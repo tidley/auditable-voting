@@ -5,8 +5,8 @@
   become: yes
 
   vars:
-    # For local testing we use the current project directory
-    app_dir: "{{ playbook_dir }}/.."
+    # Normalize project root directory (no .. allowed for systemd)
+    app_dir: "{{ playbook_dir | dirname }}"
     node_version: "20"
 
   tasks:
@@ -50,6 +50,57 @@
       args:
         chdir: "{{ app_dir }}"
 
+    - name: Install frontend dependencies
+      shell: npm install
+      args:
+        chdir: "{{ app_dir }}/web"
+
+    - name: Remove legacy JS frontend files if present
+      file:
+        path: "{{ app_dir }}/web/src/App.js"
+        state: absent
+
+    - name: Build frontend
+      shell: npm run build
+      args:
+        chdir: "{{ app_dir }}/web"
+
+    - name: Create frontend start script
+      copy:
+        dest: "{{ app_dir }}/web/start.sh"
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          exec /usr/bin/node node_modules/vite/bin/vite.js preview --host 0.0.0.0 --port 5173
+
+    - name: Create frontend systemd service
+      copy:
+        dest: /etc/systemd/system/auditable-voting-web.service
+        content: |
+          [Unit]
+          Description=Auditable Voting Frontend
+          After=network.target
+
+          [Service]
+          Type=simple
+          WorkingDirectory={{ app_dir }}/web
+          ExecStart={{ app_dir }}/web/start.sh
+          Restart=always
+          RestartSec=5
+          Environment=NODE_ENV=production
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Reload systemd
+      systemd:
+        daemon_reload: yes
+
+    - name: Enable and start frontend service
+      systemd:
+        name: auditable-voting-web
+        enabled: yes
+        state: started
     - name: Print usage instructions
       debug:
         msg:
