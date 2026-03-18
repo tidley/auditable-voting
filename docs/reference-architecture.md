@@ -23,10 +23,12 @@ Responsibilities:
 - Cashu proof validation
 - Spent proof database
 - Election lifecycle management
+- Eligibility verification against published npub set
 
 State:
 - proofs_spent table
 - elections table
+- eligible_npubs (or eligible_root reference)
 
 Suggested storage:
 - PostgreSQL (production)
@@ -34,6 +36,9 @@ Suggested storage:
 
 Critical invariant:
 Unique constraint on proof_secret prevents double voting.
+
+Additional invariant:
+Only npubs included in the published eligibility set may obtain blind-issued proofs.
 
 ---
 
@@ -55,6 +60,8 @@ Flow:
 - Verify nostr event exists
 - Mark proof spent
 - Add nostr_event_id to accepted_votes
+
+Note: Proof issuance is gated during the issuance window by eligibility verification using Nostr challenge-response.
 
 Response:
 - success or failure
@@ -141,6 +148,7 @@ Suggested custom kinds (example range 38000+):
 - 38005 — Issuance Commitment Root (mint)
 - 38006 — Spent Commitment Root (mint)
 - 38007 — Election Creation / Hard Cap Declaration (mint)
+- 38009 — Eligibility Set Commitment (mint)
 
 All mint events must be signed by the mint’s long-term public key.
 
@@ -161,6 +169,34 @@ Kind: 38007
 
 Invariant:
 - max_supply is immutable once published.
+
+---
+
+### 1b. Eligibility Set Commitment
+
+Kind: 38009
+
+The mint publishes either:
+
+- A full list of eligible npubs, OR
+- A Merkle root committing to eligible npubs
+
+Example:
+
+{
+  "election_id": "...",
+  "eligible_root": "<hex>",
+  "eligible_count": 5000
+}
+
+Issuance rule:
+
+1. Mint generates random challenge
+2. User signs challenge with eligible npub
+3. Mint verifies signature
+4. Mint proceeds with blind issuance
+
+Blind issuance ensures the mint cannot link the issued proof secret to the eligible npub at vote time.
 
 ---
 

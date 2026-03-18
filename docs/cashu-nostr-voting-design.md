@@ -15,10 +15,13 @@ Eligibility is defined by possession of a valid Cashu proof issued by a trusted 
 - Mint publishes issuance commitment root
 - Mint publishes spent commitment root
 - Election defines a hard cap (max_supply)
+- Election defines a transparent eligibility set (list or Merkle root of eligible npubs)
 
 The mint is trusted to issue proofs and compute results, but must provide cryptographic inclusion proofs so voters can verify their vote was counted.
 
 This design additionally enforces issuance transparency and a fixed election supply so the mint cannot inflate the number of eligible votes without detection.
+
+Eligibility transparency ensures that only publicly declared Nostr pubkeys may obtain voting credentials, while blind issuance ensures that the mint cannot link an eligible pubkey to a specific vote.
 
 ---
 
@@ -26,6 +29,7 @@ This design additionally enforces issuance transparency and a fixed election sup
 
 Mint:
 - Issues Cashu proofs
+- Verifies eligibility of npubs during issuance window
 - Validates and burns proofs
 - Accepts vote submissions
 - Computes tally
@@ -35,6 +39,7 @@ Mint:
 
 Voter:
 - Holds one valid Cashu proof
+- Controls an eligible Nostr pubkey (npub)
 - Generates ephemeral Nostr keypair
 - Publishes vote event
 - Submits proof privately
@@ -46,6 +51,36 @@ Nostr Relays:
 ---
 
 ## Voting Flow
+
+### 0. Transparent Eligibility Set
+
+Before the issuance window begins, the mint publishes either:
+
+1. A full list of eligible npubs, OR
+2. A Merkle root committing to the eligible npubs
+
+Example:
+
+{
+  "election_id": "...",
+  "eligible_root": "<hex>",
+  "eligible_count": 5000
+}
+
+Eligibility is public. Participation privacy is not guaranteed, but vote privacy is preserved.
+
+During issuance, a voter must prove control of an eligible npub by signing a mint-provided challenge.
+
+Flow:
+
+- Mint sends random challenge
+- Voter signs challenge with eligible npub
+- Mint verifies signature
+- Mint proceeds with blind issuance
+
+Blind issuance ensures the mint cannot link the issued proof to the eligible npub at vote time.
+
+---
 
 ### 1. Ephemeral Identity
 
@@ -238,6 +273,8 @@ Voter recomputes root and verifies match.
 Double voting prevented via spent_set.
 
 Votes are public but unlinkable to Cashu proof.
+
+Eligibility (npub membership) is public, but the mint cannot link an eligible npub to a specific vote if blind issuance is implemented correctly.
 
 Mint is trusted for correctness but must provide inclusion proofs.
 

@@ -6,6 +6,7 @@ This document defines a privacy-preserving election architecture using:
 - Three independent Cashu mints
 - Threshold-style eligibility (k-of-3 recommended: 2-of-3)
 - Nostr-based vote publication
+- Transparent eligibility set (published npub list or Merkle root)
 
 The design provides:
 
@@ -52,6 +53,7 @@ Each mint publishes:
 - max_supply
 - Issuance window
 - Voting window
+- Eligibility set commitment (eligible npubs)
 
 All mints must reference the same election_id.
 
@@ -67,6 +69,7 @@ Invariant:
 
 - max_supply is immutable per mint
 - Election parameters are publicly visible before issuance begins
+- Only npubs included in the published eligibility set may obtain blind-issued proofs
 
 ---
 
@@ -88,7 +91,10 @@ sequenceDiagram
     participant V as Voter Wallet
     participant M as Mint
 
-    V->>M: Eligibility request (during issuance window)
+    V->>M: Request issuance
+    M->>V: Random challenge
+    V->>M: Sign challenge with eligible npub
+    M->>M: Verify eligibility + signature
     V->>V: Generate random secret
     V->>V: Blind secret
     V->>M: Send blinded secret
@@ -102,6 +108,7 @@ This process is repeated independently for Mint A, Mint B, and Mint C.
 Privacy property:
 
 - Mint cannot link final proof secret to issuance request.
+- Mint can see which eligible npub requested issuance, but cannot link that npub to a later vote due to blind issuance.
 
 ---
 
