@@ -128,6 +128,123 @@ Optional Web UI:
 
 ---
 
+## Nostr Event Kinds
+
+The mint operates as a Nostr-native actor. All state transitions are expressed as signed Nostr events.
+
+Suggested custom kinds (example range 38000+):
+
+- 38000 — Vote Event (voter, ephemeral pubkey)
+- 38001 — Encrypted Proof Submission (voter → mint)
+- 38002 — Vote Acceptance Receipt (mint)
+- 38003 — Final Result (mint)
+- 38005 — Issuance Commitment Root (mint)
+- 38006 — Spent Commitment Root (mint)
+- 38007 — Election Creation / Hard Cap Declaration (mint)
+
+All mint events must be signed by the mint’s long-term public key.
+
+---
+
+## Issuance + Spent Transparency Mechanics
+
+### 1. Election Creation (Hard Cap)
+
+Kind: 38007
+
+{
+  "election_id": "...",
+  "max_supply": 5000,
+  "start_time": 1710000000,
+  "end_time": 1710003600
+}
+
+Invariant:
+- max_supply is immutable once published.
+
+---
+
+### 2. Issuance Commitment Root
+
+Kind: 38005
+
+For each issued proof:
+
+commitment = SHA256(proof_secret)
+
+Build Merkle tree:
+- Leaves sorted lexicographically by commitment
+- Internal node = SHA256(left || right)
+- Duplicate last node if odd
+
+Published event:
+
+{
+  "election_id": "...",
+  "issuance_commitment_root": "<hex>",
+  "total_issued": 5000
+}
+
+Constraint:
+- total_issued <= max_supply
+
+---
+
+### 3. Spent Commitment Root
+
+Kind: 38006
+
+For each spent proof:
+
+spent_commitment = SHA256(proof_secret)
+
+Build Merkle tree with identical ordering rules.
+
+Published event:
+
+{
+  "election_id": "...",
+  "spent_commitment_root": "<hex>",
+  "total_spent": 1234
+}
+
+Constraints:
+- total_spent <= total_issued
+
+---
+
+## Subset Proof Requirement (Spent ⊆ Issued)
+
+To verify the mint did not introduce phantom proofs, each spent commitment must be provably included in the issuance commitment tree.
+
+Mechanism:
+
+For every spent_commitment, the mint must provide:
+- Merkle inclusion proof in the issuance tree
+
+This can be implemented in two ways:
+
+Option A (Per-Vote Proofs):
+- When a vote is accepted, the mint returns:
+  - Inclusion proof of spent_commitment in issuance tree
+  - Inclusion proof of vote leaf in vote Merkle tree
+
+Option B (Bulk Transparency File):
+- At election close, mint publishes:
+  - Full list of spent_commitments
+  - Inclusion proofs into issuance tree
+
+Verification rule:
+- For every spent_commitment:
+  - Verify inclusion in issuance tree
+  - Ensure no duplicates
+- Confirm total_spent matches number of unique spent_commitments
+
+This guarantees:
+- No new eligibility introduced after issuance
+- No hidden mint-created proofs used for voting
+
+
 ## Suggested Tech Stack
 
 Backend:
