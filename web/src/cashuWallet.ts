@@ -3,7 +3,7 @@ import type { CashuProof, MintInvoiceResponse } from "./cashuMintApi";
 const STORAGE_KEY = "auditable-voting.cashu-proof";
 
 export type StoredWalletBundle = {
-  proof: CashuProof;
+  proof: CashuProof | null;
   invoice: MintInvoiceResponse;
 };
 

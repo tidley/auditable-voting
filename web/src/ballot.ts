@@ -1,5 +1,5 @@
 import { finalizeEvent, generateSecretKey, getPublicKey, nip19, SimplePool } from "nostr-tools";
-import type { CashuProof } from "./cashuMintApi";
+import type { CashuProof, RelayPublishResult } from "./cashuMintApi";
 
 export const DEFAULT_VOTE_RELAYS = [
   "wss://relay.damus.io",
@@ -58,14 +58,25 @@ export async function publishBallotEvent(input: {
 
   try {
     const results = await Promise.allSettled(pool.publish(relays, event, { maxWait: 4000 }));
+    const relayResults: RelayPublishResult[] = results.map((result, index) => (
+      result.status === "fulfilled"
+        ? { relay: relays[index], success: true }
+        : {
+            relay: relays[index],
+            success: false,
+            error: result.reason instanceof Error ? result.reason.message : String(result.reason)
+          }
+    ));
 
     return {
       eventId: event.id,
       ballotNpub,
+      event,
       proofHash,
       relays,
-      successes: results.filter((result) => result.status === "fulfilled").length,
-      failures: results.filter((result) => result.status === "rejected").length
+      successes: relayResults.filter((result) => result.success).length,
+      failures: relayResults.filter((result) => !result.success).length,
+      relayResults
     };
   } finally {
     pool.destroy();

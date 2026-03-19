@@ -1,10 +1,5 @@
-import { finalizeEvent, generateSecretKey, getPublicKey, nip19, SimplePool } from "nostr-tools";
-import type { MintInvoiceResponse } from "./cashuMintApi";
-
-export type GeneratedIdentity = {
-  npub: string;
-  nsec: string;
-};
+import { finalizeEvent, getPublicKey, nip19, SimplePool } from "nostr-tools";
+import type { MintInvoiceResponse, RelayPublishResult } from "./cashuMintApi";
 
 export const CASHU_ISSUANCE_CLAIM_KIND = 38010;
 
@@ -36,14 +31,14 @@ export function deriveNpubFromNsec(value: string): string | null {
   return nip19.npubEncode(getPublicKey(secretKey));
 }
 
-export function createGeneratedIdentity(): GeneratedIdentity {
-  const secretKey = generateSecretKey();
-  const publicKey = getPublicKey(secretKey);
+function decodeNpubToHex(value: string): string {
+  const decoded = nip19.decode(value.trim());
 
-  return {
-    npub: nip19.npubEncode(publicKey),
-    nsec: nip19.nsecEncode(secretKey)
-  };
+  if (decoded.type !== "npub") {
+    throw new Error("Coordinator value must be an npub.");
+  }
+
+  return decoded.data;
 }
 
 export function createCashuClaimEvent(
@@ -64,7 +59,7 @@ export function createCashuClaimEvent(
       created_at: Math.floor(Date.now() / 1000),
       tags: [
         ["t", "cashu-issuance"],
-        ["p", invoice.coordinatorNpub],
+        ["p", decodeNpubToHex(invoice.coordinatorNpub)],
         ["quote", invoice.quoteId],
         ["invoice", invoice.invoice],
         ["mint", mintApiUrl],
@@ -87,11 +82,21 @@ export async function publishCashuClaim(relays: string[], event: ReturnType<type
 
   try {
     const results = await Promise.allSettled(pool.publish(relays, event, { maxWait: 4000 }));
+    const relayResults: RelayPublishResult[] = results.map((result, index) => (
+      result.status === "fulfilled"
+        ? { relay: relays[index], success: true }
+        : {
+            relay: relays[index],
+            success: false,
+            error: result.reason instanceof Error ? result.reason.message : String(result.reason)
+          }
+    ));
 
     return {
       eventId: event.id,
-      successes: results.filter((result) => result.status === "fulfilled").length,
-      failures: results.filter((result) => result.status === "rejected").length
+      successes: relayResults.filter((result) => result.success).length,
+      failures: relayResults.filter((result) => !result.success).length,
+      relayResults
     };
   } finally {
     pool.destroy();

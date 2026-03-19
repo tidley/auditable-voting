@@ -29,6 +29,12 @@ export type CashuProof = {
   issuedAt: string;
 };
 
+export type RelayPublishResult = {
+  relay: string;
+  success: boolean;
+  error?: string;
+};
+
 export type ClaimDebugPayload = {
   npub: string;
   coordinatorNpub: string;
@@ -49,6 +55,29 @@ export type ClaimDebugPayload = {
     eventId: string;
     successes: number;
     failures: number;
+    relayResults: RelayPublishResult[];
+  };
+};
+
+export type BallotDebugPayload = {
+  electionId: string;
+  proofHash: string;
+  relays: string[];
+  event: {
+    id: string;
+    pubkey: string;
+    kind: number;
+    created_at: number;
+    content: string;
+    tags: string[][];
+    sig: string;
+  };
+  publishResult: {
+    eventId: string;
+    ballotNpub: string;
+    successes: number;
+    failures: number;
+    relayResults: RelayPublishResult[];
   };
 };
 
@@ -85,6 +114,16 @@ export async function fetchMintProof(mintApiUrl: string, quoteId: string) {
 
 export async function logClaimDebug(payload: ClaimDebugPayload) {
   return fetchJson<{ ok: true }>("/api/debug/claim-log", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function logBallotDebug(payload: BallotDebugPayload) {
+  return fetchJson<{ ok: true }>("/api/debug/ballot-log", {
     method: "POST",
     headers: {
       "Content-Type": "application/json"

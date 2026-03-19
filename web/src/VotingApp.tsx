@@ -1,15 +1,30 @@
 import { useState } from "react";
 import { DEFAULT_VOTE_RELAYS, publishBallotEvent } from "./ballot";
+import { logBallotDebug } from "./cashuMintApi";
 import { loadStoredWalletBundle } from "./cashuWallet";
 import { formatDateTime } from "./nostrIdentity";
 
 type VotePublishResult = {
   eventId: string;
   ballotNpub: string;
+  event: {
+    id: string;
+    pubkey: string;
+    kind: number;
+    created_at: number;
+    content: string;
+    tags: string[][];
+    sig: string;
+  };
   proofHash: string;
   relays: string[];
   successes: number;
   failures: number;
+  relayResults: Array<{
+    relay: string;
+    success: boolean;
+    error?: string;
+  }>;
 };
 
 export default function VotingApp() {
@@ -20,7 +35,7 @@ export default function VotingApp() {
   const [publishing, setPublishing] = useState(false);
   const [publishResult, setPublishResult] = useState<VotePublishResult | null>(null);
 
-  const storedProof = walletBundle?.proof && walletBundle.proof.secret !== "pending-proof" ? walletBundle.proof : null;
+  const storedProof = walletBundle?.proof ?? null;
   const electionId = walletBundle?.invoice.electionId ?? "";
   const questions = walletBundle?.invoice.questions ?? [];
   const canSubmit = Boolean(
@@ -33,17 +48,23 @@ export default function VotingApp() {
 
   async function submitBallot() {
     if (!storedProof) {
-      setError("Mint your proof before submitting a ballot.");
+      const message = "Mint your proof before submitting a ballot.";
+      setError(message);
+      window.alert(message);
       return;
     }
 
     if (!electionId.trim()) {
-      setError("No election ID found. Request a fresh invoice first.");
+      const message = "No election ID found. Request a fresh invoice first.";
+      setError(message);
+      window.alert(message);
       return;
     }
 
     if (questions.some((question) => !answers[question.id])) {
-      setError("Answer all ballot questions before submitting.");
+      const message = "Answer all ballot questions before submitting.";
+      setError(message);
+      window.alert(message);
       return;
     }
 
@@ -58,10 +79,38 @@ export default function VotingApp() {
         answers
       });
 
+      try {
+        await logBallotDebug({
+          electionId: electionId.trim(),
+          proofHash: result.proofHash,
+          relays: result.relays,
+          event: result.event,
+          publishResult: {
+            eventId: result.eventId,
+            ballotNpub: result.ballotNpub,
+            successes: result.successes,
+            failures: result.failures,
+            relayResults: result.relayResults
+          }
+        });
+      } catch {
+        // ignore debug log failures
+      }
+
       setPublishResult(result);
       setStatus(`Ballot published for election ${electionId.trim()}.`);
+
+      if (result.failures > 0) {
+        const failedRelayMessage = result.relayResults
+          .filter((relayResult) => !relayResult.success)
+          .map((relayResult) => `${relayResult.relay}: ${relayResult.error ?? "Unknown error"}`)
+          .join("\n");
+        window.alert(`Some relays rejected the ballot publish:\n${failedRelayMessage}`);
+      }
     } catch (publishError) {
-      setError(publishError instanceof Error ? publishError.message : "Could not publish ballot");
+      const message = publishError instanceof Error ? publishError.message : "Could not publish ballot";
+      setError(message);
+      window.alert(message);
     } finally {
       setPublishing(false);
     }

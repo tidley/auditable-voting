@@ -5,34 +5,12 @@ export type EligibilityResponse = {
   verifiedCount: number;
 };
 
-export type RegistrationResponse = EligibilityResponse & {
-  added: boolean;
+export type EligibilityCheckResponse = {
+  npub: string;
+  allowed: boolean;
+  hasVoted: boolean;
+  canProceed: boolean;
   message: string;
-  npub: string;
-};
-
-export type ChallengeResponse = {
-  challenge: string;
-  npub: string;
-  expiresAt: string;
-};
-
-export type VerificationResponse = {
-  verified: boolean;
-  npub: string;
-  message: string;
-  issuanceReady: boolean;
-  verifiedAt: string;
-};
-
-export type SignedEligibilityEvent = {
-  id: string;
-  sig: string;
-  kind: number;
-  pubkey: string;
-  created_at: number;
-  content: string;
-  tags: string[][];
 };
 
 async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
@@ -50,32 +28,14 @@ export async function fetchEligibility() {
   return fetchJson<EligibilityResponse>("/api/eligibility");
 }
 
-export async function registerEligibleNpub(npub: string) {
-  return fetchJson<RegistrationResponse>("/api/eligibility/register", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ npub })
+export async function resetEligibility() {
+  return fetchJson<EligibilityResponse & { message: string }>("/api/eligibility/reset", {
+    method: "POST"
   });
 }
 
-export async function requestEligibilityChallenge(npub: string) {
-  return fetchJson<ChallengeResponse>("/challenge", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ npub })
-  });
-}
-
-export async function verifyEligibilityChallenge(npub: string, event: SignedEligibilityEvent) {
-  return fetchJson<VerificationResponse>("/verify-eligibility", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ npub, event })
-  });
+export async function checkEligibility(npub: string) {
+  const url = new URL("/api/eligibility/check", window.location.origin);
+  url.searchParams.set("npub", npub);
+  return fetchJson<EligibilityCheckResponse>(url.toString());
 }

@@ -1,6 +1,7 @@
 import { randomBytes } from "crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { getPublicKey, nip19 } from "nostr-tools";
+import { ALLOWED_NPUBS } from "./voterConfig.js";
 
 export type EligibilitySnapshot = {
   eligibleNpubs: string[];
@@ -9,10 +10,17 @@ export type EligibilitySnapshot = {
   verifiedCount: number;
 };
 
-type RegistrationResult = {
-  added: boolean;
+type EligibilityCheckResult = {
   npub: string;
-  snapshot: EligibilitySnapshot;
+  allowed: boolean;
+  hasVoted: boolean;
+  canProceed: boolean;
+  message: string;
+};
+
+type VoteStatusResult = {
+  npub: string;
+  hasVoted: boolean;
 };
 
 type MockMintInvoice = {
@@ -86,6 +94,37 @@ type ClaimDebugPayload = {
     eventId?: string;
     successes?: number;
     failures?: number;
+    relayResults?: Array<{
+      relay?: string;
+      success?: boolean;
+      error?: string;
+    }>;
+  };
+};
+
+type BallotDebugPayload = {
+  electionId?: string;
+  proofHash?: string;
+  relays?: string[];
+  event?: {
+    id?: string;
+    pubkey?: string;
+    kind?: number;
+    created_at?: number;
+    content?: string;
+    tags?: string[][];
+    sig?: string;
+  };
+  publishResult?: {
+    eventId?: string;
+    ballotNpub?: string;
+    successes?: number;
+    failures?: number;
+    relayResults?: Array<{
+      relay?: string;
+      success?: boolean;
+      error?: string;
+    }>;
   };
 };
 
@@ -122,7 +161,7 @@ const DEFAULT_BALLOT_QUESTIONS = [
 ];
 
 class DemoMint {
-  private readonly eligibleNpubs = new Set<string>();
+  private readonly eligibleNpubs = new Set<string>(ALLOWED_NPUBS);
   private readonly verifiedNpubs = new Map<string, number>();
   private currentNpub: string | null = null;
 
@@ -138,26 +177,13 @@ class DemoMint {
     };
   }
 
-  registerEligibleNpub(npub: string): RegistrationResult {
-    const normalizedNpub = validateNpub(npub);
-    const added = !this.eligibleNpubs.has(normalizedNpub);
+  hasAllowedNpub(npub: string): boolean {
+    return this.eligibleNpubs.has(validateNpub(npub));
+  }
 
-    if (added) {
-      this.eligibleNpubs.add(normalizedNpub);
-      this.currentNpub = normalizedNpub;
-      console.log(`[server] registered npub: ${normalizedNpub}`);
-      console.log(`[server] eligible_count = ${this.eligibleNpubs.size}`);
-    } else {
-      this.currentNpub = normalizedNpub;
-      console.log(`[server] duplicate registration ignored: ${normalizedNpub}`);
-      console.log(`[server] eligible_count = ${this.eligibleNpubs.size}`);
-    }
-
-    return {
-      added,
-      npub: normalizedNpub,
-      snapshot: this.snapshot()
-    };
+  setCurrentEligibleNpub(npub: string) {
+    this.currentNpub = this.ensureEligibleNpub(npub);
+    console.log(`[server] current eligible npub selected: ${this.currentNpub}`);
   }
 
   ensureEligibleNpub(npub: string): string {
@@ -171,18 +197,11 @@ class DemoMint {
   }
 
   getCurrentEligibleNpub(): string {
-    if (this.currentNpub) {
-      return this.currentNpub;
+    if (!this.currentNpub) {
+      throw new Error("No eligible npub has passed step 1 yet");
     }
 
-    const firstEligibleNpub = this.eligibleNpubs.values().next().value as string | undefined;
-
-    if (!firstEligibleNpub) {
-      throw new Error("No eligible npub available for invoice issuance");
-    }
-
-    this.currentNpub = firstEligibleNpub;
-    return firstEligibleNpub;
+    return this.currentNpub;
   }
 
   markProofIssued(npub: string) {
@@ -194,6 +213,14 @@ class DemoMint {
     console.log(`[server] proof issued for npub: ${normalizedNpub}`);
     console.log(`[server] proof verification status = ${wasAlreadyVerified ? "existing" : "new"}`);
     console.log(`[server] verified_count = ${this.verifiedNpubs.size}`);
+  }
+
+  resetVerifiedStatuses() {
+    this.verifiedNpubs.clear();
+    this.currentNpub = null;
+    console.log("[server] verified statuses reset to pending");
+    console.log(`[server] verified_count = ${this.verifiedNpubs.size}`);
+    return this.snapshot();
   }
 }
 
@@ -299,6 +326,17 @@ class MockMintService {
   }
 }
 
+class MockVoteStatusService {
+  getVoteStatus(npub: string): VoteStatusResult {
+    const normalizedNpub = validateNpub(npub);
+
+    return {
+      npub: normalizedNpub,
+      hasVoted: false
+    };
+  }
+}
+
 function validateNpub(value: string): string {
   const trimmed = value.trim();
 
@@ -329,6 +367,25 @@ function writeJson(response: ServerResponse, statusCode: number, payload: unknow
 function logClaimDebug(payload: ClaimDebugPayload) {
   console.log("[server] cashu claim publish details:");
   console.log(JSON.stringify(payload, null, 2));
+
+  const failedRelays = payload.publishResult?.relayResults?.filter((result) => !result.success);
+
+  if (failedRelays && failedRelays.length > 0) {
+    console.log("[server] cashu claim publish errors:");
+    console.log(JSON.stringify(failedRelays, null, 2));
+  }
+}
+
+function logBallotDebug(payload: BallotDebugPayload) {
+  console.log("[server] ballot publish details:");
+  console.log(JSON.stringify(payload, null, 2));
+
+  const failedRelays = payload.publishResult?.relayResults?.filter((result) => !result.success);
+
+  if (failedRelays && failedRelays.length > 0) {
+    console.log("[server] ballot publish errors:");
+    console.log(JSON.stringify(failedRelays, null, 2));
+  }
 }
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
@@ -348,9 +405,10 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
 export async function startVoterServer(port = 8787) {
   const mint = new DemoMint();
   const mockMintService = new MockMintService(mint);
+  const mockVoteStatusService = new MockVoteStatusService();
 
   console.log("[server] phase 1,2 eligibility setup ready");
-  console.log("[server] eligible_count = 0");
+  console.log(`[server] eligible_count = ${ALLOWED_NPUBS.length}`);
 
   const server = createServer(async (request, response) => {
     try {
@@ -372,15 +430,50 @@ export async function startVoterServer(port = 8787) {
         return;
       }
 
-      if (request.method === "POST" && url.pathname === "/api/eligibility/register") {
-        const body = await readJsonBody(request) as { npub?: string };
-        const result = mint.registerEligibleNpub(body.npub ?? "");
+      if (request.method === "GET" && url.pathname === "/api/vote-status") {
+        const npub = url.searchParams.get("npub") ?? "";
+        const result = mockVoteStatusService.getVoteStatus(npub);
 
+        console.log(`[server] mock vote status check for ${result.npub}: hasVoted=${result.hasVoted}`);
+        console.log("[server] mock vote status details:");
+        console.log(JSON.stringify(result, null, 2));
+        writeJson(response, 200, result);
+        return;
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/eligibility/check") {
+        const npub = validateNpub(url.searchParams.get("npub") ?? "");
+        const allowed = mint.hasAllowedNpub(npub);
+        const voteStatus = mockVoteStatusService.getVoteStatus(npub);
+        const canProceed = allowed && !voteStatus.hasVoted;
+
+        if (canProceed) {
+          mint.setCurrentEligibleNpub(npub);
+        }
+
+        const result: EligibilityCheckResult = {
+          npub,
+          allowed,
+          hasVoted: voteStatus.hasVoted,
+          canProceed,
+          message: canProceed
+            ? "npub is allowed and has not voted yet"
+            : allowed
+              ? "npub has already voted"
+              : "npub is not in the allowed list"
+        };
+
+        console.log("[server] eligibility check result:");
+        console.log(JSON.stringify(result, null, 2));
+        writeJson(response, 200, result);
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/eligibility/reset") {
+        const snapshot = mint.resetVerifiedStatuses();
         writeJson(response, 200, {
-          message: result.added ? "Eligible npub registered" : "npub already registered",
-          npub: result.npub,
-          added: result.added,
-          ...result.snapshot
+          message: "All allowed npubs reset to pending",
+          ...snapshot
         });
         return;
       }
@@ -393,6 +486,13 @@ export async function startVoterServer(port = 8787) {
       if (request.method === "POST" && url.pathname === "/api/debug/claim-log") {
         const body = await readJsonBody(request) as ClaimDebugPayload;
         logClaimDebug(body);
+        writeJson(response, 200, { ok: true });
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/debug/ballot-log") {
+        const body = await readJsonBody(request) as BallotDebugPayload;
+        logBallotDebug(body);
         writeJson(response, 200, { ok: true });
         return;
       }
@@ -419,9 +519,12 @@ export async function startVoterServer(port = 8787) {
 
   console.log(`[server] listening on http://localhost:${port}`);
   console.log("[server] GET /api/eligibility");
-  console.log("[server] POST /api/eligibility/register");
+  console.log("[server] GET /api/eligibility/check?npub=");
+  console.log("[server] POST /api/eligibility/reset");
+  console.log("[server] GET /api/vote-status?npub=");
   console.log("[server] POST /api/debug/claim-log");
-  console.log("[server] GET /mock-mint/invoice?npub=");
+  console.log("[server] POST /api/debug/ballot-log");
+  console.log("[server] GET /mock-mint/invoice");
   console.log("[server] GET /mock-mint/proof/:quoteId");
 
   return server;

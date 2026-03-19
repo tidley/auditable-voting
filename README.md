@@ -1,189 +1,166 @@
 # Auditable Voting Demo
 
-This repo is a local demo of a Cashu-authenticated, Nostr-published, Merkle-auditable voting system.
+Local demo of a Nostr + Cashu-style voting flow.
 
-Right now the project focuses on the first two phases of the demo:
+The current project covers:
 
-- transparent eligibility setup
-- mock Cashu issuance flow over Nostr
-
-The implementation is intentionally simple and in-memory so the core flow is easy to demo and extend.
+- local allowlist-based voter eligibility
+- mock not-voted checks
+- mock mint invoice -> proof issuance
+- Nostr claim publishing for proof issuance
+- ballot publishing with a proof hash
+- operator dashboard for allowed and verified voters
 
 ## Overview
 
-The project explores a voting model where eligibility, vote publication, and final auditability are separated:
+The system separates a few concerns:
 
-- eligibility is based on a public set of approved Nostr public keys
-- a voter proves control of an eligible key without exposing their private key to the mint
-- blind issuance is intended to create a credential the mint cannot later link to a specific vote
-- votes are intended to be published publicly through Nostr
-- proof spending happens privately with the mint
-- final tallying is intended to be auditable through a Merkle root and inclusion proofs
+- voter eligibility is based on an allowed list of `npub`s
+- proof issuance is coordinated through a Mint API flow
+- claim and ballot events are published through Nostr relays
+- the final ballot carries a hash of the voter proof instead of the raw proof
 
-The main goal is to demonstrate the cryptographic separation between:
+Right now everything is simplified for local development:
 
-- who is allowed to participate
-- who actually participates
-- which vote gets counted
-
-## Key Ideas
-
-- `1 proof = 1 vote`
-- eligibility is transparent, so the allowed voter set is public
-- vote privacy comes from blind issuance and ephemeral vote identities
-- proofs are submitted privately and burned to prevent double voting
-- accepted votes are committed into a Merkle tree so anyone can verify inclusion
-- optional multi-mint quorum can reduce trust in any single mint
+- the allowed voter list is hardcoded in `src/voterConfig.ts`
+- the already-voted check is mocked and always returns `false`
+- the mint is mocked inside the same local server
+- proof issuance is time-based, not real blinded ecash yet
 
 ## What Is Implemented
 
-- A Node/TypeScript voter server with in-memory eligibility state in `src/voterServer.ts`
-- A voter-facing React + TypeScript page for:
-  - entering an existing `npub`
-  - generating a fresh `npub` + `nsec` locally
-  - registering the `npub` with the voter server
-  - requesting a mock invoice from a Mint API
-  - signing an invoice claim locally with `nsec`
-  - publishing that claim to public Nostr relays
-  - polling the Mint API for a mock proof
-  - storing received proofs in a simple local wallet
-- A separate backend dashboard page that shows:
-  - all registered `npub`s
-  - which `npub`s completed challenge verification
-  - eligible and verified counts
-- Console logging in the voter server for:
-  - registered `npub`s
-  - `eligible_count`
-  - mock invoice issuance
-  - mock proof readiness
-- Multi-page Vite setup for separate voter and dashboard pages
+- A Node/TypeScript voter server in `src/voterServer.ts`
+- Local allowed voter config in `src/voterConfig.ts`
+- A voter portal in `web/src/App.tsx` for:
+  - entering or generating an `npub`/`nsec`
+  - checking whether the `npub` is on the allowlist
+  - checking whether the voter has already voted via a mock API
+  - requesting a mint invoice
+  - signing and publishing an invoice claim to Nostr relays
+  - polling for a proof
+- A local single-proof wallet in `web/src/cashuWallet.ts`
+- A voting page in `web/src/VotingApp.tsx` for:
+  - loading election metadata from the stored invoice
+  - answering 2 single-choice ballot questions
+  - publishing a ballot event with a proof hash
+- A dashboard in `web/src/DashboardApp.tsx` showing allowed and verified voters
+- Server-side debug logs for:
+  - invoice details
+  - claim event details
+  - publish results
+  - proof details
 
-## Current Demo Flow
+## Current Flow
 
-1. Start the voter server locally
+1. Start the local server
 2. Open the voter portal
-3. Paste an existing `npub` or generate a fresh `npub` + `nsec`
-4. Register the `npub` with the voter server
-5. Request an invoice from the Mint API
-6. Sign the invoice claim locally with the matching `nsec`
-7. Publish the claim to public Nostr relays
-8. Poll the Mint API until the proof is ready and store it locally
-9. Open the dashboard to see the public eligibility registry
+3. Enter an `npub` from the allowlist in `src/voterConfig.ts`
+4. The server checks:
+   - the `npub` is allowed
+   - the `npub` has not voted yet (mocked to `false`)
+5. If the check passes, request an invoice from the mock Mint API
+6. The invoice response provides:
+   - voter `npub`
+   - coordinator `npub`
+   - election ID
+   - ballot questions
+   - relay list
+7. Sign the invoice claim locally with `nsec`
+8. Publish that claim to Nostr relays
+9. Poll until the proof is ready
+10. Open the voting page and publish a ballot event with the proof hash
 
 ## Project Structure
 
 ```text
-docs/                  design docs and demo plan
-src/                   voter server + CLI TypeScript code
-web/                   React + Vite frontend
-web/src/App.tsx        voter-facing portal
-web/src/DashboardApp.tsx backend dashboard
-web/src/cashuMintApi.ts Mint API client
-web/src/cashuWallet.ts  simple local proof storage
-web/src/voterManagementApi.ts shared frontend API client
-web/src/nostrIdentity.ts shared Nostr key/signing helpers
+docs/                       design docs and planning notes
+src/                        server and CLI TypeScript code
+src/voterServer.ts          local voter server and mock mint
+src/voterConfig.ts          hardcoded allowed npubs
+web/                        React + Vite frontend
+web/src/App.tsx             voter portal
+web/src/VotingApp.tsx       voting page
+web/src/DashboardApp.tsx    operator dashboard
+web/src/cashuMintApi.ts     mock mint API client
+web/src/cashuWallet.ts      single-proof local wallet storage
+web/src/ballot.ts           ballot event publishing and proof hashing
+web/src/nostrIdentity.ts    Nostr key and claim helpers
+web/src/voterManagementApi.ts allowlist and vote-status API client
 ```
 
 ## Local Development
 
-### 1. Install dependencies
-
-Root project:
+Install dependencies:
 
 ```bash
 npm install
+npm --prefix web install
 ```
 
-Web app:
-
-```bash
-cd web
-npm install
-```
-
-### 2. Build the backend CLI/server
+Build:
 
 ```bash
 npm run build
+npm --prefix web run build
 ```
 
-### 3. Start the voter server
+Start the local server:
 
 ```bash
 npm run server
 ```
 
-This starts the voter server on `http://localhost:8787`.
-
-### 4. Start the web app
-
-In `web/`:
+Start the frontend dev server:
 
 ```bash
-npm run dev
+npm --prefix web run dev
 ```
 
-By default Vite serves on `http://localhost:5173`.
-
-## Web Pages
+## Pages
 
 - Voter portal: `http://localhost:5173/`
-- Backend dashboard: `http://localhost:5173/dashboard.html`
+- Dashboard: `http://localhost:5173/dashboard.html`
+- Voting page: `http://localhost:5173/vote.html`
 
-## Current Local API Endpoints
+## Current API Endpoints
 
 - `GET /api/eligibility`
-  - returns registered and verified `npub` state
-- `POST /api/eligibility/register`
-  - registers an eligible `npub`
-- `POST /mock-mint/invoice`
-  - returns a mock invoice quote and relay list for a registered `npub`
+  - returns the local allowlist plus verified voters
+- `GET /api/eligibility/check?npub=...`
+  - checks whether the `npub` is in the allowlist and can proceed
+- `GET /api/vote-status?npub=...`
+  - mock vote-status API, currently always returns `hasVoted: false`
+- `POST /api/debug/claim-log`
+  - internal debug endpoint used by the frontend to mirror claim details into the server console
+- `GET /mock-mint/invoice`
+  - returns a mock invoice plus voter `npub`, coordinator `npub`, election ID, and ballot questions
 - `GET /mock-mint/proof/:quoteId`
-  - returns `pending` until the mock proof is ready, then returns a mock proof payload and marks that `npub` as verified in voter management
+  - returns `pending` until proof issuance is ready, then returns the proof and marks the voter as verified
 
-## Notes And Constraints
+## Allowed Npubs
 
-- State is currently in-memory only
-- The server does not persist registered users or mock mint quotes across restarts
-- `nsec` is generated and used only in the browser; it is never sent to the voter server or Mint API
-- This is still a demo system, not a production-ready voting implementation
+The current local allowlist lives in `src/voterConfig.ts`:
+
+- `npub1ukdwfffcayn5pyt8duv5fyfkwyjrykgr2efql5vmj5y9df4c82lsgkypvg`
+- `npub1kl7g5wf90gezwukh44jqtgh7dmdkv6nd20s7u88djqvv433x7ufsjrq6th`
+- `npub1et7edyz9vcpdzljns4da5t7l7qgspe3dr6flx09x6jsy2sut5xfqyfnd3u`
+
+## Notes
+
+- State is in-memory only
+- The mock already-voted API always returns `false`
+- The local wallet stores one proof per voter session
+- `nsec` stays in the browser and is never sent to the server or mint API
+- The mock mint is not real blinded Cashu issuance yet
 
 ## Roadmap
 
-### Done
-
-- Phase 1: self-service eligibility registration
-- Phase 1: separate backend dashboard for public eligibility visibility
-- Mock Mint API for invoice -> proof demo flow
-- Nostr-signed invoice claims published from the browser
-- Simple local proof wallet storage
-
-### Next
-
-- Phase 3: minimal blind issuance flow
-  - client generates random secret
-  - client sends `SHA256(secret)` commitment
-  - real mint signs the commitment
-  - wallet stores `{secret, signature}` proof
-- Phase 4: vote publication
-  - local logging or Nostr relay publishing
-  - ephemeral vote key support
-- Phase 5: private proof submission
-  - submit `{event_id, secret, signature}` to mint
-  - track spent proofs
-  - accept valid votes
-- Phase 6: Merkle tally
-  - build Merkle tree over accepted votes
-  - publish Merkle root
-  - verify inclusion proofs
-
-### Later / Optional
-
-- 3-mint quorum model
-- persistent storage
-- auth or access control for the dashboard
-- nicer operator tooling and election lifecycle management
-- public verification UI for inclusion proof checks
+- replace mock invoice/proof endpoints with the real teammate mint API
+- replace the mock already-voted API with a real spent-proof / participation check
+- move election config and ballot questions fully behind the mint/coordinator service
+- implement real Cashu blind issuance
+- submit proofs privately for vote counting
+- build Merkle commitments and public verification tools
 
 ## Related Docs
 

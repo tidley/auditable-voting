@@ -1,15 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { fetchMintProof, logClaimDebug, requestMintInvoice, type CashuProof, type MintInvoiceResponse } from "./cashuMintApi";
 import { loadStoredWalletBundle, storeProof, storeWalletBundle } from "./cashuWallet";
-import { registerEligibleNpub } from "./voterManagementApi";
+import { checkEligibility, type EligibilityCheckResponse } from "./voterManagementApi";
 import {
   createCashuClaimEvent,
-  createGeneratedIdentity,
   deriveNpubFromNsec,
   formatDateTime,
   isValidNpub,
-  publishCashuClaim,
-  type GeneratedIdentity
+  publishCashuClaim
 } from "./nostrIdentity";
 
 const DEFAULT_MINT_URL = "http://localhost:8787/mock-mint";
@@ -28,11 +26,11 @@ export default function App() {
   const [mintApiUrl, setMintApiUrl] = useState(DEFAULT_MINT_URL);
   const [npubInput, setNpubInput] = useState("");
   const [nsecInput, setNsecInput] = useState("");
-  const [generatedIdentity, setGeneratedIdentity] = useState<GeneratedIdentity | null>(null);
   const [invoiceQuote, setInvoiceQuote] = useState<MintInvoiceResponse | null>(null);
   const [publishResult, setPublishResult] = useState<PublishResult | null>(null);
   const [currentProof, setCurrentProof] = useState<CashuProof | null>(null);
   const [walletBundle, setWalletBundle] = useState(() => loadStoredWalletBundle());
+  const [eligibilityResult, setEligibilityResult] = useState<EligibilityCheckResponse | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -45,6 +43,7 @@ export default function App() {
   const derivedNpub = useMemo(() => deriveNpubFromNsec(nsecInput), [nsecInput]);
   const npubIsValid = isValidNpub(npubInput);
   const nsecMatchesNpub = Boolean(derivedNpub && (invoiceQuote ? invoiceQuote.npub === derivedNpub : npubInput.trim() === derivedNpub));
+  const canRequestInvoice = Boolean(eligibilityResult?.canProceed && !requestingInvoice);
 
   function resetIssuanceFlow() {
     setInvoiceQuote(null);
@@ -53,41 +52,42 @@ export default function App() {
     setProofPollingActive(false);
   }
 
-  function generateIdentity() {
-    const nextIdentity = createGeneratedIdentity();
-
-    setGeneratedIdentity(nextIdentity);
-    setNpubInput(nextIdentity.npub);
-    setNsecInput(nextIdentity.nsec);
+  function resetEligibilityFlow() {
+    setEligibilityResult(null);
     resetIssuanceFlow();
-    setStatus("Fresh Nostr identity generated locally. Save the nsec somewhere private before you continue.");
-    setError(null);
   }
 
-  async function registerNpub() {
+  async function checkNpubAccess() {
     if (!npubIsValid) {
-      setError("Enter a valid npub before registering.");
+      setError("Enter a valid npub before checking eligibility.");
       return;
     }
 
     setLoading(true);
     setStatus(null);
     setError(null);
-    resetIssuanceFlow();
+    resetEligibilityFlow();
 
     try {
-      const payload = await registerEligibleNpub(npubInput.trim());
-      setStatus(payload.added ? `Registered ${payload.npub} in voter management.` : `${payload.npub} was already on the eligible list.`);
+      const payload = await checkEligibility(npubInput.trim());
+      setEligibilityResult(payload);
+      setStatus(payload.message);
+
+      if (!payload.allowed) {
+        window.alert("This npub is not in the allowed list.");
+      } else if (payload.hasVoted) {
+        window.alert("This npub has already voted.");
+      }
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Registration failed");
+      setError(requestError instanceof Error ? requestError.message : "Eligibility check failed");
     } finally {
       setLoading(false);
     }
   }
 
   async function requestInvoice() {
-    if (!npubIsValid) {
-      setError("Register or paste a valid npub before requesting an invoice.");
+    if (!eligibilityResult?.canProceed) {
+      setError("Check that your npub is allowed and has not voted yet before requesting an invoice.");
       return;
     }
 
@@ -102,15 +102,7 @@ export default function App() {
       const payload = await requestMintInvoice(normalizedMintApiUrl);
       setInvoiceQuote(payload);
       storeWalletBundle({
-        proof: currentProof ?? walletBundle?.proof ?? {
-          quoteId: payload.quoteId,
-          npub: payload.npub,
-          amount: payload.amount,
-          secret: "pending-proof",
-          signature: "pending-signature",
-          mintUrl: normalizedMintApiUrl,
-          issuedAt: payload.expiresAt
-        },
+        proof: null,
         invoice: payload
       });
       setWalletBundle(loadStoredWalletBundle());
@@ -125,11 +117,13 @@ export default function App() {
   async function publishInvoiceClaim() {
     if (!invoiceQuote) {
       setError("Request an invoice first.");
+      window.alert("Request an invoice first.");
       return;
     }
 
     if (!nsecMatchesNpub) {
       setError("The provided nsec does not match the selected npub.");
+      window.alert("The provided nsec does not match the selected npub.");
       return;
     }
 
@@ -172,13 +166,23 @@ export default function App() {
       setPublishResult(result);
       setProofPollingActive(true);
 
+      if (result.failures > 0) {
+        const failedRelayMessage = result.relayResults
+          .filter((relayResult) => !relayResult.success)
+          .map((relayResult) => `${relayResult.relay}: ${relayResult.error ?? "Unknown error"}`)
+          .join("\n");
+        window.alert(`Some relays rejected the claim publish:\n${failedRelayMessage}`);
+      }
+
       if (result.successes > 0) {
         setStatus(`Claim published to ${result.successes} relay${result.successes === 1 ? "" : "s"}. Waiting for mint proof.`);
       } else {
         setStatus("Relay publish did not confirm, but the mock mint will still simulate proof delivery for this demo.");
       }
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Could not publish invoice claim");
+      const message = requestError instanceof Error ? requestError.message : "Could not publish invoice claim";
+      setError(message);
+      window.alert(message);
     } finally {
       setPublishingClaim(false);
     }
@@ -243,9 +247,9 @@ export default function App() {
     <main className="page-shell">
       <section className="hero-card">
         <p className="eyebrow">Voter Portal</p>
-        <h1>Register your npub and mint a Cashu voting proof.</h1>
+        <h1>Check your allowed npub and mint a Cashu voting proof.</h1>
         <p className="hero-copy">
-          Register your eligible `npub`, request an invoice from the Mint API, sign that invoice claim with your `nsec`, publish it to public Nostr relays, then receive a proof into your local wallet.
+          Enter an allowed `npub`, pass the mock not-voted check, request an invoice from the Mint API, sign that invoice claim with your `nsec`, publish it to public Nostr relays, then receive a proof into your local wallet.
         </p>
         <div className="hero-metadata">
           <span>Mint API</span>
@@ -266,32 +270,41 @@ export default function App() {
           <div className="panel-header">
             <div>
               <p className="panel-kicker">Step 1</p>
-              <h2>Register your npub</h2>
+              <h2>Check your npub</h2>
             </div>
           </div>
 
-          <label className="field-label" htmlFor="npub-input">Eligible npub</label>
+          <label className="field-label" htmlFor="npub-input">Allowed npub</label>
           <textarea
             id="npub-input"
             className="text-area"
             value={npubInput}
-            onChange={(event) => setNpubInput(event.target.value)}
+            onChange={(event) => {
+              setNpubInput(event.target.value);
+              setEligibilityResult(null);
+              resetIssuanceFlow();
+            }}
             placeholder="npub1..."
             rows={4}
           />
 
           <div className="button-row">
-            <button className="primary-button" onClick={() => void registerNpub()} disabled={!npubIsValid || loading}>
-              {loading ? "Registering..." : "Register npub"}
-            </button>
-            <button className="secondary-button" onClick={generateIdentity}>
-              Generate npub + nsec
+            <button className="primary-button" onClick={() => void checkNpubAccess()} disabled={!npubIsValid || loading}>
+              {loading ? "Checking..." : "Check eligibility"}
             </button>
           </div>
 
+          <p className="field-hint">
+            Only `npub`s in the local allowed list can continue. The server also performs a mock voted check and currently always returns not voted.
+          </p>
+
           <div className="validation-row">
-            <span className={npubIsValid ? "validation-ok" : "validation-warn"}>
-              {npubIsValid ? "Valid npub ready to register" : "Paste or generate a valid npub"}
+            <span className={eligibilityResult?.canProceed ? "validation-ok" : "validation-warn"}>
+              {eligibilityResult?.canProceed
+                ? "Allowed npub and not voted yet"
+                : npubIsValid
+                  ? "Check whether this npub is on the allowed list"
+                  : "Paste or generate a valid npub"}
             </span>
           </div>
         </article>
@@ -299,8 +312,8 @@ export default function App() {
         <article className="panel">
           <div className="panel-header">
             <div>
-              <p className="panel-kicker">Local wallet</p>
-              <h2>Your private key stays local</h2>
+              <p className="panel-kicker">Signer</p>
+              <h2>Use your existing nsec</h2>
             </div>
           </div>
 
@@ -311,27 +324,14 @@ export default function App() {
             </p>
           </div>
 
-          {generatedIdentity ? (
-            <div className="generated-grid">
-              <div>
-                <p className="code-label">npub</p>
-                <code className="code-block">{generatedIdentity.npub}</code>
-              </div>
-              <div>
-                <p className="code-label">nsec</p>
-                <code className="code-block code-block-secret">{generatedIdentity.nsec}</code>
-              </div>
-            </div>
-          ) : (
-            <p className="empty-copy">Generate a fresh identity if you do not already have an `npub` and `nsec`.</p>
-          )}
+          <p className="empty-copy">Use an existing Nostr account. Enter the approved `npub` in Step 1 and the matching `nsec` in Step 2 when you are ready to sign.</p>
         </article>
 
         <article className="panel panel-wide">
           <div className="panel-header">
             <div>
               <p className="panel-kicker">Step 2</p>
-              <h2>Get your Cashu proof</h2>
+              <h2>Get your voter proof</h2>
             </div>
             {currentProof && <span className="count-pill">Proof received</span>}
           </div>
@@ -342,10 +342,10 @@ export default function App() {
                 <p className="code-label">Step 2.1</p>
                 <h3 className="substep-title">Request invoice from Mint</h3>
                 <p className="field-hint substep-copy">
-                  Ask the Mint API for an issuance quote. The current default uses a local mock mint contract.
+                  Once your npub passes the allowed-list and mock voted checks, ask the Mint API for an issuance quote. The current default uses a local mock mint contract.
                 </p>
                 <div className="button-row button-row-tight">
-                  <button className="secondary-button" onClick={() => void requestInvoice()} disabled={requestingInvoice || !npubIsValid}>
+                  <button className="secondary-button" onClick={() => void requestInvoice()} disabled={!canRequestInvoice}>
                     {requestingInvoice ? "Requesting..." : "Request invoice"}
                   </button>
                 </div>
@@ -387,7 +387,7 @@ export default function App() {
                 rows={4}
               />
               <p className="field-hint">
-                Paste your `nsec` or use the generated one above. The browser derives the `npub` locally and checks it matches the registered voter.
+                Paste your `nsec` or use the generated one above. The browser derives the `npub` locally and checks it matches the approved voter identity.
               </p>
 
               {derivedNpub && (
@@ -408,7 +408,7 @@ export default function App() {
 
               <div className="validation-row">
                 <span className={nsecMatchesNpub ? "validation-ok" : "validation-warn"}>
-                  {nsecMatchesNpub ? "nsec matches selected npub" : "Enter the nsec for the registered npub before publishing"}
+                  {nsecMatchesNpub ? "nsec matches selected npub" : "Enter the nsec for the approved npub before publishing"}
                 </span>
               </div>
 
@@ -433,10 +433,10 @@ export default function App() {
               <p className="panel-kicker">Wallet</p>
               <h2>Your voting proof</h2>
             </div>
-            <span className="count-pill">{walletBundle?.proof && walletBundle.proof.secret !== "pending-proof" ? "1 proof" : "No proof"}</span>
+            <span className="count-pill">{walletBundle?.proof ? "1 proof" : "No proof"}</span>
           </div>
 
-          {walletBundle?.proof && walletBundle.proof.secret !== "pending-proof" ? (
+          {walletBundle?.proof ? (
             <div className="derived-box">
               <p className="code-label">Quote {walletBundle.proof.quoteId}</p>
               <code className="code-block code-block-muted">{walletBundle.proof.secret}</code>
@@ -448,9 +448,9 @@ export default function App() {
             <p className="empty-copy">No proof stored yet. Request an invoice, publish the signed claim, and wait for the mint proof.</p>
           )}
 
-          {walletBundle?.proof && walletBundle.proof.secret !== "pending-proof" && (
+          {walletBundle?.proof && (
             <div className="button-row">
-              <a className="ghost-button link-button" href="/vote.html">Open voting page</a>
+              <a className="primary-button link-button cta-link-button" href="/vote.html">Go To Voting Page</a>
             </div>
           )}
         </article>
