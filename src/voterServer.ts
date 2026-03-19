@@ -1,6 +1,6 @@
 import { randomBytes } from "crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
-import { nip19, verifyEvent } from "nostr-tools";
+import { getPublicKey, nip19 } from "nostr-tools";
 
 export type EligibilitySnapshot = {
   eligibleNpubs: string[];
@@ -15,42 +15,116 @@ type RegistrationResult = {
   snapshot: EligibilitySnapshot;
 };
 
-type ChallengeRecord = {
+type MockMintInvoice = {
+  quoteId: string;
   npub: string;
-  expiresAt: number;
-};
-
-type ChallengeResult = {
-  challenge: string;
-  npub: string;
+  invoice: string;
+  amount: number;
   expiresAt: string;
+  relays: string[];
+  coordinatorNpub: string;
+  electionId: string;
+  questions: Array<{
+    id: string;
+    prompt: string;
+    options: Array<{
+      value: string;
+      label: string;
+    }>;
+  }>;
 };
 
-type VerificationEvent = {
-  id: string;
-  sig: string;
-  kind: number;
-  pubkey: string;
-  created_at: number;
-  content: string;
-  tags: string[][];
-};
-
-type VerificationResult = {
-  verified: true;
+type MockCashuProof = {
+  quoteId: string;
   npub: string;
-  message: string;
-  issuanceReady: true;
-  verifiedAt: string;
+  amount: number;
+  secret: string;
+  signature: string;
+  mintUrl: string;
+  issuedAt: string;
 };
 
-const CHALLENGE_TTL_MS = 5 * 60 * 1000;
-const ELIGIBILITY_VERIFICATION_KIND = 22242;
+type MockProofResponse =
+  | {
+      status: "pending";
+      quoteId: string;
+      pollAfterMs: number;
+    }
+  | {
+      status: "ready";
+      quoteId: string;
+      proof: MockCashuProof;
+    };
+
+type MockQuoteRecord = {
+  quoteId: string;
+  npub: string;
+  invoice: string;
+  amount: number;
+  expiresAt: number;
+  readyAt: number;
+  proof: MockCashuProof;
+};
+
+type ClaimDebugPayload = {
+  npub?: string;
+  coordinatorNpub?: string;
+  mintApiUrl?: string;
+  relays?: string[];
+  quoteId?: string;
+  invoice?: string;
+  event?: {
+    id?: string;
+    pubkey?: string;
+    kind?: number;
+    created_at?: number;
+    content?: string;
+    tags?: string[][];
+    sig?: string;
+  };
+  publishResult?: {
+    eventId?: string;
+    successes?: number;
+    failures?: number;
+  };
+};
+
+const MOCK_QUOTE_TTL_MS = 10 * 60 * 1000;
+const MOCK_PROOF_READY_MS = 4000;
+const DEFAULT_MOCK_RELAYS = [
+  "wss://relay.damus.io",
+  "wss://nos.lol",
+  "wss://relay.primal.net"
+];
+const DEFAULT_COORDINATOR_NPUB = nip19.npubEncode(
+  getPublicKey(Uint8Array.from(Array.from({ length: 32 }, () => 7)))
+);
+const DEFAULT_ELECTION_ID = "spring-2026-council";
+const DEFAULT_BALLOT_QUESTIONS = [
+  {
+    id: "funding_priority",
+    prompt: "Which area should receive the first round of funding?",
+    options: [
+      { value: "community-grants", label: "Community grants" },
+      { value: "security-audits", label: "Security audits" },
+      { value: "education-programs", label: "Education programs" }
+    ]
+  },
+  {
+    id: "audit_policy",
+    prompt: "How often should published results receive an independent audit?",
+    options: [
+      { value: "every-election", label: "Every election" },
+      { value: "annual-review", label: "Annual review" },
+      { value: "only-disputes", label: "Only on disputes" }
+    ]
+  }
+];
 
 class DemoMint {
   private readonly eligibleNpubs = new Set<string>();
-  private readonly outstandingChallenges = new Map<string, ChallengeRecord>();
   private readonly verifiedNpubs = new Map<string, number>();
+  private currentNpub: string | null = null;
 
   snapshot(): EligibilitySnapshot {
     const eligibleNpubs = [...this.eligibleNpubs].sort();
@@ -70,9 +144,11 @@ class DemoMint {
 
     if (added) {
       this.eligibleNpubs.add(normalizedNpub);
+      this.currentNpub = normalizedNpub;
       console.log(`[server] registered npub: ${normalizedNpub}`);
       console.log(`[server] eligible_count = ${this.eligibleNpubs.size}`);
     } else {
+      this.currentNpub = normalizedNpub;
       console.log(`[server] duplicate registration ignored: ${normalizedNpub}`);
       console.log(`[server] eligible_count = ${this.eligibleNpubs.size}`);
     }
@@ -84,108 +160,140 @@ class DemoMint {
     };
   }
 
-  issueChallenge(npub: string): ChallengeResult {
+  ensureEligibleNpub(npub: string): string {
     const normalizedNpub = validateNpub(npub);
 
     if (!this.eligibleNpubs.has(normalizedNpub)) {
       throw new Error("npub is not in the eligible list");
     }
 
-    this.pruneExpiredChallenges();
-
-    const challenge = randomBytes(32).toString("hex");
-    const expiresAt = Date.now() + CHALLENGE_TTL_MS;
-
-    this.outstandingChallenges.set(challenge, {
-      npub: normalizedNpub,
-      expiresAt
-    });
-
-    console.log(`[server] issued challenge for npub: ${normalizedNpub}`);
-
-    return {
-      challenge,
-      npub: normalizedNpub,
-      expiresAt: new Date(expiresAt).toISOString()
-    };
+    return normalizedNpub;
   }
 
-  verifyEligibility(npub: string, event: VerificationEvent): VerificationResult {
-    const normalizedNpub = validateNpub(npub);
-
-    if (!event || typeof event !== "object") {
-      throw new Error("Signed event is required");
+  getCurrentEligibleNpub(): string {
+    if (this.currentNpub) {
+      return this.currentNpub;
     }
 
-    if (!this.eligibleNpubs.has(normalizedNpub)) {
-      throw new Error("npub is not in the eligible list");
+    const firstEligibleNpub = this.eligibleNpubs.values().next().value as string | undefined;
+
+    if (!firstEligibleNpub) {
+      throw new Error("No eligible npub available for invoice issuance");
     }
 
-    if (event.kind !== ELIGIBILITY_VERIFICATION_KIND) {
-      throw new Error(`Expected eligibility verification event kind ${ELIGIBILITY_VERIFICATION_KIND}`);
-    }
+    this.currentNpub = firstEligibleNpub;
+    return firstEligibleNpub;
+  }
 
-    if (!Array.isArray(event.tags)) {
-      throw new Error("Signed event is missing tags");
-    }
-
-    const challenge = this.getChallengeTagValue(event.tags);
-    const challengeRecord = this.outstandingChallenges.get(challenge);
-
-    if (!challengeRecord) {
-      throw new Error("Challenge not found or already used");
-    }
-
-    if (challengeRecord.expiresAt < Date.now()) {
-      this.outstandingChallenges.delete(challenge);
-      throw new Error("Challenge expired");
-    }
-
-    if (challengeRecord.npub !== normalizedNpub) {
-      throw new Error("Challenge was issued for a different npub");
-    }
-
-    if (event.pubkey !== decodeNpubToHex(normalizedNpub)) {
-      throw new Error("Signed event pubkey does not match npub");
-    }
-
-    if (!verifyEvent(event as Parameters<typeof verifyEvent>[0])) {
-      throw new Error("Invalid signed event");
-    }
-
-    this.outstandingChallenges.delete(challenge);
-
+  markProofIssued(npub: string) {
+    const normalizedNpub = this.ensureEligibleNpub(npub);
     const verifiedAt = Date.now();
+    const wasAlreadyVerified = this.verifiedNpubs.has(normalizedNpub);
     this.verifiedNpubs.set(normalizedNpub, verifiedAt);
 
-    console.log(`[server] eligibility verified for npub: ${normalizedNpub}`);
-    console.log(`[server] blind issuance unlocked for npub: ${normalizedNpub}`);
+    console.log(`[server] proof issued for npub: ${normalizedNpub}`);
+    console.log(`[server] proof verification status = ${wasAlreadyVerified ? "existing" : "new"}`);
+    console.log(`[server] verified_count = ${this.verifiedNpubs.size}`);
+  }
+}
+
+class MockMintService {
+  private readonly quotes = new Map<string, MockQuoteRecord>();
+
+  constructor(private readonly voterRegistry: DemoMint) {}
+
+  issueInvoice(baseUrl: string): MockMintInvoice {
+    this.pruneExpiredQuotes();
+
+    const normalizedNpub = this.voterRegistry.getCurrentEligibleNpub();
+
+    const quoteId = randomBytes(16).toString("hex");
+    const expiresAt = Date.now() + MOCK_QUOTE_TTL_MS;
+    const readyAt = Date.now() + MOCK_PROOF_READY_MS;
+    const invoice = `lnbc10u1p${quoteId}`;
+    const proof: MockCashuProof = {
+      quoteId,
+      npub: normalizedNpub,
+      amount: 1,
+      secret: randomBytes(32).toString("hex"),
+      signature: randomBytes(64).toString("hex"),
+      mintUrl: baseUrl,
+      issuedAt: new Date(readyAt).toISOString()
+    };
+
+    this.quotes.set(quoteId, {
+      quoteId,
+      npub: normalizedNpub,
+      invoice,
+      amount: 1,
+      expiresAt,
+      readyAt,
+      proof
+    });
+
+    console.log(`[server] mock invoice issued: ${quoteId} for ${normalizedNpub}`);
+    console.log("[server] mock invoice details:");
+    console.log(JSON.stringify({
+      quoteId,
+      npub: normalizedNpub,
+      invoice,
+      amount: 1,
+      expiresAt: new Date(expiresAt).toISOString(),
+      relays: DEFAULT_MOCK_RELAYS,
+      coordinatorNpub: DEFAULT_COORDINATOR_NPUB,
+      electionId: DEFAULT_ELECTION_ID,
+      questions: DEFAULT_BALLOT_QUESTIONS,
+      mintUrl: baseUrl
+    }, null, 2));
 
     return {
-      verified: true,
+      quoteId,
       npub: normalizedNpub,
-      message: "Eligibility verified. Blind issuance can proceed.",
-      issuanceReady: true,
-      verifiedAt: new Date(verifiedAt).toISOString()
+      invoice,
+      amount: 1,
+      expiresAt: new Date(expiresAt).toISOString(),
+      relays: DEFAULT_MOCK_RELAYS,
+      coordinatorNpub: DEFAULT_COORDINATOR_NPUB,
+      electionId: DEFAULT_ELECTION_ID,
+      questions: DEFAULT_BALLOT_QUESTIONS
     };
   }
 
-  private getChallengeTagValue(tags: string[][]): string {
-    const challengeTag = tags.find((tag) => tag[0] === "challenge" && typeof tag[1] === "string");
+  getProof(quoteId: string): MockProofResponse {
+    this.pruneExpiredQuotes();
 
-    if (!challengeTag?.[1]) {
-      throw new Error("Signed event is missing the challenge tag");
+    const record = this.quotes.get(quoteId);
+
+    if (!record) {
+      throw new Error("Quote not found or expired");
     }
 
-    return challengeTag[1];
+    if (Date.now() < record.readyAt) {
+      return {
+        status: "pending",
+        quoteId,
+        pollAfterMs: 2000
+      };
+    }
+
+    this.voterRegistry.markProofIssued(record.npub);
+    console.log(`[server] mock proof ready: ${quoteId}`);
+    console.log("[server] mock proof details:");
+    console.log(JSON.stringify(record.proof, null, 2));
+
+    return {
+      status: "ready",
+      quoteId,
+      proof: record.proof
+    };
   }
 
-  private pruneExpiredChallenges() {
+  private pruneExpiredQuotes() {
     const now = Date.now();
 
-    for (const [challenge, record] of this.outstandingChallenges.entries()) {
+    for (const [quoteId, record] of this.quotes.entries()) {
       if (record.expiresAt < now) {
-        this.outstandingChallenges.delete(challenge);
+        this.quotes.delete(quoteId);
       }
     }
   }
@@ -207,16 +315,6 @@ function validateNpub(value: string): string {
   return trimmed;
 }
 
-function decodeNpubToHex(npub: string): string {
-  const decoded = nip19.decode(npub);
-
-  if (decoded.type !== "npub") {
-    throw new Error("Expected an npub value");
-  }
-
-  return decoded.data;
-}
-
 function writeJson(response: ServerResponse, statusCode: number, payload: unknown) {
   response.writeHead(statusCode, {
     "Access-Control-Allow-Headers": "Content-Type",
@@ -226,6 +324,11 @@ function writeJson(response: ServerResponse, statusCode: number, payload: unknow
   });
 
   response.end(JSON.stringify(payload));
+}
+
+function logClaimDebug(payload: ClaimDebugPayload) {
+  console.log("[server] cashu claim publish details:");
+  console.log(JSON.stringify(payload, null, 2));
 }
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
@@ -244,8 +347,9 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
 
 export async function startVoterServer(port = 8787) {
   const mint = new DemoMint();
+  const mockMintService = new MockMintService(mint);
 
-  console.log("[server] phase 1 eligibility setup ready");
+  console.log("[server] phase 1,2 eligibility setup ready");
   console.log("[server] eligible_count = 0");
 
   const server = createServer(async (request, response) => {
@@ -261,6 +365,7 @@ export async function startVoterServer(port = 8787) {
       }
 
       const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `localhost:${port}`}`);
+      const baseUrl = `${url.protocol}//${url.host}/mock-mint`;
 
       if (request.method === "GET" && url.pathname === "/api/eligibility") {
         writeJson(response, 200, mint.snapshot());
@@ -280,19 +385,21 @@ export async function startVoterServer(port = 8787) {
         return;
       }
 
-      if (request.method === "POST" && url.pathname === "/challenge") {
-        const body = await readJsonBody(request) as { npub?: string };
-        const result = mint.issueChallenge(body.npub ?? "");
-
-        writeJson(response, 200, result);
+      if (request.method === "GET" && url.pathname === "/mock-mint/invoice") {
+        writeJson(response, 200, mockMintService.issueInvoice(baseUrl));
         return;
       }
 
-      if (request.method === "POST" && url.pathname === "/verify-eligibility") {
-        const body = await readJsonBody(request) as { npub?: string; event?: VerificationEvent };
-        const result = mint.verifyEligibility(body.npub ?? "", body.event as VerificationEvent);
+      if (request.method === "POST" && url.pathname === "/api/debug/claim-log") {
+        const body = await readJsonBody(request) as ClaimDebugPayload;
+        logClaimDebug(body);
+        writeJson(response, 200, { ok: true });
+        return;
+      }
 
-        writeJson(response, 200, result);
+      if (request.method === "GET" && url.pathname.startsWith("/mock-mint/proof/")) {
+        const quoteId = url.pathname.replace("/mock-mint/proof/", "").trim();
+        writeJson(response, 200, mockMintService.getProof(quoteId));
         return;
       }
 
@@ -313,8 +420,9 @@ export async function startVoterServer(port = 8787) {
   console.log(`[server] listening on http://localhost:${port}`);
   console.log("[server] GET /api/eligibility");
   console.log("[server] POST /api/eligibility/register");
-  console.log("[server] POST /challenge");
-  console.log("[server] POST /verify-eligibility");
+  console.log("[server] POST /api/debug/claim-log");
+  console.log("[server] GET /mock-mint/invoice?npub=");
+  console.log("[server] GET /mock-mint/proof/:quoteId");
 
   return server;
 }

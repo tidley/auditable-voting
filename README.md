@@ -5,7 +5,7 @@ This repo is a local demo of a Cashu-authenticated, Nostr-published, Merkle-audi
 Right now the project focuses on the first two phases of the demo:
 
 - transparent eligibility setup
-- Nostr challenge-response eligibility verification
+- mock Cashu issuance flow over Nostr
 
 The implementation is intentionally simple and in-memory so the core flow is easy to demo and extend.
 
@@ -42,9 +42,11 @@ The main goal is to demonstrate the cryptographic separation between:
   - entering an existing `npub`
   - generating a fresh `npub` + `nsec` locally
   - registering the `npub` with the voter server
-  - requesting a challenge from the voter server
-  - signing the challenge locally with `nsec`
-  - verifying eligibility without sending `nsec` to the backend
+  - requesting a mock invoice from a Mint API
+  - signing an invoice claim locally with `nsec`
+  - publishing that claim to public Nostr relays
+  - polling the Mint API for a mock proof
+  - storing received proofs in a simple local wallet
 - A separate backend dashboard page that shows:
   - all registered `npub`s
   - which `npub`s completed challenge verification
@@ -52,8 +54,8 @@ The main goal is to demonstrate the cryptographic separation between:
 - Console logging in the voter server for:
   - registered `npub`s
   - `eligible_count`
-  - challenge issuance
-  - successful eligibility verification
+  - mock invoice issuance
+  - mock proof readiness
 - Multi-page Vite setup for separate voter and dashboard pages
 
 ## Current Demo Flow
@@ -62,10 +64,11 @@ The main goal is to demonstrate the cryptographic separation between:
 2. Open the voter portal
 3. Paste an existing `npub` or generate a fresh `npub` + `nsec`
 4. Register the `npub` with the voter server
-5. Request a challenge
-6. Sign the challenge locally with the matching `nsec`
-7. Mint verifies the signed event and marks that `npub` as ready for blind issuance
-8. Open the dashboard to see the public eligibility registry and verification status
+5. Request an invoice from the Mint API
+6. Sign the invoice claim locally with the matching `nsec`
+7. Publish the claim to public Nostr relays
+8. Poll the Mint API until the proof is ready and store it locally
+9. Open the dashboard to see the public eligibility registry
 
 ## Project Structure
 
@@ -75,6 +78,8 @@ src/                   voter server + CLI TypeScript code
 web/                   React + Vite frontend
 web/src/App.tsx        voter-facing portal
 web/src/DashboardApp.tsx backend dashboard
+web/src/cashuMintApi.ts Mint API client
+web/src/cashuWallet.ts  simple local proof storage
 web/src/voterManagementApi.ts shared frontend API client
 web/src/nostrIdentity.ts shared Nostr key/signing helpers
 ```
@@ -125,22 +130,22 @@ By default Vite serves on `http://localhost:5173`.
 - Voter portal: `http://localhost:5173/`
 - Backend dashboard: `http://localhost:5173/dashboard.html`
 
-## Mint Endpoints
+## Current Local API Endpoints
 
 - `GET /api/eligibility`
   - returns registered and verified `npub` state
 - `POST /api/eligibility/register`
   - registers an eligible `npub`
-- `POST /challenge`
-  - issues a random challenge for an eligible `npub`
-- `POST /verify-eligibility`
-  - verifies a signed Nostr event tagged with the issued challenge
+- `POST /mock-mint/invoice`
+  - returns a mock invoice quote and relay list for a registered `npub`
+- `GET /mock-mint/proof/:quoteId`
+  - returns `pending` until the mock proof is ready, then returns a mock proof payload and marks that `npub` as verified in voter management
 
 ## Notes And Constraints
 
 - State is currently in-memory only
-- The mint does not persist registered or verified users across restarts
-- `nsec` is generated and used only in the browser; it is never sent to the mint
+- The server does not persist registered users or mock mint quotes across restarts
+- `nsec` is generated and used only in the browser; it is never sent to the voter server or Mint API
 - This is still a demo system, not a production-ready voting implementation
 
 ## Roadmap
@@ -149,14 +154,16 @@ By default Vite serves on `http://localhost:5173`.
 
 - Phase 1: self-service eligibility registration
 - Phase 1: separate backend dashboard for public eligibility visibility
-- Phase 2: challenge-response verification using Nostr signing
+- Mock Mint API for invoice -> proof demo flow
+- Nostr-signed invoice claims published from the browser
+- Simple local proof wallet storage
 
 ### Next
 
 - Phase 3: minimal blind issuance flow
   - client generates random secret
   - client sends `SHA256(secret)` commitment
-  - mint signs the commitment
+  - real mint signs the commitment
   - wallet stores `{secret, signature}` proof
 - Phase 4: vote publication
   - local logging or Nostr relay publishing

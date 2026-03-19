@@ -1,12 +1,12 @@
-import { finalizeEvent, generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
-import type { ChallengeResponse, SignedEligibilityEvent } from "./voterManagementApi";
+import { finalizeEvent, generateSecretKey, getPublicKey, nip19, SimplePool } from "nostr-tools";
+import type { MintInvoiceResponse } from "./cashuMintApi";
 
 export type GeneratedIdentity = {
   npub: string;
   nsec: string;
 };
 
-export const ELIGIBILITY_VERIFICATION_KIND = 22242;
+export const CASHU_ISSUANCE_CLAIM_KIND = 38010;
 
 export function isValidNpub(value: string) {
   try {
@@ -46,34 +46,56 @@ export function createGeneratedIdentity(): GeneratedIdentity {
   };
 }
 
-export function createEligibilityVerificationEvent(
+export function createCashuClaimEvent(
   nsec: string,
-  challenge: ChallengeResponse,
+  npub: string,
+  invoice: MintInvoiceResponse,
   mintApiUrl: string
-): SignedEligibilityEvent {
+){
   const secretKey = decodeNsec(nsec);
 
   if (!secretKey) {
-    throw new Error("Enter a valid nsec to sign the challenge.");
+    throw new Error("Enter a valid nsec to sign the invoice claim.");
   }
 
   return finalizeEvent(
     {
-      kind: ELIGIBILITY_VERIFICATION_KIND,
+      kind: CASHU_ISSUANCE_CLAIM_KIND,
       created_at: Math.floor(Date.now() / 1000),
       tags: [
-        ["challenge", challenge.challenge],
+        ["t", "cashu-issuance"],
+        ["p", invoice.coordinatorNpub],
+        ["quote", invoice.quoteId],
+        ["invoice", invoice.invoice],
         ["mint", mintApiUrl],
-        ["purpose", "eligibility_verification"]
+        ["amount", String(invoice.amount)]
       ],
       content: JSON.stringify({
-        action: "eligibility_verification",
-        challenge: challenge.challenge,
-        npub: challenge.npub
+        action: "cashu_invoice_claim",
+        quote_id: invoice.quoteId,
+        invoice: invoice.invoice,
+        npub,
+        coordinator_npub: invoice.coordinatorNpub
       })
     },
     secretKey
   );
+}
+
+export async function publishCashuClaim(relays: string[], event: ReturnType<typeof createCashuClaimEvent>) {
+  const pool = new SimplePool();
+
+  try {
+    const results = await Promise.allSettled(pool.publish(relays, event, { maxWait: 4000 }));
+
+    return {
+      eventId: event.id,
+      successes: results.filter((result) => result.status === "fulfilled").length,
+      failures: results.filter((result) => result.status === "rejected").length
+    };
+  } finally {
+    pool.destroy();
+  }
 }
 
 export function formatDateTime(value: string) {

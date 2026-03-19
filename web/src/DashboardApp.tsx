@@ -13,7 +13,6 @@ export default function DashboardApp() {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-
   const verifiedNpubs = useMemo(() => new Set(eligibility.verifiedNpubs), [eligibility.verifiedNpubs]);
 
   async function loadEligibility(showSpinner = true) {
@@ -51,7 +50,7 @@ export default function DashboardApp() {
         <p className="eyebrow">Backend Dashboard</p>
         <h1>Monitor the public eligibility set.</h1>
         <p className="hero-copy">
-          This page is intended for the operator view. It shows every registered `npub`, which voters have completed challenge verification, and the voter management state served from this same backend.
+          This page is intended for the operator view. It shows every registered `npub` from voter management. Cashu proof issuance happens through the separate Mint API flow in the voter portal.
         </p>
         <div className="hero-metadata">
           <span>Voter Management Service</span>
@@ -64,7 +63,7 @@ export default function DashboardApp() {
 
       <section className="dashboard-stats-grid">
         <article className="panel stat-card">
-          <p className="panel-kicker">Eligible</p>
+          <p className="panel-kicker">Registered</p>
           <h2>{eligibility.eligibleCount}</h2>
           <p className="field-hint">Total registered npubs currently stored by voter management.</p>
         </article>
@@ -72,13 +71,13 @@ export default function DashboardApp() {
         <article className="panel stat-card">
           <p className="panel-kicker">Verified</p>
           <h2>{eligibility.verifiedCount}</h2>
-          <p className="field-hint">Eligible npubs that completed the challenge-response flow.</p>
+          <p className="field-hint">Registered npubs that already received a proof from the mint flow.</p>
         </article>
 
         <article className="panel stat-card">
           <p className="panel-kicker">Pending</p>
           <h2>{eligibility.eligibleCount - eligibility.verifiedCount}</h2>
-          <p className="field-hint">Registered npubs still waiting for challenge verification.</p>
+          <p className="field-hint">Registered npubs still waiting for proof issuance.</p>
         </article>
       </section>
 
