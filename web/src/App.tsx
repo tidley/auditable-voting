@@ -1,13 +1,11 @@
 import { useMemo, useState } from "react";
 import {
-  DEFAULT_MINT_URL,
-  normalizeMintUrl,
   registerEligibleNpub,
   requestEligibilityChallenge,
   verifyEligibilityChallenge,
   type ChallengeResponse,
   type VerificationResponse
-} from "./mintApi";
+} from "./voterManagementApi";
 import {
   createEligibilityVerificationEvent,
   createGeneratedIdentity,
@@ -17,8 +15,14 @@ import {
   type GeneratedIdentity
 } from "./nostrIdentity";
 
+const DEFAULT_MINT_URL = "https://mint.example.com";
+
+function normalizeMintUrl(value: string) {
+  return value.trim().replace(/\/$/, "");
+}
+
 export default function App() {
-  const [mintUrl, setMintUrl] = useState(DEFAULT_MINT_URL);
+  const [mintApiUrl, setMintApiUrl] = useState(DEFAULT_MINT_URL);
   const [npubInput, setNpubInput] = useState("");
   const [nsecInput, setNsecInput] = useState("");
   const [generatedIdentity, setGeneratedIdentity] = useState<GeneratedIdentity | null>(null);
@@ -29,7 +33,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [verifying, setVerifying] = useState(false);
 
-  const apiBaseUrl = useMemo(() => normalizeMintUrl(mintUrl) || DEFAULT_MINT_URL, [mintUrl]);
+  const normalizedMintApiUrl = useMemo(() => normalizeMintUrl(mintApiUrl) || DEFAULT_MINT_URL, [mintApiUrl]);
   const derivedNpub = useMemo(() => deriveNpubFromNsec(nsecInput), [nsecInput]);
   const npubIsValid = isValidNpub(npubInput);
   const nsecMatchesNpub = Boolean(derivedNpub && npubInput.trim() === derivedNpub);
@@ -61,8 +65,8 @@ export default function App() {
     setChallengeData(null);
 
     try {
-      const payload = await registerEligibleNpub(apiBaseUrl, npubInput.trim());
-      setStatus(payload.added ? `Registered ${payload.npub} with the mint.` : `${payload.npub} was already on the eligible list.`);
+      const payload = await registerEligibleNpub(npubInput.trim());
+      setStatus(payload.added ? `Registered ${payload.npub} in voter management.` : `${payload.npub} was already on the eligible list.`);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Registration failed");
     } finally {
@@ -82,7 +86,7 @@ export default function App() {
     setVerificationResult(null);
 
     try {
-      const payload = await requestEligibilityChallenge(apiBaseUrl, npubInput.trim());
+      const payload = await requestEligibilityChallenge(npubInput.trim());
       setChallengeData(payload);
       setStatus(`Challenge issued for ${payload.npub}. Sign it locally before ${formatDateTime(payload.expiresAt)}.`);
     } catch (requestError) {
@@ -108,8 +112,8 @@ export default function App() {
     setError(null);
 
     try {
-      const signedEvent = createEligibilityVerificationEvent(nsecInput, challengeData, apiBaseUrl);
-      const payload = await verifyEligibilityChallenge(apiBaseUrl, challengeData.npub, signedEvent);
+      const signedEvent = createEligibilityVerificationEvent(nsecInput, challengeData, normalizedMintApiUrl);
+      const payload = await verifyEligibilityChallenge(challengeData.npub, signedEvent);
 
       setVerificationResult(payload);
       setStatus(payload.message);
@@ -127,17 +131,20 @@ export default function App() {
         <p className="eyebrow">Voter Portal</p>
         <h1>Register and prove control of your Nostr key.</h1>
         <p className="hero-copy">
-          Add your eligible `npub`, optionally generate a fresh Nostr identity locally, and sign the mint challenge in the browser without exposing your `nsec`.
+          Add your eligible `npub`, optionally generate a fresh Nostr identity locally, and verify that `npub` in the browser without exposing your `nsec`.
         </p>
         <div className="hero-metadata">
           <span>Mint API</span>
           <input
             className="mint-input"
-            value={mintUrl}
-            onChange={(event) => setMintUrl(event.target.value)}
+            value={mintApiUrl}
+            onChange={(event) => setMintApiUrl(event.target.value)}
             placeholder={DEFAULT_MINT_URL}
           />
         </div>
+        <p className="field-hint hero-hint">
+          This Mint API field is reserved for the remote mint service we will integrate later. The current voter management service runs on the same server as this page.
+        </p>
       </section>
 
       <section className="content-grid">
@@ -160,9 +167,9 @@ export default function App() {
           />
 
           <div className="button-row">
-            <button className="primary-button" onClick={() => void registerNpub()} disabled={!canRegister}>
-              {loading ? "Registering..." : "Register with mint"}
-            </button>
+              <button className="primary-button" onClick={() => void registerNpub()} disabled={!canRegister}>
+              {loading ? "Registering..." : "Register npub"}
+              </button>
             <button className="secondary-button" onClick={generateIdentity}>
               Generate npub + nsec
             </button>
@@ -185,10 +192,10 @@ export default function App() {
 
           <div className="warning-box">
             <strong>Protect the nsec.</strong>
-            <p>
-              `nsec` is the private key. Anyone who gets it can act as you. This page never sends `nsec` to the mint, but you should still treat it like a password.
-            </p>
-          </div>
+              <p>
+              `nsec` is the private key. Anyone who gets it can act as you. This page never sends `nsec` to the voter management service, but you should still treat it like a password.
+              </p>
+            </div>
 
           {generatedIdentity ? (
             <div className="generated-grid">
@@ -210,13 +217,48 @@ export default function App() {
           <div className="panel-header">
             <div>
               <p className="panel-kicker">Step 2</p>
-              <h2>Sign the mint challenge</h2>
+              <h2>Verify your npub</h2>
             </div>
             {verificationResult?.issuanceReady && <span className="count-pill">Eligibility verified</span>}
           </div>
 
           <div className="verification-grid">
             <div>
+              <div className="substep-card">
+                <p className="code-label">Step 2.1</p>
+                <h3 className="substep-title">Request challenge from Mint</h3>
+                <p className="field-hint substep-copy">
+                  Ask Mint for a challenge using the `npub` you already registered in Step 1.
+                </p>
+                <div className="button-row button-row-tight">
+                  <button className="secondary-button" onClick={() => void requestChallenge()} disabled={verifying || !npubIsValid}>
+                    {verifying && !challengeData ? "Requesting..." : "Request challenge"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="challenge-card challenge-card-spaced">
+                <p className="code-label">Challenge from Mint</p>
+                {challengeData ? (
+                  <>
+                    <code className="code-block code-block-muted">{challengeData.challenge}</code>
+                    <p className="field-hint">Expires {formatDateTime(challengeData.expiresAt)}</p>
+                  </>
+                ) : (
+                  <p className="empty-copy">No challenge requested yet.</p>
+                )}
+              </div>
+            </div>
+
+            <div className="challenge-column">
+              <div className="substep-card">
+                <p className="code-label">Step 2.2</p>
+                <h3 className="substep-title">Sign challenge with your nsec</h3>
+                <p className="field-hint substep-copy">
+                  Enter the matching `nsec` so the browser can sign the challenge locally and send only the signed verification event.
+                </p>
+              </div>
+
               <label className="field-label" htmlFor="nsec-input">nsec used for signing</label>
               <textarea
                 id="nsec-input"
@@ -236,25 +278,8 @@ export default function App() {
                   <code className="code-block code-block-muted">{derivedNpub}</code>
                 </div>
               )}
-            </div>
-
-            <div className="challenge-column">
-              <div className="challenge-card">
-                <p className="code-label">Challenge</p>
-                {challengeData ? (
-                  <>
-                    <code className="code-block code-block-muted">{challengeData.challenge}</code>
-                    <p className="field-hint">Expires {formatDateTime(challengeData.expiresAt)}</p>
-                  </>
-                ) : (
-                  <p className="empty-copy">Request a fresh challenge from the mint, then sign it locally with the matching `nsec`.</p>
-                )}
-              </div>
 
               <div className="button-row">
-                <button className="secondary-button" onClick={() => void requestChallenge()} disabled={verifying || !npubIsValid}>
-                  {verifying && !challengeData ? "Requesting..." : "Request challenge"}
-                </button>
                 <button className="primary-button" onClick={() => void signAndVerifyChallenge()} disabled={!canVerify}>
                   {verifying && challengeData ? "Verifying..." : "Sign and verify"}
                 </button>
@@ -262,7 +287,7 @@ export default function App() {
 
               <div className="validation-row">
                 <span className={nsecMatchesNpub ? "validation-ok" : "validation-warn"}>
-                  {nsecMatchesNpub ? "nsec matches selected npub" : "nsec must match the selected npub"}
+                  {nsecMatchesNpub ? "nsec matches selected npub" : "Enter the nsec for the registered npub before signing"}
                 </span>
               </div>
 
@@ -280,7 +305,7 @@ export default function App() {
             <div className="panel-header">
               <div>
                 <p className="panel-kicker">Latest update</p>
-                <h2>Mint response</h2>
+                <h2>Voter management response</h2>
               </div>
             </div>
             {status && <div className="notice notice-success">{status}</div>}

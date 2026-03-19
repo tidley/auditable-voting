@@ -35,12 +35,6 @@ export type SignedEligibilityEvent = {
   tags: string[][];
 };
 
-export const DEFAULT_MINT_URL = "http://localhost:8787";
-
-export function normalizeMintUrl(value: string) {
-  return value.trim().replace(/\/$/, "");
-}
-
 async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
   const response = await fetch(input, init);
   const payload = await response.json() as T & { error?: string };
@@ -52,12 +46,12 @@ async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
   return payload;
 }
 
-export async function fetchEligibility(apiBaseUrl: string) {
-  return fetchJson<EligibilityResponse>(`${apiBaseUrl}/api/eligibility`);
+export async function fetchEligibility() {
+  return fetchJson<EligibilityResponse>("/api/eligibility");
 }
 
-export async function registerEligibleNpub(apiBaseUrl: string, npub: string) {
-  return fetchJson<RegistrationResponse>(`${apiBaseUrl}/api/eligibility/register`, {
+export async function registerEligibleNpub(npub: string) {
+  return fetchJson<RegistrationResponse>("/api/eligibility/register", {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -66,8 +60,8 @@ export async function registerEligibleNpub(apiBaseUrl: string, npub: string) {
   });
 }
 
-export async function requestEligibilityChallenge(apiBaseUrl: string, npub: string) {
-  return fetchJson<ChallengeResponse>(`${apiBaseUrl}/challenge`, {
+export async function requestEligibilityChallenge(npub: string) {
+  return fetchJson<ChallengeResponse>("/challenge", {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -76,12 +70,8 @@ export async function requestEligibilityChallenge(apiBaseUrl: string, npub: stri
   });
 }
 
-export async function verifyEligibilityChallenge(
-  apiBaseUrl: string,
-  npub: string,
-  event: SignedEligibilityEvent
-) {
-  return fetchJson<VerificationResponse>(`${apiBaseUrl}/verify-eligibility`, {
+export async function verifyEligibilityChallenge(npub: string, event: SignedEligibilityEvent) {
+  return fetchJson<VerificationResponse>("/verify-eligibility", {
     method: "POST",
     headers: {
       "Content-Type": "application/json"

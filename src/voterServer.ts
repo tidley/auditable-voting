@@ -70,11 +70,11 @@ class DemoMint {
 
     if (added) {
       this.eligibleNpubs.add(normalizedNpub);
-      console.log(`[mint] registered npub: ${normalizedNpub}`);
-      console.log(`[mint] eligible_count = ${this.eligibleNpubs.size}`);
+      console.log(`[server] registered npub: ${normalizedNpub}`);
+      console.log(`[server] eligible_count = ${this.eligibleNpubs.size}`);
     } else {
-      console.log(`[mint] duplicate registration ignored: ${normalizedNpub}`);
-      console.log(`[mint] eligible_count = ${this.eligibleNpubs.size}`);
+      console.log(`[server] duplicate registration ignored: ${normalizedNpub}`);
+      console.log(`[server] eligible_count = ${this.eligibleNpubs.size}`);
     }
 
     return {
@@ -101,7 +101,7 @@ class DemoMint {
       expiresAt
     });
 
-    console.log(`[mint] issued challenge for npub: ${normalizedNpub}`);
+    console.log(`[server] issued challenge for npub: ${normalizedNpub}`);
 
     return {
       challenge,
@@ -158,8 +158,8 @@ class DemoMint {
     const verifiedAt = Date.now();
     this.verifiedNpubs.set(normalizedNpub, verifiedAt);
 
-    console.log(`[mint] eligibility verified for npub: ${normalizedNpub}`);
-    console.log(`[mint] blind issuance unlocked for npub: ${normalizedNpub}`);
+    console.log(`[server] eligibility verified for npub: ${normalizedNpub}`);
+    console.log(`[server] blind issuance unlocked for npub: ${normalizedNpub}`);
 
     return {
       verified: true,
@@ -242,11 +242,11 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
-export async function startMintServer(port = 8787) {
+export async function startVoterServer(port = 8787) {
   const mint = new DemoMint();
 
-  console.log("[mint] phase 1 eligibility setup ready");
-  console.log("[mint] eligible_count = 0");
+  console.log("[server] phase 1 eligibility setup ready");
+  console.log("[server] eligible_count = 0");
 
   const server = createServer(async (request, response) => {
     try {
@@ -310,11 +310,11 @@ export async function startMintServer(port = 8787) {
     server.listen(port, resolve);
   });
 
-  console.log(`[mint] listening on http://localhost:${port}`);
-  console.log("[mint] GET /api/eligibility");
-  console.log("[mint] POST /api/eligibility/register");
-  console.log("[mint] POST /challenge");
-  console.log("[mint] POST /verify-eligibility");
+  console.log(`[server] listening on http://localhost:${port}`);
+  console.log("[server] GET /api/eligibility");
+  console.log("[server] POST /api/eligibility/register");
+  console.log("[server] POST /challenge");
+  console.log("[server] POST /verify-eligibility");
 
   return server;
 }

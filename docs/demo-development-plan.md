@@ -55,8 +55,8 @@ Flow:
 
 - User opens the local web page
 - User pastes an existing `npub` or generates a fresh `npub` + `nsec` locally in the browser
-- Web page sends only the `npub` to the mint
-- Mint stores eligible `npub`s in memory and logs each registration to the console
+- Web page sends only the `npub` to the local voter server
+- The voter server stores eligible `npub`s in memory and logs each registration to the console
 - A separate backend dashboard page shows the current public eligible list
 - The voter-facing page does not show all registered `npub`s
 
@@ -76,7 +76,7 @@ For demo simplicity:
 
 - You may skip Merkle tree for eligibility.
 - Just check membership in array.
-- The generated `nsec` must never be sent to the mint; it is only for local signing in the browser.
+- The generated `nsec` must never be sent to the voter server; it is only for local signing in the browser.
 
 Mint publishes (log to console or Nostr event):
 
@@ -100,7 +100,7 @@ Implement challenge-response:
 
 - Signs challenge using eligible Nostr private key
 - For the current web demo, sign a local Nostr event tagged with the challenge
-- Sends signed event back to mint with the `npub`
+- Sends signed event back to the voter server with the `npub`
 
 ### Mint
 
@@ -238,7 +238,7 @@ Live demo trick:
 
 ```
 src/
-  mint.ts
+  voterServer.ts
   wallet.ts
   merkle.ts
   quorum.ts

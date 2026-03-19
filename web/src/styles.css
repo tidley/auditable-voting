@@ -129,6 +129,10 @@ code {
   margin: 16px 0 0;
 }
 
+.hero-hint {
+  max-width: 70ch;
+}
+
 .hero-metadata {
   display: flex;
   align-items: center;
@@ -222,6 +226,15 @@ code {
   font-weight: 700;
 }
 
+.inline-code-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: rgba(59, 35, 22, 0.9);
+  color: #f7ead9;
+  padding: 10px 14px;
+}
+
 .field-label {
   display: block;
   margin-bottom: 10px;
@@ -277,6 +290,10 @@ code {
   margin: 16px 0 0;
 }
 
+.button-row-tight {
+  margin-top: 10px;
+}
+
 .verification-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
@@ -289,15 +306,34 @@ code {
 }
 
 .challenge-card,
-.derived-box {
+.derived-box,
+.substep-card {
   border: 1px solid rgba(88, 59, 39, 0.12);
   border-radius: 22px;
   background: rgba(255, 255, 255, 0.56);
   padding: 18px;
 }
 
+.substep-card {
+  background: rgba(255, 250, 244, 0.78);
+}
+
 .derived-box {
   margin-top: 18px;
+}
+
+.challenge-card-spaced {
+  margin-top: 18px;
+}
+
+.substep-title {
+  margin: 0;
+  font-family: "Iowan Old Style", "Palatino Linotype", serif;
+  font-size: 1.4rem;
+}
+
+.substep-copy {
+  margin-top: 10px;
 }
 
 .text-area-secret {

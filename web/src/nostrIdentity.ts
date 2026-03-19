@@ -1,5 +1,5 @@
 import { finalizeEvent, generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
-import type { ChallengeResponse, SignedEligibilityEvent } from "./mintApi";
+import type { ChallengeResponse, SignedEligibilityEvent } from "./voterManagementApi";
 
 export type GeneratedIdentity = {
   npub: string;
@@ -49,7 +49,7 @@ export function createGeneratedIdentity(): GeneratedIdentity {
 export function createEligibilityVerificationEvent(
   nsec: string,
   challenge: ChallengeResponse,
-  apiBaseUrl: string
+  mintApiUrl: string
 ): SignedEligibilityEvent {
   const secretKey = decodeNsec(nsec);
 
@@ -57,23 +57,20 @@ export function createEligibilityVerificationEvent(
     throw new Error("Enter a valid nsec to sign the challenge.");
   }
 
-  const publicKey = getPublicKey(secretKey);
-
   return finalizeEvent(
     {
       kind: ELIGIBILITY_VERIFICATION_KIND,
       created_at: Math.floor(Date.now() / 1000),
       tags: [
         ["challenge", challenge.challenge],
-        ["mint", apiBaseUrl],
+        ["mint", mintApiUrl],
         ["purpose", "eligibility_verification"]
       ],
       content: JSON.stringify({
         action: "eligibility_verification",
         challenge: challenge.challenge,
         npub: challenge.npub
-      }),
-      pubkey: publicKey
+      })
     },
     secretKey
   );

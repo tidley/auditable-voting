@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { DEFAULT_MINT_URL, fetchEligibility, normalizeMintUrl, type EligibilityResponse } from "./mintApi";
+import { fetchEligibility, type EligibilityResponse } from "./voterManagementApi";
 
 const EMPTY_ELIGIBILITY: EligibilityResponse = {
   eligibleNpubs: [],
@@ -9,13 +9,11 @@ const EMPTY_ELIGIBILITY: EligibilityResponse = {
 };
 
 export default function DashboardApp() {
-  const [mintUrl, setMintUrl] = useState(DEFAULT_MINT_URL);
   const [eligibility, setEligibility] = useState<EligibilityResponse>(EMPTY_ELIGIBILITY);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  const apiBaseUrl = useMemo(() => normalizeMintUrl(mintUrl) || DEFAULT_MINT_URL, [mintUrl]);
   const verifiedNpubs = useMemo(() => new Set(eligibility.verifiedNpubs), [eligibility.verifiedNpubs]);
 
   async function loadEligibility(showSpinner = true) {
@@ -24,12 +22,12 @@ export default function DashboardApp() {
     }
 
     try {
-      const payload = await fetchEligibility(apiBaseUrl);
+      const payload = await fetchEligibility();
       setEligibility(payload);
-      setStatus(`Dashboard synced from ${apiBaseUrl}.`);
+      setStatus("Dashboard synced from the local voter management service.");
       setError(null);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to reach the mint");
+      setError(requestError instanceof Error ? requestError.message : "Unable to reach voter management");
     } finally {
       if (showSpinner) {
         setRefreshing(false);
@@ -45,7 +43,7 @@ export default function DashboardApp() {
     }, 5000);
 
     return () => window.clearInterval(intervalId);
-  }, [apiBaseUrl]);
+  }, []);
 
   return (
     <main className="page-shell page-shell-dashboard">
@@ -53,16 +51,11 @@ export default function DashboardApp() {
         <p className="eyebrow">Backend Dashboard</p>
         <h1>Monitor the public eligibility set.</h1>
         <p className="hero-copy">
-          This page is intended for the operator view. It shows every registered `npub`, which voters have completed challenge verification, and the current mint endpoint.
+          This page is intended for the operator view. It shows every registered `npub`, which voters have completed challenge verification, and the voter management state served from this same backend.
         </p>
         <div className="hero-metadata">
-          <span>Mint API</span>
-          <input
-            className="mint-input"
-            value={mintUrl}
-            onChange={(event) => setMintUrl(event.target.value)}
-            placeholder={DEFAULT_MINT_URL}
-          />
+          <span>Voter Management Service</span>
+          <code className="inline-code-badge">Same server</code>
           <button className="ghost-button" onClick={() => void loadEligibility()} disabled={refreshing}>
             {refreshing ? "Refreshing..." : "Refresh now"}
           </button>
@@ -73,7 +66,7 @@ export default function DashboardApp() {
         <article className="panel stat-card">
           <p className="panel-kicker">Eligible</p>
           <h2>{eligibility.eligibleCount}</h2>
-          <p className="field-hint">Total registered npubs currently stored by the mint.</p>
+          <p className="field-hint">Total registered npubs currently stored by voter management.</p>
         </article>
 
         <article className="panel stat-card">
@@ -118,7 +111,7 @@ export default function DashboardApp() {
               })}
             </ol>
           ) : (
-            <p className="empty-copy">No voters have been registered yet for this mint.</p>
+            <p className="empty-copy">No voters have been registered yet in voter management.</p>
           )}
         </article>
 

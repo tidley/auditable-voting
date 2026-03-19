@@ -37,19 +37,19 @@ The main goal is to demonstrate the cryptographic separation between:
 
 ## What Is Implemented
 
-- A Node/TypeScript mint service with in-memory eligibility state in `src/mint.ts`
+- A Node/TypeScript voter server with in-memory eligibility state in `src/voterServer.ts`
 - A voter-facing React + TypeScript page for:
   - entering an existing `npub`
   - generating a fresh `npub` + `nsec` locally
-  - registering the `npub` with the mint
-  - requesting a challenge from the mint
+  - registering the `npub` with the voter server
+  - requesting a challenge from the voter server
   - signing the challenge locally with `nsec`
   - verifying eligibility without sending `nsec` to the backend
 - A separate backend dashboard page that shows:
   - all registered `npub`s
   - which `npub`s completed challenge verification
   - eligible and verified counts
-- Console logging in the mint for:
+- Console logging in the voter server for:
   - registered `npub`s
   - `eligible_count`
   - challenge issuance
@@ -58,10 +58,10 @@ The main goal is to demonstrate the cryptographic separation between:
 
 ## Current Demo Flow
 
-1. Start the mint locally
+1. Start the voter server locally
 2. Open the voter portal
 3. Paste an existing `npub` or generate a fresh `npub` + `nsec`
-4. Register the `npub` with the mint
+4. Register the `npub` with the voter server
 5. Request a challenge
 6. Sign the challenge locally with the matching `nsec`
 7. Mint verifies the signed event and marks that `npub` as ready for blind issuance
@@ -71,11 +71,11 @@ The main goal is to demonstrate the cryptographic separation between:
 
 ```text
 docs/                  design docs and demo plan
-src/                   mint + CLI TypeScript code
+src/                   voter server + CLI TypeScript code
 web/                   React + Vite frontend
 web/src/App.tsx        voter-facing portal
 web/src/DashboardApp.tsx backend dashboard
-web/src/mintApi.ts     shared frontend API client
+web/src/voterManagementApi.ts shared frontend API client
 web/src/nostrIdentity.ts shared Nostr key/signing helpers
 ```
 
@@ -96,19 +96,19 @@ cd web
 npm install
 ```
 
-### 2. Build the backend CLI/mint
+### 2. Build the backend CLI/server
 
 ```bash
 npm run build
 ```
 
-### 3. Start the mint
+### 3. Start the voter server
 
 ```bash
-npm run mint
+npm run server
 ```
 
-This starts the mint on `http://localhost:8787`.
+This starts the voter server on `http://localhost:8787`.
 
 ### 4. Start the web app
 
