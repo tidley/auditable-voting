@@ -49,7 +49,18 @@ State can be in-memory.
 
 ## Step 1: Define Eligible npubs
 
-Hardcode a small list (e.g., 3 npubs) in a JSON file:
+For the current demo build, use a self-service eligibility page instead of a hardcoded JSON file.
+
+Flow:
+
+- User opens the local web page
+- User pastes an existing `npub` or generates a fresh `npub` + `nsec` locally in the browser
+- Web page sends only the `npub` to the mint
+- Mint stores eligible `npub`s in memory and logs each registration to the console
+- A separate backend dashboard page shows the current public eligible list
+- The voter-facing page does not show all registered `npub`s
+
+The earlier hardcoded JSON approach is still a valid fallback if you want the simplest possible mock:
 
 ```json
 {
@@ -65,6 +76,7 @@ For demo simplicity:
 
 - You may skip Merkle tree for eligibility.
 - Just check membership in array.
+- The generated `nsec` must never be sent to the mint; it is only for local signing in the browser.
 
 Mint publishes (log to console or Nostr event):
 
@@ -80,19 +92,38 @@ Implement challenge-response:
 
 ### Mint
 
-- Endpoint: `/challenge`
-- Returns random 32-byte challenge
+- Endpoint: `POST /challenge`
+- Input: `{ "npub": "npub1..." }`
+- Returns random 32-byte challenge bound to that eligible `npub`
 
 ### Wallet
 
 - Signs challenge using eligible Nostr private key
-- Sends signature back to mint
+- For the current web demo, sign a local Nostr event tagged with the challenge
+- Sends signed event back to mint with the `npub`
 
 ### Mint
 
 - Verifies signature
 - Confirms npub is in eligible list
+- Confirms challenge is unexpired and matches that `npub`
 - If valid → allow blind issuance
+
+Suggested verification payload:
+
+```json
+{
+  "npub": "npub1...",
+  "event": {
+    "kind": 22242,
+    "tags": [["challenge", "<random-hex>"]],
+    "content": "{\"action\":\"eligibility_verification\"}",
+    "pubkey": "<hex>",
+    "id": "...",
+    "sig": "..."
+  }
+}
+```
 
 ---
 

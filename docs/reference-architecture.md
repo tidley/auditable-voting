@@ -181,6 +181,8 @@ The mint publishes either:
 - A full list of eligible npubs, OR
 - A Merkle root committing to eligible npubs
 
+For the current local demo, the full list is populated through a small self-service voter page where a user pastes an `npub` or generates a local `npub`/`nsec` pair, then registers only the `npub` with the mint. The resulting eligibility list is shown on a separate backend dashboard page so voters do not see every registered `npub`.
+
 Example:
 
 {
@@ -195,6 +197,8 @@ Issuance rule:
 2. User signs challenge with eligible npub
 3. Mint verifies signature
 4. Mint proceeds with blind issuance
+
+In the current demo implementation, the signature is delivered as a signed Nostr event containing a `challenge` tag so the mint can verify the signature, the challenge binding, and the eligible `npub` match.
 
 Blind issuance ensures the mint cannot link the issued proof secret to the eligible npub at vote time.
 

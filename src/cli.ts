@@ -1,5 +1,6 @@
 import { publishVote } from "./nostrClient.js";
 import { buildMerkleTree, computeLeaf, getMerkleProof, verifyMerkleProof } from "./merkle.js";
+import { startMintServer } from "./mint.js";
 
 async function main() {
   const cmd = process.argv[2];
@@ -21,6 +22,18 @@ async function main() {
 
     console.log("Vote published:");
     console.log(JSON.stringify(result, null, 2));
+  }
+
+  else if (cmd === "start-mint") {
+    const portArg = process.argv[3] ?? "8787";
+    const port = Number(portArg);
+
+    if (!Number.isInteger(port) || port <= 0) {
+      console.error("Usage: start-mint <port>");
+      process.exit(1);
+    }
+
+    await startMintServer(port);
   }
 
   else if (cmd === "build-merkle") {
@@ -62,6 +75,7 @@ async function main() {
 
   else {
     console.log("Commands:");
+    console.log("  start-mint <port>");
     console.log("  submit-vote <relay> <electionId> <choice>");
     console.log("  build-merkle <leaf1> <leaf2> ...");
     console.log("  prove <index> <leaf1> <leaf2> ...");
