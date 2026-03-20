@@ -112,6 +112,15 @@ code {
   max-width: 12ch;
 }
 
+.hero-card h1.hero-title {
+  max-width: 18ch;
+  text-wrap: balance;
+}
+
+.hero-card h1.hero-title-dashboard {
+  max-width: 20ch;
+}
+
 .panel h2 {
   font-size: clamp(1.5rem, 2.6vw, 2rem);
 }
@@ -127,6 +136,34 @@ code {
 .hero-copy {
   max-width: 62ch;
   margin: 16px 0 0;
+}
+
+.hero-copy-home {
+  max-width: 68ch;
+}
+
+.hero-flow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.hero-flow span,
+.inline-code {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(88, 59, 39, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.68);
+  color: var(--accent-deep);
+  padding: 6px 12px;
+  font-size: 0.95em;
+}
+
+.inline-code {
+  padding: 2px 8px;
+  font-weight: 700;
 }
 
 .hero-hint {
@@ -441,6 +478,16 @@ code {
   color: var(--success-text);
 }
 
+.notice-link {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 12px;
+  color: var(--accent-deep);
+  font-weight: 700;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 0.18em;
+}
+
 .notice-error {
   background: var(--error-bg);
   color: var(--error-text);
@@ -597,6 +644,11 @@ code {
 
   .hero-card h1 {
     font-size: 2.4rem;
+  }
+
+  .hero-card h1.hero-title,
+  .hero-card h1.hero-title-dashboard {
+    max-width: none;
   }
 
   .button-row {

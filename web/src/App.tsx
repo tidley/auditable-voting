@@ -6,6 +6,7 @@ import {
   createCashuClaimEvent,
   deriveNpubFromNsec,
   formatDateTime,
+  getNostrEventVerificationUrl,
   isValidNpub,
   publishCashuClaim
 } from "./nostrIdentity";
@@ -41,6 +42,16 @@ export default function App() {
 
   const normalizedMintApiUrl = useMemo(() => normalizeMintUrl(mintApiUrl) || DEFAULT_MINT_URL, [mintApiUrl]);
   const derivedNpub = useMemo(() => deriveNpubFromNsec(nsecInput), [nsecInput]);
+  const claimVerificationUrl = useMemo(() => {
+    if (!publishResult || !invoiceQuote || publishResult.successes < 1) {
+      return null;
+    }
+
+    return getNostrEventVerificationUrl({
+      eventId: publishResult.eventId,
+      relays: invoiceQuote.relays
+    });
+  }, [invoiceQuote, publishResult]);
   const npubIsValid = isValidNpub(npubInput);
   const nsecMatchesNpub = Boolean(derivedNpub && (invoiceQuote ? invoiceQuote.npub === derivedNpub : npubInput.trim() === derivedNpub));
   const canRequestInvoice = Boolean(eligibilityResult?.canProceed && !requestingInvoice);
@@ -177,7 +188,7 @@ export default function App() {
       if (result.successes > 0) {
         setStatus(`Claim published to ${result.successes} relay${result.successes === 1 ? "" : "s"}. Waiting for mint proof.`);
       } else {
-        setStatus("Relay publish did not confirm, but the mock mint will still simulate proof delivery for this demo.");
+        setStatus("Relay publish did not confirm yet. Keep this page open while the app continues checking for your proof.");
       }
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Could not publish invoice claim";
@@ -247,10 +258,16 @@ export default function App() {
     <main className="page-shell">
       <section className="hero-card">
         <p className="eyebrow">Voter Portal</p>
-        <h1>Check your allowed npub and mint a Cashu voting proof.</h1>
-        <p className="hero-copy">
-          Enter an allowed `npub`, pass the mock not-voted check, request an invoice from the Mint API, sign that invoice claim with your `nsec`, publish it to public Nostr relays, then receive a proof into your local wallet.
+        <h1 className="hero-title">Check your allowed npub and mint a Cashu voting proof.</h1>
+        <p className="hero-copy hero-copy-home">
+          Start with your approved <code className="inline-code">npub</code>, request an invoice from the Mint API, sign the claim with your <code className="inline-code">nsec</code>, publish it to Nostr relays, and receive your voting proof in your local wallet.
         </p>
+        <div className="hero-flow" aria-label="Voter proof flow">
+          <span>Verify eligibility</span>
+          <span>Request invoice</span>
+          <span>Sign claim</span>
+          <span>Receive proof</span>
+        </div>
         <div className="hero-metadata">
           <span>Mint API</span>
           <input
@@ -261,7 +278,7 @@ export default function App() {
           />
         </div>
         <p className="field-hint hero-hint">
-          The default Mint API points to a local mock mint on the server. Later you can replace it with your teammate’s remote mint service.
+          The default Mint API points to the mint service configured for this environment. You can replace it with another compatible endpoint when needed.
         </p>
       </section>
 
@@ -295,7 +312,7 @@ export default function App() {
           </div>
 
           <p className="field-hint">
-            Only `npub`s in the local allowed list can continue. The server also performs a mock voted check and currently always returns not voted.
+            Only approved <code className="inline-code">npub</code> values can continue. The server verifies eligibility before you request an invoice.
           </p>
 
           <div className="validation-row">
@@ -320,11 +337,11 @@ export default function App() {
           <div className="warning-box">
             <strong>Protect the nsec.</strong>
             <p>
-              `nsec` is your private key. Anyone who gets it can act as you. This page signs locally in the browser and never sends `nsec` to voter management or the mint API.
+              <code className="inline-code">nsec</code> is your private key. Anyone who gets it can act as you. This page signs locally in the browser and never sends <code className="inline-code">nsec</code> to voter management or the mint API.
             </p>
           </div>
 
-          <p className="empty-copy">Use an existing Nostr account. Enter the approved `npub` in Step 1 and the matching `nsec` in Step 2 when you are ready to sign.</p>
+          <p className="empty-copy">Use an existing Nostr account. Enter the approved <code className="inline-code">npub</code> in Step 1 and the matching <code className="inline-code">nsec</code> in Step 2 when you are ready to sign.</p>
         </article>
 
         <article className="panel panel-wide">
@@ -342,7 +359,7 @@ export default function App() {
                 <p className="code-label">Step 2.1</p>
                 <h3 className="substep-title">Request invoice from Mint</h3>
                 <p className="field-hint substep-copy">
-                  Once your npub passes the allowed-list and mock voted checks, ask the Mint API for an issuance quote. The current default uses a local mock mint contract.
+                  Once your <code className="inline-code">npub</code> passes the eligibility checks, request an issuance quote from the Mint API to begin the proof flow.
                 </p>
                 <div className="button-row button-row-tight">
                   <button className="secondary-button" onClick={() => void requestInvoice()} disabled={!canRequestInvoice}>
@@ -415,6 +432,11 @@ export default function App() {
               {publishResult && (
                 <div className="notice notice-success">
                   Claim event `{publishResult.eventId}` attempted on {publishResult.successes + publishResult.failures} relay{publishResult.successes + publishResult.failures === 1 ? "" : "s"}; {publishResult.successes} success, {publishResult.failures} failure.
+                  {claimVerificationUrl && (
+                    <a className="notice-link" href={claimVerificationUrl} target="_blank" rel="noreferrer">
+                      Verify this claim event on njump
+                    </a>
+                  )}
                 </div>
               )}
 

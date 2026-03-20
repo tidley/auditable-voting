@@ -64,7 +64,7 @@ export default function DashboardApp() {
     <main className="page-shell page-shell-dashboard">
       <section className="hero-card hero-card-dashboard">
         <p className="eyebrow">Backend Dashboard</p>
-        <h1>Monitor the public eligibility set.</h1>
+        <h1 className="hero-title hero-title-dashboard">Monitor the public eligibility set.</h1>
         <p className="hero-copy">
           This page is intended for the operator view. It shows every allowed `npub` from local voter configuration. Cashu proof issuance happens through the separate Mint API flow in the voter portal.
         </p>

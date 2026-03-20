@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { DEFAULT_VOTE_RELAYS, publishBallotEvent } from "./ballot";
+import { BALLOT_EVENT_KIND, DEFAULT_VOTE_RELAYS, publishBallotEvent } from "./ballot";
 import { logBallotDebug } from "./cashuMintApi";
 import { loadStoredWalletBundle } from "./cashuWallet";
-import { formatDateTime } from "./nostrIdentity";
+import { formatDateTime, getNostrEventVerificationUrl } from "./nostrIdentity";
 
 type VotePublishResult = {
   eventId: string;
@@ -38,6 +38,14 @@ export default function VotingApp() {
   const storedProof = walletBundle?.proof ?? null;
   const electionId = walletBundle?.invoice.electionId ?? "";
   const questions = walletBundle?.invoice.questions ?? [];
+  const ballotVerificationUrl = publishResult && publishResult.successes > 0
+    ? getNostrEventVerificationUrl({
+        eventId: publishResult.eventId,
+        relays: publishResult.relays,
+        author: publishResult.event.pubkey,
+        kind: BALLOT_EVENT_KIND
+      })
+    : null;
   const canSubmit = Boolean(
     storedProof &&
     electionId.trim() &&
@@ -222,6 +230,11 @@ export default function VotingApp() {
                 <p className="field-hint">Relay attempts: {publishResult.successes + publishResult.failures}</p>
                 <p className="field-hint">Successes: {publishResult.successes}</p>
                 <p className="field-hint">Failures: {publishResult.failures}</p>
+                {ballotVerificationUrl && (
+                  <a className="notice-link" href={ballotVerificationUrl} target="_blank" rel="noreferrer">
+                    Verify this ballot event on njump
+                  </a>
+                )}
               </div>
             </div>
           ) : (

@@ -103,6 +103,22 @@ export async function publishCashuClaim(relays: string[], event: ReturnType<type
   }
 }
 
+export function getNostrEventVerificationUrl(input: {
+  eventId: string;
+  relays?: string[];
+  author?: string;
+  kind?: number;
+}) {
+  const nevent = nip19.neventEncode({
+    id: input.eventId,
+    relays: input.relays,
+    author: input.author,
+    kind: input.kind
+  });
+
+  return `https://njump.me/${nevent}`;
+}
+
 export function formatDateTime(value: string) {
   return new Date(value).toLocaleString();
 }
