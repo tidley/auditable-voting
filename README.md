@@ -15,7 +15,7 @@ The current project covers:
 
 The system separates a few concerns:
 
-- voter eligibility is based on an allowed list of `npub`s
+- voter eligibility is based on an allowed list of `npubs`
 - proof issuance is coordinated through a Mint API flow
 - claim and ballot events are published through Nostr relays
 - the final ballot carries a hash of the voter proof instead of the raw proof
@@ -26,6 +26,128 @@ Right now everything is simplified for local development:
 - the already-voted check is mocked and always returns `false`
 - the mint is mocked inside the same local server
 - proof issuance is time-based, not real blinded ecash yet
+
+## Component Architecture
+
+[Open in Mermaid Live](https://mermaid.live/edit#pako:eJxlksFugzAQRH_F8rlp7lFVCbWXSkmEUqk9QA7GXsCqsZFtklZR_r0YGwyBA9p9OwN4lhumigHe4VKoK62Jtmh_yiXqry9lQWfD_exJqrQlwqPQ5PIKxdZouk3a9tma33M0p6QCJ-ayQq6OWg-Xjndi6kIRzbKpioYJLT3fRAiw2V5RIkITPbT3dB72luD4BH0ZTxWaXDr1xREPovpNyZJXWSL6cIChY9sVgc1MHkTTgUubHRT9GSqUpB-55NJwBmjQIzO8JahPIMifyY7KWB2afjLbANpsXqewl3QM-ZHPAoxrQy9uNIY039F6EhwOjxktVrSa-HrAYz4P2GWxerg_78PXxAF-wg3ohnCGdzdsa2jcn8qgJJ2w-H7_B_1T7NI=)
+
+```mermaid
+flowchart LR
+    Voter[Voter]
+    Portal[Voter Portal\nweb/src/App.tsx]
+    VotePage[Voting Page\nweb/src/VotingApp.tsx]
+    Dashboard[Dashboard\nweb/src/DashboardApp.tsx]
+    Wallet[Local Wallet\nweb/src/cashuWallet.ts]
+    Server[Voter Server\nsrc/voterServer.ts]
+    Config[Allowed Npub Config\nsrc/voterConfig.ts]
+    Mint[Mock Mint API\ninside voter server]
+    Relays[Nostr Relays]
+
+    Voter --> Portal
+    Voter --> VotePage
+    Voter --> Dashboard
+    Portal <--> Wallet
+    VotePage <--> Wallet
+    Portal --> Server
+    Dashboard --> Server
+    Server --> Config
+    Server --> Mint
+    Portal --> Relays
+    VotePage --> Relays
+```
+
+## Sequence Diagram
+
+[Open in Mermaid Live](https://mermaid.live/edit#pako:eJyNVstu2zAQ_BVC19qWi14KAU2RNkEbIA8jKdJLLitqbROmSIWkHARB_r1LUi9bSlIfDC85s9xZDhd-SbguMMkSi481Ko5nAjYGygfF6AO106ouczRNzJ027F67dqEC4wQXFSjHVto4kAxsBDTxGHeHZk_bHS7GY9yVoC9CXWm-i8Hp6mIMu0UJzx53ra0zMbRj2F-QEkO-S82pzBiPcb6mFWywqU-oDfPhGHgGdptrMIVHdsGDisggbX5yEpuQsXPlpaqqzuN-XCdAVJ-xX-d_WAqVSFGKjciFFO455Vvku--e9W2xWERmJAyYPz2IkRz9JIV1b6BCF_dU1dw6cLVlIfcBeFBuyIYFS9kWrNfif3JQK6M5YqcSpOugoAqmtAtnFHF7qhG33mfWMaH2WnDsgV1H_FU3_Sip6HlJcTqCe9RA3i1CwXhtDHrTVJXRe6qp73dHGZTyWFNtF8WsrWUW8DPGtTaFUEBevw4LKJE7oZXHhurpt50xM7DagYLorYzdUQZss7MSHRTgoG3eOzaxyCfStqAftZAkVoIoGe694J2g5n_5uvy8nKCFF5GxVZ2TPbZD3gS47efq5q7xY4F5vUkDay71Zli91LoiqpRsTWOBeq7X_ebHdxoIadZcwyHTOyvsswoVXcbmcHvqOieBKC02iQxZ5PmNNIN3AmYXfMAoFGuBxX-cPFb-jh8sFSlxikQC-oUQjJ3SzqeM3ZBglvrntti6Uh5CPWRw8qWm53FsRPbpuIjxIafKPpEjc__KXW_-ycN61m8ah1O5R8Bo5Sb7oZeXy0nukZuH1En8W4aOxGNHd3P8g8ncM_rZ2XH78el9ZKnNrZXiQiQHZ_qB2YLpCYEMJj2eoeP5TKPYU6t2HI8sF26SVOuqrtgTGNW9DPJVMktKNCWIIsleErfF0v8DKHANtXTJ6-s_swabWQ==)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Voter
+    participant Portal as Voter Portal
+    participant Server as Voter Server
+    participant Mint as Mock Mint API
+    participant Relay as Nostr Relays
+    participant Wallet as Local Wallet
+    participant VotePage as Voting Page
+    participant Dashboard as Dashboard
+
+    Voter->>Portal: Enter npub
+    Portal->>Server: GET /api/eligibility/check?npub=...
+    Server->>Server: Check allowlist
+    Server->>Server: Mock vote-status check
+    Server-->>Portal: allowed / hasVoted / canProceed
+
+    alt allowed and not voted
+        Voter->>Portal: Request invoice
+        Portal->>Mint: GET /mock-mint/invoice
+        Mint->>Server: Read current approved npub
+        Mint-->>Portal: quoteId, invoice, npub, coordinatorNpub, electionId, questions, relays
+        Portal->>Wallet: Store invoice metadata
+
+        Voter->>Portal: Enter nsec
+        Portal->>Portal: Build claim event kind 38010
+        Portal->>Relay: Publish claim event
+        Portal->>Server: POST /api/debug/claim-log
+
+        loop Poll for proof
+            Portal->>Mint: GET /mock-mint/proof/:quoteId
+            alt proof pending
+                Mint-->>Portal: pending
+            else proof ready
+                Mint->>Server: Mark npub verified
+                Mint-->>Portal: proof
+                Portal->>Wallet: Store single proof
+            end
+        end
+
+        Voter->>VotePage: Open /vote.html
+        VotePage->>Wallet: Load invoice metadata + proof
+        Voter->>VotePage: Answer ballot questions
+        VotePage->>VotePage: Hash proof
+        VotePage->>VotePage: Build ballot event kind 38000
+        VotePage->>Relay: Publish ballot event
+        VotePage->>Server: POST /api/debug/ballot-log
+
+        Dashboard->>Server: GET /api/eligibility
+        Server-->>Dashboard: allowed npubs + verified npubs
+    else not allowed or already voted
+        Server-->>Portal: cannot proceed
+        Portal->>Voter: Popup warning
+    end
+```
+
+## Mint API Integration Diagram
+
+[Open in Mermaid Live](https://mermaid.live/edit#pako:eJx1k01v2zAMhv8K4bOLtthl8KFAsRVDgTYIlqK75ELLtENMFl19GAiK_vdJVuI6TZaDE8oPX74klfdCSUNFVTh6C2QU_WTsLPZbA_GDwYsJfU32ECsvFl7FHw8GtJ4VD2g8rMV61IAuA4f4nNuQHePrmcvxOffM8RGp6ft-_XhO_CaN-4SsxHmbQ3eO_RCxDRtM3iO8DK-z-hM7T-aSiT-oNU02nkTF7nK8NZmcGri6u8utVnA_DFZGasAMoY46zpGDjacBbnNCBmNGKlvBr4cXuGYzCivKQDq_Wii-hVjisSknxRLUp_fVdECalGcxCYkLdOm3K8FOoyhh1r7s98GkBRhH6ou9I7DhzoDSyD3QSMZnbBVlQMZ5xxX8ZdPAt-83tzdb84Kdq2Aos_fZQwl97K0E7CUcheZ60-oqWIdas9udVszoYmuf_CbUTlmuCbyceGhZp87qPQzgscsSU1Ia7kKrgmf0asemWxZ1l2qeZL2S5XY_j39uNq_JxbGhD5Yu6eTVH64KsHMBzf_Wv7YiLdSkpI83CUdkjbWmL9PLlzKOIxYgGKacNt7uUXxsrCiLnmyP3BTVe-F31Kf_e0MtBu2Lj49_j5ZioA==)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Voter
+    participant Portal as Voter Portal
+    participant Server as Voter Server
+    participant Mint as Mint API
+    participant Relay as Nostr Relays
+    participant Coordinator as Coordinator / Mint Listener
+    participant Wallet as Local Wallet
+
+    Voter->>Portal: Approved npub passes Step 1
+    Portal->>Mint: GET /invoice
+    Mint-->>Portal: quoteId, npub, coordinatorNpub, electionId, questions, relays, invoice
+
+    Voter->>Portal: Enter nsec
+    Portal->>Portal: Sign claim event
+    Note over Portal: kind 38010\nTags: p, quote, invoice, mint, amount
+    Portal->>Relay: Publish claim event
+
+    Coordinator->>Relay: Subscribe to kind 38010\nfilter by p tag
+    Relay-->>Coordinator: Matching claim events
+    Coordinator->>Coordinator: Verify election, quote, npub, signature
+    Coordinator->>Mint: Approve issuance
+    Mint-->>Portal: Proof becomes available
+    Portal->>Wallet: Store proof for voting
+```
 
 ## What Is Implemented
 
