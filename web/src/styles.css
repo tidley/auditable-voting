@@ -109,7 +109,14 @@ code {
 
 .hero-card h1 {
   font-size: clamp(2.3rem, 5vw, 4.4rem);
-  max-width: 12ch;
+}
+
+.hero-card h1.hero-title {
+  max-width: none;
+}
+
+.hero-card h1.hero-title-dashboard {
+  max-width: none;
 }
 
 .panel h2 {
@@ -125,12 +132,12 @@ code {
 }
 
 .hero-copy {
-  max-width: 62ch;
+  max-width: none;
   margin: 16px 0 0;
 }
 
 .hero-hint {
-  max-width: 70ch;
+  max-width: none;
 }
 
 .hero-metadata {
@@ -441,6 +448,16 @@ code {
   color: var(--success-text);
 }
 
+.notice-link {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 12px;
+  color: var(--accent-deep);
+  font-weight: 700;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 0.18em;
+}
+
 .notice-error {
   background: var(--error-bg);
   color: var(--error-text);
@@ -599,6 +616,11 @@ code {
     font-size: 2.4rem;
   }
 
+  .hero-card h1.hero-title,
+  .hero-card h1.hero-title-dashboard {
+    max-width: none;
+  }
+
   .button-row {
     flex-direction: column;
   }
@@ -616,5 +638,107 @@ code {
 
   .panel-header {
     flex-direction: column;
+  }
+
+  .hero-accent-image {
+    display: none;
+  }
+}
+
+.hero-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.hero-brand img {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.hero-accent-image {
+  position: absolute;
+  right: 28px;
+  bottom: 20px;
+  width: 140px;
+  height: auto;
+  opacity: 0.85;
+  pointer-events: none;
+  border-radius: 12px;
+}
+
+.inline-icon {
+  width: 18px;
+  height: 18px;
+  vertical-align: -3px;
+  margin-right: 4px;
+  border-radius: 3px;
+}
+
+.panel-accent-image {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  width: 120px;
+  height: auto;
+  opacity: 0.75;
+  pointer-events: none;
+  border-radius: 12px;
+}
+
+.empty-state-image {
+  display: block;
+  max-width: 160px;
+  height: auto;
+  margin: 0 auto 16px;
+  opacity: 0.6;
+}
+
+.signer-mode-selector {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.signer-mode-option {
+  flex: 1;
+  padding: 10px 14px;
+  border: 2px solid var(--border);
+  border-radius: 14px;
+  background: var(--card);
+  cursor: pointer;
+  text-align: center;
+  font-weight: 600;
+  font-size: 0.9rem;
+  transition: border-color 140ms, background 140ms;
+  color: var(--text);
+}
+
+.signer-mode-option:hover {
+  border-color: var(--accent);
+}
+
+.signer-mode-option.active {
+  border-color: var(--accent);
+  background: var(--card-strong);
+}
+
+.signer-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--success-bg);
+  color: var(--success-text);
+  font-size: 0.9rem;
+}
+
+@media (max-width: 768px) {
+  .panel-accent-image {
+    display: none;
   }
 }

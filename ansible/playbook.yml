@@ -1,18 +1,54 @@
+# =============================================================================
+# Auditable Voting - Main Entry Point
+# =============================================================================
+#
+# Deploy everything + publish SEC-06 election:
+#
+#   ansible-playbook ansible/playbook.yml --tags prepare
+#
+# Deploy coordinator only:
+#   ansible-playbook ansible/playbook.yml --tags coordinator
+#
+# Deploy voting client only:
+#   ansible-playbook ansible/playbook.yml --tags client
+#
+# Verify infrastructure (no changes):
+#   ansible-playbook ansible/playbook.yml --tags verify
+#
+# Local dev build (localhost, no VPS):
+#   ansible-playbook ansible/playbook.yml --tags local-dev
+#
+# =============================================================================
+
 ---
-- name: Deploy Cashu Nostr Voting App (Local Dev Mode)
+- name: Deploy Voting Coordinator
+  ansible.builtin.import_playbook: playbooks/deploy-coordinator.yml
+  tags: [coordinator]
+
+- name: Deploy Voting Client
+  ansible.builtin.import_playbook: playbooks/deploy-voting-client.yml
+  tags: [client]
+
+- name: Verify Deployed Infrastructure
+  ansible.builtin.import_playbook: playbooks/verify.yml
+  tags: [verify]
+
+- name: Deploy and Prepare (full stack + election)
+  ansible.builtin.import_playbook: playbooks/deploy-and-prepare.yml
+  tags: [prepare]
+
+- name: Local Dev Build
   hosts: localhost
   connection: local
   become: yes
-
+  tags: [local-dev]
   vars:
-    # Normalize project root directory (no .. allowed for systemd)
     app_dir: "{{ playbook_dir | dirname }}"
     node_version: "20"
 
   tasks:
-
     - name: Install system dependencies
-      apt:
+      ansible.builtin.apt:
         name:
           - git
           - curl
@@ -21,98 +57,46 @@
         update_cache: yes
 
     - name: Install NodeSource GPG key
-      shell: |
+      ansible.builtin.shell: |
         curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg
       args:
         creates: /usr/share/keyrings/nodesource.gpg
 
     - name: Add NodeSource repository
-      shell: |
+      ansible.builtin.shell: |
         echo "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_{{ node_version }}.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
       args:
         creates: /etc/apt/sources.list.d/nodesource.list
 
     - name: Install Node.js
-      apt:
+      ansible.builtin.apt:
         name: nodejs
         state: present
         update_cache: yes
 
-    # We skip cloning for local testing and use the existing working directory
-
-    - name: Install npm dependencies
-      shell: npm install
+    - name: Install root npm dependencies
+      ansible.builtin.shell: npm install
       args:
         chdir: "{{ app_dir }}"
 
     - name: Build TypeScript project
-      shell: npm run build
+      ansible.builtin.shell: npm run build
       args:
         chdir: "{{ app_dir }}"
 
     - name: Install frontend dependencies
-      shell: npm install
+      ansible.builtin.shell: npm install
       args:
         chdir: "{{ app_dir }}/web"
-
-    - name: Remove legacy JS frontend files if present
-      file:
-        path: "{{ app_dir }}/web/src/App.js"
-        state: absent
 
     - name: Build frontend
-      shell: npm run build
+      ansible.builtin.shell: npm run build
       args:
         chdir: "{{ app_dir }}/web"
 
-    - name: Create frontend start script
-      copy:
-        dest: "{{ app_dir }}/web/start.sh"
-        mode: '0755'
-        content: |
-          #!/bin/bash
-          exec /usr/bin/node node_modules/vite/bin/vite.js preview --host 0.0.0.0 --port 5173
-
-    - name: Create frontend systemd service
-      copy:
-        dest: /etc/systemd/system/auditable-voting-web.service
-        content: |
-          [Unit]
-          Description=Auditable Voting Frontend
-          After=network.target
-
-          [Service]
-          Type=simple
-          WorkingDirectory={{ app_dir }}/web
-          ExecStart={{ app_dir }}/web/start.sh
-          Restart=always
-          RestartSec=5
-          Environment=NODE_ENV=production
-
-          [Install]
-          WantedBy=multi-user.target
-
-    - name: Reload systemd
-      systemd:
-        daemon_reload: yes
-
-    - name: Enable and start frontend service
-      systemd:
-        name: auditable-voting-web
-        enabled: yes
-        state: started
-    - name: Print usage instructions
-      debug:
+    - name: Print usage
+      ansible.builtin.debug:
         msg:
-          - "Build complete."
-          - ""
-          - "To run the CLI manually:"
-          - "  node dist/cli.js"
-          - ""
-          - "Example vote submission:"
-          - "  node dist/cli.js submit-vote wss://relay.damus.io election1 Alice"
-          - ""
-          - "Example Merkle build:"
-          - "  node dist/cli.js build-merkle <leaf1> <leaf2> ..."
-
-    # No systemd service setup for local testing
+          - "=== Local Dev Build Complete ==="
+          - "Run: cd web && npx vite --host"
+          - "Or:  cd web && npx vite preview --host"

@@ -1,14 +1,100 @@
-import type { CashuProof, MintInvoiceResponse } from "./cashuMintApi";
+import type { CashuProof } from "./cashuBlind";
+import type { ElectionQuestion } from "./coordinatorApi";
 
 const STORAGE_KEY = "auditable-voting.cashu-proof";
 
 export type StoredWalletBundle = {
   proof: CashuProof | null;
-  invoice: MintInvoiceResponse;
+  election: {
+    electionId: string;
+    title: string;
+    questions: ElectionQuestion[];
+    start_time: number;
+    end_time: number;
+    mint_urls: string[];
+  } | null;
+  quote: {
+    quoteId: string;
+    bolt11: string;
+  } | null;
+  coordinatorNpub: string;
+  mintUrl: string;
+  relays: string[];
+};
+
+const LEGACY_STORAGE_KEY = "auditable-voting.cashu-proof";
+
+type LegacyWalletBundle = {
+  proof: {
+    quoteId: string;
+    npub: string;
+    amount: number;
+    secret: string;
+    signature: string;
+    mintUrl: string;
+    issuedAt: string;
+  } | null;
+  invoice: {
+    quoteId: string;
+    npub: string;
+    invoice: string;
+    amount: number;
+    expiresAt: string;
+    relays: string[];
+    coordinatorNpub: string;
+    electionId: string;
+    questions: Array<{
+      id: string;
+      prompt: string;
+      options: Array<{ value: string; label: string }>;
+    }>;
+  };
 };
 
 function canUseStorage() {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
+}
+
+function migrateLegacyBundle(rawValue: string): StoredWalletBundle | null {
+  try {
+    const legacy = JSON.parse(rawValue) as LegacyWalletBundle;
+
+    if (legacy.invoice && legacy.invoice.coordinatorNpub) {
+      return {
+        proof: legacy.proof ? {
+          id: "legacy",
+          amount: legacy.proof.amount,
+          secret: legacy.proof.secret,
+          C: legacy.proof.signature
+        } : null,
+        election: legacy.invoice ? {
+          electionId: legacy.invoice.electionId,
+          title: "",
+          questions: legacy.invoice.questions.map((q) => ({
+            id: q.id,
+            type: "choice" as const,
+            prompt: q.prompt,
+            options: q.options.map((o) => o.label),
+            select: "single" as const
+          })),
+          start_time: 0,
+          end_time: 0,
+          mint_urls: []
+        } : null,
+        quote: legacy.invoice ? {
+          quoteId: legacy.invoice.quoteId,
+          bolt11: legacy.invoice.invoice
+        } : null,
+        coordinatorNpub: legacy.invoice.coordinatorNpub,
+        mintUrl: legacy.invoice ? `http://localhost:8787/mock-mint` : "",
+        relays: legacy.invoice?.relays ?? []
+      };
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export function loadStoredWalletBundle(): StoredWalletBundle | null {
@@ -23,14 +109,26 @@ export function loadStoredWalletBundle(): StoredWalletBundle | null {
   }
 
   try {
-    return JSON.parse(rawValue) as StoredWalletBundle;
-  } catch {
-    return null;
-  }
-}
+    const parsed = JSON.parse(rawValue) as StoredWalletBundle;
 
-export function loadStoredProof(): CashuProof | null {
-  return loadStoredWalletBundle()?.proof ?? null;
+    if (parsed.coordinatorNpub) {
+      return parsed;
+    }
+
+    const migrated = migrateLegacyBundle(rawValue);
+    if (migrated) {
+      storeWalletBundle(migrated);
+    }
+
+    return migrated;
+  } catch {
+    const migrated = migrateLegacyBundle(rawValue);
+    if (migrated) {
+      storeWalletBundle(migrated);
+    }
+
+    return migrated;
+  }
 }
 
 export function storeWalletBundle(bundle: StoredWalletBundle) {
@@ -52,4 +150,12 @@ export function storeProof(proof: CashuProof) {
     ...existingBundle,
     proof
   });
+}
+
+export function clearStoredWalletBundle() {
+  if (!canUseStorage()) {
+    return;
+  }
+
+  window.localStorage.removeItem(STORAGE_KEY);
 }

@@ -1,5 +1,7 @@
 import { finalizeEvent, getPublicKey, nip19, SimplePool } from "nostr-tools";
-import type { MintInvoiceResponse, RelayPublishResult } from "./cashuMintApi";
+import type { VerifiedEvent } from "nostr-tools";
+import type { RelayPublishResult } from "./cashuMintApi";
+import type { NostrSigner } from "./signer";
 
 export const CASHU_ISSUANCE_CLAIM_KIND = 38010;
 
@@ -28,7 +30,7 @@ export function deriveNpubFromNsec(value: string): string | null {
     return null;
   }
 
-  return nip19.npubEncode(getPublicKey(secretKey));
+  return nip19.npubEncode(getPublicKey(secretKey)  );
 }
 
 function decodeNpubToHex(value: string): string {
@@ -38,15 +40,55 @@ function decodeNpubToHex(value: string): string {
     throw new Error("Coordinator value must be an npub.");
   }
 
-  return decoded.data;
+  return decoded.data as string;
+}
+
+export async function signCashuClaimEvent(
+  signer: NostrSigner,
+  coordinatorNpub: string,
+  mintUrl: string,
+  quoteId: string,
+  bolt11Invoice: string,
+  electionId: string
+): Promise<VerifiedEvent> {
+  const pubkey = await signer.getPublicKey();
+
+  const coordinatorHex = (() => {
+    const decoded = nip19.decode(coordinatorNpub.trim());
+    if (decoded.type !== "npub") {
+      throw new Error("Coordinator value must be an npub.");
+    }
+    return decoded.data as string;
+  })();
+
+  return signer.signEvent({
+    kind: CASHU_ISSUANCE_CLAIM_KIND,
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [
+      ["p", coordinatorHex],
+      ["t", "cashu-issuance"],
+      ["quote", quoteId],
+      ["invoice", bolt11Invoice],
+      ["mint", mintUrl],
+      ["amount", "1"],
+      ["election", electionId]
+    ],
+    content: JSON.stringify({
+      action: "cashu_invoice_claim",
+      quote_id: quoteId,
+      invoice: bolt11Invoice
+    })
+  });
 }
 
 export function createCashuClaimEvent(
   nsec: string,
-  npub: string,
-  invoice: MintInvoiceResponse,
-  mintApiUrl: string
-){
+  coordinatorNpub: string,
+  mintUrl: string,
+  quoteId: string,
+  bolt11Invoice: string,
+  electionId: string
+) {
   const secretKey = decodeNsec(nsec);
 
   if (!secretKey) {
@@ -58,19 +100,18 @@ export function createCashuClaimEvent(
       kind: CASHU_ISSUANCE_CLAIM_KIND,
       created_at: Math.floor(Date.now() / 1000),
       tags: [
+        ["p", decodeNpubToHex(coordinatorNpub)],
         ["t", "cashu-issuance"],
-        ["p", decodeNpubToHex(invoice.coordinatorNpub)],
-        ["quote", invoice.quoteId],
-        ["invoice", invoice.invoice],
-        ["mint", mintApiUrl],
-        ["amount", String(invoice.amount)]
+        ["quote", quoteId],
+        ["invoice", bolt11Invoice],
+        ["mint", mintUrl],
+        ["amount", "1"],
+        ["election", electionId]
       ],
       content: JSON.stringify({
         action: "cashu_invoice_claim",
-        quote_id: invoice.quoteId,
-        invoice: invoice.invoice,
-        npub,
-        coordinator_npub: invoice.coordinatorNpub
+        quote_id: quoteId,
+        invoice: bolt11Invoice
       })
     },
     secretKey
@@ -103,6 +144,25 @@ export async function publishCashuClaim(relays: string[], event: ReturnType<type
   }
 }
 
-export function formatDateTime(value: string) {
+export function getNostrEventVerificationUrl(input: {
+  eventId: string;
+  relays?: string[];
+  author?: string;
+  kind?: number;
+}) {
+  const nevent = nip19.neventEncode({
+    id: input.eventId,
+    relays: input.relays,
+    author: input.author,
+    kind: input.kind
+  });
+
+  return `https://njump.me/${nevent}`;
+}
+
+export function formatDateTime(value: string | number) {
+  if (typeof value === "number") {
+    return new Date(value * 1000).toLocaleString();
+  }
   return new Date(value).toLocaleString();
 }

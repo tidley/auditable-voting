@@ -1,20 +1,27 @@
-import { useEffect, useMemo, useState } from "react";
-import { fetchMintProof, logClaimDebug, requestMintInvoice, type CashuProof, type MintInvoiceResponse } from "./cashuMintApi";
-import { loadStoredWalletBundle, storeProof, storeWalletBundle } from "./cashuWallet";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { logClaimDebug } from "./cashuMintApi";
+import { loadStoredWalletBundle, storeWalletBundle, storeProof } from "./cashuWallet";
 import { checkEligibility, type EligibilityCheckResponse } from "./voterManagementApi";
 import {
   createCashuClaimEvent,
   deriveNpubFromNsec,
   formatDateTime,
+  getNostrEventVerificationUrl,
   isValidNpub,
-  publishCashuClaim
+  publishCashuClaim,
+  signCashuClaimEvent
 } from "./nostrIdentity";
-
-const DEFAULT_MINT_URL = "http://localhost:8787/mock-mint";
-
-function normalizeMintUrl(value: string) {
-  return value.trim().replace(/\/$/, "");
-}
+import { fetchCoordinatorInfo, fetchElectionsFromNostr, fetchElection, type CoordinatorInfo, type ElectionInfo, type ElectionQuestion, type ElectionSummary } from "./coordinatorApi";
+import { checkQuoteStatus, createMintQuote, type MintQuoteResponse } from "./mintApi";
+import { requestQuoteAndMint, type CashuProof } from "./cashuBlind";
+import { MINT_URL, USE_MOCK } from "./config";
+import {
+  createRawSigner,
+  createNip07Signer,
+  startSignerDetection,
+  type NostrSigner,
+  type SignerMode
+} from "./signer";
 
 type PublishResult = {
   eventId: string;
@@ -23,10 +30,11 @@ type PublishResult = {
 };
 
 export default function App() {
-  const [mintApiUrl, setMintApiUrl] = useState(DEFAULT_MINT_URL);
-  const [npubInput, setNpubInput] = useState("");
+  const [coordinatorInfo, setCoordinatorInfo] = useState<CoordinatorInfo | null>(null);
+  const [electionInfo, setElectionInfo] = useState<ElectionInfo | null>(null);
   const [nsecInput, setNsecInput] = useState("");
-  const [invoiceQuote, setInvoiceQuote] = useState<MintInvoiceResponse | null>(null);
+  const [mintQuote, setMintQuote] = useState<MintQuoteResponse | null>(null);
+  const [quoteState, setQuoteState] = useState<"UNPAID" | "PAID" | "ISSUED" | null>(null);
   const [publishResult, setPublishResult] = useState<PublishResult | null>(null);
   const [currentProof, setCurrentProof] = useState<CashuProof | null>(null);
   const [walletBundle, setWalletBundle] = useState(() => loadStoredWalletBundle());
@@ -34,22 +42,129 @@ export default function App() {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [requestingInvoice, setRequestingInvoice] = useState(false);
+  const [discoveryLoading, setDiscoveryLoading] = useState(true);
+  const [requestingQuote, setRequestingQuote] = useState(false);
   const [publishingClaim, setPublishingClaim] = useState(false);
-  const [checkingProof, setCheckingProof] = useState(false);
-  const [proofPollingActive, setProofPollingActive] = useState(false);
+  const [pollingQuote, setPollingQuote] = useState(false);
+  const [mintingTokens, setMintingTokens] = useState(false);
+  const [signerMode, setSignerMode] = useState<SignerMode>("raw");
+  const [signer, setSigner] = useState<NostrSigner | null>(null);
+  const [nip07Pubkey, setNip07Pubkey] = useState<string | null>(null);
+  const [nip07Scanning, setNip07Scanning] = useState(false);
+  const [allElections, setAllElections] = useState<ElectionSummary[]>([]);
+  const [electionsLoading, setElectionsLoading] = useState(false);
 
-  const normalizedMintApiUrl = useMemo(() => normalizeMintUrl(mintApiUrl) || DEFAULT_MINT_URL, [mintApiUrl]);
   const derivedNpub = useMemo(() => deriveNpubFromNsec(nsecInput), [nsecInput]);
-  const npubIsValid = isValidNpub(npubInput);
-  const nsecMatchesNpub = Boolean(derivedNpub && (invoiceQuote ? invoiceQuote.npub === derivedNpub : npubInput.trim() === derivedNpub));
-  const canRequestInvoice = Boolean(eligibilityResult?.canProceed && !requestingInvoice);
+  const activeNpub = signerMode === "nip07" && nip07Pubkey ? nip07Pubkey : derivedNpub;
+  const npubIsValid = activeNpub ? isValidNpub(activeNpub) : false;
+  const canRequestQuote = Boolean(eligibilityResult?.canProceed && !requestingQuote);
+
+  const coordinatorNpub = coordinatorInfo?.coordinatorNpub ?? "";
+  const mintUrl = coordinatorInfo?.mintUrl ?? MINT_URL;
+  const relays = coordinatorInfo?.relays ?? [];
+  const electionId = electionInfo?.election_id ?? "";
+  const questions: ElectionQuestion[] = electionInfo?.questions ?? [];
+
+  const activeMintUrl = useMemo(() => mintUrl.replace(/\/$/, ""), [mintUrl]);
+
+  async function handleElectionSelect(electionId: string) {
+    if (electionId === electionInfo?.election_id) return;
+    const summary = allElections.find((e) => e.election_id === electionId);
+    if (!summary) return;
+    const { SimplePool } = await import("nostr-tools");
+    const pool = new SimplePool();
+    const publicRelays = relays.filter((r) => r.startsWith("wss://"));
+    try {
+      if (publicRelays.length === 0) return;
+      const events = await pool.querySync(publicRelays, { kinds: [38008], ids: [summary.event_id], limit: 1 });
+      if (events.length === 0) return;
+      const content = JSON.parse(events[0].content);
+      setElectionInfo({
+        election_id: electionId,
+        event_id: summary.event_id,
+        title: content.title ?? "Untitled",
+        description: content.description ?? "",
+        questions: content.questions ?? [],
+        start_time: content.start_time ?? 0,
+        end_time: content.end_time ?? 0,
+        mint_urls: content.mint_urls ?? [],
+      });
+      setMintQuote(null);
+      setQuoteState(null);
+      setPublishResult(null);
+      setCurrentProof(null);
+      setEligibilityResult(null);
+      setStatus(`Switched to election: ${content.title ?? electionId}`);
+    } catch {
+      setError("Failed to load election from Nostr");
+    } finally {
+      pool.close(publicRelays);
+    }
+  }
+
+  const claimVerificationUrl = useMemo(() => {
+    if (!publishResult || publishResult.successes < 1) {
+      return null;
+    }
+
+    return getNostrEventVerificationUrl({
+      eventId: publishResult.eventId,
+      relays
+    });
+  }, [publishResult, relays]);
+
+  useEffect(() => {
+    async function discover() {
+      setDiscoveryLoading(true);
+      setElectionsLoading(true);
+      try {
+        const [info, election] = await Promise.all([
+          fetchCoordinatorInfo(),
+          fetchElection()
+        ]);
+        setCoordinatorInfo(info);
+        setElectionInfo(election);
+        setStatus(`Connected to coordinator. Election: ${election?.title ?? "none"}`);
+
+        const elections = await fetchElectionsFromNostr(info.coordinatorNpub, info.relays);
+        setAllElections(elections);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not reach coordinator");
+      } finally {
+        setDiscoveryLoading(false);
+        setElectionsLoading(false);
+      }
+    }
+
+    void discover();
+  }, []);
+
+  useEffect(() => {
+    const stop = startSignerDetection((result) => {
+      if (result.mode === "nip07" && result.signer) {
+        setSignerMode("nip07");
+        setSigner(result.signer);
+        setNip07Scanning(false);
+        result.signer.getNpub().then((npub) => setNip07Pubkey(npub)).catch(() => {});
+      }
+    });
+    setNip07Scanning(signerMode === "nip07" && !nip07Pubkey);
+    return () => { stop(); setNip07Scanning(false); };
+  }, []);
+
+  useEffect(() => {
+    resetEligibilityFlow();
+    if (npubIsValid && activeNpub && coordinatorInfo) {
+      void checkNpubAccess();
+    }
+  }, [activeNpub, npubIsValid, coordinatorInfo]);
 
   function resetIssuanceFlow() {
-    setInvoiceQuote(null);
+    setMintQuote(null);
+    setQuoteState(null);
     setPublishResult(null);
     setCurrentProof(null);
-    setProofPollingActive(false);
+    setPollingQuote(false);
   }
 
   function resetEligibilityFlow() {
@@ -57,9 +172,9 @@ export default function App() {
     resetIssuanceFlow();
   }
 
-  async function checkNpubAccess() {
-    if (!npubIsValid) {
-      setError("Enter a valid npub before checking eligibility.");
+  const checkNpubAccess = useCallback(async () => {
+    if (!npubIsValid || !activeNpub) {
+      setError("Connect a signer to derive your npub before checking eligibility.");
       return;
     }
 
@@ -69,61 +184,73 @@ export default function App() {
     resetEligibilityFlow();
 
     try {
-      const payload = await checkEligibility(npubInput.trim());
+      const payload = await checkEligibility(activeNpub);
       setEligibilityResult(payload);
       setStatus(payload.message);
 
       if (!payload.allowed) {
-        window.alert("This npub is not in the allowed list.");
-      } else if (payload.hasVoted) {
-        window.alert("This npub has already voted.");
+        window.alert("This npub is not in the eligible list.");
       }
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Eligibility check failed");
     } finally {
       setLoading(false);
     }
-  }
+  }, [npubIsValid, activeNpub]);
 
-  async function requestInvoice() {
+  const requestQuote = useCallback(async () => {
     if (!eligibilityResult?.canProceed) {
-      setError("Check that your npub is allowed and has not voted yet before requesting an invoice.");
+      setError("Check that your npub is eligible before requesting a quote.");
       return;
     }
 
-    setRequestingInvoice(true);
+    setRequestingQuote(true);
     setStatus(null);
     setError(null);
-    setPublishResult(null);
-    setCurrentProof(null);
-    setProofPollingActive(false);
+    resetIssuanceFlow();
 
     try {
-      const payload = await requestMintInvoice(normalizedMintApiUrl);
-      setInvoiceQuote(payload);
+      const quote = await createMintQuote();
+      setMintQuote(quote);
+      setQuoteState("UNPAID");
+
       storeWalletBundle({
         proof: null,
-        invoice: payload
+        election: electionInfo ? {
+          electionId: electionInfo.election_id,
+          title: electionInfo.title,
+          questions: electionInfo.questions,
+          start_time: electionInfo.start_time,
+          end_time: electionInfo.end_time,
+          mint_urls: electionInfo.mint_urls
+        } : null,
+        quote: {
+          quoteId: quote.quote,
+          bolt11: quote.request
+        },
+        coordinatorNpub,
+        mintUrl: activeMintUrl,
+        relays
       });
       setWalletBundle(loadStoredWalletBundle());
-      setStatus(`Mint invoice created for ${payload.npub}. Sign and publish the claim before ${formatDateTime(payload.expiresAt)}.`);
+      setStatus(`Quote ${quote.quote} created. Publish your claim to request approval.`);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Could not request invoice");
+      setError(requestError instanceof Error ? requestError.message : "Could not request quote");
     } finally {
-      setRequestingInvoice(false);
+      setRequestingQuote(false);
     }
-  }
+  }, [eligibilityResult, electionInfo, coordinatorNpub, activeMintUrl, relays]);
 
-  async function publishInvoiceClaim() {
-    if (!invoiceQuote) {
-      setError("Request an invoice first.");
-      window.alert("Request an invoice first.");
+  const publishInvoiceClaim = useCallback(async () => {
+    if (!mintQuote) {
+      setError("Request a quote first.");
+      window.alert("Request a quote first.");
       return;
     }
 
-    if (!nsecMatchesNpub) {
-      setError("The provided nsec does not match the selected npub.");
-      window.alert("The provided nsec does not match the selected npub.");
+    if (signerMode === "raw" && !derivedNpub) {
+      setError("Enter a valid nsec to sign the claim.");
+      window.alert("Enter a valid nsec to sign the claim.");
       return;
     }
 
@@ -132,22 +259,38 @@ export default function App() {
     setError(null);
 
     try {
-      const event = createCashuClaimEvent(
-        nsecInput,
-        invoiceQuote.npub,
-        invoiceQuote,
-        normalizedMintApiUrl
-      );
-      const result = await publishCashuClaim(invoiceQuote.relays, event);
+      let event;
+
+      if (signer && signerMode === "nip07") {
+        event = await signCashuClaimEvent(
+          signer,
+          coordinatorNpub,
+          activeMintUrl,
+          mintQuote.quote,
+          mintQuote.request,
+          electionId
+        );
+      } else {
+        event = createCashuClaimEvent(
+          nsecInput,
+          coordinatorNpub,
+          activeMintUrl,
+          mintQuote.quote,
+          mintQuote.request,
+          electionId
+        );
+      }
+
+      const result = await publishCashuClaim(relays, event);
 
       try {
         await logClaimDebug({
-          npub: invoiceQuote.npub,
-          coordinatorNpub: invoiceQuote.coordinatorNpub,
-          mintApiUrl: normalizedMintApiUrl,
-          relays: invoiceQuote.relays,
-          quoteId: invoiceQuote.quoteId,
-          invoice: invoiceQuote.invoice,
+          npub: activeNpub ?? "",
+          coordinatorNpub,
+          mintApiUrl: activeMintUrl,
+          relays,
+          quoteId: mintQuote.quote,
+          invoice: mintQuote.request,
           event: {
             id: event.id,
             pubkey: event.pubkey,
@@ -159,25 +302,25 @@ export default function App() {
           },
           publishResult: result
         });
-      } catch (logError) {
-        console.warn("[voter] failed to send claim debug log:", logError);
+      } catch {
+        console.warn("[voter] failed to send claim debug log");
       }
 
       setPublishResult(result);
-      setProofPollingActive(true);
+      setPollingQuote(true);
 
       if (result.failures > 0) {
         const failedRelayMessage = result.relayResults
-          .filter((relayResult) => !relayResult.success)
-          .map((relayResult) => `${relayResult.relay}: ${relayResult.error ?? "Unknown error"}`)
+          .filter((rr) => !rr.success)
+          .map((rr) => `${rr.relay}: ${rr.error ?? "Unknown error"}`)
           .join("\n");
         window.alert(`Some relays rejected the claim publish:\n${failedRelayMessage}`);
       }
 
       if (result.successes > 0) {
-        setStatus(`Claim published to ${result.successes} relay${result.successes === 1 ? "" : "s"}. Waiting for mint proof.`);
+        setStatus(`Claim published to ${result.successes} relay${result.successes === 1 ? "" : "s"}. Waiting for coordinator approval...`);
       } else {
-        setStatus("Relay publish did not confirm, but the mock mint will still simulate proof delivery for this demo.");
+        setStatus("Relay publish did not confirm. The coordinator may not see your claim.");
       }
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Could not publish invoice claim";
@@ -186,198 +329,218 @@ export default function App() {
     } finally {
       setPublishingClaim(false);
     }
-  }
+  }, [mintQuote, derivedNpub, nsecInput, coordinatorNpub, activeMintUrl, electionId, relays, activeNpub, signer, signerMode]);
 
-  async function checkForProof() {
-    if (!invoiceQuote) {
-      return;
-    }
-
-    setCheckingProof(true);
+  const pollQuoteAndMint = useCallback(async () => {
+    if (!mintQuote) return;
 
     try {
-      const payload = await fetchMintProof(normalizedMintApiUrl, invoiceQuote.quoteId);
+      const status = await checkQuoteStatus(mintQuote.quote);
+      setQuoteState(status.state);
+      console.log("[poll] quote", mintQuote.quote, "state:", status.state);
 
-      if (payload.status === "pending") {
-        setStatus(`Mint is still preparing the proof. Checking again soon.`);
+      if (status.state === "UNPAID") {
+        setStatus("Waiting for coordinator to approve quote...");
         return;
       }
 
-      setCurrentProof(payload.proof);
-      setProofPollingActive(false);
-      storeProof(payload.proof);
-      setWalletBundle(loadStoredWalletBundle());
-      setStatus(`Cashu proof received from Mint for quote ${payload.quoteId}.`);
+      if (status.state === "PAID") {
+        setPollingQuote(false);
+        console.log("[poll] quote", mintQuote.quote, "approved, minting tokens...");
+        setStatus("Quote approved! Minting tokens...");
+        setMintingTokens(true);
+
+        try {
+          const mintResult = await requestQuoteAndMint(MINT_URL.replace(/\/$/, ""), mintQuote.quote);
+          const proof = mintResult.proofs[0];
+
+          if (proof) {
+            console.log("[poll] proof received for quote", mintQuote.quote, "keyset:", proof.id);
+            setCurrentProof(proof);
+            storeProof(proof);
+            setWalletBundle(loadStoredWalletBundle());
+            setStatus(`Cashu proof received.`);
+          } else {
+            setError("Mint returned no proofs.");
+          }
+        } catch (mintError) {
+          console.error("[poll] minting failed for quote", mintQuote.quote, mintError);
+          setError(mintError instanceof Error ? mintError.message : "Token minting failed");
+        } finally {
+          setMintingTokens(false);
+        }
+      }
     } catch (requestError) {
-      setProofPollingActive(false);
-      setError(requestError instanceof Error ? requestError.message : "Could not fetch proof");
-    } finally {
-      setCheckingProof(false);
+      console.error("[poll] quote status check failed for quote", mintQuote.quote, requestError);
+      setPollingQuote(false);
+      setError(requestError instanceof Error ? requestError.message : "Quote status check failed");
     }
-  }
+  }, [mintQuote, activeMintUrl]);
 
   useEffect(() => {
-    if (!proofPollingActive || !invoiceQuote) {
-      return;
-    }
+    if (!pollingQuote || !mintQuote) return;
 
     let cancelled = false;
 
-    async function poll() {
-      if (cancelled) {
-        return;
-      }
-
-      await checkForProof();
-    }
-
-    void poll();
+    void pollQuoteAndMint();
 
     const intervalId = window.setInterval(() => {
-      void poll();
-    }, 2500);
+      if (!cancelled) {
+        void pollQuoteAndMint();
+      }
+    }, USE_MOCK ? 2500 : 5000);
 
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [proofPollingActive, invoiceQuote, normalizedMintApiUrl]);
+  }, [pollingQuote, mintQuote, pollQuoteAndMint]);
+
+  const quoteStateLabel = quoteState === "UNPAID"
+    ? "Waiting for coordinator approval"
+    : quoteState === "PAID"
+      ? "Approved -- minting tokens"
+      : quoteState === "ISSUED"
+        ? "Tokens issued"
+        : null;
 
   return (
     <main className="page-shell">
       <section className="hero-card">
-        <p className="eyebrow">Voter Portal</p>
-        <h1>Check your allowed npub and mint a Cashu voting proof.</h1>
-        <p className="hero-copy">
-          Enter an allowed `npub`, pass the mock not-voted check, request an invoice from the Mint API, sign that invoice claim with your `nsec`, publish it to public Nostr relays, then receive a proof into your local wallet.
-        </p>
-        <div className="hero-metadata">
-          <span>Mint API</span>
-          <input
-            className="mint-input"
-            value={mintApiUrl}
-            onChange={(event) => setMintApiUrl(event.target.value)}
-            placeholder={DEFAULT_MINT_URL}
-          />
+        <div className="hero-brand">
+          <img src="/images/logo.png" alt="" width={28} height={28} />
+          <p className="eyebrow">Voter Portal</p>
         </div>
-        <p className="field-hint hero-hint">
-          The default Mint API points to a local mock mint on the server. Later you can replace it with your teammate’s remote mint service.
+        <h1 className="hero-title">Check your eligible npub and mint a Cashu voting proof.</h1>
+        <p className="hero-copy">
+          Enter an eligible `npub`, request a quote from the Mint API, sign that quote claim with your `nsec`, publish it to Nostr relays, then receive a proof into your local wallet.
         </p>
+
+        {discoveryLoading ? (
+          <p className="field-hint hero-hint">Discovering coordinator...</p>
+        ) : coordinatorInfo ? (
+          <div className="hero-metadata">
+            <span>Coordinator</span>
+            <code className="inline-code-badge">{coordinatorNpub.slice(0, 20)}...</code>
+            <span><img className="inline-icon" src="/images/bitcoin-logo.png" alt="" width={18} height={18} />Mint</span>
+            <code className="inline-code-badge">{activeMintUrl}</code>
+            {allElections.length > 1 && (
+              <select
+                value={electionInfo?.election_id ?? ""}
+                onChange={(e) => void handleElectionSelect(e.target.value)}
+                disabled={electionsLoading}
+                style={{
+                  padding: "4px 8px",
+                  borderRadius: 8,
+                  border: "1px solid rgba(88,59,39,0.14)",
+                  background: "rgba(255,255,255,0.64)",
+                  fontSize: "0.85rem",
+                  maxWidth: 260,
+                }}
+              >
+                {allElections.map((e) => (
+                  <option key={e.election_id} value={e.election_id}>
+                    {e.title} ({new Date(e.start_time * 1000).toLocaleDateString()})
+                  </option>
+                ))}
+              </select>
+            )}
+            {electionInfo && !electionsLoading && allElections.length <= 1 && (
+              <>
+                <span>Election</span>
+                <code className="inline-code-badge">{electionInfo.title}</code>
+              </>
+            )}
+            {electionInfo && electionInfo.start_time > 0 && (
+              <span className="field-hint">
+                {formatDateTime(electionInfo.start_time)} -- {formatDateTime(electionInfo.end_time)}
+              </span>
+            )}
+          </div>
+        ) : (
+          <div style={{ textAlign: "center", padding: "20px 0" }}>
+            <img className="empty-state-image" src="/images/nostr/underconstruction-dark.png" alt="" width={160} />
+            <p className="field-hint hero-hint" style={{ color: "var(--muted)" }}>
+              Could not reach coordinator. Mock mode may be active.
+            </p>
+          </div>
+        )}
+        <img className="hero-accent-image" src="/images/black-hat.webp" alt="" width={140} />
       </section>
 
       <section className="content-grid">
-        <article className="panel panel-accent">
-          <div className="panel-header">
-            <div>
-              <p className="panel-kicker">Step 1</p>
-              <h2>Check your npub</h2>
-            </div>
-          </div>
-
-          <label className="field-label" htmlFor="npub-input">Allowed npub</label>
-          <textarea
-            id="npub-input"
-            className="text-area"
-            value={npubInput}
-            onChange={(event) => {
-              setNpubInput(event.target.value);
-              setEligibilityResult(null);
-              resetIssuanceFlow();
-            }}
-            placeholder="npub1..."
-            rows={4}
-          />
-
-          <div className="button-row">
-            <button className="primary-button" onClick={() => void checkNpubAccess()} disabled={!npubIsValid || loading}>
-              {loading ? "Checking..." : "Check eligibility"}
-            </button>
-          </div>
-
-          <p className="field-hint">
-            Only `npub`s in the local allowed list can continue. The server also performs a mock voted check and currently always returns not voted.
-          </p>
-
-          <div className="validation-row">
-            <span className={eligibilityResult?.canProceed ? "validation-ok" : "validation-warn"}>
-              {eligibilityResult?.canProceed
-                ? "Allowed npub and not voted yet"
-                : npubIsValid
-                  ? "Check whether this npub is on the allowed list"
-                  : "Paste or generate a valid npub"}
-            </span>
-          </div>
-        </article>
-
-        <article className="panel">
-          <div className="panel-header">
-            <div>
-              <p className="panel-kicker">Signer</p>
-              <h2>Use your existing nsec</h2>
-            </div>
-          </div>
-
-          <div className="warning-box">
-            <strong>Protect the nsec.</strong>
-            <p>
-              `nsec` is your private key. Anyone who gets it can act as you. This page signs locally in the browser and never sends `nsec` to voter management or the mint API.
-            </p>
-          </div>
-
-          <p className="empty-copy">Use an existing Nostr account. Enter the approved `npub` in Step 1 and the matching `nsec` in Step 2 when you are ready to sign.</p>
-        </article>
-
         <article className="panel panel-wide">
           <div className="panel-header">
             <div>
-              <p className="panel-kicker">Step 2</p>
-              <h2>Get your voter proof</h2>
+              <p className="panel-kicker">Signer</p>
+              <h2>Choose how to sign</h2>
             </div>
-            {currentProof && <span className="count-pill">Proof received</span>}
           </div>
 
-          <div className="verification-grid">
-            <div>
-              <div className="substep-card">
-                <p className="code-label">Step 2.1</p>
-                <h3 className="substep-title">Request invoice from Mint</h3>
-                <p className="field-hint substep-copy">
-                  Once your npub passes the allowed-list and mock voted checks, ask the Mint API for an issuance quote. The current default uses a local mock mint contract.
-                </p>
-                <div className="button-row button-row-tight">
-                  <button className="secondary-button" onClick={() => void requestInvoice()} disabled={!canRequestInvoice}>
-                    {requestingInvoice ? "Requesting..." : "Request invoice"}
-                  </button>
-                </div>
-              </div>
+          <div className="signer-mode-selector">
+            <button
+              type="button"
+              className={`signer-mode-option${signerMode === "nip07" ? " active" : ""}`}
+              onClick={() => {
+                setSignerMode("nip07");
+                try {
+                  const s = createNip07Signer();
+                  setSigner(s);
+                } catch {
+                  setSigner(null);
+                }
+              }}
+            >
+              Browser Extension
+            </button>
+            <button
+              type="button"
+              className={`signer-mode-option${signerMode === "raw" ? " active" : ""}`}
+              onClick={() => {
+                setSignerMode("raw");
+                setSigner(null);
+              }}
+            >
+              Paste nsec
+            </button>
+          </div>
 
-              <div className="challenge-card challenge-card-spaced">
-                <p className="code-label">Mint invoice</p>
-                {invoiceQuote ? (
-                  <div className="detail-stack">
-                    <code className="code-block code-block-muted">{invoiceQuote.invoice}</code>
-                    <p className="field-hint">Quote: {invoiceQuote.quoteId}</p>
-                    <p className="field-hint">Amount: {invoiceQuote.amount}</p>
-                    <p className="field-hint">Expires {formatDateTime(invoiceQuote.expiresAt)}</p>
-                    <p className="field-hint">Coordinator: {invoiceQuote.coordinatorNpub}</p>
-                    <p className="field-hint">Relays: {invoiceQuote.relays.join(", ")}</p>
+          {signerMode === "nip07" && nip07Pubkey ? (
+            <div className="signer-status">
+              <span style={{ fontWeight: 700 }}>Connected</span>
+              <code className="code-block code-block-muted" style={{ fontSize: "0.85rem", padding: "6px 10px" }}>{nip07Pubkey}</code>
+              {activeNpub && (
+                <div style={{ marginTop: 12 }}>
+                  <div className="validation-row">
+                    <span className={eligibilityResult?.canProceed ? "validation-ok" : eligibilityResult ? "validation-warn" : "validation-warn"}>
+                      {eligibilityResult?.canProceed
+                        ? "\u2713 Eligible npub confirmed"
+                        : eligibilityResult && !eligibilityResult.canProceed
+                          ? "\u2717 Not on the eligibility list"
+                          : loading
+                            ? "Checking eligibility..."
+                            : "Checking whether this npub is on the eligible list"}
+                    </span>
                   </div>
-                ) : (
-                  <p className="empty-copy">No invoice requested yet.</p>
-                )}
-              </div>
+                </div>
+              )}
             </div>
+          ) : signerMode === "nip07" && nip07Scanning ? (
+            <p className="empty-copy">Scanning for NIP-07 extension...</p>
+          ) : signerMode === "nip07" ? (
+            <p className="empty-copy">No NIP-07 extension detected. Install Alby, nos2x, or NostrKey, then reload.</p>
+          ) : null}
 
-            <div className="challenge-column">
-              <div className="substep-card">
-                <p className="code-label">Step 2.2</p>
-                <h3 className="substep-title">Sign invoice and publish</h3>
-                <p className="field-hint substep-copy">
-                  Enter the matching `nsec` so the browser can sign the invoice claim with your `npub` identity and publish it to public Nostr relays.
+          {signerMode === "raw" && (
+            <>
+              <div className="warning-box">
+                <strong>Protect the nsec.</strong>
+                <p>
+                  `nsec` is your private key. Anyone who gets it can act as you. This page signs locally in the browser and never sends `nsec` to the coordinator or the mint API.
                 </p>
               </div>
 
-              <label className="field-label" htmlFor="nsec-input">nsec used for signing</label>
+              <label className="field-label" htmlFor="nsec-input">nsec</label>
               <textarea
                 id="nsec-input"
                 className="text-area text-area-secret"
@@ -387,40 +550,130 @@ export default function App() {
                 rows={4}
               />
               <p className="field-hint">
-                Paste your `nsec` or use the generated one above. The browser derives the `npub` locally and checks it matches the approved voter identity.
+                Paste your `nsec`. The browser derives your `npub` locally.
               </p>
 
               {derivedNpub && (
                 <div className="derived-box">
-                  <p className="code-label">Derived npub from nsec</p>
+                  <p className="code-label">Derived npub</p>
                   <code className="code-block code-block-muted">{derivedNpub}</code>
                 </div>
               )}
 
+              {activeNpub && (
+                <div style={{ marginTop: 16 }}>
+                  <div className="validation-row">
+                    <span className={eligibilityResult?.canProceed ? "validation-ok" : eligibilityResult ? "validation-warn" : "validation-warn"}>
+                      {eligibilityResult?.canProceed
+                        ? "\u2713 Eligible npub confirmed"
+                        : eligibilityResult && !eligibilityResult.canProceed
+                          ? "\u2717 Not on the eligibility list"
+                          : loading
+                            ? "Checking eligibility..."
+                            : "Checking whether this npub is on the eligible list"}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          <img className="panel-accent-image" src="/images/nostr/gmnotes.png" alt="" width={120} />
+        </article>
+
+        <article className="panel panel-wide">
+          <div className="panel-header">
+            <div>
+              <p className="panel-kicker">Step 2</p>
+              <h2>Get your voter proof</h2>
+            </div>
+            {currentProof && <span className="count-pill">Proof received</span>}
+            {quoteStateLabel && <span className="count-pill">{quoteStateLabel}</span>}
+          </div>
+
+          <div className="verification-grid">
+            <div>
+              <div className="substep-card">
+                <p className="code-label">Step 2.1</p>
+                <h3 className="substep-title">Request quote from Mint</h3>
+                <p className="field-hint substep-copy">
+                  Once your npub passes the eligibility check, ask the Mint API for an issuance quote.
+                </p>
+                <div className="button-row button-row-tight">
+                  <button className="secondary-button" onClick={() => void requestQuote()} disabled={!canRequestQuote}>
+                    {requestingQuote ? "Requesting..." : "Request quote"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="challenge-card challenge-card-spaced">
+                <p className="code-label">Mint quote</p>
+                {mintQuote ? (
+                  <div className="detail-stack">
+                    <code className="code-block code-block-muted">{mintQuote.request}</code>
+                    <p className="field-hint">Quote: {mintQuote.quote}</p>
+                    <p className="field-hint">Amount: {mintQuote.amount} {mintQuote.unit}</p>
+                    <p className="field-hint">State: {quoteState ?? "unknown"}</p>
+                  </div>
+                ) : (
+                  <p className="empty-copy">No quote requested yet.</p>
+                )}
+              </div>
+            </div>
+
+            <div className="challenge-column">
+              <div className="substep-card">
+                <p className="code-label">Step 2.2</p>
+                <h3 className="substep-title">Sign quote and publish</h3>
+                <p className="field-hint substep-copy">
+                  {signerMode === "nip07"
+                    ? "Your browser extension will sign the claim. No private key is exposed to this page."
+                    : "Your nsec will sign the claim locally and publish it to Nostr relays."}
+                </p>
+              </div>
+
               <div className="button-row">
-                <button className="primary-button" onClick={() => void publishInvoiceClaim()} disabled={!invoiceQuote || !nsecMatchesNpub || publishingClaim}>
+                <button
+                  className="primary-button"
+                  onClick={() => void publishInvoiceClaim()}
+                  disabled={
+                    !mintQuote || publishingClaim ||
+                    (signerMode === "raw" && !derivedNpub) ||
+                    (signerMode === "nip07" && !signer)
+                  }
+                >
                   {publishingClaim ? "Publishing..." : "Sign and publish claim"}
-                </button>
-                <button className="ghost-button" onClick={() => void checkForProof()} disabled={!invoiceQuote || checkingProof}>
-                  {checkingProof ? "Checking..." : "Check for proof"}
                 </button>
               </div>
 
               <div className="validation-row">
-                <span className={nsecMatchesNpub ? "validation-ok" : "validation-warn"}>
-                  {nsecMatchesNpub ? "nsec matches selected npub" : "Enter the nsec for the approved npub before publishing"}
+                <span className={
+                  signerMode === "nip07"
+                    ? (signer ? "validation-ok" : "validation-warn")
+                    : (derivedNpub ? "validation-ok" : "validation-warn")
+                }>
+                  {signerMode === "nip07"
+                    ? (signer ? "Extension ready to sign" : "No extension connected")
+                    : derivedNpub
+                      ? "Signer ready"
+                      : "Enter a valid nsec in the Signer panel"}
                 </span>
               </div>
 
               {publishResult && (
                 <div className="notice notice-success">
                   Claim event `{publishResult.eventId}` attempted on {publishResult.successes + publishResult.failures} relay{publishResult.successes + publishResult.failures === 1 ? "" : "s"}; {publishResult.successes} success, {publishResult.failures} failure.
+                  {claimVerificationUrl && (
+                    <a className="notice-link" href={claimVerificationUrl} target="_blank" rel="noreferrer">
+                      Verify this claim event on njump
+                    </a>
+                  )}
                 </div>
               )}
 
               {currentProof && (
                 <div className="notice notice-success">
-                  Proof received at {formatDateTime(currentProof.issuedAt)} and stored as your single voting proof.
+                  Proof received and stored as your single voting proof.
                 </div>
               )}
             </div>
@@ -438,14 +691,14 @@ export default function App() {
 
           {walletBundle?.proof ? (
             <div className="derived-box">
-              <p className="code-label">Quote {walletBundle.proof.quoteId}</p>
-              <code className="code-block code-block-muted">{walletBundle.proof.secret}</code>
-              <p className="field-hint">Election {walletBundle.invoice.electionId}</p>
-              <p className="field-hint">Issued {formatDateTime(walletBundle.proof.issuedAt)}</p>
+              <p className="code-label">Proof</p>
+              <code className="code-block code-block-muted">{JSON.stringify(walletBundle.proof, null, 2)}</code>
+              <p className="field-hint">Election {walletBundle.election?.electionId ?? "unknown"}</p>
+              <p className="field-hint">Keyset {walletBundle.proof.id}</p>
               <p className="field-hint">Amount {walletBundle.proof.amount}</p>
             </div>
           ) : (
-            <p className="empty-copy">No proof stored yet. Request an invoice, publish the signed claim, and wait for the mint proof.</p>
+            <p className="empty-copy">No proof stored yet. Request a quote, publish the signed claim, and wait for the mint proof.</p>
           )}
 
           {walletBundle?.proof && (
@@ -460,7 +713,7 @@ export default function App() {
             <div className="panel-header">
               <div>
                 <p className="panel-kicker">Latest update</p>
-                <h2>Wallet and server response</h2>
+                <h2>Status</h2>
               </div>
             </div>
             {status && <div className="notice notice-success">{status}</div>}

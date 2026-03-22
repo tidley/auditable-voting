@@ -1,0 +1,12 @@
+vps_ip: "23.182.128.64"
+coordinator_repo_dir: "{{ playbook_dir | dirname | dirname | dirname }}/tg-mint-orchestrator"
+
+# coordinator_url: Internal URL reachable from the nginx container (proxy_pass target)
+coordinator_url: "http://host.docker.internal:8081"
+# mint_url: Internal URL reachable from the nginx container (proxy_pass target)
+mint_url: "http://host.docker.internal:3338"
+app_deploy_dir: "/opt/auditable-voting"
+node_version: "20"
+voting_subdomain: "vote"
+tls_enabled: false
+docker_network_name: "tollgate-net"

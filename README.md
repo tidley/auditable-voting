@@ -1,170 +1,114 @@
-# Auditable Voting Demo
+# Auditable Voting
 
-Local demo of a Nostr + Cashu-style voting flow.
+Nostr + Cashu voting with coordinator-mediated blind token issuance, eligibility checks, and private ballot submission.
 
-The current project covers:
+## Live Deployment
 
-- local allowlist-based voter eligibility
-- mock not-voted checks
-- mock mint invoice -> proof issuance
-- Nostr claim publishing for proof issuance
-- ballot publishing with a proof hash
-- operator dashboard for allowed and verified voters
+**Voter Portal:** http://vote.mints.23.182.128.64.sslip.io/
 
-## Overview
+**Operator Dashboard:** http://vote.mints.23.182.128.64.sslip.io/dashboard.html
 
-The system separates a few concerns:
+**Voting Page:** http://vote.mints.23.182.128.64.sslip.io/vote.html
 
-- voter eligibility is based on an allowed list of `npub`s
-- proof issuance is coordinated through a Mint API flow
-- claim and ballot events are published through Nostr relays
-- the final ballot carries a hash of the voter proof instead of the raw proof
+## Deploy
 
-Right now everything is simplified for local development:
+```bash
+ansible-playbook ansible/playbooks/deploy-and-prepare.yml
+```
 
-- the allowed voter list is hardcoded in `src/voterConfig.ts`
-- the already-voted check is mocked and always returns `false`
-- the mint is mocked inside the same local server
-- proof issuance is time-based, not real blinded ecash yet
+This single command deploys Traefik, the voting coordinator, the frontend, and publishes the election with eligibility data.
 
-## What Is Implemented
+## Production Voter Flow
 
-- A Node/TypeScript voter server in `src/voterServer.ts`
-- Local allowed voter config in `src/voterConfig.ts`
-- A voter portal in `web/src/App.tsx` for:
-  - entering or generating an `npub`/`nsec`
-  - checking whether the `npub` is on the allowlist
-  - checking whether the voter has already voted via a mock API
-  - requesting a mint invoice
-  - signing and publishing an invoice claim to Nostr relays
-  - polling for a proof
-- A local single-proof wallet in `web/src/cashuWallet.ts`
-- A voting page in `web/src/VotingApp.tsx` for:
-  - loading election metadata from the stored invoice
-  - answering 2 single-choice ballot questions
-  - publishing a ballot event with a proof hash
-- A dashboard in `web/src/DashboardApp.tsx` showing allowed and verified voters
-- Server-side debug logs for:
-  - invoice details
-  - claim event details
-  - publish results
-  - proof details
+1. Open the voter portal URL
+2. Enter your npub (checked against coordinator's eligibility list)
+3. Request a mint quote, publish a claim (kind 38010), wait for approval
+4. Mint blinded tokens from the CDK Cashu mint
+5. Fill out the ballot and publish a vote event (kind 38000)
+6. Submit the proof via NIP-04 encrypted DM to the coordinator
+7. Check vote acceptance via the tally endpoint
 
-## Current Flow
+## Architecture
 
-1. Start the local server
-2. Open the voter portal
-3. Enter an `npub` from the allowlist in `src/voterConfig.ts`
-4. The server checks:
-   - the `npub` is allowed
-   - the `npub` has not voted yet (mocked to `false`)
-5. If the check passes, request an invoice from the mock Mint API
-6. The invoice response provides:
-   - voter `npub`
-   - coordinator `npub`
-   - election ID
-   - ballot questions
-   - relay list
-7. Sign the invoice claim locally with `nsec`
-8. Publish that claim to Nostr relays
-9. Poll until the proof is ready
-10. Open the voting page and publish a ballot event with the proof hash
+```
+Browser --> Traefik (:80)
+              |-- Host(vote.mints.23.182.128.64.sslip.io)
+                  --> voting-client container (nginx:alpine)
+                       |-- /        --> static HTML/JS
+                       |-- /api/    --> coordinator:8081
+                       |-- /mint/   --> mint:3338
+```
+
+## Testing
+
+```bash
+# Frontend unit tests (vitest)
+cd web && npx vitest run
+
+# Integration readiness tests (pytest)
+python3 -m venv .venv && .venv/bin/pip install -r tests/requirements.txt
+.venv/bin/pytest tests/ -v
+
+# Playwright browser E2E tests (requires VPS running, Chromium installed)
+.venv/bin/pip install pytest-playwright
+.venv/bin/python -m playwright install chromium
+.venv/bin/pytest tests/test_ui_dashboard.py tests/test_ui_issuance.py tests/test_ui_voting.py -v --timeout=600
+
+# Headed mode (watch the browser — requires X server)
+.venv/bin/pytest tests/test_ui_issuance.py -v --timeout=300 --headed --slowmo=500
+```
+
+- 8/8 Playwright browser E2E tests pass (~2m)
+- 25/25 integration readiness tests pass
+- 12/12 E2E voter flow steps pass (~87s)
+- 13/13 signer tests pass
+- 4/4 vitest unit tests pass (cashuBlind regression guards)
+
+The ansible deploy playbook runs vitest automatically before building.
+
+## Local Development (mock mode)
+
+The frontend has a `VITE_USE_MOCK=true` mode that uses a local mock server
+instead of the real coordinator and mint:
+
+```bash
+npm install && npm --prefix web install
+npm run build && npm --prefix web run build
+npm run server       # local mock server on :8787
+npm --prefix web run dev   # Vite dev server on :5173
+```
 
 ## Project Structure
 
 ```text
 docs/                       design docs and planning notes
 src/                        server and CLI TypeScript code
-src/voterServer.ts          local voter server and mock mint
-src/voterConfig.ts          hardcoded allowed npubs
 web/                        React + Vite frontend
-web/src/App.tsx             voter portal
-web/src/VotingApp.tsx       voting page
-web/src/DashboardApp.tsx    operator dashboard
-web/src/cashuMintApi.ts     mock mint API client
-web/src/cashuWallet.ts      single-proof local wallet storage
-web/src/ballot.ts           ballot event publishing and proof hashing
-web/src/nostrIdentity.ts    Nostr key and claim helpers
-web/src/voterManagementApi.ts allowlist and vote-status API client
+web/src/App.tsx             voter portal (discovery + issuance)
+web/src/VotingApp.tsx       voting page (ballot + proof DM + tally)
+web/src/DashboardApp.tsx    operator dashboard (eligibility + tally)
+web/src/coordinatorApi.ts   coordinator HTTP API client
+web/src/mintApi.ts          CDK Cashu mint API client
+web/src/cashuBlind.ts       blinded token operations (CashuWallet)
+web/src/proofSubmission.ts  NIP-04 encrypted DM sender
+web/src/ballot.ts           ballot event publishing
+web/src/nostrIdentity.ts    Nostr key helpers, claim signing
+web/src/signer.ts           NostrSigner abstraction (raw / NIP-07)
+web/src/cashuWallet.ts      local wallet storage
+ansible/                    Ansible playbooks for deployment
+tests/                      pytest integration + E2E tests
 ```
-
-## Local Development
-
-Install dependencies:
-
-```bash
-npm install
-npm --prefix web install
-```
-
-Build:
-
-```bash
-npm run build
-npm --prefix web run build
-```
-
-Start the local server:
-
-```bash
-npm run server
-```
-
-Start the frontend dev server:
-
-```bash
-npm --prefix web run dev
-```
-
-## Pages
-
-- Voter portal: `http://localhost:5173/`
-- Dashboard: `http://localhost:5173/dashboard.html`
-- Voting page: `http://localhost:5173/vote.html`
-
-## Current API Endpoints
-
-- `GET /api/eligibility`
-  - returns the local allowlist plus verified voters
-- `GET /api/eligibility/check?npub=...`
-  - checks whether the `npub` is in the allowlist and can proceed
-- `GET /api/vote-status?npub=...`
-  - mock vote-status API, currently always returns `hasVoted: false`
-- `POST /api/debug/claim-log`
-  - internal debug endpoint used by the frontend to mirror claim details into the server console
-- `GET /mock-mint/invoice`
-  - returns a mock invoice plus voter `npub`, coordinator `npub`, election ID, and ballot questions
-- `GET /mock-mint/proof/:quoteId`
-  - returns `pending` until proof issuance is ready, then returns the proof and marks the voter as verified
-
-## Allowed Npubs
-
-The current local allowlist lives in `src/voterConfig.ts`:
-
-- `npub1ukdwfffcayn5pyt8duv5fyfkwyjrykgr2efql5vmj5y9df4c82lsgkypvg`
-- `npub1kl7g5wf90gezwukh44jqtgh7dmdkv6nd20s7u88djqvv433x7ufsjrq6th`
-- `npub1et7edyz9vcpdzljns4da5t7l7qgspe3dr6flx09x6jsy2sut5xfqyfnd3u`
-
-## Notes
-
-- State is in-memory only
-- The mock already-voted API always returns `false`
-- The local wallet stores one proof per voter session
-- `nsec` stays in the browser and is never sent to the server or mint API
-- The mock mint is not real blinded Cashu issuance yet
-
-## Roadmap
-
-- replace mock invoice/proof endpoints with the real teammate mint API
-- replace the mock already-voted API with a real spent-proof / participation check
-- move election config and ballot questions fully behind the mint/coordinator service
-- implement real Cashu blind issuance
-- submit proofs privately for vote counting
-- build Merkle commitments and public verification tools
 
 ## Related Docs
 
-- `docs/demo-development-plan.md`
-- `docs/reference-architecture.md`
-- `docs/cashu-nostr-voting-design.md`
-- `docs/self-service-issuance-3-mint-model.md`
+- `docs/playwright-e2e-test-plan.md` -- Playwright browser E2E test plan and architecture
+- `docs/proof-flow-fix-plan.md` -- all known bugs (A-K) with root cause, fix, and test cases
+- `docs/integration-plan.md` -- full integration plan (all 6 phases, DONE)
+- `docs/integration-test-plan.md` -- readiness + E2E test plan (all pass)
+- `docs/deploy-and-prepare-plan.md` -- SEC-06 deployment playbook plan
+- `docs/voting-client-deployment-plan.md` -- voting client deployment details
+- `docs/branding-and-signer-plan.md` -- branding + NIP-07 signer integration
+- `docs/reference-architecture.md` -- system architecture reference
+- `docs/cashu-nostr-voting-design.md` -- voting protocol design
+- `docs/self-service-issuance-3-mint-model.md` -- mint issuance model
+- `docs/per-election-keysets.md` -- per-election keyset rotation and version compatibility

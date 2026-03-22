@@ -1,0 +1,121 @@
+---
+# Deploy the voting coordinator: install deps + restart.
+# The coordinator is assumed to already be set up on the VPS.
+# Full initial deployment is done via tg-mint-orchestrator's own playbooks.
+- name: Deploy Voting Coordinator
+  hosts: tollgate-vps
+  become: true
+  vars:
+    coordinator_dir: "/opt/tollgate/coordinator"
+    coordinator_venv: "{{ coordinator_dir }}/.venv"
+    mint_data_dir: "/opt/tollgate/mints-local/mint1"
+    mint_http_port: 3338
+    mint_grpc_port: 8086
+    nak_port: 10547
+    _coord_repo_local: "{{ playbook_dir }}/../../../tg-mint-orchestrator"
+  pre_tasks:
+    - name: Resolve coordinator repo path locally
+      ansible.builtin.command: realpath {{ _coord_repo_local }}
+      register: _coord_resolved
+      delegate_to: localhost
+      become: false
+      changed_when: false
+      run_once: true
+  tasks:
+    - name: Wait for mint to be healthy
+      ansible.builtin.command: curl -sf http://127.0.0.1:{{ mint_http_port }}/v1/info
+      register: mint_health
+      retries: 10
+      delay: 5
+      until: mint_health.rc == 0
+      changed_when: false
+
+    - name: Copy requirements.txt to VPS
+      ansible.builtin.copy:
+        src: "{{ _coord_resolved.stdout }}/scripts/requirements.txt"
+        dest: "/tmp/coordinator-requirements.txt"
+        mode: "0644"
+
+    - name: Install coordinator Python dependencies
+      ansible.builtin.pip:
+        requirements: "/tmp/coordinator-requirements.txt"
+        virtualenv: "{{ coordinator_venv }}"
+        virtualenv_command: python3 -m venv
+
+    - name: Copy coordinator script
+      ansible.builtin.copy:
+        src: "{{ _coord_resolved.stdout }}/scripts/voting-coordinator-client.py"
+        dest: "{{ coordinator_dir }}/voting-coordinator-client.py"
+        mode: "0755"
+
+    - name: Copy eligible-voters.json
+      ansible.builtin.copy:
+        src: "{{ _coord_resolved.stdout }}/eligible-voters.json"
+        dest: "{{ coordinator_dir }}/eligible-voters.json"
+        mode: "0644"
+
+    - name: Ensure coordinator systemd service is configured
+      ansible.builtin.copy:
+        content: |
+          [Unit]
+          Description=TollGate Voting Coordinator
+          After=network.target docker.service nak.service
+          Wants=docker.service
+
+          [Service]
+          Type=simple
+          WorkingDirectory={{ coordinator_dir }}
+          {% if coordinator_election_id is defined and coordinator_election_id %}
+          ExecStart={{ coordinator_venv }}/bin/python3 {{ coordinator_dir }}/voting-coordinator-client.py \
+            --nsec-file {{ coordinator_dir }}/nsec.env \
+            --eligible {{ coordinator_dir }}/eligible-voters.json \
+            --grpc-endpoint 127.0.0.1:{{ mint_grpc_port }} \
+            --mint-url http://127.0.0.1:{{ mint_http_port }} \
+            --public-mint-url http://{{ ansible_host }}:{{ mint_http_port }} \
+            --http-port 8081 \
+            --election-id {{ coordinator_election_id }} \
+            --relays ws://localhost:{{ nak_port }} wss://relay.damus.io wss://nos.lol wss://relay.primal.net
+          {% else %}
+          ExecStart={{ coordinator_venv }}/bin/python3 {{ coordinator_dir }}/voting-coordinator-client.py \
+            --nsec-file {{ coordinator_dir }}/nsec.env \
+            --eligible {{ coordinator_dir }}/eligible-voters.json \
+            --grpc-endpoint 127.0.0.1:{{ mint_grpc_port }} \
+            --mint-url http://127.0.0.1:{{ mint_http_port }} \
+            --public-mint-url http://{{ ansible_host }}:{{ mint_http_port }} \
+            --http-port 8081 \
+            --relays ws://localhost:{{ nak_port }} wss://relay.damus.io wss://nos.lol wss://relay.primal.net
+          {% endif %}
+          Restart=always
+          RestartSec=5
+          Environment=PYTHONUNBUFFERED=1
+          Environment=COORDINATOR_PROTO_PATH={{ coordinator_dir }}/proto/cdk-mint-rpc.proto
+          Environment=COORDINATOR_GEN_DIR={{ coordinator_dir }}/_gen
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/tollgate-coordinator.service
+        mode: "0644"
+
+    - name: Reload systemd
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+
+    - name: Restart coordinator service
+      ansible.builtin.systemd_service:
+        name: tollgate-coordinator
+        state: restarted
+        enabled: true
+
+    - name: Wait for coordinator to start
+      ansible.builtin.pause:
+        seconds: 8
+
+    - name: Verify coordinator is healthy
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:8081/info"
+        method: GET
+      register: coord_check
+      retries: 10
+      delay: 3
+      until: coord_check.status == 200
+      changed_when: false

@@ -1,10 +1,14 @@
 export type BallotQuestion = {
   id: string;
+  type: "choice" | "scale" | "text";
   prompt: string;
-  options: Array<{
-    value: string;
-    label: string;
-  }>;
+  options?: Array<{ value: string; label: string }>;
+  rawOptions?: string[];
+  select?: "single" | "multiple";
+  min?: number;
+  max?: number;
+  step?: number;
+  max_length?: number;
 };
 
 export type MintInvoiceResponse = {
@@ -36,48 +40,56 @@ export type RelayPublishResult = {
 };
 
 export type ClaimDebugPayload = {
-  npub: string;
-  coordinatorNpub: string;
-  mintApiUrl: string;
-  relays: string[];
-  quoteId: string;
-  invoice: string;
-  event: {
-    id: string;
-    pubkey: string;
-    kind: number;
-    created_at: number;
-    content: string;
-    tags: string[][];
-    sig: string;
+  npub?: string;
+  coordinatorNpub?: string;
+  mintApiUrl?: string;
+  relays?: string[];
+  quoteId?: string;
+  invoice?: string;
+  event?: {
+    id?: string;
+    pubkey?: string;
+    kind?: number;
+    created_at?: number;
+    content?: string;
+    tags?: string[][];
+    sig?: string;
   };
-  publishResult: {
-    eventId: string;
-    successes: number;
-    failures: number;
-    relayResults: RelayPublishResult[];
+  publishResult?: {
+    eventId?: string;
+    successes?: number;
+    failures?: number;
+    relayResults?: Array<{
+      relay?: string;
+      success?: boolean;
+      error?: string;
+    }>;
   };
 };
 
 export type BallotDebugPayload = {
-  electionId: string;
-  proofHash: string;
-  relays: string[];
-  event: {
-    id: string;
-    pubkey: string;
-    kind: number;
-    created_at: number;
-    content: string;
-    tags: string[][];
-    sig: string;
+  electionId?: string;
+  proofHash?: string;
+  relays?: string[];
+  event?: {
+    id?: string;
+    pubkey?: string;
+    kind?: number;
+    created_at?: number;
+    content?: string;
+    tags?: string[][];
+    sig?: string;
   };
-  publishResult: {
-    eventId: string;
-    ballotNpub: string;
-    successes: number;
-    failures: number;
-    relayResults: RelayPublishResult[];
+  publishResult?: {
+    eventId?: string;
+    ballotNpub?: string;
+    successes?: number;
+    failures?: number;
+    relayResults?: Array<{
+      relay?: string;
+      success?: boolean;
+      error?: string;
+    }>;
   };
 };
 
@@ -115,9 +127,7 @@ export async function fetchMintProof(mintApiUrl: string, quoteId: string) {
 export async function logClaimDebug(payload: ClaimDebugPayload) {
   return fetchJson<{ ok: true }>("/api/debug/claim-log", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
 }
@@ -125,9 +135,7 @@ export async function logClaimDebug(payload: ClaimDebugPayload) {
 export async function logBallotDebug(payload: BallotDebugPayload) {
   return fetchJson<{ ok: true }>("/api/debug/ballot-log", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
 }

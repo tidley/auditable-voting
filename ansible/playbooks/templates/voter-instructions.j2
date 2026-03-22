@@ -1,0 +1,25 @@
+╔══════════════════════════════════════════════════════════════╗
+║  SEC-06 Feedback Election — Ready to Vote                    ║
+╠══════════════════════════════════════════════════════════════╣
+║                                                              ║
+║  Voter Portal:                                               ║
+║    http://vote.mints.{{ vps_ip }}.sslip.io/                   ║
+║                                                              ║
+║  Coordinator API:                                             ║
+║    http://{{ vps_ip }}:8081/info                              ║
+║                                                              ║
+║  Mint:                                                       ║
+║    http://{{ vps_ip }}:3338/v1/info                           ║
+║                                                              ║
+║  Coordinator npub:                                            ║
+║    {{ coord_info.json.coordinatorNpub | default('unknown') }} ║
+║                                                              ║
+║  Eligible voters: {{ eligible_npubs | length }}                ║
+║  Election ID:    {{ effective_election_id }}                  ║
+║  Election expires: {{ election_expiry }}                      ║
+║                                                              ║
+║  To vote:                                                    ║
+║    1. Open the Voter Portal URL above                        ║
+║    2. Enter your npub (must be in eligible list)             ║
+║    3. Follow the steps: claim → mint → vote → submit         ║
+╚══════════════════════════════════════════════════════════════╝

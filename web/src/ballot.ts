@@ -1,5 +1,6 @@
 import { finalizeEvent, generateSecretKey, getPublicKey, nip19, SimplePool } from "nostr-tools";
-import type { CashuProof, RelayPublishResult } from "./cashuMintApi";
+import type { RelayPublishResult } from "./cashuMintApi";
+import type { ElectionQuestion } from "./coordinatorApi";
 
 export const DEFAULT_VOTE_RELAYS = [
   "wss://relay.damus.io",
@@ -9,46 +10,61 @@ export const DEFAULT_VOTE_RELAYS = [
 
 export const BALLOT_EVENT_KIND = 38000;
 
-export async function hashProof(proof: CashuProof) {
-  const canonicalProof = JSON.stringify({
-    quoteId: proof.quoteId,
-    npub: proof.npub,
-    amount: proof.amount,
-    secret: proof.secret,
-    signature: proof.signature,
-    mintUrl: proof.mintUrl,
-    issuedAt: proof.issuedAt
-  });
+export type BallotResponse = {
+  question_id: string;
+  value?: string | number;
+  values?: string[];
+};
 
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonicalProof));
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+function formatAnswersAsResponses(
+  answers: Record<string, string | string[] | number>,
+  questions: ElectionQuestion[]
+): BallotResponse[] {
+  return questions.map((q) => {
+    const answer = answers[q.id];
+    if (answer === undefined) {
+      return { question_id: q.id };
+    }
+
+    if (q.type === "choice" && q.select === "multiple") {
+      if (Array.isArray(answer)) {
+        return { question_id: q.id, values: answer };
+      }
+      return { question_id: q.id, values: [String(answer)] };
+    }
+
+    if (q.type === "scale" && typeof answer === "number") {
+      return { question_id: q.id, value: answer };
+    }
+
+    return { question_id: q.id, value: String(answer) };
+  });
 }
 
 export async function publishBallotEvent(input: {
   electionId: string;
-  proof: CashuProof;
   relays?: string[];
-  answers: Record<string, string>;
+  answers: Record<string, string | string[] | number>;
+  questions: ElectionQuestion[];
 }) {
   const relays = input.relays && input.relays.length > 0 ? input.relays : DEFAULT_VOTE_RELAYS;
   const ballotSecretKey = generateSecretKey();
   const ballotPubkey = getPublicKey(ballotSecretKey);
   const ballotNpub = nip19.npubEncode(ballotPubkey);
-  const proofHash = await hashProof(input.proof);
+
+  const responses = formatAnswersAsResponses(input.answers, input.questions);
+
   const event = finalizeEvent(
     {
       kind: BALLOT_EVENT_KIND,
       created_at: Math.floor(Date.now() / 1000),
       tags: [
-        ["t", "auditable-vote"],
-        ["election", input.electionId],
-        ["proof_hash", proofHash],
-        ["mint", input.proof.mintUrl]
+        ["election", input.electionId]
       ],
       content: JSON.stringify({
         election_id: input.electionId,
-        proof_hash: proofHash,
-        ballot: input.answers
+        responses,
+        timestamp: Math.floor(Date.now() / 1000)
       })
     },
     ballotSecretKey
@@ -71,8 +87,8 @@ export async function publishBallotEvent(input: {
     return {
       eventId: event.id,
       ballotNpub,
+      ballotSecretKey,
       event,
-      proofHash,
       relays,
       successes: relayResults.filter((result) => result.success).length,
       failures: relayResults.filter((result) => !result.success).length,

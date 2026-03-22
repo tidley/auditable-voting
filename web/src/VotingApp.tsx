@@ -1,12 +1,15 @@
 import { useState } from "react";
-import { DEFAULT_VOTE_RELAYS, publishBallotEvent } from "./ballot";
-import { logBallotDebug } from "./cashuMintApi";
+import { publishBallotEvent, BALLOT_EVENT_KIND, DEFAULT_VOTE_RELAYS } from "./ballot";
 import { loadStoredWalletBundle } from "./cashuWallet";
-import { formatDateTime } from "./nostrIdentity";
+import { formatDateTime, getNostrEventVerificationUrl } from "./nostrIdentity";
+import { submitProofViaDm, type DmPublishResult } from "./proofSubmission";
+import type { CashuProof } from "./cashuBlind";
+import { fetchTally, type TallyInfo } from "./coordinatorApi";
 
 type VotePublishResult = {
   eventId: string;
   ballotNpub: string;
+  ballotSecretKey: Uint8Array;
   event: {
     id: string;
     pubkey: string;
@@ -16,7 +19,6 @@ type VotePublishResult = {
     tags: string[][];
     sig: string;
   };
-  proofHash: string;
   relays: string[];
   successes: number;
   failures: number;
@@ -29,22 +31,54 @@ type VotePublishResult = {
 
 export default function VotingApp() {
   const [walletBundle] = useState(() => loadStoredWalletBundle());
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [answers, setAnswers] = useState<Record<string, string | string[] | number>>({});
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [publishResult, setPublishResult] = useState<VotePublishResult | null>(null);
+  const [submittingProof, setSubmittingProof] = useState(false);
+  const [dmResult, setDmResult] = useState<DmPublishResult | null>(null);
+  const [tally, setTally] = useState<TallyInfo | null>(null);
 
   const storedProof = walletBundle?.proof ?? null;
-  const electionId = walletBundle?.invoice.electionId ?? "";
-  const questions = walletBundle?.invoice.questions ?? [];
+  const electionId = walletBundle?.election?.electionId ?? "";
+  const questions = walletBundle?.election?.questions ?? [];
+  const coordinatorNpub = walletBundle?.coordinatorNpub ?? "";
+  const relays = (walletBundle?.relays?.length ?? 0) > 0 ? walletBundle!.relays : DEFAULT_VOTE_RELAYS;
+
+  const ballotVerificationUrl = publishResult && publishResult.successes > 0
+    ? getNostrEventVerificationUrl({
+        eventId: publishResult.eventId,
+        relays: publishResult.relays,
+        author: publishResult.event.pubkey,
+        kind: BALLOT_EVENT_KIND
+      })
+    : null;
+
   const canSubmit = Boolean(
     storedProof &&
     electionId.trim() &&
     questions.length > 0 &&
-    questions.every((question) => Boolean(answers[question.id])) &&
+    questions.every((q) => {
+      const a = answers[q.id];
+      if (a === undefined) return false;
+      if (q.type === "choice" && q.select === "multiple") return Array.isArray(a) && a.length > 0;
+      return true;
+    }) &&
     !publishing
   );
+
+  function setAnswer(questionId: string, value: string | string[] | number) {
+    setAnswers((prev) => ({ ...prev, [questionId]: value }));
+  }
+
+  function toggleMultiChoice(questionId: string, option: string) {
+    const current = (answers[questionId] as string[] | undefined) ?? [];
+    const next = current.includes(option)
+      ? current.filter((v) => v !== option)
+      : [...current, option];
+    setAnswers((prev) => ({ ...prev, [questionId]: next }));
+  }
 
   async function submitBallot() {
     if (!storedProof) {
@@ -55,13 +89,18 @@ export default function VotingApp() {
     }
 
     if (!electionId.trim()) {
-      const message = "No election ID found. Request a fresh invoice first.";
+      const message = "No election ID found. Request a fresh quote first.";
       setError(message);
       window.alert(message);
       return;
     }
 
-    if (questions.some((question) => !answers[question.id])) {
+    if (questions.some((q) => {
+      const a = answers[q.id];
+      if (a === undefined) return true;
+      if (q.type === "choice" && q.select === "multiple") return !Array.isArray(a) || a.length === 0;
+      return false;
+    })) {
       const message = "Answer all ballot questions before submitting.";
       setError(message);
       window.alert(message);
@@ -75,35 +114,17 @@ export default function VotingApp() {
     try {
       const result = await publishBallotEvent({
         electionId: electionId.trim(),
-        proof: storedProof,
-        answers
+        answers,
+        questions
       });
-
-      try {
-        await logBallotDebug({
-          electionId: electionId.trim(),
-          proofHash: result.proofHash,
-          relays: result.relays,
-          event: result.event,
-          publishResult: {
-            eventId: result.eventId,
-            ballotNpub: result.ballotNpub,
-            successes: result.successes,
-            failures: result.failures,
-            relayResults: result.relayResults
-          }
-        });
-      } catch {
-        // ignore debug log failures
-      }
 
       setPublishResult(result);
       setStatus(`Ballot published for election ${electionId.trim()}.`);
 
       if (result.failures > 0) {
         const failedRelayMessage = result.relayResults
-          .filter((relayResult) => !relayResult.success)
-          .map((relayResult) => `${relayResult.relay}: ${relayResult.error ?? "Unknown error"}`)
+          .filter((rr) => !rr.success)
+          .map((rr) => `${rr.relay}: ${rr.error ?? "Unknown error"}`)
           .join("\n");
         window.alert(`Some relays rejected the ballot publish:\n${failedRelayMessage}`);
       }
@@ -116,22 +137,65 @@ export default function VotingApp() {
     }
   }
 
+  async function submitProof() {
+    if (!storedProof || !publishResult) {
+      setError("Publish ballot and have a proof before submitting.");
+      return;
+    }
+
+    setSubmittingProof(true);
+    setStatus(null);
+    setError(null);
+
+    try {
+      const result = await submitProofViaDm({
+        voterSecretKey: publishResult.ballotSecretKey,
+        coordinatorNpub,
+        voteEventId: publishResult.eventId,
+        proof: storedProof as unknown as CashuProof,
+        relays
+      });
+
+      setDmResult(result);
+      setStatus(`Proof DM sent to coordinator. ${result.successes} relay${result.successes === 1 ? "" : "s"} confirmed.`);
+    } catch (dmError) {
+      setError(dmError instanceof Error ? dmError.message : "Could not send proof DM");
+    } finally {
+      setSubmittingProof(false);
+    }
+  }
+
+  async function checkTally() {
+    try {
+      const result = await fetchTally();
+      setTally(result);
+      if (result) {
+        setStatus(`Tally: ${result.total_accepted_votes ?? 0} accepted votes out of ${result.total_published_votes} published.`);
+      }
+    } catch {
+      setError("Could not fetch tally");
+    }
+  }
+
   return (
     <main className="page-shell">
       <section className="hero-card">
-        <p className="eyebrow">Voting Page</p>
-        <h1>Cast your ballot with a proof-backed Nostr event.</h1>
+        <div className="hero-brand">
+          <img src="/images/logo.png" alt="" width={28} height={28} />
+          <p className="eyebrow">Voting Page</p>
+        </div>
+        <h1 className="hero-title">Cast your ballot with a proof-backed Nostr event.</h1>
         <p className="hero-copy">
-          Use your single stored voting proof, answer the election questions returned by the invoice flow, and publish a ballot event that includes the hash of your proof.
+          Use your stored voting proof, answer the election questions, publish a ballot event, then submit your proof to the coordinator.
         </p>
-        <p className="field-hint hero-hint">Ballots publish to: {DEFAULT_VOTE_RELAYS.join(", ")}</p>
+        <p className="field-hint hero-hint"><img className="inline-icon" src="/images/nostr/relayflasks.png" alt="" width={18} height={18} />Relays: {relays.join(", ")}</p>
         <div className="button-row">
           <a className="ghost-button link-button" href="/">Return to home page</a>
         </div>
       </section>
 
       <section className="content-grid">
-        <article className="panel panel-accent">
+        <article className="panel panel-wide">
           <div className="panel-header">
             <div>
               <p className="panel-kicker">Step 1</p>
@@ -139,25 +203,34 @@ export default function VotingApp() {
             </div>
           </div>
 
-          <label className="field-label">Election ID</label>
-          <div className="derived-box derived-box-inline">
-            <code className="code-block code-block-muted">{electionId || "No election loaded"}</code>
-          </div>
-
-          {storedProof ? (
-            <div className="derived-box">
-              <p className="code-label">Stored proof</p>
-              <code className="code-block code-block-muted">{storedProof.secret}</code>
-              <p className="field-hint">Quote {storedProof.quoteId}</p>
-              <p className="field-hint">Mint: {storedProof.mintUrl}</p>
-              <p className="field-hint">Issued {formatDateTime(storedProof.issuedAt)}</p>
+          <div className="verification-grid">
+            <div>
+              <label className="field-label">Election ID</label>
+              <div className="derived-box derived-box-inline">
+                <code className="code-block code-block-muted">{electionId || "No election loaded"}</code>
+              </div>
+              {walletBundle?.election?.title && (
+                <p className="field-hint">{walletBundle.election.title}</p>
+              )}
             </div>
-          ) : (
-            <p className="empty-copy">No voting proof found. Return home and mint your proof first.</p>
-          )}
+
+            <div>
+              {storedProof ? (
+                <div className="derived-box">
+                  <p className="code-label"><img className="inline-icon" src="/images/bitcoin-logo.png" alt="" width={18} height={18} />Stored proof</p>
+                  <code className="code-block code-block-muted">{JSON.stringify(storedProof, null, 2)}</code>
+                </div>
+              ) : (
+                <div style={{ textAlign: "center", padding: "12px 0" }}>
+                  <img className="empty-state-image" src="/images/nostr/underconstruction-dark.png" alt="" width={120} />
+                  <p className="empty-copy">No voting proof found. Return home and mint your proof first.</p>
+                </div>
+              )}
+            </div>
+          </div>
         </article>
 
-        <article className="panel">
+        <article className="panel panel-wide">
           <div className="panel-header">
             <div>
               <p className="panel-kicker">Step 2</p>
@@ -169,24 +242,81 @@ export default function VotingApp() {
             questions.map((question, index) => (
               <div key={question.id} className={index === 0 ? "question-card" : "question-card question-card-spaced"}>
                 <p className="question-title">{question.prompt}</p>
-                <div className="option-list">
-                  {question.options.map((option) => (
-                    <label key={option.value} className="option-row">
-                      <input
-                        type="radio"
-                        name={question.id}
-                        value={option.value}
-                        checked={answers[question.id] === option.value}
-                        onChange={(event) => setAnswers((current) => ({ ...current, [question.id]: event.target.value }))}
-                      />
-                      <span>{option.label}</span>
-                    </label>
-                  ))}
-                </div>
+                {question.description && (
+                  <p className="field-hint">{question.description}</p>
+                )}
+
+                {question.type === "choice" && (question.select !== "multiple") && (
+                  <div className="option-list">
+                    {(question.options ?? []).map((option: string) => {
+                      const value = option;
+                      const label = option;
+                      return (
+                        <label key={value} className="option-row">
+                          <input
+                            type="radio"
+                            name={question.id}
+                            value={value}
+                            checked={answers[question.id] === value}
+                            onChange={() => setAnswer(question.id, value)}
+                          />
+                          <span>{label}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {question.type === "choice" && question.select === "multiple" && (
+                  <div className="option-list">
+                    {(question.options ?? []).map((option: string) => {
+                      const value = option;
+                      const selected = Array.isArray(answers[question.id]) && (answers[question.id] as string[]).includes(value);
+                      return (
+                        <label key={value} className="option-row">
+                          <input
+                            type="checkbox"
+                            checked={selected}
+                            onChange={() => toggleMultiChoice(question.id, value)}
+                          />
+                          <span>{value}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {question.type === "scale" && (
+                  <div className="scale-input">
+                    <input
+                      type="range"
+                      min={question.min ?? 1}
+                      max={question.max ?? 10}
+                      step={question.step ?? 1}
+                      value={Number(answers[question.id] ?? question.min ?? 1)}
+                      onChange={(e) => setAnswer(question.id, Number(e.target.value))}
+                    />
+                    <span className="field-hint">{answers[question.id] ?? "-"}</span>
+                  </div>
+                )}
+
+                {question.type === "text" && (
+                  <textarea
+                    className="text-area"
+                    maxLength={question.max_length}
+                    rows={3}
+                    value={String(answers[question.id] ?? "")}
+                    onChange={(e) => setAnswer(question.id, e.target.value)}
+                    placeholder="Your answer..."
+                  />
+                )}
               </div>
             ))
           ) : (
-            <p className="empty-copy">No ballot questions loaded. Request a fresh invoice from the voter portal first.</p>
+            <div style={{ textAlign: "center", padding: "12px 0" }}>
+              <img className="empty-state-image" src="/images/nostr/underconstruction-dark.png" alt="" width={120} />
+              <p className="empty-copy">No ballot questions loaded. Request a fresh quote from the voter portal first.</p>
+            </div>
           )}
 
           <div className="button-row">
@@ -194,6 +324,68 @@ export default function VotingApp() {
               {publishing ? "Publishing ballot..." : "Submit ballot"}
             </button>
           </div>
+        </article>
+
+        <article className="panel panel-wide">
+          <div className="panel-header">
+            <div>
+              <p className="panel-kicker">Step 3</p>
+              <h2>Submit proof to coordinator</h2>
+            </div>
+            {dmResult && <span className="count-pill">Proof sent</span>}
+          </div>
+
+          <p className="field-hint">
+            After publishing your ballot, send your Cashu proof to the coordinator via encrypted DM so it can be burned and your vote validated.
+          </p>
+
+          <div className="button-row">
+            <button
+              className="secondary-button"
+              onClick={() => void submitProof()}
+              disabled={!publishResult || !storedProof || submittingProof}
+            >
+              {submittingProof ? "Sending..." : "Submit proof"}
+            </button>
+          </div>
+
+          {dmResult && (
+            <div className="notice notice-success">
+              Proof DM `{dmResult.eventId}` sent to {dmResult.successes} relay{dmResult.successes === 1 ? "" : "s"}.
+            </div>
+          )}
+        </article>
+
+        <article className="panel panel-wide">
+          <div className="panel-header">
+            <div>
+              <p className="panel-kicker">Step 4</p>
+              <h2>Check vote acceptance</h2>
+            </div>
+          </div>
+
+          <p className="field-hint">
+            Poll the coordinator tally to see if your vote has been accepted (proof burned).
+          </p>
+
+          <div className="button-row">
+            <button className="ghost-button" onClick={() => void checkTally()}>
+              Check tally
+            </button>
+          </div>
+
+          {tally && (
+            <div className="detail-stack">
+              <p className="field-hint">Published votes: {tally.total_published_votes}</p>
+              <p className="field-hint">Accepted votes: {tally.total_accepted_votes ?? 0}</p>
+              {tally.spent_commitment_root && (
+                <p className="field-hint">Merkle root: <code className="code-block code-block-muted">{tally.spent_commitment_root.slice(0, 16)}...</code></p>
+              )}
+              {tally.status && (
+                <p className="field-hint">Status: {tally.status}</p>
+              )}
+            </div>
+          )}
         </article>
 
         <article className="panel panel-wide">
@@ -215,13 +407,14 @@ export default function VotingApp() {
                 <code className="code-block code-block-muted">{publishResult.ballotNpub}</code>
               </div>
               <div>
-                <p className="code-label">Proof hash</p>
-                <code className="code-block code-block-muted">{publishResult.proofHash}</code>
-              </div>
-              <div>
                 <p className="field-hint">Relay attempts: {publishResult.successes + publishResult.failures}</p>
                 <p className="field-hint">Successes: {publishResult.successes}</p>
                 <p className="field-hint">Failures: {publishResult.failures}</p>
+                {ballotVerificationUrl && (
+                  <a className="notice-link" href={ballotVerificationUrl} target="_blank" rel="noreferrer">
+                    Verify this ballot event on njump
+                  </a>
+                )}
               </div>
             </div>
           ) : (
