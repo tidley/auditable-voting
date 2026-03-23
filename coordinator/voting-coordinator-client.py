@@ -1393,6 +1393,27 @@ async def run_coordinator(
         nostr_client, active_election_id=args.election_id,
     )
 
+    if args.election_id:
+        local_root = compute_eligible_root(list(eligible_set))
+        if local_root:
+            e38007_events = event_store.get_events(38007)
+            for evt in e38007_events:
+                evt_election = evt.get("election") or evt.get("election_id", "")
+                if evt_election != args.election_id:
+                    continue
+                evt_author = evt.get("pubkey", "")
+                if evt_author == coordinator_pubkey_hex:
+                    continue
+                evt_root = None
+                for tag in evt.get("tags", []):
+                    if isinstance(tag, list) and len(tag) >= 2 and tag[0] == "eligible-root":
+                        evt_root = tag[1]
+                        break
+                if evt_root and evt_root != local_root:
+                    log.warning("Coordinator %s has different eligible-root: %s (ours: %s)", evt_author[:16], evt_root[:16], local_root[:16])
+                elif evt_root:
+                    log.info("Coordinator %s eligible-root matches: %s", evt_author[:16], local_root[:16])
+
     handler = CoordinatorHandler(
         eligible_set=eligible_set,
         issued_set=issued_set,
