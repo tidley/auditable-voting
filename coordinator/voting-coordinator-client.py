@@ -546,16 +546,44 @@ def _publish_nostr_event(nostr_client: Client, kind: int, content: dict, tags: l
         pass
 
 
-def _publish_38007(nostr_client: Client, election_id: str, max_supply: int, start_time: int, end_time: int) -> None:
+def _publish_38007(nostr_client: Client, election_id: str, max_supply: int, start_time: int, end_time: int, confirm_end: int | None = None, eligible_root: str | None = None, eligible_count: int | None = None) -> None:
     content = {
         "election_id": election_id,
         "max_supply": max_supply,
-        "start_time": start_time,
-        "end_time": end_time,
+        "vote_start": start_time,
+        "vote_end": end_time,
+    }
+    if confirm_end is not None:
+        content["confirm_end"] = confirm_end
+    tags = [Tag.parse(["election", election_id])]
+    if eligible_root is not None:
+        tags.append(Tag.parse(["eligible-root", eligible_root]))
+    if eligible_count is not None:
+        tags.append(Tag.parse(["eligible-count", str(eligible_count)]))
+    _publish_nostr_event(nostr_client, 38007, content, tags)
+    log.info("Published kind 38007 join event: max_supply=%d, eligible_root=%s", max_supply, (eligible_root or "")[:16])
+
+
+def _publish_38009(nostr_client: Client, election_id: str, eligible_root: str, eligible_count: int) -> None:
+    content = {
+        "election_id": election_id,
+        "eligible_root": eligible_root,
+        "eligible_count": eligible_count,
     }
     tags = [Tag.parse(["election", election_id])]
-    _publish_nostr_event(nostr_client, 38007, content, tags)
-    log.info("Published kind 38007 hard cap: max_supply=%d", max_supply)
+    _publish_nostr_event(nostr_client, 38009, content, tags)
+    log.info("Published kind 38009 eligibility commitment: root=%s, count=%d", eligible_root[:16], eligible_count)
+
+
+def _publish_38012(nostr_client: Client, http_api: str, mint_url: str, relays: list[str]) -> None:
+    content = {
+        "http_api": http_api,
+        "mint_url": mint_url,
+        "supported_relays": relays,
+    }
+    tags = [Tag.parse(["t", "coordinator-info"])]
+    _publish_nostr_event(nostr_client, 38012, content, tags)
+    log.info("Published kind 38012 coordinator info: http_api=%s, mint=%s", http_api, mint_url)
 
 
 def _publish_38005(nostr_client: Client, election_id: str, issuance_tree: IssuanceCommitmentTree) -> None:
@@ -1271,6 +1299,16 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Election ID to lock this coordinator to. If omitted, coordinator starts without an election filter and auto-discovers elections from relay events.",
     )
+    parser.add_argument(
+        "--join-election",
+        default=None,
+        help="Election ID (38008 event ID) to join as a participating coordinator. Coordinator will verify eligible set, publish 38007/38009/38012, then start normal operation.",
+    )
+    parser.add_argument(
+        "--http-api-url",
+        default=None,
+        help="Public HTTP API URL for this coordinator (used in kind 38012 coordinator info). Example: https://coordinator.example.com:8081",
+    )
     return parser.parse_args()
 
 
@@ -1475,6 +1513,69 @@ async def async_main() -> int:
             log.warning("Mint HTTP returned %d for %s", resp.status_code, args.mint_url)
     except requests.RequestException as exc:
         log.warning("Failed to connect to mint at %s: %s", args.mint_url, exc)
+
+    if args.join_election:
+        log.info("Joining election %s...", args.join_election[:16])
+        nostr_client = Client(signer)
+        for relay in args.relays:
+            await nostr_client.add_relay(RelayUrl.parse(relay))
+        await nostr_client.connect()
+        await asyncio.sleep(2)
+
+        election_filter = Filter().kinds([Kind(38008)]).ids([args.join_election]).limit(1)
+        events = await nostr_client.fetch_events(election_filter, timeout=timedelta(seconds=15))
+        events_vec = events.to_vec()
+
+        if not events_vec:
+            log.error("Election event %s not found on relay", args.join_election[:16])
+            raise SystemExit(1)
+
+        election_event = events_vec[0]
+        election_data = extract_event_data(election_event)
+        election_content = json.loads(election_data.get("content", "{}"))
+        election_tags = election_data.get("tags", [])
+
+        canonical_root = None
+        canonical_count = None
+        vote_start = election_content.get("vote_start", election_content.get("start_time", 0))
+        vote_end = election_content.get("vote_end", election_content.get("end_time", 0))
+        confirm_end = election_content.get("confirm_end", vote_end + 3600)
+
+        for tag in election_tags:
+            if isinstance(tag, list) and len(tag) >= 2:
+                if tag[0] == "eligible-root":
+                    canonical_root = tag[1]
+                elif tag[0] == "eligible-count":
+                    canonical_count = int(tag[1])
+
+        if not canonical_root:
+            log.error("Election event has no eligible-root tag")
+            raise SystemExit(1)
+
+        local_root = compute_eligible_root(list(eligible_set))
+        if local_root != canonical_root:
+            log.error("Eligible root mismatch! Local=%s, Canonical=%s", local_root, canonical_root)
+            log.error("Your eligible-voters.json does not match the canonical eligible set.")
+            raise SystemExit(1)
+
+        log.info("Eligible root verified: %s", canonical_root[:16])
+
+        max_supply = canonical_count or len(eligible_set)
+
+        _publish_38007(nostr_client, args.join_election, max_supply, vote_start, vote_end, confirm_end, canonical_root, canonical_count)
+        await asyncio.sleep(1)
+        _publish_38009(nostr_client, args.join_election, canonical_root, max_supply)
+        await asyncio.sleep(1)
+
+        http_api_url = args.http_api_url or f"http://{args.http_host}:{args.http_port}"
+        _publish_38012(nostr_client, http_api_url, args.public_mint_url or args.mint_url, args.relays)
+        await asyncio.sleep(1)
+
+        log.info("Successfully joined election %s", args.join_election[:16])
+        log.info("Setting election-id to %s for normal operation", args.join_election[:16])
+        args.election_id = args.join_election
+
+        await nostr_client.disconnect()
 
     return await run_coordinator(
         args, keys, coordinator_pubkey, coordinator_npub, coordinator_pubkey_hex,
