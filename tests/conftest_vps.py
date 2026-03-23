@@ -1,8 +1,10 @@
-VPS_IP = "23.182.128.64"
+import os
+
+VPS_IP = os.environ.get("VPS_IP", "23.182.128.64")
 VPS_HTTP_PORT = 3338
 VPS_GRPC_PORT = 8086
-VPS_SSH_KEY = "~/.ssh/tollgate"
-VPS_SSH_USER = "root"
+VPS_SSH_KEY = os.environ.get("VPS_SSH_KEY", "~/.ssh/tollgate")
+VPS_SSH_USER = os.environ.get("VPS_SSH_USER", "root")
 
 MINT_HTTP_URL = f"http://{VPS_IP}:{VPS_HTTP_PORT}"
 MINT_GRPC_LOCAL_PORT = 18086

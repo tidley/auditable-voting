@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import re
 import time
 
@@ -7,12 +8,10 @@ import pytest
 import requests
 from playwright.sync_api import expect
 
+from tests.conftest import BASE_URL, COORDINATOR_HTTP, COORDINATOR_DIR, VPS_IP
+
 log = logging.getLogger("ui.voting")
 
-COORDINATOR_HTTP = "http://23.182.128.64:8081"
-VPS_IP = "23.182.128.64"
-BASE_URL = "http://vote.mints.23.182.128.64.sslip.io"
-COORDINATOR_DIR = "/opt/tollgate/coordinator"
 COORDINATOR_VENV_PYTHON = f"{COORDINATOR_DIR}/.venv/bin/python3"
 SSH_CMD = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=15", f"root@{VPS_IP}"]
 

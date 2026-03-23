@@ -76,6 +76,7 @@ auditable-voting/
 │   ├── test_merkle_trees.py            # Unit: MerkleTree variants
 │   ├── test_publish_tally_events.py    # Unit: tally event publishing
 │   ├── test_voter_flow.py              # Voter: blinded output, quote polling
+│   ├── test_domain_deploy.py           # HTTPS/TLS/domain verification (after deploy-domain)
 │   ├── test_ui_dashboard.py     # Playwright dashboard tests
 │   ├── test_ui_issuance.py      # Playwright issuance flow tests
 │   └── test_ui_voting.py        # Playwright voting flow tests
@@ -187,6 +188,23 @@ cd web && npm install
 
 `.env.example` is the committed template. The keys in `.env` and `.env.example` must match exactly.
 
+### Deployment Secrets (deploy.env)
+
+`deploy.env` (gitignored) holds all operator-specific secrets. Copy from the template:
+
+```bash
+cp deploy.env.example deploy.env
+```
+
+Two sections separated by purpose:
+
+| Section | Variables | Used by |
+|---------|-----------|---------|
+| `make deploy` (HTTP/sslip.io) | `VPS_IP`, `SSH_KEY_PATH`, `ANSIBLE_USER` | `make deploy` |
+| `make deploy-domain` (HTTPS/custom domain) | `VOTING_DOMAIN`, `CF_API_EMAIL`, `CF_DNS_API_TOKEN`, `ACME_EMAIL` | `make deploy-domain` |
+
+The Makefile reads `deploy.env` via `-include deploy.env` and passes values as Ansible extra-vars. Swap this file when changing operators or deploying to a different VPS.
+
 ## Key Dependencies
 
 ### Python (in `.venv/`)
@@ -290,6 +308,9 @@ Always use the venv Python:
 
 # Frontend unit tests (vitest)
 cd web && npx vitest run
+
+# Domain/TLS tests (after make deploy-domain)
+BASE_URL=https://vote.orangesync.tech .venv/bin/python -m pytest tests/test_domain_deploy.py -v
 ```
 
 ## Architecture
@@ -341,11 +362,38 @@ Browser --> Traefik (:80)
 
 ## Deployment
 
+### Make targets
+
 ```bash
-ansible-playbook ansible/playbooks/deploy-and-prepare.yml
+# HTTP only (sslip.io, no domain needed)
+make deploy
+
+# HTTPS with custom domain + Cloudflare TLS
+make deploy-domain
+
+# Frontend only
+make deploy-client
+
+# Coordinator only
+make deploy-coordinator
 ```
 
-Deploys Traefik, coordinator, frontend, and publishes election with eligibility data to the VPS.
+### How it works
+
+- `make deploy` — Deploys the full stack (Traefik, coordinator, frontend) over HTTP using sslip.io for free wildcard DNS. Reads `VPS_IP`, `SSH_KEY_PATH`, `ANSIBLE_USER` from `deploy.env`.
+- `make deploy-domain` — Same as `make deploy` but enables TLS via Let's Encrypt DNS-01 challenge (Cloudflare). Passes `tls_enabled=true`, `voting_domain`, `acme_email`, and Cloudflare API credentials as extra-vars. Requires: (1) a wildcard DNS A record `*.orangesync.tech` pointing at the VPS, (2) a Cloudflare DNS API token with zone-level permissions.
+
+### Prerequisites for make deploy-domain
+
+1. **DNS**: Create an A record at Cloudflare: `vote.orangesync.tech -> <VPS_IP>` (or a wildcard `*.orangesync.tech -> <VPS_IP>`)
+2. **CF API token**: Create a DNS-only API token at Cloudflare, add `CF_API_EMAIL` and `CF_DNS_API_TOKEN` to `deploy.env`
+
+### Known Issues
+
+- **Mint keyset rotation timeout**: Both `make deploy` and `make deploy-domain` may time out during the "Rotate Mint Keyset" phase (mint regeneration can exceed 10 minutes). The core deploy (Traefik, coordinator, voting-client) completes successfully before the timeout. The mint will finish starting on its own — check with `ssh root@<VPS_IP> "docker ps | grep mint-mint1"`.
+
+1. **DNS**: Create an A record at Cloudflare: `vote.orangesync.tech -> <VPS_IP>` (or a wildcard `*.orangesync.tech -> <VPS_IP>`)
+2. **CF API token**: Create a DNS-only API token at Cloudflare, add `CF_API_EMAIL` and `CF_DNS_API_TOKEN` to `deploy.env`
 
 ### Other deployment commands
 

@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -22,7 +23,7 @@ from nostr_sdk import (
 
 log = logging.getLogger("e2e")
 
-VPS_IP = "23.182.128.64"
+VPS_IP = os.environ.get("VPS_IP", "23.182.128.64")
 COORDINATOR_HTTP = f"http://{VPS_IP}:8081"
 MINT_HTTP = f"http://{VPS_IP}:3338"
 COORDINATOR_INTERNAL_MINT = "http://127.0.0.1:3338"

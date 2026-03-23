@@ -1,20 +1,21 @@
 # =============================================================================
 # Auditable Voting - Global Variables
 # =============================================================================
-
-# --- VPS Connection ---
-vps_ip: "23.182.128.64"
+#
+# Secrets (VPS IP, SSH key, Cloudflare creds) live in deploy.env.
+# See deploy.env.example for the template.
+#
+# Non-secret infrastructure defaults live here.
+# =============================================================================
 
 # --- Mode ---
 tls_enabled: false
+voting_domain: ""
 mint_domain: "mints.tollgate.me"
 
 # --- TLS / Let's Encrypt (only used when tls_enabled: true) ---
-acme_email: "admin@tollgate.me"
+# acme_email, acme_env_vars (CF_API_EMAIL, CF_DNS_API_TOKEN) come from deploy.env
 acme_dns_provider: "cloudflare"
-acme_env_vars:
-  CF_API_EMAIL: "your-cloudflare-email"
-  CF_DNS_API_TOKEN: "your-cloudflare-api-token"
 
 # --- Traefik ---
 traefik_version: "v3.6"

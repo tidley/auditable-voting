@@ -10,6 +10,7 @@ Thumbs.db
 
 # Environment
 .env
+deploy.env
 
 # Python
 __pycache__/

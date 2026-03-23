@@ -5,6 +5,8 @@ import time
 import pytest
 from playwright.sync_api import expect
 
+from tests.conftest import VOTING_URL
+
 log = logging.getLogger("ui.issuance")
 
 
@@ -164,7 +166,7 @@ class TestUIIssuance:
         log.info("Step 10: Proof persisted correctly in localStorage after reload")
 
         # Step 11: Navigate to vote page and verify proof is usable
-        page.goto("http://vote.mints.23.182.128.64.sslip.io/vote.html")
+        page.goto(VOTING_URL)
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(3000)
 

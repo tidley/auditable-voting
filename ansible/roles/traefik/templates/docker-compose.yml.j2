@@ -14,11 +14,10 @@ services:
 {% if tls_enabled %}
       - {{ traefik_data_dir }}/acme:/acme
 {% endif %}
-{% if tls_enabled and acme_env_vars %}
+{% if tls_enabled and cf_api_email is defined and cf_dns_api_token is defined %}
     environment:
-{% for key, value in acme_env_vars.items() %}
-      {{ key }}: "{{ value }}"
-{% endfor %}
+      CF_API_EMAIL: "{{ cf_api_email }}"
+      CF_DNS_API_TOKEN: "{{ cf_dns_api_token }}"
 {% endif %}
     networks:
       - {{ docker_network_name }}
