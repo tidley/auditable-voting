@@ -97,6 +97,21 @@ export function getMerkleProof(
   return path;
 }
 
+export function computeEligibleLeaf(npubHex: string): string {
+  return sha256(npubHex);
+}
+
+export function computeEligibleRoot(npubsHex: string[]): string {
+  if (npubsHex.length === 0) {
+    throw new Error("No npubs provided");
+  }
+  const leaves = npubsHex
+    .map(n => computeEligibleLeaf(n))
+    .sort();
+  const { root } = buildMerkleTree(leaves);
+  return root;
+}
+
 export function verifyMerkleProof(
   leaf: string,
   path: MerklePathNode[],

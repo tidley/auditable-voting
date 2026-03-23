@@ -244,6 +244,23 @@ class MerkleTree:
         return hashlib.sha256(data.encode()).hexdigest()
 
 
+class EligibleMerkleTree(MerkleTree):
+    def __init__(self):
+        super().__init__()
+
+    def compute_root_from_npubs(self, npubs_hex: list[str]) -> str | None:
+        leaves = sorted(hashlib.sha256(n.encode()).hexdigest() for n in npubs_hex)
+        if not leaves:
+            return None
+        self.bulk_load(leaves)
+        return self.get_root()
+
+
+def compute_eligible_root(npubs_hex: list[str]) -> str | None:
+    tree = EligibleMerkleTree()
+    return tree.compute_root_from_npubs(npubs_hex)
+
+
 class SpentCommitmentTree:
     def __init__(self):
         self._tree = MerkleTree()
