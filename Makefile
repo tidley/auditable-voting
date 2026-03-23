@@ -3,7 +3,7 @@ PYTEST := $(VENV_PYTHON) -m pytest
 TESTS_DIR := tests
 ANSIBLE := ansible-playbook
 
-.PHONY: help deploy deploy-client deploy-coordinator test test-fast test-all test-ui deploy-and-test deploy-and-test-all
+.PHONY: help deploy deploy-client deploy-coordinator init-election join-election test test-fast test-all test-ui deploy-and-test deploy-and-test-all
 
 help:
 	@echo ""
@@ -11,6 +11,10 @@ help:
 	@echo "    make deploy              Full stack + election (deploy-and-prepare.yml)"
 	@echo "    make deploy-client       Frontend only (deploy-voting-client.yml)"
 	@echo "    make deploy-coordinator  Coordinator only (deploy-coordinator.yml)"
+	@echo ""
+	@echo "  Election targets (multi-coordinator):"
+	@echo "    make init-election       Create a new election (38008 + 38007 + 38009 + 38012)"
+	@echo "    make join-election       Join an existing election (38007 + 38009 + 38012)"
 	@echo ""
 	@echo "  Test targets (sequential, stop on failure):"
 	@echo "    make test                Fast + integration (default, no VPS needed)"
@@ -38,6 +42,14 @@ deploy-client:
 
 deploy-coordinator:
 	$(ANSIBLE) ansible/playbooks/deploy-coordinator.yml
+
+# ─── Election (Multi-Coordinator) ────────────────────────────────────────────
+
+init-election:
+	$(ANSIBLE) ansible/playbooks/init-election.yml
+
+join-election:
+	$(ANSIBLE) ansible/playbooks/join-election.yml
 
 # ─── Test ────────────────────────────────────────────────────────────────────
 

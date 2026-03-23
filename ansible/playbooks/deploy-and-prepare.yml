@@ -304,19 +304,26 @@
                         "description": "Again: we are not looking for praise here, if you have something good to say please tell a friend or shout it into the void that is nostr."
                     }
                 ],
-                "start_time": {{ election_start }},
-                "end_time": {{ election_end }},
+                "vote_start": {{ election_start }},
+                "vote_end": {{ election_end }},
+                "confirm_end": {{ election_end + 3600 }},
                 "mint_urls": ["http://{{ ansible_host }}:3338"],
                 "keyset_id": "{{ mint_keyset_id }}"
             })
 
             keys = Keys.parse(nsec)
+            coordinator_npub = keys.public_key().to_bech32()
             signer = NostrSigner.keys(keys)
             client = Client(signer)
             await client.add_relay(RelayUrl.parse("ws://localhost:10547"))
             await client.connect()
             await asyncio.sleep(1)
-            tags = [Tag.parse(["election", election_id])]
+            tags = [
+                Tag.parse(["t", "election-announcement"]),
+                Tag.parse(["election", election_id]),
+                Tag.parse(["coordinator", coordinator_npub]),
+                Tag.parse(["mint", "http://{{ ansible_host }}:3338"]),
+            ]
             builder = EventBuilder(kind=Kind(38008), content=content).tags(tags)
             result = await client.send_event_builder(builder)
             await asyncio.sleep(3)
