@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchEligibility, resetEligibility, type EligibilityResponse } from "./voterManagementApi";
 import { SimplePool } from "nostr-tools";
-import { fetchCoordinatorInfo, fetchElectionsFromNostr, fetchTally, fetchElection, fetchIssuanceStatus, type TallyInfo, type ElectionInfo, type ElectionQuestion, type ElectionSummary, type IssuanceStatusResponse } from "./coordinatorApi";
+import { fetchCoordinatorInfo, fetchElectionsFromNostr, fetchTally, fetchElection, fetchIssuanceStatus, discoverCoordinators, fetchPerCoordinatorTallies, runAudit, type TallyInfo, type ElectionInfo, type ElectionQuestion, type ElectionSummary, type IssuanceStatusResponse, type CoordinatorDiscovery, type AuditResult, type PerCoordinatorTally } from "./coordinatorApi";
 import { USE_MOCK } from "./config";
 
 const EMPTY_ELIGIBILITY: EligibilityResponse = {
@@ -57,6 +57,10 @@ export default function DashboardApp() {
   const [coordinatorNpub, setCoordinatorNpub] = useState("");
   const [relayList, setRelayList] = useState<string[]>([]);
   const [issuanceStatus, setIssuanceStatus] = useState<IssuanceStatusResponse | null>(null);
+  const [auditResults, setAuditResults] = useState<AuditResult[] | null>(null);
+  const [perCoordinatorTallies, setPerCoordinatorTallies] = useState<PerCoordinatorTally[] | null>(null);
+  const [discoveredCoordinators, setDiscoveredCoordinators] = useState<CoordinatorDiscovery[]>([]);
+  const [runningAudit, setRunningAudit] = useState(false);
   const eligibleNpubs = useMemo(() => new Set(eligibility.eligibleNpubs), [eligibility]);
 
   const questions = useMemo(() => election?.questions ?? [], [election]);
@@ -86,6 +90,11 @@ export default function DashboardApp() {
       setTally(tallyResult);
       setElection(electionResult);
       setIssuanceStatus(issuanceResult);
+
+      if (electionResult?.event_id) {
+        const discovered = await discoverCoordinators(electionResult.event_id, info.relays);
+        setDiscoveredCoordinators(discovered);
+      }
       if (electionResult && !selectedElectionId) {
         setSelectedElectionId(electionResult.election_id);
       }
@@ -167,6 +176,40 @@ export default function DashboardApp() {
       setError(requestError instanceof Error ? requestError.message : "Unable to reset statuses");
     } finally {
       setResetting(false);
+    }
+  }
+
+  async function handleRunAudit() {
+    if (!election?.event_id || discoveredCoordinators.length === 0) {
+      setError("Need an election with discovered coordinators to run an audit.");
+      return;
+    }
+
+    setRunningAudit(true);
+    setError(null);
+
+    try {
+      const canonicalNpubs = eligibility.eligibleNpubs.length > 0
+        ? eligibility.eligibleNpubs
+        : [];
+
+      const tallies = await fetchPerCoordinatorTallies(discoveredCoordinators);
+      setPerCoordinatorTallies(tallies);
+
+      const audit = await runAudit(
+        election.event_id,
+        discoveredCoordinators,
+        canonicalNpubs,
+        election.vote_end,
+        election.confirm_end ?? election.vote_end + 86400,
+        relayList,
+      );
+      setAuditResults(audit);
+      setStatus(`Audit complete for ${audit.length} coordinator(s).`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Audit failed");
+    } finally {
+      setRunningAudit(false);
     }
   }
 
@@ -384,6 +427,117 @@ export default function DashboardApp() {
                 </div>
               );
             })}
+          </article>
+        </section>
+      )}
+
+      {discoveredCoordinators.length > 1 && (
+        <section className="content-grid">
+          <article className="panel panel-wide">
+            <div className="panel-header">
+              <div>
+                <p className="panel-kicker">Multi-Coordinator Audit</p>
+                <h2>Cross-coordinator verification</h2>
+              </div>
+              <span className="count-pill">{discoveredCoordinators.length} coordinator{discoveredCoordinators.length !== 1 ? "s" : ""}</span>
+            </div>
+
+            <p className="field-hint">
+              Compare tallies across all {discoveredCoordinators.length} coordinators. Honest coordinators should have consistent tallies.
+              Discrepancies between canonical confirmations and tallies may indicate inflation or censorship.
+            </p>
+
+            <div className="button-row">
+              <button className="secondary-button" onClick={() => void handleRunAudit()} disabled={runningAudit || USE_MOCK}>
+                {runningAudit ? "Running audit..." : "Run audit"}
+              </button>
+            </div>
+
+            {perCoordinatorTallies && perCoordinatorTallies.length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <p className="code-label" style={{ marginBottom: 8 }}>Per-coordinator tallies</p>
+                {perCoordinatorTallies.map((t) => (
+                  <div key={t.coordinatorNpub} style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    padding: "8px 0",
+                    borderBottom: "1px solid rgba(88,59,39,0.06)",
+                  }}>
+                    <code style={{ fontSize: "0.78rem", flexShrink: 0, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {t.coordinatorNpub.slice(0, 24)}...
+                    </code>
+                    <span className="field-hint" style={{ margin: 0 }}>
+                      {t.tally
+                        ? `${t.tally.total_accepted_votes ?? 0} accepted / ${t.tally.total_published_votes} published`
+                        : "No tally data"}
+                    </span>
+                    {t.result && (
+                      <span className="field-hint" style={{ margin: 0, opacity: 0.5 }}>
+                        Root: {t.result.merkle_root.slice(0, 12)}...
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {auditResults && auditResults.length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <p className="code-label" style={{ marginBottom: 8 }}>Audit results</p>
+                {auditResults.map((a) => (
+                  <div key={a.coordinatorNpub} style={{
+                    padding: "10px 12px",
+                    marginBottom: 8,
+                    borderRadius: 12,
+                    background: a.flags.length > 0 ? "rgba(231,76,60,0.06)" : "rgba(39,174,96,0.06)",
+                    border: `1px solid ${a.flags.length > 0 ? "rgba(231,76,60,0.15)" : "rgba(39,174,96,0.15)"}`,
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                      <span style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 18,
+                        height: 18,
+                        borderRadius: "50%",
+                        fontSize: "0.7rem",
+                        fontWeight: 700,
+                        flexShrink: 0,
+                        background: a.flags.length > 0 ? "#e74c3c" : "#27ae60",
+                        color: "#fff",
+                      }}>
+                        {a.flags.length > 0 ? "!" : "\u2713"}
+                      </span>
+                      <code style={{ fontSize: "0.78rem" }}>{a.coordinatorNpub.slice(0, 24)}...</code>
+                    </div>
+                    <div style={{ display: "flex", gap: 16, fontSize: "0.85rem" }}>
+                      <span className="field-hint" style={{ margin: 0 }}>Tally: <strong>{a.tally}</strong></span>
+                      <span className="field-hint" style={{ margin: 0 }}>Confirmations: <strong>{a.confirmations}</strong></span>
+                      <span className="field-hint" style={{ margin: 0 }}>Canonical: <strong>{a.canonicalCount}</strong></span>
+                      {a.fakeConfirmations > 0 && (
+                        <span style={{ color: "#e74c3c", fontSize: "0.82rem" }}>
+                          Fake confirmations: {a.fakeConfirmations}
+                        </span>
+                      )}
+                    </div>
+                    {a.flags.length > 0 && (
+                      <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 2 }}>
+                        {a.flags.map((flag, i) => (
+                          <span key={i} style={{ color: "#e74c3c", fontSize: "0.82rem" }}>
+                            {flag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {USE_MOCK && (
+              <p className="field-hint" style={{ opacity: 0.6 }}>Audit is unavailable in mock mode.</p>
+            )}
           </article>
         </section>
       )}

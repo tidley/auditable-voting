@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
+import { finalizeEvent, generateSecretKey, getPublicKey, nip19, SimplePool } from "nostr-tools";
 import { publishBallotEvent, BALLOT_EVENT_KIND, DEFAULT_VOTE_RELAYS } from "./ballot";
 import { loadStoredWalletBundle, storeBallotEventId } from "./cashuWallet";
-import { formatDateTime, getNostrEventVerificationUrl } from "./nostrIdentity";
+import { formatDateTime, getNostrEventVerificationUrl, decodeNsec } from "./nostrIdentity";
 import { submitProofViaDm, submitProofsToAllCoordinators, type DmPublishResult, type MultiCoordinatorDmResult } from "./proofSubmission";
 import type { CashuProof } from "./cashuBlind";
 import { fetchTally, checkVoteAccepted, type TallyInfo } from "./coordinatorApi";
@@ -42,6 +43,8 @@ export default function VotingApp() {
   const [tally, setTally] = useState<TallyInfo | null>(null);
   const [voteAccepted, setVoteAccepted] = useState(false);
   const [checkingVote, setCheckingVote] = useState(false);
+  const [confirmingVote, setConfirmingVote] = useState(false);
+  const [confirmationResult, setConfirmationResult] = useState<{ eventId: string; successes: number; failures: number } | null>(null);
 
   const storedProofs = walletBundle?.coordinatorProofs ?? [];
   const storedProof = storedProofs.length > 0 ? storedProofs[0].proof : null;
@@ -51,6 +54,12 @@ export default function VotingApp() {
   const coordinatorNpub = coordinatorNpubs[0] ?? "";
   const relays = (walletBundle?.relays?.length ?? 0) > 0 ? walletBundle!.relays : DEFAULT_VOTE_RELAYS;
   const storedBallotEventId = walletBundle?.ballotEventId ?? "";
+  const voteEnd = walletBundle?.election?.vote_end ?? 0;
+  const confirmEnd = walletBundle?.election?.confirm_end ?? 0;
+  const now = Math.floor(Date.now() / 1000);
+  const isInConfirmationWindow = voteEnd > 0 && now >= voteEnd && (confirmEnd === 0 || now <= confirmEnd);
+  const votingWindowNotClosed = voteEnd > 0 && now < voteEnd;
+  const hasRealKeypair = Boolean(walletBundle?.ephemeralKeypair?.nsec);
 
   function tallyStatusLabel(status: string): string {
     if (status === "closed") return "Closed";
@@ -206,6 +215,74 @@ export default function VotingApp() {
       }
     } catch {
       setError("Could not fetch tally");
+    }
+  }
+
+  async function publishVoterConfirmation() {
+    if (!hasRealKeypair) {
+      setError("Publish your voter confirmation requires a real nsec in the signer panel on the home page.");
+      return;
+    }
+
+    if (!walletBundle?.ephemeralKeypair?.nsec) {
+      setError("No ephemeral keypair found. Cannot sign confirmation.");
+      return;
+    }
+
+    if (!storedBallotEventId) {
+      setError("No ballot event found. Submit your ballot first.");
+      return;
+    }
+
+    if (votingWindowNotClosed) {
+      setError("The voting window is still open. You must wait until it closes to publish your confirmation.");
+      return;
+    }
+
+    setConfirmingVote(true);
+    setStatus(null);
+    setError(null);
+
+    try {
+      const secretKey = decodeNsec(walletBundle.ephemeralKeypair.nsec);
+      if (!secretKey) {
+        throw new Error("Invalid ephemeral nsec stored in wallet bundle.");
+      }
+
+      const event = finalizeEvent(
+        {
+          kind: 38013,
+          created_at: now,
+          tags: [
+            ["e", storedBallotEventId],
+            ...coordinatorNpubs.map(npub => {
+              const decoded = nip19.decode(npub);
+              return ["p", decoded.data as string] as string[];
+            }),
+          ],
+          content: JSON.stringify({
+            action: "voter_confirmation",
+            ballot_event_id: storedBallotEventId,
+            election_id: electionId,
+          }),
+        },
+        secretKey,
+      );
+
+      const pool = new SimplePool();
+      try {
+        const results = await Promise.allSettled(pool.publish(relays, event, { maxWait: 4000 }));
+        const successes = results.filter(r => r.status === "fulfilled").length;
+        const failures = results.length - successes;
+        setConfirmationResult({ eventId: event.id, successes, failures });
+        setStatus(`Voter confirmation (kind 38013) published to ${successes} relay(s).`);
+      } finally {
+        pool.destroy();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not publish voter confirmation");
+    } finally {
+      setConfirmingVote(false);
     }
   }
 
@@ -432,6 +509,52 @@ export default function VotingApp() {
                 <p className="field-hint">Election status: {tallyStatusLabel(tally.status)}</p>
               )}
             </div>
+          )}
+        </article>
+
+        <article className="panel panel-wide">
+          <div className="panel-header">
+            <div>
+              <p className="panel-kicker">Step 5</p>
+              <h2>Publish voter confirmation (kind 38013)</h2>
+            </div>
+            {confirmationResult && <span className="count-pill">Confirmed</span>}
+          </div>
+
+          <p className="field-hint">
+            After the voting window closes, publish a confirmation from your ephemeral key. This allows auditors to detect coordinator inflation or censorship by comparing confirmation counts against tallies.
+          </p>
+
+          {voteEnd > 0 && (
+            <div className="detail-stack" style={{ marginBottom: 12 }}>
+              <p className="field-hint">Voting window closes: {formatDateTime(voteEnd)}</p>
+              {confirmEnd > 0 && <p className="field-hint">Confirmation window closes: {formatDateTime(confirmEnd)}</p>}
+              {isInConfirmationWindow && <span className="validation-ok">Confirmation window is open</span>}
+              {votingWindowNotClosed && <span className="validation-warn">Waiting for voting window to close</span>}
+            </div>
+          )}
+
+          <div className="button-row">
+            <button
+              className="secondary-button"
+              onClick={() => void publishVoterConfirmation()}
+              disabled={!isInConfirmationWindow || !storedBallotEventId || !hasRealKeypair || confirmingVote}
+            >
+              {confirmingVote ? "Publishing confirmation..." : "Publish confirmation"}
+            </button>
+          </div>
+
+          {confirmationResult && (
+            <div className="notice notice-success">
+              Confirmation event `{confirmationResult.eventId.slice(0, 16)}...` published to {confirmationResult.successes} relay(s).
+              {confirmationResult.failures > 0 && ` ${confirmationResult.failures} failure(s).`}
+            </div>
+          )}
+
+          {!hasRealKeypair && voteEnd > 0 && (
+            <p className="field-hint" style={{ opacity: 0.6 }}>
+              Note: Voter confirmation requires a real nsec. Make sure you entered your nsec on the home page before requesting your quote.
+            </p>
           )}
         </article>
 
