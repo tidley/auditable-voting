@@ -262,6 +262,21 @@ class TestDetectSigner:
         ok, output = _run_tsx(script)
         assert ok, f"Failed:\n{output}"
 
+    def test_detect_signer_returns_raw_when_no_signevent(self):
+        script = """
+        globalThis.window = { nostr: { async getPublicKey() { return "a".repeat(64); } } };
+        import { detectSigner } from "./src/signer.ts";
+
+        const result = detectSigner();
+
+        if (result.mode !== "raw") {
+          process.exit(1);
+        }
+        console.log("OK");
+        """
+        ok, output = _run_tsx(script)
+        assert ok, f"Failed:\n{output}"
+
 
 @pytest.mark.fast
 class TestSignCashuClaimEvent:

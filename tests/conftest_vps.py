@@ -1,0 +1,11 @@
+VPS_IP = "23.182.128.64"
+VPS_HTTP_PORT = 3338
+VPS_GRPC_PORT = 8086
+VPS_SSH_KEY = "~/.ssh/tollgate"
+VPS_SSH_USER = "root"
+
+MINT_HTTP_URL = f"http://{VPS_IP}:{VPS_HTTP_PORT}"
+MINT_GRPC_LOCAL_PORT = 18086
+MINT_GRPC_LOCAL = f"localhost:{MINT_GRPC_LOCAL_PORT}"
+
+MINT_DATA_DIR = "/opt/tollgate/mints-local/mint1"

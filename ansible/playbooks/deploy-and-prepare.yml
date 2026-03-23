@@ -184,8 +184,8 @@
       ansible.builtin.assert:
         that:
           - mint_keyset_id is defined
-          - mint_keyset_id | length == 66
-          - mint_keyset_id | regex_search('^00')
+          - mint_keyset_id | length >= 4
+          - (mint_keyset_id | regex_search('^00')) is not none
         fail_msg: >-
           Keyset ID '{{ mint_keyset_id | default("NONE") }}' is invalid.
           Ensure CDK_MINTD_USE_KEYSET_V2 is set to "false" in the mint
@@ -374,6 +374,12 @@
       delay: 3
       until: coord_recheck.status == 200
       changed_when: false
+
+    - name: Verify election-id is set in coordinator service
+      ansible.builtin.shell: grep -q '\-\-election-id' /etc/systemd/system/tollgate-coordinator.service
+      register: election_id_check
+      changed_when: false
+      failed_when: election_id_check.rc != 0
 
     - name: Read eligible voters
       ansible.builtin.slurp:

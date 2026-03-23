@@ -1,0 +1,49 @@
+{
+  "realm": "tollgate",
+  "enabled": true,
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": false,
+  "duplicateEmailsAllowed": true,
+  "sslRequired": "{{ 'external' if tls_enabled else 'none' }}",
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "roles": {
+    "realm": [
+      {
+        "name": "operator",
+        "description": "TollGate mint operator"
+      }
+    ]
+  },
+  "defaultRoles": ["operator"],
+  "clients": [
+    {
+      "clientId": "cashu-client",
+      "name": "Cashu Wallet Client",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "implicitFlowEnabled": false,
+      "consentRequired": false,
+      "fullScopeAllowed": true,
+      "protocol": "openid-connect",
+      "redirectUris": [
+        "http://localhost:33388/callback",
+        "http://127.0.0.1:33388/callback"
+      ],
+      "webOrigins": ["*"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "defaultClientScopes": [
+        "profile",
+        "email"
+      ],
+      "optionalClientScopes": [
+        "offline_access"
+      ]
+    }
+  ]
+}

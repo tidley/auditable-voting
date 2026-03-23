@@ -1,0 +1,42 @@
+# =============================================================================
+# Traefik Static Configuration
+# Mode: {{ 'PRODUCTION (TLS)' if tls_enabled else 'TEST (HTTP only, sslip.io)' }}
+# =============================================================================
+
+api:
+  dashboard: {{ traefik_dashboard_enabled | lower }}
+
+entryPoints:
+  web:
+    address: ":80"
+{% if tls_enabled %}
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+  websecure:
+    address: ":443"
+{% endif %}
+
+providers:
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false
+    network: {{ docker_network_name }}
+
+{% if tls_enabled %}
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: {{ acme_email }}
+      storage: /acme/acme.json
+      dnsChallenge:
+        provider: {{ acme_dns_provider }}
+        resolvers:
+          - "1.1.1.1:53"
+          - "8.8.8.8:53"
+{% endif %}
+
+log:
+  level: INFO

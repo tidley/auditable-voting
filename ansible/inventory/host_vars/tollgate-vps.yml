@@ -1,0 +1,5 @@
+mint_public_host: "{{ vps_ip }}"
+cdk_repo_path: "/opt/cdk"
+cdk_repo_source: "sync"
+cdk_repo_path_local: "/home/c03rad0r/cdk-nostr"
+cdk_image_source: "local_load"

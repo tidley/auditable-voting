@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchEligibility, resetEligibility, type EligibilityResponse } from "./voterManagementApi";
 import { SimplePool } from "nostr-tools";
-import { fetchCoordinatorInfo, fetchElectionsFromNostr, fetchTally, fetchElection, type TallyInfo, type ElectionInfo, type ElectionQuestion, type ElectionSummary } from "./coordinatorApi";
+import { fetchCoordinatorInfo, fetchElectionsFromNostr, fetchTally, fetchElection, fetchIssuanceStatus, type TallyInfo, type ElectionInfo, type ElectionQuestion, type ElectionSummary, type IssuanceStatusResponse } from "./coordinatorApi";
 import { USE_MOCK } from "./config";
 
 const EMPTY_ELIGIBILITY: EligibilityResponse = {
@@ -56,6 +56,7 @@ export default function DashboardApp() {
   const [selectedElectionId, setSelectedElectionId] = useState<string>("");
   const [coordinatorNpub, setCoordinatorNpub] = useState("");
   const [relayList, setRelayList] = useState<string[]>([]);
+  const [issuanceStatus, setIssuanceStatus] = useState<IssuanceStatusResponse | null>(null);
   const eligibleNpubs = useMemo(() => new Set(eligibility.eligibleNpubs), [eligibility]);
 
   const questions = useMemo(() => election?.questions ?? [], [election]);
@@ -76,11 +77,15 @@ export default function DashboardApp() {
       const elections = await fetchElectionsFromNostr(info.coordinatorNpub, info.relays);
       setAllElections(elections);
 
-      const tallyResult = await fetchTally();
-      const electionResult = await fetchElection();
+      const [tallyResult, electionResult, issuanceResult] = await Promise.all([
+        fetchTally(),
+        fetchElection(),
+        fetchIssuanceStatus(),
+      ]);
       setEligibility(eligResult);
       setTally(tallyResult);
       setElection(electionResult);
+      setIssuanceStatus(issuanceResult);
       if (electionResult && !selectedElectionId) {
         setSelectedElectionId(electionResult.election_id);
       }
@@ -168,6 +173,11 @@ export default function DashboardApp() {
   const accepted = tally?.total_accepted_votes ?? 0;
   const eligible = eligibility.eligibleCount;
   const isClosed = election ? Date.now() > election.end_time * 1000 : false;
+  const tallyStatusLabel = tally?.status === "closed"
+    ? "Closed"
+    : tally?.status === "in_progress"
+      ? "In Progress"
+      : tally?.status ?? "--";
   const isActiveElection = selectedElectionId && election?.election_id === selectedElectionId;
   const selectedElectionLabel = allElections.find((e) => e.election_id === selectedElectionId);
 
@@ -277,8 +287,8 @@ export default function DashboardApp() {
 
         {tally && (
           <article className="panel stat-card">
-            <p className="panel-kicker">Status</p>
-            <h2>{tally.status}</h2>
+            <p className="panel-kicker">Election status</p>
+            <h2>{tallyStatusLabel}</h2>
             <p className="field-hint">{tally.spent_commitment_root ? `Root: ${tally.spent_commitment_root.slice(0, 16)}...` : "No commitment root yet"}</p>
           </article>
         )}
@@ -389,14 +399,35 @@ export default function DashboardApp() {
 
           {eligibility.eligibleNpubs.length > 0 ? (
             <ol className="eligible-list eligible-list-dashboard">
-              {eligibility.eligibleNpubs.map((npub) => (
-                <li key={npub} className="eligible-list-item-dashboard">
-                  <div>
-                    <p className="code-label">npub</p>
-                    <code>{npub}</code>
-                  </div>
-                </li>
-              ))}
+              {eligibility.eligibleNpubs.map((npub) => {
+                const voterInfo = issuanceStatus?.voters?.[npub];
+                const issued = voterInfo?.issued ?? false;
+                return (
+                  <li key={npub} className="eligible-list-item-dashboard">
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 20,
+                        height: 20,
+                        borderRadius: "50%",
+                        fontSize: "0.75rem",
+                        fontWeight: 700,
+                        flexShrink: 0,
+                        background: issued ? "var(--accent)" : "rgba(88,59,39,0.08)",
+                        color: issued ? "#fff" : "var(--muted)",
+                      }}>
+                        {issued ? "\u2713" : "\u2022"}
+                      </span>
+                      <code style={{ fontSize: "0.82rem" }}>{npub.slice(0, 20)}...{npub.slice(-8)}</code>
+                      <span className="field-hint" style={{ margin: 0, opacity: 0.5, flexShrink: 0 }}>
+                        {issued ? "Proof issued" : "Pending"}
+                      </span>
+                    </div>
+                  </li>
+                );
+              })}
             </ol>
           ) : (
             <p className="empty-copy">No eligible npubs found.</p>

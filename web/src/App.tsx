@@ -347,7 +347,7 @@ export default function App() {
       if (status.state === "PAID") {
         setPollingQuote(false);
         console.log("[poll] quote", mintQuote.quote, "approved, minting tokens...");
-        setStatus("Quote approved! Minting tokens...");
+        setStatus("Proof ready! Minting tokens...");
         setMintingTokens(true);
 
         try {
@@ -399,9 +399,9 @@ export default function App() {
   const quoteStateLabel = quoteState === "UNPAID"
     ? "Waiting for coordinator approval"
     : quoteState === "PAID"
-      ? "Approved -- minting tokens"
-      : quoteState === "ISSUED"
-        ? "Tokens issued"
+      ? "Proof ready"
+    : quoteState === "ISSUED"
+        ? "Proof issued"
         : null;
 
   return (
@@ -612,8 +612,7 @@ export default function App() {
                   <div className="detail-stack">
                     <code className="code-block code-block-muted">{mintQuote.request}</code>
                     <p className="field-hint">Quote: {mintQuote.quote}</p>
-                    <p className="field-hint">Amount: {mintQuote.amount} {mintQuote.unit}</p>
-                    <p className="field-hint">State: {quoteState ?? "unknown"}</p>
+                    <p className="field-hint">{quoteStateLabel ?? "unknown"}</p>
                   </div>
                 ) : (
                   <p className="empty-copy">No quote requested yet.</p>
@@ -695,7 +694,6 @@ export default function App() {
               <code className="code-block code-block-muted">{JSON.stringify(walletBundle.proof, null, 2)}</code>
               <p className="field-hint">Election {walletBundle.election?.electionId ?? "unknown"}</p>
               <p className="field-hint">Keyset {walletBundle.proof.id}</p>
-              <p className="field-hint">Amount {walletBundle.proof.amount}</p>
             </div>
           ) : (
             <p className="empty-copy">No proof stored yet. Request a quote, publish the signed claim, and wait for the mint proof.</p>

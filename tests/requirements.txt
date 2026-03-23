@@ -6,3 +6,6 @@ marshmallow<4
 pytest-timeout
 pytest-order
 pytest-playwright
+responses
+pytest-asyncio
+pytest-aiohttp

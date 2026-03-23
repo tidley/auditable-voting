@@ -8,6 +8,8 @@ markers = [
     "integration: tests hitting remote APIs without destructive VPS operations",
     "e2e: end-to-end tests requiring VPS SSH access and coordinator manipulation",
     "ui: Playwright browser tests against the live voter portal",
+    "vps: requires VPS mint (SSH tunnel + per-test mint reset)",
+    "voter: requires VPS mint reachable over public internet",
 ]
 filterwarnings = [
     "ignore:.*__version_info__.*:DeprecationWarning:environs",

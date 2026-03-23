@@ -1,0 +1,86 @@
+services:
+  postgres:
+    image: {{ auth_postgres_image }}
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: "{{ auth_postgres_user }}"
+      POSTGRES_PASSWORD: "{{ auth_postgres_password }}"
+      POSTGRES_DB: "keycloak"
+    volumes:
+      - "{{ auth_data_dir }}/postgres-data:/var/lib/postgresql/data"
+    networks:
+      - {{ docker_network_name }}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U {{ auth_postgres_user }}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  keycloak:
+    image: {{ keycloak_image }}
+    container_name: keycloak
+    restart: unless-stopped
+{% if tls_enabled %}
+    command: start --import-realm
+{% else %}
+    command: start-dev --import-realm
+{% endif %}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      KC_DB: "postgres"
+      KC_DB_URL: "jdbc:postgresql://postgres:5432/keycloak"
+      KC_DB_USERNAME: "{{ auth_postgres_user }}"
+      KC_DB_PASSWORD: "{{ auth_postgres_password }}"
+      KC_HEALTH_ENABLED: "true"
+      KC_PROXY_HEADERS: "xforwarded"
+      KC_PROXY: "edge"
+{% if tls_enabled %}
+      KC_HOSTNAME: "{{ auth_fqdn }}"
+{% else %}
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+{% endif %}
+      KC_BOOTSTRAP_ADMIN_USERNAME: "{{ keycloak_admin_user }}"
+      KC_BOOTSTRAP_ADMIN_PASSWORD: "{{ keycloak_admin_password }}"
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/9000 && echo -e 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 && cat <&3 | grep -q '200 OK'"]
+      interval: 15s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - "{{ auth_data_dir }}/realm-import:/opt/keycloak/data/import"
+    labels:
+      # --- Traefik Routing ---
+      traefik.enable: "true"
+
+{% if tls_enabled %}
+      # HTTPS router (production)
+      traefik.http.routers.keycloak.rule: "Host(`{{ auth_fqdn }}`)"
+      traefik.http.routers.keycloak.entrypoints: "websecure"
+      traefik.http.routers.keycloak.tls: "true"
+      traefik.http.routers.keycloak.tls.certresolver: "letsencrypt"
+      traefik.http.routers.keycloak.tls.domains[0].main: "{{ effective_domain }}"
+      traefik.http.routers.keycloak.tls.domains[0].sans: "*.{{ effective_domain }}"
+{% else %}
+      # HTTP router (test mode - sslip.io)
+      traefik.http.routers.keycloak.rule: "Host(`{{ auth_fqdn }}`)"
+      traefik.http.routers.keycloak.entrypoints: "web"
+{% endif %}
+
+      # Service port
+      traefik.http.services.keycloak.loadbalancer.server.port: "8080"
+
+      # TollGate metadata
+      tollgate.service: "auth"
+    networks:
+      - {{ docker_network_name }}
+
+networks:
+  {{ docker_network_name }}:
+    external: true

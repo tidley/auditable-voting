@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { publishBallotEvent, BALLOT_EVENT_KIND, DEFAULT_VOTE_RELAYS } from "./ballot";
-import { loadStoredWalletBundle } from "./cashuWallet";
+import { loadStoredWalletBundle, storeBallotEventId } from "./cashuWallet";
 import { formatDateTime, getNostrEventVerificationUrl } from "./nostrIdentity";
 import { submitProofViaDm, type DmPublishResult } from "./proofSubmission";
 import type { CashuProof } from "./cashuBlind";
-import { fetchTally, type TallyInfo } from "./coordinatorApi";
+import { fetchTally, checkVoteAccepted, type TallyInfo } from "./coordinatorApi";
+import MerkleTreeViz from "./MerkleTreeViz";
 
 type VotePublishResult = {
   eventId: string;
@@ -39,12 +40,33 @@ export default function VotingApp() {
   const [submittingProof, setSubmittingProof] = useState(false);
   const [dmResult, setDmResult] = useState<DmPublishResult | null>(null);
   const [tally, setTally] = useState<TallyInfo | null>(null);
+  const [voteAccepted, setVoteAccepted] = useState(false);
+  const [checkingVote, setCheckingVote] = useState(false);
 
   const storedProof = walletBundle?.proof ?? null;
   const electionId = walletBundle?.election?.electionId ?? "";
   const questions = walletBundle?.election?.questions ?? [];
   const coordinatorNpub = walletBundle?.coordinatorNpub ?? "";
   const relays = (walletBundle?.relays?.length ?? 0) > 0 ? walletBundle!.relays : DEFAULT_VOTE_RELAYS;
+  const storedBallotEventId = walletBundle?.ballotEventId ?? "";
+
+  function tallyStatusLabel(status: string): string {
+    if (status === "closed") return "Closed";
+    if (status === "in_progress") return "In Progress";
+    return status;
+  }
+
+  useEffect(() => {
+    if (!storedBallotEventId || !coordinatorNpub) return;
+
+    setCheckingVote(true);
+    checkVoteAccepted(storedBallotEventId, coordinatorNpub, relays)
+      .then((accepted) => {
+        setVoteAccepted(accepted);
+      })
+      .catch(() => {})
+      .finally(() => setCheckingVote(false));
+  }, [storedBallotEventId, coordinatorNpub]);
 
   const ballotVerificationUrl = publishResult && publishResult.successes > 0
     ? getNostrEventVerificationUrl({
@@ -59,6 +81,7 @@ export default function VotingApp() {
     storedProof &&
     electionId.trim() &&
     questions.length > 0 &&
+    !voteAccepted &&
     questions.every((q) => {
       const a = answers[q.id];
       if (a === undefined) return false;
@@ -157,7 +180,9 @@ export default function VotingApp() {
       });
 
       setDmResult(result);
-      setStatus(`Proof DM sent to coordinator. ${result.successes} relay${result.successes === 1 ? "" : "s"} confirmed.`);
+      storeBallotEventId(publishResult.eventId);
+      setVoteAccepted(false);
+      setStatus(`Proof DM sent to coordinator. ${result.successes} relay${result.successes === 1 ? "" : "s"} confirmed. Waiting for coordinator to process...`);
     } catch (dmError) {
       setError(dmError instanceof Error ? dmError.message : "Could not send proof DM");
     } finally {
@@ -193,6 +218,21 @@ export default function VotingApp() {
           <a className="ghost-button link-button" href="/">Return to home page</a>
         </div>
       </section>
+
+      {voteAccepted && (
+        <section className="content-grid">
+          <article className="panel panel-wide">
+            <div className="notice notice-success" style={{ fontSize: "1.05rem", padding: "16px" }}>
+              Your vote has been accepted by the coordinator. Your proof was burned and your ballot is included in the tally.
+              {storedBallotEventId && (
+                <span style={{ display: "block", marginTop: 8 }}>
+                  Ballot event: <code style={{ fontSize: "0.85rem" }}>{storedBallotEventId}</code>
+                </span>
+              )}
+            </div>
+          </article>
+        </section>
+      )}
 
       <section className="content-grid">
         <article className="panel panel-wide">
@@ -382,11 +422,13 @@ export default function VotingApp() {
                 <p className="field-hint">Merkle root: <code className="code-block code-block-muted">{tally.spent_commitment_root.slice(0, 16)}...</code></p>
               )}
               {tally.status && (
-                <p className="field-hint">Status: {tally.status}</p>
+                <p className="field-hint">Election status: {tallyStatusLabel(tally.status)}</p>
               )}
             </div>
           )}
         </article>
+
+        <MerkleTreeViz ballotEventId={storedBallotEventId} />
 
         <article className="panel panel-wide">
           <div className="panel-header">

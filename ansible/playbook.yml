@@ -2,20 +2,32 @@
 # Auditable Voting - Main Entry Point
 # =============================================================================
 #
-# Deploy everything + publish SEC-06 election:
+# Deploy everything + publish election:
 #
 #   ansible-playbook ansible/playbook.yml --tags prepare
 #
-# Deploy coordinator only:
+# Deploy coordinator only (full initial deploy from coordinator/ source):
+#
 #   ansible-playbook ansible/playbook.yml --tags coordinator
 #
 # Deploy voting client only:
+#
 #   ansible-playbook ansible/playbook.yml --tags client
 #
 # Verify infrastructure (no changes):
+#
 #   ansible-playbook ansible/playbook.yml --tags verify
 #
+# Deploy local CDK mints for development:
+#
+#   ansible-playbook ansible/playbook.yml --tags local-mints
+#
+# Deploy 3 voting mints behind Traefik on VPS:
+#
+#   ansible-playbook ansible/playbook.yml --tags voting-on-vps
+#
 # Local dev build (localhost, no VPS):
+#
 #   ansible-playbook ansible/playbook.yml --tags local-dev
 #
 # =============================================================================
@@ -36,6 +48,26 @@
 - name: Deploy and Prepare (full stack + election)
   ansible.builtin.import_playbook: playbooks/deploy-and-prepare.yml
   tags: [prepare]
+
+- name: Local Multi-Mint Deployment
+  ansible.builtin.import_playbook: playbooks/local-mints.yml
+  tags: [local-mints]
+
+- name: Voting Mints on VPS (3-mint quorum)
+  ansible.builtin.import_playbook: playbooks/voting-on-vps-playbook.yml
+  tags: [voting-on-vps]
+
+- name: Run Integration Tests
+  ansible.builtin.import_playbook: playbooks/run-integration-tests.yml
+  tags: [integration-tests]
+
+- name: Setup Pytest
+  ansible.builtin.import_playbook: playbooks/setup-pytest.yml
+  tags: [setup-pytest]
+
+- name: Nutshell Wallet
+  ansible.builtin.import_playbook: playbooks/nutshell-wallet.yml
+  tags: [nutshell]
 
 - name: Local Dev Build
   hosts: localhost

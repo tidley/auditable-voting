@@ -1,0 +1,123 @@
+---
+- name: Prepare VPS for integration tests
+  hosts: mint_hosts
+  become: true
+  vars:
+    mint_data_dir: "/opt/tollgate/mints-local/mint1"
+    mint_http_port: 3338
+
+  tasks:
+    - name: Check if mint1 container is running
+      ansible.builtin.shell: docker ps --filter name=mint-mint1 --format '{{ "{{.Names}}" }}'
+      register: mint_running
+      changed_when: false
+      failed_when: false
+      tags: [setup]
+
+    - name: Ensure mint1 data directory exists
+      ansible.builtin.file:
+        path: "{{ mint_data_dir }}"
+        state: directory
+        mode: "0755"
+      tags: [setup]
+
+    - name: Check if mint1 docker-compose.yml exists
+      ansible.builtin.stat:
+        path: "{{ mint_data_dir }}/docker-compose.yml"
+      register: compose_stat
+      tags: [setup]
+
+    - name: Fail if docker-compose.yml is missing
+      ansible.builtin.fail:
+        msg: "{{ mint_data_dir }}/docker-compose.yml not found. Run the local-mints playbook first."
+      when: not compose_stat.stat.exists
+      tags: [setup]
+
+    - name: Check if mint1 mnemonic exists
+      ansible.builtin.stat:
+        path: "{{ mint_data_dir }}/mnemonic.txt"
+      register: mnemonic_stat
+      tags: [setup]
+
+    - name: Fail if mnemonic.txt is missing
+      ansible.builtin.fail:
+        msg: "{{ mint_data_dir }}/mnemonic.txt not found. Run the local-mints playbook first."
+      when: not mnemonic_stat.stat.exists
+      tags: [setup]
+
+    - name: Stop any container using gRPC port 8086
+      ansible.builtin.shell: >
+        docker ps --filter publish=8086 --format '{{ "{{.Names}}" }}'
+        | xargs -r docker stop
+      changed_when: false
+      failed_when: false
+      tags: [setup]
+
+    - name: Remove stale mint-mint1 container if present but not running
+      ansible.builtin.shell: >
+        docker rm -f mint-mint1 2>/dev/null || true
+      changed_when: false
+      tags: [setup]
+
+    - name: Start mint1
+      community.docker.docker_compose_v2:
+        project_src: "{{ mint_data_dir }}"
+        state: present
+        pull: never
+      tags: [setup]
+
+    - name: Wait for mint1 to be healthy
+      ansible.builtin.command: curl -sf http://127.0.0.1:{{ mint_http_port }}/v1/info
+      register: mint_health
+      retries: 10
+      delay: 5
+      until: mint_health.rc == 0
+      changed_when: false
+      tags: [setup]
+
+    - name: Check if UFW is available
+      ansible.builtin.command: which ufw
+      register: ufw_available
+      changed_when: false
+      failed_when: false
+      tags: [setup]
+
+    - name: Check if UFW port {{ mint_http_port }} is allowed
+      ansible.builtin.shell: ufw status | grep -q '{{ mint_http_port }}'
+      register: ufw_check
+      changed_when: false
+      failed_when: false
+      when: ufw_available.rc == 0
+      tags: [setup]
+
+    - name: Allow UFW port {{ mint_http_port }}
+      community.general.ufw:
+        rule: allow
+        port: "{{ mint_http_port }}"
+        proto: tcp
+      when:
+        - ufw_available.rc == 0
+        - ufw_check.rc != 0
+      tags: [setup]
+
+    - name: Verify mint1 is accessible
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ mint_http_port }}/v1/info"
+        method: GET
+      register: mint_info
+      changed_when: false
+      tags: [setup]
+
+    - name: Print mint1 info
+      ansible.builtin.debug:
+        msg: "mint1 healthy: pubkey={{ mint_info.json.pubkey }} version={{ mint_info.json.version }}"
+      tags: [setup]
+
+    - name: Print integration test summary
+      ansible.builtin.debug:
+        msg:
+          - "=== VPS Integration Test Setup Complete ==="
+          - "Mint HTTP: http://{{ ansible_host }}:{{ mint_http_port }}"
+          - "Mint gRPC: 127.0.0.1:8086 (SSH tunnel required from local)"
+          - "UFW: {{ 'port 3338 open' if ufw_available.rc == 0 else 'not installed (skipped)' }}"
+      tags: [setup]

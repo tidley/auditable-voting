@@ -34,7 +34,13 @@ export async function requestQuoteAndMint(mintUrl: string, quoteId: string): Pro
 
   console.log("[mint] minting proofs against approved quote:", quoteId, "on mint:", mintUrl);
 
-  const wallet = new CashuWallet(new CashuMint(mintUrl), { unit: "sat" });
+  const keysResp = await fetch(`${mintUrl}/v1/keys`);
+  const keysData = await keysResp.json();
+  const wallet = new CashuWallet(new CashuMint(mintUrl), {
+    unit: "sat",
+    keys: keysData.keysets,
+    keysets: keysData.keysets,
+  });
 
   const proofs = await wallet.mintProofs(1, quoteId);
 

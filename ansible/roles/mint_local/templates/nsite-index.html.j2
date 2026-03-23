@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TollGate Mint Infrastructure</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:monospace;background:#0d1117;color:#c9d1d9;padding:2rem;max-width:900px;margin:0 auto}
+h1{color:#58a6ff;margin-bottom:.5rem;font-size:1.4rem}
+.sub{color:#8b949e;margin-bottom:2rem;font-size:.85rem}
+.mint{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:1.2rem;margin-bottom:1rem}
+.mint h2{color:#7ee787;font-size:1rem;margin-bottom:.6rem}
+.mint code{color:#79c0ff;font-size:.8rem;word-break:break-all}
+.row{display:flex;justify-content:space-between;align-items:center;padding:.3rem 0}
+.label{color:#8b949e;font-size:.8rem}
+.val{font-size:.8rem}
+.badge{display:inline-block;padding:.1rem .5rem;border-radius:12px;font-size:.7rem;font-weight:bold}
+.up{background:#0f5323;color:#3fb950}
+.down{background:#5a1e1e;color:#f85149}
+.footer{margin-top:2rem;color:#484f58;font-size:.75rem;text-align:center}
+</style>
+</head>
+<body>
+<h1>TollGate Mint Infrastructure</h1>
+<p class="sub">Nostr-referenced Cashu mints &mdash; {{ mints | length }} instance{{ 's' if mints | length != 1 }} deployed</p>
+
+{% for mint in mints %}
+<div class="mint">
+  <h2>{{ mint.name }}</h2>
+  {% if mint.pubkey is defined %}
+  <div class="row">
+    <span class="label">Pubkey</span>
+    <code>{{ mint.pubkey }}</code>
+  </div>
+  {% endif %}
+  {% if mint.version is defined %}
+  <div class="row">
+    <span class="label">Version</span>
+    <span class="val">{{ mint.version }}</span>
+  </div>
+  {% endif %}
+  <div class="row">
+    <span class="label">HTTP</span>
+    <code>http://{{ mint_public_host_resolved }}:{{ mint.http_port }}</code>
+  </div>
+  <div class="row">
+    <span class="label">gRPC</span>
+    <code>{{ mint_public_host_resolved }}:{{ mint.grpc_port }}</code>
+  </div>
+  <div class="row">
+    <span class="label">Cashu URL</span>
+    <code>http://{{ mint_public_host_resolved }}:{{ mint.http_port }}/v1</code>
+  </div>
+  <div class="row">
+    <span class="label">Status</span>
+    <span class="badge {{ 'up' if mint.healthy | default(false) else 'down' }}">{{ 'healthy' if mint.healthy | default(false) else 'unknown' }}</span>
+  </div>
+</div>
+{% endfor %}
+
+<p class="footer">Deployed via tg-mint-orchestrator &bull; {{ ansible_date_time.iso8601 }}</p>
+</body>
+</html>

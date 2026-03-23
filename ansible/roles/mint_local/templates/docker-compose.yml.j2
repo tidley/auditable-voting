@@ -1,0 +1,27 @@
+services:
+  mint:
+    image: "{{ cdk_mintd_local_image | default('cdk-mint:manual-approval') }}"
+    container_name: "mint-{{ item.name }}"
+    restart: unless-stopped
+    ports:
+      - "{{ item.http_port }}:{{ item.http_port }}"
+      - "{{ item.grpc_port }}:{{ item.grpc_port }}"
+    volumes:
+      - "{{ mint_data_base_dir }}/{{ item.name }}:/root/.cdk-mintd"
+    environment:
+      CDK_MINTD_LN_BACKEND: "fakewallet"
+      CDK_MINTD_DATABASE: "sqlite"
+      CDK_MINTD_LISTEN_HOST: "{{ mint_bind_host_resolved }}"
+      CDK_MINTD_LISTEN_PORT: "{{ item.http_port }}"
+      CDK_MINTD_URL: "http://{{ mint_public_host_resolved }}:{{ item.http_port }}"
+      CDK_MINTD_MNEMONIC: "{{ mint_mnemonic }}"
+      CDK_MINTD_MINT_NAME: "Local Mint {{ item.name }}"
+      CDK_MINTD_MINT_DESCRIPTION: "Local Cashu mint {{ item.name }} | coordinator: {{ coordinator_npub | default('not configured') }}"
+      CDK_MINTD_FAKE_WALLET_MANUAL_APPROVAL_INCOMING: "true"
+      CDK_MINTD_FAKE_WALLET_MANUAL_APPROVAL_OUTGOING: "true"
+      CDK_MINTD_FAKE_WALLET_ACCEPT_ARBITRARY_MELT: "true"
+      CDK_MINTD_FAKE_WALLET_ARBITRARY_MELT_FEE: "0"
+      CDK_MINTD_MINT_MANAGEMENT_ENABLED: "true"
+      CDK_MINTD_MANAGEMENT_ADDRESS: "{{ mint_management_bind_host_resolved }}"
+      CDK_MINTD_MANAGEMENT_PORT: "{{ item.grpc_port }}"
+      CDK_MINTD_USE_KEYSET_V2: "false"

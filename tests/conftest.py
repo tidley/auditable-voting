@@ -1,15 +1,28 @@
+import importlib.util
 import json
 import logging
 import os
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 import requests
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+COORDINATOR_SOURCE_DIR = PROJECT_ROOT / "coordinator"
+
+_spec = importlib.util.spec_from_file_location(
+    "voting_coordinator_client",
+    COORDINATOR_SOURCE_DIR / "voting-coordinator-client.py",
+)
+if _spec and _spec.loader:
+    _mod = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_mod)
+    sys.modules["voting_coordinator_client"] = _mod
 WEB_DIR = PROJECT_ROOT / "web"
 
 COORDINATOR_URL = os.environ.get(
@@ -54,7 +67,7 @@ SSH_CMD = [
     f"root@{VPS_IP}",
 ]
 
-ELIGIBLE_VOTERS_PATH = PROJECT_ROOT.parent / "tg-mint-orchestrator" / "eligible-voters.json"
+ELIGIBLE_VOTERS_PATH = PROJECT_ROOT / "eligible-voters.json"
 
 COORDINATOR_VENV_PYTHON = f"{COORDINATOR_DIR}/.venv/bin/python3"
 
@@ -356,7 +369,6 @@ def voting_page(browser, request, deployed_frontend):
 @pytest.fixture
 def dashboard_page(browser, request, deployed_frontend):
     from playwright.sync_api import Page as _Page
-    from playwright.sync_api import Page as _Page
     ctx = browser.new_context(
         viewport={"width": 1280, "height": 900},
         bypass_csp=True,
@@ -371,3 +383,41 @@ def dashboard_page(browser, request, deployed_frontend):
         SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
         p.screenshot(path=str(SCREENSHOT_DIR / f"{request.node.name}.png"), full_page=True)
     ctx.close()
+
+ELIGIBLE_PUBKEY_1 = "a" * 64
+ELIGIBLE_PUBKEY_2 = "b" * 64
+ELIGIBLE_PUBKEY_3 = "c" * 64
+QUOTE_ID = "3fcfc7132cdfa0dab05c4f2ac8feb65b"
+COORDINATOR_MINT_URL = "http://localhost:8787/test-mint"
+COORDINATOR_GRPC_ENDPOINT = "localhost:9999"
+
+
+@pytest.fixture
+def eligible_set():
+    return {ELIGIBLE_PUBKEY_1, ELIGIBLE_PUBKEY_2, ELIGIBLE_PUBKEY_3}
+
+
+@pytest.fixture
+def issued_set():
+    return set()
+
+
+@pytest.fixture
+def mock_nostr_client():
+    return MagicMock()
+
+
+@pytest.fixture
+def event_data_factory():
+    def _factory(**overrides):
+        defaults = {
+            "pubkey": ELIGIBLE_PUBKEY_1,
+            "quote": QUOTE_ID,
+            "amount": "1",
+            "mint": COORDINATOR_MINT_URL,
+            "election": "demo-election-1",
+        }
+        defaults.update(overrides)
+        return defaults
+
+    return _factory

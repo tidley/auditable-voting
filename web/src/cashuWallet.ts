@@ -20,6 +20,8 @@ export type StoredWalletBundle = {
   coordinatorNpub: string;
   mintUrl: string;
   relays: string[];
+  ballotEventId?: string;
+  votedAt?: string;
 };
 
 const LEGACY_STORAGE_KEY = "auditable-voting.cashu-proof";
@@ -158,4 +160,18 @@ export function clearStoredWalletBundle() {
   }
 
   window.localStorage.removeItem(STORAGE_KEY);
+}
+
+export function storeBallotEventId(eventId: string) {
+  const existingBundle = loadStoredWalletBundle();
+
+  if (!existingBundle) {
+    return;
+  }
+
+  storeWalletBundle({
+    ...existingBundle,
+    ballotEventId: eventId,
+    votedAt: new Date().toISOString()
+  });
 }

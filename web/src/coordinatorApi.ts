@@ -177,3 +177,124 @@ export async function fetchElectionsFromNostr(
     pool.close(publicRelays);
   }
 }
+
+export async function checkVoteAccepted(
+  ballotEventId: string,
+  coordinatorNpub: string,
+  relays: string[],
+): Promise<boolean> {
+  if (!ballotEventId || !coordinatorNpub || relays.length === 0) return false;
+
+  const publicRelays = relays.filter((r) => r.startsWith("wss://"));
+  if (publicRelays.length === 0) return false;
+
+  const pool = new SimplePool();
+  try {
+    const events = await Promise.race([
+      pool.querySync(publicRelays, {
+        kinds: [38002],
+        authors: [coordinatorNpub],
+        "#e": [ballotEventId],
+        limit: 1,
+      }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Nostr query timeout")), 8000)),
+    ]);
+
+    return events.length > 0;
+  } catch {
+    return false;
+  } finally {
+    pool.close(publicRelays);
+  }
+}
+
+export type IssuanceStatusInfo = {
+  eligible: boolean;
+  issued: boolean;
+};
+
+export type IssuanceStatusResponse = {
+  election_id: string;
+  voters: Record<string, IssuanceStatusInfo>;
+};
+
+export async function fetchIssuanceStatus(): Promise<IssuanceStatusResponse | null> {
+  if (USE_MOCK) {
+    return null;
+  }
+
+  try {
+    return await fetchJson<IssuanceStatusResponse>(`${COORDINATOR_URL}/issuance-status`);
+  } catch {
+    return null;
+  }
+}
+
+export type FinalResultInfo = {
+  election_id: string;
+  total_votes: number;
+  results: Record<string, Record<string, number>>;
+  merkle_root: string;
+  total_proofs_burned: number;
+  issuance_commitment_root: string;
+  spent_commitment_root: string;
+  max_supply: number;
+  event_id: string;
+  closed_at: number;
+};
+
+export async function fetchResult(): Promise<FinalResultInfo | null> {
+  if (USE_MOCK) {
+    return null;
+  }
+
+  try {
+    return await fetchJson<FinalResultInfo>(`${COORDINATOR_URL}/result`);
+  } catch {
+    return null;
+  }
+}
+
+export type VoteTreeLeaf = {
+  index: number;
+  hash: string;
+  event_id: string;
+};
+
+export type VoteTreeResponse = {
+  merkle_root: string;
+  total_leaves: number;
+  leaves: VoteTreeLeaf[];
+  levels: string[][];
+};
+
+export async function fetchVoteTree(): Promise<VoteTreeResponse | null> {
+  if (USE_MOCK) {
+    return null;
+  }
+
+  try {
+    return await fetchJson<VoteTreeResponse>(`${COORDINATOR_URL}/vote_tree`);
+  } catch {
+    return null;
+  }
+}
+
+export type InclusionProofResponse = {
+  nostr_event_id: string;
+  leaf_hash: string;
+  merkle_path: Array<{ position: "left" | "right"; hash: string }>;
+  merkle_root: string;
+};
+
+export async function fetchInclusionProof(eventId: string): Promise<InclusionProofResponse | null> {
+  if (USE_MOCK) {
+    return null;
+  }
+
+  try {
+    return await fetchJson<InclusionProofResponse>(`${COORDINATOR_URL}/inclusion_proof?event_id=${encodeURIComponent(eventId)}`);
+  } catch {
+    return null;
+  }
+}

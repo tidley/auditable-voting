@@ -1,0 +1,78 @@
+services:
+  {{ mint_container_name }}:
+    image: {{ cdk_mintd_image }}
+    container_name: {{ mint_container_name }}
+    restart: unless-stopped
+    environment:
+      # --- Lightning Backend ---
+      CDK_MINTD_LN_BACKEND: "{{ cdk_mintd_ln_backend }}"
+
+      # --- Database ---
+      CDK_MINTD_DATABASE: "{{ cdk_mintd_database }}"
+
+      # --- Network ---
+      CDK_MINTD_LISTEN_HOST: "0.0.0.0"
+      CDK_MINTD_LISTEN_PORT: "8085"
+
+      # --- Seed ---
+      CDK_MINTD_MNEMONIC: "{{ mint_mnemonic }}"
+
+      # --- Mint Info ---
+      CDK_MINTD_MINT_PUBKEY: "{{ mint_pubkey_hex }}"
+      CDK_MINTD_MINT_DESCRIPTION: "TollGate mint for {{ npub }}"
+      CDK_MINTD_MINT_CONTACT_NOSTR: "{{ mint_pubkey_hex }}"
+      CDK_MINTD_USE_KEYSET_V2: "false"
+
+{% if auth_enabled | default(false) %}
+      # --- Blind Authentication ---
+      CDK_MINTD_AUTH_ENABLED: "true"
+      CDK_MINTD_AUTH_OPENID_DISCOVERY: "{{ mint_scheme }}://{{ auth_fqdn }}/realms/tollgate/.well-known/openid-configuration"
+      CDK_MINTD_AUTH_OPENID_CLIENT_ID: "cashu-client"
+      CDK_MINTD_AUTH_MINT_MAX_BAT: "{{ cdk_auth_max_bat }}"
+
+      # Per-endpoint auth: protect minting, leave swap/melt open
+      CDK_MINTD_AUTH_GET_MINT_QUOTE: "blind"
+      CDK_MINTD_AUTH_MINT: "blind"
+      CDK_MINTD_AUTH_CHECK_MINT_QUOTE: "none"
+      CDK_MINTD_AUTH_SWAP: "none"
+      CDK_MINTD_AUTH_MELT: "none"
+      CDK_MINTD_AUTH_GET_MELT_QUOTE: "none"
+      CDK_MINTD_AUTH_CHECK_MELT_QUOTE: "none"
+      CDK_MINTD_AUTH_CHECK_PROOF_STATE: "none"
+      CDK_MINTD_AUTH_RESTORE: "none"
+
+      # Auth token storage (per-mint PostgreSQL database)
+      CDK_MINTD_AUTH_POSTGRES_URL: "postgresql://{{ auth_postgres_user }}:{{ auth_postgres_password }}@postgres:5432/{{ mint_auth_db }}"
+{% endif %}
+    volumes:
+      - "{{ mint_data_dir }}:/root/.cdk-mintd"
+    labels:
+      # --- Traefik Routing ---
+      traefik.enable: "true"
+
+{% if tls_enabled %}
+      # HTTPS router (production)
+      traefik.http.routers.{{ mint_container_name }}.rule: "Host(`{{ mint_fqdn }}`)"
+      traefik.http.routers.{{ mint_container_name }}.entrypoints: "websecure"
+      traefik.http.routers.{{ mint_container_name }}.tls: "true"
+      traefik.http.routers.{{ mint_container_name }}.tls.certresolver: "letsencrypt"
+      traefik.http.routers.{{ mint_container_name }}.tls.domains[0].main: "{{ effective_domain }}"
+      traefik.http.routers.{{ mint_container_name }}.tls.domains[0].sans: "*.{{ effective_domain }}"
+{% else %}
+      # HTTP router (test mode - sslip.io)
+      traefik.http.routers.{{ mint_container_name }}.rule: "Host(`{{ mint_fqdn }}`)"
+      traefik.http.routers.{{ mint_container_name }}.entrypoints: "web"
+{% endif %}
+
+      # Service port
+      traefik.http.services.{{ mint_container_name }}.loadbalancer.server.port: "8085"
+
+      # --- TollGate Metadata ---
+      tollgate.npub: "{{ npub }}"
+      tollgate.subdomain: "{{ mint_subdomain }}"
+    networks:
+      - {{ docker_network_name }}
+
+networks:
+  {{ docker_network_name }}:
+    external: true

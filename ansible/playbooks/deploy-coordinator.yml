@@ -1,60 +1,320 @@
 ---
-# Deploy the voting coordinator: install deps + restart.
-# The coordinator is assumed to already be set up on the VPS.
-# Full initial deployment is done via tg-mint-orchestrator's own playbooks.
 - name: Deploy Voting Coordinator
-  hosts: tollgate-vps
+  hosts: mint_hosts
   become: true
   vars:
-    coordinator_dir: "/opt/tollgate/coordinator"
-    coordinator_venv: "{{ coordinator_dir }}/.venv"
     mint_data_dir: "/opt/tollgate/mints-local/mint1"
     mint_http_port: 3338
     mint_grpc_port: 8086
+    coordinator_dir: "/opt/tollgate/coordinator"
+    coordinator_venv: "{{ coordinator_dir }}/.venv"
     nak_port: 10547
-    _coord_repo_local: "{{ playbook_dir }}/../../../tg-mint-orchestrator"
-  pre_tasks:
-    - name: Resolve coordinator repo path locally
-      ansible.builtin.command: realpath {{ _coord_repo_local }}
-      register: _coord_resolved
-      delegate_to: localhost
-      become: false
-      changed_when: false
-      run_once: true
+    election_id: ""
+
   tasks:
-    - name: Wait for mint to be healthy
+    - name: Ensure mint1 data directory exists
+      ansible.builtin.file:
+        path: "{{ mint_data_dir }}"
+        state: directory
+        mode: "0755"
+      tags: [setup]
+
+    - name: Check if mint1 docker-compose.yml exists
+      ansible.builtin.stat:
+        path: "{{ mint_data_dir }}/docker-compose.yml"
+      register: compose_stat
+      tags: [setup]
+
+    - name: Fail if docker-compose.yml is missing
+      ansible.builtin.fail:
+        msg: "{{ mint_data_dir }}/docker-compose.yml not found. Run the local-mints playbook first."
+      when: not compose_stat.stat.exists
+      tags: [setup]
+
+    - name: Check if mint1 mnemonic exists
+      ansible.builtin.stat:
+        path: "{{ mint_data_dir }}/mnemonic.txt"
+      register: mnemonic_stat
+      tags: [setup]
+
+    - name: Fail if mnemonic.txt is missing
+      ansible.builtin.fail:
+        msg: "{{ mint_data_dir }}/mnemonic.txt not found. Run the local-mints playbook first."
+      when: not mnemonic_stat.stat.exists
+      tags: [setup]
+
+    - name: Read mint mnemonic
+      ansible.builtin.slurp:
+        src: "{{ mint_data_dir }}/mnemonic.txt"
+      register: mnemonic_contents
+      tags: [setup]
+
+    - name: Derive coordinator nsec from mint mnemonic
+      ansible.builtin.script: "{{ playbook_dir }}/../../coordinator/derive-coordinator-keys.py \"{{ mnemonic_contents.content | b64decode | trim }}\""
+      register: coordinator_keys
+      changed_when: false
+      tags: [setup]
+
+    - name: Parse coordinator keys
+      ansible.builtin.set_fact:
+        coordinator_nsec: "{{ (coordinator_keys.stdout | from_json).nsec }}"
+        derived_npub: "{{ (coordinator_keys.stdout | from_json).npub }}"
+      tags: [setup]
+
+    - name: Update mint description with coordinator npub
+      ansible.builtin.lineinfile:
+        path: "{{ mint_data_dir }}/docker-compose.yml"
+        regexp: 'CDK_MINTD_MINT_DESCRIPTION:'
+        line: '      CDK_MINTD_MINT_DESCRIPTION: "Local Cashu mint mint1 coordinator-{{ derived_npub }}"'
+      register: mint_desc
+      tags: [setup]
+
+    - name: Stop any container using gRPC port {{ mint_grpc_port }}
+      ansible.builtin.shell: >
+        docker ps --filter publish={{ mint_grpc_port }} --format '{{ "{{.Names}}" }}'
+        | xargs -r docker stop
+      changed_when: false
+      failed_when: false
+      tags: [setup]
+
+    - name: Remove stale mint-mint1 container if present but not running
+      ansible.builtin.shell: >
+        docker rm -f mint-mint1 2>/dev/null || true
+      changed_when: false
+      tags: [setup]
+
+    - name: Start mint1
+      community.docker.docker_compose_v2:
+        project_src: "{{ mint_data_dir }}"
+        state: present
+        pull: never
+      tags: [setup]
+
+    - name: Wait for mint1 to be healthy
       ansible.builtin.command: curl -sf http://127.0.0.1:{{ mint_http_port }}/v1/info
       register: mint_health
       retries: 10
       delay: 5
       until: mint_health.rc == 0
       changed_when: false
+      tags: [setup]
 
-    - name: Copy requirements.txt to VPS
+    - name: Update mint description in SQLite (CDK caches env vars)
+      ansible.builtin.shell: |
+        python3 -c "
+        import sqlite3, json
+        conn = sqlite3.connect('{{ mint_data_dir }}/cdk-mintd.sqlite')
+        conn.execute('PRAGMA wal_checkpoint(FULL)')
+        row = conn.execute(\"SELECT value FROM kv_store WHERE primary_namespace='cdk_mint' AND secondary_namespace='config' AND key='mint_info'\").fetchone()
+        if row:
+            info = json.loads(row[0])
+            info['description'] = 'Local Cashu mint mint1 coordinator-{{ derived_npub }}'
+            conn.execute(\"UPDATE kv_store SET value=? WHERE primary_namespace='cdk_mint' AND secondary_namespace='config' AND key='mint_info'\", [json.dumps(info).encode()])
+            conn.commit()
+            conn.execute('PRAGMA wal_checkpoint(FULL)')
+        conn.close()
+        "
+      when: mint_desc.changed
+      changed_when: true
+      tags: [setup]
+
+    - name: Restart mint1 if description changed
+      ansible.builtin.shell: >
+        cd {{ mint_data_dir }} && docker compose restart
+      when: mint_desc.changed
+      changed_when: true
+      tags: [setup]
+
+    - name: Wait for mint1 after restart
+      ansible.builtin.command: curl -sf http://127.0.0.1:{{ mint_http_port }}/v1/info
+      register: mint_health2
+      retries: 10
+      delay: 5
+      until: mint_health2.rc == 0
+      changed_when: false
+      when: mint_desc.changed
+      tags: [setup]
+
+    - name: Verify mint1 info
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ mint_http_port }}/v1/info"
+        method: GET
+      register: mint_info
+      changed_when: false
+      tags: [setup]
+
+    - name: Verify mint description contains coordinator npub
+      ansible.builtin.assert:
+        that:
+          - "derived_npub in mint_info.json.description"
+        fail_msg: "Coordinator npub not found in mint description: {{ mint_info.json.description }}"
+      tags: [setup]
+
+    - name: Print mint1 info
+      ansible.builtin.debug:
+        msg: "mint1 healthy: pubkey={{ mint_info.json.pubkey }} description={{ mint_info.json.description }}"
+      tags: [setup]
+
+    - name: Ensure python3-venv is installed
+      ansible.builtin.package:
+        name: python3-venv
+        state: present
+      tags: [setup]
+
+    - name: Create coordinator directory
+      ansible.builtin.file:
+        path: "{{ coordinator_dir }}"
+        state: directory
+        mode: "0755"
+      tags: [setup]
+
+    - name: Create coordinator proto directory
+      ansible.builtin.file:
+        path: "{{ coordinator_dir }}/proto"
+        state: directory
+        mode: "0755"
+      tags: [setup]
+
+    - name: Check if coordinator venv exists
+      ansible.builtin.stat:
+        path: "{{ coordinator_venv }}/bin/python3"
+      register: venv_stat
+      tags: [setup]
+
+    - name: Create coordinator venv
+      ansible.builtin.command: python3 -m venv {{ coordinator_venv }}
+      when: not venv_stat.stat.exists
+      changed_when: true
+      tags: [setup]
+
+    - name: Copy coordinator requirements
       ansible.builtin.copy:
-        src: "{{ _coord_resolved.stdout }}/scripts/requirements.txt"
-        dest: "/tmp/coordinator-requirements.txt"
+        src: "{{ playbook_dir }}/../../coordinator/requirements.txt"
+        dest: "{{ coordinator_dir }}/requirements.txt"
         mode: "0644"
+      tags: [setup]
 
     - name: Install coordinator Python dependencies
       ansible.builtin.pip:
-        requirements: "/tmp/coordinator-requirements.txt"
+        requirements: "{{ coordinator_dir }}/requirements.txt"
         virtualenv: "{{ coordinator_venv }}"
         virtualenv_command: python3 -m venv
+      tags: [setup]
+
+    - name: Install key derivation dependencies (for nsec derivation)
+      ansible.builtin.pip:
+        name:
+          - mnemonic
+          - bech32
+          - coincurve
+        virtualenv: "{{ coordinator_venv }}"
+        virtualenv_command: python3 -m venv
+      tags: [setup]
 
     - name: Copy coordinator script
       ansible.builtin.copy:
-        src: "{{ _coord_resolved.stdout }}/scripts/voting-coordinator-client.py"
+        src: "{{ playbook_dir }}/../../coordinator/voting-coordinator-client.py"
         dest: "{{ coordinator_dir }}/voting-coordinator-client.py"
         mode: "0755"
+      tags: [setup]
+
+    - name: Copy proto file
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../coordinator/proto/cdk-mint-rpc.proto"
+        dest: "{{ coordinator_dir }}/proto/cdk-mint-rpc.proto"
+        mode: "0644"
+      tags: [setup]
+
+    - name: Save coordinator nsec to file
+      ansible.builtin.copy:
+        content: "{{ coordinator_nsec }}"
+        dest: "{{ coordinator_dir }}/nsec.env"
+        mode: "0600"
+      tags: [setup]
 
     - name: Copy eligible-voters.json
       ansible.builtin.copy:
-        src: "{{ _coord_resolved.stdout }}/eligible-voters.json"
+        src: "{{ playbook_dir }}/../../eligible-voters.json"
         dest: "{{ coordinator_dir }}/eligible-voters.json"
         mode: "0644"
+      tags: [setup]
 
-    - name: Ensure coordinator systemd service is configured
+    - name: Fix nak relay ExecStart with --hostname 0.0.0.0
+      ansible.builtin.lineinfile:
+        path: /etc/systemd/system/nak.service
+        regexp: '^ExecStart='
+        line: ExecStart=/usr/local/bin/nak serve --hostname 0.0.0.0
+      register: nak_exec
+      tags: [setup]
+
+    - name: Reload systemd if nak changed
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+      when: nak_exec.changed
+      tags: [setup]
+
+    - name: Restart nak relay if config changed
+      ansible.builtin.systemd_service:
+        name: nak
+        state: restarted
+      when: nak_exec.changed
+      tags: [setup]
+
+    - name: Ensure nak relay is running
+      ansible.builtin.systemd_service:
+        name: nak
+        state: started
+        enabled: true
+      tags: [setup]
+
+    - name: Verify nak is bound to 0.0.0.0
+      ansible.builtin.shell: ss -tlnp | grep ':{{ nak_port }}'
+      register: nak_bind
+      changed_when: false
+      tags: [setup]
+
+    - name: Assert nak is publicly accessible
+      ansible.builtin.assert:
+        that:
+          - "'0.0.0.0' in nak_bind.stdout or '*:{{ nak_port }}' in nak_bind.stdout"
+        fail_msg: "nak relay not bound to 0.0.0.0: {{ nak_bind.stdout }}"
+      tags: [setup]
+
+    - name: Add iptables rule for nak relay port {{ nak_port }}
+      ansible.builtin.iptables:
+        chain: INPUT
+        protocol: tcp
+        destination_port: "{{ nak_port }}"
+        jump: ACCEPT
+        state: present
+      tags: [setup]
+
+    - name: Persist iptables rules
+      ansible.builtin.command: netfilter-persistent save
+      changed_when: false
+      failed_when: false
+      tags: [setup]
+
+    - name: Add iptables rule for coordinator HTTP API port 8081
+      ansible.builtin.iptables:
+        chain: INPUT
+        protocol: tcp
+        destination_port: "8081"
+        jump: ACCEPT
+        state: present
+      tags: [setup]
+
+    - name: Persist iptables rules (HTTP API)
+      ansible.builtin.command: netfilter-persistent save
+      changed_when: false
+      failed_when: false
+      tags: [setup]
+
+    - name: Set ExecStart args with optional election-id
+      ansible.builtin.set_fact:
+        _election_id_arg: "{{ '--election-id ' + election_id if election_id else '' }}"
+
+    - name: Install coordinator systemd service
       ansible.builtin.copy:
         content: |
           [Unit]
@@ -65,7 +325,6 @@
           [Service]
           Type=simple
           WorkingDirectory={{ coordinator_dir }}
-          {% if coordinator_election_id is defined and coordinator_election_id %}
           ExecStart={{ coordinator_venv }}/bin/python3 {{ coordinator_dir }}/voting-coordinator-client.py \
             --nsec-file {{ coordinator_dir }}/nsec.env \
             --eligible {{ coordinator_dir }}/eligible-voters.json \
@@ -73,18 +332,8 @@
             --mint-url http://127.0.0.1:{{ mint_http_port }} \
             --public-mint-url http://{{ ansible_host }}:{{ mint_http_port }} \
             --http-port 8081 \
-            --election-id {{ coordinator_election_id }} \
+            {{ _election_id_arg }}\
             --relays ws://localhost:{{ nak_port }} wss://relay.damus.io wss://nos.lol wss://relay.primal.net
-          {% else %}
-          ExecStart={{ coordinator_venv }}/bin/python3 {{ coordinator_dir }}/voting-coordinator-client.py \
-            --nsec-file {{ coordinator_dir }}/nsec.env \
-            --eligible {{ coordinator_dir }}/eligible-voters.json \
-            --grpc-endpoint 127.0.0.1:{{ mint_grpc_port }} \
-            --mint-url http://127.0.0.1:{{ mint_http_port }} \
-            --public-mint-url http://{{ ansible_host }}:{{ mint_http_port }} \
-            --http-port 8081 \
-            --relays ws://localhost:{{ nak_port }} wss://relay.damus.io wss://nos.lol wss://relay.primal.net
-          {% endif %}
           Restart=always
           RestartSec=5
           Environment=PYTHONUNBUFFERED=1
@@ -95,27 +344,56 @@
           WantedBy=multi-user.target
         dest: /etc/systemd/system/tollgate-coordinator.service
         mode: "0644"
+      tags: [setup]
 
-    - name: Reload systemd
+    - name: Reload systemd for coordinator service
       ansible.builtin.systemd_service:
         daemon_reload: true
+      tags: [setup]
 
-    - name: Restart coordinator service
+    - name: Enable and start coordinator service
       ansible.builtin.systemd_service:
         name: tollgate-coordinator
         state: restarted
         enabled: true
+      tags: [setup]
 
     - name: Wait for coordinator to start
       ansible.builtin.pause:
-        seconds: 8
+        seconds: 10
+      tags: [setup]
 
-    - name: Verify coordinator is healthy
-      ansible.builtin.uri:
-        url: "http://127.0.0.1:8081/info"
-        method: GET
-      register: coord_check
-      retries: 10
-      delay: 3
-      until: coord_check.status == 200
+    - name: Check coordinator service status
+      ansible.builtin.command: systemctl is-active tollgate-coordinator
+      register: coordinator_status
       changed_when: false
+      failed_when: coordinator_status.stdout.strip() == "failed"
+      tags: [setup]
+
+    - name: Check coordinator logs for startup
+      ansible.builtin.command: journalctl -u tollgate-coordinator --no-pager -n 20
+      register: coordinator_logs
+      changed_when: false
+      tags: [setup]
+
+    - name: Print coordinator logs
+      ansible.builtin.debug:
+        var: coordinator_logs.stdout_lines
+      tags: [setup]
+
+    - name: Print deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "=== TollGate Voting Coordinator Deployed ==="
+          - "Coordinator npub: {{ derived_npub }}"
+          - "Mint HTTP: http://{{ ansible_host }}:{{ mint_http_port }}"
+          - "Mint gRPC: 127.0.0.1:{{ mint_grpc_port }}"
+          - "Coordinator HTTP API: http://{{ ansible_host }}:8081"
+          - "Nak relay: ws://{{ ansible_host }}:{{ nak_port }}"
+          - "Public relays: wss://relay.damus.io wss://nos.lol wss://relay.primal.net"
+          - "Mint description: {{ mint_info.json.description }}"
+          - "Service status: {{ coordinator_status.stdout }}"
+          - ""
+          - "Voters discover the coordinator npub via: GET http://{{ ansible_host }}:{{ mint_http_port }}/v1/info"
+          - "Coordinator API: GET http://{{ ansible_host }}:8081/info"
+      tags: [setup]

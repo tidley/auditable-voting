@@ -1,0 +1,55 @@
+- name: Create mint data directory
+  ansible.builtin.file:
+    path: "{{ mint_data_base_dir }}/{{ item.name }}"
+    state: directory
+    mode: "0755"
+
+- name: Check if mint mnemonic exists
+  ansible.builtin.stat:
+    path: "{{ mint_data_base_dir }}/{{ item.name }}/mnemonic.txt"
+  register: mint_mnemonic_stat
+
+- name: Generate mint mnemonic
+  ansible.builtin.command:
+    cmd: python3 -c "from mnemonic import Mnemonic; print(Mnemonic('english').generate(strength=128))"
+  register: generated_mnemonic
+  changed_when: false
+  when: not mint_mnemonic_stat.stat.exists
+
+- name: Persist mint mnemonic
+  ansible.builtin.copy:
+    content: "{{ generated_mnemonic.stdout }}\n"
+    dest: "{{ mint_data_base_dir }}/{{ item.name }}/mnemonic.txt"
+    mode: "0600"
+  when: not mint_mnemonic_stat.stat.exists
+
+- name: Load mint mnemonic
+  ansible.builtin.slurp:
+    src: "{{ mint_data_base_dir }}/{{ item.name }}/mnemonic.txt"
+  register: mint_mnemonic_file
+
+- name: Set mint mnemonic fact
+  ansible.builtin.set_fact:
+    mint_mnemonic: "{{ mint_mnemonic_file.content | b64decode | trim }}"
+
+- name: Template local mint docker-compose
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ mint_data_base_dir }}/{{ item.name }}/docker-compose.yml"
+    mode: "0644"
+
+- name: Start local mint container
+  community.docker.docker_compose_v2:
+    project_src: "{{ mint_data_base_dir }}/{{ item.name }}"
+    state: present
+    pull: never
+
+- name: Wait for local mint to be healthy
+  ansible.builtin.command:
+    cmd: "curl -sf http://127.0.0.1:{{ item.http_port }}/v1/info"
+  register: local_mint_health
+  retries: 10
+  delay: 5
+  until: local_mint_health.rc == 0
+  changed_when: false
+  ignore_errors: true

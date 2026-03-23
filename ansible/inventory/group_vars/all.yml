@@ -1,12 +1,49 @@
-vps_ip: "23.182.128.64"
-coordinator_repo_dir: "{{ playbook_dir | dirname | dirname | dirname }}/tg-mint-orchestrator"
+# =============================================================================
+# Auditable Voting - Global Variables
+# =============================================================================
 
-# coordinator_url: Internal URL reachable from the nginx container (proxy_pass target)
+# --- VPS Connection ---
+vps_ip: "23.182.128.64"
+
+# --- Mode ---
+tls_enabled: false
+mint_domain: "mints.tollgate.me"
+
+# --- TLS / Let's Encrypt (only used when tls_enabled: true) ---
+acme_email: "admin@tollgate.me"
+acme_dns_provider: "cloudflare"
+acme_env_vars:
+  CF_API_EMAIL: "your-cloudflare-email"
+  CF_DNS_API_TOKEN: "your-cloudflare-api-token"
+
+# --- Traefik ---
+traefik_version: "v3.6"
+traefik_dashboard_enabled: false
+traefik_data_dir: "/opt/tollgate/traefik"
+
+# --- CDK Mint Defaults ---
+cdk_mintd_image: "cashubtc/mintd:0.14.3"
+cdk_mintd_ln_backend: "fakewallet"
+cdk_mintd_database: "sqlite"
+mint_data_base_dir: "/opt/tollgate/mints"
+
+# --- Mint Network ---
+docker_network_name: "tollgate-net"
+
+# --- Authentication (Blind Auth) ---
+auth_enabled: false
+keycloak_image: "quay.io/keycloak/keycloak:26.0"
+keycloak_admin_user: "admin"
+keycloak_admin_password: "changeme-in-production"
+auth_postgres_image: "postgres:16-alpine"
+auth_postgres_user: "tollgate"
+auth_postgres_password: "changeme-in-production"
+auth_data_dir: "/opt/tollgate/auth"
+cdk_auth_max_bat: 50
+
+# --- Voting Client ---
 coordinator_url: "http://host.docker.internal:8081"
-# mint_url: Internal URL reachable from the nginx container (proxy_pass target)
 mint_url: "http://host.docker.internal:3338"
 app_deploy_dir: "/opt/auditable-voting"
 node_version: "20"
 voting_subdomain: "vote"
-tls_enabled: false
-docker_network_name: "tollgate-net"

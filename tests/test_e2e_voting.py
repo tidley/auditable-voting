@@ -34,7 +34,7 @@ from conftest_e2e import (
 
 log = logging.getLogger("e2e")
 
-ELIGIBLE_VOTERS_PATH = Path(__file__).resolve().parents[1].parent / "tg-mint-orchestrator" / "eligible-voters.json"
+ELIGIBLE_VOTERS_PATH = Path(__file__).resolve().parents[1] / "eligible-voters.json"
 
 
 @pytest.fixture(scope="session")
@@ -108,6 +108,7 @@ def test_election(voter_keys, coordinator_keys):
     log.info("Election cached: event_id=%s, election_id=%s", event_id_hex[:16], effective_election_id[:20])
 
     eligible_npubs = json.loads(ELIGIBLE_VOTERS_PATH.read_text())
+    production_eligible = sorted(eligible_npubs)
 
     eligible_npubs.append(voter_npub)
     log.info("Loaded %d eligible npubs from source, added test voter: %s", len(eligible_npubs) - 1, voter_npub[:20])
@@ -147,7 +148,17 @@ def test_election(voter_keys, coordinator_keys):
         "questions": data.get("questions", []),
     }
 
-    log.info("Election fixture torn down (events persist on relay, ID=%s)", effective_election_id)
+    log.info("Restoring production eligible-voters.json on VPS teardown...")
+    production_json = json.dumps(production_eligible)
+    ssh_run(f"echo '{production_json}' > /opt/tollgate/coordinator/eligible-voters.json")
+    ssh_run("systemctl restart tollgate-coordinator")
+    time.sleep(6)
+    try:
+        poll_until(f"{COORDINATOR_HTTP}/info", timeout=20)
+    except Exception:
+        log.warning("Coordinator did not come back after teardown restore")
+    log.info("Production eligible list restored (%d npubs), test election events persist on relay (ID=%s)",
+             len(production_eligible), effective_election_id)
 
 
 @pytest.mark.e2e

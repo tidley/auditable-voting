@@ -1,8 +1,8 @@
-# Self-Service Issuance + 3-Mint Election Model
+# 3-Mint Election Quorum Model
 
-This document defines a privacy-preserving election architecture using:
+This document defines the privacy-preserving multi-mint architecture using:
 
-- Self-service blind issuance window
+- Coordinator-managed proof issuance
 - Three independent Cashu mints
 - Threshold-style eligibility (k-of-3 recommended: 2-of-3)
 - Nostr-based vote publication
@@ -15,17 +15,19 @@ The design provides:
 - Censorship resistance (bounded)
 - Phantom voter resistance
 
+> **Source of truth:** This repo (`tg-mint-orchestrator/docs/`) is the canonical location for all protocol specifications. The copy in `../auditable-voting/docs/` is outdated and should not be referenced.
+
 ---
 
 # High-Level Model
 
-Each voter must obtain blinded proofs from three independent mints during a public issuance window.
+Each voter must obtain blinded proofs from three independent mints during a public issuance window. In the current implementation, issuance is coordinator-managed via gRPC approval (see `05-VOTING_ISSUANCE_NOSTR_CLIENT_DESIGN.md`).
 
 At vote time:
 
-- Voter publishes a Nostr vote event.
+- Voter publishes a Nostr vote event (kind 38000).
 - Voter submits proofs privately to each mint.
-- Mints burn proofs and publish spent commitments.
+- Mints burn proofs. Coordinators publish spent commitments (kind 38006).
 - Final tally includes only votes backed by valid mint quorum.
 
 Recommended validation rule:
@@ -37,6 +39,7 @@ Recommended validation rule:
 # Actors
 
 - Voter (runs Cashu wallet)
+- Coordinator (announces election, approves issuance, derives key from mint mnemonic)
 - Mint A
 - Mint B
 - Mint C
@@ -47,25 +50,29 @@ Recommended validation rule:
 
 # Phase 1 — Election Creation
 
-Each mint publishes:
+### 1a. Coordinator Announces Election
 
-- Election metadata
+The coordinator publishes kind 38008 with election questions, timing, and mint URLs. The event's ID becomes the election_id. See `04-VOTING_EVENT_INTEROP_NOTES.md` for the full spec.
+
+### 1b. Each Coordinator Declares Hard Cap
+
+Each coordinator publishes kind 38007:
+
 - max_supply
 - Issuance window
 - Voting window
-- Eligibility set commitment (eligible npubs)
+- Eligibility set commitment (eligible npubs via kind 38009)
 
-All mints must reference the same election_id.
+All mints reference the same election_id (the kind 38008 event ID).
 
-```mermaid
-flowchart LR
-    MintA -->|38007| Relays
-    MintB -->|38007| Relays
-    MintC -->|38007| Relays
-    Relays --> Voters
+```
+CoordinatorA -->|kind 38007| Relays
+CoordinatorB -->|kind 38007| Relays
+CoordinatorC -->|kind 38007| Relays
+Relays --> Voters
 ```
 
-Invariant:
+Invariants:
 
 - max_supply is immutable per mint
 - Election parameters are publicly visible before issuance begins
@@ -73,42 +80,32 @@ Invariant:
 
 ---
 
-# Phase 2 — Self-Service Blind Issuance Window
+# Phase 2 — Proof Issuance (Coordinator-Managed)
 
-Voters interact directly with each mint using a Cashu wallet.
+In the current implementation, issuance is not self-service but coordinator-managed. Voters interact with the coordinator via Nostr, and the coordinator approves mint quotes via gRPC.
 
-Important property:
+### Sequence: Coordinator-Managed Issuance
 
-- Wallet generates secrets locally
-- Wallet blinds secrets
-- Mint signs blinded values
-- Mint never sees unblinded secrets during issuance
-
-## Sequence: Blind Issuance (Per Mint)
-
-```mermaid
-sequenceDiagram
-    participant V as Voter Wallet
-    participant M as Mint
-
-    V->>M: Request issuance
-    M->>V: Random challenge
-    V->>M: Sign challenge with eligible npub
-    M->>M: Verify eligibility + signature
-    V->>V: Generate random secret
-    V->>V: Blind secret
-    V->>M: Send blinded secret
-    M->>V: Sign blinded secret
-    V->>V: Unblind signature
-    V->>V: Store valid Cashu proof
+```
+Voter -> Relays: publish kind 38010 (quote_id, mint_url, amount=1, election_id)
+Relays -> Coordinator: filtered by ["p", coordinator_npub]
+Coordinator: check pubkey in eligible_set
+Coordinator: check not already issued
+Coordinator: check amount == 1 sat
+Coordinator -> Mint: gRPC UpdateNut04Quote(quote_id, state="paid")
+Mint -> Voter: quote state becomes "paid"
+Voter -> Mint: POST /v1/mint/bolt11 (blinded outputs)
+Mint -> Voter: signed blinded proofs
+Voter: unblind and store proofs
 ```
 
-This process is repeated independently for Mint A, Mint B, and Mint C.
+This process is repeated independently for each mint (or at least 2-of-3 for quorum).
 
 Privacy property:
 
-- Mint cannot link final proof secret to issuance request.
-- Mint can see which eligible npub requested issuance, but cannot link that npub to a later vote due to blind issuance.
+- Coordinator sees which eligible npub requested issuance
+- Mint never sees the voter's npub (only the coordinator's gRPC approval)
+- Mint cannot link final proof secret to issuance request due to blind signatures
 
 ---
 
@@ -120,18 +117,14 @@ Kind: 38000
 
 ```json
 {
-  "election_id": "...",
-  "vote_choice": "Alice",
+  "election_id": "<38008_event_id>",
+  "responses": [
+    {"question_id": "q1", "value": "Alice"}
+  ],
   "timestamp": 1710000000
 }
-```
-
-```mermaid
-sequenceDiagram
-    participant V as Voter
-    participant R as Nostr Relay
-
-    V->>R: Publish signed vote event
+tags:
+  - ["election", "<election_id>"]
 ```
 
 Vote event does NOT contain any Cashu proofs.
@@ -144,45 +137,39 @@ Voter submits proofs privately to each mint.
 
 Transport options:
 
-- Encrypted Nostr DM (NIP-04 / NIP-44)
+- Encrypted Nostr DM (NIP-04 / NIP-44) — kind 38001
 - HTTPS endpoint
 - Tor strongly recommended
 
-```mermaid
-sequenceDiagram
-    participant V as Voter
-    participant MA as Mint A
-    participant MB as Mint B
-    participant MC as Mint C
-
-    V->>MA: Encrypted {event_id, proof_A}
-    V->>MB: Encrypted {event_id, proof_B}
-    V->>MC: Encrypted {event_id, proof_C}
+```
+Voter -> MintA: Encrypted {event_id, proof_A}
+Voter -> MintB: Encrypted {event_id, proof_B}
+Voter -> MintC: Encrypted {event_id, proof_C}
 ```
 
-Each mint:
+Each coordinator:
 
-- Verifies proof signature
+- Verifies proof signature (via mint)
 - Ensures proof not previously spent
-- Burns proof
+- Burns proof (via mint)
 - Records commitment = SHA256(proof_secret)
+- Publishes acceptance receipt (kind 38002)
 
 ---
 
 # Phase 5 — Transparency Publication
 
-Each mint publishes:
+Each coordinator publishes:
 
-- issuance_commitment_root
-- spent_commitment_root
+- Issuance commitment root (kind 38005)
+- Spent commitment root (kind 38006)
 - total_issued
 - total_spent
 
-```mermaid
-flowchart LR
-    MintA --> Relays
-    MintB --> Relays
-    MintC --> Relays
+```
+CoordinatorA --> Relays
+CoordinatorB --> Relays
+CoordinatorC --> Relays
 ```
 
 Public verifiers check:
@@ -316,7 +303,17 @@ The system achieves anonymous eligibility with auditable bounded supply.
 - Blind issuance mandatory
 - Issuance + spent commitment roots required
 - Tor recommended for wallet transport
+- Coordinator key derived from mint mnemonic (BIP32 master key)
 
 ---
+
+# Current Implementation
+
+The current deployment uses CDK Cashu mints behind Traefik on a VPS, with coordinator-managed issuance via gRPC. See `06-VPS_VOTING_PLAYBOOK_DESIGN.md` for deployment details.
+
+- Mint URLs: `http://mint-{a,b,c}.mints.<vps_ip>.sslip.io`
+- gRPC: `<vps_ip>:808{6,7,8}`
+- Coordinator keys: derived from each mint's BIP39 mnemonic via BIP32 master key
+- Issuance: voter publishes kind 38010 → coordinator approves via gRPC → voter mints proof
 
 This model provides strong censorship resistance, bounded trust, and preserved voter anonymity without introducing blockchain consensus.

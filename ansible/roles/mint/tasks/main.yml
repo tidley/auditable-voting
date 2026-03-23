@@ -1,0 +1,194 @@
+---
+# =============================================================================
+# Mint role: Deploy a CDK Cashu mint for a TollGate operator
+# =============================================================================
+
+- name: Check if mint already exists
+  community.docker.docker_container_info:
+    name: "{{ mint_container_name }}"
+  register: existing_mint
+
+- name: Abort if mint already deployed
+  ansible.builtin.fail:
+    msg: >
+      Mint '{{ mint_container_name }}' already exists for npub {{ npub }}.
+      URL: {{ mint_scheme }}://{{ mint_fqdn }}
+      To redeploy, first remove it manually:
+        docker compose -f {{ mint_data_dir }}/docker-compose.yml down
+  when: existing_mint.exists
+
+- name: Create mint data directory
+  ansible.builtin.file:
+    path: "{{ mint_data_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Install Python libraries for mint setup
+  ansible.builtin.pip:
+    name:
+      - mnemonic
+      - bech32
+    state: present
+    break_system_packages: true
+
+- name: Generate BIP39 mnemonic for mint
+  ansible.builtin.command:
+    cmd: python3 -c "from mnemonic import Mnemonic; print(Mnemonic('english').generate(strength=128))"
+  register: generated_mnemonic
+  changed_when: false
+
+- name: Convert npub to hex pubkey
+  ansible.builtin.command:
+    cmd: "python3 -c \"from bech32 import bech32_decode, convertbits; hrp, data = bech32_decode('{{ npub }}'); print(bytes(convertbits(data, 5, 8, False)).hex())\""
+  register: npub_hex_result
+  changed_when: false
+
+- name: Set mint facts
+  ansible.builtin.set_fact:
+    mint_mnemonic: "{{ generated_mnemonic.stdout }}"
+    mint_pubkey_hex: "{{ npub_hex_result.stdout }}"
+
+# --- Auth: Create per-mint Keycloak user and PostgreSQL database ---
+- name: Provision auth for operator
+  when: auth_enabled | default(false) | bool
+  block:
+    - name: Generate random password for operator
+      ansible.builtin.set_fact:
+        operator_auth_password: "{{ lookup('password', '/dev/null length=24 chars=ascii_letters,digits') }}"
+
+    - name: Check if per-mint auth database exists
+      ansible.builtin.command:
+        cmd: "docker exec postgres psql -U {{ auth_postgres_user }} -d keycloak -tAc \"SELECT 1 FROM pg_database WHERE datname = '{{ mint_auth_db }}'\""
+      register: db_exists_check
+      changed_when: false
+
+    - name: Create per-mint auth database
+      ansible.builtin.command:
+        cmd: "docker exec postgres psql -U {{ auth_postgres_user }} -d keycloak -c \"CREATE DATABASE {{ mint_auth_db }}\""
+      when: "'1' not in db_exists_check.stdout"
+
+    - name: Get Keycloak admin token
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:8080/realms/master/protocol/openid-connect/token"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          grant_type: "password"
+          client_id: "admin-cli"
+          username: "{{ keycloak_admin_user }}"
+          password: "{{ keycloak_admin_password }}"
+        status_code: 200
+      register: kc_token_response
+
+    - name: Set Keycloak admin token
+      ansible.builtin.set_fact:
+        kc_admin_token: "{{ kc_token_response.json.access_token }}"
+
+    - name: Check if Keycloak user already exists
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:8080/admin/realms/tollgate/users?username={{ npub }}&exact=true"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ kc_admin_token }}"
+        status_code: 200
+      register: kc_user_check
+
+    - name: Create Keycloak user for operator
+      when: kc_user_check.json | length == 0
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:8080/admin/realms/tollgate/users"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ kc_admin_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          username: "{{ npub }}"
+          enabled: true
+          credentials:
+            - type: "password"
+              value: "{{ operator_auth_password }}"
+              temporary: false
+        status_code: 201
+
+# Write the npub and mnemonic to a file in the mint's data dir for reference
+- name: Record operator metadata
+  ansible.builtin.copy:
+    content: |
+      npub={{ npub }}
+      pubkey_hex={{ mint_pubkey_hex }}
+      subdomain={{ mint_subdomain }}
+      fqdn={{ mint_fqdn }}
+      mnemonic={{ mint_mnemonic }}
+      created={{ ansible_date_time.iso8601 }}
+      {% if auth_enabled | default(false) %}
+      auth_username={{ npub }}
+      auth_password={{ operator_auth_password }}
+      auth_db={{ mint_auth_db }}
+      {% endif %}
+    dest: "{{ mint_data_dir }}/operator.env"
+    mode: "0600"
+
+- name: Template mint docker-compose
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ mint_data_dir }}/docker-compose.yml"
+    mode: "0644"
+
+- name: Start mint container
+  community.docker.docker_compose_v2:
+    project_src: "{{ mint_data_dir }}"
+    state: present
+    pull: always
+
+- name: Wait for mint to be healthy
+  ansible.builtin.command:
+    cmd: "curl -sf -H 'Host: {{ mint_fqdn }}' http://127.0.0.1/v1/info"
+  register: mint_health
+  retries: 10
+  delay: 5
+  until: mint_health.rc == 0
+  changed_when: false
+  ignore_errors: true
+
+- name: Register mint in registry
+  ansible.builtin.lineinfile:
+    path: "{{ mint_data_base_dir }}/registry.csv"
+    create: true
+    mode: "0644"
+    line: "{{ npub }},{{ mint_subdomain }},{{ mint_fqdn }},{{ ansible_date_time.iso8601 }}"
+
+- name: Print mint details
+  ansible.builtin.debug:
+    msg: |
+
+      ============================================
+       TollGate Mint Deployed Successfully!
+      ============================================
+       Operator npub : {{ npub }}
+       Pubkey (hex)  : {{ mint_pubkey_hex }}
+       Subdomain     : {{ mint_subdomain }}
+       Mint URL      : {{ mint_scheme }}://{{ mint_fqdn }}
+       Container     : {{ mint_container_name }}
+       Data dir      : {{ mint_data_dir }}
+       LN Backend    : {{ cdk_mintd_ln_backend }}
+       Mode          : {{ 'PRODUCTION (TLS)' if tls_enabled else 'TEST (HTTP, sslip.io)' }}
+      {% if auth_enabled | default(false) %}
+        Auth          : ENABLED (Blind Auth)
+       Auth Server   : {{ mint_scheme }}://{{ auth_fqdn }}
+       Auth Username : {{ npub }}
+       Auth Password : {{ operator_auth_password }}
+      {% else %}
+       Auth          : DISABLED (open mint)
+      {% endif %}
+      ============================================
+
+       Clients can connect to this mint at:
+         {{ mint_scheme }}://{{ mint_fqdn }}
+
+       Mint info endpoint:
+         {{ mint_scheme }}://{{ mint_fqdn }}/v1/info
+
+       Test with curl:
+         curl {{ mint_scheme }}://{{ mint_fqdn }}/v1/info
+      ============================================

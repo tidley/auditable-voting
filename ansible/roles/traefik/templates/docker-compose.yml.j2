@@ -1,0 +1,28 @@
+services:
+  traefik:
+    image: traefik:{{ traefik_version }}
+    container_name: traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+{% if tls_enabled %}
+      - "443:443"
+{% endif %}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - {{ traefik_data_dir }}/traefik.yml:/etc/traefik/traefik.yml:ro
+{% if tls_enabled %}
+      - {{ traefik_data_dir }}/acme:/acme
+{% endif %}
+{% if tls_enabled and acme_env_vars %}
+    environment:
+{% for key, value in acme_env_vars.items() %}
+      {{ key }}: "{{ value }}"
+{% endfor %}
+{% endif %}
+    networks:
+      - {{ docker_network_name }}
+
+networks:
+  {{ docker_network_name }}:
+    external: true

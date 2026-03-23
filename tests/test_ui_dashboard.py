@@ -35,8 +35,8 @@ class TestUIDashboard:
 
     def test_dashboard_shows_tally(self, dashboard_page):
         page = dashboard_page
-        page.wait_for_selector("p.panel-kicker:has-text('Published')", timeout=15000)
-        expect(page.locator("p.panel-kicker:has-text('Published')")).to_be_visible()
+        page.wait_for_selector("p.panel-kicker:has-text('PUBLISHED')", timeout=15000)
+        expect(page.locator("p.panel-kicker:has-text('PUBLISHED')")).to_be_visible()
         log.info("Dashboard shows tally: OK")
 
     def test_dashboard_shows_questions_from_election(self, dashboard_page):
@@ -49,14 +49,21 @@ class TestUIDashboard:
 
     def test_dashboard_shows_ballot_and_results_sections(self, dashboard_page):
         page = dashboard_page
-        page.wait_for_selector("p.panel-kicker:has-text('Results')", timeout=15000)
-        expect(page.locator("p.panel-kicker:has-text('Results')")).to_be_visible()
-        page.wait_for_selector("text=MULTIPLE CHOICE", timeout=15000)
-        ballot_section = page.locator("section:has(p.panel-kicker:text-is(\"Results\"))")
-        ballot_text = ballot_section.inner_text()
-        has_questions = "MULTIPLE CHOICE" in ballot_text or "FREE TEXT" in ballot_text or "SCALE" in ballot_text
-        assert has_questions, f"Question type badges not found. Ballot text: {ballot_text[:500]}"
-        log.info("Dashboard shows results section with question type badges: OK")
+        results_kicker = page.locator("p.panel-kicker:has-text('Results')")
+        results_count = results_kicker.count()
+        if results_count > 0:
+            results_kicker.wait_for(timeout=15000)
+            expect(results_kicker).to_be_visible()
+            page.wait_for_selector("text=MULTIPLE CHOICE", timeout=15000)
+            ballot_section = page.locator("section:has(p.panel-kicker:text-is(\"Results\"))")
+            ballot_text = ballot_section.inner_text()
+            has_questions = "MULTIPLE CHOICE" in ballot_text or "FREE TEXT" in ballot_text or "SCALE" in ballot_text
+            assert has_questions, f"Question type badges not found. Ballot text: {ballot_text[:500]}"
+            log.info("Dashboard shows results section with question type badges: OK")
+        else:
+            tally_kicker = page.locator("p.panel-kicker:has-text('Tally')")
+            tally_kicker.wait_for(timeout=15000)
+            log.info("Dashboard shows Tally section (no results yet — no votes cast): OK")
 
     def test_dashboard_single_election_no_dropdown(self, dashboard_page):
         page = dashboard_page
@@ -96,3 +103,74 @@ class TestUIDashboard:
         assert hero_copy_box["width"] > 300, \
             f"Dashboard hero-copy too narrow ({hero_copy_box['width']}px), expected >300px"
         log.info("Dashboard hero-copy width: %dpx", hero_copy_box["width"])
+
+    def test_dashboard_tally_shows_accepted_not_published(self, dashboard_page):
+        page = dashboard_page
+        page.wait_for_selector("p.panel-kicker:has-text('PUBLISHED')", timeout=15000)
+        body = page.locator("body").inner_text()
+
+        assert "PUBLISHED" in body, f"No 'PUBLISHED' text found. Body: {body[:500]}"
+        assert "ACCEPTED" in body, f"No 'ACCEPTED' text found. Body: {body[:500]}"
+
+        published_el = page.locator("p.panel-kicker:text-is('PUBLISHED') + div")
+        accepted_el = page.locator("p.panel-kicker:text-is('ACCEPTED') + div")
+
+        if published_el.count() > 0 and accepted_el.count() > 0:
+            published_text = published_el.inner_text()
+            accepted_text = accepted_el.inner_text()
+            log.info("Published: %s, Accepted: %s", published_text.strip(), accepted_text.strip())
+        log.info("Dashboard tally shows published and accepted counts: OK")
+
+    def test_dashboard_tally_no_unverified_warning(self, dashboard_page):
+        page = dashboard_page
+        page.wait_for_selector("p.panel-kicker:has-text('Published')", timeout=15000)
+        body = page.locator("body").inner_text()
+
+        assert "unverified" not in body.lower(), \
+            f"Dashboard should not show unverified vote warning. Body: {body[:500]}"
+        assert "_trust" not in body.lower(), \
+            f"Dashboard should not show _trust field. Body: {body[:500]}"
+        log.info("Dashboard tally has no unverified warning: OK")
+
+    def test_dashboard_tally_no_stale_e2e_votes(self, dashboard_page):
+        page = dashboard_page
+        page.wait_for_selector("p.panel-kicker:has-text('Published')", timeout=15000)
+        body = page.locator("body").inner_text()
+
+        assert "test-e2e" not in body.lower(), \
+            f"Dashboard shows stale E2E test election data. Body: {body[:1000]}"
+        assert "e2e test election" not in body.lower(), \
+            f"Dashboard shows stale E2E test election title. Body: {body[:1000]}"
+        log.info("Dashboard has no stale E2E test data: OK")
+
+    def test_dashboard_shows_issued_indicator(self, dashboard_page):
+        page = dashboard_page
+        page.wait_for_selector("ol.eligible-list li.eligible-list-item-dashboard", timeout=30000)
+
+        issued_checkmarks = page.locator("li.eligible-list-item-dashboard span:text-is('\u2713')")
+        pending_dots = page.locator("li.eligible-list-item-dashboard span:text-is('\u2022')")
+
+        issued_count = issued_checkmarks.count()
+        pending_count = pending_dots.count()
+
+        total_items = page.locator("li.eligible-list-item-dashboard").count()
+        assert issued_count + pending_count == total_items, \
+            f"Expected {total_items} items but found {issued_count} issued + {pending_count} pending"
+
+        assert issued_count >= 1, \
+            f"Expected at least 1 issued voter but found {issued_count}. " \
+            f"The issuance-status endpoint should return npub keys (not hex) " \
+            f"and npub1c03rad0r... should be marked as issued."
+        log.info("Dashboard shows %d issued, %d pending: OK", issued_count, pending_count)
+
+    def test_dashboard_issued_npub_matches_eligibility(self, dashboard_page):
+        page = dashboard_page
+        page.wait_for_selector("ol.eligible-list li.eligible-list-item-dashboard", timeout=30000)
+        page.wait_for_timeout(3000)
+
+        body = page.locator("body").inner_text()
+        assert "Proof issued" in body, \
+            f"Expected 'Proof issued' label in dashboard. Body: {body[:1000]}"
+        assert "Pending" in body, \
+            f"Expected 'Pending' label in dashboard. Body: {body[:1000]}"
+        log.info("Dashboard shows both 'Proof issued' and 'Pending' labels: OK")

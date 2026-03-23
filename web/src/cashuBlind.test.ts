@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockMintProofs = vi.fn().mockResolvedValue([
   { id: "test_keyset_id", amount: 1, secret: "test_secret", C: "test_signature" },
@@ -29,6 +29,21 @@ vi.mock("@cashu/cashu-ts", () => {
 
 vi.mock("./config", () => ({ USE_MOCK: false }));
 
+const mockKeysResponse = {
+  keysets: [{ id: "test_keyset_id", unit: "sat", active: true, keys: { "1": "02pubkey" } }],
+};
+
+const originalFetch = globalThis.fetch;
+beforeEach(() => {
+  globalThis.fetch = vi.fn(async (url: string | Request | URL) => {
+    const urlString = url.toString();
+    if (urlString.endsWith("/v1/keys")) {
+      return new Response(JSON.stringify(mockKeysResponse));
+    }
+    return originalFetch(url);
+  }) as typeof fetch;
+});
+
 describe("requestQuoteAndMint", () => {
   it("calls mintProofs with the approved quote ID", async () => {
     const { requestQuoteAndMint } = await import("./cashuBlind");
@@ -56,6 +71,10 @@ describe("requestQuoteAndMint", () => {
     const { CashuWallet, CashuMint } = await import("@cashu/cashu-ts");
     await requestQuoteAndMint("http://example.com/mint", "quote-456");
     expect(CashuMint).toHaveBeenCalledWith("http://example.com/mint");
-    expect(CashuWallet).toHaveBeenCalledWith(expect.any(Object), { unit: "sat" });
+    expect(CashuWallet).toHaveBeenCalledWith(expect.any(Object), {
+      unit: "sat",
+      keys: mockKeysResponse.keysets,
+      keysets: mockKeysResponse.keysets,
+    });
   });
 });

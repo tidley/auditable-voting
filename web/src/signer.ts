@@ -1,6 +1,7 @@
 import { finalizeEvent, getPublicKey, nip19 } from "nostr-tools";
 import type { EventTemplate, VerifiedEvent } from "nostr-tools";
 import { decodeNsec } from "./nostrIdentity";
+import type { WindowNostr } from "./nostr.d";
 
 export type SignerMode = "raw" | "nip07";
 
@@ -34,9 +35,9 @@ export function createRawSigner(nsec: string): NostrSigner {
 }
 
 export function createNip07Signer(): NostrSigner {
-  const nostr = window.nostr;
+  const nostr = window.nostr as WindowNostr | undefined;
 
-  if (!nostr) {
+  if (!nostr || typeof nostr.getPublicKey !== "function" || typeof nostr.signEvent !== "function") {
     throw new Error("No NIP-07 browser extension detected. Install Alby, nos2x, or NostrKey.");
   }
 
@@ -50,13 +51,22 @@ export function createNip07Signer(): NostrSigner {
       return nip19.npubEncode(hexPubkey);
     },
     async signEvent(template: EventTemplate): Promise<VerifiedEvent> {
-      return nostr.signEvent(template);
+      const result = await nostr.signEvent(template);
+      if (!result || !result.id || !result.pubkey || !result.sig) {
+        throw new Error("NIP-07 extension returned an incomplete signed event.");
+      }
+      return result as VerifiedEvent;
     }
   };
 }
 
 export function detectSigner(): { mode: SignerMode; signer: NostrSigner | null } {
-  if (typeof window !== "undefined" && window.nostr && typeof window.nostr.getPublicKey === "function") {
+  const nostr = window.nostr;
+  if (
+    typeof window !== "undefined" && nostr &&
+    typeof (nostr as WindowNostr).getPublicKey === "function" &&
+    typeof (nostr as WindowNostr).signEvent === "function"
+  ) {
     try {
       const signer = createNip07Signer();
       return { mode: "nip07", signer };
@@ -77,7 +87,12 @@ export function startSignerDetection(
   const timer = setInterval(() => {
     attempts++;
 
-    if (typeof window !== "undefined" && window.nostr && typeof window.nostr.getPublicKey === "function") {
+    const nostr = window.nostr;
+    if (
+      typeof window !== "undefined" && nostr &&
+      typeof (nostr as WindowNostr).getPublicKey === "function" &&
+      typeof (nostr as WindowNostr).signEvent === "function"
+    ) {
       try {
         const signer = createNip07Signer();
         onDetected({ mode: "nip07", signer });

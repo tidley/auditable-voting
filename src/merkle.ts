@@ -5,8 +5,36 @@ export type MerklePathNode = {
   hash: string;
 };
 
+export type InclusionProof = {
+  nostr_event_id: string;
+  leaf_hash: string;
+  merkle_path: MerklePathNode[];
+  merkle_root: string;
+};
+
 function sha256(data: Buffer | string): string {
   return createHash("sha256").update(data).digest("hex");
+}
+
+export function canonicalJson(obj: unknown): string {
+  if (obj === null || obj === undefined) return "null";
+  if (typeof obj !== "object") return JSON.stringify(obj);
+  if (Array.isArray(obj)) {
+    return "[" + obj.map(canonicalJson).join(",") + "]";
+  }
+  const sortedKeys = Object.keys(obj as Record<string, unknown>).sort();
+  const pairs = sortedKeys.map(k => JSON.stringify(k) + ":" + canonicalJson((obj as Record<string, unknown>)[k]));
+  return "{" + pairs.join(",") + "}";
+}
+
+export function computeVoteLeaf(
+  eventId: string,
+  pubkey: string,
+  responses: unknown[],
+  timestamp: number
+): string {
+  const raw = eventId + pubkey + canonicalJson(responses) + String(timestamp);
+  return sha256(raw);
 }
 
 export function computeLeaf(
@@ -15,8 +43,7 @@ export function computeLeaf(
   voteChoice: string,
   timestamp: number
 ): string {
-  const encoded = `${eventId}|${pubkey}|${voteChoice}|${timestamp}`;
-  return sha256(encoded);
+  return computeVoteLeaf(eventId, pubkey, [voteChoice], timestamp);
 }
 
 export function buildMerkleTree(leaves: string[]) {

@@ -1,0 +1,50 @@
+services:
+  {{ mint_container_name }}:
+    image: "{{ voting_mint_image | default('cdk-mint:manual-approval') }}"
+    container_name: "{{ mint_container_name }}"
+    restart: unless-stopped
+    ports:
+      - "{{ coordinator_grpc_port }}:{{ coordinator_grpc_port }}"
+    environment:
+      CDK_MINTD_LN_BACKEND: "fakewallet"
+      CDK_MINTD_DATABASE: "sqlite"
+      CDK_MINTD_LISTEN_HOST: "0.0.0.0"
+      CDK_MINTD_LISTEN_PORT: "8085"
+      CDK_MINTD_URL: "{{ mint_scheme }}://{{ mint_fqdn }}"
+      CDK_MINTD_MNEMONIC: "{{ mint_mnemonic }}"
+      CDK_MINTD_MINT_NAME: "Voting Mint {{ coordinator_name }}"
+      CDK_MINTD_MINT_DESCRIPTION: "TollGate voting coordinator {{ coordinator_name }}"
+      CDK_MINTD_FAKE_WALLET_MANUAL_APPROVAL_INCOMING: "true"
+      CDK_MINTD_FAKE_WALLET_MANUAL_APPROVAL_OUTGOING: "true"
+      CDK_MINTD_FAKE_WALLET_ACCEPT_ARBITRARY_MELT: "true"
+      CDK_MINTD_FAKE_WALLET_ARBITRARY_MELT_FEE: "0"
+      CDK_MINTD_MINT_MANAGEMENT_ENABLED: "true"
+      CDK_MINTD_MANAGEMENT_ADDRESS: "0.0.0.0"
+      CDK_MINTD_MANAGEMENT_PORT: "{{ coordinator_grpc_port }}"
+      CDK_MINTD_USE_KEYSET_V2: "false"
+    volumes:
+      - "{{ mint_data_dir }}:/root/.cdk-mintd"
+    labels:
+      traefik.enable: "true"
+
+{% if tls_enabled %}
+      traefik.http.routers.{{ mint_container_name }}.rule: "Host(`{{ mint_fqdn }}`)"
+      traefik.http.routers.{{ mint_container_name }}.entrypoints: "websecure"
+      traefik.http.routers.{{ mint_container_name }}.tls: "true"
+      traefik.http.routers.{{ mint_container_name }}.tls.certresolver: "letsencrypt"
+      traefik.http.routers.{{ mint_container_name }}.tls.domains[0].main: "{{ effective_domain }}"
+      traefik.http.routers.{{ mint_container_name }}.tls.domains[0].sans: "*.{{ effective_domain }}"
+{% else %}
+      traefik.http.routers.{{ mint_container_name }}.rule: "Host(`{{ mint_fqdn }}`)"
+      traefik.http.routers.{{ mint_container_name }}.entrypoints: "web"
+{% endif %}
+
+      traefik.http.services.{{ mint_container_name }}.loadbalancer.server.port: "8085"
+
+      tollgate.coordinator: "{{ coordinator_name }}"
+    networks:
+      - {{ docker_network_name }}
+
+networks:
+  {{ docker_network_name }}:
+    external: true

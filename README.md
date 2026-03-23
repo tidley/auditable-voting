@@ -10,13 +10,66 @@ Nostr + Cashu voting with coordinator-mediated blind token issuance, eligibility
 
 **Voting Page:** http://vote.mints.23.182.128.64.sslip.io/vote.html
 
+## Project Board
+
+| Board | URL |
+|-------|-----|
+| **auditable-voting** (repo) | [link](https://www.kanbanstr.com/#/board/2c8db3b4bf7075f9f24db49d6443e144c780206c2b15671d0ddaebc1091108f9/auditable-voting) |
+| **fix/ui-issues** (branch) | [link](https://www.kanbanstr.com/#/board/2c8db3b4bf7075f9f24db49d6443e144c780206c2b15671d0ddaebc1091108f9/fix-ui-issues) |
+
+Managed via [kanbanstr-cli](https://gitworkshop.dev/npub19jxm8d9lwp6lnujdkjwkgslpgnrcqgrv9v2kw8gdmt4uzzg3pruse3s0f3/relay.ngit.dev/kanbanstr-cli) (NIP-100)
+
+## Prerequisites
+
+One-time local setup:
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r tests/requirements.txt -r coordinator/requirements.txt
+npm install && npm --prefix web install
+```
+
 ## Deploy
+
+### Configure VPS access
+
+1. Set the VPS IP in `ansible/inventory/group_vars/all.yml`:
+
+   ```yaml
+   vps_ip: "1.2.3.4"
+   ```
+
+2. Ensure SSH key access as root to the VPS. Ansible uses `host_key_checking = False` in `ansible.cfg` and `ansible_user: root` in `ansible/inventory/hosts.yml`.
+
+3. Override the IP at runtime if needed:
+
+   ```bash
+   ansible-playbook ansible/playbooks/deploy-and-prepare.yml -e vps_ip=1.2.3.4
+   ```
+
+### Deploy everything
 
 ```bash
 ansible-playbook ansible/playbooks/deploy-and-prepare.yml
 ```
 
-This single command deploys Traefik, the voting coordinator, the frontend, and publishes the election with eligibility data.
+This single command deploys Traefik, the voting coordinator (Cashu mint + Nostr client), the frontend dashboard, and publishes the election with eligibility data.
+
+## Testing
+
+```bash
+.venv/bin/python -m pytest tests/ -v
+```
+
+By default this runs fast unit tests and integration checks (no E2E, no UI).
+
+| Variable | Effect |
+|----------|--------|
+| *(default)* | Fast + integration only |
+| `RUN_ALL_TESTS=1` | All tests including E2E and UI (requires VPS) |
+| `RUN_FAST_ONLY=1` | Fast unit tests only |
+| `SKIP_TESTS=1` | Bypass tests entirely |
+
+The pre-commit hook runs tests automatically on every `git commit` using the same tiers.
 
 ## Production Voter Flow
 
@@ -38,33 +91,6 @@ Browser --> Traefik (:80)
                        |-- /api/    --> coordinator:8081
                        |-- /mint/   --> mint:3338
 ```
-
-## Testing
-
-```bash
-# Frontend unit tests (vitest)
-cd web && npx vitest run
-
-# Integration readiness tests (pytest)
-python3 -m venv .venv && .venv/bin/pip install -r tests/requirements.txt
-.venv/bin/pytest tests/ -v
-
-# Playwright browser E2E tests (requires VPS running, Chromium installed)
-.venv/bin/pip install pytest-playwright
-.venv/bin/python -m playwright install chromium
-.venv/bin/pytest tests/test_ui_dashboard.py tests/test_ui_issuance.py tests/test_ui_voting.py -v --timeout=600
-
-# Headed mode (watch the browser — requires X server)
-.venv/bin/pytest tests/test_ui_issuance.py -v --timeout=300 --headed --slowmo=500
-```
-
-- 8/8 Playwright browser E2E tests pass (~2m)
-- 25/25 integration readiness tests pass
-- 12/12 E2E voter flow steps pass (~87s)
-- 13/13 signer tests pass
-- 4/4 vitest unit tests pass (cashuBlind regression guards)
-
-The ansible deploy playbook runs vitest automatically before building.
 
 ## Local Development (mock mode)
 
@@ -95,20 +121,17 @@ web/src/ballot.ts           ballot event publishing
 web/src/nostrIdentity.ts    Nostr key helpers, claim signing
 web/src/signer.ts           NostrSigner abstraction (raw / NIP-07)
 web/src/cashuWallet.ts      local wallet storage
+coordinator/                voting coordinator daemon + proto stubs
 ansible/                    Ansible playbooks for deployment
+scripts/                    shell wrappers for ansible playbooks
 tests/                      pytest integration + E2E tests
 ```
 
 ## Related Docs
 
-- `docs/playwright-e2e-test-plan.md` -- Playwright browser E2E test plan and architecture
-- `docs/proof-flow-fix-plan.md` -- all known bugs (A-K) with root cause, fix, and test cases
-- `docs/integration-plan.md` -- full integration plan (all 6 phases, DONE)
-- `docs/integration-test-plan.md` -- readiness + E2E test plan (all pass)
-- `docs/deploy-and-prepare-plan.md` -- SEC-06 deployment playbook plan
-- `docs/voting-client-deployment-plan.md` -- voting client deployment details
-- `docs/branding-and-signer-plan.md` -- branding + NIP-07 signer integration
-- `docs/reference-architecture.md` -- system architecture reference
-- `docs/cashu-nostr-voting-design.md` -- voting protocol design
-- `docs/self-service-issuance-3-mint-model.md` -- mint issuance model
-- `docs/per-election-keysets.md` -- per-election keyset rotation and version compatibility
+- `docs/01-system-design.md` -- voting system design (canonical)
+- `docs/02-protocol-reference.md` -- all Nostr event kinds (38000-38011)
+- `docs/07-coordinator-http-api.md` -- HTTP endpoints + stateless architecture
+- `docs/13-deploy-and-prepare.md` -- single-command full stack deploy
+- `docs/14-voting-client-deployment.md` -- voting client deployment details
+- `docs/19-playwright-test-plan.md` -- Playwright browser E2E test plan
