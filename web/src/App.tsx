@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { logClaimDebug } from "./cashuMintApi";
-import { loadStoredWalletBundle, storeWalletBundle, storeProof } from "./cashuWallet";
+import { loadStoredWalletBundle, storeWalletBundle, addCoordinatorProof, type CoordinatorProof } from "./cashuWallet";
 import { checkEligibility, type EligibilityCheckResponse } from "./voterManagementApi";
 import {
   createCashuClaimEvent,
@@ -85,9 +85,10 @@ export default function App() {
         title: content.title ?? "Untitled",
         description: content.description ?? "",
         questions: content.questions ?? [],
-        start_time: content.start_time ?? 0,
-        end_time: content.end_time ?? 0,
+        vote_start: (content as any).vote_start ?? (content as any).start_time ?? 0,
+        vote_end: (content as any).vote_end ?? (content as any).end_time ?? 0,
         mint_urls: content.mint_urls ?? [],
+        coordinator_npubs: (content as any).coordinator_npubs ?? [],
       });
       setMintQuote(null);
       setQuoteState(null);
@@ -126,7 +127,7 @@ export default function App() {
         setElectionInfo(election);
         setStatus(`Connected to coordinator. Election: ${election?.title ?? "none"}`);
 
-        const elections = await fetchElectionsFromNostr(info.coordinatorNpub, info.relays);
+        const elections = await fetchElectionsFromNostr([info.coordinatorNpub], info.relays);
         setAllElections(elections);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Could not reach coordinator");
@@ -215,21 +216,18 @@ export default function App() {
       setQuoteState("UNPAID");
 
       storeWalletBundle({
-        proof: null,
+        electionId: electionInfo?.election_id ?? "",
+        ephemeralKeypair: { nsec: "", npub: "" },
+        coordinatorProofs: [],
         election: electionInfo ? {
           electionId: electionInfo.election_id,
           title: electionInfo.title,
           questions: electionInfo.questions,
-          start_time: electionInfo.start_time,
-          end_time: electionInfo.end_time,
-          mint_urls: electionInfo.mint_urls
+          vote_start: electionInfo.vote_start,
+          vote_end: electionInfo.vote_end,
+          mint_urls: electionInfo.mint_urls,
+          coordinator_npubs: electionInfo.coordinator_npubs,
         } : null,
-        quote: {
-          quoteId: quote.quote,
-          bolt11: quote.request
-        },
-        coordinatorNpub,
-        mintUrl: activeMintUrl,
         relays
       });
       setWalletBundle(loadStoredWalletBundle());
@@ -357,7 +355,13 @@ export default function App() {
           if (proof) {
             console.log("[poll] proof received for quote", mintQuote.quote, "keyset:", proof.id);
             setCurrentProof(proof);
-            storeProof(proof);
+            const coordinatorProof: CoordinatorProof = {
+              coordinatorNpub,
+              mintUrl: activeMintUrl,
+              proof,
+              proofSecret: (proof as any).secret ?? ""
+            };
+            addCoordinatorProof(coordinatorProof);
             setWalletBundle(loadStoredWalletBundle());
             setStatus(`Cashu proof received.`);
           } else {
@@ -451,9 +455,9 @@ export default function App() {
                 <code className="inline-code-badge">{electionInfo.title}</code>
               </>
             )}
-            {electionInfo && electionInfo.start_time > 0 && (
+            {electionInfo && electionInfo.vote_start > 0 && (
               <span className="field-hint">
-                {formatDateTime(electionInfo.start_time)} -- {formatDateTime(electionInfo.end_time)}
+                {formatDateTime(electionInfo.vote_start)} -- {formatDateTime(electionInfo.vote_end)}
               </span>
             )}
           </div>
@@ -685,21 +689,21 @@ export default function App() {
               <p className="panel-kicker">Wallet</p>
               <h2>Your voting proof</h2>
             </div>
-            <span className="count-pill">{walletBundle?.proof ? "1 proof" : "No proof"}</span>
+            <span className="count-pill">{walletBundle && walletBundle.coordinatorProofs.length > 0 ? `${walletBundle.coordinatorProofs.length} proof(s)` : "No proof"}</span>
           </div>
 
-          {walletBundle?.proof ? (
+          {walletBundle && walletBundle.coordinatorProofs.length > 0 ? (
             <div className="derived-box">
               <p className="code-label">Proof</p>
-              <code className="code-block code-block-muted">{JSON.stringify(walletBundle.proof, null, 2)}</code>
+              <code className="code-block code-block-muted">{JSON.stringify(walletBundle.coordinatorProofs.map(cp => cp.proof), null, 2)}</code>
               <p className="field-hint">Election {walletBundle.election?.electionId ?? "unknown"}</p>
-              <p className="field-hint">Keyset {walletBundle.proof.id}</p>
+              <p className="field-hint">Keyset {walletBundle.coordinatorProofs[0].proof.id}</p>
             </div>
           ) : (
             <p className="empty-copy">No proof stored yet. Request a quote, publish the signed claim, and wait for the mint proof.</p>
           )}
 
-          {walletBundle?.proof && (
+          {walletBundle && walletBundle.coordinatorProofs.length > 0 && (
             <div className="button-row">
               <a className="primary-button link-button cta-link-button" href="/vote.html">Go To Voting Page</a>
             </div>

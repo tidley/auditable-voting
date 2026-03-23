@@ -1,6 +1,7 @@
 import { finalizeEvent, generateSecretKey, getPublicKey, nip19, SimplePool } from "nostr-tools";
 import type { RelayPublishResult } from "./cashuMintApi";
 import type { ElectionQuestion } from "./coordinatorApi";
+import type { CoordinatorProof } from "./cashuWallet";
 
 export const DEFAULT_VOTE_RELAYS = [
   "wss://relay.damus.io",
@@ -41,11 +42,21 @@ function formatAnswersAsResponses(
   });
 }
 
+async function computeProofHash(proofSecret: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(proofSecret);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 export async function publishBallotEvent(input: {
   electionId: string;
   relays?: string[];
   answers: Record<string, string | string[] | number>;
   questions: ElectionQuestion[];
+  coordinatorProofs?: CoordinatorProof[];
 }) {
   const relays = input.relays && input.relays.length > 0 ? input.relays : DEFAULT_VOTE_RELAYS;
   const ballotSecretKey = generateSecretKey();
@@ -54,13 +65,20 @@ export async function publishBallotEvent(input: {
 
   const responses = formatAnswersAsResponses(input.answers, input.questions);
 
+  const tags: string[][] = [["election", input.electionId]];
+
+  if (input.coordinatorProofs && input.coordinatorProofs.length > 0) {
+    for (const cp of input.coordinatorProofs) {
+      const hash = await computeProofHash(cp.proofSecret);
+      tags.push(["proof-hash", hash]);
+    }
+  }
+
   const event = finalizeEvent(
     {
       kind: BALLOT_EVENT_KIND,
       created_at: Math.floor(Date.now() / 1000),
-      tags: [
-        ["election", input.electionId]
-      ],
+      tags,
       content: JSON.stringify({
         election_id: input.electionId,
         responses,

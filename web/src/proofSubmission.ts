@@ -10,6 +10,11 @@ export type DmPublishResult = {
   relayResults: RelayPublishResult[];
 };
 
+export type MultiCoordinatorDmResult = {
+  coordinatorNpub: string;
+  result: DmPublishResult;
+};
+
 export async function submitProofViaDm(input: {
   voterSecretKey: Uint8Array;
   coordinatorNpub: string;
@@ -65,4 +70,43 @@ export async function submitProofViaDm(input: {
   } finally {
     pool.destroy();
   }
+}
+
+export type CoordinatorProofPair = {
+  coordinatorNpub: string;
+  proof: CashuProof;
+};
+
+export async function submitProofsToAllCoordinators(input: {
+  voterSecretKey: Uint8Array;
+  voteEventId: string;
+  coordinatorProofs: CoordinatorProofPair[];
+  relays: string[];
+}): Promise<MultiCoordinatorDmResult[]> {
+  const results: MultiCoordinatorDmResult[] = [];
+
+  for (const cp of input.coordinatorProofs) {
+    try {
+      const result = await submitProofViaDm({
+        voterSecretKey: input.voterSecretKey,
+        coordinatorNpub: cp.coordinatorNpub,
+        voteEventId: input.voteEventId,
+        proof: cp.proof,
+        relays: input.relays,
+      });
+      results.push({ coordinatorNpub: cp.coordinatorNpub, result });
+    } catch (error) {
+      results.push({
+        coordinatorNpub: cp.coordinatorNpub,
+        result: {
+          eventId: "",
+          successes: 0,
+          failures: 1,
+          relayResults: [],
+        },
+      });
+    }
+  }
+
+  return results;
 }

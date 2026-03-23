@@ -74,7 +74,7 @@ export default function DashboardApp() {
       setCoordinatorNpub(info.coordinatorNpub);
       setRelayList(info.relays);
 
-      const elections = await fetchElectionsFromNostr(info.coordinatorNpub, info.relays);
+      const elections = await fetchElectionsFromNostr([info.coordinatorNpub], info.relays);
       setAllElections(elections);
 
       const [tallyResult, electionResult, issuanceResult] = await Promise.all([
@@ -140,9 +140,10 @@ export default function DashboardApp() {
           title: content.title ?? "Untitled",
           description: content.description ?? "",
           questions: content.questions ?? [],
-          start_time: content.start_time ?? 0,
-          end_time: content.end_time ?? 0,
+          vote_start: (content as any).vote_start ?? (content as any).start_time ?? 0,
+          vote_end: (content as any).vote_end ?? (content as any).end_time ?? 0,
           mint_urls: content.mint_urls ?? [],
+          coordinator_npubs: (content as any).coordinator_npubs ?? [],
         });
         setTally(null);
       } catch {
@@ -172,7 +173,7 @@ export default function DashboardApp() {
   const published = tally?.total_published_votes ?? 0;
   const accepted = tally?.total_accepted_votes ?? 0;
   const eligible = eligibility.eligibleCount;
-  const isClosed = election ? Date.now() > election.end_time * 1000 : false;
+  const isClosed = election ? Date.now() > election.vote_end * 1000 : false;
   const tallyStatusLabel = tally?.status === "closed"
     ? "Closed"
     : tally?.status === "in_progress"
@@ -252,8 +253,8 @@ export default function DashboardApp() {
             {election.description && <p className="field-hint">{election.description}</p>}
             <div className="detail-stack">
               <p className="field-hint">ID: {election.election_id}</p>
-              <p className="field-hint">Start: {new Date(election.start_time * 1000).toLocaleString()}</p>
-              <p className="field-hint">End: {new Date(election.end_time * 1000).toLocaleString()}</p>
+              <p className="field-hint">Start: {new Date(election.vote_start * 1000).toLocaleString()}</p>
+              <p className="field-hint">End: {new Date(election.vote_end * 1000).toLocaleString()}</p>
             </div>
           </article>
         </section>

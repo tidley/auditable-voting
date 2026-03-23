@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { publishBallotEvent, BALLOT_EVENT_KIND, DEFAULT_VOTE_RELAYS } from "./ballot";
 import { loadStoredWalletBundle, storeBallotEventId } from "./cashuWallet";
 import { formatDateTime, getNostrEventVerificationUrl } from "./nostrIdentity";
-import { submitProofViaDm, type DmPublishResult } from "./proofSubmission";
+import { submitProofViaDm, submitProofsToAllCoordinators, type DmPublishResult, type MultiCoordinatorDmResult } from "./proofSubmission";
 import type { CashuProof } from "./cashuBlind";
 import { fetchTally, checkVoteAccepted, type TallyInfo } from "./coordinatorApi";
 import MerkleTreeViz from "./MerkleTreeViz";
@@ -38,15 +38,17 @@ export default function VotingApp() {
   const [publishing, setPublishing] = useState(false);
   const [publishResult, setPublishResult] = useState<VotePublishResult | null>(null);
   const [submittingProof, setSubmittingProof] = useState(false);
-  const [dmResult, setDmResult] = useState<DmPublishResult | null>(null);
+  const [dmResult, setDmResult] = useState<MultiCoordinatorDmResult[] | null>(null);
   const [tally, setTally] = useState<TallyInfo | null>(null);
   const [voteAccepted, setVoteAccepted] = useState(false);
   const [checkingVote, setCheckingVote] = useState(false);
 
-  const storedProof = walletBundle?.proof ?? null;
+  const storedProofs = walletBundle?.coordinatorProofs ?? [];
+  const storedProof = storedProofs.length > 0 ? storedProofs[0].proof : null;
   const electionId = walletBundle?.election?.electionId ?? "";
   const questions = walletBundle?.election?.questions ?? [];
-  const coordinatorNpub = walletBundle?.coordinatorNpub ?? "";
+  const coordinatorNpubs = walletBundle?.election?.coordinator_npubs ?? (walletBundle?.coordinatorProofs?.map(cp => cp.coordinatorNpub) ?? []);
+  const coordinatorNpub = coordinatorNpubs[0] ?? "";
   const relays = (walletBundle?.relays?.length ?? 0) > 0 ? walletBundle!.relays : DEFAULT_VOTE_RELAYS;
   const storedBallotEventId = walletBundle?.ballotEventId ?? "";
 
@@ -60,9 +62,9 @@ export default function VotingApp() {
     if (!storedBallotEventId || !coordinatorNpub) return;
 
     setCheckingVote(true);
-    checkVoteAccepted(storedBallotEventId, coordinatorNpub, relays)
-      .then((accepted) => {
-        setVoteAccepted(accepted);
+    checkVoteAccepted(storedBallotEventId, coordinatorNpubs, relays)
+      .then((results) => {
+        setVoteAccepted(results.length > 0 && results.every((r) => r.accepted));
       })
       .catch(() => {})
       .finally(() => setCheckingVote(false));
@@ -138,7 +140,9 @@ export default function VotingApp() {
       const result = await publishBallotEvent({
         electionId: electionId.trim(),
         answers,
-        questions
+        questions,
+        relays,
+        coordinatorProofs: storedProofs
       });
 
       setPublishResult(result);
@@ -161,7 +165,7 @@ export default function VotingApp() {
   }
 
   async function submitProof() {
-    if (!storedProof || !publishResult) {
+    if (storedProofs.length === 0 || !publishResult) {
       setError("Publish ballot and have a proof before submitting.");
       return;
     }
@@ -171,18 +175,21 @@ export default function VotingApp() {
     setError(null);
 
     try {
-      const result = await submitProofViaDm({
+      const results = await submitProofsToAllCoordinators({
         voterSecretKey: publishResult.ballotSecretKey,
-        coordinatorNpub,
         voteEventId: publishResult.eventId,
-        proof: storedProof as unknown as CashuProof,
+        coordinatorProofs: storedProofs.map((cp) => ({
+          coordinatorNpub: cp.coordinatorNpub,
+          proof: cp.proof as unknown as CashuProof,
+        })),
         relays
       });
 
-      setDmResult(result);
+      setDmResult(results);
       storeBallotEventId(publishResult.eventId);
       setVoteAccepted(false);
-      setStatus(`Proof DM sent to coordinator. ${result.successes} relay${result.successes === 1 ? "" : "s"} confirmed. Waiting for coordinator to process...`);
+      const totalSuccesses = results.reduce((sum, r) => sum + r.result.successes, 0);
+      setStatus(`Proof DM sent to ${results.length} coordinator(s). ${totalSuccesses} relay confirmation(s). Waiting for coordinator to process...`);
     } catch (dmError) {
       setError(dmError instanceof Error ? dmError.message : "Could not send proof DM");
     } finally {
@@ -389,9 +396,9 @@ export default function VotingApp() {
             </button>
           </div>
 
-          {dmResult && (
+          {dmResult && dmResult.length > 0 && (
             <div className="notice notice-success">
-              Proof DM `{dmResult.eventId}` sent to {dmResult.successes} relay{dmResult.successes === 1 ? "" : "s"}.
+              Proof DM sent to {dmResult.length} coordinator(s). {dmResult.filter(r => r.result.successes > 0).length} confirmed.
             </div>
           )}
         </article>

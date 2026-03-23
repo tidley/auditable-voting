@@ -3,22 +3,32 @@ import type { ElectionQuestion } from "./coordinatorApi";
 
 const STORAGE_KEY = "auditable-voting.cashu-proof";
 
+export type CoordinatorProof = {
+  coordinatorNpub: string;
+  mintUrl: string;
+  proof: CashuProof;
+  proofSecret: string;
+};
+
 export type StoredWalletBundle = {
-  proof: CashuProof | null;
+  electionId: string;
+  ephemeralKeypair: {
+    nsec: string;
+    npub: string;
+  };
+  coordinatorProofs: CoordinatorProof[];
   election: {
     electionId: string;
     title: string;
     questions: ElectionQuestion[];
-    start_time: number;
-    end_time: number;
+    vote_start: number;
+    vote_end: number;
+    confirm_end?: number;
     mint_urls: string[];
+    coordinator_npubs: string[];
+    eligible_root?: string;
+    eligible_count?: number;
   } | null;
-  quote: {
-    quoteId: string;
-    bolt11: string;
-  } | null;
-  coordinatorNpub: string;
-  mintUrl: string;
   relays: string[];
   ballotEventId?: string;
   votedAt?: string;
@@ -63,12 +73,19 @@ function migrateLegacyBundle(rawValue: string): StoredWalletBundle | null {
 
     if (legacy.invoice && legacy.invoice.coordinatorNpub) {
       return {
-        proof: legacy.proof ? {
-          id: "legacy",
-          amount: legacy.proof.amount,
-          secret: legacy.proof.secret,
-          C: legacy.proof.signature
-        } : null,
+        electionId: legacy.invoice.electionId,
+        ephemeralKeypair: { nsec: "", npub: "" },
+        coordinatorProofs: legacy.proof ? [{
+          coordinatorNpub: legacy.invoice.coordinatorNpub,
+          mintUrl: legacy.proof.mintUrl,
+          proof: {
+            id: "legacy",
+            amount: legacy.proof.amount,
+            secret: legacy.proof.secret,
+            C: legacy.proof.signature,
+          },
+          proofSecret: legacy.proof.secret,
+        }] : [],
         election: legacy.invoice ? {
           electionId: legacy.invoice.electionId,
           title: "",
@@ -77,19 +94,14 @@ function migrateLegacyBundle(rawValue: string): StoredWalletBundle | null {
             type: "choice" as const,
             prompt: q.prompt,
             options: q.options.map((o) => o.label),
-            select: "single" as const
+            select: "single" as const,
           })),
-          start_time: 0,
-          end_time: 0,
-          mint_urls: []
+          vote_start: 0,
+          vote_end: 0,
+          mint_urls: [],
+          coordinator_npubs: [legacy.invoice.coordinatorNpub],
         } : null,
-        quote: legacy.invoice ? {
-          quoteId: legacy.invoice.quoteId,
-          bolt11: legacy.invoice.invoice
-        } : null,
-        coordinatorNpub: legacy.invoice.coordinatorNpub,
-        mintUrl: legacy.invoice ? `http://localhost:8787/mock-mint` : "",
-        relays: legacy.invoice?.relays ?? []
+        relays: legacy.invoice?.relays ?? [],
       };
     }
 
@@ -113,7 +125,7 @@ export function loadStoredWalletBundle(): StoredWalletBundle | null {
   try {
     const parsed = JSON.parse(rawValue) as StoredWalletBundle;
 
-    if (parsed.coordinatorNpub) {
+    if (parsed.electionId) {
       return parsed;
     }
 
@@ -141,17 +153,22 @@ export function storeWalletBundle(bundle: StoredWalletBundle) {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(bundle));
 }
 
-export function storeProof(proof: CashuProof) {
+export function addCoordinatorProof(proof: CoordinatorProof) {
   const existingBundle = loadStoredWalletBundle();
+  if (!existingBundle) return;
 
-  if (!existingBundle) {
-    return;
+  const existing = existingBundle.coordinatorProofs.findIndex(
+    (p) => p.coordinatorNpub === proof.coordinatorNpub,
+  );
+
+  const updated = [...existingBundle.coordinatorProofs];
+  if (existing >= 0) {
+    updated[existing] = proof;
+  } else {
+    updated.push(proof);
   }
 
-  storeWalletBundle({
-    ...existingBundle,
-    proof
-  });
+  storeWalletBundle({ ...existingBundle, coordinatorProofs: updated });
 }
 
 export function clearStoredWalletBundle() {
@@ -164,14 +181,21 @@ export function clearStoredWalletBundle() {
 
 export function storeBallotEventId(eventId: string) {
   const existingBundle = loadStoredWalletBundle();
-
-  if (!existingBundle) {
-    return;
-  }
+  if (!existingBundle) return;
 
   storeWalletBundle({
     ...existingBundle,
     ballotEventId: eventId,
-    votedAt: new Date().toISOString()
+    votedAt: new Date().toISOString(),
+  });
+}
+
+export function storeEphemeralKeypair(nsec: string, npub: string) {
+  const existingBundle = loadStoredWalletBundle();
+  if (!existingBundle) return;
+
+  storeWalletBundle({
+    ...existingBundle,
+    ephemeralKeypair: { nsec, npub },
   });
 }
