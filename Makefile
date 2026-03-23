@@ -43,7 +43,7 @@ deploy:
 
 deploy-domain:
 	$(ANSIBLE) ansible/playbooks/deploy-and-prepare.yml \
-		--extra-vars "vps_ip=$(VPS_IP) ansible_ssh_private_key_file=$(SSH_KEY_PATH) ansible_user=$(ANSIBLE_USER) tls_enabled=true voting_domain=$(VOTING_DOMAIN) acme_email=$(ACME_EMAIL) cf_api_email=$(CF_API_EMAIL) cf_dns_api_token=$(CF_DNS_API_TOKEN)"
+		--extra-vars "vps_ip=$(VPS_IP) ansible_ssh_private_key_file=$(SSH_KEY_PATH) ansible_user=$(ANSIBLE_USER) tls_enabled=true voting_domain=$(VOTING_DOMAIN) acme_email=$(ACME_EMAIL) acme_env_vars={'CF_API_EMAIL':'$(CF_API_EMAIL)','CF_DNS_API_TOKEN':'$(CF_DNS_API_TOKEN)'}"
 
 deploy-client:
 	$(ANSIBLE) ansible/playbooks/deploy-voting-client.yml

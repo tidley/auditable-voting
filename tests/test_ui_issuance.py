@@ -209,3 +209,58 @@ class TestUIIssuance:
         page.wait_for_selector("text=\u2717 Not on the eligibility list", timeout=15000)
         expect(page.locator("text=\u2717 Not on the eligibility list")).to_be_visible()
         log.info("Ineligible npub shows cross: \u2717 Not on the eligibility list")
+
+    def test_voter_portal_shows_eligibility_registry(self, voter_portal):
+        page = voter_portal
+        page.wait_for_selector("text=Eligible npubs", timeout=30000)
+
+        total_items = page.locator("li.eligible-list-item-dashboard").count()
+        assert total_items >= 1, \
+            f"Expected at least 1 eligible npub on voter portal, found {total_items}"
+
+        issued_checkmarks = page.locator("li.eligible-list-item-dashboard span:text-is('\u2713')")
+        issued_count = issued_checkmarks.count()
+        assert issued_count >= 1, \
+            f"Expected at least 1 issued voter (npub1c03rad0r...), found {issued_count}"
+        log.info("Voter portal eligibility registry: %d total, %d issued: OK", total_items, issued_count)
+
+    def test_eligibility_registry_shows_profile_names(self, voter_portal):
+        page = voter_portal
+        page.wait_for_selector("text=Eligible npubs", timeout=30000)
+
+        page.wait_for_timeout(10000)
+
+        total_items = page.locator("li.eligible-list-item-dashboard").count()
+        assert total_items >= 1, "No eligible items found"
+
+        avatar_imgs = page.locator("li.eligible-list-item-dashboard img.eligible-avatar:visible")
+        avatar_count = avatar_imgs.count()
+        placeholders = page.locator("li.eligible-list-item-dashboard span.eligible-avatar-placeholder")
+        placeholder_count = placeholders.count()
+
+        assert avatar_count + placeholder_count == total_items, \
+            f"Expected {total_items} avatars/placeholders total, got {avatar_count} avatars + {placeholder_count} placeholders"
+
+        all_have_npub = page.locator("li.eligible-list-item-dashboard code").count()
+        assert all_have_npub == total_items, \
+            f"Not all items show npub text. {all_have_npub}/{total_items} have <code> elements"
+        log.info("Profile names: %d avatars, %d placeholders, all %d show npub text: OK",
+                 avatar_count, placeholder_count, total_items)
+
+    def test_eligibility_registry_avatars_no_broken_images(self, voter_portal):
+        page = voter_portal
+        page.wait_for_selector("text=Eligible npubs", timeout=30000)
+
+        page.wait_for_timeout(10000)
+
+        visible_imgs = page.locator("li.eligible-list-item-dashboard img.eligible-avatar:visible")
+        img_count = visible_imgs.count()
+        log.info("Found %d visible avatar images", img_count)
+
+        for i in range(img_count):
+            img = visible_imgs.nth(i)
+            natural_width = img.evaluate("el => el.naturalWidth")
+            assert natural_width > 0, \
+                f"Avatar image {i} appears broken (naturalWidth=0, src={img.get_attribute('src')[:80]})"
+
+        log.info("All %d avatar images loaded successfully (naturalWidth > 0)", img_count)

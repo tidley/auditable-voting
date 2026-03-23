@@ -29,9 +29,9 @@ class TestUIDashboard:
         expected_count = len(vps_eligible_synced)
         page.locator(f"h2:has-text('{expected_count}')").wait_for(timeout=15000)
         body = page.locator("body").inner_text()
-        found = any(npub[:20] in body for npub in vps_eligible_synced)
-        assert found, f"No eligible npub found in dashboard. Body: {body[:500]}"
-        log.info("Dashboard shows real npub: OK")
+        assert "Eligibility registry" not in body, \
+            f"Eligibility registry should be on voter portal, not dashboard. Body: {body[:500]}"
+        log.info("Dashboard no longer shows eligible npubs (moved to voter portal): OK")
 
     def test_dashboard_shows_tally(self, dashboard_page):
         page = dashboard_page
@@ -143,34 +143,23 @@ class TestUIDashboard:
             f"Dashboard shows stale E2E test election title. Body: {body[:1000]}"
         log.info("Dashboard has no stale E2E test data: OK")
 
-    def test_dashboard_shows_issued_indicator(self, dashboard_page):
+    def test_dashboard_links_to_vote_page(self, dashboard_page):
         page = dashboard_page
-        page.wait_for_selector("ol.eligible-list li.eligible-list-item-dashboard", timeout=30000)
+        page.wait_for_selector("text=Backend Dashboard", timeout=15000)
+        vote_link = page.locator("a.ghost-button:has-text('Voting Page')")
+        assert vote_link.count() >= 1, "Dashboard should have a 'Voting Page' link"
+        assert vote_link.first.get_attribute("href") == "/vote.html", \
+            "Voting Page link should point to /vote.html"
+        log.info("Dashboard has Voting Page link: OK")
 
-        issued_checkmarks = page.locator("li.eligible-list-item-dashboard span:text-is('\u2713')")
-        pending_dots = page.locator("li.eligible-list-item-dashboard span:text-is('\u2022')")
-
-        issued_count = issued_checkmarks.count()
-        pending_count = pending_dots.count()
-
-        total_items = page.locator("li.eligible-list-item-dashboard").count()
-        assert issued_count + pending_count == total_items, \
-            f"Expected {total_items} items but found {issued_count} issued + {pending_count} pending"
-
-        assert issued_count >= 1, \
-            f"Expected at least 1 issued voter but found {issued_count}. " \
-            f"The issuance-status endpoint should return npub keys (not hex) " \
-            f"and npub1c03rad0r... should be marked as issued."
-        log.info("Dashboard shows %d issued, %d pending: OK", issued_count, pending_count)
-
-    def test_dashboard_issued_npub_matches_eligibility(self, dashboard_page):
+    def test_dashboard_no_eligibility_registry(self, dashboard_page):
         page = dashboard_page
-        page.wait_for_selector("ol.eligible-list li.eligible-list-item-dashboard", timeout=30000)
+        page.wait_for_selector("text=Backend Dashboard", timeout=15000)
         page.wait_for_timeout(3000)
 
         body = page.locator("body").inner_text()
-        assert "Proof issued" in body, \
-            f"Expected 'Proof issued' label in dashboard. Body: {body[:1000]}"
-        assert "Pending" in body, \
-            f"Expected 'Pending' label in dashboard. Body: {body[:1000]}"
-        log.info("Dashboard shows both 'Proof issued' and 'Pending' labels: OK")
+        assert "Eligible npubs" not in body, \
+            f"Dashboard should not show eligibility registry. Body: {body[:500]}"
+        assert "Eligibility registry" not in body, \
+            f"Dashboard should not show eligibility registry header. Body: {body[:500]}"
+        log.info("Dashboard has no eligibility registry: OK")

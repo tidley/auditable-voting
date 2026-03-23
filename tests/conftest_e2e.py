@@ -180,6 +180,19 @@ def ssh_run(cmd: str, check: bool = True, timeout: int = 60) -> subprocess.Compl
     return subprocess.run(full_cmd, capture_output=True, text=True, timeout=timeout, check=check)
 
 
+def ssh_write_file(remote_path: str, content: str, timeout: int = 30) -> None:
+    full_cmd = SSH_CMD + ["cat > " + remote_path]
+    proc = subprocess.Popen(full_cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        proc.communicate(input=content.encode(), timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
+        raise
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, full_cmd, stderr=proc.stderr)
+
+
 def ssh_run_script(script: str, args: list[str], check: bool = True, timeout: int = 60) -> str:
     import uuid
     remote_path = f"/tmp/e2e_script_{uuid.uuid4().hex[:8]}.py"

@@ -228,6 +228,7 @@ export default function DashboardApp() {
         <div className="hero-metadata">
           <span>Source</span>
           <code className="inline-code-badge">{USE_MOCK ? "Mock server" : "Coordinator API"}</code>
+          <a className="ghost-button link-button" href="/vote.html">Voting Page</a>
           <button className="ghost-button" onClick={() => void loadDashboard()} disabled={refreshing}>
             {refreshing ? "Refreshing..." : "Refresh now"}
           </button>
@@ -388,52 +389,6 @@ export default function DashboardApp() {
       )}
 
       <section className="content-grid">
-        <article className="panel panel-wide">
-          <div className="panel-header">
-            <div>
-              <p className="panel-kicker">Eligibility registry</p>
-              <h2>Eligible npubs</h2>
-            </div>
-            <span className="count-pill">Auto-refresh every 5s</span>
-          </div>
-
-          {eligibility.eligibleNpubs.length > 0 ? (
-            <ol className="eligible-list eligible-list-dashboard">
-              {eligibility.eligibleNpubs.map((npub) => {
-                const voterInfo = issuanceStatus?.voters?.[npub];
-                const issued = voterInfo?.issued ?? false;
-                return (
-                  <li key={npub} className="eligible-list-item-dashboard">
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        width: 20,
-                        height: 20,
-                        borderRadius: "50%",
-                        fontSize: "0.75rem",
-                        fontWeight: 700,
-                        flexShrink: 0,
-                        background: issued ? "var(--accent)" : "rgba(88,59,39,0.08)",
-                        color: issued ? "#fff" : "var(--muted)",
-                      }}>
-                        {issued ? "\u2713" : "\u2022"}
-                      </span>
-                      <code style={{ fontSize: "0.82rem" }}>{npub.slice(0, 20)}...{npub.slice(-8)}</code>
-                      <span className="field-hint" style={{ margin: 0, opacity: 0.5, flexShrink: 0 }}>
-                        {issued ? "Proof issued" : "Pending"}
-                      </span>
-                    </div>
-                  </li>
-                );
-              })}
-            </ol>
-          ) : (
-            <p className="empty-copy">No eligible npubs found.</p>
-          )}
-        </article>
-
         {(status || error) && (
           <article className="panel panel-wide">
             <div className="panel-header">

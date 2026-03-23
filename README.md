@@ -127,6 +127,29 @@ scripts/                    shell wrappers for ansible playbooks
 tests/                      pytest integration + E2E tests
 ```
 
+## Git Worktrees
+
+The project uses [git worktrees](https://git-scm.com/docs/git-worktree) for parallel branch development. Each worktree is a separate directory with its own branch, sharing the same `.git` database.
+
+### Active Worktrees
+
+| Path | Branch |
+|------|--------|
+| `~/auditable-voting` | `feat/eligibility-move-and-merkle-tree-viz` |
+| `~/auditable-voting-cf` | `feature/cloudflare-integration-for-voter-portal` |
+| `~/auditable-voting-mc` | `feature/multi-coordinator-voting-deployment` |
+
+### Common Commands
+
+```bash
+git worktree list                                    # list all worktrees
+git worktree add -b <branch> ../<folder> main        # create new worktree
+git worktree remove ../<folder>                      # remove worktree
+git worktree prune                                   # clean up stale references
+```
+
+Each worktree has its own `.venv/` and `node_modules/`. To work in a worktree, `cd` into it and activate the venv (`source .venv/bin/activate`) before launching opencode.
+
 ## Related Docs
 
 - `docs/01-system-design.md` -- voting system design (canonical)

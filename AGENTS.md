@@ -417,6 +417,64 @@ ansible-playbook ansible/playbook.yml --tags voting-on-vps
 ansible-playbook ansible/playbook.yml --tags local-dev
 ```
 
+## Git Worktrees (Parallel Branch Development)
+
+Git worktrees allow multiple branches to be checked out simultaneously in separate directories, all sharing the same `.git` database. This is essential for running multiple opencode sessions on different branches without them interfering with each other.
+
+### Active Worktrees
+
+| Path | Branch | Purpose |
+|------|--------|---------|
+| `/home/c03rad0r/auditable-voting` | `feat/eligibility-move-and-merkle-tree-viz` | Primary worktree (main repo folder) |
+| `/home/c03rad0r/auditable-voting-cf` | `feature/cloudflare-integration-for-voter-portal` | Cloudflare integration for voter portal |
+| `/home/c03rad0r/auditable-voting-mc` | `feature/multi-coordinator-voting-deployment` | Multi-coordinator voting deployment |
+
+List all worktrees at any time:
+
+```bash
+git worktree list
+```
+
+### Resuming a Worktree
+
+Each worktree has its own `.venv/` and `node_modules/`. To resume work in a worktree:
+
+```bash
+cd /home/c03rad0r/auditable-voting-cf
+source .venv/bin/activate
+```
+
+Then launch opencode from that directory.
+
+### Creating a New Worktree
+
+```bash
+git worktree add -b <new-branch-name> ../<folder-name> main
+cd ../<folder-name>
+npm install && cd web && npm install && cd ..
+python3 -m venv .venv
+.venv/bin/pip install -r tests/requirements.txt -r coordinator/requirements.txt
+.venv/bin/python -m playwright install chromium
+```
+
+### Removing a Worktree
+
+After merging or finishing work:
+
+```bash
+git worktree remove ../<folder-name>
+git worktree prune
+git branch -d <branch-name>
+```
+
+### Important Notes
+
+- Git prevents the same branch from being checked out in two worktrees simultaneously.
+- `git fetch` in any worktree updates history for all worktrees.
+- The pre-commit hook at `.git/hooks/pre-commit` is shared across all worktrees.
+- Each worktree needs its own `.venv/` and `node_modules/` — they are not shared.
+- Worktree creation does not affect other worktrees (no branch switching, no disturbance of uncommitted changes).
+
 ## Kanban Boards (kanbanstr — NIP-100)
 
 Project tracking is done via [kanbanstr](https://www.kanbanstr.com/), a Nostr-native kanban board (NIP-100).
