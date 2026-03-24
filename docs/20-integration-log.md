@@ -994,7 +994,7 @@ ansible-playbook ansible/playbook.yml --tags local-dev
 |----------|---------|
 | `ansible/playbook.yml` | Main entry point, delegates to sub-playbooks |
 | `ansible/playbooks/deploy-all.yml` | Runs coordinator + client + verify in sequence |
-| `ansible/playbooks/deploy-coordinator.yml` | Inline tasks (no import_playbook), resolves coordinator repo path via delegate_to localhost |
+| `ansible/playbooks/update-coordinator-keep-existing-election.yml` | Inline tasks (no import_playbook), resolves coordinator repo path via delegate_to localhost |
 | `ansible/playbooks/deploy-voting-client.yml` | Installs rsync, Node.js, syncs repo, builds frontend, deploys nginx container via Docker/Traefik |
 | `ansible/playbooks/deploy-and-prepare.yml` | **Full-stack playbook:** Traefik + coordinator + client + SEC-06 election publication + voter instructions |
 | `ansible/playbooks/verify.yml` | 12 health checks: service status, CORS, pubkey match, public URL, proxy routing |

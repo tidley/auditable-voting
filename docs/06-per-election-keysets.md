@@ -60,7 +60,7 @@ Without this, the browser throws `Error: No active keyset found` when trying to 
 ## Playbook Changes
 
 - `deploy-and-prepare.yml` — new "Rotate Mint Keyset" play between client deploy and election publication
-- `deploy-coordinator.yml` — systemd service template supports `--election-id`
+- `update-coordinator-keep-existing-election.yml` — systemd service template supports `--election-id`
 
 ## Testing
 

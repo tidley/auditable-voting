@@ -187,10 +187,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!eligibilityList || !coordinatorInfo || profilesFetchedRef.current) return;
+    if (!eligibilityList || !coordinatorInfo) return;
     const publicRelays = coordinatorInfo.relays.filter(r => r.startsWith("wss://"));
     if (publicRelays.length === 0) return;
-    profilesFetchedRef.current = true;
+    if (profilesFetchedRef.current) return;
 
     async function fetchProfiles() {
       try {
@@ -225,8 +225,9 @@ export default function App() {
           } catch { /* skip malformed */ }
         }
         setProfileMap(map);
+        profilesFetchedRef.current = true;
       } catch {
-        // silent — profiles are optional enrichment
+        profilesFetchedRef.current = false;
       }
     }
 

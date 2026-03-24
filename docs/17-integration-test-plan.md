@@ -202,7 +202,7 @@ Mint URL: configurable via env var `MINT_URL`, default `http://23.182.128.64:333
 | File | Type | Purpose |
 |---|---|---|
 | `playbooks/run-integration-tests.yml` | Ansible | Tagged setup/teardown, idempotent VPS mint preparation |
-| `playbooks/deploy-coordinator.yml` | Ansible | Full coordinator deployment to VPS |
+| `playbooks/update-coordinator-keep-existing-election.yml` | Ansible | Full coordinator deployment to VPS |
 | `pytest.ini` | Config | Marker definitions for vps/voter |
 | `tests/conftest.py` | Conftest | Session hooks, module loader, shared fixtures |
 | `tests/conftest_vps.py` | Conftest | SSH tunnel, per-test mint reset, fresh quote, endpoints |

@@ -83,7 +83,7 @@
       until: traefik_health is not failed
 
 - name: Deploy Voting Coordinator
-  ansible.builtin.import_playbook: deploy-coordinator.yml
+  ansible.builtin.import_playbook: update-coordinator-keep-existing-election.yml
 
 - name: Deploy Voting Client
   ansible.builtin.import_playbook: deploy-voting-client.yml

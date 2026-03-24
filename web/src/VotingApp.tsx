@@ -216,6 +216,7 @@ export default function VotingApp() {
         <p className="field-hint hero-hint"><img className="inline-icon" src="/images/nostr/relayflasks.png" alt="" width={18} height={18} />Relays: {relays.join(", ")}</p>
         <div className="button-row">
           <a className="ghost-button link-button" href="/">Return to home page</a>
+          <a className="ghost-button link-button" href="/dashboard.html">Operator dashboard</a>
         </div>
       </section>
 

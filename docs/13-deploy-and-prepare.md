@@ -59,9 +59,9 @@ for `/v1/swap`).
 
 ### Phase 2: Deploy Services
 
-#### 2.1 Import `deploy-coordinator.yml`
+#### 2.1 Import `update-coordinator-keep-existing-election.yml`
 
-Delegates to `tg-mint-orchestrator/playbooks/deploy-coordinator.yml` which
+Delegates to `tg-mint-orchestrator/playbooks/update-coordinator-keep-existing-election.yml` which
 handles:
 
 - Mint health check (wait for `GET /v1/info`)
@@ -316,10 +316,10 @@ in format '%s'` on the VPS which runs Python 3.13 (the `%s` format code was remo
 
 ### 5. `import_playbook` cannot use variables
 
-**Symptom:** `ansible.builtin.import_playbook: deploy-coordinator.yml` failed because
+**Symptom:** `ansible.builtin.import_playbook: update-coordinator-keep-existing-election.yml` failed because
 `import_playbook` is evaluated at parse time, not runtime.
 
-**Fix:** Rewrote `deploy-coordinator.yml` to use inline tasks instead of importing
+**Fix:** Rewrote `update-coordinator-keep-existing-election.yml` to use inline tasks instead of importing
 the tg-mint-orchestrator playbook. Coordinator repo path resolved via
 `delegate_to: localhost` with `realpath`.
 
