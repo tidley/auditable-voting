@@ -73,6 +73,8 @@ The pre-commit hook runs tests automatically on every `git commit` using the sam
 
 ## Production Voter Flow
 
+### Single Coordinator
+
 1. Open the voter portal URL
 2. Enter your npub (checked against coordinator's eligibility list)
 3. Request a mint quote, publish a claim (kind 38010), wait for approval
@@ -80,6 +82,20 @@ The pre-commit hook runs tests automatically on every `git commit` using the sam
 5. Fill out the ballot and publish a vote event (kind 38000)
 6. Submit the proof via NIP-04 encrypted DM to the coordinator
 7. Check vote acceptance via the tally endpoint
+
+### Multi-Coordinator
+
+When multiple coordinators participate in the same election:
+
+1. Open the voter portal — coordinators are auto-discovered via kind 38012 events
+2. Enter your npub (checked against canonical eligible set)
+3. Click "Request from all N coordinators" — the portal iterates quote/claim/mint per coordinator
+4. Fill out the ballot — proof-hash tags are added for each coordinator's proof
+5. Submit proofs to all coordinators via encrypted DM (automated)
+6. After the voting window closes, publish a voter confirmation (kind 38013)
+7. On the dashboard, run the audit to compare tallies and detect inflation/censorship
+
+See `docs/03-quorum-model.md` for the trust model and `docs/25-multi-coordinator-implementation-status.md` for implementation progress.
 
 ## Architecture
 
@@ -129,9 +145,30 @@ tests/                      pytest integration + E2E tests
 
 ## Related Docs
 
-- `docs/01-system-design.md` -- voting system design (canonical)
-- `docs/02-protocol-reference.md` -- all Nostr event kinds (38000-38011)
+### Design & Protocol
+
+- `docs/01-system-design.md` -- multi-coordinator voting system design (canonical)
+- `docs/02-protocol-reference.md` -- all Nostr event kinds (38000-38013)
+- `docs/03-quorum-model.md` -- 1-of-N coordinator quorum, trust model, adversarial analysis
+- `docs/04-event-interop.md` -- client-facing event shapes
+- `docs/05-voter-integration-guide.md` -- voter client integration steps
+- `docs/06-per-election-keysets.md` -- per-election keyset rotation
+- `docs/08-tally-implementation.md` -- Merkle trees, close election
+
+### Implementation Status
+
+- `docs/25-multi-coordinator-implementation-status.md` -- multi-coordinator implementation progress and remaining tasks
+
+### Deployment
+
 - `docs/07-coordinator-http-api.md` -- HTTP endpoints + stateless architecture
 - `docs/13-deploy-and-prepare.md` -- single-command full stack deploy
 - `docs/14-voting-client-deployment.md` -- voting client deployment details
+- `docs/15-coordinator-deployment.md` -- coordinator systemd, 9 phases
+
+### Testing
+
+- `docs/16-coordinator-test-plan.md` -- 49 coordinator unit tests
+- `docs/17-integration-test-plan.md` -- 3-layer test architecture
+- `docs/18-frontend-test-plan.md` -- readiness tests + E2E voter flow
 - `docs/19-playwright-test-plan.md` -- Playwright browser E2E test plan
