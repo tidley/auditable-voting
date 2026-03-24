@@ -150,6 +150,10 @@ git worktree prune                                   # clean up stale references
 
 Each worktree has its own `.venv/` and `node_modules/`. To work in a worktree, `cd` into it and activate the venv (`source .venv/bin/activate`) before launching opencode.
 
+## Future Improvements
+
+- **Multi-coordinator voting deployment** — Distribute trust across multiple independent coordinators to mitigate censorship and timing attacks. See [feature/multi-coordinator-voting-deployment](https://github.com/c03rad0r/auditable-voting/tree/feature/multi-coordinator-voting-deployment).
+
 ## Related Docs
 
 - `docs/01-system-design.md` -- voting system design (canonical)
