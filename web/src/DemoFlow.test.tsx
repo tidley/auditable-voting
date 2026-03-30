@@ -160,6 +160,7 @@ vi.mock("./coordinatorApi", () => ({
       [testIdentity3.npub]: { eligible: true, issued: issuedNpubs.has(testIdentity3.npub) },
     },
   })),
+  fetchPublicLedger: vi.fn().mockResolvedValue(null),
   fetchTally: vi.fn().mockImplementation(async () => ({
     election_id: mockElection.election_id,
     status: "closed",
@@ -302,6 +303,7 @@ vi.mock("./cashuBlind", () => ({
       proofs: [{
         ...mockProof,
         npub: activeNpub,
+        secret: `proof-secret-${activeNpub}`,
       }],
     };
   }),
@@ -347,6 +349,7 @@ vi.mock("./nostrIdentity", async () => {
 vi.mock("./ballot", () => ({
   BALLOT_EVENT_KIND: 38000,
   DEFAULT_VOTE_RELAYS: mockCoordinator.relays,
+  computeProofHash: vi.fn(async (secret: string) => `hash-${secret}`),
   isBallotComplete: (answers: Record<string, unknown>, questions: Array<{ id: string }>) =>
     questions.every((q) => answers[q.id] !== undefined),
   publishBallotEvent: vi.fn().mockImplementation(async ({ answers }: { answers: Record<string, string | string[] | number> }) => {
@@ -444,9 +447,11 @@ describe("full voting demo flow", () => {
     expect(await screen.findByText(/AUDITABLE-VOTING/i)).toBeTruthy();
     expect(screen.getByDisplayValue(testIdentity.nsec)).toBeTruthy();
     expect(screen.getByRole("button", { name: /Check eligibility/i })).toBeTruthy();
+    expect(screen.getByRole("table", { name: /Public ballot ledger/i })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: /Run full demo/i }));
     await waitFor(() => expect(screen.getAllByText(/Confirmation event/i).length).toBeGreaterThan(0), { timeout: 5000 });
     await waitFor(() => expect(screen.getAllByText(/bbbbbbbb\.\.\.bbbb/i).length).toBeGreaterThan(0), { timeout: 5000 });
+    await waitFor(() => expect(screen.getByText(/3 minted/i)).toBeTruthy(), { timeout: 5000 });
     demo.unmount();
 
     const app = render(<App />);

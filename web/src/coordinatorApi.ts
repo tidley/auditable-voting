@@ -288,6 +288,24 @@ export type IssuanceStatusResponse = {
   voters: Record<string, IssuanceStatusInfo>;
 };
 
+export type PublicLedgerEntry = {
+  npub: string | null;
+  proofHash: string;
+  quoteId: string | null;
+  issuedAt: number | null;
+  ballotEventId: string | null;
+  voteChoice: string | null;
+  receiptReceivedAt: number | null;
+};
+
+export type PublicLedgerResponse = {
+  election_id: string;
+  total_entries: number;
+  voted_entries: number;
+  pending_entries: number;
+  entries: PublicLedgerEntry[];
+};
+
 export type IssuanceStartResponse = {
   request_id: string;
   status_url: string;
@@ -324,6 +342,23 @@ export async function fetchIssuanceStatus(httpApi?: string): Promise<IssuanceSta
   try {
     const url = httpApi || `${import.meta.env.VITE_COORDINATOR_URL}`;
     return await fetchJson<IssuanceStatusResponse>(`${url}/issuance-status`);
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchPublicLedger(httpApi?: string): Promise<PublicLedgerResponse | null> {
+  if (USE_MOCK) {
+    try {
+      return await fetchJson<PublicLedgerResponse>("/api/public-ledger");
+    } catch {
+      return null;
+    }
+  }
+
+  try {
+    const url = httpApi || `${import.meta.env.VITE_COORDINATOR_URL}`;
+    return await fetchJson<PublicLedgerResponse>(`${url}/public-ledger`);
   } catch {
     return null;
   }

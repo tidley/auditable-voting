@@ -4,6 +4,7 @@ import {
   discoverCoordinators,
   fetchElection,
   fetchIssuanceStatus,
+  fetchPublicLedger,
   fetchPerCoordinatorTallies,
   fetchResult,
   fetchTally,
@@ -15,6 +16,8 @@ import {
   type FinalResultInfo,
   type IssuanceStatusResponse,
   type PerCoordinatorTally,
+  type PublicLedgerEntry,
+  type PublicLedgerResponse,
   type TallyInfo,
 } from "./coordinatorApi";
 import { createMintQuote, checkQuoteStatus, type MintQuoteResponse } from "./mintApi";
@@ -30,7 +33,7 @@ import { DEMO_MODE, USE_MOCK, MINT_URL, COORDINATOR_URL } from "./config";
 import { decodeNsec, deriveNpubFromNsec, formatDateTime } from "./nostrIdentity";
 import { createDemoIdentity, type DemoIdentity } from "./demoIdentity";
 import { fetchCoordinatorInfo } from "./coordinatorApi";
-import { publishBallotEvent } from "./ballot";
+import { computeProofHash, publishBallotEvent } from "./ballot";
 import { submitProofsToAllCoordinators, type MultiCoordinatorDmResult } from "./proofSubmission";
 import { queueNostrPublish } from "./nostrPublishQueue";
 
@@ -54,6 +57,47 @@ const EMPTY_ELIGIBILITY: EligibilityResponse = {
   verifiedNpubs: [],
   verifiedCount: 0,
 };
+
+function shortCode(value: string, head = 12, tail = 6): string {
+  if (value.length <= head + tail + 3) {
+    return value;
+  }
+
+  return `${value.slice(0, head)}...${value.slice(-tail)}`;
+}
+
+function sortLedgerEntries(entries: PublicLedgerEntry[]): PublicLedgerEntry[] {
+  return [...entries].sort((left, right) => {
+    const leftIssuedAt = left.issuedAt ?? Number.MAX_SAFE_INTEGER;
+    const rightIssuedAt = right.issuedAt ?? Number.MAX_SAFE_INTEGER;
+    if (leftIssuedAt !== rightIssuedAt) {
+      return leftIssuedAt - rightIssuedAt;
+    }
+    return left.proofHash.localeCompare(right.proofHash);
+  });
+}
+
+function mergeLedgerEntries(
+  remoteEntries: PublicLedgerEntry[],
+  localEntries: PublicLedgerEntry[],
+): PublicLedgerEntry[] {
+  const merged = new Map<string, PublicLedgerEntry>();
+
+  for (const entry of [...remoteEntries, ...localEntries]) {
+    const existing = merged.get(entry.proofHash);
+    merged.set(entry.proofHash, {
+      npub: entry.npub ?? existing?.npub ?? null,
+      proofHash: entry.proofHash,
+      quoteId: entry.quoteId ?? existing?.quoteId ?? null,
+      issuedAt: entry.issuedAt ?? existing?.issuedAt ?? null,
+      ballotEventId: entry.ballotEventId ?? existing?.ballotEventId ?? null,
+      voteChoice: entry.voteChoice ?? existing?.voteChoice ?? null,
+      receiptReceivedAt: entry.receiptReceivedAt ?? existing?.receiptReceivedAt ?? null,
+    });
+  }
+
+  return sortLedgerEntries([...merged.values()]);
+}
 
 function PanelTitle({ kicker, title, right }: { kicker: string; title: string; right?: ReactNode }) {
   return (
@@ -120,6 +164,8 @@ export default function DemoApp() {
   const [election, setElection] = useState<ElectionInfo | null>(null);
   const [eligibility, setEligibility] = useState<EligibilityResponse>(EMPTY_ELIGIBILITY);
   const [issuanceStatus, setIssuanceStatus] = useState<IssuanceStatusResponse | null>(null);
+  const [publicLedger, setPublicLedger] = useState<PublicLedgerResponse | null>(null);
+  const [sessionLedger, setSessionLedger] = useState<Record<string, PublicLedgerEntry>>({});
   const [tally, setTally] = useState<TallyInfo | null>(null);
   const [finalResult, setFinalResult] = useState<FinalResultInfo | null>(null);
   const [discoveredCoordinators, setDiscoveredCoordinators] = useState<CoordinatorDiscovery[]>([]);
@@ -156,6 +202,13 @@ export default function DemoApp() {
   }, [activeQuestion, finalResult?.results, tally?.results]);
   const yesVotes = activePollResults?.Yes ?? activePollResults?.yes ?? 0;
   const noVotes = activePollResults?.No ?? activePollResults?.no ?? 0;
+  const publicLedgerEntries = useMemo(
+    () => mergeLedgerEntries(publicLedger?.entries ?? [], Object.values(sessionLedger)),
+    [publicLedger?.entries, sessionLedger],
+  );
+  const publicLedgerMintedCount = publicLedgerEntries.length;
+  const publicLedgerVotedCount = publicLedgerEntries.filter((entry) => !!entry.voteChoice).length;
+  const publicLedgerPendingCount = publicLedgerMintedCount - publicLedgerVotedCount;
 
   const eligibleNpubs = eligibility.eligibleNpubs;
   const issuedCount = Object.values(issuanceStatus?.voters ?? {}).filter((entry) => entry.issued).length;
@@ -172,6 +225,33 @@ export default function DemoApp() {
   const now = Math.floor(Date.now() / 1000);
   const isInConfirmationWindow = voteEnd > 0 && now >= voteEnd && (confirmEnd === 0 || now <= confirmEnd);
   const votingWindowNotClosed = voteEnd > 0 && now < voteEnd;
+
+  const patchSessionLedger = useCallback((proofHash: string, patch: Partial<PublicLedgerEntry>) => {
+    if (!proofHash) {
+      return;
+    }
+
+    setSessionLedger((prev) => {
+      const current = prev[proofHash] ?? {
+        npub: null,
+        proofHash,
+        quoteId: null,
+        issuedAt: null,
+        ballotEventId: null,
+        voteChoice: null,
+        receiptReceivedAt: null,
+      };
+
+      return {
+        ...prev,
+        [proofHash]: {
+          ...current,
+          ...patch,
+          proofHash,
+        },
+      };
+    });
+  }, []);
 
   const timelinePhases: StepState[] = useMemo(() => {
     const spentRoot = spentCommitmentRoot;
@@ -303,13 +383,14 @@ export default function DemoApp() {
     if (showSpinner) setRefreshing(true);
 
     try {
-      const [info, elig, electionResult, tallyResult, resultResult, issuanceResult] = await Promise.all([
+      const [info, elig, electionResult, tallyResult, resultResult, issuanceResult, publicLedgerResult] = await Promise.all([
         fetchCoordinatorInfo(),
         fetchVoterEligibility(),
         fetchElection(),
         fetchTally(),
         fetchResult(),
         fetchIssuanceStatus(),
+        fetchPublicLedger(),
       ]);
 
       setCoordinatorInfo(info);
@@ -318,6 +399,7 @@ export default function DemoApp() {
       setTally(tallyResult);
       setFinalResult(resultResult);
       setIssuanceStatus(issuanceResult);
+      setPublicLedger(publicLedgerResult);
 
       let coordinators: CoordinatorDiscovery[] = [];
       if (electionResult?.event_id) {
@@ -534,6 +616,14 @@ export default function DemoApp() {
         throw new Error("Mint did not return a proof.");
       }
 
+      patchSessionLedger(await computeProofHash(mintedProof.secret), {
+        npub,
+        quoteId: quote.quote,
+        issuedAt: Date.now(),
+        ballotEventId: null,
+        voteChoice: null,
+        receiptReceivedAt: null,
+      });
       setProof(mintedProof);
       setConfirmationResult(null);
       setStatus("Proof minted and ready for the ballot step.");
@@ -545,7 +635,7 @@ export default function DemoApp() {
     } finally {
       setMintingProof(false);
     }
-  }, [nsecInput, refreshSnapshot]);
+  }, [nsecInput, patchSessionLedger, refreshSnapshot]);
 
   const publishDemoBallot = useCallback(async (choice = voteChoice, nsecValue = nsecInput, proofInput = proof) => {
     const npub = deriveNpubFromNsec(nsecValue);
@@ -580,6 +670,11 @@ export default function DemoApp() {
         }],
       });
 
+      patchSessionLedger(await computeProofHash(proofInput.secret), {
+        npub,
+        ballotEventId: publishResult.eventId,
+        voteChoice: choice,
+      });
       setBallotEventId(publishResult.eventId);
       setConfirmationResult(null);
       setStatus(`Ballot published: ${publishResult.successes} relay confirmation(s).`);
@@ -591,7 +686,7 @@ export default function DemoApp() {
     } finally {
       setPublishingBallot(false);
     }
-  }, [coordinatorInfo?.coordinatorNpub, coordinatorInfo?.relays, election, fillDemoBallot, nsecInput, proof, voteChoice]);
+  }, [coordinatorInfo?.coordinatorNpub, coordinatorInfo?.relays, election, fillDemoBallot, nsecInput, patchSessionLedger, proof, voteChoice]);
 
   const submitDemoProof = useCallback(async (ballotId = ballotEventId, nsecValue = nsecInput, proofInput = proof) => {
     if (!election || !ballotId || !proofInput) {
@@ -629,6 +724,9 @@ export default function DemoApp() {
       if (successfulCoordinators === 0) {
         throw new Error("Proof delivery failed. No relay accepted the NIP-17 gift wrap, so no 38002 receipt can appear.");
       }
+      patchSessionLedger(await computeProofHash(proofInput.secret), {
+        receiptReceivedAt: Date.now(),
+      });
       setStatus(`Proof sent to ${successfulCoordinators} coordinator(s) across ${successfulRelays} relay confirmation(s).`);
 
       await refreshSnapshot(false);
@@ -639,7 +737,7 @@ export default function DemoApp() {
     } finally {
       setSubmittingProof(false);
     }
-  }, [ballotEventId, coordinatorInfo?.coordinatorNpub, coordinatorInfo?.relays, election, nsecInput, proof, refreshSnapshot]);
+  }, [ballotEventId, coordinatorInfo?.coordinatorNpub, coordinatorInfo?.relays, election, nsecInput, patchSessionLedger, proof, refreshSnapshot]);
 
   const runVerifierAudit = useCallback(async () => {
     if (!election?.event_id) {
@@ -889,6 +987,81 @@ export default function DemoApp() {
 
         {error && <section className="demo-banner demo-banner-error" id="demo-status">{error}</section>}
         {status && <section className="demo-banner" id="demo-status">{status}</section>}
+
+        <section className="demo-ledger-section">
+          <article className="demo-card demo-ledger-card" id="demo-ledger">
+            <PanelTitle
+              kicker="Public Ledger"
+              title="Minted passes and published ballots"
+              right={(
+                <span className={`demo-status${publicLedgerMintedCount > 0 ? " demo-status-good" : ""}`}>
+                  {publicLedgerMintedCount} minted
+                </span>
+              )}
+            />
+            <div className="demo-note">
+              Minted pass hashes appear here before they are used. Rows stay grey until a ballot is published, then the vote column flips to Yes or No.
+            </div>
+            <div className="demo-ledger-summary">
+              <div className="demo-ledger-summary-item">
+                <span>Minted passes</span>
+                <strong>{publicLedgerMintedCount}</strong>
+              </div>
+              <div className="demo-ledger-summary-item">
+                <span>Ballots shown</span>
+                <strong>{publicLedgerVotedCount}</strong>
+              </div>
+              <div className="demo-ledger-summary-item">
+                <span>Still grey</span>
+                <strong>{publicLedgerPendingCount}</strong>
+              </div>
+            </div>
+            <div className="demo-ledger-table-wrap">
+              <table className="demo-ledger-table" aria-label="Public ballot ledger">
+                <thead>
+                  <tr>
+                    <th scope="col">#</th>
+                    <th scope="col">Pass hash</th>
+                    <th scope="col">Voter</th>
+                    <th scope="col">Vote</th>
+                    <th scope="col">Receipt</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {publicLedgerEntries.length > 0 ? publicLedgerEntries.map((entry, index) => (
+                    <tr key={entry.proofHash} className={!entry.voteChoice ? "is-pending" : ""}>
+                      <td>{index + 1}</td>
+                      <td><code>{shortCode(entry.proofHash, 18, 10)}</code></td>
+                      <td><code>{entry.npub ? shortCode(entry.npub, 14, 6) : "Pending"}</code></td>
+                      <td>
+                        <span
+                          className={`demo-ledger-vote-pill${
+                            entry.voteChoice === "Yes"
+                              ? " is-yes"
+                              : entry.voteChoice === "No"
+                                ? " is-no"
+                                : " is-pending"
+                          }`}
+                        >
+                          {entry.voteChoice ?? "Pending"}
+                        </span>
+                      </td>
+                      <td>
+                        <span className={`demo-ledger-receipt${entry.receiptReceivedAt ? " is-received" : ""}`}>
+                          {entry.receiptReceivedAt ? "Received" : "Waiting"}
+                        </span>
+                      </td>
+                    </tr>
+                  )) : (
+                    <tr className="is-pending">
+                      <td colSpan={5}>No minted passes yet. As each voter receives a blind-signed proof, its hash will be appended here.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </article>
+        </section>
 
         <section className="demo-grid demo-grid-4 demo-stat-grid-ops">
           <Metric label="Coordinators" value={coordinatorCount} hint="Discovered for the election." />
