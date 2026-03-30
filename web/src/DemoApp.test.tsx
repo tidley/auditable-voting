@@ -66,6 +66,21 @@ vi.mock("./coordinatorApi", () => ({
       npub1demo: { eligible: true, issued: true },
     },
   }),
+  fetchPublicLedger: vi.fn().mockResolvedValue({
+    election_id: "e1",
+    total_entries: 1,
+    voted_entries: 0,
+    pending_entries: 1,
+    entries: [{
+      npub: "npub1demo",
+      proofHash: "a".repeat(64),
+      quoteId: "quote-1",
+      issuedAt: 1710000000000,
+      ballotEventId: null,
+      voteChoice: null,
+      receiptReceivedAt: null,
+    }],
+  }),
   fetchTally: vi.fn().mockResolvedValue({ status: "in_progress", total_published_votes: 1, total_accepted_votes: 1, spent_commitment_root: null, results: {} }),
   fetchResult: vi.fn().mockResolvedValue({ election_id: "e1", total_votes: 1, results: {}, merkle_root: "r", total_proofs_burned: 1, issuance_commitment_root: "i", spent_commitment_root: "s", max_supply: 1, event_id: "evt1", closed_at: 1 }),
   discoverCoordinators: vi.fn().mockResolvedValue([{ npub: "npub1coord", httpApi: "http://coord.example", mintUrl: "http://mint.example", relays: ["wss://relay.example"] }]),
@@ -90,6 +105,8 @@ describe("DemoApp", () => {
     expect(screen.getByRole("button", { name: /Publish confirmation/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Yes/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /No/i })).toBeTruthy();
+    expect(screen.getByRole("table", { name: /Public ballot ledger/i })).toBeTruthy();
+    expect(screen.getByText(/Minted passes and published ballots/i)).toBeTruthy();
     expect(screen.getByText(/Security guarantees/i)).toBeTruthy();
     expect(screen.getByText(/What the demo proves/i)).toBeTruthy();
     expect(screen.getByRole("link", { name: /Paste here/i })).toBeTruthy();

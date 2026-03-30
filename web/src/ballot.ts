@@ -4,6 +4,7 @@ import { logBallotDebug } from "./cashuMintApi";
 import type { ElectionQuestion } from "./coordinatorApi";
 import type { CoordinatorProof } from "./cashuWallet";
 import { USE_MOCK } from "./config";
+import { queueNostrPublish } from "./nostrPublishQueue";
 
 export const DEFAULT_VOTE_RELAYS = [
   "wss://relay.damus.io",
@@ -107,7 +108,7 @@ export async function publishBallotEvent(input: {
   const pool = new SimplePool();
 
   try {
-    const results = await Promise.allSettled(pool.publish(relays, event, { maxWait: 4000 }));
+    const results = await queueNostrPublish(() => Promise.allSettled(pool.publish(relays, event, { maxWait: 4000 })));
     const relayResults: RelayPublishResult[] = results.map((result, index) => (
       result.status === "fulfilled"
         ? { relay: relays[index], success: true }

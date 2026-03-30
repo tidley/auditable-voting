@@ -1,4 +1,4 @@
-import { randomBytes } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { getPublicKey, nip19 } from "nostr-tools";
 import { buildMerkleTree, computeEligibleRoot } from "./merkle.js";
@@ -135,6 +135,16 @@ type MockReceiptRecord = {
   receivedAt: number;
 };
 
+type PublicLedgerEntry = {
+  npub: string | null;
+  proofHash: string;
+  quoteId: string | null;
+  issuedAt: number | null;
+  ballotEventId: string | null;
+  voteChoice: string | null;
+  receiptReceivedAt: number | null;
+};
+
 const MOCK_QUOTE_TTL_MS = 10 * 60 * 1000;
 const MOCK_PROOF_READY_MS = 4000;
 const DEFAULT_MOCK_RELAYS = [
@@ -156,6 +166,10 @@ const DEFAULT_BALLOT_QUESTIONS = [
     ]
   }
 ];
+
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
 
 class DemoMint {
   private readonly eligibleNpubs = new Set<string>(ALLOWED_NPUBS);
@@ -230,7 +244,10 @@ class DemoMint {
 class MockMintService {
   private readonly quotes = new Map<string, MockQuoteRecord>();
 
-  constructor(private readonly voterRegistry: DemoMint) {}
+  constructor(
+    private readonly voterRegistry: DemoMint,
+    private readonly auditLedger: MockAuditLedger,
+  ) {}
 
   issueInvoice(baseUrl: string): MockMintInvoice {
     this.pruneExpiredQuotes();
@@ -307,6 +324,7 @@ class MockMintService {
     }
 
     this.voterRegistry.markProofIssued(record.npub);
+    this.auditLedger.recordIssuedProof(record.proof);
     console.log(`[server] mock proof ready: ${quoteId}`);
     console.log("[server] mock proof details:");
     console.log(JSON.stringify(record.proof, null, 2));
@@ -341,6 +359,7 @@ class MockVoteStatusService {
 }
 
 class MockAuditLedger {
+  private readonly issuedProofs = new Map<string, PublicLedgerEntry>();
   private readonly receipts = new Map<string, MockReceiptRecord>();
   private readonly ballots = new Map<string, {
     ballotEventId: string;
@@ -352,11 +371,39 @@ class MockAuditLedger {
     receivedAt: number;
   }>();
 
+  recordIssuedProof(proof: MockCashuProof) {
+    const proofHash = sha256Hex(proof.secret);
+    const issuedAt = Date.parse(proof.issuedAt);
+    const existing = this.issuedProofs.get(proofHash);
+
+    this.issuedProofs.set(proofHash, {
+      npub: proof.npub,
+      proofHash,
+      quoteId: proof.quoteId,
+      issuedAt: Number.isNaN(issuedAt) ? Date.now() : issuedAt,
+      ballotEventId: existing?.ballotEventId ?? null,
+      voteChoice: existing?.voteChoice ?? null,
+      receiptReceivedAt: existing?.receiptReceivedAt ?? null,
+    });
+  }
+
   recordReceipt(payload: BallotDebugPayload) {
     const proofHash = (payload.proofHash ?? extractProofHash(payload.event?.tags ?? [])).trim();
     const event = payload.event;
 
-    if (event?.kind === 38000 && event.id) {
+    if (event?.kind === 38000 && event.id && proofHash) {
+      const voteChoice = this.recordBallot(event);
+      const existing = this.issuedProofs.get(proofHash);
+      this.issuedProofs.set(proofHash, {
+        npub: existing?.npub ?? null,
+        proofHash,
+        quoteId: existing?.quoteId ?? null,
+        issuedAt: existing?.issuedAt ?? null,
+        ballotEventId: event.id,
+        voteChoice,
+        receiptReceivedAt: existing?.receiptReceivedAt ?? null,
+      });
+    } else if (event?.kind === 38000 && event.id) {
       this.recordBallot(event);
     }
 
@@ -364,16 +411,27 @@ class MockAuditLedger {
       return;
     }
 
+    const existing = this.issuedProofs.get(proofHash);
+    const receivedAt = Date.now();
     this.receipts.set(proofHash, {
       proofHash,
       ballotEventId: payload.publishResult?.eventId ?? payload.event?.id ?? null,
-      receivedAt: Date.now(),
+      receivedAt,
+    });
+    this.issuedProofs.set(proofHash, {
+      npub: existing?.npub ?? null,
+      proofHash,
+      quoteId: existing?.quoteId ?? null,
+      issuedAt: existing?.issuedAt ?? null,
+      ballotEventId: existing?.ballotEventId ?? payload.publishResult?.eventId ?? payload.event?.id ?? null,
+      voteChoice: existing?.voteChoice ?? null,
+      receiptReceivedAt: receivedAt,
     });
   }
 
-  private recordBallot(event: NonNullable<BallotDebugPayload["event"]>) {
+  private recordBallot(event: NonNullable<BallotDebugPayload["event"]>): string | null {
     if (!event.id) {
-      return;
+      return null;
     }
 
     let responses: Array<{
@@ -400,11 +458,20 @@ class MockAuditLedger {
       responses = [];
     }
 
+    const primaryResponse = responses[0];
+    const voteChoice = Array.isArray(primaryResponse?.values)
+      ? primaryResponse.values[0] ?? null
+      : primaryResponse?.value !== undefined
+        ? String(primaryResponse.value)
+        : null;
+
     this.ballots.set(event.id, {
       ballotEventId: event.id,
       responses,
       receivedAt: Date.now(),
     });
+
+    return voteChoice;
   }
 
   snapshot() {
@@ -446,6 +513,26 @@ class MockAuditLedger {
       event_id: DEFAULT_ELECTION_ID,
       closed_at: Math.floor(Date.now() / 1000),
       receipts: [...this.receipts.values()].sort((a, b) => a.receivedAt - b.receivedAt),
+    };
+  }
+
+  publicLedger() {
+    const entries = [...this.issuedProofs.values()]
+      .sort((left, right) => {
+        const leftIssuedAt = left.issuedAt ?? Number.MAX_SAFE_INTEGER;
+        const rightIssuedAt = right.issuedAt ?? Number.MAX_SAFE_INTEGER;
+        if (leftIssuedAt !== rightIssuedAt) {
+          return leftIssuedAt - rightIssuedAt;
+        }
+        return left.proofHash.localeCompare(right.proofHash);
+      });
+
+    return {
+      election_id: DEFAULT_ELECTION_ID,
+      total_entries: entries.length,
+      voted_entries: entries.filter((entry) => !!entry.voteChoice).length,
+      pending_entries: entries.filter((entry) => !entry.voteChoice).length,
+      entries,
     };
   }
 }
@@ -523,9 +610,9 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
 
 export async function startVoterServer(port = 8787) {
   const mint = new DemoMint();
-  const mockMintService = new MockMintService(mint);
-  const mockVoteStatusService = new MockVoteStatusService();
   const mockAuditLedger = new MockAuditLedger();
+  const mockMintService = new MockMintService(mint, mockAuditLedger);
+  const mockVoteStatusService = new MockVoteStatusService();
 
   console.log("[server] phase 1,2 eligibility setup ready");
   console.log(`[server] eligible_count = ${ALLOWED_NPUBS.length}`);
@@ -588,6 +675,11 @@ export async function startVoterServer(port = 8787) {
           event_id: snapshot.event_id,
           closed_at: snapshot.closed_at,
         });
+        return;
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/public-ledger") {
+        writeJson(response, 200, mockAuditLedger.publicLedger());
         return;
       }
 
@@ -692,6 +784,7 @@ export async function startVoterServer(port = 8787) {
   console.log("[server] POST /api/debug/ballot-log");
   console.log("[server] GET /api/tally");
   console.log("[server] GET /api/result");
+  console.log("[server] GET /api/public-ledger");
   console.log("[server] GET /mock-mint/invoice");
   console.log("[server] GET /mock-mint/proof/:quoteId");
 
