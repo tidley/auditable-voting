@@ -1,6 +1,6 @@
 import { USE_MOCK, MINT_URL } from "./config";
 import type { EligibilityResponse } from "./voterManagementApi";
-import { SimplePool } from "nostr-tools";
+import { SimplePool, nip19 } from "nostr-tools";
 
 export type ElectionQuestion = {
   id: string;
@@ -81,7 +81,8 @@ async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
   return payload;
 }
 
-const MOCK_COORDINATOR_NPUB = "npub1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const MOCK_COORDINATOR_PUBKEY = "1".repeat(64);
+const MOCK_COORDINATOR_NPUB = nip19.npubEncode(MOCK_COORDINATOR_PUBKEY);
 const MOCK_RELAYS = ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net"];
 const MOCK_ELECTION_ID = "spring-2026-council";
 const MOCK_ELECTION_EVENT_ID = "a".repeat(64);
