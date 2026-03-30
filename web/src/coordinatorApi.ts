@@ -71,7 +71,10 @@ export type AuditResult = {
 };
 
 async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(input, init);
+  const response = await fetch(input, {
+    ...init,
+    cache: "no-store",
+  });
   const payload = await response.json() as T & { error?: string };
 
   if (!response.ok) {
