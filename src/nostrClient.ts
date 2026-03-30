@@ -1,5 +1,5 @@
 import { generateSecretKey, getPublicKey, finalizeEvent, SimplePool } from "nostr-tools";
-import { queueNostrPublish } from "./nostrPublishQueue";
+import { queueNostrPublish } from "./nostrPublishQueue.js";
 
 export type VotePayload = {
   electionId: string;
