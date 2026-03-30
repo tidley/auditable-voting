@@ -90,17 +90,10 @@ const MOCK_ELECTION_ID = "spring-2026-council";
 const MOCK_ELECTION_EVENT_ID = "a".repeat(64);
 const MOCK_ELECTION_QUESTIONS: ElectionQuestion[] = [
   {
-    id: "funding_priority",
+    id: "proposal_approval",
     type: "choice",
-    prompt: "Which area should receive the first round of funding?",
-    options: ["Community grants", "Security audits", "Education programs"],
-    select: "single",
-  },
-  {
-    id: "audit_policy",
-    type: "choice",
-    prompt: "How often should published results receive an independent audit?",
-    options: ["Every election", "Annual review", "Only on disputes"],
+    prompt: "Should the proposal pass?",
+    options: ["Yes", "No"],
     select: "single",
   },
 ];

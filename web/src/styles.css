@@ -1900,6 +1900,28 @@ body.demo-page .button-row {
   gap: 10px;
 }
 
+body.demo-page .demo-poll-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+body.demo-page .demo-poll-option {
+  min-height: 42px;
+  border: 1px solid #2b302d;
+  background: #111312;
+  color: #cad0ca;
+  border-radius: 0;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+body.demo-page .demo-poll-option.is-active {
+  border-color: #4fe0a0;
+  background: rgba(79, 224, 160, 0.12);
+  color: #4fe0a0;
+}
+
 body.demo-page .demo-console-progress {
   display: flex;
   gap: 4px;

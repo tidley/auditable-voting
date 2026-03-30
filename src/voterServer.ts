@@ -148,21 +148,11 @@ const DEFAULT_COORDINATOR_NPUB = nip19.npubEncode(
 const DEFAULT_ELECTION_ID = "spring-2026-council";
 const DEFAULT_BALLOT_QUESTIONS = [
   {
-    id: "funding_priority",
-    prompt: "Which area should receive the first round of funding?",
+    id: "proposal_approval",
+    prompt: "Should the proposal pass?",
     options: [
-      { value: "community-grants", label: "Community grants" },
-      { value: "security-audits", label: "Security audits" },
-      { value: "education-programs", label: "Education programs" }
-    ]
-  },
-  {
-    id: "audit_policy",
-    prompt: "How often should published results receive an independent audit?",
-    options: [
-      { value: "every-election", label: "Every election" },
-      { value: "annual-review", label: "Annual review" },
-      { value: "only-disputes", label: "Only on disputes" }
+      { value: "Yes", label: "Yes" },
+      { value: "No", label: "No" }
     ]
   }
 ];
@@ -352,9 +342,24 @@ class MockVoteStatusService {
 
 class MockAuditLedger {
   private readonly receipts = new Map<string, MockReceiptRecord>();
+  private readonly ballots = new Map<string, {
+    ballotEventId: string;
+    responses: Array<{
+      question_id: string;
+      value?: string | number;
+      values?: string[];
+    }>;
+    receivedAt: number;
+  }>();
 
   recordReceipt(payload: BallotDebugPayload) {
     const proofHash = (payload.proofHash ?? extractProofHash(payload.event?.tags ?? [])).trim();
+    const event = payload.event;
+
+    if (event?.kind === 38000 && event.id) {
+      this.recordBallot(event);
+    }
+
     if (!proofHash) {
       return;
     }
@@ -366,9 +371,63 @@ class MockAuditLedger {
     });
   }
 
+  private recordBallot(event: NonNullable<BallotDebugPayload["event"]>) {
+    if (!event.id) {
+      return;
+    }
+
+    let responses: Array<{
+      question_id: string;
+      value?: string | number;
+      values?: string[];
+    }> = [];
+
+    try {
+      const parsed = JSON.parse(event.content ?? "{}") as {
+        responses?: Array<{
+          question_id?: string;
+          value?: string | number;
+          values?: string[];
+        }>;
+      };
+
+      responses = (parsed.responses ?? []).filter((response) => !!response.question_id) as Array<{
+        question_id: string;
+        value?: string | number;
+        values?: string[];
+      }>;
+    } catch {
+      responses = [];
+    }
+
+    this.ballots.set(event.id, {
+      ballotEventId: event.id,
+      responses,
+      receivedAt: Date.now(),
+    });
+  }
+
   snapshot() {
     const receiptHashes = [...this.receipts.keys()].sort();
     const receiptRoot = receiptHashes.length > 0 ? buildMerkleTree(receiptHashes).root : null;
+    const results: Record<string, Record<string, number>> = {};
+
+    for (const ballot of this.ballots.values()) {
+      for (const response of ballot.responses) {
+        const value = Array.isArray(response.values)
+          ? response.values[0]
+          : response.value;
+
+        if (value === undefined || value === null) {
+          continue;
+        }
+
+        const option = String(value);
+        results[response.question_id] ??= {};
+        results[response.question_id][option] = (results[response.question_id][option] ?? 0) + 1;
+      }
+    }
+
     const issuanceRoot = computeEligibleRoot(
       [...ALLOWED_NPUBS].map((npub) => nip19.decode(npub)).map((decoded) => decoded.type === "npub" ? decoded.data as string : "")
     );
@@ -376,10 +435,10 @@ class MockAuditLedger {
     return {
       election_id: DEFAULT_ELECTION_ID,
       status: receiptHashes.length > 0 ? "in_progress" as const : "in_progress" as const,
-      total_published_votes: receiptHashes.length,
+      total_published_votes: this.ballots.size,
       total_accepted_votes: receiptHashes.length,
       spent_commitment_root: receiptRoot,
-      results: {},
+      results,
       merkle_root: receiptRoot,
       total_proofs_burned: receiptHashes.length,
       issuance_commitment_root: issuanceRoot,
