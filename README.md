@@ -108,17 +108,41 @@ Browser --> Traefik (:80)
                        |-- /mint/   --> mint:3338
 ```
 
-## Local Development (mock mode)
+## Local Demo (mock mode)
 
-The frontend has a `VITE_USE_MOCK=true` mode that uses a local mock server
-instead of the real coordinator and mint:
+Run these commands from your local checkout root, not from a hardcoded path.
+
+Install dependencies once:
 
 ```bash
-npm install && npm --prefix web install
-npm run build && npm --prefix web run build
-npm run server       # local mock server on :8787
-npm --prefix web run dev   # Vite dev server on :5173
+npm install
+npm --prefix web install
 ```
+
+Start the mock coordinator + mock mint in one terminal:
+
+```bash
+npm run build
+npm run server
+```
+
+Start the demo UI in a second terminal:
+
+```bash
+VITE_USE_MOCK=true VITE_DEMO_MODE=true npm --prefix web run dev -- --host 127.0.0.1 --port 5173
+```
+
+Then open:
+
+```text
+http://127.0.0.1:5173/
+```
+
+Notes:
+
+- `npm run server` serves the local mock API on `http://localhost:8787`
+- the demo page uses the mock backend only when `VITE_USE_MOCK=true`
+- if you cloned the repo somewhere else, stay in that directory instead of using `/home/tom/code/auditable-voting`
 
 ## Project Structure
 
