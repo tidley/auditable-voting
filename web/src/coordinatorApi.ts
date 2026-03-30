@@ -530,10 +530,12 @@ export async function fetchPerCoordinatorTallies(
     }
 
     try {
-      const tally = await fetchJson<TallyInfo>(`${coord.httpApi}/tally`);
+      const tallyUrl = new URL("/api/tally", coord.httpApi).toString();
+      const resultUrl = new URL("/api/result", coord.httpApi).toString();
+      const tally = await fetchJson<TallyInfo>(tallyUrl);
       let result: FinalResultInfo | null = null;
       try {
-        result = await fetchJson<FinalResultInfo>(`${coord.httpApi}/result`);
+        result = await fetchJson<FinalResultInfo>(resultUrl);
       } catch {
         // no result yet
       }
