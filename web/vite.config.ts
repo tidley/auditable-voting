@@ -7,12 +7,12 @@ export default defineConfig({
   plugins: [react(), nodePolyfills()],
   server: {
     proxy: {
-      "/api": "http://localhost:8787"
+      "/api": "http://localhost:8789"
     }
   },
   preview: {
     proxy: {
-      "/api": "http://localhost:8787"
+      "/api": "http://localhost:8789"
     }
   },
   build: {

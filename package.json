@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "server": "node dist/cli.js start-server 8787",
+    "server": "node dist/cli.js start-server 8789",
     "start": "node dist/cli.js"
   },
   "dependencies": {

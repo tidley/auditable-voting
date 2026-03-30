@@ -140,7 +140,7 @@ http://127.0.0.1:5173/
 
 Notes:
 
-- `npm run server` serves the local mock API on `http://localhost:8787`
+- `npm run server` serves the local mock API on `http://localhost:8789`
 - the demo page uses the mock backend only when `VITE_USE_MOCK=true`
 - if you cloned the repo somewhere else, stay in that directory instead of using `/home/tom/code/auditable-voting`
 
