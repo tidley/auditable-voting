@@ -373,6 +373,17 @@ vi.mock("nostr-tools", async () => {
 
   return {
     ...actual,
+    nip17: {
+      wrapEvent: vi.fn((_secretKey, _recipient, content, _subject, extra) => ({
+        id: extra?.eventId ?? "gift-wrap-1",
+        pubkey: testIdentity.pubkey,
+        kind: 1059,
+        created_at: now,
+        content,
+        tags: [],
+        sig: "sig",
+      })),
+    },
     SimplePool: MockSimplePool,
   };
 });

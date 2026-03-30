@@ -75,6 +75,8 @@ describe("DemoApp", () => {
     expect(screen.getByRole("button", { name: /Run full demo/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Run audit/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Publish confirmation/i })).toBeTruthy();
+    expect(screen.getByText(/Security guarantees/i)).toBeTruthy();
+    expect(screen.getByText(/What the demo proves/i)).toBeTruthy();
     expect(screen.getByRole("link", { name: /Paste here/i })).toBeTruthy();
     expect(screen.getByText(/Live protocol log/i)).toBeTruthy();
     expect(screen.getAllByText(/Auditors can reconstruct the spent commitment tree from those receipts\./i).length).toBeGreaterThan(0);
