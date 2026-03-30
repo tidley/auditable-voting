@@ -417,6 +417,7 @@ function writeJson(response: ServerResponse, statusCode: number, payload: unknow
     "Access-Control-Allow-Headers": "Content-Type",
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
     "Access-Control-Allow-Origin": "*",
+    "Cache-Control": "no-store, max-age=0, must-revalidate",
     "Content-Type": "application/json"
   });
 
