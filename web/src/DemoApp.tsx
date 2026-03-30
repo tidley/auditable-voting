@@ -439,7 +439,7 @@ export default function DemoApp() {
 
     try {
       const publishResult = await publishBallotEvent({
-        electionId: election.electionId,
+        electionId: election.election_id,
         answers,
         questions: election.questions,
         relays,
@@ -585,7 +585,7 @@ export default function DemoApp() {
       const coordinatorNpub = election.coordinator_npubs[0] ?? coordinatorInfo?.coordinatorNpub ?? "";
       const relays = coordinatorInfo?.relays ?? [];
       const publishResult = await publishBallotEvent({
-        electionId: election.electionId,
+        electionId: election.election_id,
         answers,
         questions: election.questions,
         relays,
