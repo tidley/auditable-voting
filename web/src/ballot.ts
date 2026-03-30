@@ -1,7 +1,9 @@
 import { finalizeEvent, generateSecretKey, getPublicKey, nip19, SimplePool } from "nostr-tools";
 import type { RelayPublishResult } from "./cashuMintApi";
+import { logBallotDebug } from "./cashuMintApi";
 import type { ElectionQuestion } from "./coordinatorApi";
 import type { CoordinatorProof } from "./cashuWallet";
+import { USE_MOCK } from "./config";
 
 export const DEFAULT_VOTE_RELAYS = [
   "wss://relay.damus.io",
@@ -115,6 +117,37 @@ export async function publishBallotEvent(input: {
             error: result.reason instanceof Error ? result.reason.message : String(result.reason)
           }
     ));
+
+    if (USE_MOCK) {
+      try {
+        await logBallotDebug({
+          electionId: input.electionId,
+          relays,
+          event: {
+            id: event.id,
+            pubkey: event.pubkey,
+            kind: event.kind,
+            created_at: event.created_at,
+            content: event.content,
+            tags: event.tags,
+            sig: event.sig,
+          },
+          publishResult: {
+            eventId: event.id,
+            ballotNpub,
+            successes: relayResults.filter((result) => result.success).length,
+            failures: relayResults.filter((result) => !result.success).length,
+            relayResults: relayResults.map((result) => ({
+              relay: result.relay,
+              success: result.success,
+              error: result.error,
+            })),
+          },
+        });
+      } catch {
+        // Demo logging should not block ballot publication.
+      }
+    }
 
     return {
       eventId: event.id,

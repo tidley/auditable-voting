@@ -5,13 +5,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-const secretKey = generateSecretKey();
-const publicKey = getPublicKey(secretKey);
-const testIdentity = {
-  nsec: nip19.nsecEncode(secretKey),
-  npub: nip19.npubEncode(publicKey),
-  pubkey: publicKey,
-};
+function makeIdentity() {
+  const secretKey = generateSecretKey();
+  const publicKey = getPublicKey(secretKey);
+  return {
+    nsec: nip19.nsecEncode(secretKey),
+    npub: nip19.npubEncode(publicKey),
+    pubkey: publicKey,
+  };
+}
+
+const testIdentity = makeIdentity();
+const testIdentity2 = makeIdentity();
+const testIdentity3 = makeIdentity();
+const demoIdentities = [testIdentity, testIdentity2, testIdentity3];
 
 const coordinatorSecretKey = generateSecretKey();
 const coordinatorPublicKey = getPublicKey(coordinatorSecretKey);
@@ -32,7 +39,7 @@ const coordinatorIdentity2 = {
 const now = Math.floor(Date.now() / 1000);
 const receiptRoot = "b".repeat(64);
 
-let issued = false;
+let issuedNpubs = new Set<string>();
 let ballotPublished = false;
 let confirmationPublished = false;
 
@@ -59,10 +66,10 @@ const mockElection = {
   description: "Local demo election",
   questions: [
     {
-      id: "funding_priority",
+      id: "proposal_approval",
       type: "choice" as const,
-      prompt: "Which area should receive the first round of funding?",
-      options: ["Community grants", "Security audits", "Education programs"],
+      prompt: "Should the proposal pass?",
+      options: ["Yes", "No"],
       select: "single" as const,
     },
   ],
@@ -72,7 +79,7 @@ const mockElection = {
   mint_urls: [mockCoordinator.mintUrl],
   coordinator_npubs: [mockCoordinator.coordinatorNpub],
   eligible_root: "",
-  eligible_count: 1,
+  eligible_count: demoIdentities.length,
   eligible_url: "",
 };
 
@@ -93,74 +100,85 @@ vi.mock("./config", () => ({
   DEMO_COPY: { pass: "voting pass", quote: "approval request", proof: "voting pass", mint: "issuer" },
 }));
 
+let demoIdentityIndex = 0;
 vi.mock("./demoIdentity", () => ({
-  createDemoIdentity: () => testIdentity,
+  createDemoIdentity: () => demoIdentities[(demoIdentityIndex++) % demoIdentities.length],
 }));
 
+let activeNpub = testIdentity.npub;
 vi.mock("./voterManagementApi", () => ({
   fetchEligibility: vi.fn().mockResolvedValue({
-    eligibleNpubs: [testIdentity.npub],
-    eligibleCount: 1,
+    eligibleNpubs: demoIdentities.map((identity) => identity.npub),
+    eligibleCount: demoIdentities.length,
     verifiedNpubs: [],
     verifiedCount: 0,
   }),
-  checkEligibility: vi.fn(async (npub: string) => ({
-    npub,
-    allowed: npub === testIdentity.npub,
-    canProceed: npub === testIdentity.npub,
-    message: npub === testIdentity.npub
-      ? "npub is allowed and has not voted yet"
-      : "npub is not in the allowed list",
-  })),
+  checkEligibility: vi.fn(async (npub: string) => {
+    activeNpub = npub;
+    const allowed = demoIdentities.some((identity) => identity.npub === npub);
+    return {
+      npub,
+      allowed,
+      canProceed: allowed,
+      message: allowed
+        ? "npub is allowed and has not voted yet"
+        : "npub is not in the allowed list",
+    };
+  }),
   resetEligibility: vi.fn().mockResolvedValue({
-    eligibleNpubs: [testIdentity.npub],
-    eligibleCount: 1,
+    eligibleNpubs: demoIdentities.map((identity) => identity.npub),
+    eligibleCount: demoIdentities.length,
     verifiedNpubs: [],
     verifiedCount: 0,
     message: "reset",
   }),
-  seedEligibility: vi.fn().mockImplementation(async (npub: string) => ({
-    eligibleNpubs: [npub],
-    eligibleCount: 1,
-    verifiedNpubs: [],
-    verifiedCount: 0,
-    message: "seeded",
-  })),
+  seedEligibility: vi.fn().mockImplementation(async (npub: string) => {
+    activeNpub = npub;
+    return {
+      eligibleNpubs: [npub],
+      eligibleCount: 1,
+      verifiedNpubs: [],
+      verifiedCount: 0,
+      message: "seeded",
+    };
+  }),
 }));
 
 vi.mock("./coordinatorApi", () => ({
   fetchCoordinatorInfo: vi.fn().mockResolvedValue(mockCoordinator),
   fetchEligibility: vi.fn().mockResolvedValue({
     election_id: mockElection.election_id,
-    eligible_count: 1,
-    eligible_npubs: [testIdentity.npub],
+    eligible_count: demoIdentities.length,
+    eligible_npubs: demoIdentities.map((identity) => identity.npub),
   }),
   fetchElection: vi.fn().mockResolvedValue(mockElection),
   fetchIssuanceStatus: vi.fn().mockImplementation(async () => ({
     election_id: mockElection.election_id,
     voters: {
-      [testIdentity.npub]: { eligible: true, issued },
+      [testIdentity.npub]: { eligible: true, issued: issuedNpubs.has(testIdentity.npub) },
+      [testIdentity2.npub]: { eligible: true, issued: issuedNpubs.has(testIdentity2.npub) },
+      [testIdentity3.npub]: { eligible: true, issued: issuedNpubs.has(testIdentity3.npub) },
     },
   })),
   fetchTally: vi.fn().mockImplementation(async () => ({
     election_id: mockElection.election_id,
     status: "closed",
-    total_published_votes: ballotPublished ? 1 : 0,
-    total_accepted_votes: ballotPublished ? 1 : 0,
+    total_published_votes: ballotPublished ? 3 : 0,
+    total_accepted_votes: ballotPublished ? 3 : 0,
     spent_commitment_root: ballotPublished ? receiptRoot : null,
     results: ballotPublished
-      ? { funding_priority: { "Community grants": 1 } }
+      ? { proposal_approval: { Yes: 2, No: 1 } }
       : {},
   })),
   fetchResult: vi.fn().mockImplementation(async () => ({
     election_id: mockElection.election_id,
-    total_votes: ballotPublished ? 1 : 0,
-    results: ballotPublished ? { funding_priority: { "Community grants": 1 } } : {},
+    total_votes: ballotPublished ? 3 : 0,
+    results: ballotPublished ? { proposal_approval: { Yes: 2, No: 1 } } : {},
     merkle_root: ballotPublished ? receiptRoot : "",
-    total_proofs_burned: ballotPublished ? 1 : 0,
+    total_proofs_burned: ballotPublished ? 3 : 0,
     issuance_commitment_root: "issuance-root",
     spent_commitment_root: ballotPublished ? receiptRoot : "",
-    max_supply: 1,
+    max_supply: 3,
     event_id: mockElection.event_id,
     closed_at: now,
   })),
@@ -175,20 +193,20 @@ vi.mock("./coordinatorApi", () => ({
       tally: {
         election_id: mockElection.election_id,
         status: "closed",
-        total_published_votes: ballotPublished ? 1 : 0,
-        total_accepted_votes: ballotPublished ? 1 : 0,
+        total_published_votes: ballotPublished ? 3 : 0,
+        total_accepted_votes: ballotPublished ? 3 : 0,
         spent_commitment_root: ballotPublished ? receiptRoot : null,
-        results: ballotPublished ? { funding_priority: { "Community grants": 1 } } : {},
+        results: ballotPublished ? { proposal_approval: { Yes: 2, No: 1 } } : {},
       },
       result: {
         election_id: mockElection.election_id,
-        total_votes: ballotPublished ? 1 : 0,
-        results: ballotPublished ? { funding_priority: { "Community grants": 1 } } : {},
+        total_votes: ballotPublished ? 3 : 0,
+        results: ballotPublished ? { proposal_approval: { Yes: 2, No: 1 } } : {},
         merkle_root: ballotPublished ? receiptRoot : "",
-        total_proofs_burned: ballotPublished ? 1 : 0,
+        total_proofs_burned: ballotPublished ? 3 : 0,
         issuance_commitment_root: "issuance-root",
         spent_commitment_root: ballotPublished ? receiptRoot : "",
-        max_supply: 1,
+        max_supply: 3,
         event_id: mockElection.event_id,
         closed_at: now,
       },
@@ -199,20 +217,20 @@ vi.mock("./coordinatorApi", () => ({
       tally: {
         election_id: mockElection.election_id,
         status: "closed",
-        total_published_votes: ballotPublished ? 1 : 0,
-        total_accepted_votes: ballotPublished ? 1 : 0,
+        total_published_votes: ballotPublished ? 3 : 0,
+        total_accepted_votes: ballotPublished ? 3 : 0,
         spent_commitment_root: ballotPublished ? receiptRoot : null,
-        results: ballotPublished ? { funding_priority: { "Community grants": 1 } } : {},
+        results: ballotPublished ? { proposal_approval: { Yes: 2, No: 1 } } : {},
       },
       result: {
         election_id: mockElection.election_id,
-        total_votes: ballotPublished ? 1 : 0,
-        results: ballotPublished ? { funding_priority: { "Community grants": 1 } } : {},
+        total_votes: ballotPublished ? 3 : 0,
+        results: ballotPublished ? { proposal_approval: { Yes: 2, No: 1 } } : {},
         merkle_root: ballotPublished ? receiptRoot : "",
-        total_proofs_burned: ballotPublished ? 1 : 0,
+        total_proofs_burned: ballotPublished ? 3 : 0,
         issuance_commitment_root: "issuance-root-2",
         spent_commitment_root: ballotPublished ? receiptRoot : "",
-        max_supply: 1,
+        max_supply: 3,
         event_id: mockElection.event_id,
         closed_at: now,
       },
@@ -233,18 +251,18 @@ vi.mock("./coordinatorApi", () => ({
   runAudit: vi.fn().mockImplementation(async () => ([
     {
       coordinatorNpub: mockCoordinator.coordinatorNpub,
-      tally: ballotPublished ? 1 : 0,
-      confirmations: confirmationPublished ? 1 : 0,
+      tally: ballotPublished ? 3 : 0,
+      confirmations: confirmationPublished ? 3 : 0,
       fakeConfirmations: 0,
-      canonicalCount: 1,
+      canonicalCount: 3,
       flags: ballotPublished ? [] : ["pending"],
     },
     {
       coordinatorNpub: mockCoordinator2.coordinatorNpub,
-      tally: ballotPublished ? 1 : 0,
-      confirmations: confirmationPublished ? 1 : 0,
+      tally: ballotPublished ? 3 : 0,
+      confirmations: confirmationPublished ? 3 : 0,
       fakeConfirmations: 0,
-      canonicalCount: 1,
+      canonicalCount: 3,
       flags: ballotPublished ? [] : ["pending"],
     },
   ])),
@@ -278,10 +296,13 @@ vi.mock("./mintApi", () => ({
 
 vi.mock("./cashuBlind", () => ({
   requestQuoteAndMint: vi.fn().mockImplementation(async () => {
-    issued = true;
+    issuedNpubs.add(activeNpub);
     return {
       quote: "quote-1",
-      proofs: [mockProof],
+      proofs: [{
+        ...mockProof,
+        npub: activeNpub,
+      }],
     };
   }),
 }));
@@ -328,18 +349,20 @@ vi.mock("./ballot", () => ({
   DEFAULT_VOTE_RELAYS: mockCoordinator.relays,
   isBallotComplete: (answers: Record<string, unknown>, questions: Array<{ id: string }>) =>
     questions.every((q) => answers[q.id] !== undefined),
-  publishBallotEvent: vi.fn().mockImplementation(async () => {
+  publishBallotEvent: vi.fn().mockImplementation(async ({ answers }: { answers: Record<string, string | string[] | number> }) => {
     ballotPublished = true;
+    const choice = String(answers.proposal_approval ?? "Yes");
+    const eventId = `vote-${Math.floor(Math.random() * 1000)}`;
     return {
-      eventId: "vote-1",
+      eventId,
       ballotNpub: "npub1ballot",
       ballotSecretKey: new Uint8Array([1]),
       event: {
-        id: "vote-1",
+        id: eventId,
         pubkey: testIdentity.pubkey,
         kind: 38000,
         created_at: now,
-        content: "{}",
+        content: JSON.stringify({ election_id: mockElection.election_id, responses: [{ question_id: "proposal_approval", value: choice }], timestamp: now }),
         tags: [["election", mockElection.election_id]],
         sig: "sig",
       },
@@ -396,9 +419,11 @@ vi.mock("./signer", () => ({
 
 describe("full voting demo flow", () => {
   beforeEach(() => {
-    issued = false;
+    issuedNpubs = new Set<string>();
     ballotPublished = false;
     confirmationPublished = false;
+    demoIdentityIndex = 0;
+    activeNpub = testIdentity.npub;
     window.localStorage.clear();
     vi.clearAllMocks();
     window.alert = vi.fn();
@@ -454,7 +479,7 @@ describe("full voting demo flow", () => {
     expect(screen.getByText(/Multi-Coordinator Audit/i)).toBeTruthy();
     expect(screen.getByText(/Audit is unavailable in mock mode/i)).toBeTruthy();
     expect(screen.getAllByText(/^Accepted$/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText("1").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("3").length).toBeGreaterThan(0);
     dashboard.unmount();
   }, 15000);
 });

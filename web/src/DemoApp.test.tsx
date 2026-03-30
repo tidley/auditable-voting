@@ -3,13 +3,16 @@ import React from "react";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
+const demoIdentities = Array.from({ length: 3 }, (_, index) => ({
+  nsec: `nsec1demo${index + 1}`,
+  npub: `npub1demo${index + 1}`,
+  pubkey: `demo-pubkey-${index + 1}`,
+}));
+let demoIdentityIndex = 0;
+
 vi.mock("./config", () => ({ DEMO_MODE: true, USE_MOCK: false }));
 vi.mock("./demoIdentity", () => ({
-  createDemoIdentity: () => ({
-    nsec: "nsec1demo",
-    npub: "npub1demo",
-    pubkey: "demo-pubkey",
-  }),
+  createDemoIdentity: () => demoIdentities[(demoIdentityIndex++) % demoIdentities.length],
 }));
 vi.mock("./nostrIdentity", () => ({ formatDateTime: (value: number) => `time-${value}`, deriveNpubFromNsec: () => "npub1demo" }));
 vi.mock("./voterManagementApi", () => ({
@@ -24,6 +27,13 @@ vi.mock("./voterManagementApi", () => ({
     allowed: true,
     canProceed: true,
     message: "npub is in the eligible list",
+  }),
+  seedEligibility: vi.fn().mockResolvedValue({
+    eligibleNpubs: ["npub1demo"],
+    eligibleCount: 1,
+    verifiedNpubs: [],
+    verifiedCount: 0,
+    message: "seeded",
   }),
 }));
 vi.mock("./coordinatorApi", () => ({
@@ -69,12 +79,17 @@ describe("DemoApp", () => {
     render(<DemoApp />);
 
     expect(await screen.findByText(/AUDITABLE-VOTING/i)).toBeTruthy();
-    expect(screen.getByDisplayValue("nsec1demo")).toBeTruthy();
+    expect(screen.getByDisplayValue("nsec1demo1")).toBeTruthy();
+    expect(screen.getByRole("combobox")).toBeTruthy();
     expect(screen.getByRole("button", { name: /Check eligibility/i })).toBeTruthy();
     expect(screen.getAllByRole("button", { name: /Mint proof/i }).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /Publish ballot/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Submit proof/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Run full demo/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Run audit/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Publish confirmation/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Yes/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /No/i })).toBeTruthy();
     expect(screen.getByText(/Security guarantees/i)).toBeTruthy();
     expect(screen.getByText(/What the demo proves/i)).toBeTruthy();
     expect(screen.getByRole("link", { name: /Paste here/i })).toBeTruthy();

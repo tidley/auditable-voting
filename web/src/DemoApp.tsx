@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { finalizeEvent, nip19, SimplePool } from "nostr-tools";
+import { finalizeEvent, getPublicKey, nip19, SimplePool } from "nostr-tools";
 import {
   discoverCoordinators,
   fetchElection,
@@ -38,6 +38,14 @@ type StepState = {
   detail: string;
   status: "done" | "current" | "waiting";
 };
+
+type DemoVoteChoice = "Yes" | "No";
+
+const DEMO_VOTER_COUNT = 3;
+
+function buildDemoRoster(count = DEMO_VOTER_COUNT): DemoIdentity[] {
+  return Array.from({ length: count }, () => createDemoIdentity());
+}
 
 const EMPTY_ELIGIBILITY: EligibilityResponse = {
   eligibleNpubs: [],
@@ -101,8 +109,12 @@ function CopyField({
 }
 
 export default function DemoApp() {
-  const [identity, setIdentity] = useState<DemoIdentity>(() => createDemoIdentity());
-  const [nsecInput, setNsecInput] = useState<string>("");
+  const [voterRoster, setVoterRoster] = useState<DemoIdentity[]>(() => buildDemoRoster());
+  const [selectedVoterIndex, setSelectedVoterIndex] = useState(0);
+  const [nsecInput, setNsecInput] = useState<string>(() => voterRoster[0]?.nsec ?? "");
+  const [selectedNpub, setSelectedNpub] = useState<string>(() => voterRoster[0]?.npub ?? "");
+  const [voteChoice, setVoteChoice] = useState<DemoVoteChoice>("Yes");
+  const [choiceByNpub, setChoiceByNpub] = useState<Record<string, DemoVoteChoice>>({});
   const [coordinatorInfo, setCoordinatorInfo] = useState<CoordinatorInfo | null>(null);
   const [election, setElection] = useState<ElectionInfo | null>(null);
   const [eligibility, setEligibility] = useState<EligibilityResponse>(EMPTY_ELIGIBILITY);
@@ -112,7 +124,6 @@ export default function DemoApp() {
   const [discoveredCoordinators, setDiscoveredCoordinators] = useState<CoordinatorDiscovery[]>([]);
   const [perCoordinatorTallies, setPerCoordinatorTallies] = useState<PerCoordinatorTally[]>([]);
   const [auditResults, setAuditResults] = useState<AuditResult[]>([]);
-  const [selectedNpub, setSelectedNpub] = useState(identity.npub);
   const [voterCheck, setVoterCheck] = useState<EligibilityCheckResponse | null>(null);
   const [refreshing, setRefreshing] = useState(true);
   const [seeding, setSeeding] = useState(false);
@@ -131,14 +142,19 @@ export default function DemoApp() {
   const [dmResults, setDmResults] = useState<MultiCoordinatorDmResult[] | null>(null);
   const [confirmationResult, setConfirmationResult] = useState<{ eventId: string; successes: number; failures: number } | null>(null);
   const [ballotEventId, setBallotEventId] = useState<string>("");
-  const [ballotAnswers, setBallotAnswers] = useState<Record<string, string | string[] | number>>({});
+  const [, setBallotAnswers] = useState<Record<string, string | string[] | number>>({});
+  const selectedVoter = voterRoster[selectedVoterIndex] ?? voterRoster[0] ?? null;
   const derivedNpub = useMemo(() => deriveNpubFromNsec(nsecInput), [nsecInput]);
-
-  useEffect(() => {
-    if (!nsecInput) {
-      setNsecInput(identity.nsec);
+  const activeQuestion = election?.questions[0] ?? null;
+  const activePollResults = useMemo(() => {
+    if (!activeQuestion) {
+      return null;
     }
-  }, [identity.nsec, nsecInput]);
+
+    return tally?.results[activeQuestion.id] ?? finalResult?.results?.[activeQuestion.id] ?? null;
+  }, [activeQuestion, finalResult?.results, tally?.results]);
+  const yesVotes = activePollResults?.Yes ?? activePollResults?.yes ?? 0;
+  const noVotes = activePollResults?.No ?? activePollResults?.no ?? 0;
 
   const eligibleNpubs = eligibility.eligibleNpubs;
   const issuedCount = Object.values(issuanceStatus?.voters ?? {}).filter((entry) => entry.issued).length;
@@ -323,34 +339,52 @@ export default function DemoApp() {
     }
   }, []);
 
+  const resetActiveVoterState = useCallback(() => {
+    setMintQuote(null);
+    setProof(null);
+    setDmResults(null);
+    setConfirmationResult(null);
+    setBallotEventId("");
+    setBallotAnswers({});
+    setVoterCheck(null);
+  }, []);
+
+  const activateVoter = useCallback((roster: DemoIdentity[], index: number, choice?: DemoVoteChoice) => {
+    const voter = roster[index];
+    if (!voter) {
+      return;
+    }
+
+    setVoterRoster(roster);
+    setSelectedVoterIndex(index);
+    setNsecInput(voter.nsec);
+    setSelectedNpub(voter.npub);
+    const nextChoice = choice ?? "Yes";
+    setVoteChoice(nextChoice);
+    setChoiceByNpub((prev) => ({ ...prev, [voter.npub]: nextChoice }));
+    resetActiveVoterState();
+  }, [resetActiveVoterState]);
+
   const seedDemoVoter = useCallback(async () => {
     setSeeding(true);
     setError(null);
 
     try {
-      const nextIdentity = createDemoIdentity();
-      setIdentity(nextIdentity);
-      setNsecInput(nextIdentity.nsec);
-      setMintQuote(null);
-      setProof(null);
-      setDmResults(null);
-      setConfirmationResult(null);
-      setBallotEventId("");
-      setBallotAnswers({});
-      setAuditResults([]);
-      setVoterCheck(null);
+      const nextRoster = buildDemoRoster();
       if (USE_MOCK) {
-        await seedEligibility(nextIdentity.npub);
+        for (const voter of nextRoster) {
+          await seedEligibility(voter.npub);
+        }
       }
-      setSelectedNpub(nextIdentity.npub);
-      setStatus(`Generated voter identity: ${nextIdentity.npub}`);
+      activateVoter(nextRoster, 0, "Yes");
+      setStatus(`Generated ${nextRoster.length} voter identities.`);
       await refreshSnapshot(false);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to seed demo voter");
+      setError(requestError instanceof Error ? requestError.message : "Unable to seed demo voters");
     } finally {
       setSeeding(false);
     }
-  }, [refreshSnapshot]);
+  }, [activateVoter, refreshSnapshot]);
 
   useEffect(() => {
     void refreshSnapshot();
@@ -386,8 +420,14 @@ export default function DemoApp() {
   }, [selectedNpub]);
 
   const saveDemoIdentity = useCallback(async () => {
+    const trimmedNsec = nsecInput.trim();
+    const secretKey = decodeNsec(trimmedNsec);
     const npub = derivedNpub;
     if (!npub) {
+      setError("Paste a valid nsec first.");
+      return;
+    }
+    if (!secretKey) {
       setError("Paste a valid nsec first.");
       return;
     }
@@ -396,17 +436,27 @@ export default function DemoApp() {
     setError(null);
 
     try {
+      const nextIdentity: DemoIdentity = {
+        nsec: trimmedNsec,
+        npub,
+        pubkey: getPublicKey(secretKey),
+      };
+
+      const existingIndex = voterRoster.findIndex((voter) => voter.npub === npub);
+      const nextRoster = existingIndex >= 0
+        ? voterRoster.map((voter, index) => index === existingIndex ? nextIdentity : voter)
+        : [...voterRoster, nextIdentity];
+
+      setVoterRoster(nextRoster);
+      setSelectedVoterIndex(existingIndex >= 0 ? existingIndex : nextRoster.length - 1);
+      setSelectedNpub(npub);
+      setVoteChoice(choiceByNpub[npub] ?? "Yes");
+      setChoiceByNpub((prev) => ({ ...prev, [npub]: choiceByNpub[npub] ?? "Yes" }));
+
       if (USE_MOCK) {
         await seedEligibility(npub);
       }
-      setMintQuote(null);
-      setProof(null);
-      setDmResults(null);
-      setConfirmationResult(null);
-      setBallotEventId("");
-      setBallotAnswers({});
-      setAuditResults([]);
-      setSelectedNpub(npub);
+      resetActiveVoterState();
       setVoterCheck({
         npub,
         allowed: true,
@@ -420,15 +470,15 @@ export default function DemoApp() {
     } finally {
       setSeeding(false);
     }
-  }, [derivedNpub, refreshSnapshot]);
+  }, [choiceByNpub, derivedNpub, nsecInput, refreshSnapshot, resetActiveVoterState, voterRoster]);
 
-  const fillDemoBallot = useCallback(() => {
+  const fillDemoBallot = useCallback((choice: DemoVoteChoice = voteChoice) => {
     if (!election?.questions) return {};
 
     const filled: Record<string, string | string[] | number> = {};
     for (const question of election.questions) {
       if (question.type === "choice") {
-        filled[question.id] = question.options?.[0] ?? "";
+        filled[question.id] = choice;
       } else if (question.type === "scale") {
         filled[question.id] = question.min ?? 1;
       } else {
@@ -438,10 +488,11 @@ export default function DemoApp() {
 
     setBallotAnswers(filled);
     return filled;
-  }, [election]);
+  }, [election, voteChoice]);
 
-  const mintDemoProof = useCallback(async () => {
-    if (!derivedNpub) {
+  const mintDemoProof = useCallback(async (nsecValue = nsecInput) => {
+    const npub = deriveNpubFromNsec(nsecValue);
+    if (!npub) {
       setError("Paste a valid nsec first.");
       return;
     }
@@ -450,12 +501,14 @@ export default function DemoApp() {
     setError(null);
 
     try {
+      setNsecInput(nsecValue);
+      setSelectedNpub(npub);
+
       if (USE_MOCK) {
-        await seedEligibility(derivedNpub);
+        await seedEligibility(npub);
       }
 
-      const eligibilityCheck = await checkEligibility(derivedNpub);
-      setSelectedNpub(derivedNpub);
+      const eligibilityCheck = await checkEligibility(npub);
       setVoterCheck(eligibilityCheck);
       setStatus(eligibilityCheck.message);
 
@@ -484,25 +537,32 @@ export default function DemoApp() {
       setConfirmationResult(null);
       setStatus("Proof minted and ready for the ballot step.");
       await refreshSnapshot(false);
+      return mintedProof;
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to mint proof");
+      return null;
     } finally {
       setMintingProof(false);
     }
-  }, [derivedNpub, refreshSnapshot]);
+  }, [nsecInput, refreshSnapshot]);
 
-  const publishDemoBallot = useCallback(async () => {
-    if (!election || !proof || !derivedNpub) {
+  const publishDemoBallot = useCallback(async (choice = voteChoice, nsecValue = nsecInput, proofInput = proof) => {
+    const npub = deriveNpubFromNsec(nsecValue);
+    if (!election || !proofInput || !npub) {
       setError("Mint a proof before publishing the ballot.");
-      return;
+      return null;
     }
 
-    const answers = Object.keys(ballotAnswers).length > 0 ? ballotAnswers : fillDemoBallot();
+    setNsecInput(nsecValue);
+    setSelectedNpub(npub);
+    setVoteChoice(choice);
+    setChoiceByNpub((prev) => ({ ...prev, [npub]: choice }));
+
+    const answers = fillDemoBallot(choice);
     const coordinatorNpub = election.coordinator_npubs[0] ?? coordinatorInfo?.coordinatorNpub ?? "";
     const relays = coordinatorInfo?.relays ?? [];
 
     setPublishingBallot(true);
-    setSubmittingProof(true);
     setError(null);
 
     try {
@@ -514,8 +574,8 @@ export default function DemoApp() {
         coordinatorProofs: [{
           coordinatorNpub,
           mintUrl: election.mint_urls[0] ?? MINT_URL,
-          proof,
-          proofSecret: proof.secret,
+          proof: proofInput,
+          proofSecret: proofInput.secret,
         }],
       });
 
@@ -523,18 +583,40 @@ export default function DemoApp() {
       setConfirmationResult(null);
       setStatus(`Ballot published: ${publishResult.successes} relay confirmation(s).`);
       setIssuanceStatus((prev) => prev);
+      return publishResult;
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to publish ballot");
+      return null;
+    } finally {
+      setPublishingBallot(false);
+    }
+  }, [coordinatorInfo?.coordinatorNpub, coordinatorInfo?.relays, election, fillDemoBallot, nsecInput, proof, voteChoice]);
 
-      const voterSecretKey = decodeNsec(nsecInput);
-      if (!voterSecretKey) {
-        throw new Error("Could not decode the saved nsec.");
-      }
+  const submitDemoProof = useCallback(async (ballotId = ballotEventId, nsecValue = nsecInput, proofInput = proof) => {
+    if (!election || !ballotId || !proofInput) {
+      setError("Mint a proof and publish a ballot before submitting the proof.");
+      return null;
+    }
 
+    const voterSecretKey = decodeNsec(nsecValue);
+    if (!voterSecretKey) {
+      setError("Could not decode the saved nsec.");
+      return null;
+    }
+
+    const coordinatorNpub = election.coordinator_npubs[0] ?? coordinatorInfo?.coordinatorNpub ?? "";
+    const relays = coordinatorInfo?.relays ?? [];
+
+    setSubmittingProof(true);
+    setError(null);
+
+    try {
       const dmOutcome = await submitProofsToAllCoordinators({
         voterSecretKey,
-        voteEventId: publishResult.eventId,
+        voteEventId: ballotId,
         coordinatorProofs: [{
           coordinatorNpub,
-          proof,
+          proof: proofInput,
         }],
         relays,
         retries: DEMO_MODE ? 1 : 0,
@@ -549,14 +631,14 @@ export default function DemoApp() {
       setStatus(`Proof sent to ${successfulCoordinators} coordinator(s) across ${successfulRelays} relay confirmation(s).`);
 
       await refreshSnapshot(false);
-      await runVerifierAudit();
+      return dmOutcome;
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to publish ballot");
+      setError(requestError instanceof Error ? requestError.message : "Unable to submit proof");
+      return null;
     } finally {
-      setPublishingBallot(false);
       setSubmittingProof(false);
     }
-  }, [ballotAnswers, coordinatorInfo?.coordinatorNpub, coordinatorInfo?.relays, derivedNpub, election, fillDemoBallot, nsecInput, proof, refreshSnapshot]);
+  }, [ballotEventId, coordinatorInfo?.coordinatorNpub, coordinatorInfo?.relays, election, nsecInput, proof, refreshSnapshot]);
 
   const runVerifierAudit = useCallback(async () => {
     if (!election?.event_id) {
@@ -601,8 +683,8 @@ export default function DemoApp() {
     }
   }, [coordinatorInfo, discoveredCoordinators, election, eligibility.eligibleNpubs]);
 
-  const publishDemoConfirmation = useCallback(async (ballotId = ballotEventId) => {
-    if (!election || !ballotId || !nsecInput.trim()) {
+  const publishDemoConfirmation = useCallback(async (ballotId = ballotEventId, nsecValue = nsecInput) => {
+    if (!election || !ballotId || !nsecValue.trim()) {
       setError("Publish the ballot and save your nsec first.");
       return;
     }
@@ -612,7 +694,7 @@ export default function DemoApp() {
       return;
     }
 
-    const secretKey = decodeNsec(nsecInput.trim());
+    const secretKey = decodeNsec(nsecValue.trim());
     if (!secretKey) {
       setError("That nsec is not valid.");
       return;
@@ -672,108 +754,57 @@ export default function DemoApp() {
     setError(null);
 
     try {
-      if (!nsecInput.trim()) {
-        throw new Error("Paste a nsec first.");
-      }
-
-      const sequenceNpub = deriveNpubFromNsec(nsecInput.trim());
-      if (!sequenceNpub) {
-        throw new Error("That nsec is not valid.");
-      }
-
-      setStatus("Step 1: seeding voter identity...");
-      if (USE_MOCK) {
-        await seedEligibility(sequenceNpub);
-      }
-      setSelectedNpub(sequenceNpub);
-      setVoterCheck({
-        npub: sequenceNpub,
-        allowed: true,
-        canProceed: true,
-        message: "npub is allowed and has not voted yet",
-      });
-
-      setStatus("Step 2: minting proof...");
-      const eligibilityCheck = await checkEligibility(sequenceNpub);
-      if (!eligibilityCheck.canProceed) {
-        throw new Error(eligibilityCheck.message);
-      }
-      const quote = await createMintQuote();
-      setMintQuote(quote);
-      for (let i = 0; i < 20; i++) {
-        const quoteStatus = await checkQuoteStatus(quote.quote);
-        if (quoteStatus.state === "PAID") {
-          break;
+      const voters = voterRoster.length > 0 ? voterRoster : buildDemoRoster();
+      for (const [index, voter] of voters.entries()) {
+        const choice: DemoVoteChoice = Math.random() < 0.5 ? "Yes" : "No";
+        activateVoter(voters, index, choice);
+        if (USE_MOCK) {
+          await seedEligibility(voter.npub);
         }
-        await new Promise((resolve) => window.setTimeout(resolve, 250));
-      }
-      const minted = await requestQuoteAndMint(MINT_URL.replace(/\/$/, ""), quote.quote);
-      const mintedProof = minted.proofs[0] ?? null;
-      if (!mintedProof) {
-        throw new Error("Mint did not return a proof.");
-      }
-      setProof(mintedProof);
-      await refreshSnapshot(false);
 
-      setStatus("Step 3: casting ballot...");
-      if (!election) {
-        throw new Error("No election loaded.");
-      }
-      const answers = fillDemoBallot();
-      const coordinatorNpub = election.coordinator_npubs[0] ?? coordinatorInfo?.coordinatorNpub ?? "";
-      const relays = coordinatorInfo?.relays ?? [];
-      const publishResult = await publishBallotEvent({
-        electionId: election.election_id,
-        answers,
-        questions: election.questions,
-        relays,
-        coordinatorProofs: [{
-          coordinatorNpub,
-          mintUrl: election.mint_urls[0] ?? MINT_URL,
-          proof: mintedProof,
-          proofSecret: mintedProof.secret,
-        }],
-      });
-      setBallotEventId(publishResult.eventId);
-      setStatus(`Step 3 worked: ballot published to ${publishResult.successes} relay(s).`);
+        setStatus(`Step 1: voter ${index + 1}/${voters.length} selected (${choice})...`);
+        const eligibilityCheck = await checkEligibility(voter.npub);
+        if (!eligibilityCheck.canProceed) {
+          throw new Error(eligibilityCheck.message);
+        }
+        setVoterCheck(eligibilityCheck);
 
-      setStatus("Step 4: sending proof to coordinator(s)...");
-      const voterSecretKey = decodeNsec(nsecInput.trim());
-      if (!voterSecretKey) {
-        throw new Error("Could not decode the saved nsec.");
-      }
-      const dmOutcome = await submitProofsToAllCoordinators({
-        voterSecretKey,
-        voteEventId: publishResult.eventId,
-        coordinatorProofs: [{
-          coordinatorNpub,
-          proof: mintedProof,
-        }],
-        relays,
-        retries: DEMO_MODE ? 1 : 0,
-      });
-      setDmResults(dmOutcome);
-      const successfulCoordinators = dmOutcome.filter((result) => result.result.successes > 0).length;
-      const successfulRelays = dmOutcome.reduce((sum, result) => sum + result.result.successes, 0);
-      if (successfulCoordinators === 0) {
-        throw new Error("Step 4 failed: no relay accepted the NIP-17 gift wrap, so the coordinator cannot publish a 38002 receipt.");
-      }
-      setStatus(`Step 4 worked: proof sent to ${successfulCoordinators} coordinator(s) across ${successfulRelays} relay confirmation(s).`);
+        setStatus(`Step 2: minting proof for voter ${index + 1}/${voters.length}...`);
+        const mintedProof = await mintDemoProof(voter.nsec);
+        if (!mintedProof) {
+          throw new Error("Mint did not return a proof.");
+        }
 
-      setStatus("Step 5: refreshing verifier view...");
-      await refreshSnapshot(false);
-      setStatus("Step 6: publishing confirmation...");
-      await publishDemoConfirmation(publishResult.eventId);
-      await refreshSnapshot(false);
-      setStatus("Step 7: running audit...");
+        setStatus(`Step 3: publishing ${choice} ballot for voter ${index + 1}/${voters.length}...`);
+        const publishResult = await publishDemoBallot(choice, voter.nsec, mintedProof);
+        if (!publishResult) {
+          throw new Error("Ballot publish failed.");
+        }
+        setBallotEventId(publishResult.eventId);
+
+        setStatus(`Step 4: sending proof for voter ${index + 1}/${voters.length}...`);
+        const dmOutcome = await submitDemoProof(publishResult.eventId, voter.nsec, mintedProof);
+        if (!dmOutcome) {
+          throw new Error("Proof delivery failed.");
+        }
+
+        if (isInConfirmationWindow) {
+          setStatus(`Step 5: publishing confirmation for voter ${index + 1}/${voters.length}...`);
+          await publishDemoConfirmation(publishResult.eventId, voter.nsec);
+        }
+
+        await refreshSnapshot(false);
+      }
+
+      setStatus("Step 6: running verifier audit...");
       await runVerifierAudit();
-      setStatus("Demo complete. Every step on this page has run in order.");
+      setStatus("Demo complete. Every voter has run through the live flow.");
     } catch (sequenceError) {
       setError(sequenceError instanceof Error ? sequenceError.message : "Demo sequence failed");
     } finally {
       setRunningDemo(false);
     }
-  }, [coordinatorInfo?.coordinatorNpub, coordinatorInfo?.relays, election, fillDemoBallot, nsecInput, publishDemoConfirmation, refreshSnapshot, runningDemo, runVerifierAudit]);
+  }, [activateVoter, election, isInConfirmationWindow, mintDemoProof, publishDemoBallot, publishDemoConfirmation, refreshSnapshot, runVerifierAudit, runningDemo, seedEligibility, submitDemoProof, voterRoster]);
 
   return (
     <main className="page-shell page-shell-demo demo-app-shell">
@@ -799,11 +830,11 @@ export default function DemoApp() {
               {derivedNpub ? `${selectedNpub.slice(0, 12)}...` : "No identity"}
             </div>
             <div className="demo-sidebar-status-hint">
-              {derivedNpub ? "Ready for minting and ballot signing." : "Paste or generate an nsec to begin."}
+              {derivedNpub ? `Ready for minting and ballot signing. Voter ${selectedVoterIndex + 1} of ${voterRoster.length}.` : "Paste or generate an nsec to begin."}
             </div>
           </div>
-          <button className="primary-button demo-sidebar-cta" onClick={() => void saveDemoIdentity()} disabled={seeding || !derivedNpub}>
-            {seeding ? "Connecting..." : "Connect nsec"}
+          <button className="primary-button demo-sidebar-cta" onClick={() => void seedDemoVoter()} disabled={seeding}>
+            {seeding ? "Generating..." : "Generate voters"}
           </button>
         </div>
 
@@ -882,7 +913,7 @@ export default function DemoApp() {
                   <div className="demo-note">Waiting for voter commitments...</div>
                 </div>
                 <div className="demo-console-actions">
-                  <button className="secondary-button" onClick={() => void seedDemoVoter()} disabled={seeding}>{seeding ? "Seeding..." : "Generate nsec"}</button>
+                  <button className="secondary-button" onClick={() => void seedDemoVoter()} disabled={seeding}>{seeding ? "Generating..." : "Generate voters"}</button>
                   <button className="ghost-button" onClick={() => void mintDemoProof()} disabled={mintingProof || !derivedNpub}>{mintingProof ? "Minting..." : "Mint proof"}</button>
                 </div>
                 <div className="demo-console-grid-small">
@@ -908,6 +939,32 @@ export default function DemoApp() {
             <PanelTitle kicker="Voter" title="Eligibility and ballot" right={issuanceForSelected?.issued ? <span className="demo-status demo-status-good">Eligible</span> : <span className="demo-status">Ready</span>} />
             <div className="demo-stack">
               <div className="demo-console-field">
+                <div className="demo-label">Select voter</div>
+                <select
+                  id="demo-voter-select"
+                  className="demo-input demo-input-dark"
+                  value={selectedVoterIndex}
+                  onChange={(event) => {
+                    const nextIndex = Number(event.target.value);
+                    const nextRoster = voterRoster;
+                    const nextVoter = nextRoster[nextIndex];
+                    if (!nextVoter) return;
+                    setSelectedVoterIndex(nextIndex);
+                    setNsecInput(nextVoter.nsec);
+                    setSelectedNpub(nextVoter.npub);
+                    setVoteChoice(choiceByNpub[nextVoter.npub] ?? "Yes");
+                    resetActiveVoterState();
+                  }}
+                >
+                  {voterRoster.map((voter, index) => (
+                    <option key={voter.npub} value={index}>
+                      Voter {index + 1} • {voter.npub.slice(0, 12)}... • {choiceByNpub[voter.npub] ?? "Yes"}
+                    </option>
+                  ))}
+                </select>
+                <div className="demo-note">Switch the view to see what each voter can do.</div>
+              </div>
+              <div className="demo-console-field">
                 <div className="demo-label">Connect nsec</div>
                 <textarea
                   id="demo-nsec"
@@ -919,9 +976,47 @@ export default function DemoApp() {
                 />
                 <div className="demo-note">Paste the voter key here to save it locally.</div>
               </div>
+              <div className="demo-console-field" id="demo-poll">
+                <div className="demo-label">Simple poll</div>
+                <div className="demo-poll-toggle" role="group" aria-label="Vote choice">
+                  <button
+                    type="button"
+                    className={`demo-poll-option${voteChoice === "Yes" ? " is-active" : ""}`}
+                    onClick={() => {
+                      setVoteChoice("Yes");
+                      if (selectedNpub) {
+                        setChoiceByNpub((prev) => ({ ...prev, [selectedNpub]: "Yes" }));
+                      }
+                      fillDemoBallot("Yes");
+                    }}
+                  >
+                    Yes
+                  </button>
+                  <button
+                    type="button"
+                    className={`demo-poll-option${voteChoice === "No" ? " is-active" : ""}`}
+                    onClick={() => {
+                      setVoteChoice("No");
+                      if (selectedNpub) {
+                        setChoiceByNpub((prev) => ({ ...prev, [selectedNpub]: "No" }));
+                      }
+                      fillDemoBallot("No");
+                    }}
+                  >
+                    No
+                  </button>
+                </div>
+                <div className="demo-note">{activeQuestion?.prompt ?? "Should the proposal pass?"}</div>
+              </div>
               <div className="button-row">
                 <button className="primary-button" onClick={() => void mintDemoProof()} disabled={mintingProof || !derivedNpub}>
                   {mintingProof ? "Minting..." : "Mint proof"}
+                </button>
+                <button className="secondary-button" onClick={() => void publishDemoBallot(voteChoice)} disabled={publishingBallot || !proof || !derivedNpub}>
+                  {publishingBallot ? "Publishing..." : "Publish ballot"}
+                </button>
+                <button className="ghost-button" onClick={() => void submitDemoProof()} disabled={submittingProof || !ballotEventId || !proof}>
+                  {submittingProof ? "Submitting..." : "Submit proof"}
                 </button>
                 <button className="secondary-button" onClick={() => void saveDemoIdentity()} disabled={seeding || !derivedNpub}>
                   {seeding ? "Connecting..." : "Save identity"}
@@ -941,6 +1036,8 @@ export default function DemoApp() {
                   Issuance status: {issuanceForSelected.issued ? "issued" : "waiting"}.
                 </div>
               )}
+              <div className="demo-kv"><span>Active voter</span><code>{selectedVoter?.npub ? `${selectedVoter.npub.slice(0, 8)}...${selectedVoter.npub.slice(-4)}` : "Pending"}</code></div>
+              <div className="demo-kv"><span>Vote choice</span><code>{voteChoice}</code></div>
               <div className="demo-kv"><span>Ballot content (kind 38000)</span><code>{ballotEventId ? ballotEventId.slice(0, 6) + "..." + ballotEventId.slice(-4) : "Waiting"}</code></div>
               <div className="demo-kv"><span>Submission status</span><code>{deliveredCoordinatorCount > 0 ? "ACCEPTED" : dmResults && dmResults.length > 0 ? "FAILED" : "Pending"}</code></div>
               <div className="demo-list">
@@ -968,6 +1065,14 @@ export default function DemoApp() {
               <div className="demo-console-field">
                 <div className="demo-label">Spent-tree</div>
                 <code>{spentCommitmentRoot ? `${spentCommitmentRoot.slice(0, 8)}...${spentCommitmentRoot.slice(-4)}` : "Unavailable"}</code>
+              </div>
+              <div className="demo-console-field">
+                <div className="demo-label">Yes / No tally</div>
+                <div className="demo-console-progress">
+                  <span>Yes {yesVotes}</span>
+                  <span>No {noVotes}</span>
+                </div>
+                <div className="demo-note">The verifier recomputes the poll totals from public ballot events and receipts.</div>
               </div>
               <div className="demo-console-actions">
                 <button className="primary-button" onClick={() => void publishDemoConfirmation()} disabled={confirmingVote || !ballotEventId || !isInConfirmationWindow}>
@@ -1062,7 +1167,23 @@ export default function DemoApp() {
             <div className="demo-list" id="demo-guide">
               <a className="demo-list-item demo-list-link" href="#demo-nsec">
                 <span>Paste here</span>
-                <code>{identity.nsec}</code>
+                <code>{selectedVoter?.nsec ?? nsecInput}</code>
+              </a>
+              <a className="demo-list-item demo-list-link" href="#demo-voter-select">
+                <span>Select voter</span>
+                <code>switch view</code>
+              </a>
+              <a className="demo-list-item demo-list-link" href="#demo-poll">
+                <span>Vote yes / no</span>
+                <code>choose the side</code>
+              </a>
+              <a className="demo-list-item demo-list-link" href="#demo-voter">
+                <span>Publish ballot</span>
+                <code>this button</code>
+              </a>
+              <a className="demo-list-item demo-list-link" href="#demo-voter">
+                <span>Submit proof</span>
+                <code>this button</code>
               </a>
               <a className="demo-list-item demo-list-link" href="#demo-coordinator">
                 <span>Mint proof</span>
