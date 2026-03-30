@@ -181,6 +181,12 @@ class DemoMint {
     return this.eligibleNpubs.has(validateNpub(npub));
   }
 
+  addEligibleNpub(npub: string) {
+    const normalizedNpub = validateNpub(npub);
+    this.eligibleNpubs.add(normalizedNpub);
+    console.log(`[server] seeded eligible npub: ${normalizedNpub}`);
+  }
+
   setCurrentEligibleNpub(npub: string) {
     this.currentNpub = this.ensureEligibleNpub(npub);
     console.log(`[server] current eligible npub selected: ${this.currentNpub}`);
@@ -478,6 +484,20 @@ export async function startVoterServer(port = 8787) {
         return;
       }
 
+      if (request.method === "POST" && url.pathname === "/api/eligibility/seed") {
+        const body = await readJsonBody(request) as { npub?: string };
+        if (!body?.npub) {
+          throw new Error("npub is required");
+        }
+
+        mint.addEligibleNpub(body.npub);
+        writeJson(response, 200, {
+          message: "Eligible npub seeded",
+          ...mint.snapshot(),
+        });
+        return;
+      }
+
       if (request.method === "GET" && url.pathname === "/mock-mint/invoice") {
         writeJson(response, 200, mockMintService.issueInvoice(baseUrl));
         return;
@@ -521,6 +541,7 @@ export async function startVoterServer(port = 8787) {
   console.log("[server] GET /api/eligibility");
   console.log("[server] GET /api/eligibility/check?npub=");
   console.log("[server] POST /api/eligibility/reset");
+  console.log("[server] POST /api/eligibility/seed");
   console.log("[server] GET /api/vote-status?npub=");
   console.log("[server] POST /api/debug/claim-log");
   console.log("[server] POST /api/debug/ballot-log");

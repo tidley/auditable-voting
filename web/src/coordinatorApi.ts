@@ -83,6 +83,23 @@ async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
 
 const MOCK_COORDINATOR_NPUB = "npub1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const MOCK_RELAYS = ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net"];
+const MOCK_ELECTION_ID = "spring-2026-council";
+const MOCK_ELECTION_QUESTIONS: ElectionQuestion[] = [
+  {
+    id: "funding_priority",
+    type: "choice",
+    prompt: "Which area should receive the first round of funding?",
+    options: ["Community grants", "Security audits", "Education programs"],
+    select: "single",
+  },
+  {
+    id: "audit_policy",
+    type: "choice",
+    prompt: "How often should published results receive an independent audit?",
+    options: ["Every election", "Annual review", "Only on disputes"],
+    select: "single",
+  },
+];
 
 export async function fetchCoordinatorInfo(httpApi?: string): Promise<CoordinatorInfo> {
   if (USE_MOCK) {
@@ -101,7 +118,22 @@ export async function fetchCoordinatorInfo(httpApi?: string): Promise<Coordinato
 
 export async function fetchElection(httpApi?: string): Promise<ElectionInfo | null> {
   if (USE_MOCK) {
-    return null;
+    const now = Math.floor(Date.now() / 1000);
+    return {
+      election_id: MOCK_ELECTION_ID,
+      event_id: "mock-election-event",
+      title: "Mock election",
+      description: "Local demo election used for copy-paste testing.",
+      questions: MOCK_ELECTION_QUESTIONS,
+      vote_start: now - 300,
+      vote_end: now + 3600,
+      confirm_end: now + 7200,
+      mint_urls: [MINT_URL],
+      coordinator_npubs: [MOCK_COORDINATOR_NPUB],
+      eligible_root: "",
+      eligible_count: 0,
+      eligible_url: "",
+    };
   }
 
   try {
@@ -129,7 +161,17 @@ export async function fetchEligibility(httpApi?: string): Promise<EligibilityInf
 
 export async function fetchTally(httpApi?: string): Promise<TallyInfo | null> {
   if (USE_MOCK) {
-    return null;
+    const response = await fetch("/api/eligibility");
+    const mockResponse = (await response.json()) as EligibilityResponse;
+    const total = mockResponse.verifiedCount;
+    return {
+      election_id: MOCK_ELECTION_ID,
+      status: "in_progress",
+      total_published_votes: total,
+      total_accepted_votes: total,
+      spent_commitment_root: null,
+      results: {},
+    };
   }
 
   try {
@@ -265,7 +307,20 @@ export type IssuanceAwaitResponse = {
 
 export async function fetchIssuanceStatus(httpApi?: string): Promise<IssuanceStatusResponse | null> {
   if (USE_MOCK) {
-    return null;
+    const response = await fetch("/api/eligibility");
+    const mockResponse = (await response.json()) as EligibilityResponse;
+    const voters: Record<string, { eligible: boolean; issued: boolean }> = {};
+    for (const npub of mockResponse.eligibleNpubs) {
+      voters[npub] = {
+        eligible: true,
+        issued: mockResponse.verifiedNpubs.includes(npub),
+      };
+    }
+
+    return {
+      election_id: MOCK_ELECTION_ID,
+      voters,
+    };
   }
 
   try {

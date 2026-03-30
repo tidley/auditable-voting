@@ -24,7 +24,7 @@ vi.mock("./nostrIdentity", () => ({
   getNostrEventVerificationUrl: () => "",
 }));
 vi.mock("./cashuBlind", () => ({ requestQuoteAndMint: vi.fn() }));
-vi.mock("./cashuWallet", () => ({ loadStoredWalletBundle: vi.fn().mockReturnValue(null), storeWalletBundle: vi.fn(), addCoordinatorProof: vi.fn() }));
+vi.mock("./cashuWallet", () => ({ loadStoredWalletBundle: vi.fn().mockReturnValue(null), storeWalletBundle: vi.fn(), addCoordinatorProof: vi.fn(), storeEphemeralKeypair: vi.fn() }));
 vi.mock("./cashuMintApi", () => ({ logClaimDebug: vi.fn() }));
 vi.mock("./signer", () => ({ createRawSigner: vi.fn(), createNip07Signer: vi.fn(), startSignerDetection: () => () => {} }));
 

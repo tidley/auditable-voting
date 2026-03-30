@@ -16,12 +16,19 @@ import {
   type PerCoordinatorTally,
   type TallyInfo,
 } from "./coordinatorApi";
-import { checkEligibility, fetchEligibility, type EligibilityCheckResponse, type EligibilityResponse } from "./voterManagementApi";
+import {
+  checkEligibility,
+  fetchEligibility as fetchVoterEligibility,
+  seedEligibility,
+  type EligibilityCheckResponse,
+  type EligibilityResponse,
+} from "./voterManagementApi";
 import { DEMO_MODE, USE_MOCK } from "./config";
 import { formatDateTime } from "./nostrIdentity";
+import { createDemoIdentity, type DemoIdentity } from "./demoIdentity";
 import { fetchCoordinatorInfo } from "./coordinatorApi";
 
-type DemoStep = {
+type StepState = {
   title: string;
   detail: string;
   done: boolean;
@@ -34,50 +41,62 @@ const EMPTY_ELIGIBILITY: EligibilityResponse = {
   verifiedCount: 0,
 };
 
-function StatCard({
-  label,
-  value,
-  hint,
-}: {
-  label: string;
-  value: string | number;
-  hint: string;
-}) {
+function PanelTitle({ kicker, title, right }: { kicker: string; title: string; right?: ReactNode }) {
   return (
-    <article className="panel stat-card demo-stat-card">
-      <p className="panel-kicker">{label}</p>
-      <h2>{value}</h2>
-      <p className="field-hint">{hint}</p>
-    </article>
+    <div className="demo-panel-title">
+      <div>
+        <div className="demo-kicker">{kicker}</div>
+        <h2>{title}</h2>
+      </div>
+      {right}
+    </div>
   );
 }
 
-function Pill({
-  tone = "neutral",
-  children,
-}: {
-  tone?: "neutral" | "good" | "warn" | "bad";
-  children: ReactNode;
-}) {
-  return <span className={`status-pill status-pill-${tone}`}>{children}</span>;
+function Metric({ label, value, hint }: { label: string; value: string | number; hint: string }) {
+  return (
+    <div className="demo-metric">
+      <div className="demo-kicker">{label}</div>
+      <div className="demo-metric-value">{value}</div>
+      <div className="demo-note">{hint}</div>
+    </div>
+  );
 }
 
-function StepItem({ step }: { step: DemoStep }) {
+function CopyField({
+  label,
+  value,
+  compact = false,
+}: {
+  label: string;
+  value: string;
+  compact?: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1000);
+    } catch {
+      setCopied(false);
+    }
+  }
+
   return (
-    <li className={`demo-step ${step.done ? "demo-step-done" : ""}`}>
-      <div className="demo-step-marker" aria-hidden="true" />
-      <div className="demo-step-body">
-        <div className="demo-step-title-row">
-          <strong>{step.title}</strong>
-          <span className="field-hint">{step.done ? "Live" : "Waiting"}</span>
-        </div>
-        <p className="field-hint">{step.detail}</p>
-      </div>
-    </li>
+    <div className={`copy-field${compact ? " copy-field-compact" : ""}`}>
+      <div className="copy-field-label">{label}</div>
+      <code className="copy-field-value">{value}</code>
+      <button className="copy-field-button" onClick={handleCopy} type="button">
+        {copied ? "Copied" : "Copy"}
+      </button>
+    </div>
   );
 }
 
 export default function DemoApp() {
+  const [identity] = useState<DemoIdentity>(() => createDemoIdentity());
   const [coordinatorInfo, setCoordinatorInfo] = useState<CoordinatorInfo | null>(null);
   const [election, setElection] = useState<ElectionInfo | null>(null);
   const [eligibility, setEligibility] = useState<EligibilityResponse>(EMPTY_ELIGIBILITY);
@@ -87,44 +106,70 @@ export default function DemoApp() {
   const [discoveredCoordinators, setDiscoveredCoordinators] = useState<CoordinatorDiscovery[]>([]);
   const [perCoordinatorTallies, setPerCoordinatorTallies] = useState<PerCoordinatorTally[]>([]);
   const [auditResults, setAuditResults] = useState<AuditResult[]>([]);
-  const [selectedNpub, setSelectedNpub] = useState("");
+  const [selectedNpub, setSelectedNpub] = useState(identity.npub);
   const [voterCheck, setVoterCheck] = useState<EligibilityCheckResponse | null>(null);
   const [refreshing, setRefreshing] = useState(true);
+  const [seeding, setSeeding] = useState(false);
   const [checkingVoter, setCheckingVoter] = useState(false);
   const [runningAudit, setRunningAudit] = useState(false);
   const [status, setStatus] = useState<string>("Loading live demo state...");
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<number | null>(null);
+  const [seeded, setSeeded] = useState(false);
 
   const eligibleNpubs = eligibility.eligibleNpubs;
-  const issuanceForSelected = selectedNpub ? issuanceStatus?.voters[selectedNpub] : undefined;
   const issuedCount = Object.values(issuanceStatus?.voters ?? {}).filter((entry) => entry.issued).length;
-  const acceptedVotes = tally?.total_accepted_votes ?? finalResult?.total_votes ?? 0;
   const publishedVotes = tally?.total_published_votes ?? finalResult?.total_votes ?? 0;
-  const coordinatorCount = discoveredCoordinators.length > 0
-    ? discoveredCoordinators.length
-    : election?.coordinator_npubs.length ?? 0;
-  const liveProofStatus = issuanceForSelected?.issued
-    ? "issued"
-    : issuanceForSelected?.eligible
-      ? "eligible"
-      : "unknown";
+  const acceptedVotes = tally?.total_accepted_votes ?? finalResult?.total_votes ?? 0;
+  const confirmationCount = auditResults.length > 0 ? auditResults[0].confirmations : 0;
+  const coordinatorCount = discoveredCoordinators.length || election?.coordinator_npubs.length || 0;
+  const issuanceForSelected = selectedNpub ? issuanceStatus?.voters[selectedNpub] : undefined;
 
-  useEffect(() => {
-    if (!selectedNpub && eligibleNpubs.length > 0) {
-      setSelectedNpub(eligibleNpubs[0]);
-    }
-  }, [eligibleNpubs, selectedNpub]);
+  const steps: StepState[] = useMemo(() => [
+    {
+      title: "Seed voter identity",
+      detail: seeded
+        ? "The generated npub has been added to the mock eligibility list."
+        : "Generate an npub/nsec pair and seed it into the mock backend.",
+      done: seeded,
+    },
+    {
+      title: "Request voting pass",
+      detail: voterCheck?.allowed
+        ? `${voterCheck.npub} is eligible and can request the pass.`
+        : "Open the voter portal, paste the nsec, and request approval.",
+      done: Boolean(voterCheck?.allowed),
+    },
+    {
+      title: "Publish ballot",
+      detail: publishedVotes > 0
+        ? `${publishedVotes} ballot event(s) are visible to the verifier view.`
+        : "Submit the ballot from the voting page after the proof is minted.",
+      done: publishedVotes > 0,
+    },
+    {
+      title: "Send proof and confirmation",
+      detail: issuedCount > 0
+        ? `${issuedCount} proof(s) are stored and ready for confirmation.`
+        : "The voter proof shows up once the mint step completes.",
+      done: issuedCount > 0,
+    },
+    {
+      title: "Verify tally",
+      detail: auditResults.length > 0
+        ? `Audit ran across ${auditResults.length} coordinator(s).`
+        : "Use the verifier panel to compare tally and confirmation counts.",
+      done: auditResults.length > 0 || acceptedVotes > 0,
+    },
+  ], [acceptedVotes, auditResults.length, issuedCount, publishedVotes, seeded, voterCheck]);
 
   const refreshSnapshot = useCallback(async (showSpinner = true) => {
-    if (showSpinner) {
-      setRefreshing(true);
-    }
+    if (showSpinner) setRefreshing(true);
 
     try {
-      const [info, eligibilityResult, electionResult, tallyResult, resultResult, issuanceResult] = await Promise.all([
+      const [info, elig, electionResult, tallyResult, resultResult, issuanceResult] = await Promise.all([
         fetchCoordinatorInfo(),
-        fetchEligibility(),
+        fetchVoterEligibility(),
         fetchElection(),
         fetchTally(),
         fetchResult(),
@@ -132,26 +177,19 @@ export default function DemoApp() {
       ]);
 
       setCoordinatorInfo(info);
-      setEligibility(eligibilityResult);
+      setEligibility(elig);
       setElection(electionResult);
       setTally(tallyResult);
       setFinalResult(resultResult);
       setIssuanceStatus(issuanceResult);
-
-      const voterList = eligibilityResult.eligibleNpubs;
-      if (!selectedNpub && voterList.length > 0) {
-        setSelectedNpub(voterList[0]);
-      }
 
       let coordinators: CoordinatorDiscovery[] = [];
       if (electionResult?.event_id) {
         coordinators = await discoverCoordinators(electionResult.event_id, info.relays);
       }
       setDiscoveredCoordinators(coordinators);
-
       if (coordinators.length > 0) {
-        const tallyResults = await fetchPerCoordinatorTallies(coordinators);
-        setPerCoordinatorTallies(tallyResults);
+        setPerCoordinatorTallies(await fetchPerCoordinatorTallies(coordinators));
       } else {
         setPerCoordinatorTallies([]);
       }
@@ -162,49 +200,41 @@ export default function DemoApp() {
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to reach demo services");
     } finally {
-      if (showSpinner) {
-        setRefreshing(false);
-      }
+      if (showSpinner) setRefreshing(false);
     }
-  }, [selectedNpub]);
+  }, []);
+
+  const seedDemoVoter = useCallback(async () => {
+    setSeeding(true);
+    setError(null);
+
+    try {
+      if (USE_MOCK) {
+        await seedEligibility(identity.npub);
+      }
+      setSelectedNpub(identity.npub);
+      setSeeded(true);
+      setStatus(`Generated voter identity: ${identity.npub}`);
+      await refreshSnapshot(false);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to seed demo voter");
+    } finally {
+      setSeeding(false);
+    }
+  }, [identity.npub, refreshSnapshot]);
 
   useEffect(() => {
     void refreshSnapshot();
+    void seedDemoVoter();
+  }, [refreshSnapshot, seedDemoVoter]);
 
+  useEffect(() => {
     const intervalId = window.setInterval(() => {
       void refreshSnapshot(false);
     }, 5000);
 
     return () => window.clearInterval(intervalId);
   }, [refreshSnapshot]);
-
-  const runVerifierAudit = useCallback(async () => {
-    if (!election?.event_id || discoveredCoordinators.length === 0) {
-      setError("Need a discovered election before running an audit.");
-      return;
-    }
-
-    setRunningAudit(true);
-    setError(null);
-
-    try {
-      const audit = await runAudit(
-        election.event_id,
-        discoveredCoordinators,
-        eligibility.eligibleNpubs,
-        election.vote_end,
-        election.confirm_end ?? election.vote_end + 86400,
-        coordinatorInfo?.relays ?? [],
-      );
-
-      setAuditResults(audit);
-      setStatus(`Audit complete for ${audit.length} coordinator(s).`);
-    } catch (auditError) {
-      setError(auditError instanceof Error ? auditError.message : "Audit failed");
-    } finally {
-      setRunningAudit(false);
-    }
-  }, [coordinatorInfo?.relays, discoveredCoordinators, election, eligibility.eligibleNpubs]);
 
   const checkSelectedVoter = useCallback(async () => {
     if (!selectedNpub.trim()) {
@@ -226,258 +256,210 @@ export default function DemoApp() {
     }
   }, [selectedNpub]);
 
-  const steps: DemoStep[] = useMemo(() => [
-    {
-      title: "Coordinator publishes the election",
-      detail: election
-        ? `${election.title} is live from ${formatDateTime(election.vote_start)} to ${formatDateTime(election.vote_end)}.`
-        : "Waiting for the coordinator to announce the election.",
-      done: Boolean(election?.event_id),
-    },
-    {
-      title: "Voter checks eligibility",
-      detail: voterCheck
-        ? `${voterCheck.npub} is ${voterCheck.allowed ? "eligible" : "not eligible"}.`
-        : "Paste a voter npub and run the check.",
-      done: Boolean(voterCheck?.allowed),
-    },
-    {
-      title: "Voting pass is issued",
-      detail: issuanceForSelected
-        ? `${selectedNpub} is ${liveProofStatus}.`
-        : "Issuance status appears after eligibility and proof minting.",
-      done: Boolean(issuanceForSelected?.issued),
-    },
-    {
-      title: "Ballot is accepted",
-      detail: tally
-        ? `${acceptedVotes} accepted ballot(s) out of ${publishedVotes} published.`
-        : "Acceptance appears once the ballot is published and the coordinator confirms it.",
-      done: Boolean(acceptedVotes > 0),
-    },
-    {
-      title: "Verifier compares tallies",
-      detail: auditResults.length > 0
-        ? `${auditResults.length} coordinator audit result(s) are available.`
-        : "Run the verifier audit to compare tallies and confirmations.",
-      done: auditResults.length > 0,
-    },
-  ], [acceptedVotes, auditResults.length, election, issuanceForSelected, liveProofStatus, publishedVotes, selectedNpub, tally, voterCheck]);
+  const runVerifierAudit = useCallback(async () => {
+    if (!election?.event_id || discoveredCoordinators.length === 0) {
+      setError("Need a discovered election before running an audit.");
+      return;
+    }
+
+    setRunningAudit(true);
+    setError(null);
+
+    try {
+      const audit = await runAudit(
+        election.event_id,
+        discoveredCoordinators,
+        eligibility.eligibleNpubs,
+        election.vote_start,
+        election.confirm_end ?? election.vote_end + 86400,
+        coordinatorInfo?.relays ?? [],
+      );
+
+      setAuditResults(audit);
+      setStatus(`Audit complete for ${audit.length} coordinator(s).`);
+    } catch (auditError) {
+      setError(auditError instanceof Error ? auditError.message : "Audit failed");
+    } finally {
+      setRunningAudit(false);
+    }
+  }, [coordinatorInfo?.relays, discoveredCoordinators, election, eligibility.eligibleNpubs]);
 
   return (
     <main className="page-shell page-shell-demo">
-      <section className="hero-card hero-card-demo">
-        <div className="hero-brand">
-          <img src="/images/logo.png" alt="" width={28} height={28} />
-          <p className="eyebrow">Live Demo</p>
+      <header className="demo-header">
+        <div>
+          <div className="demo-kicker">Live Demo</div>
+          <h1>Voting control room</h1>
+          <p className="demo-lead">
+            Simple, flat status view for coordinators, voters, and verifiers.
+          </p>
         </div>
-        <h1>Watch coordinators, voters, and verifiers in one place.</h1>
-        <p className="hero-copy">
-          This is the demo control room. It polls the coordinator, eligibility, issuance, tally, and audit surfaces so you can narrate the full voting flow live without jumping between pages.
-        </p>
-        <div className="hero-metadata">
-          <span>Mode</span>
-          <Pill tone={DEMO_MODE ? "good" : "neutral"}>{DEMO_MODE ? "Demo enabled" : "Production data"}</Pill>
-          <span>Source</span>
-          <Pill tone={USE_MOCK ? "warn" : "neutral"}>{USE_MOCK ? "Mock backend" : "Live coordinator"}</Pill>
+        <div className="demo-header-meta">
+          <div className="demo-meta-row">
+            <span>Mode</span>
+            <strong>{DEMO_MODE ? "Demo" : "Live"}</strong>
+          </div>
+          <div className="demo-meta-row">
+            <span>Backend</span>
+            <strong>{USE_MOCK ? "Mock server" : "Coordinator API"}</strong>
+          </div>
           <button className="ghost-button" onClick={() => void refreshSnapshot()} disabled={refreshing}>
-            {refreshing ? "Refreshing..." : "Refresh now"}
+            {refreshing ? "Refreshing" : "Refresh"}
           </button>
-          {status && <span className="field-hint" style={{ margin: 0 }}>{status}</span>}
         </div>
-        {error && (
-          <div className="warning-box" style={{ marginTop: 16 }}>
-            <p>{error}</p>
-          </div>
-        )}
+      </header>
+
+      <section className="demo-grid demo-grid-4">
+        <Metric label="Coordinators" value={coordinatorCount} hint="Discovered for the election." />
+        <Metric label="Eligible voters" value={eligibility.eligibleCount} hint="Canonical voter list." />
+        <Metric label="Issued passes" value={issuedCount} hint="Proofs stored locally." />
+        <Metric label="Accepted ballots" value={acceptedVotes} hint="Vote results visible on the verifier." />
       </section>
 
-      <section className="demo-stat-grid">
-        <StatCard label="Coordinators" value={coordinatorCount || 0} hint="Published coordinator(s) discovered for the election." />
-        <StatCard label="Eligible voters" value={eligibility.eligibleCount} hint="Canonical eligible npubs." />
-        <StatCard label="Issued passes" value={issuedCount} hint="Voters who already received a proof." />
-        <StatCard label="Accepted ballots" value={acceptedVotes} hint="Published votes the coordinator accepted." />
-      </section>
+      {error && <section className="demo-banner demo-banner-error">{error}</section>}
+      {status && <section className="demo-banner">{status}</section>}
 
-      <section className="demo-step-panel panel">
-        <div className="panel-header">
-          <div>
-            <p className="panel-kicker">Live Process</p>
-            <h2>What the room should be showing.</h2>
+      <section className="demo-grid demo-grid-2">
+        <article className="demo-card">
+          <PanelTitle kicker="Identity" title="Ephemeral voter keypair" right={<button className="secondary-button" onClick={() => void seedDemoVoter()} disabled={seeding}>{seeding ? "Seeding..." : "Generate again"}</button>} />
+          <div className="demo-note">Use this nsec in the voter portal. The npub is seeded into the mock eligibility list.</div>
+          <div className="demo-copy-stack">
+            <CopyField label="nsec" value={identity.nsec} />
+            <CopyField label="npub" value={identity.npub} />
           </div>
-          <span className="count-pill">
-            {lastRefresh ? `Updated ${formatDateTime(lastRefresh / 1000)}` : "Waiting for data"}
-          </span>
-        </div>
-        <ol className="demo-step-list">
-          {steps.map((step) => <StepItem key={step.title} step={step} />)}
-        </ol>
-      </section>
+          <div className="demo-note">Paste the nsec on the voter page. The voter page stores the keypair so the ballot page can publish the confirmation later.</div>
+        </article>
 
-      <section className="demo-panel-grid">
-        <article className="panel">
-          <div className="panel-header">
-            <div>
-              <p className="panel-kicker">Coordinator(s)</p>
-              <h2>Election and relay status</h2>
-            </div>
-            {election?.event_id ? <Pill tone="good">Live</Pill> : <Pill tone="warn">Waiting</Pill>}
-          </div>
-
+        <article className="demo-card">
+          <PanelTitle kicker="Coordinator" title="Current election" right={election?.event_id ? <span className="demo-status demo-status-good">Live</span> : <span className="demo-status">Waiting</span>} />
           {election ? (
-            <div className="detail-stack">
-              <p className="field-hint">Election: <strong>{election.title}</strong></p>
-              <p className="field-hint">ID: {election.election_id}</p>
-              <p className="field-hint">Window: {formatDateTime(election.vote_start)} to {formatDateTime(election.vote_end)}</p>
-              {election.confirm_end && <p className="field-hint">Confirmation window ends: {formatDateTime(election.confirm_end)}</p>}
+            <div className="demo-stack">
+              <div><strong>{election.title}</strong></div>
+              <div className="demo-note">{election.description || "No description"}</div>
+              <div className="demo-kv"><span>ID</span><code>{election.election_id}</code></div>
+              <div className="demo-kv"><span>Vote window</span><code>{formatDateTime(election.vote_start)} - {formatDateTime(election.vote_end)}</code></div>
+              <div className="demo-kv"><span>Coordinator npub</span><code>{coordinatorInfo?.coordinatorNpub ?? "Loading..."}</code></div>
+              <div className="demo-kv"><span>Relays</span><code>{coordinatorInfo?.relays.join(", ") || "None"}</code></div>
             </div>
           ) : (
-            <p className="empty-copy">No election is currently loaded from the coordinator.</p>
+            <div className="demo-note">Waiting for the coordinator metadata.</div>
           )}
-
-          {coordinatorInfo && (
-            <div className="detail-stack" style={{ marginTop: 16 }}>
-              <p className="field-hint">Coordinator npub: <code className="inline-code-badge">{coordinatorInfo.coordinatorNpub}</code></p>
-              <p className="field-hint">Mint URL: <code className="inline-code-badge">{coordinatorInfo.mintUrl}</code></p>
-              <p className="field-hint">Relays: {coordinatorInfo.relays.length > 0 ? coordinatorInfo.relays.join(", ") : "None"}</p>
-            </div>
-          )}
-
-          {discoveredCoordinators.length > 0 && (
-            <div style={{ marginTop: 16 }}>
-              <p className="code-label">Discovered coordinators</p>
-              <div className="demo-list">
-                {discoveredCoordinators.map((coord) => (
-                  <div key={coord.npub} className="demo-list-item">
-                    <code>{coord.npub.slice(0, 18)}...</code>
-                    <span className="field-hint">{coord.httpApi || "No HTTP API published"}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="button-row" style={{ marginTop: 16 }}>
-            <a className="secondary-button link-button" href="/dashboard.html">Open verifier dashboard</a>
-            <a className="ghost-button link-button" href="/vote.html">Open voter portal</a>
-          </div>
         </article>
+      </section>
 
-        <article className="panel">
-          <div className="panel-header">
-            <div>
-              <p className="panel-kicker">Voter</p>
-              <h2>Eligibility and voting pass</h2>
+      <section className="demo-grid demo-grid-3">
+        <article className="demo-card">
+          <PanelTitle kicker="Voter" title="Eligibility and pass issuance" right={issuanceForSelected?.issued ? <span className="demo-status demo-status-good">Issued</span> : <span className="demo-status">Pending</span>} />
+          <div className="demo-stack">
+            <label className="demo-label" htmlFor="demo-npub">Voter npub</label>
+            <input
+              id="demo-npub"
+              className="demo-input"
+              value={selectedNpub}
+              onChange={(event) => setSelectedNpub(event.target.value)}
+              spellCheck={false}
+            />
+            <div className="button-row">
+              <button className="primary-button" onClick={() => void checkSelectedVoter()} disabled={checkingVoter}>
+                {checkingVoter ? "Checking..." : "Check eligibility"}
+              </button>
+              <a className="ghost-button link-button" href="/vote.html">Open voter portal</a>
             </div>
-            {issuanceForSelected?.issued ? <Pill tone="good">Issued</Pill> : <Pill tone="neutral">Pending</Pill>}
-          </div>
-
-          <label className="field-label" htmlFor="npub-input">Voter npub</label>
-          <input
-            id="npub-input"
-            className="mint-input"
-            value={selectedNpub}
-            onChange={(event) => setSelectedNpub(event.target.value)}
-            placeholder="npub1..."
-            autoComplete="off"
-            spellCheck={false}
-          />
-          <div className="button-row" style={{ marginTop: 12 }}>
-            <button className="primary-button" onClick={() => void checkSelectedVoter()} disabled={checkingVoter}>
-              {checkingVoter ? "Checking..." : "Check eligibility"}
-            </button>
-            <button className="secondary-button" onClick={() => void refreshSnapshot(false)} disabled={refreshing}>
-              Sync status
-            </button>
-          </div>
-
-          <div className="detail-stack" style={{ marginTop: 16 }}>
             {voterCheck ? (
-              <>
-                <p className="field-hint">Eligibility: <strong>{voterCheck.allowed ? "Eligible" : "Not eligible"}</strong></p>
-                <p className="field-hint">Message: {voterCheck.message}</p>
-              </>
-            ) : (
-              <p className="empty-copy">Run the eligibility check to show the voter path live.</p>
-            )}
-            {selectedNpub && issuanceForSelected && (
-              <>
-                <p className="field-hint">Issuance: <strong>{issuanceForSelected.issued ? "Issued" : "Not yet issued"}</strong></p>
-                <p className="field-hint">Eligible: {String(issuanceForSelected.eligible)}</p>
-              </>
-            )}
-          </div>
-
-          {eligibleNpubs.length > 0 && (
-            <div style={{ marginTop: 16 }}>
-              <p className="code-label">Eligible npubs</p>
-              <div className="demo-list">
-                {eligibleNpubs.slice(0, 4).map((npub) => (
-                  <div key={npub} className="demo-list-item">
-                    <code>{npub.slice(0, 18)}...</code>
-                    <span className="field-hint">{issuanceStatus?.voters[npub]?.issued ? "issued" : "waiting"}</span>
-                  </div>
-                ))}
+              <div className="demo-note">
+                {voterCheck.allowed ? "Eligible" : "Not eligible"}: {voterCheck.message}
               </div>
+            ) : (
+              <div className="demo-note">Run the eligibility check to show the voter path.</div>
+            )}
+            {issuanceForSelected && (
+              <div className="demo-note">
+                Issuance status: {issuanceForSelected.issued ? "issued" : "waiting"}.
+              </div>
+            )}
+            <div className="demo-list">
+              {eligibleNpubs.slice(0, 4).map((npub) => (
+                <div className="demo-list-item" key={npub}>
+                  <code>{npub.slice(0, 18)}...</code>
+                  <span>{issuanceStatus?.voters[npub]?.issued ? "issued" : "waiting"}</span>
+                </div>
+              ))}
             </div>
-          )}
+          </div>
         </article>
 
-        <article className="panel">
-          <div className="panel-header">
-            <div>
-              <p className="panel-kicker">Verifier(s)</p>
-              <h2>Acceptance and audit view</h2>
+        <article className="demo-card">
+          <PanelTitle kicker="Process" title="Live voting steps" />
+          <ol className="demo-step-list">
+            {steps.map((step) => (
+              <li className={`demo-step ${step.done ? "is-done" : ""}`} key={step.title}>
+                <span className="demo-step-dot" />
+                <div>
+                  <strong>{step.title}</strong>
+                  <div className="demo-note">{step.detail}</div>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </article>
+
+        <article className="demo-card">
+          <PanelTitle kicker="Verifier" title="Tally and audit" right={auditResults.length > 0 ? <span className="demo-status demo-status-good">Audited</span> : <span className="demo-status">Pending</span>} />
+          <div className="demo-stack">
+            <div className="demo-kv"><span>Published</span><code>{publishedVotes}</code></div>
+            <div className="demo-kv"><span>Accepted</span><code>{acceptedVotes}</code></div>
+            <div className="demo-kv"><span>Confirmations</span><code>{confirmationCount}</code></div>
+            <div className="demo-kv"><span>Final root</span><code>{finalResult?.merkle_root ? `${finalResult.merkle_root.slice(0, 24)}...` : "Unavailable"}</code></div>
+            <div className="demo-kv"><span>Spent root</span><code>{tally?.spent_commitment_root ? `${tally.spent_commitment_root.slice(0, 24)}...` : "Unavailable"}</code></div>
+            <div className="button-row">
+              <button className="secondary-button" onClick={() => void runVerifierAudit()} disabled={runningAudit || discoveredCoordinators.length === 0}>
+                {runningAudit ? "Running audit..." : "Run audit"}
+              </button>
+              <a className="ghost-button link-button" href="/dashboard.html">Open dashboard</a>
             </div>
-            {auditResults.length > 0 ? <Pill tone="good">Audited</Pill> : <Pill tone="warn">Pending</Pill>}
-          </div>
-
-          <div className="detail-stack">
-            <p className="field-hint">Published ballots: <strong>{publishedVotes}</strong></p>
-            <p className="field-hint">Accepted ballots: <strong>{acceptedVotes}</strong></p>
-            <p className="field-hint">Final result root: {finalResult ? <code className="inline-code-badge">{finalResult.merkle_root.slice(0, 24)}...</code> : "Unavailable yet"}</p>
-            <p className="field-hint">Spent root: {tally?.spent_commitment_root ? <code className="inline-code-badge">{tally.spent_commitment_root.slice(0, 24)}...</code> : "Unavailable yet"}</p>
-          </div>
-
-          <div className="button-row" style={{ marginTop: 16 }}>
-            <button className="secondary-button" onClick={() => void runVerifierAudit()} disabled={runningAudit || discoveredCoordinators.length === 0}>
-              {runningAudit ? "Running audit..." : "Run audit"}
-            </button>
-          </div>
-
-          {perCoordinatorTallies.length > 0 && (
-            <div style={{ marginTop: 16 }}>
-              <p className="code-label">Per-coordinator tallies</p>
+            {perCoordinatorTallies.length > 0 && (
               <div className="demo-list">
                 {perCoordinatorTallies.map((entry) => (
-                  <div key={entry.coordinatorNpub} className="demo-list-item">
+                  <div className="demo-list-item" key={entry.coordinatorNpub}>
                     <code>{entry.coordinatorNpub.slice(0, 18)}...</code>
-                    <span className="field-hint">
-                      {entry.tally
-                        ? `${entry.tally.total_accepted_votes ?? 0} accepted / ${entry.tally.total_published_votes} published`
-                        : "No tally yet"}
-                    </span>
+                    <span>{entry.tally ? `${entry.tally.total_accepted_votes ?? 0}/${entry.tally.total_published_votes}` : "No tally"}</span>
                   </div>
                 ))}
               </div>
-            </div>
-          )}
-
-          {auditResults.length > 0 && (
-            <div style={{ marginTop: 16 }}>
-              <p className="code-label">Audit findings</p>
+            )}
+            {auditResults.length > 0 && (
               <div className="demo-list">
-                {auditResults.map((entry) => (
-                  <div key={entry.coordinatorNpub} className="demo-list-item">
-                    <code>{entry.coordinatorNpub.slice(0, 18)}...</code>
-                    <span className="field-hint">
-                      {entry.flags.length > 0 ? entry.flags.join("; ") : "No audit flags"}
-                    </span>
+                {auditResults.map((result) => (
+                  <div className="demo-list-item" key={result.coordinatorNpub}>
+                    <code>{result.coordinatorNpub.slice(0, 18)}...</code>
+                    <span>{result.flags.length > 0 ? result.flags.join("; ") : "No audit flags"}</span>
                   </div>
                 ))}
               </div>
-            </div>
-          )}
+            )}
+          </div>
+        </article>
+      </section>
+
+      <section className="demo-grid demo-grid-2">
+        <article className="demo-card">
+          <PanelTitle kicker="Guide" title="What to copy where" />
+          <div className="demo-list">
+            <div className="demo-list-item"><span>Voter portal</span><code>/</code></div>
+            <div className="demo-list-item"><span>Voting page</span><code>/vote.html</code></div>
+            <div className="demo-list-item"><span>Verifier dashboard</span><code>/dashboard.html</code></div>
+            <div className="demo-list-item"><span>Paste here</span><code>{identity.nsec}</code></div>
+          </div>
+        </article>
+
+        <article className="demo-card">
+          <PanelTitle kicker="Refresh" title="Snapshot details" />
+          <div className="demo-stack">
+            <div className="demo-note">Last refresh: {lastRefresh ? new Date(lastRefresh).toLocaleString() : "Pending"}</div>
+            <div className="demo-note">Issued passes: {issuedCount}</div>
+            <div className="demo-note">Coordinator count: {coordinatorCount}</div>
+            <div className="demo-note">Eligibility list size: {eligibleNpubs.length}</div>
+          </div>
         </article>
       </section>
     </main>

@@ -893,3 +893,342 @@ code {
     max-width: 100%;
   }
 }
+
+body.demo-page {
+  color-scheme: dark;
+  background: #0f1115;
+  color: #e8ebf0;
+  font-family: "Inter", "Avenir Next", "Segoe UI", Arial, sans-serif;
+}
+
+body.demo-page #root {
+  background: #0f1115;
+}
+
+body.demo-page .page-shell-demo {
+  width: min(1440px, calc(100% - 32px));
+  padding: 22px 0 40px;
+}
+
+body.demo-page .demo-header,
+body.demo-page .demo-card,
+body.demo-page .demo-banner,
+body.demo-page .demo-metric,
+body.demo-page .copy-field {
+  border: 1px solid #2a303a;
+  background: #171b22;
+  border-radius: 12px;
+  box-shadow: none;
+}
+
+body.demo-page .demo-header,
+body.demo-page .demo-card,
+body.demo-page .demo-banner {
+  padding: 16px;
+}
+
+body.demo-page .demo-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+body.demo-page .demo-header h1 {
+  margin: 6px 0 0;
+  font-family: "Inter", "Avenir Next", "Segoe UI", Arial, sans-serif;
+  font-size: clamp(2rem, 4vw, 3rem);
+  line-height: 1.08;
+}
+
+body.demo-page .demo-lead,
+body.demo-page .demo-note,
+body.demo-page .demo-banner,
+body.demo-page .copy-field-label,
+body.demo-page .demo-kv span {
+  color: #98a2b3;
+}
+
+body.demo-page .demo-header-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+body.demo-page .demo-meta-row {
+  display: grid;
+  gap: 4px;
+  min-width: 112px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #13161d;
+  border: 1px solid #2a303a;
+}
+
+body.demo-page .demo-meta-row span,
+body.demo-page .demo-meta-row strong {
+  line-height: 1.2;
+}
+
+body.demo-page .demo-grid {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+body.demo-page .demo-grid-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+body.demo-page .demo-grid-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+body.demo-page .demo-grid-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+body.demo-page .demo-panel-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+body.demo-page .demo-panel-title h2 {
+  margin: 4px 0 0;
+  font-family: "Inter", "Avenir Next", "Segoe UI", Arial, sans-serif;
+  font-size: 1.1rem;
+}
+
+body.demo-page .demo-kicker {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #7cb8ff;
+}
+
+body.demo-page .demo-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #13161d;
+  border: 1px solid #2a303a;
+  color: #e8ebf0;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+body.demo-page .demo-status-good {
+  border-color: #35563f;
+  background: rgba(85, 192, 124, 0.12);
+  color: #55c07c;
+}
+
+body.demo-page .demo-metric {
+  padding: 14px 16px;
+}
+
+body.demo-page .demo-metric-value {
+  margin-top: 8px;
+  font-size: clamp(1.8rem, 3vw, 2.4rem);
+  font-weight: 700;
+}
+
+body.demo-page .demo-banner {
+  margin-bottom: 16px;
+}
+
+body.demo-page .demo-banner-error {
+  border-color: rgba(217, 106, 97, 0.4);
+  color: #ffb4ad;
+}
+
+body.demo-page .demo-copy-stack,
+body.demo-page .demo-stack {
+  display: grid;
+  gap: 12px;
+}
+
+body.demo-page .copy-field {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+body.demo-page .copy-field-compact {
+  padding: 10px;
+}
+
+body.demo-page .copy-field-value {
+  display: block;
+  overflow-x: auto;
+  white-space: nowrap;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #0f1115;
+  border: 1px solid #2a303a;
+  color: #e8ebf0;
+}
+
+body.demo-page .copy-field-button,
+body.demo-page .primary-button,
+body.demo-page .secondary-button,
+body.demo-page .ghost-button {
+  border-radius: 10px;
+  box-shadow: none;
+}
+
+body.demo-page .copy-field-button,
+body.demo-page .secondary-button,
+body.demo-page .ghost-button {
+  background: #13161d;
+  color: #e8ebf0;
+  border: 1px solid #2a303a;
+}
+
+body.demo-page .primary-button {
+  background: #7cb8ff;
+  color: #0f1115;
+  border: 1px solid #7cb8ff;
+}
+
+body.demo-page .link-button {
+  text-decoration: none;
+}
+
+body.demo-page .demo-note,
+body.demo-page .demo-label {
+  font-size: 0.92rem;
+}
+
+body.demo-page .demo-label {
+  color: #98a2b3;
+  font-weight: 600;
+}
+
+body.demo-page .demo-input {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid #2a303a;
+  background: #0f1115;
+  color: #e8ebf0;
+}
+
+body.demo-page .demo-kv {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid #2a303a;
+}
+
+body.demo-page .demo-kv code {
+  color: #e8ebf0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+body.demo-page .demo-list {
+  display: grid;
+  gap: 8px;
+}
+
+body.demo-page .demo-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #13161d;
+  border: 1px solid #2a303a;
+}
+
+body.demo-page .demo-list-item code {
+  max-width: 64%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.demo-page .demo-step-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 10px;
+}
+
+body.demo-page .demo-step {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 12px 0;
+  border-top: 1px solid #2a303a;
+}
+
+body.demo-page .demo-step:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+body.demo-page .demo-step-dot {
+  width: 10px;
+  height: 10px;
+  margin-top: 4px;
+  border-radius: 999px;
+  background: #7cb8ff;
+}
+
+body.demo-page .demo-step.is-done .demo-step-dot {
+  background: #55c07c;
+}
+
+body.demo-page .button-row {
+  margin-top: 0;
+}
+
+body.demo-page .button-row .button,
+body.demo-page .button-row button,
+body.demo-page .button-row a {
+  min-height: 40px;
+}
+
+body.demo-page .hero-card::after,
+body.demo-page .panel::after {
+  display: none;
+}
+
+@media (max-width: 1100px) {
+  body.demo-page .demo-grid-2,
+  body.demo-page .demo-grid-3,
+  body.demo-page .demo-grid-4 {
+    grid-template-columns: 1fr;
+  }
+
+  body.demo-page .demo-header {
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 768px) {
+  body.demo-page .demo-list-item,
+  body.demo-page .demo-kv,
+  body.demo-page .demo-header-meta {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  body.demo-page .demo-list-item code {
+    max-width: 100%;
+  }
+}

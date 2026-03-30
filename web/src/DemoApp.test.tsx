@@ -4,6 +4,13 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 
 vi.mock("./config", () => ({ DEMO_MODE: true, USE_MOCK: false }));
+vi.mock("./demoIdentity", () => ({
+  createDemoIdentity: () => ({
+    nsec: "nsec1demo",
+    npub: "npub1demo",
+    pubkey: "demo-pubkey",
+  }),
+}));
 vi.mock("./nostrIdentity", () => ({ formatDateTime: (value: number) => `time-${value}` }));
 vi.mock("./voterManagementApi", () => ({
   fetchEligibility: vi.fn().mockResolvedValue({
@@ -26,6 +33,11 @@ vi.mock("./coordinatorApi", () => ({
     mintPublicKey: "pk",
     relays: ["wss://relay.example"],
     electionId: "e1",
+  }),
+  fetchEligibility: vi.fn().mockResolvedValue({
+    election_id: "e1",
+    eligible_count: 1,
+    eligible_npubs: ["npub1demo"],
   }),
   fetchElection: vi.fn().mockResolvedValue({
     election_id: "e1",
@@ -56,10 +68,10 @@ describe("DemoApp", () => {
     const { default: DemoApp } = await import("./DemoApp");
     render(<DemoApp />);
 
-    expect(await screen.findByText(/Watch coordinators, voters, and verifiers in one place\./i)).toBeTruthy();
+    expect(await screen.findByText(/Simple, flat status view for coordinators, voters, and verifiers\./i)).toBeTruthy();
     expect(screen.getByRole("button", { name: /Check eligibility/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Run audit/i })).toBeTruthy();
     expect(screen.getByRole("link", { name: /Open voter portal/i })).toBeTruthy();
-    expect(screen.getByRole("link", { name: /Open verifier dashboard/i })).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Open dashboard/i })).toBeTruthy();
   });
 });

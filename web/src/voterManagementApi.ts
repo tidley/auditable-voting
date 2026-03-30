@@ -53,6 +53,19 @@ export async function resetEligibility(): Promise<EligibilityResponse & { messag
   return { ...current, message: "Reset not available in production mode" };
 }
 
+export async function seedEligibility(npub: string): Promise<EligibilityResponse & { message: string }> {
+  if (USE_MOCK) {
+    return fetchJson<EligibilityResponse & { message: string }>("/api/eligibility/seed", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ npub }),
+    });
+  }
+
+  const current = await fetchEligibility();
+  return { ...current, message: "Seeding is only available in mock mode" };
+}
+
 export async function checkEligibility(npub: string): Promise<EligibilityCheckResponse> {
   if (USE_MOCK) {
     const url = new URL("/api/eligibility/check", window.location.origin);

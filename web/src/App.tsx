@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { logClaimDebug } from "./cashuMintApi";
-import { loadStoredWalletBundle, storeWalletBundle, addCoordinatorProof, type CoordinatorProof } from "./cashuWallet";
+import { loadStoredWalletBundle, storeWalletBundle, addCoordinatorProof, storeEphemeralKeypair, type CoordinatorProof } from "./cashuWallet";
 import { checkEligibility, type EligibilityCheckResponse } from "./voterManagementApi";
 import {
   createCashuClaimEvent,
@@ -231,10 +231,16 @@ export default function App() {
       const quote = await createMintQuote();
       setMintQuote(quote);
       setQuoteState("UNPAID");
+      if (nsecInput && derivedNpub) {
+        storeEphemeralKeypair(nsecInput, derivedNpub);
+      }
 
       storeWalletBundle({
         electionId: electionInfo?.election_id ?? "",
-        ephemeralKeypair: { nsec: "", npub: "" },
+        ephemeralKeypair: {
+          nsec: nsecInput,
+          npub: derivedNpub ?? "",
+        },
         coordinatorProofs: [],
         election: electionInfo ? {
           electionId: electionInfo.election_id,
@@ -422,7 +428,10 @@ export default function App() {
 
     storeWalletBundle({
       electionId: electionInfo.election_id,
-      ephemeralKeypair: { nsec: "", npub: "" },
+      ephemeralKeypair: {
+        nsec: nsecInput,
+        npub: derivedNpub ?? "",
+      },
       coordinatorProofs: [],
       election: {
         electionId: electionInfo.election_id,
@@ -437,6 +446,9 @@ export default function App() {
       },
       relays
     });
+    if (nsecInput && derivedNpub) {
+      storeEphemeralKeypair(nsecInput, derivedNpub);
+    }
     setWalletBundle(loadStoredWalletBundle());
 
     for (const coord of coordinatorsToUse) {
@@ -489,8 +501,9 @@ export default function App() {
         }
 
         let approved = false;
+        const pollDelayMs = DEMO_MODE ? 25 : USE_MOCK ? 2500 : 5000;
         for (let i = 0; i < 60; i++) {
-          await new Promise(r => setTimeout(r, USE_MOCK ? 2500 : 5000));
+          await new Promise(r => setTimeout(r, pollDelayMs));
           const status = await checkQuoteStatus(quote.quote, mintUrl);
           setQuoteState(status.state);
           if (status.state === "PAID") {
