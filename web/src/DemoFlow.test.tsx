@@ -447,11 +447,11 @@ describe("full voting demo flow", () => {
     expect(await screen.findByText(/AUDITABLE-VOTING/i)).toBeTruthy();
     expect(screen.getByDisplayValue(testIdentity.nsec)).toBeTruthy();
     expect(screen.getByRole("button", { name: /Check eligibility/i })).toBeTruthy();
-    expect(screen.getByRole("table", { name: /Public ballot ledger/i })).toBeTruthy();
+    expect(screen.getByRole("table", { name: /Revealed proof ledger/i })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: /Run full demo/i }));
     await waitFor(() => expect(screen.getAllByText(/Confirmation event/i).length).toBeGreaterThan(0), { timeout: 5000 });
     await waitFor(() => expect(screen.getAllByText(/bbbbbbbb\.\.\.bbbb/i).length).toBeGreaterThan(0), { timeout: 5000 });
-    await waitFor(() => expect(screen.getByText(/3 minted/i)).toBeTruthy(), { timeout: 5000 });
+    await waitFor(() => expect(screen.getByText(/3 revealed/i)).toBeTruthy(), { timeout: 5000 });
     demo.unmount();
 
     const app = render(<App />);
