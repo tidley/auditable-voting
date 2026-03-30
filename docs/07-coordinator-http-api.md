@@ -72,7 +72,7 @@ Voter (ephemeral npub)
   +-- publish kind 38000 (vote event, public)
   |   tags: ["election", "<election_id>"]
   |
-  +-- encrypted NIP-04 DM --> Coordinator (full Cashu proof + vote_event_id)
+  +-- NIP-17 gift wrap --> Coordinator (full Cashu proof + vote_event_id)
                       |
                       +-- submit proof to mint via POST /v1/melt/bolt11
                       |
@@ -331,9 +331,9 @@ These data types are intentionally NOT exposed over HTTP because they are trust 
 
 ---
 
-## Proof Submission via Encrypted DM (NIP-04)
+## Proof Submission via Gift Wrap (NIP-17)
 
-The voter client collaborator needs to send the full Cashu proof to the coordinator via NIP-04 encrypted DM.
+The voter client collaborator needs to send the full Cashu proof to the coordinator via a NIP-17 gift wrap.
 
 **Recipient:** coordinator's npub (from `GET /info`)
 
@@ -407,10 +407,10 @@ Modified `process_issuance_request()`:
 
 ### Step 7: Burn flow -- DONE
 
-Added new handler for encrypted NIP-04 DMs:
+Added new handler for NIP-17 gift wraps:
 
-1. `CoordinatorHandler.handle()` dispatches kind 4 events to `_handle_dm_async()`
-2. Decrypts DM via `signer.nip04_decrypt()`
+1. `CoordinatorHandler.handle()` dispatches kind 1059 events to `_handle_gift_wrap_async()`
+2. Unwraps the gift via `UnwrappedGift.from_gift_wrap()`
 3. Parses JSON: `{vote_event_id, proof}`
 4. Calls `handle_proof_dm()` which submits proof to mint: `POST {mint_url}/v1/melt/bolt11`
 5. On success:
@@ -456,7 +456,7 @@ Updated `playbooks/deploy-coordinator.yml`:
 ### Step 11: Doc updates -- DONE
 
 - `docs/03-PROTOCOL_REFERENCE.md` -- add kind 38011 to event registry, update kind 38002 spec
-- `docs/VOTER_CLIENT_INTEGRATION_GUIDE.md` -- add HTTP API endpoints section, update relays, add NIP-04 DM proof submission spec
+- `docs/VOTER_CLIENT_INTEGRATION_GUIDE.md` -- add HTTP API endpoints section, update relays, add NIP-17 gift-wrap proof submission spec
 - `docs/11-COORDINATOR_DEPLOYMENT_PLAN.md` -- reflect stateless design, new relay list, HTTP API
 - `docs/08-VOTING_COORDINATOR_TEST_PLAN.md` -- update test plan for new API
 - `docs/09-VOTING_INTEGRATION_TEST_PLAN.md` -- update integration test descriptions
@@ -536,7 +536,7 @@ POST http://<vps_ip>:3338/v1/mint/bolt11            -- mint tokens
 
 ### Proof Submission (new)
 
-Encrypted NIP-04 DM to coordinator's npub:
+NIP-17 gift wrap to coordinator's npub:
 
 ```json
 {

@@ -36,7 +36,7 @@ Each coordinator is an independently operated Nostr actor that:
 - Listens for proof issuance requests (kind 38010) from voters
 - Auto-approves eligible requests via gRPC to its own mint
 - Tracks already-issued voters to enforce 1 proof per npub
-- Accepts vote submissions (via NIP-04 DM proof burning)
+- Accepts vote submissions (via NIP-17 gift-wrap proof burning)
 - Computes its own tally
 - Publishes its own commitment roots and final results
 
@@ -177,7 +177,7 @@ tags:
   - ["p", "<coordinator_npub>"]
 ```
 
-Transport: NIP-04 or NIP-44 encrypted DM.
+Transport: NIP-17 gift wrap or NIP-44 encrypted payload.
 
 ---
 

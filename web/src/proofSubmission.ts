@@ -1,4 +1,4 @@
-import { finalizeEvent, nip04, SimplePool } from "nostr-tools";
+import { nip17, SimplePool } from "nostr-tools";
 import { nip19 } from "nostr-tools";
 import type { RelayPublishResult } from "./cashuMintApi";
 import type { CashuProof } from "./cashuBlind";
@@ -35,16 +35,17 @@ export async function submitProofViaDm(input: {
     proof,
   });
 
-  const encryptedContent = await nip04.encrypt(voterSecretKey, coordinatorHexPubkey, dmContent);
-
-  const event = finalizeEvent(
+  const event = nip17.wrapEvent(
+    voterSecretKey,
     {
-      kind: 4,
-      created_at: Math.floor(Date.now() / 1000),
-      tags: [["p", coordinatorHexPubkey]],
-      content: encryptedContent
+      publicKey: coordinatorHexPubkey,
+      relayUrl: relays[0],
     },
-    voterSecretKey
+    dmContent,
+    "Proof submission",
+    {
+      eventId: voteEventId,
+    }
   );
 
   const pool = new SimplePool();

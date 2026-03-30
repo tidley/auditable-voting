@@ -23,6 +23,7 @@ from nostr_sdk import (
     Filter,
     Client,
     NostrSigner,
+    UnwrappedGift,
     HandleNotification,
     RelayUrl,
     EventBuilder,
@@ -832,13 +833,8 @@ class CoordinatorHandler(HandleNotification):
     async def handle(self, relay_url, subscription_id, event):
         kind_val = event.kind().as_u16()
 
-        if kind_val == 4:
-            sender = event.author().to_hex()
-            if sender == self.coordinator_pubkey_hex:
-                return
-            sender_pk = event.author()
-            dm_content = event.content()
-            asyncio.ensure_future(self._handle_dm_async(sender, sender_pk, dm_content))
+        if kind_val == 1059:
+            asyncio.ensure_future(self._handle_gift_wrap_async(event))
             return
 
         if kind_val not in (38000, 38002, 38003, 38005, 38006, 38007, 38008, 38009, 38010, 38011):
@@ -872,17 +868,19 @@ class CoordinatorHandler(HandleNotification):
                 self.spent_tree.insert(commitment)
                 log.info("Spent tree updated: count=%d root=%s", self.spent_tree.get_count(), self.spent_tree.get_root())
 
-    async def _handle_dm_async(self, sender: str, sender_pk, dm_content: str) -> None:
+    async def _handle_gift_wrap_async(self, gift_wrap_event) -> None:
         try:
-            decrypted = await self.signer.nip04_decrypt(sender_pk, dm_content)
-            log.info("DM received from %s...", sender[:16])
+            unwrapped = await UnwrappedGift.from_gift_wrap(self.signer, gift_wrap_event)
+            sender = unwrapped.sender().to_hex()
+            dm_content = unwrapped.rumor().content()
+            log.info("Gift wrap received from %s...", sender[:16])
             handle_proof_dm(
-                decrypted, sender,
+                dm_content, sender,
                 self.nostr_client, self.mint_url,
                 self.spent_tree, self.event_store,
             )
         except Exception as exc:
-            log.error("Failed to handle DM from %s...: %s", sender[:16], exc)
+            log.error("Failed to handle gift wrap from %s...: %s", gift_wrap_event.author().to_hex()[:16], exc)
 
     async def handle_msg(self, relay_url, msg):
         pass
@@ -1518,13 +1516,13 @@ async def run_coordinator(
         public_mint_url=args.public_mint_url or args.mint_url,
     )
 
-    log.info("Subscribing to kinds 38000, 38002, 38003, 38005, 38006, 38007, 38008, 38009, 38010, 38011 and NIP-04 DMs")
+    log.info("Subscribing to kinds 38000, 38002, 38003, 38005, 38006, 38007, 38008, 38009, 38010, 38011 and NIP-17 gift wraps")
 
     event_filter = Filter().kinds([Kind(38000), Kind(38002), Kind(38003), Kind(38005), Kind(38006), Kind(38007), Kind(38008), Kind(38009), Kind(38010), Kind(38011)]).limit(0)
     await nostr_client.subscribe(event_filter)
 
-    dm_filter = Filter().kind(Kind(4)).pubkey(coordinator_pubkey).limit(0)
-    await nostr_client.subscribe(dm_filter)
+    gift_wrap_filter = Filter().kind(Kind(1059)).limit(0)
+    await nostr_client.subscribe(gift_wrap_filter)
 
     http_routes = make_http_handler(
         event_store, spent_tree, coordinator_npub,

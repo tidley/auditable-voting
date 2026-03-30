@@ -2,13 +2,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const publish = vi.fn();
 const destroy = vi.fn();
-const encrypt = vi.fn();
+const wrapEvent = vi.fn();
 const decode = vi.fn();
 
 vi.mock("nostr-tools", () => ({
   nip19: { decode },
-  nip04: { encrypt },
-  finalizeEvent: vi.fn().mockReturnValue({ id: "evt-1", pubkey: "pk", content: "cipher" }),
+  nip17: { wrapEvent },
   SimplePool: function () { return { publish, destroy }; },
 }));
 
@@ -16,7 +15,7 @@ describe("proofSubmission", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     decode.mockReturnValue({ type: "npub", data: "ab".repeat(32) });
-    encrypt.mockResolvedValue("cipher");
+    wrapEvent.mockReturnValue({ id: "evt-1", pubkey: "pk", content: "cipher" });
     publish.mockImplementation((relays: string[]) => relays.map(() => Promise.resolve(undefined)));
   });
 
@@ -30,6 +29,7 @@ describe("proofSubmission", () => {
       relays: ["wss://relay.example"],
     });
 
+    expect(wrapEvent).toHaveBeenCalled();
     expect(result.successes).toBe(1);
     expect(result.failures).toBe(0);
   });

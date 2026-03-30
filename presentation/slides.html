@@ -235,7 +235,7 @@ flowchart LR
     VP -->|"HTTP\nquote / status"| MN
     VW <--> W
     VW -->|"38000"| NR
-    VW -->|"NIP-04 DM\nproof"| CR
+    VW -->|"NIP-17 gift wrap\nproof"| CR
     CR -->|"38002\n38005 38006 38003"| NR
     DB -->|"HTTP"| CR
     VP -->|"HTTP /info /election"| CR
@@ -289,7 +289,7 @@ sequenceDiagram
     <div class="slide-header">
       <div class="kicker">Phase 2 — Voting</div>
       <h2>Voting &amp; Proof Submission</h2>
-      <p>The voter generates an ephemeral Nostr keypair, publishes a structured ballot publicly (kind 38000), then submits the proof privately via encrypted NIP-04 DM. The coordinator burns the proof on the mint and publishes an acceptance receipt.</p>
+      <p>The voter generates an ephemeral Nostr keypair, publishes a structured ballot publicly (kind 38000), then submits the proof privately via a NIP-17 gift wrap. The coordinator burns the proof on the mint and publishes an acceptance receipt.</p>
     </div>
     <div class="diagram-box">
       <div class="mermaid">
@@ -305,8 +305,8 @@ sequenceDiagram
     V->>R: Publish kind 38000 (ballot)<br/>tags: [election, id]
     Note over R: Public — anyone can verify<br/>content: structured responses
 
-    V->>R: NIP-04 encrypted DM to coordinator<br/>{vote_event_id, proof}
-    R->>C: Deliver encrypted DM
+    V->>R: NIP-17 gift wrap to coordinator<br/>{vote_event_id, proof}
+    R->>C: Deliver gift wrap
 
     C->>C: Verify kind 38000 exists
     C->>M: POST /v1/melt/bolt11 (burn proof)
@@ -377,7 +377,7 @@ sequenceDiagram
           </thead>
           <tbody>
             <tr><td><code>38000</code></td><td>Vote Event</td><td><span class="badge badge-voter">Voter</span></td><td><span class="badge badge-done">Implemented</span></td><td>Public ballot with structured responses (choice, scale, text)</td></tr>
-            <tr><td><code>38001</code></td><td>Encrypted Proof Submission</td><td><span class="badge badge-voter">Voter</span></td><td><span class="badge badge-spec">Spec</span></td><td>Private proof delivery via NIP-04 DM</td></tr>
+            <tr><td><code>38001</code></td><td>Encrypted Proof Submission</td><td><span class="badge badge-voter">Voter</span></td><td><span class="badge badge-spec">Spec</span></td><td>Private proof delivery via NIP-17 gift wrap</td></tr>
             <tr><td><code>38002</code></td><td>Vote Acceptance Receipt</td><td>Coordinator</td><td><span class="badge badge-done">Implemented</span></td><td>Proof burned, contains commitment + spent_count</td></tr>
             <tr><td><code>38003</code></td><td>Final Result</td><td>Coordinator</td><td><span class="badge badge-spec">Spec</span></td><td>Per-question results, merkle_root, commitment roots</td></tr>
             <tr><td><code>38005</code></td><td>Issuance Commitment Root</td><td>Coordinator</td><td><span class="badge badge-spec">Spec</span></td><td>Commits to exact set of issued proofs</td></tr>

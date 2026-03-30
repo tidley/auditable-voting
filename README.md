@@ -80,7 +80,7 @@ The pre-commit hook runs tests automatically on every `git commit` using the sam
 3. Request a mint quote, publish a claim (kind 38010), wait for approval
 4. Mint blinded tokens from the CDK Cashu mint
 5. Fill out the ballot and publish a vote event (kind 38000)
-6. Submit the proof via NIP-04 encrypted DM to the coordinator
+6. Submit the proof via NIP-17 gift wrap to the coordinator
 7. Check vote acceptance via the tally endpoint
 
 ### Multi-Coordinator
@@ -132,7 +132,7 @@ web/src/DashboardApp.tsx    operator dashboard (eligibility + tally)
 web/src/coordinatorApi.ts   coordinator HTTP API client
 web/src/mintApi.ts          CDK Cashu mint API client
 web/src/cashuBlind.ts       blinded token operations (CashuWallet)
-web/src/proofSubmission.ts  NIP-04 encrypted DM sender
+web/src/proofSubmission.ts  NIP-17 gift-wrap sender
 web/src/ballot.ts           ballot event publishing
 web/src/nostrIdentity.ts    Nostr key helpers, claim signing
 web/src/signer.ts           NostrSigner abstraction (raw / NIP-07)

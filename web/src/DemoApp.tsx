@@ -36,7 +36,7 @@ import { submitProofsToAllCoordinators, type MultiCoordinatorDmResult } from "./
 type StepState = {
   title: string;
   detail: string;
-  done: boolean;
+  status: "done" | "current" | "waiting";
 };
 
 const EMPTY_ELIGIBILITY: EligibilityResponse = {
@@ -125,7 +125,6 @@ export default function DemoApp() {
   const [status, setStatus] = useState<string>("Loading live demo state...");
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<number | null>(null);
-  const [seeded, setSeeded] = useState(false);
   const [mintQuote, setMintQuote] = useState<MintQuoteResponse | null>(null);
   const [proof, setProof] = useState<CashuProof | null>(null);
   const [dmResults, setDmResults] = useState<MultiCoordinatorDmResult[] | null>(null);
@@ -147,49 +146,76 @@ export default function DemoApp() {
   const coordinatorCount = discoveredCoordinators.length || election?.coordinator_npubs.length || 0;
   const issuanceForSelected = selectedNpub ? issuanceStatus?.voters[selectedNpub] : undefined;
 
-  const steps: StepState[] = useMemo(() => [
-    {
-      title: "Seed voter identity",
-      detail: seeded
-        ? "The generated npub has been added to the mock eligibility list."
-        : "Generate an npub/nsec pair and seed it into the mock backend.",
-      done: seeded,
-    },
-    {
-      title: "Request voting pass",
-      detail: proof
-        ? `${selectedNpub} is eligible and the proof is minted.`
-        : voterCheck?.allowed
-          ? `${voterCheck.npub} is eligible and can request the pass.`
-          : "Paste the nsec and request approval on this page.",
-      done: Boolean(proof),
-    },
-    {
-      title: "Publish ballot",
-      detail: ballotEventId
-        ? `Ballot event ${ballotEventId.slice(0, 16)}... published.`
-        : publishedVotes > 0
-        ? `${publishedVotes} ballot event(s) are visible to the verifier view.`
-        : "Cast the ballot from the single demo page after the proof is minted.",
-      done: Boolean(ballotEventId || publishedVotes > 0),
-    },
-    {
-      title: "Send proof and confirmation",
-      detail: dmResults && dmResults.length > 0
-        ? `${dmResults.length} coordinator(s) received the proof.`
-        : issuedCount > 0
-          ? `${issuedCount} proof(s) are stored and ready for confirmation.`
-        : "The voter proof shows up once the mint step completes.",
-      done: Boolean(dmResults && dmResults.length > 0),
-    },
-    {
-      title: "Verify tally",
-      detail: auditResults.length > 0
-        ? `Audit ran across ${auditResults.length} coordinator(s).`
-        : "Use the verifier panel to compare tally and confirmation counts.",
-      done: auditResults.length > 0 || acceptedVotes > 0,
-    },
-  ], [acceptedVotes, auditResults.length, ballotEventId, dmResults, issuedCount, proof, publishedVotes, seeded, selectedNpub, voterCheck]);
+  const timelinePhases: StepState[] = useMemo(() => {
+    const spentRoot = tally?.spent_commitment_root ?? finalResult?.spent_commitment_root ?? "";
+    const spentRootShort = spentRoot ? `${spentRoot.slice(0, 24)}...` : "";
+    const confirmationDetail = auditResults.length > 0
+      ? `${confirmationCount} canonical confirmation(s) counted from real npubs.`
+      : "After the voting window, voters publish kind 38013 from their real npub.";
+
+    return [
+      {
+        title: "1. Election announced",
+        detail: election
+          ? `Election ${election.election_id} is live and visible to the demo.`
+          : "Waiting for the coordinator to publish the election announcement.",
+        status: election ? "done" : "current",
+      },
+      {
+        title: "2. Proof minted",
+        detail: proof
+          ? `Minted proof for ${selectedNpub.slice(0, 18)}... is stored locally.`
+          : voterCheck?.allowed
+            ? `${voterCheck.npub} is eligible and can mint the proof.`
+            : "Paste the nsec and mint the proof on this page.",
+        status: proof ? "done" : election ? "current" : "waiting",
+      },
+      {
+        title: "3. Ballot published",
+        detail: ballotEventId
+          ? `Ballot event ${ballotEventId.slice(0, 16)}... was published publicly.`
+          : publishedVotes > 0
+            ? `${publishedVotes} ballot event(s) are visible on the relay.`
+            : "The ephemeral ballot key publishes kind 38000 on the relay.",
+        status: ballotEventId || publishedVotes > 0 ? "done" : proof ? "current" : "waiting",
+      },
+      {
+        title: "4. Proof delivered",
+        detail: dmResults && dmResults.length > 0
+          ? `${dmResults.length} coordinator(s) received the proof gift wrap.`
+          : issuedCount > 0
+            ? `${issuedCount} proof(s) are ready to submit.`
+            : "The proof is sent privately to the coordinator via gift wrap.",
+        status: dmResults && dmResults.length > 0 ? "done" : ballotEventId ? "current" : "waiting",
+      },
+      {
+        title: "5. 38002 receipt published",
+        detail: acceptedVotes > 0
+          ? `Coordinator receipt seen. Auditors can reconstruct the spent commitment tree from those receipts.`
+          : "Waiting for the coordinator to publish kind 38002 after burning the proof.",
+        status: acceptedVotes > 0 ? "done" : dmResults && dmResults.length > 0 ? "current" : "waiting",
+      },
+      {
+        title: "6. Spent tree rebuilt",
+        detail: spentRoot
+          ? `Spent commitment root: ${spentRootShort}`
+          : "Auditors rebuild the spent commitment tree from 38002 receipts as they appear.",
+        status: spentRoot ? "done" : acceptedVotes > 0 ? "current" : "waiting",
+      },
+      {
+        title: "7. 38013 confirmations",
+        detail: confirmationDetail,
+        status: auditResults.length > 0 ? "done" : spentRoot ? "current" : "waiting",
+      },
+      {
+        title: "8. Audit comparison",
+        detail: auditResults.length > 0
+          ? `Audit ran across ${auditResults.length} coordinator(s).`
+          : "The verifier compares tally, confirmations, and the spent root.",
+        status: auditResults.length > 0 ? "done" : confirmationCount > 0 ? "current" : "waiting",
+      },
+    ];
+  }, [acceptedVotes, auditResults.length, ballotEventId, confirmationCount, dmResults, election, finalResult?.spent_commitment_root, issuedCount, proof, publishedVotes, selectedNpub, tally?.spent_commitment_root, voterCheck]);
 
   const refreshSnapshot = useCallback(async (showSpinner = true) => {
     if (showSpinner) setRefreshing(true);
@@ -251,7 +277,6 @@ export default function DemoApp() {
         await seedEligibility(nextIdentity.npub);
       }
       setSelectedNpub(nextIdentity.npub);
-      setSeeded(true);
       setStatus(`Generated voter identity: ${nextIdentity.npub}`);
       await refreshSnapshot(false);
     } catch (requestError) {
@@ -315,7 +340,6 @@ export default function DemoApp() {
       setBallotAnswers({});
       setAuditResults([]);
       setSelectedNpub(npub);
-      setSeeded(true);
       setVoterCheck({
         npub,
         allowed: true,
@@ -524,7 +548,6 @@ export default function DemoApp() {
         await seedEligibility(sequenceNpub);
       }
       setSelectedNpub(sequenceNpub);
-      setSeeded(true);
       setVoterCheck({
         npub: sequenceNpub,
         allowed: true,
@@ -738,14 +761,24 @@ export default function DemoApp() {
         </article>
 
         <article className="demo-card">
-          <PanelTitle kicker="Process" title="Live voting steps" />
-          <ol className="demo-step-list">
-            {steps.map((step) => (
-              <li className={`demo-step ${step.done ? "is-done" : ""}`} key={step.title}>
-                <span className="demo-step-dot" />
-                <div>
-                  <strong>{step.title}</strong>
-                  <div className="demo-note">{step.detail}</div>
+          <PanelTitle kicker="Audit" title="Live timeline" />
+          <div className="demo-note">
+            Auditors can reconstruct the spent commitment tree from those receipts.
+          </div>
+          <ol className="demo-timeline-list">
+            {timelinePhases.map((phase) => (
+              <li className={`demo-timeline-item is-${phase.status}`} key={phase.title}>
+                <span className="demo-timeline-rail">
+                  <span className="demo-timeline-dot" />
+                </span>
+                <div className="demo-timeline-body">
+                  <div className="demo-timeline-title-row">
+                    <strong>{phase.title}</strong>
+                    <span className={`status-pill status-pill-${phase.status === "done" ? "good" : phase.status === "current" ? "warn" : "neutral"}`}>
+                      {phase.status === "done" ? "Done" : phase.status === "current" ? "Now" : "Waiting"}
+                    </span>
+                  </div>
+                  <div className="demo-note">{phase.detail}</div>
                 </div>
               </li>
             ))}

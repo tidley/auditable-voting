@@ -4,7 +4,7 @@ Instructions for LLM coding sessions working in this repository.
 
 ## Project Overview
 
-**auditable-voting** is a Nostr + Cashu voting system with coordinator-mediated blind token issuance, eligibility checks, and private ballot submission. Voters receive blinded Cashu tokens as proof of eligibility, fill out a ballot, and submit proofs to a coordinator via NIP-04 encrypted DMs. The coordinator tallies votes and publishes a verifiable commitment root.
+**auditable-voting** is a Nostr + Cashu voting system with coordinator-mediated blind token issuance, eligibility checks, and private ballot submission. Voters receive blinded Cashu tokens as proof of eligibility, fill out a ballot, and submit proofs to a coordinator via NIP-17 gift wraps. The coordinator tallies votes and publishes a verifiable commitment root.
 
 **Live deployment:** http://vote.mints.23.182.128.64.sslip.io/
 
@@ -50,7 +50,7 @@ auditable-voting/
 │       ├── mintApi.ts           # CDK Cashu mint API client
 │       ├── cashuBlind.ts        # Blinded token operations
 │       ├── cashuWallet.ts       # Local wallet storage (localStorage)
-│       ├── proofSubmission.ts   # NIP-04 encrypted DM sender
+│       ├── proofSubmission.ts   # NIP-17 gift-wrap sender
 │       ├── ballot.ts            # Ballot event publishing (kind 38000)
 │       ├── nostrIdentity.ts     # Nostr key helpers, claim signing
 │       ├── signer.ts            # NostrSigner abstraction (raw / NIP-07)
@@ -205,7 +205,7 @@ cd web && npm install
 
 | Package | Location | Purpose |
 |---------|----------|---------|
-| `nostr-tools` | root + web | Nostr protocol (events, signing, NIP-04) |
+| `nostr-tools` | root + web | Nostr protocol (events, signing, NIP-17) |
 | `@cashu/cashu-ts` | web | Cashu wallet, blinded tokens, mint API |
 | `react` / `react-dom` | web | UI framework |
 | `vite` | web | Build tool + dev server |
@@ -327,7 +327,7 @@ Browser --> Traefik (:80)
 3. Request mint quote, publish claim event (kind 38010), wait for approval
 4. Mint blinded tokens from CDK Cashu mint
 5. Fill out ballot, publish vote event (kind 38000)
-6. Submit proof via NIP-04 encrypted DM to coordinator
+6. Submit proof via NIP-17 gift wrap to coordinator
 7. Verify vote acceptance via `/tally` endpoint
 
 ### Voter Flow (Multi-Coordinator)
@@ -337,7 +337,7 @@ Browser --> Traefik (:80)
 3. Verify canonical eligible set via `["eligible-root", hex]` tag on 38008
 4. For each coordinator: check eligibility, request quote, publish 38010, mint proof
 5. Fill out ballot, publish vote event (kind 38000) with `["proof-hash", hash]` tags
-6. Submit proof via NIP-04 DM to each coordinator
+6. Submit proof via NIP-17 gift wrap to each coordinator
 7. After voting window closes (t1), publish voter confirmation (kind 38013) from real npub
 8. Compare tallies across coordinators via `runAudit()` — flags inflation/censorship
 9. Verify vote acceptance via any coordinator's kind 38002

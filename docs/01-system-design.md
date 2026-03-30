@@ -57,7 +57,7 @@ Coordinator (per operator):
 - Auto-approves eligible requests via gRPC to its own mint
 - Enforces 1 proof per npub
 - Verifies eligibility of npubs against canonical eligible set
-- Accepts vote submissions (via NIP-04 DM proof burning)
+- Accepts vote submissions (via NIP-17 gift-wrap proof burning)
 - Computes its own tally
 - Builds its own Merkle tree over accepted votes
 - Publishes its own commitment roots (kinds 38005, 38006) and final results (kind 38003)
@@ -149,7 +149,7 @@ tags:
 
 ### 4. Private Proof Submission (Per Coordinator)
 
-Voter submits proof to each coordinator via encrypted DM (NIP-04/44):
+Voter submits proof to each coordinator via NIP-17 gift wrap / NIP-44:
 
 ```
 {
@@ -338,7 +338,7 @@ With multiple independent coordinators:
 
 ## Ephemeral Keypair and Voter Privacy
 
-Every vote event (kind 38000) and its corresponding proof DM (kind 4) are published under a freshly generated ephemeral Nostr keypair. The voter confirmation (kind 38013) is published under the voter's real npub, but only during the confirmation window (t1–t2), which is separated from the voting window (t0–t1) by a time gap.
+Every vote event (kind 38000) and its corresponding proof wrap (kind 1059) are published under a freshly generated ephemeral Nostr keypair. The voter confirmation (kind 38013) is published under the voter's real npub, but only during the confirmation window (t1–t2), which is separated from the voting window (t0–t1) by a time gap.
 
 ### Voter vs. the Public
 
@@ -360,7 +360,7 @@ Two cryptographic layers ensure the coordinator cannot link issuance to a vote:
 |---|---|---|---|
 | 38010 | Issuance claim (per coordinator) | Voter's real npub | Yes — pubkey must be in canonical eligible set |
 | 38000 | Public vote | Ephemeral keypair | No |
-| 4 (NIP-04 DM) | Proof submission to coordinator | Same ephemeral keypair | No |
+| 1059 (NIP-17 gift wrap) | Proof submission to coordinator | Same ephemeral keypair | No |
 | 38013 | Voter confirmation | Voter's real npub | Yes — only canonical npubs count |
 
 ---
