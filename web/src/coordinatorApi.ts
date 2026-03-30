@@ -248,6 +248,21 @@ export type IssuanceStatusResponse = {
   voters: Record<string, IssuanceStatusInfo>;
 };
 
+export type IssuanceStartResponse = {
+  request_id: string;
+  status_url: string;
+  status: "pending" | "issued" | "ineligible" | "already_issued" | "timeout";
+};
+
+export type IssuanceAwaitResponse = {
+  request_id?: string;
+  status: "pending" | "issued" | "ineligible" | "already_issued" | "timeout";
+  issued: boolean;
+  quote_state?: "UNPAID" | "PAID" | "ISSUED";
+  retry_after_ms?: number;
+  message?: string;
+};
+
 export async function fetchIssuanceStatus(httpApi?: string): Promise<IssuanceStatusResponse | null> {
   if (USE_MOCK) {
     return null;
@@ -259,6 +274,36 @@ export async function fetchIssuanceStatus(httpApi?: string): Promise<IssuanceSta
   } catch {
     return null;
   }
+}
+
+export async function startIssuanceTracking(input: {
+  npub: string;
+  quoteId: string;
+  electionId: string;
+  httpApi?: string;
+}): Promise<IssuanceStartResponse> {
+  const url = input.httpApi || `${import.meta.env.VITE_COORDINATOR_URL}`;
+  return fetchJson<IssuanceStartResponse>(`${url}/issuance/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      npub: input.npub,
+      quote_id: input.quoteId,
+      election_id: input.electionId,
+    }),
+  });
+}
+
+export async function awaitIssuanceStatus(input: {
+  requestId: string;
+  timeoutMs?: number;
+  httpApi?: string;
+}): Promise<IssuanceAwaitResponse> {
+  const url = input.httpApi || `${import.meta.env.VITE_COORDINATOR_URL}`;
+  const timeoutMs = input.timeoutMs ?? 30000;
+  return fetchJson<IssuanceAwaitResponse>(`${url}/issuance/${input.requestId}?timeout_ms=${timeoutMs}`, {
+    method: "GET",
+  });
 }
 
 export type FinalResultInfo = {

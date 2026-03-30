@@ -1,12 +1,13 @@
 import { useState, useEffect } from "react";
 import { finalizeEvent, generateSecretKey, getPublicKey, nip19, SimplePool } from "nostr-tools";
-import { publishBallotEvent, BALLOT_EVENT_KIND, DEFAULT_VOTE_RELAYS } from "./ballot";
+import { publishBallotEvent, BALLOT_EVENT_KIND, DEFAULT_VOTE_RELAYS, isBallotComplete } from "./ballot";
 import { loadStoredWalletBundle, storeBallotEventId } from "./cashuWallet";
 import { formatDateTime, getNostrEventVerificationUrl, decodeNsec } from "./nostrIdentity";
 import { submitProofViaDm, submitProofsToAllCoordinators, type DmPublishResult, type MultiCoordinatorDmResult } from "./proofSubmission";
 import type { CashuProof } from "./cashuBlind";
 import { fetchTally, checkVoteAccepted, type TallyInfo } from "./coordinatorApi";
 import MerkleTreeViz from "./MerkleTreeViz";
+import { DEMO_MODE } from "./config";
 
 type VotePublishResult = {
   eventId: string;
@@ -67,16 +68,19 @@ export default function VotingApp() {
     return status;
   }
 
+  async function refreshVoteAccepted(ballotEventId: string) {
+    setCheckingVote(true);
+    try {
+      const results = await checkVoteAccepted(ballotEventId, coordinatorNpubs, relays);
+      setVoteAccepted(results.length > 0 && results.every((r) => r.accepted));
+    } finally {
+      setCheckingVote(false);
+    }
+  }
+
   useEffect(() => {
     if (!storedBallotEventId || !coordinatorNpub) return;
-
-    setCheckingVote(true);
-    checkVoteAccepted(storedBallotEventId, coordinatorNpubs, relays)
-      .then((results) => {
-        setVoteAccepted(results.length > 0 && results.every((r) => r.accepted));
-      })
-      .catch(() => {})
-      .finally(() => setCheckingVote(false));
+    void refreshVoteAccepted(storedBallotEventId);
   }, [storedBallotEventId, coordinatorNpub]);
 
   const ballotVerificationUrl = publishResult && publishResult.successes > 0
@@ -93,12 +97,7 @@ export default function VotingApp() {
     electionId.trim() &&
     questions.length > 0 &&
     !voteAccepted &&
-    questions.every((q) => {
-      const a = answers[q.id];
-      if (a === undefined) return false;
-      if (q.type === "choice" && q.select === "multiple") return Array.isArray(a) && a.length > 0;
-      return true;
-    }) &&
+    isBallotComplete(answers, questions) &&
     !publishing
   );
 
@@ -129,12 +128,7 @@ export default function VotingApp() {
       return;
     }
 
-    if (questions.some((q) => {
-      const a = answers[q.id];
-      if (a === undefined) return true;
-      if (q.type === "choice" && q.select === "multiple") return !Array.isArray(a) || a.length === 0;
-      return false;
-    })) {
+    if (!isBallotComplete(answers, questions)) {
       const message = "Answer all ballot questions before submitting.";
       setError(message);
       window.alert(message);
@@ -157,6 +151,10 @@ export default function VotingApp() {
       setPublishResult(result);
       setStatus(`Ballot published for election ${electionId.trim()}.`);
 
+      if (DEMO_MODE) {
+        await submitProofAfterPublish(result);
+      }
+
       if (result.failures > 0) {
         const failedRelayMessage = result.relayResults
           .filter((rr) => !rr.success)
@@ -173,37 +171,44 @@ export default function VotingApp() {
     }
   }
 
-  async function submitProof() {
-    if (storedProofs.length === 0 || !publishResult) {
-      setError("Publish ballot and have a proof before submitting.");
-      return;
-    }
-
+  async function submitProofAfterPublish(currentPublishResult: VotePublishResult) {
     setSubmittingProof(true);
     setStatus(null);
     setError(null);
 
     try {
       const results = await submitProofsToAllCoordinators({
-        voterSecretKey: publishResult.ballotSecretKey,
-        voteEventId: publishResult.eventId,
+        voterSecretKey: currentPublishResult.ballotSecretKey,
+        voteEventId: currentPublishResult.eventId,
         coordinatorProofs: storedProofs.map((cp) => ({
           coordinatorNpub: cp.coordinatorNpub,
           proof: cp.proof as unknown as CashuProof,
         })),
-        relays
+        relays,
+        retries: DEMO_MODE ? 1 : 0,
       });
 
       setDmResult(results);
-      storeBallotEventId(publishResult.eventId);
+      storeBallotEventId(currentPublishResult.eventId);
       setVoteAccepted(false);
       const totalSuccesses = results.reduce((sum, r) => sum + r.result.successes, 0);
       setStatus(`Proof DM sent to ${results.length} coordinator(s). ${totalSuccesses} relay confirmation(s). Waiting for coordinator to process...`);
+      if (DEMO_MODE) {
+        await refreshVoteAccepted(currentPublishResult.eventId);
+      }
     } catch (dmError) {
       setError(dmError instanceof Error ? dmError.message : "Could not send proof DM");
     } finally {
       setSubmittingProof(false);
     }
+  }
+
+  async function submitProof() {
+    if (storedProofs.length === 0 || !publishResult) {
+      setError("Publish ballot and have a proof before submitting.");
+      return;
+    }
+    await submitProofAfterPublish(publishResult);
   }
 
   async function checkTally() {
@@ -454,7 +459,7 @@ export default function VotingApp() {
           <div className="panel-header">
             <div>
               <p className="panel-kicker">Step 3</p>
-              <h2>Submit proof to coordinator</h2>
+              <h2>{DEMO_MODE ? "Send your voting pass" : "Submit proof to coordinator"}</h2>
             </div>
             {dmResult && <span className="count-pill">Proof sent</span>}
           </div>
@@ -469,8 +474,13 @@ export default function VotingApp() {
               onClick={() => void submitProof()}
               disabled={!publishResult || !storedProof || submittingProof}
             >
-              {submittingProof ? "Sending..." : "Submit proof"}
+              {submittingProof ? "Sending..." : (DEMO_MODE ? "Send voting pass" : "Submit proof")}
             </button>
+            {DEMO_MODE && publishResult && (
+              <button className="ghost-button" onClick={() => void submitProof()} disabled={submittingProof}>
+                Retry send
+              </button>
+            )}
           </div>
 
           {dmResult && dmResult.length > 0 && (
@@ -484,7 +494,7 @@ export default function VotingApp() {
           <div className="panel-header">
             <div>
               <p className="panel-kicker">Step 4</p>
-              <h2>Check vote acceptance</h2>
+              <h2>{DEMO_MODE ? "See confirmation" : "Check vote acceptance"}</h2>
             </div>
           </div>
 
@@ -496,6 +506,11 @@ export default function VotingApp() {
             <button className="ghost-button" onClick={() => void checkTally()}>
               Check tally
             </button>
+            {DEMO_MODE && publishResult && (
+              <button className="ghost-button" onClick={() => void refreshVoteAccepted(publishResult.eventId)} disabled={checkingVote}>
+                {checkingVote ? "Checking..." : "Retry confirmation"}
+              </button>
+            )}
           </div>
 
           {tally && (

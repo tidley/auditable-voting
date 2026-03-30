@@ -9,6 +9,7 @@ import os
 import sys
 import time
 import datetime
+import uuid
 from datetime import timedelta
 from pathlib import Path
 
@@ -956,6 +957,15 @@ def make_http_handler(
     _vote_tree = vote_tree or VoteMerkleTree()
     _eligible_set = eligible_set or set()
     _nostr_client = nostr_client
+    issuance_requests: dict[str, dict] = {}
+
+    def _issuance_status_for(npub_raw: str, election_id: str) -> tuple[str, bool]:
+        npub_hex = normalize_npub(npub_raw)
+        if npub_hex not in _eligible_set:
+            return "ineligible", False
+        if npub_hex in event_store.get_issued_pubkeys(election_id):
+            return "issued", True
+        return "pending", False
 
     async def handle_info(request: web.Request) -> web.Response:
         election = event_store.get_election()
@@ -1213,6 +1223,82 @@ def make_http_handler(
             "levels": _vote_tree._tree._layers,
         })
 
+    async def handle_issuance_start(request: web.Request) -> web.Response:
+        election = event_store.get_election()
+        if not election:
+            return web.json_response({"error": "No election announced yet"}, status=404)
+
+        election_id = election.get("election_id") or election.get("election")
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+
+        npub = payload.get("npub", "")
+        quote_id = payload.get("quote_id", "")
+        requested_election = payload.get("election_id", election_id)
+
+        if requested_election and requested_election != election_id:
+            return web.json_response({"error": "Election mismatch", "status": "ineligible", "issued": False}, status=400)
+
+        status, issued = _issuance_status_for(npub, election_id)
+        if status == "ineligible":
+            return web.json_response({
+                "status": status,
+                "issued": issued,
+                "message": "Voter is not in the eligible set",
+            }, status=403)
+
+        if issued:
+            return web.json_response({
+                "request_id": "",
+                "status_url": "",
+                "status": "already_issued",
+                "issued": True,
+                "quote_state": "PAID",
+            })
+
+        request_id = uuid.uuid4().hex
+        issuance_requests[request_id] = {
+            "npub": npub,
+            "quote_id": quote_id,
+            "election_id": election_id,
+            "created_at": int(time.time() * 1000),
+        }
+
+        return web.json_response({
+            "request_id": request_id,
+            "status_url": f"/issuance/{request_id}",
+            "status": "pending",
+        })
+
+    async def handle_issuance_wait(request: web.Request) -> web.Response:
+        request_id = request.match_info.get("request_id", "")
+        if request_id not in issuance_requests:
+            return web.json_response({"error": "Unknown issuance request"}, status=404)
+
+        req = issuance_requests[request_id]
+        timeout_ms = int(request.query.get("timeout_ms", "30000"))
+        timeout_ms = max(1, min(timeout_ms, 60000))
+        deadline = time.time() + (timeout_ms / 1000)
+
+        while time.time() < deadline:
+            status, issued = _issuance_status_for(req["npub"], req["election_id"])
+            if status == "ineligible":
+                return web.json_response({"request_id": request_id, "status": status, "issued": False, "quote_state": "UNPAID"}, status=403)
+            if issued:
+                return web.json_response({"request_id": request_id, "status": "issued", "issued": True, "quote_state": "PAID"})
+            await asyncio.sleep(0.2)
+
+        return web.json_response({
+            "request_id": request_id,
+            "status": "timeout",
+            "issued": False,
+            "quote_state": "UNPAID",
+            "retry_after_ms": 1000,
+            "message": "Issuance still pending",
+        })
+
     router = web.RouteTableDef()
     router.get("/info")(handle_info)
     router.get("/election")(handle_election)
@@ -1222,6 +1308,8 @@ def make_http_handler(
     router.get("/result")(handle_result)
     router.get("/inclusion_proof")(handle_inclusion_proof)
     router.get("/issuance-status")(handle_issuance_status)
+    router.post("/issuance/start")(handle_issuance_start)
+    router.get("/issuance/{request_id}")(handle_issuance_wait)
     router.get("/vote_tree")(handle_vote_tree)
     return router
 

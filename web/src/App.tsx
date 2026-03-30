@@ -11,10 +11,10 @@ import {
   publishCashuClaim,
   signCashuClaimEvent
 } from "./nostrIdentity";
-import { fetchCoordinatorInfo, fetchElectionsFromNostr, fetchElection, discoverCoordinators, type CoordinatorInfo, type ElectionInfo, type ElectionQuestion, type ElectionSummary, type CoordinatorDiscovery } from "./coordinatorApi";
+import { fetchCoordinatorInfo, fetchElectionsFromNostr, fetchElection, discoverCoordinators, startIssuanceTracking, awaitIssuanceStatus, type CoordinatorInfo, type ElectionInfo, type ElectionQuestion, type ElectionSummary, type CoordinatorDiscovery } from "./coordinatorApi";
 import { checkQuoteStatus, createMintQuote, type MintQuoteResponse } from "./mintApi";
 import { requestQuoteAndMint, type CashuProof } from "./cashuBlind";
-import { MINT_URL, USE_MOCK } from "./config";
+import { DEMO_COPY, DEMO_MODE, MINT_URL, USE_MOCK } from "./config";
 import {
   createRawSigner,
   createNip07Signer,
@@ -347,74 +347,66 @@ export default function App() {
   }, [mintQuote, derivedNpub, nsecInput, coordinatorNpub, activeMintUrl, electionId, relays, activeNpub, signer, signerMode]);
 
   const pollQuoteAndMint = useCallback(async () => {
-    if (!mintQuote) return;
+    if (!mintQuote || !activeNpub) return;
 
     try {
-      const status = await checkQuoteStatus(mintQuote.quote);
-      setQuoteState(status.state);
-      console.log("[poll] quote", mintQuote.quote, "state:", status.state);
+      const started = await startIssuanceTracking({
+        npub: activeNpub,
+        quoteId: mintQuote.quote,
+        electionId,
+      });
 
-      if (status.state === "UNPAID") {
-        setStatus("Waiting for coordinator to approve quote...");
-        return;
+      if (started.status === "already_issued") {
+        setQuoteState("PAID");
+      } else {
+        const status = await awaitIssuanceStatus({ requestId: started.request_id, timeoutMs: 30000 });
+        if (status.status === "timeout") {
+          setStatus("Still waiting for coordinator approval. You can retry.");
+          setPollingQuote(false);
+          return;
+        }
+        setQuoteState(status.quote_state ?? "PAID");
       }
 
-      if (status.state === "PAID") {
-        setPollingQuote(false);
-        console.log("[poll] quote", mintQuote.quote, "approved, minting tokens...");
-        setStatus("Proof ready! Minting tokens...");
-        setMintingTokens(true);
+      setPollingQuote(false);
+      setStatus("Pass approved. Minting your voting pass...");
+      setMintingTokens(true);
+      const mintResult = await requestQuoteAndMint(MINT_URL.replace(/\/$/, ""), mintQuote.quote);
+      const proof = mintResult.proofs[0];
 
-        try {
-          const mintResult = await requestQuoteAndMint(MINT_URL.replace(/\/$/, ""), mintQuote.quote);
-          const proof = mintResult.proofs[0];
-
-          if (proof) {
-            console.log("[poll] proof received for quote", mintQuote.quote, "keyset:", proof.id);
-            setCurrentProof(proof);
-            const coordinatorProof: CoordinatorProof = {
-              coordinatorNpub,
-              mintUrl: activeMintUrl,
-              proof,
-              proofSecret: (proof as any).secret ?? ""
-            };
-            addCoordinatorProof(coordinatorProof);
-            setWalletBundle(loadStoredWalletBundle());
-            setStatus(`Cashu proof received.`);
-          } else {
-            setError("Mint returned no proofs.");
-          }
-        } catch (mintError) {
-          console.error("[poll] minting failed for quote", mintQuote.quote, mintError);
-          setError(mintError instanceof Error ? mintError.message : "Token minting failed");
-        } finally {
-          setMintingTokens(false);
-        }
+      if (proof) {
+        setCurrentProof(proof);
+        const coordinatorProof: CoordinatorProof = {
+          coordinatorNpub,
+          mintUrl: activeMintUrl,
+          proof,
+          proofSecret: (proof as any).secret ?? ""
+        };
+        addCoordinatorProof(coordinatorProof);
+        setWalletBundle(loadStoredWalletBundle());
+        setStatus(`Voting pass received.`);
+      } else {
+        setError("Mint returned no proofs.");
       }
     } catch (requestError) {
-      console.error("[poll] quote status check failed for quote", mintQuote.quote, requestError);
+      if (!DEMO_MODE && mintQuote) {
+        try {
+          const status = await checkQuoteStatus(mintQuote.quote);
+          setQuoteState(status.state);
+        } catch {
+          // ignore fallback failure
+        }
+      }
       setPollingQuote(false);
       setError(requestError instanceof Error ? requestError.message : "Quote status check failed");
+    } finally {
+      setMintingTokens(false);
     }
-  }, [mintQuote, activeMintUrl]);
+  }, [mintQuote, activeNpub, electionId, coordinatorNpub, activeMintUrl]);
 
   useEffect(() => {
     if (!pollingQuote || !mintQuote) return;
-
-    let cancelled = false;
-
     void pollQuoteAndMint();
-
-    const intervalId = window.setInterval(() => {
-      if (!cancelled) {
-        void pollQuoteAndMint();
-      }
-    }, USE_MOCK ? 2500 : 5000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-    };
   }, [pollingQuote, mintQuote, pollQuoteAndMint]);
 
   const startMultiCoordinatorIssuance = useCallback(async () => {
@@ -559,9 +551,11 @@ export default function App() {
           <img src="/images/logo.png" alt="" width={28} height={28} />
           <p className="eyebrow">Voter Portal</p>
         </div>
-        <h1 className="hero-title">Check your eligible npub and mint a Cashu voting proof.</h1>
+        <h1 className="hero-title">{DEMO_MODE ? "Verify eligibility and get your voting pass." : "Check your eligible npub and mint a Cashu voting proof."}</h1>
         <p className="hero-copy">
-          Enter an eligible `npub`, request a quote from the Mint API, sign that quote claim with your `nsec`, publish it to Nostr relays, then receive a proof into your local wallet.
+          {DEMO_MODE
+            ? "Follow the guided flow: verify, request approval, and receive your voting pass. Advanced protocol details are available below."
+            : "Enter an eligible `npub`, request a quote from the Mint API, sign that quote claim with your `nsec`, publish it to Nostr relays, then receive a proof into your local wallet."}
         </p>
 
         {discoveryLoading ? (
@@ -740,7 +734,7 @@ export default function App() {
           <div className="panel-header">
             <div>
               <p className="panel-kicker">Step 2</p>
-              <h2>Get your voter proof</h2>
+              <h2>{DEMO_MODE ? `Get your ${DEMO_COPY.pass}` : "Get your voter proof"}</h2>
             </div>
             {currentProof && <span className="count-pill">Proof received</span>}
             {quoteStateLabel && <span className="count-pill">{quoteStateLabel}</span>}
@@ -750,7 +744,7 @@ export default function App() {
             <div>
               <div className="substep-card">
                 <p className="code-label">Step 2.1</p>
-                <h3 className="substep-title">Request quote from Mint</h3>
+                <h3 className="substep-title">{DEMO_MODE ? "Request approval" : "Request quote from Mint"}</h3>
                 <p className="field-hint substep-copy">
                   {discoveredCoordinators.length > 1
                     ? `Once eligible, request a proof from each of the ${discoveredCoordinators.length} coordinators.`
@@ -758,7 +752,7 @@ export default function App() {
                 </p>
                 <div className="button-row button-row-tight">
                   <button className="secondary-button" onClick={() => void requestQuote()} disabled={!canRequestQuote || multiIssuanceRunning}>
-                    {requestingQuote ? "Requesting..." : "Request quote (single)"}
+                    {requestingQuote ? "Requesting..." : (DEMO_MODE ? "Request voting pass" : "Request quote (single)")}
                   </button>
                   {discoveredCoordinators.length > 1 && (
                     <button className="primary-button" onClick={() => void startMultiCoordinatorIssuance()} disabled={!canRequestQuote || multiIssuanceRunning}>
@@ -803,7 +797,7 @@ export default function App() {
                     (signerMode === "nip07" && !signer)
                   }
                 >
-                  {publishingClaim ? "Publishing..." : "Sign and publish claim"}
+                  {publishingClaim ? "Publishing..." : (DEMO_MODE ? "Confirm request" : "Sign and publish claim")}
                 </button>
               </div>
 

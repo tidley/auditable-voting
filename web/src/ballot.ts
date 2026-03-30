@@ -17,6 +17,20 @@ export type BallotResponse = {
   values?: string[];
 };
 
+export function isBallotComplete(
+  answers: Record<string, string | string[] | number>,
+  questions: ElectionQuestion[]
+): boolean {
+  return questions.every((q) => {
+    const a = answers[q.id];
+    if (a === undefined) return false;
+    if (q.type === "choice" && q.select === "multiple") {
+      return Array.isArray(a) && a.length > 0;
+    }
+    return true;
+  });
+}
+
 function formatAnswersAsResponses(
   answers: Record<string, string | string[] | number>,
   questions: ElectionQuestion[]

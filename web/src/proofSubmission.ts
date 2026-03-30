@@ -82,29 +82,42 @@ export async function submitProofsToAllCoordinators(input: {
   voteEventId: string;
   coordinatorProofs: CoordinatorProofPair[];
   relays: string[];
+  retries?: number;
 }): Promise<MultiCoordinatorDmResult[]> {
   const results: MultiCoordinatorDmResult[] = [];
 
+  const retries = Math.max(0, input.retries ?? 0);
+
   for (const cp of input.coordinatorProofs) {
-    try {
-      const result = await submitProofViaDm({
-        voterSecretKey: input.voterSecretKey,
-        coordinatorNpub: cp.coordinatorNpub,
-        voteEventId: input.voteEventId,
-        proof: cp.proof,
-        relays: input.relays,
-      });
-      results.push({ coordinatorNpub: cp.coordinatorNpub, result });
-    } catch (error) {
-      results.push({
-        coordinatorNpub: cp.coordinatorNpub,
-        result: {
-          eventId: "",
-          successes: 0,
-          failures: 1,
-          relayResults: [],
-        },
-      });
+    let attempt = 0;
+    let completed = false;
+    while (!completed) {
+      try {
+        const result = await submitProofViaDm({
+          voterSecretKey: input.voterSecretKey,
+          coordinatorNpub: cp.coordinatorNpub,
+          voteEventId: input.voteEventId,
+          proof: cp.proof,
+          relays: input.relays,
+        });
+        results.push({ coordinatorNpub: cp.coordinatorNpub, result });
+        completed = true;
+      } catch (error) {
+        if (attempt < retries) {
+          attempt += 1;
+          continue;
+        }
+        results.push({
+          coordinatorNpub: cp.coordinatorNpub,
+          result: {
+            eventId: "",
+            successes: 0,
+            failures: 1,
+            relayResults: [],
+          },
+        });
+        completed = true;
+      }
     }
   }
 
