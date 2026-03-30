@@ -84,6 +84,7 @@ async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
 const MOCK_COORDINATOR_NPUB = "npub1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const MOCK_RELAYS = ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net"];
 const MOCK_ELECTION_ID = "spring-2026-council";
+const MOCK_ELECTION_EVENT_ID = "a".repeat(64);
 const MOCK_ELECTION_QUESTIONS: ElectionQuestion[] = [
   {
     id: "funding_priority",
@@ -121,7 +122,7 @@ export async function fetchElection(httpApi?: string): Promise<ElectionInfo | nu
     const now = Math.floor(Date.now() / 1000);
     return {
       election_id: MOCK_ELECTION_ID,
-      event_id: "mock-election-event",
+      event_id: MOCK_ELECTION_EVENT_ID,
       title: "Mock election",
       description: "Local demo election used for copy-paste testing.",
       questions: MOCK_ELECTION_QUESTIONS,

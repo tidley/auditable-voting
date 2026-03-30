@@ -3,6 +3,11 @@ import { nip19 } from "nostr-tools";
 import type { RelayPublishResult } from "./cashuMintApi";
 import type { CashuProof } from "./cashuBlind";
 
+export const DEFAULT_DM_RELAYS = [
+  "wss://nip17.com",
+  "wss://nip17.tomdwyer.uk",
+];
+
 export type DmPublishResult = {
   eventId: string;
   successes: number;
@@ -35,11 +40,18 @@ export async function submitProofViaDm(input: {
     proof,
   });
 
+  const dmRelays = Array.from(
+    new Set([
+      ...DEFAULT_DM_RELAYS,
+      ...relays,
+    ].filter((relay) => relay.trim().length > 0))
+  );
+
   const event = nip17.wrapEvent(
     voterSecretKey,
     {
       publicKey: coordinatorHexPubkey,
-      relayUrl: relays[0],
+      relayUrl: dmRelays[0],
     },
     dmContent,
     "Proof submission",
@@ -51,12 +63,12 @@ export async function submitProofViaDm(input: {
   const pool = new SimplePool();
 
   try {
-    const results = await Promise.allSettled(pool.publish(relays, event, { maxWait: 4000 }));
+    const results = await Promise.allSettled(pool.publish(dmRelays, event, { maxWait: 4000 }));
     const relayResults: RelayPublishResult[] = results.map((result, index) => (
       result.status === "fulfilled"
-        ? { relay: relays[index], success: true }
+        ? { relay: dmRelays[index], success: true }
         : {
-            relay: relays[index],
+            relay: dmRelays[index],
             success: false,
             error: result.reason instanceof Error ? result.reason.message : String(result.reason)
           }

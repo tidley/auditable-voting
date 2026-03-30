@@ -37,7 +37,7 @@ const mockCoordinator2 = {
 
 const mockElection = {
   election_id: "mock-election-id",
-  event_id: "mock-election-event",
+  event_id: "a".repeat(64),
   title: "Mock election",
   description: "Local demo election",
   questions: [
@@ -388,9 +388,8 @@ describe("full voting demo flow", () => {
     const { default: DashboardApp } = await import("./DashboardApp");
 
     const demo = render(<DemoApp />);
-    expect(await screen.findByText(/Voting control room/i)).toBeTruthy();
-    expect(screen.getAllByText(testIdentity.npub).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(testIdentity.nsec).length).toBeGreaterThan(0);
+    expect(await screen.findByText(/AUDITABLE-VOTING/i)).toBeTruthy();
+    expect(screen.getByDisplayValue(testIdentity.nsec)).toBeTruthy();
     expect(screen.getByRole("button", { name: /Check eligibility/i })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: /Run full demo/i }));
     await waitFor(() => expect(screen.getByText(/Demo complete\. Every step on this page has run in order\./i)).toBeTruthy(), { timeout: 5000 });

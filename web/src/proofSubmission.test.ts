@@ -30,7 +30,7 @@ describe("proofSubmission", () => {
     });
 
     expect(wrapEvent).toHaveBeenCalled();
-    expect(result.successes).toBe(1);
+    expect(result.successes).toBe(3);
     expect(result.failures).toBe(0);
   });
 

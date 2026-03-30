@@ -68,14 +68,14 @@ describe("DemoApp", () => {
     const { default: DemoApp } = await import("./DemoApp");
     render(<DemoApp />);
 
-    expect(await screen.findByText(/Simple, flat status view for coordinators, voters, and verifiers\./i)).toBeTruthy();
-    expect(screen.getByLabelText(/^nsec$/i)).toBeTruthy();
+    expect(await screen.findByText(/AUDITABLE-VOTING/i)).toBeTruthy();
+    expect(screen.getByDisplayValue("nsec1demo")).toBeTruthy();
     expect(screen.getByRole("button", { name: /Check eligibility/i })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Mint proof/i })).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: /Mint proof/i }).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: /Run full demo/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Run audit/i })).toBeTruthy();
     expect(screen.getByRole("link", { name: /Paste here/i })).toBeTruthy();
-    expect(screen.getByText(/Live timeline/i)).toBeTruthy();
+    expect(screen.getByText(/Live protocol log/i)).toBeTruthy();
     expect(screen.getAllByText(/Auditors can reconstruct the spent commitment tree from those receipts\./i).length).toBeGreaterThan(0);
   });
 });
