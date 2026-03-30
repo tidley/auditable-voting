@@ -3,6 +3,7 @@ import { fetchEligibility, resetEligibility, type EligibilityResponse } from "./
 import { SimplePool } from "nostr-tools";
 import { fetchCoordinatorInfo, fetchElectionsFromNostr, fetchTally, fetchElection, fetchIssuanceStatus, discoverCoordinators, fetchPerCoordinatorTallies, runAudit, type TallyInfo, type ElectionInfo, type ElectionQuestion, type ElectionSummary, type IssuanceStatusResponse, type CoordinatorDiscovery, type AuditResult, type PerCoordinatorTally } from "./coordinatorApi";
 import { USE_MOCK } from "./config";
+import PageNav from "./PageNav";
 
 const EMPTY_ELIGIBILITY: EligibilityResponse = {
   eligibleNpubs: [],
@@ -45,6 +46,15 @@ function ProgressBar({ value, max, label }: { value: number; max: number; label:
 }
 
 export default function DashboardApp() {
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+
+    document.body.classList.add("app-page");
+    return () => {
+      document.body.classList.remove("app-page");
+    };
+  }, []);
+
   const [eligibility, setEligibility] = useState<EligibilityResponse>(EMPTY_ELIGIBILITY);
   const [tally, setTally] = useState<TallyInfo | null>(null);
   const [election, setElection] = useState<ElectionInfo | null>(null);
@@ -232,11 +242,15 @@ export default function DashboardApp() {
           <img src="/images/logo.png" alt="" width={28} height={28} />
           <p className="eyebrow">Backend Dashboard</p>
         </div>
+        <PageNav current="dashboard" />
         <h1 className="hero-title hero-title-dashboard">Monitor the election.</h1>
         <p className="hero-copy">
           {USE_MOCK
             ? "This page shows eligible npubs from the local voter config."
             : "Election data from the coordinator and Nostr relays."}
+        </p>
+        <p className="field-hint hero-hint">
+          Use the home page to seed a voter and the voting page to submit the ballot. This view is for eligibility, issuance, and audit status.
         </p>
         {allElections.length > 1 && (
           <div style={{ marginTop: 12 }}>

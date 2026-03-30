@@ -8,6 +8,7 @@ import type { CashuProof } from "./cashuBlind";
 import { fetchTally, checkVoteAccepted, type TallyInfo } from "./coordinatorApi";
 import MerkleTreeViz from "./MerkleTreeViz";
 import { DEMO_MODE } from "./config";
+import PageNav from "./PageNav";
 
 type VotePublishResult = {
   eventId: string;
@@ -33,6 +34,15 @@ type VotePublishResult = {
 };
 
 export default function VotingApp() {
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+
+    document.body.classList.add("app-page");
+    return () => {
+      document.body.classList.remove("app-page");
+    };
+  }, []);
+
   const [walletBundle] = useState(() => loadStoredWalletBundle());
   const [answers, setAnswers] = useState<Record<string, string | string[] | number>>({});
   const [status, setStatus] = useState<string | null>(null);
@@ -298,9 +308,13 @@ export default function VotingApp() {
           <img src="/images/logo.png" alt="" width={28} height={28} />
           <p className="eyebrow">Voting Page</p>
         </div>
+        <PageNav current="vote" />
         <h1 className="hero-title">Cast your ballot with a proof-backed Nostr event.</h1>
         <p className="hero-copy">
-          Use your stored voting proof, answer the election questions, publish a ballot event, then submit your proof to the coordinator.
+          Use the stored proof from the home page, answer the election questions, publish a ballot event, then submit your proof to the coordinator.
+        </p>
+        <p className="field-hint hero-hint">
+          If you have not pasted your nsec and minted a proof yet, go back to the home page first.
         </p>
         <p className="field-hint hero-hint"><img className="inline-icon" src="/images/nostr/relayflasks.png" alt="" width={18} height={18} />Relays: {relays.join(", ")}</p>
         <div className="button-row">

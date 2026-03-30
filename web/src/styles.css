@@ -1208,6 +1208,167 @@ body.demo-page .panel::after {
   display: none;
 }
 
+body.app-page {
+  color-scheme: dark;
+  background: #0f1115;
+  color: #e8ebf0;
+  font-family: "Inter", "Avenir Next", "Segoe UI", Arial, sans-serif;
+}
+
+body.app-page #root {
+  background: #0f1115;
+}
+
+body.app-page .page-shell {
+  width: min(1440px, calc(100% - 32px));
+  padding: 22px 0 40px;
+}
+
+body.demo-page .page-nav,
+body.app-page .page-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 4px;
+}
+
+body.demo-page .page-nav-link,
+body.app-page .page-nav-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  text-decoration: none;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  border: 1px solid #2a303a;
+  background: #13161d;
+  color: #e8ebf0;
+}
+
+body.demo-page .page-nav-link.is-active,
+body.app-page .page-nav-link.is-active {
+  background: #7cb8ff;
+  border-color: #7cb8ff;
+  color: #0f1115;
+}
+
+body.app-page .hero-card,
+body.app-page .panel,
+body.app-page .challenge-card,
+body.app-page .derived-box,
+body.app-page .substep-card,
+body.app-page .question-card,
+body.app-page .result-grid,
+body.app-page .warning-box,
+body.app-page .notice,
+body.app-page .select-input,
+body.app-page .mint-input,
+body.app-page .text-area,
+body.app-page .inline-code-badge,
+body.app-page .count-pill,
+body.app-page .status-chip,
+body.app-page .signer-mode-option,
+body.app-page .signer-status,
+body.app-page .demo-banner,
+body.app-page .demo-card,
+body.app-page .demo-header,
+body.app-page .demo-metric,
+body.app-page .copy-field {
+  border: 1px solid #2a303a;
+  background: #171b22;
+  box-shadow: none;
+  border-radius: 12px;
+}
+
+body.app-page .hero-card::after,
+body.app-page .panel::after {
+  display: none;
+}
+
+body.app-page .hero-card h1,
+body.app-page .panel h2,
+body.app-page .substep-title,
+body.app-page .question-title {
+  font-family: "Inter", "Avenir Next", "Segoe UI", Arial, sans-serif;
+}
+
+body.app-page .hero-copy,
+body.app-page .field-hint,
+body.app-page .empty-copy,
+body.app-page .demo-note,
+body.app-page .demo-banner,
+body.app-page .copy-field-label,
+body.app-page .code-label,
+body.app-page .demo-kv span {
+  color: #98a2b3;
+}
+
+body.app-page .secondary-button,
+body.app-page .ghost-button,
+body.app-page .copy-field-button,
+body.app-page .signer-mode-option {
+  background: #13161d;
+  color: #e8ebf0;
+  border: 1px solid #2a303a;
+}
+
+body.app-page .primary-button {
+  background: #7cb8ff;
+  color: #0f1115;
+  border: 1px solid #7cb8ff;
+}
+
+body.app-page .link-button {
+  text-decoration: none;
+}
+
+body.app-page .inline-code-badge,
+body.app-page .code-block,
+body.app-page .copy-field-value {
+  background: #0f1115;
+  color: #e8ebf0;
+}
+
+body.app-page .hero-card,
+body.app-page .panel {
+  padding: 16px;
+}
+
+body.app-page .panel {
+  padding: 20px;
+}
+
+body.app-page .signer-mode-selector,
+body.app-page .button-row {
+  margin-top: 12px;
+}
+
+body.app-page .signer-status {
+  background: rgba(85, 192, 124, 0.12);
+  color: #55c07c;
+}
+
+body.app-page .validation-ok {
+  color: #55c07c;
+}
+
+body.app-page .validation-warn {
+  color: #7cb8ff;
+}
+
+body.app-page .notice-success {
+  background: rgba(85, 192, 124, 0.12);
+  color: #55c07c;
+}
+
+body.app-page .notice-error {
+  background: rgba(217, 106, 97, 0.12);
+  color: #ffb4ad;
+}
+
 @media (max-width: 1100px) {
   body.demo-page .demo-grid-2,
   body.demo-page .demo-grid-3,
@@ -1231,4 +1392,14 @@ body.demo-page .panel::after {
   body.demo-page .demo-list-item code {
     max-width: 100%;
   }
+}
+
+body.app-page .page-nav-link,
+body.demo-page .page-nav-link {
+  font-size: 0.92rem;
+}
+
+body.app-page .hero-hint,
+body.demo-page .hero-hint {
+  margin-top: 10px;
 }

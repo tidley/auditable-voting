@@ -15,6 +15,7 @@ import { fetchCoordinatorInfo, fetchElectionsFromNostr, fetchElection, discoverC
 import { checkQuoteStatus, createMintQuote, type MintQuoteResponse } from "./mintApi";
 import { requestQuoteAndMint, type CashuProof } from "./cashuBlind";
 import { DEMO_COPY, DEMO_MODE, MINT_URL, USE_MOCK } from "./config";
+import PageNav from "./PageNav";
 import {
   createRawSigner,
   createNip07Signer,
@@ -51,6 +52,7 @@ export default function App() {
   const [mintingTokens, setMintingTokens] = useState(false);
   const [signerMode, setSignerMode] = useState<SignerMode>("raw");
   const [signer, setSigner] = useState<NostrSigner | null>(null);
+  const [nip07Available, setNip07Available] = useState(false);
   const [nip07Pubkey, setNip07Pubkey] = useState<string | null>(null);
   const [nip07Scanning, setNip07Scanning] = useState(false);
   const [allElections, setAllElections] = useState<ElectionSummary[]>([]);
@@ -72,6 +74,15 @@ export default function App() {
   const questions: ElectionQuestion[] = electionInfo?.questions ?? [];
 
   const activeMintUrl = useMemo(() => mintUrl.replace(/\/$/, ""), [mintUrl]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+
+    document.body.classList.add("app-page");
+    return () => {
+      document.body.classList.remove("app-page");
+    };
+  }, []);
 
   async function handleElectionSelect(electionId: string) {
     if (electionId === electionInfo?.election_id) return;
@@ -160,15 +171,15 @@ export default function App() {
   useEffect(() => {
     const stop = startSignerDetection((result) => {
       if (result.mode === "nip07" && result.signer) {
-        setSignerMode("nip07");
         setSigner(result.signer);
+        setNip07Available(true);
         setNip07Scanning(false);
         result.signer.getNpub().then((npub) => setNip07Pubkey(npub)).catch(() => {});
       }
     });
-    setNip07Scanning(signerMode === "nip07" && !nip07Pubkey);
+    setNip07Scanning(signerMode === "nip07" && !nip07Pubkey && !nip07Available);
     return () => { stop(); setNip07Scanning(false); };
-  }, []);
+  }, [nip07Available, nip07Pubkey, signerMode]);
 
   useEffect(() => {
     resetEligibilityFlow();
@@ -564,11 +575,17 @@ export default function App() {
           <img src="/images/logo.png" alt="" width={28} height={28} />
           <p className="eyebrow">Voter Portal</p>
         </div>
+        <PageNav current="vote" />
         <h1 className="hero-title">{DEMO_MODE ? "Verify eligibility and get your voting pass." : "Check your eligible npub and mint a Cashu voting proof."}</h1>
         <p className="hero-copy">
           {DEMO_MODE
-            ? "Follow the guided flow: verify, request approval, and receive your voting pass. Advanced protocol details are available below."
+            ? "Follow the guided flow: choose a signer, paste your nsec if you want a raw keypair, verify eligibility, request approval, and receive your voting pass."
             : "Enter an eligible `npub`, request a quote from the Mint API, sign that quote claim with your `nsec`, publish it to Nostr relays, then receive a proof into your local wallet."}
+        </p>
+        <p className="field-hint hero-hint">
+          {nip07Available
+            ? "Browser extension detected. You can use it, or keep the raw nsec path visible below."
+            : "Paste a raw nsec below, or use the browser extension if you prefer."}
         </p>
 
         {discoveryLoading ? (
@@ -655,14 +672,13 @@ export default function App() {
             >
               Browser Extension
             </button>
-            <button
-              type="button"
-              className={`signer-mode-option${signerMode === "raw" ? " active" : ""}`}
-              onClick={() => {
-                setSignerMode("raw");
-                setSigner(null);
-              }}
-            >
+              <button
+                type="button"
+                className={`signer-mode-option${signerMode === "raw" ? " active" : ""}`}
+                onClick={() => {
+                  setSignerMode("raw");
+                }}
+              >
               Paste nsec
             </button>
           </div>

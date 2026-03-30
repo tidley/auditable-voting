@@ -27,6 +27,7 @@ import { DEMO_MODE, USE_MOCK } from "./config";
 import { formatDateTime } from "./nostrIdentity";
 import { createDemoIdentity, type DemoIdentity } from "./demoIdentity";
 import { fetchCoordinatorInfo } from "./coordinatorApi";
+import PageNav from "./PageNav";
 
 type StepState = {
   title: string;
@@ -294,6 +295,7 @@ export default function DemoApp() {
             Simple, flat status view for coordinators, voters, and verifiers.
           </p>
         </div>
+        <PageNav current="home" />
         <div className="demo-header-meta">
           <div className="demo-meta-row">
             <span>Mode</span>
