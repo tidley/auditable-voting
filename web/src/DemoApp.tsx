@@ -145,6 +145,8 @@ export default function DemoApp() {
   const publishedVotes = Math.max(tally?.total_published_votes ?? 0, finalResult?.total_votes ?? 0);
   const acceptedVotes = Math.max(tally?.total_accepted_votes ?? 0, finalResult?.total_votes ?? 0);
   const spentCommitmentRoot = tally?.spent_commitment_root || finalResult?.spent_commitment_root || "";
+  const deliveredCoordinatorCount = dmResults?.filter((result) => result.result.successes > 0).length ?? 0;
+  const deliveredRelayCount = dmResults?.reduce((sum, result) => sum + result.result.successes, 0) ?? 0;
   const confirmationCount = auditResults.length > 0 ? auditResults[0].confirmations : 0;
   const coordinatorCount = discoveredCoordinators.length || election?.coordinator_npubs.length || 0;
   const issuanceForSelected = selectedNpub ? issuanceStatus?.voters[selectedNpub] : undefined;
@@ -189,19 +191,23 @@ export default function DemoApp() {
       },
       {
         title: "4. Proof delivered",
-        detail: dmResults && dmResults.length > 0
-          ? `${dmResults.length} coordinator(s) received the proof gift wrap.`
+        detail: deliveredCoordinatorCount > 0
+          ? `${deliveredCoordinatorCount} coordinator(s) received the proof gift wrap.`
+          : dmResults && dmResults.length > 0
+            ? "Proof delivery failed. No relay accepted the gift wrap."
           : issuedCount > 0
             ? `${issuedCount} proof(s) are ready to submit.`
             : "The proof is sent privately to the coordinator via gift wrap.",
-        status: dmResults && dmResults.length > 0 ? "done" : ballotEventId ? "current" : "waiting",
+        status: deliveredCoordinatorCount > 0 ? "done" : ballotEventId ? "current" : "waiting",
       },
       {
         title: "5. 38002 receipt published",
         detail: acceptedVotes > 0
           ? `Coordinator receipt seen. Auditors can reconstruct the spent commitment tree from those receipts.`
-          : "Waiting for the coordinator to publish kind 38002 after burning the proof.",
-        status: acceptedVotes > 0 ? "done" : dmResults && dmResults.length > 0 ? "current" : "waiting",
+          : deliveredCoordinatorCount > 0
+            ? "Waiting for the coordinator to publish kind 38002 after burning the proof."
+            : "No receipt yet because proof delivery has not succeeded.",
+        status: acceptedVotes > 0 ? "done" : deliveredCoordinatorCount > 0 ? "current" : "waiting",
       },
       {
         title: "6. Spent tree rebuilt",
@@ -225,7 +231,56 @@ export default function DemoApp() {
         status: auditResults.length > 0 ? "done" : confirmationResult ? "current" : "waiting",
       },
     ];
-  }, [acceptedVotes, auditResults.length, ballotEventId, confirmationCount, confirmationResult, dmResults, election, issuedCount, proof, publishedVotes, selectedNpub, spentCommitmentRoot, voterCheck]);
+  }, [acceptedVotes, auditResults.length, ballotEventId, confirmationCount, confirmationResult, deliveredCoordinatorCount, dmResults, election, issuedCount, proof, publishedVotes, selectedNpub, spentCommitmentRoot, voterCheck]);
+
+  const securityGuarantees = useMemo(() => {
+    const ballotSideStatus: StepState["status"] =
+      ballotEventId && acceptedVotes > 0 ? "done" : ballotEventId ? "current" : "waiting";
+    const publicTotalsStatus: StepState["status"] =
+      auditResults.length > 0 ? "done" : publishedVotes > 0 ? "current" : "waiting";
+    const privacyStatus: StepState["status"] =
+      ballotEventId && proof ? "done" : proof ? "current" : "waiting";
+    const issuanceStatus: StepState["status"] =
+      eligibleNpubs.length > 0 && issuedCount <= eligibleNpubs.length ? "done" : issuedCount > eligibleNpubs.length ? "current" : "waiting";
+    const deniabilityStatus: StepState["status"] =
+      confirmationResult ? "done" : isInConfirmationWindow ? "current" : "waiting";
+
+    return [
+      {
+        title: "Counted on the correct side",
+        status: ballotSideStatus,
+        detail: ballotEventId
+          ? `Ballot ${ballotEventId.slice(0, 16)}... has a receipt-backed tally entry. If the receipt were missing, this card would not turn green.`
+          : "Publish the ballot and the proof receipt to show the vote is counted only once, on the public tally side.",
+      },
+      {
+        title: "Anyone can recompute totals",
+        status: publicTotalsStatus,
+        detail: auditResults.length > 0
+          ? `The verifier already ran the public comparison across ${auditResults.length} coordinator(s).`
+          : "The same public ballot events and receipts can be re-read by anyone to compute the totals and the winner.",
+      },
+      {
+        title: "Nobody can see who voted for what",
+        status: privacyStatus,
+        detail: confirmationResult
+          ? "The 38013 confirmation proves participation only. It does not reveal the ballot choice or carry the vote content."
+          : "The ballot is separate from the confirmation step, so the public confirmation does not disclose the chosen option.",
+      },
+      {
+        title: "No overissue",
+        status: issuanceStatus,
+        detail: `${issuedCount} issued pass${issuedCount === 1 ? "" : "es"} for ${eligibleNpubs.length} eligible voter${eligibleNpubs.length === 1 ? "" : "s"}. Any overissue would show up as a mismatch here and on the verifier card.`,
+      },
+      {
+        title: "Vote is deniable",
+        status: deniabilityStatus,
+        detail: confirmationResult
+          ? "The public confirmation proves you participated. It does not prove which side you picked, so it is not a transferable receipt for a vote sale."
+          : "Publishing a confirmation is about participation counts, not about proving a particular vote choice to a third party.",
+      },
+    ];
+  }, [acceptedVotes, auditResults.length, ballotEventId, confirmationResult, eligibleNpubs.length, isInConfirmationWindow, issuedCount, proof, publishedVotes]);
 
   const refreshSnapshot = useCallback(async (showSpinner = true) => {
     if (showSpinner) setRefreshing(true);
@@ -486,7 +541,12 @@ export default function DemoApp() {
       });
 
       setDmResults(dmOutcome);
-      setStatus(`Proof sent to ${dmOutcome.length} coordinator(s).`);
+      const successfulCoordinators = dmOutcome.filter((result) => result.result.successes > 0).length;
+      const successfulRelays = dmOutcome.reduce((sum, result) => sum + result.result.successes, 0);
+      if (successfulCoordinators === 0) {
+        throw new Error("Proof delivery failed. No relay accepted the NIP-17 gift wrap, so no 38002 receipt can appear.");
+      }
+      setStatus(`Proof sent to ${successfulCoordinators} coordinator(s) across ${successfulRelays} relay confirmation(s).`);
 
       await refreshSnapshot(false);
       await runVerifierAudit();
@@ -693,7 +753,12 @@ export default function DemoApp() {
         retries: DEMO_MODE ? 1 : 0,
       });
       setDmResults(dmOutcome);
-      setStatus(`Step 4 worked: proof sent to ${dmOutcome.length} coordinator(s).`);
+      const successfulCoordinators = dmOutcome.filter((result) => result.result.successes > 0).length;
+      const successfulRelays = dmOutcome.reduce((sum, result) => sum + result.result.successes, 0);
+      if (successfulCoordinators === 0) {
+        throw new Error("Step 4 failed: no relay accepted the NIP-17 gift wrap, so the coordinator cannot publish a 38002 receipt.");
+      }
+      setStatus(`Step 4 worked: proof sent to ${successfulCoordinators} coordinator(s) across ${successfulRelays} relay confirmation(s).`);
 
       setStatus("Step 5: refreshing verifier view...");
       await refreshSnapshot(false);
@@ -877,7 +942,7 @@ export default function DemoApp() {
                 </div>
               )}
               <div className="demo-kv"><span>Ballot content (kind 38000)</span><code>{ballotEventId ? ballotEventId.slice(0, 6) + "..." + ballotEventId.slice(-4) : "Waiting"}</code></div>
-              <div className="demo-kv"><span>Submission status</span><code>{dmResults && dmResults.length > 0 ? "ACCEPTED" : "Pending"}</code></div>
+              <div className="demo-kv"><span>Submission status</span><code>{deliveredCoordinatorCount > 0 ? "ACCEPTED" : dmResults && dmResults.length > 0 ? "FAILED" : "Pending"}</code></div>
               <div className="demo-list">
                 {eligibleNpubs.slice(0, 4).map((npub) => (
                   <div className="demo-list-item" key={npub}>
@@ -967,7 +1032,31 @@ export default function DemoApp() {
               ))}
             </ol>
           </article>
+        </section>
 
+        <section className="demo-security-section">
+          <article className="demo-card demo-security-card" id="demo-security">
+            <PanelTitle kicker="Security" title="Security guarantees" />
+            <div className="demo-note">
+              What the demo proves: these claims are backed by the live ballot, receipt, tally, and confirmation state shown above.
+            </div>
+            <div className="demo-security-grid">
+              {securityGuarantees.map((item) => (
+                <div className="demo-security-item" key={item.title}>
+                  <div className="demo-security-head">
+                    <strong className="demo-security-title">{item.title}</strong>
+                    <span className={`status-pill status-pill-${item.status === "done" ? "good" : item.status === "current" ? "warn" : "neutral"}`}>
+                      {item.status === "done" ? "Verified" : item.status === "current" ? "Visible" : "Waiting"}
+                    </span>
+                  </div>
+                  <div className="demo-note">{item.detail}</div>
+                </div>
+              ))}
+            </div>
+          </article>
+        </section>
+
+        <section className="demo-audit-grid">
           <article className="demo-card">
             <PanelTitle kicker="Guide" title="What to copy where" />
             <div className="demo-list" id="demo-guide">

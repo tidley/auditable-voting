@@ -1826,6 +1826,41 @@ body.demo-page .demo-audit-grid {
   grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 1fr);
 }
 
+body.demo-page .demo-security-section {
+  margin-top: 20px;
+}
+
+body.demo-page .demo-security-card {
+  padding: 18px;
+}
+
+body.demo-page .demo-security-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+body.demo-page .demo-security-item {
+  padding: 14px;
+  border: 1px solid #232625;
+  background: #0f1010;
+}
+
+body.demo-page .demo-security-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+body.demo-page .demo-security-title {
+  color: #eef2ef;
+  font-size: 0.98rem;
+  line-height: 1.3;
+}
+
 body.demo-page .demo-card {
   padding: 18px;
 }
@@ -1972,6 +2007,7 @@ body.demo-page .demo-workspace {
 
   body.demo-page .demo-console-grid,
   body.demo-page .demo-audit-grid,
+  body.demo-page .demo-security-grid,
   body.demo-page .demo-stat-grid-ops {
     grid-template-columns: 1fr;
   }

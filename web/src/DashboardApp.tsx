@@ -348,6 +348,7 @@ export default function DashboardApp() {
             <p className="panel-kicker">Election status</p>
             <h2>{tallyStatusLabel}</h2>
             <p className="field-hint">{tally.spent_commitment_root ? `Root: ${tally.spent_commitment_root.slice(0, 16)}...` : "No commitment root yet"}</p>
+            <p className="field-hint">Anyone can recompute the totals from the public ballots and receipt-backed roots.</p>
           </article>
         )}
 

@@ -106,6 +106,8 @@ export default function VotingApp() {
   const coordinatorNpub = coordinatorNpubs[0] ?? "";
   const relays = (walletBundle?.relays?.length ?? 0) > 0 ? walletBundle!.relays : DEFAULT_VOTE_RELAYS;
   const storedBallotEventId = walletBundle?.ballotEventId ?? "";
+  const deliveredCoordinatorCount = dmResult?.filter((result) => result.result.successes > 0).length ?? 0;
+  const deliveredRelayCount = dmResult?.reduce((sum, result) => sum + result.result.successes, 0) ?? 0;
   const voteEnd = election?.vote_end ?? 0;
   const confirmEnd = election?.confirm_end ?? 0;
   const now = Math.floor(Date.now() / 1000);
@@ -259,8 +261,12 @@ export default function VotingApp() {
       setDmResult(results);
       storeBallotEventId(currentPublishResult.eventId);
       setVoteAccepted(false);
+      const successfulCoordinators = results.filter((result) => result.result.successes > 0).length;
       const totalSuccesses = results.reduce((sum, r) => sum + r.result.successes, 0);
-      setStatus(`Proof DM sent to ${results.length} coordinator(s). ${totalSuccesses} relay confirmation(s). Waiting for coordinator to process...`);
+      if (successfulCoordinators === 0) {
+        throw new Error("Proof delivery failed. No relay accepted the NIP-17 gift wrap.");
+      }
+      setStatus(`Proof DM sent to ${successfulCoordinators} coordinator(s). ${totalSuccesses} relay confirmation(s). Waiting for coordinator to process...`);
       if (DEMO_MODE) {
         await refreshVoteAccepted(currentPublishResult.eventId);
       }
@@ -579,7 +585,7 @@ export default function VotingApp() {
               <p className="panel-kicker">Step 3</p>
               <h2>{DEMO_MODE ? "Send your voting pass" : "Submit proof to coordinator"}</h2>
             </div>
-            {dmResult && <span className="count-pill">Proof sent</span>}
+            {deliveredCoordinatorCount > 0 && <span className="count-pill">Proof sent</span>}
           </div>
 
           <p className="field-hint">
@@ -601,9 +607,14 @@ export default function VotingApp() {
             )}
           </div>
 
-          {dmResult && dmResult.length > 0 && (
+          {deliveredCoordinatorCount > 0 && (
             <div className="notice notice-success">
-              Proof DM sent to {dmResult.length} coordinator(s). {dmResult.filter(r => r.result.successes > 0).length} confirmed.
+              Proof DM sent to {deliveredCoordinatorCount} coordinator(s). {deliveredRelayCount} relay confirmation(s).
+            </div>
+          )}
+          {dmResult && dmResult.length > 0 && deliveredCoordinatorCount === 0 && (
+            <div className="notice notice-error">
+              Proof delivery failed. No relay accepted the NIP-17 gift wrap.
             </div>
           )}
         </article>
@@ -656,6 +667,9 @@ export default function VotingApp() {
 
           <p className="field-hint">
             After the voting window closes, publish a confirmation from your ephemeral key. This allows auditors to detect coordinator inflation or censorship by comparing confirmation counts against tallies.
+          </p>
+          <p className="field-hint">
+            This confirmation proves participation only. It does not reveal your ballot choice or act as a transferable proof of how you voted.
           </p>
 
           {voteEnd > 0 && (
