@@ -323,13 +323,20 @@ export default function DemoApp() {
 
       <section className="demo-grid demo-grid-2">
         <article className="demo-card">
-          <PanelTitle kicker="Identity" title="Ephemeral voter keypair" right={<button className="secondary-button" onClick={() => void seedDemoVoter()} disabled={seeding}>{seeding ? "Seeding..." : "Generate again"}</button>} />
+          <PanelTitle
+            kicker="Identity"
+            title="Ephemeral voter keypair"
+            right={<button className="secondary-button" onClick={() => void seedDemoVoter()} disabled={seeding}>{seeding ? "Seeding..." : "Generate again"}</button>}
+          />
           <div className="demo-note">Use this nsec in the voter portal. The npub is seeded into the mock eligibility list.</div>
           <div className="demo-copy-stack">
             <CopyField label="nsec" value={identity.nsec} />
             <CopyField label="npub" value={identity.npub} />
           </div>
-          <div className="demo-note">Paste the nsec on the voter page. The voter page stores the keypair so the ballot page can publish the confirmation later.</div>
+          <div className="button-row">
+            <a className="primary-button link-button" href="/vote.html">Mint proof on voter portal</a>
+          </div>
+          <div className="demo-note">Paste the nsec in the voter portal nsec box. The voter page stores the keypair so the ballot page can publish the confirmation later.</div>
         </article>
 
         <article className="demo-card">
@@ -447,10 +454,22 @@ export default function DemoApp() {
         <article className="demo-card">
           <PanelTitle kicker="Guide" title="What to copy where" />
           <div className="demo-list">
-            <div className="demo-list-item"><span>Voter portal</span><code>/</code></div>
-            <div className="demo-list-item"><span>Voting page</span><code>/vote.html</code></div>
-            <div className="demo-list-item"><span>Verifier dashboard</span><code>/dashboard.html</code></div>
-            <div className="demo-list-item"><span>Paste here</span><code>{identity.nsec}</code></div>
+            <a className="demo-list-item demo-list-link" href="/">
+              <span>Control room</span>
+              <code>/</code>
+            </a>
+            <a className="demo-list-item demo-list-link" href="/vote.html">
+              <span>Voter portal</span>
+              <code>/vote.html</code>
+            </a>
+            <a className="demo-list-item demo-list-link" href="/dashboard.html">
+              <span>Verifier dashboard</span>
+              <code>/dashboard.html</code>
+            </a>
+            <a className="demo-list-item demo-list-link" href="/vote.html">
+              <span>Paste here in voter portal</span>
+              <code>{identity.nsec}</code>
+            </a>
           </div>
         </article>
 
