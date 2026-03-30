@@ -1152,6 +1152,17 @@ body.demo-page .demo-list-item {
   border: 1px solid #2a303a;
 }
 
+body.demo-page .demo-list-link {
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+body.demo-page .demo-list-link:hover {
+  border-color: #7cb8ff;
+  background: #13161d;
+}
+
 body.demo-page .demo-list-item code {
   max-width: 64%;
   overflow: hidden;
