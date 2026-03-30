@@ -5,7 +5,7 @@ import { loadStoredWalletBundle, storeBallotEventId } from "./cashuWallet";
 import { formatDateTime, getNostrEventVerificationUrl, decodeNsec } from "./nostrIdentity";
 import { submitProofViaDm, submitProofsToAllCoordinators, type DmPublishResult, type MultiCoordinatorDmResult } from "./proofSubmission";
 import type { CashuProof } from "./cashuBlind";
-import { fetchTally, checkVoteAccepted, type TallyInfo } from "./coordinatorApi";
+import { fetchElection, fetchTally, checkVoteAccepted, type ElectionInfo, type TallyInfo } from "./coordinatorApi";
 import MerkleTreeViz from "./MerkleTreeViz";
 import { DEMO_MODE } from "./config";
 import PageNav from "./PageNav";
@@ -43,7 +43,8 @@ export default function VotingApp() {
     };
   }, []);
 
-  const [walletBundle] = useState(() => loadStoredWalletBundle());
+  const [walletBundle, setWalletBundle] = useState(() => loadStoredWalletBundle());
+  const [loadedElection, setLoadedElection] = useState<ElectionInfo | null>(walletBundle?.election ?? null);
   const [answers, setAnswers] = useState<Record<string, string | string[] | number>>({});
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -57,16 +58,48 @@ export default function VotingApp() {
   const [confirmingVote, setConfirmingVote] = useState(false);
   const [confirmationResult, setConfirmationResult] = useState<{ eventId: string; successes: number; failures: number } | null>(null);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadElectionContext() {
+      try {
+        const election = await fetchElection();
+        if (cancelled) return;
+
+        setLoadedElection(election);
+        setWalletBundle(loadStoredWalletBundle());
+      } catch {
+        if (!cancelled) {
+          setLoadedElection(walletBundle?.election ?? null);
+        }
+      }
+    }
+
+    void loadElectionContext();
+
+    const handleStorage = () => {
+      setWalletBundle(loadStoredWalletBundle());
+    };
+
+    window.addEventListener("storage", handleStorage);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, []);
+
   const storedProofs = walletBundle?.coordinatorProofs ?? [];
   const storedProof = storedProofs.length > 0 ? storedProofs[0].proof : null;
-  const electionId = walletBundle?.election?.electionId ?? "";
-  const questions = walletBundle?.election?.questions ?? [];
-  const coordinatorNpubs = walletBundle?.election?.coordinator_npubs ?? (walletBundle?.coordinatorProofs?.map(cp => cp.coordinatorNpub) ?? []);
+  const election = walletBundle?.election ?? loadedElection ?? null;
+  const electionId = walletBundle?.election?.electionId ?? loadedElection?.election_id ?? "";
+  const questions = election?.questions ?? [];
+  const coordinatorNpubs = election?.coordinator_npubs ?? (walletBundle?.coordinatorProofs?.map(cp => cp.coordinatorNpub) ?? []);
   const coordinatorNpub = coordinatorNpubs[0] ?? "";
   const relays = (walletBundle?.relays?.length ?? 0) > 0 ? walletBundle!.relays : DEFAULT_VOTE_RELAYS;
   const storedBallotEventId = walletBundle?.ballotEventId ?? "";
-  const voteEnd = walletBundle?.election?.vote_end ?? 0;
-  const confirmEnd = walletBundle?.election?.confirm_end ?? 0;
+  const voteEnd = election?.vote_end ?? 0;
+  const confirmEnd = election?.confirm_end ?? 0;
   const now = Math.floor(Date.now() / 1000);
   const isInConfirmationWindow = voteEnd > 0 && now >= voteEnd && (confirmEnd === 0 || now <= confirmEnd);
   const votingWindowNotClosed = voteEnd > 0 && now < voteEnd;
@@ -316,6 +349,9 @@ export default function VotingApp() {
         <p className="field-hint hero-hint">
           If you have not pasted your nsec and minted a proof yet, go back to the home page first.
         </p>
+        <p className="field-hint hero-hint">
+          {election ? `Election loaded: ${election.title}` : "Loading election metadata from the coordinator..."}
+        </p>
         <p className="field-hint hero-hint"><img className="inline-icon" src="/images/nostr/relayflasks.png" alt="" width={18} height={18} />Relays: {relays.join(", ")}</p>
         <div className="button-row">
           <a className="ghost-button link-button" href="/">Return to home page</a>
@@ -350,10 +386,10 @@ export default function VotingApp() {
             <div>
               <label className="field-label">Election ID</label>
               <div className="derived-box derived-box-inline">
-                <code className="code-block code-block-muted">{electionId || "No election loaded"}</code>
+                <code className="code-block code-block-muted">{electionId || "Loading election..."}</code>
               </div>
-              {walletBundle?.election?.title && (
-                <p className="field-hint">{walletBundle.election.title}</p>
+              {election?.title && (
+                <p className="field-hint">{election.title}</p>
               )}
             </div>
 
