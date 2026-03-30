@@ -29,7 +29,12 @@ vi.mock("./coordinatorApi", () => ({
   fetchTally: vi.fn().mockResolvedValue(null),
   checkVoteAccepted: vi.fn().mockResolvedValue([]),
 }));
-vi.mock("./nostrIdentity", () => ({ formatDateTime: () => "time", getNostrEventVerificationUrl: () => "https://njump.me/e", decodeNsec: () => new Uint8Array([1]) }));
+vi.mock("./nostrIdentity", () => ({
+  formatDateTime: () => "time",
+  getNostrEventVerificationUrl: () => "https://njump.me/e",
+  decodeNsec: () => new Uint8Array([1]),
+  deriveNpubFromNsec: () => "npub1demo",
+}));
 vi.mock("./MerkleTreeViz", () => ({ default: () => null }));
 
 describe("VotingApp demo retry controls", () => {

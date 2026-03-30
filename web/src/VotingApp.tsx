@@ -1,8 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { finalizeEvent, generateSecretKey, getPublicKey, nip19, SimplePool } from "nostr-tools";
 import { publishBallotEvent, BALLOT_EVENT_KIND, DEFAULT_VOTE_RELAYS, isBallotComplete } from "./ballot";
-import { loadStoredWalletBundle, storeBallotEventId } from "./cashuWallet";
-import { formatDateTime, getNostrEventVerificationUrl, decodeNsec } from "./nostrIdentity";
+import { loadStoredWalletBundle, storeBallotEventId, storeEphemeralKeypair } from "./cashuWallet";
+import { deriveNpubFromNsec, formatDateTime, getNostrEventVerificationUrl, decodeNsec } from "./nostrIdentity";
 import { submitProofViaDm, submitProofsToAllCoordinators, type DmPublishResult, type MultiCoordinatorDmResult } from "./proofSubmission";
 import type { CashuProof } from "./cashuBlind";
 import { fetchElection, fetchTally, checkVoteAccepted, type ElectionInfo, type TallyInfo } from "./coordinatorApi";
@@ -44,6 +44,7 @@ export default function VotingApp() {
   }, []);
 
   const [walletBundle, setWalletBundle] = useState(() => loadStoredWalletBundle());
+  const [nsecInput, setNsecInput] = useState(() => loadStoredWalletBundle()?.ephemeralKeypair?.nsec ?? "");
   const [loadedElection, setLoadedElection] = useState<ElectionInfo | null>(walletBundle?.election ?? null);
   const [answers, setAnswers] = useState<Record<string, string | string[] | number>>({});
   const [status, setStatus] = useState<string | null>(null);
@@ -57,6 +58,7 @@ export default function VotingApp() {
   const [checkingVote, setCheckingVote] = useState(false);
   const [confirmingVote, setConfirmingVote] = useState(false);
   const [confirmationResult, setConfirmationResult] = useState<{ eventId: string; successes: number; failures: number } | null>(null);
+  const derivedNpub = useMemo(() => deriveNpubFromNsec(nsecInput), [nsecInput]);
 
   useEffect(() => {
     let cancelled = false;
@@ -88,6 +90,12 @@ export default function VotingApp() {
       window.removeEventListener("storage", handleStorage);
     };
   }, []);
+
+  useEffect(() => {
+    if (!nsecInput && walletBundle?.ephemeralKeypair?.nsec) {
+      setNsecInput(walletBundle.ephemeralKeypair.nsec);
+    }
+  }, [nsecInput, walletBundle?.ephemeralKeypair?.nsec]);
 
   const storedProofs = walletBundle?.coordinatorProofs ?? [];
   const storedProof = storedProofs.length > 0 ? storedProofs[0].proof : null;
@@ -154,6 +162,23 @@ export default function VotingApp() {
       ? current.filter((v) => v !== option)
       : [...current, option];
     setAnswers((prev) => ({ ...prev, [questionId]: next }));
+  }
+
+  function saveIdentity() {
+    const trimmed = nsecInput.trim();
+    if (!trimmed) {
+      setError("Paste an nsec first.");
+      return;
+    }
+
+    if (!derivedNpub) {
+      setError("That nsec is not valid.");
+      return;
+    }
+
+    storeEphemeralKeypair(trimmed, derivedNpub);
+    setWalletBundle(loadStoredWalletBundle());
+    setStatus(`Saved voter identity for ${derivedNpub}.`);
   }
 
   async function submitBallot() {
@@ -377,6 +402,49 @@ export default function VotingApp() {
         <article className="panel panel-wide">
           <div className="panel-header">
             <div>
+              <p className="panel-kicker">Identity</p>
+              <h2>Paste your nsec here</h2>
+            </div>
+            {derivedNpub && <span className="count-pill">Ready</span>}
+          </div>
+
+          <p className="field-hint">
+            Paste the voter key here to save it locally. You still mint the proof on the home page, but this keeps the vote flow in one place.
+          </p>
+
+          <div className="verification-grid">
+            <div>
+              <label className="field-label" htmlFor="vote-nsec-input">nsec</label>
+              <textarea
+                id="vote-nsec-input"
+                className="text-area text-area-secret"
+                value={nsecInput}
+                onChange={(event) => setNsecInput(event.target.value)}
+                placeholder="nsec1..."
+                rows={4}
+              />
+            </div>
+
+            <div>
+              <label className="field-label">Derived npub</label>
+              <div className="derived-box derived-box-inline">
+                <code className="code-block code-block-muted">{derivedNpub ?? "Paste an nsec to derive the npub"}</code>
+              </div>
+              <div className="button-row">
+                <button className="secondary-button" onClick={() => void saveIdentity()}>
+                  Save identity
+                </button>
+                <a className="ghost-button link-button" href="/">
+                  Mint proof on home page
+                </a>
+              </div>
+            </div>
+          </div>
+        </article>
+
+        <article className="panel panel-wide">
+          <div className="panel-header">
+            <div>
               <p className="panel-kicker">Step 1</p>
               <h2>Confirm election and proof</h2>
             </div>
@@ -402,7 +470,7 @@ export default function VotingApp() {
               ) : (
                 <div style={{ textAlign: "center", padding: "12px 0" }}>
                   <img className="empty-state-image" src="/images/nostr/underconstruction-dark.png" alt="" width={120} />
-                  <p className="empty-copy">No voting proof found. Return home and mint your proof first.</p>
+                  <p className="empty-copy">No voting proof found yet. Paste your nsec above, then mint the proof on the home page.</p>
                 </div>
               )}
             </div>

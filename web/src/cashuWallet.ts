@@ -192,7 +192,16 @@ export function storeBallotEventId(eventId: string) {
 
 export function storeEphemeralKeypair(nsec: string, npub: string) {
   const existingBundle = loadStoredWalletBundle();
-  if (!existingBundle) return;
+  if (!existingBundle) {
+    storeWalletBundle({
+      electionId: "__ephemeral__",
+      ephemeralKeypair: { nsec, npub },
+      coordinatorProofs: [],
+      election: null,
+      relays: [],
+    });
+    return;
+  }
 
   storeWalletBundle({
     ...existingBundle,
