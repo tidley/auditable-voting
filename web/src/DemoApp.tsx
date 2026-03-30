@@ -142,9 +142,9 @@ export default function DemoApp() {
 
   const eligibleNpubs = eligibility.eligibleNpubs;
   const issuedCount = Object.values(issuanceStatus?.voters ?? {}).filter((entry) => entry.issued).length;
-  const publishedVotes = tally?.total_published_votes ?? finalResult?.total_votes ?? 0;
-  const acceptedVotes = tally?.total_accepted_votes ?? finalResult?.total_votes ?? 0;
-  const spentCommitmentRoot = tally?.spent_commitment_root ?? finalResult?.spent_commitment_root ?? "";
+  const publishedVotes = Math.max(tally?.total_published_votes ?? 0, finalResult?.total_votes ?? 0);
+  const acceptedVotes = Math.max(tally?.total_accepted_votes ?? 0, finalResult?.total_votes ?? 0);
+  const spentCommitmentRoot = tally?.spent_commitment_root || finalResult?.spent_commitment_root || "";
   const confirmationCount = auditResults.length > 0 ? auditResults[0].confirmations : 0;
   const coordinatorCount = discoveredCoordinators.length || election?.coordinator_npubs.length || 0;
   const issuanceForSelected = selectedNpub ? issuanceStatus?.voters[selectedNpub] : undefined;
