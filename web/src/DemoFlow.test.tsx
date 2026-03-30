@@ -13,14 +13,31 @@ const testIdentity = {
   pubkey: publicKey,
 };
 
+const coordinatorSecretKey = generateSecretKey();
+const coordinatorPublicKey = getPublicKey(coordinatorSecretKey);
+const coordinatorIdentity = {
+  nsec: nip19.nsecEncode(coordinatorSecretKey),
+  npub: nip19.npubEncode(coordinatorPublicKey),
+  pubkey: coordinatorPublicKey,
+};
+
+const coordinatorSecretKey2 = generateSecretKey();
+const coordinatorPublicKey2 = getPublicKey(coordinatorSecretKey2);
+const coordinatorIdentity2 = {
+  nsec: nip19.nsecEncode(coordinatorSecretKey2),
+  npub: nip19.npubEncode(coordinatorPublicKey2),
+  pubkey: coordinatorPublicKey2,
+};
+
 const now = Math.floor(Date.now() / 1000);
+const receiptRoot = "b".repeat(64);
 
 let issued = false;
 let ballotPublished = false;
 let confirmationPublished = false;
 
 const mockCoordinator = {
-  coordinatorNpub: "npub1coorddemo0000000000000000000000000000000000000000000000000000",
+  coordinatorNpub: coordinatorIdentity.npub,
   mintUrl: "http://mint.example",
   mintPublicKey: "02aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   relays: ["wss://relay.example"],
@@ -28,7 +45,7 @@ const mockCoordinator = {
 };
 
 const mockCoordinator2 = {
-  coordinatorNpub: "npub1coorddemo1111111111111111111111111111111111111111111111111111",
+  coordinatorNpub: coordinatorIdentity2.npub,
   mintUrl: "http://mint-2.example",
   mintPublicKey: "02bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   relays: ["wss://relay.example"],
@@ -130,12 +147,23 @@ vi.mock("./coordinatorApi", () => ({
     status: "closed",
     total_published_votes: ballotPublished ? 1 : 0,
     total_accepted_votes: ballotPublished ? 1 : 0,
-    spent_commitment_root: null,
+    spent_commitment_root: ballotPublished ? receiptRoot : null,
     results: ballotPublished
       ? { funding_priority: { "Community grants": 1 } }
       : {},
   })),
-  fetchResult: vi.fn().mockResolvedValue(null),
+  fetchResult: vi.fn().mockImplementation(async () => ({
+    election_id: mockElection.election_id,
+    total_votes: ballotPublished ? 1 : 0,
+    results: ballotPublished ? { funding_priority: { "Community grants": 1 } } : {},
+    merkle_root: ballotPublished ? receiptRoot : "",
+    total_proofs_burned: ballotPublished ? 1 : 0,
+    issuance_commitment_root: "issuance-root",
+    spent_commitment_root: ballotPublished ? receiptRoot : "",
+    max_supply: 1,
+    event_id: mockElection.event_id,
+    closed_at: now,
+  })),
   discoverCoordinators: vi.fn().mockResolvedValue([
     { npub: mockCoordinator.coordinatorNpub, httpApi: "http://coordinator.example", mintUrl: mockCoordinator.mintUrl, relays: mockCoordinator.relays },
     { npub: mockCoordinator2.coordinatorNpub, httpApi: "http://coordinator-2.example", mintUrl: mockCoordinator2.mintUrl, relays: mockCoordinator2.relays },
@@ -149,10 +177,21 @@ vi.mock("./coordinatorApi", () => ({
         status: "closed",
         total_published_votes: ballotPublished ? 1 : 0,
         total_accepted_votes: ballotPublished ? 1 : 0,
-        spent_commitment_root: null,
+        spent_commitment_root: ballotPublished ? receiptRoot : null,
         results: ballotPublished ? { funding_priority: { "Community grants": 1 } } : {},
       },
-      result: null,
+      result: {
+        election_id: mockElection.election_id,
+        total_votes: ballotPublished ? 1 : 0,
+        results: ballotPublished ? { funding_priority: { "Community grants": 1 } } : {},
+        merkle_root: ballotPublished ? receiptRoot : "",
+        total_proofs_burned: ballotPublished ? 1 : 0,
+        issuance_commitment_root: "issuance-root",
+        spent_commitment_root: ballotPublished ? receiptRoot : "",
+        max_supply: 1,
+        event_id: mockElection.event_id,
+        closed_at: now,
+      },
     },
     {
       coordinatorNpub: mockCoordinator2.coordinatorNpub,
@@ -162,10 +201,21 @@ vi.mock("./coordinatorApi", () => ({
         status: "closed",
         total_published_votes: ballotPublished ? 1 : 0,
         total_accepted_votes: ballotPublished ? 1 : 0,
-        spent_commitment_root: null,
+        spent_commitment_root: ballotPublished ? receiptRoot : null,
         results: ballotPublished ? { funding_priority: { "Community grants": 1 } } : {},
       },
-      result: null,
+      result: {
+        election_id: mockElection.election_id,
+        total_votes: ballotPublished ? 1 : 0,
+        results: ballotPublished ? { funding_priority: { "Community grants": 1 } } : {},
+        merkle_root: ballotPublished ? receiptRoot : "",
+        total_proofs_burned: ballotPublished ? 1 : 0,
+        issuance_commitment_root: "issuance-root-2",
+        spent_commitment_root: ballotPublished ? receiptRoot : "",
+        max_supply: 1,
+        event_id: mockElection.event_id,
+        closed_at: now,
+      },
     },
   ])),
   startIssuanceTracking: vi.fn().mockResolvedValue({
@@ -359,7 +409,8 @@ describe("full voting demo flow", () => {
     expect(screen.getByDisplayValue(testIdentity.nsec)).toBeTruthy();
     expect(screen.getByRole("button", { name: /Check eligibility/i })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: /Run full demo/i }));
-    await waitFor(() => expect(screen.getByText(/Demo root derived from the proof receipt\./i)).toBeTruthy(), { timeout: 5000 });
+    await waitFor(() => expect(screen.getAllByText(/Confirmation event/i).length).toBeGreaterThan(0), { timeout: 5000 });
+    await waitFor(() => expect(screen.getAllByText(/bbbbbbbb\.\.\.bbbb/i).length).toBeGreaterThan(0), { timeout: 5000 });
     demo.unmount();
 
     const app = render(<App />);

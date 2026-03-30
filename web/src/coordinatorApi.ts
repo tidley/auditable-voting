@@ -126,9 +126,9 @@ export async function fetchElection(httpApi?: string): Promise<ElectionInfo | nu
       title: "Mock election",
       description: "Local demo election used for copy-paste testing.",
       questions: MOCK_ELECTION_QUESTIONS,
-      vote_start: now - 300,
-      vote_end: now + 3600,
-      confirm_end: now + 7200,
+      vote_start: now - 7200,
+      vote_end: now - 300,
+      confirm_end: now + 3600,
       mint_urls: [MINT_URL],
       coordinator_npubs: [MOCK_COORDINATOR_NPUB],
       eligible_root: "",
@@ -162,17 +162,18 @@ export async function fetchEligibility(httpApi?: string): Promise<EligibilityInf
 
 export async function fetchTally(httpApi?: string): Promise<TallyInfo | null> {
   if (USE_MOCK) {
-    const response = await fetch("/api/eligibility");
-    const mockResponse = (await response.json()) as EligibilityResponse;
-    const total = mockResponse.verifiedCount;
-    return {
-      election_id: MOCK_ELECTION_ID,
-      status: "in_progress",
-      total_published_votes: total,
-      total_accepted_votes: total,
-      spent_commitment_root: null,
-      results: {},
-    };
+    try {
+      return await fetchJson<TallyInfo>("/api/tally");
+    } catch {
+      return {
+        election_id: MOCK_ELECTION_ID,
+        status: "in_progress",
+        total_published_votes: 0,
+        total_accepted_votes: 0,
+        spent_commitment_root: null,
+        results: {},
+      };
+    }
   }
 
   try {
@@ -377,7 +378,11 @@ export type FinalResultInfo = {
 
 export async function fetchResult(httpApi?: string): Promise<FinalResultInfo | null> {
   if (USE_MOCK) {
-    return null;
+    try {
+      return await fetchJson<FinalResultInfo>("/api/result");
+    } catch {
+      return null;
+    }
   }
 
   try {

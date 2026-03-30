@@ -4,12 +4,15 @@ const publish = vi.fn();
 const destroy = vi.fn();
 const wrapEvent = vi.fn();
 const decode = vi.fn();
+const logBallotDebug = vi.fn();
 
 vi.mock("nostr-tools", () => ({
   nip19: { decode },
   nip17: { wrapEvent },
   SimplePool: function () { return { publish, destroy }; },
 }));
+
+vi.mock("./cashuMintApi", () => ({ logBallotDebug }));
 
 describe("proofSubmission", () => {
   beforeEach(() => {
