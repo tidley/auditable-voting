@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { finalizeEvent, nip19, SimplePool } from "nostr-tools";
 import {
   discoverCoordinators,
   fetchElection,
@@ -37,17 +38,6 @@ type StepState = {
   detail: string;
   status: "done" | "current" | "waiting";
 };
-
-function deriveDemoSpentCommitmentRoot(seed: string): string {
-  let state = 0x811c9dc5;
-  for (let index = 0; index < seed.length; index += 1) {
-    state ^= seed.charCodeAt(index);
-    state = Math.imul(state, 0x01000193) >>> 0;
-  }
-
-  const segment = state.toString(16).padStart(8, "0");
-  return `${segment}${segment}${segment}${segment}${segment}${segment}${segment}${segment}`;
-}
 
 const EMPTY_ELIGIBILITY: EligibilityResponse = {
   eligibleNpubs: [],
@@ -132,15 +122,16 @@ export default function DemoApp() {
   const [checkingVoter, setCheckingVoter] = useState(false);
   const [runningAudit, setRunningAudit] = useState(false);
   const [runningDemo, setRunningDemo] = useState(false);
+  const [confirmingVote, setConfirmingVote] = useState(false);
   const [status, setStatus] = useState<string>("Loading live demo state...");
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<number | null>(null);
   const [mintQuote, setMintQuote] = useState<MintQuoteResponse | null>(null);
   const [proof, setProof] = useState<CashuProof | null>(null);
   const [dmResults, setDmResults] = useState<MultiCoordinatorDmResult[] | null>(null);
+  const [confirmationResult, setConfirmationResult] = useState<{ eventId: string; successes: number; failures: number } | null>(null);
   const [ballotEventId, setBallotEventId] = useState<string>("");
   const [ballotAnswers, setBallotAnswers] = useState<Record<string, string | string[] | number>>({});
-  const [demoSpentCommitmentRoot, setDemoSpentCommitmentRoot] = useState<string>("");
   const derivedNpub = useMemo(() => deriveNpubFromNsec(nsecInput), [nsecInput]);
 
   useEffect(() => {
@@ -153,10 +144,15 @@ export default function DemoApp() {
   const issuedCount = Object.values(issuanceStatus?.voters ?? {}).filter((entry) => entry.issued).length;
   const publishedVotes = tally?.total_published_votes ?? finalResult?.total_votes ?? 0;
   const acceptedVotes = tally?.total_accepted_votes ?? finalResult?.total_votes ?? 0;
-  const spentCommitmentRoot = tally?.spent_commitment_root ?? finalResult?.spent_commitment_root ?? demoSpentCommitmentRoot;
+  const spentCommitmentRoot = tally?.spent_commitment_root ?? finalResult?.spent_commitment_root ?? "";
   const confirmationCount = auditResults.length > 0 ? auditResults[0].confirmations : 0;
   const coordinatorCount = discoveredCoordinators.length || election?.coordinator_npubs.length || 0;
   const issuanceForSelected = selectedNpub ? issuanceStatus?.voters[selectedNpub] : undefined;
+  const voteEnd = election?.vote_end ?? 0;
+  const confirmEnd = election?.confirm_end ?? 0;
+  const now = Math.floor(Date.now() / 1000);
+  const isInConfirmationWindow = voteEnd > 0 && now >= voteEnd && (confirmEnd === 0 || now <= confirmEnd);
+  const votingWindowNotClosed = voteEnd > 0 && now < voteEnd;
 
   const timelinePhases: StepState[] = useMemo(() => {
     const spentRoot = spentCommitmentRoot;
@@ -216,18 +212,20 @@ export default function DemoApp() {
       },
       {
         title: "7. 38013 confirmations",
-        detail: confirmationDetail,
-        status: auditResults.length > 0 ? "done" : spentRoot ? "current" : "waiting",
+        detail: confirmationResult
+          ? `Confirmation event ${confirmationResult.eventId.slice(0, 16)}... was published to ${confirmationResult.successes} relay(s).`
+          : confirmationDetail,
+        status: confirmationResult || auditResults.length > 0 ? "done" : spentRoot ? "current" : "waiting",
       },
       {
         title: "8. Audit comparison",
         detail: auditResults.length > 0
           ? `Audit ran across ${auditResults.length} coordinator(s).`
           : "The verifier compares tally, confirmations, and the spent root.",
-        status: auditResults.length > 0 ? "done" : confirmationCount > 0 ? "current" : "waiting",
+        status: auditResults.length > 0 ? "done" : confirmationResult ? "current" : "waiting",
       },
     ];
-  }, [acceptedVotes, auditResults.length, ballotEventId, confirmationCount, demoSpentCommitmentRoot, dmResults, election, issuedCount, proof, publishedVotes, selectedNpub, spentCommitmentRoot, voterCheck]);
+  }, [acceptedVotes, auditResults.length, ballotEventId, confirmationCount, confirmationResult, dmResults, election, issuedCount, proof, publishedVotes, selectedNpub, spentCommitmentRoot, voterCheck]);
 
   const refreshSnapshot = useCallback(async (showSpinner = true) => {
     if (showSpinner) setRefreshing(true);
@@ -281,10 +279,10 @@ export default function DemoApp() {
       setMintQuote(null);
       setProof(null);
       setDmResults(null);
+      setConfirmationResult(null);
       setBallotEventId("");
       setBallotAnswers({});
       setAuditResults([]);
-      setDemoSpentCommitmentRoot("");
       setVoterCheck(null);
       if (USE_MOCK) {
         await seedEligibility(nextIdentity.npub);
@@ -349,10 +347,10 @@ export default function DemoApp() {
       setMintQuote(null);
       setProof(null);
       setDmResults(null);
+      setConfirmationResult(null);
       setBallotEventId("");
       setBallotAnswers({});
       setAuditResults([]);
-      setDemoSpentCommitmentRoot("");
       setSelectedNpub(npub);
       setVoterCheck({
         npub,
@@ -428,7 +426,7 @@ export default function DemoApp() {
       }
 
       setProof(mintedProof);
-      setDemoSpentCommitmentRoot("");
+      setConfirmationResult(null);
       setStatus("Proof minted and ready for the ballot step.");
       await refreshSnapshot(false);
     } catch (requestError) {
@@ -467,6 +465,7 @@ export default function DemoApp() {
       });
 
       setBallotEventId(publishResult.eventId);
+      setConfirmationResult(null);
       setStatus(`Ballot published: ${publishResult.successes} relay confirmation(s).`);
       setIssuanceStatus((prev) => prev);
 
@@ -487,9 +486,6 @@ export default function DemoApp() {
       });
 
       setDmResults(dmOutcome);
-      if (dmOutcome.length > 0) {
-        setDemoSpentCommitmentRoot(deriveDemoSpentCommitmentRoot(`${publishResult.eventId}:${proof.secret}`));
-      }
       setStatus(`Proof sent to ${dmOutcome.length} coordinator(s).`);
 
       await refreshSnapshot(false);
@@ -544,6 +540,70 @@ export default function DemoApp() {
       setRunningAudit(false);
     }
   }, [coordinatorInfo, discoveredCoordinators, election, eligibility.eligibleNpubs]);
+
+  const publishDemoConfirmation = useCallback(async (ballotId = ballotEventId) => {
+    if (!election || !ballotId || !nsecInput.trim()) {
+      setError("Publish the ballot and save your nsec first.");
+      return;
+    }
+
+    if (!isInConfirmationWindow) {
+      setError("The confirmation window is not open yet.");
+      return;
+    }
+
+    const secretKey = decodeNsec(nsecInput.trim());
+    if (!secretKey) {
+      setError("That nsec is not valid.");
+      return;
+    }
+
+    setConfirmingVote(true);
+    setError(null);
+    setStatus(null);
+
+    try {
+      const confirmationCreatedAt = Math.floor(Date.now() / 1000);
+      const event = finalizeEvent(
+        {
+          kind: 38013,
+          created_at: confirmationCreatedAt,
+          tags: [
+            ["e", ballotId],
+            ...election.coordinator_npubs.map((npub) => {
+              const decoded = nip19.decode(npub);
+              if (decoded.type !== "npub") {
+                throw new Error("Coordinator value must be an npub.");
+              }
+              return ["p", decoded.data as string] as string[];
+            }),
+          ],
+          content: JSON.stringify({
+            action: "voter_confirmation",
+            ballot_event_id: ballotId,
+            election_id: election.election_id,
+          }),
+        },
+        secretKey,
+      );
+
+      const publicRelays = (coordinatorInfo?.relays ?? []).filter((relay) => relay.startsWith("wss://"));
+      const pool = new SimplePool();
+      try {
+        const results = await Promise.allSettled(pool.publish(publicRelays, event, { maxWait: 4000 }));
+        const successes = results.filter((result) => result.status === "fulfilled").length;
+        const failures = results.length - successes;
+        setConfirmationResult({ eventId: event.id, successes, failures });
+        setStatus(`Voter confirmation (kind 38013) published to ${successes} relay(s).`);
+      } finally {
+        pool.destroy();
+      }
+    } catch (publishError) {
+      setError(publishError instanceof Error ? publishError.message : "Could not publish voter confirmation");
+    } finally {
+      setConfirmingVote(false);
+    }
+  }, [ballotEventId, coordinatorInfo?.relays, election, isInConfirmationWindow, nsecInput]);
 
   const runDemoSequence = useCallback(async () => {
     if (runningDemo) return;
@@ -633,13 +693,14 @@ export default function DemoApp() {
         retries: DEMO_MODE ? 1 : 0,
       });
       setDmResults(dmOutcome);
-      if (dmOutcome.length > 0) {
-        setDemoSpentCommitmentRoot(deriveDemoSpentCommitmentRoot(`${publishResult.eventId}:${mintedProof.secret}`));
-      }
       setStatus(`Step 4 worked: proof sent to ${dmOutcome.length} coordinator(s).`);
 
       setStatus("Step 5: refreshing verifier view...");
       await refreshSnapshot(false);
+      setStatus("Step 6: publishing confirmation...");
+      await publishDemoConfirmation(publishResult.eventId);
+      await refreshSnapshot(false);
+      setStatus("Step 7: running audit...");
       await runVerifierAudit();
       setStatus("Demo complete. Every step on this page has run in order.");
     } catch (sequenceError) {
@@ -647,7 +708,7 @@ export default function DemoApp() {
     } finally {
       setRunningDemo(false);
     }
-  }, [coordinatorInfo?.coordinatorNpub, coordinatorInfo?.relays, election, fillDemoBallot, nsecInput, refreshSnapshot, runningDemo, runVerifierAudit]);
+  }, [coordinatorInfo?.coordinatorNpub, coordinatorInfo?.relays, election, fillDemoBallot, nsecInput, publishDemoConfirmation, refreshSnapshot, runningDemo, runVerifierAudit]);
 
   return (
     <main className="page-shell page-shell-demo demo-app-shell">
@@ -829,7 +890,11 @@ export default function DemoApp() {
           </article>
 
           <article className="demo-card demo-console-card" id="demo-verifier">
-            <PanelTitle kicker="Verifier" title="Tally and audit" right={auditResults.length > 0 ? <span className="demo-status demo-status-good">Ready</span> : <span className="demo-status">Pending</span>} />
+            <PanelTitle
+              kicker="Verifier"
+              title="Tally and audit"
+              right={auditResults.length > 0 ? <span className="demo-status demo-status-good">Ready</span> : confirmationResult ? <span className="demo-status demo-status-good">Confirmed</span> : <span className="demo-status">Pending</span>}
+            />
             <div className="demo-stack">
               <div className="demo-console-field">
                 <div className="demo-label">Commitment root</div>
@@ -838,25 +903,39 @@ export default function DemoApp() {
               <div className="demo-console-field">
                 <div className="demo-label">Spent-tree</div>
                 <code>{spentCommitmentRoot ? `${spentCommitmentRoot.slice(0, 8)}...${spentCommitmentRoot.slice(-4)}` : "Unavailable"}</code>
-                {!tally?.spent_commitment_root && demoSpentCommitmentRoot && (
-                  <div className="demo-note">Demo root derived from the proof receipt.</div>
-                )}
               </div>
               <div className="demo-console-actions">
+                <button className="primary-button" onClick={() => void publishDemoConfirmation()} disabled={confirmingVote || !ballotEventId || !isInConfirmationWindow}>
+                  {confirmingVote ? "Publishing 38013..." : "Publish confirmation"}
+                </button>
                 <button className="secondary-button" onClick={() => void runVerifierAudit()} disabled={runningAudit || discoveredCoordinators.length === 0}>
                   {runningAudit ? "Running audit..." : "Run audit"}
                 </button>
                 <a className="ghost-button link-button" href="#demo-audit">Audit log</a>
               </div>
+              {voteEnd > 0 && (
+                <div className="demo-console-empty">
+                  <div className="demo-note">{isInConfirmationWindow ? "Confirmation window is open." : "Waiting for the voting window to close."}</div>
+                  {confirmEnd > 0 && <div className="demo-note">Confirmation window closes: {formatDateTime(confirmEnd)}</div>}
+                </div>
+              )}
+              {confirmationResult && (
+                <div className="demo-console-empty">
+                  <div className="demo-note">Confirmation event `{confirmationResult.eventId.slice(0, 16)}...` published to {confirmationResult.successes} relay(s).</div>
+                  {confirmationResult.failures > 0 && <div className="demo-note demo-note-warning">{confirmationResult.failures} failure(s).</div>}
+                </div>
+              )}
               <div className="demo-console-empty">
                 <div className="demo-note">Inflation check</div>
-                {confirmationCount === 0 ? (
-                  <div className="demo-note">Waiting for 38013 confirmations.</div>
-                ) : (
+                {auditResults.length > 0 ? (
                   <>
                     <div className={`demo-note ${acceptedVotes > confirmationCount ? "demo-note-warning" : ""}`}>{acceptedVotes > confirmationCount ? "Warning: tally exceeds confirmations." : "No inflation detected."}</div>
                     <div className={`demo-note ${acceptedVotes < confirmationCount ? "demo-note-warning" : ""}`}>{acceptedVotes < confirmationCount ? "Warning: confirmations exceed tally." : "No censorship detected."}</div>
                   </>
+                ) : confirmationResult ? (
+                  <div className="demo-note">Waiting for the verifier audit to count published confirmations.</div>
+                ) : (
+                  <div className="demo-note">Waiting for 38013 confirmations.</div>
                 )}
               </div>
             </div>

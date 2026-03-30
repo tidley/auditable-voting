@@ -1,7 +1,9 @@
 import { nip17, SimplePool } from "nostr-tools";
 import { nip19 } from "nostr-tools";
 import type { RelayPublishResult } from "./cashuMintApi";
+import { logBallotDebug } from "./cashuMintApi";
 import type { CashuProof } from "./cashuBlind";
+import { computeProofHash } from "./ballot";
 
 export const DEFAULT_DM_RELAYS = [
   "wss://nip17.com",
@@ -71,8 +73,36 @@ export async function submitProofViaDm(input: {
             relay: dmRelays[index],
             success: false,
             error: result.reason instanceof Error ? result.reason.message : String(result.reason)
-          }
+        }
     ));
+
+    try {
+      await logBallotDebug({
+        proofHash: await computeProofHash(proof.secret),
+        relays: dmRelays,
+        event: {
+          id: event.id,
+          pubkey: event.pubkey,
+          kind: event.kind,
+          created_at: event.created_at,
+          content: event.content,
+          tags: event.tags,
+          sig: event.sig,
+        },
+        publishResult: {
+          eventId: event.id,
+          successes: relayResults.filter((r) => r.success).length,
+          failures: relayResults.filter((r) => !r.success).length,
+          relayResults: relayResults.map((result) => ({
+            relay: result.relay,
+            success: result.success,
+            error: result.error,
+          })),
+        },
+      });
+    } catch {
+      // Demo/debug logging should not block proof delivery.
+    }
 
     return {
       eventId: event.id,
