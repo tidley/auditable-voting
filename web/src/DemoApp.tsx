@@ -16,6 +16,8 @@ import {
   type PerCoordinatorTally,
   type TallyInfo,
 } from "./coordinatorApi";
+import { createMintQuote, checkQuoteStatus, type MintQuoteResponse } from "./mintApi";
+import { requestQuoteAndMint, type CashuProof } from "./cashuBlind";
 import {
   checkEligibility,
   fetchEligibility as fetchVoterEligibility,
@@ -23,11 +25,13 @@ import {
   type EligibilityCheckResponse,
   type EligibilityResponse,
 } from "./voterManagementApi";
-import { DEMO_MODE, USE_MOCK } from "./config";
-import { formatDateTime } from "./nostrIdentity";
+import { DEMO_MODE, USE_MOCK, MINT_URL, COORDINATOR_URL } from "./config";
+import { decodeNsec, deriveNpubFromNsec, formatDateTime } from "./nostrIdentity";
 import { createDemoIdentity, type DemoIdentity } from "./demoIdentity";
 import { fetchCoordinatorInfo } from "./coordinatorApi";
 import PageNav from "./PageNav";
+import { publishBallotEvent } from "./ballot";
+import { submitProofsToAllCoordinators, type MultiCoordinatorDmResult } from "./proofSubmission";
 
 type StepState = {
   title: string;
@@ -97,7 +101,8 @@ function CopyField({
 }
 
 export default function DemoApp() {
-  const [identity] = useState<DemoIdentity>(() => createDemoIdentity());
+  const [identity, setIdentity] = useState<DemoIdentity>(() => createDemoIdentity());
+  const [nsecInput, setNsecInput] = useState<string>("");
   const [coordinatorInfo, setCoordinatorInfo] = useState<CoordinatorInfo | null>(null);
   const [election, setElection] = useState<ElectionInfo | null>(null);
   const [eligibility, setEligibility] = useState<EligibilityResponse>(EMPTY_ELIGIBILITY);
@@ -111,12 +116,28 @@ export default function DemoApp() {
   const [voterCheck, setVoterCheck] = useState<EligibilityCheckResponse | null>(null);
   const [refreshing, setRefreshing] = useState(true);
   const [seeding, setSeeding] = useState(false);
+  const [mintingProof, setMintingProof] = useState(false);
+  const [publishingBallot, setPublishingBallot] = useState(false);
+  const [submittingProof, setSubmittingProof] = useState(false);
   const [checkingVoter, setCheckingVoter] = useState(false);
   const [runningAudit, setRunningAudit] = useState(false);
+  const [runningDemo, setRunningDemo] = useState(false);
   const [status, setStatus] = useState<string>("Loading live demo state...");
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<number | null>(null);
   const [seeded, setSeeded] = useState(false);
+  const [mintQuote, setMintQuote] = useState<MintQuoteResponse | null>(null);
+  const [proof, setProof] = useState<CashuProof | null>(null);
+  const [dmResults, setDmResults] = useState<MultiCoordinatorDmResult[] | null>(null);
+  const [ballotEventId, setBallotEventId] = useState<string>("");
+  const [ballotAnswers, setBallotAnswers] = useState<Record<string, string | string[] | number>>({});
+  const derivedNpub = useMemo(() => deriveNpubFromNsec(nsecInput), [nsecInput]);
+
+  useEffect(() => {
+    if (!nsecInput) {
+      setNsecInput(identity.nsec);
+    }
+  }, [identity.nsec, nsecInput]);
 
   const eligibleNpubs = eligibility.eligibleNpubs;
   const issuedCount = Object.values(issuanceStatus?.voters ?? {}).filter((entry) => entry.issued).length;
@@ -136,24 +157,30 @@ export default function DemoApp() {
     },
     {
       title: "Request voting pass",
-      detail: voterCheck?.allowed
-        ? `${voterCheck.npub} is eligible and can request the pass.`
-        : "Open the voter portal, paste the nsec, and request approval.",
-      done: Boolean(voterCheck?.allowed),
+      detail: proof
+        ? `${selectedNpub} is eligible and the proof is minted.`
+        : voterCheck?.allowed
+          ? `${voterCheck.npub} is eligible and can request the pass.`
+          : "Paste the nsec and request approval on this page.",
+      done: Boolean(proof),
     },
     {
       title: "Publish ballot",
-      detail: publishedVotes > 0
+      detail: ballotEventId
+        ? `Ballot event ${ballotEventId.slice(0, 16)}... published.`
+        : publishedVotes > 0
         ? `${publishedVotes} ballot event(s) are visible to the verifier view.`
-        : "Submit the ballot from the voting page after the proof is minted.",
-      done: publishedVotes > 0,
+        : "Cast the ballot from the single demo page after the proof is minted.",
+      done: Boolean(ballotEventId || publishedVotes > 0),
     },
     {
       title: "Send proof and confirmation",
-      detail: issuedCount > 0
-        ? `${issuedCount} proof(s) are stored and ready for confirmation.`
+      detail: dmResults && dmResults.length > 0
+        ? `${dmResults.length} coordinator(s) received the proof.`
+        : issuedCount > 0
+          ? `${issuedCount} proof(s) are stored and ready for confirmation.`
         : "The voter proof shows up once the mint step completes.",
-      done: issuedCount > 0,
+      done: Boolean(dmResults && dmResults.length > 0),
     },
     {
       title: "Verify tally",
@@ -162,7 +189,7 @@ export default function DemoApp() {
         : "Use the verifier panel to compare tally and confirmation counts.",
       done: auditResults.length > 0 || acceptedVotes > 0,
     },
-  ], [acceptedVotes, auditResults.length, issuedCount, publishedVotes, seeded, voterCheck]);
+  ], [acceptedVotes, auditResults.length, ballotEventId, dmResults, issuedCount, proof, publishedVotes, seeded, selectedNpub, voterCheck]);
 
   const refreshSnapshot = useCallback(async (showSpinner = true) => {
     if (showSpinner) setRefreshing(true);
@@ -210,19 +237,29 @@ export default function DemoApp() {
     setError(null);
 
     try {
+      const nextIdentity = createDemoIdentity();
+      setIdentity(nextIdentity);
+      setNsecInput(nextIdentity.nsec);
+      setMintQuote(null);
+      setProof(null);
+      setDmResults(null);
+      setBallotEventId("");
+      setBallotAnswers({});
+      setAuditResults([]);
+      setVoterCheck(null);
       if (USE_MOCK) {
-        await seedEligibility(identity.npub);
+        await seedEligibility(nextIdentity.npub);
       }
-      setSelectedNpub(identity.npub);
+      setSelectedNpub(nextIdentity.npub);
       setSeeded(true);
-      setStatus(`Generated voter identity: ${identity.npub}`);
+      setStatus(`Generated voter identity: ${nextIdentity.npub}`);
       await refreshSnapshot(false);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to seed demo voter");
     } finally {
       setSeeding(false);
     }
-  }, [identity.npub, refreshSnapshot]);
+  }, [refreshSnapshot]);
 
   useEffect(() => {
     void refreshSnapshot();
@@ -257,8 +294,174 @@ export default function DemoApp() {
     }
   }, [selectedNpub]);
 
+  const saveDemoIdentity = useCallback(async () => {
+    const npub = derivedNpub;
+    if (!npub) {
+      setError("Paste a valid nsec first.");
+      return;
+    }
+
+    setSeeding(true);
+    setError(null);
+
+    try {
+      if (USE_MOCK) {
+        await seedEligibility(npub);
+      }
+      setMintQuote(null);
+      setProof(null);
+      setDmResults(null);
+      setBallotEventId("");
+      setBallotAnswers({});
+      setAuditResults([]);
+      setSelectedNpub(npub);
+      setSeeded(true);
+      setVoterCheck({
+        npub,
+        allowed: true,
+        canProceed: true,
+        message: "npub is allowed and has not voted yet",
+      });
+      setStatus(`Saved voter identity for ${npub}.`);
+      await refreshSnapshot(false);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to save identity");
+    } finally {
+      setSeeding(false);
+    }
+  }, [derivedNpub, refreshSnapshot]);
+
+  const fillDemoBallot = useCallback(() => {
+    if (!election?.questions) return {};
+
+    const filled: Record<string, string | string[] | number> = {};
+    for (const question of election.questions) {
+      if (question.type === "choice") {
+        filled[question.id] = question.options?.[0] ?? "";
+      } else if (question.type === "scale") {
+        filled[question.id] = question.min ?? 1;
+      } else {
+        filled[question.id] = "demo answer";
+      }
+    }
+
+    setBallotAnswers(filled);
+    return filled;
+  }, [election]);
+
+  const mintDemoProof = useCallback(async () => {
+    if (!derivedNpub) {
+      setError("Paste a valid nsec first.");
+      return;
+    }
+
+    setMintingProof(true);
+    setError(null);
+
+    try {
+      if (USE_MOCK) {
+        await seedEligibility(derivedNpub);
+      }
+
+      const eligibilityCheck = await checkEligibility(derivedNpub);
+      setSelectedNpub(derivedNpub);
+      setVoterCheck(eligibilityCheck);
+      setStatus(eligibilityCheck.message);
+
+      if (!eligibilityCheck.canProceed) {
+        throw new Error(eligibilityCheck.message);
+      }
+
+      const quote = await createMintQuote();
+      setMintQuote(quote);
+
+      for (let i = 0; i < 20; i++) {
+        const quoteStatus = await checkQuoteStatus(quote.quote);
+        if (quoteStatus.state === "PAID") {
+          break;
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 250));
+      }
+
+      const mintResult = await requestQuoteAndMint(MINT_URL.replace(/\/$/, ""), quote.quote);
+      const mintedProof = mintResult.proofs[0] ?? null;
+      if (!mintedProof) {
+        throw new Error("Mint did not return a proof.");
+      }
+
+      setProof(mintedProof);
+      setStatus("Proof minted and ready for the ballot step.");
+      await refreshSnapshot(false);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to mint proof");
+    } finally {
+      setMintingProof(false);
+    }
+  }, [derivedNpub, refreshSnapshot]);
+
+  const publishDemoBallot = useCallback(async () => {
+    if (!election || !proof || !derivedNpub) {
+      setError("Mint a proof before publishing the ballot.");
+      return;
+    }
+
+    const answers = Object.keys(ballotAnswers).length > 0 ? ballotAnswers : fillDemoBallot();
+    const coordinatorNpub = election.coordinator_npubs[0] ?? coordinatorInfo?.coordinatorNpub ?? "";
+    const relays = coordinatorInfo?.relays ?? [];
+
+    setPublishingBallot(true);
+    setSubmittingProof(true);
+    setError(null);
+
+    try {
+      const publishResult = await publishBallotEvent({
+        electionId: election.electionId,
+        answers,
+        questions: election.questions,
+        relays,
+        coordinatorProofs: [{
+          coordinatorNpub,
+          mintUrl: election.mint_urls[0] ?? MINT_URL,
+          proof,
+          proofSecret: proof.secret,
+        }],
+      });
+
+      setBallotEventId(publishResult.eventId);
+      setStatus(`Ballot published: ${publishResult.successes} relay confirmation(s).`);
+      setIssuanceStatus((prev) => prev);
+
+      const voterSecretKey = decodeNsec(nsecInput);
+      if (!voterSecretKey) {
+        throw new Error("Could not decode the saved nsec.");
+      }
+
+      const dmOutcome = await submitProofsToAllCoordinators({
+        voterSecretKey,
+        voteEventId: publishResult.eventId,
+        coordinatorProofs: [{
+          coordinatorNpub,
+          proof,
+        }],
+        relays,
+        retries: DEMO_MODE ? 1 : 0,
+      });
+
+      setDmResults(dmOutcome);
+      setStatus(`Proof sent to ${dmOutcome.length} coordinator(s).`);
+
+      await refreshSnapshot(false);
+      await runVerifierAudit();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to publish ballot");
+    } finally {
+      setPublishingBallot(false);
+      setSubmittingProof(false);
+    }
+  }, [ballotAnswers, coordinatorInfo?.coordinatorNpub, coordinatorInfo?.relays, derivedNpub, election, fillDemoBallot, nsecInput, proof, refreshSnapshot]);
+
   const runVerifierAudit = useCallback(async () => {
-    if (!election?.event_id || discoveredCoordinators.length === 0) {
+    if (!election?.event_id) {
       setError("Need a discovered election before running an audit.");
       return;
     }
@@ -267,9 +470,24 @@ export default function DemoApp() {
     setError(null);
 
     try {
+      const coordinatorsToAudit = discoveredCoordinators.length > 0
+        ? discoveredCoordinators
+        : coordinatorInfo
+          ? [{
+              npub: coordinatorInfo.coordinatorNpub,
+              httpApi: COORDINATOR_URL,
+              mintUrl: coordinatorInfo.relays[0] ?? MINT_URL,
+              relays: coordinatorInfo.relays,
+            }]
+          : [];
+
+      if (coordinatorsToAudit.length === 0) {
+        throw new Error("Need coordinator details before running an audit.");
+      }
+
       const audit = await runAudit(
         election.event_id,
-        discoveredCoordinators,
+        coordinatorsToAudit,
         eligibility.eligibleNpubs,
         election.vote_start,
         election.confirm_end ?? election.vote_end + 86400,
@@ -283,7 +501,109 @@ export default function DemoApp() {
     } finally {
       setRunningAudit(false);
     }
-  }, [coordinatorInfo?.relays, discoveredCoordinators, election, eligibility.eligibleNpubs]);
+  }, [coordinatorInfo, discoveredCoordinators, election, eligibility.eligibleNpubs]);
+
+  const runDemoSequence = useCallback(async () => {
+    if (runningDemo) return;
+
+    setRunningDemo(true);
+    setError(null);
+
+    try {
+      if (!nsecInput.trim()) {
+        throw new Error("Paste a nsec first.");
+      }
+
+      const sequenceNpub = deriveNpubFromNsec(nsecInput.trim());
+      if (!sequenceNpub) {
+        throw new Error("That nsec is not valid.");
+      }
+
+      setStatus("Step 1: seeding voter identity...");
+      if (USE_MOCK) {
+        await seedEligibility(sequenceNpub);
+      }
+      setSelectedNpub(sequenceNpub);
+      setSeeded(true);
+      setVoterCheck({
+        npub: sequenceNpub,
+        allowed: true,
+        canProceed: true,
+        message: "npub is allowed and has not voted yet",
+      });
+
+      setStatus("Step 2: minting proof...");
+      const eligibilityCheck = await checkEligibility(sequenceNpub);
+      if (!eligibilityCheck.canProceed) {
+        throw new Error(eligibilityCheck.message);
+      }
+      const quote = await createMintQuote();
+      setMintQuote(quote);
+      for (let i = 0; i < 20; i++) {
+        const quoteStatus = await checkQuoteStatus(quote.quote);
+        if (quoteStatus.state === "PAID") {
+          break;
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 250));
+      }
+      const minted = await requestQuoteAndMint(MINT_URL.replace(/\/$/, ""), quote.quote);
+      const mintedProof = minted.proofs[0] ?? null;
+      if (!mintedProof) {
+        throw new Error("Mint did not return a proof.");
+      }
+      setProof(mintedProof);
+      await refreshSnapshot(false);
+
+      setStatus("Step 3: casting ballot...");
+      if (!election) {
+        throw new Error("No election loaded.");
+      }
+      const answers = fillDemoBallot();
+      const coordinatorNpub = election.coordinator_npubs[0] ?? coordinatorInfo?.coordinatorNpub ?? "";
+      const relays = coordinatorInfo?.relays ?? [];
+      const publishResult = await publishBallotEvent({
+        electionId: election.electionId,
+        answers,
+        questions: election.questions,
+        relays,
+        coordinatorProofs: [{
+          coordinatorNpub,
+          mintUrl: election.mint_urls[0] ?? MINT_URL,
+          proof: mintedProof,
+          proofSecret: mintedProof.secret,
+        }],
+      });
+      setBallotEventId(publishResult.eventId);
+      setStatus(`Step 3 worked: ballot published to ${publishResult.successes} relay(s).`);
+
+      setStatus("Step 4: sending proof to coordinator(s)...");
+      const voterSecretKey = decodeNsec(nsecInput.trim());
+      if (!voterSecretKey) {
+        throw new Error("Could not decode the saved nsec.");
+      }
+      const dmOutcome = await submitProofsToAllCoordinators({
+        voterSecretKey,
+        voteEventId: publishResult.eventId,
+        coordinatorProofs: [{
+          coordinatorNpub,
+          proof: mintedProof,
+        }],
+        relays,
+        retries: DEMO_MODE ? 1 : 0,
+      });
+      setDmResults(dmOutcome);
+      setStatus(`Step 4 worked: proof sent to ${dmOutcome.length} coordinator(s).`);
+
+      setStatus("Step 5: refreshing verifier view...");
+      await refreshSnapshot(false);
+      await runVerifierAudit();
+      setStatus("Demo complete. Every step on this page has run in order.");
+    } catch (sequenceError) {
+      setError(sequenceError instanceof Error ? sequenceError.message : "Demo sequence failed");
+    } finally {
+      setRunningDemo(false);
+    }
+  }, [coordinatorInfo?.coordinatorNpub, coordinatorInfo?.relays, election, fillDemoBallot, nsecInput, refreshSnapshot, runningDemo, runVerifierAudit]);
 
   return (
     <main className="page-shell page-shell-demo">
@@ -322,24 +642,44 @@ export default function DemoApp() {
       {status && <section className="demo-banner">{status}</section>}
 
       <section className="demo-grid demo-grid-2">
-        <article className="demo-card">
+        <article className="demo-card" id="demo-identity">
           <PanelTitle
             kicker="Identity"
             title="Ephemeral voter keypair"
             right={<button className="secondary-button" onClick={() => void seedDemoVoter()} disabled={seeding}>{seeding ? "Seeding..." : "Generate again"}</button>}
           />
-          <div className="demo-note">Use this nsec in the voter portal. The npub is seeded into the mock eligibility list.</div>
+          <div className="demo-note">Paste the nsec below. The npub is seeded into the mock eligibility list.</div>
           <div className="demo-copy-stack">
             <CopyField label="nsec" value={identity.nsec} />
             <CopyField label="npub" value={identity.npub} />
           </div>
-          <div className="button-row">
-            <a className="primary-button link-button" href="/vote.html">Mint proof on voter portal</a>
+          <div className="demo-stack">
+            <label className="demo-label" htmlFor="demo-nsec">nsec</label>
+            <textarea
+              id="demo-nsec"
+              className="demo-input"
+              value={nsecInput}
+              onChange={(event) => setNsecInput(event.target.value)}
+              rows={3}
+              spellCheck={false}
+            />
+            <div className="demo-note">Paste here to seed the voter and mint the proof on this page.</div>
+            <div className="button-row">
+              <button className="primary-button" onClick={() => void mintDemoProof()} disabled={mintingProof || !derivedNpub}>
+                {mintingProof ? "Minting..." : "Mint proof"}
+              </button>
+              <button className="secondary-button" onClick={() => void saveDemoIdentity()} disabled={seeding || !derivedNpub}>
+                {seeding ? "Seeding..." : "Save identity"}
+              </button>
+              <button className="ghost-button" onClick={() => void runDemoSequence()} disabled={runningDemo}>
+                {runningDemo ? "Running..." : "Run full demo"}
+              </button>
+            </div>
           </div>
-          <div className="demo-note">Paste the nsec in the voter portal nsec box. The voter page stores the keypair so the ballot page can publish the confirmation later.</div>
+          <div className="demo-note">The next cards show each step as it completes.</div>
         </article>
 
-        <article className="demo-card">
+        <article className="demo-card" id="demo-voter">
           <PanelTitle kicker="Coordinator" title="Current election" right={election?.event_id ? <span className="demo-status demo-status-good">Live</span> : <span className="demo-status">Waiting</span>} />
           {election ? (
             <div className="demo-stack">
@@ -357,7 +697,7 @@ export default function DemoApp() {
       </section>
 
       <section className="demo-grid demo-grid-3">
-        <article className="demo-card">
+        <article className="demo-card" id="demo-verifier">
           <PanelTitle kicker="Voter" title="Eligibility and pass issuance" right={issuanceForSelected?.issued ? <span className="demo-status demo-status-good">Issued</span> : <span className="demo-status">Pending</span>} />
           <div className="demo-stack">
             <label className="demo-label" htmlFor="demo-npub">Voter npub</label>
@@ -372,7 +712,7 @@ export default function DemoApp() {
               <button className="primary-button" onClick={() => void checkSelectedVoter()} disabled={checkingVoter}>
                 {checkingVoter ? "Checking..." : "Check eligibility"}
               </button>
-              <a className="ghost-button link-button" href="/vote.html">Open voter portal</a>
+              <a className="ghost-button link-button" href="#demo-identity">Jump to identity</a>
             </div>
             {voterCheck ? (
               <div className="demo-note">
@@ -424,7 +764,7 @@ export default function DemoApp() {
               <button className="secondary-button" onClick={() => void runVerifierAudit()} disabled={runningAudit || discoveredCoordinators.length === 0}>
                 {runningAudit ? "Running audit..." : "Run audit"}
               </button>
-              <a className="ghost-button link-button" href="/dashboard.html">Open dashboard</a>
+              <a className="ghost-button link-button" href="#demo-verifier">Jump to verifier</a>
             </div>
             {perCoordinatorTallies.length > 0 && (
               <div className="demo-list">
@@ -454,21 +794,21 @@ export default function DemoApp() {
         <article className="demo-card">
           <PanelTitle kicker="Guide" title="What to copy where" />
           <div className="demo-list">
-            <a className="demo-list-item demo-list-link" href="/">
-              <span>Control room</span>
-              <code>/</code>
-            </a>
-            <a className="demo-list-item demo-list-link" href="/vote.html">
-              <span>Voter portal</span>
-              <code>/vote.html</code>
-            </a>
-            <a className="demo-list-item demo-list-link" href="/dashboard.html">
-              <span>Verifier dashboard</span>
-              <code>/dashboard.html</code>
-            </a>
-            <a className="demo-list-item demo-list-link" href="/vote.html">
-              <span>Paste here in voter portal</span>
+            <a className="demo-list-item demo-list-link" href="#demo-nsec">
+              <span>Paste here</span>
               <code>{identity.nsec}</code>
+            </a>
+            <a className="demo-list-item demo-list-link" href="#demo-identity">
+              <span>Mint proof</span>
+              <code>on this page</code>
+            </a>
+            <a className="demo-list-item demo-list-link" href="#demo-voter">
+              <span>Ballot and vote</span>
+              <code>on this page</code>
+            </a>
+            <a className="demo-list-item demo-list-link" href="#demo-verifier">
+              <span>Verify and audit</span>
+              <code>on this page</code>
             </a>
           </div>
         </article>

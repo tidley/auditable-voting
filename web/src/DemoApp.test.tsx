@@ -11,7 +11,7 @@ vi.mock("./demoIdentity", () => ({
     pubkey: "demo-pubkey",
   }),
 }));
-vi.mock("./nostrIdentity", () => ({ formatDateTime: (value: number) => `time-${value}` }));
+vi.mock("./nostrIdentity", () => ({ formatDateTime: (value: number) => `time-${value}`, deriveNpubFromNsec: () => "npub1demo" }));
 vi.mock("./voterManagementApi", () => ({
   fetchEligibility: vi.fn().mockResolvedValue({
     eligibleNpubs: ["npub1demo"],
@@ -69,9 +69,11 @@ describe("DemoApp", () => {
     render(<DemoApp />);
 
     expect(await screen.findByText(/Simple, flat status view for coordinators, voters, and verifiers\./i)).toBeTruthy();
+    expect(screen.getByLabelText(/^nsec$/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: /Check eligibility/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Mint proof/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Run full demo/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Run audit/i })).toBeTruthy();
-    expect(screen.getByRole("link", { name: /Open voter portal/i })).toBeTruthy();
-    expect(screen.getByRole("link", { name: /Open dashboard/i })).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Paste here/i })).toBeTruthy();
   });
 });

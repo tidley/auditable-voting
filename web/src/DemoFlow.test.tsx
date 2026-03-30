@@ -392,6 +392,8 @@ describe("full voting demo flow", () => {
     expect(screen.getAllByText(testIdentity.npub).length).toBeGreaterThan(0);
     expect(screen.getAllByText(testIdentity.nsec).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: /Check eligibility/i })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: /Run full demo/i }));
+    await waitFor(() => expect(screen.getByText(/Demo complete\. Every step on this page has run in order\./i)).toBeTruthy(), { timeout: 5000 });
     demo.unmount();
 
     const app = render(<App />);
