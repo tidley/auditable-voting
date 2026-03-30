@@ -202,13 +202,14 @@ export default function DemoApp() {
   }, [activeQuestion, finalResult?.results, tally?.results]);
   const yesVotes = activePollResults?.Yes ?? activePollResults?.yes ?? 0;
   const noVotes = activePollResults?.No ?? activePollResults?.no ?? 0;
-  const publicLedgerEntries = useMemo(
-    () => mergeLedgerEntries(publicLedger?.entries ?? [], Object.values(sessionLedger)),
+  const revealedLedgerEntries = useMemo(
+    () => mergeLedgerEntries(publicLedger?.entries ?? [], Object.values(sessionLedger))
+      .filter((entry) => !!entry.ballotEventId || !!entry.voteChoice || !!entry.receiptReceivedAt),
     [publicLedger?.entries, sessionLedger],
   );
-  const publicLedgerMintedCount = publicLedgerEntries.length;
-  const publicLedgerVotedCount = publicLedgerEntries.filter((entry) => !!entry.voteChoice).length;
-  const publicLedgerPendingCount = publicLedgerMintedCount - publicLedgerVotedCount;
+  const revealedLedgerCount = revealedLedgerEntries.length;
+  const revealedPendingBurnCount = revealedLedgerEntries.filter((entry) => !entry.receiptReceivedAt).length;
+  const revealedBurnedCount = revealedLedgerCount - revealedPendingBurnCount;
 
   const eligibleNpubs = eligibility.eligibleNpubs;
   const issuedCount = Object.values(issuanceStatus?.voters ?? {}).filter((entry) => entry.issued).length;
@@ -991,48 +992,52 @@ export default function DemoApp() {
         <section className="demo-ledger-section">
           <article className="demo-card demo-ledger-card" id="demo-ledger">
             <PanelTitle
-              kicker="Public Ledger"
-              title="Minted passes and published ballots"
+              kicker="Reveal Ledger"
+              title="Revealed proofs and public ballots"
               right={(
-                <span className={`demo-status${publicLedgerMintedCount > 0 ? " demo-status-good" : ""}`}>
-                  {publicLedgerMintedCount} minted
+                <span className={`demo-status${revealedLedgerCount > 0 ? " demo-status-good" : ""}`}>
+                  {revealedLedgerCount} revealed
                 </span>
               )}
             />
             <div className="demo-note">
-              Minted pass hashes appear here before they are used. Rows stay grey until a ballot is published, then the vote column flips to Yes or No.
+              In the real protocol, proof hashes are not public during issuance. This table only fills after a voter reveals a proof hash through ballot publication and proof submission, while issuance remains visible only as aggregate counts.
             </div>
             <div className="demo-ledger-summary">
               <div className="demo-ledger-summary-item">
-                <span>Minted passes</span>
-                <strong>{publicLedgerMintedCount}</strong>
+                <span>Eligible voters</span>
+                <strong>{eligibility.eligibleCount}</strong>
               </div>
               <div className="demo-ledger-summary-item">
-                <span>Ballots shown</span>
-                <strong>{publicLedgerVotedCount}</strong>
+                <span>Issued passes</span>
+                <strong>{issuedCount}</strong>
               </div>
               <div className="demo-ledger-summary-item">
-                <span>Still grey</span>
-                <strong>{publicLedgerPendingCount}</strong>
+                <span>Revealed proofs</span>
+                <strong>{revealedLedgerCount}</strong>
+              </div>
+              <div className="demo-ledger-summary-item">
+                <span>Burn receipts</span>
+                <strong>{revealedBurnedCount}</strong>
               </div>
             </div>
             <div className="demo-ledger-table-wrap">
-              <table className="demo-ledger-table" aria-label="Public ballot ledger">
+              <table className="demo-ledger-table" aria-label="Revealed proof ledger">
                 <thead>
                   <tr>
                     <th scope="col">#</th>
-                    <th scope="col">Pass hash</th>
-                    <th scope="col">Voter</th>
+                    <th scope="col">Proof hash</th>
+                    <th scope="col">Ballot</th>
                     <th scope="col">Vote</th>
-                    <th scope="col">Receipt</th>
+                    <th scope="col">Burn receipt</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {publicLedgerEntries.length > 0 ? publicLedgerEntries.map((entry, index) => (
-                    <tr key={entry.proofHash} className={!entry.voteChoice ? "is-pending" : ""}>
+                  {revealedLedgerEntries.length > 0 ? revealedLedgerEntries.map((entry, index) => (
+                    <tr key={entry.proofHash} className={!entry.receiptReceivedAt ? "is-pending" : ""}>
                       <td>{index + 1}</td>
                       <td><code>{shortCode(entry.proofHash, 18, 10)}</code></td>
-                      <td><code>{entry.npub ? shortCode(entry.npub, 14, 6) : "Pending"}</code></td>
+                      <td><code>{entry.ballotEventId ? shortCode(entry.ballotEventId, 10, 8) : "Waiting"}</code></td>
                       <td>
                         <span
                           className={`demo-ledger-vote-pill${
@@ -1054,7 +1059,9 @@ export default function DemoApp() {
                     </tr>
                   )) : (
                     <tr className="is-pending">
-                      <td colSpan={5}>No minted passes yet. As each voter receives a blind-signed proof, its hash will be appended here.</td>
+                      <td colSpan={5}>
+                        No proof hashes visible yet. In the real protocol they only appear after the voter reveals them.
+                      </td>
                     </tr>
                   )}
                 </tbody>
