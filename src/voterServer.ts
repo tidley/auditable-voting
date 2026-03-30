@@ -608,7 +608,7 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
-export async function startVoterServer(port = 8787) {
+export async function startVoterServer(port = 8789) {
   const mint = new DemoMint();
   const mockAuditLedger = new MockAuditLedger();
   const mockMintService = new MockMintService(mint, mockAuditLedger);

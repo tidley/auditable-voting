@@ -25,7 +25,7 @@ async function main() {
   }
 
   else if (cmd === "start-server") {
-    const portArg = process.argv[3] ?? "8787";
+    const portArg = process.argv[3] ?? "8789";
     const port = Number(portArg);
 
     if (!Number.isInteger(port) || port <= 0) {
