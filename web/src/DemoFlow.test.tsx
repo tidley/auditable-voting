@@ -130,23 +130,12 @@ vi.mock("./coordinatorApi", () => ({
     status: "closed",
     total_published_votes: ballotPublished ? 1 : 0,
     total_accepted_votes: ballotPublished ? 1 : 0,
-    spent_commitment_root: ballotPublished ? "spent-root" : null,
+    spent_commitment_root: null,
     results: ballotPublished
       ? { funding_priority: { "Community grants": 1 } }
       : {},
   })),
-  fetchResult: vi.fn().mockImplementation(async () => ({
-    election_id: mockElection.election_id,
-    total_votes: ballotPublished ? 1 : 0,
-    results: ballotPublished ? { funding_priority: { "Community grants": 1 } } : {},
-    merkle_root: ballotPublished ? "merkle-root" : "pending-root",
-    total_proofs_burned: ballotPublished ? 1 : 0,
-    issuance_commitment_root: "issuance-root",
-    spent_commitment_root: ballotPublished ? "spent-root" : "pending-root",
-    max_supply: 1,
-    event_id: mockElection.event_id,
-    closed_at: now,
-  })),
+  fetchResult: vi.fn().mockResolvedValue(null),
   discoverCoordinators: vi.fn().mockResolvedValue([
     { npub: mockCoordinator.coordinatorNpub, httpApi: "http://coordinator.example", mintUrl: mockCoordinator.mintUrl, relays: mockCoordinator.relays },
     { npub: mockCoordinator2.coordinatorNpub, httpApi: "http://coordinator-2.example", mintUrl: mockCoordinator2.mintUrl, relays: mockCoordinator2.relays },
@@ -160,21 +149,10 @@ vi.mock("./coordinatorApi", () => ({
         status: "closed",
         total_published_votes: ballotPublished ? 1 : 0,
         total_accepted_votes: ballotPublished ? 1 : 0,
-        spent_commitment_root: ballotPublished ? "spent-root" : null,
+        spent_commitment_root: null,
         results: ballotPublished ? { funding_priority: { "Community grants": 1 } } : {},
       },
-      result: {
-        election_id: mockElection.election_id,
-        total_votes: ballotPublished ? 1 : 0,
-        results: ballotPublished ? { funding_priority: { "Community grants": 1 } } : {},
-        merkle_root: ballotPublished ? "merkle-root" : "pending-root",
-        total_proofs_burned: ballotPublished ? 1 : 0,
-        issuance_commitment_root: "issuance-root",
-        spent_commitment_root: ballotPublished ? "spent-root" : "pending-root",
-        max_supply: 1,
-        event_id: mockElection.event_id,
-        closed_at: now,
-      },
+      result: null,
     },
     {
       coordinatorNpub: mockCoordinator2.coordinatorNpub,
@@ -184,21 +162,10 @@ vi.mock("./coordinatorApi", () => ({
         status: "closed",
         total_published_votes: ballotPublished ? 1 : 0,
         total_accepted_votes: ballotPublished ? 1 : 0,
-        spent_commitment_root: ballotPublished ? "spent-root-2" : null,
+        spent_commitment_root: null,
         results: ballotPublished ? { funding_priority: { "Community grants": 1 } } : {},
       },
-      result: {
-        election_id: mockElection.election_id,
-        total_votes: ballotPublished ? 1 : 0,
-        results: ballotPublished ? { funding_priority: { "Community grants": 1 } } : {},
-        merkle_root: ballotPublished ? "merkle-root-2" : "pending-root",
-        total_proofs_burned: ballotPublished ? 1 : 0,
-        issuance_commitment_root: "issuance-root-2",
-        spent_commitment_root: ballotPublished ? "spent-root-2" : "pending-root",
-        max_supply: 1,
-        event_id: mockElection.event_id,
-        closed_at: now,
-      },
+      result: null,
     },
   ])),
   startIssuanceTracking: vi.fn().mockResolvedValue({
@@ -392,7 +359,7 @@ describe("full voting demo flow", () => {
     expect(screen.getByDisplayValue(testIdentity.nsec)).toBeTruthy();
     expect(screen.getByRole("button", { name: /Check eligibility/i })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: /Run full demo/i }));
-    await waitFor(() => expect(screen.getByText(/Demo complete\. Every step on this page has run in order\./i)).toBeTruthy(), { timeout: 5000 });
+    await waitFor(() => expect(screen.getByText(/Demo root derived from the proof receipt\./i)).toBeTruthy(), { timeout: 5000 });
     demo.unmount();
 
     const app = render(<App />);

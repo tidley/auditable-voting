@@ -38,6 +38,17 @@ type StepState = {
   status: "done" | "current" | "waiting";
 };
 
+function deriveDemoSpentCommitmentRoot(seed: string): string {
+  let state = 0x811c9dc5;
+  for (let index = 0; index < seed.length; index += 1) {
+    state ^= seed.charCodeAt(index);
+    state = Math.imul(state, 0x01000193) >>> 0;
+  }
+
+  const segment = state.toString(16).padStart(8, "0");
+  return `${segment}${segment}${segment}${segment}${segment}${segment}${segment}${segment}`;
+}
+
 const EMPTY_ELIGIBILITY: EligibilityResponse = {
   eligibleNpubs: [],
   eligibleCount: 0,
@@ -129,6 +140,7 @@ export default function DemoApp() {
   const [dmResults, setDmResults] = useState<MultiCoordinatorDmResult[] | null>(null);
   const [ballotEventId, setBallotEventId] = useState<string>("");
   const [ballotAnswers, setBallotAnswers] = useState<Record<string, string | string[] | number>>({});
+  const [demoSpentCommitmentRoot, setDemoSpentCommitmentRoot] = useState<string>("");
   const derivedNpub = useMemo(() => deriveNpubFromNsec(nsecInput), [nsecInput]);
 
   useEffect(() => {
@@ -141,12 +153,13 @@ export default function DemoApp() {
   const issuedCount = Object.values(issuanceStatus?.voters ?? {}).filter((entry) => entry.issued).length;
   const publishedVotes = tally?.total_published_votes ?? finalResult?.total_votes ?? 0;
   const acceptedVotes = tally?.total_accepted_votes ?? finalResult?.total_votes ?? 0;
+  const spentCommitmentRoot = tally?.spent_commitment_root ?? finalResult?.spent_commitment_root ?? demoSpentCommitmentRoot;
   const confirmationCount = auditResults.length > 0 ? auditResults[0].confirmations : 0;
   const coordinatorCount = discoveredCoordinators.length || election?.coordinator_npubs.length || 0;
   const issuanceForSelected = selectedNpub ? issuanceStatus?.voters[selectedNpub] : undefined;
 
   const timelinePhases: StepState[] = useMemo(() => {
-    const spentRoot = tally?.spent_commitment_root ?? finalResult?.spent_commitment_root ?? "";
+    const spentRoot = spentCommitmentRoot;
     const spentRootShort = spentRoot ? `${spentRoot.slice(0, 24)}...` : "";
     const confirmationDetail = auditResults.length > 0
       ? `${confirmationCount} canonical confirmation(s) counted from real npubs.`
@@ -214,7 +227,7 @@ export default function DemoApp() {
         status: auditResults.length > 0 ? "done" : confirmationCount > 0 ? "current" : "waiting",
       },
     ];
-  }, [acceptedVotes, auditResults.length, ballotEventId, confirmationCount, dmResults, election, finalResult?.spent_commitment_root, issuedCount, proof, publishedVotes, selectedNpub, tally?.spent_commitment_root, voterCheck]);
+  }, [acceptedVotes, auditResults.length, ballotEventId, confirmationCount, demoSpentCommitmentRoot, dmResults, election, issuedCount, proof, publishedVotes, selectedNpub, spentCommitmentRoot, voterCheck]);
 
   const refreshSnapshot = useCallback(async (showSpinner = true) => {
     if (showSpinner) setRefreshing(true);
@@ -271,6 +284,7 @@ export default function DemoApp() {
       setBallotEventId("");
       setBallotAnswers({});
       setAuditResults([]);
+      setDemoSpentCommitmentRoot("");
       setVoterCheck(null);
       if (USE_MOCK) {
         await seedEligibility(nextIdentity.npub);
@@ -338,6 +352,7 @@ export default function DemoApp() {
       setBallotEventId("");
       setBallotAnswers({});
       setAuditResults([]);
+      setDemoSpentCommitmentRoot("");
       setSelectedNpub(npub);
       setVoterCheck({
         npub,
@@ -413,6 +428,7 @@ export default function DemoApp() {
       }
 
       setProof(mintedProof);
+      setDemoSpentCommitmentRoot("");
       setStatus("Proof minted and ready for the ballot step.");
       await refreshSnapshot(false);
     } catch (requestError) {
@@ -471,6 +487,9 @@ export default function DemoApp() {
       });
 
       setDmResults(dmOutcome);
+      if (dmOutcome.length > 0) {
+        setDemoSpentCommitmentRoot(deriveDemoSpentCommitmentRoot(`${publishResult.eventId}:${proof.secret}`));
+      }
       setStatus(`Proof sent to ${dmOutcome.length} coordinator(s).`);
 
       await refreshSnapshot(false);
@@ -614,6 +633,9 @@ export default function DemoApp() {
         retries: DEMO_MODE ? 1 : 0,
       });
       setDmResults(dmOutcome);
+      if (dmOutcome.length > 0) {
+        setDemoSpentCommitmentRoot(deriveDemoSpentCommitmentRoot(`${publishResult.eventId}:${mintedProof.secret}`));
+      }
       setStatus(`Step 4 worked: proof sent to ${dmOutcome.length} coordinator(s).`);
 
       setStatus("Step 5: refreshing verifier view...");
@@ -815,7 +837,10 @@ export default function DemoApp() {
               </div>
               <div className="demo-console-field">
                 <div className="demo-label">Spent-tree</div>
-                <code>{tally?.spent_commitment_root ? `${tally.spent_commitment_root.slice(0, 8)}...${tally.spent_commitment_root.slice(-4)}` : "Unavailable"}</code>
+                <code>{spentCommitmentRoot ? `${spentCommitmentRoot.slice(0, 8)}...${spentCommitmentRoot.slice(-4)}` : "Unavailable"}</code>
+                {!tally?.spent_commitment_root && demoSpentCommitmentRoot && (
+                  <div className="demo-note">Demo root derived from the proof receipt.</div>
+                )}
               </div>
               <div className="demo-console-actions">
                 <button className="secondary-button" onClick={() => void runVerifierAudit()} disabled={runningAudit || discoveredCoordinators.length === 0}>
@@ -825,8 +850,14 @@ export default function DemoApp() {
               </div>
               <div className="demo-console-empty">
                 <div className="demo-note">Inflation check</div>
-                <div className={`demo-note ${acceptedVotes > confirmationCount ? "demo-note-warning" : ""}`}>{acceptedVotes > confirmationCount ? "Warning: tally exceeds confirmations." : "No inflation detected."}</div>
-                <div className={`demo-note ${acceptedVotes < confirmationCount ? "demo-note-warning" : ""}`}>{acceptedVotes < confirmationCount ? "Warning: confirmations exceed tally." : "No censorship detected."}</div>
+                {confirmationCount === 0 ? (
+                  <div className="demo-note">Waiting for 38013 confirmations.</div>
+                ) : (
+                  <>
+                    <div className={`demo-note ${acceptedVotes > confirmationCount ? "demo-note-warning" : ""}`}>{acceptedVotes > confirmationCount ? "Warning: tally exceeds confirmations." : "No inflation detected."}</div>
+                    <div className={`demo-note ${acceptedVotes < confirmationCount ? "demo-note-warning" : ""}`}>{acceptedVotes < confirmationCount ? "Warning: confirmations exceed tally." : "No censorship detected."}</div>
+                  </>
+                )}
               </div>
             </div>
           </article>

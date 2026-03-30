@@ -56,7 +56,7 @@ function formatAnswersAsResponses(
   });
 }
 
-async function computeProofHash(proofSecret: string): Promise<string> {
+export async function computeProofHash(proofSecret: string): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(proofSecret);
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
