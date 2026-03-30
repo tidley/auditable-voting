@@ -9,6 +9,7 @@ import { fetchElection, fetchTally, checkVoteAccepted, type ElectionInfo, type T
 import MerkleTreeViz from "./MerkleTreeViz";
 import { DEMO_MODE } from "./config";
 import PageNav from "./PageNav";
+import { queueNostrPublish } from "./nostrPublishQueue";
 
 type VotePublishResult = {
   eventId: string;
@@ -350,7 +351,9 @@ export default function VotingApp() {
 
       const pool = new SimplePool();
       try {
-        const results = await Promise.allSettled(pool.publish(relays, event, { maxWait: 4000 }));
+        const results = await queueNostrPublish(() =>
+          Promise.allSettled(pool.publish(relays, event, { maxWait: 4000 })),
+        );
         const successes = results.filter(r => r.status === "fulfilled").length;
         const failures = results.length - successes;
         setConfirmationResult({ eventId: event.id, successes, failures });

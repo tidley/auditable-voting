@@ -4,6 +4,7 @@ import type { RelayPublishResult } from "./cashuMintApi";
 import { logBallotDebug } from "./cashuMintApi";
 import type { CashuProof } from "./cashuBlind";
 import { computeProofHash } from "./ballot";
+import { queueNostrPublish } from "./nostrPublishQueue";
 
 export const DEFAULT_DM_RELAYS = [
   "wss://nip17.com",
@@ -65,7 +66,7 @@ export async function submitProofViaDm(input: {
   const pool = new SimplePool();
 
   try {
-    const results = await Promise.allSettled(pool.publish(dmRelays, event, { maxWait: 4000 }));
+    const results = await queueNostrPublish(() => Promise.allSettled(pool.publish(dmRelays, event, { maxWait: 4000 })));
     const relayResults: RelayPublishResult[] = results.map((result, index) => (
       result.status === "fulfilled"
         ? { relay: dmRelays[index], success: true }

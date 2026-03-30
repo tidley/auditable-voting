@@ -32,6 +32,7 @@ import { createDemoIdentity, type DemoIdentity } from "./demoIdentity";
 import { fetchCoordinatorInfo } from "./coordinatorApi";
 import { publishBallotEvent } from "./ballot";
 import { submitProofsToAllCoordinators, type MultiCoordinatorDmResult } from "./proofSubmission";
+import { queueNostrPublish } from "./nostrPublishQueue";
 
 type StepState = {
   title: string;
@@ -732,7 +733,9 @@ export default function DemoApp() {
       const publicRelays = (coordinatorInfo?.relays ?? []).filter((relay) => relay.startsWith("wss://"));
       const pool = new SimplePool();
       try {
-        const results = await Promise.allSettled(pool.publish(publicRelays, event, { maxWait: 4000 }));
+        const results = await queueNostrPublish(() =>
+          Promise.allSettled(pool.publish(publicRelays, event, { maxWait: 4000 })),
+        );
         const successes = results.filter((result) => result.status === "fulfilled").length;
         const failures = results.length - successes;
         setConfirmationResult({ eventId: event.id, successes, failures });
