@@ -68,7 +68,6 @@ export default function SimpleUiApp() {
   const [coordinatorNpub, setCoordinatorNpub] = useState<string>("");
   const [selectedVotingId, setSelectedVotingId] = useState<string>("");
   const [importedVotingPackage, setImportedVotingPackage] = useState<SimpleVotingPackage | null>(null);
-  const [manualVotingId, setManualVotingId] = useState<string>("");
   const [manualCoordinators, setManualCoordinators] = useState<string[]>([""]);
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [scannerOpen, setScannerOpen] = useState(false);
@@ -96,7 +95,6 @@ export default function SimpleUiApp() {
         coordinators: nextCoordinatorNpub ? [nextCoordinatorNpub] : undefined,
       };
       setImportedVotingPackage(nextPackage);
-      setManualVotingId(nextVotingId);
       setManualCoordinators(nextCoordinatorNpub ? [nextCoordinatorNpub] : [""]);
     }
   }, []);
@@ -136,22 +134,6 @@ export default function SimpleUiApp() {
   }, [voterKeypair?.nsec]);
 
   useEffect(() => {
-    const nextVotingId = manualVotingId.trim();
-    const nextCoordinators = normalizeCoordinatorNpubs(manualCoordinators);
-    const nextPackage = nextVotingId || nextCoordinators.length > 0
-      ? {
-          votingId: nextVotingId || undefined,
-          coordinatorNpub: nextCoordinators[0],
-          coordinators: nextCoordinators.length > 0 ? nextCoordinators : undefined,
-        }
-      : null;
-
-    setSelectedVotingId(nextVotingId);
-    setCoordinatorNpub(nextCoordinators[0] ?? "");
-    setImportedVotingPackage(nextPackage);
-  }, [manualCoordinators, manualVotingId]);
-
-  useEffect(() => {
     if (!coordinatorNpub && !selectedVotingId && receivedShards.length === 0 && !importedVotingPackage) {
       setLiveVoteSession(null);
       setParticipatingCoordinators([]);
@@ -163,10 +145,18 @@ export default function SimpleUiApp() {
     async function refreshLiveVote() {
       try {
         const sessions = await fetchSimpleLiveVotes();
+        const packageCoordinators = normalizeCoordinatorNpubs([
+          ...(manualCoordinators ?? []),
+          ...(importedVotingPackage?.coordinators ?? []),
+          ...(importedVotingPackage?.coordinatorNpub ? [importedVotingPackage.coordinatorNpub] : []),
+        ]);
+        const coordinatorScopedSessions = packageCoordinators.length > 0
+          ? sessions.filter((session) => packageCoordinators.includes(session.coordinatorNpub))
+          : [];
+        const inferredVotingIds = Array.from(new Set(coordinatorScopedSessions.map((session) => session.votingId)));
         const candidateVotingId = selectedVotingId
           || importedVotingPackage?.votingId
-          || "";
-        const packageCoordinators = importedVotingPackage?.coordinators ?? [];
+          || (inferredVotingIds.length === 1 ? inferredVotingIds[0] : "");
         const matchingSessions = candidateVotingId
           ? sessions.filter((session) => (
             session.votingId === candidateVotingId
@@ -184,6 +174,8 @@ export default function SimpleUiApp() {
           setParticipatingCoordinators(nextCoordinators);
           if (nextSession?.votingId) {
             setSelectedVotingId(nextSession.votingId);
+          } else if (!importedVotingPackage?.votingId) {
+            setSelectedVotingId("");
           }
         }
       } catch {
@@ -203,7 +195,7 @@ export default function SimpleUiApp() {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [coordinatorNpub, importedVotingPackage, receivedShards, selectedVotingId]);
+  }, [coordinatorNpub, importedVotingPackage, manualCoordinators, receivedShards, selectedVotingId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -236,15 +228,6 @@ export default function SimpleUiApp() {
     setVoterKeypair(nextKeypair);
   }
 
-  function syncManualFields(nextPackage: SimpleVotingPackage) {
-    const nextCoordinators = Array.from(new Set([
-      ...(nextPackage.coordinators ?? []),
-      ...(nextPackage.coordinatorNpub ? [nextPackage.coordinatorNpub] : []),
-    ]));
-    setManualVotingId(nextPackage.votingId ?? "");
-    setManualCoordinators(nextCoordinators.length > 0 ? nextCoordinators : [""]);
-  }
-
   function applyVotingDetails(parsed: SimpleVotingPackage, source: "imported" | "scanned") {
     const mergedCoordinators = Array.from(new Set([
       ...(importedVotingPackage?.coordinators ?? []),
@@ -258,8 +241,8 @@ export default function SimpleUiApp() {
       || liveVoteSession?.votingId
       || "";
 
-    if (!nextVotingId) {
-      setImportStatus("Add a voting ID as well as any coordinator npubs.");
+    if (!nextVotingId && mergedCoordinators.length === 0) {
+      setImportStatus("Add at least one coordinator npub.");
       return;
     }
 
@@ -274,26 +257,10 @@ export default function SimpleUiApp() {
     setImportedVotingPackage(nextPackage);
     setSelectedVotingId(nextVotingId);
     setCoordinatorNpub(nextPackage.coordinatorNpub ?? "");
-    syncManualFields(nextPackage);
+    setManualCoordinators(mergedCoordinators.length > 0 ? mergedCoordinators : [""]);
     setImportStatus(source === "scanned"
       ? `Voting details scanned. ${mergedCoordinators.length || 1} coordinator${mergedCoordinators.length === 1 ? "" : "s"} loaded.`
       : `Voting details imported. ${mergedCoordinators.length || 1} coordinator${mergedCoordinators.length === 1 ? "" : "s"} loaded.`);
-  }
-
-  function importVotingPackage() {
-    const normalizedCoordinators = normalizeCoordinatorNpubs(manualCoordinators);
-    const parsed = {
-      votingId: manualVotingId.trim() || undefined,
-      coordinatorNpub: normalizedCoordinators[0],
-      coordinators: normalizedCoordinators.length > 0 ? normalizedCoordinators : undefined,
-    };
-
-    if (!parsed.votingId) {
-      setImportStatus("Add a voting ID.");
-      return;
-    }
-
-    applyVotingDetails(parsed, "imported");
   }
 
   function handleScannedVotingPackage(scannedValue: string) {
@@ -308,9 +275,23 @@ export default function SimpleUiApp() {
   }
 
   function updateCoordinatorInput(index: number, value: string) {
-    setManualCoordinators((current) => current.map((entry, currentIndex) => (
-      currentIndex === index ? value : entry
-    )));
+    setManualCoordinators((current) => {
+      const next = current.map((entry, currentIndex) => (
+        currentIndex === index ? value : entry
+      ));
+      const normalized = normalizeCoordinatorNpubs(next);
+      setCoordinatorNpub(normalized[0] ?? "");
+      setImportedVotingPackage((currentPackage) => (
+        normalized.length > 0 || currentPackage?.votingId
+          ? {
+              ...currentPackage,
+              coordinatorNpub: normalized[0],
+              coordinators: normalized.length > 0 ? normalized : undefined,
+            }
+          : null
+      ));
+      return next;
+    });
   }
 
   function addCoordinatorInput() {
@@ -320,7 +301,19 @@ export default function SimpleUiApp() {
   function removeCoordinatorInput(index: number) {
     setManualCoordinators((current) => {
       const next = current.filter((_, currentIndex) => currentIndex !== index);
-      return next.length > 0 ? next : [""];
+      const nextValues = next.length > 0 ? next : [""];
+      const normalized = normalizeCoordinatorNpubs(nextValues);
+      setCoordinatorNpub(normalized[0] ?? "");
+      setImportedVotingPackage((currentPackage) => (
+        normalized.length > 0 || currentPackage?.votingId
+          ? {
+              ...currentPackage,
+              coordinatorNpub: normalized[0],
+              coordinators: normalized.length > 0 ? normalized : undefined,
+            }
+          : null
+      ));
+      return nextValues;
     });
   }
 
@@ -464,7 +457,7 @@ export default function SimpleUiApp() {
         <section className="simple-voter-section" aria-labelledby="import-package-title">
           <h2 id="import-package-title" className="simple-voter-section-title">Scan or enter voting details</h2>
           <p className="simple-voter-question">
-            Scan a coordinator QR code, or paste a voting ID and one or more coordinator npubs.
+            Scan a coordinator QR code, or paste one or more coordinator npubs.
           </p>
           <div className="simple-voter-action-row simple-voter-action-row-inline">
             <button
@@ -480,14 +473,6 @@ export default function SimpleUiApp() {
             onDetected={handleScannedVotingPackage}
             onClose={() => setScannerOpen(false)}
           />
-          <label className="simple-voter-label" htmlFor="simple-voting-id">Voting ID</label>
-          <input
-            id="simple-voting-id"
-            className="simple-voter-input"
-            value={manualVotingId}
-            onChange={(event) => setManualVotingId(event.target.value)}
-            placeholder="1357a6d0-8eb"
-          />
           <div className="simple-voter-field-stack">
             <div className="simple-voter-field-head">
               <label className="simple-voter-label simple-voter-label-tight">Coordinator npubs</label>
@@ -500,7 +485,7 @@ export default function SimpleUiApp() {
               </button>
             </div>
             {manualCoordinators.map((value, index) => (
-              <div key={`${index}-${value.slice(0, 12)}`} className="simple-voter-inline-field">
+              <div key={index} className="simple-voter-inline-field">
                 <input
                   className="simple-voter-input simple-voter-input-inline"
                   value={value}
@@ -536,7 +521,7 @@ export default function SimpleUiApp() {
           </div>
           {requestStatus && <p className="simple-voter-note">{requestStatus}</p>}
           {!selectedVotingId && (
-            <p className="simple-voter-empty">Enter voting details first.</p>
+            <p className="simple-voter-empty">Waiting for coordinators to publish the live vote.</p>
           )}
           {selectedVotingId && requestTargets.length === 0 && (
             <p className="simple-voter-empty">Add at least one coordinator npub.</p>
