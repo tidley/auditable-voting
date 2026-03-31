@@ -21,6 +21,10 @@ vi.mock("./nostrPublishQueue", () => ({
   queueNostrPublish: (task: () => Promise<unknown>) => task(),
 }));
 
+vi.mock("./simpleShardCertificate", () => ({
+  deriveTokenIdFromSimpleShardCertificates: vi.fn(async () => "token-1"),
+}));
+
 describe("simpleVotingSession", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -95,11 +99,11 @@ describe("simpleVotingSession", () => {
     const mod = await import("./simpleVotingSession");
 
     const result = await mod.publishSimpleSubmittedVote({
-      voterNsec: "nsec1voter",
+      ballotNsec: "nsec1voter",
       coordinatorNpub: "npub1coord",
       votingId: "vote-2",
       choice: "Yes",
-      shardIds: ["resp-1"],
+      shardCertificates: [{ id: "cert-1", kind: 38993, pubkey: "ab".repeat(32), created_at: 10, tags: [], content: "{}", sig: "sig" }],
     });
 
     expect(finalizeEvent).toHaveBeenCalled();
@@ -113,22 +117,22 @@ describe("simpleVotingSession", () => {
     querySync.mockResolvedValue([
       {
         id: "ballot-1",
+        pubkey: "ef".repeat(32),
         created_at: 30,
         content: JSON.stringify({
           voting_id: "vote-2",
           choice: "Yes",
-          voter_npub: "npub1voter",
-          shard_ids: ["resp-1"],
+          shard_certificates: [{ id: "cert-1", kind: 38993, pubkey: "ab".repeat(32), created_at: 10, tags: [], content: "{}", sig: "sig" }],
           created_at: "2026-03-31T00:05:00.000Z",
         }),
       },
       {
         id: "ballot-2",
+        pubkey: "12".repeat(32),
         created_at: 20,
         content: JSON.stringify({
           voting_id: "vote-x",
           choice: "No",
-          voter_npub: "npub1other",
         }),
       },
     ]);
@@ -143,9 +147,10 @@ describe("simpleVotingSession", () => {
         eventId: "ballot-1",
         votingId: "vote-2",
         coordinatorNpub: "npub1coord",
-        voterNpub: "npub1voter",
+        voterNpub: "npub1coord",
         choice: "Yes",
-        shardIds: ["resp-1"],
+        shardCertificates: [{ id: "cert-1", kind: 38993, pubkey: "ab".repeat(32), created_at: 10, tags: [], content: "{}", sig: "sig" }],
+        tokenId: "token-1",
         createdAt: "2026-03-31T00:05:00.000Z",
       },
     ]);

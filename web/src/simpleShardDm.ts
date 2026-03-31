@@ -1,6 +1,11 @@
 import { getPublicKey, nip17, nip19, SimplePool } from "nostr-tools";
 import { DEFAULT_DM_RELAYS, type DmPublishResult } from "./proofSubmission";
 import { queueNostrPublish } from "./nostrPublishQueue";
+import {
+  createSimpleShardCertificate,
+  parseSimpleShardCertificate,
+  type SimpleShardCertificate,
+} from "./simpleShardCertificate";
 
 export type SimpleShardRequest = {
   id: string;
@@ -16,6 +21,7 @@ export type SimpleShardResponse = {
   coordinatorId: string;
   thresholdLabel: string;
   createdAt: string;
+  shardCertificate: SimpleShardCertificate;
 };
 
 function buildDmRelays(relays?: string[]) {
@@ -147,13 +153,18 @@ export async function sendSimpleShardResponse(input: {
   coordinatorId: string;
   thresholdLabel: string;
   relays?: string[];
-}): Promise<DmPublishResult> {
+}): Promise<DmPublishResult & { responseId: string }> {
   const decoded = nip19.decode(input.voterNpub);
   if (decoded.type !== "npub") {
     throw new Error("Voter value must be an npub.");
   }
 
   const dmRelays = buildDmRelays(input.relays);
+  const certificate = createSimpleShardCertificate({
+    coordinatorSecretKey: input.coordinatorSecretKey,
+    thresholdLabel: input.thresholdLabel,
+  });
+  const responseId = certificate.shardId;
   const event = nip17.wrapEvent(
     input.coordinatorSecretKey,
     {
@@ -162,11 +173,12 @@ export async function sendSimpleShardResponse(input: {
     },
     JSON.stringify({
       action: "simple_shard_response",
-      response_id: crypto.randomUUID(),
+      response_id: responseId,
       request_id: input.requestId,
       coordinator_npub: input.coordinatorNpub,
       coordinator_id: input.coordinatorId,
       threshold_label: input.thresholdLabel,
+      shard_certificate: certificate.event,
       created_at: new Date().toISOString(),
     }),
     "Voting shard response",
@@ -188,6 +200,7 @@ export async function sendSimpleShardResponse(input: {
     ));
 
     return {
+      responseId,
       eventId: event.id,
       successes: relayResults.filter((result) => result.success).length,
       failures: relayResults.filter((result) => !result.success).length,
@@ -231,27 +244,33 @@ export async function fetchSimpleShardResponses(input: {
           coordinator_npub?: string;
           coordinator_id?: string;
           threshold_label?: string;
+          shard_certificate?: SimpleShardCertificate;
           created_at?: string;
         };
+
+        const parsedCertificate = payload.shard_certificate
+          ? parseSimpleShardCertificate(payload.shard_certificate, payload.coordinator_npub)
+          : null;
 
         if (
           payload.action !== "simple_shard_response"
           || !payload.response_id
           || !payload.request_id
-          || !payload.coordinator_npub
           || !payload.coordinator_id
           || !payload.threshold_label
+          || !parsedCertificate
         ) {
           continue;
         }
 
         responses.set(payload.response_id, {
-          id: payload.response_id,
+          id: parsedCertificate.shardId,
           requestId: payload.request_id,
-          coordinatorNpub: payload.coordinator_npub,
+          coordinatorNpub: parsedCertificate.coordinatorNpub,
           coordinatorId: payload.coordinator_id,
-          thresholdLabel: payload.threshold_label,
+          thresholdLabel: parsedCertificate.thresholdLabel,
           createdAt: payload.created_at ?? new Date(wrappedEvent.created_at * 1000).toISOString(),
+          shardCertificate: parsedCertificate.event,
         });
       } catch {
         continue;

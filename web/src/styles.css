@@ -467,6 +467,18 @@ code {
   box-sizing: border-box;
 }
 
+.simple-vote-entry {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.simple-vote-entry-copy {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
 .simple-identity-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 200px;

@@ -9,6 +9,8 @@ import { decodeNsec } from "./nostrIdentity";
 import { fetchElection, normalizeElectionInfo, type ElectionInfo } from "./coordinatorApi";
 import { sha256Hex } from "./tokenIdentity";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
+import TokenFingerprint from "./TokenFingerprint";
+import { deriveTokenIdFromSimpleShardCertificates } from "./simpleShardCertificate";
 import {
   fetchSimpleShardResponses,
   sendSimpleShardRequest,
@@ -34,6 +36,7 @@ export default function SimpleUiApp() {
   const [receivedShards, setReceivedShards] = useState<SimpleShardResponse[]>([]);
   const [liveVoteSession, setLiveVoteSession] = useState<SimpleLiveVoteSession | null>(null);
   const [submitStatus, setSubmitStatus] = useState<string | null>(null);
+  const [ballotTokenId, setBallotTokenId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -198,22 +201,42 @@ export default function SimpleUiApp() {
   );
   const requiredShardCount = Math.max(1, liveVoteSession?.thresholdT ?? 1);
 
-  async function submitVote() {
-    const voterNsec = walletBundle?.ephemeralKeypair.nsec ?? "";
+  useEffect(() => {
+    let cancelled = false;
 
-    if (!voterNsec || !liveVoteSession || !liveVoteChoice || uniqueShardResponses.length < requiredShardCount) {
+    void deriveTokenIdFromSimpleShardCertificates(
+      uniqueShardResponses.map((shard) => shard.shardCertificate),
+    ).then((tokenId) => {
+      if (!cancelled) {
+        setBallotTokenId(tokenId);
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setBallotTokenId(null);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [receivedShards]);
+
+  async function submitVote() {
+    if (!liveVoteSession || !liveVoteChoice || uniqueShardResponses.length < requiredShardCount) {
       return;
     }
 
     setSubmitStatus("Submitting vote...");
 
     try {
+      const ballotSecretKey = generateSecretKey();
+      const ballotNsec = nip19.nsecEncode(ballotSecretKey);
       const result = await publishSimpleSubmittedVote({
-        voterNsec,
+        ballotNsec,
         coordinatorNpub: liveVoteSession.coordinatorNpub,
         votingId: liveVoteSession.votingId,
         choice: liveVoteChoice,
-        shardIds: uniqueShardResponses.map((shard) => shard.id),
+        shardCertificates: uniqueShardResponses.map((shard) => shard.shardCertificate),
       });
 
       setSubmitStatus(result.successes > 0 ? `Vote submitted: ${liveVoteChoice}.` : "Vote submission failed.");
@@ -280,6 +303,14 @@ export default function SimpleUiApp() {
               <p className="simple-voter-question">
                 Shards ready: {uniqueShardResponses.length} of {requiredShardCount}
               </p>
+              {ballotTokenId && (
+                <div className="simple-vote-entry">
+                  <div className="simple-vote-entry-copy">
+                    <p className="simple-voter-question">Ballot fingerprint</p>
+                  </div>
+                  <TokenFingerprint tokenId={ballotTokenId} />
+                </div>
+              )}
               <div className="simple-voter-choice-row">
                 <button
                   type="button"

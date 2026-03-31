@@ -14,8 +14,10 @@ import {
   type SimpleLiveVoteSession,
   type SimpleSubmittedVote,
 } from "./simpleVotingSession";
+import { validateSimpleSubmittedVotes } from "./simpleVoteValidation";
 import { sha256Hex } from "./tokenIdentity";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
+import TokenFingerprint from "./TokenFingerprint";
 
 const COORDINATOR_STORAGE_KEY = "auditable-voting.simple-coordinator-keypair";
 
@@ -302,6 +304,11 @@ export default function SimpleCoordinatorApp() {
     }
   }
 
+  const requiredShardCount = Math.max(1, publishedVote?.thresholdT ?? 1);
+  const validatedVotes = validateSimpleSubmittedVotes(submittedVotes, requiredShardCount);
+  const validYesCount = validatedVotes.filter((entry) => entry.valid && entry.vote.choice === "Yes").length;
+  const validNoCount = validatedVotes.filter((entry) => entry.valid && entry.vote.choice === "No").length;
+
   return (
     <main className="simple-voter-shell">
       <section className="simple-voter-page">
@@ -393,13 +400,20 @@ export default function SimpleCoordinatorApp() {
           {publishedVote ? (
             <>
               <p className="simple-voter-question">
-                Yes: {submittedVotes.filter((vote) => vote.choice === "Yes").length} | No: {submittedVotes.filter((vote) => vote.choice === "No").length}
+                Yes: {validYesCount} | No: {validNoCount}
               </p>
-              {submittedVotes.length > 0 ? (
+              {validatedVotes.length > 0 ? (
                 <ul className="simple-voter-list">
-                  {submittedVotes.map((vote) => (
+                  {validatedVotes.map(({ vote, valid, reason }) => (
                     <li key={vote.eventId} className="simple-voter-list-item">
-                      Vote {vote.choice} from {vote.voterNpub.slice(0, 16)}...
+                      <div className="simple-vote-entry">
+                        <div className="simple-vote-entry-copy">
+                          <p className="simple-voter-question">
+                            Vote {vote.choice} from {vote.voterNpub.slice(0, 16)}... {valid ? "(Valid)" : `(Invalid: ${reason})`}
+                          </p>
+                        </div>
+                        {vote.tokenId && <TokenFingerprint tokenId={vote.tokenId} />}
+                      </div>
                     </li>
                   ))}
                 </ul>
