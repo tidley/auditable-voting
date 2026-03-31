@@ -215,10 +215,17 @@ code {
   flex-direction: column;
   gap: 8px;
   align-items: flex-start;
+  min-width: 0;
 }
 
 .token-fingerprint-compact {
   gap: 0;
+}
+
+.token-fingerprint-symbols {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .token-fingerprint-grid {
@@ -229,23 +236,76 @@ code {
   padding: 4px;
   background: #f4efe6;
   border: 1px solid rgba(88, 59, 39, 0.18);
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
 }
 
 .token-fingerprint-compact .token-fingerprint-grid {
   width: 42px;
   height: 42px;
+  border-radius: 10px;
 }
 
 .token-fingerprint-cell {
-  background: #efe6d6;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
 }
 
 .token-fingerprint-cell.is-filled {
-  background: linear-gradient(135deg, #c95f2d, #7a3421);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.16),
+    0 2px 5px rgba(59, 35, 22, 0.12);
+}
+
+.token-fingerprint-cell.is-empty {
+  opacity: 0.6;
 }
 
 .token-fingerprint-label {
   font-size: 0.76rem;
+}
+
+.token-fingerprint-qr-shell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 76px;
+  min-height: 76px;
+  padding: 6px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(88, 59, 39, 0.12);
+}
+
+.token-fingerprint-compact .token-fingerprint-qr-shell {
+  min-width: 56px;
+  min-height: 56px;
+  border-radius: 10px;
+}
+
+.token-fingerprint-qr {
+  display: block;
+  width: 64px;
+  height: 64px;
+  border-radius: 8px;
+}
+
+.token-fingerprint-compact .token-fingerprint-qr {
+  width: 44px;
+  height: 44px;
+}
+
+.token-fingerprint-qr-fallback {
+  background:
+    linear-gradient(90deg, rgba(46, 34, 24, 0.12) 25%, transparent 25%, transparent 50%, rgba(46, 34, 24, 0.12) 50%, rgba(46, 34, 24, 0.12) 75%, transparent 75%),
+    linear-gradient(rgba(46, 34, 24, 0.12) 25%, transparent 25%, transparent 50%, rgba(46, 34, 24, 0.12) 50%, rgba(46, 34, 24, 0.12) 75%, transparent 75%);
+  background-size: 12px 12px;
+  background-color: #fffaf2;
+}
+
+.token-fingerprint-qr-label {
+  font-size: 0.72rem;
+  color: var(--muted);
 }
 
 .token-fingerprint-panel {
@@ -301,6 +361,31 @@ code {
   min-width: 0;
 }
 
+.simple-placeholder-box,
+.simple-placeholder-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed rgba(88, 59, 39, 0.18);
+  background: rgba(255, 255, 255, 0.42);
+  color: var(--muted);
+}
+
+.simple-placeholder-box {
+  min-width: 180px;
+  min-height: 112px;
+  padding: 18px;
+  border-radius: 18px;
+  text-align: center;
+}
+
+.simple-placeholder-chip {
+  min-height: 42px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-weight: 700;
+}
+
 .simple-question-card,
 .simple-confirm-card,
 .simple-request-card,
@@ -345,6 +430,27 @@ code {
 .simple-fingerprint-gallery {
   display: grid;
   gap: 14px;
+}
+
+.simple-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.simple-data-tile {
+  padding: 16px;
+  border: 1px solid rgba(88, 59, 39, 0.12);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.56);
+}
+
+.simple-data-tile strong {
+  display: block;
+  margin-top: 6px;
+  font-size: clamp(1.8rem, 3vw, 2.4rem);
+  font-family: "Iowan Old Style", "Palatino Linotype", serif;
 }
 
 .simple-request-head,
@@ -947,6 +1053,9 @@ code {
 @media (max-width: 920px) {
   .hero-settings-grid,
   .dashboard-stats-grid,
+  .simple-ui-grid,
+  .simple-fingerprint-gallery,
+  .simple-meta-grid,
   .panel-accent,
   .content-grid > .panel:not(.panel-accent):not(.panel-wide),
   .panel-wide {
@@ -958,6 +1067,12 @@ code {
   }
 
   .dashboard-stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .simple-ui-grid,
+  .simple-fingerprint-gallery,
+  .simple-meta-grid {
     grid-template-columns: 1fr;
   }
 
@@ -992,6 +1107,14 @@ code {
   }
 
   .button-row {
+    flex-direction: column;
+  }
+
+  .token-fingerprint-symbols,
+  .simple-voter-head,
+  .simple-submit-row,
+  .simple-fingerprint-card {
+    align-items: flex-start;
     flex-direction: column;
   }
 

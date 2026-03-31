@@ -14,6 +14,20 @@ vi.mock("./cashuWallet", () => ({
   storeBallotEventId: vi.fn(),
 }));
 vi.mock("./coordinatorApi", () => ({
+  normalizeElectionInfo: (election: any) => election ? ("election_id" in election ? election : {
+    election_id: election.electionId,
+    event_id: "",
+    title: election.title,
+    description: "",
+    questions: election.questions,
+    vote_start: election.vote_start,
+    vote_end: election.vote_end,
+    confirm_end: election.confirm_end,
+    mint_urls: election.mint_urls,
+    coordinator_npubs: election.coordinator_npubs,
+    eligible_root: election.eligible_root,
+    eligible_count: election.eligible_count,
+  }) : null,
   fetchElection: vi.fn().mockResolvedValue({
     election_id: "e1",
     event_id: "evt1",

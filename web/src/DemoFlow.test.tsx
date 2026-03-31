@@ -105,7 +105,7 @@ vi.mock("./demoIdentity", () => ({
   createDemoIdentity: () => demoIdentities[(demoIdentityIndex++) % demoIdentities.length],
 }));
 
-let activeNpub = testIdentity.npub;
+let activeNpub: string = testIdentity.npub;
 vi.mock("./voterManagementApi", () => ({
   fetchEligibility: vi.fn().mockResolvedValue({
     eligibleNpubs: demoIdentities.map((identity) => identity.npub),
@@ -145,6 +145,20 @@ vi.mock("./voterManagementApi", () => ({
 }));
 
 vi.mock("./coordinatorApi", () => ({
+  normalizeElectionInfo: (election: any) => election ? ("election_id" in election ? election : {
+    election_id: election.electionId,
+    event_id: "",
+    title: election.title,
+    description: "",
+    questions: election.questions,
+    vote_start: election.vote_start,
+    vote_end: election.vote_end,
+    confirm_end: election.confirm_end,
+    mint_urls: election.mint_urls,
+    coordinator_npubs: election.coordinator_npubs,
+    eligible_root: election.eligible_root,
+    eligible_count: election.eligible_count,
+  }) : null,
   fetchCoordinatorInfo: vi.fn().mockResolvedValue(mockCoordinator),
   fetchEligibility: vi.fn().mockResolvedValue({
     election_id: mockElection.election_id,
