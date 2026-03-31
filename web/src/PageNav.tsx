@@ -1,11 +1,12 @@
 type PageNavProps = {
-  current: "home" | "vote" | "dashboard";
+  current: "home" | "vote" | "dashboard" | "simple";
 };
 
 const links = [
   { key: "home", href: "/", label: "Control room" },
   { key: "vote", href: "/vote.html", label: "Voter portal" },
   { key: "dashboard", href: "/dashboard.html", label: "Dashboard" },
+  { key: "simple", href: "/simple.html", label: "Simple UI" },
 ] as const;
 
 export default function PageNav({ current }: PageNavProps) {

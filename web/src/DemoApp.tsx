@@ -36,6 +36,7 @@ import { fetchCoordinatorInfo } from "./coordinatorApi";
 import { computeProofHash, publishBallotEvent } from "./ballot";
 import { submitProofsToAllCoordinators, type MultiCoordinatorDmResult } from "./proofSubmission";
 import { queueNostrPublish } from "./nostrPublishQueue";
+import TokenFingerprint from "./TokenFingerprint";
 
 type StepState = {
   title: string;
@@ -1026,6 +1027,7 @@ export default function DemoApp() {
                 <thead>
                   <tr>
                     <th scope="col">#</th>
+                    <th scope="col">Pattern</th>
                     <th scope="col">Proof hash</th>
                     <th scope="col">Ballot</th>
                     <th scope="col">Vote</th>
@@ -1036,6 +1038,7 @@ export default function DemoApp() {
                   {revealedLedgerEntries.length > 0 ? revealedLedgerEntries.map((entry, index) => (
                     <tr key={entry.proofHash} className={!entry.receiptReceivedAt ? "is-pending" : ""}>
                       <td>{index + 1}</td>
+                      <td><TokenFingerprint tokenId={entry.proofHash} compact label={`Public ballot fingerprint ${index + 1}`} /></td>
                       <td><code>{shortCode(entry.proofHash, 18, 10)}</code></td>
                       <td><code>{entry.ballotEventId ? shortCode(entry.ballotEventId, 10, 8) : "Waiting"}</code></td>
                       <td>
@@ -1059,7 +1062,7 @@ export default function DemoApp() {
                     </tr>
                   )) : (
                     <tr className="is-pending">
-                      <td colSpan={5}>
+                      <td colSpan={6}>
                         No proof hashes visible yet. In the real protocol they only appear after the voter reveals them.
                       </td>
                     </tr>

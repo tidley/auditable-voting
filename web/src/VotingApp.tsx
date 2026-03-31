@@ -10,9 +10,12 @@ import MerkleTreeViz from "./MerkleTreeViz";
 import { DEMO_MODE } from "./config";
 import PageNav from "./PageNav";
 import { queueNostrPublish } from "./nostrPublishQueue";
+import { deriveTokenIdFromProofSecrets, tokenIdLabel } from "./tokenIdentity";
+import TokenFingerprint from "./TokenFingerprint";
 
 type VotePublishResult = {
   eventId: string;
+  tokenId?: string | null;
   ballotNpub: string;
   ballotSecretKey: Uint8Array;
   event: {
@@ -59,6 +62,7 @@ export default function VotingApp() {
   const [checkingVote, setCheckingVote] = useState(false);
   const [confirmingVote, setConfirmingVote] = useState(false);
   const [confirmationResult, setConfirmationResult] = useState<{ eventId: string; successes: number; failures: number } | null>(null);
+  const [tokenId, setTokenId] = useState<string | null>(null);
   const derivedNpub = useMemo(() => deriveNpubFromNsec(nsecInput), [nsecInput]);
 
   useEffect(() => {
@@ -97,6 +101,23 @@ export default function VotingApp() {
       setNsecInput(walletBundle.ephemeralKeypair.nsec);
     }
   }, [nsecInput, walletBundle?.ephemeralKeypair?.nsec]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      const nextTokenId = await deriveTokenIdFromProofSecrets(
+        (walletBundle?.coordinatorProofs ?? []).map((cp) => cp.proofSecret ?? cp.proof.secret),
+      );
+      if (!cancelled) {
+        setTokenId(nextTokenId);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [walletBundle?.coordinatorProofs]);
 
   const storedProofs = walletBundle?.coordinatorProofs ?? [];
   const storedProof = storedProofs.length > 0 ? storedProofs[0].proof : null;
@@ -399,7 +420,12 @@ export default function VotingApp() {
               Your vote has been accepted by the coordinator. Your proof was burned and your ballot is included in the tally.
               {storedBallotEventId && (
                 <span style={{ display: "block", marginTop: 8 }}>
-                  Ballot event: <code style={{ fontSize: "0.85rem" }}>{storedBallotEventId}</code>
+              Ballot event: <code style={{ fontSize: "0.85rem" }}>{storedBallotEventId}</code>
+                </span>
+              )}
+              {tokenId && (
+                <span style={{ display: "block", marginTop: 8 }}>
+                  Token ID: <code style={{ fontSize: "0.85rem" }}>{tokenId}</code>
                 </span>
               )}
             </div>
@@ -484,6 +510,23 @@ export default function VotingApp() {
               )}
             </div>
           </div>
+          {tokenId && (
+            <div className="token-fingerprint-panel">
+              <div>
+                <p className="panel-kicker">Public Ballot Identity</p>
+                <h2 className="panel-title-inline">Token fingerprint</h2>
+                <p className="field-hint">
+                  This deterministic token ID is derived locally from the stored voting credential bundle and is published with the ballot as a human-checkable public fingerprint.
+                </p>
+              </div>
+              <div className="token-fingerprint-panel-body">
+                <TokenFingerprint tokenId={tokenId} label={`Voting token ${tokenIdLabel(tokenId)}`} />
+                <div className="derived-box derived-box-inline">
+                  <code className="code-block code-block-muted">{tokenId}</code>
+                </div>
+              </div>
+            </div>
+          )}
         </article>
 
         <article className="panel panel-wide">

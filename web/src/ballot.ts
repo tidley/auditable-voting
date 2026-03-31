@@ -5,6 +5,7 @@ import type { ElectionQuestion } from "./coordinatorApi";
 import type { CoordinatorProof } from "./cashuWallet";
 import { USE_MOCK } from "./config";
 import { queueNostrPublish } from "./nostrPublishQueue";
+import { deriveTokenIdFromProofSecrets } from "./tokenIdentity";
 
 export const DEFAULT_VOTE_RELAYS = [
   "wss://relay.damus.io",
@@ -81,8 +82,14 @@ export async function publishBallotEvent(input: {
   const ballotNpub = nip19.npubEncode(ballotPubkey);
 
   const responses = formatAnswersAsResponses(input.answers, input.questions);
+  const tokenId = await deriveTokenIdFromProofSecrets(
+    input.coordinatorProofs?.map((cp) => cp.proofSecret) ?? [],
+  );
 
   const tags: string[][] = [["election", input.electionId]];
+  if (tokenId) {
+    tags.push(["token-id", tokenId]);
+  }
 
   if (input.coordinatorProofs && input.coordinatorProofs.length > 0) {
     for (const cp of input.coordinatorProofs) {
@@ -98,6 +105,7 @@ export async function publishBallotEvent(input: {
       tags,
       content: JSON.stringify({
         election_id: input.electionId,
+        token_id: tokenId,
         responses,
         timestamp: Math.floor(Date.now() / 1000)
       })
@@ -155,6 +163,7 @@ export async function publishBallotEvent(input: {
       ballotNpub,
       ballotSecretKey,
       event,
+      tokenId,
       relays,
       successes: relayResults.filter((result) => result.success).length,
       failures: relayResults.filter((result) => !result.success).length,

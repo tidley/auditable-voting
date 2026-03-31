@@ -1,5 +1,18 @@
 # Cashu-Authenticated, Nostr-Published, Merkle-Auditable Voting System
 
+## Protocol Direction
+
+The target protocol direction is blind threshold token issuance over Nostr:
+
+- Coordinators validate eligibility out of band and return blind signature shares.
+- Voters combine a threshold of shares locally to assemble a final signed voting token.
+- Coordinators should not learn the final token or the voter's ballot.
+- Voters publish ballots through ephemeral Nostr keypairs.
+- Public observers verify token validity, uniqueness, and tally correctness from relay data.
+- A deterministic `token_id = hash(token)` can be rendered as a visual fingerprint for human-auditable ballot checking.
+
+This document remains the canonical system-design reference for the repository, but parts of the current implementation still use coordinator-mediated Cashu proof issuance and proof-hash receipts rather than full threshold blind-signature voting tokens.
+
 ## System Overview
 
 A multi-coordinator voting system where multiple independent operators each run their own coordinator + mint pair. Voters interact with all participating coordinators, and one honest coordinator is sufficient for a vote to be heard.
@@ -18,6 +31,15 @@ A multi-coordinator voting system where multiple independent operators each run 
 ### Canonical Eligible Set
 
 The election creator defines the authoritative list of eligible npubs in the kind 38008 event. All participating coordinators must commit to this same set via kind 38009 (eligible-root tag). Auditors verify that all coordinators' roots match.
+
+### Public Ballot Identity
+
+The intended public ballot identity is a deterministic `token_id` derived from the final signed voting token, optionally rendered as a visual fingerprint:
+
+- `token_id = HASH(token)`
+- public ledgers show `token_id` or a pattern derived from it
+- human observers use the fingerprint for inclusion checking
+- cryptographic validity always comes from token signature verification and duplicate-token rejection, not from the visual pattern itself
 
 ### Anti-Inflation via Voter Confirmations
 
@@ -134,6 +156,7 @@ Voter generates a new ephemeral Nostr keypair and publishes:
 kind: 38000
 content: {
   "election_id": "<38008_event_id>",
+  "token_id": "<hash(final_token)>",
   "responses": [
     {"question_id": "q1", "value": "Alice"},
     {"question_id": "q2", "values": ["Lightning dev", "Privacy research"]},
@@ -143,9 +166,16 @@ content: {
 }
 tags:
   - ["election", "<election_id>"]
-  - ["proof-hash", "<SHA256(proof_secret_for_coordinator_1)>"]
-  - ["proof-hash", "<SHA256(proof_secret_for_coordinator_2)>"]
+  - ["token-id", "<hash(final_token)>"]
+  - ["proof-hash", "<SHA256(proof_secret_for_coordinator_1)>"]  # transitional / current implementation
+  - ["proof-hash", "<SHA256(proof_secret_for_coordinator_2)>"]  # transitional / current implementation
 ```
+
+Target-direction interpretation:
+
+- `token_id` identifies the anonymous voting token publicly.
+- the `token-id` tag supports fast public indexing and ballot views.
+- `proof-hash` tags remain useful in the current implementation for coordinator receipt cross-reference, but they are not the final public identity model.
 
 ### 4. Private Proof Submission (Per Coordinator)
 

@@ -20,7 +20,8 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, "index.html"),
         dashboard: resolve(__dirname, "dashboard.html"),
-        vote: resolve(__dirname, "vote.html")
+        vote: resolve(__dirname, "vote.html"),
+        simple: resolve(__dirname, "simple.html")
       }
     }
   }

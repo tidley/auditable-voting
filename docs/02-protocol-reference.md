@@ -2,6 +2,23 @@
 
 This document defines the architecture and Nostr event kinds for the Cashu-Nostr Merkle-auditable voting system.
 
+## Protocol Direction
+
+The target protocol direction is:
+
+- out-of-band voter validation for Sybil resistance
+- blind threshold signature issuance by multiple coordinators
+- local voter-side assembly of the final voting token
+- anonymous Nostr ballot publication via ephemeral keys
+- public verification based on token validity, uniqueness, and deterministic tallying
+- human-auditable ballot fingerprints derived from `token_id = hash(token)`
+
+Current repository status:
+
+- the codebase already implements public Nostr ballot publication, coordinator receipts, tallying, and audit surfaces
+- issuance is still coordinator-mediated Cashu proof issuance rather than full threshold blind-signature token assembly
+- protocol fields may therefore include transitional artifacts such as `proof-hash`
+
 ### Terminology
 
 - **Mint** — The Cashu CDK mint that issues, validates, and burns proofs via its HTTP/gRPC API. "Mint" in this spec refers exclusively to Cashu operations (token issuance, proof melting, keyset management).
@@ -9,6 +26,8 @@ This document defines the architecture and Nostr event kinds for the Cashu-Nostr
 - **Election Creator** — The coordinator that publishes the initial kind 38008 event. Any coordinator can create an election.
 - **Election Participant** — A coordinator that joins an existing election by publishing kind 38007 referencing the election_id.
 - **Canonical Eligible Set** — The authoritative list of eligible npubs defined in the kind 38008 event. All participating coordinators must commit to the same eligible set via kind 38009.
+- **Token ID** — Deterministic public identifier derived from the final voting token, e.g. `SHA256(token)` or a truncated form thereof for display.
+- **Visual Fingerprint** — Deterministic human-facing pattern derived from `token_id`. Useful for public ballot inspection, but not a cryptographic primitive.
 - **All `38xxx` events are signed by the coordinator's Nostr key** (`<coordinator_npub>`).
 
 ---
@@ -135,6 +154,7 @@ Published by the voter using an ephemeral pubkey.
 kind: 38000
 content: {
   "election_id": "<38008_event_id>",
+  "token_id": "<hash(final_token)>",
   "responses": [
     {"question_id": "q1", "value": "Alice"},
     {"question_id": "q2", "values": ["Lightning dev", "Privacy research"]},
@@ -145,11 +165,17 @@ content: {
 }
 tags:
   - ["election", "<election_id>"]
+  - ["token-id", "<hash(final_token)>"]
   - ["proof-hash", "<SHA256(proof_secret_for_coordinator_1)>"]
   - ["proof-hash", "<SHA256(proof_secret_for_coordinator_2)>"]
 ```
 
-The `proof-hash` tags contain SHA256 of the proof secret for each coordinator. These are public commitments that allow anyone to verify the coordinator received the proof (cross-reference with the coordinator's kind 38002 `proof_commitment` field). One `proof-hash` tag per coordinator the voter obtained a proof from.
+Field semantics:
+
+- `token_id` is the intended long-term public ballot identity. It allows public ledgers and human-facing ballot views to identify a vote without revealing the voter.
+- `token-id` is the matching index tag for relay-side filtering and public audit tools.
+- `proof-hash` tags are transitional/current-implementation commitments that allow anyone to verify a coordinator received a proof by cross-referencing with kind 38002 `proof_commitment`.
+- One `proof-hash` tag is present per coordinator proof in the current implementation.
 
 Response fields by question type:
 
