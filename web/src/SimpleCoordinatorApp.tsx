@@ -7,7 +7,13 @@ import {
   sendSimpleShardResponse,
   type SimpleShardRequest,
 } from "./simpleShardDm";
-import { publishSimpleLiveVote, type SimpleLiveVoteSession } from "./simpleVotingSession";
+import {
+  fetchLatestSimpleLiveVote,
+  fetchSimpleSubmittedVotes,
+  publishSimpleLiveVote,
+  type SimpleLiveVoteSession,
+  type SimpleSubmittedVote,
+} from "./simpleVotingSession";
 import { sha256Hex } from "./tokenIdentity";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
 
@@ -18,7 +24,6 @@ type SimpleCoordinatorKeypair = {
   nsec: string;
 };
 
-type LiveVoteChoice = "Yes" | "No" | null;
 function loadStoredCoordinatorKeypair(): SimpleCoordinatorKeypair | null {
   if (typeof window === "undefined") {
     return null;
@@ -53,6 +58,7 @@ export default function SimpleCoordinatorApp() {
   const [questionPrompt, setQuestionPrompt] = useState("Should the proposal pass?");
   const [publishStatus, setPublishStatus] = useState<string | null>(null);
   const [publishedVote, setPublishedVote] = useState<SimpleLiveVoteSession | null>(null);
+  const [submittedVotes, setSubmittedVotes] = useState<SimpleSubmittedVote[]>([]);
 
   useEffect(() => {
     void fetchElection().then((nextElection) => {
@@ -117,6 +123,75 @@ export default function SimpleCoordinatorApp() {
       cancelled = true;
     };
   }, [keypair?.npub]);
+
+  useEffect(() => {
+    const coordinatorNpub = keypair?.npub ?? "";
+
+    if (!coordinatorNpub) {
+      setPublishedVote(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function refreshPublishedVote() {
+      try {
+        const nextVote = await fetchLatestSimpleLiveVote({ coordinatorNpub });
+        if (!cancelled) {
+          setPublishedVote(nextVote);
+        }
+      } catch {
+        if (!cancelled) {
+          setPublishedVote(null);
+        }
+      }
+    }
+
+    void refreshPublishedVote();
+    const intervalId = window.setInterval(() => {
+      void refreshPublishedVote();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [keypair?.npub]);
+
+  useEffect(() => {
+    const coordinatorNpub = keypair?.npub ?? "";
+    const votingId = publishedVote?.votingId ?? "";
+
+    if (!coordinatorNpub || !votingId) {
+      setSubmittedVotes([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function refreshSubmittedVotes() {
+      try {
+        const nextVotes = await fetchSimpleSubmittedVotes({ coordinatorNpub, votingId });
+        if (!cancelled) {
+          setSubmittedVotes(nextVotes);
+        }
+      } catch {
+        if (!cancelled) {
+          setSubmittedVotes([]);
+        }
+      }
+    }
+
+    void refreshSubmittedVotes();
+    const intervalId = window.setInterval(() => {
+      void refreshSubmittedVotes();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [keypair?.npub, publishedVote?.votingId]);
 
   function createNostrKeypair() {
     const secretKey = generateSecretKey();
@@ -306,9 +381,34 @@ export default function SimpleCoordinatorApp() {
           <p className="simple-voter-question">Threshold: {getThresholdLabel()}</p>
           {publishStatus && <p className="simple-voter-note">{publishStatus}</p>}
           {publishedVote && (
-            <p className="simple-voter-question">
-              Voting ID {publishedVote.votingId.slice(0, 12)}
-            </p>
+            <>
+              <p className="simple-voter-question">Voting ID {publishedVote.votingId.slice(0, 12)}</p>
+              <p className="simple-voter-question">Live prompt: {publishedVote.prompt}</p>
+            </>
+          )}
+        </section>
+
+        <section className="simple-voter-section" aria-labelledby="submitted-votes-title">
+          <h2 id="submitted-votes-title" className="simple-voter-section-title">Submitted votes</h2>
+          {publishedVote ? (
+            <>
+              <p className="simple-voter-question">
+                Yes: {submittedVotes.filter((vote) => vote.choice === "Yes").length} | No: {submittedVotes.filter((vote) => vote.choice === "No").length}
+              </p>
+              {submittedVotes.length > 0 ? (
+                <ul className="simple-voter-list">
+                  {submittedVotes.map((vote) => (
+                    <li key={vote.eventId} className="simple-voter-list-item">
+                      Vote {vote.choice} from {vote.voterNpub.slice(0, 16)}...
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="simple-voter-empty">No votes received yet.</p>
+              )}
+            </>
+          ) : (
+            <p className="simple-voter-empty">No live vote has been broadcast yet.</p>
           )}
         </section>
       </section>
