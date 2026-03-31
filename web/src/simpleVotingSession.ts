@@ -1,6 +1,10 @@
 import { finalizeEvent, getPublicKey, nip19, SimplePool } from "nostr-tools";
 import { DEFAULT_VOTE_RELAYS } from "./ballot";
 import { queueNostrPublish } from "./nostrPublishQueue";
+import {
+  deriveTokenIdFromSimpleShardCertificates,
+  type SimpleShardCertificate,
+} from "./simpleShardCertificate";
 
 export const SIMPLE_LIVE_VOTE_KIND = 38990;
 export const SIMPLE_LIVE_VOTE_BALLOT_KIND = 38991;
@@ -21,7 +25,8 @@ export type SimpleSubmittedVote = {
   coordinatorNpub: string;
   voterNpub: string;
   choice: "Yes" | "No";
-  shardIds: string[];
+  shardCertificates: SimpleShardCertificate[];
+  tokenId: string | null;
   createdAt: string;
 };
 
@@ -153,16 +158,16 @@ export async function fetchLatestSimpleLiveVote(input: {
 }
 
 export async function publishSimpleSubmittedVote(input: {
-  voterNsec: string;
+  ballotNsec: string;
   coordinatorNpub: string;
   votingId: string;
   choice: "Yes" | "No";
-  shardIds: string[];
+  shardCertificates: SimpleShardCertificate[];
   relays?: string[];
 }) {
-  const voterDecoded = nip19.decode(input.voterNsec.trim());
-  if (voterDecoded.type !== "nsec") {
-    throw new Error("Voter key must be an nsec.");
+  const ballotDecoded = nip19.decode(input.ballotNsec.trim());
+  if (ballotDecoded.type !== "nsec") {
+    throw new Error("Ballot key must be an nsec.");
   }
 
   const coordinatorDecoded = nip19.decode(input.coordinatorNpub.trim());
@@ -170,9 +175,9 @@ export async function publishSimpleSubmittedVote(input: {
     throw new Error("Coordinator value must be an npub.");
   }
 
-  const secretKey = voterDecoded.data as Uint8Array;
+  const secretKey = ballotDecoded.data as Uint8Array;
   const coordinatorHex = coordinatorDecoded.data as string;
-  const voterNpub = nip19.npubEncode(getPublicKey(secretKey));
+  const ballotNpub = nip19.npubEncode(getPublicKey(secretKey));
   const relays = buildPublicRelays(input.relays);
   const createdAt = new Date().toISOString();
 
@@ -183,13 +188,12 @@ export async function publishSimpleSubmittedVote(input: {
       ["t", "simple-live-vote-ballot"],
       ["p", coordinatorHex],
       ["d", input.votingId],
-      ...input.shardIds.map((shardId) => ["s", shardId]),
+      ...input.shardCertificates.map((certificate) => ["s", certificate.id]),
     ],
     content: JSON.stringify({
       voting_id: input.votingId,
       choice: input.choice,
-      voter_npub: voterNpub,
-      shard_ids: input.shardIds,
+      shard_certificates: input.shardCertificates,
       created_at: createdAt,
     }),
   }, secretKey);
@@ -209,7 +213,7 @@ export async function publishSimpleSubmittedVote(input: {
 
     return {
       eventId: event.id,
-      voterNpub,
+      ballotNpub,
       createdAt,
       successes: relayResults.filter((result) => result.success).length,
       failures: relayResults.filter((result) => !result.success).length,
@@ -248,15 +252,13 @@ export async function fetchSimpleSubmittedVotes(input: {
         const payload = JSON.parse(event.content) as {
           voting_id?: string;
           choice?: "Yes" | "No";
-          voter_npub?: string;
-          shard_ids?: string[];
+          shard_certificates?: SimpleShardCertificate[];
           created_at?: string;
         };
 
         if (
           payload.voting_id !== input.votingId
           || (payload.choice !== "Yes" && payload.choice !== "No")
-          || !payload.voter_npub
         ) {
           continue;
         }
@@ -265,9 +267,12 @@ export async function fetchSimpleSubmittedVotes(input: {
           eventId: event.id,
           votingId: payload.voting_id,
           coordinatorNpub: input.coordinatorNpub,
-          voterNpub: payload.voter_npub,
+          voterNpub: nip19.npubEncode(event.pubkey),
           choice: payload.choice,
-          shardIds: Array.isArray(payload.shard_ids) ? payload.shard_ids : [],
+          shardCertificates: Array.isArray(payload.shard_certificates) ? payload.shard_certificates : [],
+          tokenId: await deriveTokenIdFromSimpleShardCertificates(
+            Array.isArray(payload.shard_certificates) ? payload.shard_certificates : [],
+          ),
           createdAt: payload.created_at ?? new Date(event.created_at * 1000).toISOString(),
         });
       } catch {

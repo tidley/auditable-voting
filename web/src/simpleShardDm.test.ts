@@ -18,6 +18,21 @@ vi.mock("nostr-tools", () => ({
   },
 }));
 
+vi.mock("./simpleShardCertificate", () => ({
+  createSimpleShardCertificate: vi.fn(() => ({
+    shardId: "resp-1",
+    createdAt: "2026-03-31T00:00:00.000Z",
+    event: { id: "cert-1", kind: 38993, pubkey: "ab".repeat(32), created_at: 10, tags: [], content: "{}", sig: "sig" },
+  })),
+  parseSimpleShardCertificate: vi.fn(() => ({
+    shardId: "resp-1",
+    coordinatorNpub: "npub1coord",
+    thresholdLabel: "3 of 5",
+    createdAt: "2026-03-31T00:00:00.000Z",
+    event: { id: "cert-1", kind: 38993, pubkey: "ab".repeat(32), created_at: 10, tags: [], content: "{}", sig: "sig" },
+  })),
+}));
+
 describe("simpleShardDm", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -46,6 +61,7 @@ describe("simpleShardDm", () => {
 
     expect(wrapEvent).toHaveBeenCalled();
     expect(result.successes).toBeGreaterThan(0);
+    expect(result.responseId).toBeTruthy();
   });
 
   it("fetches shard responses addressed to the voter", async () => {
@@ -64,6 +80,7 @@ describe("simpleShardDm", () => {
           coordinator_npub: "npub1coord",
           coordinator_id: "abc1234",
           threshold_label: "3 of 5",
+          shard_certificate: { id: "cert-1" },
           created_at: "2026-03-31T00:00:00.000Z",
         }),
       })
@@ -86,6 +103,7 @@ describe("simpleShardDm", () => {
         coordinatorId: "abc1234",
         thresholdLabel: "3 of 5",
         createdAt: "2026-03-31T00:00:00.000Z",
+        shardCertificate: { id: "cert-1", kind: 38993, pubkey: "ab".repeat(32), created_at: 10, tags: [], content: "{}", sig: "sig" },
       },
     ]);
   });
