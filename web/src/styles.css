@@ -426,6 +426,10 @@ code {
   line-height: 1.5;
 }
 
+.simple-voter-list-item {
+  margin-bottom: 16px;
+}
+
 .simple-voter-empty,
 .simple-voter-question {
   margin: 0;

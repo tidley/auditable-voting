@@ -26,6 +26,8 @@ export type StoredWalletBundle = {
     confirm_end?: number;
     mint_urls: string[];
     coordinator_npubs: string[];
+    threshold_t?: number;
+    threshold_n?: number;
     eligible_root?: string;
     eligible_count?: number;
   } | null;
@@ -100,6 +102,8 @@ function migrateLegacyBundle(rawValue: string): StoredWalletBundle | null {
           vote_end: 0,
           mint_urls: [],
           coordinator_npubs: [legacy.invoice.coordinatorNpub],
+          threshold_t: 1,
+          threshold_n: 1,
         } : null,
         relays: legacy.invoice?.relays ?? [],
       };

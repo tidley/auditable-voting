@@ -1,7 +1,12 @@
 import { useEffect, useState } from "react";
 import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 import { fetchElection, type ElectionInfo } from "./coordinatorApi";
-import { fetchSimpleShardRequests, type SimpleShardRequest } from "./simpleShardDm";
+import { decodeNsec } from "./nostrIdentity";
+import {
+  fetchSimpleShardRequests,
+  sendSimpleShardResponse,
+  type SimpleShardRequest,
+} from "./simpleShardDm";
 import { sha256Hex } from "./tokenIdentity";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
 
@@ -45,6 +50,7 @@ export default function SimpleCoordinatorApp() {
   const [coordinatorId, setCoordinatorId] = useState("pending");
   const [liveVoteChoice, setLiveVoteChoice] = useState<LiveVoteChoice>(null);
   const [requests, setRequests] = useState<SimpleShardRequest[]>([]);
+  const [requestStatuses, setRequestStatuses] = useState<Record<string, string>>({});
 
   useEffect(() => {
     void fetchElection().then((nextElection) => {
@@ -120,6 +126,51 @@ export default function SimpleCoordinatorApp() {
     setKeypair(nextKeypair);
   }
 
+  function getThresholdLabel() {
+    const publishedT = election?.threshold_t;
+    const publishedN = election?.threshold_n;
+
+    if (publishedT && publishedN) {
+      return `${publishedT} of ${publishedN}`;
+    }
+
+    const coordinatorCount = election?.coordinator_npubs.length ?? 0;
+    if (coordinatorCount === 1) {
+      return "1 of 1";
+    }
+
+    return coordinatorCount > 1 ? `share of ${coordinatorCount}` : "share";
+  }
+
+  async function sendShard(request: SimpleShardRequest) {
+    const coordinatorNpub = keypair?.npub ?? "";
+    const coordinatorSecretKey = decodeNsec(keypair?.nsec ?? "");
+
+    if (!coordinatorNpub || !coordinatorSecretKey || !coordinatorId || coordinatorId === "pending") {
+      return;
+    }
+
+    setRequestStatuses((current) => ({ ...current, [request.id]: "Sending shard..." }));
+
+    try {
+      const result = await sendSimpleShardResponse({
+        coordinatorSecretKey,
+        voterNpub: request.voterNpub,
+        requestId: request.id,
+        coordinatorNpub,
+        coordinatorId,
+        thresholdLabel: getThresholdLabel(),
+      });
+
+      setRequestStatuses((current) => ({
+        ...current,
+        [request.id]: result.successes > 0 ? "Shard sent." : "Shard send failed.",
+      }));
+    } catch {
+      setRequestStatuses((current) => ({ ...current, [request.id]: "Shard send failed." }));
+    }
+  }
+
   const liveYesNoQuestion = election?.questions.find((question) => {
     const options = (question.options ?? []).map((option) => option.toLowerCase());
     return question.type === "choice" && options.includes("yes") && options.includes("no");
@@ -159,7 +210,20 @@ export default function SimpleCoordinatorApp() {
             <ul className="simple-voter-list">
               {requests.map((request) => (
                 <li key={request.id} className="simple-voter-list-item">
-                  Request from voter {request.voterId}
+                  <p className="simple-voter-question">Request from voter {request.voterId}</p>
+                  <div className="simple-voter-action-row">
+                    <button
+                      type="button"
+                      className="simple-voter-secondary"
+                      onClick={() => void sendShard(request)}
+                      disabled={!keypair?.nsec}
+                    >
+                      Send shard
+                    </button>
+                  </div>
+                  {requestStatuses[request.id] && (
+                    <p className="simple-voter-note">{requestStatuses[request.id]}</p>
+                  )}
                 </li>
               ))}
             </ul>

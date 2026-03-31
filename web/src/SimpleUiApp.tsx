@@ -9,7 +9,11 @@ import { decodeNsec } from "./nostrIdentity";
 import { fetchElection, normalizeElectionInfo, type ElectionInfo } from "./coordinatorApi";
 import { sha256Hex } from "./tokenIdentity";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
-import { sendSimpleShardRequest } from "./simpleShardDm";
+import {
+  fetchSimpleShardResponses,
+  sendSimpleShardRequest,
+  type SimpleShardResponse,
+} from "./simpleShardDm";
 
 type LiveVoteChoice = "Yes" | "No" | null;
 
@@ -22,6 +26,7 @@ export default function SimpleUiApp() {
   const [liveVoteChoice, setLiveVoteChoice] = useState<LiveVoteChoice>(null);
   const [coordinatorNpub, setCoordinatorNpub] = useState<string>("");
   const [requestStatus, setRequestStatus] = useState<string | null>(null);
+  const [receivedShards, setReceivedShards] = useState<SimpleShardResponse[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -55,6 +60,40 @@ export default function SimpleUiApp() {
     const params = new URLSearchParams(window.location.search);
     setCoordinatorNpub(params.get("coordinator")?.trim() ?? "");
   }, []);
+
+  useEffect(() => {
+    const voterNsec = walletBundle?.ephemeralKeypair.nsec?.trim() ?? "";
+
+    if (!voterNsec) {
+      setReceivedShards([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function refreshResponses() {
+      try {
+        const nextResponses = await fetchSimpleShardResponses({ voterNsec });
+        if (!cancelled) {
+          setReceivedShards(nextResponses);
+        }
+      } catch {
+        if (!cancelled) {
+          setReceivedShards([]);
+        }
+      }
+    }
+
+    void refreshResponses();
+    const intervalId = window.setInterval(() => {
+      void refreshResponses();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [walletBundle?.ephemeralKeypair.nsec]);
 
   useEffect(() => {
     let cancelled = false;
@@ -113,7 +152,6 @@ export default function SimpleUiApp() {
     }
   }
 
-  const shards = walletBundle?.coordinatorProofs ?? [];
   const liveYesNoQuestion = election?.questions.find((question) => {
     const options = (question.options ?? []).map((option) => option.toLowerCase());
     return question.type === "choice" && options.includes("yes") && options.includes("no");
@@ -155,11 +193,11 @@ export default function SimpleUiApp() {
 
         <section className="simple-voter-section" aria-labelledby="received-shards-title">
           <h2 id="received-shards-title" className="simple-voter-section-title">Received vote shards</h2>
-          {shards.length > 0 ? (
+          {receivedShards.length > 0 ? (
             <ul className="simple-voter-list">
-              {shards.map((shard, index) => (
-                <li key={`${shard.coordinatorNpub}-${index}`} className="simple-voter-list-item">
-                  Shard {index + 1}: {shard.coordinatorNpub.slice(0, 16)}...
+              {receivedShards.map((shard) => (
+                <li key={shard.id} className="simple-voter-list-item">
+                  Shard from coordinator {shard.coordinatorId} ({shard.thresholdLabel})
                 </li>
               ))}
             </ul>
