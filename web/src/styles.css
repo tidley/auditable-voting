@@ -363,6 +363,11 @@ code {
   margin-bottom: 28px;
 }
 
+.simple-voter-action-row-tight {
+  margin-top: 18px;
+  margin-bottom: 0;
+}
+
 .simple-voter-primary {
   min-width: 220px;
   padding: 14px 18px;

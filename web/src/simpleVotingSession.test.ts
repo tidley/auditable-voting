@@ -17,6 +17,10 @@ vi.mock("nostr-tools", () => ({
   },
 }));
 
+vi.mock("./nostrPublishQueue", () => ({
+  queueNostrPublish: (task: () => Promise<unknown>) => task(),
+}));
+
 describe("simpleVotingSession", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -85,5 +89,65 @@ describe("simpleVotingSession", () => {
       thresholdN: 5,
       eventId: "event-newer",
     });
+  });
+
+  it("publishes a submitted vote", async () => {
+    const mod = await import("./simpleVotingSession");
+
+    const result = await mod.publishSimpleSubmittedVote({
+      voterNsec: "nsec1voter",
+      coordinatorNpub: "npub1coord",
+      votingId: "vote-2",
+      choice: "Yes",
+      shardIds: ["resp-1"],
+    });
+
+    expect(finalizeEvent).toHaveBeenCalled();
+    expect(result.eventId).toBe("vote-session-1");
+    expect(result.successes).toBeGreaterThan(0);
+  });
+
+  it("fetches submitted votes for a voting id", async () => {
+    const mod = await import("./simpleVotingSession");
+
+    querySync.mockResolvedValue([
+      {
+        id: "ballot-1",
+        created_at: 30,
+        content: JSON.stringify({
+          voting_id: "vote-2",
+          choice: "Yes",
+          voter_npub: "npub1voter",
+          shard_ids: ["resp-1"],
+          created_at: "2026-03-31T00:05:00.000Z",
+        }),
+      },
+      {
+        id: "ballot-2",
+        created_at: 20,
+        content: JSON.stringify({
+          voting_id: "vote-x",
+          choice: "No",
+          voter_npub: "npub1other",
+        }),
+      },
+    ]);
+
+    const votes = await mod.fetchSimpleSubmittedVotes({
+      coordinatorNpub: "npub1coord",
+      votingId: "vote-2",
+    });
+
+    expect(votes).toEqual([
+      {
+        eventId: "ballot-1",
+        votingId: "vote-2",
+        coordinatorNpub: "npub1coord",
+        voterNpub: "npub1voter",
+        choice: "Yes",
+        shardIds: ["resp-1"],
+        createdAt: "2026-03-31T00:05:00.000Z",
+      },
+    ]);
   });
 });

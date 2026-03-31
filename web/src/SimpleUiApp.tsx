@@ -14,7 +14,11 @@ import {
   sendSimpleShardRequest,
   type SimpleShardResponse,
 } from "./simpleShardDm";
-import { fetchLatestSimpleLiveVote, type SimpleLiveVoteSession } from "./simpleVotingSession";
+import {
+  fetchLatestSimpleLiveVote,
+  publishSimpleSubmittedVote,
+  type SimpleLiveVoteSession,
+} from "./simpleVotingSession";
 
 type LiveVoteChoice = "Yes" | "No" | null;
 
@@ -29,6 +33,7 @@ export default function SimpleUiApp() {
   const [requestStatus, setRequestStatus] = useState<string | null>(null);
   const [receivedShards, setReceivedShards] = useState<SimpleShardResponse[]>([]);
   const [liveVoteSession, setLiveVoteSession] = useState<SimpleLiveVoteSession | null>(null);
+  const [submitStatus, setSubmitStatus] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -188,6 +193,35 @@ export default function SimpleUiApp() {
     }
   }
 
+  const uniqueShardResponses = Array.from(
+    new Map(receivedShards.map((shard) => [shard.coordinatorNpub, shard])).values(),
+  );
+  const requiredShardCount = Math.max(1, liveVoteSession?.thresholdT ?? 1);
+
+  async function submitVote() {
+    const voterNsec = walletBundle?.ephemeralKeypair.nsec ?? "";
+
+    if (!voterNsec || !liveVoteSession || !liveVoteChoice || uniqueShardResponses.length < requiredShardCount) {
+      return;
+    }
+
+    setSubmitStatus("Submitting vote...");
+
+    try {
+      const result = await publishSimpleSubmittedVote({
+        voterNsec,
+        coordinatorNpub: liveVoteSession.coordinatorNpub,
+        votingId: liveVoteSession.votingId,
+        choice: liveVoteChoice,
+        shardIds: uniqueShardResponses.map((shard) => shard.id),
+      });
+
+      setSubmitStatus(result.successes > 0 ? `Vote submitted: ${liveVoteChoice}.` : "Vote submission failed.");
+    } catch {
+      setSubmitStatus("Vote submission failed.");
+    }
+  }
+
   return (
     <main className="simple-voter-shell">
       <section className="simple-voter-page">
@@ -243,6 +277,9 @@ export default function SimpleUiApp() {
             <>
               <p className="simple-voter-question">{liveVoteSession.prompt}</p>
               <p className="simple-voter-note">Voting ID {liveVoteSession.votingId.slice(0, 12)}</p>
+              <p className="simple-voter-question">
+                Shards ready: {uniqueShardResponses.length} of {requiredShardCount}
+              </p>
               <div className="simple-voter-choice-row">
                 <button
                   type="button"
@@ -259,6 +296,17 @@ export default function SimpleUiApp() {
                   No
                 </button>
               </div>
+              <div className="simple-voter-action-row simple-voter-action-row-tight">
+                <button
+                  type="button"
+                  className="simple-voter-primary"
+                  onClick={() => void submitVote()}
+                  disabled={!liveVoteChoice || uniqueShardResponses.length < requiredShardCount}
+                >
+                  Submit vote
+                </button>
+              </div>
+              {submitStatus && <p className="simple-voter-note">{submitStatus}</p>}
             </>
           ) : (
             <p className="simple-voter-empty">No live Y/N vote.</p>
