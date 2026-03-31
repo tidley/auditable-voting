@@ -9,6 +9,11 @@ export type ParsedSimpleShardCertificate = {
   shardId: string;
   coordinatorNpub: string;
   thresholdLabel: string;
+  votingId: string;
+  tokenCommitment: string;
+  shareIndex: number;
+  thresholdT?: number;
+  thresholdN?: number;
   createdAt: string;
   event: SimpleShardCertificate;
 };
@@ -16,6 +21,11 @@ export type ParsedSimpleShardCertificate = {
 export function createSimpleShardCertificate(input: {
   coordinatorSecretKey: Uint8Array;
   thresholdLabel: string;
+  votingId: string;
+  tokenCommitment: string;
+  shareIndex: number;
+  thresholdT?: number;
+  thresholdN?: number;
 }) {
   const createdAt = new Date().toISOString();
   const shardId = crypto.randomUUID();
@@ -30,6 +40,11 @@ export function createSimpleShardCertificate(input: {
     content: JSON.stringify({
       shard_id: shardId,
       threshold_label: input.thresholdLabel,
+      voting_id: input.votingId,
+      token_commitment: input.tokenCommitment,
+      share_index: input.shareIndex,
+      threshold_t: input.thresholdT,
+      threshold_n: input.thresholdN,
       created_at: createdAt,
     }),
   }, input.coordinatorSecretKey);
@@ -49,10 +64,21 @@ export function parseSimpleShardCertificate(
     const payload = JSON.parse(event.content) as {
       shard_id?: string;
       threshold_label?: string;
+      voting_id?: string;
+      token_commitment?: string;
+      share_index?: number;
+      threshold_t?: number;
+      threshold_n?: number;
       created_at?: string;
     };
 
-    if (!payload.shard_id || !payload.threshold_label) {
+    if (
+      !payload.shard_id
+      || !payload.threshold_label
+      || !payload.voting_id
+      || !payload.token_commitment
+      || typeof payload.share_index !== "number"
+    ) {
       return null;
     }
 
@@ -65,6 +91,11 @@ export function parseSimpleShardCertificate(
       shardId: payload.shard_id,
       coordinatorNpub,
       thresholdLabel: payload.threshold_label,
+      votingId: payload.voting_id,
+      tokenCommitment: payload.token_commitment,
+      shareIndex: payload.share_index,
+      thresholdT: typeof payload.threshold_t === "number" ? payload.threshold_t : undefined,
+      thresholdN: typeof payload.threshold_n === "number" ? payload.threshold_n : undefined,
       createdAt: payload.created_at ?? new Date(event.created_at * 1000).toISOString(),
       event,
     };

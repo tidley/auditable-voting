@@ -100,10 +100,23 @@ describe("simpleVotingSession", () => {
 
     const result = await mod.publishSimpleSubmittedVote({
       ballotNsec: "nsec1voter",
-      coordinatorNpub: "npub1coord",
       votingId: "vote-2",
       choice: "Yes",
-      shardCertificates: [{ id: "cert-1", kind: 38993, pubkey: "ab".repeat(32), created_at: 10, tags: [], content: "{}", sig: "sig" }],
+      shardCertificates: [{
+        id: "cert-1",
+        kind: 38993,
+        pubkey: "ab".repeat(32),
+        created_at: 10,
+        tags: [],
+        content: JSON.stringify({
+          shard_id: "resp-1",
+          threshold_label: "1 of 1",
+          voting_id: "vote-2",
+          token_commitment: "commit-1",
+          share_index: 1,
+        }),
+        sig: "sig",
+      }],
     });
 
     expect(finalizeEvent).toHaveBeenCalled();
@@ -122,7 +135,21 @@ describe("simpleVotingSession", () => {
         content: JSON.stringify({
           voting_id: "vote-2",
           choice: "Yes",
-          shard_certificates: [{ id: "cert-1", kind: 38993, pubkey: "ab".repeat(32), created_at: 10, tags: [], content: "{}", sig: "sig" }],
+          shard_certificates: [{
+            id: "cert-1",
+            kind: 38993,
+            pubkey: "ab".repeat(32),
+            created_at: 10,
+            tags: [],
+            content: JSON.stringify({
+              shard_id: "resp-1",
+              threshold_label: "1 of 1",
+              voting_id: "vote-2",
+              token_commitment: "commit-1",
+              share_index: 1,
+            }),
+            sig: "sig",
+          }],
           created_at: "2026-03-31T00:05:00.000Z",
         }),
       },
@@ -138,7 +165,6 @@ describe("simpleVotingSession", () => {
     ]);
 
     const votes = await mod.fetchSimpleSubmittedVotes({
-      coordinatorNpub: "npub1coord",
       votingId: "vote-2",
     });
 
@@ -146,10 +172,23 @@ describe("simpleVotingSession", () => {
       {
         eventId: "ballot-1",
         votingId: "vote-2",
-        coordinatorNpub: "npub1coord",
         voterNpub: "npub1coord",
         choice: "Yes",
-        shardCertificates: [{ id: "cert-1", kind: 38993, pubkey: "ab".repeat(32), created_at: 10, tags: [], content: "{}", sig: "sig" }],
+        shardCertificates: [{
+          id: "cert-1",
+          kind: 38993,
+          pubkey: "ab".repeat(32),
+          created_at: 10,
+          tags: [],
+          content: JSON.stringify({
+            shard_id: "resp-1",
+            threshold_label: "1 of 1",
+            voting_id: "vote-2",
+            token_commitment: "commit-1",
+            share_index: 1,
+          }),
+          sig: "sig",
+        }],
         tokenId: "token-1",
         createdAt: "2026-03-31T00:05:00.000Z",
       },
