@@ -31,7 +31,7 @@ function loadStoredCoordinatorKeypair(): SimpleCoordinatorKeypair | null {
     return null;
   }
 
-  const raw = window.localStorage.getItem(COORDINATOR_STORAGE_KEY);
+  const raw = window.sessionStorage.getItem(COORDINATOR_STORAGE_KEY);
   if (!raw) {
     return null;
   }
@@ -48,7 +48,7 @@ function storeCoordinatorKeypair(keypair: SimpleCoordinatorKeypair) {
     return;
   }
 
-  window.localStorage.setItem(COORDINATOR_STORAGE_KEY, JSON.stringify(keypair));
+  window.sessionStorage.setItem(COORDINATOR_STORAGE_KEY, JSON.stringify(keypair));
 }
 
 export default function SimpleCoordinatorApp() {
@@ -61,6 +61,7 @@ export default function SimpleCoordinatorApp() {
   const [questionVotingId, setQuestionVotingId] = useState("");
   const [questionThresholdT, setQuestionThresholdT] = useState("1");
   const [questionThresholdN, setQuestionThresholdN] = useState("1");
+  const [questionShareIndex, setQuestionShareIndex] = useState("1");
   const [publishStatus, setPublishStatus] = useState<string | null>(null);
   const [publishedVote, setPublishedVote] = useState<SimpleLiveVoteSession | null>(null);
   const [submittedVotes, setSubmittedVotes] = useState<SimpleSubmittedVote[]>([]);
@@ -275,7 +276,7 @@ export default function SimpleCoordinatorApp() {
         thresholdLabel: getThresholdLabel(),
         votingId: request.votingId,
         tokenCommitment: request.tokenCommitment,
-        shareIndex: 1,
+        shareIndex: Number.parseInt(questionShareIndex, 10) || 1,
         thresholdT: Number.parseInt(questionThresholdT, 10) || undefined,
         thresholdN: Number.parseInt(questionThresholdN, 10) || undefined,
       });
@@ -422,6 +423,15 @@ export default function SimpleCoordinatorApp() {
                 onChange={(event) => setQuestionThresholdN(event.target.value)}
               />
             </div>
+            <div>
+              <label className="simple-voter-label" htmlFor="simple-share-index">Share Index</label>
+              <input
+                id="simple-share-index"
+                className="simple-voter-input"
+                value={questionShareIndex}
+                onChange={(event) => setQuestionShareIndex(event.target.value)}
+              />
+            </div>
           </div>
           <div className="simple-voter-action-row">
             <button
@@ -439,6 +449,7 @@ export default function SimpleCoordinatorApp() {
             <>
               <p className="simple-voter-question">Voting ID {publishedVote.votingId.slice(0, 12)}</p>
               <p className="simple-voter-question">Live prompt: {publishedVote.prompt}</p>
+              <p className="simple-voter-question">This coordinator share index: {questionShareIndex}</p>
             </>
           )}
         </section>

@@ -1,12 +1,7 @@
 import { useEffect, useState } from "react";
 import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
-import {
-  loadStoredWalletBundle,
-  storeEphemeralKeypair,
-  type StoredWalletBundle,
-} from "./cashuWallet";
 import { decodeNsec } from "./nostrIdentity";
-import { fetchElection, normalizeElectionInfo, type ElectionInfo } from "./coordinatorApi";
+import { fetchElection, type ElectionInfo } from "./coordinatorApi";
 import { sha256Hex } from "./tokenIdentity";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
 import TokenFingerprint from "./TokenFingerprint";
@@ -26,12 +21,41 @@ import {
 } from "./simpleVotingSession";
 
 type LiveVoteChoice = "Yes" | "No" | null;
+type SimpleVoterKeypair = {
+  nsec: string;
+  npub: string;
+};
+
+const SIMPLE_VOTER_STORAGE_KEY = "auditable-voting.simple-voter-keypair";
+
+function loadStoredSimpleVoterKeypair(): SimpleVoterKeypair | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const raw = window.sessionStorage.getItem(SIMPLE_VOTER_STORAGE_KEY);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(raw) as SimpleVoterKeypair;
+  } catch {
+    return null;
+  }
+}
+
+function storeSimpleVoterKeypair(keypair: SimpleVoterKeypair) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.sessionStorage.setItem(SIMPLE_VOTER_STORAGE_KEY, JSON.stringify(keypair));
+}
 
 export default function SimpleUiApp() {
-  const [walletBundle, setWalletBundle] = useState<StoredWalletBundle | null>(() => loadStoredWalletBundle());
-  const [election, setElection] = useState<ElectionInfo | null>(
-    normalizeElectionInfo(walletBundle?.election),
-  );
+  const [voterKeypair, setVoterKeypair] = useState<SimpleVoterKeypair | null>(() => loadStoredSimpleVoterKeypair());
+  const [election, setElection] = useState<ElectionInfo | null>(null);
   const [voterId, setVoterId] = useState<string>("pending");
   const [liveVoteChoice, setLiveVoteChoice] = useState<LiveVoteChoice>(null);
   const [coordinatorNpub, setCoordinatorNpub] = useState<string>("");
@@ -48,24 +72,17 @@ export default function SimpleUiApp() {
 
     void fetchElection().then((nextElection) => {
       if (!cancelled) {
-        setElection(nextElection ?? normalizeElectionInfo(walletBundle?.election));
+        setElection(nextElection);
       }
     }).catch(() => {
       if (!cancelled) {
-        setElection(normalizeElectionInfo(walletBundle?.election));
+        setElection(null);
       }
     });
-
-    const handleStorage = () => {
-      setWalletBundle(loadStoredWalletBundle());
-    };
-
-    window.addEventListener("storage", handleStorage);
     return () => {
       cancelled = true;
-      window.removeEventListener("storage", handleStorage);
     };
-  }, [walletBundle?.election]);
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -78,7 +95,7 @@ export default function SimpleUiApp() {
   }, []);
 
   useEffect(() => {
-    const voterNsec = walletBundle?.ephemeralKeypair.nsec?.trim() ?? "";
+    const voterNsec = voterKeypair?.nsec?.trim() ?? "";
 
     if (!voterNsec) {
       setReceivedShards([]);
@@ -109,7 +126,7 @@ export default function SimpleUiApp() {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [walletBundle?.ephemeralKeypair.nsec]);
+  }, [voterKeypair?.nsec]);
 
   useEffect(() => {
     if (!coordinatorNpub && !selectedVotingId && receivedShards.length === 0) {
@@ -159,7 +176,7 @@ export default function SimpleUiApp() {
   useEffect(() => {
     let cancelled = false;
 
-    const npub = walletBundle?.ephemeralKeypair.npub?.trim() ?? "";
+    const npub = voterKeypair?.npub?.trim() ?? "";
     if (!npub) {
       setVoterId("pending");
       return () => {
@@ -176,19 +193,20 @@ export default function SimpleUiApp() {
     return () => {
       cancelled = true;
     };
-  }, [walletBundle?.ephemeralKeypair.npub]);
+  }, [voterKeypair?.npub]);
 
   function createNostrKeypair() {
     const secretKey = generateSecretKey();
     const nsec = nip19.nsecEncode(secretKey);
     const npub = nip19.npubEncode(getPublicKey(secretKey));
-    storeEphemeralKeypair(nsec, npub);
-    setWalletBundle(loadStoredWalletBundle());
+    const nextKeypair = { nsec, npub };
+    storeSimpleVoterKeypair(nextKeypair);
+    setVoterKeypair(nextKeypair);
   }
 
   async function requestVotingShard() {
-    const voterNpub = walletBundle?.ephemeralKeypair.npub ?? "";
-    const voterNsec = walletBundle?.ephemeralKeypair.nsec ?? "";
+    const voterNpub = voterKeypair?.npub ?? "";
+    const voterNsec = voterKeypair?.nsec ?? "";
     const voterSecretKey = decodeNsec(voterNsec);
     const votingId = liveVoteSession?.votingId ?? selectedVotingId;
 
@@ -225,8 +243,8 @@ export default function SimpleUiApp() {
     }
   }
 
-  const tokenCommitmentBasis = walletBundle?.ephemeralKeypair.nsec && (liveVoteSession?.votingId ?? selectedVotingId)
-    ? `${walletBundle.ephemeralKeypair.nsec}:${liveVoteSession?.votingId ?? selectedVotingId}:simple-threshold-token`
+  const tokenCommitmentBasis = voterKeypair?.nsec && (liveVoteSession?.votingId ?? selectedVotingId)
+    ? `${voterKeypair.nsec}:${liveVoteSession?.votingId ?? selectedVotingId}:simple-threshold-token`
     : "";
   const [tokenCommitment, setTokenCommitment] = useState<string>("");
   useEffect(() => {
@@ -315,8 +333,8 @@ export default function SimpleUiApp() {
         </div>
 
         <SimpleIdentityPanel
-          npub={walletBundle?.ephemeralKeypair.npub ?? ""}
-          nsec={walletBundle?.ephemeralKeypair.nsec ?? ""}
+          npub={voterKeypair?.npub ?? ""}
+          nsec={voterKeypair?.nsec ?? ""}
         />
 
         <section className="simple-voter-section" aria-labelledby="request-shard-title">
@@ -326,7 +344,7 @@ export default function SimpleUiApp() {
               type="button"
               className="simple-voter-primary"
               onClick={() => void requestVotingShard()}
-              disabled={!walletBundle?.ephemeralKeypair.npub || !(liveVoteSession?.votingId ?? selectedVotingId)}
+              disabled={!voterKeypair?.npub || !(liveVoteSession?.votingId ?? selectedVotingId)}
             >
               Request voting shares
             </button>
