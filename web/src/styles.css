@@ -460,6 +460,10 @@ code {
   font-weight: 700;
 }
 
+.simple-voter-label-tight {
+  margin-bottom: 0;
+}
+
 .simple-voter-textarea {
   width: 100%;
   min-height: 96px;
@@ -482,6 +486,29 @@ code {
   font-size: 1rem;
   line-height: 1.5;
   box-sizing: border-box;
+}
+
+.simple-voter-input-inline {
+  margin-bottom: 0;
+}
+
+.simple-voter-field-stack {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.simple-voter-field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.simple-voter-inline-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .simple-vote-entry {
@@ -1405,6 +1432,12 @@ code {
   }
 
   .simple-scanner-head {
+    flex-direction: column;
+  }
+
+  .simple-voter-field-head,
+  .simple-voter-inline-field {
+    align-items: stretch;
     flex-direction: column;
   }
 

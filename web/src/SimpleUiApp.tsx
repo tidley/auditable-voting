@@ -21,7 +21,6 @@ import {
 } from "./simpleVotingSession";
 import {
   parseSimpleVotingPackage,
-  serializeSimpleVotingPackage,
   type SimpleVotingPackage,
 } from "./simpleVotingPackage";
 
@@ -65,7 +64,8 @@ export default function SimpleUiApp() {
   const [coordinatorNpub, setCoordinatorNpub] = useState<string>("");
   const [selectedVotingId, setSelectedVotingId] = useState<string>("");
   const [importedVotingPackage, setImportedVotingPackage] = useState<SimpleVotingPackage | null>(null);
-  const [importValue, setImportValue] = useState<string>("");
+  const [manualVotingId, setManualVotingId] = useState<string>("");
+  const [manualCoordinators, setManualCoordinators] = useState<string[]>([""]);
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [participatingCoordinators, setParticipatingCoordinators] = useState<string[]>([]);
@@ -92,7 +92,8 @@ export default function SimpleUiApp() {
         coordinators: nextCoordinatorNpub ? [nextCoordinatorNpub] : undefined,
       };
       setImportedVotingPackage(nextPackage);
-      setImportValue(serializeSimpleVotingPackage(nextPackage));
+      setManualVotingId(nextVotingId);
+      setManualCoordinators(nextCoordinatorNpub ? [nextCoordinatorNpub] : [""]);
     }
   }, []);
 
@@ -213,6 +214,15 @@ export default function SimpleUiApp() {
     setVoterKeypair(nextKeypair);
   }
 
+  function syncManualFields(nextPackage: SimpleVotingPackage) {
+    const nextCoordinators = Array.from(new Set([
+      ...(nextPackage.coordinators ?? []),
+      ...(nextPackage.coordinatorNpub ? [nextPackage.coordinatorNpub] : []),
+    ]));
+    setManualVotingId(nextPackage.votingId ?? "");
+    setManualCoordinators(nextCoordinators.length > 0 ? nextCoordinators : [""]);
+  }
+
   function applyVotingDetails(parsed: SimpleVotingPackage, source: "imported" | "scanned") {
     const mergedCoordinators = Array.from(new Set([
       ...(importedVotingPackage?.coordinators ?? []),
@@ -242,16 +252,24 @@ export default function SimpleUiApp() {
     setImportedVotingPackage(nextPackage);
     setSelectedVotingId(nextVotingId);
     setCoordinatorNpub(nextPackage.coordinatorNpub ?? "");
+    syncManualFields(nextPackage);
     setImportStatus(source === "scanned"
       ? `Voting details scanned. ${mergedCoordinators.length || 1} coordinator${mergedCoordinators.length === 1 ? "" : "s"} loaded.`
       : `Voting details imported. ${mergedCoordinators.length || 1} coordinator${mergedCoordinators.length === 1 ? "" : "s"} loaded.`);
   }
 
   function importVotingPackage() {
-    const parsed = parseSimpleVotingPackage(importValue);
+    const normalizedCoordinators = Array.from(new Set(
+      manualCoordinators.map((value) => value.trim()).filter((value) => value.length > 0),
+    ));
+    const parsed = {
+      votingId: manualVotingId.trim() || undefined,
+      coordinatorNpub: normalizedCoordinators[0],
+      coordinators: normalizedCoordinators.length > 0 ? normalizedCoordinators : undefined,
+    };
 
-    if (!parsed) {
-      setImportStatus("Voting details could not be parsed.");
+    if (!parsed.votingId) {
+      setImportStatus("Add a voting ID.");
       return;
     }
 
@@ -259,7 +277,6 @@ export default function SimpleUiApp() {
   }
 
   function handleScannedVotingPackage(scannedValue: string) {
-    setImportValue(scannedValue);
     const parsed = parseSimpleVotingPackage(scannedValue);
 
     if (!parsed) {
@@ -268,6 +285,23 @@ export default function SimpleUiApp() {
     }
 
     applyVotingDetails(parsed, "scanned");
+  }
+
+  function updateCoordinatorInput(index: number, value: string) {
+    setManualCoordinators((current) => current.map((entry, currentIndex) => (
+      currentIndex === index ? value : entry
+    )));
+  }
+
+  function addCoordinatorInput() {
+    setManualCoordinators((current) => [...current, ""]);
+  }
+
+  function removeCoordinatorInput(index: number) {
+    setManualCoordinators((current) => {
+      const next = current.filter((_, currentIndex) => currentIndex !== index);
+      return next.length > 0 ? next : [""];
+    });
   }
 
   async function requestVotingShard() {
@@ -422,21 +456,51 @@ export default function SimpleUiApp() {
             onDetected={handleScannedVotingPackage}
             onClose={() => setScannerOpen(false)}
           />
-          <label className="simple-voter-label" htmlFor="simple-voting-package">Voting details</label>
-          <textarea
-            id="simple-voting-package"
-            className="simple-voter-textarea"
-            value={importValue}
-            onChange={(event) => setImportValue(event.target.value)}
-            rows={7}
-            placeholder={`Voting ID: 1357a6d0-8eb\nnpub1...\nnpub1...`}
+          <label className="simple-voter-label" htmlFor="simple-voting-id">Voting ID</label>
+          <input
+            id="simple-voting-id"
+            className="simple-voter-input"
+            value={manualVotingId}
+            onChange={(event) => setManualVotingId(event.target.value)}
+            placeholder="1357a6d0-8eb"
           />
+          <div className="simple-voter-field-stack">
+            <div className="simple-voter-field-head">
+              <label className="simple-voter-label simple-voter-label-tight">Coordinator npubs</label>
+              <button
+                type="button"
+                className="simple-voter-secondary"
+                onClick={addCoordinatorInput}
+              >
+                Add coordinator
+              </button>
+            </div>
+            {manualCoordinators.map((value, index) => (
+              <div key={`${index}-${value.slice(0, 12)}`} className="simple-voter-inline-field">
+                <input
+                  className="simple-voter-input simple-voter-input-inline"
+                  value={value}
+                  onChange={(event) => updateCoordinatorInput(index, event.target.value)}
+                  placeholder="npub1..."
+                />
+                {manualCoordinators.length > 1 && (
+                  <button
+                    type="button"
+                    className="simple-voter-secondary"
+                    onClick={() => removeCoordinatorInput(index)}
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
           <div className="simple-voter-action-row">
             <button
               type="button"
               className="simple-voter-primary"
               onClick={importVotingPackage}
-              disabled={importValue.trim().length === 0}
+              disabled={manualVotingId.trim().length === 0}
             >
               Use voting details
             </button>
