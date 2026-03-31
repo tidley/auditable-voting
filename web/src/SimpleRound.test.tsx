@@ -330,23 +330,18 @@ describe("Simple round flow", () => {
     const roundId = "round-1";
     const coordinatorOneInputs = coordinatorOne.container.querySelectorAll("input.simple-voter-input");
     const coordinatorTwoInputs = coordinatorTwo.container.querySelectorAll("input.simple-voter-input");
-    await user.clear(coordinatorOneInputs[0] as HTMLInputElement);
-    await user.type(coordinatorOneInputs[0] as HTMLInputElement, roundId);
-    await user.clear(coordinatorTwoInputs[0] as HTMLInputElement);
-    await user.type(coordinatorTwoInputs[0] as HTMLInputElement, roundId);
     await user.clear(coordinatorOneInputs[1] as HTMLInputElement);
-    await user.type(coordinatorOneInputs[1] as HTMLInputElement, "2");
+    await user.type(coordinatorOneInputs[1] as HTMLInputElement, roundId);
     await user.clear(coordinatorOneInputs[2] as HTMLInputElement);
     await user.type(coordinatorOneInputs[2] as HTMLInputElement, "2");
-    await user.clear(coordinatorTwoInputs[1] as HTMLInputElement);
-    await user.type(coordinatorTwoInputs[1] as HTMLInputElement, "2");
-    await user.clear(coordinatorTwoInputs[2] as HTMLInputElement);
-    await user.type(coordinatorTwoInputs[2] as HTMLInputElement, "2");
-    await user.clear(coordinatorTwoInputs[3] as HTMLInputElement);
-    await user.type(coordinatorTwoInputs[3] as HTMLInputElement, "2");
+    await user.clear(coordinatorOneInputs[3] as HTMLInputElement);
+    await user.type(coordinatorOneInputs[3] as HTMLInputElement, "2");
+    await user.clear(coordinatorTwoInputs[0] as HTMLInputElement);
+    await user.type(coordinatorTwoInputs[0] as HTMLInputElement, coordinatorOneNpub);
+    await user.clear(coordinatorTwoInputs[4] as HTMLInputElement);
+    await user.type(coordinatorTwoInputs[4] as HTMLInputElement, "2");
 
     await user.click(coordinatorOneUi.getByRole("button", { name: /Broadcast live vote/i }));
-    await user.click(coordinatorTwoUi.getByRole("button", { name: /Broadcast live vote/i }));
 
     const voterOneCoordinatorInputs = voterOne.container.querySelectorAll("input.simple-voter-input-inline");
     const voterTwoCoordinatorInputs = voterTwo.container.querySelectorAll("input.simple-voter-input-inline");
