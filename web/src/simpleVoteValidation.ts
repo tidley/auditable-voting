@@ -42,6 +42,11 @@ export function validateSimpleSubmittedVotes(
       return { vote, valid: false, reason: "Duplicate coordinator share" };
     }
 
+    const uniqueShareIndexes = Array.from(new Set(parsedCertificates.map((certificate) => certificate.shareIndex)));
+    if (uniqueShareIndexes.length !== parsedCertificates.length) {
+      return { vote, valid: false, reason: "Duplicate share index" };
+    }
+
     if (!vote.tokenId) {
       return { vote, valid: false, reason: "Missing combined token" };
     }
