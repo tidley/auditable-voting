@@ -373,12 +373,12 @@ export default function SimpleCoordinatorApp() {
 
         {publishedVote && (
           <section className="simple-voter-section" aria-labelledby="voting-package-title">
-            <h2 id="voting-package-title" className="simple-voter-section-title">Voting package</h2>
+            <h2 id="voting-package-title" className="simple-voter-section-title">Voting details</h2>
             <SimpleQrPanel
               value={votingPackage}
-              title="Phone scan package"
-              description="Show this QR on the coordinator screen. A voter can scan it on their phone, join the voting round, and request shares."
-              copyLabel="Copy voting package"
+              title="Phone scan details"
+              description="Show this QR on the coordinator screen. Voters can scan it, or paste the voting ID and coordinator npub details manually."
+              copyLabel="Copy voting details"
             />
           </section>
         )}

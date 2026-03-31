@@ -213,33 +213,61 @@ export default function SimpleUiApp() {
     setVoterKeypair(nextKeypair);
   }
 
-  function importVotingPackage() {
-    const parsed = parseSimpleVotingPackage(importValue);
+  function applyVotingDetails(parsed: SimpleVotingPackage, source: "imported" | "scanned") {
+    const mergedCoordinators = Array.from(new Set([
+      ...(importedVotingPackage?.coordinators ?? []),
+      ...(parsed.coordinators ?? []),
+      ...(importedVotingPackage?.coordinatorNpub ? [importedVotingPackage.coordinatorNpub] : []),
+      ...(parsed.coordinatorNpub ? [parsed.coordinatorNpub] : []),
+    ]));
+    const nextVotingId = parsed.votingId
+      || importedVotingPackage?.votingId
+      || selectedVotingId
+      || liveVoteSession?.votingId
+      || "";
 
-    if (!parsed?.votingId) {
-      setImportStatus("Voting package could not be parsed.");
+    if (!nextVotingId) {
+      setImportStatus("Add a voting ID as well as any coordinator npubs.");
       return;
     }
 
-    setImportedVotingPackage(parsed);
-    setSelectedVotingId(parsed.votingId);
-    setCoordinatorNpub(parsed.coordinatorNpub ?? "");
-    setImportStatus("Voting package imported.");
+    const nextPackage = {
+      ...importedVotingPackage,
+      ...parsed,
+      votingId: nextVotingId,
+      coordinatorNpub: parsed.coordinatorNpub ?? importedVotingPackage?.coordinatorNpub ?? mergedCoordinators[0],
+      coordinators: mergedCoordinators.length > 0 ? mergedCoordinators : undefined,
+    };
+
+    setImportedVotingPackage(nextPackage);
+    setSelectedVotingId(nextVotingId);
+    setCoordinatorNpub(nextPackage.coordinatorNpub ?? "");
+    setImportStatus(source === "scanned"
+      ? `Voting details scanned. ${mergedCoordinators.length || 1} coordinator${mergedCoordinators.length === 1 ? "" : "s"} loaded.`
+      : `Voting details imported. ${mergedCoordinators.length || 1} coordinator${mergedCoordinators.length === 1 ? "" : "s"} loaded.`);
+  }
+
+  function importVotingPackage() {
+    const parsed = parseSimpleVotingPackage(importValue);
+
+    if (!parsed) {
+      setImportStatus("Voting details could not be parsed.");
+      return;
+    }
+
+    applyVotingDetails(parsed, "imported");
   }
 
   function handleScannedVotingPackage(scannedValue: string) {
     setImportValue(scannedValue);
     const parsed = parseSimpleVotingPackage(scannedValue);
 
-    if (!parsed?.votingId) {
-      setImportStatus("QR code did not contain a valid voting package.");
+    if (!parsed) {
+      setImportStatus("QR code did not contain valid voting details.");
       return;
     }
 
-    setImportedVotingPackage(parsed);
-    setSelectedVotingId(parsed.votingId);
-    setCoordinatorNpub(parsed.coordinatorNpub ?? "");
-    setImportStatus("Voting package scanned.");
+    applyVotingDetails(parsed, "scanned");
   }
 
   async function requestVotingShard() {
@@ -376,9 +404,9 @@ export default function SimpleUiApp() {
         />
 
         <section className="simple-voter-section" aria-labelledby="import-package-title">
-          <h2 id="import-package-title" className="simple-voter-section-title">Scan or import voting package</h2>
+          <h2 id="import-package-title" className="simple-voter-section-title">Scan or enter voting details</h2>
           <p className="simple-voter-question">
-            On a phone, scan a coordinator QR code. If needed, you can still paste the package manually.
+            Scan a coordinator QR code, or paste a voting ID and one or more coordinator npubs.
           </p>
           <div className="simple-voter-action-row simple-voter-action-row-inline">
             <button
@@ -394,13 +422,14 @@ export default function SimpleUiApp() {
             onDetected={handleScannedVotingPackage}
             onClose={() => setScannerOpen(false)}
           />
-          <label className="simple-voter-label" htmlFor="simple-voting-package">Package</label>
+          <label className="simple-voter-label" htmlFor="simple-voting-package">Voting details</label>
           <textarea
             id="simple-voting-package"
             className="simple-voter-textarea"
             value={importValue}
             onChange={(event) => setImportValue(event.target.value)}
             rows={7}
+            placeholder={`Voting ID: 1357a6d0-8eb\nnpub1...\nnpub1...`}
           />
           <div className="simple-voter-action-row">
             <button
@@ -409,7 +438,7 @@ export default function SimpleUiApp() {
               onClick={importVotingPackage}
               disabled={importValue.trim().length === 0}
             >
-              Import voting package
+              Use voting details
             </button>
           </div>
           {importStatus && <p className="simple-voter-note">{importStatus}</p>}
