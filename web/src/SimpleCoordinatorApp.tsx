@@ -58,6 +58,9 @@ export default function SimpleCoordinatorApp() {
   const [requests, setRequests] = useState<SimpleShardRequest[]>([]);
   const [requestStatuses, setRequestStatuses] = useState<Record<string, string>>({});
   const [questionPrompt, setQuestionPrompt] = useState("Should the proposal pass?");
+  const [questionVotingId, setQuestionVotingId] = useState("");
+  const [questionThresholdT, setQuestionThresholdT] = useState("1");
+  const [questionThresholdN, setQuestionThresholdN] = useState("1");
   const [publishStatus, setPublishStatus] = useState<string | null>(null);
   const [publishedVote, setPublishedVote] = useState<SimpleLiveVoteSession | null>(null);
   const [submittedVotes, setSubmittedVotes] = useState<SimpleSubmittedVote[]>([]);
@@ -161,10 +164,9 @@ export default function SimpleCoordinatorApp() {
   }, [keypair?.npub]);
 
   useEffect(() => {
-    const coordinatorNpub = keypair?.npub ?? "";
     const votingId = publishedVote?.votingId ?? "";
 
-    if (!coordinatorNpub || !votingId) {
+    if (!votingId) {
       setSubmittedVotes([]);
       return;
     }
@@ -173,7 +175,7 @@ export default function SimpleCoordinatorApp() {
 
     async function refreshSubmittedVotes() {
       try {
-        const nextVotes = await fetchSimpleSubmittedVotes({ coordinatorNpub, votingId });
+        const nextVotes = await fetchSimpleSubmittedVotes({ votingId });
         if (!cancelled) {
           setSubmittedVotes(nextVotes);
         }
@@ -193,7 +195,7 @@ export default function SimpleCoordinatorApp() {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [keypair?.npub, publishedVote?.votingId]);
+  }, [publishedVote?.votingId]);
 
   function createNostrKeypair() {
     const secretKey = generateSecretKey();
@@ -206,6 +208,12 @@ export default function SimpleCoordinatorApp() {
   }
 
   function getThresholdLabel() {
+    const configuredT = Number.parseInt(questionThresholdT, 10);
+    const configuredN = Number.parseInt(questionThresholdN, 10);
+    if (configuredT > 0 && configuredN > 0) {
+      return `${configuredT} of ${configuredN}`;
+    }
+
     const publishedT = election?.threshold_t;
     const publishedN = election?.threshold_n;
 
@@ -222,6 +230,12 @@ export default function SimpleCoordinatorApp() {
   }
 
   function getThresholdNumbers() {
+    const configuredT = Number.parseInt(questionThresholdT, 10);
+    const configuredN = Number.parseInt(questionThresholdN, 10);
+    if (configuredT > 0 && configuredN > 0) {
+      return { thresholdT: configuredT, thresholdN: configuredN };
+    }
+
     const publishedT = election?.threshold_t;
     const publishedN = election?.threshold_n;
 
@@ -259,6 +273,11 @@ export default function SimpleCoordinatorApp() {
         coordinatorNpub,
         coordinatorId,
         thresholdLabel: getThresholdLabel(),
+        votingId: request.votingId,
+        tokenCommitment: request.tokenCommitment,
+        shareIndex: 1,
+        thresholdT: Number.parseInt(questionThresholdT, 10) || undefined,
+        thresholdN: Number.parseInt(questionThresholdN, 10) || undefined,
       });
 
       setRequestStatuses((current) => ({
@@ -285,6 +304,7 @@ export default function SimpleCoordinatorApp() {
       const result = await publishSimpleLiveVote({
         coordinatorNsec,
         prompt,
+        votingId: questionVotingId.trim() || undefined,
         thresholdT: threshold.thresholdT,
         thresholdN: threshold.thresholdN,
       });
@@ -298,6 +318,7 @@ export default function SimpleCoordinatorApp() {
         thresholdN: threshold.thresholdN,
         eventId: result.eventId,
       });
+      setQuestionVotingId(result.votingId);
       setPublishStatus(result.successes > 0 ? "Vote broadcast." : "Vote broadcast failed.");
     } catch {
       setPublishStatus("Vote broadcast failed.");
@@ -332,7 +353,7 @@ export default function SimpleCoordinatorApp() {
               Open the voter page with this coordinator selected.
             </p>
             <code className="simple-identity-code">
-              {`${window.location.origin}/simple.html?coordinator=${encodeURIComponent(keypair.npub)}`}
+              {`${window.location.origin}/simple.html?coordinator=${encodeURIComponent(keypair.npub)}${questionVotingId ? `&voting=${encodeURIComponent(questionVotingId)}` : ""}`}
             </code>
           </section>
         )}
@@ -375,6 +396,33 @@ export default function SimpleCoordinatorApp() {
             onChange={(event) => setQuestionPrompt(event.target.value)}
             rows={3}
           />
+          <label className="simple-voter-label" htmlFor="simple-question-voting-id">Voting ID</label>
+          <input
+            id="simple-question-voting-id"
+            className="simple-voter-input"
+            value={questionVotingId}
+            onChange={(event) => setQuestionVotingId(event.target.value)}
+          />
+          <div className="simple-vote-threshold-grid">
+            <div>
+              <label className="simple-voter-label" htmlFor="simple-threshold-t">Threshold T</label>
+              <input
+                id="simple-threshold-t"
+                className="simple-voter-input"
+                value={questionThresholdT}
+                onChange={(event) => setQuestionThresholdT(event.target.value)}
+              />
+            </div>
+            <div>
+              <label className="simple-voter-label" htmlFor="simple-threshold-n">Threshold N</label>
+              <input
+                id="simple-threshold-n"
+                className="simple-voter-input"
+                value={questionThresholdN}
+                onChange={(event) => setQuestionThresholdN(event.target.value)}
+              />
+            </div>
+          </div>
           <div className="simple-voter-action-row">
             <button
               type="button"

@@ -10,14 +10,17 @@ import { fetchElection, normalizeElectionInfo, type ElectionInfo } from "./coord
 import { sha256Hex } from "./tokenIdentity";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
 import TokenFingerprint from "./TokenFingerprint";
-import { deriveTokenIdFromSimpleShardCertificates } from "./simpleShardCertificate";
+import {
+  deriveTokenIdFromSimpleShardCertificates,
+  parseSimpleShardCertificate,
+} from "./simpleShardCertificate";
 import {
   fetchSimpleShardResponses,
   sendSimpleShardRequest,
   type SimpleShardResponse,
 } from "./simpleShardDm";
 import {
-  fetchLatestSimpleLiveVote,
+  fetchSimpleLiveVotes,
   publishSimpleSubmittedVote,
   type SimpleLiveVoteSession,
 } from "./simpleVotingSession";
@@ -32,6 +35,8 @@ export default function SimpleUiApp() {
   const [voterId, setVoterId] = useState<string>("pending");
   const [liveVoteChoice, setLiveVoteChoice] = useState<LiveVoteChoice>(null);
   const [coordinatorNpub, setCoordinatorNpub] = useState<string>("");
+  const [selectedVotingId, setSelectedVotingId] = useState<string>("");
+  const [participatingCoordinators, setParticipatingCoordinators] = useState<string[]>([]);
   const [requestStatus, setRequestStatus] = useState<string | null>(null);
   const [receivedShards, setReceivedShards] = useState<SimpleShardResponse[]>([]);
   const [liveVoteSession, setLiveVoteSession] = useState<SimpleLiveVoteSession | null>(null);
@@ -69,6 +74,7 @@ export default function SimpleUiApp() {
 
     const params = new URLSearchParams(window.location.search);
     setCoordinatorNpub(params.get("coordinator")?.trim() ?? "");
+    setSelectedVotingId(params.get("voting")?.trim() ?? "");
   }, []);
 
   useEffect(() => {
@@ -106,10 +112,9 @@ export default function SimpleUiApp() {
   }, [walletBundle?.ephemeralKeypair.nsec]);
 
   useEffect(() => {
-    const activeCoordinatorNpub = coordinatorNpub || receivedShards[0]?.coordinatorNpub || "";
-
-    if (!activeCoordinatorNpub) {
+    if (!coordinatorNpub && !selectedVotingId && receivedShards.length === 0) {
       setLiveVoteSession(null);
+      setParticipatingCoordinators([]);
       return;
     }
 
@@ -117,13 +122,25 @@ export default function SimpleUiApp() {
 
     async function refreshLiveVote() {
       try {
-        const nextSession = await fetchLatestSimpleLiveVote({ coordinatorNpub: activeCoordinatorNpub });
+        const sessions = await fetchSimpleLiveVotes();
+        const candidateVotingId = selectedVotingId
+          || sessions.find((session) => session.coordinatorNpub === coordinatorNpub)?.votingId
+          || "";
+        const matchingSessions = candidateVotingId
+          ? sessions.filter((session) => session.votingId === candidateVotingId)
+          : [];
+        const nextSession = matchingSessions[0] ?? null;
         if (!cancelled) {
           setLiveVoteSession(nextSession);
+          setParticipatingCoordinators(matchingSessions.map((session) => session.coordinatorNpub));
+          if (nextSession?.votingId) {
+            setSelectedVotingId(nextSession.votingId);
+          }
         }
       } catch {
         if (!cancelled) {
           setLiveVoteSession(null);
+          setParticipatingCoordinators([]);
         }
       }
     }
@@ -137,7 +154,7 @@ export default function SimpleUiApp() {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [coordinatorNpub, receivedShards]);
+  }, [coordinatorNpub, receivedShards, selectedVotingId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -173,22 +190,34 @@ export default function SimpleUiApp() {
     const voterNpub = walletBundle?.ephemeralKeypair.npub ?? "";
     const voterNsec = walletBundle?.ephemeralKeypair.nsec ?? "";
     const voterSecretKey = decodeNsec(voterNsec);
+    const votingId = liveVoteSession?.votingId ?? selectedVotingId;
 
-    if (!voterNpub || !coordinatorNpub || voterId === "pending" || !voterSecretKey) {
+    if (!voterNpub || voterId === "pending" || !voterSecretKey || !votingId) {
       return;
     }
 
     try {
-      const result = await sendSimpleShardRequest({
-        voterSecretKey,
-        coordinatorNpub,
-        voterNpub,
-        voterId,
-      });
+      const tokenCommitment = await sha256Hex(`${voterNsec}:${votingId}:simple-threshold-token`);
+      const targets = Array.from(new Set([
+        ...participatingCoordinators,
+        ...(coordinatorNpub ? [coordinatorNpub] : []),
+      ])).filter((value) => value.trim().length > 0);
+
+      const results = await Promise.all(targets.map((targetCoordinatorNpub) => (
+        sendSimpleShardRequest({
+          voterSecretKey,
+          coordinatorNpub: targetCoordinatorNpub,
+          voterNpub,
+          voterId,
+          votingId,
+          tokenCommitment,
+        })
+      )));
+      const successes = results.reduce((sum, result) => sum + result.successes, 0);
 
       setRequestStatus(
-        result.successes > 0
-          ? "Voting shard requested."
+        successes > 0
+          ? `Voting share request sent to ${targets.length} coordinator${targets.length === 1 ? "" : "s"}.`
           : "Shard request failed.",
       );
     } catch {
@@ -196,8 +225,38 @@ export default function SimpleUiApp() {
     }
   }
 
+  const tokenCommitmentBasis = walletBundle?.ephemeralKeypair.nsec && (liveVoteSession?.votingId ?? selectedVotingId)
+    ? `${walletBundle.ephemeralKeypair.nsec}:${liveVoteSession?.votingId ?? selectedVotingId}:simple-threshold-token`
+    : "";
+  const [tokenCommitment, setTokenCommitment] = useState<string>("");
+  useEffect(() => {
+    let cancelled = false;
+    if (!tokenCommitmentBasis) {
+      setTokenCommitment("");
+      return () => {
+        cancelled = true;
+      };
+    }
+    void sha256Hex(tokenCommitmentBasis).then((value) => {
+      if (!cancelled) {
+        setTokenCommitment(value);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [tokenCommitmentBasis]);
+
   const uniqueShardResponses = Array.from(
-    new Map(receivedShards.map((shard) => [shard.coordinatorNpub, shard])).values(),
+    new Map(
+      receivedShards.flatMap((shard) => {
+        const parsed = parseSimpleShardCertificate(shard.shardCertificate);
+        if (!parsed || parsed.votingId !== (liveVoteSession?.votingId ?? selectedVotingId) || parsed.tokenCommitment !== tokenCommitment) {
+          return [];
+        }
+        return [[shard.coordinatorNpub, shard] as const];
+      }),
+    ).values(),
   );
   const requiredShardCount = Math.max(1, liveVoteSession?.thresholdT ?? 1);
 
@@ -233,7 +292,6 @@ export default function SimpleUiApp() {
       const ballotNsec = nip19.nsecEncode(ballotSecretKey);
       const result = await publishSimpleSubmittedVote({
         ballotNsec,
-        coordinatorNpub: liveVoteSession.coordinatorNpub,
         votingId: liveVoteSession.votingId,
         choice: liveVoteChoice,
         shardCertificates: uniqueShardResponses.map((shard) => shard.shardCertificate),
@@ -262,15 +320,15 @@ export default function SimpleUiApp() {
         />
 
         <section className="simple-voter-section" aria-labelledby="request-shard-title">
-          <h2 id="request-shard-title" className="simple-voter-section-title">Request voting shard</h2>
+          <h2 id="request-shard-title" className="simple-voter-section-title">Request voting shares</h2>
           <div className="simple-voter-action-row">
             <button
               type="button"
               className="simple-voter-primary"
               onClick={() => void requestVotingShard()}
-              disabled={!walletBundle?.ephemeralKeypair.npub || !coordinatorNpub}
+              disabled={!walletBundle?.ephemeralKeypair.npub || !(liveVoteSession?.votingId ?? selectedVotingId)}
             >
-              Request voting shard
+              Request voting shares
             </button>
           </div>
           {requestStatus && <p className="simple-voter-note">{requestStatus}</p>}
@@ -300,6 +358,7 @@ export default function SimpleUiApp() {
             <>
               <p className="simple-voter-question">{liveVoteSession.prompt}</p>
               <p className="simple-voter-note">Voting ID {liveVoteSession.votingId.slice(0, 12)}</p>
+              <p className="simple-voter-question">Coordinators: {participatingCoordinators.length || 1}</p>
               <p className="simple-voter-question">
                 Shards ready: {uniqueShardResponses.length} of {requiredShardCount}
               </p>

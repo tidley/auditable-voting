@@ -11,9 +11,11 @@ export function validateSimpleSubmittedVotes(
   votes: SimpleSubmittedVote[],
   requiredShardCount: number,
 ): SimpleValidatedVote[] {
+  const seenTokenIds = new Set<string>();
+
   return votes.map((vote) => {
     const parsedCertificates = vote.shardCertificates
-      .map((certificate) => parseSimpleShardCertificate(certificate, vote.coordinatorNpub))
+      .map((certificate) => parseSimpleShardCertificate(certificate))
       .filter((certificate) => certificate !== null);
 
     if (parsedCertificates.length < vote.shardCertificates.length) {
@@ -24,6 +26,31 @@ export function validateSimpleSubmittedVotes(
     if (uniqueShardIds.length < requiredShardCount) {
       return { vote, valid: false, reason: "Not enough valid shards" };
     }
+
+    const tokenCommitments = Array.from(new Set(parsedCertificates.map((certificate) => certificate.tokenCommitment)));
+    if (tokenCommitments.length !== 1) {
+      return { vote, valid: false, reason: "Mismatched token commitment" };
+    }
+
+    const votingIds = Array.from(new Set(parsedCertificates.map((certificate) => certificate.votingId)));
+    if (votingIds.length !== 1 || votingIds[0] !== vote.votingId) {
+      return { vote, valid: false, reason: "Mismatched voting id" };
+    }
+
+    const uniqueCoordinators = Array.from(new Set(parsedCertificates.map((certificate) => certificate.coordinatorNpub)));
+    if (uniqueCoordinators.length !== parsedCertificates.length) {
+      return { vote, valid: false, reason: "Duplicate coordinator share" };
+    }
+
+    if (!vote.tokenId) {
+      return { vote, valid: false, reason: "Missing combined token" };
+    }
+
+    if (seenTokenIds.has(vote.tokenId)) {
+      return { vote, valid: false, reason: "Duplicate token" };
+    }
+
+    seenTokenIds.add(vote.tokenId);
 
     return { vote, valid: true, reason: "Valid" };
   });

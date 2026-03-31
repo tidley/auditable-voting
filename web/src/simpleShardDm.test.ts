@@ -28,6 +28,11 @@ vi.mock("./simpleShardCertificate", () => ({
     shardId: "resp-1",
     coordinatorNpub: "npub1coord",
     thresholdLabel: "3 of 5",
+    votingId: "vote-1",
+    tokenCommitment: "commit-1",
+    shareIndex: 1,
+    thresholdT: 3,
+    thresholdN: 5,
     createdAt: "2026-03-31T00:00:00.000Z",
     event: { id: "cert-1", kind: 38993, pubkey: "ab".repeat(32), created_at: 10, tags: [], content: "{}", sig: "sig" },
   })),
@@ -57,6 +62,11 @@ describe("simpleShardDm", () => {
       coordinatorNpub: "npub1coord",
       coordinatorId: "abc1234",
       thresholdLabel: "1 of 1",
+      votingId: "vote-1",
+      tokenCommitment: "commit-1",
+      shareIndex: 1,
+      thresholdT: 1,
+      thresholdN: 1,
     });
 
     expect(wrapEvent).toHaveBeenCalled();

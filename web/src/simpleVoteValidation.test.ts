@@ -8,6 +8,11 @@ vi.mock("./simpleShardCertificate", () => ({
           shardId: "resp-1",
           coordinatorNpub: "npub1coord",
           thresholdLabel: "1 of 1",
+          votingId: "vote-1",
+          tokenCommitment: "commit-1",
+          shareIndex: 1,
+          thresholdT: 1,
+          thresholdN: 1,
           createdAt: "2026-03-31T00:00:00.000Z",
           event: certificate,
         }
@@ -20,8 +25,7 @@ describe("simpleVoteValidation", () => {
     const results = validateSimpleSubmittedVotes([
       {
         eventId: "vote-1",
-        votingId: "v-1",
-        coordinatorNpub: "npub1coord",
+        votingId: "vote-1",
         voterNpub: "npub1ballot",
         choice: "Yes",
         shardCertificates: [{ id: "valid-cert" } as any],
@@ -33,8 +37,7 @@ describe("simpleVoteValidation", () => {
     expect(results[0]).toEqual({
       vote: {
         eventId: "vote-1",
-        votingId: "v-1",
-        coordinatorNpub: "npub1coord",
+        votingId: "vote-1",
         voterNpub: "npub1ballot",
         choice: "Yes",
         shardCertificates: [{ id: "valid-cert" }],
@@ -50,8 +53,7 @@ describe("simpleVoteValidation", () => {
     const results = validateSimpleSubmittedVotes([
       {
         eventId: "vote-1",
-        votingId: "v-1",
-        coordinatorNpub: "npub1coord",
+        votingId: "vote-1",
         voterNpub: "npub1ballot",
         choice: "Yes",
         shardCertificates: [],
@@ -62,5 +64,32 @@ describe("simpleVoteValidation", () => {
 
     expect(results[0].valid).toBe(false);
     expect(results[0].reason).toBe("Not enough valid shards");
+  });
+
+  it("marks duplicate combined tokens invalid", () => {
+    const results = validateSimpleSubmittedVotes([
+      {
+        eventId: "vote-1",
+        votingId: "vote-1",
+        voterNpub: "npub1ballot",
+        choice: "Yes",
+        shardCertificates: [{ id: "valid-cert" } as any],
+        tokenId: "token-1",
+        createdAt: "2026-03-31T00:00:00.000Z",
+      },
+      {
+        eventId: "vote-2",
+        votingId: "vote-1",
+        voterNpub: "npub1ballot2",
+        choice: "No",
+        shardCertificates: [{ id: "valid-cert" } as any],
+        tokenId: "token-1",
+        createdAt: "2026-03-31T00:01:00.000Z",
+      },
+    ], 1);
+
+    expect(results[0].valid).toBe(true);
+    expect(results[1].valid).toBe(false);
+    expect(results[1].reason).toBe("Duplicate token");
   });
 });

@@ -22,7 +22,6 @@ export type SimpleLiveVoteSession = {
 export type SimpleSubmittedVote = {
   eventId: string;
   votingId: string;
-  coordinatorNpub: string;
   voterNpub: string;
   choice: "Yes" | "No";
   shardCertificates: SimpleShardCertificate[];
@@ -39,6 +38,7 @@ function buildPublicRelays(relays?: string[]) {
 export async function publishSimpleLiveVote(input: {
   coordinatorNsec: string;
   prompt: string;
+  votingId?: string;
   relays?: string[];
   thresholdT?: number;
   thresholdN?: number;
@@ -53,7 +53,7 @@ export async function publishSimpleLiveVote(input: {
   const coordinatorNpub = nip19.npubEncode(coordinatorHex);
   const relays = buildPublicRelays(input.relays);
   const createdAt = new Date().toISOString();
-  const votingId = crypto.randomUUID();
+  const votingId = input.votingId?.trim() || crypto.randomUUID();
 
   const event = finalizeEvent({
     kind: SIMPLE_LIVE_VOTE_KIND,
@@ -157,9 +157,55 @@ export async function fetchLatestSimpleLiveVote(input: {
   }
 }
 
+export async function fetchSimpleLiveVotes(input?: {
+  relays?: string[];
+}): Promise<SimpleLiveVoteSession[]> {
+  const relays = buildPublicRelays(input?.relays);
+  const pool = new SimplePool();
+
+  try {
+    const events = await pool.querySync(relays, {
+      kinds: [SIMPLE_LIVE_VOTE_KIND],
+      limit: 200,
+    });
+
+    const sessions = events.flatMap((event) => {
+      try {
+        const payload = JSON.parse(event.content) as {
+          voting_id?: string;
+          prompt?: string;
+          threshold_t?: number;
+          threshold_n?: number;
+          created_at?: string;
+        };
+
+        if (!payload.voting_id || !payload.prompt) {
+          return [];
+        }
+
+        return [{
+          votingId: payload.voting_id,
+          prompt: payload.prompt,
+          coordinatorNpub: nip19.npubEncode(event.pubkey),
+          createdAt: payload.created_at ?? new Date(event.created_at * 1000).toISOString(),
+          thresholdT: typeof payload.threshold_t === "number" ? payload.threshold_t : undefined,
+          thresholdN: typeof payload.threshold_n === "number" ? payload.threshold_n : undefined,
+          eventId: event.id,
+        }];
+      } catch {
+        return [];
+      }
+    });
+
+    sessions.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    return sessions;
+  } finally {
+    pool.close(relays);
+  }
+}
+
 export async function publishSimpleSubmittedVote(input: {
   ballotNsec: string;
-  coordinatorNpub: string;
   votingId: string;
   choice: "Yes" | "No";
   shardCertificates: SimpleShardCertificate[];
@@ -170,13 +216,7 @@ export async function publishSimpleSubmittedVote(input: {
     throw new Error("Ballot key must be an nsec.");
   }
 
-  const coordinatorDecoded = nip19.decode(input.coordinatorNpub.trim());
-  if (coordinatorDecoded.type !== "npub") {
-    throw new Error("Coordinator value must be an npub.");
-  }
-
   const secretKey = ballotDecoded.data as Uint8Array;
-  const coordinatorHex = coordinatorDecoded.data as string;
   const ballotNpub = nip19.npubEncode(getPublicKey(secretKey));
   const relays = buildPublicRelays(input.relays);
   const createdAt = new Date().toISOString();
@@ -186,7 +226,6 @@ export async function publishSimpleSubmittedVote(input: {
     created_at: Math.floor(Date.now() / 1000),
     tags: [
       ["t", "simple-live-vote-ballot"],
-      ["p", coordinatorHex],
       ["d", input.votingId],
       ...input.shardCertificates.map((certificate) => ["s", certificate.id]),
     ],
@@ -225,23 +264,16 @@ export async function publishSimpleSubmittedVote(input: {
 }
 
 export async function fetchSimpleSubmittedVotes(input: {
-  coordinatorNpub: string;
   votingId: string;
   relays?: string[];
 }): Promise<SimpleSubmittedVote[]> {
-  const decoded = nip19.decode(input.coordinatorNpub.trim());
-  if (decoded.type !== "npub") {
-    throw new Error("Coordinator value must be an npub.");
-  }
-
-  const coordinatorHex = decoded.data as string;
   const relays = buildPublicRelays(input.relays);
   const pool = new SimplePool();
 
   try {
     const events = await pool.querySync(relays, {
       kinds: [SIMPLE_LIVE_VOTE_BALLOT_KIND],
-      "#p": [coordinatorHex],
+      "#d": [input.votingId],
       limit: 200,
     });
 
@@ -266,7 +298,6 @@ export async function fetchSimpleSubmittedVotes(input: {
         votes.set(event.id, {
           eventId: event.id,
           votingId: payload.voting_id,
-          coordinatorNpub: input.coordinatorNpub,
           voterNpub: nip19.npubEncode(event.pubkey),
           choice: payload.choice,
           shardCertificates: Array.isArray(payload.shard_certificates) ? payload.shard_certificates : [],

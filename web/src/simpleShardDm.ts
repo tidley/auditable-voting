@@ -11,6 +11,8 @@ export type SimpleShardRequest = {
   id: string;
   voterNpub: string;
   voterId: string;
+  votingId: string;
+  tokenCommitment: string;
   createdAt: string;
 };
 
@@ -35,6 +37,8 @@ export async function sendSimpleShardRequest(input: {
   coordinatorNpub: string;
   voterNpub: string;
   voterId: string;
+  votingId: string;
+  tokenCommitment: string;
   relays?: string[];
 }): Promise<DmPublishResult> {
   const decoded = nip19.decode(input.coordinatorNpub);
@@ -54,6 +58,8 @@ export async function sendSimpleShardRequest(input: {
       request_id: crypto.randomUUID(),
       voter_npub: input.voterNpub,
       voter_id: input.voterId,
+      voting_id: input.votingId,
+      token_commitment: input.tokenCommitment,
       created_at: new Date().toISOString(),
     }),
     "Voting shard request",
@@ -116,6 +122,8 @@ export async function fetchSimpleShardRequests(input: {
           request_id?: string;
           voter_npub?: string;
           voter_id?: string;
+          voting_id?: string;
+          token_commitment?: string;
           created_at?: string;
         };
 
@@ -124,6 +132,8 @@ export async function fetchSimpleShardRequests(input: {
           || !payload.request_id
           || !payload.voter_npub
           || !payload.voter_id
+          || !payload.voting_id
+          || !payload.token_commitment
         ) {
           continue;
         }
@@ -132,6 +142,8 @@ export async function fetchSimpleShardRequests(input: {
           id: payload.request_id,
           voterNpub: payload.voter_npub,
           voterId: payload.voter_id,
+          votingId: payload.voting_id,
+          tokenCommitment: payload.token_commitment,
           createdAt: payload.created_at ?? new Date(wrappedEvent.created_at * 1000).toISOString(),
         });
       } catch {
@@ -152,6 +164,11 @@ export async function sendSimpleShardResponse(input: {
   coordinatorNpub: string;
   coordinatorId: string;
   thresholdLabel: string;
+  votingId: string;
+  tokenCommitment: string;
+  shareIndex: number;
+  thresholdT?: number;
+  thresholdN?: number;
   relays?: string[];
 }): Promise<DmPublishResult & { responseId: string }> {
   const decoded = nip19.decode(input.voterNpub);
@@ -163,6 +180,11 @@ export async function sendSimpleShardResponse(input: {
   const certificate = createSimpleShardCertificate({
     coordinatorSecretKey: input.coordinatorSecretKey,
     thresholdLabel: input.thresholdLabel,
+    votingId: input.votingId,
+    tokenCommitment: input.tokenCommitment,
+    shareIndex: input.shareIndex,
+    thresholdT: input.thresholdT,
+    thresholdN: input.thresholdN,
   });
   const responseId = certificate.shardId;
   const event = nip17.wrapEvent(
