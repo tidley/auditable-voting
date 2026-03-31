@@ -210,6 +210,168 @@ code {
   margin-bottom: 20px;
 }
 
+.token-fingerprint {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.token-fingerprint-compact {
+  gap: 0;
+}
+
+.token-fingerprint-grid {
+  display: grid;
+  gap: 2px;
+  width: 64px;
+  height: 64px;
+  padding: 4px;
+  background: #f4efe6;
+  border: 1px solid rgba(88, 59, 39, 0.18);
+}
+
+.token-fingerprint-compact .token-fingerprint-grid {
+  width: 42px;
+  height: 42px;
+}
+
+.token-fingerprint-cell {
+  background: #efe6d6;
+}
+
+.token-fingerprint-cell.is-filled {
+  background: linear-gradient(135deg, #c95f2d, #7a3421);
+}
+
+.token-fingerprint-label {
+  font-size: 0.76rem;
+}
+
+.token-fingerprint-panel {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid rgba(88, 59, 39, 0.12);
+  background: rgba(255, 248, 239, 0.88);
+  border-radius: 18px;
+}
+
+.token-fingerprint-panel-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.panel-title-inline {
+  margin: 0;
+}
+
+.page-shell-simple {
+  width: min(1240px, calc(100% - 32px));
+}
+
+.simple-hero-card {
+  margin-bottom: 24px;
+}
+
+.simple-ui-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+.simple-panel {
+  border-radius: 20px;
+}
+
+.simple-voter-head {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 16px;
+  border: 1px solid rgba(88, 59, 39, 0.12);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.56);
+}
+
+.simple-voter-copy {
+  min-width: 0;
+}
+
+.simple-question-card,
+.simple-confirm-card,
+.simple-request-card,
+.simple-motion-card,
+.simple-fingerprint-card {
+  padding: 16px;
+  border: 1px solid rgba(88, 59, 39, 0.12);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.56);
+}
+
+.simple-question-card,
+.simple-confirm-card,
+.simple-motion-list,
+.simple-request-list {
+  margin-top: 16px;
+}
+
+.simple-question-card h3,
+.simple-request-card h3,
+.simple-motion-card h3 {
+  margin: 0;
+  font-family: "Iowan Old Style", "Palatino Linotype", serif;
+  font-size: 1.3rem;
+}
+
+.simple-choice-row {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.simple-submit-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 12px 0 16px;
+}
+
+.simple-request-list,
+.simple-motion-list,
+.simple-fingerprint-gallery {
+  display: grid;
+  gap: 14px;
+}
+
+.simple-request-head,
+.simple-motion-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.simple-fingerprint-gallery {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.simple-fingerprint-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.simple-strong {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--accent-deep);
+}
+
 .demo-stat-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

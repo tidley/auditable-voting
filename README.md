@@ -71,29 +71,56 @@ By default this runs fast unit tests and integration checks (no E2E, no UI).
 
 The pre-commit hook runs tests automatically on every `git commit` using the same tiers.
 
-## Production Voter Flow
+## User Flow
 
-### Single Coordinator
+### Target Protocol Direction
 
-1. Open the voter portal URL
-2. Enter your npub (checked against coordinator's eligibility list)
-3. Request a mint quote, publish a claim (kind 38010), wait for approval
-4. Mint blinded tokens from the CDK Cashu mint
-5. Fill out the ballot and publish a vote event (kind 38000)
-6. Submit the proof via NIP-17 gift wrap to the coordinator
-7. Check vote acceptance via the tally endpoint
+The current protocol direction is Nostr voting backed by blind threshold signatures. The intended user-visible flow is:
 
-### Multi-Coordinator
+1. A voter proves eligibility out of band to coordinators and submits a blinded token commitment.
+2. Multiple coordinators independently validate eligibility and return blind signature shares, without learning the final token or vote.
+3. The voter combines enough shares to assemble a valid voting token, derives a `token_id = hash(token)`, and can render that as a deterministic visual fingerprint for human checking.
+4. The voter generates an ephemeral Nostr keypair and publishes a signed vote event carrying the vote choice, the signed token, and the `token_id`.
+5. Anyone can validate the threshold signature, reject duplicate token use, and compute the tally from the public Nostr event stream.
+6. The live public ballot view shows `token_id`-derived patterns plus the associated vote, but does not reveal voter identity.
+7. The voter independently verifies inclusion by checking that their local `token_id` or visual pattern appears publicly with the intended vote.
 
-When multiple coordinators participate in the same election:
+Protocol roles and trust boundaries:
 
-1. Open the voter portal — coordinators are auto-discovered via kind 38012 events
-2. Enter your npub (checked against canonical eligible set)
-3. Click "Request from all N coordinators" — the portal iterates quote/claim/mint per coordinator
-4. Fill out the ballot — proof-hash tags are added for each coordinator's proof
-5. Submit proofs to all coordinators via encrypted DM (automated)
-6. After the voting window closes, publish a voter confirmation (kind 38013)
-7. On the dashboard, run the audit to compare tallies and detect inflation/censorship
+- Coordinators validate voters and participate in threshold blind signing, but should not learn final tokens or ballots.
+- Voters receive signature shares, assemble the final token locally, and vote anonymously through ephemeral Nostr keys.
+- Observers and verifiers validate signatures, tally votes, and audit correctness from public artifacts.
+
+Important properties:
+
+- Blind threshold issuance provides anonymity and removes any single coordinator as a trust anchor.
+- Nostr provides a public, append-only, multi-relay event stream for transparency and replayable verification.
+- Token uniqueness prevents double voting.
+- The visual token fingerprint is for human auditability only; cryptographic validity comes from the token and signature checks.
+
+### Current Implementation Snapshot
+
+The repository currently implements coordinator-mediated blinded issuance with public Nostr ballot events and coordinator receipts.
+
+Single-coordinator flow:
+
+1. Open the voter portal URL.
+2. Enter your npub and check eligibility.
+3. Request a mint quote, publish a kind `38010` claim, and wait for approval.
+4. Mint blinded tokens from the coordinator's Cashu mint.
+5. Fill out the ballot and publish kind `38000`.
+6. Submit the proof privately via NIP-17 gift wrap.
+7. Check vote acceptance and tally state.
+
+Multi-coordinator flow:
+
+1. Open the voter portal and auto-discover coordinators via kinds `38008` and `38012`.
+2. Enter your npub and verify it against the canonical eligible set.
+3. Request issuance from each coordinator.
+4. Publish a vote event with `proof-hash` tags for the relevant proofs.
+5. Submit proofs privately to coordinators.
+6. Publish voter confirmation via kind `38013` after the voting window closes.
+7. Run the audit view to compare tallies, confirmations, and coordinator outputs.
 
 See `docs/03-quorum-model.md` for the trust model and `docs/25-multi-coordinator-implementation-status.md` for implementation progress.
 
