@@ -169,8 +169,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--relays",
         nargs="+",
-        default=["ws://23.182.128.64:10547", "wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net"],
-        help="Nostr relay URLs (default: ws://23.182.128.64:10547 wss://relay.damus.io wss://nos.lol wss://relay.primal.net)",
+        default=[
+            "ws://23.182.128.64:10547",
+            "wss://relay.damus.io",
+            "wss://nos.lol",
+            "wss://relay.primal.net",
+            "wss://relay.0xchat.com",
+            "wss://auth.nostr1.com",
+            "wss://relay.snort.social",
+            "wss://relay.nostr.band",
+        ],
+        help="Nostr relay URLs (default: ws://23.182.128.64:10547 wss://relay.damus.io wss://nos.lol wss://relay.primal.net wss://relay.0xchat.com wss://auth.nostr1.com wss://relay.snort.social wss://relay.nostr.band)",
     )
     parser.add_argument("--output", default="proof.json", help="Output file for proof (default: proof.json)")
     parser.add_argument("--timeout", type=int, default=300, help="Poll timeout in seconds (default: 300)")

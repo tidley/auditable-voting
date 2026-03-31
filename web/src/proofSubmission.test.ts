@@ -33,7 +33,7 @@ describe("proofSubmission", () => {
     });
 
     expect(wrapEvent).toHaveBeenCalled();
-    expect(result.successes).toBe(3);
+    expect(result.successes).toBe(mod.DEFAULT_DM_RELAYS.length + 1);
     expect(result.failures).toBe(0);
   });
 

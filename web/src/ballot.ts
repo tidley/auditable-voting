@@ -10,7 +10,9 @@ import { deriveTokenIdFromProofSecrets } from "./tokenIdentity";
 export const DEFAULT_VOTE_RELAYS = [
   "wss://relay.damus.io",
   "wss://nos.lol",
-  "wss://relay.primal.net"
+  "wss://relay.primal.net",
+  "wss://relay.snort.social",
+  "wss://relay.nostr.band",
 ];
 
 export const BALLOT_EVENT_KIND = 38000;

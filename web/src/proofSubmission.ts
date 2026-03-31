@@ -7,8 +7,13 @@ import { computeProofHash } from "./ballot";
 import { queueNostrPublish } from "./nostrPublishQueue";
 
 export const DEFAULT_DM_RELAYS = [
+  "wss://nos.lol",
+  "wss://relay.0xchat.com",
+  "wss://auth.nostr1.com",
   "wss://nip17.com",
   "wss://nip17.tomdwyer.uk",
+  "wss://relay.snort.social",
+  "wss://relay.nostr.band",
 ];
 
 export type DmPublishResult = {
