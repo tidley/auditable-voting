@@ -359,6 +359,25 @@ code {
   margin-bottom: 28px;
 }
 
+.simple-voter-action-row {
+  margin-bottom: 28px;
+}
+
+.simple-voter-primary {
+  min-width: 220px;
+  padding: 14px 18px;
+  border: 0;
+  background: #00703c;
+  color: #ffffff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.simple-voter-primary:hover {
+  background: #005a30;
+}
+
 .simple-voter-section {
   padding-top: 24px;
   margin-top: 24px;
