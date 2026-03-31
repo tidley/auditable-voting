@@ -17,7 +17,9 @@ import {
 import { validateSimpleSubmittedVotes } from "./simpleVoteValidation";
 import { sha256Hex } from "./tokenIdentity";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
+import SimpleQrPanel from "./SimpleQrPanel";
 import TokenFingerprint from "./TokenFingerprint";
+import { serializeSimpleVotingPackage } from "./simpleVotingPackage";
 
 const COORDINATOR_STORAGE_KEY = "auditable-voting.simple-coordinator-keypair";
 
@@ -330,6 +332,16 @@ export default function SimpleCoordinatorApp() {
   const validatedVotes = validateSimpleSubmittedVotes(submittedVotes, requiredShardCount);
   const validYesCount = validatedVotes.filter((entry) => entry.valid && entry.vote.choice === "Yes").length;
   const validNoCount = validatedVotes.filter((entry) => entry.valid && entry.vote.choice === "No").length;
+  const votingPackage = publishedVote
+    ? serializeSimpleVotingPackage({
+        votingId: publishedVote.votingId,
+        coordinatorNpub: keypair?.npub ?? undefined,
+        coordinators: keypair?.npub ? [keypair.npub] : undefined,
+        prompt: publishedVote.prompt,
+        thresholdT: publishedVote.thresholdT,
+        thresholdN: publishedVote.thresholdN,
+      })
+    : "";
 
   return (
     <main className="simple-voter-shell">
@@ -356,6 +368,18 @@ export default function SimpleCoordinatorApp() {
             <code className="simple-identity-code">
               {`${window.location.origin}/simple.html?coordinator=${encodeURIComponent(keypair.npub)}${questionVotingId ? `&voting=${encodeURIComponent(questionVotingId)}` : ""}`}
             </code>
+          </section>
+        )}
+
+        {publishedVote && (
+          <section className="simple-voter-section" aria-labelledby="voting-package-title">
+            <h2 id="voting-package-title" className="simple-voter-section-title">Voting package</h2>
+            <SimpleQrPanel
+              value={votingPackage}
+              title="Phone scan package"
+              description="Show this QR on the coordinator screen. A voter can scan it on their phone, join the voting round, and request shares."
+              copyLabel="Copy voting package"
+            />
           </section>
         )}
 

@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 import { decodeNsec } from "./nostrIdentity";
-import { fetchElection, type ElectionInfo } from "./coordinatorApi";
 import { sha256Hex } from "./tokenIdentity";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
+import SimpleQrScanner from "./SimpleQrScanner";
 import TokenFingerprint from "./TokenFingerprint";
 import {
   deriveTokenIdFromSimpleShardCertificates,
@@ -19,6 +19,7 @@ import {
   publishSimpleSubmittedVote,
   type SimpleLiveVoteSession,
 } from "./simpleVotingSession";
+import { parseSimpleVotingPackage, type SimpleVotingPackage } from "./simpleVotingPackage";
 
 type LiveVoteChoice = "Yes" | "No" | null;
 type SimpleVoterKeypair = {
@@ -55,11 +56,14 @@ function storeSimpleVoterKeypair(keypair: SimpleVoterKeypair) {
 
 export default function SimpleUiApp() {
   const [voterKeypair, setVoterKeypair] = useState<SimpleVoterKeypair | null>(() => loadStoredSimpleVoterKeypair());
-  const [election, setElection] = useState<ElectionInfo | null>(null);
   const [voterId, setVoterId] = useState<string>("pending");
   const [liveVoteChoice, setLiveVoteChoice] = useState<LiveVoteChoice>(null);
   const [coordinatorNpub, setCoordinatorNpub] = useState<string>("");
   const [selectedVotingId, setSelectedVotingId] = useState<string>("");
+  const [importedVotingPackage, setImportedVotingPackage] = useState<SimpleVotingPackage | null>(null);
+  const [importValue, setImportValue] = useState<string>("");
+  const [importStatus, setImportStatus] = useState<string | null>(null);
+  const [scannerOpen, setScannerOpen] = useState(false);
   const [participatingCoordinators, setParticipatingCoordinators] = useState<string[]>([]);
   const [requestStatus, setRequestStatus] = useState<string | null>(null);
   const [receivedShards, setReceivedShards] = useState<SimpleShardResponse[]>([]);
@@ -68,30 +72,28 @@ export default function SimpleUiApp() {
   const [ballotTokenId, setBallotTokenId] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-
-    void fetchElection().then((nextElection) => {
-      if (!cancelled) {
-        setElection(nextElection);
-      }
-    }).catch(() => {
-      if (!cancelled) {
-        setElection(null);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
 
     const params = new URLSearchParams(window.location.search);
-    setCoordinatorNpub(params.get("coordinator")?.trim() ?? "");
-    setSelectedVotingId(params.get("voting")?.trim() ?? "");
+    const nextCoordinatorNpub = params.get("coordinator")?.trim() ?? "";
+    const nextVotingId = params.get("voting")?.trim() ?? "";
+    setCoordinatorNpub(nextCoordinatorNpub);
+    setSelectedVotingId(nextVotingId);
+    if (nextCoordinatorNpub || nextVotingId) {
+      const nextPackage = {
+        votingId: nextVotingId,
+        coordinatorNpub: nextCoordinatorNpub || undefined,
+        coordinators: nextCoordinatorNpub ? [nextCoordinatorNpub] : undefined,
+      };
+      setImportedVotingPackage(nextPackage);
+      setImportValue(JSON.stringify({
+        voting_id: nextPackage.votingId,
+        coordinator_npub: nextPackage.coordinatorNpub,
+        coordinators: nextPackage.coordinators,
+      }, null, 2));
+    }
   }, []);
 
   useEffect(() => {
@@ -129,7 +131,7 @@ export default function SimpleUiApp() {
   }, [voterKeypair?.nsec]);
 
   useEffect(() => {
-    if (!coordinatorNpub && !selectedVotingId && receivedShards.length === 0) {
+    if (!coordinatorNpub && !selectedVotingId && receivedShards.length === 0 && !importedVotingPackage) {
       setLiveVoteSession(null);
       setParticipatingCoordinators([]);
       return;
@@ -141,15 +143,22 @@ export default function SimpleUiApp() {
       try {
         const sessions = await fetchSimpleLiveVotes();
         const candidateVotingId = selectedVotingId
+          || importedVotingPackage?.votingId
           || sessions.find((session) => session.coordinatorNpub === coordinatorNpub)?.votingId
           || "";
         const matchingSessions = candidateVotingId
           ? sessions.filter((session) => session.votingId === candidateVotingId)
           : [];
+        const packageCoordinators = importedVotingPackage?.coordinators ?? [];
+        const nextCoordinators = Array.from(new Set([
+          ...matchingSessions.map((session) => session.coordinatorNpub),
+          ...(importedVotingPackage?.coordinatorNpub ? [importedVotingPackage.coordinatorNpub] : []),
+          ...packageCoordinators,
+        ]));
         const nextSession = matchingSessions[0] ?? null;
         if (!cancelled) {
           setLiveVoteSession(nextSession);
-          setParticipatingCoordinators(matchingSessions.map((session) => session.coordinatorNpub));
+          setParticipatingCoordinators(nextCoordinators);
           if (nextSession?.votingId) {
             setSelectedVotingId(nextSession.votingId);
           }
@@ -171,7 +180,7 @@ export default function SimpleUiApp() {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [coordinatorNpub, receivedShards, selectedVotingId]);
+  }, [coordinatorNpub, importedVotingPackage, receivedShards, selectedVotingId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -202,6 +211,35 @@ export default function SimpleUiApp() {
     const nextKeypair = { nsec, npub };
     storeSimpleVoterKeypair(nextKeypair);
     setVoterKeypair(nextKeypair);
+  }
+
+  function importVotingPackage() {
+    const parsed = parseSimpleVotingPackage(importValue);
+
+    if (!parsed?.votingId) {
+      setImportStatus("Voting package could not be parsed.");
+      return;
+    }
+
+    setImportedVotingPackage(parsed);
+    setSelectedVotingId(parsed.votingId);
+    setCoordinatorNpub(parsed.coordinatorNpub ?? "");
+    setImportStatus("Voting package imported.");
+  }
+
+  function handleScannedVotingPackage(scannedValue: string) {
+    setImportValue(scannedValue);
+    const parsed = parseSimpleVotingPackage(scannedValue);
+
+    if (!parsed?.votingId) {
+      setImportStatus("QR code did not contain a valid voting package.");
+      return;
+    }
+
+    setImportedVotingPackage(parsed);
+    setSelectedVotingId(parsed.votingId);
+    setCoordinatorNpub(parsed.coordinatorNpub ?? "");
+    setImportStatus("Voting package scanned.");
   }
 
   async function requestVotingShard() {
@@ -337,6 +375,46 @@ export default function SimpleUiApp() {
           nsec={voterKeypair?.nsec ?? ""}
         />
 
+        <section className="simple-voter-section" aria-labelledby="import-package-title">
+          <h2 id="import-package-title" className="simple-voter-section-title">Scan or import voting package</h2>
+          <p className="simple-voter-question">
+            On a phone, scan a coordinator QR code. If needed, you can still paste the package manually.
+          </p>
+          <div className="simple-voter-action-row simple-voter-action-row-inline">
+            <button
+              type="button"
+              className="simple-voter-primary"
+              onClick={() => setScannerOpen((current) => !current)}
+            >
+              {scannerOpen ? "Hide scanner" : "Scan with camera"}
+            </button>
+          </div>
+          <SimpleQrScanner
+            active={scannerOpen}
+            onDetected={handleScannedVotingPackage}
+            onClose={() => setScannerOpen(false)}
+          />
+          <label className="simple-voter-label" htmlFor="simple-voting-package">Package</label>
+          <textarea
+            id="simple-voting-package"
+            className="simple-voter-textarea"
+            value={importValue}
+            onChange={(event) => setImportValue(event.target.value)}
+            rows={7}
+          />
+          <div className="simple-voter-action-row">
+            <button
+              type="button"
+              className="simple-voter-primary"
+              onClick={importVotingPackage}
+              disabled={importValue.trim().length === 0}
+            >
+              Import voting package
+            </button>
+          </div>
+          {importStatus && <p className="simple-voter-note">{importStatus}</p>}
+        </section>
+
         <section className="simple-voter-section" aria-labelledby="request-shard-title">
           <h2 id="request-shard-title" className="simple-voter-section-title">Request voting shares</h2>
           <div className="simple-voter-action-row">
@@ -350,8 +428,8 @@ export default function SimpleUiApp() {
             </button>
           </div>
           {requestStatus && <p className="simple-voter-note">{requestStatus}</p>}
-          {!coordinatorNpub && (
-            <p className="simple-voter-empty">Open this page from a coordinator request link first.</p>
+          {!selectedVotingId && (
+            <p className="simple-voter-empty">Paste a voting package first.</p>
           )}
         </section>
 
