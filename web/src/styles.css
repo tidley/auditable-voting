@@ -442,6 +442,26 @@ code {
   color: #00703c;
 }
 
+.simple-voter-label {
+  display: block;
+  margin-bottom: 10px;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.simple-voter-textarea {
+  width: 100%;
+  min-height: 96px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 2px solid #0b0c0c;
+  font: inherit;
+  font-size: 1rem;
+  line-height: 1.5;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
 .simple-identity-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 200px;

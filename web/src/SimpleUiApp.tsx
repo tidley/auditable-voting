@@ -14,6 +14,7 @@ import {
   sendSimpleShardRequest,
   type SimpleShardResponse,
 } from "./simpleShardDm";
+import { fetchLatestSimpleLiveVote, type SimpleLiveVoteSession } from "./simpleVotingSession";
 
 type LiveVoteChoice = "Yes" | "No" | null;
 
@@ -27,6 +28,7 @@ export default function SimpleUiApp() {
   const [coordinatorNpub, setCoordinatorNpub] = useState<string>("");
   const [requestStatus, setRequestStatus] = useState<string | null>(null);
   const [receivedShards, setReceivedShards] = useState<SimpleShardResponse[]>([]);
+  const [liveVoteSession, setLiveVoteSession] = useState<SimpleLiveVoteSession | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -96,6 +98,40 @@ export default function SimpleUiApp() {
   }, [walletBundle?.ephemeralKeypair.nsec]);
 
   useEffect(() => {
+    const activeCoordinatorNpub = coordinatorNpub || receivedShards[0]?.coordinatorNpub || "";
+
+    if (!activeCoordinatorNpub) {
+      setLiveVoteSession(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function refreshLiveVote() {
+      try {
+        const nextSession = await fetchLatestSimpleLiveVote({ coordinatorNpub: activeCoordinatorNpub });
+        if (!cancelled) {
+          setLiveVoteSession(nextSession);
+        }
+      } catch {
+        if (!cancelled) {
+          setLiveVoteSession(null);
+        }
+      }
+    }
+
+    void refreshLiveVote();
+    const intervalId = window.setInterval(() => {
+      void refreshLiveVote();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [coordinatorNpub, receivedShards]);
+
+  useEffect(() => {
     let cancelled = false;
 
     const npub = walletBundle?.ephemeralKeypair.npub?.trim() ?? "";
@@ -152,11 +188,6 @@ export default function SimpleUiApp() {
     }
   }
 
-  const liveYesNoQuestion = election?.questions.find((question) => {
-    const options = (question.options ?? []).map((option) => option.toLowerCase());
-    return question.type === "choice" && options.includes("yes") && options.includes("no");
-  }) ?? null;
-
   return (
     <main className="simple-voter-shell">
       <section className="simple-voter-page">
@@ -208,9 +239,10 @@ export default function SimpleUiApp() {
 
         <section className="simple-voter-section" aria-labelledby="live-vote-title">
           <h2 id="live-vote-title" className="simple-voter-section-title">Live Y/N vote</h2>
-          {liveYesNoQuestion ? (
+          {liveVoteSession ? (
             <>
-              <p className="simple-voter-question">{liveYesNoQuestion.prompt}</p>
+              <p className="simple-voter-question">{liveVoteSession.prompt}</p>
+              <p className="simple-voter-note">Voting ID {liveVoteSession.votingId.slice(0, 12)}</p>
               <div className="simple-voter-choice-row">
                 <button
                   type="button"
