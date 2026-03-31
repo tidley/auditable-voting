@@ -19,7 +19,11 @@ import {
   publishSimpleSubmittedVote,
   type SimpleLiveVoteSession,
 } from "./simpleVotingSession";
-import { parseSimpleVotingPackage, type SimpleVotingPackage } from "./simpleVotingPackage";
+import {
+  parseSimpleVotingPackage,
+  serializeSimpleVotingPackage,
+  type SimpleVotingPackage,
+} from "./simpleVotingPackage";
 
 type LiveVoteChoice = "Yes" | "No" | null;
 type SimpleVoterKeypair = {
@@ -88,11 +92,7 @@ export default function SimpleUiApp() {
         coordinators: nextCoordinatorNpub ? [nextCoordinatorNpub] : undefined,
       };
       setImportedVotingPackage(nextPackage);
-      setImportValue(JSON.stringify({
-        voting_id: nextPackage.votingId,
-        coordinator_npub: nextPackage.coordinatorNpub,
-        coordinators: nextPackage.coordinators,
-      }, null, 2));
+      setImportValue(serializeSimpleVotingPackage(nextPackage));
     }
   }, []);
 
