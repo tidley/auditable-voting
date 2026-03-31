@@ -359,18 +359,6 @@ export default function SimpleCoordinatorApp() {
           nsec={keypair?.nsec ?? ""}
         />
 
-        {keypair?.npub && (
-          <section className="simple-voter-section" aria-labelledby="voter-link-title">
-            <h2 id="voter-link-title" className="simple-voter-section-title">Voter request link</h2>
-            <p className="simple-voter-question">
-              Open the voter page with this coordinator selected.
-            </p>
-            <code className="simple-identity-code">
-              {`${window.location.origin}/simple.html?coordinator=${encodeURIComponent(keypair.npub)}${questionVotingId ? `&voting=${encodeURIComponent(questionVotingId)}` : ""}`}
-            </code>
-          </section>
-        )}
-
         {publishedVote && (
           <section className="simple-voter-section" aria-labelledby="voting-package-title">
             <h2 id="voting-package-title" className="simple-voter-section-title">Voting details</h2>
