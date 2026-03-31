@@ -5,9 +5,11 @@ import {
   storeEphemeralKeypair,
   type StoredWalletBundle,
 } from "./cashuWallet";
+import { decodeNsec } from "./nostrIdentity";
 import { fetchElection, normalizeElectionInfo, type ElectionInfo } from "./coordinatorApi";
-import { deriveTokenIdFromProofSecrets, sha256Hex } from "./tokenIdentity";
+import { sha256Hex } from "./tokenIdentity";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
+import { sendSimpleShardRequest } from "./simpleShardDm";
 
 type LiveVoteChoice = "Yes" | "No" | null;
 
@@ -16,9 +18,10 @@ export default function SimpleUiApp() {
   const [election, setElection] = useState<ElectionInfo | null>(
     normalizeElectionInfo(walletBundle?.election),
   );
-  const [tokenId, setTokenId] = useState<string | null>(null);
   const [voterId, setVoterId] = useState<string>("pending");
   const [liveVoteChoice, setLiveVoteChoice] = useState<LiveVoteChoice>(null);
+  const [coordinatorNpub, setCoordinatorNpub] = useState<string>("");
+  const [requestStatus, setRequestStatus] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -45,20 +48,13 @@ export default function SimpleUiApp() {
   }, [walletBundle?.election]);
 
   useEffect(() => {
-    let cancelled = false;
+    if (typeof window === "undefined") {
+      return;
+    }
 
-    void deriveTokenIdFromProofSecrets(
-      (walletBundle?.coordinatorProofs ?? []).map((proof) => proof.proofSecret ?? proof.proof.secret),
-    ).then((nextTokenId) => {
-      if (!cancelled) {
-        setTokenId(nextTokenId);
-      }
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [walletBundle?.coordinatorProofs]);
+    const params = new URLSearchParams(window.location.search);
+    setCoordinatorNpub(params.get("coordinator")?.trim() ?? "");
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,6 +86,33 @@ export default function SimpleUiApp() {
     setWalletBundle(loadStoredWalletBundle());
   }
 
+  async function requestVotingShard() {
+    const voterNpub = walletBundle?.ephemeralKeypair.npub ?? "";
+    const voterNsec = walletBundle?.ephemeralKeypair.nsec ?? "";
+    const voterSecretKey = decodeNsec(voterNsec);
+
+    if (!voterNpub || !coordinatorNpub || voterId === "pending" || !voterSecretKey) {
+      return;
+    }
+
+    try {
+      const result = await sendSimpleShardRequest({
+        voterSecretKey,
+        coordinatorNpub,
+        voterNpub,
+        voterId,
+      });
+
+      setRequestStatus(
+        result.successes > 0
+          ? "Voting shard requested."
+          : "Shard request failed.",
+      );
+    } catch {
+      setRequestStatus("Shard request failed.");
+    }
+  }
+
   const shards = walletBundle?.coordinatorProofs ?? [];
   const liveYesNoQuestion = election?.questions.find((question) => {
     const options = (question.options ?? []).map((option) => option.toLowerCase());
@@ -111,6 +134,24 @@ export default function SimpleUiApp() {
           npub={walletBundle?.ephemeralKeypair.npub ?? ""}
           nsec={walletBundle?.ephemeralKeypair.nsec ?? ""}
         />
+
+        <section className="simple-voter-section" aria-labelledby="request-shard-title">
+          <h2 id="request-shard-title" className="simple-voter-section-title">Request voting shard</h2>
+          <div className="simple-voter-action-row">
+            <button
+              type="button"
+              className="simple-voter-primary"
+              onClick={() => void requestVotingShard()}
+              disabled={!walletBundle?.ephemeralKeypair.npub || !coordinatorNpub}
+            >
+              Request voting shard
+            </button>
+          </div>
+          {requestStatus && <p className="simple-voter-note">{requestStatus}</p>}
+          {!coordinatorNpub && (
+            <p className="simple-voter-empty">Open this page from a coordinator request link first.</p>
+          )}
+        </section>
 
         <section className="simple-voter-section" aria-labelledby="received-shards-title">
           <h2 id="received-shards-title" className="simple-voter-section-title">Received vote shards</h2>

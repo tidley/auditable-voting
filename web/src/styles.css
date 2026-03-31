@@ -378,6 +378,12 @@ code {
   background: #005a30;
 }
 
+.simple-voter-primary:disabled {
+  background: #b1b4b6;
+  color: #505a5f;
+  cursor: not-allowed;
+}
+
 .simple-voter-secondary {
   align-self: flex-start;
   padding: 10px 14px;
@@ -423,6 +429,13 @@ code {
 .simple-voter-empty,
 .simple-voter-question {
   margin: 0;
+}
+
+.simple-voter-note {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.5;
+  color: #00703c;
 }
 
 .simple-identity-grid {
