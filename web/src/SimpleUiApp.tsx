@@ -7,6 +7,7 @@ import {
 } from "./cashuWallet";
 import { fetchElection, normalizeElectionInfo, type ElectionInfo } from "./coordinatorApi";
 import { deriveTokenIdFromProofSecrets, sha256Hex } from "./tokenIdentity";
+import SimpleIdentityPanel from "./SimpleIdentityPanel";
 
 type LiveVoteChoice = "Yes" | "No" | null;
 
@@ -105,6 +106,11 @@ export default function SimpleUiApp() {
             Create Nostr keypair
           </button>
         </div>
+
+        <SimpleIdentityPanel
+          npub={walletBundle?.ephemeralKeypair.npub ?? ""}
+          nsec={walletBundle?.ephemeralKeypair.nsec ?? ""}
+        />
 
         <section className="simple-voter-section" aria-labelledby="received-shards-title">
           <h2 id="received-shards-title" className="simple-voter-section-title">Received vote shards</h2>

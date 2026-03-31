@@ -378,6 +378,21 @@ code {
   background: #005a30;
 }
 
+.simple-voter-secondary {
+  align-self: flex-start;
+  padding: 10px 14px;
+  border: 2px solid #1d70b8;
+  background: #ffffff;
+  color: #1d70b8;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.simple-voter-secondary:hover {
+  background: #f3f2f1;
+}
+
 .simple-voter-section {
   padding-top: 24px;
   margin-top: 24px;
@@ -408,6 +423,59 @@ code {
 .simple-voter-empty,
 .simple-voter-question {
   margin: 0;
+}
+
+.simple-identity-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 200px;
+  gap: 24px;
+  align-items: start;
+}
+
+.simple-identity-fields {
+  display: grid;
+  gap: 20px;
+}
+
+.simple-identity-field {
+  display: grid;
+  gap: 10px;
+}
+
+.simple-identity-label {
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+.simple-identity-code {
+  display: block;
+  overflow-wrap: anywhere;
+  padding: 14px;
+  background: #f3f2f1;
+  border: 1px solid #b1b4b6;
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.simple-identity-qr-wrap {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.simple-identity-qr {
+  display: block;
+  width: 168px;
+  height: 168px;
+  border: 1px solid #b1b4b6;
+  background: #ffffff;
+  padding: 8px;
+}
+
+.simple-identity-qr-fallback {
+  background:
+    linear-gradient(90deg, rgba(11, 12, 12, 0.1) 25%, transparent 25%, transparent 50%, rgba(11, 12, 12, 0.1) 50%, rgba(11, 12, 12, 0.1) 75%, transparent 75%),
+    linear-gradient(rgba(11, 12, 12, 0.1) 25%, transparent 25%, transparent 50%, rgba(11, 12, 12, 0.1) 50%, rgba(11, 12, 12, 0.1) 75%, transparent 75%);
+  background-size: 16px 16px;
 }
 
 .simple-voter-choice-row {
@@ -1200,6 +1268,10 @@ code {
 
   .simple-voter-page {
     padding: 20px;
+  }
+
+  .simple-identity-grid {
+    grid-template-columns: 1fr;
   }
 
   .hero-card,
