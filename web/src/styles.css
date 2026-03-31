@@ -332,6 +332,88 @@ code {
   width: min(1240px, calc(100% - 32px));
 }
 
+.simple-voter-shell {
+  width: min(960px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 32px 0 48px;
+}
+
+.simple-voter-page {
+  border-top: 10px solid #1d70b8;
+  background: #ffffff;
+  color: #0b0c0c;
+  padding: 32px;
+  box-shadow: 0 8px 24px rgba(11, 12, 12, 0.08);
+}
+
+.simple-voter-title,
+.simple-voter-section-title {
+  margin: 0;
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.simple-voter-title {
+  font-size: clamp(2rem, 4vw, 3rem);
+  margin-bottom: 28px;
+}
+
+.simple-voter-section {
+  padding-top: 24px;
+  margin-top: 24px;
+  border-top: 1px solid #b1b4b6;
+}
+
+.simple-voter-section:first-of-type {
+  margin-top: 0;
+}
+
+.simple-voter-section-title {
+  font-size: 1.5rem;
+  margin-bottom: 16px;
+}
+
+.simple-voter-list {
+  margin: 0;
+  padding-left: 22px;
+}
+
+.simple-voter-list-item,
+.simple-voter-empty,
+.simple-voter-question {
+  font-size: 1.125rem;
+  line-height: 1.5;
+}
+
+.simple-voter-empty,
+.simple-voter-question {
+  margin: 0;
+}
+
+.simple-voter-choice-row {
+  display: flex;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.simple-voter-choice {
+  min-width: 120px;
+  padding: 14px 18px;
+  border: 2px solid #0b0c0c;
+  background: #ffffff;
+  color: #0b0c0c;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.simple-voter-choice.is-active {
+  background: #1d70b8;
+  border-color: #1d70b8;
+  color: #ffffff;
+}
+
 .simple-hero-card {
   margin-bottom: 24px;
 }
@@ -1090,6 +1172,15 @@ code {
   .page-shell {
     width: min(100% - 20px, 1180px);
     padding: 14px 0 28px;
+  }
+
+  .simple-voter-shell {
+    width: min(100% - 20px, 960px);
+    padding: 16px 0 28px;
+  }
+
+  .simple-voter-page {
+    padding: 20px;
   }
 
   .hero-card,
