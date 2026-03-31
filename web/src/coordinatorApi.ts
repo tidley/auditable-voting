@@ -34,6 +34,8 @@ export type ElectionInfo = {
   confirm_end?: number;
   mint_urls: string[];
   coordinator_npubs: string[];
+  threshold_t?: number;
+  threshold_n?: number;
   eligible_root?: string;
   eligible_count?: number;
   eligible_url?: string;
@@ -48,6 +50,8 @@ type StoredElectionLike = {
   confirm_end?: number;
   mint_urls: string[];
   coordinator_npubs: string[];
+  threshold_t?: number;
+  threshold_n?: number;
   eligible_root?: string;
   eligible_count?: number;
 } | null | undefined;
@@ -74,6 +78,8 @@ export function normalizeElectionInfo(
     confirm_end: election.confirm_end,
     mint_urls: election.mint_urls,
     coordinator_npubs: election.coordinator_npubs,
+    threshold_t: election.threshold_t,
+    threshold_n: election.threshold_n,
     eligible_root: election.eligible_root,
     eligible_count: election.eligible_count,
   };
@@ -173,6 +179,8 @@ export async function fetchElection(httpApi?: string): Promise<ElectionInfo | nu
       confirm_end: now + 3600,
       mint_urls: [MINT_URL],
       coordinator_npubs: [MOCK_COORDINATOR_NPUB],
+      threshold_t: 1,
+      threshold_n: 1,
       eligible_root: "",
       eligible_count: 0,
       eligible_url: "",

@@ -9,6 +9,15 @@ export type SimpleShardRequest = {
   createdAt: string;
 };
 
+export type SimpleShardResponse = {
+  id: string;
+  requestId: string;
+  coordinatorNpub: string;
+  coordinatorId: string;
+  thresholdLabel: string;
+  createdAt: string;
+};
+
 function buildDmRelays(relays?: string[]) {
   return Array.from(
     new Set([...DEFAULT_DM_RELAYS, ...(relays ?? [])].filter((relay) => relay.trim().length > 0)),
@@ -125,6 +134,131 @@ export async function fetchSimpleShardRequests(input: {
     }
 
     return [...requests.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  } finally {
+    pool.close(dmRelays);
+  }
+}
+
+export async function sendSimpleShardResponse(input: {
+  coordinatorSecretKey: Uint8Array;
+  voterNpub: string;
+  requestId: string;
+  coordinatorNpub: string;
+  coordinatorId: string;
+  thresholdLabel: string;
+  relays?: string[];
+}): Promise<DmPublishResult> {
+  const decoded = nip19.decode(input.voterNpub);
+  if (decoded.type !== "npub") {
+    throw new Error("Voter value must be an npub.");
+  }
+
+  const dmRelays = buildDmRelays(input.relays);
+  const event = nip17.wrapEvent(
+    input.coordinatorSecretKey,
+    {
+      publicKey: decoded.data as string,
+      relayUrl: dmRelays[0],
+    },
+    JSON.stringify({
+      action: "simple_shard_response",
+      response_id: crypto.randomUUID(),
+      request_id: input.requestId,
+      coordinator_npub: input.coordinatorNpub,
+      coordinator_id: input.coordinatorId,
+      threshold_label: input.thresholdLabel,
+      created_at: new Date().toISOString(),
+    }),
+    "Voting shard response",
+  );
+
+  const pool = new SimplePool();
+  try {
+    const results = await queueNostrPublish(
+      () => Promise.allSettled(pool.publish(dmRelays, event, { maxWait: 4000 })),
+    );
+    const relayResults = results.map((result, index) => (
+      result.status === "fulfilled"
+        ? { relay: dmRelays[index], success: true }
+        : {
+            relay: dmRelays[index],
+            success: false,
+            error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+          }
+    ));
+
+    return {
+      eventId: event.id,
+      successes: relayResults.filter((result) => result.success).length,
+      failures: relayResults.filter((result) => !result.success).length,
+      relayResults,
+    };
+  } finally {
+    pool.destroy();
+  }
+}
+
+export async function fetchSimpleShardResponses(input: {
+  voterNsec: string;
+  relays?: string[];
+}): Promise<SimpleShardResponse[]> {
+  const decoded = nip19.decode(input.voterNsec.trim());
+  if (decoded.type !== "nsec") {
+    throw new Error("Voter key must be an nsec.");
+  }
+
+  const secretKey = decoded.data as Uint8Array;
+  const voterHex = getPublicKey(secretKey);
+  const dmRelays = buildDmRelays(input.relays);
+  const pool = new SimplePool();
+
+  try {
+    const wrappedEvents = await pool.querySync(dmRelays, {
+      kinds: [1059],
+      "#p": [voterHex],
+      limit: 100,
+    });
+
+    const responses = new Map<string, SimpleShardResponse>();
+
+    for (const wrappedEvent of wrappedEvents) {
+      try {
+        const rumor = nip17.unwrapEvent(wrappedEvent, secretKey) as { content: string };
+        const payload = JSON.parse(rumor.content) as {
+          action?: string;
+          response_id?: string;
+          request_id?: string;
+          coordinator_npub?: string;
+          coordinator_id?: string;
+          threshold_label?: string;
+          created_at?: string;
+        };
+
+        if (
+          payload.action !== "simple_shard_response"
+          || !payload.response_id
+          || !payload.request_id
+          || !payload.coordinator_npub
+          || !payload.coordinator_id
+          || !payload.threshold_label
+        ) {
+          continue;
+        }
+
+        responses.set(payload.response_id, {
+          id: payload.response_id,
+          requestId: payload.request_id,
+          coordinatorNpub: payload.coordinator_npub,
+          coordinatorId: payload.coordinator_id,
+          thresholdLabel: payload.threshold_label,
+          createdAt: payload.created_at ?? new Date(wrappedEvent.created_at * 1000).toISOString(),
+        });
+      } catch {
+        continue;
+      }
+    }
+
+    return [...responses.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   } finally {
     pool.close(dmRelays);
   }
