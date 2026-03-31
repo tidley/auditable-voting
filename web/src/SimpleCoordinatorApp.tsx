@@ -7,6 +7,7 @@ import {
   sendSimpleShardResponse,
   type SimpleShardRequest,
 } from "./simpleShardDm";
+import { publishSimpleLiveVote, type SimpleLiveVoteSession } from "./simpleVotingSession";
 import { sha256Hex } from "./tokenIdentity";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
 
@@ -18,7 +19,6 @@ type SimpleCoordinatorKeypair = {
 };
 
 type LiveVoteChoice = "Yes" | "No" | null;
-
 function loadStoredCoordinatorKeypair(): SimpleCoordinatorKeypair | null {
   if (typeof window === "undefined") {
     return null;
@@ -48,9 +48,11 @@ export default function SimpleCoordinatorApp() {
   const [election, setElection] = useState<ElectionInfo | null>(null);
   const [keypair, setKeypair] = useState<SimpleCoordinatorKeypair | null>(() => loadStoredCoordinatorKeypair());
   const [coordinatorId, setCoordinatorId] = useState("pending");
-  const [liveVoteChoice, setLiveVoteChoice] = useState<LiveVoteChoice>(null);
   const [requests, setRequests] = useState<SimpleShardRequest[]>([]);
   const [requestStatuses, setRequestStatuses] = useState<Record<string, string>>({});
+  const [questionPrompt, setQuestionPrompt] = useState("Should the proposal pass?");
+  const [publishStatus, setPublishStatus] = useState<string | null>(null);
+  const [publishedVote, setPublishedVote] = useState<SimpleLiveVoteSession | null>(null);
 
   useEffect(() => {
     void fetchElection().then((nextElection) => {
@@ -142,6 +144,26 @@ export default function SimpleCoordinatorApp() {
     return coordinatorCount > 1 ? `share of ${coordinatorCount}` : "share";
   }
 
+  function getThresholdNumbers() {
+    const publishedT = election?.threshold_t;
+    const publishedN = election?.threshold_n;
+
+    if (publishedT && publishedN) {
+      return { thresholdT: publishedT, thresholdN: publishedN };
+    }
+
+    const coordinatorCount = election?.coordinator_npubs.length ?? 0;
+    if (coordinatorCount === 1) {
+      return { thresholdT: 1, thresholdN: 1 };
+    }
+
+    if (coordinatorCount > 1) {
+      return { thresholdN: coordinatorCount };
+    }
+
+    return {};
+  }
+
   async function sendShard(request: SimpleShardRequest) {
     const coordinatorNpub = keypair?.npub ?? "";
     const coordinatorSecretKey = decodeNsec(keypair?.nsec ?? "");
@@ -171,10 +193,39 @@ export default function SimpleCoordinatorApp() {
     }
   }
 
-  const liveYesNoQuestion = election?.questions.find((question) => {
-    const options = (question.options ?? []).map((option) => option.toLowerCase());
-    return question.type === "choice" && options.includes("yes") && options.includes("no");
-  }) ?? null;
+  async function broadcastQuestion() {
+    const coordinatorNsec = keypair?.nsec ?? "";
+    const prompt = questionPrompt.trim();
+
+    if (!coordinatorNsec || !prompt) {
+      return;
+    }
+
+    setPublishStatus("Broadcasting vote...");
+
+    try {
+      const threshold = getThresholdNumbers();
+      const result = await publishSimpleLiveVote({
+        coordinatorNsec,
+        prompt,
+        thresholdT: threshold.thresholdT,
+        thresholdN: threshold.thresholdN,
+      });
+
+      setPublishedVote({
+        votingId: result.votingId,
+        prompt,
+        coordinatorNpub: result.coordinatorNpub,
+        createdAt: result.createdAt,
+        thresholdT: threshold.thresholdT,
+        thresholdN: threshold.thresholdN,
+        eventId: result.eventId,
+      });
+      setPublishStatus(result.successes > 0 ? "Vote broadcast." : "Vote broadcast failed.");
+    } catch {
+      setPublishStatus("Vote broadcast failed.");
+    }
+  }
 
   return (
     <main className="simple-voter-shell">
@@ -232,30 +283,32 @@ export default function SimpleCoordinatorApp() {
           )}
         </section>
 
-        <section className="simple-voter-section" aria-labelledby="coordinator-live-vote-title">
-          <h2 id="coordinator-live-vote-title" className="simple-voter-section-title">Live Y/N vote</h2>
-          {liveYesNoQuestion ? (
-            <>
-              <p className="simple-voter-question">{liveYesNoQuestion.prompt}</p>
-              <div className="simple-voter-choice-row">
-                <button
-                  type="button"
-                  className={`simple-voter-choice${liveVoteChoice === "Yes" ? " is-active" : ""}`}
-                  onClick={() => setLiveVoteChoice("Yes")}
-                >
-                  Yes
-                </button>
-                <button
-                  type="button"
-                  className={`simple-voter-choice${liveVoteChoice === "No" ? " is-active" : ""}`}
-                  onClick={() => setLiveVoteChoice("No")}
-                >
-                  No
-                </button>
-              </div>
-            </>
-          ) : (
-            <p className="simple-voter-empty">No live Y/N vote.</p>
+        <section className="simple-voter-section" aria-labelledby="question-config-title">
+          <h2 id="question-config-title" className="simple-voter-section-title">Question config</h2>
+          <label className="simple-voter-label" htmlFor="simple-question-prompt">Question</label>
+          <textarea
+            id="simple-question-prompt"
+            className="simple-voter-textarea"
+            value={questionPrompt}
+            onChange={(event) => setQuestionPrompt(event.target.value)}
+            rows={3}
+          />
+          <div className="simple-voter-action-row">
+            <button
+              type="button"
+              className="simple-voter-primary"
+              onClick={() => void broadcastQuestion()}
+              disabled={!keypair?.nsec || questionPrompt.trim().length === 0}
+            >
+              Broadcast live vote
+            </button>
+          </div>
+          <p className="simple-voter-question">Threshold: {getThresholdLabel()}</p>
+          {publishStatus && <p className="simple-voter-note">{publishStatus}</p>}
+          {publishedVote && (
+            <p className="simple-voter-question">
+              Voting ID {publishedVote.votingId.slice(0, 12)}
+            </p>
           )}
         </section>
       </section>
