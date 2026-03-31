@@ -1,19 +1,20 @@
 import { useEffect, useState } from "react";
 import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 import { fetchElection, type ElectionInfo } from "./coordinatorApi";
+import { fetchSimpleShardRequests, type SimpleShardRequest } from "./simpleShardDm";
 import { sha256Hex } from "./tokenIdentity";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
 
 const COORDINATOR_STORAGE_KEY = "auditable-voting.simple-coordinator-keypair";
 
-type StoredCoordinatorKeypair = {
+type SimpleCoordinatorKeypair = {
   npub: string;
   nsec: string;
 };
 
 type LiveVoteChoice = "Yes" | "No" | null;
 
-function loadStoredCoordinatorKeypair(): StoredCoordinatorKeypair | null {
+function loadStoredCoordinatorKeypair(): SimpleCoordinatorKeypair | null {
   if (typeof window === "undefined") {
     return null;
   }
@@ -24,13 +25,13 @@ function loadStoredCoordinatorKeypair(): StoredCoordinatorKeypair | null {
   }
 
   try {
-    return JSON.parse(raw) as StoredCoordinatorKeypair;
+    return JSON.parse(raw) as SimpleCoordinatorKeypair;
   } catch {
     return null;
   }
 }
 
-function storeCoordinatorKeypair(keypair: StoredCoordinatorKeypair) {
+function storeCoordinatorKeypair(keypair: SimpleCoordinatorKeypair) {
   if (typeof window === "undefined") {
     return;
   }
@@ -40,9 +41,10 @@ function storeCoordinatorKeypair(keypair: StoredCoordinatorKeypair) {
 
 export default function SimpleCoordinatorApp() {
   const [election, setElection] = useState<ElectionInfo | null>(null);
-  const [keypair, setKeypair] = useState<StoredCoordinatorKeypair | null>(() => loadStoredCoordinatorKeypair());
+  const [keypair, setKeypair] = useState<SimpleCoordinatorKeypair | null>(() => loadStoredCoordinatorKeypair());
   const [coordinatorId, setCoordinatorId] = useState("pending");
   const [liveVoteChoice, setLiveVoteChoice] = useState<LiveVoteChoice>(null);
+  const [requests, setRequests] = useState<SimpleShardRequest[]>([]);
 
   useEffect(() => {
     void fetchElection().then((nextElection) => {
@@ -51,6 +53,40 @@ export default function SimpleCoordinatorApp() {
       setElection(null);
     });
   }, []);
+
+  useEffect(() => {
+    const coordinatorNsec = keypair?.nsec ?? "";
+
+    if (!coordinatorNsec) {
+      setRequests([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function refreshRequests() {
+      try {
+        const nextRequests = await fetchSimpleShardRequests({ coordinatorNsec });
+        if (!cancelled) {
+          setRequests(nextRequests);
+        }
+      } catch {
+        if (!cancelled) {
+          setRequests([]);
+        }
+      }
+    }
+
+    void refreshRequests();
+    const intervalId = window.setInterval(() => {
+      void refreshRequests();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [keypair?.nsec]);
 
   useEffect(() => {
     let cancelled = false;
@@ -105,9 +141,31 @@ export default function SimpleCoordinatorApp() {
           nsec={keypair?.nsec ?? ""}
         />
 
+        {keypair?.npub && (
+          <section className="simple-voter-section" aria-labelledby="voter-link-title">
+            <h2 id="voter-link-title" className="simple-voter-section-title">Voter request link</h2>
+            <p className="simple-voter-question">
+              Open the voter page with this coordinator selected.
+            </p>
+            <code className="simple-identity-code">
+              {`${window.location.origin}/simple.html?coordinator=${encodeURIComponent(keypair.npub)}`}
+            </code>
+          </section>
+        )}
+
         <section className="simple-voter-section" aria-labelledby="shard-requests-title">
           <h2 id="shard-requests-title" className="simple-voter-section-title">Received shard requests</h2>
-          <p className="simple-voter-empty">No shard requests received yet.</p>
+          {requests.length > 0 ? (
+            <ul className="simple-voter-list">
+              {requests.map((request) => (
+                <li key={request.id} className="simple-voter-list-item">
+                  Request from voter {request.voterId}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="simple-voter-empty">No shard requests received yet.</p>
+          )}
         </section>
 
         <section className="simple-voter-section" aria-labelledby="coordinator-live-vote-title">
