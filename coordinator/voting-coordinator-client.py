@@ -42,6 +42,10 @@ DEFAULT_RELAYS = [
     "wss://relay.damus.io",
     "wss://nos.lol",
     "wss://relay.primal.net",
+    "wss://relay.0xchat.com",
+    "wss://auth.nostr1.com",
+    "wss://relay.snort.social",
+    "wss://relay.nostr.band",
 ]
 
 log = logging.getLogger("coordinator")

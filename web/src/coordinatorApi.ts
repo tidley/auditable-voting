@@ -125,7 +125,13 @@ async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
 }
 
 const MOCK_COORDINATOR_NPUB = "npub1nzwqkakt2cuhrlwfhme3asrvx4s0xfyadm57tkpu2a39t9hqtahs7fsn89";
-const MOCK_RELAYS = ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net"];
+const MOCK_RELAYS = [
+  "wss://relay.damus.io",
+  "wss://nos.lol",
+  "wss://relay.primal.net",
+  "wss://relay.snort.social",
+  "wss://relay.nostr.band",
+];
 const MOCK_ELECTION_ID = "spring-2026-council";
 const MOCK_ELECTION_EVENT_ID = "a".repeat(64);
 const MOCK_ELECTION_QUESTIONS: ElectionQuestion[] = [

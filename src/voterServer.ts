@@ -150,7 +150,11 @@ const MOCK_PROOF_READY_MS = 4000;
 const DEFAULT_MOCK_RELAYS = [
   "wss://relay.damus.io",
   "wss://nos.lol",
-  "wss://relay.primal.net"
+  "wss://relay.primal.net",
+  "wss://relay.0xchat.com",
+  "wss://auth.nostr1.com",
+  "wss://relay.snort.social",
+  "wss://relay.nostr.band",
 ];
 const DEFAULT_COORDINATOR_NPUB = nip19.npubEncode(
   getPublicKey(Uint8Array.from(Array.from({ length: 32 }, () => 7)))
