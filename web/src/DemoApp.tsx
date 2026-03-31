@@ -37,6 +37,7 @@ import { computeProofHash, publishBallotEvent } from "./ballot";
 import { submitProofsToAllCoordinators, type MultiCoordinatorDmResult } from "./proofSubmission";
 import { queueNostrPublish } from "./nostrPublishQueue";
 import TokenFingerprint from "./TokenFingerprint";
+import PageNav from "./PageNav";
 
 type StepState = {
   title: string;
@@ -182,7 +183,7 @@ export default function DemoApp() {
   const [runningAudit, setRunningAudit] = useState(false);
   const [runningDemo, setRunningDemo] = useState(false);
   const [confirmingVote, setConfirmingVote] = useState(false);
-  const [status, setStatus] = useState<string>("Loading live demo state...");
+  const [status, setStatus] = useState<string | null>("Loading live demo state...");
   const [error, setError] = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<number | null>(null);
   const [mintQuote, setMintQuote] = useState<MintQuoteResponse | null>(null);
@@ -916,6 +917,7 @@ export default function DemoApp() {
           <div className="demo-brand-title">AUDITABLE-VOTING</div>
           <div className="demo-brand-subtitle">NOSTR+CASHU PROTOCOL</div>
         </div>
+        <PageNav current="home" />
 
         <div className="demo-sidebar-card">
           <div className="demo-sidebar-card-head">

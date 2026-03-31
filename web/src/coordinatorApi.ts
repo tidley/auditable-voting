@@ -39,6 +39,46 @@ export type ElectionInfo = {
   eligible_url?: string;
 };
 
+type StoredElectionLike = {
+  electionId: string;
+  title: string;
+  questions: ElectionQuestion[];
+  vote_start: number;
+  vote_end: number;
+  confirm_end?: number;
+  mint_urls: string[];
+  coordinator_npubs: string[];
+  eligible_root?: string;
+  eligible_count?: number;
+} | null | undefined;
+
+export function normalizeElectionInfo(
+  election: ElectionInfo | StoredElectionLike,
+): ElectionInfo | null {
+  if (!election) {
+    return null;
+  }
+
+  if ("election_id" in election) {
+    return election;
+  }
+
+  return {
+    election_id: election.electionId,
+    event_id: "",
+    title: election.title,
+    description: "",
+    questions: election.questions,
+    vote_start: election.vote_start,
+    vote_end: election.vote_end,
+    confirm_end: election.confirm_end,
+    mint_urls: election.mint_urls,
+    coordinator_npubs: election.coordinator_npubs,
+    eligible_root: election.eligible_root,
+    eligible_count: election.eligible_count,
+  };
+}
+
 export type EligibilityInfo = {
   election_id: string;
   eligible_count: number;

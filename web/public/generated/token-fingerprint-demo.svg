@@ -1,34 +1,105 @@
-
-<svg xmlns="http://www.w3.org/2000/svg" width="980" height="360" viewBox="0 0 980 360">
-  <rect width="100%" height="100%" fill="#f3efe3" />
-  <text x="40" y="34" font-family="Iowan Old Style, Palatino Linotype, serif" font-size="28" fill="#2e2218">TokenFingerprint Samples</text>
-  <text x="40" y="56" font-family="Avenir Next, Segoe UI, sans-serif" font-size="15" fill="#6f5a47">Three deterministic public ballot identities rendered as simple human-checkable patterns.</text>
-  
-    <g>
-      <rect x="40" y="70" width="280" height="220" rx="18" fill="#fffaf1" stroke="#d8c7b2" />
-      <text x="64" y="104" font-family="Avenir Next, Segoe UI, sans-serif" font-size="14" fill="#8a4b2b" font-weight="700">TOKEN FINGERPRINT</text>
-      <text x="64" y="126" font-family="Iowan Old Style, Palatino Linotype, serif" font-size="28" fill="#2e2218">YES</text>
-      <rect x="64" y="138" width="118" height="118" rx="12" fill="#f4efe6" stroke="#e2d3bf" />
-      <rect x="72" y="146" width="18" height="18" fill="#8a4b2b" /><rect x="93" y="146" width="18" height="18" fill="#8a4b2b" /><rect x="114" y="146" width="18" height="18" fill="#efe6d6" /><rect x="135" y="146" width="18" height="18" fill="#8a4b2b" /><rect x="156" y="146" width="18" height="18" fill="#8a4b2b" /><rect x="72" y="167" width="18" height="18" fill="#8a4b2b" /><rect x="93" y="167" width="18" height="18" fill="#efe6d6" /><rect x="114" y="167" width="18" height="18" fill="#efe6d6" /><rect x="135" y="167" width="18" height="18" fill="#efe6d6" /><rect x="156" y="167" width="18" height="18" fill="#8a4b2b" /><rect x="72" y="188" width="18" height="18" fill="#efe6d6" /><rect x="93" y="188" width="18" height="18" fill="#efe6d6" /><rect x="114" y="188" width="18" height="18" fill="#8a4b2b" /><rect x="135" y="188" width="18" height="18" fill="#efe6d6" /><rect x="156" y="188" width="18" height="18" fill="#efe6d6" /><rect x="72" y="209" width="18" height="18" fill="#efe6d6" /><rect x="93" y="209" width="18" height="18" fill="#8a4b2b" /><rect x="114" y="209" width="18" height="18" fill="#efe6d6" /><rect x="135" y="209" width="18" height="18" fill="#8a4b2b" /><rect x="156" y="209" width="18" height="18" fill="#efe6d6" /><rect x="72" y="230" width="18" height="18" fill="#efe6d6" /><rect x="93" y="230" width="18" height="18" fill="#8a4b2b" /><rect x="114" y="230" width="18" height="18" fill="#efe6d6" /><rect x="135" y="230" width="18" height="18" fill="#8a4b2b" /><rect x="156" y="230" width="18" height="18" fill="#efe6d6" />
-      <text x="64" y="266" font-family="SFMono-Regular, JetBrains Mono, monospace" font-size="15" fill="#5f2f19">6ab4d7f1c925be102cd3</text>
-      <text x="64" y="284" font-family="Avenir Next, Segoe UI, sans-serif" font-size="13" fill="#6f5a47">Simple UI sample exported from TokenFingerprint</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="360" viewBox="0 0 980 360"><defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#f3efe3"/><stop offset="48%" stop-color="#f8f4eb"/><stop offset="100%" stop-color="#e8d8bf"/></linearGradient></defs><rect width="100%" height="100%" fill="url(#bg)"/><text x="30" y="36" font-family="Iowan Old Style, Palatino Linotype, serif" font-size="32" font-weight="700" fill="#2e2218">TokenFingerprint Demo</text><text x="30" y="58" font-family="Avenir Next, Segoe UI, sans-serif" font-size="14" fill="#6f5a47">The pattern no longer mirrors across either axis; it is mixed from the full token id.</text><g>
+      <rect x="30" y="72" width="300" height="250" rx="26" fill="rgba(255,250,241,0.96)" stroke="rgba(76,51,31,0.14)"/>
+      <text x="54" y="100" font-family="Avenir Next, Segoe UI, sans-serif" font-size="12" font-weight="700" letter-spacing="1.8" fill="#8a4b2b">TOKEN FINGERPRINT</text>
+      <text x="54" y="237" font-family="Iowan Old Style, Palatino Linotype, serif" font-size="26" font-weight="700" fill="#2e2218">YES</text>
+      <text x="54" y="266" font-family="SFMono-Regular, JetBrains Mono, monospace" font-size="13" fill="#6f5a47">6ab4d7f1c925be102cd3</text>
+      <text x="54" y="290" font-family="Avenir Next, Segoe UI, sans-serif" font-size="12" fill="#6f5a47">Non-mirrored pattern plus scannable QR.</text>
+      <rect x="46" y="106" width="126" height="126" rx="16" fill="#f4efe6" stroke="rgba(88,59,39,0.16)"/>
+      <rect x="54" y="114" width="18" height="18" rx="5" fill="#497f8f" fill-opacity="1"/>
+<rect x="76" y="114" width="18" height="18" rx="5" fill="#bc8744" fill-opacity="1"/>
+<rect x="98" y="114" width="18" height="18" rx="5" fill="#6f8f5d" fill-opacity="1"/>
+<rect x="120" y="114" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="142" y="114" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="54" y="136" width="18" height="18" rx="5" fill="#bc8744" fill-opacity="1"/>
+<rect x="76" y="136" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="98" y="136" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="120" y="136" width="18" height="18" rx="5" fill="#d96a2b" fill-opacity="1"/>
+<rect x="142" y="136" width="18" height="18" rx="5" fill="#7d5fa8" fill-opacity="1"/>
+<rect x="54" y="158" width="18" height="18" rx="5" fill="#7d5fa8" fill-opacity="1"/>
+<rect x="76" y="158" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="98" y="158" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="120" y="158" width="18" height="18" rx="5" fill="#7d5fa8" fill-opacity="1"/>
+<rect x="142" y="158" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="54" y="180" width="18" height="18" rx="5" fill="#6f8f5d" fill-opacity="1"/>
+<rect x="76" y="180" width="18" height="18" rx="5" fill="#d14e44" fill-opacity="1"/>
+<rect x="98" y="180" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="120" y="180" width="18" height="18" rx="5" fill="#d96a2b" fill-opacity="1"/>
+<rect x="142" y="180" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="54" y="202" width="18" height="18" rx="5" fill="#d96a2b" fill-opacity="1"/>
+<rect x="76" y="202" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="98" y="202" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="120" y="202" width="18" height="18" rx="5" fill="#d14e44" fill-opacity="1"/>
+<rect x="142" y="202" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+      <rect x="200" y="106" width="106" height="106" rx="16" fill="rgba(255,255,255,0.82)" stroke="rgba(88,59,39,0.14)"/>
+      <image href="data:image/png;base64,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" x="211" y="117" width="84" height="84"/>
     </g>
-    <g>
-      <rect x="340" y="70" width="280" height="220" rx="18" fill="#fffaf1" stroke="#d8c7b2" />
-      <text x="364" y="104" font-family="Avenir Next, Segoe UI, sans-serif" font-size="14" fill="#8a4b2b" font-weight="700">TOKEN FINGERPRINT</text>
-      <text x="364" y="126" font-family="Iowan Old Style, Palatino Linotype, serif" font-size="28" fill="#2e2218">NO</text>
-      <rect x="364" y="138" width="118" height="118" rx="12" fill="#f4efe6" stroke="#e2d3bf" />
-      <rect x="372" y="146" width="18" height="18" fill="#8a4b2b" /><rect x="393" y="146" width="18" height="18" fill="#8a4b2b" /><rect x="414" y="146" width="18" height="18" fill="#efe6d6" /><rect x="435" y="146" width="18" height="18" fill="#8a4b2b" /><rect x="456" y="146" width="18" height="18" fill="#8a4b2b" /><rect x="372" y="167" width="18" height="18" fill="#efe6d6" /><rect x="393" y="167" width="18" height="18" fill="#efe6d6" /><rect x="414" y="167" width="18" height="18" fill="#efe6d6" /><rect x="435" y="167" width="18" height="18" fill="#efe6d6" /><rect x="456" y="167" width="18" height="18" fill="#efe6d6" /><rect x="372" y="188" width="18" height="18" fill="#8a4b2b" /><rect x="393" y="188" width="18" height="18" fill="#efe6d6" /><rect x="414" y="188" width="18" height="18" fill="#8a4b2b" /><rect x="435" y="188" width="18" height="18" fill="#efe6d6" /><rect x="456" y="188" width="18" height="18" fill="#8a4b2b" /><rect x="372" y="209" width="18" height="18" fill="#8a4b2b" /><rect x="393" y="209" width="18" height="18" fill="#8a4b2b" /><rect x="414" y="209" width="18" height="18" fill="#8a4b2b" /><rect x="435" y="209" width="18" height="18" fill="#8a4b2b" /><rect x="456" y="209" width="18" height="18" fill="#8a4b2b" /><rect x="372" y="230" width="18" height="18" fill="#efe6d6" /><rect x="393" y="230" width="18" height="18" fill="#efe6d6" /><rect x="414" y="230" width="18" height="18" fill="#efe6d6" /><rect x="435" y="230" width="18" height="18" fill="#efe6d6" /><rect x="456" y="230" width="18" height="18" fill="#efe6d6" />
-      <text x="364" y="266" font-family="SFMono-Regular, JetBrains Mono, monospace" font-size="15" fill="#5f2f19">2cf99187ee4ab35190fd</text>
-      <text x="364" y="284" font-family="Avenir Next, Segoe UI, sans-serif" font-size="13" fill="#6f5a47">Simple UI sample exported from TokenFingerprint</text>
+<g>
+      <rect x="340" y="72" width="300" height="250" rx="26" fill="rgba(255,250,241,0.96)" stroke="rgba(76,51,31,0.14)"/>
+      <text x="364" y="100" font-family="Avenir Next, Segoe UI, sans-serif" font-size="12" font-weight="700" letter-spacing="1.8" fill="#8a4b2b">TOKEN FINGERPRINT</text>
+      <text x="364" y="237" font-family="Iowan Old Style, Palatino Linotype, serif" font-size="26" font-weight="700" fill="#2e2218">NO</text>
+      <text x="364" y="266" font-family="SFMono-Regular, JetBrains Mono, monospace" font-size="13" fill="#6f5a47">2cf99187ee4ab35190fd</text>
+      <text x="364" y="290" font-family="Avenir Next, Segoe UI, sans-serif" font-size="12" fill="#6f5a47">Non-mirrored pattern plus scannable QR.</text>
+      <rect x="356" y="106" width="126" height="126" rx="16" fill="#f4efe6" stroke="rgba(88,59,39,0.16)"/>
+      <rect x="364" y="114" width="18" height="18" rx="5" fill="#7d5fa8" fill-opacity="1"/>
+<rect x="386" y="114" width="18" height="18" rx="5" fill="#6f8f5d" fill-opacity="1"/>
+<rect x="408" y="114" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="430" y="114" width="18" height="18" rx="5" fill="#497f8f" fill-opacity="1"/>
+<rect x="452" y="114" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="364" y="136" width="18" height="18" rx="5" fill="#bc8744" fill-opacity="1"/>
+<rect x="386" y="136" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="408" y="136" width="18" height="18" rx="5" fill="#7d5fa8" fill-opacity="1"/>
+<rect x="430" y="136" width="18" height="18" rx="5" fill="#d14e44" fill-opacity="1"/>
+<rect x="452" y="136" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="364" y="158" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="386" y="158" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="408" y="158" width="18" height="18" rx="5" fill="#d96a2b" fill-opacity="1"/>
+<rect x="430" y="158" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="452" y="158" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="364" y="180" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="386" y="180" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="408" y="180" width="18" height="18" rx="5" fill="#497f8f" fill-opacity="1"/>
+<rect x="430" y="180" width="18" height="18" rx="5" fill="#bc8744" fill-opacity="1"/>
+<rect x="452" y="180" width="18" height="18" rx="5" fill="#d96a2b" fill-opacity="1"/>
+<rect x="364" y="202" width="18" height="18" rx="5" fill="#d96a2b" fill-opacity="1"/>
+<rect x="386" y="202" width="18" height="18" rx="5" fill="#497f8f" fill-opacity="1"/>
+<rect x="408" y="202" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="430" y="202" width="18" height="18" rx="5" fill="#d14e44" fill-opacity="1"/>
+<rect x="452" y="202" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+      <rect x="510" y="106" width="106" height="106" rx="16" fill="rgba(255,255,255,0.82)" stroke="rgba(88,59,39,0.14)"/>
+      <image href="data:image/png;base64,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" x="521" y="117" width="84" height="84"/>
     </g>
-    <g>
-      <rect x="640" y="70" width="280" height="220" rx="18" fill="#fffaf1" stroke="#d8c7b2" />
-      <text x="664" y="104" font-family="Avenir Next, Segoe UI, sans-serif" font-size="14" fill="#8a4b2b" font-weight="700">TOKEN FINGERPRINT</text>
-      <text x="664" y="126" font-family="Iowan Old Style, Palatino Linotype, serif" font-size="28" fill="#2e2218">YES</text>
-      <rect x="664" y="138" width="118" height="118" rx="12" fill="#f4efe6" stroke="#e2d3bf" />
-      <rect x="672" y="146" width="18" height="18" fill="#8a4b2b" /><rect x="693" y="146" width="18" height="18" fill="#efe6d6" /><rect x="714" y="146" width="18" height="18" fill="#efe6d6" /><rect x="735" y="146" width="18" height="18" fill="#efe6d6" /><rect x="756" y="146" width="18" height="18" fill="#8a4b2b" /><rect x="672" y="167" width="18" height="18" fill="#efe6d6" /><rect x="693" y="167" width="18" height="18" fill="#efe6d6" /><rect x="714" y="167" width="18" height="18" fill="#8a4b2b" /><rect x="735" y="167" width="18" height="18" fill="#efe6d6" /><rect x="756" y="167" width="18" height="18" fill="#efe6d6" /><rect x="672" y="188" width="18" height="18" fill="#8a4b2b" /><rect x="693" y="188" width="18" height="18" fill="#8a4b2b" /><rect x="714" y="188" width="18" height="18" fill="#8a4b2b" /><rect x="735" y="188" width="18" height="18" fill="#8a4b2b" /><rect x="756" y="188" width="18" height="18" fill="#8a4b2b" /><rect x="672" y="209" width="18" height="18" fill="#efe6d6" /><rect x="693" y="209" width="18" height="18" fill="#efe6d6" /><rect x="714" y="209" width="18" height="18" fill="#efe6d6" /><rect x="735" y="209" width="18" height="18" fill="#efe6d6" /><rect x="756" y="209" width="18" height="18" fill="#efe6d6" /><rect x="672" y="230" width="18" height="18" fill="#efe6d6" /><rect x="693" y="230" width="18" height="18" fill="#8a4b2b" /><rect x="714" y="230" width="18" height="18" fill="#8a4b2b" /><rect x="735" y="230" width="18" height="18" fill="#8a4b2b" /><rect x="756" y="230" width="18" height="18" fill="#efe6d6" />
-      <text x="664" y="266" font-family="SFMono-Regular, JetBrains Mono, monospace" font-size="15" fill="#5f2f19">a1d93e28c77fb6405e12</text>
-      <text x="664" y="284" font-family="Avenir Next, Segoe UI, sans-serif" font-size="13" fill="#6f5a47">Simple UI sample exported from TokenFingerprint</text>
-    </g>
-</svg>
+<g>
+      <rect x="650" y="72" width="300" height="250" rx="26" fill="rgba(255,250,241,0.96)" stroke="rgba(76,51,31,0.14)"/>
+      <text x="674" y="100" font-family="Avenir Next, Segoe UI, sans-serif" font-size="12" font-weight="700" letter-spacing="1.8" fill="#8a4b2b">TOKEN FINGERPRINT</text>
+      <text x="674" y="237" font-family="Iowan Old Style, Palatino Linotype, serif" font-size="26" font-weight="700" fill="#2e2218">YES</text>
+      <text x="674" y="266" font-family="SFMono-Regular, JetBrains Mono, monospace" font-size="13" fill="#6f5a47">a1d93e28c77fb6405e12</text>
+      <text x="674" y="290" font-family="Avenir Next, Segoe UI, sans-serif" font-size="12" fill="#6f5a47">Non-mirrored pattern plus scannable QR.</text>
+      <rect x="666" y="106" width="126" height="126" rx="16" fill="#f4efe6" stroke="rgba(88,59,39,0.16)"/>
+      <rect x="674" y="114" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="696" y="114" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="718" y="114" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="740" y="114" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="762" y="114" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="674" y="136" width="18" height="18" rx="5" fill="#d96a2b" fill-opacity="1"/>
+<rect x="696" y="136" width="18" height="18" rx="5" fill="#d14e44" fill-opacity="1"/>
+<rect x="718" y="136" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="740" y="136" width="18" height="18" rx="5" fill="#bc8744" fill-opacity="1"/>
+<rect x="762" y="136" width="18" height="18" rx="5" fill="#d96a2b" fill-opacity="1"/>
+<rect x="674" y="158" width="18" height="18" rx="5" fill="#7d5fa8" fill-opacity="1"/>
+<rect x="696" y="158" width="18" height="18" rx="5" fill="#d14e44" fill-opacity="1"/>
+<rect x="718" y="158" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="740" y="158" width="18" height="18" rx="5" fill="#bc8744" fill-opacity="1"/>
+<rect x="762" y="158" width="18" height="18" rx="5" fill="#7d5fa8" fill-opacity="1"/>
+<rect x="674" y="180" width="18" height="18" rx="5" fill="#d14e44" fill-opacity="1"/>
+<rect x="696" y="180" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="718" y="180" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="740" y="180" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="762" y="180" width="18" height="18" rx="5" fill="#6f8f5d" fill-opacity="1"/>
+<rect x="674" y="202" width="18" height="18" rx="5" fill="#d96a2b" fill-opacity="1"/>
+<rect x="696" y="202" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="718" y="202" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="740" y="202" width="18" height="18" rx="5" fill="#efe6d6" fill-opacity="0.72"/>
+<rect x="762" y="202" width="18" height="18" rx="5" fill="#497f8f" fill-opacity="1"/>
+      <rect x="820" y="106" width="106" height="106" rx="16" fill="rgba(255,255,255,0.82)" stroke="rgba(88,59,39,0.14)"/>
+      <image href="data:image/png;base64,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" x="831" y="117" width="84" height="84"/>
+    </g></svg>

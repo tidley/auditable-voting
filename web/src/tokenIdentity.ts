@@ -7,6 +7,20 @@ export async function sha256Hex(input: string): Promise<string> {
     .join("");
 }
 
+export type TokenPatternCell = {
+  filled: boolean;
+  colorIndex: number;
+};
+
+export const TOKEN_FINGERPRINT_PALETTE = [
+  "#d96a2b",
+  "#d14e44",
+  "#bc8744",
+  "#6f8f5d",
+  "#497f8f",
+  "#7d5fa8",
+] as const;
+
 export async function deriveTokenIdFromProofSecrets(
   proofSecrets: string[],
   length = 20,
@@ -37,27 +51,43 @@ export function tokenIdLabel(tokenId: string | null | undefined): string {
   return `${tokenId.slice(0, 8)}...${tokenId.slice(-6)}`;
 }
 
-export function tokenPatternCells(tokenId: string, size = 5): boolean[] {
+export function tokenPatternDetail(tokenId: string, size = 5): TokenPatternCell[] {
   const normalized = tokenId.toLowerCase().replace(/[^0-9a-f]/g, "");
   if (!normalized) {
-    return Array.from({ length: size * size }, () => false);
+    return Array.from({ length: size * size }, () => ({ filled: false, colorIndex: 0 }));
   }
 
-  const cells: boolean[] = [];
-  const halfWidth = Math.ceil(size / 2);
-  let cursor = 0;
-
-  for (let row = 0; row < size; row += 1) {
-    const rowValues: boolean[] = [];
-    for (let column = 0; column < halfWidth; column += 1) {
-      const nibble = Number.parseInt(normalized[cursor % normalized.length] ?? "0", 16);
-      rowValues.push((nibble % 2) === 0);
-      cursor += 1;
-    }
-
-    const mirrored = rowValues.slice(0, size % 2 === 0 ? halfWidth : halfWidth - 1).reverse();
-    cells.push(...rowValues, ...mirrored);
+  let seed = 0x811c9dc5;
+  for (let index = 0; index < normalized.length; index += 1) {
+    seed ^= normalized.charCodeAt(index);
+    seed = Math.imul(seed, 0x01000193) >>> 0;
+    seed ^= Number.parseInt(normalized[index] ?? "0", 16);
+    seed = Math.imul(seed, 0x85ebca6b) >>> 0;
   }
 
-  return cells;
+  function nextByte(offset: number): number {
+    seed = (seed + 0x6d2b79f5 + offset) >>> 0;
+    let value = seed;
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) & 0xff;
+  }
+
+  return Array.from({ length: size * size }, (_, index) => {
+    const byte = nextByte(index * 2);
+    const accent = nextByte(index * 2 + 1);
+
+    return {
+      filled: (byte % 2) === 0,
+      colorIndex: accent % TOKEN_FINGERPRINT_PALETTE.length,
+    };
+  });
+}
+
+export function tokenPatternCells(tokenId: string, size = 5): boolean[] {
+  return tokenPatternDetail(tokenId, size).map((cell) => cell.filled);
+}
+
+export function tokenQrPayload(tokenId: string): string {
+  return `auditable-voting:token:${tokenId}`;
 }

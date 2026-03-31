@@ -5,7 +5,14 @@ import { loadStoredWalletBundle, storeBallotEventId, storeEphemeralKeypair } fro
 import { deriveNpubFromNsec, formatDateTime, getNostrEventVerificationUrl, decodeNsec } from "./nostrIdentity";
 import { submitProofViaDm, submitProofsToAllCoordinators, type DmPublishResult, type MultiCoordinatorDmResult } from "./proofSubmission";
 import type { CashuProof } from "./cashuBlind";
-import { fetchElection, fetchTally, checkVoteAccepted, type ElectionInfo, type TallyInfo } from "./coordinatorApi";
+import {
+  fetchElection,
+  fetchTally,
+  checkVoteAccepted,
+  normalizeElectionInfo,
+  type ElectionInfo,
+  type TallyInfo,
+} from "./coordinatorApi";
 import MerkleTreeViz from "./MerkleTreeViz";
 import { DEMO_MODE } from "./config";
 import PageNav from "./PageNav";
@@ -49,7 +56,9 @@ export default function VotingApp() {
 
   const [walletBundle, setWalletBundle] = useState(() => loadStoredWalletBundle());
   const [nsecInput, setNsecInput] = useState(() => loadStoredWalletBundle()?.ephemeralKeypair?.nsec ?? "");
-  const [loadedElection, setLoadedElection] = useState<ElectionInfo | null>(walletBundle?.election ?? null);
+  const [loadedElection, setLoadedElection] = useState<ElectionInfo | null>(
+    normalizeElectionInfo(walletBundle?.election),
+  );
   const [answers, setAnswers] = useState<Record<string, string | string[] | number>>({});
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -77,7 +86,7 @@ export default function VotingApp() {
         setWalletBundle(loadStoredWalletBundle());
       } catch {
         if (!cancelled) {
-          setLoadedElection(walletBundle?.election ?? null);
+          setLoadedElection(normalizeElectionInfo(walletBundle?.election));
         }
       }
     }
