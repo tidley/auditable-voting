@@ -1,7 +1,12 @@
 import { useEffect, useState } from "react";
-import { loadStoredWalletBundle, type StoredWalletBundle } from "./cashuWallet";
+import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
+import {
+  loadStoredWalletBundle,
+  storeEphemeralKeypair,
+  type StoredWalletBundle,
+} from "./cashuWallet";
 import { fetchElection, normalizeElectionInfo, type ElectionInfo } from "./coordinatorApi";
-import { deriveTokenIdFromProofSecrets, tokenIdLabel } from "./tokenIdentity";
+import { deriveTokenIdFromProofSecrets, sha256Hex } from "./tokenIdentity";
 
 type LiveVoteChoice = "Yes" | "No" | null;
 
@@ -11,6 +16,7 @@ export default function SimpleUiApp() {
     normalizeElectionInfo(walletBundle?.election),
   );
   const [tokenId, setTokenId] = useState<string | null>(null);
+  const [voterId, setVoterId] = useState<string>("pending");
   const [liveVoteChoice, setLiveVoteChoice] = useState<LiveVoteChoice>(null);
 
   useEffect(() => {
@@ -53,7 +59,36 @@ export default function SimpleUiApp() {
     };
   }, [walletBundle?.coordinatorProofs]);
 
-  const voterCode = tokenIdLabel(tokenId ?? walletBundle?.ephemeralKeypair.npub ?? "pending");
+  useEffect(() => {
+    let cancelled = false;
+
+    const npub = walletBundle?.ephemeralKeypair.npub?.trim() ?? "";
+    if (!npub) {
+      setVoterId("pending");
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void sha256Hex(npub).then((hash) => {
+      if (!cancelled) {
+        setVoterId(hash.slice(0, 7));
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [walletBundle?.ephemeralKeypair.npub]);
+
+  function createNostrKeypair() {
+    const secretKey = generateSecretKey();
+    const nsec = nip19.nsecEncode(secretKey);
+    const npub = nip19.npubEncode(getPublicKey(secretKey));
+    storeEphemeralKeypair(nsec, npub);
+    setWalletBundle(loadStoredWalletBundle());
+  }
+
   const shards = walletBundle?.coordinatorProofs ?? [];
   const liveYesNoQuestion = election?.questions.find((question) => {
     const options = (question.options ?? []).map((option) => option.toLowerCase());
@@ -63,7 +98,13 @@ export default function SimpleUiApp() {
   return (
     <main className="simple-voter-shell">
       <section className="simple-voter-page">
-        <h1 className="simple-voter-title">Voter ID {voterCode}</h1>
+        <h1 className="simple-voter-title">Voter ID {voterId}</h1>
+
+        <div className="simple-voter-action-row">
+          <button type="button" className="simple-voter-primary" onClick={createNostrKeypair}>
+            Create Nostr keypair
+          </button>
+        </div>
 
         <section className="simple-voter-section" aria-labelledby="received-shards-title">
           <h2 id="received-shards-title" className="simple-voter-section-title">Received vote shards</h2>
