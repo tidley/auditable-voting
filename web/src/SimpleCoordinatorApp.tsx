@@ -57,6 +57,7 @@ export default function SimpleCoordinatorApp() {
   const [election, setElection] = useState<ElectionInfo | null>(null);
   const [keypair, setKeypair] = useState<SimpleCoordinatorKeypair | null>(() => loadStoredCoordinatorKeypair());
   const [coordinatorId, setCoordinatorId] = useState("pending");
+  const [leadCoordinatorNpub, setLeadCoordinatorNpub] = useState("");
   const [requests, setRequests] = useState<SimpleShardRequest[]>([]);
   const [requestStatuses, setRequestStatuses] = useState<Record<string, string>>({});
   const [questionPrompt, setQuestionPrompt] = useState("Should the proposal pass?");
@@ -133,9 +134,10 @@ export default function SimpleCoordinatorApp() {
   }, [keypair?.npub]);
 
   useEffect(() => {
-    const coordinatorNpub = keypair?.npub ?? "";
+    const selfCoordinatorNpub = keypair?.npub ?? "";
+    const activeCoordinatorNpub = leadCoordinatorNpub.trim() || selfCoordinatorNpub;
 
-    if (!coordinatorNpub) {
+    if (!activeCoordinatorNpub) {
       setPublishedVote(null);
       return;
     }
@@ -144,7 +146,7 @@ export default function SimpleCoordinatorApp() {
 
     async function refreshPublishedVote() {
       try {
-        const nextVote = await fetchLatestSimpleLiveVote({ coordinatorNpub });
+        const nextVote = await fetchLatestSimpleLiveVote({ coordinatorNpub: activeCoordinatorNpub });
         if (!cancelled) {
           setPublishedVote(nextVote);
         }
@@ -164,7 +166,7 @@ export default function SimpleCoordinatorApp() {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [keypair?.npub]);
+  }, [keypair?.npub, leadCoordinatorNpub]);
 
   useEffect(() => {
     const votingId = publishedVote?.votingId ?? "";
@@ -209,6 +211,10 @@ export default function SimpleCoordinatorApp() {
     storeCoordinatorKeypair(nextKeypair);
     setKeypair(nextKeypair);
   }
+
+  const isLeadCoordinator = !leadCoordinatorNpub.trim() || leadCoordinatorNpub.trim() === (keypair?.npub ?? "");
+  const activeThresholdT = publishedVote?.thresholdT ?? (Number.parseInt(questionThresholdT, 10) || undefined);
+  const activeThresholdN = publishedVote?.thresholdN ?? (Number.parseInt(questionThresholdN, 10) || undefined);
 
   function getThresholdLabel() {
     const configuredT = Number.parseInt(questionThresholdT, 10);
@@ -269,18 +275,21 @@ export default function SimpleCoordinatorApp() {
     setRequestStatuses((current) => ({ ...current, [request.id]: "Sending shard..." }));
 
     try {
+      const thresholdLabel = activeThresholdT && activeThresholdN
+        ? `${activeThresholdT} of ${activeThresholdN}`
+        : getThresholdLabel();
       const result = await sendSimpleShardResponse({
         coordinatorSecretKey,
         voterNpub: request.voterNpub,
         requestId: request.id,
         coordinatorNpub,
         coordinatorId,
-        thresholdLabel: getThresholdLabel(),
-        votingId: request.votingId,
+        thresholdLabel,
+        votingId: publishedVote?.votingId ?? request.votingId,
         tokenCommitment: request.tokenCommitment,
         shareIndex: Number.parseInt(questionShareIndex, 10) || 1,
-        thresholdT: Number.parseInt(questionThresholdT, 10) || undefined,
-        thresholdN: Number.parseInt(questionThresholdN, 10) || undefined,
+        thresholdT: activeThresholdT,
+        thresholdN: activeThresholdN,
       });
 
       setRequestStatuses((current) => ({
@@ -296,7 +305,7 @@ export default function SimpleCoordinatorApp() {
     const coordinatorNsec = keypair?.nsec ?? "";
     const prompt = questionPrompt.trim();
 
-    if (!coordinatorNsec || !prompt) {
+    if (!coordinatorNsec || !prompt || !isLeadCoordinator) {
       return;
     }
 
@@ -401,6 +410,19 @@ export default function SimpleCoordinatorApp() {
 
         <section className="simple-voter-section" aria-labelledby="question-config-title">
           <h2 id="question-config-title" className="simple-voter-section-title">Question config</h2>
+          <label className="simple-voter-label" htmlFor="simple-lead-coordinator-npub">Lead coordinator npub</label>
+          <input
+            id="simple-lead-coordinator-npub"
+            className="simple-voter-input"
+            value={leadCoordinatorNpub}
+            onChange={(event) => setLeadCoordinatorNpub(event.target.value)}
+            placeholder="Leave blank if this coordinator is the lead"
+          />
+          <p className="simple-voter-question">
+            {isLeadCoordinator
+              ? "This coordinator publishes the live question."
+              : "This coordinator follows the lead question and only issues shares."}
+          </p>
           <label className="simple-voter-label" htmlFor="simple-question-prompt">Question</label>
           <textarea
             id="simple-question-prompt"
@@ -408,6 +430,7 @@ export default function SimpleCoordinatorApp() {
             value={questionPrompt}
             onChange={(event) => setQuestionPrompt(event.target.value)}
             rows={3}
+            disabled={!isLeadCoordinator}
           />
           <label className="simple-voter-label" htmlFor="simple-question-voting-id">Voting ID</label>
           <input
@@ -415,6 +438,7 @@ export default function SimpleCoordinatorApp() {
             className="simple-voter-input"
             value={questionVotingId}
             onChange={(event) => setQuestionVotingId(event.target.value)}
+            disabled={!isLeadCoordinator}
           />
           <div className="simple-vote-threshold-grid">
             <div>
@@ -424,6 +448,7 @@ export default function SimpleCoordinatorApp() {
                 className="simple-voter-input"
                 value={questionThresholdT}
                 onChange={(event) => setQuestionThresholdT(event.target.value)}
+                disabled={!isLeadCoordinator}
               />
             </div>
             <div>
@@ -433,6 +458,7 @@ export default function SimpleCoordinatorApp() {
                 className="simple-voter-input"
                 value={questionThresholdN}
                 onChange={(event) => setQuestionThresholdN(event.target.value)}
+                disabled={!isLeadCoordinator}
               />
             </div>
             <div>
@@ -450,17 +476,22 @@ export default function SimpleCoordinatorApp() {
               type="button"
               className="simple-voter-primary"
               onClick={() => void broadcastQuestion()}
-              disabled={!keypair?.nsec || questionPrompt.trim().length === 0}
+              disabled={!keypair?.nsec || questionPrompt.trim().length === 0 || !isLeadCoordinator}
             >
               Broadcast live vote
             </button>
           </div>
-          <p className="simple-voter-question">Threshold: {getThresholdLabel()}</p>
+          <p className="simple-voter-question">
+            Threshold: {activeThresholdT && activeThresholdN ? `${activeThresholdT} of ${activeThresholdN}` : getThresholdLabel()}
+          </p>
           {publishStatus && <p className="simple-voter-note">{publishStatus}</p>}
           {publishedVote && (
             <>
               <p className="simple-voter-question">Voting ID {publishedVote.votingId.slice(0, 12)}</p>
               <p className="simple-voter-question">Live prompt: {publishedVote.prompt}</p>
+              <p className="simple-voter-question">
+                Question source: {publishedVote.coordinatorNpub === (keypair?.npub ?? "") ? "This coordinator" : "Lead coordinator"}
+              </p>
               <p className="simple-voter-question">This coordinator share index: {questionShareIndex}</p>
             </>
           )}
