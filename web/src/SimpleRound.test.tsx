@@ -573,10 +573,15 @@ describe("Simple round flow", () => {
     const voterOneUi = within(voterOne.container);
     const voterTwoUi = within(voterTwo.container);
 
-    await user.click(coordinatorOneUi.getByRole("button", { name: /Create Nostr keypair/i }));
-    await user.click(coordinatorTwoUi.getByRole("button", { name: /Create Nostr keypair/i }));
+    await user.click(coordinatorOneUi.getByRole("button", { name: /Refresh ID/i }));
+    await user.click(coordinatorTwoUi.getByRole("button", { name: /Refresh ID/i }));
     await user.click(voterOneUi.getByRole("button", { name: /Refresh ID/i }));
     await user.click(voterTwoUi.getByRole("button", { name: /Refresh ID/i }));
+
+    await waitFor(() => {
+      expect(coordinatorOne.container.querySelectorAll("code.simple-identity-code")[0]?.textContent?.startsWith("npub1")).toBe(true);
+      expect(coordinatorTwo.container.querySelectorAll("code.simple-identity-code")[0]?.textContent?.startsWith("npub1")).toBe(true);
+    });
 
     const coordinatorOneCodes = coordinatorOne.container.querySelectorAll("code.simple-identity-code");
     const coordinatorTwoCodes = coordinatorTwo.container.querySelectorAll("code.simple-identity-code");
