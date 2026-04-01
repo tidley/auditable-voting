@@ -4,6 +4,7 @@ const publish = vi.fn();
 const destroy = vi.fn();
 const close = vi.fn();
 const querySync = vi.fn();
+const subscribeMany = vi.fn();
 const decode = vi.fn();
 const getPublicKey = vi.fn();
 const finalizeEvent = vi.fn();
@@ -13,7 +14,7 @@ vi.mock("nostr-tools", () => ({
   getPublicKey,
   nip19: { decode, npubEncode: vi.fn(() => "npub1coord") },
   SimplePool: function () {
-    return { publish, destroy, close, querySync };
+    return { publish, destroy, close, querySync, subscribeMany };
   },
 }));
 
@@ -37,6 +38,7 @@ describe("simpleVotingSession", () => {
     getPublicKey.mockReturnValue("cd".repeat(32));
     finalizeEvent.mockReturnValue({ id: "vote-session-1", pubkey: "pk", content: "{}" });
     publish.mockImplementation((relays: string[]) => relays.map(() => Promise.resolve(undefined)));
+    subscribeMany.mockReturnValue({ close: vi.fn(async () => undefined) });
   });
 
   it("publishes a live vote announcement", async () => {
@@ -93,6 +95,54 @@ describe("simpleVotingSession", () => {
       thresholdN: 5,
       eventId: "event-newer",
     });
+  });
+
+  it("subscribes to the latest live vote announcement", async () => {
+    const mod = await import("./simpleVotingSession");
+    const onSession = vi.fn();
+
+    subscribeMany.mockImplementation((_relays: string[], _filter: unknown, params: { onevent?: (event: any) => void }) => {
+      params.onevent?.({
+        id: "event-older",
+        pubkey: "ab".repeat(32),
+        created_at: 10,
+        content: JSON.stringify({
+          voting_id: "vote-1",
+          prompt: "Older question",
+          created_at: "2026-03-30T00:00:00.000Z",
+        }),
+      });
+      params.onevent?.({
+        id: "event-newer",
+        pubkey: "ab".repeat(32),
+        created_at: 20,
+        content: JSON.stringify({
+          voting_id: "vote-2",
+          prompt: "Latest question",
+          threshold_t: 3,
+          threshold_n: 5,
+          created_at: "2026-03-31T00:00:00.000Z",
+        }),
+      });
+      return { close: vi.fn(async () => undefined) };
+    });
+
+    const unsubscribe = mod.subscribeLatestSimpleLiveVote({
+      coordinatorNpub: "npub1coord",
+      onSession,
+    });
+
+    expect(onSession).toHaveBeenLastCalledWith({
+      votingId: "vote-2",
+      prompt: "Latest question",
+      coordinatorNpub: "npub1coord",
+      createdAt: "2026-03-31T00:00:00.000Z",
+      thresholdT: 3,
+      thresholdN: 5,
+      eventId: "event-newer",
+    });
+
+    unsubscribe();
   });
 
   it("publishes a submitted vote", async () => {
@@ -193,5 +243,74 @@ describe("simpleVotingSession", () => {
         createdAt: "2026-03-31T00:05:00.000Z",
       },
     ]);
+  });
+
+  it("subscribes to submitted vote updates", async () => {
+    const mod = await import("./simpleVotingSession");
+    const onVotes = vi.fn();
+
+    subscribeMany.mockImplementation((_relays: string[], _filter: unknown, params: { onevent?: (event: any) => void }) => {
+      params.onevent?.({
+        id: "ballot-1",
+        pubkey: "ef".repeat(32),
+        created_at: 30,
+        content: JSON.stringify({
+          voting_id: "vote-2",
+          choice: "Yes",
+          shard_certificates: [{
+            id: "cert-1",
+            kind: 38993,
+            pubkey: "ab".repeat(32),
+            created_at: 10,
+            tags: [],
+            content: JSON.stringify({
+              shard_id: "resp-1",
+              threshold_label: "1 of 1",
+              voting_id: "vote-2",
+              token_commitment: "commit-1",
+              share_index: 1,
+            }),
+            sig: "sig",
+          }],
+          created_at: "2026-03-31T00:05:00.000Z",
+        }),
+      });
+      return { close: vi.fn(async () => undefined) };
+    });
+
+    const unsubscribe = mod.subscribeSimpleSubmittedVotes({
+      votingId: "vote-2",
+      onVotes,
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(onVotes).toHaveBeenLastCalledWith([
+      {
+        eventId: "ballot-1",
+        votingId: "vote-2",
+        voterNpub: "npub1coord",
+        choice: "Yes",
+        shardCertificates: [{
+          id: "cert-1",
+          kind: 38993,
+          pubkey: "ab".repeat(32),
+          created_at: 10,
+          tags: [],
+          content: JSON.stringify({
+            shard_id: "resp-1",
+            threshold_label: "1 of 1",
+            voting_id: "vote-2",
+            token_commitment: "commit-1",
+            share_index: 1,
+          }),
+          sig: "sig",
+        }],
+        tokenId: "token-1",
+        createdAt: "2026-03-31T00:05:00.000Z",
+      },
+    ]);
+
+    unsubscribe();
   });
 });

@@ -41,6 +41,134 @@ function buildDmRelays(relays?: string[]) {
   );
 }
 
+function sortByCreatedAtDescending<T extends { createdAt: string }>(values: T[]) {
+  return [...values].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+}
+
+function parseSimpleShardRequest(
+  wrappedEvent: Record<string, unknown> & { created_at: number },
+  secretKey: Uint8Array,
+): SimpleShardRequest | null {
+  try {
+    const rumor = nip17.unwrapEvent(wrappedEvent as never, secretKey) as { content: string };
+    const payload = JSON.parse(rumor.content) as {
+      action?: string;
+      request_id?: string;
+      voter_npub?: string;
+      voter_id?: string;
+      voting_id?: string;
+      token_commitment?: string;
+      created_at?: string;
+    };
+
+    if (
+      payload.action !== "simple_shard_request"
+      || !payload.request_id
+      || !payload.voter_npub
+      || !payload.voter_id
+      || !payload.voting_id
+      || !payload.token_commitment
+    ) {
+      return null;
+    }
+
+    return {
+      id: payload.request_id,
+      voterNpub: payload.voter_npub,
+      voterId: payload.voter_id,
+      votingId: payload.voting_id,
+      tokenCommitment: payload.token_commitment,
+      createdAt: payload.created_at ?? new Date(wrappedEvent.created_at * 1000).toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseSimpleCoordinatorFollower(
+  wrappedEvent: Record<string, unknown> & { created_at: number },
+  secretKey: Uint8Array,
+): SimpleCoordinatorFollower | null {
+  try {
+    const rumor = nip17.unwrapEvent(wrappedEvent as never, secretKey) as { content: string };
+    const payload = JSON.parse(rumor.content) as {
+      action?: string;
+      follow_id?: string;
+      voter_npub?: string;
+      voter_id?: string;
+      voting_id?: string;
+      created_at?: string;
+    };
+
+    if (
+      payload.action !== "simple_coordinator_follow"
+      || !payload.follow_id
+      || !payload.voter_npub
+      || !payload.voter_id
+    ) {
+      return null;
+    }
+
+    return {
+      id: payload.follow_id,
+      voterNpub: payload.voter_npub,
+      voterId: payload.voter_id,
+      votingId: payload.voting_id?.trim() || undefined,
+      createdAt: payload.created_at ?? new Date(wrappedEvent.created_at * 1000).toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseSimpleShardResponse(
+  wrappedEvent: Record<string, unknown> & { created_at: number },
+  secretKey: Uint8Array,
+): SimpleShardResponse | null {
+  try {
+    const rumor = nip17.unwrapEvent(wrappedEvent as never, secretKey) as { content: string };
+    const payload = JSON.parse(rumor.content) as {
+      action?: string;
+      response_id?: string;
+      request_id?: string;
+      coordinator_npub?: string;
+      coordinator_id?: string;
+      threshold_label?: string;
+      voting_prompt?: string;
+      shard_certificate?: SimpleShardCertificate;
+      created_at?: string;
+    };
+
+    const parsedCertificate = payload.shard_certificate
+      ? parseSimpleShardCertificate(payload.shard_certificate, payload.coordinator_npub)
+      : null;
+
+    if (
+      (payload.action !== "simple_shard_response" && payload.action !== "simple_round_ticket")
+      || !payload.response_id
+      || !payload.request_id
+      || !payload.coordinator_id
+      || !payload.threshold_label
+      || !parsedCertificate
+    ) {
+      return null;
+    }
+
+    return {
+      id: parsedCertificate.shardId,
+      requestId: payload.request_id,
+      coordinatorNpub: parsedCertificate.coordinatorNpub,
+      coordinatorId: payload.coordinator_id,
+      thresholdLabel: parsedCertificate.thresholdLabel,
+      createdAt: payload.created_at ?? new Date(wrappedEvent.created_at * 1000).toISOString(),
+      votingPrompt: payload.voting_prompt?.trim() || undefined,
+      shardCertificate: parsedCertificate.event,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function sendSimpleCoordinatorFollow(input: {
   voterSecretKey: Uint8Array;
   coordinatorNpub: string;
@@ -181,43 +309,13 @@ export async function fetchSimpleShardRequests(input: {
     const requests = new Map<string, SimpleShardRequest>();
 
     for (const wrappedEvent of wrappedEvents) {
-      try {
-        const rumor = nip17.unwrapEvent(wrappedEvent, secretKey) as { content: string };
-        const payload = JSON.parse(rumor.content) as {
-          action?: string;
-          request_id?: string;
-          voter_npub?: string;
-          voter_id?: string;
-          voting_id?: string;
-          token_commitment?: string;
-          created_at?: string;
-        };
-
-        if (
-          payload.action !== "simple_shard_request"
-          || !payload.request_id
-          || !payload.voter_npub
-          || !payload.voter_id
-          || !payload.voting_id
-          || !payload.token_commitment
-        ) {
-          continue;
-        }
-
-        requests.set(payload.request_id, {
-          id: payload.request_id,
-          voterNpub: payload.voter_npub,
-          voterId: payload.voter_id,
-          votingId: payload.voting_id,
-          tokenCommitment: payload.token_commitment,
-          createdAt: payload.created_at ?? new Date(wrappedEvent.created_at * 1000).toISOString(),
-        });
-      } catch {
-        continue;
+      const request = parseSimpleShardRequest(wrappedEvent, secretKey);
+      if (request) {
+        requests.set(request.id, request);
       }
     }
 
-    return [...requests.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    return sortByCreatedAtDescending([...requests.values()]);
   } finally {
     pool.close(dmRelays);
   }
@@ -247,42 +345,68 @@ export async function fetchSimpleCoordinatorFollowers(input: {
     const followers = new Map<string, SimpleCoordinatorFollower>();
 
     for (const wrappedEvent of wrappedEvents) {
-      try {
-        const rumor = nip17.unwrapEvent(wrappedEvent, secretKey) as { content: string };
-        const payload = JSON.parse(rumor.content) as {
-          action?: string;
-          follow_id?: string;
-          voter_npub?: string;
-          voter_id?: string;
-          voting_id?: string;
-          created_at?: string;
-        };
-
-        if (
-          payload.action !== "simple_coordinator_follow"
-          || !payload.follow_id
-          || !payload.voter_npub
-          || !payload.voter_id
-        ) {
-          continue;
-        }
-
-        followers.set(payload.voter_npub, {
-          id: payload.follow_id,
-          voterNpub: payload.voter_npub,
-          voterId: payload.voter_id,
-          votingId: payload.voting_id?.trim() || undefined,
-          createdAt: payload.created_at ?? new Date(wrappedEvent.created_at * 1000).toISOString(),
-        });
-      } catch {
-        continue;
+      const follower = parseSimpleCoordinatorFollower(wrappedEvent, secretKey);
+      if (follower) {
+        followers.set(follower.voterNpub, follower);
       }
     }
 
-    return [...followers.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    return sortByCreatedAtDescending([...followers.values()]);
   } finally {
     pool.close(dmRelays);
   }
+}
+
+export function subscribeSimpleCoordinatorFollowers(input: {
+  coordinatorNsec: string;
+  relays?: string[];
+  onFollowers: (followers: SimpleCoordinatorFollower[]) => void;
+  onError?: (error: Error) => void;
+}): () => void {
+  const decoded = nip19.decode(input.coordinatorNsec.trim());
+  if (decoded.type !== "nsec") {
+    throw new Error("Coordinator key must be an nsec.");
+  }
+
+  const secretKey = decoded.data as Uint8Array;
+  const coordinatorHex = getPublicKey(secretKey);
+  const dmRelays = buildDmRelays(input.relays);
+  const pool = new SimplePool();
+  const followers = new Map<string, SimpleCoordinatorFollower>();
+  let closed = false;
+
+  const subscription = pool.subscribeMany(dmRelays, {
+    kinds: [1059],
+    "#p": [coordinatorHex],
+    limit: 100,
+  }, {
+    onevent: (wrappedEvent) => {
+      const follower = parseSimpleCoordinatorFollower(wrappedEvent, secretKey);
+      if (!follower) {
+        return;
+      }
+
+      followers.set(follower.voterNpub, follower);
+      input.onFollowers(sortByCreatedAtDescending([...followers.values()]));
+    },
+    onclose: (reasons) => {
+      if (closed) {
+        return;
+      }
+
+      const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
+      if (errors.length > 0) {
+        input.onError?.(new Error(errors.join("; ")));
+      }
+    },
+    maxWait: 4000,
+  });
+
+  return () => {
+    closed = true;
+    void subscription.close("closed by caller");
+    pool.destroy();
+  };
 }
 
 export async function sendSimpleShardResponse(input: {
@@ -464,52 +588,66 @@ export async function fetchSimpleShardResponses(input: {
     const responses = new Map<string, SimpleShardResponse>();
 
     for (const wrappedEvent of wrappedEvents) {
-      try {
-        const rumor = nip17.unwrapEvent(wrappedEvent, secretKey) as { content: string };
-        const payload = JSON.parse(rumor.content) as {
-          action?: string;
-          response_id?: string;
-          request_id?: string;
-          coordinator_npub?: string;
-          coordinator_id?: string;
-          threshold_label?: string;
-          voting_prompt?: string;
-          shard_certificate?: SimpleShardCertificate;
-          created_at?: string;
-        };
-
-        const parsedCertificate = payload.shard_certificate
-          ? parseSimpleShardCertificate(payload.shard_certificate, payload.coordinator_npub)
-          : null;
-
-        if (
-          (payload.action !== "simple_shard_response" && payload.action !== "simple_round_ticket")
-          || !payload.response_id
-          || !payload.request_id
-          || !payload.coordinator_id
-          || !payload.threshold_label
-          || !parsedCertificate
-        ) {
-          continue;
-        }
-
-        responses.set(payload.response_id, {
-          id: parsedCertificate.shardId,
-          requestId: payload.request_id,
-          coordinatorNpub: parsedCertificate.coordinatorNpub,
-          coordinatorId: payload.coordinator_id,
-          thresholdLabel: parsedCertificate.thresholdLabel,
-          createdAt: payload.created_at ?? new Date(wrappedEvent.created_at * 1000).toISOString(),
-          votingPrompt: payload.voting_prompt?.trim() || undefined,
-          shardCertificate: parsedCertificate.event,
-        });
-      } catch {
-        continue;
+      const response = parseSimpleShardResponse(wrappedEvent, secretKey);
+      if (response) {
+        responses.set(response.id, response);
       }
     }
 
-    return [...responses.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    return sortByCreatedAtDescending([...responses.values()]);
   } finally {
     pool.close(dmRelays);
   }
+}
+
+export function subscribeSimpleShardResponses(input: {
+  voterNsec: string;
+  relays?: string[];
+  onResponses: (responses: SimpleShardResponse[]) => void;
+  onError?: (error: Error) => void;
+}): () => void {
+  const decoded = nip19.decode(input.voterNsec.trim());
+  if (decoded.type !== "nsec") {
+    throw new Error("Voter key must be an nsec.");
+  }
+
+  const secretKey = decoded.data as Uint8Array;
+  const voterHex = getPublicKey(secretKey);
+  const dmRelays = buildDmRelays(input.relays);
+  const pool = new SimplePool();
+  const responses = new Map<string, SimpleShardResponse>();
+  let closed = false;
+
+  const subscription = pool.subscribeMany(dmRelays, {
+    kinds: [1059],
+    "#p": [voterHex],
+    limit: 100,
+  }, {
+    onevent: (wrappedEvent) => {
+      const response = parseSimpleShardResponse(wrappedEvent, secretKey);
+      if (!response) {
+        return;
+      }
+
+      responses.set(response.id, response);
+      input.onResponses(sortByCreatedAtDescending([...responses.values()]));
+    },
+    onclose: (reasons) => {
+      if (closed) {
+        return;
+      }
+
+      const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
+      if (errors.length > 0) {
+        input.onError?.(new Error(errors.join("; ")));
+      }
+    },
+    maxWait: 4000,
+  });
+
+  return () => {
+    closed = true;
+    void subscription.close("closed by caller");
+    pool.destroy();
+  };
 }

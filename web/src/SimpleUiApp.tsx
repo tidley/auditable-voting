@@ -10,7 +10,7 @@ import {
 } from "./simpleShardCertificate";
 import {
   sendSimpleCoordinatorFollow,
-  fetchSimpleShardResponses,
+  subscribeSimpleShardResponses,
   type SimpleShardResponse,
 } from "./simpleShardDm";
 import {
@@ -150,30 +150,14 @@ export default function SimpleUiApp() {
       return;
     }
 
-    let cancelled = false;
+    setReceivedShards([]);
 
-    async function refreshResponses() {
-      try {
-        const nextResponses = await fetchSimpleShardResponses({ voterNsec });
-        if (!cancelled) {
-          setReceivedShards(nextResponses);
-        }
-      } catch {
-        if (!cancelled) {
-          setReceivedShards([]);
-        }
-      }
-    }
-
-    void refreshResponses();
-    const intervalId = window.setInterval(() => {
-      void refreshResponses();
-    }, 2000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-    };
+    return subscribeSimpleShardResponses({
+      voterNsec,
+      onResponses: (nextResponses) => {
+        setReceivedShards(nextResponses);
+      },
+    });
   }, [voterKeypair?.nsec]);
 
   useEffect(() => {

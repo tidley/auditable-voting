@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { act, cleanup, render, waitFor, within } from "@testing-library/react";
+import { cleanup, render, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getPublicKey, nip19 } from "nostr-tools";
@@ -50,6 +50,28 @@ let coordinatorFollowers: Array<{
   votingId?: string;
   createdAt: string;
 }> = [];
+let followerSubscribers: Array<{
+  coordinatorNpub: string;
+  onFollowers: (followers: Array<{
+    id: string;
+    voterNpub: string;
+    voterId: string;
+    votingId?: string;
+    createdAt: string;
+  }>) => void;
+}> = [];
+let shardResponseSubscribers: Array<{
+  voterNpub: string;
+  onResponses: (responses: InternalResponse[]) => void;
+}> = [];
+let liveVoteSubscribers: Array<{
+  coordinatorNpub: string;
+  onSession: (vote: InternalLiveVote | null) => void;
+}> = [];
+let submittedVoteSubscribers: Array<{
+  votingId: string;
+  onVotes: (votes: InternalSubmittedVote[]) => void;
+}> = [];
 
 function sha(input: string) {
   return createHash("sha256").update(input).digest("hex");
@@ -70,6 +92,59 @@ function secretToNpub(secretKey: Uint8Array) {
 function makeTokenId(shardCertificates: any[]) {
   const ids = shardCertificates.map((certificate) => certificate.id).sort().join("|");
   return sha(ids).slice(0, 16);
+}
+
+function followerEntriesForCoordinator(coordinatorNpub: string) {
+  return coordinatorFollowers
+    .filter((entry) => entry.coordinatorNpub === coordinatorNpub)
+    .map((entry, index) => ({
+      id: `follow-${index + 1}`,
+      voterNpub: entry.voterNpub,
+      voterId: entry.voterId,
+      votingId: entry.votingId,
+      createdAt: entry.createdAt,
+    }));
+}
+
+function notifyFollowerSubscribers(coordinatorNpub: string) {
+  const nextFollowers = followerEntriesForCoordinator(coordinatorNpub);
+  for (const subscriber of followerSubscribers) {
+    if (subscriber.coordinatorNpub === coordinatorNpub) {
+      subscriber.onFollowers(nextFollowers);
+    }
+  }
+}
+
+function notifyShardResponseSubscribers(voterNpub: string) {
+  const nextResponses = shardResponses.filter((response) => response.voterNpub === voterNpub);
+  for (const subscriber of shardResponseSubscribers) {
+    if (subscriber.voterNpub === voterNpub) {
+      subscriber.onResponses(nextResponses);
+    }
+  }
+}
+
+function latestLiveVoteForCoordinator(coordinatorNpub: string) {
+  const matches = liveVotes.filter((vote) => vote.coordinatorNpub === coordinatorNpub);
+  return matches[matches.length - 1] ?? null;
+}
+
+function notifyLiveVoteSubscribers(coordinatorNpub: string) {
+  const nextVote = latestLiveVoteForCoordinator(coordinatorNpub);
+  for (const subscriber of liveVoteSubscribers) {
+    if (subscriber.coordinatorNpub === coordinatorNpub) {
+      subscriber.onSession(nextVote);
+    }
+  }
+}
+
+function notifySubmittedVoteSubscribers(votingId: string) {
+  const nextVotes = submittedVotes.filter((vote) => vote.votingId === votingId);
+  for (const subscriber of submittedVoteSubscribers) {
+    if (subscriber.votingId === votingId) {
+      subscriber.onVotes(nextVotes);
+    }
+  }
 }
 
 vi.mock("./coordinatorApi", () => ({
@@ -126,19 +201,29 @@ vi.mock("./simpleShardDm", () => ({
       votingId: input.votingId,
       createdAt: new Date().toISOString(),
     });
+    notifyFollowerSubscribers(input.coordinatorNpub);
     return { eventId: `follow-${coordinatorFollowers.length}`, successes: 1, failures: 0, relayResults: [] };
   }),
-  fetchSimpleCoordinatorFollowers: vi.fn(async (input: { coordinatorNsec: string }) => {
+  subscribeSimpleCoordinatorFollowers: vi.fn((input: {
+    coordinatorNsec: string;
+    onFollowers: (followers: Array<{
+      id: string;
+      voterNpub: string;
+      voterId: string;
+      votingId?: string;
+      createdAt: string;
+    }>) => void;
+  }) => {
     const coordinatorNpub = nsecToNpub(input.coordinatorNsec);
-    return coordinatorFollowers
-      .filter((entry) => entry.coordinatorNpub === coordinatorNpub)
-      .map((entry, index) => ({
-        id: `follow-${index + 1}`,
-        voterNpub: entry.voterNpub,
-        voterId: entry.voterId,
-        votingId: entry.votingId,
-        createdAt: entry.createdAt,
-      }));
+    const subscriber = {
+      coordinatorNpub,
+      onFollowers: input.onFollowers,
+    };
+    followerSubscribers.push(subscriber);
+    input.onFollowers(followerEntriesForCoordinator(coordinatorNpub));
+    return () => {
+      followerSubscribers = followerSubscribers.filter((entry) => entry !== subscriber);
+    };
   }),
   sendSimpleRoundTicket: vi.fn(async (input: {
     coordinatorSecretKey: Uint8Array;
@@ -183,22 +268,23 @@ vi.mock("./simpleShardDm", () => ({
       votingPrompt: input.votingPrompt,
       shardCertificate,
     });
+    notifyShardResponseSubscribers(input.voterNpub);
     return { responseId, eventId: `dm-response-${responseCounter}`, successes: 1, failures: 0, relayResults: [] };
   }),
-  fetchSimpleShardResponses: vi.fn(async (input: { voterNsec: string }) => {
+  subscribeSimpleShardResponses: vi.fn((input: {
+    voterNsec: string;
+    onResponses: (responses: InternalResponse[]) => void;
+  }) => {
     const voterNpub = nsecToNpub(input.voterNsec);
-    return shardResponses
-      .filter((response) => response.voterNpub === voterNpub)
-      .map((response) => ({
-        id: response.id,
-        requestId: response.requestId,
-        coordinatorNpub: response.coordinatorNpub,
-        coordinatorId: response.coordinatorId,
-        thresholdLabel: response.thresholdLabel,
-        createdAt: response.createdAt,
-        votingPrompt: response.votingPrompt,
-        shardCertificate: response.shardCertificate,
-      }));
+    const subscriber = {
+      voterNpub,
+      onResponses: input.onResponses,
+    };
+    shardResponseSubscribers.push(subscriber);
+    input.onResponses(shardResponses.filter((response) => response.voterNpub === voterNpub));
+    return () => {
+      shardResponseSubscribers = shardResponseSubscribers.filter((entry) => entry !== subscriber);
+    };
   }),
 }));
 
@@ -222,6 +308,7 @@ vi.mock("./simpleVotingSession", () => ({
       eventId: `live-${liveVotes.length + 1}`,
     };
     liveVotes = [...liveVotes.filter((entry) => !(entry.coordinatorNpub === coordinatorNpub && entry.votingId === votingId)), liveVote];
+    notifyLiveVoteSubscribers(coordinatorNpub);
     return {
       votingId,
       eventId: liveVote.eventId,
@@ -232,11 +319,20 @@ vi.mock("./simpleVotingSession", () => ({
       relayResults: [],
     };
   }),
-  fetchLatestSimpleLiveVote: vi.fn(async (input: { coordinatorNpub: string }) => {
-    const matches = liveVotes.filter((vote) => vote.coordinatorNpub === input.coordinatorNpub);
-    return matches[matches.length - 1] ?? null;
+  subscribeLatestSimpleLiveVote: vi.fn((input: {
+    coordinatorNpub: string;
+    onSession: (vote: InternalLiveVote | null) => void;
+  }) => {
+    const subscriber = {
+      coordinatorNpub: input.coordinatorNpub,
+      onSession: input.onSession,
+    };
+    liveVoteSubscribers.push(subscriber);
+    input.onSession(latestLiveVoteForCoordinator(input.coordinatorNpub));
+    return () => {
+      liveVoteSubscribers = liveVoteSubscribers.filter((entry) => entry !== subscriber);
+    };
   }),
-  fetchSimpleLiveVotes: vi.fn(async () => [...liveVotes].sort((a, b) => b.createdAt.localeCompare(a.createdAt))),
   publishSimpleSubmittedVote: vi.fn(async (input: {
     ballotNsec: string;
     votingId: string;
@@ -254,6 +350,7 @@ vi.mock("./simpleVotingSession", () => ({
       tokenId: makeTokenId(input.shardCertificates),
       createdAt,
     });
+    notifySubmittedVoteSubscribers(input.votingId);
     return {
       eventId: `ballot-${voteCounter}`,
       ballotNpub,
@@ -263,9 +360,20 @@ vi.mock("./simpleVotingSession", () => ({
       relayResults: [],
     };
   }),
-  fetchSimpleSubmittedVotes: vi.fn(async (input: { votingId: string }) => (
-    submittedVotes.filter((vote) => vote.votingId === input.votingId)
-  )),
+  subscribeSimpleSubmittedVotes: vi.fn((input: {
+    votingId: string;
+    onVotes: (votes: InternalSubmittedVote[]) => void;
+  }) => {
+    const subscriber = {
+      votingId: input.votingId,
+      onVotes: input.onVotes,
+    };
+    submittedVoteSubscribers.push(subscriber);
+    input.onVotes(submittedVotes.filter((vote) => vote.votingId === input.votingId));
+    return () => {
+      submittedVoteSubscribers = submittedVoteSubscribers.filter((entry) => entry !== subscriber);
+    };
+  }),
 }));
 
 describe("Simple round flow", () => {
@@ -284,6 +392,10 @@ describe("Simple round flow", () => {
     shardResponses = [];
     submittedVotes = [];
     coordinatorFollowers = [];
+    followerSubscribers = [];
+    shardResponseSubscribers = [];
+    liveVoteSubscribers = [];
+    submittedVoteSubscribers = [];
     window.sessionStorage.clear();
   });
 
@@ -367,10 +479,6 @@ describe("Simple round flow", () => {
     expect(voterOneUi.queryByText("Old stale prompt")).toBeNull();
     expect(voterTwoUi.queryByText("Old stale prompt")).toBeNull();
 
-    await act(async () => {
-      await new Promise((resolve) => window.setTimeout(resolve, 2200));
-    });
-
     await waitFor(() => {
       expect(coordinatorOneUi.getAllByRole("button", { name: /Send ticket/i })).toHaveLength(2);
       expect(coordinatorTwoUi.getAllByRole("button", { name: /Send ticket/i })).toHaveLength(2);
@@ -382,10 +490,6 @@ describe("Simple round flow", () => {
     for (const button of coordinatorTwoUi.getAllByRole("button", { name: /Send ticket/i })) {
       await user.click(button);
     }
-
-    await act(async () => {
-      await new Promise((resolve) => window.setTimeout(resolve, 2200));
-    });
 
     await waitFor(() => {
       expect(voterOneUi.getByText(/Tickets ready: 2 of 2/i)).toBeTruthy();
@@ -401,13 +505,9 @@ describe("Simple round flow", () => {
     await user.click(voterOneUi.getByRole("button", { name: /^Submit$/i }));
     await user.click(voterTwoUi.getByRole("button", { name: /^Submit$/i }));
 
-    await act(async () => {
-      await new Promise((resolve) => window.setTimeout(resolve, 2400));
-    });
-
     await waitFor(() => {
       expect(coordinatorOneUi.getByText((_, element) => element?.textContent === "Yes: 1 | No: 1")).toBeTruthy();
       expect(coordinatorTwoUi.getByText((_, element) => element?.textContent === "Yes: 1 | No: 1")).toBeTruthy();
-    }, { timeout: 6000 });
+    });
   }, 40000);
 });

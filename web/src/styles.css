@@ -336,14 +336,15 @@ code {
   width: min(960px, calc(100% - 32px));
   margin: 0 auto;
   padding: 32px 0 48px;
+  color: #f3f4f6;
 }
 
 .simple-voter-page {
-  border-top: 10px solid #1d70b8;
-  background: #ffffff;
-  color: #0b0c0c;
+  border-top: 10px solid #4da3ff;
+  background: linear-gradient(180deg, rgba(30, 41, 59, 0.98), rgba(15, 23, 42, 0.98));
+  color: #f8fafc;
   padding: 32px;
-  box-shadow: 0 8px 24px rgba(11, 12, 12, 0.08);
+  box-shadow: 0 20px 48px rgba(2, 6, 23, 0.5);
 }
 
 .simple-voter-title,
@@ -390,8 +391,8 @@ code {
   min-width: 220px;
   padding: 14px 18px;
   border: 0;
-  background: #00703c;
-  color: #ffffff;
+  background: #2563eb;
+  color: #f8fafc;
   font: inherit;
   font-weight: 700;
   cursor: pointer;
@@ -402,34 +403,34 @@ code {
 }
 
 .simple-voter-primary:hover {
-  background: #005a30;
+  background: #1d4ed8;
 }
 
 .simple-voter-primary:disabled {
-  background: #b1b4b6;
-  color: #505a5f;
+  background: #334155;
+  color: #94a3b8;
   cursor: not-allowed;
 }
 
 .simple-voter-secondary {
   align-self: flex-start;
   padding: 10px 14px;
-  border: 2px solid #1d70b8;
-  background: #ffffff;
-  color: #1d70b8;
+  border: 1px solid #475569;
+  background: #0f172a;
+  color: #cbd5e1;
   font: inherit;
   font-weight: 700;
   cursor: pointer;
 }
 
 .simple-voter-secondary:hover {
-  background: #f3f2f1;
+  background: #1e293b;
 }
 
 .simple-voter-section {
   padding-top: 24px;
   margin-top: 24px;
-  border-top: 1px solid #b1b4b6;
+  border-top: 1px solid #334155;
 }
 
 .simple-voter-section:first-of-type {
@@ -466,7 +467,7 @@ code {
   margin: 0;
   font-size: 1rem;
   line-height: 1.5;
-  color: #00703c;
+  color: #7dd3fc;
 }
 
 .simple-voter-label {
@@ -485,7 +486,9 @@ code {
   min-height: 96px;
   margin-bottom: 16px;
   padding: 12px 14px;
-  border: 2px solid #0b0c0c;
+  border: 1px solid #475569;
+  background: #0f172a;
+  color: #f8fafc;
   font: inherit;
   font-size: 1rem;
   line-height: 1.5;
@@ -497,7 +500,9 @@ code {
   width: 100%;
   margin-bottom: 16px;
   padding: 12px 14px;
-  border: 2px solid #0b0c0c;
+  border: 1px solid #475569;
+  background: #0f172a;
+  color: #f8fafc;
   font: inherit;
   font-size: 1rem;
   line-height: 1.5;
@@ -537,8 +542,8 @@ code {
   height: 56px;
   border: 0;
   border-radius: 999px;
-  background: #1d70b8;
-  color: #ffffff;
+  background: #2563eb;
+  color: #f8fafc;
   font: inherit;
   font-size: 2rem;
   line-height: 1;
@@ -547,7 +552,7 @@ code {
 }
 
 .simple-voter-add-button:hover {
-  background: #175ea5;
+  background: #1d4ed8;
 }
 
 .simple-voter-inline-field {
@@ -570,9 +575,9 @@ code {
   gap: 14px;
   align-items: center;
   padding: 16px;
-  border: 1px solid #d8dde0;
+  border: 1px solid #334155;
   border-radius: 10px;
-  background: #ffffff;
+  background: #111827;
 }
 
 .simple-coordinator-card-avatar {
@@ -581,8 +586,8 @@ code {
   width: 44px;
   height: 44px;
   border-radius: 999px;
-  background: #d5ecfa;
-  color: #0b0c0c;
+  background: #1e3a5f;
+  color: #bfdbfe;
   font-size: 2rem;
   line-height: 1;
 }
@@ -604,7 +609,7 @@ code {
 
 .simple-coordinator-card-meta {
   margin-top: 4px;
-  color: #505a5f;
+  color: #94a3b8;
   font-size: 1rem;
   overflow-wrap: anywhere;
 }
@@ -612,7 +617,7 @@ code {
 .simple-coordinator-card-remove {
   border: 0;
   background: transparent;
-  color: #505a5f;
+  color: #94a3b8;
   font: inherit;
   font-size: 2rem;
   line-height: 1;
@@ -620,7 +625,7 @@ code {
 }
 
 .simple-coordinator-card-remove:hover {
-  color: #0b0c0c;
+  color: #f8fafc;
 }
 
 .simple-voter-ticket-area {
@@ -636,19 +641,20 @@ code {
 .simple-voter-table {
   width: 100%;
   border-collapse: collapse;
-  border: 2px solid #0b0c0c;
+  border: 1px solid #475569;
+  background: #0f172a;
 }
 
 .simple-voter-table th,
 .simple-voter-table td {
   padding: 12px 14px;
-  border: 1px solid #b1b4b6;
+  border: 1px solid #334155;
   text-align: left;
   font-size: 1rem;
 }
 
 .simple-voter-table thead th {
-  background: #f3f2f1;
+  background: #1e293b;
   font-weight: 700;
 }
 
@@ -690,14 +696,16 @@ code {
 .simple-identity-label {
   font-weight: 700;
   font-size: 1rem;
+  color: #cbd5e1;
 }
 
 .simple-identity-code {
   display: block;
   overflow-wrap: anywhere;
   padding: 14px;
-  background: #f3f2f1;
-  border: 1px solid #b1b4b6;
+  background: #0f172a;
+  border: 1px solid #334155;
+  color: #e2e8f0;
   font-size: 0.95rem;
   line-height: 1.45;
 }
@@ -711,7 +719,7 @@ code {
   display: block;
   width: 168px;
   height: 168px;
-  border: 1px solid #b1b4b6;
+  border: 1px solid #334155;
   background: #ffffff;
   padding: 8px;
 }
@@ -786,18 +794,18 @@ code {
 .simple-voter-choice {
   min-width: 120px;
   padding: 14px 18px;
-  border: 2px solid #0b0c0c;
-  background: #ffffff;
-  color: #0b0c0c;
+  border: 1px solid #64748b;
+  background: #0f172a;
+  color: #f8fafc;
   font: inherit;
   font-weight: 700;
   cursor: pointer;
 }
 
 .simple-voter-choice.is-active {
-  background: #1d70b8;
-  border-color: #1d70b8;
-  color: #ffffff;
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #f8fafc;
 }
 
 .simple-hero-card {

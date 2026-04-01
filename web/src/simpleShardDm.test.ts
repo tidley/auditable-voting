@@ -4,6 +4,7 @@ const publish = vi.fn();
 const destroy = vi.fn();
 const close = vi.fn();
 const querySync = vi.fn();
+const subscribeMany = vi.fn();
 const wrapEvent = vi.fn();
 const unwrapEvent = vi.fn();
 const decode = vi.fn();
@@ -14,7 +15,7 @@ vi.mock("nostr-tools", () => ({
   nip19: { decode },
   nip17: { wrapEvent, unwrapEvent },
   SimplePool: function () {
-    return { publish, destroy, close, querySync };
+    return { publish, destroy, close, querySync, subscribeMany };
   },
 }));
 
@@ -54,6 +55,7 @@ describe("simpleShardDm", () => {
     getPublicKey.mockReturnValue("cd".repeat(32));
     wrapEvent.mockReturnValue({ id: "evt-1", pubkey: "pk", content: "cipher" });
     publish.mockImplementation((relays: string[]) => relays.map(() => Promise.resolve(undefined)));
+    subscribeMany.mockReturnValue({ close: vi.fn(async () => undefined) });
   });
 
   it("sends shard responses over the DM relay set", async () => {
@@ -231,5 +233,102 @@ describe("simpleShardDm", () => {
         createdAt: "2026-03-31T00:00:00.000Z",
       },
     ]);
+  });
+
+  it("subscribes to coordinator follower updates", async () => {
+    const mod = await import("./simpleShardDm");
+    const onFollowers = vi.fn();
+
+    subscribeMany.mockImplementation((_relays: string[], _filter: unknown, params: { onevent?: (event: { created_at: number }) => void }) => {
+      params.onevent?.({ created_at: 10 });
+      params.onevent?.({ created_at: 11 });
+      return { close: vi.fn(async () => undefined) };
+    });
+    unwrapEvent
+      .mockReturnValueOnce({
+        content: JSON.stringify({
+          action: "simple_coordinator_follow",
+          follow_id: "follow-1",
+          voter_npub: "npub1voter",
+          voter_id: "abc1234",
+          created_at: "2026-03-31T00:00:00.000Z",
+        }),
+      })
+      .mockReturnValueOnce({
+        content: JSON.stringify({
+          action: "simple_coordinator_follow",
+          follow_id: "follow-2",
+          voter_npub: "npub1voter-2",
+          voter_id: "def5678",
+          created_at: "2026-03-31T00:01:00.000Z",
+        }),
+      });
+
+    const unsubscribe = mod.subscribeSimpleCoordinatorFollowers({
+      coordinatorNsec: "nsec1coord",
+      onFollowers,
+    });
+
+    expect(onFollowers).toHaveBeenLastCalledWith([
+      {
+        id: "follow-2",
+        voterNpub: "npub1voter-2",
+        voterId: "def5678",
+        votingId: undefined,
+        createdAt: "2026-03-31T00:01:00.000Z",
+      },
+      {
+        id: "follow-1",
+        voterNpub: "npub1voter",
+        voterId: "abc1234",
+        votingId: undefined,
+        createdAt: "2026-03-31T00:00:00.000Z",
+      },
+    ]);
+
+    unsubscribe();
+  });
+
+  it("subscribes to round ticket updates for a voter", async () => {
+    const mod = await import("./simpleShardDm");
+    const onResponses = vi.fn();
+
+    subscribeMany.mockImplementation((_relays: string[], _filter: unknown, params: { onevent?: (event: { created_at: number }) => void }) => {
+      params.onevent?.({ created_at: 10 });
+      return { close: vi.fn(async () => undefined) };
+    });
+    unwrapEvent.mockReturnValueOnce({
+      content: JSON.stringify({
+        action: "simple_round_ticket",
+        response_id: "resp-1",
+        request_id: "round-ticket:vote-1:npub1coord",
+        coordinator_npub: "npub1coord",
+        coordinator_id: "abc1234",
+        threshold_label: "3 of 5",
+        voting_prompt: "Should the proposal pass?",
+        shard_certificate: { id: "cert-1" },
+        created_at: "2026-03-31T00:00:00.000Z",
+      }),
+    });
+
+    const unsubscribe = mod.subscribeSimpleShardResponses({
+      voterNsec: "nsec1voter",
+      onResponses,
+    });
+
+    expect(onResponses).toHaveBeenLastCalledWith([
+      {
+        id: "resp-1",
+        requestId: "round-ticket:vote-1:npub1coord",
+        coordinatorNpub: "npub1coord",
+        coordinatorId: "abc1234",
+        thresholdLabel: "3 of 5",
+        createdAt: "2026-03-31T00:00:00.000Z",
+        votingPrompt: "Should the proposal pass?",
+        shardCertificate: { id: "cert-1", kind: 38993, pubkey: "ab".repeat(32), created_at: 10, tags: [], content: "{}", sig: "sig" },
+      },
+    ]);
+
+    unsubscribe();
   });
 });
