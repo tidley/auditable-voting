@@ -3,11 +3,17 @@ import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 import { fetchElection, type ElectionInfo } from "./coordinatorApi";
 import { decodeNsec } from "./nostrIdentity";
 import {
-  fetchSimpleCoordinatorFollowers,
+  subscribeSimpleCoordinatorFollowers,
   sendSimpleRoundTicket,
   type SimpleCoordinatorFollower,
 } from "./simpleShardDm";
-import { fetchLatestSimpleLiveVote, fetchSimpleSubmittedVotes, publishSimpleLiveVote, type SimpleLiveVoteSession, type SimpleSubmittedVote } from "./simpleVotingSession";
+import {
+  subscribeLatestSimpleLiveVote,
+  subscribeSimpleSubmittedVotes,
+  publishSimpleLiveVote,
+  type SimpleLiveVoteSession,
+  type SimpleSubmittedVote,
+} from "./simpleVotingSession";
 import { validateSimpleSubmittedVotes } from "./simpleVoteValidation";
 import { sha256Hex } from "./tokenIdentity";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
@@ -45,6 +51,27 @@ function storeCoordinatorKeypair(keypair: SimpleCoordinatorKeypair) {
   window.sessionStorage.setItem(COORDINATOR_STORAGE_KEY, JSON.stringify(keypair));
 }
 
+function mergeFollowers(
+  currentFollowers: SimpleCoordinatorFollower[],
+  nextFollowers: SimpleCoordinatorFollower[],
+) {
+  if (nextFollowers.length === 0) {
+    return currentFollowers;
+  }
+
+  const merged = new Map<string, SimpleCoordinatorFollower>();
+
+  for (const follower of currentFollowers) {
+    merged.set(follower.voterNpub, follower);
+  }
+
+  for (const follower of nextFollowers) {
+    merged.set(follower.voterNpub, follower);
+  }
+
+  return [...merged.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+}
+
 export default function SimpleCoordinatorApp() {
   const [election, setElection] = useState<ElectionInfo | null>(null);
   const [keypair, setKeypair] = useState<SimpleCoordinatorKeypair | null>(() => loadStoredCoordinatorKeypair());
@@ -77,30 +104,14 @@ export default function SimpleCoordinatorApp() {
       return;
     }
 
-    let cancelled = false;
+    setFollowers([]);
 
-    async function refreshFollowers() {
-      try {
-        const nextFollowers = await fetchSimpleCoordinatorFollowers({ coordinatorNsec });
-        if (!cancelled) {
-          setFollowers(nextFollowers);
-        }
-      } catch {
-        if (!cancelled) {
-          setFollowers([]);
-        }
-      }
-    }
-
-    void refreshFollowers();
-    const intervalId = window.setInterval(() => {
-      void refreshFollowers();
-    }, 2000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-    };
+    return subscribeSimpleCoordinatorFollowers({
+      coordinatorNsec,
+      onFollowers: (nextFollowers) => {
+        setFollowers((current) => mergeFollowers(current, nextFollowers));
+      },
+    });
   }, [keypair?.nsec]);
 
   useEffect(() => {
@@ -136,30 +147,14 @@ export default function SimpleCoordinatorApp() {
       return;
     }
 
-    let cancelled = false;
+    setPublishedVote(null);
 
-    async function refreshPublishedVote() {
-      try {
-        const nextVote = await fetchLatestSimpleLiveVote({ coordinatorNpub: activeCoordinatorNpub });
-        if (!cancelled) {
-          setPublishedVote(nextVote);
-        }
-      } catch {
-        if (!cancelled) {
-          setPublishedVote(null);
-        }
-      }
-    }
-
-    void refreshPublishedVote();
-    const intervalId = window.setInterval(() => {
-      void refreshPublishedVote();
-    }, 2000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-    };
+    return subscribeLatestSimpleLiveVote({
+      coordinatorNpub: activeCoordinatorNpub,
+      onSession: (nextVote) => {
+        setPublishedVote(nextVote);
+      },
+    });
   }, [keypair?.npub, leadCoordinatorNpub]);
 
   useEffect(() => {
@@ -170,30 +165,14 @@ export default function SimpleCoordinatorApp() {
       return;
     }
 
-    let cancelled = false;
+    setSubmittedVotes([]);
 
-    async function refreshSubmittedVotes() {
-      try {
-        const nextVotes = await fetchSimpleSubmittedVotes({ votingId });
-        if (!cancelled) {
-          setSubmittedVotes(nextVotes);
-        }
-      } catch {
-        if (!cancelled) {
-          setSubmittedVotes([]);
-        }
-      }
-    }
-
-    void refreshSubmittedVotes();
-    const intervalId = window.setInterval(() => {
-      void refreshSubmittedVotes();
-    }, 2000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-    };
+    return subscribeSimpleSubmittedVotes({
+      votingId,
+      onVotes: (nextVotes) => {
+        setSubmittedVotes(nextVotes);
+      },
+    });
   }, [publishedVote?.votingId]);
 
   function createNostrKeypair() {

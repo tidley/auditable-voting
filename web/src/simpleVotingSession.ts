@@ -35,6 +35,76 @@ function buildPublicRelays(relays?: string[]) {
   );
 }
 
+function sortByCreatedAtDescending<T extends { createdAt: string }>(values: T[]) {
+  return [...values].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+}
+
+function parseSimpleLiveVoteEvent(
+  event: { id: string; pubkey: string; created_at: number; content: string },
+  fallbackCoordinatorNpub?: string,
+): SimpleLiveVoteSession | null {
+  try {
+    const payload = JSON.parse(event.content) as {
+      voting_id?: string;
+      prompt?: string;
+      threshold_t?: number;
+      threshold_n?: number;
+      created_at?: string;
+    };
+
+    if (!payload.voting_id || !payload.prompt) {
+      return null;
+    }
+
+    return {
+      votingId: payload.voting_id,
+      prompt: payload.prompt,
+      coordinatorNpub: fallbackCoordinatorNpub ?? nip19.npubEncode(event.pubkey),
+      createdAt: payload.created_at ?? new Date(event.created_at * 1000).toISOString(),
+      thresholdT: typeof payload.threshold_t === "number" ? payload.threshold_t : undefined,
+      thresholdN: typeof payload.threshold_n === "number" ? payload.threshold_n : undefined,
+      eventId: event.id,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function parseSimpleSubmittedVoteEvent(
+  event: { id: string; pubkey: string; created_at: number; content: string },
+  votingId: string,
+): Promise<SimpleSubmittedVote | null> {
+  try {
+    const payload = JSON.parse(event.content) as {
+      voting_id?: string;
+      choice?: "Yes" | "No";
+      shard_certificates?: SimpleShardCertificate[];
+      created_at?: string;
+    };
+
+    if (
+      payload.voting_id !== votingId
+      || (payload.choice !== "Yes" && payload.choice !== "No")
+    ) {
+      return null;
+    }
+
+    const shardCertificates = Array.isArray(payload.shard_certificates) ? payload.shard_certificates : [];
+
+    return {
+      eventId: event.id,
+      votingId: payload.voting_id,
+      voterNpub: nip19.npubEncode(event.pubkey),
+      choice: payload.choice,
+      shardCertificates,
+      tokenId: await deriveTokenIdFromSimpleShardCertificates(shardCertificates),
+      createdAt: payload.created_at ?? new Date(event.created_at * 1000).toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function publishSimpleLiveVote(input: {
   coordinatorNsec: string;
   prompt: string;
@@ -122,39 +192,66 @@ export async function fetchLatestSimpleLiveVote(input: {
       limit: 20,
     });
 
-    const sessions = events.flatMap((event) => {
-      try {
-        const payload = JSON.parse(event.content) as {
-          voting_id?: string;
-          prompt?: string;
-          threshold_t?: number;
-          threshold_n?: number;
-          created_at?: string;
-        };
-
-        if (!payload.voting_id || !payload.prompt) {
-          return [];
-        }
-
-        return [{
-          votingId: payload.voting_id,
-          prompt: payload.prompt,
-          coordinatorNpub: input.coordinatorNpub,
-          createdAt: payload.created_at ?? new Date(event.created_at * 1000).toISOString(),
-          thresholdT: typeof payload.threshold_t === "number" ? payload.threshold_t : undefined,
-          thresholdN: typeof payload.threshold_n === "number" ? payload.threshold_n : undefined,
-          eventId: event.id,
-        }];
-      } catch {
-        return [];
-      }
-    });
+    const sessions = events
+      .map((event) => parseSimpleLiveVoteEvent(event, input.coordinatorNpub))
+      .filter((session): session is SimpleLiveVoteSession => session !== null);
 
     sessions.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
     return sessions[0] ?? null;
   } finally {
     pool.close(relays);
   }
+}
+
+export function subscribeLatestSimpleLiveVote(input: {
+  coordinatorNpub: string;
+  relays?: string[];
+  onSession: (session: SimpleLiveVoteSession | null) => void;
+  onError?: (error: Error) => void;
+}): () => void {
+  const decoded = nip19.decode(input.coordinatorNpub.trim());
+  if (decoded.type !== "npub") {
+    throw new Error("Coordinator value must be an npub.");
+  }
+
+  const coordinatorHex = decoded.data as string;
+  const relays = buildPublicRelays(input.relays);
+  const pool = new SimplePool();
+  const sessions = new Map<string, SimpleLiveVoteSession>();
+  let closed = false;
+
+  const subscription = pool.subscribeMany(relays, {
+    kinds: [SIMPLE_LIVE_VOTE_KIND],
+    authors: [coordinatorHex],
+    limit: 20,
+  }, {
+    onevent: (event) => {
+      const session = parseSimpleLiveVoteEvent(event, input.coordinatorNpub);
+      if (!session) {
+        return;
+      }
+
+      sessions.set(session.eventId, session);
+      input.onSession(sortByCreatedAtDescending([...sessions.values()])[0] ?? null);
+    },
+    onclose: (reasons) => {
+      if (closed) {
+        return;
+      }
+
+      const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
+      if (errors.length > 0) {
+        input.onError?.(new Error(errors.join("; ")));
+      }
+    },
+    maxWait: 4000,
+  });
+
+  return () => {
+    closed = true;
+    void subscription.close("closed by caller");
+    pool.destroy();
+  };
 }
 
 export async function fetchSimpleLiveVotes(input?: {
@@ -169,36 +266,11 @@ export async function fetchSimpleLiveVotes(input?: {
       limit: 200,
     });
 
-    const sessions = events.flatMap((event) => {
-      try {
-        const payload = JSON.parse(event.content) as {
-          voting_id?: string;
-          prompt?: string;
-          threshold_t?: number;
-          threshold_n?: number;
-          created_at?: string;
-        };
-
-        if (!payload.voting_id || !payload.prompt) {
-          return [];
-        }
-
-        return [{
-          votingId: payload.voting_id,
-          prompt: payload.prompt,
-          coordinatorNpub: nip19.npubEncode(event.pubkey),
-          createdAt: payload.created_at ?? new Date(event.created_at * 1000).toISOString(),
-          thresholdT: typeof payload.threshold_t === "number" ? payload.threshold_t : undefined,
-          thresholdN: typeof payload.threshold_n === "number" ? payload.threshold_n : undefined,
-          eventId: event.id,
-        }];
-      } catch {
-        return [];
-      }
-    });
-
-    sessions.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-    return sessions;
+    return sortByCreatedAtDescending(
+      events
+        .map((event) => parseSimpleLiveVoteEvent(event))
+        .filter((session): session is SimpleLiveVoteSession => session !== null),
+    );
   } finally {
     pool.close(relays);
   }
@@ -280,39 +352,59 @@ export async function fetchSimpleSubmittedVotes(input: {
     const votes = new Map<string, SimpleSubmittedVote>();
 
     for (const event of events) {
-      try {
-        const payload = JSON.parse(event.content) as {
-          voting_id?: string;
-          choice?: "Yes" | "No";
-          shard_certificates?: SimpleShardCertificate[];
-          created_at?: string;
-        };
-
-        if (
-          payload.voting_id !== input.votingId
-          || (payload.choice !== "Yes" && payload.choice !== "No")
-        ) {
-          continue;
-        }
-
-        votes.set(event.id, {
-          eventId: event.id,
-          votingId: payload.voting_id,
-          voterNpub: nip19.npubEncode(event.pubkey),
-          choice: payload.choice,
-          shardCertificates: Array.isArray(payload.shard_certificates) ? payload.shard_certificates : [],
-          tokenId: await deriveTokenIdFromSimpleShardCertificates(
-            Array.isArray(payload.shard_certificates) ? payload.shard_certificates : [],
-          ),
-          createdAt: payload.created_at ?? new Date(event.created_at * 1000).toISOString(),
-        });
-      } catch {
-        continue;
+      const vote = await parseSimpleSubmittedVoteEvent(event, input.votingId);
+      if (vote) {
+        votes.set(event.id, vote);
       }
     }
 
-    return [...votes.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    return sortByCreatedAtDescending([...votes.values()]);
   } finally {
     pool.close(relays);
   }
+}
+
+export function subscribeSimpleSubmittedVotes(input: {
+  votingId: string;
+  relays?: string[];
+  onVotes: (votes: SimpleSubmittedVote[]) => void;
+  onError?: (error: Error) => void;
+}): () => void {
+  const relays = buildPublicRelays(input.relays);
+  const pool = new SimplePool();
+  const votes = new Map<string, SimpleSubmittedVote>();
+  let closed = false;
+
+  const subscription = pool.subscribeMany(relays, {
+    kinds: [SIMPLE_LIVE_VOTE_BALLOT_KIND],
+    "#d": [input.votingId],
+    limit: 200,
+  }, {
+    onevent: async (event) => {
+      const vote = await parseSimpleSubmittedVoteEvent(event, input.votingId);
+      if (!vote) {
+        return;
+      }
+
+      votes.set(vote.eventId, vote);
+      input.onVotes(sortByCreatedAtDescending([...votes.values()]));
+    },
+    onclose: (reasons) => {
+      if (closed) {
+        return;
+      }
+
+      const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
+      if (errors.length > 0) {
+        input.onError?.(new Error(errors.join("; ")));
+      }
+    },
+    maxWait: 4000,
+  });
+
+  return () => {
+    closed = true;
+    void subscription.close("closed by caller");
+    pool.destroy();
+  };
 }
