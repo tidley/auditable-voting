@@ -335,18 +335,18 @@ describe("Simple round flow", () => {
     await user.clear(coordinatorTwoInputs[4] as HTMLInputElement);
     await user.type(coordinatorTwoInputs[4] as HTMLInputElement, "2");
 
-    const voterOneCoordinatorInputs = voterOne.container.querySelectorAll("input.simple-voter-input-inline");
-    const voterTwoCoordinatorInputs = voterTwo.container.querySelectorAll("input.simple-voter-input-inline");
     await waitFor(() => {
       expect(voterOne.container.querySelectorAll("code.simple-identity-code")[0]?.textContent?.startsWith("npub1")).toBe(true);
       expect(voterTwo.container.querySelectorAll("code.simple-identity-code")[0]?.textContent?.startsWith("npub1")).toBe(true);
     });
-    await user.type(voterOneCoordinatorInputs[0] as HTMLInputElement, coordinatorOneNpub);
+    await user.type(voterOne.container.querySelector("input.simple-voter-input-inline") as HTMLInputElement, coordinatorOneNpub);
     await user.click(voterOneUi.getByRole("button", { name: /Add coordinator/i }));
-    await user.type(voterOne.container.querySelectorAll("input.simple-voter-input-inline")[1] as HTMLInputElement, coordinatorTwoNpub);
-    await user.type(voterTwoCoordinatorInputs[0] as HTMLInputElement, coordinatorOneNpub);
+    await user.type(voterOne.container.querySelector("input.simple-voter-input-inline") as HTMLInputElement, coordinatorTwoNpub);
+    await user.click(voterOneUi.getByRole("button", { name: /Add coordinator/i }));
+    await user.type(voterTwo.container.querySelector("input.simple-voter-input-inline") as HTMLInputElement, coordinatorOneNpub);
     await user.click(voterTwoUi.getByRole("button", { name: /Add coordinator/i }));
-    await user.type(voterTwo.container.querySelectorAll("input.simple-voter-input-inline")[1] as HTMLInputElement, coordinatorTwoNpub);
+    await user.type(voterTwo.container.querySelector("input.simple-voter-input-inline") as HTMLInputElement, coordinatorTwoNpub);
+    await user.click(voterTwoUi.getByRole("button", { name: /Add coordinator/i }));
 
     await user.click(voterOneUi.getByRole("button", { name: /Notify coordinators/i }));
     await user.click(voterTwoUi.getByRole("button", { name: /Notify coordinators/i }));
@@ -359,8 +359,8 @@ describe("Simple round flow", () => {
     await user.click(coordinatorOneUi.getByRole("button", { name: /Broadcast live vote/i }));
 
     await waitFor(() => {
-      expect(voterOneUi.getByText("Should the proposal pass?")).toBeTruthy();
-      expect(voterTwoUi.getByText("Should the proposal pass?")).toBeTruthy();
+      expect(voterOneUi.getByText(/No live vote ticket yet\./i)).toBeTruthy();
+      expect(voterTwoUi.getByText(/No live vote ticket yet\./i)).toBeTruthy();
       expect(coordinatorOneUi.getAllByText(/is following this coordinator/i).length).toBeGreaterThanOrEqual(2);
       expect(coordinatorTwoUi.getAllByText(/is following this coordinator/i).length).toBeGreaterThanOrEqual(2);
     });

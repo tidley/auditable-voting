@@ -397,6 +397,10 @@ code {
   cursor: pointer;
 }
 
+.simple-voter-primary-wide {
+  width: 100%;
+}
+
 .simple-voter-primary:hover {
   background: #005a30;
 }
@@ -510,6 +514,10 @@ code {
   margin-bottom: 16px;
 }
 
+.simple-voter-field-stack-tight {
+  margin-bottom: 0;
+}
+
 .simple-voter-field-head {
   display: flex;
   align-items: center;
@@ -517,10 +525,102 @@ code {
   gap: 12px;
 }
 
+.simple-voter-add-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 56px;
+  gap: 12px;
+  align-items: center;
+}
+
+.simple-voter-add-button {
+  width: 56px;
+  height: 56px;
+  border: 0;
+  border-radius: 999px;
+  background: #1d70b8;
+  color: #ffffff;
+  font: inherit;
+  font-size: 2rem;
+  line-height: 1;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.simple-voter-add-button:hover {
+  background: #175ea5;
+}
+
 .simple-voter-inline-field {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.simple-coordinator-card-list {
+  display: grid;
+  gap: 12px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.simple-coordinator-card {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 16px;
+  border: 1px solid #d8dde0;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.simple-coordinator-card-avatar {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  background: #d5ecfa;
+  color: #0b0c0c;
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.simple-coordinator-card-copy {
+  min-width: 0;
+}
+
+.simple-coordinator-card-title,
+.simple-coordinator-card-meta {
+  margin: 0;
+}
+
+.simple-coordinator-card-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.simple-coordinator-card-meta {
+  margin-top: 4px;
+  color: #505a5f;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.simple-coordinator-card-remove {
+  border: 0;
+  background: transparent;
+  color: #505a5f;
+  font: inherit;
+  font-size: 2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.simple-coordinator-card-remove:hover {
+  color: #0b0c0c;
 }
 
 .simple-voter-ticket-area {
@@ -1487,6 +1587,20 @@ code {
   .simple-voter-inline-field {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .simple-voter-add-row,
+  .simple-coordinator-card {
+    grid-template-columns: 1fr;
+  }
+
+  .simple-coordinator-card-avatar {
+    width: 40px;
+    height: 40px;
+  }
+
+  .simple-coordinator-card-remove {
+    justify-self: start;
   }
 
   .hero-card,
