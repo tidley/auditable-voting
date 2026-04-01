@@ -351,8 +351,6 @@ describe("Simple round flow", () => {
 
     await user.click(coordinatorOneUi.getByRole("button", { name: /Create Nostr keypair/i }));
     await user.click(coordinatorTwoUi.getByRole("button", { name: /Create Nostr keypair/i }));
-    await user.click(voterOneUi.getByRole("button", { name: /Create Nostr keypair/i }));
-    await user.click(voterTwoUi.getByRole("button", { name: /Create Nostr keypair/i }));
 
     const coordinatorOneCodes = coordinatorOne.container.querySelectorAll("code.simple-identity-code");
     const coordinatorTwoCodes = coordinatorTwo.container.querySelectorAll("code.simple-identity-code");
@@ -390,14 +388,13 @@ describe("Simple round flow", () => {
     expect(votingDetailsValue).toContain("Voting ID: round-1");
     expect(votingDetailsValue).toContain(coordinatorOneNpub);
 
-    const voterOneVotingDetails = voterOneUi.getByLabelText("Voting details") as HTMLTextAreaElement;
-    await user.clear(voterOneVotingDetails);
-    await user.type(voterOneVotingDetails, votingDetailsValue);
-    await user.click(voterOneUi.getByRole("button", { name: /Use voting details/i }));
-
     const voterOneCoordinatorInputs = voterOne.container.querySelectorAll("input.simple-voter-input-inline");
     const voterTwoCoordinatorInputs = voterTwo.container.querySelectorAll("input.simple-voter-input-inline");
-    expect((voterOneCoordinatorInputs[0] as HTMLInputElement).value).toBe(coordinatorOneNpub);
+    await waitFor(() => {
+      expect(voterOne.container.querySelectorAll("code.simple-identity-code")[0]?.textContent?.startsWith("npub1")).toBe(true);
+      expect(voterTwo.container.querySelectorAll("code.simple-identity-code")[0]?.textContent?.startsWith("npub1")).toBe(true);
+    });
+    await user.type(voterOneCoordinatorInputs[0] as HTMLInputElement, coordinatorOneNpub);
     await user.click(voterOneUi.getByRole("button", { name: /Add coordinator/i }));
     await user.type(voterOne.container.querySelectorAll("input.simple-voter-input-inline")[1] as HTMLInputElement, coordinatorTwoNpub);
     await user.type(voterTwoCoordinatorInputs[0] as HTMLInputElement, coordinatorOneNpub);
@@ -411,21 +408,13 @@ describe("Simple round flow", () => {
     expect(voterOneUi.queryByText("Old stale prompt")).toBeNull();
     expect(voterTwoUi.queryByText("Old stale prompt")).toBeNull();
 
-    await user.click(voterOneUi.getByRole("button", { name: /Follow coordinators/i }));
-    await user.click(voterTwoUi.getByRole("button", { name: /Follow coordinators/i }));
+    await user.click(voterOneUi.getByRole("button", { name: /Notify coordinators/i }));
+    await user.click(voterTwoUi.getByRole("button", { name: /Notify coordinators/i }));
 
     await waitFor(() => {
-      expect(voterOneUi.getByText(/Following 2 coordinators\./i)).toBeTruthy();
-      expect(voterTwoUi.getByText(/Following 2 coordinators\./i)).toBeTruthy();
+      expect(voterOneUi.getByText(/Vote tickets requested for round-1\./i)).toBeTruthy();
+      expect(voterTwoUi.getByText(/Vote tickets requested for round-1\./i)).toBeTruthy();
     });
-
-    const voterOneRequestButton = voterOneUi.getByRole("button", { name: /Request voting shares/i });
-    const voterTwoRequestButton = voterTwoUi.getByRole("button", { name: /Request voting shares/i });
-    expect((voterOneRequestButton as HTMLButtonElement).disabled).toBe(false);
-    expect((voterTwoRequestButton as HTMLButtonElement).disabled).toBe(false);
-
-    await user.click(voterOneRequestButton);
-    await user.click(voterTwoRequestButton);
 
     await act(async () => {
       await new Promise((resolve) => window.setTimeout(resolve, 5200));
@@ -448,24 +437,26 @@ describe("Simple round flow", () => {
     });
 
     await waitFor(() => {
-      expect(voterOneUi.getAllByText(/Shard from coordinator/i)).toHaveLength(2);
-      expect(voterTwoUi.getAllByText(/Shard from coordinator/i)).toHaveLength(2);
-      expect(voterOneUi.getByText(/Shards ready: 2 of 2/i)).toBeTruthy();
-      expect(voterTwoUi.getByText(/Shards ready: 2 of 2/i)).toBeTruthy();
+      expect(voterOneUi.getByText(/Tickets ready: 2 of 2/i)).toBeTruthy();
+      expect(voterTwoUi.getByText(/Tickets ready: 2 of 2/i)).toBeTruthy();
+      expect(voterOneUi.getByText("round-1")).toBeTruthy();
+      expect(voterTwoUi.getByText("round-1")).toBeTruthy();
+      expect(voterOneUi.getAllByText("2").length).toBeGreaterThan(1);
+      expect(voterTwoUi.getAllByText("2").length).toBeGreaterThan(1);
     });
 
     await user.click(voterOneUi.getByRole("button", { name: /^Yes$/i }));
     await user.click(voterTwoUi.getByRole("button", { name: /^No$/i }));
-    await user.click(voterOneUi.getByRole("button", { name: /Submit vote/i }));
-    await user.click(voterTwoUi.getByRole("button", { name: /Submit vote/i }));
+    await user.click(voterOneUi.getByRole("button", { name: /^Submit$/i }));
+    await user.click(voterTwoUi.getByRole("button", { name: /^Submit$/i }));
 
     await act(async () => {
-      await new Promise((resolve) => window.setTimeout(resolve, 5200));
+      await new Promise((resolve) => window.setTimeout(resolve, 6200));
     });
 
     await waitFor(() => {
-      expect(coordinatorOneUi.getByText(/Yes: 1 \| No: 1/i)).toBeTruthy();
-      expect(coordinatorTwoUi.getByText(/Yes: 1 \| No: 1/i)).toBeTruthy();
-    });
+      expect(coordinatorOneUi.getByText((_, element) => element?.textContent === "Yes: 1 | No: 1")).toBeTruthy();
+      expect(coordinatorTwoUi.getByText((_, element) => element?.textContent === "Yes: 1 | No: 1")).toBeTruthy();
+    }, { timeout: 8000 });
   }, 40000);
 });
