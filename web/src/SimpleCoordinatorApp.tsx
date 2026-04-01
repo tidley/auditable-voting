@@ -803,7 +803,9 @@ export default function SimpleCoordinatorApp() {
         <SimpleCollapsibleSection title="Submitted votes">
           {selectedPublishedVote ? (
             <>
-              <p className="simple-voter-question">
+              <p className="simple-voter-question">{selectedPublishedVote.prompt}</p>
+              <p className="simple-voter-note">Vote {shortVotingId(selectedPublishedVote.votingId)}</p>
+              <p className="simple-submitted-score">
                 Yes: {validYesCount} | No: {validNoCount}
               </p>
               {validatedVotes.length > 0 ? (
@@ -816,7 +818,7 @@ export default function SimpleCoordinatorApp() {
                             Vote {vote.choice} from {vote.voterNpub.slice(0, 16)}... {valid ? "(Valid)" : `(Invalid: ${reason})`}
                           </p>
                         </div>
-                        {vote.tokenId && <TokenFingerprint tokenId={vote.tokenId} />}
+                        {vote.tokenId && <TokenFingerprint tokenId={vote.tokenId} xlarge />}
                       </div>
                     </li>
                   ))}
