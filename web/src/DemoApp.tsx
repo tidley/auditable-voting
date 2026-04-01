@@ -35,7 +35,7 @@ import { createDemoIdentity, type DemoIdentity } from "./demoIdentity";
 import { fetchCoordinatorInfo } from "./coordinatorApi";
 import { computeProofHash, publishBallotEvent } from "./ballot";
 import { submitProofsToAllCoordinators, type MultiCoordinatorDmResult } from "./proofSubmission";
-import { queueNostrPublish } from "./nostrPublishQueue";
+import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import TokenFingerprint from "./TokenFingerprint";
 import PageNav from "./PageNav";
 
@@ -834,9 +834,10 @@ export default function DemoApp() {
       const publicRelays = (coordinatorInfo?.relays ?? []).filter((relay) => relay.startsWith("wss://"));
       const pool = new SimplePool();
       try {
-        const results = await queueNostrPublish(() =>
-          Promise.allSettled(pool.publish(publicRelays, event, { maxWait: 4000 })),
-        );
+        const results = await queueNostrPublish(() => publishToRelaysStaggered(
+          (relay) => pool.publish([relay], event, { maxWait: 4000 })[0],
+          publicRelays,
+        ));
         const successes = results.filter((result) => result.status === "fulfilled").length;
         const failures = results.length - successes;
         setConfirmationResult({ eventId: event.id, successes, failures });

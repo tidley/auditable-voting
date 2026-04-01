@@ -1,6 +1,6 @@
 import { finalizeEvent, getPublicKey, nip19, SimplePool } from "nostr-tools";
 import { DEFAULT_VOTE_RELAYS } from "./ballot";
-import { queueNostrPublish } from "./nostrPublishQueue";
+import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import {
   deriveTokenIdFromSimpleShardCertificates,
   type SimpleShardCertificate,
@@ -147,7 +147,10 @@ export async function publishSimpleLiveVote(input: {
 
   const pool = new SimplePool();
   try {
-    const results = await queueNostrPublish(() => Promise.allSettled(pool.publish(relays, event, { maxWait: 4000 })));
+    const results = await queueNostrPublish(() => publishToRelaysStaggered(
+      (relay) => pool.publish([relay], event, { maxWait: 4000 })[0],
+      relays,
+    ));
     const relayResults = results.map((result, index) => (
       result.status === "fulfilled"
         ? { relay: relays[index], success: true }
@@ -362,7 +365,10 @@ export async function publishSimpleSubmittedVote(input: {
 
   const pool = new SimplePool();
   try {
-    const results = await queueNostrPublish(() => Promise.allSettled(pool.publish(relays, event, { maxWait: 4000 })));
+    const results = await queueNostrPublish(() => publishToRelaysStaggered(
+      (relay) => pool.publish([relay], event, { maxWait: 4000 })[0],
+      relays,
+    ));
     const relayResults = results.map((result, index) => (
       result.status === "fulfilled"
         ? { relay: relays[index], success: true }

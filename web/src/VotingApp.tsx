@@ -16,7 +16,7 @@ import {
 import MerkleTreeViz from "./MerkleTreeViz";
 import { DEMO_MODE } from "./config";
 import PageNav from "./PageNav";
-import { queueNostrPublish } from "./nostrPublishQueue";
+import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import { deriveTokenIdFromProofSecrets, tokenIdLabel } from "./tokenIdentity";
 import TokenFingerprint from "./TokenFingerprint";
 
@@ -381,9 +381,10 @@ export default function VotingApp() {
 
       const pool = new SimplePool();
       try {
-        const results = await queueNostrPublish(() =>
-          Promise.allSettled(pool.publish(relays, event, { maxWait: 4000 })),
-        );
+        const results = await queueNostrPublish(() => publishToRelaysStaggered(
+          (relay) => pool.publish([relay], event, { maxWait: 4000 })[0],
+          relays,
+        ));
         const successes = results.filter(r => r.status === "fulfilled").length;
         const failures = results.length - successes;
         setConfirmationResult({ eventId: event.id, successes, failures });

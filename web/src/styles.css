@@ -464,7 +464,55 @@ code {
 
 .simple-voter-section-title {
   font-size: 1.5rem;
-  margin-bottom: 16px;
+  margin: 0;
+}
+
+.simple-collapsible-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.simple-collapsible-title {
+  flex: 1 1 auto;
+}
+
+.simple-collapsible-toggle {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border: 1px solid #475569;
+  background: #0f172a;
+  color: #cbd5e1;
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 180ms ease, border-color 180ms ease, color 180ms ease;
+}
+
+.simple-collapsible-toggle:hover {
+  background: #1e293b;
+  border-color: #64748b;
+}
+
+.simple-collapsible-body {
+  display: grid;
+  grid-template-rows: 1fr;
+  margin-top: 16px;
+  opacity: 1;
+  transition: grid-template-rows 220ms ease, margin-top 220ms ease, opacity 220ms ease;
+}
+
+.simple-collapsible-body-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.simple-collapsible-section.is-collapsed .simple-collapsible-body {
+  grid-template-rows: 0fr;
+  margin-top: 0;
+  opacity: 0.4;
 }
 
 .simple-voter-list {

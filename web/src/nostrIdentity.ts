@@ -2,7 +2,7 @@ import { finalizeEvent, getPublicKey, nip19, SimplePool } from "nostr-tools";
 import type { VerifiedEvent } from "nostr-tools";
 import type { RelayPublishResult } from "./cashuMintApi";
 import type { NostrSigner } from "./signer";
-import { queueNostrPublish } from "./nostrPublishQueue";
+import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 
 export const CASHU_ISSUANCE_CLAIM_KIND = 38010;
 
@@ -123,7 +123,10 @@ export async function publishCashuClaim(relays: string[], event: ReturnType<type
   const pool = new SimplePool();
 
   try {
-    const results = await queueNostrPublish(() => Promise.allSettled(pool.publish(relays, event, { maxWait: 4000 })));
+    const results = await queueNostrPublish(() => publishToRelaysStaggered(
+      (relay) => pool.publish([relay], event, { maxWait: 4000 })[0],
+      relays,
+    ));
     const relayResults: RelayPublishResult[] = results.map((result, index) => (
       result.status === "fulfilled"
         ? { relay: relays[index], success: true }

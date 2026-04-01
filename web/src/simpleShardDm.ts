@@ -1,6 +1,6 @@
 import { getPublicKey, nip17, nip19, SimplePool } from "nostr-tools";
 import { DEFAULT_DM_RELAYS, type DmPublishResult } from "./proofSubmission";
-import { queueNostrPublish } from "./nostrPublishQueue";
+import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import {
   createSimpleShardCertificate,
   parseSimpleShardCertificate,
@@ -295,9 +295,10 @@ export async function sendSimpleCoordinatorFollow(input: {
 
   const pool = new SimplePool();
   try {
-    const results = await queueNostrPublish(
-      () => Promise.allSettled(pool.publish(dmRelays, event, { maxWait: 4000 })),
-    );
+    const results = await queueNostrPublish(() => publishToRelaysStaggered(
+      (relay) => pool.publish([relay], event, { maxWait: 4000 })[0],
+      dmRelays,
+    ));
     const relayResults = results.map((result, index) => (
       result.status === "fulfilled"
         ? { relay: dmRelays[index], success: true }
@@ -351,9 +352,10 @@ export async function sendSimpleSubCoordinatorJoin(input: {
 
   const pool = new SimplePool();
   try {
-    const results = await queueNostrPublish(
-      () => Promise.allSettled(pool.publish(dmRelays, event, { maxWait: 4000 })),
-    );
+    const results = await queueNostrPublish(() => publishToRelaysStaggered(
+      (relay) => pool.publish([relay], event, { maxWait: 4000 })[0],
+      dmRelays,
+    ));
     const relayResults = results.map((result, index) => (
       result.status === "fulfilled"
         ? { relay: dmRelays[index], success: true }
@@ -410,9 +412,10 @@ export async function sendSimpleShardRequest(input: {
 
   const pool = new SimplePool();
   try {
-    const results = await queueNostrPublish(
-      () => Promise.allSettled(pool.publish(dmRelays, event, { maxWait: 4000 })),
-    );
+    const results = await queueNostrPublish(() => publishToRelaysStaggered(
+      (relay) => pool.publish([relay], event, { maxWait: 4000 })[0],
+      dmRelays,
+    ));
     const relayResults = results.map((result, index) => (
       result.status === "fulfilled"
         ? { relay: dmRelays[index], success: true }
@@ -524,6 +527,25 @@ export function subscribeSimpleCoordinatorFollowers(input: {
   const followers = new Map<string, SimpleCoordinatorFollower>();
   let closed = false;
 
+  void fetchSimpleCoordinatorFollowers({
+    coordinatorNsec: input.coordinatorNsec,
+    relays: input.relays,
+  }).then((initialFollowers) => {
+    if (closed) {
+      return;
+    }
+
+    for (const follower of initialFollowers) {
+      followers.set(follower.voterNpub, follower);
+    }
+
+    input.onFollowers(sortByCreatedAtDescending([...followers.values()]));
+  }).catch((error) => {
+    if (!closed && error instanceof Error) {
+      input.onError?.(error);
+    }
+  });
+
   const subscription = pool.subscribeMany(dmRelays, {
     kinds: [1059],
     "#p": [coordinatorHex],
@@ -558,6 +580,42 @@ export function subscribeSimpleCoordinatorFollowers(input: {
   };
 }
 
+export async function fetchSimpleSubCoordinatorApplications(input: {
+  leadCoordinatorNsec: string;
+  relays?: string[];
+}): Promise<SimpleSubCoordinatorApplication[]> {
+  const decoded = nip19.decode(input.leadCoordinatorNsec.trim());
+  if (decoded.type !== "nsec") {
+    throw new Error("Lead coordinator key must be an nsec.");
+  }
+
+  const secretKey = decoded.data as Uint8Array;
+  const leadCoordinatorHex = getPublicKey(secretKey);
+  const dmRelays = buildDmRelays(input.relays);
+  const pool = new SimplePool();
+
+  try {
+    const wrappedEvents = await pool.querySync(dmRelays, {
+      kinds: [1059],
+      "#p": [leadCoordinatorHex],
+      limit: 100,
+    });
+
+    const applications = new Map<string, SimpleSubCoordinatorApplication>();
+
+    for (const wrappedEvent of wrappedEvents) {
+      const application = parseSimpleSubCoordinatorApplication(wrappedEvent, secretKey);
+      if (application) {
+        applications.set(application.coordinatorNpub, application);
+      }
+    }
+
+    return sortByCreatedAtDescending([...applications.values()]);
+  } finally {
+    pool.close(dmRelays);
+  }
+}
+
 export function subscribeSimpleSubCoordinatorApplications(input: {
   leadCoordinatorNsec: string;
   relays?: string[];
@@ -575,6 +633,25 @@ export function subscribeSimpleSubCoordinatorApplications(input: {
   const pool = new SimplePool();
   const applications = new Map<string, SimpleSubCoordinatorApplication>();
   let closed = false;
+
+  void fetchSimpleSubCoordinatorApplications({
+    leadCoordinatorNsec: input.leadCoordinatorNsec,
+    relays: input.relays,
+  }).then((initialApplications) => {
+    if (closed) {
+      return;
+    }
+
+    for (const application of initialApplications) {
+      applications.set(application.coordinatorNpub, application);
+    }
+
+    input.onApplications(sortByCreatedAtDescending([...applications.values()]));
+  }).catch((error) => {
+    if (!closed && error instanceof Error) {
+      input.onError?.(error);
+    }
+  });
 
   const subscription = pool.subscribeMany(dmRelays, {
     kinds: [1059],
@@ -661,9 +738,10 @@ export async function sendSimpleShardResponse(input: {
 
   const pool = new SimplePool();
   try {
-    const results = await queueNostrPublish(
-      () => Promise.allSettled(pool.publish(dmRelays, event, { maxWait: 4000 })),
-    );
+    const results = await queueNostrPublish(() => publishToRelaysStaggered(
+      (relay) => pool.publish([relay], event, { maxWait: 4000 })[0],
+      dmRelays,
+    ));
     const relayResults = results.map((result, index) => (
       result.status === "fulfilled"
         ? { relay: dmRelays[index], success: true }
@@ -740,9 +818,10 @@ export async function sendSimpleRoundTicket(input: {
 
   const pool = new SimplePool();
   try {
-    const results = await queueNostrPublish(
-      () => Promise.allSettled(pool.publish(dmRelays, event, { maxWait: 4000 })),
-    );
+    const results = await queueNostrPublish(() => publishToRelaysStaggered(
+      (relay) => pool.publish([relay], event, { maxWait: 4000 })[0],
+      dmRelays,
+    ));
     const relayResults = results.map((result, index) => (
       result.status === "fulfilled"
         ? { relay: dmRelays[index], success: true }
@@ -799,9 +878,10 @@ export async function sendSimpleShareAssignment(input: {
 
   const pool = new SimplePool();
   try {
-    const results = await queueNostrPublish(
-      () => Promise.allSettled(pool.publish(dmRelays, event, { maxWait: 4000 })),
-    );
+    const results = await queueNostrPublish(() => publishToRelaysStaggered(
+      (relay) => pool.publish([relay], event, { maxWait: 4000 })[0],
+      dmRelays,
+    ));
     const relayResults = results.map((result, index) => (
       result.status === "fulfilled"
         ? { relay: dmRelays[index], success: true }
@@ -877,6 +957,25 @@ export function subscribeSimpleShardResponses(input: {
   const responses = new Map<string, SimpleShardResponse>();
   let closed = false;
 
+  void fetchSimpleShardResponses({
+    voterNsec: input.voterNsec,
+    relays: input.relays,
+  }).then((initialResponses) => {
+    if (closed) {
+      return;
+    }
+
+    for (const response of initialResponses) {
+      responses.set(response.id, response);
+    }
+
+    input.onResponses(sortByCreatedAtDescending([...responses.values()]));
+  }).catch((error) => {
+    if (!closed && error instanceof Error) {
+      input.onError?.(error);
+    }
+  });
+
   const subscription = pool.subscribeMany(dmRelays, {
     kinds: [1059],
     "#p": [voterHex],
@@ -911,6 +1010,42 @@ export function subscribeSimpleShardResponses(input: {
   };
 }
 
+export async function fetchSimpleCoordinatorShareAssignments(input: {
+  coordinatorNsec: string;
+  relays?: string[];
+}): Promise<SimpleShareAssignment[]> {
+  const decoded = nip19.decode(input.coordinatorNsec.trim());
+  if (decoded.type !== "nsec") {
+    throw new Error("Coordinator key must be an nsec.");
+  }
+
+  const secretKey = decoded.data as Uint8Array;
+  const coordinatorHex = getPublicKey(secretKey);
+  const dmRelays = buildDmRelays(input.relays);
+  const pool = new SimplePool();
+
+  try {
+    const wrappedEvents = await pool.querySync(dmRelays, {
+      kinds: [1059],
+      "#p": [coordinatorHex],
+      limit: 100,
+    });
+
+    const assignments = new Map<string, SimpleShareAssignment>();
+
+    for (const wrappedEvent of wrappedEvents) {
+      const assignment = parseSimpleShareAssignment(wrappedEvent, secretKey);
+      if (assignment) {
+        assignments.set(`${assignment.leadCoordinatorNpub}:${assignment.coordinatorNpub}`, assignment);
+      }
+    }
+
+    return sortByCreatedAtDescending([...assignments.values()]);
+  } finally {
+    pool.close(dmRelays);
+  }
+}
+
 export function subscribeSimpleCoordinatorShareAssignments(input: {
   coordinatorNsec: string;
   relays?: string[];
@@ -928,6 +1063,25 @@ export function subscribeSimpleCoordinatorShareAssignments(input: {
   const pool = new SimplePool();
   const assignments = new Map<string, SimpleShareAssignment>();
   let closed = false;
+
+  void fetchSimpleCoordinatorShareAssignments({
+    coordinatorNsec: input.coordinatorNsec,
+    relays: input.relays,
+  }).then((initialAssignments) => {
+    if (closed) {
+      return;
+    }
+
+    for (const assignment of initialAssignments) {
+      assignments.set(`${assignment.leadCoordinatorNpub}:${assignment.coordinatorNpub}`, assignment);
+    }
+
+    input.onAssignments(sortByCreatedAtDescending([...assignments.values()]));
+  }).catch((error) => {
+    if (!closed && error instanceof Error) {
+      input.onError?.(error);
+    }
+  });
 
   const subscription = pool.subscribeMany(dmRelays, {
     kinds: [1059],

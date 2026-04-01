@@ -41,6 +41,10 @@ vi.mock("./simpleShardCertificate", () => ({
 
 vi.mock("./nostrPublishQueue", () => ({
   queueNostrPublish: (task: () => Promise<unknown>) => task(),
+  publishToRelaysStaggered: async (
+    publishSingleRelay: (relay: string) => Promise<unknown>,
+    relays: string[],
+  ) => Promise.allSettled(relays.map((relay) => publishSingleRelay(relay))),
 }));
 
 describe("simpleShardDm", () => {
@@ -55,6 +59,7 @@ describe("simpleShardDm", () => {
     getPublicKey.mockReturnValue("cd".repeat(32));
     wrapEvent.mockReturnValue({ id: "evt-1", pubkey: "pk", content: "cipher" });
     publish.mockImplementation((relays: string[]) => relays.map(() => Promise.resolve(undefined)));
+    querySync.mockResolvedValue([]);
     subscribeMany.mockReturnValue({ close: vi.fn(async () => undefined) });
   });
 
