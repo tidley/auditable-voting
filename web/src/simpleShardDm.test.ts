@@ -38,6 +38,10 @@ vi.mock("./simpleShardCertificate", () => ({
   })),
 }));
 
+vi.mock("./nostrPublishQueue", () => ({
+  queueNostrPublish: (task: () => Promise<unknown>) => task(),
+}));
+
 describe("simpleShardDm", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -114,6 +118,58 @@ describe("simpleShardDm", () => {
         thresholdLabel: "3 of 5",
         createdAt: "2026-03-31T00:00:00.000Z",
         shardCertificate: { id: "cert-1", kind: 38993, pubkey: "ab".repeat(32), created_at: 10, tags: [], content: "{}", sig: "sig" },
+      },
+    ]);
+  });
+
+  it("sends follow messages to coordinators", async () => {
+    const mod = await import("./simpleShardDm");
+
+    const result = await mod.sendSimpleCoordinatorFollow({
+      voterSecretKey: new Uint8Array([1, 2, 3]),
+      coordinatorNpub: "npub1coord",
+      voterNpub: "npub1voter",
+      voterId: "abc1234",
+      votingId: "vote-1",
+    });
+
+    expect(wrapEvent).toHaveBeenCalled();
+    expect(result.successes).toBeGreaterThan(0);
+  });
+
+  it("fetches coordinator followers from DMs", async () => {
+    const mod = await import("./simpleShardDm");
+
+    querySync.mockResolvedValue([{ created_at: 10 }, { created_at: 9 }]);
+    unwrapEvent
+      .mockReturnValueOnce({
+        content: JSON.stringify({
+          action: "simple_coordinator_follow",
+          follow_id: "follow-1",
+          voter_npub: "npub1voter",
+          voter_id: "abc1234",
+          voting_id: "vote-1",
+          created_at: "2026-03-31T00:00:00.000Z",
+        }),
+      })
+      .mockReturnValueOnce({
+        content: JSON.stringify({
+          action: "simple_shard_request",
+          request_id: "req-x",
+        }),
+      });
+
+    const followers = await mod.fetchSimpleCoordinatorFollowers({
+      coordinatorNsec: "nsec1coord",
+    });
+
+    expect(followers).toEqual([
+      {
+        id: "follow-1",
+        voterNpub: "npub1voter",
+        voterId: "abc1234",
+        votingId: "vote-1",
+        createdAt: "2026-03-31T00:00:00.000Z",
       },
     ]);
   });

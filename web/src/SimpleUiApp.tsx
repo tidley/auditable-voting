@@ -10,6 +10,7 @@ import {
   parseSimpleShardCertificate,
 } from "./simpleShardCertificate";
 import {
+  sendSimpleCoordinatorFollow,
   fetchSimpleShardResponses,
   sendSimpleShardRequest,
   type SimpleShardResponse,
@@ -34,6 +35,17 @@ const SIMPLE_VOTER_STORAGE_KEY = "auditable-voting.simple-voter-keypair";
 
 function normalizeCoordinatorNpubs(values: string[]) {
   return Array.from(new Set(values.map((value) => value.trim()).filter((value) => value.length > 0)));
+}
+
+function getLatestSessionsByCoordinator(sessions: SimpleLiveVoteSession[]) {
+  const latestByCoordinator = new Map<string, SimpleLiveVoteSession>();
+  for (const session of sessions) {
+    const current = latestByCoordinator.get(session.coordinatorNpub);
+    if (!current || current.createdAt.localeCompare(session.createdAt) < 0) {
+      latestByCoordinator.set(session.coordinatorNpub, session);
+    }
+  }
+  return [...latestByCoordinator.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
 function loadStoredSimpleVoterKeypair(): SimpleVoterKeypair | null {
@@ -71,6 +83,8 @@ export default function SimpleUiApp() {
   const [manualCoordinators, setManualCoordinators] = useState<string[]>([""]);
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [scannerOpen, setScannerOpen] = useState(false);
+  const [followStatus, setFollowStatus] = useState<string | null>(null);
+  const [followedCoordinatorNpubs, setFollowedCoordinatorNpubs] = useState<string[]>([]);
   const [participatingCoordinators, setParticipatingCoordinators] = useState<string[]>([]);
   const [requestStatus, setRequestStatus] = useState<string | null>(null);
   const [receivedShards, setReceivedShards] = useState<SimpleShardResponse[]>([]);
@@ -145,20 +159,22 @@ export default function SimpleUiApp() {
     async function refreshLiveVote() {
       try {
         const sessions = await fetchSimpleLiveVotes();
+        const latestSessions = getLatestSessionsByCoordinator(sessions);
         const packageCoordinators = normalizeCoordinatorNpubs([
           ...(manualCoordinators ?? []),
           ...(importedVotingPackage?.coordinators ?? []),
           ...(importedVotingPackage?.coordinatorNpub ? [importedVotingPackage.coordinatorNpub] : []),
         ]);
         const coordinatorScopedSessions = packageCoordinators.length > 0
-          ? sessions.filter((session) => packageCoordinators.includes(session.coordinatorNpub))
+          ? latestSessions.filter((session) => packageCoordinators.includes(session.coordinatorNpub))
           : [];
-        const inferredVotingIds = Array.from(new Set(coordinatorScopedSessions.map((session) => session.votingId)));
+        const mostRecentScopedSession = coordinatorScopedSessions[0] ?? null;
         const candidateVotingId = selectedVotingId
           || importedVotingPackage?.votingId
-          || (inferredVotingIds.length === 1 ? inferredVotingIds[0] : "");
+          || mostRecentScopedSession?.votingId
+          || "";
         const matchingSessions = candidateVotingId
-          ? sessions.filter((session) => (
+          ? latestSessions.filter((session) => (
             session.votingId === candidateVotingId
             && (packageCoordinators.length === 0 || packageCoordinators.includes(session.coordinatorNpub))
           ))
@@ -317,6 +333,49 @@ export default function SimpleUiApp() {
     });
   }
 
+  async function followCoordinators() {
+    const voterNpub = voterKeypair?.npub ?? "";
+    const voterNsec = voterKeypair?.nsec ?? "";
+    const voterSecretKey = decodeNsec(voterNsec);
+    const targets = normalizeCoordinatorNpubs([
+      ...manualCoordinators,
+      ...participatingCoordinators,
+      ...(coordinatorNpub ? [coordinatorNpub] : []),
+    ]);
+
+    if (!voterNpub || voterId === "pending" || !voterSecretKey || targets.length === 0) {
+      return;
+    }
+
+    setFollowStatus("Following coordinators...");
+
+    try {
+      const results = await Promise.all(targets.map(async (targetCoordinatorNpub) => {
+        const result = await sendSimpleCoordinatorFollow({
+          voterSecretKey,
+          coordinatorNpub: targetCoordinatorNpub,
+          voterNpub,
+          voterId,
+          votingId: (liveVoteSession?.votingId ?? selectedVotingId) || undefined,
+        });
+        return { targetCoordinatorNpub, success: result.successes > 0 };
+      }));
+
+      const successfulTargets = results
+        .filter((result) => result.success)
+        .map((result) => result.targetCoordinatorNpub);
+
+      setFollowedCoordinatorNpubs((current) => Array.from(new Set([...current, ...successfulTargets])));
+      setFollowStatus(
+        successfulTargets.length > 0
+          ? `Following ${successfulTargets.length} coordinator${successfulTargets.length === 1 ? "" : "s"}.`
+          : "Coordinator follow failed.",
+      );
+    } catch {
+      setFollowStatus("Coordinator follow failed.");
+    }
+  }
+
   async function requestVotingShard() {
     const voterNpub = voterKeypair?.npub ?? "";
     const voterNsec = voterKeypair?.nsec ?? "";
@@ -393,6 +452,7 @@ export default function SimpleUiApp() {
     ...participatingCoordinators,
     ...(coordinatorNpub ? [coordinatorNpub] : []),
   ])).filter((value) => value.trim().length > 0);
+  const unfollowedRequestTargets = requestTargets.filter((target) => !followedCoordinatorNpubs.includes(target));
   const requiredShardCount = Math.max(1, liveVoteSession?.thresholdT ?? 1);
 
   useEffect(() => {
@@ -507,6 +567,24 @@ export default function SimpleUiApp() {
           {importStatus && <p className="simple-voter-note">{importStatus}</p>}
         </section>
 
+        <section className="simple-voter-section" aria-labelledby="follow-coordinators-title">
+          <h2 id="follow-coordinators-title" className="simple-voter-section-title">Follow coordinators</h2>
+          <div className="simple-voter-action-row">
+            <button
+              type="button"
+              className="simple-voter-primary"
+              onClick={() => void followCoordinators()}
+              disabled={!voterKeypair?.npub || requestTargets.length === 0}
+            >
+              Follow coordinators
+            </button>
+          </div>
+          {followStatus && <p className="simple-voter-note">{followStatus}</p>}
+          {requestTargets.length === 0 && (
+            <p className="simple-voter-empty">Add at least one coordinator npub first.</p>
+          )}
+        </section>
+
         <section className="simple-voter-section" aria-labelledby="request-shard-title">
           <h2 id="request-shard-title" className="simple-voter-section-title">Request voting shares</h2>
           <div className="simple-voter-action-row">
@@ -514,7 +592,7 @@ export default function SimpleUiApp() {
               type="button"
               className="simple-voter-primary"
               onClick={() => void requestVotingShard()}
-              disabled={!voterKeypair?.npub || !(liveVoteSession?.votingId ?? selectedVotingId) || requestTargets.length === 0}
+              disabled={!voterKeypair?.npub || !(liveVoteSession?.votingId ?? selectedVotingId) || requestTargets.length === 0 || unfollowedRequestTargets.length > 0}
             >
               Request voting shares
             </button>
@@ -525,6 +603,9 @@ export default function SimpleUiApp() {
           )}
           {selectedVotingId && requestTargets.length === 0 && (
             <p className="simple-voter-empty">Add at least one coordinator npub.</p>
+          )}
+          {requestTargets.length > 0 && unfollowedRequestTargets.length > 0 && (
+            <p className="simple-voter-empty">Follow coordinators before requesting shares.</p>
           )}
         </section>
 
