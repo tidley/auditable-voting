@@ -14,12 +14,12 @@ import {
   type SimpleShardResponse,
 } from "./simpleShardDm";
 import {
-  fetchSimpleLiveVotes,
   publishSimpleSubmittedVote,
   type SimpleLiveVoteSession,
 } from "./simpleVotingSession";
 
 type LiveVoteChoice = "Yes" | "No" | null;
+
 type SimpleVoterKeypair = {
   nsec: string;
   npub: string;
@@ -36,15 +36,12 @@ function normalizeCoordinatorNpubs(values: string[]) {
   return Array.from(new Set(values.map((value) => value.trim()).filter((value) => value.length > 0)));
 }
 
-function getLatestSessionsByCoordinator(sessions: SimpleLiveVoteSession[]) {
-  const latestByCoordinator = new Map<string, SimpleLiveVoteSession>();
-  for (const session of sessions) {
-    const current = latestByCoordinator.get(session.coordinatorNpub);
-    if (!current || current.createdAt.localeCompare(session.createdAt) < 0) {
-      latestByCoordinator.set(session.coordinatorNpub, session);
-    }
+function shortenNpub(value: string) {
+  if (value.length <= 18) {
+    return value;
   }
-  return [...latestByCoordinator.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+
+  return `${value.slice(0, 10)}...${value.slice(-8)}`;
 }
 
 function loadStoredSimpleVoterKeypair(): SimpleVoterKeypair | null {
@@ -87,13 +84,11 @@ function shortVotingId(votingId: string) {
 export default function SimpleUiApp() {
   const [voterKeypair, setVoterKeypair] = useState<SimpleVoterKeypair | null>(() => loadStoredSimpleVoterKeypair());
   const [voterId, setVoterId] = useState<string>("pending");
-  const [manualCoordinators, setManualCoordinators] = useState<string[]>([""]);
+  const [manualCoordinators, setManualCoordinators] = useState<string[]>([]);
+  const [coordinatorDraft, setCoordinatorDraft] = useState("");
   const [liveVoteChoice, setLiveVoteChoice] = useState<LiveVoteChoice>(null);
-  const [selectedVotingId, setSelectedVotingId] = useState<string>("");
   const [requestStatus, setRequestStatus] = useState<string | null>(null);
   const [receivedShards, setReceivedShards] = useState<SimpleShardResponse[]>([]);
-  const [liveVoteSession, setLiveVoteSession] = useState<SimpleLiveVoteSession | null>(null);
-  const [participatingCoordinators, setParticipatingCoordinators] = useState<string[]>([]);
   const [submitStatus, setSubmitStatus] = useState<string | null>(null);
   const [ballotTokenId, setBallotTokenId] = useState<string | null>(null);
 
@@ -101,16 +96,14 @@ export default function SimpleUiApp() {
     () => normalizeCoordinatorNpubs(manualCoordinators),
     [manualCoordinators],
   );
-  const configuredCoordinatorTargetsKey = configuredCoordinatorTargets.join("|");
-  const responseBackedLiveVoteSession = useMemo<SimpleLiveVoteSession | null>(() => {
+
+  const effectiveLiveVoteSession = useMemo<SimpleLiveVoteSession | null>(() => {
     const candidateRows = receivedShards.flatMap((response) => {
       const parsed = parseSimpleShardCertificate(response.shardCertificate);
-      if (!parsed || !configuredCoordinatorTargets.includes(response.coordinatorNpub)) {
+      if (!parsed || !configuredCoordinatorTargets.includes(response.coordinatorNpub) || !response.votingPrompt) {
         return [];
       }
-      if (!response.votingPrompt) {
-        return [];
-      }
+
       return [{
         votingId: parsed.votingId,
         prompt: response.votingPrompt,
@@ -125,7 +118,6 @@ export default function SimpleUiApp() {
     candidateRows.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
     return candidateRows[0] ?? null;
   }, [configuredCoordinatorTargets, receivedShards]);
-  const effectiveLiveVoteSession = liveVoteSession ?? responseBackedLiveVoteSession;
 
   useEffect(() => {
     if (voterKeypair) {
@@ -144,13 +136,9 @@ export default function SimpleUiApp() {
 
     const params = new URLSearchParams(window.location.search);
     const nextCoordinatorNpub = params.get("coordinator")?.trim() ?? "";
-    const nextVotingId = params.get("voting")?.trim() ?? "";
 
     if (nextCoordinatorNpub) {
       setManualCoordinators([nextCoordinatorNpub]);
-    }
-    if (nextVotingId) {
-      setSelectedVotingId(nextVotingId);
     }
   }, []);
 
@@ -189,63 +177,6 @@ export default function SimpleUiApp() {
   }, [voterKeypair?.nsec]);
 
   useEffect(() => {
-    if (configuredCoordinatorTargets.length === 0 && receivedShards.length === 0 && !selectedVotingId) {
-      setLiveVoteSession(null);
-      setParticipatingCoordinators([]);
-      return;
-    }
-
-    let cancelled = false;
-
-    async function refreshLiveVote() {
-      try {
-        const sessions = await fetchSimpleLiveVotes();
-        const latestSessions = getLatestSessionsByCoordinator(sessions);
-        const coordinatorScopedSessions = latestSessions.filter((session) => (
-          configuredCoordinatorTargets.includes(session.coordinatorNpub)
-        ));
-        const currentRoundSessions = selectedVotingId
-          ? coordinatorScopedSessions.filter((session) => session.votingId === selectedVotingId)
-          : [];
-        const nextSession = currentRoundSessions[0] ?? coordinatorScopedSessions[0] ?? null;
-        const nextCoordinators = nextSession
-          ? coordinatorScopedSessions
-            .filter((session) => session.votingId === nextSession.votingId)
-            .map((session) => session.coordinatorNpub)
-          : configuredCoordinatorTargets;
-
-        if (!cancelled) {
-          setLiveVoteSession((current) => {
-            if (nextSession) {
-              return nextSession;
-            }
-            if (!current) {
-              return null;
-            }
-            return configuredCoordinatorTargets.includes(current.coordinatorNpub) ? current : null;
-          });
-          setParticipatingCoordinators(Array.from(new Set(nextCoordinators)));
-          if (nextSession?.votingId) {
-            setSelectedVotingId(nextSession.votingId);
-          }
-        }
-      } catch {
-        // Keep the last known live vote on transient relay failures.
-      }
-    }
-
-    void refreshLiveVote();
-    const intervalId = window.setInterval(() => {
-      void refreshLiveVote();
-    }, 2000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-    };
-  }, [configuredCoordinatorTargetsKey, receivedShards, selectedVotingId]);
-
-  useEffect(() => {
     let cancelled = false;
 
     const npub = voterKeypair?.npub?.trim() ?? "";
@@ -267,6 +198,11 @@ export default function SimpleUiApp() {
     };
   }, [voterKeypair?.npub]);
 
+  useEffect(() => {
+    setLiveVoteChoice(null);
+    setSubmitStatus(null);
+  }, [effectiveLiveVoteSession?.votingId]);
+
   function refreshIdentity() {
     const nextKeypair = createSimpleVoterKeypair();
     storeSimpleVoterKeypair(nextKeypair);
@@ -278,21 +214,19 @@ export default function SimpleUiApp() {
     setReceivedShards([]);
   }
 
-  function updateCoordinatorInput(index: number, value: string) {
-    setManualCoordinators((current) => current.map((entry, currentIndex) => (
-      currentIndex === index ? value : entry
-    )));
-  }
-
   function addCoordinatorInput() {
-    setManualCoordinators((current) => [...current, ""]);
+    const nextCoordinator = coordinatorDraft.trim();
+    if (!nextCoordinator) {
+      return;
+    }
+
+    setManualCoordinators((current) => normalizeCoordinatorNpubs([...current, nextCoordinator]));
+    setCoordinatorDraft("");
+    setRequestStatus(null);
   }
 
   function removeCoordinatorInput(index: number) {
-    setManualCoordinators((current) => {
-      const next = current.filter((_, currentIndex) => currentIndex !== index);
-      return next.length > 0 ? next : [""];
-    });
+    setManualCoordinators((current) => current.filter((_, currentIndex) => currentIndex !== index));
   }
 
   async function notifyCoordinators() {
@@ -313,7 +247,6 @@ export default function SimpleUiApp() {
           coordinatorNpub,
           voterNpub,
           voterId,
-          votingId: liveVoteSession?.votingId || undefined,
         });
         return result.successes > 0;
       }));
@@ -334,9 +267,16 @@ export default function SimpleUiApp() {
       receivedShards.flatMap((shard) => {
         const parsed = parseSimpleShardCertificate(shard.shardCertificate);
         const activeVotingId = effectiveLiveVoteSession?.votingId ?? "";
-        if (!parsed || !activeVotingId || parsed.votingId !== activeVotingId) {
+
+        if (
+          !parsed
+          || !activeVotingId
+          || parsed.votingId !== activeVotingId
+          || !configuredCoordinatorTargets.includes(shard.coordinatorNpub)
+        ) {
           return [];
         }
+
         return [[shard.coordinatorNpub, shard] as const];
       }),
     ).values(),
@@ -367,18 +307,12 @@ export default function SimpleUiApp() {
   const voteTicketRows = useMemo<VoteTicketRow[]>(() => {
     const rows = new Map<string, VoteTicketRow>();
 
-    if (effectiveLiveVoteSession?.votingId) {
-      rows.set(effectiveLiveVoteSession.votingId, {
-        votingId: effectiveLiveVoteSession.votingId,
-        countsByCoordinator: {},
-      });
-    }
-
     for (const shard of receivedShards) {
       const parsed = parseSimpleShardCertificate(shard.shardCertificate);
-      if (!parsed) {
+      if (!parsed || !configuredCoordinatorTargets.includes(shard.coordinatorNpub)) {
         continue;
       }
+
       const current = rows.get(parsed.votingId) ?? {
         votingId: parsed.votingId,
         countsByCoordinator: {},
@@ -388,7 +322,7 @@ export default function SimpleUiApp() {
     }
 
     return [...rows.values()].sort((left, right) => right.votingId.localeCompare(left.votingId));
-  }, [effectiveLiveVoteSession?.votingId, receivedShards]);
+  }, [configuredCoordinatorTargets, receivedShards]);
 
   async function submitVote() {
     if (!effectiveLiveVoteSession || !liveVoteChoice || uniqueShardResponses.length < requiredShardCount) {
@@ -431,41 +365,59 @@ export default function SimpleUiApp() {
 
         <section className="simple-voter-section" aria-labelledby="coordinator-section-title">
           <h2 id="coordinator-section-title" className="simple-voter-section-title">Coordinators</h2>
-          <div className="simple-voter-field-stack">
-            <div className="simple-voter-field-head">
-              <label className="simple-voter-label simple-voter-label-tight">Coordinator npubs</label>
+          <div className="simple-voter-field-stack simple-voter-field-stack-tight">
+            <label className="simple-voter-label simple-voter-label-tight" htmlFor="simple-coordinator-draft">Coordinator npubs</label>
+            <div className="simple-voter-add-row">
+              <input
+                id="simple-coordinator-draft"
+                className="simple-voter-input simple-voter-input-inline"
+                value={coordinatorDraft}
+                onChange={(event) => setCoordinatorDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    addCoordinatorInput();
+                  }
+                }}
+                placeholder="Enter npub..."
+              />
               <button
                 type="button"
-                className="simple-voter-secondary"
+                className="simple-voter-add-button"
                 onClick={addCoordinatorInput}
+                aria-label="Add coordinator"
               >
-                Add coordinator
+                +
               </button>
             </div>
-            {manualCoordinators.map((value, index) => (
-              <div key={index} className="simple-voter-inline-field">
-                <input
-                  className="simple-voter-input simple-voter-input-inline"
-                  value={value}
-                  onChange={(event) => updateCoordinatorInput(index, event.target.value)}
-                  placeholder="npub1..."
-                />
-                {manualCoordinators.length > 1 && (
-                  <button
-                    type="button"
-                    className="simple-voter-secondary"
-                    onClick={() => removeCoordinatorInput(index)}
-                  >
-                    Remove
-                  </button>
-                )}
-              </div>
-            ))}
+            {configuredCoordinatorTargets.length > 0 ? (
+              <ul className="simple-coordinator-card-list">
+                {configuredCoordinatorTargets.map((value, index) => (
+                  <li key={value} className="simple-coordinator-card">
+                    <div className="simple-coordinator-card-avatar" aria-hidden="true">•</div>
+                    <div className="simple-coordinator-card-copy">
+                      <p className="simple-coordinator-card-title">Coordinator {index + 1}</p>
+                      <p className="simple-coordinator-card-meta" title={value}>{shortenNpub(value)}</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="simple-coordinator-card-remove"
+                      onClick={() => removeCoordinatorInput(index)}
+                      aria-label={`Remove coordinator ${index + 1}`}
+                    >
+                      ×
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="simple-voter-empty">No coordinators added yet.</p>
+            )}
           </div>
-          <div className="simple-voter-action-row">
+          <div className="simple-voter-action-row simple-voter-action-row-tight">
             <button
               type="button"
-              className="simple-voter-primary"
+              className="simple-voter-primary simple-voter-primary-wide"
               onClick={() => void notifyCoordinators()}
               disabled={!voterKeypair?.npub || configuredCoordinatorTargets.length === 0}
             >
@@ -473,9 +425,6 @@ export default function SimpleUiApp() {
             </button>
           </div>
           {requestStatus && <p className="simple-voter-note">{requestStatus}</p>}
-          {configuredCoordinatorTargets.length === 0 && (
-            <p className="simple-voter-empty">Add at least one coordinator npub.</p>
-          )}
           <div className="simple-voter-ticket-area">
             <h3 className="simple-voter-question">Live Vote Tickets Received</h3>
             {voteTicketRows.length > 0 && configuredCoordinatorTargets.length > 0 ? (
@@ -553,7 +502,7 @@ export default function SimpleUiApp() {
               {submitStatus && <p className="simple-voter-note">{submitStatus}</p>}
             </>
           ) : (
-            <p className="simple-voter-empty">No live vote yet.</p>
+            <p className="simple-voter-empty">No live vote ticket yet.</p>
           )}
         </section>
       </section>
