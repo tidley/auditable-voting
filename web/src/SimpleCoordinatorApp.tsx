@@ -273,6 +273,10 @@ export default function SimpleCoordinatorApp() {
   }, [publishedVotes, questionVotingId]);
 
   useEffect(() => {
+    setTicketStatuses({});
+  }, [selectedPublishedVote?.votingId]);
+
+  useEffect(() => {
     const votingId = selectedPublishedVote?.votingId ?? "";
 
     if (!votingId) {
@@ -690,6 +694,13 @@ export default function SimpleCoordinatorApp() {
             <ul className="simple-voter-list">
               {visibleFollowers.map((follower) => (
                 <li key={follower.id} className="simple-voter-list-item">
+                  {(() => {
+                    const ticketStatusKey = `${follower.voterNpub}:${selectedPublishedVote?.votingId ?? ""}`;
+                    const ticketStatus = ticketStatuses[ticketStatusKey];
+                    const ticketWasSent = ticketStatus === "Ticket sent.";
+
+                    return (
+                      <>
                   <p className="simple-voter-question">
                     Voter {follower.voterId} is following this coordinator
                     {follower.votingId ? ` for ${follower.votingId.slice(0, 12)}` : " and is waiting for the next live vote"}
@@ -702,13 +713,16 @@ export default function SimpleCoordinatorApp() {
                         onClick={() => void sendTicket(follower)}
                         disabled={!keypair?.nsec || (!isLeadCoordinator && activeShareIndex <= 0)}
                       >
-                        Send ticket
+                        {ticketWasSent ? "Resend" : "Send ticket"}
                       </button>
                     </div>
                   ) : null}
-                  {ticketStatuses[`${follower.voterNpub}:${selectedPublishedVote?.votingId ?? ""}`] && (
-                    <p className="simple-voter-note">{ticketStatuses[`${follower.voterNpub}:${selectedPublishedVote?.votingId ?? ""}`]}</p>
+                  {ticketStatus && (
+                    <p className="simple-voter-note">{ticketStatus}</p>
                   )}
+                      </>
+                    );
+                  })()}
                 </li>
               ))}
             </ul>
