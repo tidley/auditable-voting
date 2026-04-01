@@ -258,6 +258,13 @@ code {
   padding: 8px;
 }
 
+.token-fingerprint-xlarge .token-fingerprint-grid {
+  width: 192px;
+  height: 192px;
+  border-radius: 24px;
+  padding: 12px;
+}
+
 .token-fingerprint-cell {
   border-radius: 4px;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
@@ -302,6 +309,13 @@ code {
   border-radius: 18px;
 }
 
+.token-fingerprint-xlarge .token-fingerprint-qr-shell {
+  min-width: 210px;
+  min-height: 210px;
+  padding: 14px;
+  border-radius: 24px;
+}
+
 .token-fingerprint-qr {
   display: block;
   width: 64px;
@@ -318,6 +332,12 @@ code {
   width: 120px;
   height: 120px;
   border-radius: 12px;
+}
+
+.token-fingerprint-xlarge .token-fingerprint-qr {
+  width: 180px;
+  height: 180px;
+  border-radius: 18px;
 }
 
 .token-fingerprint-qr-fallback {
@@ -741,6 +761,14 @@ code {
 .simple-vote-entry-copy {
   flex: 1 1 280px;
   min-width: 0;
+}
+
+.simple-submitted-score {
+  margin: 10px 0 18px;
+  font-size: 1.85rem;
+  line-height: 1.2;
+  font-weight: 800;
+  color: #f8fafc;
 }
 
 .simple-vote-threshold-grid {
