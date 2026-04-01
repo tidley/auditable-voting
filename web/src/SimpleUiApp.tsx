@@ -22,6 +22,7 @@ import {
 } from "./simpleVotingSession";
 import {
   parseSimpleVotingPackage,
+  serializeSimpleVotingPackage,
   type SimpleVotingPackage,
 } from "./simpleVotingPackage";
 
@@ -80,6 +81,7 @@ export default function SimpleUiApp() {
   const [coordinatorNpub, setCoordinatorNpub] = useState<string>("");
   const [selectedVotingId, setSelectedVotingId] = useState<string>("");
   const [importedVotingPackage, setImportedVotingPackage] = useState<SimpleVotingPackage | null>(null);
+  const [votingDetailsText, setVotingDetailsText] = useState<string>("");
   const [manualCoordinators, setManualCoordinators] = useState<string[]>([""]);
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [scannerOpen, setScannerOpen] = useState(false);
@@ -110,8 +112,17 @@ export default function SimpleUiApp() {
       };
       setImportedVotingPackage(nextPackage);
       setManualCoordinators(nextCoordinatorNpub ? [nextCoordinatorNpub] : [""]);
+      setVotingDetailsText(serializeSimpleVotingPackage(nextPackage));
     }
   }, []);
+
+  const configuredCoordinatorTargets = normalizeCoordinatorNpubs([
+    ...manualCoordinators,
+    ...(importedVotingPackage?.coordinators ?? []),
+    ...(importedVotingPackage?.coordinatorNpub ? [importedVotingPackage.coordinatorNpub] : []),
+    ...(coordinatorNpub ? [coordinatorNpub] : []),
+  ]);
+  const configuredCoordinatorTargetsKey = configuredCoordinatorTargets.join("|");
 
   useEffect(() => {
     const voterNsec = voterKeypair?.nsec?.trim() ?? "";
@@ -160,17 +171,14 @@ export default function SimpleUiApp() {
       try {
         const sessions = await fetchSimpleLiveVotes();
         const latestSessions = getLatestSessionsByCoordinator(sessions);
-        const packageCoordinators = normalizeCoordinatorNpubs([
-          ...(manualCoordinators ?? []),
-          ...(importedVotingPackage?.coordinators ?? []),
-          ...(importedVotingPackage?.coordinatorNpub ? [importedVotingPackage.coordinatorNpub] : []),
-        ]);
+        const packageCoordinators = configuredCoordinatorTargets;
         const coordinatorScopedSessions = packageCoordinators.length > 0
           ? latestSessions.filter((session) => packageCoordinators.includes(session.coordinatorNpub))
           : [];
         const mostRecentScopedSession = coordinatorScopedSessions[0] ?? null;
         const candidateVotingId = selectedVotingId
           || importedVotingPackage?.votingId
+          || liveVoteSession?.votingId
           || mostRecentScopedSession?.votingId
           || "";
         const matchingSessions = candidateVotingId
@@ -186,19 +194,28 @@ export default function SimpleUiApp() {
         ]));
         const nextSession = matchingSessions[0] ?? null;
         if (!cancelled) {
-          setLiveVoteSession(nextSession);
-          setParticipatingCoordinators(nextCoordinators);
+          setLiveVoteSession((current) => {
+            if (nextSession) {
+              return nextSession;
+            }
+            if (!current) {
+              return null;
+            }
+            if (!packageCoordinators.includes(current.coordinatorNpub)) {
+              return null;
+            }
+            if (candidateVotingId && current.votingId !== candidateVotingId) {
+              return null;
+            }
+            return current;
+          });
+          setParticipatingCoordinators(nextCoordinators.length > 0 ? nextCoordinators : packageCoordinators);
           if (nextSession?.votingId) {
             setSelectedVotingId(nextSession.votingId);
-          } else if (!importedVotingPackage?.votingId) {
-            setSelectedVotingId("");
           }
         }
       } catch {
-        if (!cancelled) {
-          setLiveVoteSession(null);
-          setParticipatingCoordinators([]);
-        }
+        // Keep the last known live session during transient relay failures.
       }
     }
 
@@ -211,7 +228,7 @@ export default function SimpleUiApp() {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [coordinatorNpub, importedVotingPackage, manualCoordinators, receivedShards, selectedVotingId]);
+  }, [configuredCoordinatorTargetsKey, coordinatorNpub, importedVotingPackage, liveVoteSession?.votingId, receivedShards, selectedVotingId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -274,9 +291,21 @@ export default function SimpleUiApp() {
     setSelectedVotingId(nextVotingId);
     setCoordinatorNpub(nextPackage.coordinatorNpub ?? "");
     setManualCoordinators(mergedCoordinators.length > 0 ? mergedCoordinators : [""]);
+    setVotingDetailsText(serializeSimpleVotingPackage(nextPackage));
     setImportStatus(source === "scanned"
       ? `Voting details scanned. ${mergedCoordinators.length || 1} coordinator${mergedCoordinators.length === 1 ? "" : "s"} loaded.`
       : `Voting details imported. ${mergedCoordinators.length || 1} coordinator${mergedCoordinators.length === 1 ? "" : "s"} loaded.`);
+  }
+
+  function importVotingDetails() {
+    const parsed = parseSimpleVotingPackage(votingDetailsText);
+
+    if (!parsed) {
+      setImportStatus("Paste valid voting details or at least one coordinator npub.");
+      return;
+    }
+
+    applyVotingDetails(parsed, "imported");
   }
 
   function handleScannedVotingPackage(scannedValue: string) {
@@ -337,11 +366,7 @@ export default function SimpleUiApp() {
     const voterNpub = voterKeypair?.npub ?? "";
     const voterNsec = voterKeypair?.nsec ?? "";
     const voterSecretKey = decodeNsec(voterNsec);
-    const targets = normalizeCoordinatorNpubs([
-      ...manualCoordinators,
-      ...participatingCoordinators,
-      ...(coordinatorNpub ? [coordinatorNpub] : []),
-    ]);
+    const targets = configuredCoordinatorTargets;
 
     if (!voterNpub || voterId === "pending" || !voterSecretKey || targets.length === 0) {
       return;
@@ -380,18 +405,15 @@ export default function SimpleUiApp() {
     const voterNpub = voterKeypair?.npub ?? "";
     const voterNsec = voterKeypair?.nsec ?? "";
     const voterSecretKey = decodeNsec(voterNsec);
-    const votingId = liveVoteSession?.votingId ?? selectedVotingId;
+    const votingId = liveVoteSession?.votingId ?? "";
 
-    if (!voterNpub || voterId === "pending" || !voterSecretKey || !votingId) {
+    if (!voterNpub || voterId === "pending" || !voterSecretKey || !liveVoteSession || !votingId) {
       return;
     }
 
     try {
       const tokenCommitment = await sha256Hex(`${voterNsec}:${votingId}:simple-threshold-token`);
-      const targets = Array.from(new Set([
-        ...participatingCoordinators,
-        ...(coordinatorNpub ? [coordinatorNpub] : []),
-      ])).filter((value) => value.trim().length > 0);
+      const targets = configuredCoordinatorTargets;
 
       const results = await Promise.all(targets.map((targetCoordinatorNpub) => (
         sendSimpleShardRequest({
@@ -415,8 +437,8 @@ export default function SimpleUiApp() {
     }
   }
 
-  const tokenCommitmentBasis = voterKeypair?.nsec && (liveVoteSession?.votingId ?? selectedVotingId)
-    ? `${voterKeypair.nsec}:${liveVoteSession?.votingId ?? selectedVotingId}:simple-threshold-token`
+  const tokenCommitmentBasis = voterKeypair?.nsec && liveVoteSession?.votingId
+    ? `${voterKeypair.nsec}:${liveVoteSession.votingId}:simple-threshold-token`
     : "";
   const [tokenCommitment, setTokenCommitment] = useState<string>("");
   useEffect(() => {
@@ -441,17 +463,14 @@ export default function SimpleUiApp() {
     new Map(
       receivedShards.flatMap((shard) => {
         const parsed = parseSimpleShardCertificate(shard.shardCertificate);
-        if (!parsed || parsed.votingId !== (liveVoteSession?.votingId ?? selectedVotingId) || parsed.tokenCommitment !== tokenCommitment) {
+        if (!parsed || parsed.votingId !== liveVoteSession?.votingId || parsed.tokenCommitment !== tokenCommitment) {
           return [];
         }
         return [[shard.coordinatorNpub, shard] as const];
       }),
     ).values(),
   );
-  const requestTargets = Array.from(new Set([
-    ...participatingCoordinators,
-    ...(coordinatorNpub ? [coordinatorNpub] : []),
-  ])).filter((value) => value.trim().length > 0);
+  const requestTargets = configuredCoordinatorTargets;
   const unfollowedRequestTargets = requestTargets.filter((target) => !followedCoordinatorNpubs.includes(target));
   const requiredShardCount = Math.max(1, liveVoteSession?.thresholdT ?? 1);
 
@@ -517,7 +536,7 @@ export default function SimpleUiApp() {
         <section className="simple-voter-section" aria-labelledby="import-package-title">
           <h2 id="import-package-title" className="simple-voter-section-title">Scan or enter voting details</h2>
           <p className="simple-voter-question">
-            Scan a coordinator QR code, or paste one or more coordinator npubs.
+            Scan a coordinator QR code, paste the voting details text, or enter coordinator npubs manually.
           </p>
           <div className="simple-voter-action-row simple-voter-action-row-inline">
             <button
@@ -526,6 +545,25 @@ export default function SimpleUiApp() {
               onClick={() => setScannerOpen((current) => !current)}
             >
               {scannerOpen ? "Hide scanner" : "Scan with camera"}
+            </button>
+          </div>
+          <label className="simple-voter-label" htmlFor="simple-voting-details-text">Voting details</label>
+          <textarea
+            id="simple-voting-details-text"
+            className="simple-voter-textarea"
+            value={votingDetailsText}
+            onChange={(event) => setVotingDetailsText(event.target.value)}
+            placeholder={"Voting ID: ...\nCoordinator npubs:\n- npub1..."}
+            rows={5}
+          />
+          <div className="simple-voter-action-row">
+            <button
+              type="button"
+              className="simple-voter-secondary"
+              onClick={importVotingDetails}
+              disabled={votingDetailsText.trim().length === 0}
+            >
+              Use voting details
             </button>
           </div>
           <SimpleQrScanner
@@ -592,16 +630,16 @@ export default function SimpleUiApp() {
               type="button"
               className="simple-voter-primary"
               onClick={() => void requestVotingShard()}
-              disabled={!voterKeypair?.npub || !(liveVoteSession?.votingId ?? selectedVotingId) || requestTargets.length === 0 || unfollowedRequestTargets.length > 0}
+              disabled={!voterKeypair?.npub || !liveVoteSession?.votingId || requestTargets.length === 0 || unfollowedRequestTargets.length > 0}
             >
               Request voting shares
             </button>
           </div>
           {requestStatus && <p className="simple-voter-note">{requestStatus}</p>}
-          {!selectedVotingId && (
+          {!liveVoteSession?.votingId && (
             <p className="simple-voter-empty">Waiting for coordinators to publish the live vote.</p>
           )}
-          {selectedVotingId && requestTargets.length === 0 && (
+          {requestTargets.length === 0 && (
             <p className="simple-voter-empty">Add at least one coordinator npub.</p>
           )}
           {requestTargets.length > 0 && unfollowedRequestTargets.length > 0 && (
