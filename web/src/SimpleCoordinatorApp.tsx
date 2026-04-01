@@ -31,6 +31,14 @@ type SimpleCoordinatorKeypair = {
   nsec: string;
 };
 
+function createSimpleCoordinatorKeypair(): SimpleCoordinatorKeypair {
+  const secretKey = generateSecretKey();
+  return {
+    nsec: nip19.nsecEncode(secretKey),
+    npub: nip19.npubEncode(getPublicKey(secretKey)),
+  };
+}
+
 function loadStoredCoordinatorKeypair(): SimpleCoordinatorKeypair | null {
   if (typeof window === "undefined") {
     return null;
@@ -108,6 +116,16 @@ export default function SimpleCoordinatorApp() {
       setElection(null);
     });
   }, []);
+
+  useEffect(() => {
+    if (keypair) {
+      return;
+    }
+
+    const nextKeypair = createSimpleCoordinatorKeypair();
+    storeCoordinatorKeypair(nextKeypair);
+    setKeypair(nextKeypair);
+  }, [keypair]);
 
   useEffect(() => {
     const coordinatorNsec = keypair?.nsec ?? "";
@@ -242,14 +260,24 @@ export default function SimpleCoordinatorApp() {
     });
   }, [publishedVote?.votingId]);
 
-  function createNostrKeypair() {
-    const secretKey = generateSecretKey();
-    const nextKeypair = {
-      nsec: nip19.nsecEncode(secretKey),
-      npub: nip19.npubEncode(getPublicKey(secretKey)),
-    };
+  function refreshIdentity() {
+    const nextKeypair = createSimpleCoordinatorKeypair();
     storeCoordinatorKeypair(nextKeypair);
     setKeypair(nextKeypair);
+    setLeadCoordinatorNpub("");
+    setFollowers([]);
+    setSubCoordinators([]);
+    setTicketStatuses({});
+    setRegistrationStatus(null);
+    setAssignmentStatus(null);
+    setQuestionPrompt("Should the proposal pass?");
+    setQuestionVotingId("");
+    setQuestionThresholdT("1");
+    setQuestionThresholdN("1");
+    setQuestionShareIndex("1");
+    setPublishStatus(null);
+    setPublishedVote(null);
+    setSubmittedVotes([]);
   }
 
   function getThresholdLabel() {
@@ -465,54 +493,15 @@ export default function SimpleCoordinatorApp() {
   return (
     <main className="simple-voter-shell">
       <section className="simple-voter-page">
-        <h1 className="simple-voter-title">Coordinator ID {coordinatorId}</h1>
-
-        <div className="simple-voter-action-row">
-          <button type="button" className="simple-voter-primary" onClick={createNostrKeypair}>
-            Create Nostr keypair
+        <div className="simple-voter-header-row">
+          <h1 className="simple-voter-title">Coordinator ID {coordinatorId}</h1>
+          <button type="button" className="simple-voter-primary" onClick={refreshIdentity}>
+            Refresh ID
           </button>
         </div>
 
-        <SimpleIdentityPanel
-          npub={keypair?.npub ?? ""}
-          nsec={keypair?.nsec ?? ""}
-        />
-
-        <section className="simple-voter-section" aria-labelledby="followers-title">
-          <h2 id="followers-title" className="simple-voter-section-title">Following voters</h2>
-          {visibleFollowers.length > 0 ? (
-            <ul className="simple-voter-list">
-              {visibleFollowers.map((follower) => (
-                <li key={follower.id} className="simple-voter-list-item">
-                  <p className="simple-voter-question">
-                    Voter {follower.voterId} is following this coordinator
-                    {follower.votingId ? ` for ${follower.votingId.slice(0, 12)}` : " and is waiting for the next live vote"}
-                  </p>
-                  {publishedVote ? (
-                    <div className="simple-voter-action-row">
-                      <button
-                        type="button"
-                        className="simple-voter-secondary"
-                        onClick={() => void sendTicket(follower)}
-                        disabled={!keypair?.nsec || (!isLeadCoordinator && activeShareIndex <= 0)}
-                      >
-                        Send ticket
-                      </button>
-                    </div>
-                  ) : null}
-                  {ticketStatuses[`${follower.voterNpub}:${publishedVote?.votingId ?? ""}`] && (
-                    <p className="simple-voter-note">{ticketStatuses[`${follower.voterNpub}:${publishedVote?.votingId ?? ""}`]}</p>
-                  )}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="simple-voter-empty">No voters are following this coordinator yet.</p>
-          )}
-        </section>
-
         <section className="simple-voter-section" aria-labelledby="question-config-title">
-          <h2 id="question-config-title" className="simple-voter-section-title">Question config</h2>
+          <h2 id="question-config-title" className="simple-voter-section-title">Coordinator management</h2>
           <label className="simple-voter-label" htmlFor="simple-lead-coordinator-npub">Lead coordinator npub</label>
           <input
             id="simple-lead-coordinator-npub"
@@ -670,6 +659,45 @@ export default function SimpleCoordinatorApp() {
             )}
           </section>
         )}
+
+        <section className="simple-voter-section" aria-labelledby="followers-title">
+          <h2 id="followers-title" className="simple-voter-section-title">Following voters</h2>
+          {visibleFollowers.length > 0 ? (
+            <ul className="simple-voter-list">
+              {visibleFollowers.map((follower) => (
+                <li key={follower.id} className="simple-voter-list-item">
+                  <p className="simple-voter-question">
+                    Voter {follower.voterId} is following this coordinator
+                    {follower.votingId ? ` for ${follower.votingId.slice(0, 12)}` : " and is waiting for the next live vote"}
+                  </p>
+                  {publishedVote ? (
+                    <div className="simple-voter-action-row">
+                      <button
+                        type="button"
+                        className="simple-voter-secondary"
+                        onClick={() => void sendTicket(follower)}
+                        disabled={!keypair?.nsec || (!isLeadCoordinator && activeShareIndex <= 0)}
+                      >
+                        Send ticket
+                      </button>
+                    </div>
+                  ) : null}
+                  {ticketStatuses[`${follower.voterNpub}:${publishedVote?.votingId ?? ""}`] && (
+                    <p className="simple-voter-note">{ticketStatuses[`${follower.voterNpub}:${publishedVote?.votingId ?? ""}`]}</p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="simple-voter-empty">No voters are following this coordinator yet.</p>
+          )}
+        </section>
+
+        <SimpleIdentityPanel
+          npub={keypair?.npub ?? ""}
+          nsec={keypair?.nsec ?? ""}
+          title="Identity"
+        />
 
         <section className="simple-voter-section" aria-labelledby="submitted-votes-title">
           <h2 id="submitted-votes-title" className="simple-voter-section-title">Submitted votes</h2>
