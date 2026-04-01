@@ -4,7 +4,7 @@ import { logBallotDebug } from "./cashuMintApi";
 import type { ElectionQuestion } from "./coordinatorApi";
 import type { CoordinatorProof } from "./cashuWallet";
 import { USE_MOCK } from "./config";
-import { queueNostrPublish } from "./nostrPublishQueue";
+import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import { deriveTokenIdFromProofSecrets } from "./tokenIdentity";
 
 export const DEFAULT_VOTE_RELAYS = [
@@ -118,7 +118,10 @@ export async function publishBallotEvent(input: {
   const pool = new SimplePool();
 
   try {
-    const results = await queueNostrPublish(() => Promise.allSettled(pool.publish(relays, event, { maxWait: 4000 })));
+    const results = await queueNostrPublish(() => publishToRelaysStaggered(
+      (relay) => pool.publish([relay], event, { maxWait: 4000 })[0],
+      relays,
+    ));
     const relayResults: RelayPublishResult[] = results.map((result, index) => (
       result.status === "fulfilled"
         ? { relay: relays[index], success: true }

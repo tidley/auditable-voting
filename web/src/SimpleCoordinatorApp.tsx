@@ -21,6 +21,7 @@ import {
 } from "./simpleVotingSession";
 import { validateSimpleSubmittedVotes } from "./simpleVoteValidation";
 import { sha256Hex } from "./tokenIdentity";
+import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
 import TokenFingerprint from "./TokenFingerprint";
 
@@ -557,8 +558,7 @@ export default function SimpleCoordinatorApp() {
           title="Identity"
         />
 
-        <section className="simple-voter-section" aria-labelledby="question-config-title">
-          <h2 id="question-config-title" className="simple-voter-section-title">Coordinator management</h2>
+        <SimpleCollapsibleSection title="Coordinator management">
           <label className="simple-voter-label" htmlFor="simple-lead-coordinator-npub">Lead coordinator npub</label>
           <input
             id="simple-lead-coordinator-npub"
@@ -659,11 +659,10 @@ export default function SimpleCoordinatorApp() {
               <p className="simple-voter-question">This coordinator share index: {activeShareIndex || "Awaiting assignment"}</p>
             </>
           )}
-        </section>
+        </SimpleCollapsibleSection>
 
         {isLeadCoordinator && (
-          <section className="simple-voter-section" aria-labelledby="sub-coordinators-title">
-            <h2 id="sub-coordinators-title" className="simple-voter-section-title">Sub-coordinators</h2>
+          <SimpleCollapsibleSection title="Sub-coordinators">
             {subCoordinators.length > 0 ? (
               <>
                 <p className="simple-voter-question">
@@ -683,11 +682,10 @@ export default function SimpleCoordinatorApp() {
             ) : (
               <p className="simple-voter-empty">No sub-coordinators have submitted yet.</p>
             )}
-          </section>
+          </SimpleCollapsibleSection>
         )}
 
-        <section className="simple-voter-section" aria-labelledby="followers-title">
-          <h2 id="followers-title" className="simple-voter-section-title">Following voters</h2>
+        <SimpleCollapsibleSection title="Following voters">
           {visibleFollowers.length > 0 ? (
             <ul className="simple-voter-list">
               {visibleFollowers.map((follower) => (
@@ -717,10 +715,9 @@ export default function SimpleCoordinatorApp() {
           ) : (
             <p className="simple-voter-empty">No voters are following this coordinator yet.</p>
           )}
-        </section>
+        </SimpleCollapsibleSection>
 
-        <section className="simple-voter-section" aria-labelledby="question-section-title">
-          <h2 id="question-section-title" className="simple-voter-section-title">Question</h2>
+        <SimpleCollapsibleSection title="Question">
           {isLeadCoordinator ? (
             <>
               <label className="simple-voter-label" htmlFor="simple-question-prompt">Question</label>
@@ -787,10 +784,9 @@ export default function SimpleCoordinatorApp() {
           ) : (
             <p className="simple-voter-empty">No question selected yet.</p>
           )}
-        </section>
+        </SimpleCollapsibleSection>
 
-        <section className="simple-voter-section" aria-labelledby="submitted-votes-title">
-          <h2 id="submitted-votes-title" className="simple-voter-section-title">Submitted votes</h2>
+        <SimpleCollapsibleSection title="Submitted votes">
           {selectedPublishedVote ? (
             <>
               <p className="simple-voter-question">
@@ -818,7 +814,7 @@ export default function SimpleCoordinatorApp() {
           ) : (
             <p className="simple-voter-empty">No live vote has been broadcast yet.</p>
           )}
-        </section>
+        </SimpleCollapsibleSection>
       </section>
     </main>
   );

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import QRCode from "qrcode";
+import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 
 export default function SimpleIdentityPanel({
   npub,
@@ -59,8 +60,7 @@ export default function SimpleIdentityPanel({
   }
 
   return (
-    <section className="simple-voter-section" aria-labelledby="keypair-title">
-      <h2 id="keypair-title" className="simple-voter-section-title">{title}</h2>
+    <SimpleCollapsibleSection title={title}>
       <div className="simple-identity-grid">
         <div className="simple-identity-fields">
           <div className="simple-identity-field">
@@ -83,6 +83,6 @@ export default function SimpleIdentityPanel({
           )}
         </div>
       </div>
-    </section>
+    </SimpleCollapsibleSection>
   );
 }

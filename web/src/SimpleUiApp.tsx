@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 import { decodeNsec } from "./nostrIdentity";
 import { sha256Hex } from "./tokenIdentity";
+import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
 import TokenFingerprint from "./TokenFingerprint";
 import {
@@ -361,8 +362,7 @@ export default function SimpleUiApp() {
           title="Identity"
         />
 
-        <section className="simple-voter-section" aria-labelledby="coordinator-section-title">
-          <h2 id="coordinator-section-title" className="simple-voter-section-title">Coordinators</h2>
+        <SimpleCollapsibleSection title="Coordinators">
           <div className="simple-voter-field-stack simple-voter-field-stack-tight">
             <label className="simple-voter-label simple-voter-label-tight" htmlFor="simple-coordinator-draft">Coordinator npubs</label>
             <div className="simple-voter-add-row">
@@ -454,10 +454,9 @@ export default function SimpleUiApp() {
               <p className="simple-voter-empty">No vote tickets received yet.</p>
             )}
           </div>
-        </section>
+        </SimpleCollapsibleSection>
 
-        <section className="simple-voter-section" aria-labelledby="live-vote-title">
-          <h2 id="live-vote-title" className="simple-voter-section-title">Live Vote</h2>
+        <SimpleCollapsibleSection title="Live Vote">
           {effectiveLiveVoteSession ? (
             <>
               {voteTicketRows.length > 1 ? (
@@ -519,7 +518,7 @@ export default function SimpleUiApp() {
           ) : (
             <p className="simple-voter-empty">No live vote ticket yet.</p>
           )}
-        </section>
+        </SimpleCollapsibleSection>
       </section>
     </main>
   );

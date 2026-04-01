@@ -19,6 +19,10 @@ vi.mock("nostr-tools", () => ({
 
 vi.mock("./nostrPublishQueue", () => ({
   queueNostrPublish: (...args: Parameters<typeof queueMock>) => queueMock(...args),
+  publishToRelaysStaggered: async (
+    publishSingleRelay: (relay: string) => Promise<unknown>,
+    relays: string[],
+  ) => Promise.allSettled(relays.map((relay) => publishSingleRelay(relay))),
 }));
 
 vi.mock("./cashuMintApi", () => ({
