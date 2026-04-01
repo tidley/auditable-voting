@@ -6,16 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getPublicKey, nip19 } from "nostr-tools";
 import { createHash } from "node:crypto";
 
-type InternalRequest = {
-  id: string;
-  coordinatorNpub: string;
-  voterNpub: string;
-  voterId: string;
-  votingId: string;
-  tokenCommitment: string;
-  createdAt: string;
-};
-
 type InternalResponse = {
   id: string;
   requestId: string;
@@ -24,6 +14,7 @@ type InternalResponse = {
   thresholdLabel: string;
   createdAt: string;
   voterNpub: string;
+  votingPrompt?: string;
   shardCertificate: any;
 };
 
@@ -47,11 +38,9 @@ type InternalSubmittedVote = {
   createdAt: string;
 };
 
-let requestCounter = 0;
 let responseCounter = 0;
 let voteCounter = 0;
 let liveVotes: InternalLiveVote[] = [];
-let shardRequests: InternalRequest[] = [];
 let shardResponses: InternalResponse[] = [];
 let submittedVotes: InternalSubmittedVote[] = [];
 let coordinatorFollowers: Array<{
@@ -151,46 +140,15 @@ vi.mock("./simpleShardDm", () => ({
         createdAt: entry.createdAt,
       }));
   }),
-  sendSimpleShardRequest: vi.fn(async (input: {
-    voterSecretKey: Uint8Array;
-    coordinatorNpub: string;
-    voterNpub: string;
-    voterId: string;
-    votingId: string;
-    tokenCommitment: string;
-  }) => {
-    shardRequests.push({
-      id: `request-${++requestCounter}`,
-      coordinatorNpub: input.coordinatorNpub,
-      voterNpub: input.voterNpub,
-      voterId: input.voterId,
-      votingId: input.votingId,
-      tokenCommitment: input.tokenCommitment,
-      createdAt: new Date().toISOString(),
-    });
-    return { eventId: `dm-request-${requestCounter}`, successes: 1, failures: 0, relayResults: [] };
-  }),
-  fetchSimpleShardRequests: vi.fn(async (input: { coordinatorNsec: string }) => {
-    const coordinatorNpub = nsecToNpub(input.coordinatorNsec);
-    return shardRequests
-      .filter((request) => request.coordinatorNpub === coordinatorNpub)
-      .map((request) => ({
-        id: request.id,
-        voterNpub: request.voterNpub,
-        voterId: request.voterId,
-        votingId: request.votingId,
-        tokenCommitment: request.tokenCommitment,
-        createdAt: request.createdAt,
-      }));
-  }),
-  sendSimpleShardResponse: vi.fn(async (input: {
+  sendSimpleRoundTicket: vi.fn(async (input: {
     coordinatorSecretKey: Uint8Array;
     voterNpub: string;
-    requestId: string;
+    voterId: string;
     coordinatorNpub: string;
     coordinatorId: string;
     thresholdLabel: string;
     votingId: string;
+    votingPrompt: string;
     tokenCommitment: string;
     shareIndex: number;
     thresholdT?: number;
@@ -216,12 +174,13 @@ vi.mock("./simpleShardDm", () => ({
     };
     shardResponses.push({
       id: responseId,
-      requestId: input.requestId,
+      requestId: `round-ticket:${input.votingId}:${input.coordinatorNpub}`,
       coordinatorNpub: input.coordinatorNpub,
       coordinatorId: input.coordinatorId,
       thresholdLabel: input.thresholdLabel,
       createdAt: new Date().toISOString(),
       voterNpub: input.voterNpub,
+      votingPrompt: input.votingPrompt,
       shardCertificate,
     });
     return { responseId, eventId: `dm-response-${responseCounter}`, successes: 1, failures: 0, relayResults: [] };
@@ -237,6 +196,7 @@ vi.mock("./simpleShardDm", () => ({
         coordinatorId: response.coordinatorId,
         thresholdLabel: response.thresholdLabel,
         createdAt: response.createdAt,
+        votingPrompt: response.votingPrompt,
         shardCertificate: response.shardCertificate,
       }));
   }),
@@ -310,7 +270,6 @@ vi.mock("./simpleVotingSession", () => ({
 
 describe("Simple round flow", () => {
   beforeEach(() => {
-    requestCounter = 0;
     responseCounter = 0;
     voteCounter = 0;
     liveVotes = [{
@@ -322,7 +281,6 @@ describe("Simple round flow", () => {
       thresholdN: 1,
       eventId: "live-old",
     }];
-    shardRequests = [];
     shardResponses = [];
     submittedVotes = [];
     coordinatorFollowers = [];
@@ -351,6 +309,8 @@ describe("Simple round flow", () => {
 
     await user.click(coordinatorOneUi.getByRole("button", { name: /Create Nostr keypair/i }));
     await user.click(coordinatorTwoUi.getByRole("button", { name: /Create Nostr keypair/i }));
+    await user.click(voterOneUi.getByRole("button", { name: /Refresh ID/i }));
+    await user.click(voterTwoUi.getByRole("button", { name: /Refresh ID/i }));
 
     const coordinatorOneCodes = coordinatorOne.container.querySelectorAll("code.simple-identity-code");
     const coordinatorTwoCodes = coordinatorTwo.container.querySelectorAll("code.simple-identity-code");
@@ -375,19 +335,6 @@ describe("Simple round flow", () => {
     await user.clear(coordinatorTwoInputs[4] as HTMLInputElement);
     await user.type(coordinatorTwoInputs[4] as HTMLInputElement, "2");
 
-    await user.click(coordinatorOneUi.getByRole("button", { name: /Broadcast live vote/i }));
-
-    let votingDetailsValue = "";
-    await waitFor(() => {
-      const votingDetailsBlocks = Array.from(
-        coordinatorOne.container.querySelectorAll(".simple-qr-panel .simple-identity-code"),
-      ) as HTMLElement[];
-      votingDetailsValue = votingDetailsBlocks.find((block) => (block.textContent ?? "").includes("Voting ID:"))?.textContent ?? "";
-      expect(votingDetailsValue).toContain("Voting ID: round-1");
-    });
-    expect(votingDetailsValue).toContain("Voting ID: round-1");
-    expect(votingDetailsValue).toContain(coordinatorOneNpub);
-
     const voterOneCoordinatorInputs = voterOne.container.querySelectorAll("input.simple-voter-input-inline");
     const voterTwoCoordinatorInputs = voterTwo.container.querySelectorAll("input.simple-voter-input-inline");
     await waitFor(() => {
@@ -401,39 +348,43 @@ describe("Simple round flow", () => {
     await user.click(voterTwoUi.getByRole("button", { name: /Add coordinator/i }));
     await user.type(voterTwo.container.querySelectorAll("input.simple-voter-input-inline")[1] as HTMLInputElement, coordinatorTwoNpub);
 
-    await waitFor(() => {
-      expect(voterOneUi.getByText("Should the proposal pass?")).toBeTruthy();
-      expect(voterTwoUi.getByText("Should the proposal pass?")).toBeTruthy();
-    });
-    expect(voterOneUi.queryByText("Old stale prompt")).toBeNull();
-    expect(voterTwoUi.queryByText("Old stale prompt")).toBeNull();
-
     await user.click(voterOneUi.getByRole("button", { name: /Notify coordinators/i }));
     await user.click(voterTwoUi.getByRole("button", { name: /Notify coordinators/i }));
 
     await waitFor(() => {
-      expect(voterOneUi.getByText(/Vote tickets requested for round-1\./i)).toBeTruthy();
-      expect(voterTwoUi.getByText(/Vote tickets requested for round-1\./i)).toBeTruthy();
+      expect(voterOneUi.getByText(/Coordinators notified\. Waiting for round tickets\./i)).toBeTruthy();
+      expect(voterTwoUi.getByText(/Coordinators notified\. Waiting for round tickets\./i)).toBeTruthy();
     });
 
+    await user.click(coordinatorOneUi.getByRole("button", { name: /Broadcast live vote/i }));
+
+    await waitFor(() => {
+      expect(voterOneUi.getByText("Should the proposal pass?")).toBeTruthy();
+      expect(voterTwoUi.getByText("Should the proposal pass?")).toBeTruthy();
+      expect(coordinatorOneUi.getAllByText(/is following this coordinator/i).length).toBeGreaterThanOrEqual(2);
+      expect(coordinatorTwoUi.getAllByText(/is following this coordinator/i).length).toBeGreaterThanOrEqual(2);
+    });
+    expect(voterOneUi.queryByText("Old stale prompt")).toBeNull();
+    expect(voterTwoUi.queryByText("Old stale prompt")).toBeNull();
+
     await act(async () => {
-      await new Promise((resolve) => window.setTimeout(resolve, 5200));
+      await new Promise((resolve) => window.setTimeout(resolve, 2200));
     });
 
     await waitFor(() => {
-      expect(coordinatorOneUi.getAllByRole("button", { name: /Send shard/i })).toHaveLength(2);
-      expect(coordinatorTwoUi.getAllByRole("button", { name: /Send shard/i })).toHaveLength(2);
+      expect(coordinatorOneUi.getAllByRole("button", { name: /Send ticket/i })).toHaveLength(2);
+      expect(coordinatorTwoUi.getAllByRole("button", { name: /Send ticket/i })).toHaveLength(2);
     });
 
-    for (const button of coordinatorOneUi.getAllByRole("button", { name: /Send shard/i })) {
+    for (const button of coordinatorOneUi.getAllByRole("button", { name: /Send ticket/i })) {
       await user.click(button);
     }
-    for (const button of coordinatorTwoUi.getAllByRole("button", { name: /Send shard/i })) {
+    for (const button of coordinatorTwoUi.getAllByRole("button", { name: /Send ticket/i })) {
       await user.click(button);
     }
 
     await act(async () => {
-      await new Promise((resolve) => window.setTimeout(resolve, 5200));
+      await new Promise((resolve) => window.setTimeout(resolve, 2200));
     });
 
     await waitFor(() => {
@@ -441,8 +392,8 @@ describe("Simple round flow", () => {
       expect(voterTwoUi.getByText(/Tickets ready: 2 of 2/i)).toBeTruthy();
       expect(voterOneUi.getByText("round-1")).toBeTruthy();
       expect(voterTwoUi.getByText("round-1")).toBeTruthy();
-      expect(voterOneUi.getAllByText("2").length).toBeGreaterThan(1);
-      expect(voterTwoUi.getAllByText("2").length).toBeGreaterThan(1);
+      expect(voterOneUi.getAllByText("1").length).toBeGreaterThanOrEqual(2);
+      expect(voterTwoUi.getAllByText("1").length).toBeGreaterThanOrEqual(2);
     });
 
     await user.click(voterOneUi.getByRole("button", { name: /^Yes$/i }));
@@ -451,12 +402,12 @@ describe("Simple round flow", () => {
     await user.click(voterTwoUi.getByRole("button", { name: /^Submit$/i }));
 
     await act(async () => {
-      await new Promise((resolve) => window.setTimeout(resolve, 6200));
+      await new Promise((resolve) => window.setTimeout(resolve, 2400));
     });
 
     await waitFor(() => {
       expect(coordinatorOneUi.getByText((_, element) => element?.textContent === "Yes: 1 | No: 1")).toBeTruthy();
       expect(coordinatorTwoUi.getByText((_, element) => element?.textContent === "Yes: 1 | No: 1")).toBeTruthy();
-    }, { timeout: 8000 });
+    }, { timeout: 6000 });
   }, 40000);
 });

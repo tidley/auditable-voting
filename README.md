@@ -98,6 +98,12 @@ Important properties:
 - Token uniqueness prevents double voting.
 - The visual token fingerprint is for human auditability only; cryptographic validity comes from the token and signature checks.
 
+Ticket model:
+
+- This project treats voting tickets as round-bound, not generic pre-issued vote credits.
+- A ticket request is tied to a specific `voting_id`, and the resulting ticket is intended to be spent only on that round.
+- The main reasons are replay prevention across rounds, simpler coordinator-side validation, and a clearer public audit trail because issued tickets and submitted votes refer to the same announced round.
+
 ### Current Implementation Snapshot
 
 The repository currently implements coordinator-mediated blinded issuance with public Nostr ballot events and coordinator receipts.

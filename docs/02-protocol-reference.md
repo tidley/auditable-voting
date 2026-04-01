@@ -19,6 +19,18 @@ Current repository status:
 - issuance is still coordinator-mediated Cashu proof issuance rather than full threshold blind-signature token assembly
 - protocol fields may therefore include transitional artifacts such as `proof-hash`
 
+Current ticket binding model:
+
+- voting tickets are round-bound
+- ticket issuance and ticket spend are tied to a specific `voting_id`
+- generic pre-issued reusable vote credits are intentionally not the current model
+
+Reasons:
+
+- replay prevention is simpler because a ticket for round A is not valid for round B
+- coordinator-side validation is simpler because issuance and spend share the same round context
+- auditability is cleaner because issuance, ballot submission, and tally artifacts all point at the same announced round
+
 ### Terminology
 
 - **Mint** — The Cashu CDK mint that issues, validates, and burns proofs via its HTTP/gRPC API. "Mint" in this spec refers exclusively to Cashu operations (token issuance, proof melting, keyset management).
@@ -58,6 +70,7 @@ Each coordinator is an independently operated Nostr actor that:
 - Accepts vote submissions (via NIP-17 gift-wrap proof burning)
 - Computes its own tally
 - Publishes its own commitment roots and final results
+- Issues round-bound voting rights rather than generic reusable vote credits
 
 ---
 
