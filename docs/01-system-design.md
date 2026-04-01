@@ -41,6 +41,20 @@ The intended public ballot identity is a deterministic `token_id` derived from t
 - human observers use the fingerprint for inclusion checking
 - cryptographic validity always comes from token signature verification and duplicate-token rejection, not from the visual pattern itself
 
+### Round-Bound Ticket Model
+
+The project uses round-bound voting tickets rather than generic pre-issued vote credits:
+
+- ticket issuance is tied to a specific `voting_id`
+- a ticket for round A is not intended to be reused for round B
+- the voter must have a live announced round before a usable ticket can be issued for that round
+
+Reasons for this choice:
+
+- it reduces replay risk across rounds
+- it keeps coordinator-side validation simpler because the issued ticket and submitted ballot share the same round context
+- it keeps the public audit trail cleaner because issuance, submission, and tallying all point at the same announced vote
+
 ### Anti-Inflation via Voter Confirmations
 
 After voting, each voter publishes a kind 38013 event from their real npub during the confirmation window. Auditors count canonical confirmations (38013 from npubs in the eligible set) and compare against each coordinator's tally:

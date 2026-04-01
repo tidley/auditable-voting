@@ -11,7 +11,6 @@ import {
 import {
   sendSimpleCoordinatorFollow,
   fetchSimpleShardResponses,
-  sendSimpleShardRequest,
   type SimpleShardResponse,
 } from "./simpleShardDm";
 import {
@@ -97,15 +96,36 @@ export default function SimpleUiApp() {
   const [participatingCoordinators, setParticipatingCoordinators] = useState<string[]>([]);
   const [submitStatus, setSubmitStatus] = useState<string | null>(null);
   const [ballotTokenId, setBallotTokenId] = useState<string | null>(null);
-  const [ticketRequestNonce, setTicketRequestNonce] = useState<string>("");
-  const [pendingTicketRequest, setPendingTicketRequest] = useState(false);
-  const [lastRequestedVotingId, setLastRequestedVotingId] = useState<string>("");
 
   const configuredCoordinatorTargets = useMemo(
     () => normalizeCoordinatorNpubs(manualCoordinators),
     [manualCoordinators],
   );
   const configuredCoordinatorTargetsKey = configuredCoordinatorTargets.join("|");
+  const responseBackedLiveVoteSession = useMemo<SimpleLiveVoteSession | null>(() => {
+    const candidateRows = receivedShards.flatMap((response) => {
+      const parsed = parseSimpleShardCertificate(response.shardCertificate);
+      if (!parsed || !configuredCoordinatorTargets.includes(response.coordinatorNpub)) {
+        return [];
+      }
+      if (!response.votingPrompt) {
+        return [];
+      }
+      return [{
+        votingId: parsed.votingId,
+        prompt: response.votingPrompt,
+        coordinatorNpub: response.coordinatorNpub,
+        createdAt: response.createdAt,
+        thresholdT: parsed.thresholdT,
+        thresholdN: parsed.thresholdN,
+        eventId: `dm:${response.id}`,
+      }];
+    });
+
+    candidateRows.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    return candidateRows[0] ?? null;
+  }, [configuredCoordinatorTargets, receivedShards]);
+  const effectiveLiveVoteSession = liveVoteSession ?? responseBackedLiveVoteSession;
 
   useEffect(() => {
     if (voterKeypair) {
@@ -160,7 +180,7 @@ export default function SimpleUiApp() {
     void refreshResponses();
     const intervalId = window.setInterval(() => {
       void refreshResponses();
-    }, 5000);
+    }, 2000);
 
     return () => {
       cancelled = true;
@@ -217,7 +237,7 @@ export default function SimpleUiApp() {
     void refreshLiveVote();
     const intervalId = window.setInterval(() => {
       void refreshLiveVote();
-    }, 5000);
+    }, 2000);
 
     return () => {
       cancelled = true;
@@ -247,11 +267,6 @@ export default function SimpleUiApp() {
     };
   }, [voterKeypair?.npub]);
 
-  useEffect(() => {
-    setTicketRequestNonce("");
-    setLastRequestedVotingId("");
-  }, [liveVoteSession?.votingId]);
-
   function refreshIdentity() {
     const nextKeypair = createSimpleVoterKeypair();
     storeSimpleVoterKeypair(nextKeypair);
@@ -280,49 +295,6 @@ export default function SimpleUiApp() {
     });
   }
 
-  async function requestTicketsForLiveVote(session: SimpleLiveVoteSession) {
-    const voterNpub = voterKeypair?.npub ?? "";
-    const voterNsec = voterKeypair?.nsec ?? "";
-    const voterSecretKey = decodeNsec(voterNsec);
-
-    if (!voterNpub || voterId === "pending" || !voterSecretKey || configuredCoordinatorTargets.length === 0) {
-      return false;
-    }
-
-    try {
-      const nextTicketRequestNonce = crypto.randomUUID();
-      const tokenCommitment = await sha256Hex(
-        `${voterNsec}:${session.votingId}:${nextTicketRequestNonce}:simple-threshold-token`,
-      );
-      setTicketRequestNonce(nextTicketRequestNonce);
-      const requestResults = await Promise.all(configuredCoordinatorTargets.map((coordinatorNpub) => (
-        sendSimpleShardRequest({
-          voterSecretKey,
-          coordinatorNpub,
-          voterNpub,
-          voterId,
-          votingId: session.votingId,
-          tokenCommitment,
-        })
-      )));
-      const requestSuccesses = requestResults.reduce((sum, result) => sum + result.successes, 0);
-
-      if (requestSuccesses > 0) {
-        setPendingTicketRequest(false);
-        setLastRequestedVotingId(session.votingId);
-      }
-      setRequestStatus(
-        requestSuccesses > 0
-          ? `Coordinators notified. Vote tickets requested for ${shortVotingId(session.votingId)}.`
-          : "Vote ticket request failed.",
-      );
-      return requestSuccesses > 0;
-    } catch {
-      setRequestStatus("Vote ticket request failed.");
-      return false;
-    }
-  }
-
   async function notifyCoordinators() {
     const voterNpub = voterKeypair?.npub ?? "";
     const voterNsec = voterKeypair?.nsec ?? "";
@@ -347,70 +319,22 @@ export default function SimpleUiApp() {
       }));
       const followSuccesses = followResults.filter(Boolean).length;
 
-      if (!liveVoteSession?.votingId) {
-        setPendingTicketRequest(followSuccesses > 0);
-        setRequestStatus(
-          followSuccesses > 0
-            ? "Coordinators notified. Waiting for a live vote before tickets can be issued."
-            : "Coordinator notification failed.",
-        );
-        return;
-      }
-
-      await requestTicketsForLiveVote(liveVoteSession);
+      setRequestStatus(
+        followSuccesses > 0
+          ? "Coordinators notified. Waiting for round tickets."
+          : "Coordinator notification failed.",
+      );
     } catch {
       setRequestStatus("Coordinator notification failed.");
     }
   }
 
-  useEffect(() => {
-    if (!pendingTicketRequest || !liveVoteSession || !voterKeypair?.npub || configuredCoordinatorTargets.length === 0) {
-      return;
-    }
-    if (lastRequestedVotingId === liveVoteSession.votingId) {
-      return;
-    }
-
-    void requestTicketsForLiveVote(liveVoteSession);
-  }, [
-    configuredCoordinatorTargets.length,
-    lastRequestedVotingId,
-    liveVoteSession,
-    pendingTicketRequest,
-    voterKeypair?.npub,
-  ]);
-
-  const tokenCommitmentBasis = voterKeypair?.nsec && liveVoteSession?.votingId && ticketRequestNonce
-    ? `${voterKeypair.nsec}:${liveVoteSession.votingId}:${ticketRequestNonce}:simple-threshold-token`
-    : "";
-  const [tokenCommitment, setTokenCommitment] = useState<string>("");
-
-  useEffect(() => {
-    let cancelled = false;
-
-    if (!tokenCommitmentBasis) {
-      setTokenCommitment("");
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    void sha256Hex(tokenCommitmentBasis).then((value) => {
-      if (!cancelled) {
-        setTokenCommitment(value);
-      }
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [tokenCommitmentBasis]);
-
   const uniqueShardResponses = Array.from(
     new Map(
       receivedShards.flatMap((shard) => {
         const parsed = parseSimpleShardCertificate(shard.shardCertificate);
-        if (!parsed || parsed.votingId !== liveVoteSession?.votingId || parsed.tokenCommitment !== tokenCommitment) {
+        const activeVotingId = effectiveLiveVoteSession?.votingId ?? "";
+        if (!parsed || !activeVotingId || parsed.votingId !== activeVotingId) {
           return [];
         }
         return [[shard.coordinatorNpub, shard] as const];
@@ -418,7 +342,7 @@ export default function SimpleUiApp() {
     ).values(),
   );
 
-  const requiredShardCount = Math.max(1, liveVoteSession?.thresholdT ?? 1);
+  const requiredShardCount = Math.max(1, effectiveLiveVoteSession?.thresholdT ?? 1);
 
   useEffect(() => {
     let cancelled = false;
@@ -443,9 +367,9 @@ export default function SimpleUiApp() {
   const voteTicketRows = useMemo<VoteTicketRow[]>(() => {
     const rows = new Map<string, VoteTicketRow>();
 
-    if (liveVoteSession?.votingId) {
-      rows.set(liveVoteSession.votingId, {
-        votingId: liveVoteSession.votingId,
+    if (effectiveLiveVoteSession?.votingId) {
+      rows.set(effectiveLiveVoteSession.votingId, {
+        votingId: effectiveLiveVoteSession.votingId,
         countsByCoordinator: {},
       });
     }
@@ -464,10 +388,10 @@ export default function SimpleUiApp() {
     }
 
     return [...rows.values()].sort((left, right) => right.votingId.localeCompare(left.votingId));
-  }, [liveVoteSession?.votingId, receivedShards]);
+  }, [effectiveLiveVoteSession?.votingId, receivedShards]);
 
   async function submitVote() {
-    if (!liveVoteSession || !liveVoteChoice || uniqueShardResponses.length < requiredShardCount) {
+    if (!effectiveLiveVoteSession || !liveVoteChoice || uniqueShardResponses.length < requiredShardCount) {
       return;
     }
 
@@ -478,7 +402,7 @@ export default function SimpleUiApp() {
       const ballotNsec = nip19.nsecEncode(ballotSecretKey);
       const result = await publishSimpleSubmittedVote({
         ballotNsec,
-        votingId: liveVoteSession.votingId,
+        votingId: effectiveLiveVoteSession.votingId,
         choice: liveVoteChoice,
         shardCertificates: uniqueShardResponses.map((shard) => shard.shardCertificate),
       });
@@ -587,10 +511,10 @@ export default function SimpleUiApp() {
 
         <section className="simple-voter-section" aria-labelledby="live-vote-title">
           <h2 id="live-vote-title" className="simple-voter-section-title">Live Vote</h2>
-          {liveVoteSession ? (
+          {effectiveLiveVoteSession ? (
             <>
-              <p className="simple-voter-question">{liveVoteSession.prompt}</p>
-              <p className="simple-voter-note">Vote {shortVotingId(liveVoteSession.votingId)}</p>
+              <p className="simple-voter-question">{effectiveLiveVoteSession.prompt}</p>
+              <p className="simple-voter-note">Vote {shortVotingId(effectiveLiveVoteSession.votingId)}</p>
               <p className="simple-voter-question">
                 Tickets ready: {uniqueShardResponses.length} of {requiredShardCount}
               </p>

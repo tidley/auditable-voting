@@ -23,6 +23,7 @@ export type SimpleShardResponse = {
   coordinatorId: string;
   thresholdLabel: string;
   createdAt: string;
+  votingPrompt?: string;
   shardCertificate: SimpleShardCertificate;
 };
 
@@ -360,6 +361,85 @@ export async function sendSimpleShardResponse(input: {
   }
 }
 
+export async function sendSimpleRoundTicket(input: {
+  coordinatorSecretKey: Uint8Array;
+  voterNpub: string;
+  voterId: string;
+  coordinatorNpub: string;
+  coordinatorId: string;
+  thresholdLabel: string;
+  votingId: string;
+  votingPrompt: string;
+  tokenCommitment: string;
+  shareIndex: number;
+  thresholdT?: number;
+  thresholdN?: number;
+  relays?: string[];
+}): Promise<DmPublishResult & { responseId: string }> {
+  const decoded = nip19.decode(input.voterNpub);
+  if (decoded.type !== "npub") {
+    throw new Error("Voter value must be an npub.");
+  }
+
+  const dmRelays = buildDmRelays(input.relays);
+  const certificate = createSimpleShardCertificate({
+    coordinatorSecretKey: input.coordinatorSecretKey,
+    thresholdLabel: input.thresholdLabel,
+    votingId: input.votingId,
+    tokenCommitment: input.tokenCommitment,
+    shareIndex: input.shareIndex,
+    thresholdT: input.thresholdT,
+    thresholdN: input.thresholdN,
+  });
+  const responseId = certificate.shardId;
+  const event = nip17.wrapEvent(
+    input.coordinatorSecretKey,
+    {
+      publicKey: decoded.data as string,
+      relayUrl: dmRelays[0],
+    },
+    JSON.stringify({
+      action: "simple_round_ticket",
+      response_id: responseId,
+      request_id: `round-ticket:${input.votingId}:${input.coordinatorNpub}`,
+      voter_id: input.voterId,
+      coordinator_npub: input.coordinatorNpub,
+      coordinator_id: input.coordinatorId,
+      threshold_label: input.thresholdLabel,
+      voting_prompt: input.votingPrompt,
+      shard_certificate: certificate.event,
+      created_at: new Date().toISOString(),
+    }),
+    "Round ticket",
+  );
+
+  const pool = new SimplePool();
+  try {
+    const results = await queueNostrPublish(
+      () => Promise.allSettled(pool.publish(dmRelays, event, { maxWait: 4000 })),
+    );
+    const relayResults = results.map((result, index) => (
+      result.status === "fulfilled"
+        ? { relay: dmRelays[index], success: true }
+        : {
+            relay: dmRelays[index],
+            success: false,
+            error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+          }
+    ));
+
+    return {
+      responseId,
+      eventId: event.id,
+      successes: relayResults.filter((result) => result.success).length,
+      failures: relayResults.filter((result) => !result.success).length,
+      relayResults,
+    };
+  } finally {
+    pool.destroy();
+  }
+}
+
 export async function fetchSimpleShardResponses(input: {
   voterNsec: string;
   relays?: string[];
@@ -393,6 +473,7 @@ export async function fetchSimpleShardResponses(input: {
           coordinator_npub?: string;
           coordinator_id?: string;
           threshold_label?: string;
+          voting_prompt?: string;
           shard_certificate?: SimpleShardCertificate;
           created_at?: string;
         };
@@ -402,7 +483,7 @@ export async function fetchSimpleShardResponses(input: {
           : null;
 
         if (
-          payload.action !== "simple_shard_response"
+          (payload.action !== "simple_shard_response" && payload.action !== "simple_round_ticket")
           || !payload.response_id
           || !payload.request_id
           || !payload.coordinator_id
@@ -419,6 +500,7 @@ export async function fetchSimpleShardResponses(input: {
           coordinatorId: payload.coordinator_id,
           thresholdLabel: parsedCertificate.thresholdLabel,
           createdAt: payload.created_at ?? new Date(wrappedEvent.created_at * 1000).toISOString(),
+          votingPrompt: payload.voting_prompt?.trim() || undefined,
           shardCertificate: parsedCertificate.event,
         });
       } catch {

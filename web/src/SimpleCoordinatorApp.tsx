@@ -4,24 +4,14 @@ import { fetchElection, type ElectionInfo } from "./coordinatorApi";
 import { decodeNsec } from "./nostrIdentity";
 import {
   fetchSimpleCoordinatorFollowers,
-  fetchSimpleShardRequests,
-  sendSimpleShardResponse,
+  sendSimpleRoundTicket,
   type SimpleCoordinatorFollower,
-  type SimpleShardRequest,
 } from "./simpleShardDm";
-import {
-  fetchLatestSimpleLiveVote,
-  fetchSimpleSubmittedVotes,
-  publishSimpleLiveVote,
-  type SimpleLiveVoteSession,
-  type SimpleSubmittedVote,
-} from "./simpleVotingSession";
+import { fetchLatestSimpleLiveVote, fetchSimpleSubmittedVotes, publishSimpleLiveVote, type SimpleLiveVoteSession, type SimpleSubmittedVote } from "./simpleVotingSession";
 import { validateSimpleSubmittedVotes } from "./simpleVoteValidation";
 import { sha256Hex } from "./tokenIdentity";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
-import SimpleQrPanel from "./SimpleQrPanel";
 import TokenFingerprint from "./TokenFingerprint";
-import { serializeSimpleVotingPackage } from "./simpleVotingPackage";
 
 const COORDINATOR_STORAGE_KEY = "auditable-voting.simple-coordinator-keypair";
 
@@ -61,8 +51,7 @@ export default function SimpleCoordinatorApp() {
   const [coordinatorId, setCoordinatorId] = useState("pending");
   const [leadCoordinatorNpub, setLeadCoordinatorNpub] = useState("");
   const [followers, setFollowers] = useState<SimpleCoordinatorFollower[]>([]);
-  const [requests, setRequests] = useState<SimpleShardRequest[]>([]);
-  const [requestStatuses, setRequestStatuses] = useState<Record<string, string>>({});
+  const [ticketStatuses, setTicketStatuses] = useState<Record<string, string>>({});
   const [questionPrompt, setQuestionPrompt] = useState("Should the proposal pass?");
   const [questionVotingId, setQuestionVotingId] = useState("");
   const [questionThresholdT, setQuestionThresholdT] = useState("1");
@@ -79,40 +68,6 @@ export default function SimpleCoordinatorApp() {
       setElection(null);
     });
   }, []);
-
-  useEffect(() => {
-    const coordinatorNsec = keypair?.nsec ?? "";
-
-    if (!coordinatorNsec) {
-      setRequests([]);
-      return;
-    }
-
-    let cancelled = false;
-
-    async function refreshRequests() {
-      try {
-        const nextRequests = await fetchSimpleShardRequests({ coordinatorNsec });
-        if (!cancelled) {
-          setRequests(nextRequests);
-        }
-      } catch {
-        if (!cancelled) {
-          setRequests([]);
-        }
-      }
-    }
-
-    void refreshRequests();
-    const intervalId = window.setInterval(() => {
-      void refreshRequests();
-    }, 5000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-    };
-  }, [keypair?.nsec]);
 
   useEffect(() => {
     const coordinatorNsec = keypair?.nsec ?? "";
@@ -140,7 +95,7 @@ export default function SimpleCoordinatorApp() {
     void refreshFollowers();
     const intervalId = window.setInterval(() => {
       void refreshFollowers();
-    }, 5000);
+    }, 2000);
 
     return () => {
       cancelled = true;
@@ -199,7 +154,7 @@ export default function SimpleCoordinatorApp() {
     void refreshPublishedVote();
     const intervalId = window.setInterval(() => {
       void refreshPublishedVote();
-    }, 5000);
+    }, 2000);
 
     return () => {
       cancelled = true;
@@ -233,7 +188,7 @@ export default function SimpleCoordinatorApp() {
     void refreshSubmittedVotes();
     const intervalId = window.setInterval(() => {
       void refreshSubmittedVotes();
-    }, 5000);
+    }, 2000);
 
     return () => {
       cancelled = true;
@@ -304,40 +259,47 @@ export default function SimpleCoordinatorApp() {
     return {};
   }
 
-  async function sendShard(request: SimpleShardRequest) {
+  async function sendTicket(follower: SimpleCoordinatorFollower) {
     const coordinatorNpub = keypair?.npub ?? "";
     const coordinatorSecretKey = decodeNsec(keypair?.nsec ?? "");
+    const votingId = publishedVote?.votingId ?? "";
+    const prompt = publishedVote?.prompt ?? "";
 
-    if (!coordinatorNpub || !coordinatorSecretKey || !coordinatorId || coordinatorId === "pending") {
+    if (!coordinatorNpub || !coordinatorSecretKey || !coordinatorId || coordinatorId === "pending" || !votingId || !prompt) {
       return;
     }
 
-    setRequestStatuses((current) => ({ ...current, [request.id]: "Sending shard..." }));
+    const ticketStatusKey = `${follower.voterNpub}:${votingId}`;
+    setTicketStatuses((current) => ({ ...current, [ticketStatusKey]: "Sending ticket..." }));
 
     try {
       const thresholdLabel = activeThresholdT && activeThresholdN
         ? `${activeThresholdT} of ${activeThresholdN}`
         : getThresholdLabel();
-      const result = await sendSimpleShardResponse({
+      const tokenCommitment = await sha256Hex(
+        `${follower.voterNpub}:${votingId}:simple-round-ticket`,
+      );
+      const result = await sendSimpleRoundTicket({
         coordinatorSecretKey,
-        voterNpub: request.voterNpub,
-        requestId: request.id,
+        voterNpub: follower.voterNpub,
+        voterId: follower.voterId,
         coordinatorNpub,
         coordinatorId,
         thresholdLabel,
-        votingId: publishedVote?.votingId ?? request.votingId,
-        tokenCommitment: request.tokenCommitment,
+        votingId,
+        votingPrompt: prompt,
+        tokenCommitment,
         shareIndex: Number.parseInt(questionShareIndex, 10) || 1,
         thresholdT: activeThresholdT,
         thresholdN: activeThresholdN,
       });
 
-      setRequestStatuses((current) => ({
+      setTicketStatuses((current) => ({
         ...current,
-        [request.id]: result.successes > 0 ? "Shard sent." : "Shard send failed.",
+        [ticketStatusKey]: result.successes > 0 ? "Ticket sent." : "Ticket send failed.",
       }));
     } catch {
-      setRequestStatuses((current) => ({ ...current, [request.id]: "Shard send failed." }));
+      setTicketStatuses((current) => ({ ...current, [ticketStatusKey]: "Ticket send failed." }));
     }
   }
 
@@ -382,21 +344,8 @@ export default function SimpleCoordinatorApp() {
   const validYesCount = validatedVotes.filter((entry) => entry.valid && entry.vote.choice === "Yes").length;
   const validNoCount = validatedVotes.filter((entry) => entry.valid && entry.vote.choice === "No").length;
   const visibleFollowers = activeVotingId
-    ? followers.filter((follower) => (follower.votingId ?? "") === activeVotingId)
-    : [];
-  const visibleRequests = activeVotingId
-    ? requests.filter((request) => request.votingId === activeVotingId)
-    : [];
-  const votingPackage = publishedVote
-    ? serializeSimpleVotingPackage({
-        votingId: publishedVote.votingId,
-        coordinatorNpub: keypair?.npub ?? undefined,
-        coordinators: keypair?.npub ? [keypair.npub] : undefined,
-        prompt: publishedVote.prompt,
-        thresholdT: publishedVote.thresholdT,
-        thresholdN: publishedVote.thresholdN,
-      })
-    : "";
+    ? followers.filter((follower) => !follower.votingId || follower.votingId === activeVotingId)
+    : followers;
 
   return (
     <main className="simple-voter-shell">
@@ -414,18 +363,6 @@ export default function SimpleCoordinatorApp() {
           nsec={keypair?.nsec ?? ""}
         />
 
-        {publishedVote && isLeadCoordinator && (
-          <section className="simple-voter-section" aria-labelledby="voting-package-title">
-            <h2 id="voting-package-title" className="simple-voter-section-title">Voting details</h2>
-            <SimpleQrPanel
-              value={votingPackage}
-              title="Phone scan details"
-              description="Show this QR on the coordinator screen. Voters can scan it, or paste the voting ID and coordinator npub details manually."
-              copyLabel="Copy voting details"
-            />
-          </section>
-        )}
-
         <section className="simple-voter-section" aria-labelledby="followers-title">
           <h2 id="followers-title" className="simple-voter-section-title">Following voters</h2>
           {visibleFollowers.length > 0 ? (
@@ -434,41 +371,28 @@ export default function SimpleCoordinatorApp() {
                 <li key={follower.id} className="simple-voter-list-item">
                   <p className="simple-voter-question">
                     Voter {follower.voterId} is following this coordinator
-                    {follower.votingId ? ` for ${follower.votingId.slice(0, 12)}` : ""}
+                    {follower.votingId ? ` for ${follower.votingId.slice(0, 12)}` : " and is waiting for the next live vote"}
                   </p>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="simple-voter-empty">No voters are following this coordinator for the current round yet.</p>
-          )}
-        </section>
-
-        <section className="simple-voter-section" aria-labelledby="shard-requests-title">
-          <h2 id="shard-requests-title" className="simple-voter-section-title">Received shard requests</h2>
-          {visibleRequests.length > 0 ? (
-            <ul className="simple-voter-list">
-              {visibleRequests.map((request) => (
-                <li key={request.id} className="simple-voter-list-item">
-                  <p className="simple-voter-question">Request from voter {request.voterId}</p>
-                  <div className="simple-voter-action-row">
-                    <button
-                      type="button"
-                      className="simple-voter-secondary"
-                      onClick={() => void sendShard(request)}
-                      disabled={!keypair?.nsec}
-                    >
-                      Send shard
-                    </button>
-                  </div>
-                  {requestStatuses[request.id] && (
-                    <p className="simple-voter-note">{requestStatuses[request.id]}</p>
+                  {publishedVote ? (
+                    <div className="simple-voter-action-row">
+                      <button
+                        type="button"
+                        className="simple-voter-secondary"
+                        onClick={() => void sendTicket(follower)}
+                        disabled={!keypair?.nsec}
+                      >
+                        Send ticket
+                      </button>
+                    </div>
+                  ) : null}
+                  {ticketStatuses[`${follower.voterNpub}:${publishedVote?.votingId ?? ""}`] && (
+                    <p className="simple-voter-note">{ticketStatuses[`${follower.voterNpub}:${publishedVote?.votingId ?? ""}`]}</p>
                   )}
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="simple-voter-empty">No shard requests received for the current round yet.</p>
+            <p className="simple-voter-empty">No voters are following this coordinator yet.</p>
           )}
         </section>
 
