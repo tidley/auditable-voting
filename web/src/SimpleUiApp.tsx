@@ -443,7 +443,7 @@ export default function SimpleUiApp() {
                   <div className="simple-vote-entry-copy">
                     <p className="simple-voter-question">Ballot fingerprint</p>
                   </div>
-                  <TokenFingerprint tokenId={ballotTokenId} />
+                  <TokenFingerprint tokenId={ballotTokenId} large />
                 </div>
               )}
               <div className="simple-voter-choice-row">

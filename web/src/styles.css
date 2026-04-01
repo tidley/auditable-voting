@@ -251,6 +251,13 @@ code {
   border-radius: 10px;
 }
 
+.token-fingerprint-large .token-fingerprint-grid {
+  width: 128px;
+  height: 128px;
+  border-radius: 18px;
+  padding: 8px;
+}
+
 .token-fingerprint-cell {
   border-radius: 4px;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
@@ -288,6 +295,13 @@ code {
   border-radius: 10px;
 }
 
+.token-fingerprint-large .token-fingerprint-qr-shell {
+  min-width: 140px;
+  min-height: 140px;
+  padding: 10px;
+  border-radius: 18px;
+}
+
 .token-fingerprint-qr {
   display: block;
   width: 64px;
@@ -298,6 +312,12 @@ code {
 .token-fingerprint-compact .token-fingerprint-qr {
   width: 44px;
   height: 44px;
+}
+
+.token-fingerprint-large .token-fingerprint-qr {
+  width: 120px;
+  height: 120px;
+  border-radius: 12px;
 }
 
 .token-fingerprint-qr-fallback {

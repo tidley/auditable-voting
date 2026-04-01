@@ -50,6 +50,19 @@ let coordinatorFollowers: Array<{
   votingId?: string;
   createdAt: string;
 }> = [];
+let subCoordinatorApplications: Array<{
+  leadCoordinatorNpub: string;
+  coordinatorNpub: string;
+  coordinatorId: string;
+  createdAt: string;
+}> = [];
+let shareAssignments: Array<{
+  leadCoordinatorNpub: string;
+  coordinatorNpub: string;
+  shareIndex: number;
+  thresholdN?: number;
+  createdAt: string;
+}> = [];
 let followerSubscribers: Array<{
   coordinatorNpub: string;
   onFollowers: (followers: Array<{
@@ -71,6 +84,27 @@ let liveVoteSubscribers: Array<{
 let submittedVoteSubscribers: Array<{
   votingId: string;
   onVotes: (votes: InternalSubmittedVote[]) => void;
+}> = [];
+let subCoordinatorApplicationSubscribers: Array<{
+  leadCoordinatorNpub: string;
+  onApplications: (applications: Array<{
+    id: string;
+    coordinatorNpub: string;
+    coordinatorId: string;
+    leadCoordinatorNpub: string;
+    createdAt: string;
+  }>) => void;
+}> = [];
+let shareAssignmentSubscribers: Array<{
+  coordinatorNpub: string;
+  onAssignments: (assignments: Array<{
+    id: string;
+    leadCoordinatorNpub: string;
+    coordinatorNpub: string;
+    shareIndex: number;
+    thresholdN?: number;
+    createdAt: string;
+  }>) => void;
 }> = [];
 
 function sha(input: string) {
@@ -143,6 +177,49 @@ function notifySubmittedVoteSubscribers(votingId: string) {
   for (const subscriber of submittedVoteSubscribers) {
     if (subscriber.votingId === votingId) {
       subscriber.onVotes(nextVotes);
+    }
+  }
+}
+
+function subCoordinatorEntriesForLead(leadCoordinatorNpub: string) {
+  return subCoordinatorApplications
+    .filter((entry) => entry.leadCoordinatorNpub === leadCoordinatorNpub)
+    .map((entry, index) => ({
+      id: `application-${index + 1}`,
+      coordinatorNpub: entry.coordinatorNpub,
+      coordinatorId: entry.coordinatorId,
+      leadCoordinatorNpub: entry.leadCoordinatorNpub,
+      createdAt: entry.createdAt,
+    }));
+}
+
+function notifySubCoordinatorApplicationSubscribers(leadCoordinatorNpub: string) {
+  const nextApplications = subCoordinatorEntriesForLead(leadCoordinatorNpub);
+  for (const subscriber of subCoordinatorApplicationSubscribers) {
+    if (subscriber.leadCoordinatorNpub === leadCoordinatorNpub) {
+      subscriber.onApplications(nextApplications);
+    }
+  }
+}
+
+function shareAssignmentsForCoordinator(coordinatorNpub: string) {
+  return shareAssignments
+    .filter((entry) => entry.coordinatorNpub === coordinatorNpub)
+    .map((entry, index) => ({
+      id: `assignment-${index + 1}`,
+      leadCoordinatorNpub: entry.leadCoordinatorNpub,
+      coordinatorNpub: entry.coordinatorNpub,
+      shareIndex: entry.shareIndex,
+      thresholdN: entry.thresholdN,
+      createdAt: entry.createdAt,
+    }));
+}
+
+function notifyShareAssignmentSubscribers(coordinatorNpub: string) {
+  const nextAssignments = shareAssignmentsForCoordinator(coordinatorNpub);
+  for (const subscriber of shareAssignmentSubscribers) {
+    if (subscriber.coordinatorNpub === coordinatorNpub) {
+      subscriber.onAssignments(nextAssignments);
     }
   }
 }
@@ -223,6 +300,79 @@ vi.mock("./simpleShardDm", () => ({
     input.onFollowers(followerEntriesForCoordinator(coordinatorNpub));
     return () => {
       followerSubscribers = followerSubscribers.filter((entry) => entry !== subscriber);
+    };
+  }),
+  sendSimpleSubCoordinatorJoin: vi.fn(async (input: {
+    leadCoordinatorNpub: string;
+    coordinatorNpub: string;
+    coordinatorId: string;
+  }) => {
+    subCoordinatorApplications.push({
+      leadCoordinatorNpub: input.leadCoordinatorNpub,
+      coordinatorNpub: input.coordinatorNpub,
+      coordinatorId: input.coordinatorId,
+      createdAt: new Date().toISOString(),
+    });
+    notifySubCoordinatorApplicationSubscribers(input.leadCoordinatorNpub);
+    return { eventId: `subcoord-${subCoordinatorApplications.length}`, successes: 1, failures: 0, relayResults: [] };
+  }),
+  subscribeSimpleSubCoordinatorApplications: vi.fn((input: {
+    leadCoordinatorNsec: string;
+    onApplications: (applications: Array<{
+      id: string;
+      coordinatorNpub: string;
+      coordinatorId: string;
+      leadCoordinatorNpub: string;
+      createdAt: string;
+    }>) => void;
+  }) => {
+    const leadCoordinatorNpub = nsecToNpub(input.leadCoordinatorNsec);
+    const subscriber = {
+      leadCoordinatorNpub,
+      onApplications: input.onApplications,
+    };
+    subCoordinatorApplicationSubscribers.push(subscriber);
+    input.onApplications(subCoordinatorEntriesForLead(leadCoordinatorNpub));
+    return () => {
+      subCoordinatorApplicationSubscribers = subCoordinatorApplicationSubscribers.filter((entry) => entry !== subscriber);
+    };
+  }),
+  sendSimpleShareAssignment: vi.fn(async (input: {
+    leadCoordinatorNpub: string;
+    coordinatorNpub: string;
+    shareIndex: number;
+    thresholdN?: number;
+  }) => {
+    shareAssignments.push({
+      leadCoordinatorNpub: input.leadCoordinatorNpub,
+      coordinatorNpub: input.coordinatorNpub,
+      shareIndex: input.shareIndex,
+      thresholdN: input.thresholdN,
+      createdAt: new Date().toISOString(),
+    });
+    notifyShareAssignmentSubscribers(input.coordinatorNpub);
+    return { eventId: `assignment-${shareAssignments.length}`, successes: 1, failures: 0, relayResults: [] };
+  }),
+  subscribeSimpleCoordinatorShareAssignments: vi.fn((input: {
+    coordinatorNsec: string;
+    onAssignments: (assignments: Array<{
+      id: string;
+      leadCoordinatorNpub: string;
+      coordinatorNpub: string;
+      shareIndex: number;
+      thresholdN?: number;
+      createdAt: string;
+    }>) => void;
+  }) => {
+    const coordinatorNpub = nsecToNpub(input.coordinatorNsec);
+    const subscriber = {
+      coordinatorNpub,
+      onAssignments: input.onAssignments,
+    };
+    shareAssignmentSubscribers.push(subscriber);
+    input.onAssignments(shareAssignmentsForCoordinator(coordinatorNpub));
+    return () => {
+      shareAssignmentSubscribers = shareAssignmentSubscribers.filter((entry) => entry !== subscriber);
     };
   }),
   sendSimpleRoundTicket: vi.fn(async (input: {
@@ -392,10 +542,14 @@ describe("Simple round flow", () => {
     shardResponses = [];
     submittedVotes = [];
     coordinatorFollowers = [];
+    subCoordinatorApplications = [];
+    shareAssignments = [];
     followerSubscribers = [];
     shardResponseSubscribers = [];
     liveVoteSubscribers = [];
     submittedVoteSubscribers = [];
+    subCoordinatorApplicationSubscribers = [];
+    shareAssignmentSubscribers = [];
     window.sessionStorage.clear();
   });
 
@@ -444,8 +598,7 @@ describe("Simple round flow", () => {
     await user.type(coordinatorOneInputs[3] as HTMLInputElement, "2");
     await user.clear(coordinatorTwoInputs[0] as HTMLInputElement);
     await user.type(coordinatorTwoInputs[0] as HTMLInputElement, coordinatorOneNpub);
-    await user.clear(coordinatorTwoInputs[4] as HTMLInputElement);
-    await user.type(coordinatorTwoInputs[4] as HTMLInputElement, "2");
+    await user.click(coordinatorTwoUi.getByRole("button", { name: /Submit to lead/i }));
 
     await waitFor(() => {
       expect(voterOne.container.querySelectorAll("code.simple-identity-code")[0]?.textContent?.startsWith("npub1")).toBe(true);
@@ -466,15 +619,18 @@ describe("Simple round flow", () => {
     await waitFor(() => {
       expect(voterOneUi.getByText(/Coordinators notified\. Waiting for round tickets\./i)).toBeTruthy();
       expect(voterTwoUi.getByText(/Coordinators notified\. Waiting for round tickets\./i)).toBeTruthy();
+      expect(coordinatorOneUi.getByText(/submitted as sub-coordinator/i)).toBeTruthy();
     });
 
     await user.click(coordinatorOneUi.getByRole("button", { name: /Broadcast live vote/i }));
+    await user.click(coordinatorOneUi.getByRole("button", { name: /Distribute share indexes/i }));
 
     await waitFor(() => {
       expect(voterOneUi.getByText(/No live vote ticket yet\./i)).toBeTruthy();
       expect(voterTwoUi.getByText(/No live vote ticket yet\./i)).toBeTruthy();
       expect(coordinatorOneUi.getAllByText(/is following this coordinator/i).length).toBeGreaterThanOrEqual(2);
       expect(coordinatorTwoUi.getAllByText(/is following this coordinator/i).length).toBeGreaterThanOrEqual(2);
+      expect(coordinatorTwoUi.getByDisplayValue("2")).toBeTruthy();
     });
     expect(voterOneUi.queryByText("Old stale prompt")).toBeNull();
     expect(voterTwoUi.queryByText("Old stale prompt")).toBeNull();
