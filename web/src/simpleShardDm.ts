@@ -1,11 +1,17 @@
 import { getPublicKey, nip17, nip19, SimplePool } from "nostr-tools";
-import { DEFAULT_DM_RELAYS, type DmPublishResult } from "./proofSubmission";
+import type { DmPublishResult } from "./proofSubmission";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import {
   createSimpleShardCertificate,
   parseSimpleShardCertificate,
   type SimpleShardCertificate,
 } from "./simpleShardCertificate";
+
+export const SIMPLE_DM_RELAYS = [
+  "wss://nos.lol",
+  "wss://relay.snort.social",
+  "wss://relay.nostr.band",
+];
 
 export type SimpleShardRequest = {
   id: string;
@@ -54,7 +60,7 @@ export type SimpleShareAssignment = {
 
 function buildDmRelays(relays?: string[]) {
   return Array.from(
-    new Set([...DEFAULT_DM_RELAYS, ...(relays ?? [])].filter((relay) => relay.trim().length > 0)),
+    new Set([...SIMPLE_DM_RELAYS, ...(relays ?? [])].filter((relay) => relay.trim().length > 0)),
   );
 }
 

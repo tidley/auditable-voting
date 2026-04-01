@@ -1,10 +1,15 @@
 import { finalizeEvent, getPublicKey, nip19, SimplePool } from "nostr-tools";
-import { DEFAULT_VOTE_RELAYS } from "./ballot";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import {
   deriveTokenIdFromSimpleShardCertificates,
   type SimpleShardCertificate,
 } from "./simpleShardCertificate";
+
+export const SIMPLE_PUBLIC_RELAYS = [
+  "wss://nos.lol",
+  "wss://relay.snort.social",
+  "wss://relay.nostr.band",
+];
 
 export const SIMPLE_LIVE_VOTE_KIND = 38990;
 export const SIMPLE_LIVE_VOTE_BALLOT_KIND = 38991;
@@ -31,7 +36,7 @@ export type SimpleSubmittedVote = {
 
 function buildPublicRelays(relays?: string[]) {
   return Array.from(
-    new Set([...DEFAULT_VOTE_RELAYS, ...(relays ?? [])].filter((relay) => relay.trim().length > 0)),
+    new Set([...SIMPLE_PUBLIC_RELAYS, ...(relays ?? [])].filter((relay) => relay.trim().length > 0)),
   );
 }
 
