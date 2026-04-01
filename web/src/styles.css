@@ -32,6 +32,11 @@ body {
   font-family: "Avenir Next", "Segoe UI", sans-serif;
 }
 
+body.simple-page {
+  background: #000000;
+  color: #f8fafc;
+}
+
 button,
 input,
 textarea {

@@ -130,19 +130,6 @@ export default function SimpleUiApp() {
   }, [voterKeypair]);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    const params = new URLSearchParams(window.location.search);
-    const nextCoordinatorNpub = params.get("coordinator")?.trim() ?? "";
-
-    if (nextCoordinatorNpub) {
-      setManualCoordinators([nextCoordinatorNpub]);
-    }
-  }, []);
-
-  useEffect(() => {
     const voterNsec = voterKeypair?.nsec?.trim() ?? "";
 
     if (!voterNsec) {
