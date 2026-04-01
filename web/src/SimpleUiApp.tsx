@@ -98,6 +98,8 @@ export default function SimpleUiApp() {
   const [submitStatus, setSubmitStatus] = useState<string | null>(null);
   const [ballotTokenId, setBallotTokenId] = useState<string | null>(null);
   const [ticketRequestNonce, setTicketRequestNonce] = useState<string>("");
+  const [pendingTicketRequest, setPendingTicketRequest] = useState(false);
+  const [lastRequestedVotingId, setLastRequestedVotingId] = useState<string>("");
 
   const configuredCoordinatorTargets = useMemo(
     () => normalizeCoordinatorNpubs(manualCoordinators),
@@ -247,6 +249,7 @@ export default function SimpleUiApp() {
 
   useEffect(() => {
     setTicketRequestNonce("");
+    setLastRequestedVotingId("");
   }, [liveVoteSession?.votingId]);
 
   function refreshIdentity() {
@@ -277,6 +280,49 @@ export default function SimpleUiApp() {
     });
   }
 
+  async function requestTicketsForLiveVote(session: SimpleLiveVoteSession) {
+    const voterNpub = voterKeypair?.npub ?? "";
+    const voterNsec = voterKeypair?.nsec ?? "";
+    const voterSecretKey = decodeNsec(voterNsec);
+
+    if (!voterNpub || voterId === "pending" || !voterSecretKey || configuredCoordinatorTargets.length === 0) {
+      return false;
+    }
+
+    try {
+      const nextTicketRequestNonce = crypto.randomUUID();
+      const tokenCommitment = await sha256Hex(
+        `${voterNsec}:${session.votingId}:${nextTicketRequestNonce}:simple-threshold-token`,
+      );
+      setTicketRequestNonce(nextTicketRequestNonce);
+      const requestResults = await Promise.all(configuredCoordinatorTargets.map((coordinatorNpub) => (
+        sendSimpleShardRequest({
+          voterSecretKey,
+          coordinatorNpub,
+          voterNpub,
+          voterId,
+          votingId: session.votingId,
+          tokenCommitment,
+        })
+      )));
+      const requestSuccesses = requestResults.reduce((sum, result) => sum + result.successes, 0);
+
+      if (requestSuccesses > 0) {
+        setPendingTicketRequest(false);
+        setLastRequestedVotingId(session.votingId);
+      }
+      setRequestStatus(
+        requestSuccesses > 0
+          ? `Coordinators notified. Vote tickets requested for ${shortVotingId(session.votingId)}.`
+          : "Vote ticket request failed.",
+      );
+      return requestSuccesses > 0;
+    } catch {
+      setRequestStatus("Vote ticket request failed.");
+      return false;
+    }
+  }
+
   async function notifyCoordinators() {
     const voterNpub = voterKeypair?.npub ?? "";
     const voterNsec = voterKeypair?.nsec ?? "";
@@ -302,6 +348,7 @@ export default function SimpleUiApp() {
       const followSuccesses = followResults.filter(Boolean).length;
 
       if (!liveVoteSession?.votingId) {
+        setPendingTicketRequest(followSuccesses > 0);
         setRequestStatus(
           followSuccesses > 0
             ? "Coordinators notified. Waiting for a live vote before tickets can be issued."
@@ -310,32 +357,28 @@ export default function SimpleUiApp() {
         return;
       }
 
-      const nextTicketRequestNonce = crypto.randomUUID();
-      const tokenCommitment = await sha256Hex(
-        `${voterNsec}:${liveVoteSession.votingId}:${nextTicketRequestNonce}:simple-threshold-token`,
-      );
-      setTicketRequestNonce(nextTicketRequestNonce);
-      const requestResults = await Promise.all(configuredCoordinatorTargets.map((coordinatorNpub) => (
-        sendSimpleShardRequest({
-          voterSecretKey,
-          coordinatorNpub,
-          voterNpub,
-          voterId,
-          votingId: liveVoteSession.votingId,
-          tokenCommitment,
-        })
-      )));
-      const requestSuccesses = requestResults.reduce((sum, result) => sum + result.successes, 0);
-
-      setRequestStatus(
-        requestSuccesses > 0
-          ? `Coordinators notified. Vote tickets requested for ${shortVotingId(liveVoteSession.votingId)}.`
-          : "Vote ticket request failed.",
-      );
+      await requestTicketsForLiveVote(liveVoteSession);
     } catch {
       setRequestStatus("Coordinator notification failed.");
     }
   }
+
+  useEffect(() => {
+    if (!pendingTicketRequest || !liveVoteSession || !voterKeypair?.npub || configuredCoordinatorTargets.length === 0) {
+      return;
+    }
+    if (lastRequestedVotingId === liveVoteSession.votingId) {
+      return;
+    }
+
+    void requestTicketsForLiveVote(liveVoteSession);
+  }, [
+    configuredCoordinatorTargets.length,
+    lastRequestedVotingId,
+    liveVoteSession,
+    pendingTicketRequest,
+    voterKeypair?.npub,
+  ]);
 
   const tokenCommitmentBasis = voterKeypair?.nsec && liveVoteSession?.votingId && ticketRequestNonce
     ? `${voterKeypair.nsec}:${liveVoteSession.votingId}:${ticketRequestNonce}:simple-threshold-token`
