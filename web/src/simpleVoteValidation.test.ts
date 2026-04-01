@@ -16,6 +16,19 @@ vi.mock("./simpleShardCertificate", () => ({
           createdAt: "2026-03-31T00:00:00.000Z",
           event: certificate,
         }
+      : certificate.id === "valid-cert-2"
+        ? {
+            shardId: "resp-2",
+            coordinatorNpub: "npub1coord2",
+            thresholdLabel: "2 of 2",
+            votingId: "vote-1",
+            tokenCommitment: "commit-1",
+            shareIndex: 1,
+            thresholdT: 2,
+            thresholdN: 2,
+            createdAt: "2026-03-31T00:00:01.000Z",
+            event: certificate,
+          }
       : null
   ),
 }));
@@ -91,5 +104,22 @@ describe("simpleVoteValidation", () => {
     expect(results[0].valid).toBe(true);
     expect(results[1].valid).toBe(false);
     expect(results[1].reason).toBe("Duplicate token");
+  });
+
+  it("accepts distinct coordinator shares even when share indexes match", () => {
+    const results = validateSimpleSubmittedVotes([
+      {
+        eventId: "vote-1",
+        votingId: "vote-1",
+        voterNpub: "npub1ballot",
+        choice: "Yes",
+        shardCertificates: [{ id: "valid-cert" } as any, { id: "valid-cert-2" } as any],
+        tokenId: "token-1",
+        createdAt: "2026-03-31T00:00:00.000Z",
+      },
+    ], 2);
+
+    expect(results[0].valid).toBe(true);
+    expect(results[0].reason).toBe("Valid");
   });
 });
