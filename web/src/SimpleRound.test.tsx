@@ -54,6 +54,13 @@ let liveVotes: InternalLiveVote[] = [];
 let shardRequests: InternalRequest[] = [];
 let shardResponses: InternalResponse[] = [];
 let submittedVotes: InternalSubmittedVote[] = [];
+let coordinatorFollowers: Array<{
+  coordinatorNpub: string;
+  voterNpub: string;
+  voterId: string;
+  votingId?: string;
+  createdAt: string;
+}> = [];
 
 function sha(input: string) {
   return createHash("sha256").update(input).digest("hex");
@@ -116,6 +123,34 @@ vi.mock("./simpleShardCertificate", () => ({
 }));
 
 vi.mock("./simpleShardDm", () => ({
+  sendSimpleCoordinatorFollow: vi.fn(async (input: {
+    voterSecretKey: Uint8Array;
+    coordinatorNpub: string;
+    voterNpub: string;
+    voterId: string;
+    votingId?: string;
+  }) => {
+    coordinatorFollowers.push({
+      coordinatorNpub: input.coordinatorNpub,
+      voterNpub: input.voterNpub,
+      voterId: input.voterId,
+      votingId: input.votingId,
+      createdAt: new Date().toISOString(),
+    });
+    return { eventId: `follow-${coordinatorFollowers.length}`, successes: 1, failures: 0, relayResults: [] };
+  }),
+  fetchSimpleCoordinatorFollowers: vi.fn(async (input: { coordinatorNsec: string }) => {
+    const coordinatorNpub = nsecToNpub(input.coordinatorNsec);
+    return coordinatorFollowers
+      .filter((entry) => entry.coordinatorNpub === coordinatorNpub)
+      .map((entry, index) => ({
+        id: `follow-${index + 1}`,
+        voterNpub: entry.voterNpub,
+        voterId: entry.voterId,
+        votingId: entry.votingId,
+        createdAt: entry.createdAt,
+      }));
+  }),
   sendSimpleShardRequest: vi.fn(async (input: {
     voterSecretKey: Uint8Array;
     coordinatorNpub: string;
@@ -290,6 +325,7 @@ describe("Simple round flow", () => {
     shardRequests = [];
     shardResponses = [];
     submittedVotes = [];
+    coordinatorFollowers = [];
     window.sessionStorage.clear();
   });
 
@@ -358,6 +394,14 @@ describe("Simple round flow", () => {
     });
     expect(voterOneUi.queryByText("Old stale prompt")).toBeNull();
     expect(voterTwoUi.queryByText("Old stale prompt")).toBeNull();
+
+    await user.click(voterOneUi.getByRole("button", { name: /Follow coordinators/i }));
+    await user.click(voterTwoUi.getByRole("button", { name: /Follow coordinators/i }));
+
+    await waitFor(() => {
+      expect(voterOneUi.getByText(/Following 2 coordinators\./i)).toBeTruthy();
+      expect(voterTwoUi.getByText(/Following 2 coordinators\./i)).toBeTruthy();
+    });
 
     const voterOneRequestButton = voterOneUi.getByRole("button", { name: /Request voting shares/i });
     const voterTwoRequestButton = voterTwoUi.getByRole("button", { name: /Request voting shares/i });

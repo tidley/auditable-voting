@@ -3,8 +3,10 @@ import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 import { fetchElection, type ElectionInfo } from "./coordinatorApi";
 import { decodeNsec } from "./nostrIdentity";
 import {
+  fetchSimpleCoordinatorFollowers,
   fetchSimpleShardRequests,
   sendSimpleShardResponse,
+  type SimpleCoordinatorFollower,
   type SimpleShardRequest,
 } from "./simpleShardDm";
 import {
@@ -58,6 +60,7 @@ export default function SimpleCoordinatorApp() {
   const [keypair, setKeypair] = useState<SimpleCoordinatorKeypair | null>(() => loadStoredCoordinatorKeypair());
   const [coordinatorId, setCoordinatorId] = useState("pending");
   const [leadCoordinatorNpub, setLeadCoordinatorNpub] = useState("");
+  const [followers, setFollowers] = useState<SimpleCoordinatorFollower[]>([]);
   const [requests, setRequests] = useState<SimpleShardRequest[]>([]);
   const [requestStatuses, setRequestStatuses] = useState<Record<string, string>>({});
   const [questionPrompt, setQuestionPrompt] = useState("Should the proposal pass?");
@@ -103,6 +106,40 @@ export default function SimpleCoordinatorApp() {
     void refreshRequests();
     const intervalId = window.setInterval(() => {
       void refreshRequests();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [keypair?.nsec]);
+
+  useEffect(() => {
+    const coordinatorNsec = keypair?.nsec ?? "";
+
+    if (!coordinatorNsec) {
+      setFollowers([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function refreshFollowers() {
+      try {
+        const nextFollowers = await fetchSimpleCoordinatorFollowers({ coordinatorNsec });
+        if (!cancelled) {
+          setFollowers(nextFollowers);
+        }
+      } catch {
+        if (!cancelled) {
+          setFollowers([]);
+        }
+      }
+    }
+
+    void refreshFollowers();
+    const intervalId = window.setInterval(() => {
+      void refreshFollowers();
     }, 5000);
 
     return () => {
@@ -379,6 +416,24 @@ export default function SimpleCoordinatorApp() {
             />
           </section>
         )}
+
+        <section className="simple-voter-section" aria-labelledby="followers-title">
+          <h2 id="followers-title" className="simple-voter-section-title">Following voters</h2>
+          {followers.length > 0 ? (
+            <ul className="simple-voter-list">
+              {followers.map((follower) => (
+                <li key={follower.voterNpub} className="simple-voter-list-item">
+                  <p className="simple-voter-question">
+                    Voter {follower.voterId} is following this coordinator
+                    {follower.votingId ? ` for ${follower.votingId.slice(0, 12)}` : ""}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="simple-voter-empty">No voters are following this coordinator yet.</p>
+          )}
+        </section>
 
         <section className="simple-voter-section" aria-labelledby="shard-requests-title">
           <h2 id="shard-requests-title" className="simple-voter-section-title">Received shard requests</h2>

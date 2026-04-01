@@ -26,10 +26,75 @@ export type SimpleShardResponse = {
   shardCertificate: SimpleShardCertificate;
 };
 
+export type SimpleCoordinatorFollower = {
+  id: string;
+  voterNpub: string;
+  voterId: string;
+  votingId?: string;
+  createdAt: string;
+};
+
 function buildDmRelays(relays?: string[]) {
   return Array.from(
     new Set([...DEFAULT_DM_RELAYS, ...(relays ?? [])].filter((relay) => relay.trim().length > 0)),
   );
+}
+
+export async function sendSimpleCoordinatorFollow(input: {
+  voterSecretKey: Uint8Array;
+  coordinatorNpub: string;
+  voterNpub: string;
+  voterId: string;
+  votingId?: string;
+  relays?: string[];
+}): Promise<DmPublishResult> {
+  const decoded = nip19.decode(input.coordinatorNpub);
+  if (decoded.type !== "npub") {
+    throw new Error("Coordinator value must be an npub.");
+  }
+
+  const dmRelays = buildDmRelays(input.relays);
+  const event = nip17.wrapEvent(
+    input.voterSecretKey,
+    {
+      publicKey: decoded.data as string,
+      relayUrl: dmRelays[0],
+    },
+    JSON.stringify({
+      action: "simple_coordinator_follow",
+      follow_id: crypto.randomUUID(),
+      voter_npub: input.voterNpub,
+      voter_id: input.voterId,
+      voting_id: input.votingId,
+      created_at: new Date().toISOString(),
+    }),
+    "Follow coordinator",
+  );
+
+  const pool = new SimplePool();
+  try {
+    const results = await queueNostrPublish(
+      () => Promise.allSettled(pool.publish(dmRelays, event, { maxWait: 4000 })),
+    );
+    const relayResults = results.map((result, index) => (
+      result.status === "fulfilled"
+        ? { relay: dmRelays[index], success: true }
+        : {
+            relay: dmRelays[index],
+            success: false,
+            error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+          }
+    ));
+
+    return {
+      eventId: event.id,
+      successes: relayResults.filter((result) => result.success).length,
+      failures: relayResults.filter((result) => !result.success).length,
+      relayResults,
+    };
+  } finally {
+    pool.destroy();
+  }
 }
 
 export async function sendSimpleShardRequest(input: {
@@ -152,6 +217,68 @@ export async function fetchSimpleShardRequests(input: {
     }
 
     return [...requests.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  } finally {
+    pool.close(dmRelays);
+  }
+}
+
+export async function fetchSimpleCoordinatorFollowers(input: {
+  coordinatorNsec: string;
+  relays?: string[];
+}): Promise<SimpleCoordinatorFollower[]> {
+  const decoded = nip19.decode(input.coordinatorNsec.trim());
+  if (decoded.type !== "nsec") {
+    throw new Error("Coordinator key must be an nsec.");
+  }
+
+  const secretKey = decoded.data as Uint8Array;
+  const coordinatorHex = getPublicKey(secretKey);
+  const dmRelays = buildDmRelays(input.relays);
+  const pool = new SimplePool();
+
+  try {
+    const wrappedEvents = await pool.querySync(dmRelays, {
+      kinds: [1059],
+      "#p": [coordinatorHex],
+      limit: 100,
+    });
+
+    const followers = new Map<string, SimpleCoordinatorFollower>();
+
+    for (const wrappedEvent of wrappedEvents) {
+      try {
+        const rumor = nip17.unwrapEvent(wrappedEvent, secretKey) as { content: string };
+        const payload = JSON.parse(rumor.content) as {
+          action?: string;
+          follow_id?: string;
+          voter_npub?: string;
+          voter_id?: string;
+          voting_id?: string;
+          created_at?: string;
+        };
+
+        if (
+          payload.action !== "simple_coordinator_follow"
+          || !payload.follow_id
+          || !payload.voter_npub
+          || !payload.voter_id
+        ) {
+          continue;
+        }
+
+        followers.set(payload.voter_npub, {
+          id: payload.follow_id,
+          voterNpub: payload.voter_npub,
+          voterId: payload.voter_id,
+          votingId: payload.voting_id?.trim() || undefined,
+          createdAt: payload.created_at ?? new Date(wrappedEvent.created_at * 1000).toISOString(),
+        });
+      } catch {
+        continue;
+      }
+    }
+
+    return [...followers.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   } finally {
     pool.close(dmRelays);
   }
