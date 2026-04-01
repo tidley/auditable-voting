@@ -235,6 +235,111 @@ describe("simpleShardDm", () => {
     ]);
   });
 
+  it("sends sub-coordinator join messages to the lead coordinator", async () => {
+    const mod = await import("./simpleShardDm");
+
+    const result = await mod.sendSimpleSubCoordinatorJoin({
+      coordinatorSecretKey: new Uint8Array([1, 2, 3]),
+      leadCoordinatorNpub: "npub1lead",
+      coordinatorNpub: "npub1coord",
+      coordinatorId: "coord123",
+    });
+
+    expect(wrapEvent).toHaveBeenCalled();
+    expect(result.successes).toBeGreaterThan(0);
+  });
+
+  it("subscribes to sub-coordinator join updates", async () => {
+    const mod = await import("./simpleShardDm");
+    const onApplications = vi.fn();
+
+    subscribeMany.mockImplementation((_relays: string[], _filter: unknown, params: { onevent?: (event: { created_at: number }) => void }) => {
+      params.onevent?.({ created_at: 10 });
+      return { close: vi.fn(async () => undefined) };
+    });
+    unwrapEvent.mockReturnValueOnce({
+      content: JSON.stringify({
+        action: "simple_subcoordinator_join",
+        application_id: "application-1",
+        coordinator_npub: "npub1coord",
+        coordinator_id: "coord123",
+        lead_coordinator_npub: "npub1lead",
+        created_at: "2026-03-31T00:00:00.000Z",
+      }),
+    });
+
+    const unsubscribe = mod.subscribeSimpleSubCoordinatorApplications({
+      leadCoordinatorNsec: "nsec1lead",
+      onApplications,
+    });
+
+    expect(onApplications).toHaveBeenLastCalledWith([
+      {
+        id: "application-1",
+        coordinatorNpub: "npub1coord",
+        coordinatorId: "coord123",
+        leadCoordinatorNpub: "npub1lead",
+        createdAt: "2026-03-31T00:00:00.000Z",
+      },
+    ]);
+
+    unsubscribe();
+  });
+
+  it("sends share assignments from the lead coordinator", async () => {
+    const mod = await import("./simpleShardDm");
+
+    const result = await mod.sendSimpleShareAssignment({
+      leadCoordinatorSecretKey: new Uint8Array([1, 2, 3]),
+      leadCoordinatorNpub: "npub1lead",
+      coordinatorNpub: "npub1coord",
+      shareIndex: 2,
+      thresholdN: 3,
+    });
+
+    expect(wrapEvent).toHaveBeenCalled();
+    expect(result.successes).toBeGreaterThan(0);
+  });
+
+  it("subscribes to share assignment updates for a coordinator", async () => {
+    const mod = await import("./simpleShardDm");
+    const onAssignments = vi.fn();
+
+    subscribeMany.mockImplementation((_relays: string[], _filter: unknown, params: { onevent?: (event: { created_at: number }) => void }) => {
+      params.onevent?.({ created_at: 10 });
+      return { close: vi.fn(async () => undefined) };
+    });
+    unwrapEvent.mockReturnValueOnce({
+      content: JSON.stringify({
+        action: "simple_share_assignment",
+        assignment_id: "assignment-1",
+        lead_coordinator_npub: "npub1lead",
+        coordinator_npub: "npub1coord",
+        share_index: 2,
+        threshold_n: 3,
+        created_at: "2026-03-31T00:00:00.000Z",
+      }),
+    });
+
+    const unsubscribe = mod.subscribeSimpleCoordinatorShareAssignments({
+      coordinatorNsec: "nsec1coord",
+      onAssignments,
+    });
+
+    expect(onAssignments).toHaveBeenLastCalledWith([
+      {
+        id: "assignment-1",
+        leadCoordinatorNpub: "npub1lead",
+        coordinatorNpub: "npub1coord",
+        shareIndex: 2,
+        thresholdN: 3,
+        createdAt: "2026-03-31T00:00:00.000Z",
+      },
+    ]);
+
+    unsubscribe();
+  });
+
   it("subscribes to coordinator follower updates", async () => {
     const mod = await import("./simpleShardDm");
     const onFollowers = vi.fn();

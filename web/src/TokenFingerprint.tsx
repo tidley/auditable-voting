@@ -12,6 +12,7 @@ export default function TokenFingerprint({
   label,
   size = 5,
   compact = false,
+  large = false,
   showQr = !compact,
   qrValue,
 }: {
@@ -19,6 +20,7 @@ export default function TokenFingerprint({
   label?: string;
   size?: number;
   compact?: boolean;
+  large?: boolean;
   showQr?: boolean;
   qrValue?: string;
 }) {
@@ -37,7 +39,7 @@ export default function TokenFingerprint({
     void QRCode.toDataURL(qrPayload, {
       errorCorrectionLevel: "M",
       margin: 1,
-      width: compact ? 96 : 144,
+      width: compact ? 96 : (large ? 288 : 144),
       color: {
         dark: "#2e2218",
         light: "#fffaf2",
@@ -58,7 +60,7 @@ export default function TokenFingerprint({
   }, [compact, qrPayload, showQr]);
 
   return (
-    <div className={`token-fingerprint${compact ? " token-fingerprint-compact" : ""}`}>
+    <div className={`token-fingerprint${compact ? " token-fingerprint-compact" : ""}${large ? " token-fingerprint-large" : ""}`}>
       <div className="token-fingerprint-symbols">
         <div
           className="token-fingerprint-grid"

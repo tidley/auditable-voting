@@ -35,6 +35,23 @@ export type SimpleCoordinatorFollower = {
   createdAt: string;
 };
 
+export type SimpleSubCoordinatorApplication = {
+  id: string;
+  coordinatorNpub: string;
+  coordinatorId: string;
+  leadCoordinatorNpub: string;
+  createdAt: string;
+};
+
+export type SimpleShareAssignment = {
+  id: string;
+  leadCoordinatorNpub: string;
+  coordinatorNpub: string;
+  shareIndex: number;
+  thresholdN?: number;
+  createdAt: string;
+};
+
 function buildDmRelays(relays?: string[]) {
   return Array.from(
     new Set([...DEFAULT_DM_RELAYS, ...(relays ?? [])].filter((relay) => relay.trim().length > 0)),
@@ -169,6 +186,82 @@ function parseSimpleShardResponse(
   }
 }
 
+function parseSimpleSubCoordinatorApplication(
+  wrappedEvent: Record<string, unknown> & { created_at: number },
+  secretKey: Uint8Array,
+): SimpleSubCoordinatorApplication | null {
+  try {
+    const rumor = nip17.unwrapEvent(wrappedEvent as never, secretKey) as { content: string };
+    const payload = JSON.parse(rumor.content) as {
+      action?: string;
+      application_id?: string;
+      coordinator_npub?: string;
+      coordinator_id?: string;
+      lead_coordinator_npub?: string;
+      created_at?: string;
+    };
+
+    if (
+      payload.action !== "simple_subcoordinator_join"
+      || !payload.application_id
+      || !payload.coordinator_npub
+      || !payload.coordinator_id
+      || !payload.lead_coordinator_npub
+    ) {
+      return null;
+    }
+
+    return {
+      id: payload.application_id,
+      coordinatorNpub: payload.coordinator_npub,
+      coordinatorId: payload.coordinator_id,
+      leadCoordinatorNpub: payload.lead_coordinator_npub,
+      createdAt: payload.created_at ?? new Date(wrappedEvent.created_at * 1000).toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseSimpleShareAssignment(
+  wrappedEvent: Record<string, unknown> & { created_at: number },
+  secretKey: Uint8Array,
+): SimpleShareAssignment | null {
+  try {
+    const rumor = nip17.unwrapEvent(wrappedEvent as never, secretKey) as { content: string };
+    const payload = JSON.parse(rumor.content) as {
+      action?: string;
+      assignment_id?: string;
+      lead_coordinator_npub?: string;
+      coordinator_npub?: string;
+      share_index?: number;
+      threshold_n?: number;
+      created_at?: string;
+    };
+
+    if (
+      payload.action !== "simple_share_assignment"
+      || !payload.assignment_id
+      || !payload.lead_coordinator_npub
+      || !payload.coordinator_npub
+      || typeof payload.share_index !== "number"
+    ) {
+      return null;
+    }
+
+    return {
+      id: payload.assignment_id,
+      leadCoordinatorNpub: payload.lead_coordinator_npub,
+      coordinatorNpub: payload.coordinator_npub,
+      shareIndex: payload.share_index,
+      thresholdN: typeof payload.threshold_n === "number" ? payload.threshold_n : undefined,
+      createdAt: payload.created_at ?? new Date(wrappedEvent.created_at * 1000).toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function sendSimpleCoordinatorFollow(input: {
   voterSecretKey: Uint8Array;
   coordinatorNpub: string;
@@ -198,6 +291,62 @@ export async function sendSimpleCoordinatorFollow(input: {
       created_at: new Date().toISOString(),
     }),
     "Follow coordinator",
+  );
+
+  const pool = new SimplePool();
+  try {
+    const results = await queueNostrPublish(
+      () => Promise.allSettled(pool.publish(dmRelays, event, { maxWait: 4000 })),
+    );
+    const relayResults = results.map((result, index) => (
+      result.status === "fulfilled"
+        ? { relay: dmRelays[index], success: true }
+        : {
+            relay: dmRelays[index],
+            success: false,
+            error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+          }
+    ));
+
+    return {
+      eventId: event.id,
+      successes: relayResults.filter((result) => result.success).length,
+      failures: relayResults.filter((result) => !result.success).length,
+      relayResults,
+    };
+  } finally {
+    pool.destroy();
+  }
+}
+
+export async function sendSimpleSubCoordinatorJoin(input: {
+  coordinatorSecretKey: Uint8Array;
+  leadCoordinatorNpub: string;
+  coordinatorNpub: string;
+  coordinatorId: string;
+  relays?: string[];
+}): Promise<DmPublishResult> {
+  const decoded = nip19.decode(input.leadCoordinatorNpub);
+  if (decoded.type !== "npub") {
+    throw new Error("Lead coordinator value must be an npub.");
+  }
+
+  const dmRelays = buildDmRelays(input.relays);
+  const event = nip17.wrapEvent(
+    input.coordinatorSecretKey,
+    {
+      publicKey: decoded.data as string,
+      relayUrl: dmRelays[0],
+    },
+    JSON.stringify({
+      action: "simple_subcoordinator_join",
+      application_id: crypto.randomUUID(),
+      coordinator_npub: input.coordinatorNpub,
+      coordinator_id: input.coordinatorId,
+      lead_coordinator_npub: input.leadCoordinatorNpub,
+      created_at: new Date().toISOString(),
+    }),
+    "Join lead coordinator",
   );
 
   const pool = new SimplePool();
@@ -409,6 +558,58 @@ export function subscribeSimpleCoordinatorFollowers(input: {
   };
 }
 
+export function subscribeSimpleSubCoordinatorApplications(input: {
+  leadCoordinatorNsec: string;
+  relays?: string[];
+  onApplications: (applications: SimpleSubCoordinatorApplication[]) => void;
+  onError?: (error: Error) => void;
+}): () => void {
+  const decoded = nip19.decode(input.leadCoordinatorNsec.trim());
+  if (decoded.type !== "nsec") {
+    throw new Error("Lead coordinator key must be an nsec.");
+  }
+
+  const secretKey = decoded.data as Uint8Array;
+  const leadCoordinatorHex = getPublicKey(secretKey);
+  const dmRelays = buildDmRelays(input.relays);
+  const pool = new SimplePool();
+  const applications = new Map<string, SimpleSubCoordinatorApplication>();
+  let closed = false;
+
+  const subscription = pool.subscribeMany(dmRelays, {
+    kinds: [1059],
+    "#p": [leadCoordinatorHex],
+    limit: 100,
+  }, {
+    onevent: (wrappedEvent) => {
+      const application = parseSimpleSubCoordinatorApplication(wrappedEvent, secretKey);
+      if (!application) {
+        return;
+      }
+
+      applications.set(application.coordinatorNpub, application);
+      input.onApplications(sortByCreatedAtDescending([...applications.values()]));
+    },
+    onclose: (reasons) => {
+      if (closed) {
+        return;
+      }
+
+      const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
+      if (errors.length > 0) {
+        input.onError?.(new Error(errors.join("; ")));
+      }
+    },
+    maxWait: 4000,
+  });
+
+  return () => {
+    closed = true;
+    void subscription.close("closed by caller");
+    pool.destroy();
+  };
+}
+
 export async function sendSimpleShardResponse(input: {
   coordinatorSecretKey: Uint8Array;
   voterNpub: string;
@@ -564,6 +765,64 @@ export async function sendSimpleRoundTicket(input: {
   }
 }
 
+export async function sendSimpleShareAssignment(input: {
+  leadCoordinatorSecretKey: Uint8Array;
+  leadCoordinatorNpub: string;
+  coordinatorNpub: string;
+  shareIndex: number;
+  thresholdN?: number;
+  relays?: string[];
+}): Promise<DmPublishResult> {
+  const decoded = nip19.decode(input.coordinatorNpub);
+  if (decoded.type !== "npub") {
+    throw new Error("Coordinator value must be an npub.");
+  }
+
+  const dmRelays = buildDmRelays(input.relays);
+  const event = nip17.wrapEvent(
+    input.leadCoordinatorSecretKey,
+    {
+      publicKey: decoded.data as string,
+      relayUrl: dmRelays[0],
+    },
+    JSON.stringify({
+      action: "simple_share_assignment",
+      assignment_id: crypto.randomUUID(),
+      lead_coordinator_npub: input.leadCoordinatorNpub,
+      coordinator_npub: input.coordinatorNpub,
+      share_index: input.shareIndex,
+      threshold_n: input.thresholdN,
+      created_at: new Date().toISOString(),
+    }),
+    "Share assignment",
+  );
+
+  const pool = new SimplePool();
+  try {
+    const results = await queueNostrPublish(
+      () => Promise.allSettled(pool.publish(dmRelays, event, { maxWait: 4000 })),
+    );
+    const relayResults = results.map((result, index) => (
+      result.status === "fulfilled"
+        ? { relay: dmRelays[index], success: true }
+        : {
+            relay: dmRelays[index],
+            success: false,
+            error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+          }
+    ));
+
+    return {
+      eventId: event.id,
+      successes: relayResults.filter((result) => result.success).length,
+      failures: relayResults.filter((result) => !result.success).length,
+      relayResults,
+    };
+  } finally {
+    pool.destroy();
+  }
+}
+
 export async function fetchSimpleShardResponses(input: {
   voterNsec: string;
   relays?: string[];
@@ -631,6 +890,58 @@ export function subscribeSimpleShardResponses(input: {
 
       responses.set(response.id, response);
       input.onResponses(sortByCreatedAtDescending([...responses.values()]));
+    },
+    onclose: (reasons) => {
+      if (closed) {
+        return;
+      }
+
+      const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
+      if (errors.length > 0) {
+        input.onError?.(new Error(errors.join("; ")));
+      }
+    },
+    maxWait: 4000,
+  });
+
+  return () => {
+    closed = true;
+    void subscription.close("closed by caller");
+    pool.destroy();
+  };
+}
+
+export function subscribeSimpleCoordinatorShareAssignments(input: {
+  coordinatorNsec: string;
+  relays?: string[];
+  onAssignments: (assignments: SimpleShareAssignment[]) => void;
+  onError?: (error: Error) => void;
+}): () => void {
+  const decoded = nip19.decode(input.coordinatorNsec.trim());
+  if (decoded.type !== "nsec") {
+    throw new Error("Coordinator key must be an nsec.");
+  }
+
+  const secretKey = decoded.data as Uint8Array;
+  const coordinatorHex = getPublicKey(secretKey);
+  const dmRelays = buildDmRelays(input.relays);
+  const pool = new SimplePool();
+  const assignments = new Map<string, SimpleShareAssignment>();
+  let closed = false;
+
+  const subscription = pool.subscribeMany(dmRelays, {
+    kinds: [1059],
+    "#p": [coordinatorHex],
+    limit: 100,
+  }, {
+    onevent: (wrappedEvent) => {
+      const assignment = parseSimpleShareAssignment(wrappedEvent, secretKey);
+      if (!assignment) {
+        return;
+      }
+
+      assignments.set(`${assignment.leadCoordinatorNpub}:${assignment.coordinatorNpub}`, assignment);
+      input.onAssignments(sortByCreatedAtDescending([...assignments.values()]));
     },
     onclose: (reasons) => {
       if (closed) {
