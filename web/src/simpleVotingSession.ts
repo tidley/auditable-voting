@@ -254,6 +254,57 @@ export function subscribeLatestSimpleLiveVote(input: {
   };
 }
 
+export function subscribeSimpleLiveVotes(input: {
+  coordinatorNpub: string;
+  relays?: string[];
+  onSessions: (sessions: SimpleLiveVoteSession[]) => void;
+  onError?: (error: Error) => void;
+}): () => void {
+  const decoded = nip19.decode(input.coordinatorNpub.trim());
+  if (decoded.type !== "npub") {
+    throw new Error("Coordinator value must be an npub.");
+  }
+
+  const coordinatorHex = decoded.data as string;
+  const relays = buildPublicRelays(input.relays);
+  const pool = new SimplePool();
+  const sessions = new Map<string, SimpleLiveVoteSession>();
+  let closed = false;
+
+  const subscription = pool.subscribeMany(relays, {
+    kinds: [SIMPLE_LIVE_VOTE_KIND],
+    authors: [coordinatorHex],
+    limit: 100,
+  }, {
+    onevent: (event) => {
+      const session = parseSimpleLiveVoteEvent(event, input.coordinatorNpub);
+      if (!session) {
+        return;
+      }
+
+      sessions.set(session.eventId, session);
+      input.onSessions(sortByCreatedAtDescending([...sessions.values()]));
+    },
+    onclose: (reasons) => {
+      if (closed) {
+        return;
+      }
+
+      const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
+      if (errors.length > 0) {
+        input.onError?.(new Error(errors.join("; ")));
+      }
+    },
+    maxWait: 4000,
+  });
+
+  return () => {
+    closed = true;
+    void subscription.close("closed by caller");
+    pool.destroy();
+  };
+}
+
 export async function fetchSimpleLiveVotes(input?: {
   relays?: string[];
 }): Promise<SimpleLiveVoteSession[]> {
