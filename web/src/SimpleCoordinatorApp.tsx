@@ -112,7 +112,7 @@ export default function SimpleCoordinatorApp() {
   const isLeadCoordinator = !leadCoordinatorNpub.trim() || leadCoordinatorNpub.trim() === (keypair?.npub ?? "");
   const activeShareIndex = isLeadCoordinator ? 1 : (Number.parseInt(questionShareIndex, 10) || 0);
   const hasAssignedShareIndex = !isLeadCoordinator && activeShareIndex > 0;
-  const liveVoteSourceNpub = isLeadCoordinator ? (keypair?.npub ?? "") : leadCoordinatorNpub.trim();
+  const liveVoteSourceNpub = !isLeadCoordinator ? leadCoordinatorNpub.trim() : "";
   const selectedPublishedVote = useMemo(
     () => publishedVotes.find((vote) => vote.votingId === selectedVotingId) ?? publishedVotes[0] ?? null,
     [publishedVotes, selectedVotingId],
@@ -160,7 +160,7 @@ export default function SimpleCoordinatorApp() {
   useEffect(() => {
     const leadCoordinatorNsec = keypair?.nsec ?? "";
 
-    if (!leadCoordinatorNsec) {
+    if (!leadCoordinatorNsec || !isLeadCoordinator) {
       setSubCoordinators([]);
       return;
     }
@@ -173,12 +173,12 @@ export default function SimpleCoordinatorApp() {
         setSubCoordinators(nextApplications);
       },
     });
-  }, [keypair?.nsec]);
+  }, [isLeadCoordinator, keypair?.nsec]);
 
   useEffect(() => {
     const coordinatorNsec = keypair?.nsec ?? "";
 
-    if (!coordinatorNsec) {
+    if (!coordinatorNsec || isLeadCoordinator || !leadCoordinatorNpub.trim()) {
       return;
     }
 
@@ -207,7 +207,7 @@ export default function SimpleCoordinatorApp() {
         setAssignmentStatus(`Assigned share index ${latestAssignment.shareIndex} by the lead coordinator.`);
       },
     });
-  }, [keypair?.nsec, keypair?.npub, leadCoordinatorNpub]);
+  }, [isLeadCoordinator, keypair?.nsec, keypair?.npub, leadCoordinatorNpub]);
 
   useEffect(() => {
     let cancelled = false;

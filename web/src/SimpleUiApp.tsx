@@ -116,7 +116,7 @@ export default function SimpleUiApp() {
   useEffect(() => {
     const voterNsec = voterKeypair?.nsec?.trim() ?? "";
 
-    if (!voterNsec) {
+    if (!voterNsec || configuredCoordinatorTargets.length === 0) {
       setReceivedShards([]);
       return;
     }
@@ -129,7 +129,7 @@ export default function SimpleUiApp() {
         setReceivedShards(nextResponses);
       },
     });
-  }, [voterKeypair?.nsec]);
+  }, [configuredCoordinatorTargets.length, voterKeypair?.nsec]);
 
   useEffect(() => {
     let cancelled = false;
