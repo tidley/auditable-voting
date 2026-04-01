@@ -379,9 +379,25 @@ describe("Simple round flow", () => {
 
     await user.click(coordinatorOneUi.getByRole("button", { name: /Broadcast live vote/i }));
 
+    let votingDetailsValue = "";
+    await waitFor(() => {
+      const votingDetailsBlocks = Array.from(
+        coordinatorOne.container.querySelectorAll(".simple-qr-panel .simple-identity-code"),
+      ) as HTMLElement[];
+      votingDetailsValue = votingDetailsBlocks.find((block) => (block.textContent ?? "").includes("Voting ID:"))?.textContent ?? "";
+      expect(votingDetailsValue).toContain("Voting ID: round-1");
+    });
+    expect(votingDetailsValue).toContain("Voting ID: round-1");
+    expect(votingDetailsValue).toContain(coordinatorOneNpub);
+
+    const voterOneVotingDetails = voterOneUi.getByLabelText("Voting details") as HTMLTextAreaElement;
+    await user.clear(voterOneVotingDetails);
+    await user.type(voterOneVotingDetails, votingDetailsValue);
+    await user.click(voterOneUi.getByRole("button", { name: /Use voting details/i }));
+
     const voterOneCoordinatorInputs = voterOne.container.querySelectorAll("input.simple-voter-input-inline");
     const voterTwoCoordinatorInputs = voterTwo.container.querySelectorAll("input.simple-voter-input-inline");
-    await user.type(voterOneCoordinatorInputs[0] as HTMLInputElement, coordinatorOneNpub);
+    expect((voterOneCoordinatorInputs[0] as HTMLInputElement).value).toBe(coordinatorOneNpub);
     await user.click(voterOneUi.getByRole("button", { name: /Add coordinator/i }));
     await user.type(voterOne.container.querySelectorAll("input.simple-voter-input-inline")[1] as HTMLInputElement, coordinatorTwoNpub);
     await user.type(voterTwoCoordinatorInputs[0] as HTMLInputElement, coordinatorOneNpub);
