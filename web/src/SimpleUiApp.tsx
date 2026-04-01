@@ -27,6 +27,10 @@ type SimpleVoterKeypair = {
 
 type VoteTicketRow = {
   votingId: string;
+  prompt: string;
+  createdAt: string;
+  thresholdT?: number;
+  thresholdN?: number;
   countsByCoordinator: Record<string, number>;
 };
 
@@ -91,33 +95,12 @@ export default function SimpleUiApp() {
   const [receivedShards, setReceivedShards] = useState<SimpleShardResponse[]>([]);
   const [submitStatus, setSubmitStatus] = useState<string | null>(null);
   const [ballotTokenId, setBallotTokenId] = useState<string | null>(null);
+  const [selectedVotingId, setSelectedVotingId] = useState("");
 
   const configuredCoordinatorTargets = useMemo(
     () => normalizeCoordinatorNpubs(manualCoordinators),
     [manualCoordinators],
   );
-
-  const effectiveLiveVoteSession = useMemo<SimpleLiveVoteSession | null>(() => {
-    const candidateRows = receivedShards.flatMap((response) => {
-      const parsed = parseSimpleShardCertificate(response.shardCertificate);
-      if (!parsed || !configuredCoordinatorTargets.includes(response.coordinatorNpub) || !response.votingPrompt) {
-        return [];
-      }
-
-      return [{
-        votingId: parsed.votingId,
-        prompt: response.votingPrompt,
-        coordinatorNpub: response.coordinatorNpub,
-        createdAt: response.createdAt,
-        thresholdT: parsed.thresholdT,
-        thresholdN: parsed.thresholdN,
-        eventId: `dm:${response.id}`,
-      }];
-    });
-
-    candidateRows.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-    return candidateRows[0] ?? null;
-  }, [configuredCoordinatorTargets, receivedShards]);
 
   useEffect(() => {
     if (voterKeypair) {
@@ -172,7 +155,7 @@ export default function SimpleUiApp() {
   useEffect(() => {
     setLiveVoteChoice(null);
     setSubmitStatus(null);
-  }, [effectiveLiveVoteSession?.votingId]);
+  }, [selectedVotingId]);
 
   function refreshIdentity() {
     const nextKeypair = createSimpleVoterKeypair();
@@ -183,6 +166,7 @@ export default function SimpleUiApp() {
     setSubmitStatus(null);
     setBallotTokenId(null);
     setReceivedShards([]);
+    setSelectedVotingId("");
   }
 
   function addCoordinatorInput() {
@@ -237,7 +221,7 @@ export default function SimpleUiApp() {
     new Map(
       receivedShards.flatMap((shard) => {
         const parsed = parseSimpleShardCertificate(shard.shardCertificate);
-        const activeVotingId = effectiveLiveVoteSession?.votingId ?? "";
+        const activeVotingId = selectedVotingId.trim();
 
         if (
           !parsed
@@ -252,8 +236,6 @@ export default function SimpleUiApp() {
       }),
     ).values(),
   );
-
-  const requiredShardCount = Math.max(1, effectiveLiveVoteSession?.thresholdT ?? 1);
 
   useEffect(() => {
     let cancelled = false;
@@ -280,20 +262,65 @@ export default function SimpleUiApp() {
 
     for (const shard of receivedShards) {
       const parsed = parseSimpleShardCertificate(shard.shardCertificate);
-      if (!parsed || !configuredCoordinatorTargets.includes(shard.coordinatorNpub)) {
+      if (!parsed || !configuredCoordinatorTargets.includes(shard.coordinatorNpub) || !shard.votingPrompt) {
         continue;
       }
 
       const current = rows.get(parsed.votingId) ?? {
         votingId: parsed.votingId,
+        prompt: shard.votingPrompt,
+        createdAt: shard.createdAt,
+        thresholdT: parsed.thresholdT,
+        thresholdN: parsed.thresholdN,
         countsByCoordinator: {},
       };
+      if (shard.createdAt > current.createdAt) {
+        current.createdAt = shard.createdAt;
+        current.prompt = shard.votingPrompt;
+        current.thresholdT = parsed.thresholdT;
+        current.thresholdN = parsed.thresholdN;
+      }
       current.countsByCoordinator[shard.coordinatorNpub] = (current.countsByCoordinator[shard.coordinatorNpub] ?? 0) + 1;
       rows.set(parsed.votingId, current);
     }
 
-    return [...rows.values()].sort((left, right) => right.votingId.localeCompare(left.votingId));
+    return [...rows.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }, [configuredCoordinatorTargets, receivedShards]);
+
+  useEffect(() => {
+    if (!voteTicketRows.length) {
+      setSelectedVotingId("");
+      return;
+    }
+
+    setSelectedVotingId((current) => (
+      voteTicketRows.some((row) => row.votingId === current) ? current : voteTicketRows[0].votingId
+    ));
+  }, [voteTicketRows]);
+
+  const effectiveLiveVoteSession = useMemo<SimpleLiveVoteSession | null>(() => {
+    const selectedRow = voteTicketRows.find((row) => row.votingId === selectedVotingId) ?? voteTicketRows[0] ?? null;
+    if (!selectedRow) {
+      return null;
+    }
+
+    const sourceResponse = receivedShards.find((response) => {
+      const parsed = parseSimpleShardCertificate(response.shardCertificate);
+      return parsed?.votingId === selectedRow.votingId && configuredCoordinatorTargets.includes(response.coordinatorNpub);
+    });
+
+    return {
+      votingId: selectedRow.votingId,
+      prompt: selectedRow.prompt,
+      coordinatorNpub: sourceResponse?.coordinatorNpub ?? "",
+      createdAt: selectedRow.createdAt,
+      thresholdT: selectedRow.thresholdT,
+      thresholdN: selectedRow.thresholdN,
+      eventId: `ticket-row:${selectedRow.votingId}`,
+    };
+  }, [configuredCoordinatorTargets, receivedShards, selectedVotingId, voteTicketRows]);
+
+  const requiredShardCount = Math.max(1, effectiveLiveVoteSession?.thresholdT ?? 1);
 
   async function submitVote() {
     if (!effectiveLiveVoteSession || !liveVoteChoice || uniqueShardResponses.length < requiredShardCount) {
@@ -433,6 +460,23 @@ export default function SimpleUiApp() {
           <h2 id="live-vote-title" className="simple-voter-section-title">Live Vote</h2>
           {effectiveLiveVoteSession ? (
             <>
+              {voteTicketRows.length > 1 ? (
+                <>
+                  <label className="simple-voter-label" htmlFor="simple-live-round">Round</label>
+                  <select
+                    id="simple-live-round"
+                    className="simple-voter-input"
+                    value={effectiveLiveVoteSession.votingId}
+                    onChange={(event) => setSelectedVotingId(event.target.value)}
+                  >
+                    {voteTicketRows.map((row) => (
+                      <option key={row.votingId} value={row.votingId}>
+                        {shortVotingId(row.votingId)} - {row.prompt}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              ) : null}
               <p className="simple-voter-question">{effectiveLiveVoteSession.prompt}</p>
               <p className="simple-voter-note">Vote {shortVotingId(effectiveLiveVoteSession.votingId)}</p>
               <p className="simple-voter-question">

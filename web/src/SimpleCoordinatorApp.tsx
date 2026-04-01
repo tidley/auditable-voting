@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 import { fetchElection, type ElectionInfo } from "./coordinatorApi";
 import { decodeNsec } from "./nostrIdentity";
@@ -13,7 +13,7 @@ import {
   type SimpleSubCoordinatorApplication,
 } from "./simpleShardDm";
 import {
-  subscribeLatestSimpleLiveVote,
+  subscribeSimpleLiveVotes,
   subscribeSimpleSubmittedVotes,
   publishSimpleLiveVote,
   type SimpleLiveVoteSession,
@@ -85,6 +85,10 @@ function mergeFollowers(
   return [...merged.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
+function shortVotingId(votingId: string) {
+  return votingId.slice(0, 12);
+}
+
 export default function SimpleCoordinatorApp() {
   const [election, setElection] = useState<ElectionInfo | null>(null);
   const [keypair, setKeypair] = useState<SimpleCoordinatorKeypair | null>(() => loadStoredCoordinatorKeypair());
@@ -101,13 +105,20 @@ export default function SimpleCoordinatorApp() {
   const [questionThresholdN, setQuestionThresholdN] = useState("1");
   const [questionShareIndex, setQuestionShareIndex] = useState("1");
   const [publishStatus, setPublishStatus] = useState<string | null>(null);
-  const [publishedVote, setPublishedVote] = useState<SimpleLiveVoteSession | null>(null);
+  const [publishedVotes, setPublishedVotes] = useState<SimpleLiveVoteSession[]>([]);
+  const [selectedVotingId, setSelectedVotingId] = useState("");
   const [submittedVotes, setSubmittedVotes] = useState<SimpleSubmittedVote[]>([]);
   const isLeadCoordinator = !leadCoordinatorNpub.trim() || leadCoordinatorNpub.trim() === (keypair?.npub ?? "");
   const activeShareIndex = isLeadCoordinator ? 1 : (Number.parseInt(questionShareIndex, 10) || 0);
-  const activeVotingId = publishedVote?.votingId ?? questionVotingId.trim();
-  const activeThresholdT = publishedVote?.thresholdT ?? (Number.parseInt(questionThresholdT, 10) || undefined);
-  const activeThresholdN = publishedVote?.thresholdN ?? (Number.parseInt(questionThresholdN, 10) || undefined);
+  const hasAssignedShareIndex = !isLeadCoordinator && activeShareIndex > 0;
+  const liveVoteSourceNpub = isLeadCoordinator ? (keypair?.npub ?? "") : leadCoordinatorNpub.trim();
+  const selectedPublishedVote = useMemo(
+    () => publishedVotes.find((vote) => vote.votingId === selectedVotingId) ?? publishedVotes[0] ?? null,
+    [publishedVotes, selectedVotingId],
+  );
+  const activeVotingId = selectedPublishedVote?.votingId ?? questionVotingId.trim();
+  const activeThresholdT = selectedPublishedVote?.thresholdT ?? (Number.parseInt(questionThresholdT, 10) || undefined);
+  const activeThresholdN = selectedPublishedVote?.thresholdN ?? (Number.parseInt(questionThresholdN, 10) || undefined);
 
   useEffect(() => {
     void fetchElection().then((nextElection) => {
@@ -188,6 +199,10 @@ export default function SimpleCoordinatorApp() {
         }
 
         setQuestionShareIndex(String(latestAssignment.shareIndex));
+        if (latestAssignment.thresholdN && latestAssignment.thresholdN > 0) {
+          setQuestionThresholdN(String(latestAssignment.thresholdN));
+        }
+        setRegistrationStatus(null);
         setAssignmentStatus(`Assigned share index ${latestAssignment.shareIndex} by the lead coordinator.`);
       },
     });
@@ -222,28 +237,42 @@ export default function SimpleCoordinatorApp() {
   }, [isLeadCoordinator, leadCoordinatorNpub]);
 
   useEffect(() => {
-    const selfCoordinatorNpub = keypair?.npub ?? "";
-    const nextLeadCoordinatorNpub = leadCoordinatorNpub.trim();
-    const isFollowingLead = nextLeadCoordinatorNpub.length > 0 && nextLeadCoordinatorNpub !== selfCoordinatorNpub;
-    const activeCoordinatorNpub = isFollowingLead ? nextLeadCoordinatorNpub : "";
-
-    if (!activeCoordinatorNpub) {
-      setPublishedVote(null);
+    if (!liveVoteSourceNpub) {
+      setPublishedVotes([]);
       return;
     }
 
-    setPublishedVote(null);
+    setPublishedVotes([]);
 
-    return subscribeLatestSimpleLiveVote({
-      coordinatorNpub: activeCoordinatorNpub,
-      onSession: (nextVote) => {
-        setPublishedVote(nextVote);
+    return subscribeSimpleLiveVotes({
+      coordinatorNpub: liveVoteSourceNpub,
+      onSessions: (nextVotes) => {
+        setPublishedVotes(nextVotes);
       },
     });
-  }, [keypair?.npub, leadCoordinatorNpub]);
+  }, [liveVoteSourceNpub]);
 
   useEffect(() => {
-    const votingId = publishedVote?.votingId ?? "";
+    if (!publishedVotes.length) {
+      setSelectedVotingId("");
+      return;
+    }
+
+    if (questionVotingId.trim()) {
+      const matchingVote = publishedVotes.find((vote) => vote.votingId === questionVotingId.trim());
+      if (matchingVote) {
+        setSelectedVotingId(questionVotingId.trim());
+        return;
+      }
+    }
+
+    setSelectedVotingId((current) => (
+      publishedVotes.some((vote) => vote.votingId === current) ? current : publishedVotes[0].votingId
+    ));
+  }, [publishedVotes, questionVotingId]);
+
+  useEffect(() => {
+    const votingId = selectedPublishedVote?.votingId ?? "";
 
     if (!votingId) {
       setSubmittedVotes([]);
@@ -258,7 +287,7 @@ export default function SimpleCoordinatorApp() {
         setSubmittedVotes(nextVotes);
       },
     });
-  }, [publishedVote?.votingId]);
+  }, [selectedPublishedVote?.votingId]);
 
   function refreshIdentity() {
     const nextKeypair = createSimpleCoordinatorKeypair();
@@ -276,7 +305,8 @@ export default function SimpleCoordinatorApp() {
     setQuestionThresholdN("1");
     setQuestionShareIndex("1");
     setPublishStatus(null);
-    setPublishedVote(null);
+    setPublishedVotes([]);
+    setSelectedVotingId("");
     setSubmittedVotes([]);
   }
 
@@ -331,8 +361,8 @@ export default function SimpleCoordinatorApp() {
   async function sendTicket(follower: SimpleCoordinatorFollower) {
     const coordinatorNpub = keypair?.npub ?? "";
     const coordinatorSecretKey = decodeNsec(keypair?.nsec ?? "");
-    const votingId = publishedVote?.votingId ?? "";
-    const prompt = publishedVote?.prompt ?? "";
+    const votingId = selectedPublishedVote?.votingId ?? "";
+    const prompt = selectedPublishedVote?.prompt ?? "";
 
     if (!coordinatorNpub || !coordinatorSecretKey || !coordinatorId || coordinatorId === "pending" || !votingId || !prompt || activeShareIndex <= 0) {
       return;
@@ -392,20 +422,41 @@ export default function SimpleCoordinatorApp() {
         thresholdN: threshold.thresholdN,
       });
 
-      setPublishedVote({
-        votingId: result.votingId,
-        prompt,
-        coordinatorNpub: result.coordinatorNpub,
-        createdAt: result.createdAt,
-        thresholdT: threshold.thresholdT,
-        thresholdN: threshold.thresholdN,
-        eventId: result.eventId,
+      setPublishedVotes((current) => {
+        const nextVote = {
+          votingId: result.votingId,
+          prompt,
+          coordinatorNpub: result.coordinatorNpub,
+          createdAt: result.createdAt,
+          thresholdT: threshold.thresholdT,
+          thresholdN: threshold.thresholdN,
+          eventId: result.eventId,
+        };
+        return [nextVote, ...current.filter((vote) => vote.votingId !== nextVote.votingId)];
       });
+      setSelectedVotingId(result.votingId);
       setQuestionVotingId(result.votingId);
       setPublishStatus(result.successes > 0 ? "Vote broadcast." : "Vote broadcast failed.");
     } catch {
       setPublishStatus("Vote broadcast failed.");
     }
+  }
+
+  function selectRound(votingId: string) {
+    setSelectedVotingId(votingId);
+    if (!isLeadCoordinator) {
+      return;
+    }
+
+    const selectedVote = publishedVotes.find((vote) => vote.votingId === votingId);
+    if (!selectedVote) {
+      return;
+    }
+
+    setQuestionVotingId(selectedVote.votingId);
+    setQuestionPrompt(selectedVote.prompt);
+    setQuestionThresholdT(String(selectedVote.thresholdT ?? 1));
+    setQuestionThresholdN(String(selectedVote.thresholdN ?? 1));
   }
 
   async function submitToLeadCoordinator() {
@@ -481,7 +532,7 @@ export default function SimpleCoordinatorApp() {
     }
   }
 
-  const requiredShardCount = Math.max(1, publishedVote?.thresholdT ?? 1);
+  const requiredShardCount = Math.max(1, selectedPublishedVote?.thresholdT ?? 1);
   const validatedVotes = validateSimpleSubmittedVotes(submittedVotes, requiredShardCount);
   const validYesCount = validatedVotes.filter((entry) => entry.valid && entry.vote.choice === "Yes").length;
   const validNoCount = validatedVotes.filter((entry) => entry.valid && entry.vote.choice === "No").length;
@@ -499,6 +550,12 @@ export default function SimpleCoordinatorApp() {
             Refresh ID
           </button>
         </div>
+
+        <SimpleIdentityPanel
+          npub={keypair?.npub ?? ""}
+          nsec={keypair?.nsec ?? ""}
+          title="Identity"
+        />
 
         <section className="simple-voter-section" aria-labelledby="question-config-title">
           <h2 id="question-config-title" className="simple-voter-section-title">Coordinator management</h2>
@@ -523,6 +580,147 @@ export default function SimpleCoordinatorApp() {
               ? "This coordinator publishes the live question."
               : "This coordinator follows the lead question and only issues shares."}
           </p>
+          {isLeadCoordinator ? (
+            <>
+              {publishedVotes.length > 0 ? (
+                <>
+                  <label className="simple-voter-label" htmlFor="simple-active-round">Current round</label>
+                  <select
+                    id="simple-active-round"
+                    className="simple-voter-input"
+                    value={selectedPublishedVote?.votingId ?? ""}
+                    onChange={(event) => selectRound(event.target.value)}
+                  >
+                    {publishedVotes.map((vote) => (
+                      <option key={vote.eventId} value={vote.votingId}>
+                        {shortVotingId(vote.votingId)} - {vote.prompt}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              ) : null}
+              <div className="simple-voter-action-row">
+                <button
+                  type="button"
+                  className="simple-voter-secondary"
+                  onClick={() => void distributeShareIndexes()}
+                  disabled={!keypair?.nsec || subCoordinators.length === 0}
+                >
+                  Distribute share indexes
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="simple-vote-threshold-grid">
+                <div>
+                  <label className="simple-voter-label" htmlFor="simple-share-index">Share Index</label>
+                  <input
+                    id="simple-share-index"
+                    className="simple-voter-input"
+                    value={questionShareIndex || "Awaiting assignment"}
+                    readOnly
+                    disabled
+                  />
+                </div>
+              </div>
+              <div className="simple-voter-action-row">
+                <button
+                  type="button"
+                  className="simple-voter-secondary"
+                  onClick={() => void submitToLeadCoordinator()}
+                  disabled={
+                    !keypair?.nsec
+                    || !leadCoordinatorNpub.trim()
+                    || leadCoordinatorNpub.trim() === (keypair?.npub ?? "")
+                    || hasAssignedShareIndex
+                  }
+                >
+                  {hasAssignedShareIndex ? "Registered with lead" : "Submit to lead"}
+                </button>
+              </div>
+            </>
+          )}
+          <p className="simple-voter-question">
+            Threshold: {activeThresholdT && activeThresholdN ? `${activeThresholdT} of ${activeThresholdN}` : getThresholdLabel()}
+          </p>
+          {publishStatus && <p className="simple-voter-note">{publishStatus}</p>}
+          {registrationStatus && !isLeadCoordinator && !hasAssignedShareIndex && (
+            <p className="simple-voter-note">{registrationStatus}</p>
+          )}
+          {assignmentStatus && <p className="simple-voter-note">{assignmentStatus}</p>}
+          {selectedPublishedVote && (
+            <>
+              <p className="simple-voter-question">Voting ID {selectedPublishedVote.votingId.slice(0, 12)}</p>
+              <p className="simple-voter-question">Live prompt: {selectedPublishedVote.prompt}</p>
+              <p className="simple-voter-question">
+                Question source: {selectedPublishedVote.coordinatorNpub === (keypair?.npub ?? "") ? "This coordinator" : "Lead coordinator"}
+              </p>
+              <p className="simple-voter-question">This coordinator share index: {activeShareIndex || "Awaiting assignment"}</p>
+            </>
+          )}
+        </section>
+
+        {isLeadCoordinator && (
+          <section className="simple-voter-section" aria-labelledby="sub-coordinators-title">
+            <h2 id="sub-coordinators-title" className="simple-voter-section-title">Sub-coordinators</h2>
+            {subCoordinators.length > 0 ? (
+              <>
+                <p className="simple-voter-question">
+                  {subCoordinators.length} sub-coordinator{subCoordinators.length === 1 ? "" : "s"} submitted
+                  {expectedSubCoordinatorCount > 0 ? ` of ${expectedSubCoordinatorCount} expected` : ""}.
+                </p>
+                <ul className="simple-voter-list">
+                  {subCoordinators.map((application, index) => (
+                    <li key={application.id} className="simple-voter-list-item">
+                      <p className="simple-voter-question">
+                        Coordinator {application.coordinatorId} submitted as sub-coordinator #{index + 1}.
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : (
+              <p className="simple-voter-empty">No sub-coordinators have submitted yet.</p>
+            )}
+          </section>
+        )}
+
+        <section className="simple-voter-section" aria-labelledby="followers-title">
+          <h2 id="followers-title" className="simple-voter-section-title">Following voters</h2>
+          {visibleFollowers.length > 0 ? (
+            <ul className="simple-voter-list">
+              {visibleFollowers.map((follower) => (
+                <li key={follower.id} className="simple-voter-list-item">
+                  <p className="simple-voter-question">
+                    Voter {follower.voterId} is following this coordinator
+                    {follower.votingId ? ` for ${follower.votingId.slice(0, 12)}` : " and is waiting for the next live vote"}
+                  </p>
+                  {selectedPublishedVote ? (
+                    <div className="simple-voter-action-row">
+                      <button
+                        type="button"
+                        className="simple-voter-secondary"
+                        onClick={() => void sendTicket(follower)}
+                        disabled={!keypair?.nsec || (!isLeadCoordinator && activeShareIndex <= 0)}
+                      >
+                        Send ticket
+                      </button>
+                    </div>
+                  ) : null}
+                  {ticketStatuses[`${follower.voterNpub}:${selectedPublishedVote?.votingId ?? ""}`] && (
+                    <p className="simple-voter-note">{ticketStatuses[`${follower.voterNpub}:${selectedPublishedVote?.votingId ?? ""}`]}</p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="simple-voter-empty">No voters are following this coordinator yet.</p>
+          )}
+        </section>
+
+        <section className="simple-voter-section" aria-labelledby="question-section-title">
+          <h2 id="question-section-title" className="simple-voter-section-title">Question</h2>
           {isLeadCoordinator ? (
             <>
               <label className="simple-voter-label" htmlFor="simple-question-prompt">Question</label>
@@ -580,128 +778,20 @@ export default function SimpleCoordinatorApp() {
                   Broadcast live vote
                 </button>
               </div>
-              <div className="simple-voter-action-row">
-                <button
-                  type="button"
-                  className="simple-voter-secondary"
-                  onClick={() => void distributeShareIndexes()}
-                  disabled={!keypair?.nsec || subCoordinators.length === 0}
-                >
-                  Distribute share indexes
-                </button>
-              </div>
+            </>
+          ) : selectedPublishedVote ? (
+            <>
+              <p className="simple-voter-question">{selectedPublishedVote.prompt}</p>
+              <p className="simple-voter-note">Vote {shortVotingId(selectedPublishedVote.votingId)}</p>
             </>
           ) : (
-            <>
-              <div className="simple-vote-threshold-grid">
-                <div>
-                  <label className="simple-voter-label" htmlFor="simple-share-index">Share Index</label>
-                  <input
-                    id="simple-share-index"
-                    className="simple-voter-input"
-                    value={questionShareIndex || "Awaiting assignment"}
-                    readOnly
-                    disabled
-                  />
-                </div>
-              </div>
-              <div className="simple-voter-action-row">
-                <button
-                  type="button"
-                  className="simple-voter-secondary"
-                  onClick={() => void submitToLeadCoordinator()}
-                  disabled={!keypair?.nsec || !leadCoordinatorNpub.trim() || leadCoordinatorNpub.trim() === (keypair?.npub ?? "")}
-                >
-                  Submit to lead
-                </button>
-              </div>
-            </>
-          )}
-          <p className="simple-voter-question">
-            Threshold: {activeThresholdT && activeThresholdN ? `${activeThresholdT} of ${activeThresholdN}` : getThresholdLabel()}
-          </p>
-          {publishStatus && <p className="simple-voter-note">{publishStatus}</p>}
-          {registrationStatus && !isLeadCoordinator && <p className="simple-voter-note">{registrationStatus}</p>}
-          {assignmentStatus && <p className="simple-voter-note">{assignmentStatus}</p>}
-          {publishedVote && (
-            <>
-              <p className="simple-voter-question">Voting ID {publishedVote.votingId.slice(0, 12)}</p>
-              <p className="simple-voter-question">Live prompt: {publishedVote.prompt}</p>
-              <p className="simple-voter-question">
-                Question source: {publishedVote.coordinatorNpub === (keypair?.npub ?? "") ? "This coordinator" : "Lead coordinator"}
-              </p>
-              <p className="simple-voter-question">This coordinator share index: {activeShareIndex || "Awaiting assignment"}</p>
-            </>
+            <p className="simple-voter-empty">No question selected yet.</p>
           )}
         </section>
-
-        {isLeadCoordinator && (
-          <section className="simple-voter-section" aria-labelledby="sub-coordinators-title">
-            <h2 id="sub-coordinators-title" className="simple-voter-section-title">Sub-coordinators</h2>
-            {subCoordinators.length > 0 ? (
-              <>
-                <p className="simple-voter-question">
-                  {subCoordinators.length} sub-coordinator{subCoordinators.length === 1 ? "" : "s"} submitted
-                  {expectedSubCoordinatorCount > 0 ? ` of ${expectedSubCoordinatorCount} expected` : ""}.
-                </p>
-                <ul className="simple-voter-list">
-                  {subCoordinators.map((application, index) => (
-                    <li key={application.id} className="simple-voter-list-item">
-                      <p className="simple-voter-question">
-                        Coordinator {application.coordinatorId} submitted as sub-coordinator #{index + 1}.
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            ) : (
-              <p className="simple-voter-empty">No sub-coordinators have submitted yet.</p>
-            )}
-          </section>
-        )}
-
-        <section className="simple-voter-section" aria-labelledby="followers-title">
-          <h2 id="followers-title" className="simple-voter-section-title">Following voters</h2>
-          {visibleFollowers.length > 0 ? (
-            <ul className="simple-voter-list">
-              {visibleFollowers.map((follower) => (
-                <li key={follower.id} className="simple-voter-list-item">
-                  <p className="simple-voter-question">
-                    Voter {follower.voterId} is following this coordinator
-                    {follower.votingId ? ` for ${follower.votingId.slice(0, 12)}` : " and is waiting for the next live vote"}
-                  </p>
-                  {publishedVote ? (
-                    <div className="simple-voter-action-row">
-                      <button
-                        type="button"
-                        className="simple-voter-secondary"
-                        onClick={() => void sendTicket(follower)}
-                        disabled={!keypair?.nsec || (!isLeadCoordinator && activeShareIndex <= 0)}
-                      >
-                        Send ticket
-                      </button>
-                    </div>
-                  ) : null}
-                  {ticketStatuses[`${follower.voterNpub}:${publishedVote?.votingId ?? ""}`] && (
-                    <p className="simple-voter-note">{ticketStatuses[`${follower.voterNpub}:${publishedVote?.votingId ?? ""}`]}</p>
-                  )}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="simple-voter-empty">No voters are following this coordinator yet.</p>
-          )}
-        </section>
-
-        <SimpleIdentityPanel
-          npub={keypair?.npub ?? ""}
-          nsec={keypair?.nsec ?? ""}
-          title="Identity"
-        />
 
         <section className="simple-voter-section" aria-labelledby="submitted-votes-title">
           <h2 id="submitted-votes-title" className="simple-voter-section-title">Submitted votes</h2>
-          {publishedVote ? (
+          {selectedPublishedVote ? (
             <>
               <p className="simple-voter-question">
                 Yes: {validYesCount} | No: {validNoCount}

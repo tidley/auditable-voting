@@ -81,6 +81,10 @@ let liveVoteSubscribers: Array<{
   coordinatorNpub: string;
   onSession: (vote: InternalLiveVote | null) => void;
 }> = [];
+let liveVoteListSubscribers: Array<{
+  coordinatorNpub: string;
+  onSessions: (votes: InternalLiveVote[]) => void;
+}> = [];
 let submittedVoteSubscribers: Array<{
   votingId: string;
   onVotes: (votes: InternalSubmittedVote[]) => void;
@@ -168,6 +172,14 @@ function notifyLiveVoteSubscribers(coordinatorNpub: string) {
   for (const subscriber of liveVoteSubscribers) {
     if (subscriber.coordinatorNpub === coordinatorNpub) {
       subscriber.onSession(nextVote);
+    }
+  }
+  const nextVotes = liveVotes
+    .filter((vote) => vote.coordinatorNpub === coordinatorNpub)
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  for (const subscriber of liveVoteListSubscribers) {
+    if (subscriber.coordinatorNpub === coordinatorNpub) {
+      subscriber.onSessions(nextVotes);
     }
   }
 }
@@ -483,6 +495,24 @@ vi.mock("./simpleVotingSession", () => ({
       liveVoteSubscribers = liveVoteSubscribers.filter((entry) => entry !== subscriber);
     };
   }),
+  subscribeSimpleLiveVotes: vi.fn((input: {
+    coordinatorNpub: string;
+    onSessions: (votes: InternalLiveVote[]) => void;
+  }) => {
+    const subscriber = {
+      coordinatorNpub: input.coordinatorNpub,
+      onSessions: input.onSessions,
+    };
+    liveVoteListSubscribers.push(subscriber);
+    input.onSessions(
+      liveVotes
+        .filter((vote) => vote.coordinatorNpub === input.coordinatorNpub)
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
+    );
+    return () => {
+      liveVoteListSubscribers = liveVoteListSubscribers.filter((entry) => entry !== subscriber);
+    };
+  }),
   publishSimpleSubmittedVote: vi.fn(async (input: {
     ballotNsec: string;
     votingId: string;
@@ -547,6 +577,7 @@ describe("Simple round flow", () => {
     followerSubscribers = [];
     shardResponseSubscribers = [];
     liveVoteSubscribers = [];
+    liveVoteListSubscribers = [];
     submittedVoteSubscribers = [];
     subCoordinatorApplicationSubscribers = [];
     shareAssignmentSubscribers = [];
