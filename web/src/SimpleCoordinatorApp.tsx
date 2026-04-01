@@ -172,7 +172,9 @@ export default function SimpleCoordinatorApp() {
 
   useEffect(() => {
     const selfCoordinatorNpub = keypair?.npub ?? "";
-    const activeCoordinatorNpub = leadCoordinatorNpub.trim() || selfCoordinatorNpub;
+    const nextLeadCoordinatorNpub = leadCoordinatorNpub.trim();
+    const isFollowingLead = nextLeadCoordinatorNpub.length > 0 && nextLeadCoordinatorNpub !== selfCoordinatorNpub;
+    const activeCoordinatorNpub = isFollowingLead ? nextLeadCoordinatorNpub : "";
 
     if (!activeCoordinatorNpub) {
       setPublishedVote(null);
@@ -250,6 +252,7 @@ export default function SimpleCoordinatorApp() {
   }
 
   const isLeadCoordinator = !leadCoordinatorNpub.trim() || leadCoordinatorNpub.trim() === (keypair?.npub ?? "");
+  const activeVotingId = publishedVote?.votingId ?? questionVotingId.trim();
   const activeThresholdT = publishedVote?.thresholdT ?? (Number.parseInt(questionThresholdT, 10) || undefined);
   const activeThresholdN = publishedVote?.thresholdN ?? (Number.parseInt(questionThresholdN, 10) || undefined);
 
@@ -378,6 +381,12 @@ export default function SimpleCoordinatorApp() {
   const validatedVotes = validateSimpleSubmittedVotes(submittedVotes, requiredShardCount);
   const validYesCount = validatedVotes.filter((entry) => entry.valid && entry.vote.choice === "Yes").length;
   const validNoCount = validatedVotes.filter((entry) => entry.valid && entry.vote.choice === "No").length;
+  const visibleFollowers = activeVotingId
+    ? followers.filter((follower) => (follower.votingId ?? "") === activeVotingId)
+    : [];
+  const visibleRequests = activeVotingId
+    ? requests.filter((request) => request.votingId === activeVotingId)
+    : [];
   const votingPackage = publishedVote
     ? serializeSimpleVotingPackage({
         votingId: publishedVote.votingId,
@@ -405,7 +414,7 @@ export default function SimpleCoordinatorApp() {
           nsec={keypair?.nsec ?? ""}
         />
 
-        {publishedVote && (
+        {publishedVote && isLeadCoordinator && (
           <section className="simple-voter-section" aria-labelledby="voting-package-title">
             <h2 id="voting-package-title" className="simple-voter-section-title">Voting details</h2>
             <SimpleQrPanel
@@ -419,10 +428,10 @@ export default function SimpleCoordinatorApp() {
 
         <section className="simple-voter-section" aria-labelledby="followers-title">
           <h2 id="followers-title" className="simple-voter-section-title">Following voters</h2>
-          {followers.length > 0 ? (
+          {visibleFollowers.length > 0 ? (
             <ul className="simple-voter-list">
-              {followers.map((follower) => (
-                <li key={follower.voterNpub} className="simple-voter-list-item">
+              {visibleFollowers.map((follower) => (
+                <li key={follower.id} className="simple-voter-list-item">
                   <p className="simple-voter-question">
                     Voter {follower.voterId} is following this coordinator
                     {follower.votingId ? ` for ${follower.votingId.slice(0, 12)}` : ""}
@@ -431,15 +440,15 @@ export default function SimpleCoordinatorApp() {
               ))}
             </ul>
           ) : (
-            <p className="simple-voter-empty">No voters are following this coordinator yet.</p>
+            <p className="simple-voter-empty">No voters are following this coordinator for the current round yet.</p>
           )}
         </section>
 
         <section className="simple-voter-section" aria-labelledby="shard-requests-title">
           <h2 id="shard-requests-title" className="simple-voter-section-title">Received shard requests</h2>
-          {requests.length > 0 ? (
+          {visibleRequests.length > 0 ? (
             <ul className="simple-voter-list">
-              {requests.map((request) => (
+              {visibleRequests.map((request) => (
                 <li key={request.id} className="simple-voter-list-item">
                   <p className="simple-voter-question">Request from voter {request.voterId}</p>
                   <div className="simple-voter-action-row">
@@ -459,7 +468,7 @@ export default function SimpleCoordinatorApp() {
               ))}
             </ul>
           ) : (
-            <p className="simple-voter-empty">No shard requests received yet.</p>
+            <p className="simple-voter-empty">No shard requests received for the current round yet.</p>
           )}
         </section>
 

@@ -4,9 +4,11 @@ import QRCode from "qrcode";
 export default function SimpleIdentityPanel({
   npub,
   nsec,
+  title = "Identity",
 }: {
   npub: string;
   nsec: string;
+  title?: string;
 }) {
   const [copied, setCopied] = useState(false);
   const [qrSrc, setQrSrc] = useState<string | null>(null);
@@ -58,18 +60,18 @@ export default function SimpleIdentityPanel({
 
   return (
     <section className="simple-voter-section" aria-labelledby="keypair-title">
-      <h2 id="keypair-title" className="simple-voter-section-title">Nostr keypair</h2>
+      <h2 id="keypair-title" className="simple-voter-section-title">{title}</h2>
       <div className="simple-identity-grid">
         <div className="simple-identity-fields">
           <div className="simple-identity-field">
-            <div className="simple-identity-label">npub</div>
+            <div className="simple-identity-label">Public key</div>
             <code className="simple-identity-code">{npub}</code>
             <button type="button" className="simple-voter-secondary" onClick={copyNpub}>
               {copied ? "Copied" : "Copy npub"}
             </button>
           </div>
           <div className="simple-identity-field">
-            <div className="simple-identity-label">nsec</div>
+            <div className="simple-identity-label">Private key</div>
             <code className="simple-identity-code">{nsec}</code>
           </div>
         </div>

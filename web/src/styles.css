@@ -359,6 +359,18 @@ code {
   margin-bottom: 28px;
 }
 
+.simple-voter-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+.simple-voter-header-row .simple-voter-title {
+  margin-bottom: 0;
+}
+
 .simple-voter-action-row {
   margin-bottom: 28px;
 }
@@ -511,6 +523,35 @@ code {
   gap: 12px;
 }
 
+.simple-voter-ticket-area {
+  margin-top: 28px;
+  display: grid;
+  gap: 16px;
+}
+
+.simple-voter-table-wrap {
+  overflow-x: auto;
+}
+
+.simple-voter-table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 2px solid #0b0c0c;
+}
+
+.simple-voter-table th,
+.simple-voter-table td {
+  padding: 12px 14px;
+  border: 1px solid #b1b4b6;
+  text-align: left;
+  font-size: 1rem;
+}
+
+.simple-voter-table thead th {
+  background: #f3f2f1;
+  font-weight: 700;
+}
+
 .simple-vote-entry {
   display: flex;
   align-items: flex-start;
@@ -636,6 +677,8 @@ code {
 
 .simple-voter-choice-row {
   display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
   gap: 12px;
   margin-top: 18px;
 }
@@ -1429,6 +1472,11 @@ code {
   .simple-qr-panel,
   .simple-identity-grid {
     grid-template-columns: 1fr;
+  }
+
+  .simple-voter-header-row {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .simple-scanner-head {
