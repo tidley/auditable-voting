@@ -141,6 +141,10 @@ export default function SimpleCoordinatorApp() {
   const activeVotingId = selectedPublishedVote?.votingId ?? "";
   const activeThresholdT = selectedPublishedVote?.thresholdT ?? (Number.parseInt(questionThresholdT, 10) || undefined);
   const activeThresholdN = selectedPublishedVote?.thresholdN ?? (Number.parseInt(questionThresholdN, 10) || undefined);
+  const maxThresholdT = Math.max(
+    1,
+    Math.min(Number.parseInt(questionThresholdN, 10) || 1, availableCoordinatorCount),
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -362,10 +366,6 @@ export default function SimpleCoordinatorApp() {
       return;
     }
 
-    const maxThresholdT = Math.max(
-      1,
-      Math.min(Number.parseInt(questionThresholdN, 10) || 1, availableCoordinatorCount),
-    );
     setQuestionThresholdT((current) => {
       const parsed = Number.parseInt(current, 10);
       const nextValue = Number.isFinite(parsed)
@@ -1051,33 +1051,35 @@ export default function SimpleCoordinatorApp() {
               />
               <div className="simple-vote-threshold-grid">
                 <div>
-                  <label className="simple-voter-label" htmlFor="simple-threshold-t">Threshold T</label>
-                  <input
-                    id="simple-threshold-t"
-                    className="simple-voter-range"
-                    type="range"
-                    min="1"
-                    max={Math.max(1, Math.min(Number.parseInt(questionThresholdN, 10) || 1, availableCoordinatorCount))}
-                    step="1"
-                    value={questionThresholdT}
-                    onChange={(event) => setQuestionThresholdT(event.target.value)}
-                  />
-                  <p className="simple-voter-note">T = {questionThresholdT}</p>
-                </div>
-                <div>
-                  <label className="simple-voter-label" htmlFor="simple-threshold-n">Threshold N</label>
-                  <input
-                    id="simple-threshold-n"
-                    className="simple-voter-range"
-                    type="range"
-                    min="1"
-                    max={availableCoordinatorCount}
-                    step="1"
-                    value={questionThresholdN}
-                    disabled
-                    readOnly
-                  />
-                  <p className="simple-voter-note">N = {questionThresholdN} of {availableCoordinatorCount} coordinators</p>
+                  <label className="simple-voter-label" htmlFor="simple-threshold-t-value">Threshold T</label>
+                  <div className="simple-threshold-stepper">
+                    <button
+                      type="button"
+                      className="simple-voter-secondary simple-threshold-stepper-button"
+                      aria-label="Decrease Threshold T"
+                      onClick={() => setQuestionThresholdT((current) => String(Math.max(1, (Number.parseInt(current, 10) || 1) - 1)))}
+                      disabled={(Number.parseInt(questionThresholdT, 10) || 1) <= 1}
+                    >
+                      -
+                    </button>
+                    <output
+                      id="simple-threshold-t-value"
+                      className="simple-threshold-stepper-value"
+                      aria-live="polite"
+                    >
+                      {questionThresholdT}
+                    </output>
+                    <button
+                      type="button"
+                      className="simple-voter-secondary simple-threshold-stepper-button"
+                      aria-label="Increase Threshold T"
+                      onClick={() => setQuestionThresholdT((current) => String(Math.min(maxThresholdT, (Number.parseInt(current, 10) || 1) + 1)))}
+                      disabled={(Number.parseInt(questionThresholdT, 10) || 1) >= maxThresholdT}
+                    >
+                      +
+                    </button>
+                  </div>
+                  <p className="simple-voter-note">T = {questionThresholdT}, capped to 1-{maxThresholdT}. N is fixed at {questionThresholdN}.</p>
                 </div>
               </div>
               <div className="simple-voter-action-row">

@@ -858,7 +858,7 @@ describe("Simple round flow", () => {
       expect(coordinatorOneUi.getByText(/submitted as sub-coordinator/i)).toBeTruthy();
     });
 
-    fireEvent.change(coordinatorOneUi.getByLabelText(/^Threshold T$/i), { target: { value: "2" } });
+    await user.click(coordinatorOneUi.getByRole("button", { name: /Increase Threshold T/i }));
 
     await user.click(coordinatorOneUi.getByRole("button", { name: /Broadcast live vote/i }));
     await user.click(coordinatorOneUi.getByRole("button", { name: /Distribute share indexes/i }));
