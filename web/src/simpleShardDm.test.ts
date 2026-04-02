@@ -133,6 +133,9 @@ describe("simpleShardDm", () => {
     });
 
     expect(wrapEvent).toHaveBeenCalled();
+    expect(JSON.parse(wrapEvent.mock.calls[0][2])).toMatchObject({
+      request_id: "request-1",
+    });
     expect(JSON.parse(wrapEvent.mock.calls[0][2]).blind_share_response).toMatchObject({
       shareId: "share-1",
       requestId: "request-1",

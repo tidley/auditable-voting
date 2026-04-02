@@ -10,13 +10,16 @@ import {
 } from "./simpleShardCertificate";
 
 export const SIMPLE_DM_RELAYS = [
-  'wss://relay.0xchat.com',
-  'wss://auth.nostr1.com',
   'wss://nip17.com',
   'wss://nip17.tomdwyer.uk',
   'wss://relay.nostr.band',
   'wss://nos.lol',
 ];
+
+const SIMPLE_DM_PUBLISH_MAX_WAIT_MS = 1500;
+const SIMPLE_DM_SUBSCRIPTION_MAX_WAIT_MS = 1500;
+const SIMPLE_DM_PUBLISH_STAGGER_MS = 250;
+const SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS = 300;
 
 export type SimpleDmAcknowledgedAction =
   | 'simple_coordinator_follow'
@@ -408,10 +411,14 @@ export async function sendSimpleCoordinatorFollow(input: {
 
   const pool = new SimplePool();
   try {
-    const results = await queueNostrPublish(() => publishToRelaysStaggered(
-      (relay) => pool.publish([relay], event, { maxWait: 4000 })[0],
-      dmRelays,
-    ));
+    const results = await queueNostrPublish(
+      () => publishToRelaysStaggered(
+        (relay) => pool.publish([relay], event, { maxWait: SIMPLE_DM_PUBLISH_MAX_WAIT_MS })[0],
+        dmRelays,
+        { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
+      ),
+      { channel: "simple-dm", minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS },
+    );
     const relayResults = results.map((result, index) => (
       result.status === "fulfilled"
         ? { relay: dmRelays[index], success: true }
@@ -474,11 +481,14 @@ export async function sendSimpleDmAcknowledgement(input: {
 
   const pool = new SimplePool();
   try {
-    const results = await queueNostrPublish(() =>
-      publishToRelaysStaggered(
-        (relay) => pool.publish([relay], event, { maxWait: 4000 })[0],
-        dmRelays,
-      ),
+    const results = await queueNostrPublish(
+      () =>
+        publishToRelaysStaggered(
+          (relay) => pool.publish([relay], event, { maxWait: SIMPLE_DM_PUBLISH_MAX_WAIT_MS })[0],
+          dmRelays,
+          { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
+        ),
+      { channel: "simple-dm-ack", minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS },
     );
     const relayResults = results.map((result, index) =>
       result.status === 'fulfilled'
@@ -536,10 +546,14 @@ export async function sendSimpleSubCoordinatorJoin(input: {
 
   const pool = new SimplePool();
   try {
-    const results = await queueNostrPublish(() => publishToRelaysStaggered(
-      (relay) => pool.publish([relay], event, { maxWait: 4000 })[0],
-      dmRelays,
-    ));
+    const results = await queueNostrPublish(
+      () => publishToRelaysStaggered(
+        (relay) => pool.publish([relay], event, { maxWait: SIMPLE_DM_PUBLISH_MAX_WAIT_MS })[0],
+        dmRelays,
+        { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
+      ),
+      { channel: "simple-dm", minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS },
+    );
     const relayResults = results.map((result, index) => (
       result.status === "fulfilled"
         ? { relay: dmRelays[index], success: true }
@@ -596,10 +610,14 @@ export async function sendSimpleShardRequest(input: {
 
   const pool = new SimplePool();
   try {
-    const results = await queueNostrPublish(() => publishToRelaysStaggered(
-      (relay) => pool.publish([relay], event, { maxWait: 4000 })[0],
-      dmRelays,
-    ));
+    const results = await queueNostrPublish(
+      () => publishToRelaysStaggered(
+        (relay) => pool.publish([relay], event, { maxWait: SIMPLE_DM_PUBLISH_MAX_WAIT_MS })[0],
+        dmRelays,
+        { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
+      ),
+      { channel: "simple-dm", minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS },
+    );
     const relayResults = results.map((result, index) => (
       result.status === "fulfilled"
         ? { relay: dmRelays[index], success: true }
@@ -718,7 +736,7 @@ export function subscribeSimpleShardRequests(input: {
         input.onError?.(new Error(errors.join("; ")));
       }
     },
-    maxWait: 4000,
+    maxWait: SIMPLE_DM_SUBSCRIPTION_MAX_WAIT_MS,
   });
 
   return () => {
@@ -887,7 +905,7 @@ export function subscribeSimpleDmAcknowledgements(input: {
           input.onError?.(new Error(errors.join('; ')));
         }
       },
-      maxWait: 4000,
+      maxWait: SIMPLE_DM_SUBSCRIPTION_MAX_WAIT_MS,
     },
   );
 
@@ -959,7 +977,7 @@ export function subscribeSimpleCoordinatorFollowers(input: {
         input.onError?.(new Error(errors.join("; ")));
       }
     },
-    maxWait: 4000,
+    maxWait: SIMPLE_DM_SUBSCRIPTION_MAX_WAIT_MS,
   });
 
   return () => {
@@ -1066,7 +1084,7 @@ export function subscribeSimpleSubCoordinatorApplications(input: {
         input.onError?.(new Error(errors.join("; ")));
       }
     },
-    maxWait: 4000,
+    maxWait: SIMPLE_DM_SUBSCRIPTION_MAX_WAIT_MS,
   });
 
   return () => {
@@ -1115,7 +1133,7 @@ export async function sendSimpleShardResponse(input: {
     JSON.stringify({
       action: "simple_shard_response",
       response_id: responseId,
-      request_id: input.request.id,
+      request_id: input.request.blindRequest.requestId,
       coordinator_npub: input.coordinatorNpub,
       coordinator_id: input.coordinatorId,
       threshold_label: input.thresholdLabel,
@@ -1127,10 +1145,14 @@ export async function sendSimpleShardResponse(input: {
 
   const pool = new SimplePool();
   try {
-    const results = await queueNostrPublish(() => publishToRelaysStaggered(
-      (relay) => pool.publish([relay], event, { maxWait: 4000 })[0],
-      dmRelays,
-    ));
+    const results = await queueNostrPublish(
+      () => publishToRelaysStaggered(
+        (relay) => pool.publish([relay], event, { maxWait: SIMPLE_DM_PUBLISH_MAX_WAIT_MS })[0],
+        dmRelays,
+        { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
+      ),
+      { channel: "simple-dm", minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS },
+    );
     const relayResults = results.map((result, index) => (
       result.status === "fulfilled"
         ? { relay: dmRelays[index], success: true }
@@ -1194,7 +1216,7 @@ export async function sendSimpleRoundTicket(input: {
     JSON.stringify({
       action: "simple_round_ticket",
       response_id: responseId,
-      request_id: input.request.id,
+      request_id: input.request.blindRequest.requestId,
       voter_id: input.voterId,
       coordinator_npub: input.coordinatorNpub,
       coordinator_id: input.coordinatorId,
@@ -1208,10 +1230,14 @@ export async function sendSimpleRoundTicket(input: {
 
   const pool = new SimplePool();
   try {
-    const results = await queueNostrPublish(() => publishToRelaysStaggered(
-      (relay) => pool.publish([relay], event, { maxWait: 4000 })[0],
-      dmRelays,
-    ));
+    const results = await queueNostrPublish(
+      () => publishToRelaysStaggered(
+        (relay) => pool.publish([relay], event, { maxWait: SIMPLE_DM_PUBLISH_MAX_WAIT_MS })[0],
+        dmRelays,
+        { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
+      ),
+      { channel: "simple-dm", minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS },
+    );
     const relayResults = results.map((result, index) => (
       result.status === "fulfilled"
         ? { relay: dmRelays[index], success: true }
@@ -1268,10 +1294,14 @@ export async function sendSimpleShareAssignment(input: {
 
   const pool = new SimplePool();
   try {
-    const results = await queueNostrPublish(() => publishToRelaysStaggered(
-      (relay) => pool.publish([relay], event, { maxWait: 4000 })[0],
-      dmRelays,
-    ));
+    const results = await queueNostrPublish(
+      () => publishToRelaysStaggered(
+        (relay) => pool.publish([relay], event, { maxWait: SIMPLE_DM_PUBLISH_MAX_WAIT_MS })[0],
+        dmRelays,
+        { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
+      ),
+      { channel: "simple-dm", minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS },
+    );
     const relayResults = results.map((result, index) => (
       result.status === "fulfilled"
         ? { relay: dmRelays[index], success: true }
@@ -1390,7 +1420,7 @@ export function subscribeSimpleShardResponses(input: {
         input.onError?.(new Error(errors.join("; ")));
       }
     },
-    maxWait: 4000,
+    maxWait: SIMPLE_DM_SUBSCRIPTION_MAX_WAIT_MS,
   });
 
   return () => {
@@ -1497,7 +1527,7 @@ export function subscribeSimpleCoordinatorShareAssignments(input: {
         input.onError?.(new Error(errors.join("; ")));
       }
     },
-    maxWait: 4000,
+    maxWait: SIMPLE_DM_SUBSCRIPTION_MAX_WAIT_MS,
   });
 
   return () => {

@@ -8,7 +8,13 @@ import {
 } from "nostr-tools";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
-import { SIMPLE_PUBLIC_RELAYS } from "./simpleVotingSession";
+import {
+  SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS,
+  SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS,
+  SIMPLE_PUBLIC_PUBLISH_STAGGER_MS,
+  SIMPLE_PUBLIC_RELAYS,
+  SIMPLE_PUBLIC_SUBSCRIPTION_MAX_WAIT_MS,
+} from "./simpleVotingSession";
 import { sha256Hex } from "./tokenIdentity";
 
 export const SIMPLE_BLIND_KEY_KIND = 38993;
@@ -288,10 +294,14 @@ export async function publishSimpleBlindKeyAnnouncement(input: {
 
   const pool = new SimplePool();
   try {
-    const results = await queueNostrPublish(() => publishToRelaysStaggered(
-      (relay) => pool.publish([relay], event, { maxWait: 4000 })[0],
-      relays,
-    ));
+    const results = await queueNostrPublish(
+      () => publishToRelaysStaggered(
+        (relay) => pool.publish([relay], event, { maxWait: SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS })[0],
+        relays,
+        { staggerMs: SIMPLE_PUBLIC_PUBLISH_STAGGER_MS },
+      ),
+      { channel: "simple-public", minIntervalMs: SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS },
+    );
     return {
       eventId: event.id,
       successes: results.filter((result) => result.status === "fulfilled").length,
@@ -439,7 +449,7 @@ export function subscribeLatestSimpleBlindKeyAnnouncement(input: {
         input.onError?.(new Error(errors.join("; ")));
       }
     },
-    maxWait: 4000,
+    maxWait: SIMPLE_PUBLIC_SUBSCRIPTION_MAX_WAIT_MS,
   });
 
   return () => {

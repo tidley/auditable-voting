@@ -10,8 +10,12 @@ export const SIMPLE_PUBLIC_RELAYS = [
   "wss://relay.snort.social",
   "wss://relay.nostr.band",
   "wss://relay.damus.io",
-  "wss://relay.primal.net",
 ];
+
+export const SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS = 1500;
+export const SIMPLE_PUBLIC_SUBSCRIPTION_MAX_WAIT_MS = 1500;
+export const SIMPLE_PUBLIC_PUBLISH_STAGGER_MS = 300;
+export const SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS = 500;
 
 export const SIMPLE_LIVE_VOTE_KIND = 38990;
 export const SIMPLE_LIVE_VOTE_BALLOT_KIND = 38991;
@@ -154,10 +158,14 @@ export async function publishSimpleLiveVote(input: {
 
   const pool = new SimplePool();
   try {
-    const results = await queueNostrPublish(() => publishToRelaysStaggered(
-      (relay) => pool.publish([relay], event, { maxWait: 4000 })[0],
-      relays,
-    ));
+    const results = await queueNostrPublish(
+      () => publishToRelaysStaggered(
+        (relay) => pool.publish([relay], event, { maxWait: SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS })[0],
+        relays,
+        { staggerMs: SIMPLE_PUBLIC_PUBLISH_STAGGER_MS },
+      ),
+      { channel: "simple-public", minIntervalMs: SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS },
+    );
     const relayResults = results.map((result, index) => (
       result.status === "fulfilled"
         ? { relay: relays[index], success: true }
@@ -254,7 +262,7 @@ export function subscribeLatestSimpleLiveVote(input: {
         input.onError?.(new Error(errors.join("; ")));
       }
     },
-    maxWait: 4000,
+    maxWait: SIMPLE_PUBLIC_SUBSCRIPTION_MAX_WAIT_MS,
   });
 
   return () => {
@@ -305,7 +313,7 @@ export function subscribeSimpleLiveVotes(input: {
         input.onError?.(new Error(errors.join("; ")));
       }
     },
-    maxWait: 4000,
+    maxWait: SIMPLE_PUBLIC_SUBSCRIPTION_MAX_WAIT_MS,
   });
 
   return () => {
@@ -372,10 +380,14 @@ export async function publishSimpleSubmittedVote(input: {
 
   const pool = new SimplePool();
   try {
-    const results = await queueNostrPublish(() => publishToRelaysStaggered(
-      (relay) => pool.publish([relay], event, { maxWait: 4000 })[0],
-      relays,
-    ));
+    const results = await queueNostrPublish(
+      () => publishToRelaysStaggered(
+        (relay) => pool.publish([relay], event, { maxWait: SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS })[0],
+        relays,
+        { staggerMs: SIMPLE_PUBLIC_PUBLISH_STAGGER_MS },
+      ),
+      { channel: "simple-public", minIntervalMs: SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS },
+    );
     const relayResults = results.map((result, index) => (
       result.status === "fulfilled"
         ? { relay: relays[index], success: true }
@@ -463,7 +475,7 @@ export function subscribeSimpleSubmittedVotes(input: {
         input.onError?.(new Error(errors.join("; ")));
       }
     },
-    maxWait: 4000,
+    maxWait: SIMPLE_PUBLIC_SUBSCRIPTION_MAX_WAIT_MS,
   });
 
   return () => {
