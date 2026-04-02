@@ -4,6 +4,7 @@ import { SimplePool } from "nostr-tools";
 import { fetchCoordinatorInfo, fetchElectionsFromNostr, fetchTally, fetchElection, fetchIssuanceStatus, discoverCoordinators, fetchPerCoordinatorTallies, runAudit, type TallyInfo, type ElectionInfo, type ElectionQuestion, type ElectionSummary, type IssuanceStatusResponse, type CoordinatorDiscovery, type AuditResult, type PerCoordinatorTally } from "./coordinatorApi";
 import { USE_MOCK } from "./config";
 import PageNav from "./PageNav";
+import { assetUrl } from "./basePath";
 
 const EMPTY_ELIGIBILITY: EligibilityResponse = {
   eligibleNpubs: [],
@@ -239,7 +240,7 @@ export default function DashboardApp() {
     <main className="page-shell page-shell-dashboard">
       <section className="hero-card hero-card-dashboard">
         <div className="hero-brand">
-          <img src="/images/logo.png" alt="" width={28} height={28} />
+          <img src={assetUrl("images/logo.png")} alt="" width={28} height={28} />
           <p className="eyebrow">Backend Dashboard</p>
         </div>
         <PageNav current="dashboard" />

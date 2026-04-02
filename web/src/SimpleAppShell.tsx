@@ -44,35 +44,35 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
   );
 
   return (
-    <div className="simple-app-shell">
-      <div className="simple-role-switch-wrap">
-        <div className="simple-role-switch-header">
-          <p className="simple-role-switch-kicker">Simple UI</p>
-          <h1 className="simple-role-switch-title">{roleTitle}</h1>
-        </div>
-        <div className="simple-role-switch" role="tablist" aria-label="Simple role switch">
+    <div className='simple-app-shell'>
+      <div className='simple-role-switch-wrap'>
+        <div
+          className='simple-role-switch'
+          role='tablist'
+          aria-label='Simple role switch'
+        >
           <button
-            type="button"
-            role="tab"
-            aria-selected={role === "voter"}
-            className={`simple-role-switch-button${role === "voter" ? " is-active" : ""}`}
-            onClick={() => setRole("voter")}
+            type='button'
+            role='tab'
+            aria-selected={role === 'voter'}
+            className={`simple-role-switch-button${role === 'voter' ? ' is-active' : ''}`}
+            onClick={() => setRole('voter')}
           >
             Voter
           </button>
           <button
-            type="button"
-            role="tab"
-            aria-selected={role === "coordinator"}
-            className={`simple-role-switch-button${role === "coordinator" ? " is-active" : ""}`}
-            onClick={() => setRole("coordinator")}
+            type='button'
+            role='tab'
+            aria-selected={role === 'coordinator'}
+            className={`simple-role-switch-button${role === 'coordinator' ? ' is-active' : ''}`}
+            onClick={() => setRole('coordinator')}
           >
             Coordinator
           </button>
         </div>
       </div>
 
-      {role === "voter" ? <SimpleUiApp /> : <SimpleCoordinatorApp />}
+      {role === 'voter' ? <SimpleUiApp /> : <SimpleCoordinatorApp />}
     </div>
   );
 }

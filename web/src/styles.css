@@ -670,6 +670,12 @@ code {
   box-sizing: border-box;
 }
 
+.simple-voter-range {
+  width: 100%;
+  margin-bottom: 8px;
+  accent-color: #2563eb;
+}
+
 .simple-voter-input-inline {
   margin-bottom: 0;
 }
@@ -831,6 +837,23 @@ code {
   min-width: 0;
 }
 
+.simple-vote-result-line {
+  font-weight: 700;
+}
+
+.simple-vote-valid,
+.simple-vote-invalid {
+  font-weight: 800;
+}
+
+.simple-vote-valid {
+  color: #4ade80;
+}
+
+.simple-vote-invalid {
+  color: #f87171;
+}
+
 .simple-submitted-score {
   margin: 10px 0 18px;
   font-size: 1.85rem;
@@ -855,6 +878,11 @@ code {
 .simple-identity-fields {
   display: grid;
   gap: 20px;
+}
+
+.simple-identity-restore {
+  display: grid;
+  gap: 10px;
 }
 
 .simple-identity-field {

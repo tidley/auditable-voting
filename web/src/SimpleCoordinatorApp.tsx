@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
-import { fetchElection, type ElectionInfo } from "./coordinatorApi";
-import { decodeNsec } from "./nostrIdentity";
+import { decodeNsec, deriveNpubFromNsec } from "./nostrIdentity";
 import {
   subscribeSimpleCoordinatorFollowers,
   subscribeSimpleCoordinatorShareAssignments,
@@ -91,9 +90,9 @@ function shortVotingId(votingId: string) {
 }
 
 export default function SimpleCoordinatorApp() {
-  const [election, setElection] = useState<ElectionInfo | null>(null);
   const [keypair, setKeypair] = useState<SimpleCoordinatorKeypair | null>(() => loadStoredCoordinatorKeypair());
   const [coordinatorId, setCoordinatorId] = useState("pending");
+  const [identityStatus, setIdentityStatus] = useState<string | null>(null);
   const [leadCoordinatorNpub, setLeadCoordinatorNpub] = useState("");
   const [followers, setFollowers] = useState<SimpleCoordinatorFollower[]>([]);
   const [subCoordinators, setSubCoordinators] = useState<SimpleSubCoordinatorApplication[]>([]);
@@ -112,6 +111,7 @@ export default function SimpleCoordinatorApp() {
   const isLeadCoordinator = !leadCoordinatorNpub.trim() || leadCoordinatorNpub.trim() === (keypair?.npub ?? "");
   const activeShareIndex = isLeadCoordinator ? 1 : (Number.parseInt(questionShareIndex, 10) || 0);
   const hasAssignedShareIndex = !isLeadCoordinator && activeShareIndex > 0;
+  const availableCoordinatorCount = Math.max(1, subCoordinators.length + 1);
   const liveVoteSourceNpub = !isLeadCoordinator ? leadCoordinatorNpub.trim() : "";
   const selectedPublishedVote = useMemo(
     () => publishedVotes.find((vote) => vote.votingId === selectedVotingId) ?? publishedVotes[0] ?? null,
@@ -120,14 +120,6 @@ export default function SimpleCoordinatorApp() {
   const activeVotingId = selectedPublishedVote?.votingId ?? questionVotingId.trim();
   const activeThresholdT = selectedPublishedVote?.thresholdT ?? (Number.parseInt(questionThresholdT, 10) || undefined);
   const activeThresholdN = selectedPublishedVote?.thresholdN ?? (Number.parseInt(questionThresholdN, 10) || undefined);
-
-  useEffect(() => {
-    void fetchElection().then((nextElection) => {
-      setElection(nextElection);
-    }).catch(() => {
-      setElection(null);
-    });
-  }, []);
 
   useEffect(() => {
     if (keypair) {
@@ -238,6 +230,32 @@ export default function SimpleCoordinatorApp() {
   }, [isLeadCoordinator, leadCoordinatorNpub]);
 
   useEffect(() => {
+    if (!isLeadCoordinator) {
+      return;
+    }
+
+    setQuestionThresholdN(String(availableCoordinatorCount));
+  }, [availableCoordinatorCount, isLeadCoordinator]);
+
+  useEffect(() => {
+    if (!isLeadCoordinator) {
+      return;
+    }
+
+    const maxThresholdT = Math.max(
+      1,
+      Math.min(Number.parseInt(questionThresholdN, 10) || 1, availableCoordinatorCount),
+    );
+    setQuestionThresholdT((current) => {
+      const parsed = Number.parseInt(current, 10);
+      const nextValue = Number.isFinite(parsed)
+        ? Math.min(Math.max(parsed, 1), maxThresholdT)
+        : maxThresholdT;
+      return String(nextValue);
+    });
+  }, [availableCoordinatorCount, isLeadCoordinator, questionThresholdN]);
+
+  useEffect(() => {
     if (!liveVoteSourceNpub) {
       setPublishedVotes([]);
       return;
@@ -259,6 +277,11 @@ export default function SimpleCoordinatorApp() {
       return;
     }
 
+    if (!isLeadCoordinator) {
+      setSelectedVotingId(publishedVotes[0].votingId);
+      return;
+    }
+
     if (questionVotingId.trim()) {
       const matchingVote = publishedVotes.find((vote) => vote.votingId === questionVotingId.trim());
       if (matchingVote) {
@@ -270,7 +293,7 @@ export default function SimpleCoordinatorApp() {
     setSelectedVotingId((current) => (
       publishedVotes.some((vote) => vote.votingId === current) ? current : publishedVotes[0].votingId
     ));
-  }, [publishedVotes, questionVotingId]);
+  }, [isLeadCoordinator, publishedVotes, questionVotingId]);
 
   useEffect(() => {
     setTicketStatuses({});
@@ -298,6 +321,41 @@ export default function SimpleCoordinatorApp() {
     const nextKeypair = createSimpleCoordinatorKeypair();
     storeCoordinatorKeypair(nextKeypair);
     setKeypair(nextKeypair);
+    setIdentityStatus(null);
+    setLeadCoordinatorNpub("");
+    setFollowers([]);
+    setSubCoordinators([]);
+    setTicketStatuses({});
+    setRegistrationStatus(null);
+    setAssignmentStatus(null);
+    setQuestionPrompt("Should the proposal pass?");
+    setQuestionVotingId("");
+    setQuestionThresholdT("1");
+    setQuestionThresholdN("1");
+    setQuestionShareIndex("1");
+    setPublishStatus(null);
+    setPublishedVotes([]);
+    setSelectedVotingId("");
+    setSubmittedVotes([]);
+  }
+
+  function restoreIdentity(nextNsec: string) {
+    const trimmed = nextNsec.trim();
+    const derivedNpub = deriveNpubFromNsec(trimmed);
+
+    if (!trimmed || !derivedNpub) {
+      setIdentityStatus("Enter a valid nsec.");
+      return;
+    }
+
+    const nextKeypair = {
+      nsec: trimmed,
+      npub: derivedNpub,
+    };
+
+    storeCoordinatorKeypair(nextKeypair);
+    setKeypair(nextKeypair);
+    setIdentityStatus("Identity restored from nsec.");
     setLeadCoordinatorNpub("");
     setFollowers([]);
     setSubCoordinators([]);
@@ -322,19 +380,7 @@ export default function SimpleCoordinatorApp() {
       return `${configuredT} of ${configuredN}`;
     }
 
-    const publishedT = election?.threshold_t;
-    const publishedN = election?.threshold_n;
-
-    if (publishedT && publishedN) {
-      return `${publishedT} of ${publishedN}`;
-    }
-
-    const coordinatorCount = election?.coordinator_npubs.length ?? 0;
-    if (coordinatorCount === 1) {
-      return "1 of 1";
-    }
-
-    return coordinatorCount > 1 ? `share of ${coordinatorCount}` : "share";
+    return "1 of 1";
   }
 
   function getThresholdNumbers() {
@@ -344,23 +390,7 @@ export default function SimpleCoordinatorApp() {
       return { thresholdT: configuredT, thresholdN: configuredN };
     }
 
-    const publishedT = election?.threshold_t;
-    const publishedN = election?.threshold_n;
-
-    if (publishedT && publishedN) {
-      return { thresholdT: publishedT, thresholdN: publishedN };
-    }
-
-    const coordinatorCount = election?.coordinator_npubs.length ?? 0;
-    if (coordinatorCount === 1) {
-      return { thresholdT: 1, thresholdN: 1 };
-    }
-
-    if (coordinatorCount > 1) {
-      return { thresholdN: coordinatorCount };
-    }
-
-    return {};
+    return { thresholdT: 1, thresholdN: 1 };
   }
 
   async function sendTicket(follower: SimpleCoordinatorFollower) {
@@ -547,25 +577,44 @@ export default function SimpleCoordinatorApp() {
           npub={keypair?.npub ?? ""}
           nsec={keypair?.nsec ?? ""}
           title="Identity"
+          onRestoreNsec={restoreIdentity}
+          restoreMessage={identityStatus}
         />
 
         <SimpleCollapsibleSection title="Coordinator management">
           <label className="simple-voter-label" htmlFor="simple-lead-coordinator-npub">Lead coordinator npub</label>
-          <input
-            id="simple-lead-coordinator-npub"
-            className="simple-voter-input"
-            value={leadCoordinatorNpub}
-            onChange={(event) => {
-              const nextLeadCoordinatorNpub = event.target.value;
-              setLeadCoordinatorNpub(nextLeadCoordinatorNpub);
-              if (nextLeadCoordinatorNpub.trim() !== (keypair?.npub ?? "")) {
-                setQuestionShareIndex("");
-              }
-              setRegistrationStatus(null);
-              setAssignmentStatus(null);
-            }}
-            placeholder="Leave blank if this coordinator is the lead"
-          />
+          <div className="simple-voter-inline-field">
+            <input
+              id="simple-lead-coordinator-npub"
+              className="simple-voter-input simple-voter-input-inline"
+              value={leadCoordinatorNpub}
+              onChange={(event) => {
+                const nextLeadCoordinatorNpub = event.target.value;
+                setLeadCoordinatorNpub(nextLeadCoordinatorNpub);
+                if (nextLeadCoordinatorNpub.trim() !== (keypair?.npub ?? "")) {
+                  setQuestionShareIndex("");
+                }
+                setRegistrationStatus(null);
+                setAssignmentStatus(null);
+              }}
+              placeholder="Leave blank if this coordinator is the lead"
+            />
+            {!isLeadCoordinator ? (
+              <button
+                type="button"
+                className="simple-voter-secondary"
+                onClick={() => void submitToLeadCoordinator()}
+                disabled={
+                  !keypair?.nsec
+                  || !leadCoordinatorNpub.trim()
+                  || leadCoordinatorNpub.trim() === (keypair?.npub ?? "")
+                  || hasAssignedShareIndex
+                }
+              >
+                {hasAssignedShareIndex ? "Registered with lead" : "Submit to lead"}
+              </button>
+            ) : null}
+          </div>
           <p className="simple-voter-question">
             {isLeadCoordinator
               ? "This coordinator publishes the live question."
@@ -614,21 +663,6 @@ export default function SimpleCoordinatorApp() {
                     disabled
                   />
                 </div>
-              </div>
-              <div className="simple-voter-action-row">
-                <button
-                  type="button"
-                  className="simple-voter-secondary"
-                  onClick={() => void submitToLeadCoordinator()}
-                  disabled={
-                    !keypair?.nsec
-                    || !leadCoordinatorNpub.trim()
-                    || leadCoordinatorNpub.trim() === (keypair?.npub ?? "")
-                    || hasAssignedShareIndex
-                  }
-                >
-                  {hasAssignedShareIndex ? "Registered with lead" : "Submit to lead"}
-                </button>
               </div>
             </>
           )}
@@ -729,41 +763,35 @@ export default function SimpleCoordinatorApp() {
                 onChange={(event) => setQuestionPrompt(event.target.value)}
                 rows={3}
               />
-              <label className="simple-voter-label" htmlFor="simple-question-voting-id">Voting ID</label>
-              <input
-                id="simple-question-voting-id"
-                className="simple-voter-input"
-                value={questionVotingId}
-                onChange={(event) => setQuestionVotingId(event.target.value)}
-              />
               <div className="simple-vote-threshold-grid">
                 <div>
                   <label className="simple-voter-label" htmlFor="simple-threshold-t">Threshold T</label>
                   <input
                     id="simple-threshold-t"
-                    className="simple-voter-input"
+                    className="simple-voter-range"
+                    type="range"
+                    min="1"
+                    max={Math.max(1, Math.min(Number.parseInt(questionThresholdN, 10) || 1, availableCoordinatorCount))}
+                    step="1"
                     value={questionThresholdT}
                     onChange={(event) => setQuestionThresholdT(event.target.value)}
                   />
+                  <p className="simple-voter-note">T = {questionThresholdT}</p>
                 </div>
                 <div>
                   <label className="simple-voter-label" htmlFor="simple-threshold-n">Threshold N</label>
                   <input
                     id="simple-threshold-n"
-                    className="simple-voter-input"
+                    className="simple-voter-range"
+                    type="range"
+                    min="1"
+                    max={availableCoordinatorCount}
+                    step="1"
                     value={questionThresholdN}
-                    onChange={(event) => setQuestionThresholdN(event.target.value)}
-                  />
-                </div>
-                <div>
-                  <label className="simple-voter-label" htmlFor="simple-share-index">Share Index</label>
-                  <input
-                    id="simple-share-index"
-                    className="simple-voter-input"
-                    value="1"
-                    readOnly
                     disabled
+                    readOnly
                   />
+                  <p className="simple-voter-note">N = {questionThresholdN} of {availableCoordinatorCount} coordinators</p>
                 </div>
               </div>
               <div className="simple-voter-action-row">
@@ -801,11 +829,15 @@ export default function SimpleCoordinatorApp() {
                     <li key={vote.eventId} className="simple-voter-list-item">
                       <div className="simple-vote-entry">
                         <div className="simple-vote-entry-copy">
-                          <p className="simple-voter-question">
-                            Vote {vote.choice} from {vote.voterNpub.slice(0, 16)}... {valid ? "(Valid)" : `(Invalid: ${reason})`}
+                          <p className="simple-voter-question simple-vote-result-line">
+                            <span>Vote {vote.choice}</span>
+                            {" "}
+                            <span className={valid ? "simple-vote-valid" : "simple-vote-invalid"}>
+                              {valid ? "[Valid]" : `[Invalid${reason ? `: ${reason}` : ""}]`}
+                            </span>
                           </p>
                         </div>
-                        {vote.tokenId && <TokenFingerprint tokenId={vote.tokenId} large />}
+                        {vote.tokenId && <TokenFingerprint tokenId={vote.tokenId} large hideMetadata />}
                       </div>
                     </li>
                   ))}

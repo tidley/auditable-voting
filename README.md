@@ -177,6 +177,37 @@ Notes:
 - the demo page uses the mock backend only when `VITE_USE_MOCK=true`
 - if you cloned the repo somewhere else, stay in that directory instead of using `/home/tom/code/auditable-voting`
 
+## GitHub Pages
+
+The frontend can be deployed to GitHub Pages as a static site.
+
+Important limitation:
+
+- GitHub Pages only hosts the static frontend build
+- it does not provide the local Vite `/api` proxy used in mock mode
+- for a Pages deployment, point the app at a real coordinator and mint by setting repository variables:
+  - `VITE_COORDINATOR_URL`
+  - `VITE_MINT_URL`
+
+This repo now includes a GitHub Actions workflow at `.github/workflows/deploy-pages.yml` that:
+
+- builds the `web/` frontend
+- uses a Pages-safe base path
+- deploys `web/dist` to GitHub Pages
+
+The workflow builds with:
+
+```text
+VITE_USE_MOCK=false
+VITE_DEMO_MODE=false
+```
+
+If you want to test the same Pages-style path handling locally, run:
+
+```bash
+VITE_BASE_PATH=/auditable-voting/ npm --prefix web run build
+```
+
 ## Project Structure
 
 ```text
