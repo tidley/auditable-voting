@@ -206,6 +206,24 @@ What lands here:
 - client-side unblinding and share aggregation
 - locally stored round-bound voting credentials
 
+Status:
+
+- partially implemented in the simple runtime
+
+What is implemented now:
+
+- dedicated round reconciliation via [web/src/simpleRoundState.ts](/home/tom/code/auditable-voting/web/src/simpleRoundState.ts)
+- blinded issuance requests over NIP-17 in [web/src/simpleShardDm.ts](/home/tom/code/auditable-voting/web/src/simpleShardDm.ts)
+- real blind-signature share objects in [web/src/simpleShardCertificate.ts](/home/tom/code/auditable-voting/web/src/simpleShardCertificate.ts)
+- client-side unblinding in [web/src/SimpleUiApp.tsx](/home/tom/code/auditable-voting/web/src/SimpleUiApp.tsx)
+- a runtime verification script at [web/scripts/verify-simple-blind-shares.ts](/home/tom/code/auditable-voting/web/scripts/verify-simple-blind-shares.ts)
+
+What remains:
+
+- threshold aggregation beyond per-coordinator blind shares
+- promoting the simple shell to the only shipped frontend path across every route
+- removing legacy frontend entrypoints from the build once the remaining review/audit flow is ported
+
 Files that become obsolete after this phase:
 
 - [web/src/mintApi.ts](/home/tom/code/auditable-voting/web/src/mintApi.ts)
@@ -213,6 +231,11 @@ Files that become obsolete after this phase:
 - [web/src/cashuBlind.ts](/home/tom/code/auditable-voting/web/src/cashuBlind.ts)
 - [web/src/cashuWallet.ts](/home/tom/code/auditable-voting/web/src/cashuWallet.ts)
 - [coordinator/voting-request-proof.py](/home/tom/code/auditable-voting/coordinator/voting-request-proof.py)
+
+Current frontend cutover status:
+
+- `index.html`, `vote.html`, and `dashboard.html` now mount the simple client-only shell
+- the legacy backend-oriented React apps remain in-source but are no longer the primary shipped frontend routes
 
 ### Phase 5. Nostr-Native Ballot Spend and Tally
 

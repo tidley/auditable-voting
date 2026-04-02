@@ -6,10 +6,10 @@
     <link rel="icon" type="image/png" href="%BASE_URL%images/logo.png" />
     <link rel="apple-touch-icon" href="%BASE_URL%images/logo.png" />
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="Auditable Voting Demo" />
-    <meta property="og:description" content="Plain live control room for coordinators, voters, and verifiers." />
+    <meta property="og:title" content="Auditable Voting" />
+    <meta property="og:description" content="Client-only Nostr voting shell for voters and coordinators." />
     <meta property="og:image" content="%BASE_URL%images/og-image.jpg" />
-    <title>Auditable Voting Demo</title>
+    <title>Auditable Voting</title>
   </head>
   <body>
     <script>
@@ -18,8 +18,8 @@
         var currentPath = window.location.pathname.replace(/\/+$/, "/");
         var basePath = new URL(base, window.location.origin).pathname.replace(/\/+$/, "/");
 
-        if (window.location.hostname.endsWith("github.io") && currentPath === basePath) {
-          window.location.replace(new URL(base + "simple.html", window.location.origin).toString());
+        if (window.location.hostname.endsWith("github.io") && currentPath === basePath + "simple.html") {
+          window.location.replace(new URL(base, window.location.origin).toString());
         }
       })();
     </script>
