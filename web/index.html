@@ -12,6 +12,17 @@
     <title>Auditable Voting Demo</title>
   </head>
   <body>
+    <script>
+      (function () {
+        var base = "%BASE_URL%";
+        var currentPath = window.location.pathname.replace(/\/+$/, "/");
+        var basePath = new URL(base, window.location.origin).pathname.replace(/\/+$/, "/");
+
+        if (window.location.hostname.endsWith("github.io") && currentPath === basePath) {
+          window.location.replace(new URL(base + "simple.html", window.location.origin).toString());
+        }
+      })();
+    </script>
     <div id="root"></div>
     <script type="module" src="./src/main.tsx"></script>
   </body>
