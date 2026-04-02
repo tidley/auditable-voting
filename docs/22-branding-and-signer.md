@@ -106,10 +106,10 @@ Only **2 of 6 signing touchpoints** involve the user's real nsec:
 | 1 | `getPublicKey()` -- npub derivation | `nostrIdentity.ts` | Yes | Yes |
 | 2 | `finalizeEvent()` -- kind 38010 | `nostrIdentity.ts` | Yes | Yes |
 | 3 | `getPublicKey()` + `finalizeEvent()` -- kind 38000 | `ballot.ts` | No (ephemeral) | No |
-| 4 | `nip04.encrypt()` -- proof DM encryption | `proofSubmission.ts` | No (ephemeral) | No |
-| 5 | `finalizeEvent()` -- kind 4 DM | `proofSubmission.ts` | No (ephemeral) | No |
+| 4 | `nip17.wrapEvent()` -- proof gift wrap | `proofSubmission.ts` | No (ephemeral) | No |
+| 5 | `send_event()` -- kind 1059 gift wrap | `proofSubmission.ts` | No (ephemeral) | No |
 
-The ballot event (kind 38000) and proof DM (kind 4) are intentionally signed
+The ballot event (kind 38000) and proof gift wrap (kind 1059) are intentionally signed
 with a throwaway keypair generated at ballot submission time. This provides
 anonymity -- the ballot is unlinkable to the voter's real npub without the
 coordinator's private records. These flows are **not affected** by the signer

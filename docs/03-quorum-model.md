@@ -1,105 +1,120 @@
-# 3-Mint Election Quorum Model
+# Multi-Coordinator Election Model
 
-This document defines the privacy-preserving multi-mint architecture using:
+This document defines the multi-coordinator architecture using:
 
+- Multiple independent coordinators (each with their own mint)
 - Coordinator-managed proof issuance
-- Three independent Cashu mints
-- Threshold-style eligibility (k-of-3 recommended: 2-of-3)
+- 1-of-N quorum (any coordinator acceptance counts)
 - Nostr-based vote publication
-- Transparent eligibility set (published npub list or Merkle root)
+- Canonical eligible set with cross-coordinator verification
+- Mandatory voter confirmations (kind 38013) for anti-inflation detection
+- Phased timing (voting window + confirmation window) for anti-doxing
 
 The design provides:
 
 - Unlinkable eligibility credentials
 - Supply transparency
-- Censorship resistance (bounded)
-- Phantom voter resistance
-
-> **Source of truth:** This repo (`tg-mint-orchestrator/docs/`) is the canonical location for all protocol specifications. The copy in `../auditable-voting/docs/` is outdated and should not be referenced.
+- Censorship resistance (1-of-N)
+- Phantom voter detection
+- Coordinator fraud detection
 
 ---
 
 # High-Level Model
 
-Each voter must obtain blinded proofs from three independent mints during a public issuance window. In the current implementation, issuance is coordinator-managed via gRPC approval (see `05-VOTING_ISSUANCE_NOSTR_CLIENT_DESIGN.md`).
+Multiple independent coordinators participate in the same election. Each coordinator runs its own mint. Voters obtain one blinded proof from each coordinator during a public issuance window.
 
 At vote time:
 
-- Voter publishes a Nostr vote event (kind 38000).
-- Voter submits proofs privately to each mint.
-- Mints burn proofs. Coordinators publish spent commitments (kind 38006).
-- Final tally includes only votes backed by valid mint quorum.
+- Voter publishes one Nostr vote event (kind 38000) with proof-hash tags for each coordinator.
+- Voter submits proofs privately to each coordinator via NIP-04 DM.
+- Each coordinator burns proofs and publishes its own acceptance receipts (kind 38002).
+- Each coordinator publishes its own tally (kind 38003).
+- Voters and auditors compare tallies across coordinators.
+- Voters publish mandatory confirmations (kind 38013) from their real npub during the confirmation window.
 
-Recommended validation rule:
+Validation rule:
 
-    Vote valid ⇔ proofs from at least 2-of-3 mints are valid and unspent
+    Vote heard ⇔ at least 1 coordinator accepted the proof
+
+Fraud detection:
+
+    Coordinator inflated ⇔ coordinator tally > canonical voter confirmations
+    Coordinator censored  ⇔ coordinator tally < canonical voter confirmations
 
 ---
 
 # Actors
 
-- Voter (runs Cashu wallet)
-- Coordinator (announces election, approves issuance, derives key from mint mnemonic)
-- Mint A
-- Mint B
-- Mint C
+- Voter (runs Cashu wallet, interacts with all coordinators)
+- Coordinator A (independent operator, own mint, own Nostr key)
+- Coordinator B (independent operator, own mint, own Nostr key)
+- Coordinator N (any number of independent coordinators)
 - Nostr relays
-- Public verifiers
+- Auditors (verify cross-coordinator consistency)
 
 ---
 
-# Phase 1 — Election Creation
+# Phase 0 — Election Creation
 
-### 1a. Coordinator Announces Election
+Any coordinator can create an election by publishing kind 38008:
 
-The coordinator publishes kind 38008 with election questions, timing, and mint URLs. The event's ID becomes the election_id. See `04-VOTING_EVENT_INTEROP_NOTES.md` for the full spec.
+- Election questions, title, description
+- Timing: vote_start (t0), vote_end (t1), confirm_end (t2)
+- Canonical eligible set (eligible-root, eligible-count, eligible-url)
+- Expected coordinator participants (["coordinator", npub] tags)
 
-### 1b. Each Coordinator Declares Hard Cap
+The event's ID becomes the election_id.
 
-Each coordinator publishes kind 38007:
+---
 
-- max_supply
-- Issuance window
-- Voting window
-- Eligibility set commitment (eligible npubs via kind 38009)
+# Phase 0b — Coordinators Join
 
-All mints reference the same election_id (the kind 38008 event ID).
+Other coordinators discover the election via relay subscription to kind 38008 and join by:
+
+1. Fetching the canonical eligible list from `eligible-url`
+2. Computing the Merkle root
+3. Verifying it matches `eligible-root` from 38008
+4. Publishing kind 38007 (hard cap + eligible-root commitment + timing)
+5. Publishing kind 38009 (eligibility set commitment)
+6. Publishing kind 38012 (coordinator info — HTTP API, mint URL, relays)
+
+Voters discover coordinators by:
+1. Reading `["coordinator", ...]` tags from 38008
+2. Querying kind 38012 by each coordinator's npub
 
 ```
-CoordinatorA -->|kind 38007| Relays
-CoordinatorB -->|kind 38007| Relays
-CoordinatorC -->|kind 38007| Relays
-Relays --> Voters
+CoordinatorA -->|kind 38007, 38009, 38012| Relays
+CoordinatorB -->|kind 38007, 38009, 38012| Relays
+Relays --> Voters (discover via 38008 + 38012)
 ```
 
 Invariants:
 
-- max_supply is immutable per mint
-- Election parameters are publicly visible before issuance begins
-- Only npubs included in the published eligibility set may obtain blind-issued proofs
+- All coordinators' eligible-roots must match the canonical root from 38008
+- All coordinators' timing must match 38008
+- max_supply must equal canonical eligible_count
 
 ---
 
-# Phase 2 — Proof Issuance (Coordinator-Managed)
+# Phase 1 — Proof Issuance (Per Coordinator)
 
-In the current implementation, issuance is not self-service but coordinator-managed. Voters interact with the coordinator via Nostr, and the coordinator approves mint quotes via gRPC.
+Voters obtain one proof from each coordinator independently.
 
-### Sequence: Coordinator-Managed Issuance
+### Sequence (repeated for each coordinator):
 
 ```
-Voter -> Relays: publish kind 38010 (quote_id, mint_url, amount=1, election_id)
-Relays -> Coordinator: filtered by ["p", coordinator_npub]
-Coordinator: check pubkey in eligible_set
+Voter -> Coordinator's Mint: POST /v1/mint/quote/bolt11
+Voter -> Relays: publish kind 38010 (["p", coordinator_npub], quote_id, mint_url, amount=1, election_id)
+Coordinator: check pubkey in canonical eligible_set
 Coordinator: check not already issued
 Coordinator: check amount == 1 sat
 Coordinator -> Mint: gRPC UpdateNut04Quote(quote_id, state="paid")
 Mint -> Voter: quote state becomes "paid"
 Voter -> Mint: POST /v1/mint/bolt11 (blinded outputs)
 Mint -> Voter: signed blinded proofs
-Voter: unblind and store proofs
+Voter: unblind and store proof + proof_secret
 ```
-
-This process is repeated independently for each mint (or at least 2-of-3 for quorum).
 
 Privacy property:
 
@@ -109,51 +124,57 @@ Privacy property:
 
 ---
 
-# Phase 3 — Vote Publication
+# Phase 2 — Vote Publication
 
-Voter publishes vote event publicly via Nostr.
+Voter publishes vote event publicly via Nostr with proof-hash tags:
 
-Kind: 38000
-
-```json
-{
-  "election_id": "<38008_event_id>",
-  "responses": [
-    {"question_id": "q1", "value": "Alice"}
-  ],
-  "timestamp": 1710000000
-}
+```
+kind: 38000
+content: {election_id, responses, timestamp}
 tags:
   - ["election", "<election_id>"]
+  - ["proof-hash", "<SHA256(proof_secret_for_coordinator_A)>"]
+  - ["proof-hash", "<SHA256(proof_secret_for_coordinator_B)>"]
 ```
 
-Vote event does NOT contain any Cashu proofs.
+The proof-hash tags are public commitments. Anyone can verify a coordinator received the proof by cross-referencing with that coordinator's kind 38002 events (which contain `proof_commitment`).
+
+Vote event does NOT contain the proofs themselves.
 
 ---
 
-# Phase 4 — Proof Submission (Out-of-Band)
+# Phase 3 — Proof Submission (Per Coordinator)
 
-Voter submits proofs privately to each mint.
-
-Transport options:
-
-- Encrypted Nostr DM (NIP-04 / NIP-44) — kind 38001
-- HTTPS endpoint
-- Tor strongly recommended
+Voter submits proofs privately to each coordinator via NIP-04 encrypted DM.
 
 ```
-Voter -> MintA: Encrypted {event_id, proof_A}
-Voter -> MintB: Encrypted {event_id, proof_B}
-Voter -> MintC: Encrypted {event_id, proof_C}
+Voter -> CoordinatorA: Encrypted DM {event_id, proof_A}
+Voter -> CoordinatorB: Encrypted DM {event_id, proof_B}
 ```
 
 Each coordinator:
-
-- Verifies proof signature (via mint)
+- Verifies proof signature (via its mint)
 - Ensures proof not previously spent
-- Burns proof (via mint)
+- Burns proof (via its mint)
 - Records commitment = SHA256(proof_secret)
 - Publishes acceptance receipt (kind 38002)
+
+---
+
+# Phase 4 — Voter Confirmation
+
+After the voting window closes (t1), each voter publishes a kind 38013 from their **real npub**:
+
+```
+kind: 38013
+pubkey: <voter_real_npub>
+content: {"election_id": "<election_id>", "action": "voted"}
+tags: [["election", "<election_id>"]]
+```
+
+Must be published during t1–t2. Events before t1 are rejected.
+
+This establishes the canonical confirmation count: the number of real eligible voters who actually voted.
 
 ---
 
@@ -163,157 +184,199 @@ Each coordinator publishes:
 
 - Issuance commitment root (kind 38005)
 - Spent commitment root (kind 38006)
-- total_issued
-- total_spent
+- Final result (kind 38003)
+- total_issued, total_spent
 
-```
-CoordinatorA --> Relays
-CoordinatorB --> Relays
-CoordinatorC --> Relays
-```
-
-Public verifiers check:
-
-- spent ⊆ issuance
-- total_issued <= max_supply
-- total_spent <= total_issued
+Public verifiers and auditors check:
+- spent ⊆ issuance (per coordinator)
+- total_issued <= max_supply (per coordinator)
+- total_spent <= total_issued (per coordinator)
+- All coordinators' eligible-roots match canonical root
+- All coordinators' tallies are consistent with canonical confirmations
 
 ---
 
-# Vote Validation Rule (2-of-3 Recommended)
+# Audit Algorithm
 
-A vote is valid if:
+For each coordinator C:
 
-1. Vote event is included in vote Merkle tree
-2. At least 2 mints include the corresponding proof commitment in their spent tree
+```
+canonical_confirmations = count of 38013 events where:
+    election_id matches
+    created_at >= vote_end AND created_at <= confirm_end
+    pubkey ∈ canonical_eligible_set
 
-This prevents:
+fake_confirmations = 38013 events where pubkey ∉ canonical_eligible_set
 
-- Single-mint censorship
-- Single-mint phantom voter injection
+tally_C = C's 38003.total_votes
+
+if tally_C > canonical_confirmations:
+    FLAG("inflation")
+if tally_C < canonical_confirmations:
+    FLAG("censorship")
+if fake_confirmations > 0:
+    FLAG("fake voters")
+
+for each 38011 from C:
+    if approved_npub ∉ canonical_eligible_set:
+        FLAG("issuance to non-canonical npub")
+```
+
+---
+
+# Vote Validation Rule (1-of-N)
+
+A vote is heard if:
+
+1. At least one coordinator published a kind 38002 for the vote event
+2. The vote event exists on relays (kind 38000)
+3. At least one coordinator includes it in its vote Merkle tree
+
+A vote is verified-legitimate if:
+
+1. The voter published a 38013 confirmation from their real npub
+2. The real npub is in the canonical eligible set
+3. At least one coordinator accepted the corresponding proof
 
 ---
 
 # Adversarial Analysis
 
-## Threat 1 — Single Malicious Mint
+## Threat 1 — Single Malicious Coordinator
 
-If 1 mint:
+If 1 of N coordinators is malicious:
 
-- Refuses issuance → voter can still obtain 2-of-3
-- Refuses burn → 2-of-3 still sufficient
-- Attempts phantom issuance → cannot fabricate quorum alone
+- Refuses issuance → voter gets proofs from other coordinators
+- Refuses burn → other coordinators still accept
+- Attempts phantom issuance → detected via 38011 audit (non-canonical npubs) and 38013 confirmations (tally > confirmations)
+- Attempts censorship → detected via 38013 (tally < confirmations)
 
-Security holds if ≥ 2 mints are honest.
-
----
-
-## Threat 2 — Two Colluding Mints
-
-If 2 mints collude:
-
-- They can censor (block quorum)
-- They can fabricate eligibility
-
-This is the quorum failure boundary.
-
-Trust assumption:
-
-    At least 2 mints behave honestly.
+Security holds if at least 1 coordinator is honest.
 
 ---
 
-## Threat 3 — Issuance Bias
+## Threat 2 — N-1 Malicious Coordinators
 
-Each mint controls its issuance policy.
+If N-1 of N coordinators collude:
+
+- They can censor (the one honest coordinator's tally is the only accurate one)
+- They can inflate (but the honest coordinator's lower tally exposes this)
+- Auditors can identify which coordinator is honest by comparing against canonical confirmations
+
+The honest coordinator provides ground truth. The system degrades gracefully.
+
+---
+
+## Threat 3 — All Coordinators Collude
+
+If all N coordinators collude:
+
+- They can censor, inflate, and fabricate
+- 38013 confirmations still provide a lower bound from voters themselves
+- But if no auditor notices, the fraud stands
+
+This is the fundamental trust boundary. Mitigation:
+- Make it easy for anyone to deploy a coordinator
+- Encourage diverse, independent coordinator operators
+- More coordinators = harder to collude
+
+---
+
+## Threat 4 — Eligibility Inflation
+
+A coordinator adds fake npubs to its local eligible-voters.json and issues proofs to itself.
+
+Detection:
+- Coordinator's 38009 eligible-root will differ from canonical root → detected immediately
+- If coordinator lies about root: 38011 events will reference non-canonical npubs → detected by auditor
+- Coordinator's tally will exceed canonical confirmations → detected by 38013 audit
+
+---
+
+## Threat 5 — Fake Voter Confirmations
+
+A coordinator publishes 38013 events from its fake npubs to pad the confirmation count.
+
+Detection:
+- 38013 events from npubs not in the canonical eligible set are trivially filtered
+- These non-canonical 38013s are themselves red flags (evidence of fraud attempt)
+
+---
+
+## Threat 6 — Timing Attack (Doxing)
+
+An observer correlates vote events (ephemeral keys) with confirmation events (real keys) based on publication timestamps.
 
 Mitigation:
-
-- Transparent eligibility rules
-- Public issuance window
-- Independent auditors
-
-Bias requires ≥ 2 mints to align to affect quorum.
+- Phased timing: voting window (t0–t1) is separated from confirmation window (t1–t2)
+- All votes are submitted during t0–t1, all confirmations during t1–t2
+- Temporal correlation is unreliable — all confirmations happen in a batch after all votes
 
 ---
 
-## Threat 4 — Mint Learns Vote Identity
+## Threat 7 — Coordinator Learns Vote Identity
 
 Blind issuance prevents linking proof to issuance identity.
 
-Mint only learns:
-
+Coordinator only learns:
 - Proof secret at burn time
 - Associated vote event id
 
-Mint does NOT learn:
-
+Coordinator does NOT learn:
 - Which human received that proof
 
-Unless blind protocol is broken or network metadata is logged.
-
----
-
-## Threat 5 — Network-Level Deanonymization
-
-Possible if mints log:
-
-- IP addresses
-- Timing correlations
-
-Mitigation:
-
-- Wallet uses Tor
-- Delay between issuance and voting
-- Multiple relays
+Additional protection from phased timing:
+- Even if coordinator observes when a 38013 appears from a real npub, it cannot reliably correlate it to a specific vote event because all confirmations are batched in the confirmation window
 
 ---
 
 # Trust Model Summary
 
-Compared to a single-mint design:
+Compared to a single-coordinator design:
 
-- Phantom voter attack requires ≥ 2 mints colluding
-- Censorship requires ≥ 2 mints colluding
-- Eligibility inflation requires ≥ 2 mints colluding
-
-This is a Byzantine-style threshold trust model without a blockchain.
+- Censorship by any single coordinator is detectable
+- Inflation by any single coordinator is detectable
+- Fake voter injection is detectable
+- Only one honest coordinator needed for a vote to be heard
+- Timing attacks on voter identity are mitigated by phased windows
 
 Security assumption:
 
-    Fewer than 2 mints are malicious.
+    At least 1 coordinator behaves honestly.
 
 ---
 
 # Privacy Guarantees
 
-- Votes are public but unlinkable to identity
+- Votes are public but unlinkable to identity (ephemeral keys)
 - Proof issuance is blind
-- Proof submission is private
+- Proof submission is private (encrypted DM)
 - No proof appears in public vote events
-
-The system achieves anonymous eligibility with auditable bounded supply.
+- Voter confirmations are separated from votes by a time gap
+- The system achieves anonymous eligibility with auditable bounded supply
 
 ---
 
 # Recommended Parameters
 
-- Number of mints: 3
-- Quorum requirement: 2-of-3
+- Number of coordinators: ≥ 3
+- Quorum requirement: 1-of-N (any coordinator acceptance counts)
 - Blind issuance mandatory
 - Issuance + spent commitment roots required
+- Mandatory voter confirmations (kind 38013)
+- Phased timing: confirmation window starts after voting window closes
 - Tor recommended for wallet transport
 - Coordinator key derived from mint mnemonic (BIP32 master key)
 
 ---
 
-# Current Implementation
+# Deployment Model
 
-The current deployment uses CDK Cashu mints behind Traefik on a VPS, with coordinator-managed issuance via gRPC. See `06-VPS_VOTING_PLAYBOOK_DESIGN.md` for deployment details.
+Each operator independently deploys their own coordinator + mint:
 
-- Mint URLs: `http://mint-{a,b,c}.mints.<vps_ip>.sslip.io`
-- gRPC: `<vps_ip>:808{6,7,8}`
-- Coordinator keys: derived from each mint's BIP39 mnemonic via BIP32 master key
-- Issuance: voter publishes kind 38010 → coordinator approves via gRPC → voter mints proof
+```bash
+make deploy                    # Deploy coordinator + mint to your VPS
+make join-election ELECTION_ID=<id>  # Join an existing election
+```
 
-This model provides strong censorship resistance, bounded trust, and preserved voter anonymity without introducing blockchain consensus.
+No shared infrastructure between coordinators. Each operator provides their own VPS, mint, and Nostr key. The only shared state is the canonical eligible set (referenced by URL in the 38008 event) and the Nostr relay network.

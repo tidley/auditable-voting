@@ -16,6 +16,7 @@ from nostr_sdk import (
     NostrSigner,
     RelayUrl,
     Tag,
+    gift_wrap,
 )
 
 log = logging.getLogger("e2e_tests")
@@ -405,11 +406,9 @@ class TestCoordinatorE2E:
             await client.add_relay(RelayUrl.parse(RELAY_URL))
             await client.connect()
             await asyncio.sleep(1)
-            encrypted = await voter_signer.nip04_encrypt(coordinator_pk, dm_payload)
-            builder = EventBuilder(kind=Kind(4), content=encrypted).tags(
-                [Tag.parse(["p", coordinator_npub])]
-            )
-            event_id = await client.send_event_builder(builder)
+            rumor = EventBuilder.text_note(dm_payload).build(voter_keys_obj.public_key())
+            wrapped = await gift_wrap(voter_signer, coordinator_pk, rumor)
+            event_id = await client.send_event(wrapped)
             await asyncio.sleep(5)
             return str(event_id)
 
@@ -419,7 +418,7 @@ class TestCoordinatorE2E:
         finally:
             loop.close()
 
-        log.info("Sent NIP-04 DM for proof burn (event=%s)", event_id[:16])
+        log.info("Sent NIP-17 gift wrap for proof burn (event=%s)", event_id[:16])
         log.info("Waiting 10s for coordinator to process burn...")
         time.sleep(10)
 

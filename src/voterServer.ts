@@ -1,6 +1,7 @@
-import { randomBytes } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { getPublicKey, nip19 } from "nostr-tools";
+import { buildMerkleTree, computeEligibleRoot } from "./merkle.js";
 import { ALLOWED_NPUBS } from "./voterConfig.js";
 
 export type EligibilitySnapshot = {
@@ -128,12 +129,32 @@ type BallotDebugPayload = {
   };
 };
 
+type MockReceiptRecord = {
+  proofHash: string;
+  ballotEventId: string | null;
+  receivedAt: number;
+};
+
+type PublicLedgerEntry = {
+  npub: string | null;
+  proofHash: string;
+  quoteId: string | null;
+  issuedAt: number | null;
+  ballotEventId: string | null;
+  voteChoice: string | null;
+  receiptReceivedAt: number | null;
+};
+
 const MOCK_QUOTE_TTL_MS = 10 * 60 * 1000;
 const MOCK_PROOF_READY_MS = 4000;
 const DEFAULT_MOCK_RELAYS = [
   "wss://relay.damus.io",
   "wss://nos.lol",
-  "wss://relay.primal.net"
+  "wss://relay.primal.net",
+  "wss://relay.0xchat.com",
+  "wss://auth.nostr1.com",
+  "wss://relay.snort.social",
+  "wss://relay.nostr.band",
 ];
 const DEFAULT_COORDINATOR_NPUB = nip19.npubEncode(
   getPublicKey(Uint8Array.from(Array.from({ length: 32 }, () => 7)))
@@ -141,24 +162,18 @@ const DEFAULT_COORDINATOR_NPUB = nip19.npubEncode(
 const DEFAULT_ELECTION_ID = "spring-2026-council";
 const DEFAULT_BALLOT_QUESTIONS = [
   {
-    id: "funding_priority",
-    prompt: "Which area should receive the first round of funding?",
+    id: "proposal_approval",
+    prompt: "Should the proposal pass?",
     options: [
-      { value: "community-grants", label: "Community grants" },
-      { value: "security-audits", label: "Security audits" },
-      { value: "education-programs", label: "Education programs" }
-    ]
-  },
-  {
-    id: "audit_policy",
-    prompt: "How often should published results receive an independent audit?",
-    options: [
-      { value: "every-election", label: "Every election" },
-      { value: "annual-review", label: "Annual review" },
-      { value: "only-disputes", label: "Only on disputes" }
+      { value: "Yes", label: "Yes" },
+      { value: "No", label: "No" }
     ]
   }
 ];
+
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
 
 class DemoMint {
   private readonly eligibleNpubs = new Set<string>(ALLOWED_NPUBS);
@@ -179,6 +194,12 @@ class DemoMint {
 
   hasAllowedNpub(npub: string): boolean {
     return this.eligibleNpubs.has(validateNpub(npub));
+  }
+
+  addEligibleNpub(npub: string) {
+    const normalizedNpub = validateNpub(npub);
+    this.eligibleNpubs.add(normalizedNpub);
+    console.log(`[server] seeded eligible npub: ${normalizedNpub}`);
   }
 
   setCurrentEligibleNpub(npub: string) {
@@ -227,7 +248,10 @@ class DemoMint {
 class MockMintService {
   private readonly quotes = new Map<string, MockQuoteRecord>();
 
-  constructor(private readonly voterRegistry: DemoMint) {}
+  constructor(
+    private readonly voterRegistry: DemoMint,
+    private readonly auditLedger: MockAuditLedger,
+  ) {}
 
   issueInvoice(baseUrl: string): MockMintInvoice {
     this.pruneExpiredQuotes();
@@ -304,6 +328,7 @@ class MockMintService {
     }
 
     this.voterRegistry.markProofIssued(record.npub);
+    this.auditLedger.recordIssuedProof(record.proof);
     console.log(`[server] mock proof ready: ${quoteId}`);
     console.log("[server] mock proof details:");
     console.log(JSON.stringify(record.proof, null, 2));
@@ -337,6 +362,190 @@ class MockVoteStatusService {
   }
 }
 
+class MockAuditLedger {
+  private readonly issuedProofs = new Map<string, PublicLedgerEntry>();
+  private readonly receipts = new Map<string, MockReceiptRecord>();
+  private readonly ballots = new Map<string, {
+    ballotEventId: string;
+    responses: Array<{
+      question_id: string;
+      value?: string | number;
+      values?: string[];
+    }>;
+    receivedAt: number;
+  }>();
+
+  recordIssuedProof(proof: MockCashuProof) {
+    const proofHash = sha256Hex(proof.secret);
+    const issuedAt = Date.parse(proof.issuedAt);
+    const existing = this.issuedProofs.get(proofHash);
+
+    this.issuedProofs.set(proofHash, {
+      npub: proof.npub,
+      proofHash,
+      quoteId: proof.quoteId,
+      issuedAt: Number.isNaN(issuedAt) ? Date.now() : issuedAt,
+      ballotEventId: existing?.ballotEventId ?? null,
+      voteChoice: existing?.voteChoice ?? null,
+      receiptReceivedAt: existing?.receiptReceivedAt ?? null,
+    });
+  }
+
+  recordReceipt(payload: BallotDebugPayload) {
+    const proofHash = (payload.proofHash ?? extractProofHash(payload.event?.tags ?? [])).trim();
+    const event = payload.event;
+
+    if (event?.kind === 38000 && event.id && proofHash) {
+      const voteChoice = this.recordBallot(event);
+      const existing = this.issuedProofs.get(proofHash);
+      this.issuedProofs.set(proofHash, {
+        npub: existing?.npub ?? null,
+        proofHash,
+        quoteId: existing?.quoteId ?? null,
+        issuedAt: existing?.issuedAt ?? null,
+        ballotEventId: event.id,
+        voteChoice,
+        receiptReceivedAt: existing?.receiptReceivedAt ?? null,
+      });
+    } else if (event?.kind === 38000 && event.id) {
+      this.recordBallot(event);
+    }
+
+    if (!proofHash) {
+      return;
+    }
+
+    const existing = this.issuedProofs.get(proofHash);
+    const receivedAt = Date.now();
+    this.receipts.set(proofHash, {
+      proofHash,
+      ballotEventId: payload.publishResult?.eventId ?? payload.event?.id ?? null,
+      receivedAt,
+    });
+    this.issuedProofs.set(proofHash, {
+      npub: existing?.npub ?? null,
+      proofHash,
+      quoteId: existing?.quoteId ?? null,
+      issuedAt: existing?.issuedAt ?? null,
+      ballotEventId: existing?.ballotEventId ?? payload.publishResult?.eventId ?? payload.event?.id ?? null,
+      voteChoice: existing?.voteChoice ?? null,
+      receiptReceivedAt: receivedAt,
+    });
+  }
+
+  private recordBallot(event: NonNullable<BallotDebugPayload["event"]>): string | null {
+    if (!event.id) {
+      return null;
+    }
+
+    let responses: Array<{
+      question_id: string;
+      value?: string | number;
+      values?: string[];
+    }> = [];
+
+    try {
+      const parsed = JSON.parse(event.content ?? "{}") as {
+        responses?: Array<{
+          question_id?: string;
+          value?: string | number;
+          values?: string[];
+        }>;
+      };
+
+      responses = (parsed.responses ?? []).filter((response) => !!response.question_id) as Array<{
+        question_id: string;
+        value?: string | number;
+        values?: string[];
+      }>;
+    } catch {
+      responses = [];
+    }
+
+    const primaryResponse = responses[0];
+    const voteChoice = Array.isArray(primaryResponse?.values)
+      ? primaryResponse.values[0] ?? null
+      : primaryResponse?.value !== undefined
+        ? String(primaryResponse.value)
+        : null;
+
+    this.ballots.set(event.id, {
+      ballotEventId: event.id,
+      responses,
+      receivedAt: Date.now(),
+    });
+
+    return voteChoice;
+  }
+
+  snapshot() {
+    const receiptHashes = [...this.receipts.keys()].sort();
+    const receiptRoot = receiptHashes.length > 0 ? buildMerkleTree(receiptHashes).root : null;
+    const results: Record<string, Record<string, number>> = {};
+
+    for (const ballot of this.ballots.values()) {
+      for (const response of ballot.responses) {
+        const value = Array.isArray(response.values)
+          ? response.values[0]
+          : response.value;
+
+        if (value === undefined || value === null) {
+          continue;
+        }
+
+        const option = String(value);
+        results[response.question_id] ??= {};
+        results[response.question_id][option] = (results[response.question_id][option] ?? 0) + 1;
+      }
+    }
+
+    const issuanceRoot = computeEligibleRoot(
+      [...ALLOWED_NPUBS].map((npub) => nip19.decode(npub)).map((decoded) => decoded.type === "npub" ? decoded.data as string : "")
+    );
+
+    return {
+      election_id: DEFAULT_ELECTION_ID,
+      status: receiptHashes.length > 0 ? "in_progress" as const : "in_progress" as const,
+      total_published_votes: this.ballots.size,
+      total_accepted_votes: receiptHashes.length,
+      spent_commitment_root: receiptRoot,
+      results,
+      merkle_root: receiptRoot,
+      total_proofs_burned: receiptHashes.length,
+      issuance_commitment_root: issuanceRoot,
+      max_supply: ALLOWED_NPUBS.length,
+      event_id: DEFAULT_ELECTION_ID,
+      closed_at: Math.floor(Date.now() / 1000),
+      receipts: [...this.receipts.values()].sort((a, b) => a.receivedAt - b.receivedAt),
+    };
+  }
+
+  publicLedger() {
+    const entries = [...this.issuedProofs.values()]
+      .sort((left, right) => {
+        const leftIssuedAt = left.issuedAt ?? Number.MAX_SAFE_INTEGER;
+        const rightIssuedAt = right.issuedAt ?? Number.MAX_SAFE_INTEGER;
+        if (leftIssuedAt !== rightIssuedAt) {
+          return leftIssuedAt - rightIssuedAt;
+        }
+        return left.proofHash.localeCompare(right.proofHash);
+      });
+
+    return {
+      election_id: DEFAULT_ELECTION_ID,
+      total_entries: entries.length,
+      voted_entries: entries.filter((entry) => !!entry.voteChoice).length,
+      pending_entries: entries.filter((entry) => !entry.voteChoice).length,
+      entries,
+    };
+  }
+}
+
+function extractProofHash(tags: string[][]): string {
+  const hashTag = tags.find((tag) => tag[0] === "proof-hash" && tag[1]);
+  return hashTag?.[1] ?? "";
+}
+
 function validateNpub(value: string): string {
   const trimmed = value.trim();
 
@@ -358,6 +567,7 @@ function writeJson(response: ServerResponse, statusCode: number, payload: unknow
     "Access-Control-Allow-Headers": "Content-Type",
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
     "Access-Control-Allow-Origin": "*",
+    "Cache-Control": "no-store, max-age=0, must-revalidate",
     "Content-Type": "application/json"
   });
 
@@ -402,9 +612,10 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
-export async function startVoterServer(port = 8787) {
+export async function startVoterServer(port = 8789) {
   const mint = new DemoMint();
-  const mockMintService = new MockMintService(mint);
+  const mockAuditLedger = new MockAuditLedger();
+  const mockMintService = new MockMintService(mint, mockAuditLedger);
   const mockVoteStatusService = new MockVoteStatusService();
 
   console.log("[server] phase 1,2 eligibility setup ready");
@@ -438,6 +649,41 @@ export async function startVoterServer(port = 8787) {
         console.log("[server] mock vote status details:");
         console.log(JSON.stringify(result, null, 2));
         writeJson(response, 200, result);
+        return;
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/tally") {
+        const snapshot = mockAuditLedger.snapshot();
+        writeJson(response, 200, {
+          election_id: snapshot.election_id,
+          status: snapshot.status,
+          total_published_votes: snapshot.total_published_votes,
+          total_accepted_votes: snapshot.total_accepted_votes,
+          spent_commitment_root: snapshot.spent_commitment_root,
+          results: snapshot.results,
+        });
+        return;
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/result") {
+        const snapshot = mockAuditLedger.snapshot();
+        writeJson(response, 200, {
+          election_id: snapshot.election_id,
+          total_votes: snapshot.total_accepted_votes,
+          results: snapshot.results,
+          merkle_root: snapshot.merkle_root ?? "",
+          total_proofs_burned: snapshot.total_proofs_burned,
+          issuance_commitment_root: snapshot.issuance_commitment_root,
+          spent_commitment_root: snapshot.spent_commitment_root ?? "",
+          max_supply: snapshot.max_supply,
+          event_id: snapshot.event_id,
+          closed_at: snapshot.closed_at,
+        });
+        return;
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/public-ledger") {
+        writeJson(response, 200, mockAuditLedger.publicLedger());
         return;
       }
 
@@ -478,6 +724,20 @@ export async function startVoterServer(port = 8787) {
         return;
       }
 
+      if (request.method === "POST" && url.pathname === "/api/eligibility/seed") {
+        const body = await readJsonBody(request) as { npub?: string };
+        if (!body?.npub) {
+          throw new Error("npub is required");
+        }
+
+        mint.addEligibleNpub(body.npub);
+        writeJson(response, 200, {
+          message: "Eligible npub seeded",
+          ...mint.snapshot(),
+        });
+        return;
+      }
+
       if (request.method === "GET" && url.pathname === "/mock-mint/invoice") {
         writeJson(response, 200, mockMintService.issueInvoice(baseUrl));
         return;
@@ -493,6 +753,7 @@ export async function startVoterServer(port = 8787) {
       if (request.method === "POST" && url.pathname === "/api/debug/ballot-log") {
         const body = await readJsonBody(request) as BallotDebugPayload;
         logBallotDebug(body);
+        mockAuditLedger.recordReceipt(body);
         writeJson(response, 200, { ok: true });
         return;
       }
@@ -521,9 +782,13 @@ export async function startVoterServer(port = 8787) {
   console.log("[server] GET /api/eligibility");
   console.log("[server] GET /api/eligibility/check?npub=");
   console.log("[server] POST /api/eligibility/reset");
+  console.log("[server] POST /api/eligibility/seed");
   console.log("[server] GET /api/vote-status?npub=");
   console.log("[server] POST /api/debug/claim-log");
   console.log("[server] POST /api/debug/ballot-log");
+  console.log("[server] GET /api/tally");
+  console.log("[server] GET /api/result");
+  console.log("[server] GET /api/public-ledger");
   console.log("[server] GET /mock-mint/invoice");
   console.log("[server] GET /mock-mint/proof/:quoteId");
 

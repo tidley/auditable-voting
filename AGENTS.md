@@ -4,7 +4,7 @@ Instructions for LLM coding sessions working in this repository.
 
 ## Project Overview
 
-**auditable-voting** is a Nostr + Cashu voting system with coordinator-mediated blind token issuance, eligibility checks, and private ballot submission. Voters receive blinded Cashu tokens as proof of eligibility, fill out a ballot, and submit proofs to a coordinator via NIP-04 encrypted DMs. The coordinator tallies votes and publishes a verifiable commitment root.
+**auditable-voting** is a Nostr + Cashu voting system with coordinator-mediated blind token issuance, eligibility checks, and private ballot submission. Voters receive blinded Cashu tokens as proof of eligibility, fill out a ballot, and submit proofs to a coordinator via NIP-17 gift wraps. The coordinator tallies votes and publishes a verifiable commitment root.
 
 **Live deployment:** http://vote.mints.23.182.128.64.sslip.io/
 
@@ -50,7 +50,7 @@ auditable-voting/
 │       ├── mintApi.ts           # CDK Cashu mint API client
 │       ├── cashuBlind.ts        # Blinded token operations
 │       ├── cashuWallet.ts       # Local wallet storage (localStorage)
-│       ├── proofSubmission.ts   # NIP-04 encrypted DM sender
+│       ├── proofSubmission.ts   # NIP-17 gift-wrap sender
 │       ├── ballot.ts            # Ballot event publishing (kind 38000)
 │       ├── nostrIdentity.ts     # Nostr key helpers, claim signing
 │       ├── signer.ts            # NostrSigner abstraction (raw / NIP-07)
@@ -223,7 +223,7 @@ The Makefile reads `deploy.env` via `-include deploy.env` and passes values as A
 
 | Package | Location | Purpose |
 |---------|----------|---------|
-| `nostr-tools` | root + web | Nostr protocol (events, signing, NIP-04) |
+| `nostr-tools` | root + web | Nostr protocol (events, signing, NIP-17) |
 | `@cashu/cashu-ts` | web | Cashu wallet, blinded tokens, mint API |
 | `react` / `react-dom` | web | UI framework |
 | `vite` | web | Build tool + dev server |
@@ -326,28 +326,89 @@ Browser --> Traefik (:80)
 
 ### Nostr Event Kinds
 
-| Kind | Purpose | Direction |
-|------|---------|-----------|
-| 38008 | Election announcement | Coordinator -> Relay |
-| 38009 | Eligibility list | Coordinator -> Relay |
-| 38010 | Token issuance claim | Voter -> Relay -> Coordinator |
-| 38011 | Issuance approval receipt | Coordinator -> Relay |
-| 38000 | Ballot | Voter -> Relay -> Coordinator |
+| Kind | Name | Direction |
+|------|------|-----------|
+| 38000 | Vote Event | Voter -> Relay -> Coordinator |
 | 38002 | Vote acceptance | Coordinator -> Relay |
 | 38003 | Final result | Coordinator -> Relay |
 | 38005 | Issuance commitment root | Coordinator -> Relay |
 | 38006 | Spent commitment root | Coordinator -> Relay |
-| 4 | Encrypted DM (proof) | Voter -> Coordinator (NIP-04) |
+| 38007 | Hard cap / join event | Coordinator -> Relay |
+| 38008 | Election announcement | Coordinator -> Relay |
+| 38009 | Eligibility set commitment | Coordinator -> Relay |
+| 38010 | Token issuance claim | Voter -> Relay -> Coordinator |
+| 38011 | Issuance approval receipt | Coordinator -> Relay |
+| 38012 | Coordinator info | Coordinator -> Relay |
+| 38013 | Voter confirmation | Voter -> Relay |
 
-### Voter Flow
+### Voter Flow (Single Coordinator)
 
 1. Discover coordinator via `/info` endpoint
 2. Check eligibility against coordinator's eligible npub list
 3. Request mint quote, publish claim event (kind 38010), wait for approval
 4. Mint blinded tokens from CDK Cashu mint
 5. Fill out ballot, publish vote event (kind 38000)
-6. Submit proof via NIP-04 encrypted DM to coordinator
+6. Submit proof via NIP-17 gift wrap to coordinator
 7. Verify vote acceptance via `/tally` endpoint
+
+### Voter Flow (Multi-Coordinator)
+
+1. Discover election via kind 38008 from any coordinator's npub
+2. Discover participating coordinators via `["coordinator", npub]` tags on 38008 + kind 38012 info events
+3. Verify canonical eligible set via `["eligible-root", hex]` tag on 38008
+4. For each coordinator: check eligibility, request quote, publish 38010, mint proof
+5. Fill out ballot, publish vote event (kind 38000) with `["proof-hash", hash]` tags
+6. Submit proof via NIP-17 gift wrap to each coordinator
+7. After voting window closes (t1), publish voter confirmation (kind 38013) from real npub
+8. Compare tallies across coordinators via `runAudit()` — flags inflation/censorship
+9. Verify vote acceptance via any coordinator's kind 38002
+
+### Anti-Inflation via Voter Confirmations
+
+After the voting window closes (t1), each voter publishes kind 38013 from their real npub during the confirmation window (t1-t2). Auditors count canonical confirmations (38013 from npubs in the eligible set) and compare against each coordinator's tally:
+
+- `tally > canonical_confirmations` → coordinator inflated (fake votes)
+- `tally < canonical_confirmations` → coordinator censored (ignored real votes)
+- 38013 from non-canonical npub → fake voter sock puppet detected
+
+### Phased Timing (Anti-Doxing)
+
+```
+┌─────────────┐         ┌──────────────┐
+│  VOTING     │  GAP    │ CONFIRMATION │
+│  WINDOW     │         │  WINDOW      │
+│  t0 → t1    │         │  t1 → t2     │
+└─────────────┘         └──────────────┘
+```
+
+Vote events are published during t0-t1 under ephemeral keys. Voter confirmations are published during t1-t2 under real keys. The time gap prevents timing-based correlation.
+
+## Multi-Coordinator Architecture (In Progress)
+
+The system is being refactored from a single-coordinator model to a multi-coordinator model where multiple independent operators each run their own coordinator + mint pair.
+
+### Completed
+
+- Protocol specs updated (docs/01, 02, 03) with new event kinds 38012, 38013
+- `compute_eligible_root()` added in both TypeScript and Python
+- Coordinator `--join-election` mode: verifies eligible root, publishes 38007/38009/38012
+- Startup cross-check: logs warnings when coordinators have different eligible roots
+- Frontend discovery: `discoverCoordinators()` via 38008 + 38012 events
+- Frontend multi-coordinator wallet: `coordinatorProofs` array replacing single `proof`
+- Frontend proof-hash tags on vote events (kind 38000)
+- Frontend multi-coordinator proof submission: `submitProofsToAllCoordinators()`
+- Frontend audit API: `runAudit()` compares tallies vs canonical confirmations
+- Ansible `init-election.yml` and `join-election.yml` playbooks
+- Makefile `init-election` and `join-election` targets
+- 21 unit tests for multi-coordinator logic (tests/test_multi_coordinator.py)
+
+### Remaining (Requires VPS)
+
+- Wire multi-coordinator issuance loop in App.tsx (iterate over discovered coordinators)
+- Wire 38013 confirmation publishing UI in VotingApp.tsx
+- Build audit comparison view in DashboardApp.tsx
+- Integration/e2e testing with multiple real coordinators
+- VPS deployment testing of init-election / join-election playbooks
 
 ## Code Style
 

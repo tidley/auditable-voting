@@ -1,4 +1,4 @@
-import { COORDINATOR_URL, USE_MOCK, MINT_URL } from "./config";
+import { USE_MOCK, MINT_URL } from "./config";
 import type { EligibilityResponse } from "./voterManagementApi";
 import { SimplePool } from "nostr-tools";
 
@@ -29,10 +29,61 @@ export type ElectionInfo = {
   title: string;
   description: string;
   questions: ElectionQuestion[];
-  start_time: number;
-  end_time: number;
+  vote_start: number;
+  vote_end: number;
+  confirm_end?: number;
   mint_urls: string[];
+  coordinator_npubs: string[];
+  threshold_t?: number;
+  threshold_n?: number;
+  eligible_root?: string;
+  eligible_count?: number;
+  eligible_url?: string;
 };
+
+type StoredElectionLike = {
+  electionId: string;
+  title: string;
+  questions: ElectionQuestion[];
+  vote_start: number;
+  vote_end: number;
+  confirm_end?: number;
+  mint_urls: string[];
+  coordinator_npubs: string[];
+  threshold_t?: number;
+  threshold_n?: number;
+  eligible_root?: string;
+  eligible_count?: number;
+} | null | undefined;
+
+export function normalizeElectionInfo(
+  election: ElectionInfo | StoredElectionLike,
+): ElectionInfo | null {
+  if (!election) {
+    return null;
+  }
+
+  if ("election_id" in election) {
+    return election;
+  }
+
+  return {
+    election_id: election.electionId,
+    event_id: "",
+    title: election.title,
+    description: "",
+    questions: election.questions,
+    vote_start: election.vote_start,
+    vote_end: election.vote_end,
+    confirm_end: election.confirm_end,
+    mint_urls: election.mint_urls,
+    coordinator_npubs: election.coordinator_npubs,
+    threshold_t: election.threshold_t,
+    threshold_n: election.threshold_n,
+    eligible_root: election.eligible_root,
+    eligible_count: election.eligible_count,
+  };
+}
 
 export type EligibilityInfo = {
   election_id: string;
@@ -49,8 +100,27 @@ export type TallyInfo = {
   results: Record<string, Record<string, number>>;
 };
 
+export type PerCoordinatorTally = {
+  coordinatorNpub: string;
+  httpApi: string;
+  tally: TallyInfo | null;
+  result: FinalResultInfo | null;
+};
+
+export type AuditResult = {
+  coordinatorNpub: string;
+  tally: number;
+  confirmations: number;
+  fakeConfirmations: number;
+  canonicalCount: number;
+  flags: string[];
+};
+
 async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(input, init);
+  const response = await fetch(input, {
+    ...init,
+    cache: "no-store",
+  });
   const payload = await response.json() as T & { error?: string };
 
   if (!response.ok) {
@@ -60,10 +130,27 @@ async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
   return payload;
 }
 
-const MOCK_COORDINATOR_NPUB = "npub1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-const MOCK_RELAYS = ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net"];
+const MOCK_COORDINATOR_NPUB = "npub1nzwqkakt2cuhrlwfhme3asrvx4s0xfyadm57tkpu2a39t9hqtahs7fsn89";
+const MOCK_RELAYS = [
+  "wss://relay.damus.io",
+  "wss://nos.lol",
+  "wss://relay.primal.net",
+  "wss://relay.snort.social",
+  "wss://relay.nostr.band",
+];
+const MOCK_ELECTION_ID = "spring-2026-council";
+const MOCK_ELECTION_EVENT_ID = "a".repeat(64);
+const MOCK_ELECTION_QUESTIONS: ElectionQuestion[] = [
+  {
+    id: "proposal_approval",
+    type: "choice",
+    prompt: "Should the proposal pass?",
+    options: ["Yes", "No"],
+    select: "single",
+  },
+];
 
-export async function fetchCoordinatorInfo(): Promise<CoordinatorInfo> {
+export async function fetchCoordinatorInfo(httpApi?: string): Promise<CoordinatorInfo> {
   if (USE_MOCK) {
     return {
       coordinatorNpub: MOCK_COORDINATOR_NPUB,
@@ -74,22 +161,41 @@ export async function fetchCoordinatorInfo(): Promise<CoordinatorInfo> {
     };
   }
 
-  return fetchJson<CoordinatorInfo>(`${COORDINATOR_URL}/info`);
+  const url = httpApi || `${import.meta.env.VITE_COORDINATOR_URL}/info`;
+  return fetchJson<CoordinatorInfo>(`${url}/info`);
 }
 
-export async function fetchElection(): Promise<ElectionInfo | null> {
+export async function fetchElection(httpApi?: string): Promise<ElectionInfo | null> {
   if (USE_MOCK) {
-    return null;
+    const now = Math.floor(Date.now() / 1000);
+    return {
+      election_id: MOCK_ELECTION_ID,
+      event_id: MOCK_ELECTION_EVENT_ID,
+      title: "Mock election",
+      description: "Local demo election used for copy-paste testing.",
+      questions: MOCK_ELECTION_QUESTIONS,
+      vote_start: now - 7200,
+      vote_end: now - 300,
+      confirm_end: now + 3600,
+      mint_urls: [MINT_URL],
+      coordinator_npubs: [MOCK_COORDINATOR_NPUB],
+      threshold_t: 1,
+      threshold_n: 1,
+      eligible_root: "",
+      eligible_count: 0,
+      eligible_url: "",
+    };
   }
 
   try {
-    return await fetchJson<ElectionInfo>(`${COORDINATOR_URL}/election`);
+    const url = httpApi || `${import.meta.env.VITE_COORDINATOR_URL}`;
+    return await fetchJson<ElectionInfo>(`${url}/election`);
   } catch {
     return null;
   }
 }
 
-export async function fetchEligibility(): Promise<EligibilityInfo> {
+export async function fetchEligibility(httpApi?: string): Promise<EligibilityInfo> {
   if (USE_MOCK) {
     const response = await fetch("/api/eligibility");
     const mockResponse = (await response.json()) as EligibilityResponse;
@@ -100,16 +206,29 @@ export async function fetchEligibility(): Promise<EligibilityInfo> {
     };
   }
 
-  return fetchJson<EligibilityInfo>(`${COORDINATOR_URL}/eligibility`);
+  const url = httpApi || `${import.meta.env.VITE_COORDINATOR_URL}`;
+  return fetchJson<EligibilityInfo>(`${url}/eligibility`);
 }
 
-export async function fetchTally(): Promise<TallyInfo | null> {
+export async function fetchTally(httpApi?: string): Promise<TallyInfo | null> {
   if (USE_MOCK) {
-    return null;
+    try {
+      return await fetchJson<TallyInfo>("/api/tally");
+    } catch {
+      return {
+        election_id: MOCK_ELECTION_ID,
+        status: "in_progress",
+        total_published_votes: 0,
+        total_accepted_votes: 0,
+        spent_commitment_root: null,
+        results: {},
+      };
+    }
   }
 
   try {
-    return await fetchJson<TallyInfo>(`${COORDINATOR_URL}/tally`);
+    const url = httpApi || `${import.meta.env.VITE_COORDINATOR_URL}`;
+    return await fetchJson<TallyInfo>(`${url}/tally`);
   } catch {
     return null;
   }
@@ -125,10 +244,10 @@ export type ElectionSummary = {
 };
 
 export async function fetchElectionsFromNostr(
-  coordinatorNpub: string,
+  coordinatorNpubs: string[],
   relays: string[],
 ): Promise<ElectionSummary[]> {
-  if (!coordinatorNpub || relays.length === 0) return [];
+  if (coordinatorNpubs.length === 0 || relays.length === 0) return [];
 
   const publicRelays = relays.filter((r) => r.startsWith("wss://"));
   if (publicRelays.length === 0) return [];
@@ -138,7 +257,7 @@ export async function fetchElectionsFromNostr(
     const events = await Promise.race([
       pool.querySync(publicRelays, {
         kinds: [38008],
-        authors: [coordinatorNpub],
+        authors: coordinatorNpubs,
         limit: 50,
       }),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Nostr query timeout")), 8000)),
@@ -162,8 +281,8 @@ export async function fetchElectionsFromNostr(
           election_id: electionId,
           event_id: evt.id,
           title: (content.title as string) ?? "Untitled election",
-          start_time: (content.start_time as number) ?? 0,
-          end_time: (content.end_time as number) ?? 0,
+          start_time: (content.vote_start as number) ?? (content.start_time as number) ?? 0,
+          end_time: (content.vote_end as number) ?? (content.end_time as number) ?? 0,
           created_at: evt.created_at,
         };
       })
@@ -180,29 +299,34 @@ export async function fetchElectionsFromNostr(
 
 export async function checkVoteAccepted(
   ballotEventId: string,
-  coordinatorNpub: string,
+  coordinatorNpubs: string[],
   relays: string[],
-): Promise<boolean> {
-  if (!ballotEventId || !coordinatorNpub || relays.length === 0) return false;
+): Promise<{ npub: string; accepted: boolean }[]> {
+  if (!ballotEventId || coordinatorNpubs.length === 0 || relays.length === 0) return [];
 
   const publicRelays = relays.filter((r) => r.startsWith("wss://"));
-  if (publicRelays.length === 0) return false;
+  if (publicRelays.length === 0) return [];
 
   const pool = new SimplePool();
   try {
     const events = await Promise.race([
       pool.querySync(publicRelays, {
         kinds: [38002],
-        authors: [coordinatorNpub],
+        authors: coordinatorNpubs,
         "#e": [ballotEventId],
-        limit: 1,
+        limit: 10,
       }),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Nostr query timeout")), 8000)),
     ]);
 
-    return events.length > 0;
+    const acceptedBy = new Set(events.map((e) => e.pubkey));
+
+    return coordinatorNpubs.map((npub) => ({
+      npub,
+      accepted: acceptedBy.has(npub),
+    }));
   } catch {
-    return false;
+    return coordinatorNpubs.map((npub) => ({ npub, accepted: false }));
   } finally {
     pool.close(publicRelays);
   }
@@ -218,16 +342,110 @@ export type IssuanceStatusResponse = {
   voters: Record<string, IssuanceStatusInfo>;
 };
 
-export async function fetchIssuanceStatus(): Promise<IssuanceStatusResponse | null> {
+export type PublicLedgerEntry = {
+  npub: string | null;
+  proofHash: string;
+  quoteId: string | null;
+  issuedAt: number | null;
+  ballotEventId: string | null;
+  voteChoice: string | null;
+  receiptReceivedAt: number | null;
+};
+
+export type PublicLedgerResponse = {
+  election_id: string;
+  total_entries: number;
+  voted_entries: number;
+  pending_entries: number;
+  entries: PublicLedgerEntry[];
+};
+
+export type IssuanceStartResponse = {
+  request_id: string;
+  status_url: string;
+  status: "pending" | "issued" | "ineligible" | "already_issued" | "timeout";
+};
+
+export type IssuanceAwaitResponse = {
+  request_id?: string;
+  status: "pending" | "issued" | "ineligible" | "already_issued" | "timeout";
+  issued: boolean;
+  quote_state?: "UNPAID" | "PAID" | "ISSUED";
+  retry_after_ms?: number;
+  message?: string;
+};
+
+export async function fetchIssuanceStatus(httpApi?: string): Promise<IssuanceStatusResponse | null> {
   if (USE_MOCK) {
-    return null;
+    const response = await fetch("/api/eligibility");
+    const mockResponse = (await response.json()) as EligibilityResponse;
+    const voters: Record<string, { eligible: boolean; issued: boolean }> = {};
+    for (const npub of mockResponse.eligibleNpubs) {
+      voters[npub] = {
+        eligible: true,
+        issued: mockResponse.verifiedNpubs.includes(npub),
+      };
+    }
+
+    return {
+      election_id: MOCK_ELECTION_ID,
+      voters,
+    };
   }
 
   try {
-    return await fetchJson<IssuanceStatusResponse>(`${COORDINATOR_URL}/issuance-status`);
+    const url = httpApi || `${import.meta.env.VITE_COORDINATOR_URL}`;
+    return await fetchJson<IssuanceStatusResponse>(`${url}/issuance-status`);
   } catch {
     return null;
   }
+}
+
+export async function fetchPublicLedger(httpApi?: string): Promise<PublicLedgerResponse | null> {
+  if (USE_MOCK) {
+    try {
+      return await fetchJson<PublicLedgerResponse>("/api/public-ledger");
+    } catch {
+      return null;
+    }
+  }
+
+  try {
+    const url = httpApi || `${import.meta.env.VITE_COORDINATOR_URL}`;
+    return await fetchJson<PublicLedgerResponse>(`${url}/public-ledger`);
+  } catch {
+    return null;
+  }
+}
+
+export async function startIssuanceTracking(input: {
+  npub: string;
+  quoteId: string;
+  electionId: string;
+  httpApi?: string;
+}): Promise<IssuanceStartResponse> {
+  const url = input.httpApi || `${import.meta.env.VITE_COORDINATOR_URL}`;
+  return fetchJson<IssuanceStartResponse>(`${url}/issuance/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      npub: input.npub,
+      quote_id: input.quoteId,
+      election_id: input.electionId,
+    }),
+  });
+}
+
+export async function awaitIssuanceStatus(input: {
+  requestId: string;
+  timeoutMs?: number;
+  httpApi?: string;
+}): Promise<IssuanceAwaitResponse> {
+  const url = input.httpApi || `${import.meta.env.VITE_COORDINATOR_URL}`;
+  const timeoutMs = input.timeoutMs ?? 30000;
+  return fetchJson<IssuanceAwaitResponse>(`${url}/issuance/${input.requestId}?timeout_ms=${timeoutMs}`, {
+    method: "GET",
+  });
 }
 
 export type FinalResultInfo = {
@@ -243,13 +461,18 @@ export type FinalResultInfo = {
   closed_at: number;
 };
 
-export async function fetchResult(): Promise<FinalResultInfo | null> {
+export async function fetchResult(httpApi?: string): Promise<FinalResultInfo | null> {
   if (USE_MOCK) {
-    return null;
+    try {
+      return await fetchJson<FinalResultInfo>("/api/result");
+    } catch {
+      return null;
+    }
   }
 
   try {
-    return await fetchJson<FinalResultInfo>(`${COORDINATOR_URL}/result`);
+    const url = httpApi || `${import.meta.env.VITE_COORDINATOR_URL}`;
+    return await fetchJson<FinalResultInfo>(`${url}/result`);
   } catch {
     return null;
   }
@@ -268,13 +491,14 @@ export type VoteTreeResponse = {
   levels: string[][];
 };
 
-export async function fetchVoteTree(): Promise<VoteTreeResponse | null> {
+export async function fetchVoteTree(httpApi?: string): Promise<VoteTreeResponse | null> {
   if (USE_MOCK) {
     return null;
   }
 
   try {
-    return await fetchJson<VoteTreeResponse>(`${COORDINATOR_URL}/vote_tree`);
+    const url = httpApi || `${import.meta.env.VITE_COORDINATOR_URL}`;
+    return await fetchJson<VoteTreeResponse>(`${url}/vote_tree`);
   } catch {
     return null;
   }
@@ -287,14 +511,189 @@ export type InclusionProofResponse = {
   merkle_root: string;
 };
 
-export async function fetchInclusionProof(eventId: string): Promise<InclusionProofResponse | null> {
+export async function fetchInclusionProof(eventId: string, httpApi?: string): Promise<InclusionProofResponse | null> {
   if (USE_MOCK) {
     return null;
   }
 
   try {
-    return await fetchJson<InclusionProofResponse>(`${COORDINATOR_URL}/inclusion_proof?event_id=${encodeURIComponent(eventId)}`);
+    const url = httpApi || `${import.meta.env.VITE_COORDINATOR_URL}`;
+    return await fetchJson<InclusionProofResponse>(`${url}/inclusion_proof?event_id=${encodeURIComponent(eventId)}`);
   } catch {
     return null;
   }
+}
+
+export type CoordinatorDiscovery = {
+  npub: string;
+  httpApi: string;
+  mintUrl: string;
+  relays: string[];
+};
+
+export async function discoverCoordinators(
+  electionEventId: string,
+  relays: string[],
+): Promise<CoordinatorDiscovery[]> {
+  const publicRelays = relays.filter((r) => r.startsWith("wss://"));
+  if (publicRelays.length === 0) return [];
+
+  const pool = new SimplePool();
+  try {
+    const events = await Promise.race([
+      pool.querySync(publicRelays, {
+        kinds: [38008],
+        ids: [electionEventId],
+        limit: 1,
+      }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Nostr query timeout")), 8000)),
+    ]);
+
+    if (events.length === 0) return [];
+
+    const electionEvent = events[0];
+    const coordinatorNpubs = electionEvent.tags
+      .filter((t) => t[0] === "coordinator" && t[1])
+      .map((t) => t[1]);
+
+    if (coordinatorNpubs.length === 0) {
+      const creatorNpub = electionEvent.pubkey;
+      if (creatorNpub) {
+        coordinatorNpubs.push(creatorNpub);
+      }
+    }
+
+    const discoveries: CoordinatorDiscovery[] = [];
+
+    for (const npub of coordinatorNpubs) {
+      try {
+        const infoEvents = await Promise.race([
+          pool.querySync(publicRelays, {
+            kinds: [38012],
+            authors: [npub],
+            "#t": ["coordinator-info"],
+            limit: 1,
+          }),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Nostr query timeout")), 5000)),
+        ]);
+
+        if (infoEvents.length > 0) {
+          const content = JSON.parse(infoEvents[0].content);
+          discoveries.push({
+            npub,
+            httpApi: content.http_api || "",
+            mintUrl: content.mint_url || "",
+            relays: content.supported_relays || relays,
+          });
+        }
+      } catch {
+        discoveries.push({ npub, httpApi: "", mintUrl: "", relays });
+      }
+    }
+
+    return discoveries;
+  } catch {
+    return [];
+  } finally {
+    pool.close(publicRelays);
+  }
+}
+
+export async function fetchPerCoordinatorTallies(
+  coordinators: CoordinatorDiscovery[],
+): Promise<PerCoordinatorTally[]> {
+  const results: PerCoordinatorTally[] = [];
+
+  for (const coord of coordinators) {
+    if (!coord.httpApi) {
+      results.push({ coordinatorNpub: coord.npub, httpApi: coord.httpApi, tally: null, result: null });
+      continue;
+    }
+
+    try {
+      const tallyUrl = new URL("/api/tally", coord.httpApi).toString();
+      const resultUrl = new URL("/api/result", coord.httpApi).toString();
+      const tally = await fetchJson<TallyInfo>(tallyUrl);
+      let result: FinalResultInfo | null = null;
+      try {
+        result = await fetchJson<FinalResultInfo>(resultUrl);
+      } catch {
+        // no result yet
+      }
+      results.push({ coordinatorNpub: coord.npub, httpApi: coord.httpApi, tally, result });
+    } catch {
+      results.push({ coordinatorNpub: coord.npub, httpApi: coord.httpApi, tally: null, result: null });
+    }
+  }
+
+  return results;
+}
+
+export async function runAudit(
+  electionEventId: string,
+  coordinators: CoordinatorDiscovery[],
+  canonicalEligibleNpubs: string[],
+  voteEnd: number,
+  confirmEnd: number,
+  relays: string[],
+): Promise<AuditResult[]> {
+  const publicRelays = relays.filter((r) => r.startsWith("wss://"));
+  const canonicalSet = new Set(canonicalEligibleNpubs);
+  const canonicalCount = canonicalEligibleNpubs.length;
+
+  let confirmations = 0;
+  let fakeConfirmations = 0;
+
+  if (publicRelays.length > 0) {
+    const pool = new SimplePool();
+    try {
+      const events = await Promise.race([
+        pool.querySync(publicRelays, {
+          kinds: [38013],
+          "#e": [electionEventId],
+          limit: canonicalCount * 2,
+        }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Nostr query timeout")), 10000)),
+      ]);
+
+      for (const evt of events) {
+        if (evt.created_at < voteEnd || evt.created_at > confirmEnd) continue;
+        if (canonicalSet.has(evt.pubkey)) {
+          confirmations++;
+        } else {
+          fakeConfirmations++;
+        }
+      }
+    } catch {
+      // confirmation count unavailable
+    } finally {
+      pool.close(publicRelays);
+    }
+  }
+
+  const tallies = await fetchPerCoordinatorTallies(coordinators);
+
+  return tallies.map((t) => {
+    const flags: string[] = [];
+    const tally = t.tally?.total_accepted_votes ?? t.result?.total_votes ?? 0;
+
+    if (tally > canonicalCount) {
+      flags.push("tally exceeds canonical eligible count");
+    }
+    if (tally > confirmations) {
+      flags.push("possible inflation — tally exceeds canonical confirmations");
+    }
+    if (tally < confirmations) {
+      flags.push("possible censorship — confirmations exceed tally");
+    }
+
+    return {
+      coordinatorNpub: t.coordinatorNpub,
+      tally,
+      confirmations,
+      fakeConfirmations,
+      canonicalCount,
+      flags,
+    };
+  });
 }

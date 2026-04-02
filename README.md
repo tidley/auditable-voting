@@ -71,15 +71,64 @@ By default this runs fast unit tests and integration checks (no E2E, no UI).
 
 The pre-commit hook runs tests automatically on every `git commit` using the same tiers.
 
-## Production Voter Flow
+## User Flow
 
-1. Open the voter portal URL
-2. Enter your npub (checked against coordinator's eligibility list)
-3. Request a mint quote, publish a claim (kind 38010), wait for approval
-4. Mint blinded tokens from the CDK Cashu mint
-5. Fill out the ballot and publish a vote event (kind 38000)
-6. Submit the proof via NIP-04 encrypted DM to the coordinator
-7. Check vote acceptance via the tally endpoint
+### Target Protocol Direction
+
+The current protocol direction is Nostr voting backed by blind threshold signatures. The intended user-visible flow is:
+
+1. A voter proves eligibility out of band to coordinators and submits a blinded token commitment.
+2. Multiple coordinators independently validate eligibility and return blind signature shares, without learning the final token or vote.
+3. The voter combines enough shares to assemble a valid voting token, derives a `token_id = hash(token)`, and can render that as a deterministic visual fingerprint for human checking.
+4. The voter generates an ephemeral Nostr keypair and publishes a signed vote event carrying the vote choice, the signed token, and the `token_id`.
+5. Anyone can validate the threshold signature, reject duplicate token use, and compute the tally from the public Nostr event stream.
+6. The live public ballot view shows `token_id`-derived patterns plus the associated vote, but does not reveal voter identity.
+7. The voter independently verifies inclusion by checking that their local `token_id` or visual pattern appears publicly with the intended vote.
+
+Protocol roles and trust boundaries:
+
+- Coordinators validate voters and participate in threshold blind signing, but should not learn final tokens or ballots.
+- Voters receive signature shares, assemble the final token locally, and vote anonymously through ephemeral Nostr keys.
+- Observers and verifiers validate signatures, tally votes, and audit correctness from public artifacts.
+
+Important properties:
+
+- Blind threshold issuance provides anonymity and removes any single coordinator as a trust anchor.
+- Nostr provides a public, append-only, multi-relay event stream for transparency and replayable verification.
+- Token uniqueness prevents double voting.
+- The visual token fingerprint is for human auditability only; cryptographic validity comes from the token and signature checks.
+
+Ticket model:
+
+- This project treats voting tickets as round-bound, not generic pre-issued vote credits.
+- A ticket request is tied to a specific `voting_id`, and the resulting ticket is intended to be spent only on that round.
+- The main reasons are replay prevention across rounds, simpler coordinator-side validation, and a clearer public audit trail because issued tickets and submitted votes refer to the same announced round.
+
+### Current Implementation Snapshot
+
+The repository currently implements coordinator-mediated blinded issuance with public Nostr ballot events and coordinator receipts.
+
+Single-coordinator flow:
+
+1. Open the voter portal URL.
+2. Enter your npub and check eligibility.
+3. Request a mint quote, publish a kind `38010` claim, and wait for approval.
+4. Mint blinded tokens from the coordinator's Cashu mint.
+5. Fill out the ballot and publish kind `38000`.
+6. Submit the proof privately via NIP-17 gift wrap.
+7. Check vote acceptance and tally state.
+
+Multi-coordinator flow:
+
+1. Open the voter portal and auto-discover coordinators via kinds `38008` and `38012`.
+2. Enter your npub and verify it against the canonical eligible set.
+3. Request issuance from each coordinator.
+4. Publish a vote event with `proof-hash` tags for the relevant proofs.
+5. Submit proofs privately to coordinators.
+6. Publish voter confirmation via kind `38013` after the voting window closes.
+7. Run the audit view to compare tallies, confirmations, and coordinator outputs.
+
+See `docs/03-quorum-model.md` for the trust model and `docs/25-multi-coordinator-implementation-status.md` for implementation progress.
 
 ## Architecture
 
@@ -92,16 +141,71 @@ Browser --> Traefik (:80)
                        |-- /mint/   --> mint:3338
 ```
 
-## Local Development (mock mode)
+## Local Demo (mock mode)
 
-The frontend has a `VITE_USE_MOCK=true` mode that uses a local mock server
-instead of the real coordinator and mint:
+Run these commands from your local checkout root, not from a hardcoded path.
+
+Install dependencies once:
 
 ```bash
-npm install && npm --prefix web install
-npm run build && npm --prefix web run build
-npm run server       # local mock server on :8787
-npm --prefix web run dev   # Vite dev server on :5173
+npm install
+npm --prefix web install
+```
+
+Start the mock coordinator + mock mint in one terminal:
+
+```bash
+npm run build
+npm run server
+```
+
+Start the demo UI in a second terminal:
+
+```bash
+VITE_USE_MOCK=true VITE_DEMO_MODE=true npm --prefix web run dev -- --host 127.0.0.1 --port 5173
+```
+
+Then open:
+
+```text
+http://127.0.0.1:5173/
+```
+
+Notes:
+
+- `npm run server` serves the local mock API on `http://localhost:8789`
+- the demo page uses the mock backend only when `VITE_USE_MOCK=true`
+- if you cloned the repo somewhere else, stay in that directory instead of using `/home/tom/code/auditable-voting`
+
+## GitHub Pages
+
+The frontend can be deployed to GitHub Pages as a static site.
+
+Important limitation:
+
+- GitHub Pages only hosts the static frontend build
+- it does not provide the local Vite `/api` proxy used in mock mode
+- for a Pages deployment, point the app at a real coordinator and mint by setting repository variables:
+  - `VITE_COORDINATOR_URL`
+  - `VITE_MINT_URL`
+
+This repo now includes a GitHub Actions workflow at `.github/workflows/deploy-pages.yml` that:
+
+- builds the `web/` frontend
+- uses a Pages-safe base path
+- deploys `web/dist` to GitHub Pages
+
+The workflow builds with:
+
+```text
+VITE_USE_MOCK=false
+VITE_DEMO_MODE=false
+```
+
+If you want to test the same Pages-style path handling locally, run:
+
+```bash
+VITE_BASE_PATH=/auditable-voting/ npm --prefix web run build
 ```
 
 ## Project Structure
@@ -116,7 +220,7 @@ web/src/DashboardApp.tsx    operator dashboard (eligibility + tally)
 web/src/coordinatorApi.ts   coordinator HTTP API client
 web/src/mintApi.ts          CDK Cashu mint API client
 web/src/cashuBlind.ts       blinded token operations (CashuWallet)
-web/src/proofSubmission.ts  NIP-04 encrypted DM sender
+web/src/proofSubmission.ts  NIP-17 gift-wrap sender
 web/src/ballot.ts           ballot event publishing
 web/src/nostrIdentity.ts    Nostr key helpers, claim signing
 web/src/signer.ts           NostrSigner abstraction (raw / NIP-07)
@@ -156,9 +260,30 @@ Each worktree has its own `.venv/` and `node_modules/`. To work in a worktree, `
 
 ## Related Docs
 
-- `docs/01-system-design.md` -- voting system design (canonical)
-- `docs/02-protocol-reference.md` -- all Nostr event kinds (38000-38011)
+### Design & Protocol
+
+- `docs/01-system-design.md` -- multi-coordinator voting system design (canonical)
+- `docs/02-protocol-reference.md` -- all Nostr event kinds (38000-38013)
+- `docs/03-quorum-model.md` -- 1-of-N coordinator quorum, trust model, adversarial analysis
+- `docs/04-event-interop.md` -- client-facing event shapes
+- `docs/05-voter-integration-guide.md` -- voter client integration steps
+- `docs/06-per-election-keysets.md` -- per-election keyset rotation
+- `docs/08-tally-implementation.md` -- Merkle trees, close election
+
+### Implementation Status
+
+- `docs/25-multi-coordinator-implementation-status.md` -- multi-coordinator implementation progress and remaining tasks
+
+### Deployment
+
 - `docs/07-coordinator-http-api.md` -- HTTP endpoints + stateless architecture
 - `docs/13-deploy-and-prepare.md` -- single-command full stack deploy
 - `docs/14-voting-client-deployment.md` -- voting client deployment details
+- `docs/15-coordinator-deployment.md` -- coordinator systemd, 9 phases
+
+### Testing
+
+- `docs/16-coordinator-test-plan.md` -- 49 coordinator unit tests
+- `docs/17-integration-test-plan.md` -- 3-layer test architecture
+- `docs/18-frontend-test-plan.md` -- readiness tests + E2E voter flow
 - `docs/19-playwright-test-plan.md` -- Playwright browser E2E test plan

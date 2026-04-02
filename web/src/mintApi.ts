@@ -44,7 +44,9 @@ async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
   return payload;
 }
 
-export async function createMintQuote(): Promise<MintQuoteResponse> {
+export async function createMintQuote(mintUrl?: string): Promise<MintQuoteResponse> {
+  const url = (mintUrl ?? MINT_URL).replace(/\/$/, "");
+
   if (USE_MOCK) {
     const mockInvoice = await requestMintInvoice(MINT_URL);
     return {
@@ -57,14 +59,16 @@ export async function createMintQuote(): Promise<MintQuoteResponse> {
     };
   }
 
-  return fetchJson<MintQuoteResponse>(`${MINT_URL}/v1/mint/quote/bolt11`, {
+  return fetchJson<MintQuoteResponse>(`${url}/v1/mint/quote/bolt11`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ amount: 1, unit: "sat" })
   });
 }
 
-export async function checkQuoteStatus(quoteId: string): Promise<MintQuoteStatusResponse> {
+export async function checkQuoteStatus(quoteId: string, mintUrl?: string): Promise<MintQuoteStatusResponse> {
+  const url = (mintUrl ?? MINT_URL).replace(/\/$/, "");
+
   if (USE_MOCK) {
     const mockStatus = await fetchMintProof(MINT_URL, quoteId);
     if (mockStatus.status === "pending") {
@@ -73,7 +77,7 @@ export async function checkQuoteStatus(quoteId: string): Promise<MintQuoteStatus
     return { quote: quoteId, state: "PAID", amount: 1, unit: "sat" };
   }
 
-  return fetchJson<MintQuoteStatusResponse>(`${MINT_URL}/v1/mint/quote/bolt11/${quoteId}`);
+  return fetchJson<MintQuoteStatusResponse>(`${url}/v1/mint/quote/bolt11/${quoteId}`);
 }
 
 export async function getMintKeys(): Promise<MintKeysResponse> {

@@ -4,15 +4,16 @@ import react from "@vitejs/plugin-react";
 import { nodePolyfills } from "vite-plugin-node-polyfills";
 
 export default defineConfig({
+  base: process.env.VITE_BASE_PATH || "/",
   plugins: [react(), nodePolyfills()],
   server: {
     proxy: {
-      "/api": "http://localhost:8787"
+      "/api": "http://localhost:8789"
     }
   },
   preview: {
     proxy: {
-      "/api": "http://localhost:8787"
+      "/api": "http://localhost:8789"
     }
   },
   build: {
@@ -20,7 +21,9 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, "index.html"),
         dashboard: resolve(__dirname, "dashboard.html"),
-        vote: resolve(__dirname, "vote.html")
+        vote: resolve(__dirname, "vote.html"),
+        simple: resolve(__dirname, "simple.html"),
+        simpleCoordinator: resolve(__dirname, "simple-coordinator.html")
       }
     }
   }

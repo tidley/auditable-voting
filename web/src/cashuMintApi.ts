@@ -125,7 +125,7 @@ export async function fetchMintProof(mintApiUrl: string, quoteId: string) {
 }
 
 export async function logClaimDebug(payload: ClaimDebugPayload) {
-  return fetchJson<{ ok: true }>("/api/debug/claim-log", {
+  return fetchJson<{ ok: true }>(new URL("/api/debug/claim-log", COORDINATOR_URL).toString(), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
@@ -133,9 +133,10 @@ export async function logClaimDebug(payload: ClaimDebugPayload) {
 }
 
 export async function logBallotDebug(payload: BallotDebugPayload) {
-  return fetchJson<{ ok: true }>("/api/debug/ballot-log", {
+  return fetchJson<{ ok: true }>(new URL("/api/debug/ballot-log", COORDINATOR_URL).toString(), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
 }
+import { COORDINATOR_URL, USE_MOCK } from "./config";

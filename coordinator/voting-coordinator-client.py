@@ -9,6 +9,7 @@ import os
 import sys
 import time
 import datetime
+import uuid
 from datetime import timedelta
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from nostr_sdk import (
     Filter,
     Client,
     NostrSigner,
+    UnwrappedGift,
     HandleNotification,
     RelayUrl,
     EventBuilder,
@@ -40,6 +42,10 @@ DEFAULT_RELAYS = [
     "wss://relay.damus.io",
     "wss://nos.lol",
     "wss://relay.primal.net",
+    "wss://relay.0xchat.com",
+    "wss://auth.nostr1.com",
+    "wss://relay.snort.social",
+    "wss://relay.nostr.band",
 ]
 
 log = logging.getLogger("coordinator")
@@ -242,6 +248,23 @@ class MerkleTree:
     @staticmethod
     def _hash(data: str) -> str:
         return hashlib.sha256(data.encode()).hexdigest()
+
+
+class EligibleMerkleTree(MerkleTree):
+    def __init__(self):
+        super().__init__()
+
+    def compute_root_from_npubs(self, npubs_hex: list[str]) -> str | None:
+        leaves = sorted(hashlib.sha256(n.encode()).hexdigest() for n in npubs_hex)
+        if not leaves:
+            return None
+        self.bulk_load(leaves)
+        return self.get_root()
+
+
+def compute_eligible_root(npubs_hex: list[str]) -> str | None:
+    tree = EligibleMerkleTree()
+    return tree.compute_root_from_npubs(npubs_hex)
 
 
 class SpentCommitmentTree:
@@ -529,16 +552,44 @@ def _publish_nostr_event(nostr_client: Client, kind: int, content: dict, tags: l
         pass
 
 
-def _publish_38007(nostr_client: Client, election_id: str, max_supply: int, start_time: int, end_time: int) -> None:
+def _publish_38007(nostr_client: Client, election_id: str, max_supply: int, start_time: int, end_time: int, confirm_end: int | None = None, eligible_root: str | None = None, eligible_count: int | None = None) -> None:
     content = {
         "election_id": election_id,
         "max_supply": max_supply,
-        "start_time": start_time,
-        "end_time": end_time,
+        "vote_start": start_time,
+        "vote_end": end_time,
+    }
+    if confirm_end is not None:
+        content["confirm_end"] = confirm_end
+    tags = [Tag.parse(["election", election_id])]
+    if eligible_root is not None:
+        tags.append(Tag.parse(["eligible-root", eligible_root]))
+    if eligible_count is not None:
+        tags.append(Tag.parse(["eligible-count", str(eligible_count)]))
+    _publish_nostr_event(nostr_client, 38007, content, tags)
+    log.info("Published kind 38007 join event: max_supply=%d, eligible_root=%s", max_supply, (eligible_root or "")[:16])
+
+
+def _publish_38009(nostr_client: Client, election_id: str, eligible_root: str, eligible_count: int) -> None:
+    content = {
+        "election_id": election_id,
+        "eligible_root": eligible_root,
+        "eligible_count": eligible_count,
     }
     tags = [Tag.parse(["election", election_id])]
-    _publish_nostr_event(nostr_client, 38007, content, tags)
-    log.info("Published kind 38007 hard cap: max_supply=%d", max_supply)
+    _publish_nostr_event(nostr_client, 38009, content, tags)
+    log.info("Published kind 38009 eligibility commitment: root=%s, count=%d", eligible_root[:16], eligible_count)
+
+
+def _publish_38012(nostr_client: Client, http_api: str, mint_url: str, relays: list[str]) -> None:
+    content = {
+        "http_api": http_api,
+        "mint_url": mint_url,
+        "supported_relays": relays,
+    }
+    tags = [Tag.parse(["t", "coordinator-info"])]
+    _publish_nostr_event(nostr_client, 38012, content, tags)
+    log.info("Published kind 38012 coordinator info: http_api=%s, mint=%s", http_api, mint_url)
 
 
 def _publish_38005(nostr_client: Client, election_id: str, issuance_tree: IssuanceCommitmentTree) -> None:
@@ -786,15 +837,8 @@ class CoordinatorHandler(HandleNotification):
     async def handle(self, relay_url, subscription_id, event):
         kind_val = event.kind().as_u16()
 
-        if kind_val == 4:
-            sender = event.author().to_hex()
-            if sender == self.coordinator_pubkey_hex:
-                dm_content = event.content()
-                asyncio.ensure_future(self._handle_admin_dm(dm_content))
-                return
-            sender_pk = event.author()
-            dm_content = event.content()
-            asyncio.ensure_future(self._handle_dm_async(sender, sender_pk, dm_content))
+        if kind_val == 1059:
+            asyncio.ensure_future(self._handle_gift_wrap_async(event))
             return
 
         if kind_val not in (38000, 38002, 38003, 38005, 38006, 38007, 38008, 38009, 38010, 38011):
@@ -828,17 +872,19 @@ class CoordinatorHandler(HandleNotification):
                 self.spent_tree.insert(commitment)
                 log.info("Spent tree updated: count=%d root=%s", self.spent_tree.get_count(), self.spent_tree.get_root())
 
-    async def _handle_dm_async(self, sender: str, sender_pk, dm_content: str) -> None:
+    async def _handle_gift_wrap_async(self, gift_wrap_event) -> None:
         try:
-            decrypted = await self.signer.nip04_decrypt(sender_pk, dm_content)
-            log.info("DM received from %s...", sender[:16])
+            unwrapped = await UnwrappedGift.from_gift_wrap(self.signer, gift_wrap_event)
+            sender = unwrapped.sender().to_hex()
+            dm_content = unwrapped.rumor().content()
+            log.info("Gift wrap received from %s...", sender[:16])
             handle_proof_dm(
-                decrypted, sender,
+                dm_content, sender,
                 self.nostr_client, self.mint_url,
                 self.spent_tree, self.event_store,
             )
         except Exception as exc:
-            log.error("Failed to handle DM from %s...: %s", sender[:16], exc)
+            log.error("Failed to handle gift wrap from %s...: %s", gift_wrap_event.author().to_hex()[:16], exc)
 
     async def _handle_admin_dm(self, dm_content: str) -> None:
         try:
@@ -965,6 +1011,15 @@ def make_http_handler(
     _vote_tree = vote_tree or VoteMerkleTree()
     _eligible_set = eligible_set or set()
     _nostr_client = nostr_client
+    issuance_requests: dict[str, dict] = {}
+
+    def _issuance_status_for(npub_raw: str, election_id: str) -> tuple[str, bool]:
+        npub_hex = normalize_npub(npub_raw)
+        if npub_hex not in _eligible_set:
+            return "ineligible", False
+        if npub_hex in event_store.get_issued_pubkeys(election_id):
+            return "issued", True
+        return "pending", False
 
     async def handle_info(request: web.Request) -> web.Response:
         election = event_store.get_election()
@@ -1188,6 +1243,82 @@ def make_http_handler(
             "levels": _vote_tree._tree._layers,
         })
 
+    async def handle_issuance_start(request: web.Request) -> web.Response:
+        election = event_store.get_election()
+        if not election:
+            return web.json_response({"error": "No election announced yet"}, status=404)
+
+        election_id = election.get("election_id") or election.get("election")
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+
+        npub = payload.get("npub", "")
+        quote_id = payload.get("quote_id", "")
+        requested_election = payload.get("election_id", election_id)
+
+        if requested_election and requested_election != election_id:
+            return web.json_response({"error": "Election mismatch", "status": "ineligible", "issued": False}, status=400)
+
+        status, issued = _issuance_status_for(npub, election_id)
+        if status == "ineligible":
+            return web.json_response({
+                "status": status,
+                "issued": issued,
+                "message": "Voter is not in the eligible set",
+            }, status=403)
+
+        if issued:
+            return web.json_response({
+                "request_id": "",
+                "status_url": "",
+                "status": "already_issued",
+                "issued": True,
+                "quote_state": "PAID",
+            })
+
+        request_id = uuid.uuid4().hex
+        issuance_requests[request_id] = {
+            "npub": npub,
+            "quote_id": quote_id,
+            "election_id": election_id,
+            "created_at": int(time.time() * 1000),
+        }
+
+        return web.json_response({
+            "request_id": request_id,
+            "status_url": f"/issuance/{request_id}",
+            "status": "pending",
+        })
+
+    async def handle_issuance_wait(request: web.Request) -> web.Response:
+        request_id = request.match_info.get("request_id", "")
+        if request_id not in issuance_requests:
+            return web.json_response({"error": "Unknown issuance request"}, status=404)
+
+        req = issuance_requests[request_id]
+        timeout_ms = int(request.query.get("timeout_ms", "30000"))
+        timeout_ms = max(1, min(timeout_ms, 60000))
+        deadline = time.time() + (timeout_ms / 1000)
+
+        while time.time() < deadline:
+            status, issued = _issuance_status_for(req["npub"], req["election_id"])
+            if status == "ineligible":
+                return web.json_response({"request_id": request_id, "status": status, "issued": False, "quote_state": "UNPAID"}, status=403)
+            if issued:
+                return web.json_response({"request_id": request_id, "status": "issued", "issued": True, "quote_state": "PAID"})
+            await asyncio.sleep(0.2)
+
+        return web.json_response({
+            "request_id": request_id,
+            "status": "timeout",
+            "issued": False,
+            "quote_state": "UNPAID",
+            "retry_after_ms": 1000,
+            "message": "Issuance still pending",
+        })
+
     router = web.RouteTableDef()
     router.get("/info")(handle_info)
     router.get("/election")(handle_election)
@@ -1196,6 +1327,8 @@ def make_http_handler(
     router.get("/result")(handle_result)
     router.get("/inclusion_proof")(handle_inclusion_proof)
     router.get("/issuance-status")(handle_issuance_status)
+    router.post("/issuance/start")(handle_issuance_start)
+    router.get("/issuance/{request_id}")(handle_issuance_wait)
     router.get("/vote_tree")(handle_vote_tree)
     return router
 
@@ -1272,6 +1405,16 @@ def parse_args() -> argparse.Namespace:
         "--election-id",
         default=None,
         help="Election ID to lock this coordinator to. If omitted, coordinator starts without an election filter and auto-discovers elections from relay events.",
+    )
+    parser.add_argument(
+        "--join-election",
+        default=None,
+        help="Election ID (38008 event ID) to join as a participating coordinator. Coordinator will verify eligible set, publish 38007/38009/38012, then start normal operation.",
+    )
+    parser.add_argument(
+        "--http-api-url",
+        default=None,
+        help="Public HTTP API URL for this coordinator (used in kind 38012 coordinator info). Example: https://coordinator.example.com:8081",
     )
     return parser.parse_args()
 
@@ -1354,6 +1497,27 @@ async def run_coordinator(
         nostr_client, active_election_id=args.election_id,
     )
 
+    if args.election_id:
+        local_root = compute_eligible_root(list(eligible_set))
+        if local_root:
+            e38007_events = event_store.get_events(38007)
+            for evt in e38007_events:
+                evt_election = evt.get("election") or evt.get("election_id", "")
+                if evt_election != args.election_id:
+                    continue
+                evt_author = evt.get("pubkey", "")
+                if evt_author == coordinator_pubkey_hex:
+                    continue
+                evt_root = None
+                for tag in evt.get("tags", []):
+                    if isinstance(tag, list) and len(tag) >= 2 and tag[0] == "eligible-root":
+                        evt_root = tag[1]
+                        break
+                if evt_root and evt_root != local_root:
+                    log.warning("Coordinator %s has different eligible-root: %s (ours: %s)", evt_author[:16], evt_root[:16], local_root[:16])
+                elif evt_root:
+                    log.info("Coordinator %s eligible-root matches: %s", evt_author[:16], local_root[:16])
+
     handler = CoordinatorHandler(
         eligible_set=eligible_set,
         issued_set=issued_set,
@@ -1370,13 +1534,13 @@ async def run_coordinator(
         public_mint_url=args.public_mint_url or args.mint_url,
     )
 
-    log.info("Subscribing to kinds 38000, 38002, 38003, 38005, 38006, 38007, 38008, 38009, 38010, 38011 and NIP-04 DMs")
+    log.info("Subscribing to kinds 38000, 38002, 38003, 38005, 38006, 38007, 38008, 38009, 38010, 38011 and NIP-17 gift wraps")
 
     event_filter = Filter().kinds([Kind(38000), Kind(38002), Kind(38003), Kind(38005), Kind(38006), Kind(38007), Kind(38008), Kind(38009), Kind(38010), Kind(38011)]).limit(0)
     await nostr_client.subscribe(event_filter)
 
-    dm_filter = Filter().kind(Kind(4)).pubkey(coordinator_pubkey).limit(0)
-    await nostr_client.subscribe(dm_filter)
+    gift_wrap_filter = Filter().kind(Kind(1059)).limit(0)
+    await nostr_client.subscribe(gift_wrap_filter)
 
     http_routes = make_http_handler(
         event_store, spent_tree, coordinator_npub,
@@ -1482,6 +1646,69 @@ async def async_main() -> int:
             log.warning("Mint HTTP returned %d for %s", resp.status_code, args.mint_url)
     except requests.RequestException as exc:
         log.warning("Failed to connect to mint at %s: %s", args.mint_url, exc)
+
+    if args.join_election:
+        log.info("Joining election %s...", args.join_election[:16])
+        nostr_client = Client(signer)
+        for relay in args.relays:
+            await nostr_client.add_relay(RelayUrl.parse(relay))
+        await nostr_client.connect()
+        await asyncio.sleep(2)
+
+        election_filter = Filter().kinds([Kind(38008)]).ids([args.join_election]).limit(1)
+        events = await nostr_client.fetch_events(election_filter, timeout=timedelta(seconds=15))
+        events_vec = events.to_vec()
+
+        if not events_vec:
+            log.error("Election event %s not found on relay", args.join_election[:16])
+            raise SystemExit(1)
+
+        election_event = events_vec[0]
+        election_data = extract_event_data(election_event)
+        election_content = json.loads(election_data.get("content", "{}"))
+        election_tags = election_data.get("tags", [])
+
+        canonical_root = None
+        canonical_count = None
+        vote_start = election_content.get("vote_start", election_content.get("start_time", 0))
+        vote_end = election_content.get("vote_end", election_content.get("end_time", 0))
+        confirm_end = election_content.get("confirm_end", vote_end + 3600)
+
+        for tag in election_tags:
+            if isinstance(tag, list) and len(tag) >= 2:
+                if tag[0] == "eligible-root":
+                    canonical_root = tag[1]
+                elif tag[0] == "eligible-count":
+                    canonical_count = int(tag[1])
+
+        if not canonical_root:
+            log.error("Election event has no eligible-root tag")
+            raise SystemExit(1)
+
+        local_root = compute_eligible_root(list(eligible_set))
+        if local_root != canonical_root:
+            log.error("Eligible root mismatch! Local=%s, Canonical=%s", local_root, canonical_root)
+            log.error("Your eligible-voters.json does not match the canonical eligible set.")
+            raise SystemExit(1)
+
+        log.info("Eligible root verified: %s", canonical_root[:16])
+
+        max_supply = canonical_count or len(eligible_set)
+
+        _publish_38007(nostr_client, args.join_election, max_supply, vote_start, vote_end, confirm_end, canonical_root, canonical_count)
+        await asyncio.sleep(1)
+        _publish_38009(nostr_client, args.join_election, canonical_root, max_supply)
+        await asyncio.sleep(1)
+
+        http_api_url = args.http_api_url or f"http://{args.http_host}:{args.http_port}"
+        _publish_38012(nostr_client, http_api_url, args.public_mint_url or args.mint_url, args.relays)
+        await asyncio.sleep(1)
+
+        log.info("Successfully joined election %s", args.join_election[:16])
+        log.info("Setting election-id to %s for normal operation", args.join_election[:16])
+        args.election_id = args.join_election
+
+        await nostr_client.disconnect()
 
     return await run_coordinator(
         args, keys, coordinator_pubkey, coordinator_npub, coordinator_pubkey_hex,

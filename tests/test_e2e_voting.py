@@ -262,8 +262,8 @@ def test_full_voter_flow(voter_keys, coordinator_keys, test_election):
     assert len(vote_event_id) > 10, f"Failed to publish 38000: {vote_event_id}"
     log.info("Ballot published: %s", vote_event_id[:20])
 
-    # ── Step 11: Send NIP-04 DM with proof ─────────────────────────────
-    log.info("=== Step 11: Unblind signature and send NIP-04 DM with proof ===")
+    # ── Step 11: Send NIP-17 gift wrap with proof ─────────────────────
+    log.info("=== Step 11: Unblind signature and send NIP-17 gift wrap with proof ===")
     proof = unblind_signature(mint_sig, secret, r_hex)
     dm_payload = json.dumps({
         "vote_event_id": vote_event_id,

@@ -143,7 +143,7 @@ asyncio.run(main())
 
 SEND_DM_SCRIPT = r'''
 import asyncio, json, sys
-from nostr_sdk import Keys, Kind, NostrSigner, Client, EventBuilder, Tag, RelayUrl
+from nostr_sdk import Keys, NostrSigner, Client, EventBuilder, RelayUrl, gift_wrap
 
 async def main():
     sender_nsec = sys.argv[1]
@@ -163,11 +163,9 @@ async def main():
     await client.add_relay(RelayUrl.parse("ws://localhost:10547"))
     await client.connect()
     await asyncio.sleep(1)
-    encrypted = await signer.nip04_encrypt(coord_pk, dm_payload)
-    builder = EventBuilder(kind=Kind(4), content=encrypted).tags(
-        [Tag.parse(["p", coord_hex])]
-    )
-    event_id = await client.send_event_builder(builder)
+    rumor = EventBuilder.text_note(dm_payload).build(keys.public_key())
+    wrapped = await gift_wrap(signer, coord_pk, rumor)
+    event_id = await client.send_event(wrapped)
     await asyncio.sleep(3)
     print(event_id.id.to_hex())
 

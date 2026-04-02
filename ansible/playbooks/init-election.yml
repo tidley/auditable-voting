@@ -1,0 +1,311 @@
+---
+# Init Election: create a new election as the election creator
+#
+# Usage:
+#   ansible-playbook ansible/playbooks/init-election.yml \
+#     -e "title=My Election" \
+#     -e "description=Election description" \
+#     -e "election_start=1710000000" \
+#     -e "election_end=1710003600" \
+#     -e "eligible_path=./eligible-voters.json"
+#
+# This playbook reads the coordinator's nsec from the deployed VPS,
+# computes the eligible-root Merkle root, and publishes a kind 38008
+# event with coordinator tags and eligible-set commitment.
+# It then publishes 38007, 38009, and 38012 for the creator.
+
+- name: Publish Election Announcement
+  hosts: tollgate-vps
+  become: true
+  vars:
+    coordinator_dir: "/opt/tollgate/coordinator"
+    coordinator_venv: "{{ coordinator_dir }}/.venv"
+    mint_data_dir: "/opt/tollgate/mints-local/mint1"
+    confirm_window_seconds: 3600
+
+  tasks:
+    - name: Validate required variables
+      ansible.builtin.assert:
+        that:
+          - title is defined
+          - election_start is defined
+          - election_end is defined
+        fail_msg: "title, election_start, and election_end are required"
+
+    - name: Set default eligible path
+      ansible.builtin.set_fact:
+        eligible_path: "{{ eligible_path | default(coordinator_dir + '/eligible-voters.json') }}"
+
+    - name: Wait for coordinator to be healthy
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:8081/info"
+        method: GET
+      register: coord_info
+      retries: 15
+      delay: 3
+      until: coord_info.status == 200
+      changed_when: false
+
+    - name: Read coordinator nsec
+      ansible.builtin.slurp:
+        src: "{{ coordinator_dir }}/nsec.env"
+      register: nsec_raw
+      changed_when: false
+
+    - name: Set coordinator nsec fact
+      ansible.builtin.set_fact:
+        coordinator_nsec: "{{ nsec_raw.content | b64decode | trim }}"
+
+    - name: Read eligible voters file
+      ansible.builtin.slurp:
+        src: "{{ eligible_path }}"
+      register: eligible_raw
+      changed_when: false
+
+    - name: Compute eligible root
+      ansible.builtin.shell: |
+        {{ coordinator_venv }}/bin/python3 -c "
+        import json, hashlib, sys
+        npubs = json.loads('''{{ eligible_raw.content | b64decode }}''')
+        if isinstance(npubs, dict):
+            npubs = npubs.get('npubs', npubs.get('eligible_npubs', []))
+        hex_npubs = []
+        for n in npubs:
+            n = n.strip()
+            if n.startswith('npub1'):
+                import base64
+                data = base64.b64decode('bech32' + n[5:] + 'q')
+                hrp, data5 = '', bytearray()
+                for b in data:
+                    val = 0
+                    for j in range(5):
+                        val = (val << 5) | (b[j] if j < len(b) else 0)
+                    for j in range(4, -1, -1):
+                        data5.append((val >> (j * 5)) & 31)
+                from bech32 import bech32_decode
+                decoded = bech32_decode(n)
+                if decoded:
+                    hex_npubs.append(decoded[1].hex())
+            else:
+                hex_npubs.append(n)
+        leaves = sorted(hashlib.sha256(n.encode()).hexdigest() for n in hex_npubs)
+        print(json.dumps({'root': leaves[0] if len(leaves) == 1 else None, 'count': len(leaves), 'hex_npubs': hex_npubs}))
+        " 2>/dev/null || echo "ERROR"
+      args:
+        executable: /bin/bash
+      register: eligible_info
+      changed_when: false
+
+    - name: Use simplified root computation
+      ansible.builtin.shell: |
+        {{ coordinator_venv }}/bin/python3 << 'PYEOF'
+        import json, hashlib
+
+        raw = open("{{ eligible_path }}").read()
+        npubs = json.loads(raw)
+        if isinstance(npubs, dict):
+            npubs = npubs.get("npubs", npubs.get("eligible_npubs", []))
+
+        hex_npubs = []
+        for n in npubs:
+            n = n.strip()
+            if not n:
+                continue
+            from nostr_sdk import PublicKey
+            if n.startswith("npub1"):
+                hex_npubs.append(PublicKey.parse(n).to_hex())
+            else:
+                hex_npubs.append(n)
+
+        leaves = sorted(hashlib.sha256(n.encode()).hexdigest() for n in hex_npubs)
+
+        def build_root(leaves):
+            while len(leaves) > 1:
+                if len(leaves) % 2 == 1:
+                    leaves.append(leaves[-1])
+                next_level = []
+                for i in range(0, len(leaves), 2):
+                    parent = hashlib.sha256((leaves[i] + leaves[i+1]).encode()).hexdigest()
+                    next_level.append(parent)
+                leaves = next_level
+            return leaves[0] if leaves else None
+
+        root = build_root(leaves)
+        print(json.dumps({"root": root, "count": len(hex_npubs)}))
+        PYEOF
+      args:
+        executable: /bin/bash
+      register: eligible_data
+      changed_when: false
+
+    - name: Parse eligible root data
+      ansible.builtin.set_fact:
+        eligible_root: "{{ (eligible_data.stdout | from_json).root }}"
+        eligible_count: "{{ (eligible_data.stdout | from_json).count }}"
+
+    - name: Publish kind 38008 (election announcement)
+      ansible.builtin.shell: |
+        {{ coordinator_venv }}/bin/python3 << 'PYEOF'
+        import asyncio, json
+        from nostr_sdk import Keys, Kind, NostrSigner, Client, EventBuilder, Tag, RelayUrl
+
+        async def main():
+            nsec = "{{ coordinator_nsec }}"
+            content = json.dumps({
+                "title": "{{ title | default('Untitled Election') }}",
+                "description": "{{ description | default('') }}",
+                "questions": [],
+                "vote_start": {{ election_start }},
+                "vote_end": {{ election_end }},
+                "confirm_end": {{ election_end | int + confirm_window_seconds }},
+            })
+
+            keys = Keys.parse(nsec)
+            coordinator_npub = keys.public_key().to_bech32()
+            signer = NostrSigner.keys(keys)
+            client = Client(signer)
+            await client.add_relay(RelayUrl.parse("ws://localhost:10547"))
+            await client.connect()
+            await asyncio.sleep(1)
+
+            tags = [
+                Tag.parse(["t", "election-announcement"]),
+                Tag.parse(["coordinator", coordinator_npub]),
+                Tag.parse(["eligible-root", "{{ eligible_root }}"]),
+                Tag.parse(["eligible-count", "{{ eligible_count }}"]),
+                Tag.parse(["mint", "http://{{ ansible_host }}:3338"]),
+            ]
+
+            builder = EventBuilder(kind=Kind(38008), content=content).tags(tags)
+            result = await client.send_event_builder(builder)
+            await asyncio.sleep(3)
+            print(result.id.to_hex())
+
+        asyncio.run(main())
+        PYEOF
+      args:
+        executable: /bin/bash
+      register: election_event
+      changed_when: true
+
+    - name: Set election_id fact
+      ansible.builtin.set_fact:
+        election_id: "{{ election_event.stdout.strip() }}"
+
+    - name: Publish kind 38007 (hard cap / join as creator)
+      ansible.builtin.shell: |
+        {{ coordinator_venv }}/bin/python3 << 'PYEOF'
+        import asyncio, json
+        from nostr_sdk import Keys, Kind, NostrSigner, Client, EventBuilder, Tag, RelayUrl
+
+        async def main():
+            nsec = "{{ coordinator_nsec }}"
+            election_id = "{{ election_id }}"
+            content = json.dumps({
+                "election_id": election_id,
+                "max_supply": {{ eligible_count }},
+                "vote_start": {{ election_start }},
+                "vote_end": {{ election_end }},
+                "confirm_end": {{ election_end | int + confirm_window_seconds }},
+            })
+
+            signer = NostrSigner.keys(Keys.parse(nsec))
+            client = Client(signer)
+            await client.add_relay(RelayUrl.parse("ws://localhost:10547"))
+            await client.connect()
+            await asyncio.sleep(1)
+
+            tags = [
+                Tag.parse(["election", election_id]),
+                Tag.parse(["eligible-root", "{{ eligible_root }}"]),
+                Tag.parse(["eligible-count", "{{ eligible_count }}"]),
+            ]
+            builder = EventBuilder(kind=Kind(38007), content=content).tags(tags)
+            await client.send_event_builder(builder)
+            await asyncio.sleep(1)
+            print("OK")
+
+        asyncio.run(main())
+        PYEOF
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Publish kind 38009 (eligibility commitment)
+      ansible.builtin.shell: |
+        {{ coordinator_venv }}/bin/python3 << 'PYEOF'
+        import asyncio, json
+        from nostr_sdk import Keys, Kind, NostrSigner, Client, EventBuilder, Tag, RelayUrl
+
+        async def main():
+            nsec = "{{ coordinator_nsec }}"
+            election_id = "{{ election_id }}"
+            content = json.dumps({
+                "election_id": election_id,
+                "eligible_root": "{{ eligible_root }}",
+                "eligible_count": {{ eligible_count }},
+            })
+
+            signer = NostrSigner.keys(Keys.parse(nsec))
+            client = Client(signer)
+            await client.add_relay(RelayUrl.parse("ws://localhost:10547"))
+            await client.connect()
+            await asyncio.sleep(1)
+
+            tags = [Tag.parse(["election", election_id])]
+            builder = EventBuilder(kind=Kind(38009), content=content).tags(tags)
+            await client.send_event_builder(builder)
+            await asyncio.sleep(1)
+            print("OK")
+
+        asyncio.run(main())
+        PYEOF
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Publish kind 38012 (coordinator info)
+      ansible.builtin.shell: |
+        {{ coordinator_venv }}/bin/python3 << 'PYEOF'
+        import asyncio, json
+        from nostr_sdk import Keys, Kind, NostrSigner, Client, EventBuilder, Tag, RelayUrl
+
+        async def main():
+            nsec = "{{ coordinator_nsec }}"
+            content = json.dumps({
+                "http_api": "http://{{ ansible_host }}:8081",
+                "mint_url": "http://{{ ansible_host }}:3338",
+                "supported_relays": ["ws://localhost:10547", "wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net"],
+            })
+
+            signer = NostrSigner.keys(Keys.parse(nsec))
+            client = Client(signer)
+            await client.add_relay(RelayUrl.parse("ws://localhost:10547"))
+            await client.connect()
+            await asyncio.sleep(1)
+
+            tags = [Tag.parse(["t", "coordinator-info"])]
+            builder = EventBuilder(kind=Kind(38012), content=content).tags(tags)
+            await client.send_event_builder(builder)
+            await asyncio.sleep(1)
+            print("OK")
+
+        asyncio.run(main())
+        PYEOF
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Print election info
+      ansible.builtin.debug:
+        msg: |
+          Election created successfully!
+          Election ID: {{ election_id }}
+          Coordinator npub: {{ coord_info.json.coordinatorNpub | default('see /info') }}
+          Eligible root: {{ eligible_root }}
+          Eligible count: {{ eligible_count }}
+          Vote window: {{ election_start }} - {{ election_end }}
+          Confirm window: {{ election_end }} - {{ election_end | int + confirm_window_seconds }}
+
+          Other coordinators can join with:
+            make join-election ELECTION_ID={{ election_id }}

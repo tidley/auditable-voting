@@ -3,16 +3,27 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="icon" type="image/png" href="/images/logo.png" />
-    <link rel="apple-touch-icon" href="/images/logo.png" />
+    <link rel="icon" type="image/png" href="%BASE_URL%images/logo.png" />
+    <link rel="apple-touch-icon" href="%BASE_URL%images/logo.png" />
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="Auditable Voting — Voter Portal" />
-    <meta property="og:description" content="Check your eligible npub and mint a Cashu voting proof for sovereign, auditable elections." />
-    <meta property="og:image" content="/images/og-image.jpg" />
-    <title>Auditable Voting Voter Portal</title>
+    <meta property="og:title" content="Auditable Voting Demo" />
+    <meta property="og:description" content="Plain live control room for coordinators, voters, and verifiers." />
+    <meta property="og:image" content="%BASE_URL%images/og-image.jpg" />
+    <title>Auditable Voting Demo</title>
   </head>
   <body>
+    <script>
+      (function () {
+        var base = "%BASE_URL%";
+        var currentPath = window.location.pathname.replace(/\/+$/, "/");
+        var basePath = new URL(base, window.location.origin).pathname.replace(/\/+$/, "/");
+
+        if (window.location.hostname.endsWith("github.io") && currentPath === basePath) {
+          window.location.replace(new URL(base + "simple.html", window.location.origin).toString());
+        }
+      })();
+    </script>
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <script type="module" src="./src/main.tsx"></script>
   </body>
 </html>

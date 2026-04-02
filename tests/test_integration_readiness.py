@@ -246,19 +246,19 @@ class TestCashuTsExports:
 
 
 @pytest.mark.fast
-class TestNostrToolsNip04:
-    def test_nostr_tools_nip04_encrypt(self):
+class TestNostrToolsNip17:
+    def test_nostr_tools_nip17_wrap_event(self):
         from conftest import _check_js
         script = """
-        import { nip04 } from "nostr-tools";
-        if (typeof nip04 !== "object" || typeof nip04.encrypt !== "function") {
-          console.error("nip04.encrypt not found. nip04 type: " + typeof nip04);
+        import { nip17 } from "nostr-tools";
+        if (typeof nip17 !== "object" || typeof nip17.wrapEvent !== "function") {
+          console.error("nip17.wrapEvent not found. nip17 type: " + typeof nip17);
           process.exit(1);
         }
-        console.log("OK: nip04.encrypt found");
+        console.log("OK: nip17.wrapEvent found");
         """
         ok, output = _check_js(script)
-        assert ok, f"nostr-tools nip04 mismatch:\n{output}"
+        assert ok, f"nostr-tools nip17 mismatch:\n{output}"
 
 
 # ---------------------------------------------------------------------------

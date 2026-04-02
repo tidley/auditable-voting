@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchEligibility, resetEligibility, type EligibilityResponse } from "./voterManagementApi";
 import { SimplePool } from "nostr-tools";
-import { fetchCoordinatorInfo, fetchElectionsFromNostr, fetchTally, fetchElection, fetchIssuanceStatus, type TallyInfo, type ElectionInfo, type ElectionQuestion, type ElectionSummary, type IssuanceStatusResponse } from "./coordinatorApi";
+import { fetchCoordinatorInfo, fetchElectionsFromNostr, fetchTally, fetchElection, fetchIssuanceStatus, discoverCoordinators, fetchPerCoordinatorTallies, runAudit, type TallyInfo, type ElectionInfo, type ElectionQuestion, type ElectionSummary, type IssuanceStatusResponse, type CoordinatorDiscovery, type AuditResult, type PerCoordinatorTally } from "./coordinatorApi";
 import { USE_MOCK } from "./config";
+import PageNav from "./PageNav";
+import { assetUrl } from "./basePath";
 
 const EMPTY_ELIGIBILITY: EligibilityResponse = {
   eligibleNpubs: [],
@@ -45,6 +47,15 @@ function ProgressBar({ value, max, label }: { value: number; max: number; label:
 }
 
 export default function DashboardApp() {
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+
+    document.body.classList.add("app-page");
+    return () => {
+      document.body.classList.remove("app-page");
+    };
+  }, []);
+
   const [eligibility, setEligibility] = useState<EligibilityResponse>(EMPTY_ELIGIBILITY);
   const [tally, setTally] = useState<TallyInfo | null>(null);
   const [election, setElection] = useState<ElectionInfo | null>(null);
@@ -57,6 +68,10 @@ export default function DashboardApp() {
   const [coordinatorNpub, setCoordinatorNpub] = useState("");
   const [relayList, setRelayList] = useState<string[]>([]);
   const [issuanceStatus, setIssuanceStatus] = useState<IssuanceStatusResponse | null>(null);
+  const [auditResults, setAuditResults] = useState<AuditResult[] | null>(null);
+  const [perCoordinatorTallies, setPerCoordinatorTallies] = useState<PerCoordinatorTally[] | null>(null);
+  const [discoveredCoordinators, setDiscoveredCoordinators] = useState<CoordinatorDiscovery[]>([]);
+  const [runningAudit, setRunningAudit] = useState(false);
   const eligibleNpubs = useMemo(() => new Set(eligibility.eligibleNpubs), [eligibility]);
 
   const questions = useMemo(() => election?.questions ?? [], [election]);
@@ -74,7 +89,7 @@ export default function DashboardApp() {
       setCoordinatorNpub(info.coordinatorNpub);
       setRelayList(info.relays);
 
-      const elections = await fetchElectionsFromNostr(info.coordinatorNpub, info.relays);
+      const elections = await fetchElectionsFromNostr([info.coordinatorNpub], info.relays);
       setAllElections(elections);
 
       const [tallyResult, electionResult, issuanceResult] = await Promise.all([
@@ -86,6 +101,11 @@ export default function DashboardApp() {
       setTally(tallyResult);
       setElection(electionResult);
       setIssuanceStatus(issuanceResult);
+
+      if (electionResult?.event_id) {
+        const discovered = await discoverCoordinators(electionResult.event_id, info.relays);
+        setDiscoveredCoordinators(discovered);
+      }
       if (electionResult && !selectedElectionId) {
         setSelectedElectionId(electionResult.election_id);
       }
@@ -140,9 +160,10 @@ export default function DashboardApp() {
           title: content.title ?? "Untitled",
           description: content.description ?? "",
           questions: content.questions ?? [],
-          start_time: content.start_time ?? 0,
-          end_time: content.end_time ?? 0,
+          vote_start: (content as any).vote_start ?? (content as any).start_time ?? 0,
+          vote_end: (content as any).vote_end ?? (content as any).end_time ?? 0,
           mint_urls: content.mint_urls ?? [],
+          coordinator_npubs: (content as any).coordinator_npubs ?? [],
         });
         setTally(null);
       } catch {
@@ -169,10 +190,44 @@ export default function DashboardApp() {
     }
   }
 
+  async function handleRunAudit() {
+    if (!election?.event_id || discoveredCoordinators.length === 0) {
+      setError("Need an election with discovered coordinators to run an audit.");
+      return;
+    }
+
+    setRunningAudit(true);
+    setError(null);
+
+    try {
+      const canonicalNpubs = eligibility.eligibleNpubs.length > 0
+        ? eligibility.eligibleNpubs
+        : [];
+
+      const tallies = await fetchPerCoordinatorTallies(discoveredCoordinators);
+      setPerCoordinatorTallies(tallies);
+
+      const audit = await runAudit(
+        election.event_id,
+        discoveredCoordinators,
+        canonicalNpubs,
+        election.vote_end,
+        election.confirm_end ?? election.vote_end + 86400,
+        relayList,
+      );
+      setAuditResults(audit);
+      setStatus(`Audit complete for ${audit.length} coordinator(s).`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Audit failed");
+    } finally {
+      setRunningAudit(false);
+    }
+  }
+
   const published = tally?.total_published_votes ?? 0;
   const accepted = tally?.total_accepted_votes ?? 0;
   const eligible = eligibility.eligibleCount;
-  const isClosed = election ? Date.now() > election.end_time * 1000 : false;
+  const isClosed = election ? Date.now() > election.vote_end * 1000 : false;
   const tallyStatusLabel = tally?.status === "closed"
     ? "Closed"
     : tally?.status === "in_progress"
@@ -185,14 +240,18 @@ export default function DashboardApp() {
     <main className="page-shell page-shell-dashboard">
       <section className="hero-card hero-card-dashboard">
         <div className="hero-brand">
-          <img src="/images/logo.png" alt="" width={28} height={28} />
+          <img src={assetUrl("images/logo.png")} alt="" width={28} height={28} />
           <p className="eyebrow">Backend Dashboard</p>
         </div>
+        <PageNav current="dashboard" />
         <h1 className="hero-title hero-title-dashboard">Monitor the election.</h1>
         <p className="hero-copy">
           {USE_MOCK
             ? "This page shows eligible npubs from the local voter config."
             : "Election data from the coordinator and Nostr relays."}
+        </p>
+        <p className="field-hint hero-hint">
+          Use the home page to seed a voter and the voting page to submit the ballot. This view is for eligibility, issuance, and audit status.
         </p>
         {allElections.length > 1 && (
           <div style={{ marginTop: 12 }}>
@@ -253,8 +312,8 @@ export default function DashboardApp() {
             {election.description && <p className="field-hint">{election.description}</p>}
             <div className="detail-stack">
               <p className="field-hint">ID: {election.election_id}</p>
-              <p className="field-hint">Start: {new Date(election.start_time * 1000).toLocaleString()}</p>
-              <p className="field-hint">End: {new Date(election.end_time * 1000).toLocaleString()}</p>
+              <p className="field-hint">Start: {new Date(election.vote_start * 1000).toLocaleString()}</p>
+              <p className="field-hint">End: {new Date(election.vote_end * 1000).toLocaleString()}</p>
             </div>
           </article>
         </section>
@@ -291,6 +350,7 @@ export default function DashboardApp() {
             <p className="panel-kicker">Election status</p>
             <h2>{tallyStatusLabel}</h2>
             <p className="field-hint">{tally.spent_commitment_root ? `Root: ${tally.spent_commitment_root.slice(0, 16)}...` : "No commitment root yet"}</p>
+            <p className="field-hint">Anyone can recompute the totals from the public ballots and receipt-backed roots.</p>
           </article>
         )}
 
@@ -384,6 +444,117 @@ export default function DashboardApp() {
                 </div>
               );
             })}
+          </article>
+        </section>
+      )}
+
+      {discoveredCoordinators.length > 1 && (
+        <section className="content-grid">
+          <article className="panel panel-wide">
+            <div className="panel-header">
+              <div>
+                <p className="panel-kicker">Multi-Coordinator Audit</p>
+                <h2>Cross-coordinator verification</h2>
+              </div>
+              <span className="count-pill">{discoveredCoordinators.length} coordinator{discoveredCoordinators.length !== 1 ? "s" : ""}</span>
+            </div>
+
+            <p className="field-hint">
+              Compare tallies across all {discoveredCoordinators.length} coordinators. Honest coordinators should have consistent tallies.
+              Discrepancies between canonical confirmations and tallies may indicate inflation or censorship.
+            </p>
+
+            <div className="button-row">
+              <button className="secondary-button" onClick={() => void handleRunAudit()} disabled={runningAudit || USE_MOCK}>
+                {runningAudit ? "Running audit..." : "Run audit"}
+              </button>
+            </div>
+
+            {perCoordinatorTallies && perCoordinatorTallies.length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <p className="code-label" style={{ marginBottom: 8 }}>Per-coordinator tallies</p>
+                {perCoordinatorTallies.map((t) => (
+                  <div key={t.coordinatorNpub} style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    padding: "8px 0",
+                    borderBottom: "1px solid rgba(88,59,39,0.06)",
+                  }}>
+                    <code style={{ fontSize: "0.78rem", flexShrink: 0, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {t.coordinatorNpub.slice(0, 24)}...
+                    </code>
+                    <span className="field-hint" style={{ margin: 0 }}>
+                      {t.tally
+                        ? `${t.tally.total_accepted_votes ?? 0} accepted / ${t.tally.total_published_votes} published`
+                        : "No tally data"}
+                    </span>
+                    {t.result && (
+                      <span className="field-hint" style={{ margin: 0, opacity: 0.5 }}>
+                        Root: {t.result.merkle_root.slice(0, 12)}...
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {auditResults && auditResults.length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <p className="code-label" style={{ marginBottom: 8 }}>Audit results</p>
+                {auditResults.map((a) => (
+                  <div key={a.coordinatorNpub} style={{
+                    padding: "10px 12px",
+                    marginBottom: 8,
+                    borderRadius: 12,
+                    background: a.flags.length > 0 ? "rgba(231,76,60,0.06)" : "rgba(39,174,96,0.06)",
+                    border: `1px solid ${a.flags.length > 0 ? "rgba(231,76,60,0.15)" : "rgba(39,174,96,0.15)"}`,
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                      <span style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 18,
+                        height: 18,
+                        borderRadius: "50%",
+                        fontSize: "0.7rem",
+                        fontWeight: 700,
+                        flexShrink: 0,
+                        background: a.flags.length > 0 ? "#e74c3c" : "#27ae60",
+                        color: "#fff",
+                      }}>
+                        {a.flags.length > 0 ? "!" : "\u2713"}
+                      </span>
+                      <code style={{ fontSize: "0.78rem" }}>{a.coordinatorNpub.slice(0, 24)}...</code>
+                    </div>
+                    <div style={{ display: "flex", gap: 16, fontSize: "0.85rem" }}>
+                      <span className="field-hint" style={{ margin: 0 }}>Tally: <strong>{a.tally}</strong></span>
+                      <span className="field-hint" style={{ margin: 0 }}>Confirmations: <strong>{a.confirmations}</strong></span>
+                      <span className="field-hint" style={{ margin: 0 }}>Canonical: <strong>{a.canonicalCount}</strong></span>
+                      {a.fakeConfirmations > 0 && (
+                        <span style={{ color: "#e74c3c", fontSize: "0.82rem" }}>
+                          Fake confirmations: {a.fakeConfirmations}
+                        </span>
+                      )}
+                    </div>
+                    {a.flags.length > 0 && (
+                      <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 2 }}>
+                        {a.flags.map((flag, i) => (
+                          <span key={i} style={{ color: "#e74c3c", fontSize: "0.82rem" }}>
+                            {flag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {USE_MOCK && (
+              <p className="field-hint" style={{ opacity: 0.6 }}>Audit is unavailable in mock mode.</p>
+            )}
           </article>
         </section>
       )}

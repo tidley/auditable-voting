@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { logClaimDebug } from "./cashuMintApi";
-import { loadStoredWalletBundle, storeWalletBundle, storeProof } from "./cashuWallet";
-import { checkEligibility, fetchEligibility, type EligibilityCheckResponse, type EligibilityResponse } from "./voterManagementApi";
+import { loadStoredWalletBundle, storeWalletBundle, addCoordinatorProof, storeEphemeralKeypair, type CoordinatorProof } from "./cashuWallet";
+import { checkEligibility, type EligibilityCheckResponse } from "./voterManagementApi";
 import {
   createCashuClaimEvent,
   deriveNpubFromNsec,
@@ -11,10 +11,12 @@ import {
   publishCashuClaim,
   signCashuClaimEvent
 } from "./nostrIdentity";
-import { fetchCoordinatorInfo, fetchElectionsFromNostr, fetchElection, fetchIssuanceStatus, type CoordinatorInfo, type ElectionInfo, type ElectionQuestion, type ElectionSummary, type IssuanceStatusResponse } from "./coordinatorApi";
+import { fetchCoordinatorInfo, fetchElectionsFromNostr, fetchElection, discoverCoordinators, startIssuanceTracking, awaitIssuanceStatus, type CoordinatorInfo, type ElectionInfo, type ElectionQuestion, type ElectionSummary, type CoordinatorDiscovery } from "./coordinatorApi";
 import { checkQuoteStatus, createMintQuote, type MintQuoteResponse } from "./mintApi";
 import { requestQuoteAndMint, type CashuProof } from "./cashuBlind";
-import { MINT_URL, USE_MOCK } from "./config";
+import { DEMO_COPY, DEMO_MODE, MINT_URL, USE_MOCK } from "./config";
+import PageNav from "./PageNav";
+import { assetUrl, pageUrl } from "./basePath";
 import {
   createRawSigner,
   createNip07Signer,
@@ -28,6 +30,8 @@ type PublishResult = {
   successes: number;
   failures: number;
 };
+
+type CoordinatorIssuanceState = "idle" | "requesting_quote" | "publishing_claim" | "polling" | "minting" | "done" | "error";
 
 export default function App() {
   const [coordinatorInfo, setCoordinatorInfo] = useState<CoordinatorInfo | null>(null);
@@ -49,19 +53,20 @@ export default function App() {
   const [mintingTokens, setMintingTokens] = useState(false);
   const [signerMode, setSignerMode] = useState<SignerMode>("raw");
   const [signer, setSigner] = useState<NostrSigner | null>(null);
+  const [nip07Available, setNip07Available] = useState(false);
   const [nip07Pubkey, setNip07Pubkey] = useState<string | null>(null);
   const [nip07Scanning, setNip07Scanning] = useState(false);
   const [allElections, setAllElections] = useState<ElectionSummary[]>([]);
   const [electionsLoading, setElectionsLoading] = useState(false);
-  const [eligibilityList, setEligibilityList] = useState<EligibilityResponse | null>(null);
-  const [issuanceStatus, setIssuanceStatus] = useState<IssuanceStatusResponse | null>(null);
-  const [profileMap, setProfileMap] = useState<Record<string, { name: string; picture?: string }>>({});
-  const profilesFetchedRef = useRef(false);
+  const [discoveredCoordinators, setDiscoveredCoordinators] = useState<CoordinatorDiscovery[]>([]);
+  const [issuanceProgress, setIssuanceProgress] = useState<Record<string, CoordinatorIssuanceState>>({});
+  const [issuanceErrors, setIssuanceErrors] = useState<Record<string, string>>({});
+  const [multiIssuanceRunning, setMultiIssuanceRunning] = useState(false);
 
   const derivedNpub = useMemo(() => deriveNpubFromNsec(nsecInput), [nsecInput]);
   const activeNpub = signerMode === "nip07" && nip07Pubkey ? nip07Pubkey : derivedNpub;
   const npubIsValid = activeNpub ? isValidNpub(activeNpub) : false;
-  const canRequestQuote = Boolean(eligibilityResult?.canProceed && !requestingQuote);
+  const canRequestQuote = Boolean(eligibilityResult?.canProceed && !requestingQuote && !multiIssuanceRunning);
 
   const coordinatorNpub = coordinatorInfo?.coordinatorNpub ?? "";
   const mintUrl = coordinatorInfo?.mintUrl ?? MINT_URL;
@@ -70,6 +75,15 @@ export default function App() {
   const questions: ElectionQuestion[] = electionInfo?.questions ?? [];
 
   const activeMintUrl = useMemo(() => mintUrl.replace(/\/$/, ""), [mintUrl]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+
+    document.body.classList.add("app-page");
+    return () => {
+      document.body.classList.remove("app-page");
+    };
+  }, []);
 
   async function handleElectionSelect(electionId: string) {
     if (electionId === electionInfo?.election_id) return;
@@ -89,9 +103,10 @@ export default function App() {
         title: content.title ?? "Untitled",
         description: content.description ?? "",
         questions: content.questions ?? [],
-        start_time: content.start_time ?? 0,
-        end_time: content.end_time ?? 0,
+        vote_start: (content as any).vote_start ?? (content as any).start_time ?? 0,
+        vote_end: (content as any).vote_end ?? (content as any).end_time ?? 0,
         mint_urls: content.mint_urls ?? [],
+        coordinator_npubs: (content as any).coordinator_npubs ?? [],
       });
       setMintQuote(null);
       setQuoteState(null);
@@ -130,8 +145,19 @@ export default function App() {
         setElectionInfo(election);
         setStatus(`Connected to coordinator. Election: ${election?.title ?? "none"}`);
 
-        const elections = await fetchElectionsFromNostr(info.coordinatorNpub, info.relays);
+        const elections = await fetchElectionsFromNostr([info.coordinatorNpub], info.relays);
         setAllElections(elections);
+
+        if (election?.event_id && election.coordinator_npubs.length > 1) {
+          const discovered = await discoverCoordinators(election.event_id, info.relays);
+          setDiscoveredCoordinators(discovered);
+          if (discovered.length > 1) {
+            setStatus(`Discovered ${discovered.length} coordinators. Election: ${election.title}`);
+          }
+        } else if (election?.event_id) {
+          const discovered = await discoverCoordinators(election.event_id, info.relays);
+          setDiscoveredCoordinators(discovered);
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Could not reach coordinator");
       } finally {
@@ -146,15 +172,15 @@ export default function App() {
   useEffect(() => {
     const stop = startSignerDetection((result) => {
       if (result.mode === "nip07" && result.signer) {
-        setSignerMode("nip07");
         setSigner(result.signer);
+        setNip07Available(true);
         setNip07Scanning(false);
         result.signer.getNpub().then((npub) => setNip07Pubkey(npub)).catch(() => {});
       }
     });
-    setNip07Scanning(signerMode === "nip07" && !nip07Pubkey);
+    setNip07Scanning(signerMode === "nip07" && !nip07Pubkey && !nip07Available);
     return () => { stop(); setNip07Scanning(false); };
-  }, []);
+  }, [nip07Available, nip07Pubkey, signerMode]);
 
   useEffect(() => {
     resetEligibilityFlow();
@@ -288,23 +314,26 @@ export default function App() {
       const quote = await createMintQuote();
       setMintQuote(quote);
       setQuoteState("UNPAID");
+      if (nsecInput && derivedNpub) {
+        storeEphemeralKeypair(nsecInput, derivedNpub);
+      }
 
       storeWalletBundle({
-        proof: null,
+        electionId: electionInfo?.election_id ?? "",
+        ephemeralKeypair: {
+          nsec: nsecInput,
+          npub: derivedNpub ?? "",
+        },
+        coordinatorProofs: [],
         election: electionInfo ? {
           electionId: electionInfo.election_id,
           title: electionInfo.title,
           questions: electionInfo.questions,
-          start_time: electionInfo.start_time,
-          end_time: electionInfo.end_time,
-          mint_urls: electionInfo.mint_urls
+          vote_start: electionInfo.vote_start,
+          vote_end: electionInfo.vote_end,
+          mint_urls: electionInfo.mint_urls,
+          coordinator_npubs: electionInfo.coordinator_npubs,
         } : null,
-        quote: {
-          quoteId: quote.quote,
-          bolt11: quote.request
-        },
-        coordinatorNpub,
-        mintUrl: activeMintUrl,
         relays
       });
       setWalletBundle(loadStoredWalletBundle());
@@ -407,69 +436,201 @@ export default function App() {
   }, [mintQuote, derivedNpub, nsecInput, coordinatorNpub, activeMintUrl, electionId, relays, activeNpub, signer, signerMode]);
 
   const pollQuoteAndMint = useCallback(async () => {
-    if (!mintQuote) return;
+    if (!mintQuote || !activeNpub) return;
 
     try {
-      const status = await checkQuoteStatus(mintQuote.quote);
-      setQuoteState(status.state);
-      console.log("[poll] quote", mintQuote.quote, "state:", status.state);
+      const started = await startIssuanceTracking({
+        npub: activeNpub,
+        quoteId: mintQuote.quote,
+        electionId,
+      });
 
-      if (status.state === "UNPAID") {
-        setStatus("Waiting for coordinator to approve quote...");
-        return;
+      if (started.status === "already_issued") {
+        setQuoteState("PAID");
+      } else {
+        const status = await awaitIssuanceStatus({ requestId: started.request_id, timeoutMs: 30000 });
+        if (status.status === "timeout") {
+          setStatus("Still waiting for coordinator approval. You can retry.");
+          setPollingQuote(false);
+          return;
+        }
+        setQuoteState(status.quote_state ?? "PAID");
       }
 
-      if (status.state === "PAID") {
-        setPollingQuote(false);
-        console.log("[poll] quote", mintQuote.quote, "approved, minting tokens...");
-        setStatus("Proof ready! Minting tokens...");
-        setMintingTokens(true);
+      setPollingQuote(false);
+      setStatus("Pass approved. Minting your voting pass...");
+      setMintingTokens(true);
+      const mintResult = await requestQuoteAndMint(MINT_URL.replace(/\/$/, ""), mintQuote.quote);
+      const proof = mintResult.proofs[0];
 
-        try {
-          const mintResult = await requestQuoteAndMint(MINT_URL.replace(/\/$/, ""), mintQuote.quote);
-          const proof = mintResult.proofs[0];
-
-          if (proof) {
-            console.log("[poll] proof received for quote", mintQuote.quote, "keyset:", proof.id);
-            setCurrentProof(proof);
-            storeProof(proof);
-            setWalletBundle(loadStoredWalletBundle());
-            setStatus(`Cashu proof received.`);
-          } else {
-            setError("Mint returned no proofs.");
-          }
-        } catch (mintError) {
-          console.error("[poll] minting failed for quote", mintQuote.quote, mintError);
-          setError(mintError instanceof Error ? mintError.message : "Token minting failed");
-        } finally {
-          setMintingTokens(false);
-        }
+      if (proof) {
+        setCurrentProof(proof);
+        const coordinatorProof: CoordinatorProof = {
+          coordinatorNpub,
+          mintUrl: activeMintUrl,
+          proof,
+          proofSecret: (proof as any).secret ?? ""
+        };
+        addCoordinatorProof(coordinatorProof);
+        setWalletBundle(loadStoredWalletBundle());
+        setStatus(`Voting pass received.`);
+      } else {
+        setError("Mint returned no proofs.");
       }
     } catch (requestError) {
-      console.error("[poll] quote status check failed for quote", mintQuote.quote, requestError);
+      if (!DEMO_MODE && mintQuote) {
+        try {
+          const status = await checkQuoteStatus(mintQuote.quote);
+          setQuoteState(status.state);
+        } catch {
+          // ignore fallback failure
+        }
+      }
       setPollingQuote(false);
       setError(requestError instanceof Error ? requestError.message : "Quote status check failed");
+    } finally {
+      setMintingTokens(false);
     }
-  }, [mintQuote, activeMintUrl]);
+  }, [mintQuote, activeNpub, electionId, coordinatorNpub, activeMintUrl]);
 
   useEffect(() => {
     if (!pollingQuote || !mintQuote) return;
-
-    let cancelled = false;
-
     void pollQuoteAndMint();
-
-    const intervalId = window.setInterval(() => {
-      if (!cancelled) {
-        void pollQuoteAndMint();
-      }
-    }, USE_MOCK ? 2500 : 5000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-    };
   }, [pollingQuote, mintQuote, pollQuoteAndMint]);
+
+  const startMultiCoordinatorIssuance = useCallback(async () => {
+    if (!electionInfo || !activeNpub) return;
+
+    const coordinatorsToUse = discoveredCoordinators.length > 1
+      ? discoveredCoordinators
+      : [{ npub: coordinatorNpub, httpApi: "", mintUrl: activeMintUrl, relays }];
+
+    setMultiIssuanceRunning(true);
+    setIssuanceProgress({});
+    setIssuanceErrors({});
+
+    storeWalletBundle({
+      electionId: electionInfo.election_id,
+      ephemeralKeypair: {
+        nsec: nsecInput,
+        npub: derivedNpub ?? "",
+      },
+      coordinatorProofs: [],
+      election: {
+        electionId: electionInfo.election_id,
+        title: electionInfo.title,
+        questions: electionInfo.questions,
+        vote_start: electionInfo.vote_start,
+        vote_end: electionInfo.vote_end,
+        mint_urls: electionInfo.mint_urls,
+        coordinator_npubs: coordinatorsToUse.map(c => c.npub),
+        eligible_root: electionInfo.eligible_root,
+        eligible_count: electionInfo.eligible_count,
+      },
+      relays
+    });
+    if (nsecInput && derivedNpub) {
+      storeEphemeralKeypair(nsecInput, derivedNpub);
+    }
+    setWalletBundle(loadStoredWalletBundle());
+
+    for (const coord of coordinatorsToUse) {
+      const mintUrl = (coord.mintUrl || MINT_URL).replace(/\/$/, "");
+      setIssuanceProgress(prev => ({ ...prev, [coord.npub]: "requesting_quote" }));
+
+      try {
+        const quote = await createMintQuote(mintUrl);
+        setMintQuote(quote);
+        setQuoteState("UNPAID");
+        setIssuanceProgress(prev => ({ ...prev, [coord.npub]: "publishing_claim" }));
+
+        let event;
+        if (signer && signerMode === "nip07") {
+          event = await signCashuClaimEvent(signer, coord.npub, mintUrl, quote.quote, quote.request, electionInfo.election_id);
+        } else {
+          event = createCashuClaimEvent(nsecInput, coord.npub, mintUrl, quote.quote, quote.request, electionInfo.election_id);
+        }
+
+        const result = await publishCashuClaim(relays, event);
+        setIssuanceProgress(prev => ({ ...prev, [coord.npub]: "polling" }));
+
+        if (result.successes === 0) {
+          setIssuanceProgress(prev => ({ ...prev, [coord.npub]: "error" }));
+          setIssuanceErrors(prev => ({ ...prev, [coord.npub]: "Claim publish failed on all relays" }));
+          continue;
+        }
+
+        try {
+          await logClaimDebug({
+            npub: activeNpub ?? "",
+            coordinatorNpub: coord.npub,
+            mintApiUrl: mintUrl,
+            relays,
+            quoteId: quote.quote,
+            invoice: quote.request,
+            event: {
+              id: event.id,
+              pubkey: event.pubkey,
+              kind: event.kind,
+              created_at: event.created_at,
+              content: event.content,
+              tags: event.tags,
+              sig: event.sig
+            },
+            publishResult: result
+          });
+        } catch {
+          console.warn("[voter] failed to send claim debug log for", coord.npub);
+        }
+
+        let approved = false;
+        const pollDelayMs = DEMO_MODE ? 25 : USE_MOCK ? 2500 : 5000;
+        for (let i = 0; i < 60; i++) {
+          await new Promise(r => setTimeout(r, pollDelayMs));
+          const status = await checkQuoteStatus(quote.quote, mintUrl);
+          setQuoteState(status.state);
+          if (status.state === "PAID") {
+            approved = true;
+            break;
+          }
+        }
+
+        if (!approved) {
+          setIssuanceProgress(prev => ({ ...prev, [coord.npub]: "error" }));
+          setIssuanceErrors(prev => ({ ...prev, [coord.npub]: "Quote not approved within timeout" }));
+          continue;
+        }
+
+        setIssuanceProgress(prev => ({ ...prev, [coord.npub]: "minting" }));
+        const mintResult = await requestQuoteAndMint(mintUrl, quote.quote);
+        const proof = mintResult.proofs[0];
+
+        if (proof) {
+          const coordinatorProof: CoordinatorProof = {
+            coordinatorNpub: coord.npub,
+            mintUrl,
+            proof,
+            proofSecret: (proof as any).secret ?? "",
+          };
+          addCoordinatorProof(coordinatorProof);
+          setWalletBundle(loadStoredWalletBundle());
+          setCurrentProof(proof);
+          setIssuanceProgress(prev => ({ ...prev, [coord.npub]: "done" }));
+        } else {
+          setIssuanceProgress(prev => ({ ...prev, [coord.npub]: "error" }));
+          setIssuanceErrors(prev => ({ ...prev, [coord.npub]: "Mint returned no proofs" }));
+        }
+      } catch (err) {
+        setIssuanceProgress(prev => ({ ...prev, [coord.npub]: "error" }));
+        setIssuanceErrors(prev => ({ ...prev, [coord.npub]: err instanceof Error ? err.message : "Unknown error" }));
+      }
+    }
+
+    setMultiIssuanceRunning(false);
+    const finalBundle = loadStoredWalletBundle();
+    const proofCount = finalBundle?.coordinatorProofs.length ?? 0;
+    setStatus(`Issuance complete. ${proofCount} proof(s) obtained.`);
+  }, [electionInfo, activeNpub, discoveredCoordinators, coordinatorNpub, activeMintUrl, relays, signer, signerMode, nsecInput]);
 
   const quoteStateLabel = quoteState === "UNPAID"
     ? "Waiting for coordinator approval"
@@ -483,21 +644,36 @@ export default function App() {
     <main className="page-shell">
       <section className="hero-card">
         <div className="hero-brand">
-          <img src="/images/logo.png" alt="" width={28} height={28} />
+          <img src={assetUrl("images/logo.png")} alt="" width={28} height={28} />
           <p className="eyebrow">Voter Portal</p>
         </div>
-        <h1 className="hero-title">Check your eligible npub and mint a Cashu voting proof.</h1>
+        <PageNav current="vote" />
+        <h1 className="hero-title">{DEMO_MODE ? "Verify eligibility and get your voting pass." : "Check your eligible npub and mint a Cashu voting proof."}</h1>
         <p className="hero-copy">
-          Enter an eligible `npub`, request a quote from the Mint API, sign that quote claim with your `nsec`, publish it to Nostr relays, then receive a proof into your local wallet.
+          {DEMO_MODE
+            ? "Follow the guided flow: choose a signer, paste your nsec if you want a raw keypair, verify eligibility, request approval, and receive your voting pass."
+            : "Enter an eligible `npub`, request a quote from the Mint API, sign that quote claim with your `nsec`, publish it to Nostr relays, then receive a proof into your local wallet."}
+        </p>
+        <p className="field-hint hero-hint">
+          {nip07Available
+            ? "Browser extension detected. You can use it, or keep the raw nsec path visible below."
+            : "Paste a raw nsec below, or use the browser extension if you prefer."}
         </p>
 
         {discoveryLoading ? (
           <p className="field-hint hero-hint">Discovering coordinator...</p>
         ) : coordinatorInfo ? (
           <div className="hero-metadata">
-            <span>Coordinator</span>
+            <span>Coordinator{discoveredCoordinators.length > 1 ? `s (${discoveredCoordinators.length})` : ""}</span>
             <code className="inline-code-badge">{coordinatorNpub.slice(0, 20)}...</code>
-            <span><img className="inline-icon" src="/images/bitcoin-logo.png" alt="" width={18} height={18} />Mint</span>
+            {discoveredCoordinators.length > 1 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, maxWidth: "100%" }}>
+                {discoveredCoordinators.map((c) => (
+                  <code key={c.npub} className="inline-code-badge" style={{ fontSize: "0.75rem" }}>{c.npub.slice(0, 16)}...</code>
+                ))}
+              </div>
+            )}
+            <span><img className="inline-icon" src={assetUrl("images/bitcoin-logo.png")} alt="" width={18} height={18} />Mint</span>
             <code className="inline-code-badge">{activeMintUrl}</code>
             {allElections.length > 1 && (
               <select
@@ -526,21 +702,21 @@ export default function App() {
                 <code className="inline-code-badge">{electionInfo.title}</code>
               </>
             )}
-            {electionInfo && electionInfo.start_time > 0 && (
+            {electionInfo && electionInfo.vote_start > 0 && (
               <span className="field-hint">
-                {formatDateTime(electionInfo.start_time)} -- {formatDateTime(electionInfo.end_time)}
+                {formatDateTime(electionInfo.vote_start)} -- {formatDateTime(electionInfo.vote_end)}
               </span>
             )}
           </div>
         ) : (
           <div style={{ textAlign: "center", padding: "20px 0" }}>
-            <img className="empty-state-image" src="/images/nostr/underconstruction-dark.png" alt="" width={160} />
+            <img className="empty-state-image" src={assetUrl("images/nostr/underconstruction-dark.png")} alt="" width={160} />
             <p className="field-hint hero-hint" style={{ color: "var(--muted)" }}>
               Could not reach coordinator. Mock mode may be active.
             </p>
           </div>
         )}
-        <img className="hero-accent-image" src="/images/black-hat.webp" alt="" width={140} />
+        <img className="hero-accent-image" src={assetUrl("images/black-hat.webp")} alt="" width={140} />
       </section>
 
       <section className="content-grid">
@@ -568,14 +744,13 @@ export default function App() {
             >
               Browser Extension
             </button>
-            <button
-              type="button"
-              className={`signer-mode-option${signerMode === "raw" ? " active" : ""}`}
-              onClick={() => {
-                setSignerMode("raw");
-                setSigner(null);
-              }}
-            >
+              <button
+                type="button"
+                className={`signer-mode-option${signerMode === "raw" ? " active" : ""}`}
+                onClick={() => {
+                  setSignerMode("raw");
+                }}
+              >
               Paste nsec
             </button>
           </div>
@@ -653,14 +828,14 @@ export default function App() {
             </>
           )}
 
-          <img className="panel-accent-image" src="/images/nostr/gmnotes.png" alt="" width={120} />
+          <img className="panel-accent-image" src={assetUrl("images/nostr/gmnotes.png")} alt="" width={120} />
         </article>
 
         <article className="panel panel-wide">
           <div className="panel-header">
             <div>
               <p className="panel-kicker">Step 2</p>
-              <h2>Get your voter proof</h2>
+              <h2>{DEMO_MODE ? `Get your ${DEMO_COPY.pass}` : "Get your voter proof"}</h2>
             </div>
             {currentProof && <span className="count-pill">Proof received</span>}
             {quoteStateLabel && <span className="count-pill">{quoteStateLabel}</span>}
@@ -670,14 +845,21 @@ export default function App() {
             <div>
               <div className="substep-card">
                 <p className="code-label">Step 2.1</p>
-                <h3 className="substep-title">Request quote from Mint</h3>
+                <h3 className="substep-title">{DEMO_MODE ? "Request approval" : "Request quote from Mint"}</h3>
                 <p className="field-hint substep-copy">
-                  Once your npub passes the eligibility check, ask the Mint API for an issuance quote.
+                  {discoveredCoordinators.length > 1
+                    ? `Once eligible, request a proof from each of the ${discoveredCoordinators.length} coordinators.`
+                    : "Once your npub passes the eligibility check, ask the Mint API for an issuance quote."}
                 </p>
                 <div className="button-row button-row-tight">
-                  <button className="secondary-button" onClick={() => void requestQuote()} disabled={!canRequestQuote}>
-                    {requestingQuote ? "Requesting..." : "Request quote"}
+                  <button className="secondary-button" onClick={() => void requestQuote()} disabled={!canRequestQuote || multiIssuanceRunning}>
+                    {requestingQuote ? "Requesting..." : (DEMO_MODE ? "Request voting pass" : "Request quote (single)")}
                   </button>
+                  {discoveredCoordinators.length > 1 && (
+                    <button className="primary-button" onClick={() => void startMultiCoordinatorIssuance()} disabled={!canRequestQuote || multiIssuanceRunning}>
+                      {multiIssuanceRunning ? "Issuing from all coordinators..." : `Request from all ${discoveredCoordinators.length} coordinators`}
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -716,7 +898,7 @@ export default function App() {
                     (signerMode === "nip07" && !signer)
                   }
                 >
-                  {publishingClaim ? "Publishing..." : "Sign and publish claim"}
+                  {publishingClaim ? "Publishing..." : (DEMO_MODE ? "Confirm request" : "Sign and publish claim")}
                 </button>
               </div>
 
@@ -750,6 +932,57 @@ export default function App() {
                   Proof received and stored as your single voting proof.
                 </div>
               )}
+
+              {discoveredCoordinators.length > 1 && Object.keys(issuanceProgress).length > 0 && (
+                <div style={{ marginTop: 16 }}>
+                  <p className="code-label" style={{ marginBottom: 8 }}>Per-coordinator issuance progress</p>
+                  {discoveredCoordinators.map((coord) => {
+                    const state = issuanceProgress[coord.npub];
+                    const errorMsg = issuanceErrors[coord.npub];
+                    const stateLabel = state === "requesting_quote"
+                      ? "Requesting quote..."
+                      : state === "publishing_claim"
+                        ? "Publishing claim..."
+                        : state === "polling"
+                          ? "Waiting for approval..."
+                          : state === "minting"
+                            ? "Minting proof..."
+                            : state === "done"
+                              ? "Proof received"
+                              : state === "error"
+                                ? "Failed"
+                                : "Pending";
+                    return (
+                      <div key={coord.npub} style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        padding: "6px 0",
+                        borderBottom: "1px solid rgba(88,59,39,0.06)",
+                      }}>
+                        <span style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          width: 18,
+                          height: 18,
+                          borderRadius: "50%",
+                          fontSize: "0.7rem",
+                          fontWeight: 700,
+                          flexShrink: 0,
+                          background: state === "done" ? "var(--accent)" : state === "error" ? "#e74c3c" : "rgba(88,59,39,0.08)",
+                          color: state === "done" || state === "error" ? "#fff" : "var(--muted)",
+                        }}>
+                          {state === "done" ? "\u2713" : state === "error" ? "\u2717" : "\u2022"}
+                        </span>
+                        <code style={{ fontSize: "0.78rem", flexShrink: 0 }}>{coord.npub.slice(0, 20)}...</code>
+                        <span className="field-hint" style={{ margin: 0, opacity: 0.7 }}>{stateLabel}</span>
+                        {errorMsg && <span style={{ fontSize: "0.75rem", color: "#e74c3c" }}>{errorMsg}</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
         </article>
@@ -760,23 +993,23 @@ export default function App() {
               <p className="panel-kicker">Wallet</p>
               <h2>Your voting proof</h2>
             </div>
-            <span className="count-pill">{walletBundle?.proof ? "1 proof" : "No proof"}</span>
+            <span className="count-pill">{walletBundle && walletBundle.coordinatorProofs.length > 0 ? `${walletBundle.coordinatorProofs.length} proof(s)` : "No proof"}</span>
           </div>
 
-          {walletBundle?.proof ? (
+          {walletBundle && walletBundle.coordinatorProofs.length > 0 ? (
             <div className="derived-box">
               <p className="code-label">Proof</p>
-              <code className="code-block code-block-muted">{JSON.stringify(walletBundle.proof, null, 2)}</code>
+              <code className="code-block code-block-muted">{JSON.stringify(walletBundle.coordinatorProofs.map(cp => cp.proof), null, 2)}</code>
               <p className="field-hint">Election {walletBundle.election?.electionId ?? "unknown"}</p>
-              <p className="field-hint">Keyset {walletBundle.proof.id}</p>
+              <p className="field-hint">Keyset {walletBundle.coordinatorProofs[0].proof.id}</p>
             </div>
           ) : (
             <p className="empty-copy">No proof stored yet. Request a quote, publish the signed claim, and wait for the mint proof.</p>
           )}
 
-          {walletBundle?.proof && (
+          {walletBundle && walletBundle.coordinatorProofs.length > 0 && (
             <div className="button-row">
-              <a className="primary-button link-button cta-link-button" href="/vote.html">Go To Voting Page</a>
+              <a className="primary-button link-button cta-link-button" href={pageUrl("vote.html")}>Go To Voting Page</a>
             </div>
           )}
         </article>

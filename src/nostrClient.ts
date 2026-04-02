@@ -1,4 +1,5 @@
 import { generateSecretKey, getPublicKey, finalizeEvent, SimplePool } from "nostr-tools";
+import { queueNostrPublish } from "./nostrPublishQueue.js";
 
 export type VotePayload = {
   electionId: string;
@@ -27,7 +28,7 @@ export async function publishVote(
   const signedEvent = finalizeEvent(eventTemplate, sk);
 
   const pool = new SimplePool();
-  await pool.publish([relayUrl], signedEvent);
+  await queueNostrPublish(() => Promise.allSettled(pool.publish([relayUrl], signedEvent)));
 
   return {
     eventId: signedEvent.id,
