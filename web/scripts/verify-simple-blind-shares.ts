@@ -39,6 +39,8 @@ function makeAnnouncementEvent(
       scheme: SIMPLE_BLIND_SCHEME,
       key_id: privateKey.keyId,
       bits: privateKey.bits,
+      hash: privateKey.hash,
+      salt_length: privateKey.saltLength,
       n: privateKey.n,
       e: privateKey.e,
       created_at: "2026-04-02T00:00:00.000Z",

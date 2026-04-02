@@ -102,6 +102,7 @@ async function parseSimpleSubmittedVoteEvent(
       voting_id?: string;
       choice?: "Yes" | "No";
       shard_proofs?: SimplePublicShardProof[];
+      shard_certificates?: SimpleShardCertificate[];
       created_at?: string;
     };
 
@@ -112,7 +113,11 @@ async function parseSimpleSubmittedVoteEvent(
       return null;
     }
 
-    const shardProofs = Array.isArray(payload.shard_proofs) ? payload.shard_proofs : [];
+    const shardProofs = Array.isArray(payload.shard_proofs)
+      ? payload.shard_proofs
+      : Array.isArray(payload.shard_certificates)
+        ? payload.shard_certificates.map((certificate) => toSimplePublicShardProof(certificate))
+        : [];
 
     return {
       eventId: event.id,

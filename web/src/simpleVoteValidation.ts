@@ -24,11 +24,12 @@ export function validateSimpleSubmittedVotes(
   });
 
   return canonicallySortedVotes.map((vote) => {
-    const parsedProofs = vote.shardProofs
+    const shardProofs = Array.isArray(vote.shardProofs) ? vote.shardProofs : [];
+    const parsedProofs = shardProofs
       .map((proof) => parseSimplePublicShardProof(proof))
       .filter((proof) => proof !== null);
 
-    if (parsedProofs.length < vote.shardProofs.length) {
+    if (parsedProofs.length < shardProofs.length) {
       return { vote, valid: false, reason: "Invalid shard signature" };
     }
 

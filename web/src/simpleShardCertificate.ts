@@ -6,7 +6,7 @@ import {
   verifyEvent,
   type VerifiedEvent,
 } from "nostr-tools";
-import { sha256 } from "@noble/hashes/sha2.js";
+import { sha384 } from "@noble/hashes/sha2.js";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import {
   SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS,
@@ -18,14 +18,18 @@ import {
 import { sha256Hex } from "./tokenIdentity";
 
 export const SIMPLE_BLIND_KEY_KIND = 38993;
-export const SIMPLE_BLIND_SCHEME = "rsa-blind-v1";
+export const SIMPLE_BLIND_SCHEME = "rsabssa-sha384-pss-randomized-v1";
 export const SIMPLE_BLIND_KEY_BITS = 3072;
-const SIMPLE_BLIND_DOMAIN_SEPARATOR = "auditable-voting/simple-blind/v1";
+export const SIMPLE_BLIND_HASH = "SHA-384";
+export const SIMPLE_BLIND_SALT_LENGTH = 48;
+const SIMPLE_BLIND_DOMAIN_SEPARATOR = "auditable-voting/simple-blind/v2";
 
 export type SimpleBlindPublicKey = {
   scheme: typeof SIMPLE_BLIND_SCHEME;
   keyId: string;
   bits: number;
+  hash: typeof SIMPLE_BLIND_HASH;
+  saltLength: typeof SIMPLE_BLIND_SALT_LENGTH;
   n: string;
   e: string;
 };
@@ -174,6 +178,11 @@ function bigintToHex(value: bigint) {
   return value.toString(16);
 }
 
+function bigintToFixedLengthBytes(value: bigint, byteLength: number) {
+  const hex = value.toString(16).padStart(byteLength * 2, "0");
+  return hexToBytes(hex);
+}
+
 function hexToBigint(hex: string) {
   return BigInt(`0x${hex}`);
 }
@@ -242,21 +251,145 @@ function randomBigintBelow(maxExclusive: bigint, webCryptoOverride?: Crypto): bi
   }
 }
 
-function hashMessageRepresentative(message: string, modulus: bigint) {
-  const hashHex = bytesToHex(
-    sha256(utf8ToBytes(`${SIMPLE_BLIND_DOMAIN_SEPARATOR}|${message}`)),
+function xorBytes(left: Uint8Array, right: Uint8Array) {
+  const bytes = new Uint8Array(left.length);
+  for (let index = 0; index < left.length; index += 1) {
+    bytes[index] = left[index] ^ right[index];
+  }
+  return bytes;
+}
+
+function mgf1Sha384(seed: Uint8Array, length: number) {
+  const blocks: Uint8Array[] = [];
+  let offset = 0;
+  let counter = 0;
+
+  while (offset < length) {
+    const counterBytes = new Uint8Array([
+      (counter >>> 24) & 0xff,
+      (counter >>> 16) & 0xff,
+      (counter >>> 8) & 0xff,
+      counter & 0xff,
+    ]);
+    const digest = new Uint8Array(sha384(new Uint8Array([...seed, ...counterBytes])));
+    blocks.push(digest);
+    offset += digest.length;
+    counter += 1;
+  }
+
+  const concatenated = new Uint8Array(offset);
+  let cursor = 0;
+  for (const block of blocks) {
+    concatenated.set(block, cursor);
+    cursor += block.length;
+  }
+
+  return concatenated.slice(0, length);
+}
+
+function encodePssRepresentative(
+  message: string,
+  modulus: bigint,
+  webCryptoOverride?: Crypto,
+) {
+  const cryptoApi = getWebCrypto(webCryptoOverride);
+  const messageBytes = utf8ToBytes(`${SIMPLE_BLIND_DOMAIN_SEPARATOR}|${message}`);
+  const messageHash = new Uint8Array(sha384(messageBytes));
+  const modulusBits = modulus.toString(2).length;
+  const emBits = modulusBits - 1;
+  const emLen = Math.ceil(emBits / 8);
+  const hashLength = messageHash.length;
+  const salt = cryptoApi.getRandomValues(new Uint8Array(SIMPLE_BLIND_SALT_LENGTH));
+
+  if (emLen < hashLength + SIMPLE_BLIND_SALT_LENGTH + 2) {
+    throw new Error("RSA modulus is too small for blind PSS encoding.");
+  }
+
+  const messagePrime = new Uint8Array(8 + hashLength + salt.length);
+  messagePrime.set(messageHash, 8);
+  messagePrime.set(salt, 8 + hashLength);
+  const hashedPrime = new Uint8Array(sha384(messagePrime));
+  const ps = new Uint8Array(emLen - salt.length - hashLength - 2);
+  const dataBlock = new Uint8Array([...ps, 0x01, ...salt]);
+  const dbMask = mgf1Sha384(hashedPrime, emLen - hashLength - 1);
+  const maskedDb = xorBytes(dataBlock, dbMask);
+  const unusedBits = (8 * emLen) - emBits;
+  if (unusedBits > 0) {
+    maskedDb[0] &= 0xff >>> unusedBits;
+  }
+  const encoded = new Uint8Array(emLen);
+  encoded.set(maskedDb, 0);
+  encoded.set(hashedPrime, emLen - hashLength - 1);
+  encoded[emLen - 1] = 0xbc;
+
+  return hexToBigint(bytesToHex(encoded));
+}
+
+function verifyPssRepresentative(
+  publicKey: SimpleBlindPublicKey,
+  message: string,
+  signatureHex: string,
+) {
+  const modulus = hexToBigint(publicKey.n);
+  const exponent = hexToBigint(publicKey.e);
+  const modulusBits = modulus.toString(2).length;
+  const emBits = modulusBits - 1;
+  const emLen = Math.ceil(emBits / 8);
+  const hashLength = SIMPLE_BLIND_SALT_LENGTH;
+  const recovered = modPow(hexToBigint(signatureHex), exponent, modulus);
+  const encoded = bigintToFixedLengthBytes(recovered, emLen);
+
+  if (encoded[encoded.length - 1] !== 0xbc) {
+    return false;
+  }
+
+  const maskedDb = encoded.slice(0, emLen - hashLength - 1);
+  const hash = encoded.slice(emLen - hashLength - 1, emLen - 1);
+  const unusedBits = (8 * emLen) - emBits;
+  if (unusedBits > 0 && (maskedDb[0] & (0xff << (8 - unusedBits))) !== 0) {
+    return false;
+  }
+
+  const dbMask = mgf1Sha384(hash, emLen - hashLength - 1);
+  const dataBlock = xorBytes(maskedDb, dbMask);
+  if (unusedBits > 0) {
+    dataBlock[0] &= 0xff >>> unusedBits;
+  }
+
+  const prefixLength = emLen - hashLength - publicKey.saltLength - 2;
+  if (prefixLength < 0) {
+    return false;
+  }
+
+  for (let index = 0; index < prefixLength; index += 1) {
+    if (dataBlock[index] !== 0x00) {
+      return false;
+    }
+  }
+
+  if (dataBlock[prefixLength] !== 0x01) {
+    return false;
+  }
+
+  const salt = dataBlock.slice(dataBlock.length - publicKey.saltLength);
+  const messageHash = new Uint8Array(
+    sha384(utf8ToBytes(`${SIMPLE_BLIND_DOMAIN_SEPARATOR}|${message}`)),
   );
-  const representative = (hexToBigint(hashHex) % (modulus - 1n)) + 1n;
-  return representative;
+  const messagePrime = new Uint8Array(8 + messageHash.length + salt.length);
+  messagePrime.set(messageHash, 8);
+  messagePrime.set(salt, 8 + messageHash.length);
+  const expectedHash = new Uint8Array(sha384(messagePrime));
+
+  return bytesToHex(hash) === bytesToHex(expectedHash);
 }
 
 export async function generateSimpleBlindKeyPair(bits = SIMPLE_BLIND_KEY_BITS, webCryptoOverride?: Crypto): Promise<SimpleBlindPrivateKey> {
   const webCrypto = getWebCrypto(webCryptoOverride);
   const keyPair = await webCrypto.subtle.generateKey({
-    name: "RSASSA-PKCS1-v1_5",
+    name: "RSA-PSS",
     modulusLength: bits,
     publicExponent: new Uint8Array([1, 0, 1]),
-    hash: "SHA-256",
+    hash: SIMPLE_BLIND_HASH,
   }, true, ["sign", "verify"]);
 
   const privateJwk = await webCrypto.subtle.exportKey("jwk", keyPair.privateKey) as RsaJwk;
@@ -270,6 +403,8 @@ export async function generateSimpleBlindKeyPair(bits = SIMPLE_BLIND_KEY_BITS, w
     scheme: SIMPLE_BLIND_SCHEME,
     keyId: keyId.slice(0, 24),
     bits,
+    hash: SIMPLE_BLIND_HASH,
+    saltLength: SIMPLE_BLIND_SALT_LENGTH,
     n: bigintToHex(bigintFromBase64Url(publicJwk.n)),
     e: bigintToHex(bigintFromBase64Url(publicJwk.e)),
     d: bigintToHex(bigintFromBase64Url(privateJwk.d)),
@@ -281,6 +416,8 @@ export function toSimpleBlindPublicKey(privateKey: SimpleBlindPrivateKey): Simpl
     scheme: SIMPLE_BLIND_SCHEME,
     keyId: privateKey.keyId,
     bits: privateKey.bits,
+    hash: privateKey.hash,
+    saltLength: privateKey.saltLength,
     n: privateKey.n,
     e: privateKey.e,
   };
@@ -313,6 +450,8 @@ export async function publishSimpleBlindKeyAnnouncement(input: {
       scheme: input.publicKey.scheme,
       key_id: input.publicKey.keyId,
       bits: input.publicKey.bits,
+      hash: input.publicKey.hash,
+      salt_length: input.publicKey.saltLength,
       n: input.publicKey.n,
       e: input.publicKey.e,
       created_at: createdAt,
@@ -356,6 +495,8 @@ export function parseSimpleBlindKeyAnnouncement(
       scheme?: string;
       key_id?: string;
       bits?: number;
+      hash?: string;
+      salt_length?: number;
       n?: string;
       e?: string;
       created_at?: string;
@@ -367,6 +508,8 @@ export function parseSimpleBlindKeyAnnouncement(
       || payload.scheme !== SIMPLE_BLIND_SCHEME
       || !payload.key_id
       || typeof payload.bits !== "number"
+      || payload.hash !== SIMPLE_BLIND_HASH
+      || payload.salt_length !== SIMPLE_BLIND_SALT_LENGTH
       || !payload.n
       || !payload.e
     ) {
@@ -388,6 +531,8 @@ export function parseSimpleBlindKeyAnnouncement(
         scheme: SIMPLE_BLIND_SCHEME,
         keyId: payload.key_id,
         bits: payload.bits,
+        hash: SIMPLE_BLIND_HASH,
+        saltLength: SIMPLE_BLIND_SALT_LENGTH,
         n: payload.n,
         e: payload.e,
       },
@@ -517,7 +662,7 @@ export function createSimpleBlindIssuanceRequest(input: {
     const modulus = hexToBigint(input.publicKey.n);
     const exponent = hexToBigint(input.publicKey.e);
     const tokenMessage = input.tokenMessage?.trim() || `${input.votingId}:${randomUuid(input.webCrypto)}`;
-    const message = hashMessageRepresentative(tokenMessage, modulus);
+    const message = encodePssRepresentative(tokenMessage, modulus, input.webCrypto);
 
     let blindingFactor = 0n;
     do {
@@ -642,12 +787,7 @@ export function parseSimpleShardCertificate(
       return null;
     }
 
-    const modulus = hexToBigint(keyAnnouncement.publicKey.n);
-    const exponent = hexToBigint(keyAnnouncement.publicKey.e);
-    const signature = hexToBigint(share.unblindedSignature);
-    const representative = hashMessageRepresentative(share.tokenMessage, modulus);
-    const recovered = modPow(signature, exponent, modulus);
-    if (recovered !== representative) {
+    if (!verifyPssRepresentative(keyAnnouncement.publicKey, share.tokenMessage, share.unblindedSignature)) {
       return null;
     }
 
@@ -700,12 +840,7 @@ export function parseSimplePublicShardProof(
       return null;
     }
 
-    const modulus = hexToBigint(keyAnnouncement.publicKey.n);
-    const exponent = hexToBigint(keyAnnouncement.publicKey.e);
-    const signature = hexToBigint(proof.unblindedSignature);
-    const representative = hashMessageRepresentative(proof.tokenCommitment, modulus);
-    const recovered = modPow(signature, exponent, modulus);
-    if (recovered !== representative) {
+    if (!verifyPssRepresentative(keyAnnouncement.publicKey, proof.tokenCommitment, proof.unblindedSignature)) {
       return null;
     }
 
