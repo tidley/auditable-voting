@@ -15,6 +15,7 @@ import {
   type SimpleBlindRequestSecret,
 } from "./simpleShardCertificate";
 import {
+  fetchSimpleShardResponses,
   sendSimpleCoordinatorFollow,
   sendSimpleDmAcknowledgement,
   sendSimpleShardRequest,
@@ -104,6 +105,25 @@ function shortVotingId(votingId: string) {
   return votingId.slice(0, 12);
 }
 
+function equalReceivedShards(
+  left: SimpleShardResponse[],
+  right: SimpleShardResponse[],
+) {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((value, index) => {
+    const next = right[index];
+    return (
+      value.id === next?.id
+      && value.requestId === next?.requestId
+      && value.coordinatorNpub === next?.coordinatorNpub
+      && Boolean(value.shardCertificate) === Boolean(next?.shardCertificate)
+    );
+  });
+}
+
 function createRoundTokenMessage(votingId: string, voterNpub: string) {
   const randomPart = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   return `${votingId}:${voterNpub}:${randomPart}`;
@@ -132,6 +152,35 @@ export default function SimpleUiApp() {
   const sentTicketReceiptAckIdsRef = useRef<Set<string>>(new Set());
   const lastAutoSelectedVotingIdRef = useRef("");
   const manualRoundSelectionRef = useRef(false);
+
+  function reconcileIncomingShardResponses(nextResponses: SimpleShardResponse[]) {
+    const nextIssuedShares = nextResponses.flatMap((response) => {
+      const existingShare = response.shardCertificate;
+      if (existingShare) {
+        return [response];
+      }
+
+      const pending = pendingBlindRequests[`${response.coordinatorNpub}:${response.requestId}`]
+        ?? Object.values(pendingBlindRequests).find((request) => request.request.requestId === response.requestId);
+      if (!pending) {
+        return [];
+      }
+
+      try {
+        const shardCertificate = unblindSimpleBlindShare({
+          response: response.blindShareResponse,
+          secret: pending.secret,
+        });
+        return [{ ...response, shardCertificate }];
+      } catch {
+        return [];
+      }
+    });
+
+    setReceivedShards((current) => (
+      equalReceivedShards(current, nextIssuedShares) ? current : nextIssuedShares
+    ));
+  }
 
   const configuredCoordinatorTargets = useMemo(
     () => normalizeCoordinatorNpubs(manualCoordinators),
@@ -239,34 +288,48 @@ export default function SimpleUiApp() {
 
     return subscribeSimpleShardResponses({
       voterNsec,
-      onResponses: (nextResponses) => {
-        const nextIssuedShares = nextResponses.flatMap((response) => {
-          const existingShare = response.shardCertificate;
-          if (existingShare) {
-            return [response];
-          }
-
-          const pending = pendingBlindRequests[`${response.coordinatorNpub}:${response.requestId}`]
-            ?? Object.values(pendingBlindRequests).find((request) => request.request.requestId === response.requestId);
-          if (!pending) {
-            return [];
-          }
-
-          try {
-            const shardCertificate = unblindSimpleBlindShare({
-              response: response.blindShareResponse,
-              secret: pending.secret,
-            });
-            return [{ ...response, shardCertificate }];
-          } catch {
-            return [];
-          }
-        });
-
-        setReceivedShards(nextIssuedShares);
-      },
+      onResponses: reconcileIncomingShardResponses,
     });
   }, [configuredCoordinatorTargets.length, pendingBlindRequests, voterKeypair?.nsec]);
+
+  useEffect(() => {
+    const voterNsec = voterKeypair?.nsec?.trim() ?? "";
+
+    if (!voterNsec || configuredCoordinatorTargets.length === 0) {
+      return;
+    }
+
+    const hasPendingTicket = Object.values(pendingBlindRequests).some((request) => {
+      return !receivedShards.some((response) => response.requestId === request.request.requestId);
+    });
+
+    if (!hasPendingTicket) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const refresh = () => {
+      void fetchSimpleShardResponses({ voterNsec }).then((nextResponses) => {
+        if (!cancelled) {
+          reconcileIncomingShardResponses(nextResponses);
+        }
+      }).catch(() => undefined);
+    };
+
+    refresh();
+    const intervalId = window.setInterval(refresh, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [
+    configuredCoordinatorTargets.length,
+    pendingBlindRequests,
+    receivedShards,
+    voterKeypair?.nsec,
+  ]);
 
   useEffect(() => {
     if (configuredCoordinatorTargets.length === 0) {

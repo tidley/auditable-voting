@@ -166,6 +166,7 @@ let blindAnnouncementSubscribers: Array<{
   coordinatorNpub: string;
   onAnnouncement: (announcement: any | null) => void;
 }> = [];
+let suppressedShardResponseNotifications = new Set<string>();
 
 function sha(input: string) {
   return createHash("sha256").update(input).digest("hex");
@@ -632,7 +633,7 @@ vi.mock("./simpleShardDm", () => ({
     thresholdN?: number;
   }) => {
     const responseId = `response-${++responseCounter}`;
-    shardResponses.push({
+    const nextResponse = {
       id: responseId,
       dmEventId: `dm-response-${responseCounter}`,
       requestId: input.request.blindRequest.requestId,
@@ -653,9 +654,16 @@ vi.mock("./simpleShardDm", () => ({
         createdAt: new Date().toISOString(),
         keyAnnouncementEvent: input.keyAnnouncementEvent,
       },
-    });
-    notifyShardResponseSubscribers(input.voterNpub);
+    };
+    shardResponses.push(nextResponse);
+    if (!suppressedShardResponseNotifications.has(input.voterNpub)) {
+      notifyShardResponseSubscribers(input.voterNpub);
+    }
     return { responseId, eventId: `dm-response-${responseCounter}`, successes: 1, failures: 0, relayResults: [] };
+  }),
+  fetchSimpleShardResponses: vi.fn(async (input: { voterNsec: string }) => {
+    const voterNpub = nsecToNpub(input.voterNsec);
+    return shardResponses.filter((response) => response.voterNpub === voterNpub);
   }),
   subscribeSimpleShardResponses: vi.fn((input: {
     voterNsec: string;
@@ -860,12 +868,14 @@ describe("Simple round flow", () => {
     shardRequestSubscribers = [];
     dmAcknowledgementSubscribers = [];
     blindAnnouncementSubscribers = [];
+    suppressedShardResponseNotifications = new Set();
     window.sessionStorage.clear();
     await resetSimpleActorStateForTests();
   });
 
   afterEach(async () => {
     cleanup();
+    vi.useRealTimers();
     window.sessionStorage.clear();
     await resetSimpleActorStateForTests();
   });
@@ -1076,5 +1086,60 @@ describe("Simple round flow", () => {
     if (voterTwoRoundSelector) {
       expect(Array.from(voterTwoRoundSelector.options).some((option) => option.value === firstRoundId)).toBe(true);
     }
+  }, 40000);
+
+  it("recovers a ticket from DM history when the live delivery is missed", async () => {
+    const user = userEvent.setup();
+    const { default: SimpleCoordinatorApp } = await import("./SimpleCoordinatorApp");
+    const { default: SimpleUiApp } = await import("./SimpleUiApp");
+
+    const coordinator = render(<SimpleCoordinatorApp />);
+    const voter = render(<SimpleUiApp />);
+
+    const coordinatorUi = within(coordinator.container);
+    const voterUi = within(voter.container);
+
+    await user.click(coordinatorUi.getByRole("button", { name: /Refresh ID/i }));
+    await user.click(voterUi.getByRole("button", { name: /Refresh ID/i }));
+
+    await waitFor(() => {
+      expect(coordinator.container.querySelectorAll("code.simple-identity-code")[0]?.textContent?.startsWith("npub1")).toBe(true);
+      expect(voter.container.querySelectorAll("code.simple-identity-code")[0]?.textContent?.startsWith("npub1")).toBe(true);
+    });
+
+    const coordinatorNpub =
+      coordinator.container.querySelectorAll("code.simple-identity-code")[0]?.textContent ?? "";
+    const voterNpub =
+      voter.container.querySelectorAll("code.simple-identity-code")[0]?.textContent ?? "";
+
+    suppressedShardResponseNotifications = new Set([voterNpub]);
+
+    await user.type(voterUi.getByPlaceholderText("Enter npub..."), coordinatorNpub);
+    await user.click(voterUi.getByRole("button", { name: /Add coordinator/i }));
+    await user.click(voterUi.getByRole("button", { name: /Notify coordinators/i }));
+
+    await waitFor(() => {
+      expect(coordinatorUi.getByText(/is following this coordinator/i)).toBeTruthy();
+    });
+
+    await user.click(coordinatorUi.getByRole("button", { name: /Broadcast live vote/i }));
+
+    await waitFor(() => {
+      expect(voterUi.getByText(/Tickets ready: 0 of 1/i)).toBeTruthy();
+      expect(coordinatorUi.getByRole("button", { name: /Send ticket/i })).toBeTruthy();
+    });
+
+    await user.click(coordinatorUi.getByRole("button", { name: /Send ticket/i }));
+
+    await waitFor(() => {
+      expect(voterUi.getByText(/Waiting for ticket\./i)).toBeTruthy();
+    });
+
+    await new Promise((resolve) => window.setTimeout(resolve, 5200));
+
+    await waitFor(() => {
+      expect(voterUi.getByText(/Tickets ready: 1 of 1/i)).toBeTruthy();
+      expect(voterUi.getByText(/Ticket received\./i)).toBeTruthy();
+    });
   }, 40000);
 });
