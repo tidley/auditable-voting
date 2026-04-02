@@ -454,7 +454,7 @@ code {
 
 .simple-voter-page {
   border-top: 10px solid #4da3ff;
-  background: linear-gradient(180deg, rgba(30, 41, 59, 0.98), rgba(15, 23, 42, 0.98));
+  background: #0f172a;
   color: #f8fafc;
   padding: 32px;
   box-shadow: 0 20px 48px rgba(2, 6, 23, 0.5);
