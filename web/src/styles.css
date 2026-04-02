@@ -377,16 +377,84 @@ code {
   width: min(1240px, calc(100% - 32px));
 }
 
+.simple-app-shell {
+  width: min(1040px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 24px 0 48px;
+}
+
+.simple-role-switch-wrap {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.simple-role-switch-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.simple-role-switch-kicker {
+  margin: 0 0 6px;
+  color: #7dd3fc;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.simple-role-switch-title {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.simple-role-switch {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  width: min(420px, 100%);
+  padding: 8px;
+  border: 1px solid #334155;
+  background: #0f172a;
+  box-shadow: 0 20px 48px rgba(2, 6, 23, 0.35);
+}
+
+.simple-role-switch-button {
+  min-height: 52px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #94a3b8;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 180ms ease, color 180ms ease, border-color 180ms ease;
+}
+
+.simple-role-switch-button:hover {
+  background: #1e293b;
+  color: #e2e8f0;
+}
+
+.simple-role-switch-button.is-active {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #f8fafc;
+}
+
 .simple-voter-shell {
   width: min(960px, calc(100% - 32px));
   margin: 0 auto;
-  padding: 32px 0 48px;
+  padding: 0 0 48px;
   color: #f3f4f6;
 }
 
 .simple-voter-page {
   border-top: 10px solid #4da3ff;
-  background: linear-gradient(180deg, rgba(30, 41, 59, 0.98), rgba(15, 23, 42, 0.98));
+  background: #0f172a;
   color: #f8fafc;
   padding: 32px;
   box-shadow: 0 20px 48px rgba(2, 6, 23, 0.5);

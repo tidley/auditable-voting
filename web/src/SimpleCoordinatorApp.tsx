@@ -440,7 +440,7 @@ export default function SimpleCoordinatorApp() {
         return [nextVote, ...current.filter((vote) => vote.votingId !== nextVote.votingId)];
       });
       setSelectedVotingId(result.votingId);
-      setQuestionVotingId(result.votingId);
+      setQuestionVotingId("");
       setPublishStatus(result.successes > 0 ? "Vote broadcast." : "Vote broadcast failed.");
     } catch {
       setPublishStatus("Vote broadcast failed.");
@@ -449,19 +449,6 @@ export default function SimpleCoordinatorApp() {
 
   function selectRound(votingId: string) {
     setSelectedVotingId(votingId);
-    if (!isLeadCoordinator) {
-      return;
-    }
-
-    const selectedVote = publishedVotes.find((vote) => vote.votingId === votingId);
-    if (!selectedVote) {
-      return;
-    }
-
-    setQuestionVotingId(selectedVote.votingId);
-    setQuestionPrompt(selectedVote.prompt);
-    setQuestionThresholdT(String(selectedVote.thresholdT ?? 1));
-    setQuestionThresholdN(String(selectedVote.thresholdN ?? 1));
   }
 
   async function submitToLeadCoordinator() {
@@ -584,25 +571,25 @@ export default function SimpleCoordinatorApp() {
               ? "This coordinator publishes the live question."
               : "This coordinator follows the lead question and only issues shares."}
           </p>
+          {publishedVotes.length > 0 ? (
+            <>
+              <label className="simple-voter-label" htmlFor="simple-active-round">Current round</label>
+              <select
+                id="simple-active-round"
+                className="simple-voter-input"
+                value={selectedPublishedVote?.votingId ?? ""}
+                onChange={(event) => selectRound(event.target.value)}
+              >
+                {publishedVotes.map((vote) => (
+                  <option key={vote.eventId} value={vote.votingId}>
+                    {shortVotingId(vote.votingId)} - {vote.prompt}
+                  </option>
+                ))}
+              </select>
+            </>
+          ) : null}
           {isLeadCoordinator ? (
             <>
-              {publishedVotes.length > 0 ? (
-                <>
-                  <label className="simple-voter-label" htmlFor="simple-active-round">Current round</label>
-                  <select
-                    id="simple-active-round"
-                    className="simple-voter-input"
-                    value={selectedPublishedVote?.votingId ?? ""}
-                    onChange={(event) => selectRound(event.target.value)}
-                  >
-                    {publishedVotes.map((vote) => (
-                      <option key={vote.eventId} value={vote.votingId}>
-                        {shortVotingId(vote.votingId)} - {vote.prompt}
-                      </option>
-                    ))}
-                  </select>
-                </>
-              ) : null}
               <div className="simple-voter-action-row">
                 <button
                   type="button"
@@ -818,7 +805,7 @@ export default function SimpleCoordinatorApp() {
                             Vote {vote.choice} from {vote.voterNpub.slice(0, 16)}... {valid ? "(Valid)" : `(Invalid: ${reason})`}
                           </p>
                         </div>
-                        {vote.tokenId && <TokenFingerprint tokenId={vote.tokenId} xlarge />}
+                        {vote.tokenId && <TokenFingerprint tokenId={vote.tokenId} large />}
                       </div>
                     </li>
                   ))}

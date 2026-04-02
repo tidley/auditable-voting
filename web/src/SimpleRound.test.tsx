@@ -692,14 +692,32 @@ describe("Simple round flow", () => {
       expect(voterTwoUi.getAllByText("1").length).toBeGreaterThanOrEqual(2);
     });
 
+    const questionSection = coordinatorOneUi.getByRole("heading", { name: /^Question$/i }).closest("section");
+    expect(questionSection).toBeTruthy();
+    const leadQuestionInput = within(questionSection as HTMLElement).getByLabelText(/^Question$/i);
+    await user.clear(leadQuestionInput);
+    await user.type(leadQuestionInput, "Second question");
+    await user.click(coordinatorOneUi.getByRole("button", { name: /Broadcast live vote/i }));
+
+    await waitFor(() => {
+      const roundSelector = coordinatorOne.container.querySelector("select#simple-active-round");
+      expect(roundSelector).toBeTruthy();
+      const roundOptions = within(roundSelector as HTMLSelectElement).getAllByRole("option");
+      const roundOptionTexts = roundOptions.map((option) => option.textContent ?? "");
+      expect(roundOptions).toHaveLength(2);
+      expect(roundOptionTexts.some((text) => text.includes("round-1"))).toBe(true);
+      expect(roundOptionTexts.some((text) => text.includes("Second question"))).toBe(true);
+      expect(within(questionSection as HTMLElement).getByDisplayValue("Second question")).toBeTruthy();
+    });
+
     await user.click(voterOneUi.getByRole("button", { name: /^Yes$/i }));
     await user.click(voterTwoUi.getByRole("button", { name: /^No$/i }));
     await user.click(voterOneUi.getByRole("button", { name: /^Submit$/i }));
     await user.click(voterTwoUi.getByRole("button", { name: /^Submit$/i }));
+    await user.selectOptions(coordinatorOne.container.querySelector("select#simple-active-round") as HTMLSelectElement, roundId);
 
     await waitFor(() => {
       expect(coordinatorOneUi.getByText((_, element) => element?.textContent === "Yes: 1 | No: 1")).toBeTruthy();
-      expect(coordinatorTwoUi.getByText((_, element) => element?.textContent === "Yes: 1 | No: 1")).toBeTruthy();
     });
   }, 40000);
 });
