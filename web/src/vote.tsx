@@ -1,14 +1,14 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import VotingApp from "./VotingApp";
+import SimpleAppShell from "./SimpleAppShell";
 import "./styles.css";
 
 if (typeof document !== "undefined") {
-  document.body.classList.add("app-page");
+  document.body.classList.add("simple-page");
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <VotingApp />
+    <SimpleAppShell initialRole="voter" />
   </React.StrictMode>
 );

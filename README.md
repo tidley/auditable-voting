@@ -1,14 +1,14 @@
 # Auditable Voting
 
-Nostr + Cashu voting with coordinator-mediated blind token issuance, eligibility checks, and private ballot submission.
+Nostr voting with client-side coordinator and voter flows, blind-signature share issuance, and local recovery state.
 
 ## Live Deployment
 
-**Voter Portal:** http://vote.mints.23.182.128.64.sslip.io/
+**Main App:** http://vote.mints.23.182.128.64.sslip.io/
 
-**Operator Dashboard:** http://vote.mints.23.182.128.64.sslip.io/dashboard.html
+**Coordinator View:** http://vote.mints.23.182.128.64.sslip.io/dashboard.html
 
-**Voting Page:** http://vote.mints.23.182.128.64.sslip.io/vote.html
+**Voter View:** http://vote.mints.23.182.128.64.sslip.io/vote.html
 
 ## Project Board
 
@@ -52,7 +52,7 @@ npm install && npm --prefix web install
 ansible-playbook ansible/playbooks/deploy-and-prepare.yml
 ```
 
-This single command deploys Traefik, the voting coordinator (Cashu mint + Nostr client), the frontend dashboard, and publishes the election with eligibility data.
+This single command deploys the legacy Traefik/coordinator stack and the frontend bundle. The current frontend migration direction is client-only, with Nostr as canonical state and the simple shell as the primary shipped UI.
 
 ## Testing
 
@@ -106,39 +106,24 @@ Ticket model:
 
 ### Current Implementation Snapshot
 
-The repository currently implements coordinator-mediated blinded issuance with public Nostr ballot events and coordinator receipts.
+The primary shipped frontend is now the client-only simple shell:
 
-Single-coordinator flow:
+1. Open `/` or `/vote.html` for the voter shell.
+2. Open `/dashboard.html` for the coordinator shell.
+3. Voters and coordinators generate or restore local Nostr identities.
+4. Coordinators publish rounds over Nostr and send blind-signature shares over NIP-17.
+5. Voters collect round-bound shares, derive a ballot fingerprint locally, and submit ballots to Nostr.
+6. Coordinators validate submitted votes locally from the received blind-share set.
 
-1. Open the voter portal URL.
-2. Enter your npub and check eligibility.
-3. Request a mint quote, publish a kind `38010` claim, and wait for approval.
-4. Mint blinded tokens from the coordinator's Cashu mint.
-5. Fill out the ballot and publish kind `38000`.
-6. Submit the proof privately via NIP-17 gift wrap.
-7. Check vote acceptance and tally state.
-
-Multi-coordinator flow:
-
-1. Open the voter portal and auto-discover coordinators via kinds `38008` and `38012`.
-2. Enter your npub and verify it against the canonical eligible set.
-3. Request issuance from each coordinator.
-4. Publish a vote event with `proof-hash` tags for the relevant proofs.
-5. Submit proofs privately to coordinators.
-6. Publish voter confirmation via kind `38013` after the voting window closes.
-7. Run the audit view to compare tallies, confirmations, and coordinator outputs.
-
-See `docs/03-quorum-model.md` for the trust model and `docs/25-multi-coordinator-implementation-status.md` for implementation progress.
+The older backend-oriented frontend modules remain in-source as legacy code during migration, but they are no longer the canonical shipped UI path.
 
 ## Architecture
 
 ```
-Browser --> Traefik (:80)
-              |-- Host(vote.mints.23.182.128.64.sslip.io)
-                  --> voting-client container (nginx:alpine)
-                       |-- /        --> static HTML/JS
-                       |-- /api/    --> coordinator:8081
-                       |-- /mint/   --> mint:3338
+Browser (static bundle)
+  |-- Nostr relays for canonical shared state
+  |-- IndexedDB for local active state
+  |-- optional Blossom backup/restore layer (planned)
 ```
 
 ## Local Demo (mock mode)
