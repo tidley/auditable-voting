@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getPublicKey, nip19 } from "nostr-tools";
 import { createHash } from "node:crypto";
-import { resetSimpleActorStateForTests } from "./simpleLocalState";
+import { resetSimpleActorStateForTests, saveSimpleActorState } from "./simpleLocalState";
 
 type InternalResponse = {
   id: string;
@@ -940,6 +940,69 @@ describe("Simple round flow", () => {
       expect(voter.container.querySelectorAll("code.simple-identity-code")[1]?.textContent).toBe(voterNsec);
       expect(coordinator.container.querySelectorAll("code.simple-identity-code")[0]?.textContent).toBe(coordinatorNpub);
       expect(coordinator.container.querySelectorAll("code.simple-identity-code")[1]?.textContent).toBe(coordinatorNsec);
+    });
+  });
+
+  it("normalizes legacy coordinator rounds without authorized coordinator roster", async () => {
+    const { default: SimpleCoordinatorApp } = await import("./SimpleCoordinatorApp");
+
+    const coordinatorSecretKey = Uint8Array.from({ length: 32 }, (_, index) => index + 33);
+    const coordinatorNsec = nip19.nsecEncode(coordinatorSecretKey);
+    const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecretKey));
+
+    liveVotes = [{
+      votingId: "legacy-round",
+      prompt: "Legacy cached prompt",
+      coordinatorNpub,
+      createdAt: "2026-04-02T00:00:00.000Z",
+      thresholdT: 1,
+      thresholdN: 1,
+      eventId: "legacy-event",
+    } as unknown as InternalLiveVote];
+
+    await saveSimpleActorState({
+      role: "coordinator",
+      keypair: {
+        nsec: coordinatorNsec,
+        npub: coordinatorNpub,
+      },
+      updatedAt: new Date().toISOString(),
+      cache: {
+        leadCoordinatorNpub: "",
+        followers: [],
+        subCoordinators: [],
+        ticketDeliveries: {},
+        pendingRequests: [],
+        registrationStatus: null,
+        assignmentStatus: null,
+        questionPrompt: "Should the proposal pass?",
+        questionThresholdT: "1",
+        questionThresholdN: "1",
+        questionShareIndex: "1",
+        roundBlindPrivateKeys: {},
+        roundBlindKeyAnnouncements: {},
+        publishStatus: null,
+        publishedVotes: [{
+          votingId: "legacy-round",
+          prompt: "Legacy cached prompt",
+          coordinatorNpub,
+          createdAt: "2026-04-02T00:00:00.000Z",
+          thresholdT: 1,
+          thresholdN: 1,
+          eventId: "legacy-event",
+        }],
+        selectedVotingId: "legacy-round",
+        selectedSubmittedVotingId: "legacy-round",
+        submittedVotes: [],
+      },
+    });
+
+    const coordinator = render(<SimpleCoordinatorApp />);
+    const coordinatorUi = within(coordinator.container);
+
+    await waitFor(() => {
+      expect(coordinatorUi.getAllByText(/Legacy cached prompt/i).length).toBeGreaterThan(0);
+      expect(coordinatorUi.getByText(/Voting ID legacy-round/i)).toBeTruthy();
     });
   });
 

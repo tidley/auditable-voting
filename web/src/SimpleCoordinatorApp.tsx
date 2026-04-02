@@ -76,6 +76,39 @@ function sortCoordinatorRoster(values: string[]) {
   return [...new Set(values.filter((value) => value.trim().length > 0))].sort();
 }
 
+function normalizeLiveVoteSession(
+  vote: Partial<SimpleLiveVoteSession> | null | undefined,
+  fallbackCoordinatorNpubs: string[] = [],
+): SimpleLiveVoteSession | null {
+  if (
+    !vote
+    || typeof vote.votingId !== "string"
+    || typeof vote.prompt !== "string"
+    || typeof vote.coordinatorNpub !== "string"
+    || typeof vote.createdAt !== "string"
+    || typeof vote.eventId !== "string"
+  ) {
+    return null;
+  }
+
+  const authorizedCoordinatorNpubs = sortCoordinatorRoster(
+    Array.isArray(vote.authorizedCoordinatorNpubs)
+      ? vote.authorizedCoordinatorNpubs
+      : [vote.coordinatorNpub, ...fallbackCoordinatorNpubs],
+  );
+
+  return {
+    votingId: vote.votingId,
+    prompt: vote.prompt,
+    coordinatorNpub: vote.coordinatorNpub,
+    createdAt: vote.createdAt,
+    thresholdT: typeof vote.thresholdT === "number" ? vote.thresholdT : undefined,
+    thresholdN: typeof vote.thresholdN === "number" ? vote.thresholdN : undefined,
+    authorizedCoordinatorNpubs,
+    eventId: vote.eventId,
+  };
+}
+
 function createSimpleCoordinatorKeypair(): SimpleCoordinatorKeypair {
   const secretKey = generateSecretKey();
   return {
@@ -189,6 +222,15 @@ export default function SimpleCoordinatorApp() {
         setKeypair(storedState.keypair);
         const cache = (storedState.cache ?? null) as Partial<SimpleCoordinatorCache> | null;
         if (cache) {
+          const fallbackCoordinatorNpubs = sortCoordinatorRoster(
+            Array.isArray(cache.subCoordinators)
+              ? cache.subCoordinators.flatMap((application) => (
+                application && typeof application.coordinatorNpub === "string"
+                  ? [application.coordinatorNpub]
+                  : []
+              ))
+              : [],
+          );
           setLeadCoordinatorNpub(typeof cache.leadCoordinatorNpub === "string" ? cache.leadCoordinatorNpub : "");
           setFollowers(Array.isArray(cache.followers) ? cache.followers : []);
           setSubCoordinators(Array.isArray(cache.subCoordinators) ? cache.subCoordinators : []);
@@ -211,7 +253,13 @@ export default function SimpleCoordinatorApp() {
               : {},
           );
           setPublishStatus(typeof cache.publishStatus === "string" ? cache.publishStatus : null);
-          setPublishedVotes(Array.isArray(cache.publishedVotes) ? cache.publishedVotes : []);
+          setPublishedVotes(
+            Array.isArray(cache.publishedVotes)
+              ? cache.publishedVotes
+                .map((vote) => normalizeLiveVoteSession(vote, fallbackCoordinatorNpubs))
+                .filter((vote): vote is SimpleLiveVoteSession => vote !== null)
+              : [],
+          );
           setSelectedVotingId(typeof cache.selectedVotingId === "string" ? cache.selectedVotingId : "");
           setSelectedSubmittedVotingId(
             typeof cache.selectedSubmittedVotingId === 'string'
@@ -658,7 +706,11 @@ export default function SimpleCoordinatorApp() {
     return subscribeSimpleLiveVotes({
       coordinatorNpub: liveVoteSourceNpub,
       onSessions: (nextVotes) => {
-        setPublishedVotes(nextVotes);
+        setPublishedVotes(
+          nextVotes
+            .map((vote) => normalizeLiveVoteSession(vote))
+            .filter((vote): vote is SimpleLiveVoteSession => vote !== null),
+        );
       },
     });
   }, [liveVoteSourceNpub]);
@@ -835,6 +887,15 @@ export default function SimpleCoordinatorApp() {
       setIdentityStatus("Identity restored from backup.");
       setBackupStatus(`Backup restored from ${bundle.exportedAt}.`);
       const cache = (bundle.cache ?? null) as Partial<SimpleCoordinatorCache> | null;
+      const fallbackCoordinatorNpubs = sortCoordinatorRoster(
+        Array.isArray(cache?.subCoordinators)
+          ? cache.subCoordinators.flatMap((application) => (
+            application && typeof application.coordinatorNpub === "string"
+              ? [application.coordinatorNpub]
+              : []
+          ))
+          : [],
+      );
       setLeadCoordinatorNpub(typeof cache?.leadCoordinatorNpub === "string" ? cache.leadCoordinatorNpub : "");
       setFollowers(Array.isArray(cache?.followers) ? cache.followers : []);
       setSubCoordinators(Array.isArray(cache?.subCoordinators) ? cache.subCoordinators : []);
@@ -860,7 +921,13 @@ export default function SimpleCoordinatorApp() {
           : {},
       );
       setPublishStatus(typeof cache?.publishStatus === "string" ? cache.publishStatus : null);
-      setPublishedVotes(Array.isArray(cache?.publishedVotes) ? cache.publishedVotes : []);
+      setPublishedVotes(
+        Array.isArray(cache?.publishedVotes)
+          ? cache.publishedVotes
+            .map((vote) => normalizeLiveVoteSession(vote, fallbackCoordinatorNpubs))
+            .filter((vote): vote is SimpleLiveVoteSession => vote !== null)
+          : [],
+      );
       setSelectedVotingId(typeof cache?.selectedVotingId === "string" ? cache.selectedVotingId : "");
       setSelectedSubmittedVotingId(
         typeof cache?.selectedSubmittedVotingId === 'string'
