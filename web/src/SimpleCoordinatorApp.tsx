@@ -37,6 +37,7 @@ import {
 import {
   downloadSimpleActorBackup,
   loadSimpleActorState,
+  parseEncryptedSimpleActorBackupBundle,
   parseSimpleActorBackupBundle,
   saveSimpleActorState,
   type SimpleActorKeypair,
@@ -62,13 +63,18 @@ type SimpleCoordinatorCache = {
   questionThresholdT: string;
   questionThresholdN: string;
   questionShareIndex: string;
-  blindPrivateKey: SimpleBlindPrivateKey | null;
+  roundBlindPrivateKeys: Record<string, SimpleBlindPrivateKey>;
+  roundBlindKeyAnnouncements: Record<string, SimpleBlindKeyAnnouncement>;
   publishStatus: string | null;
   publishedVotes: SimpleLiveVoteSession[];
   selectedVotingId: string;
   selectedSubmittedVotingId: string;
   submittedVotes: SimpleSubmittedVote[];
 };
+
+function sortCoordinatorRoster(values: string[]) {
+  return [...new Set(values.filter((value) => value.trim().length > 0))].sort();
+}
 
 function createSimpleCoordinatorKeypair(): SimpleCoordinatorKeypair {
   const secretKey = generateSecretKey();
@@ -131,8 +137,8 @@ export default function SimpleCoordinatorApp() {
   const [questionThresholdT, setQuestionThresholdT] = useState("1");
   const [questionThresholdN, setQuestionThresholdN] = useState("1");
   const [questionShareIndex, setQuestionShareIndex] = useState("1");
-  const [blindPrivateKey, setBlindPrivateKey] = useState<SimpleBlindPrivateKey | null>(null);
-  const [blindKeyAnnouncement, setBlindKeyAnnouncement] = useState<SimpleBlindKeyAnnouncement | null>(null);
+  const [roundBlindPrivateKeys, setRoundBlindPrivateKeys] = useState<Record<string, SimpleBlindPrivateKey>>({});
+  const [roundBlindKeyAnnouncements, setRoundBlindKeyAnnouncements] = useState<Record<string, SimpleBlindKeyAnnouncement>>({});
   const [publishStatus, setPublishStatus] = useState<string | null>(null);
   const [publishedVotes, setPublishedVotes] = useState<SimpleLiveVoteSession[]>([]);
   const [selectedVotingId, setSelectedVotingId] = useState("");
@@ -160,6 +166,8 @@ export default function SimpleCoordinatorApp() {
   const activeVotingId = selectedPublishedVote?.votingId ?? "";
   const activeThresholdT = selectedPublishedVote?.thresholdT ?? (Number.parseInt(questionThresholdT, 10) || undefined);
   const activeThresholdN = selectedPublishedVote?.thresholdN ?? (Number.parseInt(questionThresholdN, 10) || undefined);
+  const activeBlindPrivateKey = activeVotingId ? roundBlindPrivateKeys[activeVotingId] ?? null : null;
+  const activeBlindKeyAnnouncement = activeVotingId ? roundBlindKeyAnnouncements[activeVotingId] ?? null : null;
   const maxThresholdT = Math.max(
     1,
     Math.min(Number.parseInt(questionThresholdN, 10) || 1, availableCoordinatorCount),
@@ -192,9 +200,16 @@ export default function SimpleCoordinatorApp() {
           setQuestionThresholdT(typeof cache.questionThresholdT === "string" ? cache.questionThresholdT : "1");
           setQuestionThresholdN(typeof cache.questionThresholdN === "string" ? cache.questionThresholdN : "1");
           setQuestionShareIndex(typeof cache.questionShareIndex === "string" ? cache.questionShareIndex : "1");
-          setBlindPrivateKey(cache.blindPrivateKey && typeof cache.blindPrivateKey === "object"
-            ? cache.blindPrivateKey as SimpleBlindPrivateKey
-            : null);
+          setRoundBlindPrivateKeys(
+            cache.roundBlindPrivateKeys && typeof cache.roundBlindPrivateKeys === "object"
+              ? cache.roundBlindPrivateKeys as Record<string, SimpleBlindPrivateKey>
+              : {},
+          );
+          setRoundBlindKeyAnnouncements(
+            cache.roundBlindKeyAnnouncements && typeof cache.roundBlindKeyAnnouncements === "object"
+              ? cache.roundBlindKeyAnnouncements as Record<string, SimpleBlindKeyAnnouncement>
+              : {},
+          );
           setPublishStatus(typeof cache.publishStatus === "string" ? cache.publishStatus : null);
           setPublishedVotes(Array.isArray(cache.publishedVotes) ? cache.publishedVotes : []);
           setSelectedVotingId(typeof cache.selectedVotingId === "string" ? cache.selectedVotingId : "");
@@ -249,7 +264,8 @@ export default function SimpleCoordinatorApp() {
       questionThresholdT,
       questionThresholdN,
       questionShareIndex,
-      blindPrivateKey,
+      roundBlindPrivateKeys,
+      roundBlindKeyAnnouncements,
       publishStatus,
       publishedVotes,
       selectedVotingId,
@@ -272,7 +288,8 @@ export default function SimpleCoordinatorApp() {
     pendingRequests,
     publishStatus,
     publishedVotes,
-    blindPrivateKey,
+    roundBlindKeyAnnouncements,
+    roundBlindPrivateKeys,
     questionPrompt,
     questionShareIndex,
     questionThresholdN,
@@ -446,14 +463,24 @@ export default function SimpleCoordinatorApp() {
   }, [availableCoordinatorCount, isLeadCoordinator, questionThresholdN]);
 
   useEffect(() => {
-    if (!keypair || blindPrivateKey) {
+    const coordinatorNpub = keypair?.npub ?? "";
+    const activeRound = selectedPublishedVote;
+
+    if (!coordinatorNpub || !activeRound || !activeRound.authorizedCoordinatorNpubs.includes(coordinatorNpub)) {
+      return;
+    }
+
+    if (roundBlindPrivateKeys[activeRound.votingId]) {
       return;
     }
 
     let cancelled = false;
     void generateSimpleBlindKeyPair().then((nextBlindKey) => {
       if (!cancelled) {
-        setBlindPrivateKey(nextBlindKey);
+        setRoundBlindPrivateKeys((current) => ({
+          ...current,
+          [activeRound.votingId]: nextBlindKey,
+        }));
       }
     }).catch(() => {
       if (!cancelled) {
@@ -464,26 +491,49 @@ export default function SimpleCoordinatorApp() {
     return () => {
       cancelled = true;
     };
-  }, [blindPrivateKey, keypair]);
+  }, [keypair?.npub, roundBlindPrivateKeys, selectedPublishedVote]);
 
   useEffect(() => {
-    if (!keypair?.nsec || !blindPrivateKey) {
-      setBlindKeyAnnouncement(null);
+    const coordinatorNsec = keypair?.nsec ?? "";
+    const coordinatorNpub = keypair?.npub ?? "";
+    const activeRound = selectedPublishedVote;
+
+    if (
+      !coordinatorNsec
+      || !coordinatorNpub
+      || !activeRound
+      || !activeRound.authorizedCoordinatorNpubs.includes(coordinatorNpub)
+    ) {
+      return;
+    }
+
+    const blindPrivateKey = roundBlindPrivateKeys[activeRound.votingId];
+    if (!blindPrivateKey) {
+      return;
+    }
+
+    const existingAnnouncement = roundBlindKeyAnnouncements[activeRound.votingId];
+    if (existingAnnouncement?.publicKey.keyId === blindPrivateKey.keyId) {
       return;
     }
 
     let cancelled = false;
     void publishSimpleBlindKeyAnnouncement({
-      coordinatorNsec: keypair.nsec,
+      coordinatorNsec,
+      votingId: activeRound.votingId,
       publicKey: blindPrivateKey,
     }).then((result) => {
       if (!cancelled) {
-        setBlindKeyAnnouncement({
-          coordinatorNpub: keypair.npub,
-          publicKey: blindPrivateKey,
-          createdAt: result.createdAt,
-          event: result.event,
-        });
+        setRoundBlindKeyAnnouncements((current) => ({
+          ...current,
+          [activeRound.votingId]: {
+            coordinatorNpub,
+            votingId: activeRound.votingId,
+            publicKey: blindPrivateKey,
+            createdAt: result.createdAt,
+            event: result.event,
+          },
+        }));
       }
     }).catch(() => {
       if (!cancelled) {
@@ -494,7 +544,7 @@ export default function SimpleCoordinatorApp() {
     return () => {
       cancelled = true;
     };
-  }, [blindPrivateKey, keypair?.npub, keypair?.nsec]);
+  }, [keypair?.npub, keypair?.nsec, roundBlindKeyAnnouncements, roundBlindPrivateKeys, selectedPublishedVote]);
 
   useEffect(() => {
     const coordinatorNsec = keypair?.nsec ?? "";
@@ -677,8 +727,8 @@ export default function SimpleCoordinatorApp() {
     setQuestionThresholdT("1");
     setQuestionThresholdN("1");
     setQuestionShareIndex("1");
-    setBlindPrivateKey(null);
-    setBlindKeyAnnouncement(null);
+    setRoundBlindPrivateKeys({});
+    setRoundBlindKeyAnnouncements({});
     setPublishStatus(null);
     setPublishedVotes([]);
     setSelectedVotingId("");
@@ -724,8 +774,8 @@ export default function SimpleCoordinatorApp() {
     setQuestionThresholdT("1");
     setQuestionThresholdN("1");
     setQuestionShareIndex("1");
-    setBlindPrivateKey(null);
-    setBlindKeyAnnouncement(null);
+    setRoundBlindPrivateKeys({});
+    setRoundBlindKeyAnnouncements({});
     setPublishStatus(null);
     setPublishedVotes([]);
     setSelectedVotingId("");
@@ -737,12 +787,12 @@ export default function SimpleCoordinatorApp() {
     sentAssignmentAckIdsRef.current.clear();
   }
 
-  function downloadBackup() {
+  function downloadBackup(passphrase?: string) {
     if (!keypair) {
       return;
     }
 
-    downloadSimpleActorBackup('coordinator', keypair as SimpleActorKeypair, {
+    void downloadSimpleActorBackup('coordinator', keypair as SimpleActorKeypair, {
       leadCoordinatorNpub,
       followers,
       subCoordinators,
@@ -754,20 +804,22 @@ export default function SimpleCoordinatorApp() {
       questionThresholdT,
       questionThresholdN,
       questionShareIndex,
-      blindPrivateKey,
+      roundBlindPrivateKeys,
+      roundBlindKeyAnnouncements,
       publishStatus,
       publishedVotes,
       selectedVotingId,
       selectedSubmittedVotingId,
       submittedVotes,
-    } satisfies SimpleCoordinatorCache);
-    setBackupStatus("Coordinator backup downloaded.");
+    } satisfies SimpleCoordinatorCache, { passphrase });
+    setBackupStatus(passphrase?.trim() ? "Encrypted coordinator backup downloaded." : "Coordinator backup downloaded.");
   }
 
-  async function restoreBackup(file: File) {
+  async function restoreBackup(file: File, passphrase?: string) {
     try {
       const text = await file.text();
-      const bundle = parseSimpleActorBackupBundle(text);
+      const bundle = parseSimpleActorBackupBundle(text)
+        ?? (passphrase?.trim() ? await parseEncryptedSimpleActorBackupBundle(text, passphrase.trim()) : null);
       if (!bundle || bundle.role !== "coordinator") {
         setBackupStatus("Backup file is not a coordinator backup.");
         return;
@@ -797,10 +849,16 @@ export default function SimpleCoordinatorApp() {
       setQuestionThresholdT(typeof cache?.questionThresholdT === "string" ? cache.questionThresholdT : "1");
       setQuestionThresholdN(typeof cache?.questionThresholdN === "string" ? cache.questionThresholdN : "1");
       setQuestionShareIndex(typeof cache?.questionShareIndex === "string" ? cache.questionShareIndex : "1");
-      setBlindPrivateKey(cache?.blindPrivateKey && typeof cache.blindPrivateKey === "object"
-        ? cache.blindPrivateKey as SimpleBlindPrivateKey
-        : null);
-      setBlindKeyAnnouncement(null);
+      setRoundBlindPrivateKeys(
+        cache?.roundBlindPrivateKeys && typeof cache.roundBlindPrivateKeys === "object"
+          ? cache.roundBlindPrivateKeys as Record<string, SimpleBlindPrivateKey>
+          : {},
+      );
+      setRoundBlindKeyAnnouncements(
+        cache?.roundBlindKeyAnnouncements && typeof cache.roundBlindKeyAnnouncements === "object"
+          ? cache.roundBlindKeyAnnouncements as Record<string, SimpleBlindKeyAnnouncement>
+          : {},
+      );
       setPublishStatus(typeof cache?.publishStatus === "string" ? cache.publishStatus : null);
       setPublishedVotes(Array.isArray(cache?.publishedVotes) ? cache.publishedVotes : []);
       setSelectedVotingId(typeof cache?.selectedVotingId === "string" ? cache.selectedVotingId : "");
@@ -849,8 +907,8 @@ export default function SimpleCoordinatorApp() {
     if (
       !coordinatorNpub
       || !coordinatorSecretKey
-      || !blindPrivateKey
-      || !blindKeyAnnouncement
+      || !activeBlindPrivateKey
+      || !activeBlindKeyAnnouncement
       || !matchingRequest
       || !coordinatorId
       || coordinatorId === "pending"
@@ -870,8 +928,8 @@ export default function SimpleCoordinatorApp() {
         : getThresholdLabel();
       const result = await sendSimpleRoundTicket({
         coordinatorSecretKey,
-        blindPrivateKey,
-        keyAnnouncementEvent: blindKeyAnnouncement.event,
+        blindPrivateKey: activeBlindPrivateKey,
+        keyAnnouncementEvent: activeBlindKeyAnnouncement.event,
         voterNpub: follower.voterNpub,
         voterId: follower.voterId,
         coordinatorNpub,
@@ -912,11 +970,16 @@ export default function SimpleCoordinatorApp() {
 
     try {
       const threshold = getThresholdNumbers();
+      const authorizedCoordinatorNpubs = sortCoordinatorRoster([
+        keypair?.npub ?? "",
+        ...subCoordinators.map((application) => application.coordinatorNpub),
+      ]);
       const result = await publishSimpleLiveVote({
         coordinatorNsec,
         prompt,
         thresholdT: threshold.thresholdT,
         thresholdN: threshold.thresholdN,
+        authorizedCoordinatorNpubs,
       });
 
       setPublishedVotes((current) => {
@@ -927,6 +990,7 @@ export default function SimpleCoordinatorApp() {
           createdAt: result.createdAt,
           thresholdT: threshold.thresholdT,
           thresholdN: threshold.thresholdN,
+          authorizedCoordinatorNpubs,
           eventId: result.eventId,
         };
         return [nextVote, ...current.filter((vote) => vote.votingId !== nextVote.votingId)];
@@ -1019,7 +1083,11 @@ export default function SimpleCoordinatorApp() {
     1,
     selectedSubmittedVote?.thresholdT ?? 1,
   );
-  const validatedVotes = validateSimpleSubmittedVotes(submittedVotes, requiredShardCount);
+  const validatedVotes = validateSimpleSubmittedVotes(
+    submittedVotes,
+    requiredShardCount,
+    selectedSubmittedVote?.authorizedCoordinatorNpubs ?? [],
+  );
   const validYesCount = validatedVotes.filter((entry) => entry.valid && entry.vote.choice === "Yes").length;
   const validNoCount = validatedVotes.filter((entry) => entry.valid && entry.vote.choice === "No").length;
   const visibleFollowers = activeVotingId
@@ -1267,8 +1335,8 @@ export default function SimpleCoordinatorApp() {
                               onClick={() => void sendTicket(follower)}
                               disabled={
                                 !keypair?.nsec ||
-                                !blindPrivateKey ||
-                                !blindKeyAnnouncement ||
+                                !activeBlindPrivateKey ||
+                                !activeBlindKeyAnnouncement ||
                                 !hasPendingRequest ||
                                 (!isLeadCoordinator && activeShareIndex <= 0)
                               }

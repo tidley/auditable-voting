@@ -19,6 +19,8 @@ import { sha256Hex } from "./tokenIdentity";
 
 export const SIMPLE_BLIND_KEY_KIND = 38993;
 export const SIMPLE_BLIND_SCHEME = "rsa-blind-v1";
+export const SIMPLE_BLIND_KEY_BITS = 3072;
+const SIMPLE_BLIND_DOMAIN_SEPARATOR = "auditable-voting/simple-blind/v1";
 
 export type SimpleBlindPublicKey = {
   scheme: typeof SIMPLE_BLIND_SCHEME;
@@ -34,6 +36,7 @@ export type SimpleBlindPrivateKey = SimpleBlindPublicKey & {
 
 export type SimpleBlindKeyAnnouncement = {
   coordinatorNpub: string;
+  votingId: string;
   publicKey: SimpleBlindPublicKey;
   createdAt: string;
   event: VerifiedEvent;
@@ -93,6 +96,25 @@ export type ParsedSimpleShardCertificate = {
   createdAt: string;
   publicKey: SimpleBlindPublicKey;
   event: SimpleShardCertificate;
+};
+
+export type SimplePublicShardProof = {
+  coordinatorNpub: string;
+  votingId: string;
+  tokenCommitment: string;
+  unblindedSignature: string;
+  shareIndex: number;
+  keyAnnouncementEvent: VerifiedEvent;
+};
+
+export type ParsedSimplePublicShardProof = {
+  coordinatorNpub: string;
+  votingId: string;
+  tokenCommitment: string;
+  shareIndex: number;
+  publicKey: SimpleBlindPublicKey;
+  keyAnnouncement: SimpleBlindKeyAnnouncement;
+  event: SimplePublicShardProof;
 };
 
 type RsaJwk = {
@@ -221,12 +243,14 @@ function randomBigintBelow(maxExclusive: bigint, webCryptoOverride?: Crypto): bi
 }
 
 function hashMessageRepresentative(message: string, modulus: bigint) {
-  const hashHex = bytesToHex(sha256(utf8ToBytes(message)));
+  const hashHex = bytesToHex(
+    sha256(utf8ToBytes(`${SIMPLE_BLIND_DOMAIN_SEPARATOR}|${message}`)),
+  );
   const representative = (hexToBigint(hashHex) % (modulus - 1n)) + 1n;
   return representative;
 }
 
-export async function generateSimpleBlindKeyPair(bits = 1024, webCryptoOverride?: Crypto): Promise<SimpleBlindPrivateKey> {
+export async function generateSimpleBlindKeyPair(bits = SIMPLE_BLIND_KEY_BITS, webCryptoOverride?: Crypto): Promise<SimpleBlindPrivateKey> {
   const webCrypto = getWebCrypto(webCryptoOverride);
   const keyPair = await webCrypto.subtle.generateKey({
     name: "RSASSA-PKCS1-v1_5",
@@ -264,6 +288,7 @@ export function toSimpleBlindPublicKey(privateKey: SimpleBlindPrivateKey): Simpl
 
 export async function publishSimpleBlindKeyAnnouncement(input: {
   coordinatorNsec: string;
+  votingId: string;
   publicKey: SimpleBlindPublicKey;
   relays?: string[];
 }) {
@@ -280,9 +305,11 @@ export async function publishSimpleBlindKeyAnnouncement(input: {
     created_at: Math.floor(Date.now() / 1000),
     tags: [
       ["t", "simple-blind-key"],
+      ["voting-id", input.votingId],
       ["key-id", input.publicKey.keyId],
     ],
     content: JSON.stringify({
+      voting_id: input.votingId,
       scheme: input.publicKey.scheme,
       key_id: input.publicKey.keyId,
       bits: input.publicKey.bits,
@@ -317,6 +344,7 @@ export async function publishSimpleBlindKeyAnnouncement(input: {
 export function parseSimpleBlindKeyAnnouncement(
   event: VerifiedEvent,
   expectedCoordinatorNpub?: string,
+  expectedVotingId?: string,
 ): SimpleBlindKeyAnnouncement | null {
   if (event.kind !== SIMPLE_BLIND_KEY_KIND || !verifyEvent(event)) {
     return null;
@@ -324,6 +352,7 @@ export function parseSimpleBlindKeyAnnouncement(
 
   try {
     const payload = JSON.parse(event.content) as {
+      voting_id?: string;
       scheme?: string;
       key_id?: string;
       bits?: number;
@@ -333,7 +362,9 @@ export function parseSimpleBlindKeyAnnouncement(
     };
 
     if (
-      payload.scheme !== SIMPLE_BLIND_SCHEME
+      !payload.voting_id
+      || payload.voting_id.trim().length === 0
+      || payload.scheme !== SIMPLE_BLIND_SCHEME
       || !payload.key_id
       || typeof payload.bits !== "number"
       || !payload.n
@@ -346,9 +377,13 @@ export function parseSimpleBlindKeyAnnouncement(
     if (expectedCoordinatorNpub && coordinatorNpub !== expectedCoordinatorNpub) {
       return null;
     }
+    if (expectedVotingId && payload.voting_id !== expectedVotingId) {
+      return null;
+    }
 
     return {
       coordinatorNpub,
+      votingId: payload.voting_id,
       publicKey: {
         scheme: SIMPLE_BLIND_SCHEME,
         keyId: payload.key_id,
@@ -366,6 +401,7 @@ export function parseSimpleBlindKeyAnnouncement(
 
 export async function fetchLatestSimpleBlindKeyAnnouncement(input: {
   coordinatorNpub: string;
+  votingId?: string;
   relays?: string[];
 }): Promise<SimpleBlindKeyAnnouncement | null> {
   const decoded = nip19.decode(input.coordinatorNpub.trim());
@@ -382,7 +418,13 @@ export async function fetchLatestSimpleBlindKeyAnnouncement(input: {
       limit: 20,
     });
     const parsed = events
-      .map((event) => parseSimpleBlindKeyAnnouncement(event as VerifiedEvent, input.coordinatorNpub))
+      .map((event) =>
+        parseSimpleBlindKeyAnnouncement(
+          event as VerifiedEvent,
+          input.coordinatorNpub,
+          input.votingId,
+        ),
+      )
       .filter((entry): entry is SimpleBlindKeyAnnouncement => entry !== null)
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
     return parsed[0] ?? null;
@@ -393,6 +435,7 @@ export async function fetchLatestSimpleBlindKeyAnnouncement(input: {
 
 export function subscribeLatestSimpleBlindKeyAnnouncement(input: {
   coordinatorNpub: string;
+  votingId?: string;
   relays?: string[];
   onAnnouncement: (announcement: SimpleBlindKeyAnnouncement | null) => void;
   onError?: (error: Error) => void;
@@ -409,6 +452,7 @@ export function subscribeLatestSimpleBlindKeyAnnouncement(input: {
 
   void fetchLatestSimpleBlindKeyAnnouncement({
     coordinatorNpub: input.coordinatorNpub,
+    votingId: input.votingId,
     relays: input.relays,
   }).then((announcement) => {
     if (closed || !announcement) {
@@ -430,7 +474,11 @@ export function subscribeLatestSimpleBlindKeyAnnouncement(input: {
     limit: 20,
   }, {
     onevent: (event) => {
-      const announcement = parseSimpleBlindKeyAnnouncement(event as VerifiedEvent, input.coordinatorNpub);
+      const announcement = parseSimpleBlindKeyAnnouncement(
+        event as VerifiedEvent,
+        input.coordinatorNpub,
+        input.votingId,
+      );
       if (!announcement) {
         return;
       }
@@ -538,6 +586,7 @@ export function unblindSimpleBlindShare(input: {
   const keyAnnouncement = parseSimpleBlindKeyAnnouncement(
     input.response.keyAnnouncementEvent,
     input.response.coordinatorNpub,
+    input.secret.votingId,
   );
   if (!keyAnnouncement) {
     throw new Error("Blind response key announcement is invalid.");
@@ -583,6 +632,7 @@ export function parseSimpleShardCertificate(
     const keyAnnouncement = parseSimpleBlindKeyAnnouncement(
       share.keyAnnouncementEvent,
       expectedCoordinatorNpub ?? share.coordinatorNpub,
+      share.votingId,
     );
     if (!keyAnnouncement) {
       return null;
@@ -619,6 +669,60 @@ export function parseSimpleShardCertificate(
   }
 }
 
+export function toSimplePublicShardProof(
+  share: SimpleShardCertificate,
+): SimplePublicShardProof {
+  return {
+    coordinatorNpub: share.coordinatorNpub,
+    votingId: share.votingId,
+    tokenCommitment: share.tokenMessage,
+    unblindedSignature: share.unblindedSignature,
+    shareIndex: share.shareIndex,
+    keyAnnouncementEvent: share.keyAnnouncementEvent,
+  };
+}
+
+export function parseSimplePublicShardProof(
+  proof: SimplePublicShardProof,
+  expectedCoordinatorNpub?: string,
+): ParsedSimplePublicShardProof | null {
+  try {
+    const keyAnnouncement = parseSimpleBlindKeyAnnouncement(
+      proof.keyAnnouncementEvent,
+      expectedCoordinatorNpub ?? proof.coordinatorNpub,
+      proof.votingId,
+    );
+    if (!keyAnnouncement) {
+      return null;
+    }
+
+    if (proof.coordinatorNpub !== keyAnnouncement.coordinatorNpub) {
+      return null;
+    }
+
+    const modulus = hexToBigint(keyAnnouncement.publicKey.n);
+    const exponent = hexToBigint(keyAnnouncement.publicKey.e);
+    const signature = hexToBigint(proof.unblindedSignature);
+    const representative = hashMessageRepresentative(proof.tokenCommitment, modulus);
+    const recovered = modPow(signature, exponent, modulus);
+    if (recovered !== representative) {
+      return null;
+    }
+
+    return {
+      coordinatorNpub: proof.coordinatorNpub,
+      votingId: proof.votingId,
+      tokenCommitment: proof.tokenCommitment,
+      shareIndex: proof.shareIndex,
+      publicKey: keyAnnouncement.publicKey,
+      keyAnnouncement,
+      event: proof,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function deriveTokenIdFromSimpleShardCertificates(
   certificates: SimpleShardCertificate[],
   length = 20,
@@ -637,6 +741,35 @@ export async function deriveTokenIdFromSimpleShardCertificates(
 
   const shareDescriptor = validCertificates
     .map((certificate) => `${certificate.coordinatorNpub}:${certificate.shardId}:${certificate.publicKey.keyId}`)
+    .sort()
+    .join("|");
+  const tokenId = await sha256Hex(`${uniqueTokenMessages[0]}:${shareDescriptor}`);
+  return tokenId.slice(0, length);
+}
+
+export async function deriveTokenIdFromSimplePublicShardProofs(
+  proofs: SimplePublicShardProof[],
+  length = 20,
+): Promise<string | null> {
+  const validProofs = proofs
+    .map((proof) => parseSimplePublicShardProof(proof))
+    .filter((proof): proof is ParsedSimplePublicShardProof => proof !== null);
+  if (validProofs.length === 0) {
+    return null;
+  }
+
+  const uniqueTokenMessages = Array.from(
+    new Set(validProofs.map((proof) => proof.tokenCommitment)),
+  );
+  if (uniqueTokenMessages.length !== 1) {
+    return null;
+  }
+
+  const shareDescriptor = validProofs
+    .map(
+      (proof) =>
+        `${proof.coordinatorNpub}:${proof.publicKey.keyId}:${proof.shareIndex}`,
+    )
     .sort()
     .join("|");
   const tokenId = await sha256Hex(`${uniqueTokenMessages[0]}:${shareDescriptor}`);

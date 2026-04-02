@@ -21,10 +21,81 @@ export type SimpleActorBackupBundle = {
   cache?: unknown;
 };
 
+export type SimpleEncryptedActorBackupBundle = {
+  version: 1;
+  type: "auditable-voting.simple-backup.encrypted";
+  role: SimpleActorRole;
+  exportedAt: string;
+  kdf: {
+    name: "PBKDF2";
+    hash: "SHA-256";
+    iterations: number;
+    salt: string;
+  };
+  cipher: {
+    name: "AES-GCM";
+    iv: string;
+  };
+  ciphertext: string;
+};
+
 const DB_NAME = "auditable-voting-simple";
 const DB_VERSION = 1;
 const STORE_NAME = "actor-state";
 const memoryState = new Map<string, SimpleActorState>();
+const BACKUP_KDF_ITERATIONS = 250_000;
+
+function getWebCrypto() {
+  if (!globalThis.crypto?.subtle) {
+    throw new Error("WebCrypto is required.");
+  }
+
+  return globalThis.crypto;
+}
+
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = "";
+  for (const value of bytes) {
+    binary += String.fromCharCode(value);
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(value: string) {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+async function deriveBackupKey(passphrase: string, salt: Uint8Array) {
+  const cryptoApi = getWebCrypto();
+  const keyMaterial = await cryptoApi.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(passphrase),
+    "PBKDF2",
+    false,
+    ["deriveKey"],
+  );
+
+  return cryptoApi.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      hash: "SHA-256",
+      iterations: BACKUP_KDF_ITERATIONS,
+      salt,
+    },
+    keyMaterial,
+    {
+      name: "AES-GCM",
+      length: 256,
+    },
+    false,
+    ["encrypt", "decrypt"],
+  );
+}
 
 function hasIndexedDb() {
   return typeof indexedDB !== "undefined";
@@ -167,17 +238,96 @@ export function parseSimpleActorBackupBundle(value: string): SimpleActorBackupBu
   }
 }
 
-export function downloadSimpleActorBackup(role: SimpleActorRole, keypair: SimpleActorKeypair, cache?: unknown) {
+export async function parseEncryptedSimpleActorBackupBundle(
+  value: string,
+  passphrase: string,
+): Promise<SimpleActorBackupBundle | null> {
+  try {
+    const parsed = JSON.parse(value) as Partial<SimpleEncryptedActorBackupBundle>;
+    if (
+      parsed.version !== 1
+      || parsed.type !== "auditable-voting.simple-backup.encrypted"
+      || (parsed.role !== "voter" && parsed.role !== "coordinator")
+      || !parsed.kdf
+      || parsed.kdf.name !== "PBKDF2"
+      || parsed.kdf.hash !== "SHA-256"
+      || typeof parsed.kdf.iterations !== "number"
+      || typeof parsed.kdf.salt !== "string"
+      || !parsed.cipher
+      || parsed.cipher.name !== "AES-GCM"
+      || typeof parsed.cipher.iv !== "string"
+      || typeof parsed.ciphertext !== "string"
+    ) {
+      return null;
+    }
+
+    const key = await deriveBackupKey(passphrase, base64ToBytes(parsed.kdf.salt));
+    const decrypted = await getWebCrypto().subtle.decrypt(
+      {
+        name: "AES-GCM",
+        iv: base64ToBytes(parsed.cipher.iv),
+      },
+      key,
+      base64ToBytes(parsed.ciphertext),
+    );
+    return parseSimpleActorBackupBundle(new TextDecoder().decode(new Uint8Array(decrypted)));
+  } catch {
+    return null;
+  }
+}
+
+export async function downloadSimpleActorBackup(
+  role: SimpleActorRole,
+  keypair: SimpleActorKeypair,
+  cache?: unknown,
+  options?: { passphrase?: string },
+) {
   if (typeof document === "undefined" || typeof URL === "undefined") {
     return;
   }
 
   const bundle = buildSimpleActorBackupBundle(role, keypair, cache);
-  const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+  let contents = JSON.stringify(bundle, null, 2);
+  let filename = `auditable-voting-${role}-backup.json`;
+
+  if (options?.passphrase?.trim()) {
+    const passphrase = options.passphrase.trim();
+    const cryptoApi = getWebCrypto();
+    const salt = cryptoApi.getRandomValues(new Uint8Array(16));
+    const iv = cryptoApi.getRandomValues(new Uint8Array(12));
+    const key = await deriveBackupKey(passphrase, salt);
+    const encrypted = await cryptoApi.subtle.encrypt(
+      { name: "AES-GCM", iv },
+      key,
+      new TextEncoder().encode(contents),
+    );
+
+    const encryptedBundle: SimpleEncryptedActorBackupBundle = {
+      version: 1,
+      type: "auditable-voting.simple-backup.encrypted",
+      role,
+      exportedAt: bundle.exportedAt,
+      kdf: {
+        name: "PBKDF2",
+        hash: "SHA-256",
+        iterations: BACKUP_KDF_ITERATIONS,
+        salt: bytesToBase64(salt),
+      },
+      cipher: {
+        name: "AES-GCM",
+        iv: bytesToBase64(iv),
+      },
+      ciphertext: bytesToBase64(new Uint8Array(encrypted)),
+    };
+    contents = JSON.stringify(encryptedBundle, null, 2);
+    filename = `auditable-voting-${role}-backup.encrypted.json`;
+  }
+
+  const blob = new Blob([contents], { type: "application/json" });
   const blobUrl = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = blobUrl;
-  anchor.download = `auditable-voting-${role}-backup.json`;
+  anchor.download = filename;
   anchor.click();
   URL.revokeObjectURL(blobUrl);
 }

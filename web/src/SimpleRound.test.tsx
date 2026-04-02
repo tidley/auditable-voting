@@ -28,6 +28,7 @@ type InternalLiveVote = {
   createdAt: string;
   thresholdT?: number;
   thresholdN?: number;
+  authorizedCoordinatorNpubs: string[];
   eventId: string;
 };
 
@@ -36,7 +37,7 @@ type InternalSubmittedVote = {
   votingId: string;
   voterNpub: string;
   choice: "Yes" | "No";
-  shardCertificates: any[];
+  shardProofs: any[];
   tokenId: string;
   createdAt: string;
 };
@@ -164,6 +165,7 @@ let dmAcknowledgementSubscribers: Array<{
 }> = [];
 let blindAnnouncementSubscribers: Array<{
   coordinatorNpub: string;
+  votingId?: string;
   onAnnouncement: (announcement: any | null) => void;
 }> = [];
 let suppressedShardResponseNotifications = new Set<string>();
@@ -184,8 +186,11 @@ function secretToNpub(secretKey: Uint8Array) {
   return nip19.npubEncode(getPublicKey(secretKey));
 }
 
-function makeTokenId(shardCertificates: any[]) {
-  const ids = shardCertificates.map((certificate) => certificate.shareId ?? certificate.id).sort().join("|");
+function makeTokenId(shardProofs: any[]) {
+  const ids = shardProofs
+    .map((proof) => `${proof.coordinatorNpub}:${proof.votingId}:${proof.tokenCommitment}:${proof.shareIndex}:${proof.keyAnnouncementEvent?.id ?? proof.id}`)
+    .sort()
+    .join("|");
   return sha(ids).slice(0, 16);
 }
 
@@ -319,10 +324,14 @@ function notifyShardRequestSubscribers(coordinatorNpub: string) {
   }
 }
 
-function notifyBlindAnnouncementSubscribers(coordinatorNpub: string) {
-  const nextAnnouncement = blindAnnouncements[coordinatorNpub] ?? null;
+function makeBlindAnnouncementKey(coordinatorNpub: string, votingId: string) {
+  return `${coordinatorNpub}:${votingId}`;
+}
+
+function notifyBlindAnnouncementSubscribers(coordinatorNpub: string, votingId: string) {
+  const nextAnnouncement = blindAnnouncements[makeBlindAnnouncementKey(coordinatorNpub, votingId)] ?? null;
   for (const subscriber of blindAnnouncementSubscribers) {
-    if (subscriber.coordinatorNpub === coordinatorNpub) {
+    if (subscriber.coordinatorNpub === coordinatorNpub && (!subscriber.votingId || subscriber.votingId === votingId)) {
       subscriber.onAnnouncement(nextAnnouncement);
     }
   }
@@ -365,25 +374,26 @@ vi.mock("./simpleShardCertificate", () => ({
   generateSimpleBlindKeyPair: vi.fn(async () => ({
     scheme: "rsa-blind-v1",
     keyId: `key-${Object.keys(blindAnnouncements).length + 1}`,
-    bits: 1024,
+    bits: 3072,
     n: `n-${Object.keys(blindAnnouncements).length + 1}`,
     e: "10001",
     d: `d-${Object.keys(blindAnnouncements).length + 1}`,
   })),
-  publishSimpleBlindKeyAnnouncement: vi.fn(async (input: { coordinatorNsec: string; publicKey: any }) => {
+  publishSimpleBlindKeyAnnouncement: vi.fn(async (input: { coordinatorNsec: string; votingId: string; publicKey: any }) => {
     const coordinatorNpub = nsecToNpub(input.coordinatorNsec);
     const announcement = {
       coordinatorNpub,
+      votingId: input.votingId,
       publicKey: input.publicKey,
       createdAt: new Date().toISOString(),
       event: {
-        id: `blind-key-${coordinatorNpub}`,
+        id: `blind-key-${coordinatorNpub}-${input.votingId}`,
         kind: 38993,
         pubkey: coordinatorNpub,
       },
     };
-    blindAnnouncements[coordinatorNpub] = announcement;
-    notifyBlindAnnouncementSubscribers(coordinatorNpub);
+    blindAnnouncements[makeBlindAnnouncementKey(coordinatorNpub, input.votingId)] = announcement;
+    notifyBlindAnnouncementSubscribers(coordinatorNpub, input.votingId);
     return {
       eventId: announcement.event.id,
       successes: 1,
@@ -392,13 +402,18 @@ vi.mock("./simpleShardCertificate", () => ({
       event: announcement.event,
     };
   }),
-  subscribeLatestSimpleBlindKeyAnnouncement: vi.fn((input: { coordinatorNpub: string; onAnnouncement: (announcement: any | null) => void }) => {
+  subscribeLatestSimpleBlindKeyAnnouncement: vi.fn((input: { coordinatorNpub: string; votingId?: string; onAnnouncement: (announcement: any | null) => void }) => {
     const subscriber = {
       coordinatorNpub: input.coordinatorNpub,
+      votingId: input.votingId,
       onAnnouncement: input.onAnnouncement,
     };
     blindAnnouncementSubscribers.push(subscriber);
-    input.onAnnouncement(blindAnnouncements[input.coordinatorNpub] ?? null);
+    input.onAnnouncement(
+      input.votingId
+        ? blindAnnouncements[makeBlindAnnouncementKey(input.coordinatorNpub, input.votingId)] ?? null
+        : null,
+    );
     return () => {
       blindAnnouncementSubscribers = blindAnnouncementSubscribers.filter((entry) => entry !== subscriber);
     };
@@ -452,7 +467,7 @@ vi.mock("./simpleShardCertificate", () => ({
         }
       : null
   )),
-  deriveTokenIdFromSimpleShardCertificates: vi.fn(async (certificates: any[]) => makeTokenId(certificates)),
+  deriveTokenIdFromSimplePublicShardProofs: vi.fn(async (proofs: any[]) => makeTokenId(proofs)),
 }));
 
 vi.mock("./simpleShardDm", () => ({
@@ -738,6 +753,7 @@ vi.mock("./simpleVotingSession", () => ({
     votingId?: string;
     thresholdT?: number;
     thresholdN?: number;
+    authorizedCoordinatorNpubs?: string[];
   }) => {
     const coordinatorNpub = nsecToNpub(input.coordinatorNsec);
     const votingId = input.votingId?.trim() || `round-${liveVotes.length + 1}`;
@@ -748,6 +764,7 @@ vi.mock("./simpleVotingSession", () => ({
       createdAt: new Date().toISOString(),
       thresholdT: input.thresholdT,
       thresholdN: input.thresholdN,
+      authorizedCoordinatorNpubs: input.authorizedCoordinatorNpubs ?? [coordinatorNpub],
       eventId: `live-${liveVotes.length + 1}`,
     };
     liveVotes = [...liveVotes.filter((entry) => !(entry.coordinatorNpub === coordinatorNpub && entry.votingId === votingId)), liveVote];
@@ -802,13 +819,21 @@ vi.mock("./simpleVotingSession", () => ({
   }) => {
     const ballotNpub = nsecToNpub(input.ballotNsec);
     const createdAt = new Date().toISOString();
+    const shardProofs = input.shardCertificates.map((certificate) => ({
+      coordinatorNpub: certificate.coordinatorNpub,
+      votingId: certificate.votingId,
+      tokenCommitment: certificate.tokenMessage,
+      unblindedSignature: certificate.unblindedSignature,
+      shareIndex: certificate.shareIndex,
+      keyAnnouncementEvent: certificate.keyAnnouncementEvent,
+    }));
     submittedVotes.push({
       eventId: `ballot-${++voteCounter}`,
       votingId: input.votingId,
       voterNpub: ballotNpub,
       choice: input.choice,
-      shardCertificates: input.shardCertificates,
-      tokenId: makeTokenId(input.shardCertificates),
+      shardProofs,
+      tokenId: makeTokenId(shardProofs),
       createdAt,
     });
     notifySubmittedVoteSubscribers(input.votingId);

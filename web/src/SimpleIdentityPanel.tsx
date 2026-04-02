@@ -17,13 +17,14 @@ export default function SimpleIdentityPanel({
   title?: string;
   onRestoreNsec?: (nsec: string) => void;
   restoreMessage?: string | null;
-  onDownloadBackup?: () => void;
-  onRestoreBackupFile?: (file: File) => void | Promise<void>;
+  onDownloadBackup?: (passphrase?: string) => void | Promise<void>;
+  onRestoreBackupFile?: (file: File, passphrase?: string) => void | Promise<void>;
   backupMessage?: string | null;
 }) {
   const [copied, setCopied] = useState(false);
   const [qrSrc, setQrSrc] = useState<string | null>(null);
   const [restoreNsec, setRestoreNsec] = useState("");
+  const [backupPassphrase, setBackupPassphrase] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -108,12 +109,22 @@ export default function SimpleIdentityPanel({
           {onDownloadBackup || onRestoreBackupFile ? (
             <div className="simple-identity-restore">
               <div className="simple-identity-label">Backup</div>
+              <input
+                className="simple-voter-input"
+                value={backupPassphrase}
+                onChange={(event) => setBackupPassphrase(event.target.value)}
+                placeholder="Optional backup passphrase"
+                type="password"
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+              />
               <div className="simple-voter-inline-field">
                 {onDownloadBackup ? (
                   <button
                     type="button"
                     className="simple-voter-secondary"
-                    onClick={onDownloadBackup}
+                    onClick={() => void onDownloadBackup(backupPassphrase)}
                   >
                     Download backup
                   </button>
@@ -128,7 +139,7 @@ export default function SimpleIdentityPanel({
                       onChange={(event) => {
                         const file = event.target.files?.[0];
                         if (file) {
-                          void onRestoreBackupFile(file);
+                          void onRestoreBackupFile(file, backupPassphrase);
                         }
                         event.currentTarget.value = "";
                       }}
