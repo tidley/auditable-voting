@@ -489,6 +489,15 @@ code {
   color: #f3f4f6;
 }
 
+.simple-app-version {
+  margin: 12px auto 0;
+  width: min(960px, calc(100% - 32px));
+  color: #64748b;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  text-align: right;
+}
+
 .simple-voter-page {
   border-top: 10px solid #4da3ff;
   background: #0f172a;
@@ -1887,6 +1896,10 @@ code {
   .simple-voter-shell {
     width: min(100% - 20px, 960px);
     padding: 16px 0 28px;
+  }
+
+  .simple-app-version {
+    width: min(100% - 20px, 960px);
   }
 
   .simple-voter-page {
