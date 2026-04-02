@@ -16,6 +16,7 @@ export default function TokenFingerprint({
   xlarge = false,
   showQr = !compact,
   qrValue,
+  hideMetadata = false,
 }: {
   tokenId: string;
   label?: string;
@@ -25,6 +26,7 @@ export default function TokenFingerprint({
   xlarge?: boolean;
   showQr?: boolean;
   qrValue?: string;
+  hideMetadata?: boolean;
 }) {
   const [qrSrc, setQrSrc] = useState<string | null>(null);
   const cells = tokenPatternDetail(tokenId, size);
@@ -96,7 +98,7 @@ export default function TokenFingerprint({
           </div>
         )}
       </div>
-      {!compact && (
+      {!compact && !hideMetadata && (
         <>
           <code className="token-fingerprint-label">{tokenIdLabel(tokenId)}</code>
           {showQr && (

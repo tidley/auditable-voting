@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
-import { decodeNsec } from "./nostrIdentity";
+import { decodeNsec, deriveNpubFromNsec } from "./nostrIdentity";
 import { sha256Hex } from "./tokenIdentity";
 import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
@@ -93,6 +93,7 @@ export default function SimpleUiApp() {
   const [coordinatorDraft, setCoordinatorDraft] = useState("");
   const [liveVoteChoice, setLiveVoteChoice] = useState<LiveVoteChoice>(null);
   const [requestStatus, setRequestStatus] = useState<string | null>(null);
+  const [identityStatus, setIdentityStatus] = useState<string | null>(null);
   const [receivedShards, setReceivedShards] = useState<SimpleShardResponse[]>([]);
   const [submitStatus, setSubmitStatus] = useState<string | null>(null);
   const [ballotTokenId, setBallotTokenId] = useState<string | null>(null);
@@ -162,6 +163,32 @@ export default function SimpleUiApp() {
     const nextKeypair = createSimpleVoterKeypair();
     storeSimpleVoterKeypair(nextKeypair);
     setVoterKeypair(nextKeypair);
+    setIdentityStatus(null);
+    setLiveVoteChoice(null);
+    setRequestStatus(null);
+    setSubmitStatus(null);
+    setBallotTokenId(null);
+    setReceivedShards([]);
+    setSelectedVotingId("");
+  }
+
+  function restoreIdentity(nextNsec: string) {
+    const trimmed = nextNsec.trim();
+    const derivedNpub = deriveNpubFromNsec(trimmed);
+
+    if (!trimmed || !derivedNpub) {
+      setIdentityStatus("Enter a valid nsec.");
+      return;
+    }
+
+    const nextKeypair = {
+      nsec: trimmed,
+      npub: derivedNpub,
+    };
+
+    storeSimpleVoterKeypair(nextKeypair);
+    setVoterKeypair(nextKeypair);
+    setIdentityStatus("Identity restored from nsec.");
     setLiveVoteChoice(null);
     setRequestStatus(null);
     setSubmitStatus(null);
@@ -360,6 +387,8 @@ export default function SimpleUiApp() {
           npub={voterKeypair?.npub ?? ""}
           nsec={voterKeypair?.nsec ?? ""}
           title="Identity"
+          onRestoreNsec={restoreIdentity}
+          restoreMessage={identityStatus}
         />
 
         <SimpleCollapsibleSection title="Coordinators">

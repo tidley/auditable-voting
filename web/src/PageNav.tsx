@@ -1,12 +1,14 @@
+import { pageUrl } from "./basePath";
+
 type PageNavProps = {
   current: "home" | "vote" | "dashboard" | "simple";
 };
 
 const links = [
-  { key: "home", href: "/", label: "Control room" },
-  { key: "vote", href: "/vote.html", label: "Voter portal" },
-  { key: "dashboard", href: "/dashboard.html", label: "Dashboard" },
-  { key: "simple", href: "/simple.html", label: "Simple UI" },
+  { key: "home", href: pageUrl(), label: "Control room" },
+  { key: "vote", href: pageUrl("vote.html"), label: "Voter portal" },
+  { key: "dashboard", href: pageUrl("dashboard.html"), label: "Dashboard" },
+  { key: "simple", href: pageUrl("simple.html"), label: "Simple UI" },
 ] as const;
 
 export default function PageNav({ current }: PageNavProps) {

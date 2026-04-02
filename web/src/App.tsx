@@ -16,6 +16,7 @@ import { checkQuoteStatus, createMintQuote, type MintQuoteResponse } from "./min
 import { requestQuoteAndMint, type CashuProof } from "./cashuBlind";
 import { DEMO_COPY, DEMO_MODE, MINT_URL, USE_MOCK } from "./config";
 import PageNav from "./PageNav";
+import { assetUrl, pageUrl } from "./basePath";
 import {
   createRawSigner,
   createNip07Signer,
@@ -572,7 +573,7 @@ export default function App() {
     <main className="page-shell">
       <section className="hero-card">
         <div className="hero-brand">
-          <img src="/images/logo.png" alt="" width={28} height={28} />
+          <img src={assetUrl("images/logo.png")} alt="" width={28} height={28} />
           <p className="eyebrow">Voter Portal</p>
         </div>
         <PageNav current="vote" />
@@ -601,7 +602,7 @@ export default function App() {
                 ))}
               </div>
             )}
-            <span><img className="inline-icon" src="/images/bitcoin-logo.png" alt="" width={18} height={18} />Mint</span>
+            <span><img className="inline-icon" src={assetUrl("images/bitcoin-logo.png")} alt="" width={18} height={18} />Mint</span>
             <code className="inline-code-badge">{activeMintUrl}</code>
             {allElections.length > 1 && (
               <select
@@ -638,13 +639,13 @@ export default function App() {
           </div>
         ) : (
           <div style={{ textAlign: "center", padding: "20px 0" }}>
-            <img className="empty-state-image" src="/images/nostr/underconstruction-dark.png" alt="" width={160} />
+            <img className="empty-state-image" src={assetUrl("images/nostr/underconstruction-dark.png")} alt="" width={160} />
             <p className="field-hint hero-hint" style={{ color: "var(--muted)" }}>
               Could not reach coordinator. Mock mode may be active.
             </p>
           </div>
         )}
-        <img className="hero-accent-image" src="/images/black-hat.webp" alt="" width={140} />
+        <img className="hero-accent-image" src={assetUrl("images/black-hat.webp")} alt="" width={140} />
       </section>
 
       <section className="content-grid">
@@ -756,7 +757,7 @@ export default function App() {
             </>
           )}
 
-          <img className="panel-accent-image" src="/images/nostr/gmnotes.png" alt="" width={120} />
+          <img className="panel-accent-image" src={assetUrl("images/nostr/gmnotes.png")} alt="" width={120} />
         </article>
 
         <article className="panel panel-wide">
@@ -937,7 +938,7 @@ export default function App() {
 
           {walletBundle && walletBundle.coordinatorProofs.length > 0 && (
             <div className="button-row">
-              <a className="primary-button link-button cta-link-button" href="/vote.html">Go To Voting Page</a>
+              <a className="primary-button link-button cta-link-button" href={pageUrl("vote.html")}>Go To Voting Page</a>
             </div>
           )}
         </article>

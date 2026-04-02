@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, render, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getPublicKey, nip19 } from "nostr-tools";
@@ -235,10 +235,6 @@ function notifyShareAssignmentSubscribers(coordinatorNpub: string) {
     }
   }
 }
-
-vi.mock("./coordinatorApi", () => ({
-  fetchElection: vi.fn().mockResolvedValue(null),
-}));
 
 vi.mock("./SimpleQrScanner", () => ({
   default: () => null,
@@ -589,6 +585,44 @@ describe("Simple round flow", () => {
     window.sessionStorage.clear();
   });
 
+  it("restores voter and coordinator identities from pasted nsec", async () => {
+    const user = userEvent.setup();
+    const { default: SimpleCoordinatorApp } = await import("./SimpleCoordinatorApp");
+    const { default: SimpleUiApp } = await import("./SimpleUiApp");
+
+    const coordinator = render(<SimpleCoordinatorApp />);
+    const voter = render(<SimpleUiApp />);
+
+    const voterSecretKey = Uint8Array.from({ length: 32 }, (_, index) => index + 1);
+    const voterNsec = nip19.nsecEncode(voterSecretKey);
+    const voterNpub = nip19.npubEncode(getPublicKey(voterSecretKey));
+    const coordinatorSecretKey = Uint8Array.from({ length: 32 }, (_, index) => index + 33);
+    const coordinatorNsec = nip19.nsecEncode(coordinatorSecretKey);
+    const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecretKey));
+
+    const coordinatorUi = within(coordinator.container);
+    const voterUi = within(voter.container);
+
+    const voterRestoreInput = voterUi.getByPlaceholderText("nsec1...");
+    await user.clear(voterRestoreInput);
+    await user.type(voterRestoreInput, voterNsec);
+    await user.click(voterUi.getByRole("button", { name: /^Restore$/i }));
+
+    const coordinatorRestoreInput = coordinatorUi.getByPlaceholderText("nsec1...");
+    await user.clear(coordinatorRestoreInput);
+    await user.type(coordinatorRestoreInput, coordinatorNsec);
+    await user.click(coordinatorUi.getByRole("button", { name: /^Restore$/i }));
+
+    await waitFor(() => {
+      expect(voterUi.getByText("Identity restored from nsec.")).toBeTruthy();
+      expect(coordinatorUi.getByText("Identity restored from nsec.")).toBeTruthy();
+      expect(voter.container.querySelectorAll("code.simple-identity-code")[0]?.textContent).toBe(voterNpub);
+      expect(voter.container.querySelectorAll("code.simple-identity-code")[1]?.textContent).toBe(voterNsec);
+      expect(coordinator.container.querySelectorAll("code.simple-identity-code")[0]?.textContent).toBe(coordinatorNpub);
+      expect(coordinator.container.querySelectorAll("code.simple-identity-code")[1]?.textContent).toBe(coordinatorNsec);
+    });
+  });
+
   it("simulates a two-coordinator two-voter voting round", async () => {
     const user = userEvent.setup();
     const { default: SimpleCoordinatorApp } = await import("./SimpleCoordinatorApp");
@@ -623,30 +657,22 @@ describe("Simple round flow", () => {
     expect(coordinatorTwoNpub.startsWith("npub1")).toBe(true);
     expect(coordinatorOneNpub).not.toBe(coordinatorTwoNpub);
 
-    const roundId = "round-1";
-    const coordinatorOneInputs = coordinatorOne.container.querySelectorAll("input.simple-voter-input");
-    const coordinatorTwoInputs = coordinatorTwo.container.querySelectorAll("input.simple-voter-input");
-    await user.clear(coordinatorOneInputs[1] as HTMLInputElement);
-    await user.type(coordinatorOneInputs[1] as HTMLInputElement, roundId);
-    await user.clear(coordinatorOneInputs[2] as HTMLInputElement);
-    await user.type(coordinatorOneInputs[2] as HTMLInputElement, "2");
-    await user.clear(coordinatorOneInputs[3] as HTMLInputElement);
-    await user.type(coordinatorOneInputs[3] as HTMLInputElement, "2");
-    await user.clear(coordinatorTwoInputs[0] as HTMLInputElement);
-    await user.type(coordinatorTwoInputs[0] as HTMLInputElement, coordinatorOneNpub);
+    const coordinatorTwoLeadInput = coordinatorTwoUi.getByPlaceholderText("Leave blank if this coordinator is the lead");
+    await user.clear(coordinatorTwoLeadInput);
+    await user.type(coordinatorTwoLeadInput, coordinatorOneNpub);
     await user.click(coordinatorTwoUi.getByRole("button", { name: /Submit to lead/i }));
 
     await waitFor(() => {
       expect(voterOne.container.querySelectorAll("code.simple-identity-code")[0]?.textContent?.startsWith("npub1")).toBe(true);
       expect(voterTwo.container.querySelectorAll("code.simple-identity-code")[0]?.textContent?.startsWith("npub1")).toBe(true);
     });
-    await user.type(voterOne.container.querySelector("input.simple-voter-input-inline") as HTMLInputElement, coordinatorOneNpub);
+    await user.type(voterOneUi.getByPlaceholderText("Enter npub..."), coordinatorOneNpub);
     await user.click(voterOneUi.getByRole("button", { name: /Add coordinator/i }));
-    await user.type(voterOne.container.querySelector("input.simple-voter-input-inline") as HTMLInputElement, coordinatorTwoNpub);
+    await user.type(voterOneUi.getByPlaceholderText("Enter npub..."), coordinatorTwoNpub);
     await user.click(voterOneUi.getByRole("button", { name: /Add coordinator/i }));
-    await user.type(voterTwo.container.querySelector("input.simple-voter-input-inline") as HTMLInputElement, coordinatorOneNpub);
+    await user.type(voterTwoUi.getByPlaceholderText("Enter npub..."), coordinatorOneNpub);
     await user.click(voterTwoUi.getByRole("button", { name: /Add coordinator/i }));
-    await user.type(voterTwo.container.querySelector("input.simple-voter-input-inline") as HTMLInputElement, coordinatorTwoNpub);
+    await user.type(voterTwoUi.getByPlaceholderText("Enter npub..."), coordinatorTwoNpub);
     await user.click(voterTwoUi.getByRole("button", { name: /Add coordinator/i }));
 
     await user.click(voterOneUi.getByRole("button", { name: /Notify coordinators/i }));
@@ -658,8 +684,13 @@ describe("Simple round flow", () => {
       expect(coordinatorOneUi.getByText(/submitted as sub-coordinator/i)).toBeTruthy();
     });
 
+    fireEvent.change(coordinatorOneUi.getByLabelText(/^Threshold T$/i), { target: { value: "2" } });
+
     await user.click(coordinatorOneUi.getByRole("button", { name: /Broadcast live vote/i }));
     await user.click(coordinatorOneUi.getByRole("button", { name: /Distribute share indexes/i }));
+
+    const firstRoundId = liveVotes[liveVotes.length - 1]?.votingId ?? "";
+    expect(firstRoundId).toBeTruthy();
 
     await waitFor(() => {
       expect(voterOneUi.getByText(/No live vote ticket yet\./i)).toBeTruthy();
@@ -686,8 +717,8 @@ describe("Simple round flow", () => {
     await waitFor(() => {
       expect(voterOneUi.getByText(/Tickets ready: 2 of 2/i)).toBeTruthy();
       expect(voterTwoUi.getByText(/Tickets ready: 2 of 2/i)).toBeTruthy();
-      expect(voterOneUi.getByText("round-1")).toBeTruthy();
-      expect(voterTwoUi.getByText("round-1")).toBeTruthy();
+      expect(voterOneUi.getByText(firstRoundId)).toBeTruthy();
+      expect(voterTwoUi.getByText(firstRoundId)).toBeTruthy();
       expect(voterOneUi.getAllByText("1").length).toBeGreaterThanOrEqual(2);
       expect(voterTwoUi.getAllByText("1").length).toBeGreaterThanOrEqual(2);
     });
@@ -705,16 +736,21 @@ describe("Simple round flow", () => {
       const roundOptions = within(roundSelector as HTMLSelectElement).getAllByRole("option");
       const roundOptionTexts = roundOptions.map((option) => option.textContent ?? "");
       expect(roundOptions).toHaveLength(2);
-      expect(roundOptionTexts.some((text) => text.includes("round-1"))).toBe(true);
+      expect(roundOptionTexts.some((text) => text.includes(firstRoundId))).toBe(true);
       expect(roundOptionTexts.some((text) => text.includes("Second question"))).toBe(true);
       expect(within(questionSection as HTMLElement).getByDisplayValue("Second question")).toBeTruthy();
+    });
+
+    await waitFor(() => {
+      expect(coordinatorTwoUi.getAllByText("Second question").length).toBeGreaterThanOrEqual(1);
+      expect(coordinatorTwoUi.getAllByRole("button", { name: /Send ticket/i }).length).toBeGreaterThanOrEqual(2);
     });
 
     await user.click(voterOneUi.getByRole("button", { name: /^Yes$/i }));
     await user.click(voterTwoUi.getByRole("button", { name: /^No$/i }));
     await user.click(voterOneUi.getByRole("button", { name: /^Submit$/i }));
     await user.click(voterTwoUi.getByRole("button", { name: /^Submit$/i }));
-    await user.selectOptions(coordinatorOne.container.querySelector("select#simple-active-round") as HTMLSelectElement, roundId);
+    await user.selectOptions(coordinatorOne.container.querySelector("select#simple-active-round") as HTMLSelectElement, firstRoundId);
 
     await waitFor(() => {
       expect(coordinatorOneUi.getByText((_, element) => element?.textContent === "Yes: 1 | No: 1")).toBeTruthy();

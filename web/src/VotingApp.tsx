@@ -16,6 +16,7 @@ import {
 import MerkleTreeViz from "./MerkleTreeViz";
 import { DEMO_MODE } from "./config";
 import PageNav from "./PageNav";
+import { assetUrl, pageUrl } from "./basePath";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import { deriveTokenIdFromProofSecrets, tokenIdLabel } from "./tokenIdentity";
 import TokenFingerprint from "./TokenFingerprint";
@@ -403,7 +404,7 @@ export default function VotingApp() {
     <main className="page-shell">
       <section className="hero-card">
         <div className="hero-brand">
-          <img src="/images/logo.png" alt="" width={28} height={28} />
+          <img src={assetUrl("images/logo.png")} alt="" width={28} height={28} />
           <p className="eyebrow">Voting Page</p>
         </div>
         <PageNav current="vote" />
@@ -417,9 +418,9 @@ export default function VotingApp() {
         <p className="field-hint hero-hint">
           {election ? `Election loaded: ${election.title}` : "Loading election metadata from the coordinator..."}
         </p>
-        <p className="field-hint hero-hint"><img className="inline-icon" src="/images/nostr/relayflasks.png" alt="" width={18} height={18} />Relays: {relays.join(", ")}</p>
+        <p className="field-hint hero-hint"><img className="inline-icon" src={assetUrl("images/nostr/relayflasks.png")} alt="" width={18} height={18} />Relays: {relays.join(", ")}</p>
         <div className="button-row">
-          <a className="ghost-button link-button" href="/">Return to home page</a>
+          <a className="ghost-button link-button" href={pageUrl()}>Return to home page</a>
         </div>
       </section>
 
@@ -479,7 +480,7 @@ export default function VotingApp() {
                 <button className="secondary-button" onClick={() => void saveIdentity()}>
                   Save identity
                 </button>
-                <a className="ghost-button link-button" href="/">
+                <a className="ghost-button link-button" href={pageUrl()}>
                   Mint proof on home page
                 </a>
               </div>
@@ -509,12 +510,12 @@ export default function VotingApp() {
             <div>
               {storedProof ? (
                 <div className="derived-box">
-                  <p className="code-label"><img className="inline-icon" src="/images/bitcoin-logo.png" alt="" width={18} height={18} />Stored proof</p>
+                  <p className="code-label"><img className="inline-icon" src={assetUrl("images/bitcoin-logo.png")} alt="" width={18} height={18} />Stored proof</p>
                   <code className="code-block code-block-muted">{JSON.stringify(storedProof, null, 2)}</code>
                 </div>
               ) : (
                 <div style={{ textAlign: "center", padding: "12px 0" }}>
-                  <img className="empty-state-image" src="/images/nostr/underconstruction-dark.png" alt="" width={120} />
+                  <img className="empty-state-image" src={assetUrl("images/nostr/underconstruction-dark.png")} alt="" width={120} />
                   <p className="empty-copy">No voting proof found yet. Paste your nsec above, then mint the proof on the home page.</p>
                 </div>
               )}
@@ -623,7 +624,7 @@ export default function VotingApp() {
             ))
           ) : (
             <div style={{ textAlign: "center", padding: "12px 0" }}>
-              <img className="empty-state-image" src="/images/nostr/underconstruction-dark.png" alt="" width={120} />
+              <img className="empty-state-image" src={assetUrl("images/nostr/underconstruction-dark.png")} alt="" width={120} />
               <p className="empty-copy">No ballot questions loaded. Request a fresh quote from the voter portal first.</p>
             </div>
           )}

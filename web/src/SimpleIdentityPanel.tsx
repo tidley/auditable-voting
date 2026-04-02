@@ -6,13 +6,18 @@ export default function SimpleIdentityPanel({
   npub,
   nsec,
   title = "Identity",
+  onRestoreNsec,
+  restoreMessage,
 }: {
   npub: string;
   nsec: string;
   title?: string;
+  onRestoreNsec?: (nsec: string) => void;
+  restoreMessage?: string | null;
 }) {
   const [copied, setCopied] = useState(false);
   const [qrSrc, setQrSrc] = useState<string | null>(null);
+  const [restoreNsec, setRestoreNsec] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -63,6 +68,37 @@ export default function SimpleIdentityPanel({
     <SimpleCollapsibleSection title={title}>
       <div className="simple-identity-grid">
         <div className="simple-identity-fields">
+          {onRestoreNsec ? (
+            <div className="simple-identity-restore">
+              <div className="simple-identity-label">Restore from nsec</div>
+              <div className="simple-voter-inline-field">
+                <input
+                  className="simple-voter-input simple-voter-input-inline"
+                  value={restoreNsec}
+                  onChange={(event) => setRestoreNsec(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      onRestoreNsec(restoreNsec);
+                    }
+                  }}
+                  placeholder="nsec1..."
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                />
+                <button
+                  type="button"
+                  className="simple-voter-secondary"
+                  onClick={() => onRestoreNsec(restoreNsec)}
+                  disabled={!restoreNsec.trim()}
+                >
+                  Restore
+                </button>
+              </div>
+              {restoreMessage ? <p className="simple-voter-note">{restoreMessage}</p> : null}
+            </div>
+          ) : null}
           <div className="simple-identity-field">
             <div className="simple-identity-label">Public key</div>
             <code className="simple-identity-code">{npub}</code>
