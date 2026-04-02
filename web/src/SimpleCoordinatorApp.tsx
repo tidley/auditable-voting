@@ -1,14 +1,17 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 import { decodeNsec, deriveNpubFromNsec } from "./nostrIdentity";
 import {
   subscribeSimpleCoordinatorFollowers,
+  subscribeSimpleDmAcknowledgements,
   subscribeSimpleCoordinatorShareAssignments,
   subscribeSimpleShardRequests,
   subscribeSimpleSubCoordinatorApplications,
+  sendSimpleDmAcknowledgement,
   sendSimpleShareAssignment,
   sendSimpleSubCoordinatorJoin,
   sendSimpleRoundTicket,
+  type SimpleDmAcknowledgement,
   type SimpleCoordinatorFollower,
   type SimpleShardRequest,
   type SimpleSubCoordinatorApplication,
@@ -48,7 +51,7 @@ type SimpleCoordinatorCache = {
   leadCoordinatorNpub: string;
   followers: SimpleCoordinatorFollower[];
   subCoordinators: SimpleSubCoordinatorApplication[];
-  ticketStatuses: Record<string, string>;
+  ticketDeliveries: Record<string, { status: string; eventId?: string; responseId?: string }>;
   pendingRequests: SimpleShardRequest[];
   registrationStatus: string | null;
   assignmentStatus: string | null;
@@ -115,8 +118,9 @@ export default function SimpleCoordinatorApp() {
   const [leadCoordinatorNpub, setLeadCoordinatorNpub] = useState("");
   const [followers, setFollowers] = useState<SimpleCoordinatorFollower[]>([]);
   const [subCoordinators, setSubCoordinators] = useState<SimpleSubCoordinatorApplication[]>([]);
-  const [ticketStatuses, setTicketStatuses] = useState<Record<string, string>>({});
+  const [ticketDeliveries, setTicketDeliveries] = useState<Record<string, { status: string; eventId?: string; responseId?: string }>>({});
   const [pendingRequests, setPendingRequests] = useState<SimpleShardRequest[]>([]);
+  const [dmAcknowledgements, setDmAcknowledgements] = useState<SimpleDmAcknowledgement[]>([]);
   const [registrationStatus, setRegistrationStatus] = useState<string | null>(null);
   const [assignmentStatus, setAssignmentStatus] = useState<string | null>(null);
   const [questionPrompt, setQuestionPrompt] = useState("Should the proposal pass?");
@@ -145,6 +149,10 @@ export default function SimpleCoordinatorApp() {
     1,
     Math.min(Number.parseInt(questionThresholdN, 10) || 1, availableCoordinatorCount),
   );
+  const sentFollowAckIdsRef = useRef<Set<string>>(new Set());
+  const sentRequestAckIdsRef = useRef<Set<string>>(new Set());
+  const sentSubCoordinatorAckIdsRef = useRef<Set<string>>(new Set());
+  const sentAssignmentAckIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -161,7 +169,7 @@ export default function SimpleCoordinatorApp() {
           setLeadCoordinatorNpub(typeof cache.leadCoordinatorNpub === "string" ? cache.leadCoordinatorNpub : "");
           setFollowers(Array.isArray(cache.followers) ? cache.followers : []);
           setSubCoordinators(Array.isArray(cache.subCoordinators) ? cache.subCoordinators : []);
-          setTicketStatuses(cache.ticketStatuses && typeof cache.ticketStatuses === "object" ? cache.ticketStatuses : {});
+          setTicketDeliveries(cache.ticketDeliveries && typeof cache.ticketDeliveries === "object" ? cache.ticketDeliveries : {});
           setPendingRequests(Array.isArray(cache.pendingRequests) ? cache.pendingRequests : []);
           setRegistrationStatus(typeof cache.registrationStatus === "string" ? cache.registrationStatus : null);
           setAssignmentStatus(typeof cache.assignmentStatus === "string" ? cache.assignmentStatus : null);
@@ -213,7 +221,7 @@ export default function SimpleCoordinatorApp() {
       leadCoordinatorNpub,
       followers,
       subCoordinators,
-      ticketStatuses,
+      ticketDeliveries,
       pendingRequests,
       registrationStatus,
       assignmentStatus,
@@ -252,7 +260,7 @@ export default function SimpleCoordinatorApp() {
     selectedVotingId,
     subCoordinators,
     submittedVotes,
-    ticketStatuses,
+    ticketDeliveries,
   ]);
 
   useEffect(() => {
@@ -269,6 +277,24 @@ export default function SimpleCoordinatorApp() {
       coordinatorNsec,
       onFollowers: (nextFollowers) => {
         setFollowers((current) => mergeFollowers(current, nextFollowers));
+      },
+    });
+  }, [keypair?.nsec]);
+
+  useEffect(() => {
+    const actorNsec = keypair?.nsec ?? "";
+
+    if (!actorNsec) {
+      setDmAcknowledgements([]);
+      return;
+    }
+
+    setDmAcknowledgements([]);
+
+    return subscribeSimpleDmAcknowledgements({
+      actorNsec,
+      onAcknowledgements: (nextAcknowledgements) => {
+        setDmAcknowledgements(nextAcknowledgements);
       },
     });
   }, [keypair?.nsec]);
@@ -321,9 +347,31 @@ export default function SimpleCoordinatorApp() {
         }
         setRegistrationStatus(null);
         setAssignmentStatus(`Assigned share index ${latestAssignment.shareIndex} by the lead coordinator.`);
+
+        if (!latestAssignment.dmEventId || sentAssignmentAckIdsRef.current.has(latestAssignment.dmEventId)) {
+          return;
+        }
+
+        const coordinatorSecretKey = decodeNsec(coordinatorNsec);
+
+        if (!coordinatorSecretKey || !keypair?.npub) {
+          return;
+        }
+
+        sentAssignmentAckIdsRef.current.add(latestAssignment.dmEventId);
+        void sendSimpleDmAcknowledgement({
+          senderSecretKey: coordinatorSecretKey,
+          recipientNpub: latestAssignment.leadCoordinatorNpub,
+          actorNpub: keypair.npub,
+          actorId: coordinatorId === "pending" ? undefined : coordinatorId,
+          ackedAction: "simple_share_assignment",
+          ackedEventId: latestAssignment.dmEventId,
+        }).catch(() => {
+          sentAssignmentAckIdsRef.current.delete(latestAssignment.dmEventId);
+        });
       },
     });
-  }, [isLeadCoordinator, keypair?.nsec, keypair?.npub, leadCoordinatorNpub]);
+  }, [coordinatorId, isLeadCoordinator, keypair?.nsec, keypair?.npub, leadCoordinatorNpub]);
 
   useEffect(() => {
     let cancelled = false;
@@ -444,6 +492,90 @@ export default function SimpleCoordinatorApp() {
   }, [keypair?.nsec]);
 
   useEffect(() => {
+    const coordinatorSecretKey = decodeNsec(keypair?.nsec ?? "");
+    const coordinatorNpub = keypair?.npub ?? "";
+
+    if (!coordinatorSecretKey || !coordinatorNpub) {
+      return;
+    }
+
+    for (const follower of followers) {
+      if (!follower.dmEventId || sentFollowAckIdsRef.current.has(follower.dmEventId)) {
+        continue;
+      }
+
+      sentFollowAckIdsRef.current.add(follower.dmEventId);
+      void sendSimpleDmAcknowledgement({
+        senderSecretKey: coordinatorSecretKey,
+        recipientNpub: follower.voterNpub,
+        actorNpub: coordinatorNpub,
+        actorId: coordinatorId === "pending" ? undefined : coordinatorId,
+        ackedAction: "simple_coordinator_follow",
+        ackedEventId: follower.dmEventId,
+        votingId: follower.votingId,
+      }).catch(() => {
+        sentFollowAckIdsRef.current.delete(follower.dmEventId);
+      });
+    }
+  }, [coordinatorId, followers, keypair?.nsec, keypair?.npub]);
+
+  useEffect(() => {
+    const coordinatorSecretKey = decodeNsec(keypair?.nsec ?? "");
+    const coordinatorNpub = keypair?.npub ?? "";
+
+    if (!coordinatorSecretKey || !coordinatorNpub) {
+      return;
+    }
+
+    for (const request of pendingRequests) {
+      if (!request.dmEventId || sentRequestAckIdsRef.current.has(request.dmEventId)) {
+        continue;
+      }
+
+      sentRequestAckIdsRef.current.add(request.dmEventId);
+      void sendSimpleDmAcknowledgement({
+        senderSecretKey: coordinatorSecretKey,
+        recipientNpub: request.voterNpub,
+        actorNpub: coordinatorNpub,
+        actorId: coordinatorId === "pending" ? undefined : coordinatorId,
+        ackedAction: "simple_shard_request",
+        ackedEventId: request.dmEventId,
+        votingId: request.votingId,
+        requestId: request.blindRequest.requestId,
+      }).catch(() => {
+        sentRequestAckIdsRef.current.delete(request.dmEventId);
+      });
+    }
+  }, [coordinatorId, keypair?.nsec, keypair?.npub, pendingRequests]);
+
+  useEffect(() => {
+    const coordinatorSecretKey = decodeNsec(keypair?.nsec ?? "");
+    const coordinatorNpub = keypair?.npub ?? "";
+
+    if (!isLeadCoordinator || !coordinatorSecretKey || !coordinatorNpub) {
+      return;
+    }
+
+    for (const application of subCoordinators) {
+      if (!application.dmEventId || sentSubCoordinatorAckIdsRef.current.has(application.dmEventId)) {
+        continue;
+      }
+
+      sentSubCoordinatorAckIdsRef.current.add(application.dmEventId);
+      void sendSimpleDmAcknowledgement({
+        senderSecretKey: coordinatorSecretKey,
+        recipientNpub: application.coordinatorNpub,
+        actorNpub: coordinatorNpub,
+        actorId: coordinatorId === "pending" ? undefined : coordinatorId,
+        ackedAction: "simple_subcoordinator_join",
+        ackedEventId: application.dmEventId,
+      }).catch(() => {
+        sentSubCoordinatorAckIdsRef.current.delete(application.dmEventId);
+      });
+    }
+  }, [coordinatorId, isLeadCoordinator, keypair?.nsec, keypair?.npub, subCoordinators]);
+
+  useEffect(() => {
     if (!liveVoteSourceNpub) {
       setPublishedVotes([]);
       return;
@@ -476,10 +608,6 @@ export default function SimpleCoordinatorApp() {
   }, [isLeadCoordinator, publishedVotes]);
 
   useEffect(() => {
-    setTicketStatuses({});
-  }, [selectedPublishedVote?.votingId]);
-
-  useEffect(() => {
     const votingId = selectedPublishedVote?.votingId ?? "";
 
     if (!votingId) {
@@ -510,8 +638,9 @@ export default function SimpleCoordinatorApp() {
     setLeadCoordinatorNpub("");
     setFollowers([]);
     setSubCoordinators([]);
-    setTicketStatuses({});
+    setTicketDeliveries({});
     setPendingRequests([]);
+    setDmAcknowledgements([]);
     setRegistrationStatus(null);
     setAssignmentStatus(null);
     setQuestionPrompt("Should the proposal pass?");
@@ -524,6 +653,10 @@ export default function SimpleCoordinatorApp() {
     setPublishedVotes([]);
     setSelectedVotingId("");
     setSubmittedVotes([]);
+    sentFollowAckIdsRef.current.clear();
+    sentRequestAckIdsRef.current.clear();
+    sentSubCoordinatorAckIdsRef.current.clear();
+    sentAssignmentAckIdsRef.current.clear();
   }
 
   function restoreIdentity(nextNsec: string) {
@@ -551,8 +684,9 @@ export default function SimpleCoordinatorApp() {
     setLeadCoordinatorNpub("");
     setFollowers([]);
     setSubCoordinators([]);
-    setTicketStatuses({});
+    setTicketDeliveries({});
     setPendingRequests([]);
+    setDmAcknowledgements([]);
     setRegistrationStatus(null);
     setAssignmentStatus(null);
     setQuestionPrompt("Should the proposal pass?");
@@ -565,6 +699,10 @@ export default function SimpleCoordinatorApp() {
     setPublishedVotes([]);
     setSelectedVotingId("");
     setSubmittedVotes([]);
+    sentFollowAckIdsRef.current.clear();
+    sentRequestAckIdsRef.current.clear();
+    sentSubCoordinatorAckIdsRef.current.clear();
+    sentAssignmentAckIdsRef.current.clear();
   }
 
   function downloadBackup() {
@@ -576,7 +714,7 @@ export default function SimpleCoordinatorApp() {
       leadCoordinatorNpub,
       followers,
       subCoordinators,
-      ticketStatuses,
+      ticketDeliveries,
       pendingRequests,
       registrationStatus,
       assignmentStatus,
@@ -615,8 +753,11 @@ export default function SimpleCoordinatorApp() {
       setLeadCoordinatorNpub(typeof cache?.leadCoordinatorNpub === "string" ? cache.leadCoordinatorNpub : "");
       setFollowers(Array.isArray(cache?.followers) ? cache.followers : []);
       setSubCoordinators(Array.isArray(cache?.subCoordinators) ? cache.subCoordinators : []);
-      setTicketStatuses(cache?.ticketStatuses && typeof cache.ticketStatuses === "object" ? cache.ticketStatuses : {});
+      setTicketDeliveries(
+        cache?.ticketDeliveries && typeof cache.ticketDeliveries === "object" ? cache.ticketDeliveries : {},
+      );
       setPendingRequests(Array.isArray(cache?.pendingRequests) ? cache.pendingRequests : []);
+      setDmAcknowledgements([]);
       setRegistrationStatus(typeof cache?.registrationStatus === "string" ? cache.registrationStatus : null);
       setAssignmentStatus(typeof cache?.assignmentStatus === "string" ? cache.assignmentStatus : null);
       setQuestionPrompt(typeof cache?.questionPrompt === "string" ? cache.questionPrompt : "Should the proposal pass?");
@@ -631,6 +772,10 @@ export default function SimpleCoordinatorApp() {
       setPublishedVotes(Array.isArray(cache?.publishedVotes) ? cache.publishedVotes : []);
       setSelectedVotingId(typeof cache?.selectedVotingId === "string" ? cache.selectedVotingId : "");
       setSubmittedVotes(Array.isArray(cache?.submittedVotes) ? cache.submittedVotes : []);
+      sentFollowAckIdsRef.current.clear();
+      sentRequestAckIdsRef.current.clear();
+      sentSubCoordinatorAckIdsRef.current.clear();
+      sentAssignmentAckIdsRef.current.clear();
     } catch {
       setBackupStatus("Backup restore failed.");
     }
@@ -679,7 +824,7 @@ export default function SimpleCoordinatorApp() {
     }
 
     const ticketStatusKey = `${follower.voterNpub}:${votingId}`;
-    setTicketStatuses((current) => ({ ...current, [ticketStatusKey]: "Sending ticket..." }));
+    setTicketDeliveries((current) => ({ ...current, [ticketStatusKey]: { status: "Sending ticket..." } }));
 
     try {
       const thresholdLabel = activeThresholdT && activeThresholdN
@@ -701,12 +846,19 @@ export default function SimpleCoordinatorApp() {
         thresholdN: activeThresholdN,
       });
 
-      setTicketStatuses((current) => ({
+      setTicketDeliveries((current) => ({
         ...current,
-        [ticketStatusKey]: result.successes > 0 ? "Ticket sent." : "Ticket send failed.",
+        [ticketStatusKey]: {
+          status: result.successes > 0 ? "Ticket sent." : "Ticket send failed.",
+          eventId: result.eventId,
+          responseId: result.responseId,
+        },
       }));
     } catch {
-      setTicketStatuses((current) => ({ ...current, [ticketStatusKey]: "Ticket send failed." }));
+      setTicketDeliveries((current) => ({
+        ...current,
+        [ticketStatusKey]: { status: "Ticket send failed." },
+      }));
     }
   }
 
@@ -991,42 +1143,71 @@ export default function SimpleCoordinatorApp() {
                 <li key={follower.id} className="simple-voter-list-item">
                   {(() => {
                     const ticketStatusKey = `${follower.voterNpub}:${selectedPublishedVote?.votingId ?? ""}`;
-                    const ticketStatus = ticketStatuses[ticketStatusKey];
+                    const ticketDelivery = ticketDeliveries[ticketStatusKey];
+                    const ticketStatus = ticketDelivery?.status ?? null;
                     const ticketWasSent = ticketStatus === "Ticket sent.";
                     const hasPendingRequest = selectedPublishedVote
                       ? Boolean(findLatestRoundRequest(pendingRequests, follower.voterNpub, selectedPublishedVote.votingId))
                       : false;
+                    const ticketReceiptAck = ticketDelivery?.eventId
+                      ? dmAcknowledgements.find((ack) => (
+                        ack.ackedAction === "simple_round_ticket"
+                        && ack.ackedEventId === ticketDelivery.eventId
+                      ))
+                      : null;
 
                     return (
                       <>
-                  <p className="simple-voter-question">
-                    Voter {follower.voterId} is following this coordinator
-                    {follower.votingId ? ` for ${follower.votingId.slice(0, 12)}` : " and is waiting for the next live vote"}
-                  </p>
-                  {selectedPublishedVote ? (
-                    <div className="simple-voter-action-row">
-                      <button
-                        type="button"
-                        className="simple-voter-secondary"
-                        onClick={() => void sendTicket(follower)}
-                        disabled={
-                          !keypair?.nsec
-                          || !blindPrivateKey
-                          || !blindKeyAnnouncement
-                          || !hasPendingRequest
-                          || (!isLeadCoordinator && activeShareIndex <= 0)
-                        }
-                      >
-                        {ticketWasSent ? "Resend" : "Send ticket"}
-                      </button>
-                    </div>
-                  ) : null}
-                  {!ticketStatus && selectedPublishedVote && !hasPendingRequest ? (
-                    <p className="simple-voter-note">Waiting for this voter&apos;s blinded ticket request.</p>
-                  ) : null}
-                  {ticketStatus && (
-                    <p className="simple-voter-note">{ticketStatus}</p>
-                  )}
+                        <p className="simple-voter-question">
+                          Voter {follower.voterId} is following this coordinator
+                          {follower.votingId ? ` for ${follower.votingId.slice(0, 12)}` : " and is waiting for the next live vote"}
+                        </p>
+                        {selectedPublishedVote ? (
+                          <div className="simple-voter-action-row">
+                            <button
+                              type="button"
+                              className="simple-voter-secondary"
+                              onClick={() => void sendTicket(follower)}
+                              disabled={
+                                !keypair?.nsec
+                                || !blindPrivateKey
+                                || !blindKeyAnnouncement
+                                || !hasPendingRequest
+                                || (!isLeadCoordinator && activeShareIndex <= 0)
+                              }
+                            >
+                              {ticketWasSent ? "Resend" : "Send ticket"}
+                            </button>
+                          </div>
+                        ) : null}
+                        <ul className="simple-delivery-diagnostics">
+                          <li className="simple-delivery-ok">Follow request received.</li>
+                          <li className={hasPendingRequest ? "simple-delivery-ok" : "simple-delivery-waiting"}>
+                            {hasPendingRequest
+                              ? "Blinded ticket request received."
+                              : "Waiting for this voter's blinded ticket request."}
+                          </li>
+                          {selectedPublishedVote ? (
+                            <li className={
+                              ticketStatus === "Ticket send failed."
+                                ? "simple-delivery-error"
+                                : ticketStatus
+                                  ? "simple-delivery-ok"
+                                  : "simple-delivery-waiting"
+                            }>
+                              {ticketStatus ?? "Ticket not sent yet."}
+                            </li>
+                          ) : (
+                            <li className="simple-delivery-waiting">Waiting for a live round.</li>
+                          )}
+                          {selectedPublishedVote && ticketWasSent ? (
+                            <li className={ticketReceiptAck ? "simple-delivery-ok" : "simple-delivery-waiting"}>
+                              {ticketReceiptAck
+                                ? "Voter acknowledged ticket receipt."
+                                : "Waiting for voter ticket receipt acknowledgement."}
+                            </li>
+                          ) : null}
+                        </ul>
                       </>
                     );
                   })()}

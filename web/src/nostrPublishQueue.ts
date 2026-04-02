@@ -1,5 +1,5 @@
-const MIN_PUBLISH_INTERVAL_MS = 1000;
-const PER_RELAY_PUBLISH_STAGGER_MS = 250;
+const MIN_PUBLISH_INTERVAL_MS = 1500;
+const PER_RELAY_PUBLISH_STAGGER_MS = 600;
 
 let nextAllowedAt = 0;
 let tail: Promise<void> = Promise.resolve();

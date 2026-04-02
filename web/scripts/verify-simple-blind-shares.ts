@@ -14,7 +14,7 @@ import {
   unblindSimpleBlindShare,
 } from "../src/simpleShardCertificate";
 
-const webcrypto = nodeCrypto.webcrypto;
+const webcrypto = nodeCrypto.webcrypto as unknown as Crypto;
 
 function makeSecretKey(seed: number) {
   return Uint8Array.from({ length: 32 }, (_, index) => (seed + index) % 255 || 1);

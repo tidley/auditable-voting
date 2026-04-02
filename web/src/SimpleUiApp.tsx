@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 import { decodeNsec, deriveNpubFromNsec } from "./nostrIdentity";
 import { sha256Hex } from "./tokenIdentity";
@@ -16,8 +16,11 @@ import {
 } from "./simpleShardCertificate";
 import {
   sendSimpleCoordinatorFollow,
+  sendSimpleDmAcknowledgement,
   sendSimpleShardRequest,
+  subscribeSimpleDmAcknowledgements,
   subscribeSimpleShardResponses,
+  type SimpleDmAcknowledgement,
   type SimpleShardRequest,
   type SimpleShardResponse,
 } from "./simpleShardDm";
@@ -48,6 +51,7 @@ type PendingBlindRequest = {
   request: SimpleShardRequest["blindRequest"];
   secret: SimpleBlindRequestSecret;
   createdAt: string;
+  dmEventId?: string;
 };
 
 type SimpleVoterCache = {
@@ -55,6 +59,8 @@ type SimpleVoterCache = {
   requestStatus: string | null;
   receivedShards: SimpleShardResponse[];
   pendingBlindRequests: Record<string, PendingBlindRequest>;
+  followDeliveries: Record<string, { status: string; eventId?: string }>;
+  requestDeliveries: Record<string, { status: string; eventId?: string; requestId?: string }>;
   submitStatus: string | null;
   selectedVotingId: string;
   liveVoteChoice: LiveVoteChoice;
@@ -101,11 +107,15 @@ export default function SimpleUiApp() {
   const [backupStatus, setBackupStatus] = useState<string | null>(null);
   const [receivedShards, setReceivedShards] = useState<SimpleShardResponse[]>([]);
   const [pendingBlindRequests, setPendingBlindRequests] = useState<Record<string, PendingBlindRequest>>({});
+  const [followDeliveries, setFollowDeliveries] = useState<Record<string, { status: string; eventId?: string }>>({});
+  const [requestDeliveries, setRequestDeliveries] = useState<Record<string, { status: string; eventId?: string; requestId?: string }>>({});
+  const [dmAcknowledgements, setDmAcknowledgements] = useState<SimpleDmAcknowledgement[]>([]);
   const [discoveredSessions, setDiscoveredSessions] = useState<SimpleLiveVoteSession[]>([]);
   const [knownBlindKeys, setKnownBlindKeys] = useState<Record<string, SimpleBlindKeyAnnouncement>>({});
   const [submitStatus, setSubmitStatus] = useState<string | null>(null);
   const [ballotTokenId, setBallotTokenId] = useState<string | null>(null);
   const [selectedVotingId, setSelectedVotingId] = useState("");
+  const sentTicketReceiptAckIdsRef = useRef<Set<string>>(new Set());
 
   const configuredCoordinatorTargets = useMemo(
     () => normalizeCoordinatorNpubs(manualCoordinators),
@@ -130,6 +140,16 @@ export default function SimpleUiApp() {
           setPendingBlindRequests(
             cache.pendingBlindRequests && typeof cache.pendingBlindRequests === "object"
               ? cache.pendingBlindRequests
+              : {},
+          );
+          setFollowDeliveries(
+            cache.followDeliveries && typeof cache.followDeliveries === "object"
+              ? cache.followDeliveries
+              : {},
+          );
+          setRequestDeliveries(
+            cache.requestDeliveries && typeof cache.requestDeliveries === "object"
+              ? cache.requestDeliveries
               : {},
           );
           setSubmitStatus(typeof cache.submitStatus === "string" ? cache.submitStatus : null);
@@ -173,6 +193,8 @@ export default function SimpleUiApp() {
       requestStatus,
       receivedShards,
       pendingBlindRequests,
+      followDeliveries,
+      requestDeliveries,
       submitStatus,
       selectedVotingId,
       liveVoteChoice,
@@ -188,13 +210,33 @@ export default function SimpleUiApp() {
     identityReady,
     liveVoteChoice,
     manualCoordinators,
+    followDeliveries,
     pendingBlindRequests,
     receivedShards,
     requestStatus,
+    requestDeliveries,
     selectedVotingId,
     submitStatus,
     voterKeypair,
   ]);
+
+  useEffect(() => {
+    const actorNsec = voterKeypair?.nsec?.trim() ?? "";
+
+    if (!actorNsec) {
+      setDmAcknowledgements([]);
+      return;
+    }
+
+    setDmAcknowledgements([]);
+
+    return subscribeSimpleDmAcknowledgements({
+      actorNsec,
+      onAcknowledgements: (nextAcknowledgements) => {
+        setDmAcknowledgements(nextAcknowledgements);
+      },
+    });
+  }, [voterKeypair?.nsec]);
 
   useEffect(() => {
     const voterNsec = voterKeypair?.nsec?.trim() ?? "";
@@ -335,9 +377,13 @@ export default function SimpleUiApp() {
     setBallotTokenId(null);
     setReceivedShards([]);
     setPendingBlindRequests({});
+    setFollowDeliveries({});
+    setRequestDeliveries({});
+    setDmAcknowledgements([]);
     setDiscoveredSessions([]);
     setKnownBlindKeys({});
     setSelectedVotingId("");
+    sentTicketReceiptAckIdsRef.current.clear();
   }
 
   function restoreIdentity(nextNsec: string) {
@@ -368,9 +414,13 @@ export default function SimpleUiApp() {
     setBallotTokenId(null);
     setReceivedShards([]);
     setPendingBlindRequests({});
+    setFollowDeliveries({});
+    setRequestDeliveries({});
+    setDmAcknowledgements([]);
     setDiscoveredSessions([]);
     setKnownBlindKeys({});
     setSelectedVotingId("");
+    sentTicketReceiptAckIdsRef.current.clear();
   }
 
   function downloadBackup() {
@@ -383,6 +433,8 @@ export default function SimpleUiApp() {
       requestStatus,
       receivedShards,
       pendingBlindRequests,
+      followDeliveries,
+      requestDeliveries,
       submitStatus,
       selectedVotingId,
       liveVoteChoice,
@@ -420,7 +472,19 @@ export default function SimpleUiApp() {
           ? cache.pendingBlindRequests
           : {},
       );
+      setFollowDeliveries(
+        cache?.followDeliveries && typeof cache.followDeliveries === "object"
+          ? cache.followDeliveries
+          : {},
+      );
+      setRequestDeliveries(
+        cache?.requestDeliveries && typeof cache.requestDeliveries === "object"
+          ? cache.requestDeliveries
+          : {},
+      );
       setSelectedVotingId(typeof cache?.selectedVotingId === "string" ? cache.selectedVotingId : "");
+      setDmAcknowledgements([]);
+      sentTicketReceiptAckIdsRef.current.clear();
     } catch {
       setBackupStatus("Backup restore failed.");
     }
@@ -460,9 +524,21 @@ export default function SimpleUiApp() {
           voterNpub,
           voterId,
         });
-        return result.successes > 0;
+        return {
+          coordinatorNpub,
+          success: result.successes > 0,
+          eventId: result.eventId,
+        };
       }));
-      const followSuccesses = followResults.filter(Boolean).length;
+      const nextDeliveries = Object.fromEntries(followResults.map((result) => [
+        result.coordinatorNpub,
+        {
+          status: result.success ? "Follow request sent." : "Follow request failed.",
+          eventId: result.eventId,
+        },
+      ]));
+      setFollowDeliveries((current) => ({ ...current, ...nextDeliveries }));
+      const followSuccesses = followResults.filter((result) => result.success).length;
 
       setRequestStatus(
         followSuccesses > 0
@@ -595,9 +671,6 @@ export default function SimpleUiApp() {
         } satisfies PendingBlindRequest;
       }));
 
-      const nextRequests = Object.fromEntries(createdEntries.map((entry) => [`${entry.coordinatorNpub}:${entry.votingId}`, entry]));
-      setPendingBlindRequests((current) => ({ ...current, ...nextRequests }));
-
       const results = await Promise.all(createdEntries.map(async (entry) => sendSimpleShardRequest({
         voterSecretKey,
         coordinatorNpub: entry.coordinatorNpub,
@@ -607,9 +680,30 @@ export default function SimpleUiApp() {
         blindRequest: entry.request,
       })));
 
-      if (results.some((result) => result.successes > 0)) {
-        setRequestStatus("Coordinators notified. Waiting for round tickets.");
-      }
+      const successfulEntries = createdEntries.flatMap((entry, index) => (
+        results[index].successes > 0
+          ? [{ ...entry, dmEventId: results[index].eventId }]
+          : []
+      ));
+      const nextRequests = Object.fromEntries(
+        successfulEntries.map((entry) => [`${entry.coordinatorNpub}:${entry.votingId}`, entry]),
+      );
+      setPendingBlindRequests((current) => ({ ...current, ...nextRequests }));
+      const nextRequestDeliveries = Object.fromEntries(createdEntries.map((entry, index) => [
+        `${entry.coordinatorNpub}:${entry.votingId}`,
+        {
+          status: results[index].successes > 0 ? "Blinded ticket request sent." : "Blinded ticket request failed.",
+          eventId: results[index].eventId,
+          requestId: entry.request.requestId,
+        },
+      ]));
+      setRequestDeliveries((current) => ({ ...current, ...nextRequestDeliveries }));
+
+      setRequestStatus(
+        results.some((result) => result.successes > 0)
+          ? "Coordinators notified. Waiting for round tickets."
+          : "Blinded ticket requests failed.",
+      );
     })();
   }, [
     configuredCoordinatorTargets,
@@ -621,6 +715,39 @@ export default function SimpleUiApp() {
     voterKeypair?.npub,
     voterKeypair?.nsec,
   ]);
+
+  useEffect(() => {
+    const voterSecretKey = decodeNsec(voterKeypair?.nsec ?? "");
+    const voterNpub = voterKeypair?.npub ?? "";
+
+    if (!voterSecretKey || !voterNpub) {
+      return;
+    }
+
+    for (const response of receivedShards) {
+      if (!response.dmEventId || sentTicketReceiptAckIdsRef.current.has(response.dmEventId)) {
+        continue;
+      }
+
+      const responseVotingId = response.shardCertificate?.votingId
+        ?? Object.values(pendingBlindRequests).find((request) => request.request.requestId === response.requestId)?.votingId;
+
+      sentTicketReceiptAckIdsRef.current.add(response.dmEventId);
+      void sendSimpleDmAcknowledgement({
+        senderSecretKey: voterSecretKey,
+        recipientNpub: response.coordinatorNpub,
+        actorNpub: voterNpub,
+        actorId: voterId === "pending" ? undefined : voterId,
+        ackedAction: "simple_round_ticket",
+        ackedEventId: response.dmEventId,
+        votingId: responseVotingId,
+        requestId: response.requestId,
+        responseId: response.id,
+      }).catch(() => {
+        sentTicketReceiptAckIdsRef.current.delete(response.dmEventId);
+      });
+    }
+  }, [pendingBlindRequests, receivedShards, voterId, voterKeypair?.npub, voterKeypair?.nsec]);
 
   const requiredShardCount = Math.max(1, effectiveLiveVoteSession?.thresholdT ?? 1);
 
@@ -704,6 +831,75 @@ export default function SimpleUiApp() {
                     <div className="simple-coordinator-card-copy">
                       <p className="simple-coordinator-card-title">Coordinator {index + 1}</p>
                       <p className="simple-coordinator-card-meta" title={value}>{shortenNpub(value)}</p>
+                      {(() => {
+                        const followDelivery = followDeliveries[value];
+                        const followAck = followDelivery?.eventId
+                          ? dmAcknowledgements.find((ack) => (
+                            ack.actorNpub === value
+                            && ack.ackedAction === "simple_coordinator_follow"
+                            && ack.ackedEventId === followDelivery.eventId
+                          ))
+                          : null;
+                        const roundSeen = effectiveLiveVoteSession
+                          ? discoveredSessions.some((session) => (
+                            session.coordinatorNpub === value
+                            && session.votingId === effectiveLiveVoteSession.votingId
+                          ))
+                          : false;
+                        const blindKeySeen = Boolean(knownBlindKeys[value]);
+                        const requestDeliveryKey = effectiveLiveVoteSession ? `${value}:${effectiveLiveVoteSession.votingId}` : "";
+                        const requestDelivery = requestDeliveryKey ? requestDeliveries[requestDeliveryKey] : undefined;
+                        const requestAck = requestDelivery?.eventId
+                          ? dmAcknowledgements.find((ack) => (
+                            ack.actorNpub === value
+                            && ack.ackedAction === "simple_shard_request"
+                            && ack.ackedEventId === requestDelivery.eventId
+                          ))
+                          : null;
+                        const ticketReceived = uniqueShardResponses.some((response) => response.coordinatorNpub === value);
+
+                        return (
+                          <ul className="simple-delivery-diagnostics simple-delivery-diagnostics-compact">
+                            <li className={
+                              followDelivery?.status === "Follow request failed."
+                                ? "simple-delivery-error"
+                                : followAck
+                                  ? "simple-delivery-ok"
+                                  : followDelivery
+                                    ? "simple-delivery-waiting"
+                                    : "simple-delivery-waiting"
+                            }>
+                              {followAck
+                                ? "Follow request acknowledged."
+                                : followDelivery?.status ?? "Follow request not sent yet."}
+                            </li>
+                            <li className={roundSeen ? "simple-delivery-ok" : "simple-delivery-waiting"}>
+                              {roundSeen ? "Live round seen." : "Waiting for live round."}
+                            </li>
+                            <li className={blindKeySeen ? "simple-delivery-ok" : "simple-delivery-waiting"}>
+                              {blindKeySeen ? "Blind key seen." : "Waiting for blind key."}
+                            </li>
+                            <li className={
+                              requestDelivery?.status === "Blinded ticket request failed."
+                                ? "simple-delivery-error"
+                                : ticketReceived || requestAck
+                                  ? "simple-delivery-ok"
+                                  : requestDelivery
+                                    ? "simple-delivery-waiting"
+                                    : "simple-delivery-waiting"
+                            }>
+                              {ticketReceived
+                                ? "Blinded ticket request acknowledged."
+                                : requestAck
+                                  ? "Blinded ticket request acknowledged."
+                                  : requestDelivery?.status ?? "Waiting to send blinded ticket request."}
+                            </li>
+                            <li className={ticketReceived ? "simple-delivery-ok" : "simple-delivery-waiting"}>
+                              {ticketReceived ? "Ticket received." : "Waiting for ticket."}
+                            </li>
+                          </ul>
+                        );
+                      })()}
                     </div>
                     <button
                       type="button"

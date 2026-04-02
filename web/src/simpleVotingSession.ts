@@ -9,6 +9,8 @@ export const SIMPLE_PUBLIC_RELAYS = [
   "wss://nos.lol",
   "wss://relay.snort.social",
   "wss://relay.nostr.band",
+  "wss://relay.damus.io",
+  "wss://relay.primal.net",
 ];
 
 export const SIMPLE_LIVE_VOTE_KIND = 38990;

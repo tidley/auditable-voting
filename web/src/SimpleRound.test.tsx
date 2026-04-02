@@ -9,6 +9,7 @@ import { resetSimpleActorStateForTests } from "./simpleLocalState";
 
 type InternalResponse = {
   id: string;
+  dmEventId: string;
   requestId: string;
   coordinatorNpub: string;
   coordinatorId: string;
@@ -74,10 +75,22 @@ let shardRequests: Array<{
   createdAt: string;
 }> = [];
 let blindAnnouncements: Record<string, any> = {};
+let dmAcknowledgements: Array<{
+  recipientNpub: string;
+  ackedAction: string;
+  ackedEventId: string;
+  actorNpub: string;
+  actorId?: string;
+  votingId?: string;
+  requestId?: string;
+  responseId?: string;
+  createdAt: string;
+}> = [];
 let followerSubscribers: Array<{
   coordinatorNpub: string;
   onFollowers: (followers: Array<{
     id: string;
+    dmEventId: string;
     voterNpub: string;
     voterId: string;
     votingId?: string;
@@ -104,6 +117,7 @@ let subCoordinatorApplicationSubscribers: Array<{
   leadCoordinatorNpub: string;
   onApplications: (applications: Array<{
     id: string;
+    dmEventId: string;
     coordinatorNpub: string;
     coordinatorId: string;
     leadCoordinatorNpub: string;
@@ -114,6 +128,7 @@ let shareAssignmentSubscribers: Array<{
   coordinatorNpub: string;
   onAssignments: (assignments: Array<{
     id: string;
+    dmEventId: string;
     leadCoordinatorNpub: string;
     coordinatorNpub: string;
     shareIndex: number;
@@ -125,10 +140,25 @@ let shardRequestSubscribers: Array<{
   coordinatorNpub: string;
   onRequests: (requests: Array<{
     id: string;
+    dmEventId: string;
     voterNpub: string;
     voterId: string;
     votingId: string;
     blindRequest: any;
+    createdAt: string;
+  }>) => void;
+}> = [];
+let dmAcknowledgementSubscribers: Array<{
+  actorNpub: string;
+  onAcknowledgements: (acknowledgements: Array<{
+    id: string;
+    ackedAction: string;
+    ackedEventId: string;
+    actorNpub: string;
+    actorId?: string;
+    votingId?: string;
+    requestId?: string;
+    responseId?: string;
     createdAt: string;
   }>) => void;
 }> = [];
@@ -163,6 +193,7 @@ function followerEntriesForCoordinator(coordinatorNpub: string) {
     .filter((entry) => entry.coordinatorNpub === coordinatorNpub)
     .map((entry, index) => ({
       id: `follow-${index + 1}`,
+      dmEventId: `follow-event-${index + 1}`,
       voterNpub: entry.voterNpub,
       voterId: entry.voterId,
       votingId: entry.votingId,
@@ -224,6 +255,7 @@ function subCoordinatorEntriesForLead(leadCoordinatorNpub: string) {
     .filter((entry) => entry.leadCoordinatorNpub === leadCoordinatorNpub)
     .map((entry, index) => ({
       id: `application-${index + 1}`,
+      dmEventId: `application-event-${index + 1}`,
       coordinatorNpub: entry.coordinatorNpub,
       coordinatorId: entry.coordinatorId,
       leadCoordinatorNpub: entry.leadCoordinatorNpub,
@@ -245,6 +277,7 @@ function shareAssignmentsForCoordinator(coordinatorNpub: string) {
     .filter((entry) => entry.coordinatorNpub === coordinatorNpub)
     .map((entry, index) => ({
       id: `assignment-${index + 1}`,
+      dmEventId: `assignment-event-${index + 1}`,
       leadCoordinatorNpub: entry.leadCoordinatorNpub,
       coordinatorNpub: entry.coordinatorNpub,
       shareIndex: entry.shareIndex,
@@ -267,6 +300,7 @@ function shardRequestsForCoordinator(coordinatorNpub: string) {
     .filter((entry) => entry.coordinatorNpub === coordinatorNpub)
     .map((entry, index) => ({
       id: `request-${index + 1}:${entry.blindRequest.requestId}`,
+      dmEventId: `request-event-${index + 1}:${entry.blindRequest.requestId}`,
       voterNpub: entry.voterNpub,
       voterId: entry.voterId,
       votingId: entry.votingId,
@@ -289,6 +323,27 @@ function notifyBlindAnnouncementSubscribers(coordinatorNpub: string) {
   for (const subscriber of blindAnnouncementSubscribers) {
     if (subscriber.coordinatorNpub === coordinatorNpub) {
       subscriber.onAnnouncement(nextAnnouncement);
+    }
+  }
+}
+
+function notifyDmAcknowledgementSubscribers(recipientNpub: string) {
+  const nextAcknowledgements = dmAcknowledgements
+    .filter((entry) => entry.recipientNpub === recipientNpub)
+    .map((entry, index) => ({
+      id: `ack-${index + 1}`,
+      ackedAction: entry.ackedAction,
+      ackedEventId: entry.ackedEventId,
+      actorNpub: entry.actorNpub,
+      actorId: entry.actorId,
+      votingId: entry.votingId,
+      requestId: entry.requestId,
+      responseId: entry.responseId,
+      createdAt: entry.createdAt,
+    }));
+  for (const subscriber of dmAcknowledgementSubscribers) {
+    if (subscriber.actorNpub === recipientNpub) {
+      subscriber.onAcknowledgements(nextAcknowledgements);
     }
   }
 }
@@ -421,6 +476,7 @@ vi.mock("./simpleShardDm", () => ({
     coordinatorNsec: string;
     onFollowers: (followers: Array<{
       id: string;
+      dmEventId: string;
       voterNpub: string;
       voterId: string;
       votingId?: string;
@@ -456,6 +512,7 @@ vi.mock("./simpleShardDm", () => ({
     leadCoordinatorNsec: string;
     onApplications: (applications: Array<{
       id: string;
+      dmEventId: string;
       coordinatorNpub: string;
       coordinatorId: string;
       leadCoordinatorNpub: string;
@@ -493,6 +550,7 @@ vi.mock("./simpleShardDm", () => ({
     coordinatorNsec: string;
     onAssignments: (assignments: Array<{
       id: string;
+      dmEventId: string;
       leadCoordinatorNpub: string;
       coordinatorNpub: string;
       shareIndex: number;
@@ -533,6 +591,7 @@ vi.mock("./simpleShardDm", () => ({
     coordinatorNsec: string;
     onRequests: (requests: Array<{
       id: string;
+      dmEventId: string;
       voterNpub: string;
       voterId: string;
       votingId: string;
@@ -575,6 +634,7 @@ vi.mock("./simpleShardDm", () => ({
     const responseId = `response-${++responseCounter}`;
     shardResponses.push({
       id: responseId,
+      dmEventId: `dm-response-${responseCounter}`,
       requestId: input.request.blindRequest.requestId,
       coordinatorNpub: input.coordinatorNpub,
       coordinatorId: input.coordinatorId,
@@ -610,6 +670,55 @@ vi.mock("./simpleShardDm", () => ({
     input.onResponses(shardResponses.filter((response) => response.voterNpub === voterNpub));
     return () => {
       shardResponseSubscribers = shardResponseSubscribers.filter((entry) => entry !== subscriber);
+    };
+  }),
+  sendSimpleDmAcknowledgement: vi.fn(async (input: {
+    recipientNpub: string;
+    ackedAction: string;
+    ackedEventId: string;
+    actorNpub: string;
+    actorId?: string;
+    votingId?: string;
+    requestId?: string;
+    responseId?: string;
+  }) => {
+    dmAcknowledgements.push({
+      recipientNpub: input.recipientNpub,
+      ackedAction: input.ackedAction,
+      ackedEventId: input.ackedEventId,
+      actorNpub: input.actorNpub,
+      actorId: input.actorId,
+      votingId: input.votingId,
+      requestId: input.requestId,
+      responseId: input.responseId,
+      createdAt: new Date().toISOString(),
+    });
+    notifyDmAcknowledgementSubscribers(input.recipientNpub);
+    return { eventId: `ack-event-${dmAcknowledgements.length}`, successes: 1, failures: 0, relayResults: [] };
+  }),
+  subscribeSimpleDmAcknowledgements: vi.fn((input: {
+    actorNsec: string;
+    onAcknowledgements: (acknowledgements: Array<{
+      id: string;
+      ackedAction: string;
+      ackedEventId: string;
+      actorNpub: string;
+      actorId?: string;
+      votingId?: string;
+      requestId?: string;
+      responseId?: string;
+      createdAt: string;
+    }>) => void;
+  }) => {
+    const actorNpub = nsecToNpub(input.actorNsec);
+    const subscriber = {
+      actorNpub,
+      onAcknowledgements: input.onAcknowledgements,
+    };
+    dmAcknowledgementSubscribers.push(subscriber);
+    notifyDmAcknowledgementSubscribers(actorNpub);
+    return () => {
+      dmAcknowledgementSubscribers = dmAcknowledgementSubscribers.filter((entry) => entry !== subscriber);
     };
   }),
 }));
@@ -740,6 +849,7 @@ describe("Simple round flow", () => {
     shareAssignments = [];
     shardRequests = [];
     blindAnnouncements = {};
+    dmAcknowledgements = [];
     followerSubscribers = [];
     shardResponseSubscribers = [];
     liveVoteSubscribers = [];
@@ -748,6 +858,7 @@ describe("Simple round flow", () => {
     subCoordinatorApplicationSubscribers = [];
     shareAssignmentSubscribers = [];
     shardRequestSubscribers = [];
+    dmAcknowledgementSubscribers = [];
     blindAnnouncementSubscribers = [];
     window.sessionStorage.clear();
     await resetSimpleActorStateForTests();
@@ -895,6 +1006,10 @@ describe("Simple round flow", () => {
       expect(voterTwoUi.getByText(firstRoundId)).toBeTruthy();
       expect(voterOneUi.getAllByText("1").length).toBeGreaterThanOrEqual(2);
       expect(voterTwoUi.getAllByText("1").length).toBeGreaterThanOrEqual(2);
+      expect(voterOneUi.getAllByText(/Ticket received\./i).length).toBeGreaterThanOrEqual(2);
+      expect(voterTwoUi.getAllByText(/Ticket received\./i).length).toBeGreaterThanOrEqual(2);
+      expect(coordinatorOneUi.getAllByText(/Voter acknowledged ticket receipt\./i).length).toBeGreaterThanOrEqual(2);
+      expect(coordinatorTwoUi.getAllByText(/Voter acknowledged ticket receipt\./i).length).toBeGreaterThanOrEqual(2);
     });
 
     const questionSection = coordinatorOneUi.getByRole("heading", { name: /^Question$/i }).closest("section");

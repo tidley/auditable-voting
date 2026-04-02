@@ -668,6 +668,34 @@ code {
   color: #7dd3fc;
 }
 
+.simple-delivery-diagnostics {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding-left: 18px;
+}
+
+.simple-delivery-diagnostics-compact {
+  margin-top: 10px;
+}
+
+.simple-delivery-diagnostics li {
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.simple-delivery-ok {
+  color: #4ade80;
+}
+
+.simple-delivery-waiting {
+  color: #7dd3fc;
+}
+
+.simple-delivery-error {
+  color: #f87171;
+}
+
 .simple-voter-label {
   display: block;
   margin-bottom: 10px;

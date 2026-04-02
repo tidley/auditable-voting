@@ -10,13 +10,37 @@ import {
 } from "./simpleShardCertificate";
 
 export const SIMPLE_DM_RELAYS = [
-  "wss://nos.lol",
-  "wss://relay.snort.social",
-  "wss://relay.nostr.band",
+  'wss://relay.0xchat.com',
+  'wss://auth.nostr1.com',
+  'wss://nip17.com',
+  'wss://nip17.tomdwyer.uk',
+  'wss://relay.nostr.band',
+  'wss://nos.lol',
 ];
+
+export type SimpleDmAcknowledgedAction =
+  | 'simple_coordinator_follow'
+  | 'simple_subcoordinator_join'
+  | 'simple_shard_request'
+  | 'simple_share_assignment'
+  | 'simple_shard_response'
+  | 'simple_round_ticket';
+
+export type SimpleDmAcknowledgement = {
+  id: string;
+  ackedAction: SimpleDmAcknowledgedAction;
+  ackedEventId: string;
+  actorNpub: string;
+  actorId?: string;
+  votingId?: string;
+  requestId?: string;
+  responseId?: string;
+  createdAt: string;
+};
 
 export type SimpleShardRequest = {
   id: string;
+  dmEventId: string;
   voterNpub: string;
   voterId: string;
   votingId: string;
@@ -26,6 +50,7 @@ export type SimpleShardRequest = {
 
 export type SimpleShardResponse = {
   id: string;
+  dmEventId: string;
   requestId: string;
   coordinatorNpub: string;
   coordinatorId: string;
@@ -38,6 +63,7 @@ export type SimpleShardResponse = {
 
 export type SimpleCoordinatorFollower = {
   id: string;
+  dmEventId: string;
   voterNpub: string;
   voterId: string;
   votingId?: string;
@@ -46,6 +72,7 @@ export type SimpleCoordinatorFollower = {
 
 export type SimpleSubCoordinatorApplication = {
   id: string;
+  dmEventId: string;
   coordinatorNpub: string;
   coordinatorId: string;
   leadCoordinatorNpub: string;
@@ -54,6 +81,7 @@ export type SimpleSubCoordinatorApplication = {
 
 export type SimpleShareAssignment = {
   id: string;
+  dmEventId: string;
   leadCoordinatorNpub: string;
   coordinatorNpub: string;
   shareIndex: number;
@@ -72,11 +100,13 @@ function sortByCreatedAtDescending<T extends { createdAt: string }>(values: T[])
 }
 
 function parseSimpleShardRequest(
-  wrappedEvent: Record<string, unknown> & { created_at: number },
+  wrappedEvent: Record<string, unknown> & { id?: string; created_at: number },
   secretKey: Uint8Array,
 ): SimpleShardRequest | null {
   try {
-    const rumor = nip17.unwrapEvent(wrappedEvent as never, secretKey) as { content: string };
+    const rumor = nip17.unwrapEvent(wrappedEvent as never, secretKey) as {
+      content: string;
+    };
     const payload = JSON.parse(rumor.content) as {
       action?: string;
       request_id?: string;
@@ -88,23 +118,26 @@ function parseSimpleShardRequest(
     };
 
     if (
-      payload.action !== "simple_shard_request"
-      || !payload.request_id
-      || !payload.voter_npub
-      || !payload.voter_id
-      || !payload.voting_id
-      || !payload.blind_request
+      payload.action !== 'simple_shard_request' ||
+      !payload.request_id ||
+      !payload.voter_npub ||
+      !payload.voter_id ||
+      !payload.voting_id ||
+      !payload.blind_request
     ) {
       return null;
     }
 
     return {
       id: payload.request_id,
+      dmEventId: String(wrappedEvent.id ?? payload.request_id),
       voterNpub: payload.voter_npub,
       voterId: payload.voter_id,
       votingId: payload.voting_id,
       blindRequest: payload.blind_request,
-      createdAt: payload.created_at ?? new Date(wrappedEvent.created_at * 1000).toISOString(),
+      createdAt:
+        payload.created_at ??
+        new Date(wrappedEvent.created_at * 1000).toISOString(),
     };
   } catch {
     return null;
@@ -112,11 +145,13 @@ function parseSimpleShardRequest(
 }
 
 function parseSimpleCoordinatorFollower(
-  wrappedEvent: Record<string, unknown> & { created_at: number },
+  wrappedEvent: Record<string, unknown> & { id?: string; created_at: number },
   secretKey: Uint8Array,
 ): SimpleCoordinatorFollower | null {
   try {
-    const rumor = nip17.unwrapEvent(wrappedEvent as never, secretKey) as { content: string };
+    const rumor = nip17.unwrapEvent(wrappedEvent as never, secretKey) as {
+      content: string;
+    };
     const payload = JSON.parse(rumor.content) as {
       action?: string;
       follow_id?: string;
@@ -127,20 +162,23 @@ function parseSimpleCoordinatorFollower(
     };
 
     if (
-      payload.action !== "simple_coordinator_follow"
-      || !payload.follow_id
-      || !payload.voter_npub
-      || !payload.voter_id
+      payload.action !== 'simple_coordinator_follow' ||
+      !payload.follow_id ||
+      !payload.voter_npub ||
+      !payload.voter_id
     ) {
       return null;
     }
 
     return {
       id: payload.follow_id,
+      dmEventId: String(wrappedEvent.id ?? payload.follow_id),
       voterNpub: payload.voter_npub,
       voterId: payload.voter_id,
       votingId: payload.voting_id?.trim() || undefined,
-      createdAt: payload.created_at ?? new Date(wrappedEvent.created_at * 1000).toISOString(),
+      createdAt:
+        payload.created_at ??
+        new Date(wrappedEvent.created_at * 1000).toISOString(),
     };
   } catch {
     return null;
@@ -148,11 +186,13 @@ function parseSimpleCoordinatorFollower(
 }
 
 function parseSimpleShardResponse(
-  wrappedEvent: Record<string, unknown> & { created_at: number },
+  wrappedEvent: Record<string, unknown> & { id?: string; created_at: number },
   secretKey: Uint8Array,
 ): SimpleShardResponse | null {
   try {
-    const rumor = nip17.unwrapEvent(wrappedEvent as never, secretKey) as { content: string };
+    const rumor = nip17.unwrapEvent(wrappedEvent as never, secretKey) as {
+      content: string;
+    };
     const payload = JSON.parse(rumor.content) as {
       action?: string;
       response_id?: string;
@@ -166,23 +206,29 @@ function parseSimpleShardResponse(
     };
 
     if (
-      (payload.action !== "simple_shard_response" && payload.action !== "simple_round_ticket")
-      || !payload.response_id
-      || !payload.request_id
-      || !payload.coordinator_id
-      || !payload.threshold_label
-      || !payload.blind_share_response
+      (payload.action !== 'simple_shard_response' &&
+        payload.action !== 'simple_round_ticket') ||
+      !payload.response_id ||
+      !payload.request_id ||
+      !payload.coordinator_id ||
+      !payload.threshold_label ||
+      !payload.blind_share_response
     ) {
       return null;
     }
 
     return {
       id: payload.response_id,
+      dmEventId: String(wrappedEvent.id ?? payload.response_id),
       requestId: payload.request_id,
-      coordinatorNpub: payload.coordinator_npub ?? payload.blind_share_response.coordinatorNpub,
+      coordinatorNpub:
+        payload.coordinator_npub ??
+        payload.blind_share_response.coordinatorNpub,
       coordinatorId: payload.coordinator_id,
       thresholdLabel: payload.threshold_label,
-      createdAt: payload.created_at ?? new Date(wrappedEvent.created_at * 1000).toISOString(),
+      createdAt:
+        payload.created_at ??
+        new Date(wrappedEvent.created_at * 1000).toISOString(),
       votingPrompt: payload.voting_prompt?.trim() || undefined,
       blindShareResponse: payload.blind_share_response,
     };
@@ -192,11 +238,13 @@ function parseSimpleShardResponse(
 }
 
 function parseSimpleSubCoordinatorApplication(
-  wrappedEvent: Record<string, unknown> & { created_at: number },
+  wrappedEvent: Record<string, unknown> & { id?: string; created_at: number },
   secretKey: Uint8Array,
 ): SimpleSubCoordinatorApplication | null {
   try {
-    const rumor = nip17.unwrapEvent(wrappedEvent as never, secretKey) as { content: string };
+    const rumor = nip17.unwrapEvent(wrappedEvent as never, secretKey) as {
+      content: string;
+    };
     const payload = JSON.parse(rumor.content) as {
       action?: string;
       application_id?: string;
@@ -207,21 +255,24 @@ function parseSimpleSubCoordinatorApplication(
     };
 
     if (
-      payload.action !== "simple_subcoordinator_join"
-      || !payload.application_id
-      || !payload.coordinator_npub
-      || !payload.coordinator_id
-      || !payload.lead_coordinator_npub
+      payload.action !== 'simple_subcoordinator_join' ||
+      !payload.application_id ||
+      !payload.coordinator_npub ||
+      !payload.coordinator_id ||
+      !payload.lead_coordinator_npub
     ) {
       return null;
     }
 
     return {
       id: payload.application_id,
+      dmEventId: String(wrappedEvent.id ?? payload.application_id),
       coordinatorNpub: payload.coordinator_npub,
       coordinatorId: payload.coordinator_id,
       leadCoordinatorNpub: payload.lead_coordinator_npub,
-      createdAt: payload.created_at ?? new Date(wrappedEvent.created_at * 1000).toISOString(),
+      createdAt:
+        payload.created_at ??
+        new Date(wrappedEvent.created_at * 1000).toISOString(),
     };
   } catch {
     return null;
@@ -229,11 +280,13 @@ function parseSimpleSubCoordinatorApplication(
 }
 
 function parseSimpleShareAssignment(
-  wrappedEvent: Record<string, unknown> & { created_at: number },
+  wrappedEvent: Record<string, unknown> & { id?: string; created_at: number },
   secretKey: Uint8Array,
 ): SimpleShareAssignment | null {
   try {
-    const rumor = nip17.unwrapEvent(wrappedEvent as never, secretKey) as { content: string };
+    const rumor = nip17.unwrapEvent(wrappedEvent as never, secretKey) as {
+      content: string;
+    };
     const payload = JSON.parse(rumor.content) as {
       action?: string;
       assignment_id?: string;
@@ -245,22 +298,77 @@ function parseSimpleShareAssignment(
     };
 
     if (
-      payload.action !== "simple_share_assignment"
-      || !payload.assignment_id
-      || !payload.lead_coordinator_npub
-      || !payload.coordinator_npub
-      || typeof payload.share_index !== "number"
+      payload.action !== 'simple_share_assignment' ||
+      !payload.assignment_id ||
+      !payload.lead_coordinator_npub ||
+      !payload.coordinator_npub ||
+      typeof payload.share_index !== 'number'
     ) {
       return null;
     }
 
     return {
       id: payload.assignment_id,
+      dmEventId: String(wrappedEvent.id ?? payload.assignment_id),
       leadCoordinatorNpub: payload.lead_coordinator_npub,
       coordinatorNpub: payload.coordinator_npub,
       shareIndex: payload.share_index,
-      thresholdN: typeof payload.threshold_n === "number" ? payload.threshold_n : undefined,
-      createdAt: payload.created_at ?? new Date(wrappedEvent.created_at * 1000).toISOString(),
+      thresholdN:
+        typeof payload.threshold_n === 'number'
+          ? payload.threshold_n
+          : undefined,
+      createdAt:
+        payload.created_at ??
+        new Date(wrappedEvent.created_at * 1000).toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseSimpleDmAcknowledgement(
+  wrappedEvent: Record<string, unknown> & { created_at: number },
+  secretKey: Uint8Array,
+): SimpleDmAcknowledgement | null {
+  try {
+    const rumor = nip17.unwrapEvent(wrappedEvent as never, secretKey) as {
+      content: string;
+    };
+    const payload = JSON.parse(rumor.content) as {
+      action?: string;
+      ack_id?: string;
+      acked_action?: SimpleDmAcknowledgedAction;
+      acked_event_id?: string;
+      actor_npub?: string;
+      actor_id?: string;
+      voting_id?: string;
+      request_id?: string;
+      response_id?: string;
+      created_at?: string;
+    };
+
+    if (
+      payload.action !== 'simple_dm_ack' ||
+      !payload.ack_id ||
+      !payload.acked_action ||
+      !payload.acked_event_id ||
+      !payload.actor_npub
+    ) {
+      return null;
+    }
+
+    return {
+      id: payload.ack_id,
+      ackedAction: payload.acked_action,
+      ackedEventId: payload.acked_event_id,
+      actorNpub: payload.actor_npub,
+      actorId: payload.actor_id?.trim() || undefined,
+      votingId: payload.voting_id?.trim() || undefined,
+      requestId: payload.request_id?.trim() || undefined,
+      responseId: payload.response_id?.trim() || undefined,
+      createdAt:
+        payload.created_at ??
+        new Date(wrappedEvent.created_at * 1000).toISOString(),
     };
   } catch {
     return null;
@@ -313,6 +421,77 @@ export async function sendSimpleCoordinatorFollow(input: {
             error: result.reason instanceof Error ? result.reason.message : String(result.reason),
           }
     ));
+
+    return {
+      eventId: event.id,
+      successes: relayResults.filter((result) => result.success).length,
+      failures: relayResults.filter((result) => !result.success).length,
+      relayResults,
+    };
+  } finally {
+    pool.destroy();
+  }
+}
+
+export async function sendSimpleDmAcknowledgement(input: {
+  senderSecretKey: Uint8Array;
+  recipientNpub: string;
+  actorNpub: string;
+  actorId?: string;
+  ackedAction: SimpleDmAcknowledgedAction;
+  ackedEventId: string;
+  votingId?: string;
+  requestId?: string;
+  responseId?: string;
+  relays?: string[];
+}): Promise<DmPublishResult> {
+  const decoded = nip19.decode(input.recipientNpub);
+  if (decoded.type !== 'npub') {
+    throw new Error('Recipient value must be an npub.');
+  }
+
+  const dmRelays = buildDmRelays(input.relays);
+  const event = nip17.wrapEvent(
+    input.senderSecretKey,
+    {
+      publicKey: decoded.data as string,
+      relayUrl: dmRelays[0],
+    },
+    JSON.stringify({
+      action: 'simple_dm_ack',
+      ack_id: crypto.randomUUID(),
+      acked_action: input.ackedAction,
+      acked_event_id: input.ackedEventId,
+      actor_npub: input.actorNpub,
+      actor_id: input.actorId,
+      voting_id: input.votingId,
+      request_id: input.requestId,
+      response_id: input.responseId,
+      created_at: new Date().toISOString(),
+    }),
+    'DM acknowledgement',
+  );
+
+  const pool = new SimplePool();
+  try {
+    const results = await queueNostrPublish(() =>
+      publishToRelaysStaggered(
+        (relay) => pool.publish([relay], event, { maxWait: 4000 })[0],
+        dmRelays,
+      ),
+    );
+    const relayResults = results.map((result, index) =>
+      result.status === 'fulfilled'
+        ? { relay: dmRelays[index], success: true }
+        : {
+            relay: dmRelays[index],
+            success: false,
+            error:
+              result.reason instanceof Error
+                ? result.reason.message
+                : String(result.reason),
+          },
+    );
 
     return {
       eventId: event.id,
@@ -583,6 +762,140 @@ export async function fetchSimpleCoordinatorFollowers(input: {
   } finally {
     pool.close(dmRelays);
   }
+}
+
+export async function fetchSimpleDmAcknowledgements(input: {
+  actorNsec: string;
+  relays?: string[];
+}): Promise<SimpleDmAcknowledgement[]> {
+  const decoded = nip19.decode(input.actorNsec.trim());
+  if (decoded.type !== 'nsec') {
+    throw new Error('Actor key must be an nsec.');
+  }
+
+  const secretKey = decoded.data as Uint8Array;
+  const actorHex = getPublicKey(secretKey);
+  const dmRelays = buildDmRelays(input.relays);
+  const pool = new SimplePool();
+
+  try {
+    const wrappedEvents = await pool.querySync(dmRelays, {
+      kinds: [1059],
+      '#p': [actorHex],
+      limit: 100,
+    });
+
+    const acknowledgements = new Map<string, SimpleDmAcknowledgement>();
+
+    for (const wrappedEvent of wrappedEvents) {
+      const acknowledgement = parseSimpleDmAcknowledgement(
+        wrappedEvent,
+        secretKey,
+      );
+      if (acknowledgement) {
+        acknowledgements.set(
+          `${acknowledgement.actorNpub}:${acknowledgement.ackedAction}:${acknowledgement.ackedEventId}`,
+          acknowledgement,
+        );
+      }
+    }
+
+    return sortByCreatedAtDescending([...acknowledgements.values()]);
+  } finally {
+    pool.close(dmRelays);
+  }
+}
+
+export function subscribeSimpleDmAcknowledgements(input: {
+  actorNsec: string;
+  relays?: string[];
+  onAcknowledgements: (acknowledgements: SimpleDmAcknowledgement[]) => void;
+  onError?: (error: Error) => void;
+}): () => void {
+  const decoded = nip19.decode(input.actorNsec.trim());
+  if (decoded.type !== 'nsec') {
+    throw new Error('Actor key must be an nsec.');
+  }
+
+  const secretKey = decoded.data as Uint8Array;
+  const actorHex = getPublicKey(secretKey);
+  const dmRelays = buildDmRelays(input.relays);
+  const pool = new SimplePool();
+  const acknowledgements = new Map<string, SimpleDmAcknowledgement>();
+  let closed = false;
+
+  void fetchSimpleDmAcknowledgements({
+    actorNsec: input.actorNsec,
+    relays: input.relays,
+  })
+    .then((initialAcknowledgements) => {
+      if (closed) {
+        return;
+      }
+
+      for (const acknowledgement of initialAcknowledgements) {
+        acknowledgements.set(
+          `${acknowledgement.actorNpub}:${acknowledgement.ackedAction}:${acknowledgement.ackedEventId}`,
+          acknowledgement,
+        );
+      }
+
+      input.onAcknowledgements(
+        sortByCreatedAtDescending([...acknowledgements.values()]),
+      );
+    })
+    .catch((error) => {
+      if (!closed && error instanceof Error) {
+        input.onError?.(error);
+      }
+    });
+
+  const subscription = pool.subscribeMany(
+    dmRelays,
+    {
+      kinds: [1059],
+      '#p': [actorHex],
+      limit: 100,
+    },
+    {
+      onevent: (wrappedEvent) => {
+        const acknowledgement = parseSimpleDmAcknowledgement(
+          wrappedEvent,
+          secretKey,
+        );
+        if (!acknowledgement) {
+          return;
+        }
+
+        acknowledgements.set(
+          `${acknowledgement.actorNpub}:${acknowledgement.ackedAction}:${acknowledgement.ackedEventId}`,
+          acknowledgement,
+        );
+        input.onAcknowledgements(
+          sortByCreatedAtDescending([...acknowledgements.values()]),
+        );
+      },
+      onclose: (reasons) => {
+        if (closed) {
+          return;
+        }
+
+        const errors = reasons.filter(
+          (reason) => !reason.startsWith('closed by caller'),
+        );
+        if (errors.length > 0) {
+          input.onError?.(new Error(errors.join('; ')));
+        }
+      },
+      maxWait: 4000,
+    },
+  );
+
+  return () => {
+    closed = true;
+    void subscription.close('closed by caller');
+    pool.destroy();
+  };
 }
 
 export function subscribeSimpleCoordinatorFollowers(input: {
