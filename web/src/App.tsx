@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { logClaimDebug } from "./cashuMintApi";
 import { loadStoredWalletBundle, storeWalletBundle, addCoordinatorProof, storeEphemeralKeypair, type CoordinatorProof } from "./cashuWallet";
 import { checkEligibility, type EligibilityCheckResponse } from "./voterManagementApi";
@@ -188,6 +188,77 @@ export default function App() {
       void checkNpubAccess();
     }
   }, [activeNpub, npubIsValid, coordinatorInfo]);
+
+  useEffect(() => {
+    async function loadEligibilityList() {
+      try {
+        const [eligResult, issuanceResult] = await Promise.all([
+          fetchEligibility(),
+          fetchIssuanceStatus(),
+        ]);
+        setEligibilityList(eligResult);
+        setIssuanceStatus(issuanceResult);
+      } catch {
+        // silent — this is a background refresh
+      }
+    }
+
+    void loadEligibilityList();
+
+    const intervalId = window.setInterval(() => {
+      void loadEligibilityList();
+    }, 5000);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
+
+  useEffect(() => {
+    if (!eligibilityList || !coordinatorInfo) return;
+    const publicRelays = coordinatorInfo.relays.filter(r => r.startsWith("wss://"));
+    if (publicRelays.length === 0) return;
+    if (profilesFetchedRef.current) return;
+
+    async function fetchProfiles() {
+      try {
+        const list = eligibilityList!;
+        const { SimplePool, nip19 } = await import("nostr-tools");
+        const pool = new SimplePool();
+        const npubs = list.eligibleNpubs;
+        const hexPubkeys = npubs.map(n => {
+          try { return nip19.decode(n).data as string; } catch { return null; }
+        }).filter((h): h is string => h !== null);
+
+        const events = await Promise.race([
+          pool.querySync(publicRelays, { kinds: [0], authors: hexPubkeys }),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Profile fetch timeout")), 8000)),
+        ]);
+
+        const hexToNpub = new Map<string, string>();
+        for (const npub of npubs) {
+          try { hexToNpub.set(nip19.decode(npub).data as string, npub); } catch { /* skip */ }
+        }
+
+        const map: Record<string, { name: string; picture?: string }> = {};
+        for (const evt of events) {
+          const npub = hexToNpub.get(evt.pubkey);
+          if (!npub) continue;
+          try {
+            const content = JSON.parse(evt.content);
+            map[npub] = {
+              name: content.display_name || content.name || "",
+              picture: content.picture || undefined,
+            };
+          } catch { /* skip malformed */ }
+        }
+        setProfileMap(map);
+        profilesFetchedRef.current = true;
+      } catch {
+        profilesFetchedRef.current = false;
+      }
+    }
+
+    void fetchProfiles();
+  }, [eligibilityList, coordinatorInfo]);
 
   function resetIssuanceFlow() {
     setMintQuote(null);
@@ -940,6 +1011,66 @@ export default function App() {
             <div className="button-row">
               <a className="primary-button link-button cta-link-button" href={pageUrl("vote.html")}>Go To Voting Page</a>
             </div>
+          )}
+        </article>
+
+        <article className="panel panel-wide">
+          <div className="panel-header">
+            <div>
+              <p className="panel-kicker">Eligibility registry</p>
+              <h2>Eligible npubs</h2>
+            </div>
+            <span className="count-pill">Auto-refresh every 5s</span>
+          </div>
+
+          {eligibilityList && eligibilityList.eligibleNpubs.length > 0 ? (
+            <ol className="eligible-list eligible-list-dashboard">
+              {eligibilityList.eligibleNpubs.map((npub) => {
+                const voterInfo = issuanceStatus?.voters?.[npub];
+                const issued = voterInfo?.issued ?? false;
+                const profile = profileMap[npub];
+                return (
+                  <li key={npub} className="eligible-list-item-dashboard">
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 20,
+                        height: 20,
+                        borderRadius: "50%",
+                        fontSize: "0.75rem",
+                        fontWeight: 700,
+                        flexShrink: 0,
+                        background: issued ? "var(--accent)" : "rgba(88,59,39,0.08)",
+                        color: issued ? "#fff" : "var(--muted)",
+                      }}>
+                        {issued ? "\u2713" : "\u2022"}
+                      </span>
+                      {profile?.picture ? (
+                        <img
+                          className="eligible-avatar"
+                          src={profile.picture}
+                          alt=""
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                        />
+                      ) : (
+                        <span className="eligible-avatar-placeholder" />
+                      )}
+                      {profile?.name ? (
+                        <span style={{ fontSize: "0.85rem", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{profile.name}</span>
+                      ) : null}
+                      <code style={{ fontSize: "0.75rem", opacity: 0.5 }}>{npub.slice(0, 12)}...{npub.slice(-4)}</code>
+                      <span className="field-hint" style={{ margin: 0, opacity: 0.5, flexShrink: 0 }}>
+                        {issued ? "Proof issued" : "Pending"}
+                      </span>
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+          ) : (
+            <p className="empty-copy">No eligible npubs found.</p>
           )}
         </article>
 

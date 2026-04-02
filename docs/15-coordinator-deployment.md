@@ -18,7 +18,7 @@
 
 ## Phase 1: Coordinator Deployment (DONE)
 
-**File:** `playbooks/deploy-coordinator.yml`
+**File:** `playbooks/update-coordinator-keep-existing-election.yml`
 
 ### Completed Tasks
 
@@ -410,7 +410,7 @@ See `docs/13-TALLY_IMPLEMENTATION_PLAN.md` for the full plan.
 
 | File | Description |
 |---|---|
-| `playbooks/deploy-coordinator.yml` | Full VPS deployment playbook |
+| `playbooks/update-coordinator-keep-existing-election.yml` | Full VPS deployment playbook |
 | `scripts/requirements.txt` | Coordinator runtime deps (grpcio, grpcio-tools, nostr-sdk, requests, aiohttp) |
 | `scripts/voter-requirements.txt` | Voter CLI deps (includes cashu + marshmallow<4.0) |
 | `scripts/voting-request-proof.py` | Voter CLI (quote, publish 38010, poll, mint, unblind) |

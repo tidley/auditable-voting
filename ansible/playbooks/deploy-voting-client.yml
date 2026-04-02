@@ -4,8 +4,10 @@
   become: true
   vars:
     app_local_dir: "{{ playbook_dir | dirname | dirname }}"
-    effective_domain: "{{ (vps_ip + '.sslip.io') | replace('.', '-', 1) | replace('-sslip-io', '.sslip.io') | default(vps_ip + '.sslip.io') }}"
-    voting_fqdn: "{{ voting_subdomain }}.mints.{{ vps_ip }}.sslip.io"
+    _is_tls: "{{ tls_enabled | default(false) | bool }}"
+    effective_domain: "{{ voting_domain if _is_tls else (vps_ip + '.sslip.io') }}"
+    voting_fqdn: "{{ voting_subdomain + '.' + voting_domain if _is_tls else (voting_subdomain + '.mints.' + vps_ip + '.sslip.io') }}"
+    voting_scheme: "{{ 'https' if _is_tls else 'http' }}"
 
   tasks:
 
@@ -153,10 +155,11 @@
 
     - name: Verify frontend serves via Traefik
       ansible.builtin.uri:
-        url: "http://127.0.0.1/"
+        url: "{{ voting_scheme }}://127.0.0.1/"
         headers:
           Host: "{{ voting_fqdn }}"
         method: GET
+        validate_certs: false
       register: frontend_check
       changed_when: false
       tags: [verify]
@@ -170,10 +173,11 @@
 
     - name: Verify API proxy works
       ansible.builtin.uri:
-        url: "http://127.0.0.1/api/info"
+        url: "{{ voting_scheme }}://127.0.0.1/api/info"
         headers:
           Host: "{{ voting_fqdn }}"
         method: GET
+        validate_certs: false
       register: api_check
       changed_when: false
       failed_when: false
@@ -195,9 +199,9 @@
           - "Network: {{ docker_network_name }}"
           - "Coordinator URL: {{ coordinator_url }}"
           - "Mint URL: {{ mint_url }}"
-          - "Frontend: http://{{ voting_fqdn }}/"
-          - "API proxy:  http://{{ voting_fqdn }}/api/"
-          - "Mint proxy: http://{{ voting_fqdn }}/mint/"
+          - "Frontend: {{ voting_scheme }}://{{ voting_fqdn }}/"
+          - "API proxy:  {{ voting_scheme }}://{{ voting_fqdn }}/api/"
+          - "Mint proxy: {{ voting_scheme }}://{{ voting_fqdn }}/mint/"
           - "TLS: {{ 'enabled' if tls_enabled else 'disabled (HTTP only)' }}"
           - ""
           - "Build env vars:"

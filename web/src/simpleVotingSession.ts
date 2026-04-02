@@ -358,7 +358,7 @@ export async function publishSimpleSubmittedVote(input: {
     tags: [
       ["t", "simple-live-vote-ballot"],
       ["d", input.votingId],
-      ...input.shardCertificates.map((certificate) => ["s", certificate.id]),
+      ...input.shardCertificates.map((certificate) => ["s", certificate.shareId]),
     ],
     content: JSON.stringify({
       voting_id: input.votingId,

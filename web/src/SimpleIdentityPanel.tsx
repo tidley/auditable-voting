@@ -8,12 +8,18 @@ export default function SimpleIdentityPanel({
   title = "Identity",
   onRestoreNsec,
   restoreMessage,
+  onDownloadBackup,
+  onRestoreBackupFile,
+  backupMessage,
 }: {
   npub: string;
   nsec: string;
   title?: string;
   onRestoreNsec?: (nsec: string) => void;
   restoreMessage?: string | null;
+  onDownloadBackup?: () => void;
+  onRestoreBackupFile?: (file: File) => void | Promise<void>;
+  backupMessage?: string | null;
 }) {
   const [copied, setCopied] = useState(false);
   const [qrSrc, setQrSrc] = useState<string | null>(null);
@@ -97,6 +103,40 @@ export default function SimpleIdentityPanel({
                 </button>
               </div>
               {restoreMessage ? <p className="simple-voter-note">{restoreMessage}</p> : null}
+            </div>
+          ) : null}
+          {onDownloadBackup || onRestoreBackupFile ? (
+            <div className="simple-identity-restore">
+              <div className="simple-identity-label">Backup</div>
+              <div className="simple-voter-inline-field">
+                {onDownloadBackup ? (
+                  <button
+                    type="button"
+                    className="simple-voter-secondary"
+                    onClick={onDownloadBackup}
+                  >
+                    Download backup
+                  </button>
+                ) : null}
+                {onRestoreBackupFile ? (
+                  <label className="simple-voter-secondary simple-voter-file-button">
+                    Restore backup
+                    <input
+                      className="simple-voter-file-input"
+                      type="file"
+                      accept="application/json,.json"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (file) {
+                          void onRestoreBackupFile(file);
+                        }
+                        event.currentTarget.value = "";
+                      }}
+                    />
+                  </label>
+                ) : null}
+              </div>
+              {backupMessage ? <p className="simple-voter-note">{backupMessage}</p> : null}
             </div>
           ) : null}
           <div className="simple-identity-field">

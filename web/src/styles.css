@@ -885,6 +885,22 @@ code {
   gap: 10px;
 }
 
+.simple-voter-file-button {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.simple-voter-file-input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
 .simple-identity-field {
   display: grid;
   gap: 10px;
@@ -1721,6 +1737,24 @@ code {
 
 .eligible-list code {
   overflow-wrap: anywhere;
+}
+
+.eligible-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  border: 1px solid rgba(88, 59, 39, 0.1);
+}
+
+.eligible-avatar-placeholder {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(88, 59, 39, 0.08);
+  flex-shrink: 0;
+  display: inline-block;
 }
 
 @media (max-width: 920px) {

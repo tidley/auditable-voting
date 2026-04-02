@@ -57,10 +57,12 @@ def _run_in_web(cmd: list[str], timeout: int = 60) -> tuple[bool, str]:
 
 log = logging.getLogger("ui")
 
-VPS_IP = "23.182.128.64"
-COORDINATOR_HTTP = f"http://{VPS_IP}:8081"
+VPS_IP = os.environ.get("VPS_IP", "23.182.128.64")
+COORDINATOR_HTTP = os.environ.get("COORDINATOR_HTTP", f"http://{VPS_IP}:8081")
 COORDINATOR_DIR = "/opt/tollgate/coordinator"
-BASE_URL = "http://vote.mints.23.182.128.64.sslip.io"
+BASE_URL = os.environ.get("BASE_URL", f"http://vote.mints.{VPS_IP}.sslip.io")
+VOTING_URL = os.environ.get("VOTING_URL", f"{BASE_URL}/vote.html")
+DASHBOARD_URL = os.environ.get("DASHBOARD_URL", f"{BASE_URL}/dashboard.html")
 
 SSH_CMD = [
     "ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=15",
@@ -289,7 +291,7 @@ def deployed_frontend():
     subprocess.run(["rm", "-f", dist_tar], timeout=5)
 
     _poll_until(
-        f"http://vote.mints.{VPS_IP}.sslip.io/",
+        BASE_URL,
         timeout=30,
         expect_status=200,
     )

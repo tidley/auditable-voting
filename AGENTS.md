@@ -76,6 +76,7 @@ auditable-voting/
 │   ├── test_merkle_trees.py            # Unit: MerkleTree variants
 │   ├── test_publish_tally_events.py    # Unit: tally event publishing
 │   ├── test_voter_flow.py              # Voter: blinded output, quote polling
+│   ├── test_domain_deploy.py           # HTTPS/TLS/domain verification (after deploy-domain-new-election)
 │   ├── test_ui_dashboard.py     # Playwright dashboard tests
 │   ├── test_ui_issuance.py      # Playwright issuance flow tests
 │   └── test_ui_voting.py        # Playwright voting flow tests
@@ -98,7 +99,7 @@ auditable-voting/
 │   │   └── host_vars/           # Per-host overrides
 │   ├── playbooks/               # Task-specific playbooks
 │   │   ├── deploy-and-prepare.yml     # Full stack + election publication
-│   │   ├── deploy-coordinator.yml      # Coordinator initial deploy
+│   │   ├── update-coordinator-keep-existing-election.yml  # Coordinator update (preserves election)
 │   │   ├── deploy-voting-client.yml    # Frontend build + nginx container
 │   │   ├── verify.yml                 # Post-deploy health checks
 │   │   ├── local-mints.yml            # Local 3-mint development setup
@@ -186,6 +187,23 @@ cd web && npm install
 | `VITE_MINT_URL` | CDK Cashu mint URL |
 
 `.env.example` is the committed template. The keys in `.env` and `.env.example` must match exactly.
+
+### Deployment Secrets (deploy.env)
+
+`deploy.env` (gitignored) holds all operator-specific secrets. Copy from the template:
+
+```bash
+cp deploy.env.example deploy.env
+```
+
+Two sections separated by purpose:
+
+| Section | Variables | Used by |
+|---------|-----------|---------|
+| `make deploy` (HTTP/sslip.io) | `VPS_IP`, `SSH_KEY_PATH`, `ANSIBLE_USER` | `make deploy` |
+| `make deploy-domain-new-election` (HTTPS/custom domain) | `VOTING_DOMAIN`, `CF_API_EMAIL`, `CF_DNS_API_TOKEN`, `ACME_EMAIL` | `make deploy-domain-new-election` |
+
+The Makefile reads `deploy.env` via `-include deploy.env` and passes values as Ansible extra-vars. Swap this file when changing operators or deploying to a different VPS.
 
 ## Key Dependencies
 
@@ -290,6 +308,9 @@ Always use the venv Python:
 
 # Frontend unit tests (vitest)
 cd web && npx vitest run
+
+# Domain/TLS tests (after make deploy-domain-new-election)
+BASE_URL=https://vote.orangesync.tech .venv/bin/python -m pytest tests/test_domain_deploy.py -v
 ```
 
 ## Architecture
@@ -402,11 +423,39 @@ The system is being refactored from a single-coordinator model to a multi-coordi
 
 ## Deployment
 
+### Make targets
+
 ```bash
-ansible-playbook ansible/playbooks/deploy-and-prepare.yml
+# HTTP only (sslip.io, no domain needed)
+make deploy
+
+# HTTPS with custom domain + Cloudflare TLS + new election
+make deploy-domain-new-election
+
+# Coordinator only (preserves current election)
+make update-coordinator-keep-existing-election
+
+# Frontend only
+make deploy-client
 ```
 
-Deploys Traefik, coordinator, frontend, and publishes election with eligibility data to the VPS.
+### How it works
+
+- `make deploy` — Deploys the full stack (Traefik, coordinator, frontend) over HTTP using sslip.io for free wildcard DNS. Reads `VPS_IP`, `SSH_KEY_PATH`, `ANSIBLE_USER` from `deploy.env`.
+- `make deploy-domain-new-election` — Full stack + new election with TLS via Let's Encrypt DNS-01 challenge (Cloudflare). Passes `tls_enabled=true`, `voting_domain`, `acme_email`, and Cloudflare API credentials as extra-vars. Requires: (1) a wildcard DNS A record `*.orangesync.tech` pointing at the VPS, (2) a Cloudflare DNS API token with zone-level permissions.
+- `make update-coordinator-keep-existing-election` — Deploys only the coordinator (code changes, restarts systemd service). Preserves the current election, issuance state, and voter data.
+
+### Prerequisites for make deploy-domain-new-election
+
+1. **DNS**: Create an A record at Cloudflare: `vote.orangesync.tech -> <VPS_IP>` (or a wildcard `*.orangesync.tech -> <VPS_IP>`)
+2. **CF API token**: Create a DNS-only API token at Cloudflare, add `CF_API_EMAIL` and `CF_DNS_API_TOKEN` to `deploy.env`
+
+### Known Issues
+
+- **Mint keyset rotation timeout**: Both `make deploy` and `make deploy-domain-new-election` may time out during the "Rotate Mint Keyset" phase (mint regeneration can exceed 10 minutes). The core deploy (Traefik, coordinator, voting-client) completes successfully before the timeout. The mint will finish starting on its own — check with `ssh root@<VPS_IP> "docker ps | grep mint-mint1"`.
+
+1. **DNS**: Create an A record at Cloudflare: `vote.orangesync.tech -> <VPS_IP>` (or a wildcard `*.orangesync.tech -> <VPS_IP>`)
+2. **CF API token**: Create a DNS-only API token at Cloudflare, add `CF_API_EMAIL` and `CF_DNS_API_TOKEN` to `deploy.env`
 
 ### Other deployment commands
 
@@ -429,6 +478,64 @@ ansible-playbook ansible/playbook.yml --tags voting-on-vps
 # Local dev build only (no VPS)
 ansible-playbook ansible/playbook.yml --tags local-dev
 ```
+
+## Git Worktrees (Parallel Branch Development)
+
+Git worktrees allow multiple branches to be checked out simultaneously in separate directories, all sharing the same `.git` database. This is essential for running multiple opencode sessions on different branches without them interfering with each other.
+
+### Active Worktrees
+
+| Path | Branch | Purpose |
+|------|--------|---------|
+| `/home/c03rad0r/auditable-voting` | `feat/eligibility-move-and-merkle-tree-viz` | Primary worktree (main repo folder) |
+| `/home/c03rad0r/auditable-voting-cf` | `feature/cloudflare-integration-for-voter-portal` | Cloudflare integration for voter portal |
+| `/home/c03rad0r/auditable-voting-mc` | `feature/multi-coordinator-voting-deployment` | Multi-coordinator voting deployment |
+
+List all worktrees at any time:
+
+```bash
+git worktree list
+```
+
+### Resuming a Worktree
+
+Each worktree has its own `.venv/` and `node_modules/`. To resume work in a worktree:
+
+```bash
+cd /home/c03rad0r/auditable-voting-cf
+source .venv/bin/activate
+```
+
+Then launch opencode from that directory.
+
+### Creating a New Worktree
+
+```bash
+git worktree add -b <new-branch-name> ../<folder-name> main
+cd ../<folder-name>
+npm install && cd web && npm install && cd ..
+python3 -m venv .venv
+.venv/bin/pip install -r tests/requirements.txt -r coordinator/requirements.txt
+.venv/bin/python -m playwright install chromium
+```
+
+### Removing a Worktree
+
+After merging or finishing work:
+
+```bash
+git worktree remove ../<folder-name>
+git worktree prune
+git branch -d <branch-name>
+```
+
+### Important Notes
+
+- Git prevents the same branch from being checked out in two worktrees simultaneously.
+- `git fetch` in any worktree updates history for all worktrees.
+- The pre-commit hook at `.git/hooks/pre-commit` is shared across all worktrees.
+- Each worktree needs its own `.venv/` and `node_modules/` — they are not shared.
+- Worktree creation does not affect other worktrees (no branch switching, no disturbance of uncommitted changes).
 
 ## Kanban Boards (kanbanstr — NIP-100)
 

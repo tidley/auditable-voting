@@ -614,9 +614,9 @@ The `deploy-and-prepare.yml` already publishes a 38009 event as part of its elec
 
 | Bug | Fix Location | Deployed By |
 |-----|-------------|-------------|
-| A | Coordinator Python source | `deploy-coordinator.yml` (copies script) |
+| A | Coordinator Python source | `update-coordinator-keep-existing-election.yml` (copies script) |
 | B-D | `cashuBlind.ts`, `cashu.d.ts` | `deploy-voting-client.yml` (npm build) |
-| E | Coordinator Python source (poll loop) | `deploy-coordinator.yml` (copies script) |
+| E | Coordinator Python source (poll loop) | `update-coordinator-keep-existing-election.yml` (copies script) |
 | F | `cashuBlind.ts` (CashuMint wrapper) | `deploy-voting-client.yml` (npm build) |
 | G | Mint docker-compose env var | `deploy-and-prepare.yml` (enforces during rotation) |
 | H | `vite.config.ts` + `package.json` | `deploy-voting-client.yml` (npm install + build) |

@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import re
 import time
 
@@ -7,12 +8,10 @@ import pytest
 import requests
 from playwright.sync_api import expect
 
+from tests.conftest import BASE_URL, COORDINATOR_HTTP, COORDINATOR_DIR, VPS_IP
+
 log = logging.getLogger("ui.voting")
 
-COORDINATOR_HTTP = "http://23.182.128.64:8081"
-VPS_IP = "23.182.128.64"
-BASE_URL = "http://vote.mints.23.182.128.64.sslip.io"
-COORDINATOR_DIR = "/opt/tollgate/coordinator"
 COORDINATOR_VENV_PYTHON = f"{COORDINATOR_DIR}/.venv/bin/python3"
 SSH_CMD = ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=15", f"root@{VPS_IP}"]
 
@@ -155,6 +154,30 @@ class TestUIVotingStatic:
         assert hero_copy_box["width"] > 300, \
             f"Vote page hero-copy too narrow ({hero_copy_box['width']}px), expected >300px"
         log.info("Vote page hero-copy width: %dpx", hero_copy_box["width"])
+
+    def test_merkle_tree_panel_full_width(self, voting_page):
+        page = voting_page
+        page.wait_for_selector("text=Merkle tree", timeout=15000)
+
+        step_panels = page.locator("article.panel.panel-wide")
+        panel_count = step_panels.count()
+        assert panel_count >= 3, f"Expected >=3 panel-wide articles, got {panel_count}"
+
+        widths = []
+        for i in range(panel_count):
+            box = step_panels.nth(i).bounding_box()
+            if box:
+                widths.append(box["width"])
+
+        assert len(widths) >= 3, "Could not get bounding boxes for panels"
+        merkle_heading = page.locator("h2:text('Merkle tree')")
+        merkle_panel = merkle_heading.locator("xpath=ancestor::article")
+        merkle_box = merkle_panel.bounding_box()
+        assert merkle_box is not None, "Merkle tree panel not found"
+        assert merkle_box["width"] >= min(widths) - 2, \
+            f"Merkle tree panel ({merkle_box['width']}px) is narrower than other panels ({min(widths)}px). " \
+            f"Expected full width within content-grid."
+        log.info("Merkle tree panel width: %dpx (matches other panels: %s)", merkle_box["width"], widths[:3])
 
 
 @pytest.mark.e2e

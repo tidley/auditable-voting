@@ -8,9 +8,10 @@ ANSIBLE := ansible-playbook
 help:
 	@echo ""
 	@echo "  Deploy targets:"
-	@echo "    make deploy              Full stack + election (deploy-and-prepare.yml)"
-	@echo "    make deploy-client       Frontend only (deploy-voting-client.yml)"
-	@echo "    make deploy-coordinator  Coordinator only (deploy-coordinator.yml)"
+	@echo "    make deploy                                    Full stack + election (HTTP/sslip.io)"
+	@echo "    make deploy-domain-new-election                Full stack + new election (HTTPS/custom domain + Cloudflare)"
+	@echo "    make update-coordinator-keep-existing-election  Coordinator only (preserves current election)"
+	@echo "    make deploy-client                             Frontend only (deploy-voting-client.yml)"
 	@echo ""
 	@echo "  Election targets (multi-coordinator):"
 	@echo "    make init-election       Create a new election (38008 + 38007 + 38009 + 38012)"
@@ -21,27 +22,36 @@ help:
 	@echo "    make test-fast           Fast unit tests only"
 	@echo "    make test-all            Fast + integration + UI Playwright (requires VPS)"
 	@echo "    make test-ui             UI Playwright only (requires VPS)"
+	@echo "    make test-domain         HTTPS/domain/TLS tests (after make deploy-domain-new-election)"
 	@echo ""
 	@echo "  Combined:"
-	@echo "    make deploy-and-test     Deploy, then test (fast + integration)"
-	@echo "    make deploy-and-test-all Deploy, then test-all (includes UI Playwright)"
+	@echo "    make deploy-and-test          Deploy (HTTP), then test"
+	@echo "    make deploy-and-test-all      Deploy (HTTP), then test-all"
+	@echo "    make deploy-domain-new-election-and-test   Deploy (HTTPS), then test"
 	@echo ""
 	@echo "  Pre-commit hook tiers (set before git commit):"
 	@echo "    RUN_FAST_ONLY=1 git commit ...   Fast only"
 	@echo "    RUN_ALL_TESTS=1 git commit ...   All tiers"
 	@echo "    SKIP_TESTS=1 git commit ...      Skip tests"
 	@echo ""
+	@echo "  Secrets are read from deploy.env (see deploy.env.example)."
+	@echo ""
 
 # ─── Deploy ──────────────────────────────────────────────────────────────────
 
 deploy:
-	$(ANSIBLE) ansible/playbooks/deploy-and-prepare.yml
+	$(ANSIBLE) ansible/playbooks/deploy-and-prepare.yml \
+		--extra-vars "vps_ip=$(VPS_IP) ansible_ssh_private_key_file=$(SSH_KEY_PATH) ansible_user=$(ANSIBLE_USER)"
+
+deploy-domain-new-election:
+	$(ANSIBLE) ansible/playbooks/deploy-and-prepare.yml \
+		--extra-vars "vps_ip=$(VPS_IP) ansible_ssh_private_key_file=$(SSH_KEY_PATH) ansible_user=$(ANSIBLE_USER) tls_enabled=true voting_domain=$(VOTING_DOMAIN) acme_email=$(ACME_EMAIL) acme_env_vars={'CF_API_EMAIL':'$(CF_API_EMAIL)','CF_DNS_API_TOKEN':'$(CF_DNS_API_TOKEN)'}"
 
 deploy-client:
 	$(ANSIBLE) ansible/playbooks/deploy-voting-client.yml
 
-deploy-coordinator:
-	$(ANSIBLE) ansible/playbooks/deploy-coordinator.yml
+update-coordinator-keep-existing-election:
+	$(ANSIBLE) ansible/playbooks/update-coordinator-keep-existing-election.yml
 
 # ─── Election (Multi-Coordinator) ────────────────────────────────────────────
 
@@ -76,8 +86,13 @@ test-all: test
 test-ui:
 	RUN_ALL_TESTS=1 $(PYTEST) $(TESTS_DIR)/test_ui_fixes.py $(TESTS_DIR)/test_ui_dashboard.py $(TESTS_DIR)/test_ui_issuance.py $(TESTS_DIR)/test_ui_voting.py -v --timeout=600
 
+test-domain:
+	$(PYTEST) $(TESTS_DIR)/test_domain_deploy.py -v --timeout=30
+
 # ─── Combined ────────────────────────────────────────────────────────────────
 
 deploy-and-test: deploy test
 
 deploy-and-test-all: deploy test-all
+
+deploy-domain-new-election-and-test: deploy-domain-new-election test-domain

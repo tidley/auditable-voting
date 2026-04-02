@@ -886,6 +886,58 @@ class CoordinatorHandler(HandleNotification):
         except Exception as exc:
             log.error("Failed to handle gift wrap from %s...: %s", gift_wrap_event.author().to_hex()[:16], exc)
 
+    async def _handle_admin_dm(self, dm_content: str) -> None:
+        try:
+            decrypted = await self.signer.nip04_decrypt(self.coordinator_pubkey_hex, dm_content)
+        except Exception as exc:
+            log.error("Failed to decrypt admin DM: %s", exc)
+            return
+
+        try:
+            payload = json.loads(decrypted)
+        except json.JSONDecodeError:
+            log.warning("Admin DM: invalid JSON")
+            return
+
+        command = payload.get("command", "")
+
+        if command == "close":
+            log.info("Admin command: CLOSE election")
+            election = self.event_store.get_election()
+            if not election:
+                log.warning("Admin CLOSE: no election announced")
+                return
+
+            election_id = election.get("election_id") or election.get("election")
+            end_time = None
+            try:
+                content = json.loads(election.get("content", "{}"))
+                end_time = content.get("end_time")
+            except json.JSONDecodeError:
+                pass
+
+            now = int(time.time())
+            if end_time and now < end_time:
+                log.warning("Admin CLOSE: election open until %d, current time %d", end_time, now)
+                return
+
+            existing = self.event_store.get_final_result(election_id)
+            if existing:
+                log.info("Admin CLOSE: election already closed (event %s)", existing.get("id", "?")[:16])
+                return
+
+            result = await asyncio.to_thread(
+                close_election,
+                self.event_store, self.spent_tree, self.issuance_tree,
+                self.vote_tree, self.nostr_client, self.eligible_set,
+            )
+            if result:
+                log.info("Admin CLOSE: election closed (event %s)", result.get("id", "?")[:16])
+            else:
+                log.error("Admin CLOSE: failed to close election")
+        else:
+            log.warning("Admin DM: unknown command '%s'", command)
+
     async def handle_msg(self, relay_url, msg):
         pass
 
@@ -1088,40 +1140,6 @@ def make_http_handler(
             },
         })
 
-    async def handle_close(request: web.Request) -> web.Response:
-        if not _nostr_client:
-            return web.json_response({"error": "Nostr client not configured"}, status=500)
-
-        election = event_store.get_election()
-        if not election:
-            return web.json_response({"error": "No election announced yet"}, status=400)
-
-        election_id = election.get("election_id") or election.get("election")
-        end_time = None
-        try:
-            content = json.loads(election.get("content", "{}"))
-            end_time = content.get("end_time")
-        except json.JSONDecodeError:
-            pass
-
-        now = int(time.time())
-        if end_time and now < end_time:
-            return web.json_response({"error": f"Election open until {end_time}, current time {now}"}, status=400)
-
-        existing = event_store.get_final_result(election_id)
-        if existing:
-            return web.json_response({"status": "already_closed", "event_id": existing.get("id")})
-
-        result = await asyncio.to_thread(
-            close_election,
-            event_store, spent_tree, _issuance_tree,
-            _vote_tree, _nostr_client, _eligible_set,
-        )
-        if result is None:
-            return web.json_response({"error": "Failed to close election"}, status=500)
-
-        return web.json_response({"status": "closed", "event_id": result.get("id")})
-
     async def handle_result(request: web.Request) -> web.Response:
         election = event_store.get_election()
         if not election:
@@ -1306,7 +1324,6 @@ def make_http_handler(
     router.get("/election")(handle_election)
     router.get("/tally")(handle_tally)
     router.get("/eligibility")(handle_eligibility)
-    router.post("/close")(handle_close)
     router.get("/result")(handle_result)
     router.get("/inclusion_proof")(handle_inclusion_proof)
     router.get("/issuance-status")(handle_issuance_status)
@@ -1438,11 +1455,8 @@ async def recover_state_from_relay(
             if commitment:
                 spent_tree.insert(commitment)
 
-    if active_election_id:
-        election_id = active_election_id
-    else:
-        election = event_store.get_election()
-        election_id = (election.get("election_id") or election.get("election")) if election else None
+    election = event_store.get_election()
+    election_id = (election.get("election_id") or election.get("election")) if election else None
 
     issued_set = event_store.get_issued_pubkeys(election_id) if election_id else set()
 
@@ -1556,20 +1570,28 @@ async def run_coordinator(
     await site.start()
     log.info("HTTP API listening on %s:%d", args.http_host, args.http_port)
 
+    async def _fetch_claim_events(client: Client, filt: Filter):
+        events = await client.fetch_events(filt, timeout=timedelta(seconds=10))
+        return events.to_vec()
+
     async def poll_claims():
         seen_ids: set[str] = set()
         while True:
             await asyncio.sleep(10)
             try:
-                since = Timestamp.from_secs(int(time.time()) - 120)
+                since = Timestamp.from_secs(int(time.time()) - 300)
                 claim_filter = Filter().kinds([Kind(38010)]).limit(10).since(since)
-                events = await nostr_client.fetch_events(claim_filter, timeout=timedelta(seconds=10))
-                for event in events.to_vec():
+                events_vec = await asyncio.wait_for(
+                    _fetch_claim_events(nostr_client, claim_filter),
+                    timeout=30.0,
+                )
+                for event in events_vec:
                     event_id = event.id().to_hex()
                     if event_id not in seen_ids:
                         seen_ids.add(event_id)
                         log.info("POLL: found new claim %s...", event_id[:16])
                         await handler.handle("poll", "poll", event)
+                log.info("Claim poll check (seen=%d, fetched=%d)", len(seen_ids), len(events_vec))
             except Exception as exc:
                 log.warning("Claim poll error: %s", exc)
 

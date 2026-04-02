@@ -12,11 +12,25 @@
   hosts: tollgate-vps
   become: true
   tasks:
-    - name: Check if Traefik container is running
-      ansible.builtin.shell: docker ps --filter name=traefik --format '{{ "{{.Names}}" }}'
-      register: traefik_check
-      changed_when: false
-      failed_when: false
+    - name: Set effective domain (test mode - sslip.io)
+      when: not (tls_enabled | default(false) | bool)
+      ansible.builtin.set_fact:
+        effective_domain: "mints.{{ vps_ip }}.sslip.io"
+        mint_scheme: "http"
+        voting_fqdn: "{{ voting_subdomain }}.mints.{{ vps_ip }}.sslip.io"
+        voting_scheme: "http"
+
+    - name: Set effective domain (production - real domain)
+      when: tls_enabled | default(false) | bool
+      ansible.builtin.set_fact:
+        effective_domain: "{{ voting_domain }}"
+        mint_scheme: "https"
+        voting_fqdn: "{{ voting_subdomain }}.{{ voting_domain }}"
+        voting_scheme: "https"
+
+    - name: Print effective domain
+      ansible.builtin.debug:
+        msg: "Mode: {{ mint_scheme }}://{{ effective_domain }}"
 
     - name: Ensure tollgate-net Docker network exists
       community.docker.docker_network:
@@ -24,25 +38,52 @@
         state: present
         driver: bridge
 
+    - name: Template Traefik static config
+      ansible.builtin.template:
+        src: ../roles/traefik/templates/traefik.yml.j2
+        dest: "{{ traefik_data_dir }}/traefik.yml"
+        mode: "0644"
+
+    - name: Template Traefik docker-compose
+      ansible.builtin.template:
+        src: ../roles/traefik/templates/docker-compose.yml.j2
+        dest: "{{ traefik_data_dir }}/docker-compose.yml"
+        mode: "0644"
+
+    - name: Ensure ACME storage directory exists
+      ansible.builtin.file:
+        path: "{{ traefik_data_dir }}/acme"
+        state: directory
+        mode: "0755"
+      when: tls_enabled | default(false) | bool
+
+    - name: Ensure ACME storage file exists
+      ansible.builtin.file:
+        path: "{{ traefik_data_dir }}/acme/acme.json"
+        state: touch
+        mode: "0600"
+      when: tls_enabled | default(false) | bool
+
     - name: Start Traefik via docker-compose
       community.docker.docker_compose_v2:
-        project_src: /opt/tollgate/traefik
+        project_src: "{{ traefik_data_dir }}"
         state: present
         pull: never
-      when: "'traefik' not in traefik_check.stdout"
+        recreate: always
 
     - name: Wait for Traefik to be reachable
       ansible.builtin.uri:
-        url: "http://127.0.0.1:80/"
+        url: "{{ mint_scheme }}://127.0.0.1/"
         method: GET
         status_code: [200, 404]
+        validate_certs: false
       register: traefik_health
       retries: 10
       delay: 3
       until: traefik_health is not failed
 
 - name: Deploy Voting Coordinator
-  ansible.builtin.import_playbook: deploy-coordinator.yml
+  ansible.builtin.import_playbook: update-coordinator-keep-existing-election.yml
 
 - name: Deploy Voting Client
   ansible.builtin.import_playbook: deploy-voting-client.yml

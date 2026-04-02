@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getPublicKey, nip19 } from "nostr-tools";
 import { createHash } from "node:crypto";
+import { resetSimpleActorStateForTests } from "./simpleLocalState";
 
 type InternalResponse = {
   id: string;
@@ -15,7 +16,8 @@ type InternalResponse = {
   createdAt: string;
   voterNpub: string;
   votingPrompt?: string;
-  shardCertificate: any;
+  blindShareResponse: any;
+  shardCertificate?: any;
 };
 
 type InternalLiveVote = {
@@ -63,6 +65,15 @@ let shareAssignments: Array<{
   thresholdN?: number;
   createdAt: string;
 }> = [];
+let shardRequests: Array<{
+  coordinatorNpub: string;
+  voterNpub: string;
+  voterId: string;
+  votingId: string;
+  blindRequest: any;
+  createdAt: string;
+}> = [];
+let blindAnnouncements: Record<string, any> = {};
 let followerSubscribers: Array<{
   coordinatorNpub: string;
   onFollowers: (followers: Array<{
@@ -110,6 +121,21 @@ let shareAssignmentSubscribers: Array<{
     createdAt: string;
   }>) => void;
 }> = [];
+let shardRequestSubscribers: Array<{
+  coordinatorNpub: string;
+  onRequests: (requests: Array<{
+    id: string;
+    voterNpub: string;
+    voterId: string;
+    votingId: string;
+    blindRequest: any;
+    createdAt: string;
+  }>) => void;
+}> = [];
+let blindAnnouncementSubscribers: Array<{
+  coordinatorNpub: string;
+  onAnnouncement: (announcement: any | null) => void;
+}> = [];
 
 function sha(input: string) {
   return createHash("sha256").update(input).digest("hex");
@@ -128,7 +154,7 @@ function secretToNpub(secretKey: Uint8Array) {
 }
 
 function makeTokenId(shardCertificates: any[]) {
-  const ids = shardCertificates.map((certificate) => certificate.id).sort().join("|");
+  const ids = shardCertificates.map((certificate) => certificate.shareId ?? certificate.id).sort().join("|");
   return sha(ids).slice(0, 16);
 }
 
@@ -236,6 +262,37 @@ function notifyShareAssignmentSubscribers(coordinatorNpub: string) {
   }
 }
 
+function shardRequestsForCoordinator(coordinatorNpub: string) {
+  return shardRequests
+    .filter((entry) => entry.coordinatorNpub === coordinatorNpub)
+    .map((entry, index) => ({
+      id: `request-${index + 1}:${entry.blindRequest.requestId}`,
+      voterNpub: entry.voterNpub,
+      voterId: entry.voterId,
+      votingId: entry.votingId,
+      blindRequest: entry.blindRequest,
+      createdAt: entry.createdAt,
+    }));
+}
+
+function notifyShardRequestSubscribers(coordinatorNpub: string) {
+  const nextRequests = shardRequestsForCoordinator(coordinatorNpub);
+  for (const subscriber of shardRequestSubscribers) {
+    if (subscriber.coordinatorNpub === coordinatorNpub) {
+      subscriber.onRequests(nextRequests);
+    }
+  }
+}
+
+function notifyBlindAnnouncementSubscribers(coordinatorNpub: string) {
+  const nextAnnouncement = blindAnnouncements[coordinatorNpub] ?? null;
+  for (const subscriber of blindAnnouncementSubscribers) {
+    if (subscriber.coordinatorNpub === coordinatorNpub) {
+      subscriber.onAnnouncement(nextAnnouncement);
+    }
+  }
+}
+
 vi.mock("./SimpleQrScanner", () => ({
   default: () => null,
 }));
@@ -249,25 +306,96 @@ vi.mock("./tokenIdentity", () => ({
 }));
 
 vi.mock("./simpleShardCertificate", () => ({
-  parseSimpleShardCertificate: vi.fn((certificate: any) => {
-    try {
-      const payload = JSON.parse(certificate.content);
-      return {
-        shardId: payload.shard_id,
-        coordinatorNpub: nip19.npubEncode(certificate.pubkey),
-        thresholdLabel: payload.threshold_label,
-        votingId: payload.voting_id,
-        tokenCommitment: payload.token_commitment,
-        shareIndex: payload.share_index,
-        thresholdT: payload.threshold_t,
-        thresholdN: payload.threshold_n,
-        createdAt: new Date((certificate.created_at ?? 0) * 1000).toISOString(),
-        event: certificate,
-      };
-    } catch {
-      return null;
-    }
+  generateSimpleBlindKeyPair: vi.fn(async () => ({
+    scheme: "rsa-blind-v1",
+    keyId: `key-${Object.keys(blindAnnouncements).length + 1}`,
+    bits: 1024,
+    n: `n-${Object.keys(blindAnnouncements).length + 1}`,
+    e: "10001",
+    d: `d-${Object.keys(blindAnnouncements).length + 1}`,
+  })),
+  publishSimpleBlindKeyAnnouncement: vi.fn(async (input: { coordinatorNsec: string; publicKey: any }) => {
+    const coordinatorNpub = nsecToNpub(input.coordinatorNsec);
+    const announcement = {
+      coordinatorNpub,
+      publicKey: input.publicKey,
+      createdAt: new Date().toISOString(),
+      event: {
+        id: `blind-key-${coordinatorNpub}`,
+        kind: 38993,
+        pubkey: coordinatorNpub,
+      },
+    };
+    blindAnnouncements[coordinatorNpub] = announcement;
+    notifyBlindAnnouncementSubscribers(coordinatorNpub);
+    return {
+      eventId: announcement.event.id,
+      successes: 1,
+      failures: 0,
+      createdAt: announcement.createdAt,
+      event: announcement.event,
+    };
   }),
+  subscribeLatestSimpleBlindKeyAnnouncement: vi.fn((input: { coordinatorNpub: string; onAnnouncement: (announcement: any | null) => void }) => {
+    const subscriber = {
+      coordinatorNpub: input.coordinatorNpub,
+      onAnnouncement: input.onAnnouncement,
+    };
+    blindAnnouncementSubscribers.push(subscriber);
+    input.onAnnouncement(blindAnnouncements[input.coordinatorNpub] ?? null);
+    return () => {
+      blindAnnouncementSubscribers = blindAnnouncementSubscribers.filter((entry) => entry !== subscriber);
+    };
+  }),
+  createSimpleBlindIssuanceRequest: vi.fn(async (input: { publicKey: any; votingId: string; tokenMessage?: string }) => {
+    const requestId = `blind-request-${crypto.randomUUID()}`;
+    return {
+      request: {
+        requestId,
+        votingId: input.votingId,
+        blindedMessage: `blinded:${requestId}`,
+        createdAt: new Date().toISOString(),
+      },
+      secret: {
+        requestId,
+        votingId: input.votingId,
+        tokenMessage: input.tokenMessage ?? `token:${input.votingId}:${requestId}`,
+        blindingFactor: `factor:${requestId}`,
+        publicKey: input.publicKey,
+        createdAt: new Date().toISOString(),
+      },
+    };
+  }),
+  unblindSimpleBlindShare: vi.fn((input: { response: any; secret: any }) => ({
+    shareId: input.response.shareId,
+    requestId: input.response.requestId,
+    coordinatorNpub: input.response.coordinatorNpub,
+    votingId: input.secret.votingId,
+    tokenMessage: input.secret.tokenMessage,
+    unblindedSignature: `signature:${input.response.shareId}`,
+    shareIndex: input.response.shareIndex,
+    thresholdT: input.response.thresholdT,
+    thresholdN: input.response.thresholdN,
+    createdAt: input.response.createdAt,
+    keyAnnouncementEvent: input.response.keyAnnouncementEvent,
+  })),
+  parseSimpleShardCertificate: vi.fn((certificate: any) => (
+    certificate
+      ? {
+          shardId: certificate.shareId,
+          requestId: certificate.requestId,
+          coordinatorNpub: certificate.coordinatorNpub,
+          votingId: certificate.votingId,
+          tokenCommitment: certificate.tokenMessage,
+          shareIndex: certificate.shareIndex,
+          thresholdT: certificate.thresholdT,
+          thresholdN: certificate.thresholdN,
+          createdAt: certificate.createdAt,
+          publicKey: { keyId: certificate.keyAnnouncementEvent?.id ?? "blind-key" },
+          event: certificate,
+        }
+      : null
+  )),
   deriveTokenIdFromSimpleShardCertificates: vi.fn(async (certificates: any[]) => makeTokenId(certificates)),
 }));
 
@@ -383,48 +511,88 @@ vi.mock("./simpleShardDm", () => ({
       shareAssignmentSubscribers = shareAssignmentSubscribers.filter((entry) => entry !== subscriber);
     };
   }),
+  sendSimpleShardRequest: vi.fn(async (input: {
+    coordinatorNpub: string;
+    voterNpub: string;
+    voterId: string;
+    votingId: string;
+    blindRequest: any;
+  }) => {
+    shardRequests.push({
+      coordinatorNpub: input.coordinatorNpub,
+      voterNpub: input.voterNpub,
+      voterId: input.voterId,
+      votingId: input.votingId,
+      blindRequest: input.blindRequest,
+      createdAt: new Date().toISOString(),
+    });
+    notifyShardRequestSubscribers(input.coordinatorNpub);
+    return { eventId: `request-${shardRequests.length}`, successes: 1, failures: 0, relayResults: [] };
+  }),
+  subscribeSimpleShardRequests: vi.fn((input: {
+    coordinatorNsec: string;
+    onRequests: (requests: Array<{
+      id: string;
+      voterNpub: string;
+      voterId: string;
+      votingId: string;
+      blindRequest: any;
+      createdAt: string;
+    }>) => void;
+  }) => {
+    const coordinatorNpub = nsecToNpub(input.coordinatorNsec);
+    const subscriber = {
+      coordinatorNpub,
+      onRequests: input.onRequests,
+    };
+    shardRequestSubscribers.push(subscriber);
+    input.onRequests(shardRequestsForCoordinator(coordinatorNpub));
+    return () => {
+      shardRequestSubscribers = shardRequestSubscribers.filter((entry) => entry !== subscriber);
+    };
+  }),
   sendSimpleRoundTicket: vi.fn(async (input: {
     coordinatorSecretKey: Uint8Array;
+    blindPrivateKey: any;
+    keyAnnouncementEvent: any;
     voterNpub: string;
     voterId: string;
     coordinatorNpub: string;
     coordinatorId: string;
     thresholdLabel: string;
-    votingId: string;
+    request: {
+      id: string;
+      votingId: string;
+      blindRequest: {
+        requestId: string;
+      };
+    };
     votingPrompt: string;
-    tokenCommitment: string;
     shareIndex: number;
     thresholdT?: number;
     thresholdN?: number;
   }) => {
     const responseId = `response-${++responseCounter}`;
-    const shardCertificate = {
-      id: `certificate-${responseCounter}`,
-      kind: 38993,
-      pubkey: getPublicKey(input.coordinatorSecretKey),
-      created_at: Math.floor(Date.now() / 1000),
-      tags: [],
-      content: JSON.stringify({
-        shard_id: responseId,
-        threshold_label: input.thresholdLabel,
-        voting_id: input.votingId,
-        token_commitment: input.tokenCommitment,
-        share_index: input.shareIndex,
-        threshold_t: input.thresholdT,
-        threshold_n: input.thresholdN,
-      }),
-      sig: "sig",
-    };
     shardResponses.push({
       id: responseId,
-      requestId: `round-ticket:${input.votingId}:${input.coordinatorNpub}`,
+      requestId: input.request.blindRequest.requestId,
       coordinatorNpub: input.coordinatorNpub,
       coordinatorId: input.coordinatorId,
       thresholdLabel: input.thresholdLabel,
       createdAt: new Date().toISOString(),
       voterNpub: input.voterNpub,
       votingPrompt: input.votingPrompt,
-      shardCertificate,
+      blindShareResponse: {
+        shareId: responseId,
+        requestId: input.request.blindRequest.requestId,
+        coordinatorNpub: input.coordinatorNpub,
+        blindedSignature: `blind-signature:${responseId}`,
+        shareIndex: input.shareIndex,
+        thresholdT: input.thresholdT,
+        thresholdN: input.thresholdN,
+        createdAt: new Date().toISOString(),
+        keyAnnouncementEvent: input.keyAnnouncementEvent,
+      },
     });
     notifyShardResponseSubscribers(input.voterNpub);
     return { responseId, eventId: `dm-response-${responseCounter}`, successes: 1, failures: 0, relayResults: [] };
@@ -553,7 +721,7 @@ vi.mock("./simpleVotingSession", () => ({
 }));
 
 describe("Simple round flow", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     responseCounter = 0;
     voteCounter = 0;
     liveVotes = [{
@@ -570,6 +738,8 @@ describe("Simple round flow", () => {
     coordinatorFollowers = [];
     subCoordinatorApplications = [];
     shareAssignments = [];
+    shardRequests = [];
+    blindAnnouncements = {};
     followerSubscribers = [];
     shardResponseSubscribers = [];
     liveVoteSubscribers = [];
@@ -577,12 +747,16 @@ describe("Simple round flow", () => {
     submittedVoteSubscribers = [];
     subCoordinatorApplicationSubscribers = [];
     shareAssignmentSubscribers = [];
+    shardRequestSubscribers = [];
+    blindAnnouncementSubscribers = [];
     window.sessionStorage.clear();
+    await resetSimpleActorStateForTests();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     cleanup();
     window.sessionStorage.clear();
+    await resetSimpleActorStateForTests();
   });
 
   it("restores voter and coordinator identities from pasted nsec", async () => {
@@ -603,12 +777,12 @@ describe("Simple round flow", () => {
     const coordinatorUi = within(coordinator.container);
     const voterUi = within(voter.container);
 
-    const voterRestoreInput = voterUi.getByPlaceholderText("nsec1...");
+    const voterRestoreInput = await voterUi.findByPlaceholderText("nsec1...");
     await user.clear(voterRestoreInput);
     await user.type(voterRestoreInput, voterNsec);
     await user.click(voterUi.getByRole("button", { name: /^Restore$/i }));
 
-    const coordinatorRestoreInput = coordinatorUi.getByPlaceholderText("nsec1...");
+    const coordinatorRestoreInput = await coordinatorUi.findByPlaceholderText("nsec1...");
     await user.clear(coordinatorRestoreInput);
     await user.type(coordinatorRestoreInput, coordinatorNsec);
     await user.click(coordinatorUi.getByRole("button", { name: /^Restore$/i }));
@@ -693,8 +867,8 @@ describe("Simple round flow", () => {
     expect(firstRoundId).toBeTruthy();
 
     await waitFor(() => {
-      expect(voterOneUi.getByText(/No live vote ticket yet\./i)).toBeTruthy();
-      expect(voterTwoUi.getByText(/No live vote ticket yet\./i)).toBeTruthy();
+      expect(voterOneUi.getByText(/Tickets ready: 0 of 2/i)).toBeTruthy();
+      expect(voterTwoUi.getByText(/Tickets ready: 0 of 2/i)).toBeTruthy();
       expect(coordinatorOneUi.getAllByText(/is following this coordinator/i).length).toBeGreaterThanOrEqual(2);
       expect(coordinatorTwoUi.getAllByText(/is following this coordinator/i).length).toBeGreaterThanOrEqual(2);
       expect(coordinatorTwoUi.getByDisplayValue("2")).toBeTruthy();
@@ -746,14 +920,25 @@ describe("Simple round flow", () => {
       expect(coordinatorTwoUi.getAllByRole("button", { name: /Send ticket/i }).length).toBeGreaterThanOrEqual(2);
     });
 
+    const voterOneRoundSelector = voterOne.container.querySelector("select#simple-live-round") as HTMLSelectElement | null;
+    const voterTwoRoundSelector = voterTwo.container.querySelector("select#simple-live-round") as HTMLSelectElement | null;
+    if (voterOneRoundSelector) {
+      await user.selectOptions(voterOneRoundSelector, firstRoundId);
+    }
+    if (voterTwoRoundSelector) {
+      await user.selectOptions(voterTwoRoundSelector, firstRoundId);
+    }
     await user.click(voterOneUi.getByRole("button", { name: /^Yes$/i }));
     await user.click(voterTwoUi.getByRole("button", { name: /^No$/i }));
     await user.click(voterOneUi.getByRole("button", { name: /^Submit$/i }));
     await user.click(voterTwoUi.getByRole("button", { name: /^Submit$/i }));
-    await user.selectOptions(coordinatorOne.container.querySelector("select#simple-active-round") as HTMLSelectElement, firstRoundId);
+    const coordinatorRoundSelector = coordinatorOne.container.querySelector("select#simple-active-round") as HTMLSelectElement | null;
+    if (coordinatorRoundSelector) {
+      await user.selectOptions(coordinatorRoundSelector, firstRoundId);
+    }
 
     await waitFor(() => {
-      expect(coordinatorOneUi.getByText((_, element) => element?.textContent === "Yes: 1 | No: 1")).toBeTruthy();
+      expect(coordinatorOne.container.textContent).toContain("Yes: 1 | No: 1");
     });
   }, 40000);
 });

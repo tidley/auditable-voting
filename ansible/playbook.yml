@@ -34,7 +34,7 @@
 
 ---
 - name: Deploy Voting Coordinator
-  ansible.builtin.import_playbook: playbooks/deploy-coordinator.yml
+  ansible.builtin.import_playbook: playbooks/update-coordinator-keep-existing-election.yml
   tags: [coordinator]
 
 - name: Deploy Voting Client

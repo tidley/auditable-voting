@@ -2,8 +2,10 @@ import { getPublicKey, nip17, nip19, SimplePool } from "nostr-tools";
 import type { DmPublishResult } from "./proofSubmission";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import {
-  createSimpleShardCertificate,
-  parseSimpleShardCertificate,
+  createSimpleBlindShareResponse,
+  type SimpleBlindIssuanceRequest,
+  type SimpleBlindPrivateKey,
+  type SimpleBlindShareResponse,
   type SimpleShardCertificate,
 } from "./simpleShardCertificate";
 
@@ -18,7 +20,7 @@ export type SimpleShardRequest = {
   voterNpub: string;
   voterId: string;
   votingId: string;
-  tokenCommitment: string;
+  blindRequest: SimpleBlindIssuanceRequest;
   createdAt: string;
 };
 
@@ -30,7 +32,8 @@ export type SimpleShardResponse = {
   thresholdLabel: string;
   createdAt: string;
   votingPrompt?: string;
-  shardCertificate: SimpleShardCertificate;
+  blindShareResponse: SimpleBlindShareResponse;
+  shardCertificate?: SimpleShardCertificate;
 };
 
 export type SimpleCoordinatorFollower = {
@@ -80,7 +83,7 @@ function parseSimpleShardRequest(
       voter_npub?: string;
       voter_id?: string;
       voting_id?: string;
-      token_commitment?: string;
+      blind_request?: SimpleBlindIssuanceRequest;
       created_at?: string;
     };
 
@@ -90,7 +93,7 @@ function parseSimpleShardRequest(
       || !payload.voter_npub
       || !payload.voter_id
       || !payload.voting_id
-      || !payload.token_commitment
+      || !payload.blind_request
     ) {
       return null;
     }
@@ -100,7 +103,7 @@ function parseSimpleShardRequest(
       voterNpub: payload.voter_npub,
       voterId: payload.voter_id,
       votingId: payload.voting_id,
-      tokenCommitment: payload.token_commitment,
+      blindRequest: payload.blind_request,
       createdAt: payload.created_at ?? new Date(wrappedEvent.created_at * 1000).toISOString(),
     };
   } catch {
@@ -158,13 +161,9 @@ function parseSimpleShardResponse(
       coordinator_id?: string;
       threshold_label?: string;
       voting_prompt?: string;
-      shard_certificate?: SimpleShardCertificate;
+      blind_share_response?: SimpleBlindShareResponse;
       created_at?: string;
     };
-
-    const parsedCertificate = payload.shard_certificate
-      ? parseSimpleShardCertificate(payload.shard_certificate, payload.coordinator_npub)
-      : null;
 
     if (
       (payload.action !== "simple_shard_response" && payload.action !== "simple_round_ticket")
@@ -172,20 +171,20 @@ function parseSimpleShardResponse(
       || !payload.request_id
       || !payload.coordinator_id
       || !payload.threshold_label
-      || !parsedCertificate
+      || !payload.blind_share_response
     ) {
       return null;
     }
 
     return {
-      id: parsedCertificate.shardId,
+      id: payload.response_id,
       requestId: payload.request_id,
-      coordinatorNpub: parsedCertificate.coordinatorNpub,
+      coordinatorNpub: payload.coordinator_npub ?? payload.blind_share_response.coordinatorNpub,
       coordinatorId: payload.coordinator_id,
-      thresholdLabel: parsedCertificate.thresholdLabel,
+      thresholdLabel: payload.threshold_label,
       createdAt: payload.created_at ?? new Date(wrappedEvent.created_at * 1000).toISOString(),
       votingPrompt: payload.voting_prompt?.trim() || undefined,
-      shardCertificate: parsedCertificate.event,
+      blindShareResponse: payload.blind_share_response,
     };
   } catch {
     return null;
@@ -389,7 +388,7 @@ export async function sendSimpleShardRequest(input: {
   voterNpub: string;
   voterId: string;
   votingId: string;
-  tokenCommitment: string;
+  blindRequest: SimpleBlindIssuanceRequest;
   relays?: string[];
 }): Promise<DmPublishResult> {
   const decoded = nip19.decode(input.coordinatorNpub);
@@ -410,7 +409,7 @@ export async function sendSimpleShardRequest(input: {
       voter_npub: input.voterNpub,
       voter_id: input.voterId,
       voting_id: input.votingId,
-      token_commitment: input.tokenCommitment,
+      blind_request: input.blindRequest,
       created_at: new Date().toISOString(),
     }),
     "Voting shard request",
@@ -477,6 +476,77 @@ export async function fetchSimpleShardRequests(input: {
   } finally {
     pool.close(dmRelays);
   }
+}
+
+export function subscribeSimpleShardRequests(input: {
+  coordinatorNsec: string;
+  relays?: string[];
+  onRequests: (requests: SimpleShardRequest[]) => void;
+  onError?: (error: Error) => void;
+}): () => void {
+  const decoded = nip19.decode(input.coordinatorNsec.trim());
+  if (decoded.type !== "nsec") {
+    throw new Error("Coordinator key must be an nsec.");
+  }
+
+  const secretKey = decoded.data as Uint8Array;
+  const coordinatorHex = getPublicKey(secretKey);
+  const dmRelays = buildDmRelays(input.relays);
+  const pool = new SimplePool();
+  const requests = new Map<string, SimpleShardRequest>();
+  let closed = false;
+
+  void fetchSimpleShardRequests({
+    coordinatorNsec: input.coordinatorNsec,
+    relays: input.relays,
+  }).then((initialRequests) => {
+    if (closed) {
+      return;
+    }
+
+    for (const request of initialRequests) {
+      requests.set(request.id, request);
+    }
+
+    input.onRequests(sortByCreatedAtDescending([...requests.values()]));
+  }).catch((error) => {
+    if (!closed && error instanceof Error) {
+      input.onError?.(error);
+    }
+  });
+
+  const subscription = pool.subscribeMany(dmRelays, {
+    kinds: [1059],
+    "#p": [coordinatorHex],
+    limit: 100,
+  }, {
+    onevent: (wrappedEvent) => {
+      const request = parseSimpleShardRequest(wrappedEvent, secretKey);
+      if (!request) {
+        return;
+      }
+
+      requests.set(request.id, request);
+      input.onRequests(sortByCreatedAtDescending([...requests.values()]));
+    },
+    onclose: (reasons) => {
+      if (closed) {
+        return;
+      }
+
+      const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
+      if (errors.length > 0) {
+        input.onError?.(new Error(errors.join("; ")));
+      }
+    },
+    maxWait: 4000,
+  });
+
+  return () => {
+    closed = true;
+    void subscription.close("closed by caller");
+    pool.destroy();
+  };
 }
 
 export async function fetchSimpleCoordinatorFollowers(input: {
@@ -695,13 +765,13 @@ export function subscribeSimpleSubCoordinatorApplications(input: {
 
 export async function sendSimpleShardResponse(input: {
   coordinatorSecretKey: Uint8Array;
+  blindPrivateKey: SimpleBlindPrivateKey;
+  keyAnnouncementEvent: any;
   voterNpub: string;
-  requestId: string;
+  request: SimpleShardRequest;
   coordinatorNpub: string;
   coordinatorId: string;
   thresholdLabel: string;
-  votingId: string;
-  tokenCommitment: string;
   shareIndex: number;
   thresholdT?: number;
   thresholdN?: number;
@@ -713,16 +783,16 @@ export async function sendSimpleShardResponse(input: {
   }
 
   const dmRelays = buildDmRelays(input.relays);
-  const certificate = createSimpleShardCertificate({
-    coordinatorSecretKey: input.coordinatorSecretKey,
-    thresholdLabel: input.thresholdLabel,
-    votingId: input.votingId,
-    tokenCommitment: input.tokenCommitment,
+  const blindShareResponse = createSimpleBlindShareResponse({
+    privateKey: input.blindPrivateKey,
+    keyAnnouncementEvent: input.keyAnnouncementEvent,
+    coordinatorNpub: input.coordinatorNpub,
+    request: input.request.blindRequest,
     shareIndex: input.shareIndex,
     thresholdT: input.thresholdT,
     thresholdN: input.thresholdN,
   });
-  const responseId = certificate.shardId;
+  const responseId = blindShareResponse.shareId;
   const event = nip17.wrapEvent(
     input.coordinatorSecretKey,
     {
@@ -732,11 +802,11 @@ export async function sendSimpleShardResponse(input: {
     JSON.stringify({
       action: "simple_shard_response",
       response_id: responseId,
-      request_id: input.requestId,
+      request_id: input.request.id,
       coordinator_npub: input.coordinatorNpub,
       coordinator_id: input.coordinatorId,
       threshold_label: input.thresholdLabel,
-      shard_certificate: certificate.event,
+      blind_share_response: blindShareResponse,
       created_at: new Date().toISOString(),
     }),
     "Voting shard response",
@@ -772,14 +842,15 @@ export async function sendSimpleShardResponse(input: {
 
 export async function sendSimpleRoundTicket(input: {
   coordinatorSecretKey: Uint8Array;
+  blindPrivateKey: SimpleBlindPrivateKey;
+  keyAnnouncementEvent: any;
   voterNpub: string;
   voterId: string;
   coordinatorNpub: string;
   coordinatorId: string;
   thresholdLabel: string;
-  votingId: string;
+  request: SimpleShardRequest;
   votingPrompt: string;
-  tokenCommitment: string;
   shareIndex: number;
   thresholdT?: number;
   thresholdN?: number;
@@ -791,16 +862,16 @@ export async function sendSimpleRoundTicket(input: {
   }
 
   const dmRelays = buildDmRelays(input.relays);
-  const certificate = createSimpleShardCertificate({
-    coordinatorSecretKey: input.coordinatorSecretKey,
-    thresholdLabel: input.thresholdLabel,
-    votingId: input.votingId,
-    tokenCommitment: input.tokenCommitment,
+  const blindShareResponse = createSimpleBlindShareResponse({
+    privateKey: input.blindPrivateKey,
+    keyAnnouncementEvent: input.keyAnnouncementEvent,
+    coordinatorNpub: input.coordinatorNpub,
+    request: input.request.blindRequest,
     shareIndex: input.shareIndex,
     thresholdT: input.thresholdT,
     thresholdN: input.thresholdN,
   });
-  const responseId = certificate.shardId;
+  const responseId = blindShareResponse.shareId;
   const event = nip17.wrapEvent(
     input.coordinatorSecretKey,
     {
@@ -810,13 +881,13 @@ export async function sendSimpleRoundTicket(input: {
     JSON.stringify({
       action: "simple_round_ticket",
       response_id: responseId,
-      request_id: `round-ticket:${input.votingId}:${input.coordinatorNpub}`,
+      request_id: input.request.id,
       voter_id: input.voterId,
       coordinator_npub: input.coordinatorNpub,
       coordinator_id: input.coordinatorId,
       threshold_label: input.thresholdLabel,
       voting_prompt: input.votingPrompt,
-      shard_certificate: certificate.event,
+      blind_share_response: blindShareResponse,
       created_at: new Date().toISOString(),
     }),
     "Round ticket",

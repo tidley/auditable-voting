@@ -367,7 +367,7 @@ Added `wss://nos.lol` and `wss://relay.primal.net` across the codebase.
 Files updated:
 - `scripts/voting-coordinator-client.py` -- default `--relays` arg
 - `scripts/voting-request-proof.py` -- default `--relays` arg
-- `playbooks/deploy-coordinator.yml` -- systemd ExecStart, summary output
+- `playbooks/update-coordinator-keep-existing-election.yml` -- systemd ExecStart, summary output
 
 ### Step 2: New dependency -- DONE
 
@@ -445,7 +445,7 @@ await asyncio.gather(
 
 ### Step 10: Playbook changes -- DONE
 
-Updated `playbooks/deploy-coordinator.yml`:
+Updated `playbooks/update-coordinator-keep-existing-election.yml`:
 
 - Added `--http-port 8081` to systemd ExecStart (8080 conflicts with docker-proxy on VPS)
 - Updated `--relays` with new relay list (nak + damus + nos.lol + primal)
