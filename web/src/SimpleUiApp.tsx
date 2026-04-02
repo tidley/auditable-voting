@@ -66,6 +66,20 @@ type SimpleVoterCache = {
   liveVoteChoice: LiveVoteChoice;
 };
 
+function createEmptyVoterCache(): SimpleVoterCache {
+  return {
+    manualCoordinators: [],
+    requestStatus: null,
+    receivedShards: [],
+    pendingBlindRequests: {},
+    followDeliveries: {},
+    requestDeliveries: {},
+    submitStatus: null,
+    selectedVotingId: "",
+    liveVoteChoice: null,
+  };
+}
+
 function normalizeCoordinatorNpubs(values: string[]) {
   return Array.from(new Set(values.map((value) => value.trim()).filter((value) => value.length > 0)));
 }
@@ -116,6 +130,8 @@ export default function SimpleUiApp() {
   const [ballotTokenId, setBallotTokenId] = useState<string | null>(null);
   const [selectedVotingId, setSelectedVotingId] = useState("");
   const sentTicketReceiptAckIdsRef = useRef<Set<string>>(new Set());
+  const lastAutoSelectedVotingIdRef = useRef("");
+  const manualRoundSelectionRef = useRef(false);
 
   const configuredCoordinatorTargets = useMemo(
     () => normalizeCoordinatorNpubs(manualCoordinators),
@@ -132,30 +148,16 @@ export default function SimpleUiApp() {
 
       if (storedState?.keypair) {
         setVoterKeypair(storedState.keypair);
-        const cache = (storedState.cache ?? null) as Partial<SimpleVoterCache> | null;
-        if (cache) {
-          setManualCoordinators(Array.isArray(cache.manualCoordinators) ? cache.manualCoordinators : []);
-          setRequestStatus(typeof cache.requestStatus === "string" ? cache.requestStatus : null);
-          setReceivedShards(Array.isArray(cache.receivedShards) ? cache.receivedShards : []);
-          setPendingBlindRequests(
-            cache.pendingBlindRequests && typeof cache.pendingBlindRequests === "object"
-              ? cache.pendingBlindRequests
-              : {},
-          );
-          setFollowDeliveries(
-            cache.followDeliveries && typeof cache.followDeliveries === "object"
-              ? cache.followDeliveries
-              : {},
-          );
-          setRequestDeliveries(
-            cache.requestDeliveries && typeof cache.requestDeliveries === "object"
-              ? cache.requestDeliveries
-              : {},
-          );
-          setSubmitStatus(typeof cache.submitStatus === "string" ? cache.submitStatus : null);
-          setSelectedVotingId(typeof cache.selectedVotingId === "string" ? cache.selectedVotingId : "");
-          setLiveVoteChoice(cache.liveVoteChoice === "Yes" || cache.liveVoteChoice === "No" ? cache.liveVoteChoice : null);
-        }
+        const emptyCache = createEmptyVoterCache();
+        setManualCoordinators(emptyCache.manualCoordinators);
+        setRequestStatus(emptyCache.requestStatus);
+        setReceivedShards(emptyCache.receivedShards);
+        setPendingBlindRequests(emptyCache.pendingBlindRequests);
+        setFollowDeliveries(emptyCache.followDeliveries);
+        setRequestDeliveries(emptyCache.requestDeliveries);
+        setSubmitStatus(emptyCache.submitStatus);
+        setSelectedVotingId(emptyCache.selectedVotingId);
+        setLiveVoteChoice(emptyCache.liveVoteChoice);
         setIdentityReady(true);
         return;
       }
@@ -188,23 +190,10 @@ export default function SimpleUiApp() {
       return;
     }
 
-    const cache: SimpleVoterCache = {
-      manualCoordinators,
-      requestStatus,
-      receivedShards,
-      pendingBlindRequests,
-      followDeliveries,
-      requestDeliveries,
-      submitStatus,
-      selectedVotingId,
-      liveVoteChoice,
-    };
-
     void saveSimpleActorState({
       role: "voter",
       keypair: voterKeypair,
       updatedAt: new Date().toISOString(),
-      cache,
     });
   }, [
     identityReady,
@@ -361,16 +350,11 @@ export default function SimpleUiApp() {
     setSubmitStatus(null);
   }, [selectedVotingId]);
 
-  function refreshIdentity() {
-    const nextKeypair = createSimpleVoterKeypair();
-    void saveSimpleActorState({
-      role: "voter",
-      keypair: nextKeypair,
-      updatedAt: new Date().toISOString(),
-    });
-    setVoterKeypair(nextKeypair);
-    setIdentityStatus(null);
-    setBackupStatus(null);
+  function clearVoterSessionState(options?: { clearManualCoordinators?: boolean }) {
+    if (options?.clearManualCoordinators ?? false) {
+      setManualCoordinators([]);
+      setCoordinatorDraft("");
+    }
     setLiveVoteChoice(null);
     setRequestStatus(null);
     setSubmitStatus(null);
@@ -383,7 +367,22 @@ export default function SimpleUiApp() {
     setDiscoveredSessions([]);
     setKnownBlindKeys({});
     setSelectedVotingId("");
+    lastAutoSelectedVotingIdRef.current = "";
+    manualRoundSelectionRef.current = false;
     sentTicketReceiptAckIdsRef.current.clear();
+  }
+
+  function refreshIdentity() {
+    const nextKeypair = createSimpleVoterKeypair();
+    void saveSimpleActorState({
+      role: "voter",
+      keypair: nextKeypair,
+      updatedAt: new Date().toISOString(),
+    });
+    setVoterKeypair(nextKeypair);
+    setIdentityStatus(null);
+    setBackupStatus(null);
+    clearVoterSessionState({ clearManualCoordinators: true });
   }
 
   function restoreIdentity(nextNsec: string) {
@@ -408,19 +407,7 @@ export default function SimpleUiApp() {
     setVoterKeypair(nextKeypair);
     setIdentityStatus("Identity restored from nsec.");
     setBackupStatus(null);
-    setLiveVoteChoice(null);
-    setRequestStatus(null);
-    setSubmitStatus(null);
-    setBallotTokenId(null);
-    setReceivedShards([]);
-    setPendingBlindRequests({});
-    setFollowDeliveries({});
-    setRequestDeliveries({});
-    setDmAcknowledgements([]);
-    setDiscoveredSessions([]);
-    setKnownBlindKeys({});
-    setSelectedVotingId("");
-    sentTicketReceiptAckIdsRef.current.clear();
+    clearVoterSessionState({ clearManualCoordinators: true });
   }
 
   function downloadBackup() {
@@ -455,7 +442,6 @@ export default function SimpleUiApp() {
         role: "voter",
         keypair: bundle.keypair,
         updatedAt: new Date().toISOString(),
-        cache: bundle.cache,
       });
       setVoterKeypair(bundle.keypair);
       setIdentityStatus("Identity restored from backup.");
@@ -603,14 +589,27 @@ export default function SimpleUiApp() {
   useEffect(() => {
     if (!reconciledRoundState.knownRounds.length) {
       setSelectedVotingId("");
+      lastAutoSelectedVotingIdRef.current = "";
+      manualRoundSelectionRef.current = false;
       return;
     }
 
-    setSelectedVotingId((current) => (
-      reconciledRoundState.knownRounds.some((round) => round.votingId === current)
+    const latestVotingId = reconciledRoundState.knownRounds[0].votingId;
+    setSelectedVotingId((current) => {
+      const canAutoAdvance =
+        !manualRoundSelectionRef.current
+        || !current
+        || current === lastAutoSelectedVotingIdRef.current;
+
+      if (lastAutoSelectedVotingIdRef.current !== latestVotingId && canAutoAdvance) {
+        lastAutoSelectedVotingIdRef.current = latestVotingId;
+        return latestVotingId;
+      }
+
+      return reconciledRoundState.knownRounds.some((round) => round.votingId === current)
         ? current
-        : reconciledRoundState.knownRounds[0].votingId
-    ));
+        : latestVotingId;
+    });
   }, [reconciledRoundState.knownRounds]);
 
   const effectiveLiveVoteSession = useMemo<SimpleLiveVoteSession | null>(() => {
@@ -963,18 +962,21 @@ export default function SimpleUiApp() {
         <SimpleCollapsibleSection title="Live Vote">
           {effectiveLiveVoteSession ? (
             <>
-              {voteTicketRows.length > 1 ? (
+              {reconciledRoundState.knownRounds.length > 1 ? (
                 <>
                   <label className="simple-voter-label" htmlFor="simple-live-round">Round</label>
                   <select
                     id="simple-live-round"
                     className="simple-voter-input"
                     value={effectiveLiveVoteSession.votingId}
-                    onChange={(event) => setSelectedVotingId(event.target.value)}
+                    onChange={(event) => {
+                      manualRoundSelectionRef.current = true;
+                      setSelectedVotingId(event.target.value);
+                    }}
                   >
-                    {voteTicketRows.map((row) => (
-                      <option key={row.votingId} value={row.votingId}>
-                        {shortVotingId(row.votingId)} - {row.prompt}
+                    {reconciledRoundState.knownRounds.map((round) => (
+                      <option key={round.votingId} value={round.votingId}>
+                        {shortVotingId(round.votingId)} - {round.prompt}
                       </option>
                     ))}
                   </select>
