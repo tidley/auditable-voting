@@ -4,11 +4,13 @@ import { decodeNsec, deriveNpubFromNsec } from "./nostrIdentity";
 import {
   subscribeSimpleCoordinatorFollowers,
   subscribeSimpleCoordinatorShareAssignments,
+  subscribeSimpleShardRequests,
   subscribeSimpleSubCoordinatorApplications,
   sendSimpleShareAssignment,
   sendSimpleSubCoordinatorJoin,
   sendSimpleRoundTicket,
   type SimpleCoordinatorFollower,
+  type SimpleShardRequest,
   type SimpleSubCoordinatorApplication,
 } from "./simpleShardDm";
 import {
@@ -23,12 +25,42 @@ import { sha256Hex } from "./tokenIdentity";
 import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
 import TokenFingerprint from "./TokenFingerprint";
-
-const COORDINATOR_STORAGE_KEY = "auditable-voting.simple-coordinator-keypair";
+import {
+  generateSimpleBlindKeyPair,
+  publishSimpleBlindKeyAnnouncement,
+  type SimpleBlindKeyAnnouncement,
+  type SimpleBlindPrivateKey,
+} from "./simpleShardCertificate";
+import {
+  downloadSimpleActorBackup,
+  loadSimpleActorState,
+  parseSimpleActorBackupBundle,
+  saveSimpleActorState,
+  type SimpleActorKeypair,
+} from "./simpleLocalState";
 
 type SimpleCoordinatorKeypair = {
   npub: string;
   nsec: string;
+};
+
+type SimpleCoordinatorCache = {
+  leadCoordinatorNpub: string;
+  followers: SimpleCoordinatorFollower[];
+  subCoordinators: SimpleSubCoordinatorApplication[];
+  ticketStatuses: Record<string, string>;
+  pendingRequests: SimpleShardRequest[];
+  registrationStatus: string | null;
+  assignmentStatus: string | null;
+  questionPrompt: string;
+  questionThresholdT: string;
+  questionThresholdN: string;
+  questionShareIndex: string;
+  blindPrivateKey: SimpleBlindPrivateKey | null;
+  publishStatus: string | null;
+  publishedVotes: SimpleLiveVoteSession[];
+  selectedVotingId: string;
+  submittedVotes: SimpleSubmittedVote[];
 };
 
 function createSimpleCoordinatorKeypair(): SimpleCoordinatorKeypair {
@@ -37,31 +69,6 @@ function createSimpleCoordinatorKeypair(): SimpleCoordinatorKeypair {
     nsec: nip19.nsecEncode(secretKey),
     npub: nip19.npubEncode(getPublicKey(secretKey)),
   };
-}
-
-function loadStoredCoordinatorKeypair(): SimpleCoordinatorKeypair | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  const raw = window.sessionStorage.getItem(COORDINATOR_STORAGE_KEY);
-  if (!raw) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(raw) as SimpleCoordinatorKeypair;
-  } catch {
-    return null;
-  }
-}
-
-function storeCoordinatorKeypair(keypair: SimpleCoordinatorKeypair) {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  window.sessionStorage.setItem(COORDINATOR_STORAGE_KEY, JSON.stringify(keypair));
 }
 
 function mergeFollowers(
@@ -89,21 +96,35 @@ function shortVotingId(votingId: string) {
   return votingId.slice(0, 12);
 }
 
+function findLatestRoundRequest(
+  requests: SimpleShardRequest[],
+  voterNpub: string,
+  votingId: string,
+) {
+  return requests
+    .filter((request) => request.voterNpub === voterNpub && request.votingId === votingId)
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null;
+}
+
 export default function SimpleCoordinatorApp() {
-  const [keypair, setKeypair] = useState<SimpleCoordinatorKeypair | null>(() => loadStoredCoordinatorKeypair());
+  const [keypair, setKeypair] = useState<SimpleCoordinatorKeypair | null>(null);
+  const [identityReady, setIdentityReady] = useState(false);
   const [coordinatorId, setCoordinatorId] = useState("pending");
   const [identityStatus, setIdentityStatus] = useState<string | null>(null);
+  const [backupStatus, setBackupStatus] = useState<string | null>(null);
   const [leadCoordinatorNpub, setLeadCoordinatorNpub] = useState("");
   const [followers, setFollowers] = useState<SimpleCoordinatorFollower[]>([]);
   const [subCoordinators, setSubCoordinators] = useState<SimpleSubCoordinatorApplication[]>([]);
   const [ticketStatuses, setTicketStatuses] = useState<Record<string, string>>({});
+  const [pendingRequests, setPendingRequests] = useState<SimpleShardRequest[]>([]);
   const [registrationStatus, setRegistrationStatus] = useState<string | null>(null);
   const [assignmentStatus, setAssignmentStatus] = useState<string | null>(null);
   const [questionPrompt, setQuestionPrompt] = useState("Should the proposal pass?");
-  const [questionVotingId, setQuestionVotingId] = useState("");
   const [questionThresholdT, setQuestionThresholdT] = useState("1");
   const [questionThresholdN, setQuestionThresholdN] = useState("1");
   const [questionShareIndex, setQuestionShareIndex] = useState("1");
+  const [blindPrivateKey, setBlindPrivateKey] = useState<SimpleBlindPrivateKey | null>(null);
+  const [blindKeyAnnouncement, setBlindKeyAnnouncement] = useState<SimpleBlindKeyAnnouncement | null>(null);
   const [publishStatus, setPublishStatus] = useState<string | null>(null);
   const [publishedVotes, setPublishedVotes] = useState<SimpleLiveVoteSession[]>([]);
   const [selectedVotingId, setSelectedVotingId] = useState("");
@@ -112,24 +133,123 @@ export default function SimpleCoordinatorApp() {
   const activeShareIndex = isLeadCoordinator ? 1 : (Number.parseInt(questionShareIndex, 10) || 0);
   const hasAssignedShareIndex = !isLeadCoordinator && activeShareIndex > 0;
   const availableCoordinatorCount = Math.max(1, subCoordinators.length + 1);
-  const liveVoteSourceNpub = !isLeadCoordinator ? leadCoordinatorNpub.trim() : "";
+  const liveVoteSourceNpub = isLeadCoordinator ? (keypair?.npub ?? "") : leadCoordinatorNpub.trim();
   const selectedPublishedVote = useMemo(
     () => publishedVotes.find((vote) => vote.votingId === selectedVotingId) ?? publishedVotes[0] ?? null,
     [publishedVotes, selectedVotingId],
   );
-  const activeVotingId = selectedPublishedVote?.votingId ?? questionVotingId.trim();
+  const activeVotingId = selectedPublishedVote?.votingId ?? "";
   const activeThresholdT = selectedPublishedVote?.thresholdT ?? (Number.parseInt(questionThresholdT, 10) || undefined);
   const activeThresholdN = selectedPublishedVote?.thresholdN ?? (Number.parseInt(questionThresholdN, 10) || undefined);
 
   useEffect(() => {
-    if (keypair) {
+    let cancelled = false;
+
+    void loadSimpleActorState("coordinator").then((storedState) => {
+      if (cancelled) {
+        return;
+      }
+
+      if (storedState?.keypair) {
+        setKeypair(storedState.keypair);
+        const cache = (storedState.cache ?? null) as Partial<SimpleCoordinatorCache> | null;
+        if (cache) {
+          setLeadCoordinatorNpub(typeof cache.leadCoordinatorNpub === "string" ? cache.leadCoordinatorNpub : "");
+          setFollowers(Array.isArray(cache.followers) ? cache.followers : []);
+          setSubCoordinators(Array.isArray(cache.subCoordinators) ? cache.subCoordinators : []);
+          setTicketStatuses(cache.ticketStatuses && typeof cache.ticketStatuses === "object" ? cache.ticketStatuses : {});
+          setPendingRequests(Array.isArray(cache.pendingRequests) ? cache.pendingRequests : []);
+          setRegistrationStatus(typeof cache.registrationStatus === "string" ? cache.registrationStatus : null);
+          setAssignmentStatus(typeof cache.assignmentStatus === "string" ? cache.assignmentStatus : null);
+          setQuestionPrompt(typeof cache.questionPrompt === "string" ? cache.questionPrompt : "Should the proposal pass?");
+          setQuestionThresholdT(typeof cache.questionThresholdT === "string" ? cache.questionThresholdT : "1");
+          setQuestionThresholdN(typeof cache.questionThresholdN === "string" ? cache.questionThresholdN : "1");
+          setQuestionShareIndex(typeof cache.questionShareIndex === "string" ? cache.questionShareIndex : "1");
+          setBlindPrivateKey(cache.blindPrivateKey && typeof cache.blindPrivateKey === "object"
+            ? cache.blindPrivateKey as SimpleBlindPrivateKey
+            : null);
+          setPublishStatus(typeof cache.publishStatus === "string" ? cache.publishStatus : null);
+          setPublishedVotes(Array.isArray(cache.publishedVotes) ? cache.publishedVotes : []);
+          setSelectedVotingId(typeof cache.selectedVotingId === "string" ? cache.selectedVotingId : "");
+          setSubmittedVotes(Array.isArray(cache.submittedVotes) ? cache.submittedVotes : []);
+        }
+        setIdentityReady(true);
+        return;
+      }
+
+      const nextKeypair = createSimpleCoordinatorKeypair();
+      void saveSimpleActorState({
+        role: "coordinator",
+        keypair: nextKeypair,
+        updatedAt: new Date().toISOString(),
+      });
+      setKeypair(nextKeypair);
+      setIdentityReady(true);
+    }).catch(() => {
+      if (cancelled) {
+        return;
+      }
+
+      const nextKeypair = createSimpleCoordinatorKeypair();
+      setKeypair(nextKeypair);
+      setIdentityReady(true);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!identityReady || !keypair) {
       return;
     }
 
-    const nextKeypair = createSimpleCoordinatorKeypair();
-    storeCoordinatorKeypair(nextKeypair);
-    setKeypair(nextKeypair);
-  }, [keypair]);
+    const cache: SimpleCoordinatorCache = {
+      leadCoordinatorNpub,
+      followers,
+      subCoordinators,
+      ticketStatuses,
+      pendingRequests,
+      registrationStatus,
+      assignmentStatus,
+      questionPrompt,
+      questionThresholdT,
+      questionThresholdN,
+      questionShareIndex,
+      blindPrivateKey,
+      publishStatus,
+      publishedVotes,
+      selectedVotingId,
+      submittedVotes,
+    };
+
+    void saveSimpleActorState({
+      role: "coordinator",
+      keypair,
+      updatedAt: new Date().toISOString(),
+      cache,
+    });
+  }, [
+    assignmentStatus,
+    followers,
+    identityReady,
+    keypair,
+    leadCoordinatorNpub,
+    pendingRequests,
+    publishStatus,
+    publishedVotes,
+    blindPrivateKey,
+    questionPrompt,
+    questionShareIndex,
+    questionThresholdN,
+    questionThresholdT,
+    registrationStatus,
+    selectedVotingId,
+    subCoordinators,
+    submittedVotes,
+    ticketStatuses,
+  ]);
 
   useEffect(() => {
     const coordinatorNsec = keypair?.nsec ?? "";
@@ -256,6 +376,74 @@ export default function SimpleCoordinatorApp() {
   }, [availableCoordinatorCount, isLeadCoordinator, questionThresholdN]);
 
   useEffect(() => {
+    if (!keypair || blindPrivateKey) {
+      return;
+    }
+
+    let cancelled = false;
+    void generateSimpleBlindKeyPair().then((nextBlindKey) => {
+      if (!cancelled) {
+        setBlindPrivateKey(nextBlindKey);
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setPublishStatus("Blind signing key generation failed.");
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [blindPrivateKey, keypair]);
+
+  useEffect(() => {
+    if (!keypair?.nsec || !blindPrivateKey) {
+      setBlindKeyAnnouncement(null);
+      return;
+    }
+
+    let cancelled = false;
+    void publishSimpleBlindKeyAnnouncement({
+      coordinatorNsec: keypair.nsec,
+      publicKey: blindPrivateKey,
+    }).then((result) => {
+      if (!cancelled) {
+        setBlindKeyAnnouncement({
+          coordinatorNpub: keypair.npub,
+          publicKey: blindPrivateKey,
+          createdAt: result.createdAt,
+          event: result.event,
+        });
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setPublishStatus("Blind signing key announcement failed.");
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [blindPrivateKey, keypair?.npub, keypair?.nsec]);
+
+  useEffect(() => {
+    const coordinatorNsec = keypair?.nsec ?? "";
+    if (!coordinatorNsec) {
+      setPendingRequests([]);
+      return;
+    }
+
+    setPendingRequests([]);
+
+    return subscribeSimpleShardRequests({
+      coordinatorNsec,
+      onRequests: (nextRequests) => {
+        setPendingRequests(nextRequests);
+      },
+    });
+  }, [keypair?.nsec]);
+
+  useEffect(() => {
     if (!liveVoteSourceNpub) {
       setPublishedVotes([]);
       return;
@@ -282,18 +470,10 @@ export default function SimpleCoordinatorApp() {
       return;
     }
 
-    if (questionVotingId.trim()) {
-      const matchingVote = publishedVotes.find((vote) => vote.votingId === questionVotingId.trim());
-      if (matchingVote) {
-        setSelectedVotingId(questionVotingId.trim());
-        return;
-      }
-    }
-
     setSelectedVotingId((current) => (
       publishedVotes.some((vote) => vote.votingId === current) ? current : publishedVotes[0].votingId
     ));
-  }, [isLeadCoordinator, publishedVotes, questionVotingId]);
+  }, [isLeadCoordinator, publishedVotes]);
 
   useEffect(() => {
     setTicketStatuses({});
@@ -319,20 +499,27 @@ export default function SimpleCoordinatorApp() {
 
   function refreshIdentity() {
     const nextKeypair = createSimpleCoordinatorKeypair();
-    storeCoordinatorKeypair(nextKeypair);
+    void saveSimpleActorState({
+      role: "coordinator",
+      keypair: nextKeypair,
+      updatedAt: new Date().toISOString(),
+    });
     setKeypair(nextKeypair);
     setIdentityStatus(null);
+    setBackupStatus(null);
     setLeadCoordinatorNpub("");
     setFollowers([]);
     setSubCoordinators([]);
     setTicketStatuses({});
+    setPendingRequests([]);
     setRegistrationStatus(null);
     setAssignmentStatus(null);
     setQuestionPrompt("Should the proposal pass?");
-    setQuestionVotingId("");
     setQuestionThresholdT("1");
     setQuestionThresholdN("1");
     setQuestionShareIndex("1");
+    setBlindPrivateKey(null);
+    setBlindKeyAnnouncement(null);
     setPublishStatus(null);
     setPublishedVotes([]);
     setSelectedVotingId("");
@@ -353,24 +540,100 @@ export default function SimpleCoordinatorApp() {
       npub: derivedNpub,
     };
 
-    storeCoordinatorKeypair(nextKeypair);
+    void saveSimpleActorState({
+      role: "coordinator",
+      keypair: nextKeypair,
+      updatedAt: new Date().toISOString(),
+    });
     setKeypair(nextKeypair);
     setIdentityStatus("Identity restored from nsec.");
+    setBackupStatus(null);
     setLeadCoordinatorNpub("");
     setFollowers([]);
     setSubCoordinators([]);
     setTicketStatuses({});
+    setPendingRequests([]);
     setRegistrationStatus(null);
     setAssignmentStatus(null);
     setQuestionPrompt("Should the proposal pass?");
-    setQuestionVotingId("");
     setQuestionThresholdT("1");
     setQuestionThresholdN("1");
     setQuestionShareIndex("1");
+    setBlindPrivateKey(null);
+    setBlindKeyAnnouncement(null);
     setPublishStatus(null);
     setPublishedVotes([]);
     setSelectedVotingId("");
     setSubmittedVotes([]);
+  }
+
+  function downloadBackup() {
+    if (!keypair) {
+      return;
+    }
+
+    downloadSimpleActorBackup("coordinator", keypair as SimpleActorKeypair, {
+      leadCoordinatorNpub,
+      followers,
+      subCoordinators,
+      ticketStatuses,
+      pendingRequests,
+      registrationStatus,
+      assignmentStatus,
+      questionPrompt,
+      questionThresholdT,
+      questionThresholdN,
+      questionShareIndex,
+      blindPrivateKey,
+      publishStatus,
+      publishedVotes,
+      selectedVotingId,
+      submittedVotes,
+    } satisfies SimpleCoordinatorCache);
+    setBackupStatus("Coordinator backup downloaded.");
+  }
+
+  async function restoreBackup(file: File) {
+    try {
+      const text = await file.text();
+      const bundle = parseSimpleActorBackupBundle(text);
+      if (!bundle || bundle.role !== "coordinator") {
+        setBackupStatus("Backup file is not a coordinator backup.");
+        return;
+      }
+
+      await saveSimpleActorState({
+        role: "coordinator",
+        keypair: bundle.keypair,
+        updatedAt: new Date().toISOString(),
+        cache: bundle.cache,
+      });
+      setKeypair(bundle.keypair);
+      setIdentityStatus("Identity restored from backup.");
+      setBackupStatus(`Backup restored from ${bundle.exportedAt}.`);
+      const cache = (bundle.cache ?? null) as Partial<SimpleCoordinatorCache> | null;
+      setLeadCoordinatorNpub(typeof cache?.leadCoordinatorNpub === "string" ? cache.leadCoordinatorNpub : "");
+      setFollowers(Array.isArray(cache?.followers) ? cache.followers : []);
+      setSubCoordinators(Array.isArray(cache?.subCoordinators) ? cache.subCoordinators : []);
+      setTicketStatuses(cache?.ticketStatuses && typeof cache.ticketStatuses === "object" ? cache.ticketStatuses : {});
+      setPendingRequests(Array.isArray(cache?.pendingRequests) ? cache.pendingRequests : []);
+      setRegistrationStatus(typeof cache?.registrationStatus === "string" ? cache.registrationStatus : null);
+      setAssignmentStatus(typeof cache?.assignmentStatus === "string" ? cache.assignmentStatus : null);
+      setQuestionPrompt(typeof cache?.questionPrompt === "string" ? cache.questionPrompt : "Should the proposal pass?");
+      setQuestionThresholdT(typeof cache?.questionThresholdT === "string" ? cache.questionThresholdT : "1");
+      setQuestionThresholdN(typeof cache?.questionThresholdN === "string" ? cache.questionThresholdN : "1");
+      setQuestionShareIndex(typeof cache?.questionShareIndex === "string" ? cache.questionShareIndex : "1");
+      setBlindPrivateKey(cache?.blindPrivateKey && typeof cache.blindPrivateKey === "object"
+        ? cache.blindPrivateKey as SimpleBlindPrivateKey
+        : null);
+      setBlindKeyAnnouncement(null);
+      setPublishStatus(typeof cache?.publishStatus === "string" ? cache.publishStatus : null);
+      setPublishedVotes(Array.isArray(cache?.publishedVotes) ? cache.publishedVotes : []);
+      setSelectedVotingId(typeof cache?.selectedVotingId === "string" ? cache.selectedVotingId : "");
+      setSubmittedVotes(Array.isArray(cache?.submittedVotes) ? cache.submittedVotes : []);
+    } catch {
+      setBackupStatus("Backup restore failed.");
+    }
   }
 
   function getThresholdLabel() {
@@ -398,8 +661,20 @@ export default function SimpleCoordinatorApp() {
     const coordinatorSecretKey = decodeNsec(keypair?.nsec ?? "");
     const votingId = selectedPublishedVote?.votingId ?? "";
     const prompt = selectedPublishedVote?.prompt ?? "";
+    const matchingRequest = findLatestRoundRequest(pendingRequests, follower.voterNpub, votingId);
 
-    if (!coordinatorNpub || !coordinatorSecretKey || !coordinatorId || coordinatorId === "pending" || !votingId || !prompt || activeShareIndex <= 0) {
+    if (
+      !coordinatorNpub
+      || !coordinatorSecretKey
+      || !blindPrivateKey
+      || !blindKeyAnnouncement
+      || !matchingRequest
+      || !coordinatorId
+      || coordinatorId === "pending"
+      || !votingId
+      || !prompt
+      || activeShareIndex <= 0
+    ) {
       return;
     }
 
@@ -410,19 +685,17 @@ export default function SimpleCoordinatorApp() {
       const thresholdLabel = activeThresholdT && activeThresholdN
         ? `${activeThresholdT} of ${activeThresholdN}`
         : getThresholdLabel();
-      const tokenCommitment = await sha256Hex(
-        `${follower.voterNpub}:${votingId}:simple-round-ticket`,
-      );
       const result = await sendSimpleRoundTicket({
         coordinatorSecretKey,
+        blindPrivateKey,
+        keyAnnouncementEvent: blindKeyAnnouncement.event,
         voterNpub: follower.voterNpub,
         voterId: follower.voterId,
         coordinatorNpub,
         coordinatorId,
         thresholdLabel,
-        votingId,
+        request: matchingRequest,
         votingPrompt: prompt,
-        tokenCommitment,
         shareIndex: activeShareIndex,
         thresholdT: activeThresholdT,
         thresholdN: activeThresholdN,
@@ -452,7 +725,6 @@ export default function SimpleCoordinatorApp() {
       const result = await publishSimpleLiveVote({
         coordinatorNsec,
         prompt,
-        votingId: questionVotingId.trim() || undefined,
         thresholdT: threshold.thresholdT,
         thresholdN: threshold.thresholdN,
       });
@@ -470,7 +742,6 @@ export default function SimpleCoordinatorApp() {
         return [nextVote, ...current.filter((vote) => vote.votingId !== nextVote.votingId)];
       });
       setSelectedVotingId(result.votingId);
-      setQuestionVotingId("");
       setPublishStatus(result.successes > 0 ? "Vote broadcast." : "Vote broadcast failed.");
     } catch {
       setPublishStatus("Vote broadcast failed.");
@@ -579,6 +850,9 @@ export default function SimpleCoordinatorApp() {
           title="Identity"
           onRestoreNsec={restoreIdentity}
           restoreMessage={identityStatus}
+          onDownloadBackup={identityReady ? downloadBackup : undefined}
+          onRestoreBackupFile={restoreBackup}
+          backupMessage={backupStatus}
         />
 
         <SimpleCollapsibleSection title="Coordinator management">
@@ -719,6 +993,9 @@ export default function SimpleCoordinatorApp() {
                     const ticketStatusKey = `${follower.voterNpub}:${selectedPublishedVote?.votingId ?? ""}`;
                     const ticketStatus = ticketStatuses[ticketStatusKey];
                     const ticketWasSent = ticketStatus === "Ticket sent.";
+                    const hasPendingRequest = selectedPublishedVote
+                      ? Boolean(findLatestRoundRequest(pendingRequests, follower.voterNpub, selectedPublishedVote.votingId))
+                      : false;
 
                     return (
                       <>
@@ -732,11 +1009,20 @@ export default function SimpleCoordinatorApp() {
                         type="button"
                         className="simple-voter-secondary"
                         onClick={() => void sendTicket(follower)}
-                        disabled={!keypair?.nsec || (!isLeadCoordinator && activeShareIndex <= 0)}
+                        disabled={
+                          !keypair?.nsec
+                          || !blindPrivateKey
+                          || !blindKeyAnnouncement
+                          || !hasPendingRequest
+                          || (!isLeadCoordinator && activeShareIndex <= 0)
+                        }
                       >
                         {ticketWasSent ? "Resend" : "Send ticket"}
                       </button>
                     </div>
+                  ) : null}
+                  {!ticketStatus && selectedPublishedVote && !hasPendingRequest ? (
+                    <p className="simple-voter-note">Waiting for this voter&apos;s blinded ticket request.</p>
                   ) : null}
                   {ticketStatus && (
                     <p className="simple-voter-note">{ticketStatus}</p>

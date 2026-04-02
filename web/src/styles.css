@@ -885,6 +885,22 @@ code {
   gap: 10px;
 }
 
+.simple-voter-file-button {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.simple-voter-file-input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
 .simple-identity-field {
   display: grid;
   gap: 10px;
