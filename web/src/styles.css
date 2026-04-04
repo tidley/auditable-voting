@@ -424,6 +424,7 @@ code {
   display: grid;
   gap: 16px;
   margin-bottom: 20px;
+  justify-items: center;
 }
 
 .simple-role-switch-header {
