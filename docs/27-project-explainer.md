@@ -1,0 +1,561 @@
+# Auditable Voting Explainer
+
+This document is a portable, teaching-oriented explanation of the project.
+
+It is written for readers who want to understand:
+
+- what the system is trying to achieve
+- why it uses Nostr and blind signatures
+- how voters, coordinators, and observers interact
+- what is public, what is private, and what can be verified
+
+---
+
+## 1. The Short Version
+
+This project is an **anonymous, publicly auditable voting system**.
+
+The intended model is:
+
+1. A voter is confirmed as eligible by one or more coordinators.
+2. The voter asks those coordinators to blindly sign a round-bound voting token.
+3. The coordinators return blind signature shares without learning the final token.
+4. The voter assembles a usable token locally.
+5. The voter publishes a ballot to Nostr using an **ephemeral** key.
+6. Anyone can verify:
+   - the ballot belongs to a real issued token
+   - the token was not spent twice
+   - the tally is computed correctly from public data
+
+The main goals are:
+
+- **privacy**: coordinators should not be able to deanonymize ballots
+- **auditability**: observers should be able to recompute the tally
+- **portability**: the client can run as a static web app
+- **resilience**: Nostr relays act as the shared public event layer
+
+---
+
+## 2. What Problem It Solves
+
+Traditional online voting systems often force a tradeoff:
+
+- either the operator knows who voted for what
+- or the public cannot independently verify the result
+
+This project tries to avoid both failures.
+
+It separates the process into two parts:
+
+- **issuance**: proving a voter is allowed to vote and giving them a private credential
+- **voting**: spending that credential anonymously in public
+
+That split is the reason blind signatures matter.
+
+---
+
+## 3. Core Idea
+
+The key trick is:
+
+- a coordinator signs a **blinded** message
+- the voter later **unblinds** it
+- the final token is valid
+- but the coordinator should not be able to link the final token back to the specific issuance request
+
+That gives the voter a token which is:
+
+- valid
+- anonymous
+- publicly spendable once
+
+---
+
+## 4. Main Actors
+
+### Voter
+
+The voter:
+
+- has a real long-term Nostr identity
+- proves eligibility out of band
+- requests blind signatures
+- combines enough shares
+- votes using an **ephemeral** ballot key
+
+### Coordinator
+
+A coordinator:
+
+- verifies voter eligibility
+- publishes voting rounds
+- issues blind signature shares
+- validates ballots
+- tallies votes
+
+### Observer / Validator
+
+An observer:
+
+- watches public Nostr events
+- verifies ballot validity rules
+- rejects duplicates
+- recomputes the tally independently
+
+### Nostr Relays
+
+Relays are the shared event layer:
+
+- public rounds
+- public ballots
+- public results
+- private DMs for issuance-related traffic
+
+---
+
+## 5. High-Level Architecture
+
+```mermaid
+flowchart LR
+  V[Voter Browser]
+  C1[Coordinator A Browser]
+  C2[Coordinator B Browser]
+  N[Nostr Relays]
+  O[Observer / Auditor]
+  B[(IndexedDB / Local State)]
+
+  V --> B
+  C1 --> B
+  C2 --> B
+
+  V <--> N
+  C1 <--> N
+  C2 <--> N
+  O <--> N
+```
+
+### Storage model
+
+The migration direction is:
+
+- **Nostr**: canonical shared state
+- **IndexedDB**: local active state and secrets
+- **Blossom**: planned encrypted backup bundles
+
+This matters because the system is trying to move toward a client-side model, not a traditional central server.
+
+---
+
+## 6. What Is Public vs Private
+
+### Public on Nostr
+
+- round announcements
+- coordinator identities
+- blind key announcements
+- ballots
+- tally / result events
+
+### Private or local
+
+- coordinator private signing keys
+- voter private keys
+- blind request secrets
+- unspent credential material
+- local cache / restore bundles
+
+### Private DM traffic
+
+- follow / join coordination
+- blind issuance requests
+- blind issuance responses
+- acknowledgements
+
+---
+
+## 7. The End-to-End Flow
+
+```mermaid
+sequenceDiagram
+  participant V as Voter
+  participant N as Nostr
+  participant C as Coordinator
+  participant O as Observer
+
+  C->>N: Publish round announcement
+  C->>N: Publish round blind key
+  V->>N: Discover round + coordinator key
+  V->>C: Send blinded issuance request (DM)
+  C->>V: Send blind signature share (DM)
+  V->>V: Unblind and assemble token locally
+  V->>N: Publish ballot from ephemeral key
+  O->>N: Read ballot stream
+  O->>O: Verify token validity + uniqueness
+  O->>O: Recompute tally
+```
+
+---
+
+## 8. Round Announcement
+
+A coordinator publishes a live round. In the simple flow this includes:
+
+- `voting_id`
+- prompt / question
+- threshold information
+- authorized coordinator roster
+
+This tells voters:
+
+- which round is active
+- which coordinators are valid for the round
+- how many shares are needed
+
+### Why round-bound matters
+
+Tickets or tokens are tied to a specific `voting_id`.
+
+That prevents a credential issued for round A from being replayed in round B.
+
+---
+
+## 9. Blind Key Announcement
+
+Each coordinator publishes a **per-round blind-signing key announcement**.
+
+That key is:
+
+- specific to the round
+- signed by the coordinator’s stable identity
+- used for validating that round’s blind shares
+
+This is important because it avoids using one long-lived blind-signing key for every election forever.
+
+```mermaid
+flowchart TD
+  I[Stable Coordinator Identity]
+  K[Per-Round Blind Key]
+  R[Round / voting_id]
+
+  I --> K
+  K --> R
+```
+
+---
+
+## 10. Blind Issuance
+
+The voter never asks the coordinator to sign the final token directly.
+
+Instead:
+
+1. The voter creates a token message locally.
+2. The voter blinds it.
+3. The blinded request is sent to the coordinator.
+4. The coordinator signs the blinded request.
+5. The voter unblinds the result locally.
+
+```mermaid
+flowchart LR
+  M[Token Message]
+  B[Blinding]
+  BR[Blinded Request]
+  S[Coordinator Signs]
+  BS[Blind Signature Share]
+  U[Unblinding]
+  T[Usable Token Share]
+
+  M --> B --> BR --> S --> BS --> U --> T
+```
+
+### Why this matters
+
+If done correctly:
+
+- the coordinator knows it signed *something valid*
+- but it should not know the final token that later appears in public voting
+
+That separation is the core privacy property.
+
+---
+
+## 11. Threshold Model
+
+The target direction is a threshold model:
+
+- multiple coordinators may issue shares
+- the voter needs enough valid shares to vote
+
+Example:
+
+- 3 coordinators exist
+- threshold is 2-of-3
+- any 2 valid shares are enough
+
+```mermaid
+flowchart LR
+  C1[Coordinator A Share]
+  C2[Coordinator B Share]
+  C3[Coordinator C Share]
+  T[Threshold Check]
+  V[Valid Voting Token]
+
+  C1 --> T
+  C2 --> T
+  C3 --> T
+  T --> V
+```
+
+### Important validation rule
+
+Shares must be checked against:
+
+- the round’s authorized coordinator roster
+- the round’s blind key announcements
+- the threshold rule for that round
+
+---
+
+## 12. Ballot Publication
+
+Once the voter has enough valid share material:
+
+- the voter creates an **ephemeral** ballot keypair
+- the voter publishes a public ballot to Nostr
+
+The public ballot should expose only what is needed to verify the vote, not what would link it back to issuance.
+
+### Public ballot goals
+
+- contains the vote choice
+- contains anonymous proof material
+- can be validated publicly
+- cannot be linked back to the original blind request by the coordinator
+
+---
+
+## 13. Duplicate Spend Prevention
+
+A valid anonymous vote is still only supposed to count **once**.
+
+That means the system needs deterministic duplicate handling:
+
+- if the same token is spent twice
+- everyone must agree which spend counts
+- later spends must be rejected
+
+The current direction is:
+
+- first valid spend wins
+- ordering must be **canonical**
+- all observers should converge on the same result
+
+```mermaid
+flowchart TD
+  A[Ballot A with Token X]
+  B[Ballot B with Token X]
+  O[Canonical Ordering Rule]
+  K[Keep First Valid Spend]
+  D[Discard Duplicate]
+
+  A --> O
+  B --> O
+  O --> K
+  O --> D
+```
+
+This is a correctness problem, not just a UI problem.
+
+---
+
+## 14. Auditability
+
+An outsider should be able to reconstruct the tally from public events.
+
+That means:
+
+- ballots are public
+- duplicate rejection is deterministic
+- tallying rules are deterministic
+- results are reproducible from relay history
+
+```mermaid
+flowchart LR
+  E[Nostr Events]
+  V[Validate Ballots]
+  U[Reject Duplicates]
+  T[Compute Tally]
+  R[Independent Result]
+
+  E --> V --> U --> T --> R
+```
+
+This is the “auditable” part of auditable voting.
+
+---
+
+## 15. Why Nostr
+
+Nostr gives the project a shared, replayable event layer without requiring one central database.
+
+Benefits:
+
+- multi-relay distribution
+- public reproducibility
+- portable client architecture
+- no single relay is supposed to be the whole truth
+
+In this repo, relay selection is being improved with **NIP-65 inbox/outbox hints** so senders and receivers can better choose where to publish and subscribe.
+
+---
+
+## 16. Why Local State Still Exists
+
+Even in a client-side architecture, some things cannot live only on relays:
+
+- private keys
+- blind request secrets
+- pending local voting state
+- restore data
+
+That is why IndexedDB matters.
+
+The browser stores:
+
+- local identities
+- cached round state
+- blind request state
+- received shares
+- coordinator private material
+
+Planned backup direction:
+
+- export encrypted bundles
+- optional upload to Blossom
+- restore on a new device
+
+---
+
+## 17. Security Goals
+
+The intended security properties are:
+
+### Ballot privacy
+
+Coordinators should not be able to tell which final ballot belongs to which issuance request.
+
+### One-person-one-vote
+
+Only eligible voters should receive valid voting credentials.
+
+### No double voting
+
+A token should only count once.
+
+### Public verifiability
+
+Anyone should be able to recompute the tally.
+
+### No single coordinator trust anchor
+
+Threshold issuance means one coordinator alone should not define the whole system.
+
+---
+
+## 18. Current State of the Repo
+
+The repository contains both:
+
+- older backend / Cashu-oriented code
+- newer simple client-side voting flow
+
+Current migration direction:
+
+- `simple.html` is the main client-side shell
+- Nostr is the shared state layer
+- blind-share issuance is in the simple flow
+- local browser state is used for active session data
+
+The long-term direction is to make the simple flow the canonical path and reduce the legacy backend-oriented path.
+
+---
+
+## 19. Current Risks and Hard Problems
+
+The interesting parts of this project are also the risky parts.
+
+### 1. Privacy can be broken by bad ballot design
+
+If the public ballot includes issuance-linking fields, coordinator-to-ballot anonymity is lost.
+
+### 2. Duplicate handling must be canonical
+
+If different observers disagree about which spend was first, the tally is not stable.
+
+### 3. Coordinator key custody matters
+
+If coordinator signing keys are exposed in browser storage, an attacker can mint fake voting rights.
+
+### 4. Relay delivery is messy in the real world
+
+Live relay behavior is probabilistic, so follow requests, announcements, blind requests, and tickets all need recovery and reconciliation logic.
+
+### 5. Cryptography must be conservative
+
+Blind-signature code is not a place for “close enough”.
+
+---
+
+## 20. Mental Model for Teaching
+
+A useful way to explain the system is:
+
+> “A voter gets a private stamp of eligibility without revealing the final ballot token, then spends that token publicly once, and everyone can verify the tally.”
+
+Or even shorter:
+
+> “Private issuance, public spending, public audit.”
+
+---
+
+## 21. Teaching Diagram: The Whole Story
+
+```mermaid
+flowchart TD
+  A[Eligible Voter]
+  B[Blind Issuance Request]
+  C[Coordinator Blind Signature Shares]
+  D[Local Token Assembly]
+  E[Ephemeral Ballot Publication]
+  F[Public Verification]
+  G[Deterministic Tally]
+
+  A --> B
+  B --> C
+  C --> D
+  D --> E
+  E --> F
+  F --> G
+```
+
+---
+
+## 22. Suggested Audience-Specific Summary
+
+### For non-technical audiences
+
+This project aims to let people vote anonymously online while still allowing everyone to verify the final count.
+
+### For developers
+
+This is a Nostr-based anonymous voting system using blind threshold issuance, ephemeral ballot identities, deterministic duplicate rejection, and replayable public tallying.
+
+### For security-minded audiences
+
+The project is attempting to separate voter eligibility from public ballot identity, so coordinators can help issue voting credentials without being able to deanonymize the final vote.
+
+---
+
+## 23. One-Sentence Summary
+
+**Auditable Voting is an attempt to combine anonymous credential issuance, public Nostr ballot publication, and independent tally verification in a client-heavy architecture.**

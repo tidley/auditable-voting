@@ -744,6 +744,36 @@ code {
   box-sizing: border-box;
 }
 
+.simple-auditor-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.simple-auditor-summary-card {
+  padding: 14px 16px;
+  border: 1px solid #334155;
+  background: #111827;
+  border-radius: 10px;
+}
+
+.simple-auditor-summary-label {
+  margin: 0 0 8px;
+  color: #93c5fd;
+  font-size: 0.95rem;
+  line-height: 1.4;
+  font-weight: 700;
+}
+
+.simple-auditor-score {
+  margin: 0;
+  font-size: 2rem;
+  line-height: 1.1;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
 .simple-voter-input-inline {
   margin-bottom: 0;
 }
