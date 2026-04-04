@@ -396,7 +396,7 @@ Benefits:
 - portable client architecture
 - no single relay is supposed to be the whole truth
 
-In this repo, relay selection is being improved with **NIP-65 inbox/outbox hints** so senders and receivers can better choose where to publish and subscribe.
+In this repo, relay selection uses **NIP-65 inbox/outbox hints** so senders and receivers can better choose where to publish and subscribe.
 
 ---
 
@@ -455,19 +455,14 @@ Threshold issuance means one coordinator alone should not define the whole syste
 
 ## 18. Current State of the Repo
 
-The repository contains both:
-
-- older backend / Cashu-oriented code
-- newer simple client-side voting flow
-
-Current migration direction:
+The repository now focuses on the client-side web app only:
 
 - `simple.html` is the main client-side shell
 - Nostr is the shared state layer
 - blind-share issuance is in the simple flow
 - local browser state is used for active session data
 
-The long-term direction is to make the simple flow the canonical path and reduce the legacy backend-oriented path.
+The older backend-oriented stack has been removed from this repository.
 
 ---
 

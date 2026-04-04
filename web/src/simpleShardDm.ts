@@ -1,5 +1,4 @@
 import { getPublicKey, nip17, nip19, SimplePool } from "nostr-tools";
-import type { DmPublishResult } from "./proofSubmission";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import {
   resolveNip65ConversationRelays,
@@ -43,6 +42,17 @@ export type SimpleDmAcknowledgement = {
   requestId?: string;
   responseId?: string;
   createdAt: string;
+};
+
+export type DmPublishResult = {
+  eventId: string;
+  successes: number;
+  failures: number;
+  relayResults: Array<{
+    relay: string;
+    success: boolean;
+    error?: string;
+  }>;
 };
 
 export type SimpleShardRequest = {
