@@ -494,7 +494,7 @@ code {
   margin: 12px auto 0;
   width: min(960px, calc(100% - 32px));
   color: #64748b;
-  font-size: 0.75rem;
+  font-size: 1rem;
   line-height: 1.2;
   text-align: right;
   display: flex;
