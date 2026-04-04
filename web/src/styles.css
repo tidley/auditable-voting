@@ -772,6 +772,10 @@ code {
   align-items: center;
 }
 
+.simple-voter-add-row-with-scan {
+  grid-template-columns: minmax(0, 1fr) 56px auto;
+}
+
 .simple-voter-add-button {
   width: 56px;
   height: 56px;
@@ -788,6 +792,10 @@ code {
 
 .simple-voter-add-button:hover {
   background: #1d4ed8;
+}
+
+.simple-voter-scan-button {
+  min-width: 88px;
 }
 
 .simple-voter-inline-field {

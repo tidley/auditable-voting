@@ -27,7 +27,9 @@ import { validateSimpleSubmittedVotes } from "./simpleVoteValidation";
 import { sha256Hex } from "./tokenIdentity";
 import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
+import SimpleQrScanner from "./SimpleQrScanner";
 import TokenFingerprint from "./TokenFingerprint";
+import { extractNpubFromScan } from "./npubScan";
 import {
   generateSimpleBlindKeyPair,
   publishSimpleBlindKeyAnnouncement,
@@ -159,6 +161,8 @@ export default function SimpleCoordinatorApp() {
   const [identityStatus, setIdentityStatus] = useState<string | null>(null);
   const [backupStatus, setBackupStatus] = useState<string | null>(null);
   const [leadCoordinatorNpub, setLeadCoordinatorNpub] = useState("");
+  const [leadScannerActive, setLeadScannerActive] = useState(false);
+  const [leadScannerStatus, setLeadScannerStatus] = useState<string | null>(null);
   const [followers, setFollowers] = useState<SimpleCoordinatorFollower[]>([]);
   const [subCoordinators, setSubCoordinators] = useState<SimpleSubCoordinatorApplication[]>([]);
   const [ticketDeliveries, setTicketDeliveries] = useState<Record<string, { status: string; eventId?: string; responseId?: string }>>({});
@@ -840,6 +844,23 @@ export default function SimpleCoordinatorApp() {
     sentAssignmentAckIdsRef.current.clear();
   }
 
+  function handleLeadCoordinatorScanDetected(rawValue: string) {
+    const scannedNpub = extractNpubFromScan(rawValue);
+    if (!scannedNpub) {
+      setLeadScannerStatus("QR did not contain a valid npub.");
+      return false;
+    }
+
+    setLeadCoordinatorNpub(scannedNpub);
+    if (scannedNpub.trim() !== (keypair?.npub ?? '')) {
+      setQuestionShareIndex('');
+    }
+    setRegistrationStatus(null);
+    setAssignmentStatus(null);
+    setLeadScannerStatus(`Scanned ${scannedNpub.slice(0, 18)}...`);
+    return true;
+  }
+
   function downloadBackup(passphrase?: string) {
     if (!keypair) {
       return;
@@ -1203,6 +1224,7 @@ export default function SimpleCoordinatorApp() {
               onChange={(event) => {
                 const nextLeadCoordinatorNpub = event.target.value;
                 setLeadCoordinatorNpub(nextLeadCoordinatorNpub);
+                setLeadScannerStatus(null);
                 if (nextLeadCoordinatorNpub.trim() !== (keypair?.npub ?? '')) {
                   setQuestionShareIndex('');
                 }
@@ -1211,6 +1233,16 @@ export default function SimpleCoordinatorApp() {
               }}
               placeholder='Leave blank if this coordinator is the lead'
             />
+            <button
+              type='button'
+              className='simple-voter-secondary simple-voter-scan-button'
+              onClick={() => {
+                setLeadScannerStatus(null);
+                setLeadScannerActive(true);
+              }}
+            >
+              Scan
+            </button>
             {!isLeadCoordinator ? (
               <button
                 type='button'
@@ -1229,6 +1261,13 @@ export default function SimpleCoordinatorApp() {
               </button>
             ) : null}
           </div>
+          <SimpleQrScanner
+            active={leadScannerActive}
+            onDetected={handleLeadCoordinatorScanDetected}
+            onClose={() => setLeadScannerActive(false)}
+            prompt='Point the camera at the lead coordinator npub QR code.'
+          />
+          {leadScannerStatus ? <p className='simple-voter-note'>{leadScannerStatus}</p> : null}
           <p className='simple-voter-question'>
             {isLeadCoordinator
               ? 'This coordinator publishes the live question.'

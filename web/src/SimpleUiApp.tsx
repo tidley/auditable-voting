@@ -4,7 +4,9 @@ import { decodeNsec, deriveNpubFromNsec } from "./nostrIdentity";
 import { sha256Hex } from "./tokenIdentity";
 import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
+import SimpleQrScanner from "./SimpleQrScanner";
 import TokenFingerprint from "./TokenFingerprint";
+import { extractNpubFromScan } from "./npubScan";
 import {
   deriveTokenIdFromSimplePublicShardProofs,
   createSimpleBlindIssuanceRequest,
@@ -140,6 +142,8 @@ export default function SimpleUiApp() {
   const [voterId, setVoterId] = useState<string>("pending");
   const [manualCoordinators, setManualCoordinators] = useState<string[]>([]);
   const [coordinatorDraft, setCoordinatorDraft] = useState("");
+  const [coordinatorScannerActive, setCoordinatorScannerActive] = useState(false);
+  const [coordinatorScannerStatus, setCoordinatorScannerStatus] = useState<string | null>(null);
   const [liveVoteChoice, setLiveVoteChoice] = useState<LiveVoteChoice>(null);
   const [requestStatus, setRequestStatus] = useState<string | null>(null);
   const [identityStatus, setIdentityStatus] = useState<string | null>(null);
@@ -579,6 +583,20 @@ export default function SimpleUiApp() {
     setRequestStatus(null);
   }
 
+  function handleCoordinatorScanDetected(rawValue: string) {
+    const scannedNpub = extractNpubFromScan(rawValue);
+    if (!scannedNpub) {
+      setCoordinatorScannerStatus("QR did not contain a valid npub.");
+      return false;
+    }
+
+    setManualCoordinators((current) => normalizeCoordinatorNpubs([...current, scannedNpub]));
+    setCoordinatorDraft("");
+    setRequestStatus(null);
+    setCoordinatorScannerStatus(`Scanned ${shortenNpub(scannedNpub)}.`);
+    return true;
+  }
+
   function removeCoordinatorInput(index: number) {
     setManualCoordinators((current) => current.filter((_, currentIndex) => currentIndex !== index));
   }
@@ -903,12 +921,15 @@ export default function SimpleUiApp() {
         <SimpleCollapsibleSection title="Coordinators">
           <div className="simple-voter-field-stack simple-voter-field-stack-tight">
             <label className="simple-voter-label simple-voter-label-tight" htmlFor="simple-coordinator-draft">Coordinator npubs</label>
-            <div className="simple-voter-add-row">
+            <div className="simple-voter-add-row simple-voter-add-row-with-scan">
               <input
                 id="simple-coordinator-draft"
                 className="simple-voter-input simple-voter-input-inline"
                 value={coordinatorDraft}
-                onChange={(event) => setCoordinatorDraft(event.target.value)}
+                onChange={(event) => {
+                  setCoordinatorDraft(event.target.value);
+                  setCoordinatorScannerStatus(null);
+                }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
                     event.preventDefault();
@@ -925,7 +946,24 @@ export default function SimpleUiApp() {
               >
                 +
               </button>
+              <button
+                type="button"
+                className="simple-voter-secondary simple-voter-scan-button"
+                onClick={() => {
+                  setCoordinatorScannerStatus(null);
+                  setCoordinatorScannerActive(true);
+                }}
+              >
+                Scan
+              </button>
             </div>
+            <SimpleQrScanner
+              active={coordinatorScannerActive}
+              onDetected={handleCoordinatorScanDetected}
+              onClose={() => setCoordinatorScannerActive(false)}
+              prompt="Point the camera at a coordinator npub QR code."
+            />
+            {coordinatorScannerStatus ? <p className="simple-voter-note">{coordinatorScannerStatus}</p> : null}
             {configuredCoordinatorTargets.length > 0 ? (
               <ul className="simple-coordinator-card-list">
                 {configuredCoordinatorTargets.map((value, index) => (

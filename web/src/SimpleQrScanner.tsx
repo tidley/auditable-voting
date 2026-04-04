@@ -25,10 +25,12 @@ export default function SimpleQrScanner({
   active,
   onDetected,
   onClose,
+  prompt = "Point the camera at a QR code.",
 }: {
   active: boolean;
-  onDetected: (value: string) => void;
+  onDetected: (value: string) => boolean | Promise<boolean>;
   onClose: () => void;
+  prompt?: string;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -110,8 +112,16 @@ export default function SimpleQrScanner({
         void detector.detect(currentVideo).then((results) => {
           const rawValue = results.find((result) => typeof result.rawValue === "string" && result.rawValue.trim())?.rawValue?.trim();
           if (rawValue) {
-            onDetected(rawValue);
-            onClose();
+            void Promise.resolve(onDetected(rawValue)).then((accepted) => {
+              if (accepted) {
+                onClose();
+                return;
+              }
+
+              animationFrameRef.current = window.requestAnimationFrame(scan);
+            }).catch(() => {
+              animationFrameRef.current = window.requestAnimationFrame(scan);
+            });
             return;
           }
 
@@ -160,7 +170,7 @@ export default function SimpleQrScanner({
   return (
     <div className="simple-scanner-shell">
       <div className="simple-scanner-head">
-        <p className="simple-voter-question">Point the camera at a coordinator voting-package QR code.</p>
+        <p className="simple-voter-question">{prompt}</p>
         <button type="button" className="simple-voter-secondary" onClick={onClose}>
           Close scanner
         </button>
