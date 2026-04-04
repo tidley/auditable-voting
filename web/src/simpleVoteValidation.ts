@@ -1,5 +1,5 @@
 import type { SimpleSubmittedVote } from "./simpleVotingSession";
-import { parseSimpleShardCertificate } from "./simpleShardCertificate";
+import { parseSimplePublicShardProof } from "./simpleShardCertificate";
 
 export type SimpleValidatedVote = {
   vote: SimpleSubmittedVote;
@@ -10,35 +10,58 @@ export type SimpleValidatedVote = {
 export function validateSimpleSubmittedVotes(
   votes: SimpleSubmittedVote[],
   requiredShardCount: number,
+  authorizedCoordinatorNpubs: string[] = [],
 ): SimpleValidatedVote[] {
   const seenTokenIds = new Set<string>();
+  const allowedCoordinators = new Set(authorizedCoordinatorNpubs);
+  const canonicallySortedVotes = [...votes].sort((left, right) => {
+    const createdAtComparison = left.createdAt.localeCompare(right.createdAt);
+    if (createdAtComparison !== 0) {
+      return createdAtComparison;
+    }
 
-  return votes.map((vote) => {
-    const parsedCertificates = vote.shardCertificates
-      .map((certificate) => parseSimpleShardCertificate(certificate))
-      .filter((certificate) => certificate !== null);
+    return left.eventId.localeCompare(right.eventId);
+  });
 
-    if (parsedCertificates.length < vote.shardCertificates.length) {
+  return canonicallySortedVotes.map((vote) => {
+    const shardProofs = Array.isArray(vote.shardProofs) ? vote.shardProofs : [];
+    const parsedProofs = shardProofs
+      .map((proof) => parseSimplePublicShardProof(proof))
+      .filter((proof) => proof !== null);
+
+    if (parsedProofs.length < shardProofs.length) {
       return { vote, valid: false, reason: "Invalid shard signature" };
     }
 
-    const uniqueShardIds = Array.from(new Set(parsedCertificates.map((certificate) => certificate.shardId)));
-    if (uniqueShardIds.length < requiredShardCount) {
+    const uniqueCoordinators = Array.from(
+      new Set(parsedProofs.map((proof) => proof.coordinatorNpub)),
+    );
+    if (uniqueCoordinators.length < requiredShardCount) {
       return { vote, valid: false, reason: "Not enough valid shards" };
     }
 
-    const tokenCommitments = Array.from(new Set(parsedCertificates.map((certificate) => certificate.tokenCommitment)));
+    if (
+      allowedCoordinators.size > 0
+      && uniqueCoordinators.some((coordinatorNpub) => !allowedCoordinators.has(coordinatorNpub))
+    ) {
+      return { vote, valid: false, reason: "Unauthorized coordinator share" };
+    }
+
+    const tokenCommitments = Array.from(
+      new Set(parsedProofs.map((proof) => proof.tokenCommitment)),
+    );
     if (tokenCommitments.length !== 1) {
       return { vote, valid: false, reason: "Mismatched token commitment" };
     }
 
-    const votingIds = Array.from(new Set(parsedCertificates.map((certificate) => certificate.votingId)));
+    const votingIds = Array.from(
+      new Set(parsedProofs.map((proof) => proof.votingId)),
+    );
     if (votingIds.length !== 1 || votingIds[0] !== vote.votingId) {
       return { vote, valid: false, reason: "Mismatched voting id" };
     }
 
-    const uniqueCoordinators = Array.from(new Set(parsedCertificates.map((certificate) => certificate.coordinatorNpub)));
-    if (uniqueCoordinators.length !== parsedCertificates.length) {
+    if (uniqueCoordinators.length !== parsedProofs.length) {
       return { vote, valid: false, reason: "Duplicate coordinator share" };
     }
 

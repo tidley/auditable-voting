@@ -85,6 +85,7 @@ export function reconcileSimpleKnownRounds(input: {
         createdAt: row.createdAt,
         thresholdT: row.thresholdT,
         thresholdN: row.thresholdN,
+        authorizedCoordinatorNpubs: [...input.configuredCoordinatorTargets],
         eventId: `ticket-row:${row.votingId}`,
       });
     }

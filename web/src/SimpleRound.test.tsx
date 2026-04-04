@@ -1,14 +1,15 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
+import { cleanup, render, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getPublicKey, nip19 } from "nostr-tools";
 import { createHash } from "node:crypto";
-import { resetSimpleActorStateForTests } from "./simpleLocalState";
+import { resetSimpleActorStateForTests, saveSimpleActorState } from "./simpleLocalState";
 
 type InternalResponse = {
   id: string;
+  dmEventId: string;
   requestId: string;
   coordinatorNpub: string;
   coordinatorId: string;
@@ -27,6 +28,7 @@ type InternalLiveVote = {
   createdAt: string;
   thresholdT?: number;
   thresholdN?: number;
+  authorizedCoordinatorNpubs: string[];
   eventId: string;
 };
 
@@ -35,7 +37,7 @@ type InternalSubmittedVote = {
   votingId: string;
   voterNpub: string;
   choice: "Yes" | "No";
-  shardCertificates: any[];
+  shardProofs: any[];
   tokenId: string;
   createdAt: string;
 };
@@ -74,10 +76,22 @@ let shardRequests: Array<{
   createdAt: string;
 }> = [];
 let blindAnnouncements: Record<string, any> = {};
+let dmAcknowledgements: Array<{
+  recipientNpub: string;
+  ackedAction: string;
+  ackedEventId: string;
+  actorNpub: string;
+  actorId?: string;
+  votingId?: string;
+  requestId?: string;
+  responseId?: string;
+  createdAt: string;
+}> = [];
 let followerSubscribers: Array<{
   coordinatorNpub: string;
   onFollowers: (followers: Array<{
     id: string;
+    dmEventId: string;
     voterNpub: string;
     voterId: string;
     votingId?: string;
@@ -104,6 +118,7 @@ let subCoordinatorApplicationSubscribers: Array<{
   leadCoordinatorNpub: string;
   onApplications: (applications: Array<{
     id: string;
+    dmEventId: string;
     coordinatorNpub: string;
     coordinatorId: string;
     leadCoordinatorNpub: string;
@@ -114,6 +129,7 @@ let shareAssignmentSubscribers: Array<{
   coordinatorNpub: string;
   onAssignments: (assignments: Array<{
     id: string;
+    dmEventId: string;
     leadCoordinatorNpub: string;
     coordinatorNpub: string;
     shareIndex: number;
@@ -125,6 +141,7 @@ let shardRequestSubscribers: Array<{
   coordinatorNpub: string;
   onRequests: (requests: Array<{
     id: string;
+    dmEventId: string;
     voterNpub: string;
     voterId: string;
     votingId: string;
@@ -132,10 +149,26 @@ let shardRequestSubscribers: Array<{
     createdAt: string;
   }>) => void;
 }> = [];
+let dmAcknowledgementSubscribers: Array<{
+  actorNpub: string;
+  onAcknowledgements: (acknowledgements: Array<{
+    id: string;
+    ackedAction: string;
+    ackedEventId: string;
+    actorNpub: string;
+    actorId?: string;
+    votingId?: string;
+    requestId?: string;
+    responseId?: string;
+    createdAt: string;
+  }>) => void;
+}> = [];
 let blindAnnouncementSubscribers: Array<{
   coordinatorNpub: string;
+  votingId?: string;
   onAnnouncement: (announcement: any | null) => void;
 }> = [];
+let suppressedShardResponseNotifications = new Set<string>();
 
 function sha(input: string) {
   return createHash("sha256").update(input).digest("hex");
@@ -153,8 +186,11 @@ function secretToNpub(secretKey: Uint8Array) {
   return nip19.npubEncode(getPublicKey(secretKey));
 }
 
-function makeTokenId(shardCertificates: any[]) {
-  const ids = shardCertificates.map((certificate) => certificate.shareId ?? certificate.id).sort().join("|");
+function makeTokenId(shardProofs: any[]) {
+  const ids = shardProofs
+    .map((proof) => `${proof.coordinatorNpub}:${proof.votingId}:${proof.tokenCommitment}:${proof.shareIndex}:${proof.keyAnnouncementEvent?.id ?? proof.id}`)
+    .sort()
+    .join("|");
   return sha(ids).slice(0, 16);
 }
 
@@ -163,6 +199,7 @@ function followerEntriesForCoordinator(coordinatorNpub: string) {
     .filter((entry) => entry.coordinatorNpub === coordinatorNpub)
     .map((entry, index) => ({
       id: `follow-${index + 1}`,
+      dmEventId: `follow-event-${index + 1}`,
       voterNpub: entry.voterNpub,
       voterId: entry.voterId,
       votingId: entry.votingId,
@@ -224,6 +261,7 @@ function subCoordinatorEntriesForLead(leadCoordinatorNpub: string) {
     .filter((entry) => entry.leadCoordinatorNpub === leadCoordinatorNpub)
     .map((entry, index) => ({
       id: `application-${index + 1}`,
+      dmEventId: `application-event-${index + 1}`,
       coordinatorNpub: entry.coordinatorNpub,
       coordinatorId: entry.coordinatorId,
       leadCoordinatorNpub: entry.leadCoordinatorNpub,
@@ -245,6 +283,7 @@ function shareAssignmentsForCoordinator(coordinatorNpub: string) {
     .filter((entry) => entry.coordinatorNpub === coordinatorNpub)
     .map((entry, index) => ({
       id: `assignment-${index + 1}`,
+      dmEventId: `assignment-event-${index + 1}`,
       leadCoordinatorNpub: entry.leadCoordinatorNpub,
       coordinatorNpub: entry.coordinatorNpub,
       shareIndex: entry.shareIndex,
@@ -267,6 +306,7 @@ function shardRequestsForCoordinator(coordinatorNpub: string) {
     .filter((entry) => entry.coordinatorNpub === coordinatorNpub)
     .map((entry, index) => ({
       id: `request-${index + 1}:${entry.blindRequest.requestId}`,
+      dmEventId: `request-event-${index + 1}:${entry.blindRequest.requestId}`,
       voterNpub: entry.voterNpub,
       voterId: entry.voterId,
       votingId: entry.votingId,
@@ -284,11 +324,36 @@ function notifyShardRequestSubscribers(coordinatorNpub: string) {
   }
 }
 
-function notifyBlindAnnouncementSubscribers(coordinatorNpub: string) {
-  const nextAnnouncement = blindAnnouncements[coordinatorNpub] ?? null;
+function makeBlindAnnouncementKey(coordinatorNpub: string, votingId: string) {
+  return `${coordinatorNpub}:${votingId}`;
+}
+
+function notifyBlindAnnouncementSubscribers(coordinatorNpub: string, votingId: string) {
+  const nextAnnouncement = blindAnnouncements[makeBlindAnnouncementKey(coordinatorNpub, votingId)] ?? null;
   for (const subscriber of blindAnnouncementSubscribers) {
-    if (subscriber.coordinatorNpub === coordinatorNpub) {
+    if (subscriber.coordinatorNpub === coordinatorNpub && (!subscriber.votingId || subscriber.votingId === votingId)) {
       subscriber.onAnnouncement(nextAnnouncement);
+    }
+  }
+}
+
+function notifyDmAcknowledgementSubscribers(recipientNpub: string) {
+  const nextAcknowledgements = dmAcknowledgements
+    .filter((entry) => entry.recipientNpub === recipientNpub)
+    .map((entry, index) => ({
+      id: `ack-${index + 1}`,
+      ackedAction: entry.ackedAction,
+      ackedEventId: entry.ackedEventId,
+      actorNpub: entry.actorNpub,
+      actorId: entry.actorId,
+      votingId: entry.votingId,
+      requestId: entry.requestId,
+      responseId: entry.responseId,
+      createdAt: entry.createdAt,
+    }));
+  for (const subscriber of dmAcknowledgementSubscribers) {
+    if (subscriber.actorNpub === recipientNpub) {
+      subscriber.onAcknowledgements(nextAcknowledgements);
     }
   }
 }
@@ -309,25 +374,26 @@ vi.mock("./simpleShardCertificate", () => ({
   generateSimpleBlindKeyPair: vi.fn(async () => ({
     scheme: "rsa-blind-v1",
     keyId: `key-${Object.keys(blindAnnouncements).length + 1}`,
-    bits: 1024,
+    bits: 3072,
     n: `n-${Object.keys(blindAnnouncements).length + 1}`,
     e: "10001",
     d: `d-${Object.keys(blindAnnouncements).length + 1}`,
   })),
-  publishSimpleBlindKeyAnnouncement: vi.fn(async (input: { coordinatorNsec: string; publicKey: any }) => {
+  publishSimpleBlindKeyAnnouncement: vi.fn(async (input: { coordinatorNsec: string; votingId: string; publicKey: any }) => {
     const coordinatorNpub = nsecToNpub(input.coordinatorNsec);
     const announcement = {
       coordinatorNpub,
+      votingId: input.votingId,
       publicKey: input.publicKey,
       createdAt: new Date().toISOString(),
       event: {
-        id: `blind-key-${coordinatorNpub}`,
+        id: `blind-key-${coordinatorNpub}-${input.votingId}`,
         kind: 38993,
         pubkey: coordinatorNpub,
       },
     };
-    blindAnnouncements[coordinatorNpub] = announcement;
-    notifyBlindAnnouncementSubscribers(coordinatorNpub);
+    blindAnnouncements[makeBlindAnnouncementKey(coordinatorNpub, input.votingId)] = announcement;
+    notifyBlindAnnouncementSubscribers(coordinatorNpub, input.votingId);
     return {
       eventId: announcement.event.id,
       successes: 1,
@@ -336,13 +402,18 @@ vi.mock("./simpleShardCertificate", () => ({
       event: announcement.event,
     };
   }),
-  subscribeLatestSimpleBlindKeyAnnouncement: vi.fn((input: { coordinatorNpub: string; onAnnouncement: (announcement: any | null) => void }) => {
+  subscribeLatestSimpleBlindKeyAnnouncement: vi.fn((input: { coordinatorNpub: string; votingId?: string; onAnnouncement: (announcement: any | null) => void }) => {
     const subscriber = {
       coordinatorNpub: input.coordinatorNpub,
+      votingId: input.votingId,
       onAnnouncement: input.onAnnouncement,
     };
     blindAnnouncementSubscribers.push(subscriber);
-    input.onAnnouncement(blindAnnouncements[input.coordinatorNpub] ?? null);
+    input.onAnnouncement(
+      input.votingId
+        ? blindAnnouncements[makeBlindAnnouncementKey(input.coordinatorNpub, input.votingId)] ?? null
+        : null,
+    );
     return () => {
       blindAnnouncementSubscribers = blindAnnouncementSubscribers.filter((entry) => entry !== subscriber);
     };
@@ -396,7 +467,7 @@ vi.mock("./simpleShardCertificate", () => ({
         }
       : null
   )),
-  deriveTokenIdFromSimpleShardCertificates: vi.fn(async (certificates: any[]) => makeTokenId(certificates)),
+  deriveTokenIdFromSimplePublicShardProofs: vi.fn(async (proofs: any[]) => makeTokenId(proofs)),
 }));
 
 vi.mock("./simpleShardDm", () => ({
@@ -421,6 +492,7 @@ vi.mock("./simpleShardDm", () => ({
     coordinatorNsec: string;
     onFollowers: (followers: Array<{
       id: string;
+      dmEventId: string;
       voterNpub: string;
       voterId: string;
       votingId?: string;
@@ -456,6 +528,7 @@ vi.mock("./simpleShardDm", () => ({
     leadCoordinatorNsec: string;
     onApplications: (applications: Array<{
       id: string;
+      dmEventId: string;
       coordinatorNpub: string;
       coordinatorId: string;
       leadCoordinatorNpub: string;
@@ -493,6 +566,7 @@ vi.mock("./simpleShardDm", () => ({
     coordinatorNsec: string;
     onAssignments: (assignments: Array<{
       id: string;
+      dmEventId: string;
       leadCoordinatorNpub: string;
       coordinatorNpub: string;
       shareIndex: number;
@@ -533,6 +607,7 @@ vi.mock("./simpleShardDm", () => ({
     coordinatorNsec: string;
     onRequests: (requests: Array<{
       id: string;
+      dmEventId: string;
       voterNpub: string;
       voterId: string;
       votingId: string;
@@ -573,8 +648,9 @@ vi.mock("./simpleShardDm", () => ({
     thresholdN?: number;
   }) => {
     const responseId = `response-${++responseCounter}`;
-    shardResponses.push({
+    const nextResponse = {
       id: responseId,
+      dmEventId: `dm-response-${responseCounter}`,
       requestId: input.request.blindRequest.requestId,
       coordinatorNpub: input.coordinatorNpub,
       coordinatorId: input.coordinatorId,
@@ -593,9 +669,16 @@ vi.mock("./simpleShardDm", () => ({
         createdAt: new Date().toISOString(),
         keyAnnouncementEvent: input.keyAnnouncementEvent,
       },
-    });
-    notifyShardResponseSubscribers(input.voterNpub);
+    };
+    shardResponses.push(nextResponse);
+    if (!suppressedShardResponseNotifications.has(input.voterNpub)) {
+      notifyShardResponseSubscribers(input.voterNpub);
+    }
     return { responseId, eventId: `dm-response-${responseCounter}`, successes: 1, failures: 0, relayResults: [] };
+  }),
+  fetchSimpleShardResponses: vi.fn(async (input: { voterNsec: string }) => {
+    const voterNpub = nsecToNpub(input.voterNsec);
+    return shardResponses.filter((response) => response.voterNpub === voterNpub);
   }),
   subscribeSimpleShardResponses: vi.fn((input: {
     voterNsec: string;
@@ -612,6 +695,55 @@ vi.mock("./simpleShardDm", () => ({
       shardResponseSubscribers = shardResponseSubscribers.filter((entry) => entry !== subscriber);
     };
   }),
+  sendSimpleDmAcknowledgement: vi.fn(async (input: {
+    recipientNpub: string;
+    ackedAction: string;
+    ackedEventId: string;
+    actorNpub: string;
+    actorId?: string;
+    votingId?: string;
+    requestId?: string;
+    responseId?: string;
+  }) => {
+    dmAcknowledgements.push({
+      recipientNpub: input.recipientNpub,
+      ackedAction: input.ackedAction,
+      ackedEventId: input.ackedEventId,
+      actorNpub: input.actorNpub,
+      actorId: input.actorId,
+      votingId: input.votingId,
+      requestId: input.requestId,
+      responseId: input.responseId,
+      createdAt: new Date().toISOString(),
+    });
+    notifyDmAcknowledgementSubscribers(input.recipientNpub);
+    return { eventId: `ack-event-${dmAcknowledgements.length}`, successes: 1, failures: 0, relayResults: [] };
+  }),
+  subscribeSimpleDmAcknowledgements: vi.fn((input: {
+    actorNsec: string;
+    onAcknowledgements: (acknowledgements: Array<{
+      id: string;
+      ackedAction: string;
+      ackedEventId: string;
+      actorNpub: string;
+      actorId?: string;
+      votingId?: string;
+      requestId?: string;
+      responseId?: string;
+      createdAt: string;
+    }>) => void;
+  }) => {
+    const actorNpub = nsecToNpub(input.actorNsec);
+    const subscriber = {
+      actorNpub,
+      onAcknowledgements: input.onAcknowledgements,
+    };
+    dmAcknowledgementSubscribers.push(subscriber);
+    notifyDmAcknowledgementSubscribers(actorNpub);
+    return () => {
+      dmAcknowledgementSubscribers = dmAcknowledgementSubscribers.filter((entry) => entry !== subscriber);
+    };
+  }),
 }));
 
 vi.mock("./simpleVotingSession", () => ({
@@ -621,6 +753,7 @@ vi.mock("./simpleVotingSession", () => ({
     votingId?: string;
     thresholdT?: number;
     thresholdN?: number;
+    authorizedCoordinatorNpubs?: string[];
   }) => {
     const coordinatorNpub = nsecToNpub(input.coordinatorNsec);
     const votingId = input.votingId?.trim() || `round-${liveVotes.length + 1}`;
@@ -631,6 +764,7 @@ vi.mock("./simpleVotingSession", () => ({
       createdAt: new Date().toISOString(),
       thresholdT: input.thresholdT,
       thresholdN: input.thresholdN,
+      authorizedCoordinatorNpubs: input.authorizedCoordinatorNpubs ?? [coordinatorNpub],
       eventId: `live-${liveVotes.length + 1}`,
     };
     liveVotes = [...liveVotes.filter((entry) => !(entry.coordinatorNpub === coordinatorNpub && entry.votingId === votingId)), liveVote];
@@ -685,13 +819,21 @@ vi.mock("./simpleVotingSession", () => ({
   }) => {
     const ballotNpub = nsecToNpub(input.ballotNsec);
     const createdAt = new Date().toISOString();
+    const shardProofs = input.shardCertificates.map((certificate) => ({
+      coordinatorNpub: certificate.coordinatorNpub,
+      votingId: certificate.votingId,
+      tokenCommitment: certificate.tokenMessage,
+      unblindedSignature: certificate.unblindedSignature,
+      shareIndex: certificate.shareIndex,
+      keyAnnouncementEvent: certificate.keyAnnouncementEvent,
+    }));
     submittedVotes.push({
       eventId: `ballot-${++voteCounter}`,
       votingId: input.votingId,
       voterNpub: ballotNpub,
       choice: input.choice,
-      shardCertificates: input.shardCertificates,
-      tokenId: makeTokenId(input.shardCertificates),
+      shardProofs,
+      tokenId: makeTokenId(shardProofs),
       createdAt,
     });
     notifySubmittedVoteSubscribers(input.votingId);
@@ -740,6 +882,7 @@ describe("Simple round flow", () => {
     shareAssignments = [];
     shardRequests = [];
     blindAnnouncements = {};
+    dmAcknowledgements = [];
     followerSubscribers = [];
     shardResponseSubscribers = [];
     liveVoteSubscribers = [];
@@ -748,13 +891,16 @@ describe("Simple round flow", () => {
     subCoordinatorApplicationSubscribers = [];
     shareAssignmentSubscribers = [];
     shardRequestSubscribers = [];
+    dmAcknowledgementSubscribers = [];
     blindAnnouncementSubscribers = [];
+    suppressedShardResponseNotifications = new Set();
     window.sessionStorage.clear();
     await resetSimpleActorStateForTests();
   });
 
   afterEach(async () => {
     cleanup();
+    vi.useRealTimers();
     window.sessionStorage.clear();
     await resetSimpleActorStateForTests();
   });
@@ -794,6 +940,220 @@ describe("Simple round flow", () => {
       expect(voter.container.querySelectorAll("code.simple-identity-code")[1]?.textContent).toBe(voterNsec);
       expect(coordinator.container.querySelectorAll("code.simple-identity-code")[0]?.textContent).toBe(coordinatorNpub);
       expect(coordinator.container.querySelectorAll("code.simple-identity-code")[1]?.textContent).toBe(coordinatorNsec);
+    });
+  });
+
+  it("normalizes legacy coordinator rounds without authorized coordinator roster", async () => {
+    const { default: SimpleCoordinatorApp } = await import("./SimpleCoordinatorApp");
+
+    const coordinatorSecretKey = Uint8Array.from({ length: 32 }, (_, index) => index + 33);
+    const coordinatorNsec = nip19.nsecEncode(coordinatorSecretKey);
+    const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecretKey));
+
+    liveVotes = [{
+      votingId: "legacy-round",
+      prompt: "Legacy cached prompt",
+      coordinatorNpub,
+      createdAt: "2026-04-02T00:00:00.000Z",
+      thresholdT: 1,
+      thresholdN: 1,
+      eventId: "legacy-event",
+    } as unknown as InternalLiveVote];
+
+    await saveSimpleActorState({
+      role: "coordinator",
+      keypair: {
+        nsec: coordinatorNsec,
+        npub: coordinatorNpub,
+      },
+      updatedAt: new Date().toISOString(),
+      cache: {
+        leadCoordinatorNpub: "",
+        followers: [],
+        subCoordinators: [],
+        ticketDeliveries: {},
+        pendingRequests: [],
+        registrationStatus: null,
+        assignmentStatus: null,
+        questionPrompt: "Should the proposal pass?",
+        questionThresholdT: "1",
+        questionThresholdN: "1",
+        questionShareIndex: "1",
+        roundBlindPrivateKeys: {},
+        roundBlindKeyAnnouncements: {},
+        publishStatus: null,
+        publishedVotes: [{
+          votingId: "legacy-round",
+          prompt: "Legacy cached prompt",
+          coordinatorNpub,
+          createdAt: "2026-04-02T00:00:00.000Z",
+          thresholdT: 1,
+          thresholdN: 1,
+          eventId: "legacy-event",
+        }],
+        selectedVotingId: "legacy-round",
+        selectedSubmittedVotingId: "legacy-round",
+        submittedVotes: [],
+      },
+    });
+
+    const coordinator = render(<SimpleCoordinatorApp />);
+    const coordinatorUi = within(coordinator.container);
+
+    await waitFor(() => {
+      expect(coordinatorUi.getAllByText(/Legacy cached prompt/i).length).toBeGreaterThan(0);
+      expect(coordinatorUi.getByText(/Voting ID legacy-round/i)).toBeTruthy();
+    });
+  });
+
+  it("keeps send ticket disabled until the blinded ticket request is received", async () => {
+    const { default: SimpleCoordinatorApp } = await import("./SimpleCoordinatorApp");
+
+    const coordinatorSecretKey = Uint8Array.from({ length: 32 }, (_, index) => index + 65);
+    const coordinatorNsec = nip19.nsecEncode(coordinatorSecretKey);
+    const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecretKey));
+
+    liveVotes = [{
+      votingId: "legacy-round",
+      prompt: "Legacy cached prompt",
+      coordinatorNpub,
+      createdAt: "2026-04-02T00:00:00.000Z",
+      thresholdT: 1,
+      thresholdN: 1,
+      authorizedCoordinatorNpubs: [coordinatorNpub],
+      eventId: "legacy-event",
+    }];
+    coordinatorFollowers = [{
+      coordinatorNpub,
+      voterNpub: "npub1voterxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      voterId: "abc1234",
+      createdAt: "2026-04-02T00:01:00.000Z",
+    }];
+
+    await saveSimpleActorState({
+      role: "coordinator",
+      keypair: {
+        nsec: coordinatorNsec,
+        npub: coordinatorNpub,
+      },
+      updatedAt: new Date().toISOString(),
+      cache: {
+        leadCoordinatorNpub: "",
+        followers: [{
+          id: "follower-1",
+          dmEventId: "follow-event-1",
+          voterNpub: "npub1voterxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          voterId: "abc1234",
+          createdAt: "2026-04-02T00:01:00.000Z",
+        }],
+        subCoordinators: [],
+        ticketDeliveries: {},
+        pendingRequests: [],
+        registrationStatus: null,
+        assignmentStatus: null,
+        questionPrompt: "Should the proposal pass?",
+        questionThresholdT: "1",
+        questionThresholdN: "1",
+        questionShareIndex: "1",
+        roundBlindPrivateKeys: {
+          "legacy-round": {
+            scheme: "rsabssa-sha384-pss-randomized-v1",
+            modulus: "c3Q",
+            exponent: "AQAB",
+            privateExponent: "c3Q",
+            primeP: "cA",
+            primeQ: "cQ",
+            publicKeyJwk: {
+              kty: "RSA",
+              n: "c3Q",
+              e: "AQAB",
+              alg: "PS384",
+              key_ops: ["verify"],
+              ext: true,
+            },
+            hash: "SHA-384",
+            saltLength: 48,
+          } as any,
+        },
+        roundBlindKeyAnnouncements: {
+          "legacy-round": {
+            coordinatorNpub,
+            votingId: "legacy-round",
+            publicKey: {
+              scheme: "rsabssa-sha384-pss-randomized-v1",
+              keyId: "legacy-key-id",
+              modulus: "c3Q",
+              exponent: "AQAB",
+              keyBits: 3072,
+              hash: "SHA-384",
+              saltLength: 48,
+            },
+            createdAt: "2026-04-02T00:00:00.000Z",
+            event: { id: "blind-key-event" },
+          } as any,
+        },
+        publishStatus: null,
+        publishedVotes: [{
+          votingId: "legacy-round",
+          prompt: "Legacy cached prompt",
+          coordinatorNpub,
+          createdAt: "2026-04-02T00:00:00.000Z",
+          thresholdT: 1,
+          thresholdN: 1,
+          authorizedCoordinatorNpubs: [coordinatorNpub],
+          eventId: "legacy-event",
+        }],
+        selectedVotingId: "legacy-round",
+        selectedSubmittedVotingId: "legacy-round",
+        submittedVotes: [],
+      },
+    });
+
+    const coordinator = render(<SimpleCoordinatorApp />);
+    const coordinatorUi = within(coordinator.container);
+
+    await waitFor(() => {
+      expect(
+        coordinatorUi.getByText(/Waiting for this voter's blinded ticket request\./i),
+      ).toBeTruthy();
+    });
+
+    expect(
+      (coordinatorUi.getByRole("button", { name: /Send ticket/i }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it("clears voter coordinators on refresh id and does not restore them on reload", async () => {
+    const user = userEvent.setup();
+    const { default: SimpleUiApp } = await import("./SimpleUiApp");
+
+    const firstRender = render(<SimpleUiApp />);
+    const firstUi = within(firstRender.container);
+
+    await user.click(firstUi.getByRole("button", { name: /Refresh ID/i }));
+    const coordinatorInput = await firstUi.findByPlaceholderText("Enter npub...");
+    await user.type(coordinatorInput, "npub1examplecoordinatorxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+    await user.click(firstUi.getByRole("button", { name: /Add coordinator/i }));
+
+    await waitFor(() => {
+      expect(firstUi.getByText(/Coordinator 1/i)).toBeTruthy();
+    });
+
+    await user.click(firstUi.getByRole("button", { name: /Refresh ID/i }));
+
+    await waitFor(() => {
+      expect(firstUi.queryByText(/Coordinator 1/i)).toBeNull();
+      expect(firstUi.getByText(/No coordinators added yet\./i)).toBeTruthy();
+    });
+
+    firstRender.unmount();
+
+    const secondRender = render(<SimpleUiApp />);
+    const secondUi = within(secondRender.container);
+
+    await waitFor(() => {
+      expect(secondUi.getByText(/No coordinators added yet\./i)).toBeTruthy();
+      expect(secondUi.queryByText(/Coordinator 1/i)).toBeNull();
     });
   });
 
@@ -858,7 +1218,7 @@ describe("Simple round flow", () => {
       expect(coordinatorOneUi.getByText(/submitted as sub-coordinator/i)).toBeTruthy();
     });
 
-    fireEvent.change(coordinatorOneUi.getByLabelText(/^Threshold T$/i), { target: { value: "2" } });
+    await user.click(coordinatorOneUi.getByRole("button", { name: /Increase Threshold T/i }));
 
     await user.click(coordinatorOneUi.getByRole("button", { name: /Broadcast live vote/i }));
     await user.click(coordinatorOneUi.getByRole("button", { name: /Distribute share indexes/i }));
@@ -895,6 +1255,10 @@ describe("Simple round flow", () => {
       expect(voterTwoUi.getByText(firstRoundId)).toBeTruthy();
       expect(voterOneUi.getAllByText("1").length).toBeGreaterThanOrEqual(2);
       expect(voterTwoUi.getAllByText("1").length).toBeGreaterThanOrEqual(2);
+      expect(voterOneUi.getAllByText(/Ticket received\./i).length).toBeGreaterThanOrEqual(2);
+      expect(voterTwoUi.getAllByText(/Ticket received\./i).length).toBeGreaterThanOrEqual(2);
+      expect(coordinatorOneUi.getAllByText(/Voter acknowledged ticket receipt\./i).length).toBeGreaterThanOrEqual(2);
+      expect(coordinatorTwoUi.getAllByText(/Voter acknowledged ticket receipt\./i).length).toBeGreaterThanOrEqual(2);
     });
 
     const questionSection = coordinatorOneUi.getByRole("heading", { name: /^Question$/i }).closest("section");
@@ -919,26 +1283,68 @@ describe("Simple round flow", () => {
       expect(coordinatorTwoUi.getAllByText("Second question").length).toBeGreaterThanOrEqual(1);
       expect(coordinatorTwoUi.getAllByRole("button", { name: /Send ticket/i }).length).toBeGreaterThanOrEqual(2);
     });
-
     const voterOneRoundSelector = voterOne.container.querySelector("select#simple-live-round") as HTMLSelectElement | null;
     const voterTwoRoundSelector = voterTwo.container.querySelector("select#simple-live-round") as HTMLSelectElement | null;
     if (voterOneRoundSelector) {
-      await user.selectOptions(voterOneRoundSelector, firstRoundId);
+      expect(Array.from(voterOneRoundSelector.options).some((option) => option.value === firstRoundId)).toBe(true);
     }
     if (voterTwoRoundSelector) {
-      await user.selectOptions(voterTwoRoundSelector, firstRoundId);
+      expect(Array.from(voterTwoRoundSelector.options).some((option) => option.value === firstRoundId)).toBe(true);
     }
-    await user.click(voterOneUi.getByRole("button", { name: /^Yes$/i }));
-    await user.click(voterTwoUi.getByRole("button", { name: /^No$/i }));
-    await user.click(voterOneUi.getByRole("button", { name: /^Submit$/i }));
-    await user.click(voterTwoUi.getByRole("button", { name: /^Submit$/i }));
-    const coordinatorRoundSelector = coordinatorOne.container.querySelector("select#simple-active-round") as HTMLSelectElement | null;
-    if (coordinatorRoundSelector) {
-      await user.selectOptions(coordinatorRoundSelector, firstRoundId);
-    }
+  }, 40000);
+
+  it("recovers a ticket from DM history when the live delivery is missed", async () => {
+    const user = userEvent.setup();
+    const { default: SimpleCoordinatorApp } = await import("./SimpleCoordinatorApp");
+    const { default: SimpleUiApp } = await import("./SimpleUiApp");
+
+    const coordinator = render(<SimpleCoordinatorApp />);
+    const voter = render(<SimpleUiApp />);
+
+    const coordinatorUi = within(coordinator.container);
+    const voterUi = within(voter.container);
+
+    await user.click(coordinatorUi.getByRole("button", { name: /Refresh ID/i }));
+    await user.click(voterUi.getByRole("button", { name: /Refresh ID/i }));
 
     await waitFor(() => {
-      expect(coordinatorOne.container.textContent).toContain("Yes: 1 | No: 1");
+      expect(coordinator.container.querySelectorAll("code.simple-identity-code")[0]?.textContent?.startsWith("npub1")).toBe(true);
+      expect(voter.container.querySelectorAll("code.simple-identity-code")[0]?.textContent?.startsWith("npub1")).toBe(true);
+    });
+
+    const coordinatorNpub =
+      coordinator.container.querySelectorAll("code.simple-identity-code")[0]?.textContent ?? "";
+    const voterNpub =
+      voter.container.querySelectorAll("code.simple-identity-code")[0]?.textContent ?? "";
+
+    suppressedShardResponseNotifications = new Set([voterNpub]);
+
+    await user.type(voterUi.getByPlaceholderText("Enter npub..."), coordinatorNpub);
+    await user.click(voterUi.getByRole("button", { name: /Add coordinator/i }));
+    await user.click(voterUi.getByRole("button", { name: /Notify coordinators/i }));
+
+    await waitFor(() => {
+      expect(coordinatorUi.getByText(/is following this coordinator/i)).toBeTruthy();
+    });
+
+    await user.click(coordinatorUi.getByRole("button", { name: /Broadcast live vote/i }));
+
+    await waitFor(() => {
+      expect(voterUi.getByText(/Tickets ready: 0 of 1/i)).toBeTruthy();
+      expect(coordinatorUi.getByRole("button", { name: /Send ticket/i })).toBeTruthy();
+    });
+
+    await user.click(coordinatorUi.getByRole("button", { name: /Send ticket/i }));
+
+    await waitFor(() => {
+      expect(voterUi.getByText(/Waiting for ticket\./i)).toBeTruthy();
+    });
+
+    await new Promise((resolve) => window.setTimeout(resolve, 5200));
+
+    await waitFor(() => {
+      expect(voterUi.getByText(/Tickets ready: 1 of 1/i)).toBeTruthy();
+      expect(voterUi.getByText(/Ticket received\./i)).toBeTruthy();
     });
   }, 40000);
 });

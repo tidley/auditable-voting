@@ -12,8 +12,9 @@
     "verify:simple-blind-shares": "tsx scripts/verify-simple-blind-shares.ts"
   },
   "dependencies": {
-    "@noble/hashes": "^2.0.1",
     "@cashu/cashu-ts": "^2.5.3",
+    "@noble/hashes": "^2.0.1",
+    "jsqr": "^1.4.0",
     "nostr-tools": "^2.7.0",
     "qrcode": "^1.5.4",
     "react": "^18.2.0",

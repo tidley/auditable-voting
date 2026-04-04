@@ -1,15 +1,26 @@
 import { finalizeEvent, getPublicKey, nip19, SimplePool } from "nostr-tools";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import {
-  deriveTokenIdFromSimpleShardCertificates,
+  resolveNip65OutboxRelays,
+} from "./nip65RelayHints";
+import {
+  deriveTokenIdFromSimplePublicShardProofs,
+  toSimplePublicShardProof,
   type SimpleShardCertificate,
+  type SimplePublicShardProof,
 } from "./simpleShardCertificate";
 
 export const SIMPLE_PUBLIC_RELAYS = [
   "wss://nos.lol",
   "wss://relay.snort.social",
   "wss://relay.nostr.band",
+  "wss://relay.damus.io",
 ];
+
+export const SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS = 1500;
+export const SIMPLE_PUBLIC_SUBSCRIPTION_MAX_WAIT_MS = 1500;
+export const SIMPLE_PUBLIC_PUBLISH_STAGGER_MS = 300;
+export const SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS = 500;
 
 export const SIMPLE_LIVE_VOTE_KIND = 38990;
 export const SIMPLE_LIVE_VOTE_BALLOT_KIND = 38991;
@@ -21,6 +32,7 @@ export type SimpleLiveVoteSession = {
   createdAt: string;
   thresholdT?: number;
   thresholdN?: number;
+  authorizedCoordinatorNpubs: string[];
   eventId: string;
 };
 
@@ -29,7 +41,7 @@ export type SimpleSubmittedVote = {
   votingId: string;
   voterNpub: string;
   choice: "Yes" | "No";
-  shardCertificates: SimpleShardCertificate[];
+  shardProofs: SimplePublicShardProof[];
   tokenId: string | null;
   createdAt: string;
 };
@@ -54,6 +66,7 @@ function parseSimpleLiveVoteEvent(
       prompt?: string;
       threshold_t?: number;
       threshold_n?: number;
+      authorized_coordinators?: string[];
       created_at?: string;
     };
 
@@ -68,6 +81,14 @@ function parseSimpleLiveVoteEvent(
       createdAt: payload.created_at ?? new Date(event.created_at * 1000).toISOString(),
       thresholdT: typeof payload.threshold_t === "number" ? payload.threshold_t : undefined,
       thresholdN: typeof payload.threshold_n === "number" ? payload.threshold_n : undefined,
+      authorizedCoordinatorNpubs: Array.from(
+        new Set(
+          (Array.isArray(payload.authorized_coordinators)
+            ? payload.authorized_coordinators
+            : [fallbackCoordinatorNpub ?? nip19.npubEncode(event.pubkey)])
+            .filter((value): value is string => typeof value === "string" && value.trim().length > 0),
+        ),
+      ),
       eventId: event.id,
     };
   } catch {
@@ -83,6 +104,7 @@ async function parseSimpleSubmittedVoteEvent(
     const payload = JSON.parse(event.content) as {
       voting_id?: string;
       choice?: "Yes" | "No";
+      shard_proofs?: SimplePublicShardProof[];
       shard_certificates?: SimpleShardCertificate[];
       created_at?: string;
     };
@@ -94,15 +116,19 @@ async function parseSimpleSubmittedVoteEvent(
       return null;
     }
 
-    const shardCertificates = Array.isArray(payload.shard_certificates) ? payload.shard_certificates : [];
+    const shardProofs = Array.isArray(payload.shard_proofs)
+      ? payload.shard_proofs
+      : Array.isArray(payload.shard_certificates)
+        ? payload.shard_certificates.map((certificate) => toSimplePublicShardProof(certificate))
+        : [];
 
     return {
       eventId: event.id,
       votingId: payload.voting_id,
       voterNpub: nip19.npubEncode(event.pubkey),
       choice: payload.choice,
-      shardCertificates,
-      tokenId: await deriveTokenIdFromSimpleShardCertificates(shardCertificates),
+      shardProofs,
+      tokenId: await deriveTokenIdFromSimplePublicShardProofs(shardProofs),
       createdAt: payload.created_at ?? new Date(event.created_at * 1000).toISOString(),
     };
   } catch {
@@ -117,6 +143,7 @@ export async function publishSimpleLiveVote(input: {
   relays?: string[];
   thresholdT?: number;
   thresholdN?: number;
+  authorizedCoordinatorNpubs?: string[];
 }) {
   const decoded = nip19.decode(input.coordinatorNsec.trim());
   if (decoded.type !== "nsec") {
@@ -126,9 +153,19 @@ export async function publishSimpleLiveVote(input: {
   const secretKey = decoded.data as Uint8Array;
   const coordinatorHex = getPublicKey(secretKey);
   const coordinatorNpub = nip19.npubEncode(coordinatorHex);
-  const relays = buildPublicRelays(input.relays);
+  const relays = await resolveNip65OutboxRelays({
+    npub: coordinatorNpub,
+    fallbackRelays: buildPublicRelays(input.relays),
+  });
   const createdAt = new Date().toISOString();
   const votingId = input.votingId?.trim() || crypto.randomUUID();
+  const authorizedCoordinatorNpubs = Array.from(
+    new Set(
+      (input.authorizedCoordinatorNpubs?.length
+        ? input.authorizedCoordinatorNpubs
+        : [coordinatorNpub]).filter((value) => value.trim().length > 0),
+    ),
+  );
 
   const event = finalizeEvent({
     kind: SIMPLE_LIVE_VOTE_KIND,
@@ -136,6 +173,7 @@ export async function publishSimpleLiveVote(input: {
     tags: [
       ["t", "simple-live-vote"],
       ["voting-id", votingId],
+      ...authorizedCoordinatorNpubs.map((coordinatorNpub) => ["coordinator", coordinatorNpub] as [string, string]),
       ...(input.thresholdT !== undefined ? [["threshold-t", String(input.thresholdT)]] : []),
       ...(input.thresholdN !== undefined ? [["threshold-n", String(input.thresholdN)]] : []),
     ],
@@ -146,16 +184,21 @@ export async function publishSimpleLiveVote(input: {
       options: ["Yes", "No"],
       threshold_t: input.thresholdT,
       threshold_n: input.thresholdN,
+      authorized_coordinators: authorizedCoordinatorNpubs,
       created_at: createdAt,
     }),
   }, secretKey);
 
   const pool = new SimplePool();
   try {
-    const results = await queueNostrPublish(() => publishToRelaysStaggered(
-      (relay) => pool.publish([relay], event, { maxWait: 4000 })[0],
-      relays,
-    ));
+    const results = await queueNostrPublish(
+      () => publishToRelaysStaggered(
+        (relay) => pool.publish([relay], event, { maxWait: SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS })[0],
+        relays,
+        { staggerMs: SIMPLE_PUBLIC_PUBLISH_STAGGER_MS },
+      ),
+      { channel: "simple-public", minIntervalMs: SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS },
+    );
     const relayResults = results.map((result, index) => (
       result.status === "fulfilled"
         ? { relay: relays[index], success: true }
@@ -190,7 +233,10 @@ export async function fetchLatestSimpleLiveVote(input: {
   }
 
   const coordinatorHex = decoded.data as string;
-  const relays = buildPublicRelays(input.relays);
+  const relays = await resolveNip65OutboxRelays({
+    npub: input.coordinatorNpub,
+    fallbackRelays: buildPublicRelays(input.relays),
+  });
   const pool = new SimplePool();
 
   try {
@@ -223,41 +269,55 @@ export function subscribeLatestSimpleLiveVote(input: {
   }
 
   const coordinatorHex = decoded.data as string;
-  const relays = buildPublicRelays(input.relays);
+  const fallbackRelays = buildPublicRelays(input.relays);
   const pool = new SimplePool();
   const sessions = new Map<string, SimpleLiveVoteSession>();
   let closed = false;
+  let subscription: { close: (reason?: string) => Promise<void> | void } | null = null;
 
-  const subscription = pool.subscribeMany(relays, {
-    kinds: [SIMPLE_LIVE_VOTE_KIND],
-    authors: [coordinatorHex],
-    limit: 20,
-  }, {
-    onevent: (event) => {
-      const session = parseSimpleLiveVoteEvent(event, input.coordinatorNpub);
-      if (!session) {
-        return;
-      }
+  void resolveNip65OutboxRelays({
+    npub: input.coordinatorNpub,
+    fallbackRelays,
+  }).then((relays) => {
+    if (closed) {
+      return;
+    }
 
-      sessions.set(session.eventId, session);
-      input.onSession(sortByCreatedAtDescending([...sessions.values()])[0] ?? null);
-    },
-    onclose: (reasons) => {
-      if (closed) {
-        return;
-      }
+    subscription = pool.subscribeMany(relays, {
+      kinds: [SIMPLE_LIVE_VOTE_KIND],
+      authors: [coordinatorHex],
+      limit: 20,
+    }, {
+      onevent: (event) => {
+        const session = parseSimpleLiveVoteEvent(event, input.coordinatorNpub);
+        if (!session) {
+          return;
+        }
 
-      const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
-      if (errors.length > 0) {
-        input.onError?.(new Error(errors.join("; ")));
-      }
-    },
-    maxWait: 4000,
+        sessions.set(session.eventId, session);
+        input.onSession(sortByCreatedAtDescending([...sessions.values()])[0] ?? null);
+      },
+      onclose: (reasons) => {
+        if (closed) {
+          return;
+        }
+
+        const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
+        if (errors.length > 0) {
+          input.onError?.(new Error(errors.join("; ")));
+        }
+      },
+      maxWait: SIMPLE_PUBLIC_SUBSCRIPTION_MAX_WAIT_MS,
+    });
+  }).catch((error) => {
+    if (!closed && error instanceof Error) {
+      input.onError?.(error);
+    }
   });
 
   return () => {
     closed = true;
-    void subscription.close("closed by caller");
+    void subscription?.close("closed by caller");
     pool.destroy();
   };
 }
@@ -274,41 +334,55 @@ export function subscribeSimpleLiveVotes(input: {
   }
 
   const coordinatorHex = decoded.data as string;
-  const relays = buildPublicRelays(input.relays);
+  const fallbackRelays = buildPublicRelays(input.relays);
   const pool = new SimplePool();
   const sessions = new Map<string, SimpleLiveVoteSession>();
   let closed = false;
+  let subscription: { close: (reason?: string) => Promise<void> | void } | null = null;
 
-  const subscription = pool.subscribeMany(relays, {
-    kinds: [SIMPLE_LIVE_VOTE_KIND],
-    authors: [coordinatorHex],
-    limit: 100,
-  }, {
-    onevent: (event) => {
-      const session = parseSimpleLiveVoteEvent(event, input.coordinatorNpub);
-      if (!session) {
-        return;
-      }
+  void resolveNip65OutboxRelays({
+    npub: input.coordinatorNpub,
+    fallbackRelays,
+  }).then((relays) => {
+    if (closed) {
+      return;
+    }
 
-      sessions.set(session.eventId, session);
-      input.onSessions(sortByCreatedAtDescending([...sessions.values()]));
-    },
-    onclose: (reasons) => {
-      if (closed) {
-        return;
-      }
+    subscription = pool.subscribeMany(relays, {
+      kinds: [SIMPLE_LIVE_VOTE_KIND],
+      authors: [coordinatorHex],
+      limit: 100,
+    }, {
+      onevent: (event) => {
+        const session = parseSimpleLiveVoteEvent(event, input.coordinatorNpub);
+        if (!session) {
+          return;
+        }
 
-      const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
-      if (errors.length > 0) {
-        input.onError?.(new Error(errors.join("; ")));
-      }
-    },
-    maxWait: 4000,
+        sessions.set(session.eventId, session);
+        input.onSessions(sortByCreatedAtDescending([...sessions.values()]));
+      },
+      onclose: (reasons) => {
+        if (closed) {
+          return;
+        }
+
+        const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
+        if (errors.length > 0) {
+          input.onError?.(new Error(errors.join("; ")));
+        }
+      },
+      maxWait: SIMPLE_PUBLIC_SUBSCRIPTION_MAX_WAIT_MS,
+    });
+  }).catch((error) => {
+    if (!closed && error instanceof Error) {
+      input.onError?.(error);
+    }
   });
 
   return () => {
     closed = true;
-    void subscription.close("closed by caller");
+    void subscription?.close("closed by caller");
     pool.destroy();
   };
 }
@@ -349,8 +423,20 @@ export async function publishSimpleSubmittedVote(input: {
 
   const secretKey = ballotDecoded.data as Uint8Array;
   const ballotNpub = nip19.npubEncode(getPublicKey(secretKey));
-  const relays = buildPublicRelays(input.relays);
+  const coordinatorRelays = await Promise.all(
+    Array.from(new Set(input.shardCertificates.map((certificate) => certificate.coordinatorNpub))).map(
+      async (coordinatorNpub) => resolveNip65OutboxRelays({
+        npub: coordinatorNpub,
+        fallbackRelays: buildPublicRelays(input.relays),
+      }),
+    ),
+  );
+  const relays = Array.from(new Set(coordinatorRelays.flat()));
   const createdAt = new Date().toISOString();
+  const shardProofs = input.shardCertificates.map((certificate) =>
+    toSimplePublicShardProof(certificate),
+  );
+  const tokenId = await deriveTokenIdFromSimplePublicShardProofs(shardProofs);
 
   const event = finalizeEvent({
     kind: SIMPLE_LIVE_VOTE_BALLOT_KIND,
@@ -358,22 +444,27 @@ export async function publishSimpleSubmittedVote(input: {
     tags: [
       ["t", "simple-live-vote-ballot"],
       ["d", input.votingId],
-      ...input.shardCertificates.map((certificate) => ["s", certificate.shareId]),
+      ...(tokenId ? [["token-id", tokenId]] : []),
+      ...shardProofs.map((proof) => ["coordinator", proof.coordinatorNpub] as [string, string]),
     ],
     content: JSON.stringify({
       voting_id: input.votingId,
       choice: input.choice,
-      shard_certificates: input.shardCertificates,
+      shard_proofs: shardProofs,
       created_at: createdAt,
     }),
   }, secretKey);
 
   const pool = new SimplePool();
   try {
-    const results = await queueNostrPublish(() => publishToRelaysStaggered(
-      (relay) => pool.publish([relay], event, { maxWait: 4000 })[0],
-      relays,
-    ));
+    const results = await queueNostrPublish(
+      () => publishToRelaysStaggered(
+        (relay) => pool.publish([relay], event, { maxWait: SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS })[0],
+        relays,
+        { staggerMs: SIMPLE_PUBLIC_PUBLISH_STAGGER_MS },
+      ),
+      { channel: "simple-public", minIntervalMs: SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS },
+    );
     const relayResults = results.map((result, index) => (
       result.status === "fulfilled"
         ? { relay: relays[index], success: true }
@@ -387,6 +478,7 @@ export async function publishSimpleSubmittedVote(input: {
     return {
       eventId: event.id,
       ballotNpub,
+      tokenId,
       createdAt,
       successes: relayResults.filter((result) => result.success).length,
       failures: relayResults.filter((result) => !result.success).length,
@@ -461,7 +553,7 @@ export function subscribeSimpleSubmittedVotes(input: {
         input.onError?.(new Error(errors.join("; ")));
       }
     },
-    maxWait: 4000,
+    maxWait: SIMPLE_PUBLIC_SUBSCRIPTION_MAX_WAIT_MS,
   });
 
   return () => {

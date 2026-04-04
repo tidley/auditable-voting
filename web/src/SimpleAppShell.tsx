@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import SimpleCoordinatorApp from "./SimpleCoordinatorApp";
 import SimpleUiApp from "./SimpleUiApp";
+import { SIMPLE_APP_VERSION } from "./simpleAppVersion";
 
 type SimpleRole = "voter" | "coordinator";
 
@@ -73,6 +74,9 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
       </div>
 
       {role === 'voter' ? <SimpleUiApp /> : <SimpleCoordinatorApp />}
+      <footer className='simple-app-version' aria-label='App version'>
+        {SIMPLE_APP_VERSION}
+      </footer>
     </div>
   );
 }

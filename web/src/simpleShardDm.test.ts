@@ -9,6 +9,8 @@ const wrapEvent = vi.fn();
 const unwrapEvent = vi.fn();
 const decode = vi.fn();
 const getPublicKey = vi.fn();
+const resolveNip65ConversationRelays = vi.fn();
+const resolveNip65InboxRelays = vi.fn();
 
 vi.mock("nostr-tools", () => ({
   getPublicKey,
@@ -51,6 +53,11 @@ vi.mock("./nostrPublishQueue", () => ({
   ) => Promise.allSettled(relays.map((relay) => publishSingleRelay(relay))),
 }));
 
+vi.mock("./nip65RelayHints", () => ({
+  resolveNip65ConversationRelays,
+  resolveNip65InboxRelays,
+}));
+
 describe("simpleShardDm", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -65,6 +72,11 @@ describe("simpleShardDm", () => {
     publish.mockImplementation((relays: string[]) => relays.map(() => Promise.resolve(undefined)));
     querySync.mockResolvedValue([]);
     subscribeMany.mockReturnValue({ close: vi.fn(async () => undefined) });
+    resolveNip65ConversationRelays.mockResolvedValue([
+      "wss://recipient.example",
+      "wss://sender.example",
+    ]);
+    resolveNip65InboxRelays.mockResolvedValue(["wss://inbox.example"]);
   });
 
   it("sends blinded shard requests over DMs", async () => {
@@ -90,6 +102,11 @@ describe("simpleShardDm", () => {
       votingId: "vote-1",
       blindedMessage: "blind-msg-1",
       createdAt: "2026-04-02T00:00:00.000Z",
+    });
+    expect(resolveNip65ConversationRelays).toHaveBeenCalledWith({
+      recipientNpub: "npub1coord",
+      senderNpub: "npub1voter",
+      fallbackRelays: expect.any(Array),
     });
     expect(result.successes).toBeGreaterThan(0);
   });
@@ -133,6 +150,9 @@ describe("simpleShardDm", () => {
     });
 
     expect(wrapEvent).toHaveBeenCalled();
+    expect(JSON.parse(wrapEvent.mock.calls[0][2])).toMatchObject({
+      request_id: "request-1",
+    });
     expect(JSON.parse(wrapEvent.mock.calls[0][2]).blind_share_response).toMatchObject({
       shareId: "share-1",
       requestId: "request-1",
@@ -180,6 +200,7 @@ describe("simpleShardDm", () => {
     expect(responses).toEqual([
       {
         id: "share-1",
+        dmEventId: "share-1",
         requestId: "request-1",
         coordinatorNpub: "npub1coord",
         coordinatorId: "coord123",
@@ -232,9 +253,13 @@ describe("simpleShardDm", () => {
       onRequests,
     });
 
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
     expect(onRequests).toHaveBeenCalledWith([
       {
         id: "request-1",
+        dmEventId: "request-1",
         voterNpub: "npub1voter",
         voterId: "voter123",
         votingId: "vote-1",
@@ -247,7 +272,75 @@ describe("simpleShardDm", () => {
         createdAt: "2026-04-02T00:00:01.000Z",
       },
     ]);
+    expect(resolveNip65InboxRelays).toHaveBeenCalledWith({
+      npub: "npub1cdcdcdcd",
+      fallbackRelays: expect.any(Array),
+    });
 
     unsubscribe();
+  });
+
+  it("sends DM acknowledgements over NIP-17", async () => {
+    const mod = await import("./simpleShardDm");
+
+    const result = await mod.sendSimpleDmAcknowledgement({
+      senderSecretKey: new Uint8Array([1, 2, 3]),
+      recipientNpub: "npub1coord",
+      actorNpub: "npub1voter",
+      actorId: "voter123",
+      ackedAction: "simple_shard_request",
+      ackedEventId: "wrapped-event-1",
+      votingId: "vote-1",
+      requestId: "request-1",
+    });
+
+    expect(JSON.parse(wrapEvent.mock.calls[0][2])).toMatchObject({
+      action: "simple_dm_ack",
+      actor_npub: "npub1voter",
+      actor_id: "voter123",
+      acked_action: "simple_shard_request",
+      acked_event_id: "wrapped-event-1",
+      voting_id: "vote-1",
+      request_id: "request-1",
+    });
+    expect(result.successes).toBeGreaterThan(0);
+  });
+
+  it("fetches DM acknowledgements addressed to the actor", async () => {
+    const mod = await import("./simpleShardDm");
+
+    querySync.mockResolvedValue([{ created_at: 10, id: "ack-event-1" }]);
+    unwrapEvent.mockReturnValueOnce({
+      content: JSON.stringify({
+        action: "simple_dm_ack",
+        ack_id: "ack-1",
+        acked_action: "simple_round_ticket",
+        acked_event_id: "ticket-event-1",
+        actor_npub: "npub1coord",
+        actor_id: "coord123",
+        voting_id: "vote-1",
+        request_id: "request-1",
+        response_id: "response-1",
+        created_at: "2026-04-02T00:00:03.000Z",
+      }),
+    });
+
+    const acknowledgements = await mod.fetchSimpleDmAcknowledgements({
+      actorNsec: "nsec1actor",
+    });
+
+    expect(acknowledgements).toEqual([
+      {
+        id: "ack-1",
+        ackedAction: "simple_round_ticket",
+        ackedEventId: "ticket-event-1",
+        actorNpub: "npub1coord",
+        actorId: "coord123",
+        votingId: "vote-1",
+        requestId: "request-1",
+        responseId: "response-1",
+        createdAt: "2026-04-02T00:00:03.000Z",
+      },
+    ]);
   });
 });

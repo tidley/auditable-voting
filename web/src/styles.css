@@ -489,6 +489,15 @@ code {
   color: #f3f4f6;
 }
 
+.simple-app-version {
+  margin: 12px auto 0;
+  width: min(960px, calc(100% - 32px));
+  color: #64748b;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  text-align: right;
+}
+
 .simple-voter-page {
   border-top: 10px solid #4da3ff;
   background: #0f172a;
@@ -668,6 +677,34 @@ code {
   color: #7dd3fc;
 }
 
+.simple-delivery-diagnostics {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding-left: 18px;
+}
+
+.simple-delivery-diagnostics-compact {
+  margin-top: 10px;
+}
+
+.simple-delivery-diagnostics li {
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.simple-delivery-ok {
+  color: #4ade80;
+}
+
+.simple-delivery-waiting {
+  color: #7dd3fc;
+}
+
+.simple-delivery-error {
+  color: #f87171;
+}
+
 .simple-voter-label {
   display: block;
   margin-bottom: 10px;
@@ -707,12 +744,6 @@ code {
   box-sizing: border-box;
 }
 
-.simple-voter-range {
-  width: 100%;
-  margin-bottom: 8px;
-  accent-color: #2563eb;
-}
-
 .simple-voter-input-inline {
   margin-bottom: 0;
 }
@@ -741,6 +772,10 @@ code {
   align-items: center;
 }
 
+.simple-voter-add-row-with-scan {
+  grid-template-columns: minmax(0, 1fr) 56px auto;
+}
+
 .simple-voter-add-button {
   width: 56px;
   height: 56px;
@@ -757,6 +792,10 @@ code {
 
 .simple-voter-add-button:hover {
   background: #1d4ed8;
+}
+
+.simple-voter-scan-button {
+  min-width: 88px;
 }
 
 .simple-voter-inline-field {
@@ -901,8 +940,34 @@ code {
 
 .simple-vote-threshold-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
+}
+
+.simple-threshold-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.simple-threshold-stepper-button {
+  min-width: 48px;
+  min-height: 48px;
+  padding: 0;
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+.simple-threshold-stepper-value {
+  min-width: 72px;
+  padding: 12px 14px;
+  border: 1px solid #475569;
+  background: #0f172a;
+  color: #f8fafc;
+  font-size: 1.25rem;
+  font-weight: 800;
+  text-align: center;
 }
 
 .simple-identity-grid {
@@ -1031,6 +1096,10 @@ code {
   border: 1px solid #b1b4b6;
   background: #0b0c0c;
   object-fit: cover;
+}
+
+.simple-scanner-canvas {
+  display: none;
 }
 
 .simple-voter-choice-row {
@@ -1839,6 +1908,10 @@ code {
   .simple-voter-shell {
     width: min(100% - 20px, 960px);
     padding: 16px 0 28px;
+  }
+
+  .simple-app-version {
+    width: min(100% - 20px, 960px);
   }
 
   .simple-voter-page {

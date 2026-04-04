@@ -6,18 +6,31 @@ import {
   verifyEvent,
   type VerifiedEvent,
 } from "nostr-tools";
-import { sha256 } from "@noble/hashes/sha2.js";
+import { sha384 } from "@noble/hashes/sha2.js";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
-import { SIMPLE_PUBLIC_RELAYS } from "./simpleVotingSession";
+import { resolveNip65OutboxRelays } from "./nip65RelayHints";
+import {
+  SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS,
+  SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS,
+  SIMPLE_PUBLIC_PUBLISH_STAGGER_MS,
+  SIMPLE_PUBLIC_RELAYS,
+  SIMPLE_PUBLIC_SUBSCRIPTION_MAX_WAIT_MS,
+} from "./simpleVotingSession";
 import { sha256Hex } from "./tokenIdentity";
 
 export const SIMPLE_BLIND_KEY_KIND = 38993;
-export const SIMPLE_BLIND_SCHEME = "rsa-blind-v1";
+export const SIMPLE_BLIND_SCHEME = "rsabssa-sha384-pss-randomized-v1";
+export const SIMPLE_BLIND_KEY_BITS = 3072;
+export const SIMPLE_BLIND_HASH = "SHA-384";
+export const SIMPLE_BLIND_SALT_LENGTH = 48;
+const SIMPLE_BLIND_DOMAIN_SEPARATOR = "auditable-voting/simple-blind/v2";
 
 export type SimpleBlindPublicKey = {
   scheme: typeof SIMPLE_BLIND_SCHEME;
   keyId: string;
   bits: number;
+  hash: typeof SIMPLE_BLIND_HASH;
+  saltLength: typeof SIMPLE_BLIND_SALT_LENGTH;
   n: string;
   e: string;
 };
@@ -28,6 +41,7 @@ export type SimpleBlindPrivateKey = SimpleBlindPublicKey & {
 
 export type SimpleBlindKeyAnnouncement = {
   coordinatorNpub: string;
+  votingId: string;
   publicKey: SimpleBlindPublicKey;
   createdAt: string;
   event: VerifiedEvent;
@@ -89,6 +103,25 @@ export type ParsedSimpleShardCertificate = {
   event: SimpleShardCertificate;
 };
 
+export type SimplePublicShardProof = {
+  coordinatorNpub: string;
+  votingId: string;
+  tokenCommitment: string;
+  unblindedSignature: string;
+  shareIndex: number;
+  keyAnnouncementEvent: VerifiedEvent;
+};
+
+export type ParsedSimplePublicShardProof = {
+  coordinatorNpub: string;
+  votingId: string;
+  tokenCommitment: string;
+  shareIndex: number;
+  publicKey: SimpleBlindPublicKey;
+  keyAnnouncement: SimpleBlindKeyAnnouncement;
+  event: SimplePublicShardProof;
+};
+
 type RsaJwk = {
   n?: string;
   e?: string;
@@ -144,6 +177,11 @@ function hexToBytes(hex: string) {
 
 function bigintToHex(value: bigint) {
   return value.toString(16);
+}
+
+function bigintToFixedLengthBytes(value: bigint, byteLength: number) {
+  const hex = value.toString(16).padStart(byteLength * 2, "0");
+  return hexToBytes(hex);
 }
 
 function hexToBigint(hex: string) {
@@ -214,19 +252,145 @@ function randomBigintBelow(maxExclusive: bigint, webCryptoOverride?: Crypto): bi
   }
 }
 
-function hashMessageRepresentative(message: string, modulus: bigint) {
-  const hashHex = bytesToHex(sha256(utf8ToBytes(message)));
-  const representative = (hexToBigint(hashHex) % (modulus - 1n)) + 1n;
-  return representative;
+function xorBytes(left: Uint8Array, right: Uint8Array) {
+  const bytes = new Uint8Array(left.length);
+  for (let index = 0; index < left.length; index += 1) {
+    bytes[index] = left[index] ^ right[index];
+  }
+  return bytes;
 }
 
-export async function generateSimpleBlindKeyPair(bits = 1024, webCryptoOverride?: Crypto): Promise<SimpleBlindPrivateKey> {
+function mgf1Sha384(seed: Uint8Array, length: number) {
+  const blocks: Uint8Array[] = [];
+  let offset = 0;
+  let counter = 0;
+
+  while (offset < length) {
+    const counterBytes = new Uint8Array([
+      (counter >>> 24) & 0xff,
+      (counter >>> 16) & 0xff,
+      (counter >>> 8) & 0xff,
+      counter & 0xff,
+    ]);
+    const digest = new Uint8Array(sha384(new Uint8Array([...seed, ...counterBytes])));
+    blocks.push(digest);
+    offset += digest.length;
+    counter += 1;
+  }
+
+  const concatenated = new Uint8Array(offset);
+  let cursor = 0;
+  for (const block of blocks) {
+    concatenated.set(block, cursor);
+    cursor += block.length;
+  }
+
+  return concatenated.slice(0, length);
+}
+
+function encodePssRepresentative(
+  message: string,
+  modulus: bigint,
+  webCryptoOverride?: Crypto,
+) {
+  const cryptoApi = getWebCrypto(webCryptoOverride);
+  const messageBytes = utf8ToBytes(`${SIMPLE_BLIND_DOMAIN_SEPARATOR}|${message}`);
+  const messageHash = new Uint8Array(sha384(messageBytes));
+  const modulusBits = modulus.toString(2).length;
+  const emBits = modulusBits - 1;
+  const emLen = Math.ceil(emBits / 8);
+  const hashLength = messageHash.length;
+  const salt = cryptoApi.getRandomValues(new Uint8Array(SIMPLE_BLIND_SALT_LENGTH));
+
+  if (emLen < hashLength + SIMPLE_BLIND_SALT_LENGTH + 2) {
+    throw new Error("RSA modulus is too small for blind PSS encoding.");
+  }
+
+  const messagePrime = new Uint8Array(8 + hashLength + salt.length);
+  messagePrime.set(messageHash, 8);
+  messagePrime.set(salt, 8 + hashLength);
+  const hashedPrime = new Uint8Array(sha384(messagePrime));
+  const ps = new Uint8Array(emLen - salt.length - hashLength - 2);
+  const dataBlock = new Uint8Array([...ps, 0x01, ...salt]);
+  const dbMask = mgf1Sha384(hashedPrime, emLen - hashLength - 1);
+  const maskedDb = xorBytes(dataBlock, dbMask);
+  const unusedBits = (8 * emLen) - emBits;
+  if (unusedBits > 0) {
+    maskedDb[0] &= 0xff >>> unusedBits;
+  }
+  const encoded = new Uint8Array(emLen);
+  encoded.set(maskedDb, 0);
+  encoded.set(hashedPrime, emLen - hashLength - 1);
+  encoded[emLen - 1] = 0xbc;
+
+  return hexToBigint(bytesToHex(encoded));
+}
+
+function verifyPssRepresentative(
+  publicKey: SimpleBlindPublicKey,
+  message: string,
+  signatureHex: string,
+) {
+  const modulus = hexToBigint(publicKey.n);
+  const exponent = hexToBigint(publicKey.e);
+  const modulusBits = modulus.toString(2).length;
+  const emBits = modulusBits - 1;
+  const emLen = Math.ceil(emBits / 8);
+  const hashLength = SIMPLE_BLIND_SALT_LENGTH;
+  const recovered = modPow(hexToBigint(signatureHex), exponent, modulus);
+  const encoded = bigintToFixedLengthBytes(recovered, emLen);
+
+  if (encoded[encoded.length - 1] !== 0xbc) {
+    return false;
+  }
+
+  const maskedDb = encoded.slice(0, emLen - hashLength - 1);
+  const hash = encoded.slice(emLen - hashLength - 1, emLen - 1);
+  const unusedBits = (8 * emLen) - emBits;
+  if (unusedBits > 0 && (maskedDb[0] & (0xff << (8 - unusedBits))) !== 0) {
+    return false;
+  }
+
+  const dbMask = mgf1Sha384(hash, emLen - hashLength - 1);
+  const dataBlock = xorBytes(maskedDb, dbMask);
+  if (unusedBits > 0) {
+    dataBlock[0] &= 0xff >>> unusedBits;
+  }
+
+  const prefixLength = emLen - hashLength - publicKey.saltLength - 2;
+  if (prefixLength < 0) {
+    return false;
+  }
+
+  for (let index = 0; index < prefixLength; index += 1) {
+    if (dataBlock[index] !== 0x00) {
+      return false;
+    }
+  }
+
+  if (dataBlock[prefixLength] !== 0x01) {
+    return false;
+  }
+
+  const salt = dataBlock.slice(dataBlock.length - publicKey.saltLength);
+  const messageHash = new Uint8Array(
+    sha384(utf8ToBytes(`${SIMPLE_BLIND_DOMAIN_SEPARATOR}|${message}`)),
+  );
+  const messagePrime = new Uint8Array(8 + messageHash.length + salt.length);
+  messagePrime.set(messageHash, 8);
+  messagePrime.set(salt, 8 + messageHash.length);
+  const expectedHash = new Uint8Array(sha384(messagePrime));
+
+  return bytesToHex(hash) === bytesToHex(expectedHash);
+}
+
+export async function generateSimpleBlindKeyPair(bits = SIMPLE_BLIND_KEY_BITS, webCryptoOverride?: Crypto): Promise<SimpleBlindPrivateKey> {
   const webCrypto = getWebCrypto(webCryptoOverride);
   const keyPair = await webCrypto.subtle.generateKey({
-    name: "RSASSA-PKCS1-v1_5",
+    name: "RSA-PSS",
     modulusLength: bits,
     publicExponent: new Uint8Array([1, 0, 1]),
-    hash: "SHA-256",
+    hash: SIMPLE_BLIND_HASH,
   }, true, ["sign", "verify"]);
 
   const privateJwk = await webCrypto.subtle.exportKey("jwk", keyPair.privateKey) as RsaJwk;
@@ -240,6 +404,8 @@ export async function generateSimpleBlindKeyPair(bits = 1024, webCryptoOverride?
     scheme: SIMPLE_BLIND_SCHEME,
     keyId: keyId.slice(0, 24),
     bits,
+    hash: SIMPLE_BLIND_HASH,
+    saltLength: SIMPLE_BLIND_SALT_LENGTH,
     n: bigintToHex(bigintFromBase64Url(publicJwk.n)),
     e: bigintToHex(bigintFromBase64Url(publicJwk.e)),
     d: bigintToHex(bigintFromBase64Url(privateJwk.d)),
@@ -251,6 +417,8 @@ export function toSimpleBlindPublicKey(privateKey: SimpleBlindPrivateKey): Simpl
     scheme: SIMPLE_BLIND_SCHEME,
     keyId: privateKey.keyId,
     bits: privateKey.bits,
+    hash: privateKey.hash,
+    saltLength: privateKey.saltLength,
     n: privateKey.n,
     e: privateKey.e,
   };
@@ -258,6 +426,7 @@ export function toSimpleBlindPublicKey(privateKey: SimpleBlindPrivateKey): Simpl
 
 export async function publishSimpleBlindKeyAnnouncement(input: {
   coordinatorNsec: string;
+  votingId: string;
   publicKey: SimpleBlindPublicKey;
   relays?: string[];
 }) {
@@ -267,19 +436,27 @@ export async function publishSimpleBlindKeyAnnouncement(input: {
   }
 
   const secretKey = decoded.data as Uint8Array;
-  const relays = buildPublicRelays(input.relays);
+  const coordinatorNpub = nip19.npubEncode(getPublicKey(secretKey));
+  const relays = await resolveNip65OutboxRelays({
+    npub: coordinatorNpub,
+    fallbackRelays: buildPublicRelays(input.relays),
+  });
   const createdAt = new Date().toISOString();
   const event = finalizeEvent({
     kind: SIMPLE_BLIND_KEY_KIND,
     created_at: Math.floor(Date.now() / 1000),
     tags: [
       ["t", "simple-blind-key"],
+      ["voting-id", input.votingId],
       ["key-id", input.publicKey.keyId],
     ],
     content: JSON.stringify({
+      voting_id: input.votingId,
       scheme: input.publicKey.scheme,
       key_id: input.publicKey.keyId,
       bits: input.publicKey.bits,
+      hash: input.publicKey.hash,
+      salt_length: input.publicKey.saltLength,
       n: input.publicKey.n,
       e: input.publicKey.e,
       created_at: createdAt,
@@ -288,10 +465,14 @@ export async function publishSimpleBlindKeyAnnouncement(input: {
 
   const pool = new SimplePool();
   try {
-    const results = await queueNostrPublish(() => publishToRelaysStaggered(
-      (relay) => pool.publish([relay], event, { maxWait: 4000 })[0],
-      relays,
-    ));
+    const results = await queueNostrPublish(
+      () => publishToRelaysStaggered(
+        (relay) => pool.publish([relay], event, { maxWait: SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS })[0],
+        relays,
+        { staggerMs: SIMPLE_PUBLIC_PUBLISH_STAGGER_MS },
+      ),
+      { channel: "simple-public", minIntervalMs: SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS },
+    );
     return {
       eventId: event.id,
       successes: results.filter((result) => result.status === "fulfilled").length,
@@ -307,6 +488,7 @@ export async function publishSimpleBlindKeyAnnouncement(input: {
 export function parseSimpleBlindKeyAnnouncement(
   event: VerifiedEvent,
   expectedCoordinatorNpub?: string,
+  expectedVotingId?: string,
 ): SimpleBlindKeyAnnouncement | null {
   if (event.kind !== SIMPLE_BLIND_KEY_KIND || !verifyEvent(event)) {
     return null;
@@ -314,18 +496,25 @@ export function parseSimpleBlindKeyAnnouncement(
 
   try {
     const payload = JSON.parse(event.content) as {
+      voting_id?: string;
       scheme?: string;
       key_id?: string;
       bits?: number;
+      hash?: string;
+      salt_length?: number;
       n?: string;
       e?: string;
       created_at?: string;
     };
 
     if (
-      payload.scheme !== SIMPLE_BLIND_SCHEME
+      !payload.voting_id
+      || payload.voting_id.trim().length === 0
+      || payload.scheme !== SIMPLE_BLIND_SCHEME
       || !payload.key_id
       || typeof payload.bits !== "number"
+      || payload.hash !== SIMPLE_BLIND_HASH
+      || payload.salt_length !== SIMPLE_BLIND_SALT_LENGTH
       || !payload.n
       || !payload.e
     ) {
@@ -336,13 +525,19 @@ export function parseSimpleBlindKeyAnnouncement(
     if (expectedCoordinatorNpub && coordinatorNpub !== expectedCoordinatorNpub) {
       return null;
     }
+    if (expectedVotingId && payload.voting_id !== expectedVotingId) {
+      return null;
+    }
 
     return {
       coordinatorNpub,
+      votingId: payload.voting_id,
       publicKey: {
         scheme: SIMPLE_BLIND_SCHEME,
         keyId: payload.key_id,
         bits: payload.bits,
+        hash: SIMPLE_BLIND_HASH,
+        saltLength: SIMPLE_BLIND_SALT_LENGTH,
         n: payload.n,
         e: payload.e,
       },
@@ -356,6 +551,7 @@ export function parseSimpleBlindKeyAnnouncement(
 
 export async function fetchLatestSimpleBlindKeyAnnouncement(input: {
   coordinatorNpub: string;
+  votingId?: string;
   relays?: string[];
 }): Promise<SimpleBlindKeyAnnouncement | null> {
   const decoded = nip19.decode(input.coordinatorNpub.trim());
@@ -363,7 +559,10 @@ export async function fetchLatestSimpleBlindKeyAnnouncement(input: {
     throw new Error("Coordinator value must be an npub.");
   }
 
-  const relays = buildPublicRelays(input.relays);
+  const relays = await resolveNip65OutboxRelays({
+    npub: input.coordinatorNpub,
+    fallbackRelays: buildPublicRelays(input.relays),
+  });
   const pool = new SimplePool();
   try {
     const events = await pool.querySync(relays, {
@@ -372,7 +571,13 @@ export async function fetchLatestSimpleBlindKeyAnnouncement(input: {
       limit: 20,
     });
     const parsed = events
-      .map((event) => parseSimpleBlindKeyAnnouncement(event as VerifiedEvent, input.coordinatorNpub))
+      .map((event) =>
+        parseSimpleBlindKeyAnnouncement(
+          event as VerifiedEvent,
+          input.coordinatorNpub,
+          input.votingId,
+        ),
+      )
       .filter((entry): entry is SimpleBlindKeyAnnouncement => entry !== null)
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
     return parsed[0] ?? null;
@@ -383,6 +588,7 @@ export async function fetchLatestSimpleBlindKeyAnnouncement(input: {
 
 export function subscribeLatestSimpleBlindKeyAnnouncement(input: {
   coordinatorNpub: string;
+  votingId?: string;
   relays?: string[];
   onAnnouncement: (announcement: SimpleBlindKeyAnnouncement | null) => void;
   onError?: (error: Error) => void;
@@ -392,13 +598,15 @@ export function subscribeLatestSimpleBlindKeyAnnouncement(input: {
     throw new Error("Coordinator value must be an npub.");
   }
 
-  const relays = buildPublicRelays(input.relays);
+  const fallbackRelays = buildPublicRelays(input.relays);
   const pool = new SimplePool();
   const announcements = new Map<string, SimpleBlindKeyAnnouncement>();
   let closed = false;
+  let subscription: { close: (reason?: string) => Promise<void> | void } | null = null;
 
   void fetchLatestSimpleBlindKeyAnnouncement({
     coordinatorNpub: input.coordinatorNpub,
+    votingId: input.votingId,
     relays: input.relays,
   }).then((announcement) => {
     if (closed || !announcement) {
@@ -414,37 +622,54 @@ export function subscribeLatestSimpleBlindKeyAnnouncement(input: {
     }
   });
 
-  const subscription = pool.subscribeMany(relays, {
-    kinds: [SIMPLE_BLIND_KEY_KIND],
-    authors: [decoded.data as string],
-    limit: 20,
-  }, {
-    onevent: (event) => {
-      const announcement = parseSimpleBlindKeyAnnouncement(event as VerifiedEvent, input.coordinatorNpub);
-      if (!announcement) {
-        return;
-      }
+  void resolveNip65OutboxRelays({
+    npub: input.coordinatorNpub,
+    fallbackRelays,
+  }).then((relays) => {
+    if (closed) {
+      return;
+    }
 
-      announcements.set(announcement.event.id, announcement);
-      const latest = [...announcements.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null;
-      input.onAnnouncement(latest);
-    },
-    onclose: (reasons) => {
-      if (closed) {
-        return;
-      }
+    subscription = pool.subscribeMany(relays, {
+      kinds: [SIMPLE_BLIND_KEY_KIND],
+      authors: [decoded.data as string],
+      limit: 20,
+    }, {
+      onevent: (event) => {
+        const announcement = parseSimpleBlindKeyAnnouncement(
+          event as VerifiedEvent,
+          input.coordinatorNpub,
+          input.votingId,
+        );
+        if (!announcement) {
+          return;
+        }
 
-      const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
-      if (errors.length > 0) {
-        input.onError?.(new Error(errors.join("; ")));
-      }
-    },
-    maxWait: 4000,
+        announcements.set(announcement.event.id, announcement);
+        const latest = [...announcements.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null;
+        input.onAnnouncement(latest);
+      },
+      onclose: (reasons) => {
+        if (closed) {
+          return;
+        }
+
+        const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
+        if (errors.length > 0) {
+          input.onError?.(new Error(errors.join("; ")));
+        }
+      },
+      maxWait: SIMPLE_PUBLIC_SUBSCRIPTION_MAX_WAIT_MS,
+    });
+  }).catch((error) => {
+    if (!closed && error instanceof Error) {
+      input.onError?.(error);
+    }
   });
 
   return () => {
     closed = true;
-    void subscription.close("closed by caller");
+    void subscription?.close("closed by caller");
     pool.destroy();
   };
 }
@@ -459,7 +684,7 @@ export function createSimpleBlindIssuanceRequest(input: {
     const modulus = hexToBigint(input.publicKey.n);
     const exponent = hexToBigint(input.publicKey.e);
     const tokenMessage = input.tokenMessage?.trim() || `${input.votingId}:${randomUuid(input.webCrypto)}`;
-    const message = hashMessageRepresentative(tokenMessage, modulus);
+    const message = encodePssRepresentative(tokenMessage, modulus, input.webCrypto);
 
     let blindingFactor = 0n;
     do {
@@ -528,6 +753,7 @@ export function unblindSimpleBlindShare(input: {
   const keyAnnouncement = parseSimpleBlindKeyAnnouncement(
     input.response.keyAnnouncementEvent,
     input.response.coordinatorNpub,
+    input.secret.votingId,
   );
   if (!keyAnnouncement) {
     throw new Error("Blind response key announcement is invalid.");
@@ -573,6 +799,7 @@ export function parseSimpleShardCertificate(
     const keyAnnouncement = parseSimpleBlindKeyAnnouncement(
       share.keyAnnouncementEvent,
       expectedCoordinatorNpub ?? share.coordinatorNpub,
+      share.votingId,
     );
     if (!keyAnnouncement) {
       return null;
@@ -582,12 +809,7 @@ export function parseSimpleShardCertificate(
       return null;
     }
 
-    const modulus = hexToBigint(keyAnnouncement.publicKey.n);
-    const exponent = hexToBigint(keyAnnouncement.publicKey.e);
-    const signature = hexToBigint(share.unblindedSignature);
-    const representative = hashMessageRepresentative(share.tokenMessage, modulus);
-    const recovered = modPow(signature, exponent, modulus);
-    if (recovered !== representative) {
+    if (!verifyPssRepresentative(keyAnnouncement.publicKey, share.tokenMessage, share.unblindedSignature)) {
       return null;
     }
 
@@ -603,6 +825,55 @@ export function parseSimpleShardCertificate(
       createdAt: share.createdAt,
       publicKey: keyAnnouncement.publicKey,
       event: share,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function toSimplePublicShardProof(
+  share: SimpleShardCertificate,
+): SimplePublicShardProof {
+  return {
+    coordinatorNpub: share.coordinatorNpub,
+    votingId: share.votingId,
+    tokenCommitment: share.tokenMessage,
+    unblindedSignature: share.unblindedSignature,
+    shareIndex: share.shareIndex,
+    keyAnnouncementEvent: share.keyAnnouncementEvent,
+  };
+}
+
+export function parseSimplePublicShardProof(
+  proof: SimplePublicShardProof,
+  expectedCoordinatorNpub?: string,
+): ParsedSimplePublicShardProof | null {
+  try {
+    const keyAnnouncement = parseSimpleBlindKeyAnnouncement(
+      proof.keyAnnouncementEvent,
+      expectedCoordinatorNpub ?? proof.coordinatorNpub,
+      proof.votingId,
+    );
+    if (!keyAnnouncement) {
+      return null;
+    }
+
+    if (proof.coordinatorNpub !== keyAnnouncement.coordinatorNpub) {
+      return null;
+    }
+
+    if (!verifyPssRepresentative(keyAnnouncement.publicKey, proof.tokenCommitment, proof.unblindedSignature)) {
+      return null;
+    }
+
+    return {
+      coordinatorNpub: proof.coordinatorNpub,
+      votingId: proof.votingId,
+      tokenCommitment: proof.tokenCommitment,
+      shareIndex: proof.shareIndex,
+      publicKey: keyAnnouncement.publicKey,
+      keyAnnouncement,
+      event: proof,
     };
   } catch {
     return null;
@@ -627,6 +898,35 @@ export async function deriveTokenIdFromSimpleShardCertificates(
 
   const shareDescriptor = validCertificates
     .map((certificate) => `${certificate.coordinatorNpub}:${certificate.shardId}:${certificate.publicKey.keyId}`)
+    .sort()
+    .join("|");
+  const tokenId = await sha256Hex(`${uniqueTokenMessages[0]}:${shareDescriptor}`);
+  return tokenId.slice(0, length);
+}
+
+export async function deriveTokenIdFromSimplePublicShardProofs(
+  proofs: SimplePublicShardProof[],
+  length = 20,
+): Promise<string | null> {
+  const validProofs = proofs
+    .map((proof) => parseSimplePublicShardProof(proof))
+    .filter((proof): proof is ParsedSimplePublicShardProof => proof !== null);
+  if (validProofs.length === 0) {
+    return null;
+  }
+
+  const uniqueTokenMessages = Array.from(
+    new Set(validProofs.map((proof) => proof.tokenCommitment)),
+  );
+  if (uniqueTokenMessages.length !== 1) {
+    return null;
+  }
+
+  const shareDescriptor = validProofs
+    .map(
+      (proof) =>
+        `${proof.coordinatorNpub}:${proof.publicKey.keyId}:${proof.shareIndex}`,
+    )
     .sort()
     .join("|");
   const tokenId = await sha256Hex(`${uniqueTokenMessages[0]}:${shareDescriptor}`);
