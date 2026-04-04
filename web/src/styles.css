@@ -451,9 +451,9 @@ code {
 
 .simple-role-switch {
   display: inline-grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
-  width: min(420px, 100%);
+  width: min(560px, 100%);
   padding: 8px;
   border: 1px solid #334155;
   background: #0f172a;
