@@ -1098,6 +1098,10 @@ code {
   object-fit: cover;
 }
 
+.simple-scanner-canvas {
+  display: none;
+}
+
 .simple-voter-choice-row {
   display: flex;
   flex-wrap: wrap;

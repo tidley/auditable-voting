@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import jsQR from "jsqr";
 
 type BarcodeDetectorResultLike = {
   rawValue?: string;
@@ -33,6 +34,7 @@ export default function SimpleQrScanner({
   prompt?: string;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const detectorRef = useRef<BarcodeDetectorLike | null>(null);
   const animationFrameRef = useRef<number | null>(null);
@@ -52,17 +54,13 @@ export default function SimpleQrScanner({
 
     if (!navigator.mediaDevices?.getUserMedia) {
       setStatus("error");
-      setErrorMessage("Camera access is not available in this browser.");
+      setErrorMessage("Camera access is not available in this browser. Use HTTPS or localhost, or paste the npub manually.");
       return;
     }
 
-    if (!barcodeDetectorCtor) {
-      setStatus("error");
-      setErrorMessage("QR scanning is not available in this browser. Paste the voting package instead.");
-      return;
-    }
-
-    detectorRef.current = new barcodeDetectorCtor({ formats: ["qr_code"] });
+    detectorRef.current = barcodeDetectorCtor
+      ? new barcodeDetectorCtor({ formats: ["qr_code"] })
+      : null;
     setStatus("starting");
     setErrorMessage(null);
 
@@ -103,14 +101,42 @@ export default function SimpleQrScanner({
       const scan = () => {
         const detector = detectorRef.current;
         const currentVideo = videoRef.current;
+        const canvas = canvasRef.current;
 
-        if (!detector || !currentVideo || currentVideo.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+        if (!currentVideo || currentVideo.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
           animationFrameRef.current = window.requestAnimationFrame(scan);
           return;
         }
 
-        void detector.detect(currentVideo).then((results) => {
-          const rawValue = results.find((result) => typeof result.rawValue === "string" && result.rawValue.trim())?.rawValue?.trim();
+        const detectPromise = detector
+          ? detector.detect(currentVideo).then((results) => (
+            results.find((result) => typeof result.rawValue === "string" && result.rawValue.trim())?.rawValue?.trim() ?? null
+          ))
+          : Promise.resolve().then(() => {
+            if (!canvas) {
+              return null;
+            }
+
+            const width = currentVideo.videoWidth;
+            const height = currentVideo.videoHeight;
+            if (!width || !height) {
+              return null;
+            }
+
+            canvas.width = width;
+            canvas.height = height;
+            const context = canvas.getContext("2d", { willReadFrequently: true });
+            if (!context) {
+              return null;
+            }
+
+            context.drawImage(currentVideo, 0, 0, width, height);
+            const imageData = context.getImageData(0, 0, width, height);
+            const result = jsQR(imageData.data, imageData.width, imageData.height);
+            return result?.data?.trim() || null;
+          });
+
+        void detectPromise.then((rawValue) => {
           if (rawValue) {
             void Promise.resolve(onDetected(rawValue)).then((accepted) => {
               if (accepted) {
@@ -176,6 +202,7 @@ export default function SimpleQrScanner({
         </button>
       </div>
       <video ref={videoRef} className="simple-scanner-video" muted playsInline autoPlay />
+      <canvas ref={canvasRef} className="simple-scanner-canvas" aria-hidden="true" />
       {status === "starting" && <p className="simple-voter-note">Starting camera...</p>}
       {status === "scanning" && <p className="simple-voter-note">Scanning for a QR code...</p>}
       {errorMessage ? <p className="simple-voter-empty">{errorMessage}</p> : null}
