@@ -91,7 +91,8 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
 
       {role === 'voter' ? <SimpleUiApp /> : role === 'coordinator' ? <SimpleCoordinatorApp /> : <SimpleAuditorApp />}
       <footer className='simple-app-version' aria-label='App version'>
-        {SIMPLE_APP_VERSION}
+        <span>{SIMPLE_APP_VERSION}</span>
+        <a href='project-explainer.html'>Description</a>
       </footer>
     </div>
   );
