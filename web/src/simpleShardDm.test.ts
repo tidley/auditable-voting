@@ -9,6 +9,8 @@ const wrapEvent = vi.fn();
 const unwrapEvent = vi.fn();
 const decode = vi.fn();
 const getPublicKey = vi.fn();
+const resolveNip65ConversationRelays = vi.fn();
+const resolveNip65InboxRelays = vi.fn();
 
 vi.mock("nostr-tools", () => ({
   getPublicKey,
@@ -51,6 +53,11 @@ vi.mock("./nostrPublishQueue", () => ({
   ) => Promise.allSettled(relays.map((relay) => publishSingleRelay(relay))),
 }));
 
+vi.mock("./nip65RelayHints", () => ({
+  resolveNip65ConversationRelays,
+  resolveNip65InboxRelays,
+}));
+
 describe("simpleShardDm", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -65,6 +72,11 @@ describe("simpleShardDm", () => {
     publish.mockImplementation((relays: string[]) => relays.map(() => Promise.resolve(undefined)));
     querySync.mockResolvedValue([]);
     subscribeMany.mockReturnValue({ close: vi.fn(async () => undefined) });
+    resolveNip65ConversationRelays.mockResolvedValue([
+      "wss://recipient.example",
+      "wss://sender.example",
+    ]);
+    resolveNip65InboxRelays.mockResolvedValue(["wss://inbox.example"]);
   });
 
   it("sends blinded shard requests over DMs", async () => {
@@ -90,6 +102,11 @@ describe("simpleShardDm", () => {
       votingId: "vote-1",
       blindedMessage: "blind-msg-1",
       createdAt: "2026-04-02T00:00:00.000Z",
+    });
+    expect(resolveNip65ConversationRelays).toHaveBeenCalledWith({
+      recipientNpub: "npub1coord",
+      senderNpub: "npub1voter",
+      fallbackRelays: expect.any(Array),
     });
     expect(result.successes).toBeGreaterThan(0);
   });
@@ -236,6 +253,9 @@ describe("simpleShardDm", () => {
       onRequests,
     });
 
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
     expect(onRequests).toHaveBeenCalledWith([
       {
         id: "request-1",
@@ -252,6 +272,10 @@ describe("simpleShardDm", () => {
         createdAt: "2026-04-02T00:00:01.000Z",
       },
     ]);
+    expect(resolveNip65InboxRelays).toHaveBeenCalledWith({
+      npub: "npub1cdcdcdcd",
+      fallbackRelays: expect.any(Array),
+    });
 
     unsubscribe();
   });

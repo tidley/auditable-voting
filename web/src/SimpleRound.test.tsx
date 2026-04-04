@@ -1006,6 +1006,123 @@ describe("Simple round flow", () => {
     });
   });
 
+  it("keeps send ticket disabled until the blinded ticket request is received", async () => {
+    const { default: SimpleCoordinatorApp } = await import("./SimpleCoordinatorApp");
+
+    const coordinatorSecretKey = Uint8Array.from({ length: 32 }, (_, index) => index + 65);
+    const coordinatorNsec = nip19.nsecEncode(coordinatorSecretKey);
+    const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecretKey));
+
+    liveVotes = [{
+      votingId: "legacy-round",
+      prompt: "Legacy cached prompt",
+      coordinatorNpub,
+      createdAt: "2026-04-02T00:00:00.000Z",
+      thresholdT: 1,
+      thresholdN: 1,
+      authorizedCoordinatorNpubs: [coordinatorNpub],
+      eventId: "legacy-event",
+    }];
+    coordinatorFollowers = [{
+      coordinatorNpub,
+      voterNpub: "npub1voterxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      voterId: "abc1234",
+      createdAt: "2026-04-02T00:01:00.000Z",
+    }];
+
+    await saveSimpleActorState({
+      role: "coordinator",
+      keypair: {
+        nsec: coordinatorNsec,
+        npub: coordinatorNpub,
+      },
+      updatedAt: new Date().toISOString(),
+      cache: {
+        leadCoordinatorNpub: "",
+        followers: [{
+          id: "follower-1",
+          dmEventId: "follow-event-1",
+          voterNpub: "npub1voterxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          voterId: "abc1234",
+          createdAt: "2026-04-02T00:01:00.000Z",
+        }],
+        subCoordinators: [],
+        ticketDeliveries: {},
+        pendingRequests: [],
+        registrationStatus: null,
+        assignmentStatus: null,
+        questionPrompt: "Should the proposal pass?",
+        questionThresholdT: "1",
+        questionThresholdN: "1",
+        questionShareIndex: "1",
+        roundBlindPrivateKeys: {
+          "legacy-round": {
+            scheme: "rsabssa-sha384-pss-randomized-v1",
+            modulus: "c3Q",
+            exponent: "AQAB",
+            privateExponent: "c3Q",
+            primeP: "cA",
+            primeQ: "cQ",
+            publicKeyJwk: {
+              kty: "RSA",
+              n: "c3Q",
+              e: "AQAB",
+              alg: "PS384",
+              key_ops: ["verify"],
+              ext: true,
+            },
+            hash: "SHA-384",
+            saltLength: 48,
+          } as any,
+        },
+        roundBlindKeyAnnouncements: {
+          "legacy-round": {
+            coordinatorNpub,
+            votingId: "legacy-round",
+            publicKey: {
+              scheme: "rsabssa-sha384-pss-randomized-v1",
+              keyId: "legacy-key-id",
+              modulus: "c3Q",
+              exponent: "AQAB",
+              keyBits: 3072,
+              hash: "SHA-384",
+              saltLength: 48,
+            },
+            createdAt: "2026-04-02T00:00:00.000Z",
+            event: { id: "blind-key-event" },
+          } as any,
+        },
+        publishStatus: null,
+        publishedVotes: [{
+          votingId: "legacy-round",
+          prompt: "Legacy cached prompt",
+          coordinatorNpub,
+          createdAt: "2026-04-02T00:00:00.000Z",
+          thresholdT: 1,
+          thresholdN: 1,
+          authorizedCoordinatorNpubs: [coordinatorNpub],
+          eventId: "legacy-event",
+        }],
+        selectedVotingId: "legacy-round",
+        selectedSubmittedVotingId: "legacy-round",
+        submittedVotes: [],
+      },
+    });
+
+    const coordinator = render(<SimpleCoordinatorApp />);
+    const coordinatorUi = within(coordinator.container);
+
+    await waitFor(() => {
+      expect(
+        coordinatorUi.getByText(/Waiting for this voter's blinded ticket request\./i),
+      ).toBeTruthy();
+    });
+
+    expect(
+      (coordinatorUi.getByRole("button", { name: /Send ticket/i }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
   it("clears voter coordinators on refresh id and does not restore them on reload", async () => {
     const user = userEvent.setup();
     const { default: SimpleUiApp } = await import("./SimpleUiApp");

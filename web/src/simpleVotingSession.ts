@@ -1,6 +1,9 @@
 import { finalizeEvent, getPublicKey, nip19, SimplePool } from "nostr-tools";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import {
+  resolveNip65OutboxRelays,
+} from "./nip65RelayHints";
+import {
   deriveTokenIdFromSimplePublicShardProofs,
   toSimplePublicShardProof,
   type SimpleShardCertificate,
@@ -150,7 +153,10 @@ export async function publishSimpleLiveVote(input: {
   const secretKey = decoded.data as Uint8Array;
   const coordinatorHex = getPublicKey(secretKey);
   const coordinatorNpub = nip19.npubEncode(coordinatorHex);
-  const relays = buildPublicRelays(input.relays);
+  const relays = await resolveNip65OutboxRelays({
+    npub: coordinatorNpub,
+    fallbackRelays: buildPublicRelays(input.relays),
+  });
   const createdAt = new Date().toISOString();
   const votingId = input.votingId?.trim() || crypto.randomUUID();
   const authorizedCoordinatorNpubs = Array.from(
@@ -227,7 +233,10 @@ export async function fetchLatestSimpleLiveVote(input: {
   }
 
   const coordinatorHex = decoded.data as string;
-  const relays = buildPublicRelays(input.relays);
+  const relays = await resolveNip65OutboxRelays({
+    npub: input.coordinatorNpub,
+    fallbackRelays: buildPublicRelays(input.relays),
+  });
   const pool = new SimplePool();
 
   try {
@@ -260,41 +269,55 @@ export function subscribeLatestSimpleLiveVote(input: {
   }
 
   const coordinatorHex = decoded.data as string;
-  const relays = buildPublicRelays(input.relays);
+  const fallbackRelays = buildPublicRelays(input.relays);
   const pool = new SimplePool();
   const sessions = new Map<string, SimpleLiveVoteSession>();
   let closed = false;
+  let subscription: { close: (reason?: string) => Promise<void> | void } | null = null;
 
-  const subscription = pool.subscribeMany(relays, {
-    kinds: [SIMPLE_LIVE_VOTE_KIND],
-    authors: [coordinatorHex],
-    limit: 20,
-  }, {
-    onevent: (event) => {
-      const session = parseSimpleLiveVoteEvent(event, input.coordinatorNpub);
-      if (!session) {
-        return;
-      }
+  void resolveNip65OutboxRelays({
+    npub: input.coordinatorNpub,
+    fallbackRelays,
+  }).then((relays) => {
+    if (closed) {
+      return;
+    }
 
-      sessions.set(session.eventId, session);
-      input.onSession(sortByCreatedAtDescending([...sessions.values()])[0] ?? null);
-    },
-    onclose: (reasons) => {
-      if (closed) {
-        return;
-      }
+    subscription = pool.subscribeMany(relays, {
+      kinds: [SIMPLE_LIVE_VOTE_KIND],
+      authors: [coordinatorHex],
+      limit: 20,
+    }, {
+      onevent: (event) => {
+        const session = parseSimpleLiveVoteEvent(event, input.coordinatorNpub);
+        if (!session) {
+          return;
+        }
 
-      const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
-      if (errors.length > 0) {
-        input.onError?.(new Error(errors.join("; ")));
-      }
-    },
-    maxWait: SIMPLE_PUBLIC_SUBSCRIPTION_MAX_WAIT_MS,
+        sessions.set(session.eventId, session);
+        input.onSession(sortByCreatedAtDescending([...sessions.values()])[0] ?? null);
+      },
+      onclose: (reasons) => {
+        if (closed) {
+          return;
+        }
+
+        const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
+        if (errors.length > 0) {
+          input.onError?.(new Error(errors.join("; ")));
+        }
+      },
+      maxWait: SIMPLE_PUBLIC_SUBSCRIPTION_MAX_WAIT_MS,
+    });
+  }).catch((error) => {
+    if (!closed && error instanceof Error) {
+      input.onError?.(error);
+    }
   });
 
   return () => {
     closed = true;
-    void subscription.close("closed by caller");
+    void subscription?.close("closed by caller");
     pool.destroy();
   };
 }
@@ -311,41 +334,55 @@ export function subscribeSimpleLiveVotes(input: {
   }
 
   const coordinatorHex = decoded.data as string;
-  const relays = buildPublicRelays(input.relays);
+  const fallbackRelays = buildPublicRelays(input.relays);
   const pool = new SimplePool();
   const sessions = new Map<string, SimpleLiveVoteSession>();
   let closed = false;
+  let subscription: { close: (reason?: string) => Promise<void> | void } | null = null;
 
-  const subscription = pool.subscribeMany(relays, {
-    kinds: [SIMPLE_LIVE_VOTE_KIND],
-    authors: [coordinatorHex],
-    limit: 100,
-  }, {
-    onevent: (event) => {
-      const session = parseSimpleLiveVoteEvent(event, input.coordinatorNpub);
-      if (!session) {
-        return;
-      }
+  void resolveNip65OutboxRelays({
+    npub: input.coordinatorNpub,
+    fallbackRelays,
+  }).then((relays) => {
+    if (closed) {
+      return;
+    }
 
-      sessions.set(session.eventId, session);
-      input.onSessions(sortByCreatedAtDescending([...sessions.values()]));
-    },
-    onclose: (reasons) => {
-      if (closed) {
-        return;
-      }
+    subscription = pool.subscribeMany(relays, {
+      kinds: [SIMPLE_LIVE_VOTE_KIND],
+      authors: [coordinatorHex],
+      limit: 100,
+    }, {
+      onevent: (event) => {
+        const session = parseSimpleLiveVoteEvent(event, input.coordinatorNpub);
+        if (!session) {
+          return;
+        }
 
-      const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
-      if (errors.length > 0) {
-        input.onError?.(new Error(errors.join("; ")));
-      }
-    },
-    maxWait: SIMPLE_PUBLIC_SUBSCRIPTION_MAX_WAIT_MS,
+        sessions.set(session.eventId, session);
+        input.onSessions(sortByCreatedAtDescending([...sessions.values()]));
+      },
+      onclose: (reasons) => {
+        if (closed) {
+          return;
+        }
+
+        const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
+        if (errors.length > 0) {
+          input.onError?.(new Error(errors.join("; ")));
+        }
+      },
+      maxWait: SIMPLE_PUBLIC_SUBSCRIPTION_MAX_WAIT_MS,
+    });
+  }).catch((error) => {
+    if (!closed && error instanceof Error) {
+      input.onError?.(error);
+    }
   });
 
   return () => {
     closed = true;
-    void subscription.close("closed by caller");
+    void subscription?.close("closed by caller");
     pool.destroy();
   };
 }
@@ -386,7 +423,15 @@ export async function publishSimpleSubmittedVote(input: {
 
   const secretKey = ballotDecoded.data as Uint8Array;
   const ballotNpub = nip19.npubEncode(getPublicKey(secretKey));
-  const relays = buildPublicRelays(input.relays);
+  const coordinatorRelays = await Promise.all(
+    Array.from(new Set(input.shardCertificates.map((certificate) => certificate.coordinatorNpub))).map(
+      async (coordinatorNpub) => resolveNip65OutboxRelays({
+        npub: coordinatorNpub,
+        fallbackRelays: buildPublicRelays(input.relays),
+      }),
+    ),
+  );
+  const relays = Array.from(new Set(coordinatorRelays.flat()));
   const createdAt = new Date().toISOString();
   const shardProofs = input.shardCertificates.map((certificate) =>
     toSimplePublicShardProof(certificate),

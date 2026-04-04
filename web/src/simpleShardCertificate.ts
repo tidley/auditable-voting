@@ -8,6 +8,7 @@ import {
 } from "nostr-tools";
 import { sha384 } from "@noble/hashes/sha2.js";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
+import { resolveNip65OutboxRelays } from "./nip65RelayHints";
 import {
   SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS,
   SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS,
@@ -435,7 +436,11 @@ export async function publishSimpleBlindKeyAnnouncement(input: {
   }
 
   const secretKey = decoded.data as Uint8Array;
-  const relays = buildPublicRelays(input.relays);
+  const coordinatorNpub = nip19.npubEncode(getPublicKey(secretKey));
+  const relays = await resolveNip65OutboxRelays({
+    npub: coordinatorNpub,
+    fallbackRelays: buildPublicRelays(input.relays),
+  });
   const createdAt = new Date().toISOString();
   const event = finalizeEvent({
     kind: SIMPLE_BLIND_KEY_KIND,
@@ -554,7 +559,10 @@ export async function fetchLatestSimpleBlindKeyAnnouncement(input: {
     throw new Error("Coordinator value must be an npub.");
   }
 
-  const relays = buildPublicRelays(input.relays);
+  const relays = await resolveNip65OutboxRelays({
+    npub: input.coordinatorNpub,
+    fallbackRelays: buildPublicRelays(input.relays),
+  });
   const pool = new SimplePool();
   try {
     const events = await pool.querySync(relays, {
@@ -590,10 +598,11 @@ export function subscribeLatestSimpleBlindKeyAnnouncement(input: {
     throw new Error("Coordinator value must be an npub.");
   }
 
-  const relays = buildPublicRelays(input.relays);
+  const fallbackRelays = buildPublicRelays(input.relays);
   const pool = new SimplePool();
   const announcements = new Map<string, SimpleBlindKeyAnnouncement>();
   let closed = false;
+  let subscription: { close: (reason?: string) => Promise<void> | void } | null = null;
 
   void fetchLatestSimpleBlindKeyAnnouncement({
     coordinatorNpub: input.coordinatorNpub,
@@ -613,41 +622,54 @@ export function subscribeLatestSimpleBlindKeyAnnouncement(input: {
     }
   });
 
-  const subscription = pool.subscribeMany(relays, {
-    kinds: [SIMPLE_BLIND_KEY_KIND],
-    authors: [decoded.data as string],
-    limit: 20,
-  }, {
-    onevent: (event) => {
-      const announcement = parseSimpleBlindKeyAnnouncement(
-        event as VerifiedEvent,
-        input.coordinatorNpub,
-        input.votingId,
-      );
-      if (!announcement) {
-        return;
-      }
+  void resolveNip65OutboxRelays({
+    npub: input.coordinatorNpub,
+    fallbackRelays,
+  }).then((relays) => {
+    if (closed) {
+      return;
+    }
 
-      announcements.set(announcement.event.id, announcement);
-      const latest = [...announcements.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null;
-      input.onAnnouncement(latest);
-    },
-    onclose: (reasons) => {
-      if (closed) {
-        return;
-      }
+    subscription = pool.subscribeMany(relays, {
+      kinds: [SIMPLE_BLIND_KEY_KIND],
+      authors: [decoded.data as string],
+      limit: 20,
+    }, {
+      onevent: (event) => {
+        const announcement = parseSimpleBlindKeyAnnouncement(
+          event as VerifiedEvent,
+          input.coordinatorNpub,
+          input.votingId,
+        );
+        if (!announcement) {
+          return;
+        }
 
-      const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
-      if (errors.length > 0) {
-        input.onError?.(new Error(errors.join("; ")));
-      }
-    },
-    maxWait: SIMPLE_PUBLIC_SUBSCRIPTION_MAX_WAIT_MS,
+        announcements.set(announcement.event.id, announcement);
+        const latest = [...announcements.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null;
+        input.onAnnouncement(latest);
+      },
+      onclose: (reasons) => {
+        if (closed) {
+          return;
+        }
+
+        const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
+        if (errors.length > 0) {
+          input.onError?.(new Error(errors.join("; ")));
+        }
+      },
+      maxWait: SIMPLE_PUBLIC_SUBSCRIPTION_MAX_WAIT_MS,
+    });
+  }).catch((error) => {
+    if (!closed && error instanceof Error) {
+      input.onError?.(error);
+    }
   });
 
   return () => {
     closed = true;
-    void subscription.close("closed by caller");
+    void subscription?.close("closed by caller");
     pool.destroy();
   };
 }

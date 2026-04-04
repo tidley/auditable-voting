@@ -561,7 +561,8 @@ export default function SimpleCoordinatorApp() {
     }
 
     const existingAnnouncement = roundBlindKeyAnnouncements[activeRound.votingId];
-    if (existingAnnouncement?.publicKey.keyId === blindPrivateKey.keyId) {
+    const existingAnnouncementKeyId = existingAnnouncement?.publicKey?.keyId;
+    if (existingAnnouncementKeyId === blindPrivateKey.keyId) {
       return;
     }
 
@@ -1378,6 +1379,13 @@ export default function SimpleCoordinatorApp() {
                           ),
                         )
                       : false;
+                    const canSendTicket = Boolean(
+                      keypair?.nsec &&
+                      activeBlindPrivateKey &&
+                      activeBlindKeyAnnouncement &&
+                      hasPendingRequest &&
+                      (isLeadCoordinator || activeShareIndex > 0),
+                    );
                     const ticketReceiptAck = ticketDelivery?.eventId
                       ? dmAcknowledgements.find(
                           (ack) =>
@@ -1400,13 +1408,7 @@ export default function SimpleCoordinatorApp() {
                               type='button'
                               className='simple-voter-secondary'
                               onClick={() => void sendTicket(follower)}
-                              disabled={
-                                !keypair?.nsec ||
-                                !activeBlindPrivateKey ||
-                                !activeBlindKeyAnnouncement ||
-                                !hasPendingRequest ||
-                                (!isLeadCoordinator && activeShareIndex <= 0)
-                              }
+                              disabled={!canSendTicket}
                             >
                               {ticketWasSent ? 'Resend' : 'Send ticket'}
                             </button>
