@@ -401,7 +401,7 @@
     <h1>Why auditable anonymous voting is hard, and why this stack can make it work</h1>
     <p class="lead">The usual failure mode is simple: either the operator can tell who voted for what, or outsiders cannot independently verify the result. This project is trying to avoid both failures at the same time.</p>
     <div class="quote">
-      <p>The trick is not “private voting” or “public auditing” alone. The trick is separating <strong>authorization</strong> from <strong>ballot publication</strong> without losing verifiability.</p>
+      <p>The trick is not “private voting” or “public auditing” alone. The trick is separating <strong>authorisation</strong> from <strong>ballot publication</strong> without losing verifiability.</p>
     </div>
     <div class="speaker-note">Open with the contradiction. Frame the entire deck as resolving a three-way tension: privacy, auditability, and deployability.</div>
   </section>
@@ -458,7 +458,7 @@
     <div class="grid-3">
       <div class="card">
         <h3>Central database bias</h3>
-        <p>Traditional apps want one backend to know identity, authorization, current state, and final outcome. That is convenient for product teams and bad for ballot secrecy.</p>
+        <p>Traditional apps want one backend to know identity, authorisation, current state, and final outcome. That is convenient for product teams and bad for ballot secrecy.</p>
       </div>
       <div class="card">
         <h3>Authentication leakage</h3>
@@ -486,7 +486,7 @@
         </div>
         <div class="flow-box">
           <h4>Reject duplicates</h4>
-          <p>without deanonymizing the token</p>
+          <p>without deanonymising the token</p>
         </div>
       </div>
     </div>
@@ -495,7 +495,7 @@
 
   <section class="slide">
     <div class="eyebrow">The Thesis</div>
-    <h2>Make authorization private, make ballots public, and make the bridge between them blind</h2>
+    <h2>Make authorisation private, make ballots public, and make the bridge between them blind</h2>
     <div class="diagram">
       <div class="diagram-title">The separating line that makes the system possible</div>
       <div class="flow flow-5">
@@ -522,7 +522,7 @@
       </div>
     </div>
     <div class="quote">
-      <p>Blind signatures are the privacy hinge. They let a coordinator authorize a vote <strong>without learning the exact credential that will later be spent in public</strong>.</p>
+      <p>Blind signatures are the privacy hinge. They let a coordinator authorise a vote <strong>without learning the exact credential that will later be spent in public</strong>.</p>
     </div>
     <div class="speaker-note">This is the core design claim. Everything else is support infrastructure around this separation.</div>
   </section>
@@ -582,47 +582,6 @@
   </section>
 
   <section class="slide">
-    <div class="eyebrow">Why Blind Signatures</div>
-    <h2>The authorization token must be valid, one-time, and unlinkable</h2>
-    <div class="grid-3">
-      <div class="card">
-        <h3>Not just login</h3>
-        <p>A normal login session is reusable and observable. A voting credential should be <strong>round-bound</strong> and separately spendable.</p>
-      </div>
-      <div class="card">
-        <h3>Not just a receipt</h3>
-        <p>If the public ballot reveals issuance metadata, the coordinator can deanonymize the vote. The spent proof must not expose issuance linkage.</p>
-      </div>
-      <div class="card">
-        <h3>Not just a token</h3>
-        <p>The token must be publicly verifiable enough to audit, but private enough that issuance and spend are not trivially connected.</p>
-      </div>
-    </div>
-    <div class="diagram">
-      <div class="diagram-title">Credential lifecycle</div>
-      <div class="flow flow-4">
-        <div class="flow-box">
-          <h4>Blinded request</h4>
-          <p>Coordinator sees a blinded message tied to the round.</p>
-        </div>
-        <div class="flow-box">
-          <h4>Blind signature share</h4>
-          <p>Coordinator signs without seeing the final token.</p>
-        </div>
-        <div class="flow-box">
-          <h4>Local unblinding</h4>
-          <p>Voter recovers the usable anonymous proof locally.</p>
-        </div>
-        <div class="flow-box">
-          <h4>One public spend</h4>
-          <p>Auditors validate the ballot and reject duplicates deterministically.</p>
-        </div>
-      </div>
-    </div>
-    <div class="speaker-note">This is the “ecash-style” part: a credential that behaves like a one-time anonymous spend, not a reusable authenticated session.</div>
-  </section>
-
-  <section class="slide">
     <div class="eyebrow">Why This Stack Specifically</div>
     <h2>Each piece covers a different failure mode</h2>
     <div class="table-wrap">
@@ -648,7 +607,7 @@
           <tr>
             <td><strong>Credential privacy</strong></td>
             <td>Blind-signature issuance</td>
-            <td>Coordinator authorizes without learning the final spend token.</td>
+            <td>Coordinator authorises without learning the final spend token.</td>
           </tr>
           <tr>
             <td><strong>Ballot unlinkability</strong></td>
@@ -678,17 +637,17 @@
       <div class="card">
         <h3>What threshold issuance changes</h3>
         <ul>
-          <li>The round defines the authorized coordinator roster</li>
+          <li>The round defines the authorised coordinator roster</li>
           <li>Each coordinator announces a per-round blind key</li>
           <li>The voter gathers enough distinct shares to reach threshold <span class="mono">T of N</span></li>
-          <li>The final ballot is valid only if enough authorized coordinators participated</li>
+          <li>The final ballot is valid only if enough authorised coordinators participated</li>
         </ul>
       </div>
       <div class="card">
         <h3>What auditors gain</h3>
         <ul>
           <li>They can verify the ballot used the right roster for that round</li>
-          <li>They can reject shares from unauthorized coordinators</li>
+          <li>They can reject shares from unauthorised coordinators</li>
           <li>They can compare public tallies across coordinators</li>
           <li>They can detect censorship or inflation by divergence</li>
         </ul>
@@ -726,7 +685,7 @@
       <div class="flow flow-5">
         <div class="flow-box">
           <h4>1. Publish round</h4>
-          <p>Public on Nostr: question, voting ID, threshold, authorized coordinators.</p>
+          <p>Public on Nostr: question, voting ID, threshold, authorised coordinators.</p>
         </div>
         <div class="flow-box">
           <h4>2. Announce blind keys</h4>
@@ -738,7 +697,7 @@
         </div>
         <div class="flow-box">
           <h4>4. Publish ballots</h4>
-          <p>Public on Nostr: ephemeral-key vote + anonymous proof material.</p>
+          <p>Public on Nostr: ephemeral-key vote + anonymous proof material, without issuance-linking metadata.</p>
         </div>
         <div class="flow-box">
           <h4>5. Recompute tally</h4>
@@ -753,7 +712,7 @@
       </div>
       <div class="card">
         <h3>Public</h3>
-        <p>Round metadata, coordinator roster, ballot stream, accepted tally logic, results.</p>
+        <p>Round metadata, coordinator roster, ballot stream, accepted tally logic, results. The public ballot must reveal enough to verify, but not enough to reconnect it to issuance.</p>
       </div>
       <div class="card">
         <h3>Local only</h3>
@@ -780,7 +739,7 @@
         <h3>What an auditor checks</h3>
         <ul>
           <li>Was each ballot bound to the correct round?</li>
-          <li>Did it meet threshold from authorized coordinators only?</li>
+          <li>Did it meet threshold from authorised coordinators only?</li>
           <li>Was the token spent more than once?</li>
           <li>Does the public tally match the accepted valid ballots?</li>
         </ul>
@@ -815,7 +774,7 @@
         <ul>
           <li>Publicly auditable rounds and ballots</li>
           <li>Static client deployment</li>
-          <li>Coordinator-blind authorization</li>
+          <li>Coordinator-blind authorisation</li>
           <li>Portable observer verification</li>
         </ul>
       </div>
@@ -837,7 +796,7 @@
     <div class="closing">
       <h2>Why this works: the stack aligns the trust boundaries with the protocol boundaries</h2>
       <div class="quote">
-        <p>Nostr handles <strong>shared signed public state</strong>. Blind signatures handle <strong>private unlinkable authorization</strong>. Ephemeral keys handle <strong>public ballot separation</strong>. Auditors handle <strong>independent recomputation</strong>.</p>
+        <p>Nostr handles <strong>shared signed public state</strong>. Blind signatures handle <strong>private unlinkable authorisation</strong>. Ephemeral keys handle <strong>public ballot separation</strong>. Auditors handle <strong>independent recomputation</strong>.</p>
       </div>
       <div class="grid-3">
         <div class="stat">
@@ -848,7 +807,7 @@
         <div class="stat">
           <span class="number">Blind</span>
           <h3>Issuance</h3>
-          <p>Coordinator authorizes without learning the final token.</p>
+          <p>Coordinator authorises without learning the final token.</p>
         </div>
         <div class="stat">
           <span class="number">Local</span>
