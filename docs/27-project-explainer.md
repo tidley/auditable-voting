@@ -1,8 +1,6 @@
 # Auditable Voting Explainer
 
-This document is a portable, teaching-oriented explanation of the project.
-
-It is written for readers who want to understand:
+This document is written for readers who want to understand:
 
 - what the system is trying to achieve
 - why it uses Nostr and blind signatures
@@ -29,7 +27,7 @@ The intended model is:
 
 The main goals are:
 
-- **privacy**: coordinators should not be able to deanonymize ballots
+- **privacy**: coordinators should not be able to deanonymise ballots
 - **auditability**: observers should be able to recompute the tally
 - **portability**: the client can run as a static web app
 - **resilience**: Nostr relays act as the shared public event layer
@@ -203,7 +201,7 @@ A coordinator publishes a live round. In the simple flow this includes:
 - `voting_id`
 - prompt / question
 - threshold information
-- authorized coordinator roster
+- authorised coordinator roster
 
 This tells voters:
 
@@ -268,14 +266,7 @@ flowchart LR
   M --> B --> BR --> S --> BS --> U --> T
 ```
 
-### Why this matters
-
-If done correctly:
-
-- the coordinator knows it signed *something valid*
-- but it should not know the final token that later appears in public voting
-
-That separation is the core privacy property.
+If done correctly, the coordinator signs *something valid* without learning the final token that will later appear in public voting.
 
 ---
 
@@ -310,7 +301,7 @@ flowchart LR
 
 Shares must be checked against:
 
-- the round’s authorized coordinator roster
+- the round’s authorised coordinator roster
 - the round’s blind key announcements
 - the threshold rule for that round
 
@@ -323,14 +314,14 @@ Once the voter has enough valid share material:
 - the voter creates an **ephemeral** ballot keypair
 - the voter publishes a public ballot to Nostr
 
-The public ballot should expose only what is needed to verify the vote, not what would link it back to issuance.
+The public ballot should expose only what is needed to verify the vote, not what would link it back to issuance. That is where the privacy property from blind issuance either survives or gets lost.
 
 ### Public ballot goals
 
 - contains the vote choice
 - contains anonymous proof material
 - can be validated publicly
-- cannot be linked back to the original blind request by the coordinator
+- omits issuance-linking fields, so the coordinator cannot tie the final ballot back to the original blind request
 
 ---
 
@@ -552,7 +543,7 @@ This is a Nostr-based anonymous voting system using blind threshold issuance, ep
 
 ### For security-minded audiences
 
-The project is attempting to separate voter eligibility from public ballot identity, so coordinators can help issue voting credentials without being able to deanonymize the final vote.
+The project is attempting to separate voter eligibility from public ballot identity, so coordinators can help issue voting credentials without being able to deanonymise the final vote.
 
 ---
 
