@@ -467,6 +467,25 @@ vi.mock("./simpleShardCertificate", () => ({
         }
       : null
   )),
+  parseSimplePublicShardProof: vi.fn((proof: any) => (
+    proof
+      ? {
+          coordinatorNpub: proof.coordinatorNpub,
+          votingId: proof.votingId,
+          tokenCommitment: proof.tokenCommitment,
+          shareIndex: proof.shareIndex,
+          publicKey: proof.keyAnnouncementEvent?.content?.public_key ?? { keyId: proof.keyAnnouncementEvent?.id ?? "blind-key" },
+          keyAnnouncement: {
+            coordinatorNpub: proof.coordinatorNpub,
+            votingId: proof.votingId,
+            publicKey: proof.keyAnnouncementEvent?.content?.public_key ?? { keyId: proof.keyAnnouncementEvent?.id ?? "blind-key" },
+            createdAt: proof.keyAnnouncementEvent?.created_at ?? new Date().toISOString(),
+            event: proof.keyAnnouncementEvent,
+          },
+          event: proof,
+        }
+      : null
+  )),
   deriveTokenIdFromSimplePublicShardProofs: vi.fn(async (proofs: any[]) => makeTokenId(proofs)),
 }));
 
@@ -811,6 +830,9 @@ vi.mock("./simpleVotingSession", () => ({
       liveVoteListSubscribers = liveVoteListSubscribers.filter((entry) => entry !== subscriber);
     };
   }),
+  fetchSimpleLiveVotes: vi.fn(async () => (
+    [...liveVotes].sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+  )),
   publishSimpleSubmittedVote: vi.fn(async (input: {
     ballotNsec: string;
     votingId: string;
@@ -1347,4 +1369,69 @@ describe("Simple round flow", () => {
       expect(voterUi.getByText(/Ticket received\./i)).toBeTruthy();
     });
   }, 40000);
+
+  it("lets an auditor inspect a public round and reconstruct the tally", async () => {
+    const { default: SimpleAppShell } = await import("./SimpleAppShell");
+
+    const coordinatorSecretKey = Uint8Array.from({ length: 32 }, (_, index) => index + 101);
+    const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecretKey));
+    const ballotSecretKey = Uint8Array.from({ length: 32 }, (_, index) => index + 151);
+    const ballotNpub = nip19.npubEncode(getPublicKey(ballotSecretKey));
+
+    liveVotes = [{
+      votingId: "audit-round-1",
+      prompt: "Should the proposal pass?",
+      coordinatorNpub,
+      createdAt: "2026-04-04T00:00:00.000Z",
+      thresholdT: 1,
+      thresholdN: 1,
+      authorizedCoordinatorNpubs: [coordinatorNpub],
+      eventId: "live-audit-1",
+    }];
+    submittedVotes = [{
+      eventId: "ballot-audit-1",
+      votingId: "audit-round-1",
+      voterNpub: ballotNpub,
+      choice: "Yes",
+      shardProofs: [{
+        coordinatorNpub,
+        votingId: "audit-round-1",
+        tokenCommitment: "audit-token-1",
+        unblindedSignature: "sig-1",
+        shareIndex: 1,
+        keyAnnouncementEvent: {
+          id: "blind-key-audit-1",
+          kind: 38993,
+          pubkey: coordinatorNpub,
+          content: JSON.stringify({
+            voting_id: "audit-round-1",
+            scheme: "rsabssa-sha384-pss-randomized-v1",
+            key_id: "audit-key-1",
+            bits: 3072,
+            hash: "SHA-384",
+            salt_length: 48,
+            n: "n-1",
+            e: "10001",
+            created_at: "2026-04-04T00:00:00.000Z",
+          }),
+          created_at: 1,
+          tags: [],
+          sig: "sig",
+        },
+      }],
+      tokenId: "token-audit-1",
+      createdAt: "2026-04-04T00:00:05.000Z",
+    }];
+
+    const auditor = render(<SimpleAppShell initialRole="auditor" />);
+    const auditorUi = within(auditor.container);
+
+    await waitFor(() => {
+      expect(auditorUi.getByRole("heading", { name: /^Auditor$/i, level: 1 })).toBeTruthy();
+      expect(auditorUi.getAllByText(/Should the proposal pass\?/i).length).toBeGreaterThan(0);
+      expect(auditorUi.getByText(/Yes: 1 \| No: 0/i)).toBeTruthy();
+      expect(auditorUi.getByText(/Vote Yes/i)).toBeTruthy();
+      expect(auditorUi.getByText(/Authorized coordinators: 1/i)).toBeTruthy();
+    });
+  });
 });

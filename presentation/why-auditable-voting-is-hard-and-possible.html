@@ -1,0 +1,936 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Why Auditable Anonymous Voting Is Hard — And Why This Stack Can Do It</title>
+  <style>
+    :root {
+      --bg: #091018;
+      --bg-2: #0f1824;
+      --panel: rgba(255, 255, 255, 0.05);
+      --panel-strong: rgba(255, 255, 255, 0.08);
+      --border: rgba(157, 214, 255, 0.16);
+      --text: #eef5ff;
+      --muted: #9cb3c9;
+      --accent: #6fd0ff;
+      --accent-2: #8ef0c7;
+      --warn: #ffcc74;
+      --danger: #ff7d91;
+      --ok: #8ef0c7;
+      --mono: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      --sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--sans);
+      background:
+        radial-gradient(circle at top left, rgba(111, 208, 255, 0.14), transparent 28%),
+        radial-gradient(circle at bottom right, rgba(142, 240, 199, 0.12), transparent 32%),
+        linear-gradient(180deg, var(--bg), #05090e 110%);
+      color: var(--text);
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    #progress {
+      position: fixed;
+      inset: 0 auto auto 0;
+      height: 3px;
+      width: 0;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      z-index: 40;
+      transition: width 180ms ease;
+    }
+
+    .slide {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 56px 72px 80px;
+      opacity: 0;
+      transform: translateX(42px);
+      transition: opacity 300ms ease, transform 300ms ease;
+      pointer-events: none;
+      overflow-y: auto;
+      gap: 24px;
+    }
+
+    .slide.active {
+      opacity: 1;
+      transform: translateX(0);
+      pointer-events: auto;
+    }
+
+    .slide.prev {
+      transform: translateX(-42px);
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--accent);
+      text-transform: uppercase;
+      font-size: 0.82rem;
+      letter-spacing: 0.14em;
+      font-weight: 700;
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 42px;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--accent));
+    }
+
+    h1 {
+      font-size: clamp(2.8rem, 6vw, 5.2rem);
+      line-height: 0.98;
+      letter-spacing: -0.04em;
+      max-width: 1100px;
+    }
+
+    h2 {
+      font-size: clamp(1.9rem, 4vw, 3rem);
+      line-height: 1.04;
+      letter-spacing: -0.03em;
+      max-width: 980px;
+    }
+
+    p, li, td {
+      color: var(--muted);
+      line-height: 1.58;
+      font-size: 1rem;
+    }
+
+    strong {
+      color: var(--text);
+      font-weight: 700;
+    }
+
+    .lead {
+      font-size: 1.2rem;
+      max-width: 840px;
+      color: #d6e4f3;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text);
+      font-size: 0.82rem;
+      font-weight: 700;
+    }
+
+    .grid-2, .grid-3, .grid-4 {
+      display: grid;
+      gap: 18px;
+      width: 100%;
+      max-width: 1180px;
+    }
+
+    .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+    .card, .diagram, .stat, .quote, .table-wrap {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      backdrop-filter: blur(12px);
+    }
+
+    .card, .quote, .table-wrap { padding: 24px; }
+
+    .card h3, .stat h3 {
+      margin-bottom: 12px;
+      font-size: 1rem;
+      color: var(--text);
+    }
+
+    .stat {
+      padding: 28px 20px;
+      text-align: center;
+    }
+
+    .stat .number {
+      display: block;
+      font-size: 2.6rem;
+      line-height: 1;
+      letter-spacing: -0.04em;
+      color: var(--text);
+      margin-bottom: 10px;
+    }
+
+    .diagram {
+      padding: 26px;
+      max-width: 1180px;
+      width: 100%;
+    }
+
+    .diagram-title {
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--accent);
+      margin-bottom: 16px;
+      font-weight: 700;
+    }
+
+    .flow {
+      display: grid;
+      gap: 14px;
+    }
+
+    .flow-4 {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .flow-5 {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+
+    .flow-box {
+      position: relative;
+      padding: 18px;
+      border-radius: 18px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.03);
+      min-height: 130px;
+    }
+
+    .flow-box h4 {
+      font-size: 0.95rem;
+      margin-bottom: 10px;
+    }
+
+    .flow-box::after {
+      content: "→";
+      position: absolute;
+      top: calc(50% - 10px);
+      right: -11px;
+      color: var(--accent);
+      font-size: 1.4rem;
+      font-weight: 700;
+    }
+
+    .flow-box:last-child::after {
+      display: none;
+    }
+
+    .tradeoff {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .tradeoff .left, .tradeoff .right {
+      padding: 18px;
+      border-radius: 18px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      min-height: 180px;
+    }
+
+    .tradeoff .left {
+      background: rgba(255, 125, 145, 0.08);
+      border-color: rgba(255, 125, 145, 0.18);
+    }
+
+    .tradeoff .right {
+      background: rgba(142, 240, 199, 0.08);
+      border-color: rgba(142, 240, 199, 0.18);
+    }
+
+    .tradeoff h3 {
+      margin-bottom: 12px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.95rem;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 12px 10px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--accent);
+      font-size: 0.82rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    ul {
+      list-style: none;
+      display: grid;
+      gap: 8px;
+    }
+
+    li::before {
+      content: "→ ";
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .mono {
+      font-family: var(--mono);
+      font-size: 0.92rem;
+      color: #d7ebff;
+    }
+
+    .quote {
+      max-width: 920px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .quote::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 4px;
+      background: linear-gradient(180deg, var(--accent), var(--accent-2));
+    }
+
+    .quote p {
+      font-size: 1.2rem;
+      color: var(--text);
+      max-width: 860px;
+    }
+
+    .closing {
+      max-width: 1100px;
+      display: grid;
+      gap: 18px;
+    }
+
+    .footer-bar {
+      position: fixed;
+      right: 22px;
+      bottom: 18px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      z-index: 50;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 0.82rem;
+    }
+
+    .footer-bar button {
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px 14px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    .speaker-note {
+      display: none;
+      position: fixed;
+      left: 22px;
+      bottom: 18px;
+      max-width: 430px;
+      border-radius: 14px;
+      border: 1px solid rgba(255, 204, 116, 0.24);
+      background: rgba(255, 204, 116, 0.08);
+      color: var(--warn);
+      padding: 10px 14px;
+      font-size: 0.78rem;
+      line-height: 1.45;
+      z-index: 50;
+      font-family: var(--mono);
+    }
+
+    body.show-notes .speaker-note {
+      display: block;
+    }
+
+    @media (max-width: 980px) {
+      .slide { padding: 34px 20px 86px; }
+      .grid-2, .grid-3, .grid-4, .flow-4, .flow-5, .tradeoff {
+        grid-template-columns: 1fr;
+      }
+      .flow-box::after {
+        content: "↓";
+        top: auto;
+        bottom: -18px;
+        right: calc(50% - 7px);
+      }
+      .flow-box:last-child::after {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="progress"></div>
+
+  <section class="slide active">
+    <div class="eyebrow">Auditable Voting</div>
+    <div class="pill-row">
+      <span class="pill">Anonymous ballots</span>
+      <span class="pill">Public auditability</span>
+      <span class="pill">Static client</span>
+      <span class="pill">Nostr + blind signatures</span>
+    </div>
+    <h1>Why auditable anonymous voting is hard, and why this stack can make it work</h1>
+    <p class="lead">The usual failure mode is simple: either the operator can tell who voted for what, or outsiders cannot independently verify the result. This project is trying to avoid both failures at the same time.</p>
+    <div class="quote">
+      <p>The trick is not “private voting” or “public auditing” alone. The trick is separating <strong>authorization</strong> from <strong>ballot publication</strong> without losing verifiability.</p>
+    </div>
+    <div class="speaker-note">Open with the contradiction. Frame the entire deck as resolving a three-way tension: privacy, auditability, and deployability.</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">The Core Problem</div>
+    <h2>Online voting pulls in four directions at once</h2>
+    <div class="grid-4">
+      <div class="stat">
+        <span class="number">1</span>
+        <h3>Eligibility</h3>
+        <p>Only real, allowed participants should be able to vote.</p>
+      </div>
+      <div class="stat">
+        <span class="number">2</span>
+        <h3>Anonymity</h3>
+        <p>No coordinator should be able to map a public ballot back to the voter.</p>
+      </div>
+      <div class="stat">
+        <span class="number">3</span>
+        <h3>Uniqueness</h3>
+        <p>Each voting credential must be spendable once, with deterministic conflict resolution.</p>
+      </div>
+      <div class="stat">
+        <span class="number">4</span>
+        <h3>Auditability</h3>
+        <p>Any observer should be able to recompute the tally from public evidence.</p>
+      </div>
+    </div>
+    <div class="tradeoff">
+      <div class="left">
+        <h3>Common bad shortcut</h3>
+        <ul>
+          <li>Operator checks identity</li>
+          <li>Operator also sees the vote</li>
+          <li>Audit depends on trusting the server</li>
+        </ul>
+      </div>
+      <div class="right">
+        <h3>What we actually need</h3>
+        <ul>
+          <li>Voter proves they may vote</li>
+          <li>Operator issues a credential without learning the final token</li>
+          <li>Ballot is public, but unlinkable</li>
+        </ul>
+      </div>
+    </div>
+    <div class="speaker-note">This slide explains why the problem is structurally hard, not just under-engineered.</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Why Most Systems Fail</div>
+    <h2>The awkward truth: normal web architecture is biased against private verifiable voting</h2>
+    <div class="grid-3">
+      <div class="card">
+        <h3>Central database bias</h3>
+        <p>Traditional apps want one backend to know identity, authorization, current state, and final outcome. That is convenient for product teams and bad for ballot secrecy.</p>
+      </div>
+      <div class="card">
+        <h3>Authentication leakage</h3>
+        <p>If the same identity that authenticates also publishes the vote, anonymity is gone. If the identity disappears too early, eligibility becomes hard to prove.</p>
+      </div>
+      <div class="card">
+        <h3>Audit theater</h3>
+        <p>Many “auditable” systems still require trusting server logs, private tables, or privileged access. That is not public verification.</p>
+      </div>
+    </div>
+    <div class="diagram">
+      <div class="diagram-title">The impossible-looking loop</div>
+      <div class="flow flow-4">
+        <div class="flow-box">
+          <h4>Know the voter</h4>
+          <p>to enforce eligibility</p>
+        </div>
+        <div class="flow-box">
+          <h4>Forget the voter</h4>
+          <p>before the ballot is public</p>
+        </div>
+        <div class="flow-box">
+          <h4>Keep a public record</h4>
+          <p>so auditors can recompute</p>
+        </div>
+        <div class="flow-box">
+          <h4>Reject duplicates</h4>
+          <p>without deanonymizing the token</p>
+        </div>
+      </div>
+    </div>
+    <div class="speaker-note">This is where the audience should feel the tension, not just hear a feature list.</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">The Thesis</div>
+    <h2>Make authorization private, make ballots public, and make the bridge between them blind</h2>
+    <div class="diagram">
+      <div class="diagram-title">The separating line that makes the system possible</div>
+      <div class="flow flow-5">
+        <div class="flow-box">
+          <h4>Real identity</h4>
+          <p>Voter proves they belong in the eligible set.</p>
+        </div>
+        <div class="flow-box">
+          <h4>Blind issuance</h4>
+          <p>Coordinator signs a blinded message, not the final token.</p>
+        </div>
+        <div class="flow-box">
+          <h4>Local assembly</h4>
+          <p>Voter unblinds and combines shares in the browser.</p>
+        </div>
+        <div class="flow-box">
+          <h4>Ephemeral ballot</h4>
+          <p>Vote is published from a fresh key, not the long-term identity.</p>
+        </div>
+        <div class="flow-box">
+          <h4>Public audit</h4>
+          <p>Anyone checks validity, uniqueness, and tally from relay data.</p>
+        </div>
+      </div>
+    </div>
+    <div class="quote">
+      <p>Blind signatures are the privacy hinge. They let a coordinator authorize a vote <strong>without learning the exact credential that will later be spent in public</strong>.</p>
+    </div>
+    <div class="speaker-note">This is the core design claim. Everything else is support infrastructure around this separation.</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Why Nostr</div>
+    <h2>Nostr gives you a signed event fabric instead of a single authoritative server</h2>
+    <div class="grid-2">
+      <div class="card">
+        <h3>What Nostr contributes</h3>
+        <ul>
+          <li>Public, signed event publication for rounds, ballots, and results</li>
+          <li>Private NIP-17 DM transport for issuance requests and responses</li>
+          <li>Relay diversity instead of one central database</li>
+          <li>Portable identities and signed announcements</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Why that matters here</h3>
+        <ul>
+          <li>Auditors can read the same public state as coordinators</li>
+          <li>Static clients can participate without a proprietary backend</li>
+          <li>Coordinator rosters and per-round keys can be announced in public</li>
+          <li>The protocol remains inspectable by any third party</li>
+        </ul>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Need</th>
+            <th>Why a normal app server is weak here</th>
+            <th>Why Nostr helps</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Shared round state</strong></td>
+            <td>Server logs become the source of truth</td>
+            <td>Round announcements and results are public signed events</td>
+          </tr>
+          <tr>
+            <td><strong>Independent audit</strong></td>
+            <td>Requires privileged API or database access</td>
+            <td>Auditors subscribe to the same public relay data</td>
+          </tr>
+          <tr>
+            <td><strong>Client portability</strong></td>
+            <td>Heavy backend dependency</td>
+            <td>Static Pages client can still participate and verify</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="speaker-note">Keep this grounded: Nostr is not magic, but it is a strong fit for shared public protocol state.</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Why Blind Signatures</div>
+    <h2>The authorization token must be valid, one-time, and unlinkable</h2>
+    <div class="grid-3">
+      <div class="card">
+        <h3>Not just login</h3>
+        <p>A normal login session is reusable and observable. A voting credential should be <strong>round-bound</strong> and separately spendable.</p>
+      </div>
+      <div class="card">
+        <h3>Not just a receipt</h3>
+        <p>If the public ballot reveals issuance metadata, the coordinator can deanonymize the vote. The spent proof must not expose issuance linkage.</p>
+      </div>
+      <div class="card">
+        <h3>Not just a token</h3>
+        <p>The token must be publicly verifiable enough to audit, but private enough that issuance and spend are not trivially connected.</p>
+      </div>
+    </div>
+    <div class="diagram">
+      <div class="diagram-title">Credential lifecycle</div>
+      <div class="flow flow-4">
+        <div class="flow-box">
+          <h4>Blinded request</h4>
+          <p>Coordinator sees a blinded message tied to the round.</p>
+        </div>
+        <div class="flow-box">
+          <h4>Blind signature share</h4>
+          <p>Coordinator signs without seeing the final token.</p>
+        </div>
+        <div class="flow-box">
+          <h4>Local unblinding</h4>
+          <p>Voter recovers the usable anonymous proof locally.</p>
+        </div>
+        <div class="flow-box">
+          <h4>One public spend</h4>
+          <p>Auditors validate the ballot and reject duplicates deterministically.</p>
+        </div>
+      </div>
+    </div>
+    <div class="speaker-note">This is the “ecash-style” part: a credential that behaves like a one-time anonymous spend, not a reusable authenticated session.</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Why This Stack Specifically</div>
+    <h2>Each piece covers a different failure mode</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Layer</th>
+            <th>Chosen tech</th>
+            <th>Why it belongs here</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Public state</strong></td>
+            <td>Nostr relays</td>
+            <td>Signed round announcements, ballots, and results become publicly inspectable.</td>
+          </tr>
+          <tr>
+            <td><strong>Private coordination</strong></td>
+            <td>NIP-17 DMs</td>
+            <td>Blind requests and blind responses can move privately without inventing a separate transport.</td>
+          </tr>
+          <tr>
+            <td><strong>Credential privacy</strong></td>
+            <td>Blind-signature issuance</td>
+            <td>Coordinator authorizes without learning the final spend token.</td>
+          </tr>
+          <tr>
+            <td><strong>Ballot unlinkability</strong></td>
+            <td>Ephemeral ballot keys</td>
+            <td>The long-term voter identity is not the public voting identity.</td>
+          </tr>
+          <tr>
+            <td><strong>Trust reduction</strong></td>
+            <td>Multiple coordinators</td>
+            <td>Threshold issuance and public comparison reduce single-operator power.</td>
+          </tr>
+          <tr>
+            <td><strong>User control</strong></td>
+            <td>Browser + IndexedDB</td>
+            <td>Static clients can hold local state and work without a proprietary app server.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="speaker-note">Make the stack feel engineered rather than accidental. Each component earns its place.</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Threshold Model</div>
+    <h2>Multiple coordinators make fraud harder and auditing more meaningful</h2>
+    <div class="grid-2">
+      <div class="card">
+        <h3>What threshold issuance changes</h3>
+        <ul>
+          <li>The round defines the authorized coordinator roster</li>
+          <li>Each coordinator announces a per-round blind key</li>
+          <li>The voter gathers enough distinct shares to reach threshold <span class="mono">T of N</span></li>
+          <li>The final ballot is valid only if enough authorized coordinators participated</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>What auditors gain</h3>
+        <ul>
+          <li>They can verify the ballot used the right roster for that round</li>
+          <li>They can reject shares from unauthorized coordinators</li>
+          <li>They can compare public tallies across coordinators</li>
+          <li>They can detect censorship or inflation by divergence</li>
+        </ul>
+      </div>
+    </div>
+    <div class="diagram">
+      <div class="diagram-title">Trust distribution</div>
+      <div class="flow flow-4">
+        <div class="flow-box">
+          <h4>Coordinator A</h4>
+          <p>Per-round blind key + share</p>
+        </div>
+        <div class="flow-box">
+          <h4>Coordinator B</h4>
+          <p>Per-round blind key + share</p>
+        </div>
+        <div class="flow-box">
+          <h4>Voter</h4>
+          <p>Combines enough shares locally</p>
+        </div>
+        <div class="flow-box">
+          <h4>Auditor</h4>
+          <p>Checks threshold and coordinator set from public state</p>
+        </div>
+      </div>
+    </div>
+    <div class="speaker-note">The audience should come away understanding that multiple coordinators are not ornamentation; they change the trust model.</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">End-to-End Flow</div>
+    <h2>Why the system is possible: every phase has a clear public/private boundary</h2>
+    <div class="diagram">
+      <div class="diagram-title">Protocol phases</div>
+      <div class="flow flow-5">
+        <div class="flow-box">
+          <h4>1. Publish round</h4>
+          <p>Public on Nostr: question, voting ID, threshold, authorized coordinators.</p>
+        </div>
+        <div class="flow-box">
+          <h4>2. Announce blind keys</h4>
+          <p>Public on Nostr: per-round coordinator keys signed by stable identities.</p>
+        </div>
+        <div class="flow-box">
+          <h4>3. Issue blind shares</h4>
+          <p>Private over DMs: blinded request in, blind signature share out.</p>
+        </div>
+        <div class="flow-box">
+          <h4>4. Publish ballots</h4>
+          <p>Public on Nostr: ephemeral-key vote + anonymous proof material.</p>
+        </div>
+        <div class="flow-box">
+          <h4>5. Recompute tally</h4>
+          <p>Anyone audits validity, duplicate rejection, and final totals.</p>
+        </div>
+      </div>
+    </div>
+    <div class="grid-3">
+      <div class="card">
+        <h3>Private</h3>
+        <p>Eligibility proofing, blind issuance requests, blind signature responses, local secrets.</p>
+      </div>
+      <div class="card">
+        <h3>Public</h3>
+        <p>Round metadata, coordinator roster, ballot stream, accepted tally logic, results.</p>
+      </div>
+      <div class="card">
+        <h3>Local only</h3>
+        <p>Unblinding, token assembly, ephemeral ballot key generation, user-side backup and restore.</p>
+      </div>
+    </div>
+    <div class="speaker-note">This slide is the concrete “how.” If the room only remembers one architecture slide, it should be this one.</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Auditing</div>
+    <h2>The system is only credible if outsiders can reconstruct the result themselves</h2>
+    <div class="grid-2">
+      <div class="card">
+        <h3>What an auditor reads</h3>
+        <ul>
+          <li>Round announcement and coordinator roster</li>
+          <li>Per-round blind-key announcements</li>
+          <li>Public ballot events</li>
+          <li>Final results from coordinators</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>What an auditor checks</h3>
+        <ul>
+          <li>Was each ballot bound to the correct round?</li>
+          <li>Did it meet threshold from authorized coordinators only?</li>
+          <li>Was the token spent more than once?</li>
+          <li>Does the public tally match the accepted valid ballots?</li>
+        </ul>
+      </div>
+    </div>
+    <div class="quote">
+      <p>“Auditor” is not an administrator role. It is the proof that the protocol state is public enough to be challenged by anyone.</p>
+    </div>
+    <div class="speaker-note">This connects directly to the new Auditor screen in the client: auditability is a protocol property, not just a dashboard feature.</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Limits</div>
+    <h2>This is possible, but only if the hard edges are treated as protocol work, not UI polish</h2>
+    <div class="grid-3">
+      <div class="card">
+        <h3>Relay reality</h3>
+        <p>Public relays are lossy, delayed, and uneven. The client must reconcile history, not trust live delivery alone.</p>
+      </div>
+      <div class="card">
+        <h3>Key custody</h3>
+        <p>If coordinator signing keys sit unprotected in the browser, the privacy math is irrelevant. Local secret handling matters.</p>
+      </div>
+      <div class="card">
+        <h3>Canonical spend rules</h3>
+        <p>“First valid spend wins” only works if every verifier computes “first” the same way from public data.</p>
+      </div>
+    </div>
+    <div class="grid-2">
+      <div class="card">
+        <h3>What this stack can do well</h3>
+        <ul>
+          <li>Publicly auditable rounds and ballots</li>
+          <li>Static client deployment</li>
+          <li>Coordinator-blind authorization</li>
+          <li>Portable observer verification</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>What still needs discipline</h3>
+        <ul>
+          <li>Strong blind-signature implementation</li>
+          <li>Deterministic duplicate handling</li>
+          <li>Encrypted local key storage</li>
+          <li>Relay health and retry strategy</li>
+        </ul>
+      </div>
+    </div>
+    <div class="speaker-note">Important credibility slide. This is where you show you understand the difference between “possible” and “finished.”</div>
+  </section>
+
+  <section class="slide">
+    <div class="eyebrow">Takeaway</div>
+    <div class="closing">
+      <h2>Why this works: the stack aligns the trust boundaries with the protocol boundaries</h2>
+      <div class="quote">
+        <p>Nostr handles <strong>shared signed public state</strong>. Blind signatures handle <strong>private unlinkable authorization</strong>. Ephemeral keys handle <strong>public ballot separation</strong>. Auditors handle <strong>independent recomputation</strong>.</p>
+      </div>
+      <div class="grid-3">
+        <div class="stat">
+          <span class="number">Public</span>
+          <h3>Round + ballot + tally</h3>
+          <p>Anyone can inspect and recompute.</p>
+        </div>
+        <div class="stat">
+          <span class="number">Blind</span>
+          <h3>Issuance</h3>
+          <p>Coordinator authorizes without learning the final token.</p>
+        </div>
+        <div class="stat">
+          <span class="number">Local</span>
+          <h3>Assembly</h3>
+          <p>The voter keeps the privacy-critical step in their own client.</p>
+        </div>
+      </div>
+      <p class="lead">That is why the problem is hard. And that is why this particular stack is one of the few realistic ways to make it work without collapsing back into “just trust the server.”</p>
+    </div>
+    <div class="speaker-note">End on the architectural thesis, not a feature recap.</div>
+  </section>
+
+  <div class="speaker-note" id="global-note"></div>
+
+  <div class="footer-bar">
+    <span id="counter">1 / 10</span>
+    <button type="button" id="prev">Prev</button>
+    <button type="button" id="next">Next</button>
+  </div>
+
+  <script>
+    const slides = Array.from(document.querySelectorAll(".slide"));
+    const counter = document.getElementById("counter");
+    const progress = document.getElementById("progress");
+    const prev = document.getElementById("prev");
+    const next = document.getElementById("next");
+    let index = 0;
+    let touchStartX = 0;
+
+    function renderSlides() {
+      slides.forEach((slide, slideIndex) => {
+        slide.classList.toggle("active", slideIndex === index);
+        slide.classList.toggle("prev", slideIndex < index);
+      });
+      counter.textContent = `${index + 1} / ${slides.length}`;
+      progress.style.width = `${((index + 1) / slides.length) * 100}%`;
+      prev.disabled = index === 0;
+      next.disabled = index === slides.length - 1;
+      const active = slides[index];
+      const note = active.querySelector(".speaker-note");
+      const globalNote = document.getElementById("global-note");
+      globalNote.textContent = note ? note.textContent : "";
+      active.scrollTop = 0;
+    }
+
+    function changeSlide(delta) {
+      const nextIndex = Math.min(slides.length - 1, Math.max(0, index + delta));
+      if (nextIndex !== index) {
+        index = nextIndex;
+        renderSlides();
+      }
+    }
+
+    prev.addEventListener("click", () => changeSlide(-1));
+    next.addEventListener("click", () => changeSlide(1));
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowRight" || event.key === "PageDown" || event.key === " ") {
+        event.preventDefault();
+        changeSlide(1);
+      }
+      if (event.key === "ArrowLeft" || event.key === "PageUp") {
+        event.preventDefault();
+        changeSlide(-1);
+      }
+      if (event.key.toLowerCase() === "n") {
+        document.body.classList.toggle("show-notes");
+      }
+    });
+
+    document.addEventListener("touchstart", (event) => {
+      touchStartX = event.changedTouches[0].clientX;
+    }, { passive: true });
+
+    document.addEventListener("touchend", (event) => {
+      const deltaX = event.changedTouches[0].clientX - touchStartX;
+      if (Math.abs(deltaX) < 40) return;
+      if (deltaX < 0) changeSlide(1);
+      if (deltaX > 0) changeSlide(-1);
+    }, { passive: true });
+
+    renderSlides();
+  </script>
+</body>
+</html>

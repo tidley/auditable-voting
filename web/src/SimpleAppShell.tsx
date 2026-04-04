@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
+import SimpleAuditorApp from "./SimpleAuditorApp";
 import SimpleCoordinatorApp from "./SimpleCoordinatorApp";
 import SimpleUiApp from "./SimpleUiApp";
 import { SIMPLE_APP_VERSION } from "./simpleAppVersion";
 
-type SimpleRole = "voter" | "coordinator";
+type SimpleRole = "voter" | "coordinator" | "auditor";
 
 type SimpleAppShellProps = {
   initialRole?: SimpleRole;
@@ -15,7 +16,7 @@ function readRoleFromUrl(): SimpleRole | null {
   }
 
   const role = new URLSearchParams(window.location.search).get("role");
-  if (role === "voter" || role === "coordinator") {
+  if (role === "voter" || role === "coordinator" || role === "auditor") {
     return role;
   }
 
@@ -40,7 +41,13 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
   }, [role]);
 
   const roleTitle = useMemo(
-    () => (role === "voter" ? "Voter view" : "Coordinator view"),
+    () => (
+      role === "voter"
+        ? "Voter view"
+        : role === "coordinator"
+          ? "Coordinator view"
+          : "Auditor view"
+    ),
     [role],
   );
 
@@ -70,10 +77,19 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
           >
             Coordinator
           </button>
+          <button
+            type='button'
+            role='tab'
+            aria-selected={role === 'auditor'}
+            className={`simple-role-switch-button${role === 'auditor' ? ' is-active' : ''}`}
+            onClick={() => setRole('auditor')}
+          >
+            Auditor
+          </button>
         </div>
       </div>
 
-      {role === 'voter' ? <SimpleUiApp /> : <SimpleCoordinatorApp />}
+      {role === 'voter' ? <SimpleUiApp /> : role === 'coordinator' ? <SimpleCoordinatorApp /> : <SimpleAuditorApp />}
       <footer className='simple-app-version' aria-label='App version'>
         {SIMPLE_APP_VERSION}
       </footer>
