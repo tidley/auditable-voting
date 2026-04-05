@@ -1,62 +1,60 @@
-import * as auditableVotingRustCoreWasm from "./auditable_voting_core/pkg/auditable_voting_rust_core_bg.js";
-import initAuditableVotingRustCore from "./auditable_voting_core/pkg/auditable_voting_rust_core_bg.wasm?init";
-
-const auditableVotingRustCoreInstance = await initAuditableVotingRustCore({
-  "./auditable_voting_rust_core_bg.js": auditableVotingRustCoreWasm,
-});
-const auditableVotingRustCore =
-  auditableVotingRustCoreInstance instanceof WebAssembly.Instance
-    ? auditableVotingRustCoreInstance.exports
-    : auditableVotingRustCoreInstance;
-
-auditableVotingRustCoreWasm.__wbg_set_wasm(auditableVotingRustCore);
-if ("__wbindgen_start" in auditableVotingRustCore && typeof auditableVotingRustCore.__wbindgen_start === "function") {
-  auditableVotingRustCore.__wbindgen_start();
-}
+import {
+  build_simple_vote_ticket_rows as buildSimpleVoteTicketRowsWasm,
+  derive_actor_display_id as deriveActorDisplayIdWasm,
+  derive_token_id_from_proof_secrets as deriveTokenIdFromProofSecretsWasm,
+  extract_npub_from_scan as extractNpubFromScanWasm,
+  sha256_hex as sha256HexWasm,
+  sort_records_by_created_at_desc as sortRecordsByCreatedAtDescWasm,
+  sort_simple_votes_canonical as sortSimpleVotesCanonicalWasm,
+  token_id_label as tokenIdLabelWasm,
+  token_pattern_cells as tokenPatternCellsWasm,
+  token_pattern_detail as tokenPatternDetailWasm,
+  token_qr_payload as tokenQrPayloadWasm,
+} from "./auditable_voting_core/pkg/auditable_voting_rust_core";
 
 export function deriveActorDisplayIdRust(value: string) {
-  return auditableVotingRustCoreWasm.derive_actor_display_id(value);
+  return deriveActorDisplayIdWasm(value);
 }
 
 export function extractNpubFromScanRust(value: string) {
-  return auditableVotingRustCoreWasm.extract_npub_from_scan(value) ?? null;
+  return extractNpubFromScanWasm(value) ?? null;
 }
 
 export function sha256HexRust(input: string) {
-  return auditableVotingRustCoreWasm.sha256_hex(input);
+  return sha256HexWasm(input);
 }
 
 export function deriveTokenIdFromProofSecretsRust(proofSecrets: string[], length: number) {
-  return auditableVotingRustCoreWasm.derive_token_id_from_proof_secrets(proofSecrets, length);
+  return deriveTokenIdFromProofSecretsWasm(proofSecrets, length);
 }
 
 export function tokenIdLabelRust(tokenId: string | null | undefined) {
-  return auditableVotingRustCoreWasm.token_id_label(tokenId ?? undefined);
+  return tokenIdLabelWasm(tokenId ?? undefined);
 }
 
 export function tokenPatternDetailRust(tokenId: string, size: number) {
-  return auditableVotingRustCoreWasm.token_pattern_detail(tokenId, size) as {
+  return tokenPatternDetailWasm(tokenId, size) as {
     filled: boolean;
     colorIndex: number;
   }[];
 }
 
 export function tokenPatternCellsRust(tokenId: string, size: number) {
-  return auditableVotingRustCoreWasm.token_pattern_cells(tokenId, size) as boolean[];
+  return tokenPatternCellsWasm(tokenId, size) as boolean[];
 }
 
 export function tokenQrPayloadRust(tokenId: string) {
-  return auditableVotingRustCoreWasm.token_qr_payload(tokenId);
+  return tokenQrPayloadWasm(tokenId);
 }
 
 export function sortSimpleVotesCanonicalRust<T extends { createdAt: string; eventId: string }>(
   votes: T[],
 ) {
-  return auditableVotingRustCoreWasm.sort_simple_votes_canonical(votes) as T[];
+  return sortSimpleVotesCanonicalWasm(votes) as T[];
 }
 
 export function sortRecordsByCreatedAtDescRust<T extends { createdAt: string }>(values: T[]) {
-  return auditableVotingRustCoreWasm.sort_records_by_created_at_desc(values) as T[];
+  return sortRecordsByCreatedAtDescWasm(values) as T[];
 }
 
 export function buildSimpleVoteTicketRowsRust<
@@ -69,10 +67,7 @@ export function buildSimpleVoteTicketRowsRust<
     coordinatorNpub: string;
   },
 >(entries: T[], configuredCoordinatorTargets: string[]) {
-  return (auditableVotingRustCoreWasm.build_simple_vote_ticket_rows(
-    entries,
-    configuredCoordinatorTargets,
-  ) as Array<{
+  return (buildSimpleVoteTicketRowsWasm(entries, configuredCoordinatorTargets) as Array<{
     votingId: string;
     prompt: string;
     createdAt: string;
