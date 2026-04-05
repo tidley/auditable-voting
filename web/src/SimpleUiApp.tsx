@@ -187,7 +187,6 @@ export default function SimpleUiApp() {
   const sentTicketReceiptAckIdsRef = useRef<Set<string>>(new Set());
   const lastAutoSelectedVotingIdRef = useRef("");
   const manualRoundSelectionRef = useRef(false);
-  const manualTabSelectionRef = useRef(false);
 
   function persistVoterIdentity(nextKeypair: SimpleVoterKeypair, cache?: Partial<SimpleVoterCache>) {
     return saveSimpleActorState({
@@ -702,7 +701,6 @@ export default function SimpleUiApp() {
     setSelectedVotingId("");
     setActiveTab("configure");
     setShowVoteDetails(false);
-    manualTabSelectionRef.current = false;
     lastAutoSelectedVotingIdRef.current = "";
     manualRoundSelectionRef.current = false;
     sentTicketReceiptAckIdsRef.current.clear();
@@ -1357,21 +1355,7 @@ export default function SimpleUiApp() {
     ? `Waiting for Coordinator ${activeVoteCoordinatorIndex + 1}'s key before preparing ticket request.`
     : "Waiting for a coordinator key before preparing ticket request.";
 
-  useEffect(() => {
-    if (manualTabSelectionRef.current) {
-      return;
-    }
-
-    if (effectiveLiveVoteSession || voteTicketRows.length > 0 || voteSubmittedSuccessfully) {
-      setActiveTab("vote");
-      return;
-    }
-
-    setActiveTab("configure");
-  }, [effectiveLiveVoteSession, voteSubmittedSuccessfully, voteTicketRows.length]);
-
   function selectTab(nextTab: VoterTab) {
-    manualTabSelectionRef.current = true;
     setActiveTab(nextTab);
   }
 
@@ -1463,11 +1447,11 @@ export default function SimpleUiApp() {
           </button>
         </div>
 
+        {activeTab === "configure" ? (
         <section
-          className={`simple-voter-tab-panel${activeTab !== "configure" ? " is-hidden" : ""}`}
+          className="simple-voter-tab-panel"
           role="tabpanel"
           aria-label="Configure"
-          hidden={activeTab !== "configure"}
         >
             <div className="simple-voter-field-stack simple-voter-field-stack-tight">
               <label className="simple-voter-label simple-voter-label-tight" htmlFor="simple-coordinator-draft">Coordinator npubs</label>
@@ -1580,12 +1564,13 @@ export default function SimpleUiApp() {
             </div>
             {requestStatus ? <p className="simple-voter-note">{requestStatus}</p> : null}
         </section>
+        ) : null}
 
+        {activeTab === "vote" ? (
         <section
-          className={`simple-voter-tab-panel${activeTab !== "vote" ? " is-hidden" : ""}`}
+          className="simple-voter-tab-panel"
           role="tabpanel"
           aria-label="Vote"
-          hidden={activeTab !== "vote"}
         >
           {effectiveLiveVoteSession ? (
               <>
@@ -1725,12 +1710,13 @@ export default function SimpleUiApp() {
             </div>
           )}
         </section>
+        ) : null}
 
+        {activeTab === "settings" ? (
         <section
-          className={`simple-voter-tab-panel${activeTab !== "settings" ? " is-hidden" : ""}`}
+          className="simple-voter-tab-panel"
           role="tabpanel"
           aria-label="Settings"
-          hidden={activeTab !== "settings"}
         >
           <SimpleIdentityPanel
             npub={voterKeypair?.npub ?? ""}
@@ -1748,6 +1734,7 @@ export default function SimpleUiApp() {
           />
           <SimpleRelayPanel />
         </section>
+        ) : null}
       </section>
     </main>
   );

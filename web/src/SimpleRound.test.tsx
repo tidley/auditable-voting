@@ -1028,6 +1028,7 @@ describe("Simple round flow", () => {
     await user.clear(voterRestoreInput);
     await user.type(voterRestoreInput, voterNsec);
     await user.click(voterUi.getByRole("button", { name: /^Restore$/i }));
+    await user.click(voterUi.getByRole("tab", { name: /^Settings$/i }));
 
     const coordinatorRestoreInput = await coordinatorUi.findByPlaceholderText("nsec1...");
     await user.clear(coordinatorRestoreInput);
@@ -1294,10 +1295,14 @@ describe("Simple round flow", () => {
     await user.click(coordinatorTwoUi.getByRole("button", { name: /Refresh ID/i }));
     await user.click(voterOneUi.getByRole("button", { name: /Refresh ID/i }));
     await user.click(voterTwoUi.getByRole("button", { name: /Refresh ID/i }));
+    await user.click(voterOneUi.getByRole("tab", { name: /^Settings$/i }));
+    await user.click(voterTwoUi.getByRole("tab", { name: /^Settings$/i }));
 
     await waitFor(() => {
       expect(coordinatorOne.container.querySelectorAll("code.simple-identity-code")[0]?.textContent?.startsWith("npub1")).toBe(true);
       expect(coordinatorTwo.container.querySelectorAll("code.simple-identity-code")[0]?.textContent?.startsWith("npub1")).toBe(true);
+      expect(voterOne.container.querySelectorAll("code.simple-identity-code")[0]?.textContent?.startsWith("npub1")).toBe(true);
+      expect(voterTwo.container.querySelectorAll("code.simple-identity-code")[0]?.textContent?.startsWith("npub1")).toBe(true);
     });
 
     const coordinatorOneCodes = coordinatorOne.container.querySelectorAll("code.simple-identity-code");
@@ -1318,6 +1323,8 @@ describe("Simple round flow", () => {
       expect(voterOne.container.querySelectorAll("code.simple-identity-code")[0]?.textContent?.startsWith("npub1")).toBe(true);
       expect(voterTwo.container.querySelectorAll("code.simple-identity-code")[0]?.textContent?.startsWith("npub1")).toBe(true);
     });
+    await user.click(voterOneUi.getByRole("tab", { name: /^Configure$/i }));
+    await user.click(voterTwoUi.getByRole("tab", { name: /^Configure$/i }));
     await user.type(voterOneUi.getByPlaceholderText("Enter npub..."), coordinatorOneNpub);
     await user.click(voterOneUi.getByRole("button", { name: /Add coordinator/i }));
     await user.type(voterOneUi.getByPlaceholderText("Enter npub..."), coordinatorTwoNpub);
@@ -1340,6 +1347,8 @@ describe("Simple round flow", () => {
 
     await user.click(coordinatorOneUi.getByRole("button", { name: /Broadcast live vote/i }));
     await user.click(coordinatorOneUi.getByRole("button", { name: /Distribute share indexes/i }));
+    await user.click(voterOneUi.getByRole("tab", { name: /^Vote$/i }));
+    await user.click(voterTwoUi.getByRole("tab", { name: /^Vote$/i }));
 
     const firstRoundId = liveVotes[liveVotes.length - 1]?.votingId ?? "";
     expect(firstRoundId).toBeTruthy();
@@ -1376,8 +1385,8 @@ describe("Simple round flow", () => {
       expect(voterTwoUi.getAllByText(firstRoundId).length).toBeGreaterThanOrEqual(1);
       expect(voterOneUi.getAllByText("1").length).toBeGreaterThanOrEqual(2);
       expect(voterTwoUi.getAllByText("1").length).toBeGreaterThanOrEqual(2);
-      expect(voterOneUi.getAllByText(/Ticket received\./i).length).toBeGreaterThanOrEqual(2);
-      expect(voterTwoUi.getAllByText(/Ticket received\./i).length).toBeGreaterThanOrEqual(2);
+      expect(voterOneUi.getByText(/Vote ticket received/i)).toBeTruthy();
+      expect(voterTwoUi.getByText(/Vote ticket received/i)).toBeTruthy();
       expect(coordinatorOneUi.getAllByText(/Voter acknowledged ticket receipt\./i).length).toBeGreaterThanOrEqual(2);
       expect(coordinatorTwoUi.getAllByText(/Voter acknowledged ticket receipt\./i).length).toBeGreaterThanOrEqual(2);
     });
@@ -1427,6 +1436,7 @@ describe("Simple round flow", () => {
 
     await user.click(coordinatorUi.getByRole("button", { name: /Refresh ID/i }));
     await user.click(voterUi.getByRole("button", { name: /Refresh ID/i }));
+    await user.click(voterUi.getByRole("tab", { name: /^Settings$/i }));
 
     await waitFor(() => {
       expect(coordinator.container.querySelectorAll("code.simple-identity-code")[0]?.textContent?.startsWith("npub1")).toBe(true);
@@ -1440,6 +1450,7 @@ describe("Simple round flow", () => {
 
     suppressedShardResponseNotifications = new Set([voterNpub]);
 
+    await user.click(voterUi.getByRole("tab", { name: /^Configure$/i }));
     await user.type(voterUi.getByPlaceholderText("Enter npub..."), coordinatorNpub);
     await user.click(voterUi.getByRole("button", { name: /Add coordinator/i }));
     await user.click(voterUi.getByRole("button", { name: /Notify coordinators/i }));
@@ -1449,6 +1460,7 @@ describe("Simple round flow", () => {
     });
 
     await user.click(coordinatorUi.getByRole("button", { name: /Broadcast live vote/i }));
+    await user.click(voterUi.getByRole("tab", { name: /^Vote$/i }));
 
     await waitFor(() => {
       expect(voterUi.getByText(/Tickets ready: 0 of 1/i)).toBeTruthy();
@@ -1469,7 +1481,7 @@ describe("Simple round flow", () => {
 
     await waitFor(() => {
       expect(voterUi.getByText(/Tickets ready: 1 of 1/i)).toBeTruthy();
-      expect(voterUi.getByText(/Ticket received\./i)).toBeTruthy();
+      expect(voterUi.getByText(/Vote ticket received/i)).toBeTruthy();
     });
   }, 40000);
 
