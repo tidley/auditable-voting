@@ -179,6 +179,22 @@ pub struct TicketRetrySelectionInput {
     max_attempts: u32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActorRelaySetInput {
+    preferred_relays: Vec<String>,
+    fallback_relays: Vec<String>,
+    extra_relays: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationRelaySetInput {
+    recipient_inbox_relays: Vec<String>,
+    sender_outbox_relays: Vec<String>,
+    fallback_relays: Vec<String>,
+}
+
 fn js_error(message: impl ToString) -> JsValue {
     JsValue::from_str(&message.to_string())
 }
@@ -319,6 +335,10 @@ fn normalize_trimmed_unique(values: Vec<String>) -> Vec<String> {
     }
 
     normalized
+}
+
+fn merge_relay_groups(groups: Vec<Vec<String>>) -> Vec<String> {
+    normalize_trimmed_unique(groups.into_iter().flatten().collect())
 }
 
 fn diagnostic(tone: &str, text: impl Into<String>) -> DeliveryDiagnostic {
@@ -831,6 +851,35 @@ pub fn normalize_coordinator_npubs(values: JsValue) -> Result<JsValue, JsValue> 
     let values = serde_wasm_bindgen::from_value::<Vec<String>>(values)
         .map_err(|error| js_error(error.to_string()))?;
     serialize(&normalize_trimmed_unique(values))
+}
+
+#[wasm_bindgen]
+pub fn normalize_relays(values: JsValue) -> Result<JsValue, JsValue> {
+    let values = serde_wasm_bindgen::from_value::<Vec<String>>(values)
+        .map_err(|error| js_error(error.to_string()))?;
+    serialize(&normalize_trimmed_unique(values))
+}
+
+#[wasm_bindgen]
+pub fn build_actor_relay_set(input: JsValue) -> Result<JsValue, JsValue> {
+    let input = serde_wasm_bindgen::from_value::<ActorRelaySetInput>(input)
+        .map_err(|error| js_error(error.to_string()))?;
+    serialize(&merge_relay_groups(vec![
+        input.preferred_relays,
+        input.fallback_relays,
+        input.extra_relays,
+    ]))
+}
+
+#[wasm_bindgen]
+pub fn build_conversation_relay_set(input: JsValue) -> Result<JsValue, JsValue> {
+    let input = serde_wasm_bindgen::from_value::<ConversationRelaySetInput>(input)
+        .map_err(|error| js_error(error.to_string()))?;
+    serialize(&merge_relay_groups(vec![
+        input.recipient_inbox_relays,
+        input.sender_outbox_relays,
+        input.fallback_relays,
+    ]))
 }
 
 #[wasm_bindgen]

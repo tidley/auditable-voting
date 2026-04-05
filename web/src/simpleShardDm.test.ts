@@ -26,6 +26,18 @@ vi.mock("nostr-tools", () => ({
   },
 }));
 
+vi.mock("./sharedNostrPool", () => ({
+  getSharedNostrPool: () => ({ publish, destroy, close, querySync, subscribeMany }),
+}));
+
+vi.mock("./wasm/auditableVotingCore", async () => {
+  const actual = await vi.importActual<typeof import("./wasm/auditableVotingCore")>("./wasm/auditableVotingCore");
+  return {
+    ...actual,
+    normalizeRelaysRust: (values: string[]) => Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))),
+  };
+});
+
 vi.mock("./simpleShardCertificate", () => ({
   createSimpleBlindShareResponse: vi.fn((input: {
     coordinatorNpub: string;

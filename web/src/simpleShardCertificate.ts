@@ -2,13 +2,13 @@ import {
   finalizeEvent,
   getPublicKey,
   nip19,
-  SimplePool,
   verifyEvent,
   type VerifiedEvent,
 } from "nostr-tools";
 import { RSABSSA } from "@cloudflare/blindrsa-ts";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import { publishOwnNip65RelayHints, resolveNip65OutboxRelays } from "./nip65RelayHints";
+import { getSharedNostrPool } from "./sharedNostrPool";
 import {
   SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS,
   SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS,
@@ -17,6 +17,7 @@ import {
   SIMPLE_PUBLIC_SUBSCRIPTION_MAX_WAIT_MS,
 } from "./simpleVotingSession";
 import { sha256Hex } from "./tokenIdentity";
+import { normalizeRelaysRust } from "./wasm/auditableVotingCore";
 
 export const SIMPLE_BLIND_KEY_KIND = 38993;
 export const SIMPLE_BLIND_SCHEME = "rsabssa-sha384-pss-deterministic-v1";
@@ -132,7 +133,7 @@ type RsaJwk = {
 const simpleBlindSuite = RSABSSA.SHA384.PSS.Deterministic();
 
 function buildPublicRelays(relays?: string[]) {
-  return Array.from(new Set([...SIMPLE_PUBLIC_RELAYS, ...(relays ?? [])].filter((relay) => relay.trim().length > 0)));
+  return normalizeRelaysRust([...SIMPLE_PUBLIC_RELAYS, ...(relays ?? [])]);
 }
 
 function getWebCrypto(override?: Crypto) {
@@ -339,26 +340,22 @@ export async function publishSimpleBlindKeyAnnouncement(input: {
     }),
   }, secretKey);
 
-  const pool = new SimplePool();
-  try {
-    const results = await queueNostrPublish(
-      () => publishToRelaysStaggered(
-        (relay) => pool.publish([relay], event, { maxWait: SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS })[0],
-        relays,
-        { staggerMs: SIMPLE_PUBLIC_PUBLISH_STAGGER_MS },
-      ),
-      { channel: "simple-public", minIntervalMs: SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS },
-    );
-    return {
-      eventId: event.id,
-      successes: results.filter((result) => result.status === "fulfilled").length,
-      failures: results.filter((result) => result.status === "rejected").length,
-      createdAt,
-      event,
-    };
-  } finally {
-    pool.destroy();
-  }
+  const pool = getSharedNostrPool();
+  const results = await queueNostrPublish(
+    () => publishToRelaysStaggered(
+      (relay) => pool.publish([relay], event, { maxWait: SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS })[0],
+      relays,
+      { staggerMs: SIMPLE_PUBLIC_PUBLISH_STAGGER_MS },
+    ),
+    { channel: "simple-public", minIntervalMs: SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS },
+  );
+  return {
+    eventId: event.id,
+    successes: results.filter((result) => result.status === "fulfilled").length,
+    failures: results.filter((result) => result.status === "rejected").length,
+    createdAt,
+    event,
+  };
 }
 
 export function parseSimpleBlindKeyAnnouncement(
@@ -439,27 +436,23 @@ export async function fetchLatestSimpleBlindKeyAnnouncement(input: {
     npub: input.coordinatorNpub,
     fallbackRelays: buildPublicRelays(input.relays),
   });
-  const pool = new SimplePool();
-  try {
-    const events = await pool.querySync(relays, {
-      kinds: [SIMPLE_BLIND_KEY_KIND],
-      authors: [decoded.data as string],
-      limit: 20,
-    });
-    const parsed = events
-      .map((event) =>
-        parseSimpleBlindKeyAnnouncement(
-          event as VerifiedEvent,
-          input.coordinatorNpub,
-          input.votingId,
-        ),
-      )
-      .filter((entry): entry is SimpleBlindKeyAnnouncement => entry !== null)
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-    return parsed[0] ?? null;
-  } finally {
-    pool.close(relays);
-  }
+  const pool = getSharedNostrPool();
+  const events = await pool.querySync(relays, {
+    kinds: [SIMPLE_BLIND_KEY_KIND],
+    authors: [decoded.data as string],
+    limit: 20,
+  });
+  const parsed = events
+    .map((event) =>
+      parseSimpleBlindKeyAnnouncement(
+        event as VerifiedEvent,
+        input.coordinatorNpub,
+        input.votingId,
+      ),
+    )
+    .filter((entry): entry is SimpleBlindKeyAnnouncement => entry !== null)
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  return parsed[0] ?? null;
 }
 
 export function subscribeLatestSimpleBlindKeyAnnouncement(input: {
@@ -475,7 +468,7 @@ export function subscribeLatestSimpleBlindKeyAnnouncement(input: {
   }
 
   const fallbackRelays = buildPublicRelays(input.relays);
-  const pool = new SimplePool();
+  const pool = getSharedNostrPool();
   const announcements = new Map<string, SimpleBlindKeyAnnouncement>();
   let closed = false;
   let subscription: { close: (reason?: string) => Promise<void> | void } | null = null;
@@ -546,7 +539,6 @@ export function subscribeLatestSimpleBlindKeyAnnouncement(input: {
   return () => {
     closed = true;
     void subscription?.close("closed by caller");
-    pool.destroy();
   };
 }
 

@@ -12,6 +12,10 @@ type RelayProbe = {
   detail: string;
 };
 
+const RELAY_PROBE_TIMEOUT_MS = 4000;
+const RELAY_PROBE_RETRY_DELAY_MS = 350;
+const RELAY_PROBE_CONCURRENCY = 3;
+
 function classifyRelayStrength(latencyMs: number): RelayStrength {
   if (latencyMs < 400) {
     return 'strong';
@@ -22,42 +26,95 @@ function classifyRelayStrength(latencyMs: number): RelayStrength {
   return 'weak';
 }
 
-async function probeRelay(relay: string): Promise<RelayProbe> {
+async function attemptRelayProbe(relay: string): Promise<RelayProbe> {
   const startedAt = performance.now();
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const socket = new WebSocket(relay);
-      const timeoutId = window.setTimeout(() => {
-        socket.close();
-        reject(new Error('Timed out'));
-      }, 4000);
+  await new Promise<void>((resolve, reject) => {
+    const socket = new WebSocket(relay);
+    let settled = false;
+    let opened = false;
 
-      socket.onopen = () => {
-        window.clearTimeout(timeoutId);
-        socket.close();
-        resolve();
-      };
-      socket.onerror = () => {
-        window.clearTimeout(timeoutId);
-        socket.close();
-        reject(new Error('Connection failed'));
-      };
-    });
-    const latencyMs = Math.round(performance.now() - startedAt);
-    const strength = classifyRelayStrength(latencyMs);
-    return {
-      relay,
-      strength,
-      latencyMs,
-      detail:
-        strength === 'strong' ? 'Good' : strength === 'fair' ? 'Okay' : 'Slow',
+    const finish = (fn: () => void) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      window.clearTimeout(timeoutId);
+      socket.onopen = null;
+      socket.onerror = null;
+      socket.onclose = null;
+      fn();
     };
+
+    const timeoutId = window.setTimeout(() => {
+      try {
+        socket.close();
+      } catch {
+        // Ignore close failures from abandoned sockets.
+      }
+      finish(() => reject(new Error('Timed out')));
+    }, RELAY_PROBE_TIMEOUT_MS);
+
+    socket.onopen = () => {
+      opened = true;
+      try {
+        socket.close(1000, 'relay probe complete');
+      } catch {
+        // Ignore close failures after a successful open.
+      }
+      finish(resolve);
+    };
+
+    socket.onerror = () => {
+      finish(() => reject(new Error('Connection failed')));
+    };
+
+    socket.onclose = (event) => {
+      if (opened || event.code === 1000) {
+        finish(resolve);
+        return;
+      }
+      finish(() => reject(new Error(event.reason || `Closed (${event.code})`)));
+    };
+  });
+
+  const latencyMs = Math.round(performance.now() - startedAt);
+  const strength = classifyRelayStrength(latencyMs);
+  return {
+    relay,
+    strength,
+    latencyMs,
+    detail:
+      strength === 'strong' ? 'Good' : strength === 'fair' ? 'Okay' : 'Slow',
+  };
+}
+
+async function probeRelay(relay: string): Promise<RelayProbe> {
+  try {
+    return await attemptRelayProbe(relay);
   } catch {
-    return {
-      relay,
-      strength: 'offline',
-      detail: 'Offline',
-    };
+    await new Promise((resolve) => window.setTimeout(resolve, RELAY_PROBE_RETRY_DELAY_MS));
+    try {
+      return await attemptRelayProbe(relay);
+    } catch {
+      return {
+        relay,
+        strength: 'offline',
+        detail: 'Offline',
+      };
+    }
+  }
+}
+
+async function probeRelaysInBatches(
+  relays: string[],
+  onProbe: (probe: RelayProbe) => void,
+) {
+  for (let index = 0; index < relays.length; index += RELAY_PROBE_CONCURRENCY) {
+    const batch = relays.slice(index, index + RELAY_PROBE_CONCURRENCY);
+    const results = await Promise.all(batch.map((relay) => probeRelay(relay)));
+    for (const result of results) {
+      onProbe(result);
+    }
   }
 }
 
@@ -86,13 +143,14 @@ function RelayProbeList({
       })),
     );
 
-    void Promise.all(relays.map((relay) => probeRelay(relay))).then(
-      (results) => {
-        if (!cancelled) {
-          setProbes(results);
-        }
-      },
-    );
+    void probeRelaysInBatches(relays, (probe) => {
+      if (cancelled) {
+        return;
+      }
+      setProbes((current) => current.map((entry) => (
+        entry.relay === probe.relay ? probe : entry
+      )));
+    });
 
     return () => {
       cancelled = true;

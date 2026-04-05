@@ -536,6 +536,7 @@
         <ul>
           <li>Public, signed event publication for rounds, ballots, and results</li>
           <li>Private NIP-17 DM transport for issuance requests and responses</li>
+          <li>NIP-65 inbox/outbox hints for relay discovery and relay-list publication</li>
           <li>Relay diversity instead of one central database</li>
           <li>Portable identities and signed announcements</li>
         </ul>
@@ -546,6 +547,7 @@
           <li>Auditors can read the same public state as coordinators</li>
           <li>Static clients can participate without a proprietary backend</li>
           <li>Coordinator rosters and per-round keys can be announced in public</li>
+          <li>Participants can publish their own preferred relay hints as communication starts</li>
           <li>The protocol remains inspectable by any third party</li>
         </ul>
       </div>
@@ -620,9 +622,14 @@
             <td>Threshold issuance and public comparison reduce single-operator power.</td>
           </tr>
           <tr>
+            <td><strong>Deterministic core</strong></td>
+            <td>Rust/Wasm engine</td>
+            <td>Shared protocol logic, ordering, diagnostics, and retry decisions can move out of ad hoc UI code.</td>
+          </tr>
+          <tr>
             <td><strong>User control</strong></td>
-            <td>Browser + IndexedDB</td>
-            <td>Static clients can hold local state and work without a proprietary app server.</td>
+            <td>Browser + IndexedDB + passphrase protection</td>
+            <td>Static clients can hold local state and work without a proprietary app server, while still protecting backup/export flows.</td>
           </tr>
         </tbody>
       </table>
@@ -787,6 +794,9 @@
           <li>Relay health and retry strategy</li>
         </ul>
       </div>
+    </div>
+    <div class="quote">
+      <p>The current repo is already client-only and static-deployable, but live relay reliability is still the main operational weakness.</p>
     </div>
     <div class="speaker-note">Important credibility slide. This is where you show you understand the difference between “possible” and “finished.”</div>
   </section>

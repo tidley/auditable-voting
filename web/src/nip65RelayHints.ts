@@ -1,5 +1,11 @@
-import { finalizeEvent, getPublicKey, nip19, SimplePool, type VerifiedEvent } from "nostr-tools";
+import { finalizeEvent, getPublicKey, nip19, type VerifiedEvent } from "nostr-tools";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
+import { getSharedNostrPool } from "./sharedNostrPool";
+import {
+  buildActorRelaySetRust,
+  buildConversationRelaySetRust,
+  normalizeRelaysRust,
+} from "./wasm/auditableVotingCore";
 
 export const NIP65_RELAY_LIST_KIND = 10002;
 
@@ -15,9 +21,7 @@ const relayHintsInflight = new Map<string, Promise<Nip65RelayHints | null>>();
 const publishedRelayHintKeys = new Set<string>();
 
 function uniqueRelays(values: string[]) {
-  return Array.from(
-    new Set(values.map((value) => value.trim()).filter((value) => value.length > 0)),
-  );
+  return normalizeRelaysRust(values);
 }
 
 function buildRelayHintCacheKey(
@@ -125,7 +129,7 @@ export async function fetchNip65RelayHints(input: {
   }
 
   const request = (async () => {
-    const pool = new SimplePool();
+    const pool = getSharedNostrPool();
     try {
       const events = await pool.querySync(discoveryRelays, {
         kinds: [NIP65_RELAY_LIST_KIND],
@@ -142,7 +146,6 @@ export async function fetchNip65RelayHints(input: {
       return latest;
     } finally {
       relayHintsInflight.delete(npub);
-      pool.close(discoveryRelays);
     }
   })();
 
@@ -174,7 +177,10 @@ export async function publishOwnNip65RelayHints(input: {
   const npub = nip19.npubEncode(getPublicKey(input.secretKey));
   const inboxRelays = uniqueRelays(input.inboxRelays ?? []);
   const outboxRelays = uniqueRelays(input.outboxRelays ?? []);
-  const publishRelays = uniqueRelays([...input.publishRelays, ...outboxRelays, ...inboxRelays]);
+  const publishRelays = buildActorRelaySetRust({
+    preferredRelays: [...outboxRelays, ...inboxRelays],
+    fallbackRelays: input.publishRelays,
+  });
 
   if (publishRelays.length === 0 || (inboxRelays.length === 0 && outboxRelays.length === 0)) {
     return null;
@@ -204,42 +210,38 @@ export async function publishOwnNip65RelayHints(input: {
     content: "",
   }, input.secretKey);
 
-  const pool = new SimplePool();
-  try {
-    const results = await queueNostrPublish(
-      () => publishToRelaysStaggered(
-        (relay) => pool.publish([relay], event, { maxWait: 1500 })[0],
-        publishRelays,
-        { staggerMs: 250 },
-      ),
-      {
-        channel: input.channel ?? `nip65:${npub}`,
-        minIntervalMs: input.minIntervalMs ?? 1000,
-      },
-    );
+  const pool = getSharedNostrPool();
+  const results = await queueNostrPublish(
+    () => publishToRelaysStaggered(
+      (relay) => pool.publish([relay], event, { maxWait: 1500 })[0],
+      publishRelays,
+      { staggerMs: 250 },
+    ),
+    {
+      channel: input.channel ?? `nip65:${npub}`,
+      minIntervalMs: input.minIntervalMs ?? 1000,
+    },
+  );
 
-    const successes = results.filter((result) => result.status === "fulfilled").length;
-    if (successes > 0) {
-      relayHintsCache.set(npub, {
-        npub,
-        inboxRelays,
-        outboxRelays,
-        fetchedAt: createdAt,
-      });
-      publishedRelayHintKeys.add(cacheKey);
-    }
-
-    return {
-      eventId: event.id,
-      successes,
-      failures: results.filter((result) => result.status === "rejected").length,
+  const successes = results.filter((result) => result.status === "fulfilled").length;
+  if (successes > 0) {
+    relayHintsCache.set(npub, {
+      npub,
       inboxRelays,
       outboxRelays,
-      publishRelays,
-    };
-  } finally {
-    pool.destroy?.();
+      fetchedAt: createdAt,
+    });
+    publishedRelayHintKeys.add(cacheKey);
   }
+
+  return {
+    eventId: event.id,
+    successes,
+    failures: results.filter((result) => result.status === "rejected").length,
+    inboxRelays,
+    outboxRelays,
+    publishRelays,
+  };
 }
 
 function getCachedRelayList(
@@ -267,9 +269,15 @@ export async function resolveNip65InboxRelays(input: {
   fallbackRelays: string[];
   extraRelays?: string[];
 }): Promise<string[]> {
-  const fallbackRelays = uniqueRelays([...input.fallbackRelays, ...(input.extraRelays ?? [])]);
+  const fallbackRelays = buildActorRelaySetRust({
+    fallbackRelays: input.fallbackRelays,
+    extraRelays: input.extraRelays,
+  });
   primeNip65RelayHintsInBackground(input.npub, fallbackRelays);
-  return uniqueRelays([...getCachedRelayList(input.npub, "inboxRelays"), ...fallbackRelays]);
+  return buildActorRelaySetRust({
+    preferredRelays: getCachedRelayList(input.npub, "inboxRelays"),
+    fallbackRelays,
+  });
 }
 
 export async function resolveNip65OutboxRelays(input: {
@@ -277,9 +285,15 @@ export async function resolveNip65OutboxRelays(input: {
   fallbackRelays: string[];
   extraRelays?: string[];
 }): Promise<string[]> {
-  const fallbackRelays = uniqueRelays([...input.fallbackRelays, ...(input.extraRelays ?? [])]);
+  const fallbackRelays = buildActorRelaySetRust({
+    fallbackRelays: input.fallbackRelays,
+    extraRelays: input.extraRelays,
+  });
   primeNip65RelayHintsInBackground(input.npub, fallbackRelays);
-  return uniqueRelays([...getCachedRelayList(input.npub, "outboxRelays"), ...fallbackRelays]);
+  return buildActorRelaySetRust({
+    preferredRelays: getCachedRelayList(input.npub, "outboxRelays"),
+    fallbackRelays,
+  });
 }
 
 export async function resolveNip65ConversationRelays(input: {
@@ -288,7 +302,10 @@ export async function resolveNip65ConversationRelays(input: {
   fallbackRelays: string[];
   extraRelays?: string[];
 }): Promise<string[]> {
-  const fallbackRelays = uniqueRelays([...input.fallbackRelays, ...(input.extraRelays ?? [])]);
+  const fallbackRelays = buildActorRelaySetRust({
+    fallbackRelays: input.fallbackRelays,
+    extraRelays: input.extraRelays,
+  });
   const [recipientInboxRelays, senderOutboxRelays] = await Promise.all([
     resolveNip65InboxRelays({
       npub: input.recipientNpub,
@@ -302,7 +319,11 @@ export async function resolveNip65ConversationRelays(input: {
       : Promise.resolve<string[]>([]),
   ]);
 
-  return uniqueRelays([...recipientInboxRelays, ...senderOutboxRelays, ...fallbackRelays]);
+  return buildConversationRelaySetRust({
+    recipientInboxRelays,
+    senderOutboxRelays,
+    fallbackRelays,
+  });
 }
 
 export function resetNip65RelayHintsForTests() {

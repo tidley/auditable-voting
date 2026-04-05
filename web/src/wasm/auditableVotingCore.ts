@@ -1,4 +1,6 @@
 import {
+  build_actor_relay_set as buildActorRelaySetWasm,
+  build_conversation_relay_set as buildConversationRelaySetWasm,
   build_coordinator_follower_rows as buildCoordinatorFollowerRowsWasm,
   build_simple_vote_ticket_rows as buildSimpleVoteTicketRowsWasm,
   build_voter_coordinator_diagnostics as buildVoterCoordinatorDiagnosticsWasm,
@@ -11,6 +13,7 @@ import {
   select_request_retry_keys as selectRequestRetryKeysWasm,
   select_ticket_retry_targets as selectTicketRetryTargetsWasm,
   sha256_hex as sha256HexWasm,
+  normalize_relays as normalizeRelaysWasm,
   sort_records_by_created_at_desc as sortRecordsByCreatedAtDescWasm,
   sort_simple_votes_canonical as sortSimpleVotesCanonicalWasm,
   token_id_label as tokenIdLabelWasm,
@@ -57,6 +60,34 @@ export type CoordinatorFollowerRowRust = {
 
 export function normalizeCoordinatorNpubsRust(values: string[]) {
   return normalizeCoordinatorNpubsWasm(values) as string[];
+}
+
+export function normalizeRelaysRust(values: string[]) {
+  return normalizeRelaysWasm(values) as string[];
+}
+
+export function buildActorRelaySetRust(input: {
+  preferredRelays?: string[];
+  fallbackRelays: string[];
+  extraRelays?: string[];
+}) {
+  return buildActorRelaySetWasm({
+    preferredRelays: input.preferredRelays ?? [],
+    fallbackRelays: input.fallbackRelays,
+    extraRelays: input.extraRelays ?? [],
+  }) as string[];
+}
+
+export function buildConversationRelaySetRust(input: {
+  recipientInboxRelays: string[];
+  senderOutboxRelays?: string[];
+  fallbackRelays: string[];
+}) {
+  return buildConversationRelaySetWasm({
+    recipientInboxRelays: input.recipientInboxRelays,
+    senderOutboxRelays: input.senderOutboxRelays ?? [],
+    fallbackRelays: input.fallbackRelays,
+  }) as string[];
 }
 
 export function deriveActorDisplayIdRust(value: string) {

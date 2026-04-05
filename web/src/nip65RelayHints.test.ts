@@ -19,6 +19,37 @@ vi.mock("nostr-tools", () => ({
   },
 }));
 
+vi.mock("./sharedNostrPool", () => ({
+  getSharedNostrPool: () => ({ publish, destroy, close, querySync }),
+}));
+
+vi.mock("./wasm/auditableVotingCore", async () => {
+  const actual = await vi.importActual<typeof import("./wasm/auditableVotingCore")>("./wasm/auditableVotingCore");
+  const normalizeRelaysRust = (values: string[]) => Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+  return {
+    ...actual,
+    normalizeRelaysRust,
+    buildActorRelaySetRust: (input: {
+      preferredRelays?: string[];
+      fallbackRelays: string[];
+      extraRelays?: string[];
+    }) => normalizeRelaysRust([
+      ...(input.preferredRelays ?? []),
+      ...input.fallbackRelays,
+      ...(input.extraRelays ?? []),
+    ]),
+    buildConversationRelaySetRust: (input: {
+      recipientInboxRelays: string[];
+      senderOutboxRelays?: string[];
+      fallbackRelays: string[];
+    }) => normalizeRelaysRust([
+      ...input.recipientInboxRelays,
+      ...(input.senderOutboxRelays ?? []),
+      ...input.fallbackRelays,
+    ]),
+  };
+});
+
 vi.mock("./nostrPublishQueue", () => ({
   queueNostrPublish: (task: () => Promise<unknown>) => task(),
   publishToRelaysStaggered: async (

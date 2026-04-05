@@ -337,13 +337,14 @@ flowchart LR
 
 ### Storage model
 
-The migration direction is:
+The current client-side model is:
 
 - **Nostr**: canonical shared state
 - **IndexedDB**: local active state and secrets
-- **Blossom**: planned encrypted backup bundles
+- **passphrase protection**: optional local protection and backup encryption
+- **Rust/Wasm core**: deterministic protocol logic shared across the client
 
-This matters because the system is trying to move toward a client-side model, not a traditional central server.
+This matters because the system is now intentionally browser-local rather than a traditional central server.
 
 ---
 
@@ -601,6 +602,8 @@ Benefits:
 
 In this repo, relay selection uses **NIP-65 inbox/outbox hints** so senders and receivers can better choose where to publish and subscribe.
 
+The current client also publishes its own NIP-65 relay hints when voter or coordinator communication begins.
+
 ---
 
 ## 16. Why Local State Still Exists
@@ -622,10 +625,10 @@ The browser stores:
 - received shares
 - coordinator private material
 
-Planned backup direction:
+The current client supports:
 
-- export encrypted bundles
-- optional upload to Blossom
+- local backup export
+- optional passphrase-encrypted backups
 - restore on a new device
 
 ---
@@ -660,9 +663,12 @@ Threshold issuance means one coordinator alone should not define the whole syste
 
 The repository now focuses on the client-side web app only:
 
-- `simple.html` is the main client-side shell
+- `simple.html` is the main role-switching shell
+- voter, coordinator, and auditor flows all live in `web/`
 - Nostr is the shared state layer
-- blind-share issuance is in the simple flow
+- NIP-17 DMs carry issuance-related traffic
+- NIP-65 relay hints are resolved and now also published by participants
+- a Rust/Wasm core handles more of the deterministic protocol logic
 - local browser state is used for active session data
 
 The older backend-oriented stack has been removed from this repository.
@@ -693,6 +699,10 @@ Live relay behavior is probabilistic, so follow requests, announcements, blind r
 ### 5. Cryptography must be conservative
 
 Blind-signature code is not a place for “close enough”.
+
+### 6. Browser state is still a security boundary
+
+Even with passphrase protection and backup encryption, browser-held secrets still need careful custody and review.
 
 ---
 
