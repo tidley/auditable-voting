@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build:wasm": "cd rust-core && wasm-pack build --mode no-install --target bundler --out-dir ../src/wasm/auditable_voting_core/pkg",
+    "build:wasm": "cd rust-core && wasm-pack build --target bundler --out-dir ../src/wasm/auditable_voting_core/pkg",
     "predev": "node scripts/ensure-wasm-artifacts.mjs",
     "prebuild": "node scripts/ensure-wasm-artifacts.mjs",
     "pretest": "node scripts/ensure-wasm-artifacts.mjs",
