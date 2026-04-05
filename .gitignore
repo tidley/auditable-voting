@@ -8,6 +8,10 @@ dist/
 .DS_Store
 Thumbs.db
 
+# Local editor / tooling files
+.vscode/
+.codex
+
 # Environment
 .env
 deploy.env
