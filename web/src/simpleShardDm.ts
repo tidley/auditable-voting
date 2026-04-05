@@ -1,4 +1,5 @@
 import { getPublicKey, nip17, nip19, SimplePool } from "nostr-tools";
+import { deriveActorDisplayId } from "./actorDisplay";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import {
   resolveNip65ConversationRelays,
@@ -60,6 +61,7 @@ export type SimpleShardRequest = {
   dmEventId: string;
   voterNpub: string;
   voterId: string;
+  replyNpub: string;
   votingId: string;
   blindRequest: SimpleBlindIssuanceRequest;
   createdAt: string;
@@ -145,6 +147,35 @@ function sortByCreatedAtDescending<T extends { createdAt: string }>(values: T[])
   return [...values].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
+function uniqueNonEmpty(values: Array<string | undefined>) {
+  return Array.from(new Set(values.map((value) => value?.trim() ?? "").filter((value) => value.length > 0)));
+}
+
+function collectActorSecrets(
+  actorNsec?: string,
+  actorNsecs?: string[],
+) {
+  return uniqueNonEmpty([actorNsec, ...(actorNsecs ?? [])]).map((value) => getNpubFromNsec(value, "Actor"));
+}
+
+function parseWithAnySecretKey<T>(
+  wrappedEvent: Record<string, unknown> & { id?: string; created_at: number },
+  secretEntries: Array<{ secretKey: Uint8Array }>,
+  parser: (
+    wrappedEvent: Record<string, unknown> & { id?: string; created_at: number },
+    secretKey: Uint8Array,
+  ) => T | null,
+): T | null {
+  for (const entry of secretEntries) {
+    const parsed = parser(wrappedEvent, entry.secretKey);
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
 function parseSimpleShardRequest(
   wrappedEvent: Record<string, unknown> & { id?: string; created_at: number },
   secretKey: Uint8Array,
@@ -157,7 +188,7 @@ function parseSimpleShardRequest(
       action?: string;
       request_id?: string;
       voter_npub?: string;
-      voter_id?: string;
+      reply_npub?: string;
       voting_id?: string;
       blind_request?: SimpleBlindIssuanceRequest;
       created_at?: string;
@@ -167,7 +198,7 @@ function parseSimpleShardRequest(
       payload.action !== 'simple_shard_request' ||
       !payload.request_id ||
       !payload.voter_npub ||
-      !payload.voter_id ||
+      !payload.reply_npub ||
       !payload.voting_id ||
       !payload.blind_request
     ) {
@@ -178,7 +209,8 @@ function parseSimpleShardRequest(
       id: payload.request_id,
       dmEventId: String(wrappedEvent.id ?? payload.request_id),
       voterNpub: payload.voter_npub,
-      voterId: payload.voter_id,
+      voterId: deriveActorDisplayId(payload.voter_npub),
+      replyNpub: payload.reply_npub,
       votingId: payload.voting_id,
       blindRequest: payload.blind_request,
       createdAt:
@@ -202,7 +234,6 @@ function parseSimpleCoordinatorFollower(
       action?: string;
       follow_id?: string;
       voter_npub?: string;
-      voter_id?: string;
       voting_id?: string;
       created_at?: string;
     };
@@ -210,8 +241,7 @@ function parseSimpleCoordinatorFollower(
     if (
       payload.action !== 'simple_coordinator_follow' ||
       !payload.follow_id ||
-      !payload.voter_npub ||
-      !payload.voter_id
+      !payload.voter_npub
     ) {
       return null;
     }
@@ -220,7 +250,7 @@ function parseSimpleCoordinatorFollower(
       id: payload.follow_id,
       dmEventId: String(wrappedEvent.id ?? payload.follow_id),
       voterNpub: payload.voter_npub,
-      voterId: payload.voter_id,
+      voterId: deriveActorDisplayId(payload.voter_npub),
       votingId: payload.voting_id?.trim() || undefined,
       createdAt:
         payload.created_at ??
@@ -244,7 +274,6 @@ function parseSimpleShardResponse(
       response_id?: string;
       request_id?: string;
       coordinator_npub?: string;
-      coordinator_id?: string;
       threshold_label?: string;
       voting_prompt?: string;
       blind_share_response?: SimpleBlindShareResponse;
@@ -256,10 +285,16 @@ function parseSimpleShardResponse(
         payload.action !== 'simple_round_ticket') ||
       !payload.response_id ||
       !payload.request_id ||
-      !payload.coordinator_id ||
       !payload.threshold_label ||
       !payload.blind_share_response
     ) {
+      return null;
+    }
+
+    const coordinatorNpub =
+      payload.coordinator_npub ??
+      payload.blind_share_response.coordinatorNpub;
+    if (!coordinatorNpub) {
       return null;
     }
 
@@ -267,10 +302,8 @@ function parseSimpleShardResponse(
       id: payload.response_id,
       dmEventId: String(wrappedEvent.id ?? payload.response_id),
       requestId: payload.request_id,
-      coordinatorNpub:
-        payload.coordinator_npub ??
-        payload.blind_share_response.coordinatorNpub,
-      coordinatorId: payload.coordinator_id,
+      coordinatorNpub,
+      coordinatorId: deriveActorDisplayId(coordinatorNpub),
       thresholdLabel: payload.threshold_label,
       createdAt:
         payload.created_at ??
@@ -295,7 +328,6 @@ function parseSimpleSubCoordinatorApplication(
       action?: string;
       application_id?: string;
       coordinator_npub?: string;
-      coordinator_id?: string;
       lead_coordinator_npub?: string;
       created_at?: string;
     };
@@ -304,7 +336,6 @@ function parseSimpleSubCoordinatorApplication(
       payload.action !== 'simple_subcoordinator_join' ||
       !payload.application_id ||
       !payload.coordinator_npub ||
-      !payload.coordinator_id ||
       !payload.lead_coordinator_npub
     ) {
       return null;
@@ -314,7 +345,7 @@ function parseSimpleSubCoordinatorApplication(
       id: payload.application_id,
       dmEventId: String(wrappedEvent.id ?? payload.application_id),
       coordinatorNpub: payload.coordinator_npub,
-      coordinatorId: payload.coordinator_id,
+      coordinatorId: deriveActorDisplayId(payload.coordinator_npub),
       leadCoordinatorNpub: payload.lead_coordinator_npub,
       createdAt:
         payload.created_at ??
@@ -386,7 +417,6 @@ function parseSimpleDmAcknowledgement(
       acked_action?: SimpleDmAcknowledgedAction;
       acked_event_id?: string;
       actor_npub?: string;
-      actor_id?: string;
       voting_id?: string;
       request_id?: string;
       response_id?: string;
@@ -408,7 +438,7 @@ function parseSimpleDmAcknowledgement(
       ackedAction: payload.acked_action,
       ackedEventId: payload.acked_event_id,
       actorNpub: payload.actor_npub,
-      actorId: payload.actor_id?.trim() || undefined,
+      actorId: deriveActorDisplayId(payload.actor_npub),
       votingId: payload.voting_id?.trim() || undefined,
       requestId: payload.request_id?.trim() || undefined,
       responseId: payload.response_id?.trim() || undefined,
@@ -425,7 +455,6 @@ export async function sendSimpleCoordinatorFollow(input: {
   voterSecretKey: Uint8Array;
   coordinatorNpub: string;
   voterNpub: string;
-  voterId: string;
   votingId?: string;
   relays?: string[];
 }): Promise<DmPublishResult> {
@@ -449,7 +478,6 @@ export async function sendSimpleCoordinatorFollow(input: {
       action: "simple_coordinator_follow",
       follow_id: crypto.randomUUID(),
       voter_npub: input.voterNpub,
-      voter_id: input.voterId,
       voting_id: input.votingId,
       created_at: new Date().toISOString(),
     }),
@@ -491,7 +519,6 @@ export async function sendSimpleDmAcknowledgement(input: {
   senderSecretKey: Uint8Array;
   recipientNpub: string;
   actorNpub: string;
-  actorId?: string;
   ackedAction: SimpleDmAcknowledgedAction;
   ackedEventId: string;
   votingId?: string;
@@ -521,7 +548,6 @@ export async function sendSimpleDmAcknowledgement(input: {
       acked_action: input.ackedAction,
       acked_event_id: input.ackedEventId,
       actor_npub: input.actorNpub,
-      actor_id: input.actorId,
       voting_id: input.votingId,
       request_id: input.requestId,
       response_id: input.responseId,
@@ -569,7 +595,6 @@ export async function sendSimpleSubCoordinatorJoin(input: {
   coordinatorSecretKey: Uint8Array;
   leadCoordinatorNpub: string;
   coordinatorNpub: string;
-  coordinatorId: string;
   relays?: string[];
 }): Promise<DmPublishResult> {
   const decoded = nip19.decode(input.leadCoordinatorNpub);
@@ -592,7 +617,6 @@ export async function sendSimpleSubCoordinatorJoin(input: {
       action: "simple_subcoordinator_join",
       application_id: crypto.randomUUID(),
       coordinator_npub: input.coordinatorNpub,
-      coordinator_id: input.coordinatorId,
       lead_coordinator_npub: input.leadCoordinatorNpub,
       created_at: new Date().toISOString(),
     }),
@@ -634,7 +658,7 @@ export async function sendSimpleShardRequest(input: {
   voterSecretKey: Uint8Array;
   coordinatorNpub: string;
   voterNpub: string;
-  voterId: string;
+  replyNpub: string;
   votingId: string;
   blindRequest: SimpleBlindIssuanceRequest;
   relays?: string[];
@@ -659,7 +683,7 @@ export async function sendSimpleShardRequest(input: {
       action: "simple_shard_request",
       request_id: crypto.randomUUID(),
       voter_npub: input.voterNpub,
-      voter_id: input.voterId,
+      reply_npub: input.replyNpub,
       voting_id: input.votingId,
       blind_request: input.blindRequest,
       created_at: new Date().toISOString(),
@@ -844,28 +868,36 @@ export async function fetchSimpleCoordinatorFollowers(input: {
 
 export async function fetchSimpleDmAcknowledgements(input: {
   actorNsec: string;
+  actorNsecs?: string[];
   relays?: string[];
 }): Promise<SimpleDmAcknowledgement[]> {
-  const { secretKey, publicHex: actorHex, npub: actorNpub } = getNpubFromNsec(
-    input.actorNsec,
-    "Actor",
+  const actorEntries = collectActorSecrets(input.actorNsec, input.actorNsecs);
+  if (actorEntries.length === 0) {
+    return [];
+  }
+
+  const actorHexes = Array.from(new Set(actorEntries.map((entry) => entry.publicHex)));
+  const actorNpubs = Array.from(new Set(actorEntries.map((entry) => entry.npub)));
+  const inboxRelaySets = await Promise.all(
+    actorNpubs.map((actorNpub) => resolveRecipientInboxRelays(actorNpub, input.relays)),
   );
-  const dmRelays = await resolveRecipientInboxRelays(actorNpub, input.relays);
+  const dmRelays = Array.from(new Set(inboxRelaySets.flat()));
   const pool = new SimplePool();
 
   try {
     const wrappedEvents = await pool.querySync(dmRelays, {
       kinds: [1059],
-      '#p': [actorHex],
+      '#p': actorHexes,
       limit: 100,
     });
 
     const acknowledgements = new Map<string, SimpleDmAcknowledgement>();
 
     for (const wrappedEvent of wrappedEvents) {
-      const acknowledgement = parseSimpleDmAcknowledgement(
+      const acknowledgement = parseWithAnySecretKey(
         wrappedEvent,
-        secretKey,
+        actorEntries,
+        parseSimpleDmAcknowledgement,
       );
       if (acknowledgement) {
         acknowledgements.set(
@@ -883,14 +915,17 @@ export async function fetchSimpleDmAcknowledgements(input: {
 
 export function subscribeSimpleDmAcknowledgements(input: {
   actorNsec: string;
+  actorNsecs?: string[];
   relays?: string[];
   onAcknowledgements: (acknowledgements: SimpleDmAcknowledgement[]) => void;
   onError?: (error: Error) => void;
 }): () => void {
-  const { secretKey, publicHex: actorHex, npub: actorNpub } = getNpubFromNsec(
-    input.actorNsec,
-    "Actor",
-  );
+  const actorEntries = collectActorSecrets(input.actorNsec, input.actorNsecs);
+  if (actorEntries.length === 0) {
+    return () => undefined;
+  }
+  const actorHexes = Array.from(new Set(actorEntries.map((entry) => entry.publicHex)));
+  const actorNpubs = Array.from(new Set(actorEntries.map((entry) => entry.npub)));
   const pool = new SimplePool();
   const acknowledgements = new Map<string, SimpleDmAcknowledgement>();
   let closed = false;
@@ -898,6 +933,7 @@ export function subscribeSimpleDmAcknowledgements(input: {
 
   void fetchSimpleDmAcknowledgements({
     actorNsec: input.actorNsec,
+    actorNsecs: input.actorNsecs,
     relays: input.relays,
   })
     .then((initialAcknowledgements) => {
@@ -922,23 +958,26 @@ export function subscribeSimpleDmAcknowledgements(input: {
       }
     });
 
-  void resolveRecipientInboxRelays(actorNpub, input.relays).then((dmRelays) => {
+  void Promise.all(actorNpubs.map((actorNpub) => resolveRecipientInboxRelays(actorNpub, input.relays))).then((relaySets) => {
     if (closed) {
       return;
     }
+
+    const dmRelays = Array.from(new Set(relaySets.flat()));
 
     subscription = pool.subscribeMany(
       dmRelays,
       {
         kinds: [1059],
-        '#p': [actorHex],
+        '#p': actorHexes,
         limit: 100,
       },
       {
         onevent: (wrappedEvent) => {
-          const acknowledgement = parseSimpleDmAcknowledgement(
+          const acknowledgement = parseWithAnySecretKey(
             wrappedEvent,
-            secretKey,
+            actorEntries,
+            parseSimpleDmAcknowledgement,
           );
           if (!acknowledgement) {
             return;
@@ -1173,23 +1212,22 @@ export async function sendSimpleShardResponse(input: {
   coordinatorSecretKey: Uint8Array;
   blindPrivateKey: SimpleBlindPrivateKey;
   keyAnnouncementEvent: any;
-  voterNpub: string;
+  recipientNpub: string;
   request: SimpleShardRequest;
   coordinatorNpub: string;
-  coordinatorId: string;
   thresholdLabel: string;
   shareIndex: number;
   thresholdT?: number;
   thresholdN?: number;
   relays?: string[];
 }): Promise<DmPublishResult & { responseId: string }> {
-  const decoded = nip19.decode(input.voterNpub);
+  const decoded = nip19.decode(input.recipientNpub);
   if (decoded.type !== "npub") {
     throw new Error("Voter value must be an npub.");
   }
 
   const dmRelays = await resolveConversationDmRelays(
-    input.voterNpub,
+    input.recipientNpub,
     input.coordinatorNpub,
     input.relays,
   );
@@ -1214,7 +1252,6 @@ export async function sendSimpleShardResponse(input: {
       response_id: responseId,
       request_id: input.request.blindRequest.requestId,
       coordinator_npub: input.coordinatorNpub,
-      coordinator_id: input.coordinatorId,
       threshold_label: input.thresholdLabel,
       blind_share_response: blindShareResponse,
       created_at: new Date().toISOString(),
@@ -1258,10 +1295,8 @@ export async function sendSimpleRoundTicket(input: {
   coordinatorSecretKey: Uint8Array;
   blindPrivateKey: SimpleBlindPrivateKey;
   keyAnnouncementEvent: any;
-  voterNpub: string;
-  voterId: string;
+  recipientNpub: string;
   coordinatorNpub: string;
-  coordinatorId: string;
   thresholdLabel: string;
   request: SimpleShardRequest;
   votingPrompt: string;
@@ -1270,13 +1305,13 @@ export async function sendSimpleRoundTicket(input: {
   thresholdN?: number;
   relays?: string[];
 }): Promise<DmPublishResult & { responseId: string }> {
-  const decoded = nip19.decode(input.voterNpub);
+  const decoded = nip19.decode(input.recipientNpub);
   if (decoded.type !== "npub") {
     throw new Error("Voter value must be an npub.");
   }
 
   const dmRelays = await resolveConversationDmRelays(
-    input.voterNpub,
+    input.recipientNpub,
     input.coordinatorNpub,
     input.relays,
   );
@@ -1300,9 +1335,7 @@ export async function sendSimpleRoundTicket(input: {
       action: "simple_round_ticket",
       response_id: responseId,
       request_id: input.request.blindRequest.requestId,
-      voter_id: input.voterId,
       coordinator_npub: input.coordinatorNpub,
-      coordinator_id: input.coordinatorId,
       threshold_label: input.thresholdLabel,
       voting_prompt: input.votingPrompt,
       blind_share_response: blindShareResponse,
@@ -1412,26 +1445,32 @@ export async function sendSimpleShareAssignment(input: {
 
 export async function fetchSimpleShardResponses(input: {
   voterNsec: string;
+  voterNsecs?: string[];
   relays?: string[];
 }): Promise<SimpleShardResponse[]> {
-  const { secretKey, publicHex: voterHex, npub: voterNpub } = getNpubFromNsec(
-    input.voterNsec,
-    "Voter",
+  const voterEntries = collectActorSecrets(input.voterNsec, input.voterNsecs);
+  if (voterEntries.length === 0) {
+    return [];
+  }
+  const voterHexes = Array.from(new Set(voterEntries.map((entry) => entry.publicHex)));
+  const voterNpubs = Array.from(new Set(voterEntries.map((entry) => entry.npub)));
+  const inboxRelaySets = await Promise.all(
+    voterNpubs.map((voterNpub) => resolveRecipientInboxRelays(voterNpub, input.relays)),
   );
-  const dmRelays = await resolveRecipientInboxRelays(voterNpub, input.relays);
+  const dmRelays = Array.from(new Set(inboxRelaySets.flat()));
   const pool = new SimplePool();
 
   try {
     const wrappedEvents = await pool.querySync(dmRelays, {
       kinds: [1059],
-      "#p": [voterHex],
+      "#p": voterHexes,
       limit: 100,
     });
 
     const responses = new Map<string, SimpleShardResponse>();
 
     for (const wrappedEvent of wrappedEvents) {
-      const response = parseSimpleShardResponse(wrappedEvent, secretKey);
+      const response = parseWithAnySecretKey(wrappedEvent, voterEntries, parseSimpleShardResponse);
       if (response) {
         responses.set(response.id, response);
       }
@@ -1445,14 +1484,17 @@ export async function fetchSimpleShardResponses(input: {
 
 export function subscribeSimpleShardResponses(input: {
   voterNsec: string;
+  voterNsecs?: string[];
   relays?: string[];
   onResponses: (responses: SimpleShardResponse[]) => void;
   onError?: (error: Error) => void;
 }): () => void {
-  const { secretKey, publicHex: voterHex, npub: voterNpub } = getNpubFromNsec(
-    input.voterNsec,
-    "Voter",
-  );
+  const voterEntries = collectActorSecrets(input.voterNsec, input.voterNsecs);
+  if (voterEntries.length === 0) {
+    return () => undefined;
+  }
+  const voterHexes = Array.from(new Set(voterEntries.map((entry) => entry.publicHex)));
+  const voterNpubs = Array.from(new Set(voterEntries.map((entry) => entry.npub)));
   const pool = new SimplePool();
   const responses = new Map<string, SimpleShardResponse>();
   let closed = false;
@@ -1460,6 +1502,7 @@ export function subscribeSimpleShardResponses(input: {
 
   void fetchSimpleShardResponses({
     voterNsec: input.voterNsec,
+    voterNsecs: input.voterNsecs,
     relays: input.relays,
   }).then((initialResponses) => {
     if (closed) {
@@ -1477,18 +1520,20 @@ export function subscribeSimpleShardResponses(input: {
     }
   });
 
-  void resolveRecipientInboxRelays(voterNpub, input.relays).then((dmRelays) => {
+  void Promise.all(voterNpubs.map((voterNpub) => resolveRecipientInboxRelays(voterNpub, input.relays))).then((relaySets) => {
     if (closed) {
       return;
     }
 
+    const dmRelays = Array.from(new Set(relaySets.flat()));
+
     subscription = pool.subscribeMany(dmRelays, {
       kinds: [1059],
-      "#p": [voterHex],
+      "#p": voterHexes,
       limit: 100,
     }, {
       onevent: (wrappedEvent) => {
-        const response = parseSimpleShardResponse(wrappedEvent, secretKey);
+        const response = parseWithAnySecretKey(wrappedEvent, voterEntries, parseSimpleShardResponse);
         if (!response) {
           return;
         }

@@ -28,6 +28,7 @@ import { sha256Hex } from "./tokenIdentity";
 import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
 import SimpleQrScanner from "./SimpleQrScanner";
+import SimpleUnlockGate from "./SimpleUnlockGate";
 import TokenFingerprint from "./TokenFingerprint";
 import { extractNpubFromScan } from "./npubScan";
 import {
@@ -38,10 +39,14 @@ import {
 } from "./simpleShardCertificate";
 import {
   downloadSimpleActorBackup,
+  clearSimpleActorState,
+  isSimpleActorStateLocked,
   loadSimpleActorState,
+  loadSimpleActorStateWithOptions,
   parseEncryptedSimpleActorBackupBundle,
   parseSimpleActorBackupBundle,
   saveSimpleActorState,
+  SimpleActorStateLockedError,
   type SimpleActorKeypair,
 } from "./simpleLocalState";
 
@@ -56,7 +61,7 @@ type SimpleCoordinatorCache = {
   subCoordinators: SimpleSubCoordinatorApplication[];
   ticketDeliveries: Record<
     string,
-    { status: string; eventId?: string; responseId?: string }
+    { status: string; eventId?: string; responseId?: string; attempts?: number; lastAttemptAt?: string }
   >;
   pendingRequests: SimpleShardRequest[];
   registrationStatus: string | null;
@@ -160,12 +165,15 @@ export default function SimpleCoordinatorApp() {
   const [coordinatorId, setCoordinatorId] = useState("pending");
   const [identityStatus, setIdentityStatus] = useState<string | null>(null);
   const [backupStatus, setBackupStatus] = useState<string | null>(null);
+  const [storagePassphrase, setStoragePassphrase] = useState("");
+  const [storageLocked, setStorageLocked] = useState(false);
+  const [storageStatus, setStorageStatus] = useState<string | null>(null);
   const [leadCoordinatorNpub, setLeadCoordinatorNpub] = useState("");
   const [leadScannerActive, setLeadScannerActive] = useState(false);
   const [leadScannerStatus, setLeadScannerStatus] = useState<string | null>(null);
   const [followers, setFollowers] = useState<SimpleCoordinatorFollower[]>([]);
   const [subCoordinators, setSubCoordinators] = useState<SimpleSubCoordinatorApplication[]>([]);
-  const [ticketDeliveries, setTicketDeliveries] = useState<Record<string, { status: string; eventId?: string; responseId?: string }>>({});
+  const [ticketDeliveries, setTicketDeliveries] = useState<Record<string, { status: string; eventId?: string; responseId?: string; attempts?: number; lastAttemptAt?: string }>>({});
   const [pendingRequests, setPendingRequests] = useState<SimpleShardRequest[]>([]);
   const [dmAcknowledgements, setDmAcknowledgements] = useState<SimpleDmAcknowledgement[]>([]);
   const [registrationStatus, setRegistrationStatus] = useState<string | null>(null);
@@ -272,6 +280,7 @@ export default function SimpleCoordinatorApp() {
           );
           setSubmittedVotes(Array.isArray(cache.submittedVotes) ? cache.submittedVotes : []);
         }
+        setStorageLocked(false);
         setIdentityReady(true);
         return;
       }
@@ -281,16 +290,24 @@ export default function SimpleCoordinatorApp() {
         role: "coordinator",
         keypair: nextKeypair,
         updatedAt: new Date().toISOString(),
-      });
+      }).catch(() => undefined);
       setKeypair(nextKeypair);
+      setStorageLocked(false);
       setIdentityReady(true);
-    }).catch(() => {
+    }).catch(async (error) => {
       if (cancelled) {
+        return;
+      }
+
+      if (error instanceof SimpleActorStateLockedError || await isSimpleActorStateLocked("coordinator")) {
+        setStorageLocked(true);
+        setStorageStatus("Local coordinator state is locked.");
         return;
       }
 
       const nextKeypair = createSimpleCoordinatorKeypair();
       setKeypair(nextKeypair);
+      setStorageLocked(false);
       setIdentityReady(true);
     });
 
@@ -330,7 +347,7 @@ export default function SimpleCoordinatorApp() {
       keypair,
       updatedAt: new Date().toISOString(),
       cache,
-    });
+    }, storagePassphrase ? { passphrase: storagePassphrase } : undefined);
   }, [
     assignmentStatus,
     followers,
@@ -349,6 +366,7 @@ export default function SimpleCoordinatorApp() {
     registrationStatus,
     selectedSubmittedVotingId,
     selectedVotingId,
+    storagePassphrase,
     subCoordinators,
     submittedVotes,
     ticketDeliveries,
@@ -454,7 +472,6 @@ export default function SimpleCoordinatorApp() {
           senderSecretKey: coordinatorSecretKey,
           recipientNpub: latestAssignment.leadCoordinatorNpub,
           actorNpub: keypair.npub,
-          actorId: coordinatorId === "pending" ? undefined : coordinatorId,
           ackedAction: "simple_share_assignment",
           ackedEventId: latestAssignment.dmEventId,
         }).catch(() => {
@@ -634,7 +651,6 @@ export default function SimpleCoordinatorApp() {
         senderSecretKey: coordinatorSecretKey,
         recipientNpub: follower.voterNpub,
         actorNpub: coordinatorNpub,
-        actorId: coordinatorId === "pending" ? undefined : coordinatorId,
         ackedAction: "simple_coordinator_follow",
         ackedEventId: follower.dmEventId,
         votingId: follower.votingId,
@@ -660,9 +676,8 @@ export default function SimpleCoordinatorApp() {
       sentRequestAckIdsRef.current.add(request.dmEventId);
       void sendSimpleDmAcknowledgement({
         senderSecretKey: coordinatorSecretKey,
-        recipientNpub: request.voterNpub,
+        recipientNpub: request.replyNpub,
         actorNpub: coordinatorNpub,
-        actorId: coordinatorId === "pending" ? undefined : coordinatorId,
         ackedAction: "simple_shard_request",
         ackedEventId: request.dmEventId,
         votingId: request.votingId,
@@ -691,7 +706,6 @@ export default function SimpleCoordinatorApp() {
         senderSecretKey: coordinatorSecretKey,
         recipientNpub: application.coordinatorNpub,
         actorNpub: coordinatorNpub,
-        actorId: coordinatorId === "pending" ? undefined : coordinatorId,
         ackedAction: "simple_subcoordinator_join",
         ackedEventId: application.dmEventId,
       }).catch(() => {
@@ -768,7 +782,7 @@ export default function SimpleCoordinatorApp() {
       role: "coordinator",
       keypair: nextKeypair,
       updatedAt: new Date().toISOString(),
-    });
+    }, storagePassphrase ? { passphrase: storagePassphrase } : undefined);
     setKeypair(nextKeypair);
     setIdentityStatus(null);
     setBackupStatus(null);
@@ -815,7 +829,7 @@ export default function SimpleCoordinatorApp() {
       role: "coordinator",
       keypair: nextKeypair,
       updatedAt: new Date().toISOString(),
-    });
+    }, storagePassphrase ? { passphrase: storagePassphrase } : undefined);
     setKeypair(nextKeypair);
     setIdentityStatus("Identity restored from nsec.");
     setBackupStatus(null);
@@ -904,7 +918,7 @@ export default function SimpleCoordinatorApp() {
         keypair: bundle.keypair,
         updatedAt: new Date().toISOString(),
         cache: bundle.cache,
-      });
+      }, storagePassphrase ? { passphrase: storagePassphrase } : undefined);
       setKeypair(bundle.keypair);
       setIdentityStatus("Identity restored from backup.");
       setBackupStatus(`Backup restored from ${bundle.exportedAt}.`);
@@ -966,6 +980,85 @@ export default function SimpleCoordinatorApp() {
     }
   }
 
+  async function unlockLocalState(passphrase: string) {
+    const trimmed = passphrase.trim();
+    if (!trimmed) {
+      setStorageStatus("Enter the passphrase.");
+      return;
+    }
+
+    try {
+      const storedState = await loadSimpleActorStateWithOptions("coordinator", { passphrase: trimmed });
+      if (!storedState?.keypair) {
+        setStorageStatus("No coordinator state was found.");
+        return;
+      }
+
+      const cache = (storedState.cache ?? null) as Partial<SimpleCoordinatorCache> | null;
+      const fallbackCoordinatorNpubs = sortCoordinatorRoster(
+        Array.isArray(cache?.subCoordinators)
+          ? cache.subCoordinators.flatMap((application) => (
+            application && typeof application.coordinatorNpub === "string"
+              ? [application.coordinatorNpub]
+              : []
+          ))
+          : [],
+      );
+      setStoragePassphrase(trimmed);
+      setKeypair(storedState.keypair);
+      setLeadCoordinatorNpub(typeof cache?.leadCoordinatorNpub === "string" ? cache.leadCoordinatorNpub : "");
+      setFollowers(Array.isArray(cache?.followers) ? cache.followers : []);
+      setSubCoordinators(Array.isArray(cache?.subCoordinators) ? cache.subCoordinators : []);
+      setTicketDeliveries(cache?.ticketDeliveries && typeof cache.ticketDeliveries === "object" ? cache.ticketDeliveries : {});
+      setPendingRequests(Array.isArray(cache?.pendingRequests) ? cache.pendingRequests : []);
+      setRegistrationStatus(typeof cache?.registrationStatus === "string" ? cache.registrationStatus : null);
+      setAssignmentStatus(typeof cache?.assignmentStatus === "string" ? cache.assignmentStatus : null);
+      setQuestionPrompt(typeof cache?.questionPrompt === "string" ? cache.questionPrompt : "Should the proposal pass?");
+      setQuestionThresholdT(typeof cache?.questionThresholdT === "string" ? cache.questionThresholdT : "1");
+      setQuestionThresholdN(typeof cache?.questionThresholdN === "string" ? cache.questionThresholdN : "1");
+      setQuestionShareIndex(typeof cache?.questionShareIndex === "string" ? cache.questionShareIndex : "1");
+      setRoundBlindPrivateKeys(cache?.roundBlindPrivateKeys && typeof cache.roundBlindPrivateKeys === "object" ? cache.roundBlindPrivateKeys as Record<string, SimpleBlindPrivateKey> : {});
+      setRoundBlindKeyAnnouncements(cache?.roundBlindKeyAnnouncements && typeof cache.roundBlindKeyAnnouncements === "object" ? cache.roundBlindKeyAnnouncements as Record<string, SimpleBlindKeyAnnouncement> : {});
+      setPublishStatus(typeof cache?.publishStatus === "string" ? cache.publishStatus : null);
+      setPublishedVotes(
+        Array.isArray(cache?.publishedVotes)
+          ? cache.publishedVotes
+            .map((vote) => normalizeLiveVoteSession(vote, fallbackCoordinatorNpubs))
+            .filter((vote): vote is SimpleLiveVoteSession => vote !== null)
+          : [],
+      );
+      setSelectedVotingId(typeof cache?.selectedVotingId === "string" ? cache.selectedVotingId : "");
+      setSelectedSubmittedVotingId(typeof cache?.selectedSubmittedVotingId === "string" ? cache.selectedSubmittedVotingId : "");
+      setSubmittedVotes(Array.isArray(cache?.submittedVotes) ? cache.submittedVotes : []);
+      setStorageLocked(false);
+      setStorageStatus("Local coordinator state unlocked.");
+      setIdentityReady(true);
+    } catch {
+      setStorageStatus("Unlock failed.");
+    }
+  }
+
+  async function protectLocalState(passphrase: string) {
+    if (!passphrase.trim() || !keypair) {
+      setStorageStatus("Enter a passphrase first.");
+      return;
+    }
+    setStoragePassphrase(passphrase.trim());
+    setStorageStatus("Local coordinator state will be stored encrypted.");
+  }
+
+  async function disableLocalStateProtection(currentPassphrase?: string) {
+    if (!keypair) {
+      return;
+    }
+    if (!storagePassphrase && !currentPassphrase?.trim()) {
+      setStorageStatus("Enter the current passphrase to remove protection.");
+      return;
+    }
+    setStoragePassphrase("");
+    setStorageStatus("Local coordinator state protection removed.");
+  }
+
   function getThresholdLabel() {
     const configuredT = Number.parseInt(questionThresholdT, 10);
     const configuredN = Number.parseInt(questionThresholdN, 10);
@@ -1019,10 +1112,8 @@ export default function SimpleCoordinatorApp() {
         coordinatorSecretKey,
         blindPrivateKey: activeBlindPrivateKey,
         keyAnnouncementEvent: activeBlindKeyAnnouncement.event,
-        voterNpub: follower.voterNpub,
-        voterId: follower.voterId,
+        recipientNpub: matchingRequest.replyNpub,
         coordinatorNpub,
-        coordinatorId,
         thresholdLabel,
         request: matchingRequest,
         votingPrompt: prompt,
@@ -1037,6 +1128,8 @@ export default function SimpleCoordinatorApp() {
           status: result.successes > 0 ? "Ticket sent." : "Ticket send failed.",
           eventId: result.eventId,
           responseId: result.responseId,
+          attempts: (current[ticketStatusKey]?.attempts ?? 0) + 1,
+          lastAttemptAt: new Date().toISOString(),
         },
       }));
     } catch {
@@ -1117,7 +1210,6 @@ export default function SimpleCoordinatorApp() {
         coordinatorSecretKey,
         leadCoordinatorNpub: nextLeadCoordinatorNpub,
         coordinatorNpub,
-        coordinatorId,
       });
 
       setRegistrationStatus(
@@ -1184,6 +1276,61 @@ export default function SimpleCoordinatorApp() {
     : followers;
   const expectedSubCoordinatorCount = Math.max(0, (Number.parseInt(questionThresholdN, 10) || 1) - 1);
 
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      if (!selectedPublishedVote) {
+        return;
+      }
+
+      const retries = visibleFollowers.filter((follower) => {
+        const key = `${follower.voterNpub}:${selectedPublishedVote.votingId}`;
+        const delivery = ticketDeliveries[key];
+        if (!delivery?.eventId || (delivery.attempts ?? 0) >= 4) {
+          return false;
+        }
+        const acknowledged = dmAcknowledgements.some((ack) => (
+          ack.ackedAction === "simple_round_ticket"
+          && ack.ackedEventId === delivery.eventId
+        ));
+        if (acknowledged) {
+          return false;
+        }
+        const lastAttemptAt = delivery.lastAttemptAt ? Date.parse(delivery.lastAttemptAt) : 0;
+        return Date.now() - lastAttemptAt >= 10000;
+      });
+
+      for (const follower of retries) {
+        void sendTicket(follower);
+      }
+    }, 5000);
+
+    return () => window.clearInterval(intervalId);
+  }, [dmAcknowledgements, selectedPublishedVote, ticketDeliveries, visibleFollowers]);
+
+  if (storageLocked && !identityReady) {
+    return (
+      <SimpleUnlockGate
+        roleLabel="Coordinator"
+        status={storageStatus}
+        onUnlock={unlockLocalState}
+        onReset={async () => {
+          await clearSimpleActorState("coordinator");
+          setStorageLocked(false);
+          setStoragePassphrase("");
+          const nextKeypair = createSimpleCoordinatorKeypair();
+          await saveSimpleActorState({
+            role: "coordinator",
+            keypair: nextKeypair,
+            updatedAt: new Date().toISOString(),
+          });
+          setKeypair(nextKeypair);
+          setIdentityReady(true);
+          setStorageStatus("Locked local coordinator state reset.");
+        }}
+      />
+    );
+  }
+
   return (
     <main className='simple-voter-shell'>
       <section className='simple-voter-page'>
@@ -1207,6 +1354,10 @@ export default function SimpleCoordinatorApp() {
           onDownloadBackup={identityReady ? downloadBackup : undefined}
           onRestoreBackupFile={restoreBackup}
           backupMessage={backupStatus}
+          onProtectLocalState={identityReady ? protectLocalState : undefined}
+          onDisableLocalStateProtection={identityReady ? disableLocalStateProtection : undefined}
+          localStateProtected={Boolean(storagePassphrase)}
+          localStateMessage={storageStatus}
         />
 
         <SimpleCollapsibleSection title='Coordinator management'>

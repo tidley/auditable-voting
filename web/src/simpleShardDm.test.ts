@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { deriveActorDisplayId } from "./actorDisplay";
 
 const publish = vi.fn();
 const destroy = vi.fn();
@@ -86,7 +87,7 @@ describe("simpleShardDm", () => {
       voterSecretKey: new Uint8Array([1, 2, 3]),
       coordinatorNpub: "npub1coord",
       voterNpub: "npub1voter",
-      voterId: "voter123",
+      replyNpub: "npub1reply",
       votingId: "vote-1",
       blindRequest: {
         requestId: "request-1",
@@ -125,15 +126,13 @@ describe("simpleShardDm", () => {
         d: "22",
       },
       keyAnnouncementEvent: { id: "blind-key-1" },
-      voterNpub: "npub1voter",
-      voterId: "voter123",
+      recipientNpub: "npub1reply",
       coordinatorNpub: "npub1coord",
-      coordinatorId: "coord123",
       thresholdLabel: "2 of 3",
       request: {
         id: "request-entry-1",
         voterNpub: "npub1voter",
-        voterId: "voter123",
+        replyNpub: "npub1reply",
         votingId: "vote-1",
         blindRequest: {
           requestId: "request-1",
@@ -175,7 +174,6 @@ describe("simpleShardDm", () => {
         response_id: "share-1",
         request_id: "request-1",
         coordinator_npub: "npub1coord",
-        coordinator_id: "coord123",
         threshold_label: "2 of 3",
         voting_prompt: "Should the proposal pass?",
         blind_share_response: {
@@ -203,7 +201,7 @@ describe("simpleShardDm", () => {
         dmEventId: "share-1",
         requestId: "request-1",
         coordinatorNpub: "npub1coord",
-        coordinatorId: "coord123",
+        coordinatorId: deriveActorDisplayId("npub1coord"),
         thresholdLabel: "2 of 3",
         createdAt: "2026-04-02T00:00:01.000Z",
         votingPrompt: "Should the proposal pass?",
@@ -236,7 +234,7 @@ describe("simpleShardDm", () => {
         action: "simple_shard_request",
         request_id: "request-1",
         voter_npub: "npub1voter",
-        voter_id: "voter123",
+        reply_npub: "npub1reply",
         voting_id: "vote-1",
         blind_request: {
           requestId: "request-1",
@@ -261,7 +259,8 @@ describe("simpleShardDm", () => {
         id: "request-1",
         dmEventId: "request-1",
         voterNpub: "npub1voter",
-        voterId: "voter123",
+        voterId: deriveActorDisplayId("npub1voter"),
+        replyNpub: "npub1reply",
         votingId: "vote-1",
         blindRequest: {
           requestId: "request-1",
@@ -287,7 +286,6 @@ describe("simpleShardDm", () => {
       senderSecretKey: new Uint8Array([1, 2, 3]),
       recipientNpub: "npub1coord",
       actorNpub: "npub1voter",
-      actorId: "voter123",
       ackedAction: "simple_shard_request",
       ackedEventId: "wrapped-event-1",
       votingId: "vote-1",
@@ -297,7 +295,6 @@ describe("simpleShardDm", () => {
     expect(JSON.parse(wrapEvent.mock.calls[0][2])).toMatchObject({
       action: "simple_dm_ack",
       actor_npub: "npub1voter",
-      actor_id: "voter123",
       acked_action: "simple_shard_request",
       acked_event_id: "wrapped-event-1",
       voting_id: "vote-1",
@@ -317,7 +314,6 @@ describe("simpleShardDm", () => {
         acked_action: "simple_round_ticket",
         acked_event_id: "ticket-event-1",
         actor_npub: "npub1coord",
-        actor_id: "coord123",
         voting_id: "vote-1",
         request_id: "request-1",
         response_id: "response-1",
@@ -335,7 +331,7 @@ describe("simpleShardDm", () => {
         ackedAction: "simple_round_ticket",
         ackedEventId: "ticket-event-1",
         actorNpub: "npub1coord",
-        actorId: "coord123",
+        actorId: deriveActorDisplayId("npub1coord"),
         votingId: "vote-1",
         requestId: "request-1",
         responseId: "response-1",

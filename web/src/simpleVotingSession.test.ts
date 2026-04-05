@@ -127,7 +127,7 @@ describe("simpleVotingSession", () => {
       votingId: "vote-2",
       prompt: "Latest question",
       coordinatorNpub: "npub1coord",
-      createdAt: "2026-03-31T00:00:00.000Z",
+      createdAt: "1970-01-01T00:00:20.000Z",
       thresholdT: 3,
       thresholdN: 5,
       authorizedCoordinatorNpubs: ["npub1coord", "npub1coord2"],
@@ -210,8 +210,39 @@ describe("simpleVotingSession", () => {
           keyAnnouncementEvent: { id: "blind-key-1" },
         }],
         tokenId: "token-1",
-        createdAt: "2026-03-31T00:05:00.000Z",
+        createdAt: "1970-01-01T00:00:30.000Z",
       },
     ]);
+  });
+
+  it("prefers signed event metadata over payload created_at for submitted vote ordering", async () => {
+    const mod = await import("./simpleVotingSession");
+
+    querySync.mockResolvedValue([
+      {
+        id: "ballot-older-event",
+        pubkey: "ef".repeat(32),
+        created_at: 10,
+        content: JSON.stringify({
+          voting_id: "vote-2",
+          choice: "Yes",
+          shard_proofs: [{
+            coordinatorNpub: "npub1coord",
+            votingId: "vote-2",
+            tokenCommitment: "commit-1",
+            unblindedSignature: "sig-1",
+            shareIndex: 1,
+            keyAnnouncementEvent: { id: "blind-key-1" },
+          }],
+          created_at: "2099-01-01T00:00:00.000Z",
+        }),
+      },
+    ]);
+
+    const votes = await mod.fetchSimpleSubmittedVotes({
+      votingId: "vote-2",
+    });
+
+    expect(votes[0]?.createdAt).toBe("1970-01-01T00:00:10.000Z");
   });
 });

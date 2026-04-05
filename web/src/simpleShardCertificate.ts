@@ -541,7 +541,7 @@ export function parseSimpleBlindKeyAnnouncement(
         n: payload.n,
         e: payload.e,
       },
-      createdAt: payload.created_at ?? new Date(event.created_at * 1000).toISOString(),
+      createdAt: new Date(event.created_at * 1000).toISOString(),
       event,
     };
   } catch {

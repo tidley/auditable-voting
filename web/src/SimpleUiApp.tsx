@@ -5,6 +5,7 @@ import { sha256Hex } from "./tokenIdentity";
 import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
 import SimpleQrScanner from "./SimpleQrScanner";
+import SimpleUnlockGate from "./SimpleUnlockGate";
 import TokenFingerprint from "./TokenFingerprint";
 import { extractNpubFromScan } from "./npubScan";
 import {
@@ -35,10 +36,14 @@ import {
 import { reconcileSimpleKnownRounds } from "./simpleRoundState";
 import {
   downloadSimpleActorBackup,
+  clearSimpleActorState,
+  isSimpleActorStateLocked,
   loadSimpleActorState,
+  loadSimpleActorStateWithOptions,
   parseEncryptedSimpleActorBackupBundle,
   parseSimpleActorBackupBundle,
   saveSimpleActorState,
+  SimpleActorStateLockedError,
   type SimpleActorKeypair,
 } from "./simpleLocalState";
 
@@ -52,10 +57,16 @@ type SimpleVoterKeypair = {
 type PendingBlindRequest = {
   coordinatorNpub: string;
   votingId: string;
+  replyNpub: string;
   request: SimpleShardRequest["blindRequest"];
   secret: SimpleBlindRequestSecret;
   createdAt: string;
   dmEventId?: string;
+};
+
+type RoundReplyKeypair = {
+  npub: string;
+  nsec: string;
 };
 
 type SimpleVoterCache = {
@@ -63,8 +74,9 @@ type SimpleVoterCache = {
   requestStatus: string | null;
   receivedShards: SimpleShardResponse[];
   pendingBlindRequests: Record<string, PendingBlindRequest>;
-  followDeliveries: Record<string, { status: string; eventId?: string }>;
-  requestDeliveries: Record<string, { status: string; eventId?: string; requestId?: string }>;
+  roundReplyKeypairs: Record<string, RoundReplyKeypair>;
+  followDeliveries: Record<string, { status: string; eventId?: string; attempts?: number; lastAttemptAt?: string }>;
+  requestDeliveries: Record<string, { status: string; eventId?: string; requestId?: string; attempts?: number; lastAttemptAt?: string }>;
   submitStatus: string | null;
   selectedVotingId: string;
   liveVoteChoice: LiveVoteChoice;
@@ -76,6 +88,7 @@ function createEmptyVoterCache(): SimpleVoterCache {
     requestStatus: null,
     receivedShards: [],
     pendingBlindRequests: {},
+    roundReplyKeypairs: {},
     followDeliveries: {},
     requestDeliveries: {},
     submitStatus: null,
@@ -148,10 +161,14 @@ export default function SimpleUiApp() {
   const [requestStatus, setRequestStatus] = useState<string | null>(null);
   const [identityStatus, setIdentityStatus] = useState<string | null>(null);
   const [backupStatus, setBackupStatus] = useState<string | null>(null);
+  const [storagePassphrase, setStoragePassphrase] = useState("");
+  const [storageLocked, setStorageLocked] = useState(false);
+  const [storageStatus, setStorageStatus] = useState<string | null>(null);
   const [receivedShards, setReceivedShards] = useState<SimpleShardResponse[]>([]);
   const [pendingBlindRequests, setPendingBlindRequests] = useState<Record<string, PendingBlindRequest>>({});
-  const [followDeliveries, setFollowDeliveries] = useState<Record<string, { status: string; eventId?: string }>>({});
-  const [requestDeliveries, setRequestDeliveries] = useState<Record<string, { status: string; eventId?: string; requestId?: string }>>({});
+  const [roundReplyKeypairs, setRoundReplyKeypairs] = useState<Record<string, RoundReplyKeypair>>({});
+  const [followDeliveries, setFollowDeliveries] = useState<Record<string, { status: string; eventId?: string; attempts?: number; lastAttemptAt?: string }>>({});
+  const [requestDeliveries, setRequestDeliveries] = useState<Record<string, { status: string; eventId?: string; requestId?: string; attempts?: number; lastAttemptAt?: string }>>({});
   const [dmAcknowledgements, setDmAcknowledgements] = useState<SimpleDmAcknowledgement[]>([]);
   const [discoveredSessions, setDiscoveredSessions] = useState<SimpleLiveVoteSession[]>([]);
   const [knownBlindKeys, setKnownBlindKeys] = useState<Record<string, SimpleBlindKeyAnnouncement>>({});
@@ -161,6 +178,15 @@ export default function SimpleUiApp() {
   const sentTicketReceiptAckIdsRef = useRef<Set<string>>(new Set());
   const lastAutoSelectedVotingIdRef = useRef("");
   const manualRoundSelectionRef = useRef(false);
+
+  function persistVoterIdentity(nextKeypair: SimpleVoterKeypair, cache?: Partial<SimpleVoterCache>) {
+    return saveSimpleActorState({
+      role: "voter",
+      keypair: nextKeypair,
+      updatedAt: new Date().toISOString(),
+      cache,
+    }, storagePassphrase ? { passphrase: storagePassphrase } : undefined);
+  }
 
   function reconcileIncomingShardResponses(nextResponses: SimpleShardResponse[]) {
     const nextIssuedShares = nextResponses.flatMap((response) => {
@@ -226,16 +252,34 @@ export default function SimpleUiApp() {
 
       if (storedState?.keypair) {
         setVoterKeypair(storedState.keypair);
-        const emptyCache = createEmptyVoterCache();
-        setManualCoordinators(emptyCache.manualCoordinators);
-        setRequestStatus(emptyCache.requestStatus);
-        setReceivedShards(emptyCache.receivedShards);
-        setPendingBlindRequests(emptyCache.pendingBlindRequests);
-        setFollowDeliveries(emptyCache.followDeliveries);
-        setRequestDeliveries(emptyCache.requestDeliveries);
-        setSubmitStatus(emptyCache.submitStatus);
-        setSelectedVotingId(emptyCache.selectedVotingId);
-        setLiveVoteChoice(emptyCache.liveVoteChoice);
+        const cache = (storedState.cache ?? null) as Partial<SimpleVoterCache> | null;
+        setManualCoordinators(Array.isArray(cache?.manualCoordinators) ? cache.manualCoordinators : []);
+        setRequestStatus(typeof cache?.requestStatus === "string" ? cache.requestStatus : null);
+        setReceivedShards(Array.isArray(cache?.receivedShards) ? cache.receivedShards : []);
+        setPendingBlindRequests(
+          cache?.pendingBlindRequests && typeof cache.pendingBlindRequests === "object"
+            ? cache.pendingBlindRequests
+            : {},
+        );
+        setRoundReplyKeypairs(
+          cache?.roundReplyKeypairs && typeof cache.roundReplyKeypairs === "object"
+            ? cache.roundReplyKeypairs
+            : {},
+        );
+        setFollowDeliveries(
+          cache?.followDeliveries && typeof cache.followDeliveries === "object"
+            ? cache.followDeliveries
+            : {},
+        );
+        setRequestDeliveries(
+          cache?.requestDeliveries && typeof cache.requestDeliveries === "object"
+            ? cache.requestDeliveries
+            : {},
+        );
+        setSubmitStatus(typeof cache?.submitStatus === "string" ? cache.submitStatus : null);
+        setSelectedVotingId(typeof cache?.selectedVotingId === "string" ? cache.selectedVotingId : "");
+        setLiveVoteChoice(cache?.liveVoteChoice === "Yes" || cache?.liveVoteChoice === "No" ? cache.liveVoteChoice : null);
+        setStorageLocked(false);
         setIdentityReady(true);
         return;
       }
@@ -245,16 +289,24 @@ export default function SimpleUiApp() {
         role: "voter",
         keypair: nextKeypair,
         updatedAt: new Date().toISOString(),
-      });
+      }).catch(() => undefined);
       setVoterKeypair(nextKeypair);
+      setStorageLocked(false);
       setIdentityReady(true);
-    }).catch(() => {
+    }).catch(async (error) => {
       if (cancelled) {
+        return;
+      }
+
+      if (error instanceof SimpleActorStateLockedError || await isSimpleActorStateLocked("voter")) {
+        setStorageLocked(true);
+        setStorageStatus("Local voter state is locked.");
         return;
       }
 
       const nextKeypair = createSimpleVoterKeypair();
       setVoterKeypair(nextKeypair);
+      setStorageLocked(false);
       setIdentityReady(true);
     });
 
@@ -268,21 +320,37 @@ export default function SimpleUiApp() {
       return;
     }
 
+    const cache: SimpleVoterCache = {
+      manualCoordinators,
+      requestStatus,
+      receivedShards,
+      pendingBlindRequests,
+      roundReplyKeypairs,
+      followDeliveries,
+      requestDeliveries,
+      submitStatus,
+      selectedVotingId,
+      liveVoteChoice,
+    };
+
     void saveSimpleActorState({
       role: "voter",
       keypair: voterKeypair,
       updatedAt: new Date().toISOString(),
-    });
+      cache,
+    }, storagePassphrase ? { passphrase: storagePassphrase } : undefined);
   }, [
     identityReady,
     liveVoteChoice,
     manualCoordinators,
     followDeliveries,
     pendingBlindRequests,
+    roundReplyKeypairs,
     receivedShards,
     requestStatus,
     requestDeliveries,
     selectedVotingId,
+    storagePassphrase,
     submitStatus,
     voterKeypair,
   ]);
@@ -299,11 +367,12 @@ export default function SimpleUiApp() {
 
     return subscribeSimpleDmAcknowledgements({
       actorNsec,
+      actorNsecs: Object.values(roundReplyKeypairs).map((keypair) => keypair.nsec),
       onAcknowledgements: (nextAcknowledgements) => {
         setDmAcknowledgements(nextAcknowledgements);
       },
     });
-  }, [voterKeypair?.nsec]);
+  }, [roundReplyKeypairs, voterKeypair?.nsec]);
 
   useEffect(() => {
     const voterNsec = voterKeypair?.nsec?.trim() ?? "";
@@ -317,9 +386,10 @@ export default function SimpleUiApp() {
 
     return subscribeSimpleShardResponses({
       voterNsec,
+      voterNsecs: Object.values(roundReplyKeypairs).map((keypair) => keypair.nsec),
       onResponses: reconcileIncomingShardResponses,
     });
-  }, [configuredCoordinatorTargets.length, pendingBlindRequests, voterKeypair?.nsec]);
+  }, [configuredCoordinatorTargets.length, pendingBlindRequests, roundReplyKeypairs, voterKeypair?.nsec]);
 
   useEffect(() => {
     const voterNsec = voterKeypair?.nsec?.trim() ?? "";
@@ -339,7 +409,10 @@ export default function SimpleUiApp() {
     let cancelled = false;
 
     const refresh = () => {
-      void fetchSimpleShardResponses({ voterNsec }).then((nextResponses) => {
+      void fetchSimpleShardResponses({
+        voterNsec,
+        voterNsecs: Object.values(roundReplyKeypairs).map((keypair) => keypair.nsec),
+      }).then((nextResponses) => {
         if (!cancelled) {
           reconcileIncomingShardResponses(nextResponses);
         }
@@ -357,6 +430,7 @@ export default function SimpleUiApp() {
     configuredCoordinatorTargets.length,
     pendingBlindRequests,
     receivedShards,
+    roundReplyKeypairs,
     voterKeypair?.nsec,
   ]);
 
@@ -456,6 +530,7 @@ export default function SimpleUiApp() {
     setBallotTokenId(null);
     setReceivedShards([]);
     setPendingBlindRequests({});
+    setRoundReplyKeypairs({});
     setFollowDeliveries({});
     setRequestDeliveries({});
     setDmAcknowledgements([]);
@@ -473,7 +548,7 @@ export default function SimpleUiApp() {
       role: "voter",
       keypair: nextKeypair,
       updatedAt: new Date().toISOString(),
-    });
+    }, storagePassphrase ? { passphrase: storagePassphrase } : undefined);
     setVoterKeypair(nextKeypair);
     setIdentityStatus(null);
     setBackupStatus(null);
@@ -498,7 +573,7 @@ export default function SimpleUiApp() {
       role: "voter",
       keypair: nextKeypair,
       updatedAt: new Date().toISOString(),
-    });
+    }, storagePassphrase ? { passphrase: storagePassphrase } : undefined);
     setVoterKeypair(nextKeypair);
     setIdentityStatus("Identity restored from nsec.");
     setBackupStatus(null);
@@ -515,6 +590,7 @@ export default function SimpleUiApp() {
       requestStatus,
       receivedShards,
       pendingBlindRequests,
+      roundReplyKeypairs,
       followDeliveries,
       requestDeliveries,
       submitStatus,
@@ -538,7 +614,8 @@ export default function SimpleUiApp() {
         role: "voter",
         keypair: bundle.keypair,
         updatedAt: new Date().toISOString(),
-      });
+        cache: bundle.cache,
+      }, storagePassphrase ? { passphrase: storagePassphrase } : undefined);
       setVoterKeypair(bundle.keypair);
       setIdentityStatus("Identity restored from backup.");
       setBackupStatus(`Backup restored from ${bundle.exportedAt}.`);
@@ -552,6 +629,11 @@ export default function SimpleUiApp() {
       setPendingBlindRequests(
         cache?.pendingBlindRequests && typeof cache.pendingBlindRequests === "object"
           ? cache.pendingBlindRequests
+          : {},
+      );
+      setRoundReplyKeypairs(
+        cache?.roundReplyKeypairs && typeof cache.roundReplyKeypairs === "object"
+          ? cache.roundReplyKeypairs
           : {},
       );
       setFollowDeliveries(
@@ -570,6 +652,63 @@ export default function SimpleUiApp() {
     } catch {
       setBackupStatus("Backup restore failed.");
     }
+  }
+
+  async function unlockLocalState(passphrase: string) {
+    const trimmed = passphrase.trim();
+    if (!trimmed) {
+      setStorageStatus("Enter the passphrase.");
+      return;
+    }
+
+    try {
+      const storedState = await loadSimpleActorStateWithOptions("voter", { passphrase: trimmed });
+      if (!storedState?.keypair) {
+        setStorageStatus("No voter state was found.");
+        return;
+      }
+
+      const cache = (storedState.cache ?? null) as Partial<SimpleVoterCache> | null;
+      setStoragePassphrase(trimmed);
+      setVoterKeypair(storedState.keypair);
+      setManualCoordinators(Array.isArray(cache?.manualCoordinators) ? cache.manualCoordinators : []);
+      setRequestStatus(typeof cache?.requestStatus === "string" ? cache.requestStatus : null);
+      setReceivedShards(Array.isArray(cache?.receivedShards) ? cache.receivedShards : []);
+      setPendingBlindRequests(cache?.pendingBlindRequests && typeof cache.pendingBlindRequests === "object" ? cache.pendingBlindRequests : {});
+      setRoundReplyKeypairs(cache?.roundReplyKeypairs && typeof cache.roundReplyKeypairs === "object" ? cache.roundReplyKeypairs : {});
+      setFollowDeliveries(cache?.followDeliveries && typeof cache.followDeliveries === "object" ? cache.followDeliveries : {});
+      setRequestDeliveries(cache?.requestDeliveries && typeof cache.requestDeliveries === "object" ? cache.requestDeliveries : {});
+      setSubmitStatus(typeof cache?.submitStatus === "string" ? cache.submitStatus : null);
+      setSelectedVotingId(typeof cache?.selectedVotingId === "string" ? cache.selectedVotingId : "");
+      setLiveVoteChoice(cache?.liveVoteChoice === "Yes" || cache?.liveVoteChoice === "No" ? cache.liveVoteChoice : null);
+      setStorageLocked(false);
+      setStorageStatus("Local voter state unlocked.");
+      setIdentityReady(true);
+    } catch {
+      setStorageStatus("Unlock failed.");
+    }
+  }
+
+  async function protectLocalState(passphrase: string) {
+    const trimmed = passphrase.trim();
+    if (!trimmed || !voterKeypair) {
+      setStorageStatus("Enter a passphrase first.");
+      return;
+    }
+    setStoragePassphrase(trimmed);
+    setStorageStatus("Local voter state will be stored encrypted.");
+  }
+
+  async function disableLocalStateProtection(currentPassphrase?: string) {
+    if (!voterKeypair) {
+      return;
+    }
+    if (!storagePassphrase && !currentPassphrase?.trim()) {
+      setStorageStatus("Enter the current passphrase to remove protection.");
+      return;
+    }
+    setStoragePassphrase("");
+    setStorageStatus("Local voter state protection removed.");
   }
 
   function addCoordinatorInput() {
@@ -618,7 +757,6 @@ export default function SimpleUiApp() {
           voterSecretKey,
           coordinatorNpub,
           voterNpub,
-          voterId,
         });
         return {
           coordinatorNpub,
@@ -631,6 +769,8 @@ export default function SimpleUiApp() {
         {
           status: result.success ? "Follow request sent." : "Follow request failed.",
           eventId: result.eventId,
+          attempts: 1,
+          lastAttemptAt: new Date().toISOString(),
         },
       ]));
       setFollowDeliveries((current) => ({ ...current, ...nextDeliveries }));
@@ -645,6 +785,63 @@ export default function SimpleUiApp() {
       setRequestStatus("Coordinator notification failed.");
     }
   }
+
+  useEffect(() => {
+    const voterSecretKey = decodeNsec(voterKeypair?.nsec ?? "");
+    const voterNpub = voterKeypair?.npub ?? "";
+
+    if (!voterSecretKey || !voterNpub || configuredCoordinatorTargets.length === 0) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      const now = Date.now();
+      const retryTargets = configuredCoordinatorTargets.filter((coordinatorNpub) => {
+        const delivery = followDeliveries[coordinatorNpub];
+        if (!delivery?.eventId) {
+          return false;
+        }
+        const acknowledged = dmAcknowledgements.some((ack) => (
+          ack.ackedAction === "simple_coordinator_follow"
+          && ack.ackedEventId === delivery.eventId
+        ));
+        if (acknowledged || (delivery.attempts ?? 0) >= 3) {
+          return false;
+        }
+        const lastAttemptAt = delivery.lastAttemptAt ? Date.parse(delivery.lastAttemptAt) : 0;
+        return now - lastAttemptAt >= 8000;
+      });
+
+      if (!retryTargets.length) {
+        return;
+      }
+
+      void Promise.all(retryTargets.map(async (coordinatorNpub) => {
+        const result = await sendSimpleCoordinatorFollow({
+          voterSecretKey,
+          coordinatorNpub,
+          voterNpub,
+        });
+        return { coordinatorNpub, result };
+      })).then((results) => {
+        setFollowDeliveries((current) => {
+          const next = { ...current };
+          for (const { coordinatorNpub, result } of results) {
+            const previous = current[coordinatorNpub];
+            next[coordinatorNpub] = {
+              status: result.successes > 0 ? "Follow request resent." : "Follow request retry failed.",
+              eventId: result.eventId,
+              attempts: (previous?.attempts ?? 0) + 1,
+              lastAttemptAt: new Date().toISOString(),
+            };
+          }
+          return next;
+        });
+      }).catch(() => undefined);
+    }, 4000);
+
+    return () => window.clearInterval(intervalId);
+  }, [configuredCoordinatorTargets, dmAcknowledgements, followDeliveries, voterKeypair?.npub, voterKeypair?.nsec]);
 
   const uniqueShardResponses = Array.from(
     new Map(
@@ -775,6 +972,7 @@ export default function SimpleUiApp() {
           return parsed?.votingId === round.votingId;
         })?.shardCertificate?.tokenMessage
         ?? createRoundTokenMessage(round.votingId, voterNpub);
+      const replyKeypair = roundReplyKeypairs[round.votingId] ?? createSimpleVoterKeypair();
 
       const createdEntries = await Promise.all(coordinatorsToRequest.map(async (coordinatorNpub) => {
         const announcement = knownBlindKeys[makeRoundBlindKeyId(coordinatorNpub, round.votingId)];
@@ -786,6 +984,7 @@ export default function SimpleUiApp() {
         return {
           coordinatorNpub,
           votingId: round.votingId,
+          replyNpub: replyKeypair.npub,
           request: created.request,
           secret: created.secret,
           createdAt: created.request.createdAt,
@@ -793,10 +992,10 @@ export default function SimpleUiApp() {
       }));
 
       const results = await Promise.all(createdEntries.map(async (entry) => sendSimpleShardRequest({
-        voterSecretKey,
+        voterSecretKey: decodeNsec(replyKeypair.nsec) ?? voterSecretKey,
         coordinatorNpub: entry.coordinatorNpub,
         voterNpub,
-        voterId,
+        replyNpub: entry.replyNpub,
         votingId: round.votingId,
         blindRequest: entry.request,
       })));
@@ -809,6 +1008,10 @@ export default function SimpleUiApp() {
       const nextRequests = Object.fromEntries(
         successfulEntries.map((entry) => [`${entry.coordinatorNpub}:${entry.votingId}`, entry]),
       );
+      setRoundReplyKeypairs((current) => ({
+        ...current,
+        [round.votingId]: current[round.votingId] ?? replyKeypair,
+      }));
       setPendingBlindRequests((current) => ({ ...current, ...nextRequests }));
       const nextRequestDeliveries = Object.fromEntries(createdEntries.map((entry, index) => [
         `${entry.coordinatorNpub}:${entry.votingId}`,
@@ -816,6 +1019,8 @@ export default function SimpleUiApp() {
           status: results[index].successes > 0 ? "Blinded ticket request sent." : "Blinded ticket request failed.",
           eventId: results[index].eventId,
           requestId: entry.request.requestId,
+          attempts: results[index].successes > 0 ? 1 : 0,
+          lastAttemptAt: new Date().toISOString(),
         },
       ]));
       setRequestDeliveries((current) => ({ ...current, ...nextRequestDeliveries }));
@@ -832,16 +1037,78 @@ export default function SimpleUiApp() {
     knownBlindKeys,
     pendingBlindRequests,
     receivedShards,
+    roundReplyKeypairs,
     voterId,
     voterKeypair?.npub,
     voterKeypair?.nsec,
   ]);
 
   useEffect(() => {
-    const voterSecretKey = decodeNsec(voterKeypair?.nsec ?? "");
-    const voterNpub = voterKeypair?.npub ?? "";
+    const intervalId = window.setInterval(() => {
+      const now = Date.now();
+      const retryEntries = Object.entries(pendingBlindRequests).filter(([key, requestEntry]) => {
+        const delivery = requestDeliveries[key];
+        const acknowledged = delivery?.eventId
+          ? dmAcknowledgements.some((ack) => (
+              ack.ackedAction === "simple_shard_request"
+              && ack.ackedEventId === delivery.eventId
+            ))
+          : false;
+        const received = receivedShards.some((response) => response.requestId === requestEntry.request.requestId);
+        if (acknowledged || received || (delivery?.attempts ?? 0) >= 4) {
+          return false;
+        }
+        const lastAttemptAt = delivery?.lastAttemptAt ? Date.parse(delivery.lastAttemptAt) : 0;
+        return now - lastAttemptAt >= 10000;
+      });
 
-    if (!voterSecretKey || !voterNpub) {
+      if (!retryEntries.length) {
+        return;
+      }
+
+      void Promise.all(retryEntries.map(async ([key, requestEntry]) => {
+        const replyKeypair = roundReplyKeypairs[requestEntry.votingId];
+        const senderSecretKey = decodeNsec(replyKeypair?.nsec ?? "");
+        const voterNpub = voterKeypair?.npub ?? "";
+        if (!senderSecretKey || !voterNpub) {
+          return null;
+        }
+        const result = await sendSimpleShardRequest({
+          voterSecretKey: senderSecretKey,
+          coordinatorNpub: requestEntry.coordinatorNpub,
+          voterNpub,
+          replyNpub: requestEntry.replyNpub,
+          votingId: requestEntry.votingId,
+          blindRequest: requestEntry.request,
+        });
+        return { key, result, requestId: requestEntry.request.requestId };
+      })).then((results) => {
+        const completed = results.filter((value): value is NonNullable<typeof value> => value !== null);
+        if (!completed.length) {
+          return;
+        }
+        setRequestDeliveries((current) => {
+          const next = { ...current };
+          for (const { key, result, requestId } of completed) {
+            const previous = current[key];
+            next[key] = {
+              status: result.successes > 0 ? "Blinded ticket request resent." : "Blinded ticket request retry failed.",
+              eventId: result.eventId,
+              requestId,
+              attempts: (previous?.attempts ?? 0) + 1,
+              lastAttemptAt: new Date().toISOString(),
+            };
+          }
+          return next;
+        });
+      }).catch(() => undefined);
+    }, 5000);
+
+    return () => window.clearInterval(intervalId);
+  }, [dmAcknowledgements, pendingBlindRequests, receivedShards, requestDeliveries, roundReplyKeypairs, voterKeypair?.npub]);
+
+  useEffect(() => {
+    if (!voterKeypair?.npub) {
       return;
     }
 
@@ -852,13 +1119,18 @@ export default function SimpleUiApp() {
 
       const responseVotingId = response.shardCertificate?.votingId
         ?? Object.values(pendingBlindRequests).find((request) => request.request.requestId === response.requestId)?.votingId;
+      const replyKeypair = responseVotingId ? roundReplyKeypairs[responseVotingId] : null;
+      const senderSecretKey = decodeNsec(replyKeypair?.nsec ?? "");
+      const actorNpub = replyKeypair?.npub ?? "";
+      if (!senderSecretKey || !actorNpub) {
+        continue;
+      }
 
       sentTicketReceiptAckIdsRef.current.add(response.dmEventId);
       void sendSimpleDmAcknowledgement({
-        senderSecretKey: voterSecretKey,
+        senderSecretKey,
         recipientNpub: response.coordinatorNpub,
-        actorNpub: voterNpub,
-        actorId: voterId === "pending" ? undefined : voterId,
+        actorNpub,
         ackedAction: "simple_round_ticket",
         ackedEventId: response.dmEventId,
         votingId: responseVotingId,
@@ -868,7 +1140,7 @@ export default function SimpleUiApp() {
         sentTicketReceiptAckIdsRef.current.delete(response.dmEventId);
       });
     }
-  }, [pendingBlindRequests, receivedShards, voterId, voterKeypair?.npub, voterKeypair?.nsec]);
+  }, [pendingBlindRequests, receivedShards, roundReplyKeypairs, voterKeypair?.npub]);
 
   const requiredShardCount = Math.max(1, effectiveLiveVoteSession?.thresholdT ?? 1);
 
@@ -897,6 +1169,30 @@ export default function SimpleUiApp() {
     }
   }
 
+  if (storageLocked && !identityReady) {
+    return (
+      <SimpleUnlockGate
+        roleLabel="Voter"
+        status={storageStatus}
+        onUnlock={unlockLocalState}
+        onReset={async () => {
+          await clearSimpleActorState("voter");
+          setStorageLocked(false);
+          setStoragePassphrase("");
+          const nextKeypair = createSimpleVoterKeypair();
+          await saveSimpleActorState({
+            role: "voter",
+            keypair: nextKeypair,
+            updatedAt: new Date().toISOString(),
+          });
+          setVoterKeypair(nextKeypair);
+          setIdentityReady(true);
+          setStorageStatus("Locked local voter state reset.");
+        }}
+      />
+    );
+  }
+
   return (
     <main className="simple-voter-shell">
       <section className="simple-voter-page">
@@ -916,6 +1212,10 @@ export default function SimpleUiApp() {
           onDownloadBackup={identityReady ? downloadBackup : undefined}
           onRestoreBackupFile={restoreBackup}
           backupMessage={backupStatus}
+          onProtectLocalState={identityReady ? protectLocalState : undefined}
+          onDisableLocalStateProtection={identityReady ? disableLocalStateProtection : undefined}
+          localStateProtected={Boolean(storagePassphrase)}
+          localStateMessage={storageStatus}
         />
 
         <SimpleCollapsibleSection title="Coordinators">

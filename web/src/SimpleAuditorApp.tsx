@@ -222,7 +222,7 @@ export default function SimpleAuditorApp() {
                           <p className='simple-voter-note'>Ballot {vote.eventId}</p>
                         </div>
                         {vote.tokenId ? (
-                          <TokenFingerprint tokenId={vote.tokenId} compact size='large' showLabel={false} showQrLabel={false} />
+                          <TokenFingerprint tokenId={vote.tokenId} compact large hideMetadata />
                         ) : null}
                       </div>
                     </li>

@@ -39,11 +39,37 @@ export type SimpleEncryptedActorBackupBundle = {
   ciphertext: string;
 };
 
+export type SimpleEncryptedActorState = {
+  version: 1;
+  type: "auditable-voting.simple-state.encrypted";
+  role: SimpleActorRole;
+  updatedAt: string;
+  kdf: {
+    name: "PBKDF2";
+    hash: "SHA-256";
+    iterations: number;
+    salt: string;
+  };
+  cipher: {
+    name: "AES-GCM";
+    iv: string;
+  };
+  ciphertext: string;
+};
+
 const DB_NAME = "auditable-voting-simple";
 const DB_VERSION = 1;
 const STORE_NAME = "actor-state";
 const memoryState = new Map<string, SimpleActorState>();
 const BACKUP_KDF_ITERATIONS = 250_000;
+const ACTIVE_STATE_KDF_ITERATIONS = 250_000;
+
+export class SimpleActorStateLockedError extends Error {
+  constructor() {
+    super("Local actor state is locked.");
+    this.name = "SimpleActorStateLockedError";
+  }
+}
 
 function getWebCrypto() {
   if (!globalThis.crypto?.subtle) {
@@ -71,6 +97,18 @@ function base64ToBytes(value: string) {
 }
 
 async function deriveBackupKey(passphrase: string, salt: Uint8Array) {
+  return derivePassphraseKey(passphrase, salt, BACKUP_KDF_ITERATIONS);
+}
+
+async function deriveActiveStateKey(passphrase: string, salt: Uint8Array) {
+  return derivePassphraseKey(passphrase, salt, ACTIVE_STATE_KDF_ITERATIONS);
+}
+
+async function derivePassphraseKey(
+  passphrase: string,
+  salt: Uint8Array,
+  iterations: number,
+) {
   const cryptoApi = getWebCrypto();
   const keyMaterial = await cryptoApi.subtle.importKey(
     "raw",
@@ -84,8 +122,8 @@ async function deriveBackupKey(passphrase: string, salt: Uint8Array) {
     {
       name: "PBKDF2",
       hash: "SHA-256",
-      iterations: BACKUP_KDF_ITERATIONS,
-      salt,
+      iterations,
+      salt: salt.slice().buffer,
     },
     keyMaterial,
     {
@@ -143,17 +181,90 @@ async function withStore<T>(
 }
 
 export async function loadSimpleActorState(role: SimpleActorRole): Promise<SimpleActorState | null> {
+  return loadSimpleActorStateWithOptions(role);
+}
+
+export async function isSimpleActorStateLocked(role: SimpleActorRole): Promise<boolean> {
+  if (!hasIndexedDb()) {
+    return false;
+  }
+
+  const result = await withStore<SimpleActorState | SimpleEncryptedActorState | undefined>("readonly", (store) => store.get(role));
+  return Boolean(result && "type" in result && result.type === "auditable-voting.simple-state.encrypted");
+}
+
+export async function loadSimpleActorStateWithOptions(
+  role: SimpleActorRole,
+  options?: { passphrase?: string },
+): Promise<SimpleActorState | null> {
   if (!hasIndexedDb()) {
     return memoryState.get(role) ?? null;
   }
 
-  const result = await withStore<SimpleActorState | undefined>("readonly", (store) => store.get(role));
-  return result ?? null;
+  const result = await withStore<SimpleActorState | SimpleEncryptedActorState | undefined>("readonly", (store) => store.get(role));
+  if (!result) {
+    return null;
+  }
+
+  if ((result as SimpleEncryptedActorState).type === "auditable-voting.simple-state.encrypted") {
+    const encrypted = result as SimpleEncryptedActorState;
+    const passphrase = options?.passphrase?.trim();
+    if (!passphrase) {
+      throw new SimpleActorStateLockedError();
+    }
+    const key = await deriveActiveStateKey(passphrase, base64ToBytes(encrypted.kdf.salt));
+    const decrypted = await getWebCrypto().subtle.decrypt(
+      {
+        name: "AES-GCM",
+        iv: base64ToBytes(encrypted.cipher.iv),
+      },
+      key,
+      base64ToBytes(encrypted.ciphertext),
+    );
+    const parsed = JSON.parse(new TextDecoder().decode(new Uint8Array(decrypted))) as SimpleActorState;
+    return parsed ?? null;
+  }
+
+  return result as SimpleActorState;
 }
 
-export async function saveSimpleActorState(state: SimpleActorState): Promise<void> {
+export async function saveSimpleActorState(
+  state: SimpleActorState,
+  options?: { passphrase?: string },
+): Promise<void> {
   if (!hasIndexedDb()) {
     memoryState.set(state.role, state);
+    return;
+  }
+
+  if (options?.passphrase?.trim()) {
+    const cryptoApi = getWebCrypto();
+    const salt = cryptoApi.getRandomValues(new Uint8Array(16));
+    const iv = cryptoApi.getRandomValues(new Uint8Array(12));
+    const key = await deriveActiveStateKey(options.passphrase.trim(), salt);
+    const encrypted = await cryptoApi.subtle.encrypt(
+      { name: "AES-GCM", iv },
+      key,
+      new TextEncoder().encode(JSON.stringify(state)),
+    );
+    const payload: SimpleEncryptedActorState = {
+      version: 1,
+      type: "auditable-voting.simple-state.encrypted",
+      role: state.role,
+      updatedAt: state.updatedAt,
+      kdf: {
+        name: "PBKDF2",
+        hash: "SHA-256",
+        iterations: ACTIVE_STATE_KDF_ITERATIONS,
+        salt: bytesToBase64(salt),
+      },
+      cipher: {
+        name: "AES-GCM",
+        iv: bytesToBase64(iv),
+      },
+      ciphertext: bytesToBase64(new Uint8Array(encrypted)),
+    };
+    await withStore("readwrite", (store) => store.put(payload, state.role));
     return;
   }
 

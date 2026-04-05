@@ -78,7 +78,7 @@ function parseSimpleLiveVoteEvent(
       votingId: payload.voting_id,
       prompt: payload.prompt,
       coordinatorNpub: fallbackCoordinatorNpub ?? nip19.npubEncode(event.pubkey),
-      createdAt: payload.created_at ?? new Date(event.created_at * 1000).toISOString(),
+      createdAt: new Date(event.created_at * 1000).toISOString(),
       thresholdT: typeof payload.threshold_t === "number" ? payload.threshold_t : undefined,
       thresholdN: typeof payload.threshold_n === "number" ? payload.threshold_n : undefined,
       authorizedCoordinatorNpubs: Array.from(
@@ -129,7 +129,7 @@ async function parseSimpleSubmittedVoteEvent(
       choice: payload.choice,
       shardProofs,
       tokenId: await deriveTokenIdFromSimplePublicShardProofs(shardProofs),
-      createdAt: payload.created_at ?? new Date(event.created_at * 1000).toISOString(),
+      createdAt: new Date(event.created_at * 1000).toISOString(),
     };
   } catch {
     return null;
