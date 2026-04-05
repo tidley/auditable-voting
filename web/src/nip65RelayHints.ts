@@ -20,6 +20,31 @@ const relayHintsCache = new Map<string, Nip65RelayHints | null>();
 const relayHintsInflight = new Map<string, Promise<Nip65RelayHints | null>>();
 const publishedRelayHintKeys = new Set<string>();
 
+function isNip65Disabled() {
+  const explicitOverride = Reflect.get(globalThis as object, "__AUDITABLE_VOTING_DISABLE_NIP65__");
+  if (explicitOverride === true) {
+    return true;
+  }
+  if (explicitOverride === false) {
+    return false;
+  }
+
+  if (typeof globalThis.location?.search !== "string") {
+    return true;
+  }
+
+  try {
+    const params = new URLSearchParams(globalThis.location.search);
+    const value = params.get("nip65")?.trim().toLowerCase();
+    if (!value) {
+      return true;
+    }
+    return !(value === "on" || value === "true" || value === "1");
+  } catch {
+    return true;
+  }
+}
+
 function uniqueRelays(values: string[]) {
   return normalizeRelaysRust(values);
 }
@@ -109,6 +134,10 @@ export async function fetchNip65RelayHints(input: {
   discoveryRelays: string[];
   force?: boolean;
 }): Promise<Nip65RelayHints | null> {
+  if (isNip65Disabled()) {
+    return null;
+  }
+
   const npub = input.npub.trim();
   if (!npub) {
     return null;
@@ -174,6 +203,10 @@ export async function publishOwnNip65RelayHints(input: {
   minIntervalMs?: number;
   force?: boolean;
 }) {
+  if (isNip65Disabled()) {
+    return null;
+  }
+
   const npub = nip19.npubEncode(getPublicKey(input.secretKey));
   const inboxRelays = uniqueRelays(input.inboxRelays ?? []);
   const outboxRelays = uniqueRelays(input.outboxRelays ?? []);
@@ -273,6 +306,9 @@ export async function resolveNip65InboxRelays(input: {
     fallbackRelays: input.fallbackRelays,
     extraRelays: input.extraRelays,
   });
+  if (isNip65Disabled()) {
+    return fallbackRelays;
+  }
   primeNip65RelayHintsInBackground(input.npub, fallbackRelays);
   return buildActorRelaySetRust({
     preferredRelays: getCachedRelayList(input.npub, "inboxRelays"),
@@ -289,6 +325,9 @@ export async function resolveNip65OutboxRelays(input: {
     fallbackRelays: input.fallbackRelays,
     extraRelays: input.extraRelays,
   });
+  if (isNip65Disabled()) {
+    return fallbackRelays;
+  }
   primeNip65RelayHintsInBackground(input.npub, fallbackRelays);
   return buildActorRelaySetRust({
     preferredRelays: getCachedRelayList(input.npub, "outboxRelays"),
@@ -306,6 +345,9 @@ export async function resolveNip65ConversationRelays(input: {
     fallbackRelays: input.fallbackRelays,
     extraRelays: input.extraRelays,
   });
+  if (isNip65Disabled()) {
+    return fallbackRelays;
+  }
   const [recipientInboxRelays, senderOutboxRelays] = await Promise.all([
     resolveNip65InboxRelays({
       npub: input.recipientNpub,

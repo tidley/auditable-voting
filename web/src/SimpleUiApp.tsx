@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 import { decodeNsec, deriveNpubFromNsec } from "./nostrIdentity";
-import { sha256Hex } from "./tokenIdentity";
+import { deriveActorDisplayId } from "./actorDisplay";
 import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
 import SimpleQrScanner from "./SimpleQrScanner";
@@ -13,6 +13,7 @@ import { formatRoundOptionLabel } from "./roundLabel";
 import {
   deriveTokenIdFromSimplePublicShardProofs,
   createSimpleBlindIssuanceRequest,
+  fetchLatestSimpleBlindKeyAnnouncement,
   parseSimpleShardCertificate,
   subscribeLatestSimpleBlindKeyAnnouncement,
   unblindSimpleBlindShare,
@@ -217,9 +218,15 @@ export default function SimpleUiApp() {
       }
     }))).flat();
 
-    setReceivedShards((current) => (
-      equalReceivedShards(current, nextIssuedShares) ? current : nextIssuedShares
-    ));
+    setReceivedShards((current) => {
+      const merged = new Map(current.map((response) => [response.id, response]));
+      for (const response of nextIssuedShares) {
+        merged.set(response.id, response);
+      }
+
+      const nextMergedShares = [...merged.values()];
+      return equalReceivedShards(current, nextMergedShares) ? current : nextMergedShares;
+    });
   }
 
   const configuredCoordinatorTargets = useMemo(
@@ -246,6 +253,102 @@ export default function SimpleUiApp() {
 
     return [...values];
   }, [discoveredSessions, pendingBlindRequests, receivedShards]);
+
+  useEffect(() => {
+    const receivedRequestIds = new Set(receivedShards.map((response) => response.requestId));
+    if (receivedRequestIds.size === 0) {
+      return;
+    }
+
+    setPendingBlindRequests((current) => {
+      let changed = false;
+      const next = Object.fromEntries(
+        Object.entries(current).filter(([, requestEntry]) => {
+          const keep = !receivedRequestIds.has(requestEntry.request.requestId);
+          if (!keep) {
+            changed = true;
+          }
+          return keep;
+        }),
+      );
+      return changed ? next : current;
+    });
+
+    setRequestDeliveries((current) => {
+      let changed = false;
+      const next = Object.fromEntries(
+        Object.entries(current).filter(([, delivery]) => {
+          const keep = !delivery.requestId || !receivedRequestIds.has(delivery.requestId);
+          if (!keep) {
+            changed = true;
+          }
+          return keep;
+        }),
+      );
+      return changed ? next : current;
+    });
+  }, [receivedShards]);
+
+  useEffect(() => {
+    const pendingKeys = new Set(Object.keys(pendingBlindRequests));
+    const activeRoundIds = new Set(knownRoundVotingIds);
+
+    setRequestDeliveries((current) => {
+      let changed = false;
+      const next = Object.fromEntries(
+        Object.entries(current).filter(([key]) => {
+          const keep = pendingKeys.has(key);
+          if (!keep) {
+            changed = true;
+          }
+          return keep;
+        }),
+      );
+      return changed ? next : current;
+    });
+
+    setRoundReplyKeypairs((current) => {
+      let changed = false;
+      const next = Object.fromEntries(
+        Object.entries(current).filter(([votingId]) => {
+          const keep = activeRoundIds.has(votingId) || votingId === selectedVotingId;
+          if (!keep) {
+            changed = true;
+          }
+          return keep;
+        }),
+      );
+      return changed ? next : current;
+    });
+
+    setKnownBlindKeys((current) => {
+      let changed = false;
+      const next = Object.fromEntries(
+        Object.entries(current).filter(([key, announcement]) => {
+          const keep = activeRoundIds.has(announcement.votingId) || announcement.votingId === selectedVotingId;
+          if (!keep) {
+            changed = true;
+          }
+          return keep;
+        }),
+      );
+      return changed ? next : current;
+    });
+
+    setFollowDeliveries((current) => {
+      let changed = false;
+      const next = Object.fromEntries(
+        Object.entries(current).filter(([coordinatorNpub]) => {
+          const keep = configuredCoordinatorTargets.includes(coordinatorNpub);
+          if (!keep) {
+            changed = true;
+          }
+          return keep;
+        }),
+      );
+      return changed ? next : current;
+    });
+  }, [configuredCoordinatorTargets, knownRoundVotingIds, pendingBlindRequests, selectedVotingId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -387,8 +490,6 @@ export default function SimpleUiApp() {
       return;
     }
 
-    setReceivedShards([]);
-
     return subscribeSimpleShardResponses({
       voterNsec,
       voterNsecs: Object.values(roundReplyKeypairs).map((keypair) => keypair.nsec),
@@ -396,7 +497,7 @@ export default function SimpleUiApp() {
         void reconcileIncomingShardResponses(responses);
       },
     });
-  }, [configuredCoordinatorTargets.length, pendingBlindRequests, roundReplyKeypairs, voterKeypair?.nsec]);
+  }, [configuredCoordinatorTargets.length, roundReplyKeypairs, voterKeypair?.nsec]);
 
   useEffect(() => {
     const voterNsec = voterKeypair?.nsec?.trim() ?? "";
@@ -512,25 +613,64 @@ export default function SimpleUiApp() {
   }, [configuredCoordinatorTargets, knownRoundVotingIds]);
 
   useEffect(() => {
-    let cancelled = false;
+    const roundsMissingBlindKeys = configuredCoordinatorTargets.flatMap((coordinatorNpub) => {
+      return knownRoundVotingIds.flatMap((votingId) => (
+        knownBlindKeys[makeRoundBlindKeyId(coordinatorNpub, votingId)]
+          ? []
+          : [{ coordinatorNpub, votingId }]
+      ));
+    });
 
-    const npub = voterKeypair?.npub?.trim() ?? "";
-    if (!npub) {
-      setVoterId("pending");
-      return () => {
-        cancelled = true;
-      };
+    if (roundsMissingBlindKeys.length === 0) {
+      return;
     }
 
-    void sha256Hex(npub).then((hash) => {
-      if (!cancelled) {
-        setVoterId(hash.slice(0, 7));
-      }
-    });
+    let cancelled = false;
+
+    const refreshMissingBlindKeys = () => {
+      void Promise.all(roundsMissingBlindKeys.map(async ({ coordinatorNpub, votingId }) => {
+        const announcement = await fetchLatestSimpleBlindKeyAnnouncement({
+          coordinatorNpub,
+          votingId,
+        });
+        return announcement ? { coordinatorNpub, votingId, announcement } : null;
+      })).then((results) => {
+        if (cancelled) {
+          return;
+        }
+
+        const foundAnnouncements = results.filter((value): value is NonNullable<typeof value> => value !== null);
+        if (foundAnnouncements.length === 0) {
+          return;
+        }
+
+        setKnownBlindKeys((current) => {
+          const next = { ...current };
+          for (const result of foundAnnouncements) {
+            next[makeRoundBlindKeyId(result.coordinatorNpub, result.votingId)] = result.announcement;
+          }
+          return next;
+        });
+      }).catch(() => undefined);
+    };
+
+    refreshMissingBlindKeys();
+    const intervalId = window.setInterval(refreshMissingBlindKeys, 5000);
 
     return () => {
       cancelled = true;
+      window.clearInterval(intervalId);
     };
+  }, [configuredCoordinatorTargets, knownBlindKeys, knownRoundVotingIds]);
+
+  useEffect(() => {
+    const npub = voterKeypair?.npub?.trim() ?? "";
+    if (!npub) {
+      setVoterId("pending");
+      return;
+    }
+
+    setVoterId(deriveActorDisplayId(npub));
   }, [voterKeypair?.npub]);
 
   useEffect(() => {

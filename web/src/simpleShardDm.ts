@@ -18,16 +18,11 @@ import { normalizeRelaysRust, sortRecordsByCreatedAtDescRust } from "./wasm/audi
 
 export const SIMPLE_DM_RELAYS = [
   'wss://nip17.tomdwyer.uk',
+  'wss://strfry.bitsbytom.com',
   'wss://relay.primal.net',
   'wss://nos.lol',
   'wss://auth.nostr1.com',
   'wss://relay.0xchat.com',
-  'wss://strfry.bitsbytom.com',
-  'wss://nip17.com',
-  'wss://relay.snort.social',
-  'wss://relay.nostr.bg',
-  'wss://nostr.mom',
-  'wss://relay.nostr.band',
 ];
 
 const SIMPLE_DM_PUBLISH_MAX_WAIT_MS = 1500;

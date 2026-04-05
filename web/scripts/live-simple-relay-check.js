@@ -44,10 +44,46 @@ async function clickAllEnabled(page, matcher) {
     if (!(await button.isDisabled())) {
       await button.click();
       clicked += 1;
-      await sleep(250);
+      await sleep(100);
     }
   }
   return clicked;
+}
+
+async function allVotersTicketReady(voters) {
+  for (const page of voters) {
+    const body = await readBody(page);
+    const ticketReady = parseTicketReady(body);
+    if (!ticketReady || ticketReady.ready < ticketReady.required) {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function clickEnabledTicketsDuringWindow(coordinators, voters, durationMs) {
+  const deadline = Date.now() + durationMs;
+  const sendCounts = coordinators.map((_, index) => ({
+    coordinator: index + 1,
+    clicked: 0,
+  }));
+
+  while (Date.now() < deadline) {
+    let clickedThisPass = 0;
+    for (const [index, page] of coordinators.entries()) {
+      const clicked = await clickAllEnabled(page, /Send ticket|Resend/i);
+      sendCounts[index].clicked += clicked;
+      clickedThisPass += clicked;
+    }
+
+    if (await allVotersTicketReady(voters)) {
+      break;
+    }
+
+    await sleep(clickedThisPass > 0 ? 750 : 1500);
+  }
+
+  return sendCounts;
 }
 
 async function addCoordinatorsToVoter(page, coordinatorNpubs) {
@@ -93,6 +129,7 @@ async function main() {
   const voterCount = envInt("LIVE_VOTERS", 10);
   const roundCount = envInt("LIVE_ROUNDS", 3);
   const base = process.env.LIVE_SIMPLE_BASE_URL ?? "http://127.0.0.1:4175/simple.html";
+  const nip65Mode = (process.env.LIVE_NIP65 ?? "off").trim().toLowerCase();
   const startupWaitMs = envInt("LIVE_STARTUP_WAIT_MS", 45000);
   const roundWaitMs = envInt("LIVE_ROUND_WAIT_MS", 20000);
   const ticketWaitMs = envInt("LIVE_TICKET_WAIT_MS", 20000);
@@ -105,13 +142,23 @@ async function main() {
 
   for (let index = 0; index < coordinatorCount; index += 1) {
     const page = await context.newPage();
-    await page.goto(`${base}?role=coordinator`, { waitUntil: "networkidle" });
+    const url = new URL(base);
+    url.searchParams.set("role", "coordinator");
+    if (nip65Mode !== "on") {
+      url.searchParams.set("nip65", "off");
+    }
+    await page.goto(url.toString(), { waitUntil: "networkidle" });
     coordinators.push(page);
   }
 
   for (let index = 0; index < voterCount; index += 1) {
     const page = await context.newPage();
-    await page.goto(`${base}?role=voter`, { waitUntil: "networkidle" });
+    const url = new URL(base);
+    url.searchParams.set("role", "voter");
+    if (nip65Mode !== "on") {
+      url.searchParams.set("nip65", "off");
+    }
+    await page.goto(url.toString(), { waitUntil: "networkidle" });
     voters.push(page);
   }
 
@@ -151,13 +198,9 @@ async function main() {
 
     await sleep(roundWaitMs);
 
-    const sendCounts = [];
-    for (const [index, page] of coordinators.entries()) {
-      const clicked = await clickAllEnabled(page, /Send ticket|Resend/i);
-      sendCounts.push({ coordinator: index + 1, clicked });
-    }
+    const sendCounts = await clickEnabledTicketsDuringWindow(coordinators, voters, ticketWaitMs);
 
-    await sleep(ticketWaitMs);
+    await sleep(4000);
 
     for (const [index, page] of voters.entries()) {
       const body = await readBody(page);
@@ -206,6 +249,7 @@ async function main() {
   console.log(JSON.stringify({
     config: {
       base,
+      nip65Mode,
       coordinatorCount,
       voterCount,
       roundCount,

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 import { decodeNsec, deriveNpubFromNsec } from "./nostrIdentity";
+import { deriveActorDisplayId } from "./actorDisplay";
 import {
   subscribeSimpleCoordinatorFollowers,
   subscribeSimpleDmAcknowledgements,
@@ -28,7 +29,6 @@ import {
   validateSimpleSubmittedVotes,
   type SimpleValidatedVote,
 } from "./simpleVoteValidation";
-import { sha256Hex } from "./tokenIdentity";
 import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
 import SimpleQrScanner from "./SimpleQrScanner";
@@ -38,6 +38,7 @@ import { extractNpubFromScan } from "./npubScan";
 import { primeNip65RelayHints } from "./nip65RelayHints";
 import { formatRoundOptionLabel } from "./roundLabel";
 import {
+  fetchLatestSimpleBlindKeyAnnouncement,
   generateSimpleBlindKeyPair,
   publishSimpleBlindKeyAnnouncement,
   type SimpleBlindKeyAnnouncement,
@@ -189,6 +190,7 @@ export default function SimpleCoordinatorApp() {
     useState('');
   const [submittedVotes, setSubmittedVotes] = useState<SimpleSubmittedVote[]>([]);
   const [validatedVotes, setValidatedVotes] = useState<SimpleValidatedVote[]>([]);
+  const blindKeyRepublishAtRef = useRef<Record<string, number>>({});
   const isLeadCoordinator = !leadCoordinatorNpub.trim() || leadCoordinatorNpub.trim() === (keypair?.npub ?? "");
   const activeShareIndex = isLeadCoordinator ? 1 : (Number.parseInt(questionShareIndex, 10) || 0);
   const hasAssignedShareIndex = !isLeadCoordinator && activeShareIndex > 0;
@@ -481,25 +483,14 @@ export default function SimpleCoordinatorApp() {
   }, [coordinatorId, isLeadCoordinator, keypair?.nsec, keypair?.npub, leadCoordinatorNpub]);
 
   useEffect(() => {
-    let cancelled = false;
     const npub = keypair?.npub ?? "";
 
     if (!npub) {
       setCoordinatorId("pending");
-      return () => {
-        cancelled = true;
-      };
+      return;
     }
 
-    void sha256Hex(npub).then((hash) => {
-      if (!cancelled) {
-        setCoordinatorId(hash.slice(0, 7));
-      }
-    });
-
-    return () => {
-      cancelled = true;
-    };
+    setCoordinatorId(deriveActorDisplayId(npub));
   }, [keypair?.npub]);
 
   useEffect(() => {
@@ -1124,6 +1115,46 @@ export default function SimpleCoordinatorApp() {
     }
   }
 
+  async function ensureBlindKeyAnnouncementForRound(input: {
+    votingId: string;
+    blindPrivateKey: SimpleBlindPrivateKey;
+    forceRepublish?: boolean;
+  }) {
+    const coordinatorNpub = keypair?.npub ?? "";
+    if (!coordinatorNpub) {
+      return null;
+    }
+
+    const existingAnnouncement = roundBlindKeyAnnouncements[input.votingId];
+    if (existingAnnouncement && !input.forceRepublish) {
+      return existingAnnouncement;
+    }
+
+    if (!input.forceRepublish) {
+      try {
+        const fetchedAnnouncement = await fetchLatestSimpleBlindKeyAnnouncement({
+          coordinatorNpub,
+          votingId: input.votingId,
+        });
+        if (fetchedAnnouncement) {
+          setRoundBlindKeyAnnouncements((current) => ({
+            ...current,
+            [input.votingId]: fetchedAnnouncement,
+          }));
+          return fetchedAnnouncement;
+        }
+      } catch {
+        // Fall through to republish with the local private key.
+      }
+    }
+
+    return publishBlindKeyForRound({
+      votingId: input.votingId,
+      blindPrivateKey: input.blindPrivateKey,
+      force: true,
+    });
+  }
+
   async function sendTicket(follower: SimpleCoordinatorFollower) {
     const coordinatorNpub = keypair?.npub ?? "";
     const coordinatorSecretKey = decodeNsec(keypair?.nsec ?? "");
@@ -1135,7 +1166,6 @@ export default function SimpleCoordinatorApp() {
       !coordinatorNpub
       || !coordinatorSecretKey
       || !activeBlindPrivateKey
-      || !activeBlindKeyAnnouncement
       || !matchingRequest
       || !coordinatorId
       || coordinatorId === "pending"
@@ -1143,6 +1173,22 @@ export default function SimpleCoordinatorApp() {
       || !prompt
       || activeShareIndex <= 0
     ) {
+      return;
+    }
+
+    const keyAnnouncement = await ensureBlindKeyAnnouncementForRound({
+      votingId,
+      blindPrivateKey: activeBlindPrivateKey,
+    });
+    if (!keyAnnouncement) {
+      setTicketDeliveries((current) => ({
+        ...current,
+        [`${follower.voterNpub}:${votingId}`]: {
+          status: "Blind key announcement unavailable.",
+          attempts: (current[`${follower.voterNpub}:${votingId}`]?.attempts ?? 0) + 1,
+          lastAttemptAt: new Date().toISOString(),
+        },
+      }));
       return;
     }
 
@@ -1156,7 +1202,7 @@ export default function SimpleCoordinatorApp() {
       const result = await sendSimpleRoundTicket({
         coordinatorSecretKey,
         blindPrivateKey: activeBlindPrivateKey,
-        keyAnnouncementEvent: activeBlindKeyAnnouncement.event,
+        keyAnnouncementEvent: keyAnnouncement.event,
         recipientNpub: matchingRequest.replyNpub,
         coordinatorNpub,
         thresholdLabel,
@@ -1339,7 +1385,6 @@ export default function SimpleCoordinatorApp() {
   const canIssueTickets = Boolean(
     keypair?.nsec &&
     activeBlindPrivateKey &&
-    activeBlindKeyAnnouncement &&
     (isLeadCoordinator || activeShareIndex > 0),
   );
   const coordinatorFollowerRows = useMemo(() => buildCoordinatorFollowerRowsRust({
@@ -1399,6 +1444,55 @@ export default function SimpleCoordinatorApp() {
 
     return () => window.clearInterval(intervalId);
   }, [dmAcknowledgements, selectedPublishedVote, ticketDeliveries, visibleFollowers]);
+
+  useEffect(() => {
+    if (!selectedPublishedVote || !activeBlindPrivateKey || !keypair?.npub) {
+      return;
+    }
+
+    const waitingFollowerCount = visibleFollowers.filter((follower) => (
+      !findLatestRoundRequest(pendingRequests, follower.voterNpub, selectedPublishedVote.votingId)
+    )).length;
+
+    if (waitingFollowerCount === 0 && activeBlindKeyAnnouncement) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const refreshBlindKeyAnnouncement = () => {
+      const now = Date.now();
+      const lastRepublishAt = blindKeyRepublishAtRef.current[selectedPublishedVote.votingId] ?? 0;
+      if (now - lastRepublishAt < 8000) {
+        return;
+      }
+
+      blindKeyRepublishAtRef.current[selectedPublishedVote.votingId] = now;
+      void ensureBlindKeyAnnouncementForRound({
+        votingId: selectedPublishedVote.votingId,
+        blindPrivateKey: activeBlindPrivateKey,
+        forceRepublish: waitingFollowerCount > 0 || !activeBlindKeyAnnouncement,
+      }).catch(() => {
+        if (!cancelled) {
+          setPublishStatus("Blind signing key announcement failed.");
+        }
+      });
+    };
+
+    refreshBlindKeyAnnouncement();
+    const intervalId = window.setInterval(refreshBlindKeyAnnouncement, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [
+    activeBlindKeyAnnouncement,
+    activeBlindPrivateKey,
+    keypair?.npub,
+    pendingRequests,
+    selectedPublishedVote,
+    visibleFollowers,
+  ]);
 
   useEffect(() => {
     const knownParticipants = sortCoordinatorRoster([

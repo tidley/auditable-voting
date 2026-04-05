@@ -22,11 +22,6 @@ export const SIMPLE_PUBLIC_RELAYS = [
   "wss://purplepag.es",
   "wss://nostr.mom",
   "wss://eden.nostr.land",
-  "wss://relay.snort.social",
-  "wss://relay.nostr.bg",
-  "wss://relay.nostr.wine",
-  "wss://relay.plebstr.com",
-  "wss://relay.nostr.band",
 ];
 
 export const SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS = 1500;
