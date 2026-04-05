@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 import { decodeNsec, deriveNpubFromNsec } from "./nostrIdentity";
 import { deriveActorDisplayId } from "./actorDisplay";
-import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
 import SimpleQrScanner from "./SimpleQrScanner";
+import SimpleRelayPanel from "./SimpleRelayPanel";
 import SimpleUnlockGate from "./SimpleUnlockGate";
 import TokenFingerprint from "./TokenFingerprint";
 import { extractNpubFromScan } from "./npubScan";
@@ -58,6 +58,7 @@ import {
 } from "./wasm/auditableVotingCore";
 
 type LiveVoteChoice = "Yes" | "No" | null;
+type VoterTab = "configure" | "vote" | "settings";
 
 type SimpleVoterKeypair = {
   nsec: string;
@@ -181,9 +182,12 @@ export default function SimpleUiApp() {
   const [submitStatus, setSubmitStatus] = useState<string | null>(null);
   const [ballotTokenId, setBallotTokenId] = useState<string | null>(null);
   const [selectedVotingId, setSelectedVotingId] = useState("");
+  const [activeTab, setActiveTab] = useState<VoterTab>("configure");
+  const [showVoteDetails, setShowVoteDetails] = useState(false);
   const sentTicketReceiptAckIdsRef = useRef<Set<string>>(new Set());
   const lastAutoSelectedVotingIdRef = useRef("");
   const manualRoundSelectionRef = useRef(false);
+  const manualTabSelectionRef = useRef(false);
 
   function persistVoterIdentity(nextKeypair: SimpleVoterKeypair, cache?: Partial<SimpleVoterCache>) {
     return saveSimpleActorState({
@@ -696,6 +700,9 @@ export default function SimpleUiApp() {
     setDiscoveredSessions([]);
     setKnownBlindKeys({});
     setSelectedVotingId("");
+    setActiveTab("configure");
+    setShowVoteDetails(false);
+    manualTabSelectionRef.current = false;
     lastAutoSelectedVotingIdRef.current = "";
     manualRoundSelectionRef.current = false;
     sentTicketReceiptAckIdsRef.current.clear();
@@ -1332,6 +1339,41 @@ export default function SimpleUiApp() {
   }, [pendingBlindRequests, receivedShards, roundReplyKeypairs, voterKeypair?.npub]);
 
   const requiredShardCount = Math.max(1, effectiveLiveVoteSession?.thresholdT ?? 1);
+  const voteSubmittedSuccessfully = submitStatus?.startsWith("Vote submitted:") ?? false;
+  const voteTicketReady = uniqueShardResponses.length >= requiredShardCount && requiredShardCount > 0;
+  const hasCoordinatorConnection = coordinatorDiagnostics.some((entry) => (
+    entry.follow.tone === "ok"
+    || entry.round.tone === "ok"
+    || entry.request.tone === "ok"
+    || entry.ticket.tone === "ok"
+  ));
+  const activeVoteCoordinatorIndex = effectiveLiveVoteSession
+    ? configuredCoordinatorTargets.findIndex((value) => (
+      effectiveLiveVoteSession.authorizedCoordinatorNpubs.includes(value)
+      && !knownBlindKeys[makeRoundBlindKeyId(value, effectiveLiveVoteSession.votingId)]
+    ))
+    : -1;
+  const waitingForCoordinatorKeyText = activeVoteCoordinatorIndex >= 0
+    ? `Waiting for Coordinator ${activeVoteCoordinatorIndex + 1}'s key before preparing ticket request.`
+    : "Waiting for a coordinator key before preparing ticket request.";
+
+  useEffect(() => {
+    if (manualTabSelectionRef.current) {
+      return;
+    }
+
+    if (effectiveLiveVoteSession || voteTicketRows.length > 0 || voteSubmittedSuccessfully) {
+      setActiveTab("vote");
+      return;
+    }
+
+    setActiveTab("configure");
+  }, [effectiveLiveVoteSession, voteSubmittedSuccessfully, voteTicketRows.length]);
+
+  function selectTab(nextTab: VoterTab) {
+    manualTabSelectionRef.current = true;
+    setActiveTab(nextTab);
+  }
 
   async function submitVote() {
     if (!effectiveLiveVoteSession || !liveVoteChoice || uniqueShardResponses.length < requiredShardCount) {
@@ -1391,232 +1433,321 @@ export default function SimpleUiApp() {
             Refresh ID
           </button>
         </div>
+        <div className="simple-voter-tabs" role="tablist" aria-label="Voter sections">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "configure"}
+            className={`simple-voter-tab${activeTab === "configure" ? " is-active" : ""}`}
+            onClick={() => selectTab("configure")}
+          >
+            Configure
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "vote"}
+            className={`simple-voter-tab${activeTab === "vote" ? " is-active" : ""}`}
+            onClick={() => selectTab("vote")}
+          >
+            Vote
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "settings"}
+            className={`simple-voter-tab${activeTab === "settings" ? " is-active" : ""}`}
+            onClick={() => selectTab("settings")}
+          >
+            Settings
+          </button>
+        </div>
 
-        <SimpleIdentityPanel
-          npub={voterKeypair?.npub ?? ""}
-          nsec={voterKeypair?.nsec ?? ""}
-          title="Identity"
-          onRestoreNsec={restoreIdentity}
-          restoreMessage={identityStatus}
-          onDownloadBackup={identityReady ? downloadBackup : undefined}
-          onRestoreBackupFile={restoreBackup}
-          backupMessage={backupStatus}
-          onProtectLocalState={identityReady ? protectLocalState : undefined}
-          onDisableLocalStateProtection={identityReady ? disableLocalStateProtection : undefined}
-          localStateProtected={Boolean(storagePassphrase)}
-          localStateMessage={storageStatus}
-        />
-
-        <SimpleCollapsibleSection title="Coordinators">
-          <div className="simple-voter-field-stack simple-voter-field-stack-tight">
-            <label className="simple-voter-label simple-voter-label-tight" htmlFor="simple-coordinator-draft">Coordinator npubs</label>
-            <div className="simple-voter-add-row simple-voter-add-row-with-scan">
-              <input
-                id="simple-coordinator-draft"
-                className="simple-voter-input simple-voter-input-inline"
-                value={coordinatorDraft}
-                onChange={(event) => {
-                  setCoordinatorDraft(event.target.value);
-                  setCoordinatorScannerStatus(null);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    addCoordinatorInput();
-                  }
-                }}
-                placeholder="Enter npub..."
+        <section
+          className={`simple-voter-tab-panel${activeTab !== "configure" ? " is-hidden" : ""}`}
+          role="tabpanel"
+          aria-label="Configure"
+          hidden={activeTab !== "configure"}
+        >
+            <div className="simple-voter-field-stack simple-voter-field-stack-tight">
+              <label className="simple-voter-label simple-voter-label-tight" htmlFor="simple-coordinator-draft">Coordinator npubs</label>
+              <div className="simple-voter-add-row simple-voter-add-row-with-scan">
+                <input
+                  id="simple-coordinator-draft"
+                  className="simple-voter-input simple-voter-input-inline"
+                  value={coordinatorDraft}
+                  onChange={(event) => {
+                    setCoordinatorDraft(event.target.value);
+                    setCoordinatorScannerStatus(null);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      addCoordinatorInput();
+                    }
+                  }}
+                  placeholder="Enter npub..."
+                />
+                <button
+                  type="button"
+                  className="simple-voter-add-button"
+                  onClick={addCoordinatorInput}
+                  aria-label="Add coordinator"
+                >
+                  +
+                </button>
+                <button
+                  type="button"
+                  className="simple-voter-secondary simple-voter-scan-button"
+                  onClick={() => {
+                    setCoordinatorScannerStatus(null);
+                    setCoordinatorScannerActive(true);
+                  }}
+                >
+                  Scan
+                </button>
+              </div>
+              <SimpleQrScanner
+                active={coordinatorScannerActive}
+                onDetected={handleCoordinatorScanDetected}
+                onClose={() => setCoordinatorScannerActive(false)}
+                prompt="Point the camera at a coordinator npub QR code."
               />
+              {coordinatorScannerStatus ? <p className="simple-voter-note">{coordinatorScannerStatus}</p> : null}
+              {configuredCoordinatorTargets.length > 0 ? (
+                <ul className="simple-coordinator-card-list">
+                  {configuredCoordinatorTargets.map((value, index) => (
+                    <li key={value} className="simple-coordinator-card">
+                      <div className="simple-coordinator-card-avatar" aria-hidden="true">•</div>
+                      <div className="simple-coordinator-card-copy">
+                        <p className="simple-coordinator-card-title">Coordinator {index + 1}</p>
+                        <p className="simple-coordinator-card-meta" title={value}>{shortenNpub(value)}</p>
+                        {(() => {
+                          const diagnostic = coordinatorDiagnosticsByNpub.get(value);
+                          const toneClass = (tone: string) => (
+                            tone === "error"
+                              ? "simple-delivery-error"
+                              : tone === "ok"
+                                ? "simple-delivery-ok"
+                                : "simple-delivery-waiting"
+                          );
+
+                          return (
+                            <ul className="simple-delivery-diagnostics simple-delivery-diagnostics-compact">
+                              <li className={toneClass(diagnostic?.follow.tone ?? "waiting")}>
+                                {diagnostic?.follow.text ?? "Follow request not sent yet."}
+                              </li>
+                              <li className={toneClass(diagnostic?.round.tone ?? "waiting")}>
+                                {diagnostic?.round.text ?? "Waiting for live round."}
+                              </li>
+                              <li className={toneClass(diagnostic?.blindKey.tone ?? "waiting")}>
+                                {diagnostic?.blindKey.text ?? `Waiting for Coordinator ${index + 1}'s key before preparing ticket request.`}
+                              </li>
+                              <li className={toneClass(diagnostic?.request.tone ?? "waiting")}>
+                                {diagnostic?.request.text ?? "Waiting to send blinded ticket request."}
+                              </li>
+                              <li className={toneClass(diagnostic?.ticket.tone ?? "waiting")}>
+                                {diagnostic?.ticket.text ?? "Waiting for ticket."}
+                              </li>
+                            </ul>
+                          );
+                        })()}
+                      </div>
+                      <button
+                        type="button"
+                        className="simple-coordinator-card-remove"
+                        onClick={() => removeCoordinatorInput(index)}
+                        aria-label={`Remove coordinator ${index + 1}`}
+                      >
+                        ×
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="simple-voter-empty">No coordinators added yet.</p>
+              )}
+            </div>
+            <div className="simple-voter-action-row simple-voter-action-row-tight">
               <button
                 type="button"
-                className="simple-voter-add-button"
-                onClick={addCoordinatorInput}
-                aria-label="Add coordinator"
+                className="simple-voter-primary simple-voter-primary-wide"
+                onClick={() => void notifyCoordinators()}
+                disabled={!voterKeypair?.npub || configuredCoordinatorTargets.length === 0}
               >
-                +
-              </button>
-              <button
-                type="button"
-                className="simple-voter-secondary simple-voter-scan-button"
-                onClick={() => {
-                  setCoordinatorScannerStatus(null);
-                  setCoordinatorScannerActive(true);
-                }}
-              >
-                Scan
+                Notify coordinators
               </button>
             </div>
-            <SimpleQrScanner
-              active={coordinatorScannerActive}
-              onDetected={handleCoordinatorScanDetected}
-              onClose={() => setCoordinatorScannerActive(false)}
-              prompt="Point the camera at a coordinator npub QR code."
-            />
-            {coordinatorScannerStatus ? <p className="simple-voter-note">{coordinatorScannerStatus}</p> : null}
-            {configuredCoordinatorTargets.length > 0 ? (
-              <ul className="simple-coordinator-card-list">
-                {configuredCoordinatorTargets.map((value, index) => (
-                  <li key={value} className="simple-coordinator-card">
-                    <div className="simple-coordinator-card-avatar" aria-hidden="true">•</div>
-                    <div className="simple-coordinator-card-copy">
-                      <p className="simple-coordinator-card-title">Coordinator {index + 1}</p>
-                      <p className="simple-coordinator-card-meta" title={value}>{shortenNpub(value)}</p>
-                      {(() => {
-                        const diagnostic = coordinatorDiagnosticsByNpub.get(value);
-                        const toneClass = (tone: string) => (
-                          tone === "error"
-                            ? "simple-delivery-error"
-                            : tone === "ok"
-                              ? "simple-delivery-ok"
-                              : "simple-delivery-waiting"
-                        );
+            {requestStatus ? <p className="simple-voter-note">{requestStatus}</p> : null}
+        </section>
 
-                        return (
-                          <ul className="simple-delivery-diagnostics simple-delivery-diagnostics-compact">
-                            <li className={toneClass(diagnostic?.follow.tone ?? "waiting")}>
-                              {diagnostic?.follow.text ?? "Follow request not sent yet."}
-                            </li>
-                            <li className={toneClass(diagnostic?.round.tone ?? "waiting")}>
-                              {diagnostic?.round.text ?? "Waiting for live round."}
-                            </li>
-                            <li className={toneClass(diagnostic?.blindKey.tone ?? "waiting")}>
-                              {diagnostic?.blindKey.text ?? `Waiting for Coordinator ${index + 1}'s key before preparing ticket request.`}
-                            </li>
-                            <li className={toneClass(diagnostic?.request.tone ?? "waiting")}>
-                              {diagnostic?.request.text ?? "Waiting to send blinded ticket request."}
-                            </li>
-                            <li className={toneClass(diagnostic?.ticket.tone ?? "waiting")}>
-                              {diagnostic?.ticket.text ?? "Waiting for ticket."}
-                            </li>
-                          </ul>
-                        );
-                      })()}
-                    </div>
-                    <button
-                      type="button"
-                      className="simple-coordinator-card-remove"
-                      onClick={() => removeCoordinatorInput(index)}
-                      aria-label={`Remove coordinator ${index + 1}`}
-                    >
-                      ×
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="simple-voter-empty">No coordinators added yet.</p>
-            )}
-          </div>
-          <div className="simple-voter-action-row simple-voter-action-row-tight">
-            <button
-              type="button"
-              className="simple-voter-primary simple-voter-primary-wide"
-              onClick={() => void notifyCoordinators()}
-              disabled={!voterKeypair?.npub || configuredCoordinatorTargets.length === 0}
-            >
-              Notify coordinators
-            </button>
-          </div>
-          {requestStatus && <p className="simple-voter-note">{requestStatus}</p>}
-          <div className="simple-voter-ticket-area">
-            <h3 className="simple-voter-question">Live Vote Tickets Received</h3>
-            {voteTicketRows.length > 0 && configuredCoordinatorTargets.length > 0 ? (
-              <div className="simple-voter-table-wrap">
-                <table className="simple-voter-table">
-                  <thead>
-                    <tr>
-                      <th scope="col">Vote</th>
-                      {configuredCoordinatorTargets.map((coordinatorNpub, index) => (
-                        <th key={coordinatorNpub} scope="col">Coord {index + 1}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {voteTicketRows.map((row) => (
-                      <tr key={row.votingId}>
-                        <th scope="row">{shortVotingId(row.votingId)}</th>
-                        {configuredCoordinatorTargets.map((coordinatorNpub) => (
-                          <td key={`${row.votingId}:${coordinatorNpub}`}>
-                            {row.countsByCoordinator[coordinatorNpub] ?? 0}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <p className="simple-voter-empty">No vote tickets received yet.</p>
-            )}
-          </div>
-        </SimpleCollapsibleSection>
-
-        <SimpleCollapsibleSection title="Live Vote">
+        <section
+          className={`simple-voter-tab-panel${activeTab !== "vote" ? " is-hidden" : ""}`}
+          role="tabpanel"
+          aria-label="Vote"
+          hidden={activeTab !== "vote"}
+        >
           {effectiveLiveVoteSession ? (
-            <>
-              {reconciledRoundState.knownRounds.length > 1 ? (
-                <>
-                  <label className="simple-voter-label" htmlFor="simple-live-round">Round</label>
-                  <select
-                    id="simple-live-round"
-                    className="simple-voter-input"
-                    value={effectiveLiveVoteSession.votingId}
-                    onChange={(event) => {
-                      manualRoundSelectionRef.current = true;
-                      setSelectedVotingId(event.target.value);
-                    }}
-                  >
-                    {reconciledRoundState.knownRounds.map((round) => (
-                      <option key={round.votingId} value={round.votingId}>
-                        {formatRoundOptionLabel(round)}
-                      </option>
-                    ))}
-                  </select>
-                </>
-              ) : null}
-              <p className="simple-voter-question">{effectiveLiveVoteSession.prompt}</p>
-              <p className="simple-voter-note">Vote {shortVotingId(effectiveLiveVoteSession.votingId)}</p>
-              <p className="simple-voter-question">
-                Tickets ready: {uniqueShardResponses.length} of {requiredShardCount}
-              </p>
-              {ballotTokenId && (
-                <div className="simple-vote-entry">
-                  <div className="simple-vote-entry-copy">
-                    <p className="simple-voter-question">Ballot fingerprint</p>
+              <>
+                {reconciledRoundState.knownRounds.length > 1 ? (
+                  <div className="simple-voter-round-picker">
+                    <label className="simple-voter-label" htmlFor="simple-live-round">Round</label>
+                    <select
+                      id="simple-live-round"
+                      className="simple-voter-input"
+                      value={effectiveLiveVoteSession.votingId}
+                      onChange={(event) => {
+                        manualRoundSelectionRef.current = true;
+                        setSelectedVotingId(event.target.value);
+                      }}
+                    >
+                      {reconciledRoundState.knownRounds.map((round) => (
+                        <option key={round.votingId} value={round.votingId}>
+                          {formatRoundOptionLabel(round)}
+                        </option>
+                      ))}
+                    </select>
                   </div>
-                  <TokenFingerprint tokenId={ballotTokenId} large />
+                ) : null}
+
+                <div className="simple-vote-card">
+                  <p className="simple-vote-card-kicker">Live round</p>
+                  <h2 className="simple-vote-card-title">{effectiveLiveVoteSession.prompt}</h2>
+                  <p className="simple-vote-card-meta">Vote {shortVotingId(effectiveLiveVoteSession.votingId)}</p>
+                  <p className="simple-vote-card-meta simple-vote-card-meta-compact">{effectiveLiveVoteSession.votingId}</p>
+                  <p className="simple-vote-card-meta">
+                    Tickets ready: {uniqueShardResponses.length} of {requiredShardCount}
+                  </p>
                 </div>
-              )}
-              <div className="simple-voter-choice-row">
+
+                <div className="simple-vote-button-grid">
+                  <button
+                    type="button"
+                    className={`simple-voter-choice simple-voter-choice-yes${liveVoteChoice === "Yes" ? " is-active" : ""}`}
+                    onClick={() => setLiveVoteChoice("Yes")}
+                  >
+                    Yes
+                  </button>
+                  <button
+                    type="button"
+                    className={`simple-voter-choice simple-voter-choice-no${liveVoteChoice === "No" ? " is-active" : ""}`}
+                    onClick={() => setLiveVoteChoice("No")}
+                  >
+                    No
+                  </button>
+                </div>
+
                 <button
                   type="button"
-                  className={`simple-voter-choice${liveVoteChoice === "Yes" ? " is-active" : ""}`}
-                  onClick={() => setLiveVoteChoice("Yes")}
-                >
-                  Yes
-                </button>
-                <button
-                  type="button"
-                  className={`simple-voter-choice${liveVoteChoice === "No" ? " is-active" : ""}`}
-                  onClick={() => setLiveVoteChoice("No")}
-                >
-                  No
-                </button>
-                <button
-                  type="button"
-                  className="simple-voter-primary"
+                  className="simple-voter-primary simple-voter-primary-wide simple-vote-submit"
                   onClick={() => void submitVote()}
                   disabled={!liveVoteChoice || uniqueShardResponses.length < requiredShardCount}
                 >
-                  Submit
+                  Submit vote
                 </button>
-              </div>
-              {submitStatus && <p className="simple-voter-note">{submitStatus}</p>}
-            </>
+
+                <section className="simple-vote-status-card" aria-label="Vote status">
+                  <h3 className="simple-vote-status-title">Status</h3>
+                  <ul className="simple-vote-status-list">
+                    <li className={hasCoordinatorConnection ? "is-complete" : "is-pending"}>
+                      <span className="simple-vote-status-icon" aria-hidden="true">{hasCoordinatorConnection ? "✓" : "○"}</span>
+                      <span>{hasCoordinatorConnection ? "Connected to voting network" : "Waiting to connect to coordinators"}</span>
+                    </li>
+                    <li className={voteTicketReady ? "is-complete" : "is-pending"}>
+                      <span className="simple-vote-status-icon" aria-hidden="true">{voteTicketReady ? "✓" : "○"}</span>
+                      <span>{voteTicketReady ? "Vote ticket received" : waitingForCoordinatorKeyText}</span>
+                    </li>
+                    <li className={voteSubmittedSuccessfully ? "is-complete" : "is-pending"}>
+                      <span className="simple-vote-status-icon" aria-hidden="true">{voteSubmittedSuccessfully ? "✓" : "○"}</span>
+                      <span>{voteSubmittedSuccessfully ? "Vote submitted successfully" : "Vote not submitted yet"}</span>
+                    </li>
+                  </ul>
+                  {submitStatus ? <p className="simple-voter-note">{submitStatus}</p> : null}
+                  <button
+                    type="button"
+                    className="simple-vote-details-toggle"
+                    onClick={() => setShowVoteDetails((current) => !current)}
+                    aria-expanded={showVoteDetails}
+                  >
+                    {showVoteDetails ? "Hide details" : "Show details"}
+                  </button>
+                  {showVoteDetails ? (
+                    <div className="simple-vote-details">
+                      {ballotTokenId ? (
+                        <div className="simple-vote-entry">
+                          <div className="simple-vote-entry-copy">
+                            <p className="simple-voter-question">Ballot fingerprint</p>
+                          </div>
+                          <TokenFingerprint tokenId={ballotTokenId} large />
+                        </div>
+                      ) : null}
+                      <div className="simple-voter-ticket-area">
+                        <h3 className="simple-voter-question">Live Vote Tickets Received</h3>
+                        {voteTicketRows.length > 0 && configuredCoordinatorTargets.length > 0 ? (
+                          <div className="simple-voter-table-wrap">
+                            <table className="simple-voter-table">
+                              <thead>
+                                <tr>
+                                  <th scope="col">Vote</th>
+                                  {configuredCoordinatorTargets.map((coordinatorNpub, index) => (
+                                    <th key={coordinatorNpub} scope="col">Coord {index + 1}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {voteTicketRows.map((row) => (
+                                  <tr key={row.votingId}>
+                                    <th scope="row">{shortVotingId(row.votingId)}</th>
+                                    {configuredCoordinatorTargets.map((coordinatorNpub) => (
+                                      <td key={`${row.votingId}:${coordinatorNpub}`}>
+                                        {row.countsByCoordinator[coordinatorNpub] ?? 0}
+                                      </td>
+                                    ))}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        ) : (
+                          <p className="simple-voter-empty">No vote tickets received yet.</p>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+                </section>
+              </>
           ) : (
-            <p className="simple-voter-empty">No live vote ticket yet.</p>
+            <div className="simple-vote-empty-state">
+              <p className="simple-voter-question">No live vote ticket yet.</p>
+              <p className="simple-voter-note">
+                Add coordinators in Configure, then wait for the next live round and ticket.
+              </p>
+            </div>
           )}
-        </SimpleCollapsibleSection>
+        </section>
+
+        <section
+          className={`simple-voter-tab-panel${activeTab !== "settings" ? " is-hidden" : ""}`}
+          role="tabpanel"
+          aria-label="Settings"
+          hidden={activeTab !== "settings"}
+        >
+          <SimpleIdentityPanel
+            npub={voterKeypair?.npub ?? ""}
+            nsec={voterKeypair?.nsec ?? ""}
+            title="Identity"
+            onRestoreNsec={restoreIdentity}
+            restoreMessage={identityStatus}
+            onDownloadBackup={identityReady ? downloadBackup : undefined}
+            onRestoreBackupFile={restoreBackup}
+            backupMessage={backupStatus}
+            onProtectLocalState={identityReady ? protectLocalState : undefined}
+            onDisableLocalStateProtection={identityReady ? disableLocalStateProtection : undefined}
+            localStateProtected={Boolean(storagePassphrase)}
+            localStateMessage={storageStatus}
+          />
+          <SimpleRelayPanel />
+        </section>
       </section>
     </main>
   );

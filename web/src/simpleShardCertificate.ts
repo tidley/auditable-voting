@@ -132,8 +132,146 @@ type RsaJwk = {
 
 const simpleBlindSuite = RSABSSA.SHA384.PSS.Deterministic();
 
+type BlindKeySubscriber = {
+  id: number;
+  votingId?: string;
+  onAnnouncement: (announcement: SimpleBlindKeyAnnouncement | null) => void;
+  onError?: (error: Error) => void;
+};
+
+type BlindKeySubscriptionState = {
+  subscribers: Map<number, BlindKeySubscriber>;
+  announcements: Map<string, SimpleBlindKeyAnnouncement>;
+  subscription: { close: (reason?: string) => Promise<void> | void } | null;
+  closed: boolean;
+};
+
+const blindKeySubscriptions = new Map<string, BlindKeySubscriptionState>();
+let nextBlindKeySubscriberId = 1;
+
 function buildPublicRelays(relays?: string[]) {
   return normalizeRelaysRust([...SIMPLE_PUBLIC_RELAYS, ...(relays ?? [])]);
+}
+
+function buildBlindKeySubscriptionKey(coordinatorNpub: string, relays?: string[]) {
+  return `${coordinatorNpub.trim()}::${buildPublicRelays(relays).join("|")}`;
+}
+
+function sortAnnouncementsDescending(values: SimpleBlindKeyAnnouncement[]) {
+  return [...values].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+}
+
+function latestMatchingBlindKeyAnnouncement(
+  announcements: Iterable<SimpleBlindKeyAnnouncement>,
+  votingId?: string,
+) {
+  const matches = [...announcements].filter((announcement) => (
+    !votingId || announcement.votingId === votingId
+  ));
+  return sortAnnouncementsDescending(matches)[0] ?? null;
+}
+
+function notifyBlindKeySubscribers(state: BlindKeySubscriptionState) {
+  for (const subscriber of state.subscribers.values()) {
+    subscriber.onAnnouncement(
+      latestMatchingBlindKeyAnnouncement(state.announcements.values(), subscriber.votingId),
+    );
+  }
+}
+
+async function ensureBlindKeySubscription(input: {
+  coordinatorNpub: string;
+  relays?: string[];
+}) {
+  const subscriptionKey = buildBlindKeySubscriptionKey(input.coordinatorNpub, input.relays);
+  const existing = blindKeySubscriptions.get(subscriptionKey);
+  if (existing) {
+    return existing;
+  }
+
+  const decoded = nip19.decode(input.coordinatorNpub.trim());
+  if (decoded.type !== "npub") {
+    throw new Error("Coordinator value must be an npub.");
+  }
+
+  const state: BlindKeySubscriptionState = {
+    subscribers: new Map(),
+    announcements: new Map(),
+    subscription: null,
+    closed: false,
+  };
+  blindKeySubscriptions.set(subscriptionKey, state);
+
+  const fallbackRelays = buildPublicRelays(input.relays);
+  const pool = getSharedNostrPool();
+
+  void resolveNip65OutboxRelays({
+    npub: input.coordinatorNpub,
+    fallbackRelays,
+  }).then(async (relays) => {
+    if (state.closed) {
+      return;
+    }
+
+    const events = await pool.querySync(relays, {
+      kinds: [SIMPLE_BLIND_KEY_KIND],
+      authors: [decoded.data as string],
+      limit: 50,
+    });
+
+    for (const event of events) {
+      const announcement = parseSimpleBlindKeyAnnouncement(
+        event as VerifiedEvent,
+        input.coordinatorNpub,
+      );
+      if (announcement) {
+        state.announcements.set(announcement.event.id, announcement);
+      }
+    }
+    notifyBlindKeySubscribers(state);
+
+    state.subscription = pool.subscribeMany(relays, {
+      kinds: [SIMPLE_BLIND_KEY_KIND],
+      authors: [decoded.data as string],
+      limit: 50,
+    }, {
+      onevent: (event) => {
+        const announcement = parseSimpleBlindKeyAnnouncement(
+          event as VerifiedEvent,
+          input.coordinatorNpub,
+        );
+        if (!announcement) {
+          return;
+        }
+
+        state.announcements.set(announcement.event.id, announcement);
+        notifyBlindKeySubscribers(state);
+      },
+      onclose: (reasons) => {
+        if (state.closed) {
+          return;
+        }
+
+        const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
+        if (errors.length > 0) {
+          for (const subscriber of state.subscribers.values()) {
+            subscriber.onError?.(new Error(errors.join("; ")));
+          }
+        }
+      },
+      maxWait: SIMPLE_PUBLIC_SUBSCRIPTION_MAX_WAIT_MS,
+    });
+  }).catch((error) => {
+    if (state.closed || !(error instanceof Error)) {
+      return;
+    }
+
+    for (const subscriber of state.subscribers.values()) {
+      subscriber.onError?.(error);
+    }
+  });
+
+  return state;
 }
 
 function getWebCrypto(override?: Crypto) {
@@ -462,74 +600,27 @@ export function subscribeLatestSimpleBlindKeyAnnouncement(input: {
   onAnnouncement: (announcement: SimpleBlindKeyAnnouncement | null) => void;
   onError?: (error: Error) => void;
 }): () => void {
-  const decoded = nip19.decode(input.coordinatorNpub.trim());
-  if (decoded.type !== "npub") {
-    throw new Error("Coordinator value must be an npub.");
-  }
-
-  const fallbackRelays = buildPublicRelays(input.relays);
-  const pool = getSharedNostrPool();
-  const announcements = new Map<string, SimpleBlindKeyAnnouncement>();
+  const subscriptionKey = buildBlindKeySubscriptionKey(input.coordinatorNpub, input.relays);
+  const subscriberId = nextBlindKeySubscriberId++;
   let closed = false;
-  let subscription: { close: (reason?: string) => Promise<void> | void } | null = null;
 
-  void fetchLatestSimpleBlindKeyAnnouncement({
+  void ensureBlindKeySubscription({
     coordinatorNpub: input.coordinatorNpub,
-    votingId: input.votingId,
     relays: input.relays,
-  }).then((announcement) => {
-    if (closed || !announcement) {
-      return;
-    }
-
-    announcements.set(announcement.event.id, announcement);
-    const latest = [...announcements.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null;
-    input.onAnnouncement(latest);
-  }).catch((error) => {
-    if (!closed && error instanceof Error) {
-      input.onError?.(error);
-    }
-  });
-
-  void resolveNip65OutboxRelays({
-    npub: input.coordinatorNpub,
-    fallbackRelays,
-  }).then((relays) => {
+  }).then((state) => {
     if (closed) {
       return;
     }
 
-    subscription = pool.subscribeMany(relays, {
-      kinds: [SIMPLE_BLIND_KEY_KIND],
-      authors: [decoded.data as string],
-      limit: 20,
-    }, {
-      onevent: (event) => {
-        const announcement = parseSimpleBlindKeyAnnouncement(
-          event as VerifiedEvent,
-          input.coordinatorNpub,
-          input.votingId,
-        );
-        if (!announcement) {
-          return;
-        }
-
-        announcements.set(announcement.event.id, announcement);
-        const latest = [...announcements.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null;
-        input.onAnnouncement(latest);
-      },
-      onclose: (reasons) => {
-        if (closed) {
-          return;
-        }
-
-        const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
-        if (errors.length > 0) {
-          input.onError?.(new Error(errors.join("; ")));
-        }
-      },
-      maxWait: SIMPLE_PUBLIC_SUBSCRIPTION_MAX_WAIT_MS,
+    state.subscribers.set(subscriberId, {
+      id: subscriberId,
+      votingId: input.votingId,
+      onAnnouncement: input.onAnnouncement,
+      onError: input.onError,
     });
+    input.onAnnouncement(
+      latestMatchingBlindKeyAnnouncement(state.announcements.values(), input.votingId),
+    );
   }).catch((error) => {
     if (!closed && error instanceof Error) {
       input.onError?.(error);
@@ -538,7 +629,19 @@ export function subscribeLatestSimpleBlindKeyAnnouncement(input: {
 
   return () => {
     closed = true;
-    void subscription?.close("closed by caller");
+    const state = blindKeySubscriptions.get(subscriptionKey);
+    if (!state) {
+      return;
+    }
+
+    state.subscribers.delete(subscriberId);
+    if (state.subscribers.size > 0) {
+      return;
+    }
+
+    state.closed = true;
+    blindKeySubscriptions.delete(subscriptionKey);
+    void state.subscription?.close("closed by caller");
   };
 }
 

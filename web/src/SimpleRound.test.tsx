@@ -1023,6 +1023,7 @@ describe("Simple round flow", () => {
     const coordinatorUi = within(coordinator.container);
     const voterUi = within(voter.container);
 
+    await user.click(voterUi.getByRole("tab", { name: /^Settings$/i }));
     const voterRestoreInput = await voterUi.findByPlaceholderText("nsec1...");
     await user.clear(voterRestoreInput);
     await user.type(voterRestoreInput, voterNsec);
@@ -1042,6 +1043,7 @@ describe("Simple round flow", () => {
       expect(coordinator.container.querySelectorAll("code.simple-identity-code")[1]?.textContent).toBe("Hidden");
     });
 
+    await user.click(voterUi.getByRole("tab", { name: /^Settings$/i }));
     await user.click(voterUi.getByRole("button", { name: "Click to reveal" }));
     await user.click(coordinatorUi.getByRole("button", { name: "Click to reveal" }));
 
@@ -1364,11 +1366,14 @@ describe("Simple round flow", () => {
       await user.click(button);
     }
 
+    await user.click(voterOneUi.getByRole("button", { name: /Show details/i }));
+    await user.click(voterTwoUi.getByRole("button", { name: /Show details/i }));
+
     await waitFor(() => {
       expect(voterOneUi.getByText(/Tickets ready: 2 of 2/i)).toBeTruthy();
       expect(voterTwoUi.getByText(/Tickets ready: 2 of 2/i)).toBeTruthy();
-      expect(voterOneUi.getByText(firstRoundId)).toBeTruthy();
-      expect(voterTwoUi.getByText(firstRoundId)).toBeTruthy();
+      expect(voterOneUi.getAllByText(firstRoundId).length).toBeGreaterThanOrEqual(1);
+      expect(voterTwoUi.getAllByText(firstRoundId).length).toBeGreaterThanOrEqual(1);
       expect(voterOneUi.getAllByText("1").length).toBeGreaterThanOrEqual(2);
       expect(voterTwoUi.getAllByText("1").length).toBeGreaterThanOrEqual(2);
       expect(voterOneUi.getAllByText(/Ticket received\./i).length).toBeGreaterThanOrEqual(2);
