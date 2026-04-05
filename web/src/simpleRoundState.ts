@@ -1,6 +1,10 @@
 import type { SimpleLiveVoteSession } from "./simpleVotingSession";
 import type { SimpleShardResponse } from "./simpleShardDm";
 import { parseSimpleShardCertificate } from "./simpleShardCertificate";
+import {
+  buildSimpleVoteTicketRowsRust,
+  sortRecordsByCreatedAtDescRust,
+} from "./wasm/auditableVotingCore";
 
 export type SimpleVoteTicketRow = {
   votingId: string;
@@ -11,43 +15,34 @@ export type SimpleVoteTicketRow = {
   countsByCoordinator: Record<string, number>;
 };
 
-function byCreatedAtDescending<T extends { createdAt: string }>(values: T[]) {
-  return [...values].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-}
-
 export function buildSimpleVoteTicketRows(
   receivedShards: SimpleShardResponse[],
   configuredCoordinatorTargets: string[],
 ): SimpleVoteTicketRow[] {
-  const rows = new Map<string, SimpleVoteTicketRow>();
-
+  const entries: Array<{
+    votingId: string;
+    prompt: string;
+    createdAt: string;
+    thresholdT?: number;
+    thresholdN?: number;
+    coordinatorNpub: string;
+  }> = [];
   for (const shard of receivedShards) {
     const parsed = shard.shardCertificate ? parseSimpleShardCertificate(shard.shardCertificate) : null;
     if (!parsed || !configuredCoordinatorTargets.includes(shard.coordinatorNpub) || !shard.votingPrompt) {
       continue;
     }
-
-    const current = rows.get(parsed.votingId) ?? {
+    entries.push({
       votingId: parsed.votingId,
       prompt: shard.votingPrompt,
       createdAt: shard.createdAt,
       thresholdT: parsed.thresholdT,
       thresholdN: parsed.thresholdN,
-      countsByCoordinator: {},
-    };
-
-    if (shard.createdAt > current.createdAt) {
-      current.createdAt = shard.createdAt;
-      current.prompt = shard.votingPrompt;
-      current.thresholdT = parsed.thresholdT;
-      current.thresholdN = parsed.thresholdN;
-    }
-
-    current.countsByCoordinator[shard.coordinatorNpub] = (current.countsByCoordinator[shard.coordinatorNpub] ?? 0) + 1;
-    rows.set(parsed.votingId, current);
+      coordinatorNpub: shard.coordinatorNpub,
+    });
   }
 
-  return byCreatedAtDescending([...rows.values()]);
+  return buildSimpleVoteTicketRowsRust(entries, configuredCoordinatorTargets);
 }
 
 export function reconcileSimpleKnownRounds(input: {
@@ -93,6 +88,6 @@ export function reconcileSimpleKnownRounds(input: {
 
   return {
     ticketRows,
-    knownRounds: byCreatedAtDescending([...sessionsByVotingId.values()]),
+    knownRounds: sortRecordsByCreatedAtDescRust([...sessionsByVotingId.values()]),
   };
 }

@@ -12,14 +12,15 @@ import {
   type SimpleBlindShareResponse,
   type SimpleShardCertificate,
 } from "./simpleShardCertificate";
+import { sortRecordsByCreatedAtDescRust } from "./wasm/auditableVotingCore";
 
 export const SIMPLE_DM_RELAYS = [
   'wss://nip17.tomdwyer.uk',
+  'wss://strfry.bitsbytom.com',
   'wss://nos.lol',
   'wss://nip17.com',
   'wss://auth.nostr1.com',
   'wss://relay.0xchat.com',
-  'wss://inbox.nostr.wine',
   'wss://relay.primal.net',
   'wss://relay.snort.social',
   'wss://relay.nostr.bg',
@@ -121,6 +122,10 @@ function buildDmRelays(relays?: string[]) {
   );
 }
 
+function buildDmPublishChannel(recipientNpub: string) {
+  return `simple-dm:${recipientNpub.trim()}`;
+}
+
 async function resolveRecipientInboxRelays(recipientNpub: string, relays?: string[]) {
   return resolveNip65InboxRelays({
     npub: recipientNpub,
@@ -151,7 +156,7 @@ function getNpubFromNsec(nsec: string, actorLabel: string) {
 }
 
 function sortByCreatedAtDescending<T extends { createdAt: string }>(values: T[]) {
-  return [...values].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  return sortRecordsByCreatedAtDescRust(values);
 }
 
 function uniqueNonEmpty(values: Array<string | undefined>) {
@@ -499,7 +504,10 @@ export async function sendSimpleCoordinatorFollow(input: {
         dmRelays,
         { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
       ),
-      { channel: "simple-dm", minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS },
+      {
+        channel: buildDmPublishChannel(input.coordinatorNpub),
+        minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
+      },
     );
     const relayResults = results.map((result, index) => (
       result.status === "fulfilled"
@@ -572,7 +580,10 @@ export async function sendSimpleDmAcknowledgement(input: {
           dmRelays,
           { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
         ),
-      { channel: "simple-dm-ack", minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS },
+      {
+        channel: buildDmPublishChannel(input.recipientNpub),
+        minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
+      },
     );
     const relayResults = results.map((result, index) =>
       result.status === 'fulfilled'
@@ -638,7 +649,10 @@ export async function sendSimpleSubCoordinatorJoin(input: {
         dmRelays,
         { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
       ),
-      { channel: "simple-dm", minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS },
+      {
+        channel: buildDmPublishChannel(input.leadCoordinatorNpub),
+        minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
+      },
     );
     const relayResults = results.map((result, index) => (
       result.status === "fulfilled"
@@ -706,7 +720,10 @@ export async function sendSimpleShardRequest(input: {
         dmRelays,
         { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
       ),
-      { channel: "simple-dm", minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS },
+      {
+        channel: buildDmPublishChannel(input.coordinatorNpub),
+        minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
+      },
     );
     const relayResults = results.map((result, index) => (
       result.status === "fulfilled"
@@ -1274,7 +1291,10 @@ export async function sendSimpleShardResponse(input: {
         dmRelays,
         { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
       ),
-      { channel: "simple-dm", minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS },
+      {
+        channel: buildDmPublishChannel(input.recipientNpub),
+        minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
+      },
     );
     const relayResults = results.map((result, index) => (
       result.status === "fulfilled"
@@ -1359,7 +1379,10 @@ export async function sendSimpleRoundTicket(input: {
         dmRelays,
         { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
       ),
-      { channel: "simple-dm", minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS },
+      {
+        channel: buildDmPublishChannel(input.recipientNpub),
+        minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
+      },
     );
     const relayResults = results.map((result, index) => (
       result.status === "fulfilled"
@@ -1427,7 +1450,10 @@ export async function sendSimpleShareAssignment(input: {
         dmRelays,
         { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
       ),
-      { channel: "simple-dm", minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS },
+      {
+        channel: buildDmPublishChannel(input.coordinatorNpub),
+        minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
+      },
     );
     const relayResults = results.map((result, index) => (
       result.status === "fulfilled"

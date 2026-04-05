@@ -2,6 +2,7 @@ import type { SimpleSubmittedVote } from "./simpleVotingSession";
 import {
   verifySimplePublicShardProof,
 } from "./simpleShardCertificate";
+import { sortSimpleVotesCanonicalRust } from "./wasm/auditableVotingCore";
 
 export type SimpleValidatedVote = {
   vote: SimpleSubmittedVote;
@@ -16,14 +17,7 @@ export async function validateSimpleSubmittedVotes(
 ): Promise<SimpleValidatedVote[]> {
   const seenTokenIds = new Set<string>();
   const allowedCoordinators = new Set(authorizedCoordinatorNpubs);
-  const canonicallySortedVotes = [...votes].sort((left, right) => {
-    const createdAtComparison = left.createdAt.localeCompare(right.createdAt);
-    if (createdAtComparison !== 0) {
-      return createdAtComparison;
-    }
-
-    return left.eventId.localeCompare(right.eventId);
-  });
+  const canonicallySortedVotes = sortSimpleVotesCanonicalRust(votes);
 
   const results: SimpleValidatedVote[] = [];
 
