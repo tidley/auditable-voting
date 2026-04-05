@@ -59,21 +59,19 @@ export async function publishToRelaysStaggered(
   relays: string[],
   options?: { staggerMs?: number },
 ): Promise<PromiseSettledResult<unknown>[]> {
-  const results: PromiseSettledResult<unknown>[] = [];
   const staggerMs = options?.staggerMs ?? DEFAULT_PER_RELAY_PUBLISH_STAGGER_MS;
+  return Promise.all(
+    relays.map(async (relay, index) => {
+      if (index > 0 && staggerMs > 0) {
+        await delay(index * staggerMs);
+      }
 
-  for (const [index, relay] of relays.entries()) {
-    if (index > 0) {
-      await delay(staggerMs);
-    }
-
-    try {
-      const value = await publishSingleRelay(relay);
-      results.push({ status: "fulfilled", value });
-    } catch (error) {
-      results.push({ status: "rejected", reason: error });
-    }
-  }
-
-  return results;
+      try {
+        const value = await publishSingleRelay(relay);
+        return { status: "fulfilled", value } satisfies PromiseFulfilledResult<unknown>;
+      } catch (error) {
+        return { status: "rejected", reason: error } satisfies PromiseRejectedResult;
+      }
+    }),
+  );
 }
