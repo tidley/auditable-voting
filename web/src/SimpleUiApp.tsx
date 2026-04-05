@@ -32,6 +32,7 @@ import {
   type SimpleShardResponse,
 } from "./simpleShardDm";
 import {
+  fetchLatestSimpleLiveVote,
   publishSimpleSubmittedVote,
   SIMPLE_PUBLIC_RELAYS,
   subscribeLatestSimpleLiveVote,
@@ -570,6 +571,51 @@ export default function SimpleUiApp() {
       for (const cleanup of cleanups) {
         cleanup();
       }
+    };
+  }, [configuredCoordinatorTargets]);
+
+  useEffect(() => {
+    if (configuredCoordinatorTargets.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const refreshLatestRounds = () => {
+      void Promise.all(
+        configuredCoordinatorTargets.map(async (coordinatorNpub) => {
+          const session = await fetchLatestSimpleLiveVote({ coordinatorNpub });
+          return session;
+        }),
+      ).then((sessions) => {
+        if (cancelled) {
+          return;
+        }
+
+        const nextSessions = sessions.filter((session): session is SimpleLiveVoteSession => session !== null);
+        if (nextSessions.length === 0) {
+          return;
+        }
+
+        setDiscoveredSessions((current) => {
+          const merged = new Map(
+            current.map((session) => [`${session.coordinatorNpub}:${session.votingId}`, session] as const),
+          );
+          for (const session of nextSessions) {
+            merged.set(`${session.coordinatorNpub}:${session.votingId}`, session);
+          }
+          return [...merged.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+        });
+      }).catch(() => undefined);
+    };
+
+    const timeoutId = window.setTimeout(refreshLatestRounds, 2500);
+    const intervalId = window.setInterval(refreshLatestRounds, 8000);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+      window.clearInterval(intervalId);
     };
   }, [configuredCoordinatorTargets]);
 

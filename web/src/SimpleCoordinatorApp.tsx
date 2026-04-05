@@ -3,6 +3,9 @@ import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 import { decodeNsec, deriveNpubFromNsec } from "./nostrIdentity";
 import { deriveActorDisplayId } from "./actorDisplay";
 import {
+  fetchSimpleCoordinatorFollowers,
+  fetchSimpleDmAcknowledgements,
+  fetchSimpleShardRequests,
   subscribeSimpleCoordinatorFollowers,
   subscribeSimpleDmAcknowledgements,
   subscribeSimpleCoordinatorShareAssignments,
@@ -392,6 +395,32 @@ export default function SimpleCoordinatorApp() {
   }, [keypair?.nsec]);
 
   useEffect(() => {
+    const coordinatorNsec = keypair?.nsec ?? "";
+
+    if (!coordinatorNsec) {
+      return;
+    }
+
+    let cancelled = false;
+    const refreshFollowers = () => {
+      void fetchSimpleCoordinatorFollowers({ coordinatorNsec }).then((nextFollowers) => {
+        if (!cancelled && nextFollowers.length > 0) {
+          setFollowers((current) => mergeSimpleFollowersRust(current, nextFollowers));
+        }
+      }).catch(() => undefined);
+    };
+
+    const timeoutId = window.setTimeout(refreshFollowers, 2500);
+    const intervalId = window.setInterval(refreshFollowers, 8000);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+      window.clearInterval(intervalId);
+    };
+  }, [keypair?.nsec]);
+
+  useEffect(() => {
     const actorNsec = keypair?.nsec ?? "";
 
     if (!actorNsec) {
@@ -407,6 +436,31 @@ export default function SimpleCoordinatorApp() {
         setDmAcknowledgements(nextAcknowledgements);
       },
     });
+  }, [keypair?.nsec]);
+
+  useEffect(() => {
+    const actorNsec = keypair?.nsec ?? "";
+    if (!actorNsec) {
+      return;
+    }
+
+    let cancelled = false;
+    const refreshAcknowledgements = () => {
+      void fetchSimpleDmAcknowledgements({ actorNsec }).then((nextAcknowledgements) => {
+        if (!cancelled && nextAcknowledgements.length > 0) {
+          setDmAcknowledgements(nextAcknowledgements);
+        }
+      }).catch(() => undefined);
+    };
+
+    const timeoutId = window.setTimeout(refreshAcknowledgements, 3000);
+    const intervalId = window.setInterval(refreshAcknowledgements, 9000);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+      window.clearInterval(intervalId);
+    };
   }, [keypair?.nsec]);
 
   useEffect(() => {
@@ -601,6 +655,31 @@ export default function SimpleCoordinatorApp() {
         setPendingRequests(nextRequests);
       },
     });
+  }, [keypair?.nsec]);
+
+  useEffect(() => {
+    const coordinatorNsec = keypair?.nsec ?? "";
+    if (!coordinatorNsec) {
+      return;
+    }
+
+    let cancelled = false;
+    const refreshRequests = () => {
+      void fetchSimpleShardRequests({ coordinatorNsec }).then((nextRequests) => {
+        if (!cancelled && nextRequests.length > 0) {
+          setPendingRequests(nextRequests);
+        }
+      }).catch(() => undefined);
+    };
+
+    const timeoutId = window.setTimeout(refreshRequests, 3000);
+    const intervalId = window.setInterval(refreshRequests, 7000);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+      window.clearInterval(intervalId);
+    };
   }, [keypair?.nsec]);
 
   useEffect(() => {
@@ -1231,6 +1310,49 @@ export default function SimpleCoordinatorApp() {
     }
   }
 
+  async function resendRoundInfo(follower: SimpleCoordinatorFollower) {
+    const coordinatorNsec = keypair?.nsec ?? "";
+    const votingId = selectedPublishedVote?.votingId ?? "";
+    const prompt = selectedPublishedVote?.prompt ?? "";
+
+    if (!coordinatorNsec || !votingId || !prompt || !activeBlindPrivateKey) {
+      return;
+    }
+
+    const followerId = deriveActorDisplayId(follower.voterNpub);
+    setPublishStatus(`Resending round info for Voter ${followerId}...`);
+
+    try {
+      let announcementRepublished = false;
+
+      if (isLeadCoordinator) {
+        const result = await publishSimpleLiveVote({
+          coordinatorNsec,
+          prompt,
+          votingId,
+          thresholdT: selectedPublishedVote?.thresholdT,
+          thresholdN: selectedPublishedVote?.thresholdN,
+          authorizedCoordinatorNpubs: selectedPublishedVote?.authorizedCoordinatorNpubs,
+        });
+        announcementRepublished = result.successes > 0;
+      }
+
+      const keyAnnouncement = await ensureBlindKeyAnnouncementForRound({
+        votingId,
+        blindPrivateKey: activeBlindPrivateKey,
+        forceRepublish: true,
+      });
+
+      if (keyAnnouncement && (announcementRepublished || !isLeadCoordinator)) {
+        setPublishStatus(`Round info resent for Voter ${followerId}.`);
+      } else {
+        setPublishStatus(`Round info resend failed for Voter ${followerId}.`);
+      }
+    } catch {
+      setPublishStatus(`Round info resend failed for Voter ${followerId}.`);
+    }
+  }
+
   async function broadcastQuestion() {
     const coordinatorNsec = keypair?.nsec ?? "";
     const prompt = questionPrompt.trim();
@@ -1767,11 +1889,20 @@ export default function SimpleCoordinatorApp() {
                   return null;
                 }
 
+                const waitingForBlindedRequest = Boolean(
+                  selectedPublishedVote
+                  && !findLatestRoundRequest(
+                    pendingRequests,
+                    follower.voterNpub,
+                    selectedPublishedVote.votingId,
+                  ),
+                );
+
                 return (
                   <li key={row.id} className='simple-voter-list-item'>
                     <p className='simple-voter-question'>{row.followingText}</p>
                     {selectedPublishedVote ? (
-                      <div className='simple-voter-action-row'>
+                      <div className='simple-voter-action-row simple-voter-action-row-inline'>
                         <button
                           type='button'
                           className='simple-voter-secondary'
@@ -1780,6 +1911,16 @@ export default function SimpleCoordinatorApp() {
                         >
                           {row.sendLabel}
                         </button>
+                        {waitingForBlindedRequest ? (
+                          <button
+                            type='button'
+                            className='simple-voter-secondary'
+                            onClick={() => void resendRoundInfo(follower)}
+                            disabled={!activeBlindPrivateKey}
+                          >
+                            Resend round info
+                          </button>
+                        ) : null}
                       </div>
                     ) : null}
                     <ul className='simple-delivery-diagnostics'>

@@ -1,5 +1,5 @@
 import { finalizeEvent, getPublicKey, nip19, type VerifiedEvent } from "nostr-tools";
-import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
+import { publishToRelayTiers, queueNostrPublish } from "./nostrPublishQueue";
 import { getSharedNostrPool } from "./sharedNostrPool";
 import {
   buildActorRelaySetRust,
@@ -47,6 +47,10 @@ function isNip65Disabled() {
 
 function uniqueRelays(values: string[]) {
   return normalizeRelaysRust(values);
+}
+
+function primaryHintRelays(relays: string[]) {
+  return relays.slice(0, Math.min(2, relays.length));
 }
 
 function buildRelayHintCacheKey(
@@ -160,11 +164,34 @@ export async function fetchNip65RelayHints(input: {
   const request = (async () => {
     const pool = getSharedNostrPool();
     try {
-      const events = await pool.querySync(discoveryRelays, {
-        kinds: [NIP65_RELAY_LIST_KIND],
-        authors: [getDecodedNpubHex(npub)],
-        limit: 10,
-      });
+      const primaryRelays = primaryHintRelays(discoveryRelays);
+      const fallbackRelays = discoveryRelays.slice(primaryRelays.length);
+      let events: VerifiedEvent[];
+      try {
+        const primaryEvents = await pool.querySync(primaryRelays, {
+          kinds: [NIP65_RELAY_LIST_KIND],
+          authors: [getDecodedNpubHex(npub)],
+          limit: 10,
+        });
+        if (primaryEvents.length > 0 || fallbackRelays.length === 0) {
+          events = primaryEvents as VerifiedEvent[];
+        } else {
+          events = await pool.querySync(fallbackRelays, {
+            kinds: [NIP65_RELAY_LIST_KIND],
+            authors: [getDecodedNpubHex(npub)],
+            limit: 10,
+          }) as VerifiedEvent[];
+        }
+      } catch {
+        if (fallbackRelays.length === 0) {
+          throw new Error("Primary NIP-65 relay query failed.");
+        }
+        events = await pool.querySync(fallbackRelays, {
+          kinds: [NIP65_RELAY_LIST_KIND],
+          authors: [getDecodedNpubHex(npub)],
+          limit: 10,
+        }) as VerifiedEvent[];
+      }
       const parsed = sortByFetchedAtDescending(
         events
           .map((event) => parseNip65RelayHintsEvent(event as VerifiedEvent, npub))
@@ -245,10 +272,10 @@ export async function publishOwnNip65RelayHints(input: {
 
   const pool = getSharedNostrPool();
   const results = await queueNostrPublish(
-    () => publishToRelaysStaggered(
+    () => publishToRelayTiers(
       (relay) => pool.publish([relay], event, { maxWait: 1500 })[0],
       publishRelays,
-      { staggerMs: 250 },
+      { primaryCount: 2, staggerMs: 250 },
     ),
     {
       channel: input.channel ?? `nip65:${npub}`,
@@ -256,7 +283,7 @@ export async function publishOwnNip65RelayHints(input: {
     },
   );
 
-  const successes = results.filter((result) => result.status === "fulfilled").length;
+  const successes = results.filter((result) => result.success).length;
   if (successes > 0) {
     relayHintsCache.set(npub, {
       npub,
@@ -270,7 +297,7 @@ export async function publishOwnNip65RelayHints(input: {
   return {
     eventId: event.id,
     successes,
-    failures: results.filter((result) => result.status === "rejected").length,
+    failures: results.filter((result) => !result.success).length,
     inboxRelays,
     outboxRelays,
     publishRelays,

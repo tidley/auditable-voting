@@ -571,6 +571,10 @@ vi.mock("./simpleShardDm", () => ({
       followerSubscribers = followerSubscribers.filter((entry) => entry !== subscriber);
     };
   }),
+  fetchSimpleCoordinatorFollowers: vi.fn(async (input: { coordinatorNsec: string }) => {
+    const coordinatorNpub = nsecToNpub(input.coordinatorNsec);
+    return followerEntriesForCoordinator(coordinatorNpub);
+  }),
   sendSimpleSubCoordinatorJoin: vi.fn(async (input: {
     leadCoordinatorNpub: string;
     coordinatorNpub: string;
@@ -687,6 +691,10 @@ vi.mock("./simpleShardDm", () => ({
     return () => {
       shardRequestSubscribers = shardRequestSubscribers.filter((entry) => entry !== subscriber);
     };
+  }),
+  fetchSimpleShardRequests: vi.fn(async (input: { coordinatorNsec: string }) => {
+    const coordinatorNpub = nsecToNpub(input.coordinatorNsec);
+    return shardRequestsForCoordinator(coordinatorNpub);
   }),
   sendSimpleRoundTicket: vi.fn(async (input: {
     coordinatorSecretKey: Uint8Array;
@@ -810,6 +818,10 @@ vi.mock("./simpleShardDm", () => ({
       dmAcknowledgementSubscribers = dmAcknowledgementSubscribers.filter((entry) => entry !== subscriber);
     };
   }),
+  fetchSimpleDmAcknowledgements: vi.fn(async (input: { actorNsec: string; actorNsecs?: string[] }) => {
+    const actorNpubs = [input.actorNsec, ...(input.actorNsecs ?? [])].map((value) => nsecToNpub(value) as string);
+    return dmAcknowledgements.filter((ack) => actorNpubs.includes(ack.recipientNpub));
+  }),
 }));
 
 vi.mock("./simpleVotingSession", () => ({
@@ -864,6 +876,9 @@ vi.mock("./simpleVotingSession", () => ({
     return () => {
       liveVoteSubscribers = liveVoteSubscribers.filter((entry) => entry !== subscriber);
     };
+  }),
+  fetchLatestSimpleLiveVote: vi.fn(async (input: { coordinatorNpub: string }) => {
+    return latestLiveVoteForCoordinator(input.coordinatorNpub);
   }),
   subscribeSimpleLiveVotes: vi.fn((input: {
     coordinatorNpub: string;
@@ -1118,7 +1133,11 @@ describe("Simple round flow", () => {
   });
 
   it("keeps send ticket disabled until the blinded ticket request is received", async () => {
+    const user = userEvent.setup();
     const { default: SimpleCoordinatorApp } = await import("./SimpleCoordinatorApp");
+    const votingSession = await import("./simpleVotingSession");
+    const publishSimpleLiveVoteMock = vi.mocked(votingSession.publishSimpleLiveVote);
+    publishSimpleLiveVoteMock.mockClear();
 
     const coordinatorSecretKey = Uint8Array.from({ length: 32 }, (_, index) => index + 65);
     const coordinatorNsec = nip19.nsecEncode(coordinatorSecretKey);
@@ -1232,6 +1251,16 @@ describe("Simple round flow", () => {
     expect(
       (coordinatorUi.getByRole("button", { name: /Send ticket/i }) as HTMLButtonElement).disabled,
     ).toBe(true);
+
+    await user.click(coordinatorUi.getByRole("button", { name: /Resend round info/i }));
+
+    await waitFor(() => {
+      expect(publishSimpleLiveVoteMock).toHaveBeenCalledWith(expect.objectContaining({
+        coordinatorNsec,
+        votingId: "legacy-round",
+        prompt: "Legacy cached prompt",
+      }));
+    });
   });
 
   it("clears voter coordinators on refresh id and does not restore them on reload", async () => {

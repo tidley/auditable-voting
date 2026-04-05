@@ -1,6 +1,6 @@
 import { getPublicKey, nip17, nip19 } from "nostr-tools";
 import { deriveActorDisplayId } from "./actorDisplay";
-import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
+import { publishToRelayTiers, queueNostrPublish } from "./nostrPublishQueue";
 import {
   publishOwnNip65RelayHints,
   resolveNip65ConversationRelays,
@@ -29,6 +29,8 @@ const SIMPLE_DM_PUBLISH_MAX_WAIT_MS = 1500;
 const SIMPLE_DM_SUBSCRIPTION_MAX_WAIT_MS = 1500;
 const SIMPLE_DM_PUBLISH_STAGGER_MS = 250;
 const SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS = 300;
+const SIMPLE_DM_PRIMARY_RELAY_COUNT = 2;
+const SIMPLE_DM_PRIMARY_QUERY_RELAY_COUNT = 2;
 
 export type SimpleDmAcknowledgedAction =
   | 'simple_coordinator_follow'
@@ -119,6 +121,33 @@ function buildDmRelays(relays?: string[]) {
 
 function buildDmPublishChannel(recipientNpub: string) {
   return `simple-dm:${recipientNpub.trim()}`;
+}
+
+function primaryDmRelays(relays: string[]) {
+  return relays.slice(0, Math.min(SIMPLE_DM_PRIMARY_QUERY_RELAY_COUNT, relays.length));
+}
+
+async function queryDmRelaysPrimaryFirst(
+  filters: Parameters<ReturnType<typeof getSharedNostrPool>["querySync"]>[1],
+  relays: string[],
+) {
+  const pool = getSharedNostrPool();
+  const primaryRelays = primaryDmRelays(relays);
+  const fallbackRelays = relays.slice(primaryRelays.length);
+
+  try {
+    const primaryEvents = await pool.querySync(primaryRelays, filters);
+    if (primaryEvents.length > 0 || fallbackRelays.length === 0) {
+      return primaryEvents;
+    }
+  } catch {
+    if (fallbackRelays.length === 0) {
+      throw new Error("Primary DM relay query failed.");
+    }
+  }
+
+  const fallbackEvents = await pool.querySync(fallbackRelays, filters);
+  return fallbackEvents;
 }
 
 async function resolveRecipientInboxRelays(recipientNpub: string, relays?: string[]) {
@@ -500,25 +529,20 @@ export async function sendSimpleCoordinatorFollow(input: {
 
   const pool = getSharedNostrPool();
   const results = await queueNostrPublish(
-    () => publishToRelaysStaggered(
+    () => publishToRelayTiers(
       (relay) => pool.publish([relay], event, { maxWait: SIMPLE_DM_PUBLISH_MAX_WAIT_MS })[0],
       dmRelays,
-      { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
+      {
+        primaryCount: SIMPLE_DM_PRIMARY_RELAY_COUNT,
+        staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS,
+      },
     ),
     {
       channel: buildDmPublishChannel(input.coordinatorNpub),
       minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
     },
   );
-  const relayResults = results.map((result, index) => (
-    result.status === "fulfilled"
-      ? { relay: dmRelays[index], success: true }
-      : {
-          relay: dmRelays[index],
-          success: false,
-          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-        }
-  ));
+  const relayResults = results;
 
   return {
     eventId: event.id,
@@ -579,28 +603,20 @@ export async function sendSimpleDmAcknowledgement(input: {
   const pool = getSharedNostrPool();
   const results = await queueNostrPublish(
     () =>
-      publishToRelaysStaggered(
+      publishToRelayTiers(
         (relay) => pool.publish([relay], event, { maxWait: SIMPLE_DM_PUBLISH_MAX_WAIT_MS })[0],
         dmRelays,
-        { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
+        {
+          primaryCount: SIMPLE_DM_PRIMARY_RELAY_COUNT,
+          staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS,
+        },
       ),
     {
       channel: buildDmPublishChannel(input.recipientNpub),
       minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
     },
   );
-  const relayResults = results.map((result, index) =>
-    result.status === 'fulfilled'
-      ? { relay: dmRelays[index], success: true }
-      : {
-          relay: dmRelays[index],
-          success: false,
-          error:
-            result.reason instanceof Error
-              ? result.reason.message
-              : String(result.reason),
-        },
-  );
+  const relayResults = results;
 
   return {
     eventId: event.id,
@@ -651,25 +667,20 @@ export async function sendSimpleSubCoordinatorJoin(input: {
 
   const pool = getSharedNostrPool();
   const results = await queueNostrPublish(
-    () => publishToRelaysStaggered(
+    () => publishToRelayTiers(
       (relay) => pool.publish([relay], event, { maxWait: SIMPLE_DM_PUBLISH_MAX_WAIT_MS })[0],
       dmRelays,
-      { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
+      {
+        primaryCount: SIMPLE_DM_PRIMARY_RELAY_COUNT,
+        staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS,
+      },
     ),
     {
       channel: buildDmPublishChannel(input.leadCoordinatorNpub),
       minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
     },
   );
-  const relayResults = results.map((result, index) => (
-    result.status === "fulfilled"
-      ? { relay: dmRelays[index], success: true }
-      : {
-          relay: dmRelays[index],
-          success: false,
-          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-        }
-  ));
+  const relayResults = results;
 
   return {
     eventId: event.id,
@@ -725,25 +736,20 @@ export async function sendSimpleShardRequest(input: {
 
   const pool = getSharedNostrPool();
   const results = await queueNostrPublish(
-    () => publishToRelaysStaggered(
+    () => publishToRelayTiers(
       (relay) => pool.publish([relay], event, { maxWait: SIMPLE_DM_PUBLISH_MAX_WAIT_MS })[0],
       dmRelays,
-      { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
+      {
+        primaryCount: SIMPLE_DM_PRIMARY_RELAY_COUNT,
+        staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS,
+      },
     ),
     {
       channel: buildDmPublishChannel(input.coordinatorNpub),
       minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
     },
   );
-  const relayResults = results.map((result, index) => (
-    result.status === "fulfilled"
-      ? { relay: dmRelays[index], success: true }
-      : {
-          relay: dmRelays[index],
-          success: false,
-          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-        }
-  ));
+  const relayResults = results;
 
   return {
     eventId: event.id,
@@ -763,11 +769,11 @@ export async function fetchSimpleShardRequests(input: {
   );
   const dmRelays = await resolveRecipientInboxRelays(coordinatorNpub, input.relays);
   const pool = getSharedNostrPool();
-  const wrappedEvents = await pool.querySync(dmRelays, {
+  const wrappedEvents = await queryDmRelaysPrimaryFirst({
     kinds: [1059],
     "#p": [coordinatorHex],
     limit: 100,
-  });
+  }, dmRelays);
 
   const requests = new Map<string, SimpleShardRequest>();
 
@@ -820,7 +826,7 @@ export function subscribeSimpleShardRequests(input: {
       return;
     }
 
-    subscription = pool.subscribeMany(dmRelays, {
+    subscription = pool.subscribeMany(primaryDmRelays(dmRelays), {
       kinds: [1059],
       "#p": [coordinatorHex],
       limit: 100,
@@ -868,11 +874,11 @@ export async function fetchSimpleCoordinatorFollowers(input: {
   );
   const dmRelays = await resolveRecipientInboxRelays(coordinatorNpub, input.relays);
   const pool = getSharedNostrPool();
-  const wrappedEvents = await pool.querySync(dmRelays, {
+  const wrappedEvents = await queryDmRelaysPrimaryFirst({
     kinds: [1059],
     "#p": [coordinatorHex],
     limit: 100,
-  });
+  }, dmRelays);
 
   const followers = new Map<string, SimpleCoordinatorFollower>();
 
@@ -903,11 +909,11 @@ export async function fetchSimpleDmAcknowledgements(input: {
   );
   const dmRelays = Array.from(new Set(inboxRelaySets.flat()));
   const pool = getSharedNostrPool();
-  const wrappedEvents = await pool.querySync(dmRelays, {
+  const wrappedEvents = await queryDmRelaysPrimaryFirst({
     kinds: [1059],
     '#p': actorHexes,
     limit: 100,
-  });
+  }, dmRelays);
 
   const acknowledgements = new Map<string, SimpleDmAcknowledgement>();
 
@@ -981,7 +987,7 @@ export function subscribeSimpleDmAcknowledgements(input: {
     const dmRelays = Array.from(new Set(relaySets.flat()));
 
     subscription = pool.subscribeMany(
-      dmRelays,
+      primaryDmRelays(dmRelays),
       {
         kinds: [1059],
         '#p': actorHexes,
@@ -1072,7 +1078,7 @@ export function subscribeSimpleCoordinatorFollowers(input: {
       return;
     }
 
-    subscription = pool.subscribeMany(dmRelays, {
+    subscription = pool.subscribeMany(primaryDmRelays(dmRelays), {
       kinds: [1059],
       "#p": [coordinatorHex],
       limit: 100,
@@ -1120,11 +1126,11 @@ export async function fetchSimpleSubCoordinatorApplications(input: {
   );
   const dmRelays = await resolveRecipientInboxRelays(leadCoordinatorNpub, input.relays);
   const pool = getSharedNostrPool();
-  const wrappedEvents = await pool.querySync(dmRelays, {
+  const wrappedEvents = await queryDmRelaysPrimaryFirst({
     kinds: [1059],
     "#p": [leadCoordinatorHex],
     limit: 100,
-  });
+  }, dmRelays);
 
   const applications = new Map<string, SimpleSubCoordinatorApplication>();
 
@@ -1177,7 +1183,7 @@ export function subscribeSimpleSubCoordinatorApplications(input: {
       return;
     }
 
-    subscription = pool.subscribeMany(dmRelays, {
+    subscription = pool.subscribeMany(primaryDmRelays(dmRelays), {
       kinds: [1059],
       "#p": [leadCoordinatorHex],
       limit: 100,
@@ -1275,25 +1281,20 @@ export async function sendSimpleShardResponse(input: {
 
   const pool = getSharedNostrPool();
   const results = await queueNostrPublish(
-    () => publishToRelaysStaggered(
+    () => publishToRelayTiers(
       (relay) => pool.publish([relay], event, { maxWait: SIMPLE_DM_PUBLISH_MAX_WAIT_MS })[0],
       dmRelays,
-      { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
+      {
+        primaryCount: SIMPLE_DM_PRIMARY_RELAY_COUNT,
+        staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS,
+      },
     ),
     {
       channel: buildDmPublishChannel(input.recipientNpub),
       minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
     },
   );
-  const relayResults = results.map((result, index) => (
-    result.status === "fulfilled"
-      ? { relay: dmRelays[index], success: true }
-      : {
-          relay: dmRelays[index],
-          success: false,
-          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-        }
-  ));
+  const relayResults = results;
 
   return {
     responseId,
@@ -1366,25 +1367,20 @@ export async function sendSimpleRoundTicket(input: {
 
   const pool = getSharedNostrPool();
   const results = await queueNostrPublish(
-    () => publishToRelaysStaggered(
+    () => publishToRelayTiers(
       (relay) => pool.publish([relay], event, { maxWait: SIMPLE_DM_PUBLISH_MAX_WAIT_MS })[0],
       dmRelays,
-      { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
+      {
+        primaryCount: SIMPLE_DM_PRIMARY_RELAY_COUNT,
+        staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS,
+      },
     ),
     {
       channel: buildDmPublishChannel(input.recipientNpub),
       minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
     },
   );
-  const relayResults = results.map((result, index) => (
-    result.status === "fulfilled"
-      ? { relay: dmRelays[index], success: true }
-      : {
-          relay: dmRelays[index],
-          success: false,
-          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-        }
-  ));
+  const relayResults = results;
 
   return {
     responseId,
@@ -1440,25 +1436,20 @@ export async function sendSimpleShareAssignment(input: {
 
   const pool = getSharedNostrPool();
   const results = await queueNostrPublish(
-    () => publishToRelaysStaggered(
+    () => publishToRelayTiers(
       (relay) => pool.publish([relay], event, { maxWait: SIMPLE_DM_PUBLISH_MAX_WAIT_MS })[0],
       dmRelays,
-      { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
+      {
+        primaryCount: SIMPLE_DM_PRIMARY_RELAY_COUNT,
+        staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS,
+      },
     ),
     {
       channel: buildDmPublishChannel(input.coordinatorNpub),
       minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
     },
   );
-  const relayResults = results.map((result, index) => (
-    result.status === "fulfilled"
-      ? { relay: dmRelays[index], success: true }
-      : {
-          relay: dmRelays[index],
-          success: false,
-          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-        }
-  ));
+  const relayResults = results;
 
   return {
     eventId: event.id,
@@ -1484,11 +1475,11 @@ export async function fetchSimpleShardResponses(input: {
   );
   const dmRelays = Array.from(new Set(inboxRelaySets.flat()));
   const pool = getSharedNostrPool();
-  const wrappedEvents = await pool.querySync(dmRelays, {
+  const wrappedEvents = await queryDmRelaysPrimaryFirst({
     kinds: [1059],
     "#p": voterHexes,
     limit: 100,
-  });
+  }, dmRelays);
 
   const responses = new Map<string, SimpleShardResponse>();
 
@@ -1547,7 +1538,7 @@ export function subscribeSimpleShardResponses(input: {
 
     const dmRelays = Array.from(new Set(relaySets.flat()));
 
-    subscription = pool.subscribeMany(dmRelays, {
+    subscription = pool.subscribeMany(primaryDmRelays(dmRelays), {
       kinds: [1059],
       "#p": voterHexes,
       limit: 100,
@@ -1595,11 +1586,11 @@ export async function fetchSimpleCoordinatorShareAssignments(input: {
   );
   const dmRelays = await resolveRecipientInboxRelays(coordinatorNpub, input.relays);
   const pool = getSharedNostrPool();
-  const wrappedEvents = await pool.querySync(dmRelays, {
+  const wrappedEvents = await queryDmRelaysPrimaryFirst({
     kinds: [1059],
     "#p": [coordinatorHex],
     limit: 100,
-  });
+  }, dmRelays);
 
   const assignments = new Map<string, SimpleShareAssignment>();
 
@@ -1652,7 +1643,7 @@ export function subscribeSimpleCoordinatorShareAssignments(input: {
       return;
     }
 
-    subscription = pool.subscribeMany(dmRelays, {
+    subscription = pool.subscribeMany(primaryDmRelays(dmRelays), {
       kinds: [1059],
       "#p": [coordinatorHex],
       limit: 100,

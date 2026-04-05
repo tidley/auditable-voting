@@ -1,5 +1,6 @@
 const DEFAULT_MIN_PUBLISH_INTERVAL_MS = 1500;
 const DEFAULT_PER_RELAY_PUBLISH_STAGGER_MS = 600;
+const DEFAULT_PRIMARY_RELAY_COUNT = 2;
 
 type QueueState = {
   nextAllowedAt: number;
@@ -74,4 +75,67 @@ export async function publishToRelaysStaggered(
       }
     }),
   );
+}
+
+export type RelayPublishOutcome = {
+  relay: string;
+  success: boolean;
+  error?: string;
+};
+
+export async function publishToRelayTiers(
+  publishSingleRelay: (relay: string) => Promise<unknown>,
+  relays: string[],
+  options?: {
+    primaryCount?: number;
+    staggerMs?: number;
+    fallbackStaggerMs?: number;
+    minPrimarySuccesses?: number;
+  },
+): Promise<RelayPublishOutcome[]> {
+  const primaryCount = Math.max(
+    1,
+    Math.min(options?.primaryCount ?? DEFAULT_PRIMARY_RELAY_COUNT, relays.length),
+  );
+  const minPrimarySuccesses = Math.max(1, options?.minPrimarySuccesses ?? 1);
+  const primaryRelays = relays.slice(0, primaryCount);
+  const fallbackRelays = relays.slice(primaryCount);
+
+  const mapOutcomes = (
+    tierRelays: string[],
+    results: PromiseSettledResult<unknown>[],
+  ): RelayPublishOutcome[] => (
+    results.map((result, index) => (
+      result.status === "fulfilled"
+        ? { relay: tierRelays[index], success: true }
+        : {
+            relay: tierRelays[index],
+            success: false,
+            error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+          }
+    ))
+  );
+
+  const primaryResults = await publishToRelaysStaggered(
+    publishSingleRelay,
+    primaryRelays,
+    { staggerMs: options?.staggerMs },
+  );
+  const primaryOutcomes = mapOutcomes(primaryRelays, primaryResults);
+  const primarySuccesses = primaryOutcomes.filter((result) => result.success).length;
+
+  if (fallbackRelays.length === 0 || primarySuccesses >= minPrimarySuccesses) {
+    return primaryOutcomes;
+  }
+
+  const fallbackResults = await publishToRelaysStaggered(
+    publishSingleRelay,
+    fallbackRelays,
+    { staggerMs: options?.fallbackStaggerMs ?? options?.staggerMs },
+  );
+
+  return [
+    ...primaryOutcomes,
+    ...mapOutcomes(fallbackRelays, fallbackResults),
+  ];
 }

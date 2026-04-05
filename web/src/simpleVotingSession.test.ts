@@ -38,6 +38,24 @@ vi.mock("./nostrPublishQueue", () => ({
     publishSingleRelay: (relay: string) => Promise<unknown>,
     relays: string[],
   ) => Promise.allSettled(relays.map((relay) => publishSingleRelay(relay))),
+  publishToRelayTiers: async (
+    publishSingleRelay: (relay: string) => Promise<unknown>,
+    relays: string[],
+  ) => relays.map(async (relay) => {
+    try {
+      await publishSingleRelay(relay);
+      return { relay, success: true };
+    } catch (error) {
+      return {
+        relay,
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }).reduce<Promise<Array<{ relay: string; success: boolean; error?: string }>>>(
+    async (accPromise, nextPromise) => [...await accPromise, await nextPromise],
+    Promise.resolve([]),
+  ),
 }));
 
 vi.mock("./nip65RelayHints", () => ({
