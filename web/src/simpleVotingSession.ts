@@ -1,6 +1,7 @@
 import { finalizeEvent, getPublicKey, nip19, SimplePool } from "nostr-tools";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import {
+  publishOwnNip65RelayHints,
   resolveNip65OutboxRelays,
 } from "./nip65RelayHints";
 import {
@@ -15,13 +16,15 @@ export const SIMPLE_PUBLIC_RELAYS = [
   "wss://strfry.bitsbytom.com",
   "wss://nos.lol",
   "wss://relay.primal.net",
-  "wss://relay.snort.social",
-  "wss://relay.nostr.bg",
+  "wss://relay.damus.io",
+  "wss://nostr.mutinywallet.com",
+  "wss://purplepag.es",
   "wss://nostr.mom",
   "wss://eden.nostr.land",
+  "wss://relay.snort.social",
+  "wss://relay.nostr.bg",
   "wss://relay.nostr.wine",
   "wss://relay.plebstr.com",
-  "wss://purplepag.es",
   "wss://relay.nostr.band",
 ];
 
@@ -165,6 +168,12 @@ export async function publishSimpleLiveVote(input: {
     npub: coordinatorNpub,
     fallbackRelays: buildPublicRelays(input.relays),
   });
+  await publishOwnNip65RelayHints({
+    secretKey,
+    outboxRelays: relays,
+    publishRelays: relays,
+    channel: `nip65:${coordinatorNpub}`,
+  }).catch(() => null);
   const createdAt = new Date().toISOString();
   const votingId = input.votingId?.trim() || crypto.randomUUID();
   const authorizedCoordinatorNpubs = Array.from(
@@ -440,6 +449,12 @@ export async function publishSimpleSubmittedVote(input: {
     ),
   );
   const relays = Array.from(new Set(coordinatorRelays.flat()));
+  await publishOwnNip65RelayHints({
+    secretKey,
+    outboxRelays: relays,
+    publishRelays: relays,
+    channel: `nip65:${ballotNpub}`,
+  }).catch(() => null);
   const createdAt = new Date().toISOString();
   const shardProofs = input.shardCertificates.map((certificate) =>
     toSimplePublicShardProof(certificate),

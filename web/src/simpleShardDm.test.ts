@@ -12,6 +12,7 @@ const decode = vi.fn();
 const getPublicKey = vi.fn();
 const resolveNip65ConversationRelays = vi.fn();
 const resolveNip65InboxRelays = vi.fn();
+const publishOwnNip65RelayHints = vi.fn();
 
 vi.mock("nostr-tools", () => ({
   getPublicKey,
@@ -55,6 +56,7 @@ vi.mock("./nostrPublishQueue", () => ({
 }));
 
 vi.mock("./nip65RelayHints", () => ({
+  publishOwnNip65RelayHints,
   resolveNip65ConversationRelays,
   resolveNip65InboxRelays,
 }));
@@ -78,6 +80,7 @@ describe("simpleShardDm", () => {
       "wss://sender.example",
     ]);
     resolveNip65InboxRelays.mockResolvedValue(["wss://inbox.example"]);
+    publishOwnNip65RelayHints.mockResolvedValue({ successes: 1 });
   });
 
   it("sends blinded shard requests over DMs", async () => {
@@ -108,6 +111,13 @@ describe("simpleShardDm", () => {
       recipientNpub: "npub1coord",
       senderNpub: "npub1voter",
       fallbackRelays: expect.any(Array),
+    });
+    expect(publishOwnNip65RelayHints).toHaveBeenCalledWith({
+      secretKey: new Uint8Array([1, 2, 3]),
+      inboxRelays: ["wss://recipient.example", "wss://sender.example"],
+      outboxRelays: ["wss://recipient.example", "wss://sender.example"],
+      publishRelays: ["wss://recipient.example", "wss://sender.example"],
+      channel: "nip65:npub1reply",
     });
     expect(result.successes).toBeGreaterThan(0);
   });

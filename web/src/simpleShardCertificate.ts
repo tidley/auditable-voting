@@ -8,7 +8,7 @@ import {
 } from "nostr-tools";
 import { RSABSSA } from "@cloudflare/blindrsa-ts";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
-import { resolveNip65OutboxRelays } from "./nip65RelayHints";
+import { publishOwnNip65RelayHints, resolveNip65OutboxRelays } from "./nip65RelayHints";
 import {
   SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS,
   SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS,
@@ -311,6 +311,12 @@ export async function publishSimpleBlindKeyAnnouncement(input: {
     npub: coordinatorNpub,
     fallbackRelays: buildPublicRelays(input.relays),
   });
+  await publishOwnNip65RelayHints({
+    secretKey,
+    outboxRelays: relays,
+    publishRelays: relays,
+    channel: `nip65:${coordinatorNpub}`,
+  }).catch(() => null);
   const createdAt = new Date().toISOString();
   const event = finalizeEvent({
     kind: SIMPLE_BLIND_KEY_KIND,

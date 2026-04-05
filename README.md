@@ -2,6 +2,23 @@
 
 Client-only Nostr voting with browser-based voter, coordinator, and auditor flows.
 
+## Current state
+
+This repo now contains only the static web app in `web/`.
+
+The shipped app currently includes:
+
+- voter, coordinator, and auditor screens
+- round announcements over Nostr
+- NIP-17 DM traffic for follow, blind request, ticket, and acknowledgement flows
+- per-round blind-signature key announcements
+- blind-signature share issuance and public ballot verification
+- local browser persistence, backup, and optional passphrase protection
+- relay hint resolution via NIP-65
+- a growing Rust/Wasm core for deterministic protocol logic
+
+The client-only architecture is in place, but live relay reliability and recovery behaviour still need hardening.
+
 ## What is in this repo
 
 - `web/` — the shipped React + Vite app
@@ -9,7 +26,16 @@ Client-only Nostr voting with browser-based voter, coordinator, and auditor flow
 - `presentation/project-overview.html` — the portable presentation deck
 - `.github/workflows/static.yml` — GitHub Pages deployment
 
-Everything else from the older coordinator/Cashu/deployment stack has been removed.
+Older backend, Cashu, deployment, and coordinator-server code has been removed.
+
+## Main routes
+
+- `/` — voter shell
+- `/vote.html` — voter shell
+- `/dashboard.html` — coordinator shell
+- `/simple.html` — shared role-switching shell
+- `/simple-coordinator.html` — coordinator-first shell
+- `/project-explainer.html` — published explainer page
 
 ## Local development
 
@@ -17,6 +43,12 @@ Install dependencies:
 
 ```bash
 npm --prefix web install
+```
+
+The app uses a Rust/Wasm core. First-time local setup also needs:
+
+```bash
+rustup target add wasm32-unknown-unknown
 ```
 
 Run the app:
@@ -32,14 +64,67 @@ Open:
 - `http://127.0.0.1:5173/dashboard.html`
 - `http://127.0.0.1:5173/simple.html`
 
-## Verify the frontend
+## Build and verification
+
+Production build:
+
+```bash
+npm --prefix web run build
+```
+
+Verification:
 
 ```bash
 cd web
-npx vitest run
+npm test
+npm run test:rust
 npm run verify:simple-blind-shares
+npx tsc --noEmit
 npm run build
 ```
+
+## Protocol shape
+
+At a high level:
+
+1. A coordinator publishes a live round.
+2. Coordinators publish per-round blind-signing keys.
+3. A voter follows coordinators and sends blinded issuance requests over DMs.
+4. Coordinators return blind-signature shares over DMs.
+5. The voter unblinds enough shares locally and submits a ballot from an ephemeral key.
+6. Coordinators and auditors validate ballots and recompute the tally from public data.
+
+Public state:
+
+- round announcements
+- blind-key announcements
+- ballots
+- results / tally inputs
+
+Private or local state:
+
+- actor secret keys
+- blind request secrets
+- issuance DM traffic
+- ticket acknowledgements
+- browser-local cache and backup bundles
+
+## Relay model
+
+The app currently uses:
+
+- public relays for round and ballot events
+- DM relays for NIP-17 gift-wrapped messages
+- NIP-65 inbox/outbox hints for relay discovery
+
+The app now also publishes its own NIP-65 relay hints when voter/coordinator communication starts.
+
+## Known limitations
+
+- live public relay convergence is still the main operational weakness
+- the protocol works much better in tests than on unhealthy public relay sets
+- local secret material is still a browser-custody problem even with passphrase protection
+- the cryptographic path is materially improved, but still deserves external review before strong production claims
 
 ## GitHub Pages
 
@@ -57,14 +142,6 @@ To test the same base path locally:
 ```bash
 VITE_BASE_PATH=/auditable-voting/ npm --prefix web run build
 ```
-
-## Main routes
-
-- `/` — voter shell
-- `/vote.html` — voter shell
-- `/dashboard.html` — coordinator shell
-- `/simple.html` — shared role-switching shell
-- `/simple-coordinator.html` — coordinator-first shell
 
 ## Related material
 

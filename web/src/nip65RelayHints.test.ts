@@ -1,21 +1,38 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const finalizeEvent = vi.fn();
+const getPublicKey = vi.fn();
+const publish = vi.fn();
 const querySync = vi.fn();
 const close = vi.fn();
+const destroy = vi.fn();
 
 vi.mock("nostr-tools", () => ({
+  finalizeEvent,
+  getPublicKey,
   nip19: {
     decode: vi.fn((value: string) => ({ type: "npub", data: value.replace(/^npub1/, "") })),
     npubEncode: vi.fn((value: string) => `npub1${String(value).slice(0, 8)}`),
   },
   SimplePool: function () {
-    return { querySync, close };
+    return { querySync, close, publish, destroy };
   },
+}));
+
+vi.mock("./nostrPublishQueue", () => ({
+  queueNostrPublish: (task: () => Promise<unknown>) => task(),
+  publishToRelaysStaggered: async (
+    publishSingleRelay: (relay: string) => Promise<unknown>,
+    relays: string[],
+  ) => Promise.allSettled(relays.map((relay) => publishSingleRelay(relay))),
 }));
 
 describe("nip65RelayHints", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    getPublicKey.mockReturnValue("deadbeef");
+    finalizeEvent.mockImplementation((event) => ({ id: "relay-list-1", ...event }));
+    publish.mockImplementation((relays: string[]) => relays.map(() => Promise.resolve(undefined)));
   });
 
   it("parses inbox and outbox relay markers from a NIP-65 event", async () => {
@@ -91,5 +108,43 @@ describe("nip65RelayHints", () => {
       "wss://fallback.example",
       "wss://sender-outbox.example",
     ]);
+  });
+
+  it("publishes and caches the actor's own relay hints", async () => {
+    const mod = await import("./nip65RelayHints");
+
+    const first = await mod.publishOwnNip65RelayHints({
+      secretKey: new Uint8Array([1, 2, 3]),
+      inboxRelays: ["wss://dm.example"],
+      outboxRelays: ["wss://pub.example"],
+      publishRelays: ["wss://pub.example"],
+    });
+
+    expect(first?.successes).toBe(2);
+    expect(finalizeEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: mod.NIP65_RELAY_LIST_KIND,
+        tags: expect.arrayContaining([
+          ["r", "wss://dm.example", "read"],
+          ["r", "wss://pub.example", "write"],
+        ]),
+      }),
+      new Uint8Array([1, 2, 3]),
+    );
+
+    await mod.publishOwnNip65RelayHints({
+      secretKey: new Uint8Array([1, 2, 3]),
+      inboxRelays: ["wss://dm.example"],
+      outboxRelays: ["wss://pub.example"],
+      publishRelays: ["wss://pub.example"],
+    });
+
+    expect(finalizeEvent).toHaveBeenCalledTimes(1);
+    expect(mod.getCachedNip65RelayHints("npub1deadbeef")).toEqual({
+      npub: "npub1deadbeef",
+      inboxRelays: ["wss://dm.example"],
+      outboxRelays: ["wss://pub.example"],
+      fetchedAt: expect.any(String),
+    });
   });
 });

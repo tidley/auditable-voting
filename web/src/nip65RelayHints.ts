@@ -1,4 +1,5 @@
-import { nip19, SimplePool, type VerifiedEvent } from "nostr-tools";
+import { finalizeEvent, getPublicKey, nip19, SimplePool, type VerifiedEvent } from "nostr-tools";
+import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 
 export const NIP65_RELAY_LIST_KIND = 10002;
 
@@ -11,11 +12,26 @@ export type Nip65RelayHints = {
 
 const relayHintsCache = new Map<string, Nip65RelayHints | null>();
 const relayHintsInflight = new Map<string, Promise<Nip65RelayHints | null>>();
+const publishedRelayHintKeys = new Set<string>();
 
 function uniqueRelays(values: string[]) {
   return Array.from(
     new Set(values.map((value) => value.trim()).filter((value) => value.length > 0)),
   );
+}
+
+function buildRelayHintCacheKey(
+  npub: string,
+  inboxRelays: string[],
+  outboxRelays: string[],
+  publishRelays: string[],
+) {
+  return [
+    npub,
+    inboxRelays.join("|"),
+    outboxRelays.join("|"),
+    publishRelays.join("|"),
+  ].join("::");
 }
 
 export function parseNip65RelayHintsEvent(
@@ -146,6 +162,86 @@ export async function primeNip65RelayHints(npubs: string[], discoveryRelays: str
   }));
 }
 
+export async function publishOwnNip65RelayHints(input: {
+  secretKey: Uint8Array;
+  inboxRelays?: string[];
+  outboxRelays?: string[];
+  publishRelays: string[];
+  channel?: string;
+  minIntervalMs?: number;
+  force?: boolean;
+}) {
+  const npub = nip19.npubEncode(getPublicKey(input.secretKey));
+  const inboxRelays = uniqueRelays(input.inboxRelays ?? []);
+  const outboxRelays = uniqueRelays(input.outboxRelays ?? []);
+  const publishRelays = uniqueRelays([...input.publishRelays, ...outboxRelays, ...inboxRelays]);
+
+  if (publishRelays.length === 0 || (inboxRelays.length === 0 && outboxRelays.length === 0)) {
+    return null;
+  }
+
+  const cacheKey = buildRelayHintCacheKey(npub, inboxRelays, outboxRelays, publishRelays);
+  if (!input.force && publishedRelayHintKeys.has(cacheKey)) {
+    return null;
+  }
+
+  const relayTags = Array.from(new Set([...inboxRelays, ...outboxRelays])).map((relay) => {
+    const inInbox = inboxRelays.includes(relay);
+    const inOutbox = outboxRelays.includes(relay);
+
+    if (inInbox && inOutbox) {
+      return ["r", relay];
+    }
+
+    return ["r", relay, inInbox ? "read" : "write"];
+  });
+
+  const createdAt = new Date().toISOString();
+  const event = finalizeEvent({
+    kind: NIP65_RELAY_LIST_KIND,
+    created_at: Math.floor(Date.now() / 1000),
+    tags: relayTags,
+    content: "",
+  }, input.secretKey);
+
+  const pool = new SimplePool();
+  try {
+    const results = await queueNostrPublish(
+      () => publishToRelaysStaggered(
+        (relay) => pool.publish([relay], event, { maxWait: 1500 })[0],
+        publishRelays,
+        { staggerMs: 250 },
+      ),
+      {
+        channel: input.channel ?? `nip65:${npub}`,
+        minIntervalMs: input.minIntervalMs ?? 1000,
+      },
+    );
+
+    const successes = results.filter((result) => result.status === "fulfilled").length;
+    if (successes > 0) {
+      relayHintsCache.set(npub, {
+        npub,
+        inboxRelays,
+        outboxRelays,
+        fetchedAt: createdAt,
+      });
+      publishedRelayHintKeys.add(cacheKey);
+    }
+
+    return {
+      eventId: event.id,
+      successes,
+      failures: results.filter((result) => result.status === "rejected").length,
+      inboxRelays,
+      outboxRelays,
+      publishRelays,
+    };
+  } finally {
+    pool.destroy?.();
+  }
+}
+
 function getCachedRelayList(
   npub: string,
   kind: "inboxRelays" | "outboxRelays",
@@ -211,4 +307,5 @@ export async function resolveNip65ConversationRelays(input: {
 
 export function resetNip65RelayHintsForTests() {
   relayHintsCache.clear();
+  publishedRelayHintKeys.clear();
 }

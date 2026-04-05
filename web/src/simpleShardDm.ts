@@ -2,6 +2,7 @@ import { getPublicKey, nip17, nip19, SimplePool } from "nostr-tools";
 import { deriveActorDisplayId } from "./actorDisplay";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import {
+  publishOwnNip65RelayHints,
   resolveNip65ConversationRelays,
   resolveNip65InboxRelays,
 } from "./nip65RelayHints";
@@ -16,12 +17,12 @@ import { sortRecordsByCreatedAtDescRust } from "./wasm/auditableVotingCore";
 
 export const SIMPLE_DM_RELAYS = [
   'wss://nip17.tomdwyer.uk',
-  'wss://strfry.bitsbytom.com',
+  'wss://relay.primal.net',
   'wss://nos.lol',
-  'wss://nip17.com',
   'wss://auth.nostr1.com',
   'wss://relay.0xchat.com',
-  'wss://relay.primal.net',
+  'wss://strfry.bitsbytom.com',
+  'wss://nip17.com',
   'wss://relay.snort.social',
   'wss://relay.nostr.bg',
   'wss://nostr.mom',
@@ -480,6 +481,13 @@ export async function sendSimpleCoordinatorFollow(input: {
     input.voterNpub,
     input.relays,
   );
+  await publishOwnNip65RelayHints({
+    secretKey: input.voterSecretKey,
+    inboxRelays: dmRelays,
+    outboxRelays: dmRelays,
+    publishRelays: dmRelays,
+    channel: `nip65:${input.voterNpub}`,
+  }).catch(() => null);
   const event = nip17.wrapEvent(
     input.voterSecretKey,
     {
@@ -551,6 +559,13 @@ export async function sendSimpleDmAcknowledgement(input: {
     input.actorNpub,
     input.relays,
   );
+  await publishOwnNip65RelayHints({
+    secretKey: input.senderSecretKey,
+    inboxRelays: dmRelays,
+    outboxRelays: dmRelays,
+    publishRelays: dmRelays,
+    channel: `nip65:${input.actorNpub}`,
+  }).catch(() => null);
   const event = nip17.wrapEvent(
     input.senderSecretKey,
     {
@@ -625,6 +640,13 @@ export async function sendSimpleSubCoordinatorJoin(input: {
     input.coordinatorNpub,
     input.relays,
   );
+  await publishOwnNip65RelayHints({
+    secretKey: input.coordinatorSecretKey,
+    inboxRelays: dmRelays,
+    outboxRelays: dmRelays,
+    publishRelays: dmRelays,
+    channel: `nip65:${input.coordinatorNpub}`,
+  }).catch(() => null);
   const event = nip17.wrapEvent(
     input.coordinatorSecretKey,
     {
@@ -694,6 +716,13 @@ export async function sendSimpleShardRequest(input: {
     input.voterNpub,
     input.relays,
   );
+  await publishOwnNip65RelayHints({
+    secretKey: input.voterSecretKey,
+    inboxRelays: dmRelays,
+    outboxRelays: dmRelays,
+    publishRelays: dmRelays,
+    channel: `nip65:${input.replyNpub}`,
+  }).catch(() => null);
   const event = nip17.wrapEvent(
     input.voterSecretKey,
     {
@@ -1255,6 +1284,13 @@ export async function sendSimpleShardResponse(input: {
     input.coordinatorNpub,
     input.relays,
   );
+  await publishOwnNip65RelayHints({
+    secretKey: input.coordinatorSecretKey,
+    inboxRelays: dmRelays,
+    outboxRelays: dmRelays,
+    publishRelays: dmRelays,
+    channel: `nip65:${input.coordinatorNpub}`,
+  }).catch(() => null);
   const blindShareResponse = await createSimpleBlindShareResponse({
     privateKey: input.blindPrivateKey,
     keyAnnouncementEvent: input.keyAnnouncementEvent,
@@ -1342,6 +1378,13 @@ export async function sendSimpleRoundTicket(input: {
     input.coordinatorNpub,
     input.relays,
   );
+  await publishOwnNip65RelayHints({
+    secretKey: input.coordinatorSecretKey,
+    inboxRelays: dmRelays,
+    outboxRelays: dmRelays,
+    publishRelays: dmRelays,
+    channel: `nip65:${input.coordinatorNpub}`,
+  }).catch(() => null);
   const blindShareResponse = await createSimpleBlindShareResponse({
     privateKey: input.blindPrivateKey,
     keyAnnouncementEvent: input.keyAnnouncementEvent,
@@ -1424,6 +1467,13 @@ export async function sendSimpleShareAssignment(input: {
     input.leadCoordinatorNpub,
     input.relays,
   );
+  await publishOwnNip65RelayHints({
+    secretKey: input.leadCoordinatorSecretKey,
+    inboxRelays: dmRelays,
+    outboxRelays: dmRelays,
+    publishRelays: dmRelays,
+    channel: `nip65:${input.leadCoordinatorNpub}`,
+  }).catch(() => null);
   const event = nip17.wrapEvent(
     input.leadCoordinatorSecretKey,
     {

@@ -36,6 +36,7 @@ import SimpleUnlockGate from "./SimpleUnlockGate";
 import TokenFingerprint from "./TokenFingerprint";
 import { extractNpubFromScan } from "./npubScan";
 import { primeNip65RelayHints } from "./nip65RelayHints";
+import { formatRoundOptionLabel } from "./roundLabel";
 import {
   generateSimpleBlindKeyPair,
   publishSimpleBlindKeyAnnouncement,
@@ -54,6 +55,11 @@ import {
   SimpleActorStateLockedError,
   type SimpleActorKeypair,
 } from "./simpleLocalState";
+import {
+  buildCoordinatorFollowerRowsRust,
+  mergeSimpleFollowersRust,
+  selectTicketRetryTargetsRust,
+} from "./wasm/auditableVotingCore";
 
 type SimpleCoordinatorKeypair = {
   npub: string;
@@ -129,29 +135,16 @@ function createSimpleCoordinatorKeypair(): SimpleCoordinatorKeypair {
   };
 }
 
-function mergeFollowers(
-  currentFollowers: SimpleCoordinatorFollower[],
-  nextFollowers: SimpleCoordinatorFollower[],
-) {
-  if (nextFollowers.length === 0) {
-    return currentFollowers;
-  }
-
-  const merged = new Map<string, SimpleCoordinatorFollower>();
-
-  for (const follower of currentFollowers) {
-    merged.set(follower.voterNpub, follower);
-  }
-
-  for (const follower of nextFollowers) {
-    merged.set(follower.voterNpub, follower);
-  }
-
-  return [...merged.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-}
-
 function shortVotingId(votingId: string) {
   return votingId.slice(0, 12);
+}
+
+function deliveryToneClass(tone: string) {
+  return tone === "error"
+    ? "simple-delivery-error"
+    : tone === "ok"
+      ? "simple-delivery-ok"
+      : "simple-delivery-waiting";
 }
 
 function findLatestRoundRequest(
@@ -391,7 +384,7 @@ export default function SimpleCoordinatorApp() {
     return subscribeSimpleCoordinatorFollowers({
       coordinatorNsec,
       onFollowers: (nextFollowers) => {
-        setFollowers((current) => mergeFollowers(current, nextFollowers));
+        setFollowers((current) => mergeSimpleFollowersRust(current, nextFollowers));
       },
     });
   }, [keypair?.nsec]);
@@ -587,30 +580,10 @@ export default function SimpleCoordinatorApp() {
       return;
     }
 
-    const existingAnnouncement = roundBlindKeyAnnouncements[activeRound.votingId];
-    const existingAnnouncementKeyId = existingAnnouncement?.publicKey?.keyId;
-    if (existingAnnouncementKeyId === blindPrivateKey.keyId) {
-      return;
-    }
-
     let cancelled = false;
-    void publishSimpleBlindKeyAnnouncement({
-      coordinatorNsec,
+    void publishBlindKeyForRound({
       votingId: activeRound.votingId,
-      publicKey: blindPrivateKey,
-    }).then((result) => {
-      if (!cancelled) {
-        setRoundBlindKeyAnnouncements((current) => ({
-          ...current,
-          [activeRound.votingId]: {
-            coordinatorNpub,
-            votingId: activeRound.votingId,
-            publicKey: blindPrivateKey,
-            createdAt: result.createdAt,
-            event: result.event,
-          },
-        }));
-      }
+      blindPrivateKey,
     }).catch(() => {
       if (!cancelled) {
         setPublishStatus("Blind signing key announcement failed.");
@@ -620,7 +593,7 @@ export default function SimpleCoordinatorApp() {
     return () => {
       cancelled = true;
     };
-  }, [keypair?.npub, keypair?.nsec, roundBlindKeyAnnouncements, roundBlindPrivateKeys, selectedPublishedVote]);
+  }, [keypair?.npub, keypair?.nsec, publishedVotes, roundBlindKeyAnnouncements, roundBlindPrivateKeys, selectedPublishedVote]);
 
   useEffect(() => {
     const coordinatorNsec = keypair?.nsec ?? "";
@@ -1085,6 +1058,72 @@ export default function SimpleCoordinatorApp() {
     return { thresholdT: 1, thresholdN: 1 };
   }
 
+  async function publishBlindKeyForRound(input: {
+    votingId: string;
+    blindPrivateKey: SimpleBlindPrivateKey;
+    force?: boolean;
+  }) {
+    const coordinatorNsec = keypair?.nsec ?? "";
+    const coordinatorNpub = keypair?.npub ?? "";
+    const activeRound =
+      publishedVotes.find((vote) => vote.votingId === input.votingId) ?? null;
+
+    if (
+      !coordinatorNsec ||
+      !coordinatorNpub ||
+      !activeRound ||
+      !activeRound.authorizedCoordinatorNpubs.includes(coordinatorNpub)
+    ) {
+      return null;
+    }
+
+    const existingAnnouncement = roundBlindKeyAnnouncements[input.votingId];
+    const existingAnnouncementKeyId = existingAnnouncement?.publicKey?.keyId;
+    if (!input.force && existingAnnouncementKeyId === input.blindPrivateKey.keyId) {
+      return existingAnnouncement ?? null;
+    }
+
+    const result = await publishSimpleBlindKeyAnnouncement({
+      coordinatorNsec,
+      votingId: input.votingId,
+      publicKey: input.blindPrivateKey,
+    });
+
+    const nextAnnouncement: SimpleBlindKeyAnnouncement = {
+      coordinatorNpub,
+      votingId: input.votingId,
+      publicKey: input.blindPrivateKey,
+      createdAt: result.createdAt,
+      event: result.event,
+    };
+
+    setRoundBlindKeyAnnouncements((current) => ({
+      ...current,
+      [input.votingId]: nextAnnouncement,
+    }));
+
+    return nextAnnouncement;
+  }
+
+  async function republishActiveBlindKey() {
+    if (!activeVotingId || !activeBlindPrivateKey) {
+      return;
+    }
+
+    setPublishStatus("Republishing blind key...");
+
+    try {
+      const result = await publishBlindKeyForRound({
+        votingId: activeVotingId,
+        blindPrivateKey: activeBlindPrivateKey,
+        force: true,
+      });
+      setPublishStatus(result ? "Blind key republished." : "Blind key republish failed.");
+    } catch {
+      setPublishStatus("Blind key republish failed.");
+    }
+  }
+
   async function sendTicket(follower: SimpleCoordinatorFollower) {
     const coordinatorNpub = keypair?.npub ?? "";
     const coordinatorSecretKey = decodeNsec(keypair?.nsec ?? "");
@@ -1297,6 +1336,39 @@ export default function SimpleCoordinatorApp() {
   const visibleFollowers = activeVotingId
     ? followers.filter((follower) => !follower.votingId || follower.votingId === activeVotingId)
     : followers;
+  const canIssueTickets = Boolean(
+    keypair?.nsec &&
+    activeBlindPrivateKey &&
+    activeBlindKeyAnnouncement &&
+    (isLeadCoordinator || activeShareIndex > 0),
+  );
+  const coordinatorFollowerRows = useMemo(() => buildCoordinatorFollowerRowsRust({
+    followers,
+    selectedPublishedVotingId: selectedPublishedVote?.votingId ?? null,
+    pendingRequests: pendingRequests.map((request) => ({
+      voterNpub: request.voterNpub,
+      votingId: request.votingId,
+      createdAt: request.createdAt,
+    })),
+    ticketDeliveries,
+    acknowledgements: dmAcknowledgements.map((ack) => ({
+      actorNpub: ack.actorNpub,
+      ackedAction: ack.ackedAction,
+      ackedEventId: ack.ackedEventId,
+    })),
+    canIssueTickets,
+  }), [
+    canIssueTickets,
+    dmAcknowledgements,
+    followers,
+    pendingRequests,
+    selectedPublishedVote?.votingId,
+    ticketDeliveries,
+  ]);
+  const visibleFollowersById = useMemo(
+    () => new Map(visibleFollowers.map((follower) => [follower.id, follower])),
+    [visibleFollowers],
+  );
   const expectedSubCoordinatorCount = Math.max(0, (Number.parseInt(questionThresholdN, 10) || 1) - 1);
 
   useEffect(() => {
@@ -1305,22 +1377,20 @@ export default function SimpleCoordinatorApp() {
         return;
       }
 
-      const retries = visibleFollowers.filter((follower) => {
-        const key = `${follower.voterNpub}:${selectedPublishedVote.votingId}`;
-        const delivery = ticketDeliveries[key];
-        if (!delivery?.eventId || (delivery.attempts ?? 0) >= 4) {
-          return false;
-        }
-        const acknowledged = dmAcknowledgements.some((ack) => (
-          ack.ackedAction === "simple_round_ticket"
-          && ack.ackedEventId === delivery.eventId
-        ));
-        if (acknowledged) {
-          return false;
-        }
-        const lastAttemptAt = delivery.lastAttemptAt ? Date.parse(delivery.lastAttemptAt) : 0;
-        return Date.now() - lastAttemptAt >= 10000;
-      });
+      const retryFollowerIds = new Set(selectTicketRetryTargetsRust({
+        followers: visibleFollowers,
+        selectedPublishedVotingId: selectedPublishedVote.votingId,
+        ticketDeliveries,
+        acknowledgements: dmAcknowledgements.map((ack) => ({
+          actorNpub: ack.actorNpub,
+          ackedAction: ack.ackedAction,
+          ackedEventId: ack.ackedEventId,
+        })),
+        nowMs: Date.now(),
+        minRetryAgeMs: 10000,
+        maxAttempts: 4,
+      }));
+      const retries = visibleFollowers.filter((follower) => retryFollowerIds.has(follower.id));
 
       for (const follower of retries) {
         void sendTicket(follower);
@@ -1476,7 +1546,7 @@ export default function SimpleCoordinatorApp() {
               >
                 {publishedVotes.map((vote) => (
                   <option key={vote.eventId} value={vote.votingId}>
-                    {shortVotingId(vote.votingId)} - {vote.prompt}
+                    {formatRoundOptionLabel(vote)}
                   </option>
                 ))}
               </select>
@@ -1492,6 +1562,14 @@ export default function SimpleCoordinatorApp() {
                   disabled={!keypair?.nsec || subCoordinators.length === 0}
                 >
                   Distribute share indexes
+                </button>
+                <button
+                  type='button'
+                  className='simple-voter-secondary'
+                  onClick={() => void republishActiveBlindKey()}
+                  disabled={!activeVotingId || !activeBlindPrivateKey}
+                >
+                  Republish blind key
                 </button>
               </div>
             </>
@@ -1587,110 +1665,40 @@ export default function SimpleCoordinatorApp() {
         )}
 
         <SimpleCollapsibleSection title='Following voters'>
-          {visibleFollowers.length > 0 ? (
+          {coordinatorFollowerRows.length > 0 ? (
             <ul className='simple-voter-list'>
-              {visibleFollowers.map((follower) => (
-                <li key={follower.id} className='simple-voter-list-item'>
-                  {(() => {
-                    const ticketStatusKey = `${follower.voterNpub}:${selectedPublishedVote?.votingId ?? ''}`;
-                    const ticketDelivery = ticketDeliveries[ticketStatusKey];
-                    const ticketStatus = ticketDelivery?.status ?? null;
-                    const ticketWasSent = ticketStatus === 'Ticket sent.';
-                    const hasPendingRequest = selectedPublishedVote
-                      ? Boolean(
-                          findLatestRoundRequest(
-                            pendingRequests,
-                            follower.voterNpub,
-                            selectedPublishedVote.votingId,
-                          ),
-                        )
-                      : false;
-                    const canSendTicket = Boolean(
-                      keypair?.nsec &&
-                      activeBlindPrivateKey &&
-                      activeBlindKeyAnnouncement &&
-                      hasPendingRequest &&
-                      (isLeadCoordinator || activeShareIndex > 0),
-                    );
-                    const ticketReceiptAck = ticketDelivery?.eventId
-                      ? dmAcknowledgements.find(
-                          (ack) =>
-                            ack.ackedAction === 'simple_round_ticket' &&
-                            ack.ackedEventId === ticketDelivery.eventId,
-                        )
-                      : null;
+              {coordinatorFollowerRows.map((row) => {
+                const follower = visibleFollowersById.get(row.id);
+                if (!follower) {
+                  return null;
+                }
 
-                    return (
-                      <>
-                        <p className='simple-voter-question'>
-                          Voter {follower.voterId} is following this coordinator
-                          {follower.votingId
-                            ? ` for ${follower.votingId.slice(0, 12)}`
-                            : ' and is waiting for the next live vote'}
-                        </p>
-                        {selectedPublishedVote ? (
-                          <div className='simple-voter-action-row'>
-                            <button
-                              type='button'
-                              className='simple-voter-secondary'
-                              onClick={() => void sendTicket(follower)}
-                              disabled={!canSendTicket}
-                            >
-                              {ticketWasSent ? 'Resend' : 'Send ticket'}
-                            </button>
-                          </div>
-                        ) : null}
-                        <ul className='simple-delivery-diagnostics'>
-                          <li className='simple-delivery-ok'>
-                            Follow request received.
-                          </li>
-                          <li
-                            className={
-                              hasPendingRequest
-                                ? 'simple-delivery-ok'
-                                : 'simple-delivery-waiting'
-                            }
-                          >
-                            {hasPendingRequest
-                              ? 'Blinded ticket request received.'
-                              : "Waiting for this voter's blinded ticket request."}
-                          </li>
-                          {selectedPublishedVote ? (
-                            <li
-                              className={
-                                ticketStatus === 'Ticket send failed.'
-                                  ? 'simple-delivery-error'
-                                  : ticketStatus
-                                    ? 'simple-delivery-ok'
-                                    : 'simple-delivery-waiting'
-                              }
-                            >
-                              {ticketStatus ?? 'Ticket not sent yet.'}
-                            </li>
-                          ) : (
-                            <li className='simple-delivery-waiting'>
-                              Waiting for a live round.
-                            </li>
-                          )}
-                          {selectedPublishedVote && ticketWasSent ? (
-                            <li
-                              className={
-                                ticketReceiptAck
-                                  ? 'simple-delivery-ok'
-                                  : 'simple-delivery-waiting'
-                              }
-                            >
-                              {ticketReceiptAck
-                                ? 'Voter acknowledged ticket receipt.'
-                                : 'Waiting for voter ticket receipt acknowledgement.'}
-                            </li>
-                          ) : null}
-                        </ul>
-                      </>
-                    );
-                  })()}
-                </li>
-              ))}
+                return (
+                  <li key={row.id} className='simple-voter-list-item'>
+                    <p className='simple-voter-question'>{row.followingText}</p>
+                    {selectedPublishedVote ? (
+                      <div className='simple-voter-action-row'>
+                        <button
+                          type='button'
+                          className='simple-voter-secondary'
+                          onClick={() => void sendTicket(follower)}
+                          disabled={!row.canSendTicket}
+                        >
+                          {row.sendLabel}
+                        </button>
+                      </div>
+                    ) : null}
+                    <ul className='simple-delivery-diagnostics'>
+                      <li className={deliveryToneClass(row.follow.tone)}>{row.follow.text}</li>
+                      <li className={deliveryToneClass(row.pendingRequest.tone)}>{row.pendingRequest.text}</li>
+                      <li className={deliveryToneClass(row.ticket.tone)}>{row.ticket.text}</li>
+                      {row.receipt ? (
+                        <li className={deliveryToneClass(row.receipt.tone)}>{row.receipt.text}</li>
+                      ) : null}
+                    </ul>
+                  </li>
+                );
+              })}
             </ul>
           ) : (
             <p className='simple-voter-empty'>
@@ -1827,7 +1835,7 @@ export default function SimpleCoordinatorApp() {
                   >
                     {publishedVotes.map((vote) => (
                       <option key={vote.eventId} value={vote.votingId}>
-                        {shortVotingId(vote.votingId)} - {vote.prompt}
+                        {formatRoundOptionLabel(vote)}
                       </option>
                     ))}
                   </select>

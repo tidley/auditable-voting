@@ -9,6 +9,7 @@ import SimpleUnlockGate from "./SimpleUnlockGate";
 import TokenFingerprint from "./TokenFingerprint";
 import { extractNpubFromScan } from "./npubScan";
 import { primeNip65RelayHints } from "./nip65RelayHints";
+import { formatRoundOptionLabel } from "./roundLabel";
 import {
   deriveTokenIdFromSimplePublicShardProofs,
   createSimpleBlindIssuanceRequest,
@@ -48,6 +49,12 @@ import {
   SimpleActorStateLockedError,
   type SimpleActorKeypair,
 } from "./simpleLocalState";
+import {
+  buildVoterCoordinatorDiagnosticsRust,
+  normalizeCoordinatorNpubsRust,
+  selectFollowRetryTargetsRust,
+  selectRequestRetryKeysRust,
+} from "./wasm/auditableVotingCore";
 
 type LiveVoteChoice = "Yes" | "No" | null;
 
@@ -97,10 +104,6 @@ function createEmptyVoterCache(): SimpleVoterCache {
     selectedVotingId: "",
     liveVoteChoice: null,
   };
-}
-
-function normalizeCoordinatorNpubs(values: string[]) {
-  return Array.from(new Set(values.map((value) => value.trim()).filter((value) => value.length > 0)));
 }
 
 function shortenNpub(value: string) {
@@ -220,7 +223,7 @@ export default function SimpleUiApp() {
   }
 
   const configuredCoordinatorTargets = useMemo(
-    () => normalizeCoordinatorNpubs(manualCoordinators),
+    () => normalizeCoordinatorNpubsRust(manualCoordinators),
     [manualCoordinators],
   );
   const knownRoundVotingIds = useMemo(() => {
@@ -733,7 +736,7 @@ export default function SimpleUiApp() {
       return;
     }
 
-    setManualCoordinators((current) => normalizeCoordinatorNpubs([...current, nextCoordinator]));
+    setManualCoordinators((current) => normalizeCoordinatorNpubsRust([...current, nextCoordinator]));
     setCoordinatorDraft("");
     setRequestStatus(null);
   }
@@ -745,7 +748,7 @@ export default function SimpleUiApp() {
       return false;
     }
 
-    setManualCoordinators((current) => normalizeCoordinatorNpubs([...current, scannedNpub]));
+    setManualCoordinators((current) => normalizeCoordinatorNpubsRust([...current, scannedNpub]));
     setCoordinatorDraft("");
     setRequestStatus(null);
     setCoordinatorScannerStatus(`Scanned ${shortenNpub(scannedNpub)}.`);
@@ -812,20 +815,17 @@ export default function SimpleUiApp() {
 
     const intervalId = window.setInterval(() => {
       const now = Date.now();
-      const retryTargets = configuredCoordinatorTargets.filter((coordinatorNpub) => {
-        const delivery = followDeliveries[coordinatorNpub];
-        if (!delivery?.eventId) {
-          return false;
-        }
-        const acknowledged = dmAcknowledgements.some((ack) => (
-          ack.ackedAction === "simple_coordinator_follow"
-          && ack.ackedEventId === delivery.eventId
-        ));
-        if (acknowledged || (delivery.attempts ?? 0) >= 3) {
-          return false;
-        }
-        const lastAttemptAt = delivery.lastAttemptAt ? Date.parse(delivery.lastAttemptAt) : 0;
-        return now - lastAttemptAt >= 8000;
+      const retryTargets = selectFollowRetryTargetsRust({
+        configuredCoordinatorTargets,
+        followDeliveries,
+        acknowledgements: dmAcknowledgements.map((ack) => ({
+          actorNpub: ack.actorNpub,
+          ackedAction: ack.ackedAction,
+          ackedEventId: ack.ackedEventId,
+        })),
+        nowMs: now,
+        minRetryAgeMs: 8000,
+        maxAttempts: 3,
       });
 
       if (!retryTargets.length) {
@@ -949,6 +949,37 @@ export default function SimpleUiApp() {
       ?? null;
   }, [reconciledRoundState.knownRounds, selectedVotingId]);
 
+  const coordinatorDiagnostics = useMemo(() => buildVoterCoordinatorDiagnosticsRust({
+    configuredCoordinatorTargets,
+    activeVotingId: effectiveLiveVoteSession?.votingId ?? null,
+    discoveredRoundSources: discoveredSessions.map((session) => ({
+      coordinatorNpub: session.coordinatorNpub,
+      votingId: session.votingId,
+    })),
+    knownBlindKeyIds: Object.keys(knownBlindKeys),
+    followDeliveries,
+    requestDeliveries,
+    acknowledgements: dmAcknowledgements.map((ack) => ({
+      actorNpub: ack.actorNpub,
+      ackedAction: ack.ackedAction,
+      ackedEventId: ack.ackedEventId,
+    })),
+    ticketReceivedCoordinatorNpubs: uniqueShardResponses.map((response) => response.coordinatorNpub),
+  }), [
+    configuredCoordinatorTargets,
+    discoveredSessions,
+    dmAcknowledgements,
+    effectiveLiveVoteSession?.votingId,
+    followDeliveries,
+    knownBlindKeys,
+    requestDeliveries,
+    uniqueShardResponses,
+  ]);
+  const coordinatorDiagnosticsByNpub = useMemo(
+    () => new Map(coordinatorDiagnostics.map((entry) => [entry.coordinatorNpub, entry])),
+    [coordinatorDiagnostics],
+  );
+
   useEffect(() => {
     const voterSecretKey = decodeNsec(voterKeypair?.nsec ?? "");
     const voterNpub = voterKeypair?.npub ?? "";
@@ -1062,21 +1093,23 @@ export default function SimpleUiApp() {
   useEffect(() => {
     const intervalId = window.setInterval(() => {
       const now = Date.now();
-      const retryEntries = Object.entries(pendingBlindRequests).filter(([key, requestEntry]) => {
-        const delivery = requestDeliveries[key];
-        const acknowledged = delivery?.eventId
-          ? dmAcknowledgements.some((ack) => (
-              ack.ackedAction === "simple_shard_request"
-              && ack.ackedEventId === delivery.eventId
-            ))
-          : false;
-        const received = receivedShards.some((response) => response.requestId === requestEntry.request.requestId);
-        if (acknowledged || received || (delivery?.attempts ?? 0) >= 4) {
-          return false;
-        }
-        const lastAttemptAt = delivery?.lastAttemptAt ? Date.parse(delivery.lastAttemptAt) : 0;
-        return now - lastAttemptAt >= 10000;
-      });
+      const retryKeys = new Set(selectRequestRetryKeysRust({
+        pendingRequests: Object.entries(pendingBlindRequests).map(([key, requestEntry]) => ({
+          key,
+          requestId: requestEntry.request.requestId,
+        })),
+        requestDeliveries,
+        acknowledgements: dmAcknowledgements.map((ack) => ({
+          actorNpub: ack.actorNpub,
+          ackedAction: ack.ackedAction,
+          ackedEventId: ack.ackedEventId,
+        })),
+        receivedRequestIds: receivedShards.map((response) => response.requestId),
+        nowMs: now,
+        minRetryAgeMs: 10000,
+        maxAttempts: 4,
+      }));
+      const retryEntries = Object.entries(pendingBlindRequests).filter(([key]) => retryKeys.has(key));
 
       if (!retryEntries.length) {
         return;
@@ -1289,72 +1322,31 @@ export default function SimpleUiApp() {
                       <p className="simple-coordinator-card-title">Coordinator {index + 1}</p>
                       <p className="simple-coordinator-card-meta" title={value}>{shortenNpub(value)}</p>
                       {(() => {
-                        const followDelivery = followDeliveries[value];
-                        const followAck = followDelivery?.eventId
-                          ? dmAcknowledgements.find((ack) => (
-                            ack.actorNpub === value
-                            && ack.ackedAction === "simple_coordinator_follow"
-                            && ack.ackedEventId === followDelivery.eventId
-                          ))
-                          : null;
-                        const roundSeen = effectiveLiveVoteSession
-                          ? discoveredSessions.some((session) => (
-                            session.coordinatorNpub === value
-                            && session.votingId === effectiveLiveVoteSession.votingId
-                          ))
-                          : false;
-                        const blindKeySeen = effectiveLiveVoteSession
-                          ? Boolean(knownBlindKeys[makeRoundBlindKeyId(value, effectiveLiveVoteSession.votingId)])
-                          : false;
-                        const requestDeliveryKey = effectiveLiveVoteSession ? `${value}:${effectiveLiveVoteSession.votingId}` : "";
-                        const requestDelivery = requestDeliveryKey ? requestDeliveries[requestDeliveryKey] : undefined;
-                        const requestAck = requestDelivery?.eventId
-                          ? dmAcknowledgements.find((ack) => (
-                            ack.actorNpub === value
-                            && ack.ackedAction === "simple_shard_request"
-                            && ack.ackedEventId === requestDelivery.eventId
-                          ))
-                          : null;
-                        const ticketReceived = uniqueShardResponses.some((response) => response.coordinatorNpub === value);
+                        const diagnostic = coordinatorDiagnosticsByNpub.get(value);
+                        const toneClass = (tone: string) => (
+                          tone === "error"
+                            ? "simple-delivery-error"
+                            : tone === "ok"
+                              ? "simple-delivery-ok"
+                              : "simple-delivery-waiting"
+                        );
 
                         return (
                           <ul className="simple-delivery-diagnostics simple-delivery-diagnostics-compact">
-                            <li className={
-                              followDelivery?.status === "Follow request failed."
-                                ? "simple-delivery-error"
-                                : followAck
-                                  ? "simple-delivery-ok"
-                                  : followDelivery
-                                    ? "simple-delivery-waiting"
-                                    : "simple-delivery-waiting"
-                            }>
-                              {followAck
-                                ? "Follow request acknowledged."
-                                : followDelivery?.status ?? "Follow request not sent yet."}
+                            <li className={toneClass(diagnostic?.follow.tone ?? "waiting")}>
+                              {diagnostic?.follow.text ?? "Follow request not sent yet."}
                             </li>
-                            <li className={roundSeen ? "simple-delivery-ok" : "simple-delivery-waiting"}>
-                              {roundSeen ? "Live round seen." : "Waiting for live round."}
+                            <li className={toneClass(diagnostic?.round.tone ?? "waiting")}>
+                              {diagnostic?.round.text ?? "Waiting for live round."}
                             </li>
-                            <li className={blindKeySeen ? "simple-delivery-ok" : "simple-delivery-waiting"}>
-                              {blindKeySeen ? "Blind key seen." : "Waiting for blind key."}
+                            <li className={toneClass(diagnostic?.blindKey.tone ?? "waiting")}>
+                              {diagnostic?.blindKey.text ?? `Waiting for Coordinator ${index + 1}'s key before preparing ticket request.`}
                             </li>
-                            <li className={
-                              requestDelivery?.status === "Blinded ticket request failed."
-                                ? "simple-delivery-error"
-                                : ticketReceived || requestAck
-                                  ? "simple-delivery-ok"
-                                  : requestDelivery
-                                    ? "simple-delivery-waiting"
-                                    : "simple-delivery-waiting"
-                            }>
-                              {ticketReceived
-                                ? "Blinded ticket request acknowledged."
-                                : requestAck
-                                  ? "Blinded ticket request acknowledged."
-                                  : requestDelivery?.status ?? "Waiting to send blinded ticket request."}
+                            <li className={toneClass(diagnostic?.request.tone ?? "waiting")}>
+                              {diagnostic?.request.text ?? "Waiting to send blinded ticket request."}
                             </li>
-                            <li className={ticketReceived ? "simple-delivery-ok" : "simple-delivery-waiting"}>
-                              {ticketReceived ? "Ticket received." : "Waiting for ticket."}
+                            <li className={toneClass(diagnostic?.ticket.tone ?? "waiting")}>
+                              {diagnostic?.ticket.text ?? "Waiting for ticket."}
                             </li>
                           </ul>
                         );
@@ -1436,7 +1428,7 @@ export default function SimpleUiApp() {
                   >
                     {reconciledRoundState.knownRounds.map((round) => (
                       <option key={round.votingId} value={round.votingId}>
-                        {shortVotingId(round.votingId)} - {round.prompt}
+                        {formatRoundOptionLabel(round)}
                       </option>
                     ))}
                   </select>

@@ -11,11 +11,8 @@ import {
   validateSimpleSubmittedVotes,
   type SimpleValidatedVote,
 } from "./simpleVoteValidation";
+import { formatRoundOptionLabel } from "./roundLabel";
 import { sortRecordsByCreatedAtDescRust } from "./wasm/auditableVotingCore";
-
-function shortVotingId(votingId: string) {
-  return votingId.slice(0, 12);
-}
 
 export default function SimpleAuditorApp() {
   const [discoveredRounds, setDiscoveredRounds] = useState<SimpleLiveVoteSession[]>([]);
@@ -153,7 +150,7 @@ export default function SimpleAuditorApp() {
               >
                 {discoveredRounds.map((round) => (
                   <option key={round.eventId} value={round.votingId}>
-                    {shortVotingId(round.votingId)} - {round.prompt}
+                    {formatRoundOptionLabel(round)}
                   </option>
                 ))}
               </select>

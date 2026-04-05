@@ -9,6 +9,7 @@ const decode = vi.fn();
 const getPublicKey = vi.fn();
 const finalizeEvent = vi.fn();
 const resolveNip65OutboxRelays = vi.fn();
+const publishOwnNip65RelayHints = vi.fn();
 
 vi.mock("nostr-tools", () => ({
   finalizeEvent,
@@ -28,6 +29,7 @@ vi.mock("./nostrPublishQueue", () => ({
 }));
 
 vi.mock("./nip65RelayHints", () => ({
+  publishOwnNip65RelayHints,
   resolveNip65OutboxRelays,
 }));
 
@@ -60,6 +62,7 @@ describe("simpleVotingSession", () => {
     publish.mockImplementation((relays: string[]) => relays.map(() => Promise.resolve(undefined)));
     subscribeMany.mockReturnValue({ close: vi.fn(async () => undefined) });
     resolveNip65OutboxRelays.mockImplementation(async ({ fallbackRelays }: { fallbackRelays: string[] }) => fallbackRelays);
+    publishOwnNip65RelayHints.mockResolvedValue({ successes: 1 });
   });
 
   it("publishes a live vote announcement with authorized coordinators", async () => {
@@ -80,7 +83,16 @@ describe("simpleVotingSession", () => {
       npub: "npub1coord",
       fallbackRelays: expect.any(Array),
     });
-    expect(finalizeEvent.mock.calls[0][0].tags).toEqual(
+    expect(publishOwnNip65RelayHints).toHaveBeenCalledWith({
+      secretKey: new Uint8Array([1, 2, 3]),
+      outboxRelays: expect.any(Array),
+      publishRelays: expect.any(Array),
+      channel: "nip65:npub1coord",
+    });
+    const liveVoteEvent = finalizeEvent.mock.calls
+      .map((call) => call[0])
+      .find((event) => event.kind === mod.SIMPLE_LIVE_VOTE_KIND);
+    expect(liveVoteEvent?.tags).toEqual(
       expect.arrayContaining([
         ["coordinator", "npub1coord"],
         ["coordinator", "npub1coord2"],

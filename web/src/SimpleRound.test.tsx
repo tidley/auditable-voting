@@ -373,6 +373,7 @@ vi.mock("./SimpleRelayPanel", () => ({
 }));
 
 vi.mock("./nip65RelayHints", () => ({
+  publishOwnNip65RelayHints: vi.fn(async () => ({ successes: 1 })),
   primeNip65RelayHints: vi.fn(async () => undefined),
   resolveNip65InboxRelays: vi.fn(async ({ fallbackRelays }: { fallbackRelays: string[] }) => fallbackRelays),
   resolveNip65OutboxRelays: vi.fn(async ({ fallbackRelays }: { fallbackRelays: string[] }) => fallbackRelays),
@@ -1243,13 +1244,21 @@ describe("Simple round flow", () => {
     await user.click(firstUi.getByRole("button", { name: /Add coordinator/i }));
 
     await waitFor(() => {
-      expect(firstUi.getByText(/Coordinator 1/i)).toBeTruthy();
+      expect(
+        firstUi.getByText("Coordinator 1", {
+          selector: ".simple-coordinator-card-title",
+        }),
+      ).toBeTruthy();
     });
 
     await user.click(firstUi.getByRole("button", { name: /Refresh ID/i }));
 
     await waitFor(() => {
-      expect(firstUi.queryByText(/Coordinator 1/i)).toBeNull();
+      expect(
+        firstUi.queryByText("Coordinator 1", {
+          selector: ".simple-coordinator-card-title",
+        }),
+      ).toBeNull();
       expect(firstUi.getByText(/No coordinators added yet\./i)).toBeTruthy();
     });
 
