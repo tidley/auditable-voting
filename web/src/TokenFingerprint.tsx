@@ -64,46 +64,50 @@ export default function TokenFingerprint({
   }, [compact, qrPayload, showQr]);
 
   return (
-    <div className={`token-fingerprint${compact ? " token-fingerprint-compact" : ""}${large ? " token-fingerprint-large" : ""}${xlarge ? " token-fingerprint-xlarge" : ""}`}>
-      <div className="token-fingerprint-symbols">
+    <div
+      className={`token-fingerprint${compact ? ' token-fingerprint-compact' : ''}${large ? ' token-fingerprint-large' : ''}${xlarge ? ' token-fingerprint-xlarge' : ''}`}
+    >
+      <div className='token-fingerprint-symbols'>
         <div
-          className="token-fingerprint-grid"
-          role="img"
+          className='token-fingerprint-grid'
+          role='img'
           aria-label={label ?? `Token fingerprint ${tokenIdLabel(tokenId)}`}
           style={{ gridTemplateColumns: `repeat(${size}, minmax(0, 1fr))` }}
         >
           {cells.map((cell, index) => (
             <span
               key={`${tokenId}-${index}`}
-              className={`token-fingerprint-cell${cell.filled ? " is-filled" : " is-empty"}`}
+              className={`token-fingerprint-cell${cell.filled ? ' is-filled' : ' is-empty'}`}
               style={{
                 backgroundColor: cell.filled
                   ? TOKEN_FINGERPRINT_PALETTE[cell.colorIndex]
-                  : "#efe6d6",
+                  : '#efe6d6',
               }}
             />
           ))}
         </div>
         {showQr && (
-          <div className="token-fingerprint-qr-shell">
+          <div className='token-fingerprint-qr-shell'>
             {qrSrc ? (
               <img
-                className="token-fingerprint-qr"
+                className='token-fingerprint-qr'
                 src={qrSrc}
                 alt={`Scannable QR for token ${tokenIdLabel(tokenId)}`}
               />
             ) : (
-              <div className="token-fingerprint-qr token-fingerprint-qr-fallback" aria-hidden="true" />
+              <div
+                className='token-fingerprint-qr token-fingerprint-qr-fallback'
+                aria-hidden='true'
+              />
             )}
           </div>
         )}
       </div>
       {!compact && !hideMetadata && (
         <>
-          <code className="token-fingerprint-label">{tokenIdLabel(tokenId)}</code>
-          {showQr && (
-            <span className="token-fingerprint-qr-label">QR encodes: {qrPayload}</span>
-          )}
+          <code className='token-fingerprint-label'>
+            Token fingerprint: {tokenIdLabel(tokenId)}
+          </code>
         </>
       )}
     </div>
