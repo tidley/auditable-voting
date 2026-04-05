@@ -424,6 +424,7 @@ code {
   display: grid;
   gap: 16px;
   margin-bottom: 20px;
+  justify-items: center;
 }
 
 .simple-role-switch-header {
@@ -451,9 +452,9 @@ code {
 
 .simple-role-switch {
   display: inline-grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
-  width: min(420px, 100%);
+  width: min(560px, 100%);
   padding: 8px;
   border: 1px solid #334155;
   background: #0f172a;
@@ -493,9 +494,91 @@ code {
   margin: 12px auto 0;
   width: min(960px, calc(100% - 32px));
   color: #64748b;
-  font-size: 0.75rem;
+  font-size: 1rem;
   line-height: 1.2;
   text-align: right;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.simple-app-version a {
+  color: #8fb9ff;
+  text-decoration: none;
+}
+
+.simple-app-version a:hover,
+.simple-app-version a:focus-visible {
+  text-decoration: underline;
+}
+
+.simple-unlock-panel {
+  max-width: 34rem;
+}
+
+.simple-relay-group {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.simple-relay-group + .simple-relay-group {
+  margin-top: 1.25rem;
+}
+
+.simple-relay-heading {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.simple-relay-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.simple-relay-item {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid rgba(125, 189, 255, 0.18);
+  background: rgba(10, 16, 34, 0.48);
+}
+
+.simple-relay-url {
+  font-size: 0.875rem;
+  word-break: break-all;
+}
+
+.simple-relay-status {
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.simple-relay-status.is-checking {
+  color: rgba(193, 203, 219, 0.82);
+}
+
+.simple-relay-status.is-strong {
+  color: #50d890;
+}
+
+.simple-relay-status.is-fair {
+  color: #f3cf69;
+}
+
+.simple-relay-status.is-weak {
+  color: #f0a44c;
+}
+
+.simple-relay-status.is-offline {
+  color: #ef7f7f;
 }
 
 .simple-voter-page {
@@ -1053,6 +1136,11 @@ code {
   color: #e2e8f0;
   font-size: 0.95rem;
   line-height: 1.45;
+}
+
+.simple-identity-secret-row {
+  display: grid;
+  gap: 10px;
 }
 
 .simple-identity-qr-wrap {
@@ -1942,6 +2030,7 @@ code {
 
   .simple-app-version {
     width: min(100% - 20px, 960px);
+    gap: 10px;
   }
 
   .simple-voter-page {

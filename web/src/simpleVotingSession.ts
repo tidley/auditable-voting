@@ -12,9 +12,15 @@ import {
 
 export const SIMPLE_PUBLIC_RELAYS = [
   "wss://nos.lol",
+  "wss://relay.primal.net",
   "wss://relay.snort.social",
+  "wss://relay.nostr.bg",
+  "wss://nostr.mom",
+  "wss://eden.nostr.land",
+  "wss://relay.nostr.wine",
+  "wss://relay.plebstr.com",
+  "wss://purplepag.es",
   "wss://relay.nostr.band",
-  "wss://relay.damus.io",
 ];
 
 export const SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS = 1500;
@@ -78,7 +84,7 @@ function parseSimpleLiveVoteEvent(
       votingId: payload.voting_id,
       prompt: payload.prompt,
       coordinatorNpub: fallbackCoordinatorNpub ?? nip19.npubEncode(event.pubkey),
-      createdAt: payload.created_at ?? new Date(event.created_at * 1000).toISOString(),
+      createdAt: new Date(event.created_at * 1000).toISOString(),
       thresholdT: typeof payload.threshold_t === "number" ? payload.threshold_t : undefined,
       thresholdN: typeof payload.threshold_n === "number" ? payload.threshold_n : undefined,
       authorizedCoordinatorNpubs: Array.from(
@@ -129,7 +135,7 @@ async function parseSimpleSubmittedVoteEvent(
       choice: payload.choice,
       shardProofs,
       tokenId: await deriveTokenIdFromSimplePublicShardProofs(shardProofs),
-      createdAt: payload.created_at ?? new Date(event.created_at * 1000).toISOString(),
+      createdAt: new Date(event.created_at * 1000).toISOString(),
     };
   } catch {
     return null;

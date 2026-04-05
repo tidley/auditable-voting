@@ -11,6 +11,10 @@ export default function SimpleIdentityPanel({
   onDownloadBackup,
   onRestoreBackupFile,
   backupMessage,
+  onProtectLocalState,
+  onDisableLocalStateProtection,
+  localStateProtected = false,
+  localStateMessage,
 }: {
   npub: string;
   nsec: string;
@@ -20,11 +24,16 @@ export default function SimpleIdentityPanel({
   onDownloadBackup?: (passphrase?: string) => void | Promise<void>;
   onRestoreBackupFile?: (file: File, passphrase?: string) => void | Promise<void>;
   backupMessage?: string | null;
+  onProtectLocalState?: (passphrase: string) => void | Promise<void>;
+  onDisableLocalStateProtection?: (passphrase?: string) => void | Promise<void>;
+  localStateProtected?: boolean;
+  localStateMessage?: string | null;
 }) {
   const [copied, setCopied] = useState(false);
   const [qrSrc, setQrSrc] = useState<string | null>(null);
   const [restoreNsec, setRestoreNsec] = useState("");
   const [backupPassphrase, setBackupPassphrase] = useState("");
+  const [showPrivateKey, setShowPrivateKey] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -150,6 +159,43 @@ export default function SimpleIdentityPanel({
               {backupMessage ? <p className="simple-voter-note">{backupMessage}</p> : null}
             </div>
           ) : null}
+          {onProtectLocalState || onDisableLocalStateProtection ? (
+            <div className="simple-identity-restore">
+              <div className="simple-identity-label">Local state</div>
+              <input
+                className="simple-voter-input"
+                value={backupPassphrase}
+                onChange={(event) => setBackupPassphrase(event.target.value)}
+                placeholder="Passphrase to lock/unlock local state"
+                type="password"
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+              />
+              <div className="simple-voter-inline-field">
+                {onProtectLocalState ? (
+                  <button
+                    type="button"
+                    className="simple-voter-secondary"
+                    onClick={() => void onProtectLocalState(backupPassphrase)}
+                    disabled={!backupPassphrase.trim()}
+                  >
+                    {localStateProtected ? "Update passphrase" : "Protect local state"}
+                  </button>
+                ) : null}
+                {onDisableLocalStateProtection ? (
+                  <button
+                    type="button"
+                    className="simple-voter-secondary"
+                    onClick={() => void onDisableLocalStateProtection(backupPassphrase)}
+                  >
+                    Remove protection
+                  </button>
+                ) : null}
+              </div>
+              {localStateMessage ? <p className="simple-voter-note">{localStateMessage}</p> : null}
+            </div>
+          ) : null}
           <div className="simple-identity-field">
             <div className="simple-identity-label">Public key</div>
             <code className="simple-identity-code">{npub}</code>
@@ -159,7 +205,16 @@ export default function SimpleIdentityPanel({
           </div>
           <div className="simple-identity-field">
             <div className="simple-identity-label">Private key</div>
-            <code className="simple-identity-code">{nsec}</code>
+            <div className="simple-identity-secret-row">
+              <code className="simple-identity-code">{showPrivateKey ? nsec : "Hidden"}</code>
+              <button
+                type="button"
+                className="simple-voter-secondary"
+                onClick={() => setShowPrivateKey((value) => !value)}
+              >
+                {showPrivateKey ? "Hide" : "Click to reveal"}
+              </button>
+            </div>
           </div>
         </div>
         <div className="simple-identity-qr-wrap">

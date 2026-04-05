@@ -10,6 +10,7 @@ export type Nip65RelayHints = {
 };
 
 const relayHintsCache = new Map<string, Nip65RelayHints | null>();
+const relayHintsInflight = new Map<string, Promise<Nip65RelayHints | null>>();
 
 function uniqueRelays(values: string[]) {
   return Array.from(
@@ -97,30 +98,40 @@ export async function fetchNip65RelayHints(input: {
     return relayHintsCache.get(npub) ?? null;
   }
 
+  if (!input.force && relayHintsInflight.has(npub)) {
+    return relayHintsInflight.get(npub) ?? null;
+  }
+
   const discoveryRelays = uniqueRelays(input.discoveryRelays);
   if (discoveryRelays.length === 0) {
     relayHintsCache.set(npub, null);
     return null;
   }
 
-  const pool = new SimplePool();
-  try {
-    const events = await pool.querySync(discoveryRelays, {
-      kinds: [NIP65_RELAY_LIST_KIND],
-      authors: [getDecodedNpubHex(npub)],
-      limit: 10,
-    });
-    const parsed = sortByFetchedAtDescending(
-      events
-        .map((event) => parseNip65RelayHintsEvent(event as VerifiedEvent, npub))
-        .filter((entry): entry is Nip65RelayHints => entry !== null),
-    );
-    const latest = parsed[0] ?? null;
-    relayHintsCache.set(npub, latest);
-    return latest;
-  } finally {
-    pool.close(discoveryRelays);
-  }
+  const request = (async () => {
+    const pool = new SimplePool();
+    try {
+      const events = await pool.querySync(discoveryRelays, {
+        kinds: [NIP65_RELAY_LIST_KIND],
+        authors: [getDecodedNpubHex(npub)],
+        limit: 10,
+      });
+      const parsed = sortByFetchedAtDescending(
+        events
+          .map((event) => parseNip65RelayHintsEvent(event as VerifiedEvent, npub))
+          .filter((entry): entry is Nip65RelayHints => entry !== null),
+      );
+      const latest = parsed[0] ?? null;
+      relayHintsCache.set(npub, latest);
+      return latest;
+    } finally {
+      relayHintsInflight.delete(npub);
+      pool.close(discoveryRelays);
+    }
+  })();
+
+  relayHintsInflight.set(npub, request);
+  return request;
 }
 
 export async function primeNip65RelayHints(npubs: string[], discoveryRelays: string[]) {
@@ -135,18 +146,34 @@ export async function primeNip65RelayHints(npubs: string[], discoveryRelays: str
   }));
 }
 
+function getCachedRelayList(
+  npub: string,
+  kind: "inboxRelays" | "outboxRelays",
+) {
+  const cached = relayHintsCache.get(npub);
+  return cached ? cached[kind] : [];
+}
+
+function primeNip65RelayHintsInBackground(npub: string, discoveryRelays: string[]) {
+  const normalizedNpub = npub.trim();
+  if (!normalizedNpub || relayHintsInflight.has(normalizedNpub)) {
+    return;
+  }
+
+  void fetchNip65RelayHints({
+    npub: normalizedNpub,
+    discoveryRelays,
+  }).catch(() => null);
+}
+
 export async function resolveNip65InboxRelays(input: {
   npub: string;
   fallbackRelays: string[];
   extraRelays?: string[];
 }): Promise<string[]> {
   const fallbackRelays = uniqueRelays([...input.fallbackRelays, ...(input.extraRelays ?? [])]);
-  const hints = await fetchNip65RelayHints({
-    npub: input.npub,
-    discoveryRelays: fallbackRelays,
-  }).catch(() => null);
-
-  return uniqueRelays([...(hints?.inboxRelays ?? []), ...fallbackRelays]);
+  primeNip65RelayHintsInBackground(input.npub, fallbackRelays);
+  return uniqueRelays([...getCachedRelayList(input.npub, "inboxRelays"), ...fallbackRelays]);
 }
 
 export async function resolveNip65OutboxRelays(input: {
@@ -155,12 +182,8 @@ export async function resolveNip65OutboxRelays(input: {
   extraRelays?: string[];
 }): Promise<string[]> {
   const fallbackRelays = uniqueRelays([...input.fallbackRelays, ...(input.extraRelays ?? [])]);
-  const hints = await fetchNip65RelayHints({
-    npub: input.npub,
-    discoveryRelays: fallbackRelays,
-  }).catch(() => null);
-
-  return uniqueRelays([...(hints?.outboxRelays ?? []), ...fallbackRelays]);
+  primeNip65RelayHintsInBackground(input.npub, fallbackRelays);
+  return uniqueRelays([...getCachedRelayList(input.npub, "outboxRelays"), ...fallbackRelays]);
 }
 
 export async function resolveNip65ConversationRelays(input: {

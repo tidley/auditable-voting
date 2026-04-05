@@ -7,7 +7,10 @@ import {
   type SimpleLiveVoteSession,
   type SimpleSubmittedVote,
 } from "./simpleVotingSession";
-import { validateSimpleSubmittedVotes } from "./simpleVoteValidation";
+import {
+  validateSimpleSubmittedVotes,
+  type SimpleValidatedVote,
+} from "./simpleVoteValidation";
 
 function shortVotingId(votingId: string) {
   return votingId.slice(0, 12);
@@ -21,6 +24,7 @@ export default function SimpleAuditorApp() {
   const [discoveredRounds, setDiscoveredRounds] = useState<SimpleLiveVoteSession[]>([]);
   const [selectedVotingId, setSelectedVotingId] = useState("");
   const [submittedVotes, setSubmittedVotes] = useState<SimpleSubmittedVote[]>([]);
+  const [validatedVotes, setValidatedVotes] = useState<SimpleValidatedVote[]>([]);
   const [refreshStatus, setRefreshStatus] = useState<string | null>(null);
 
   useEffect(() => {
@@ -91,14 +95,27 @@ export default function SimpleAuditorApp() {
     });
   }, [selectedRound?.votingId]);
 
-  const validatedVotes = useMemo(
-    () => validateSimpleSubmittedVotes(
+  useEffect(() => {
+    let cancelled = false;
+
+    void validateSimpleSubmittedVotes(
       submittedVotes,
       Math.max(1, selectedRound?.thresholdT ?? 1),
       selectedRound?.authorizedCoordinatorNpubs ?? [],
-    ),
-    [selectedRound?.authorizedCoordinatorNpubs, selectedRound?.thresholdT, submittedVotes],
-  );
+    ).then((nextValidatedVotes) => {
+      if (!cancelled) {
+        setValidatedVotes(nextValidatedVotes);
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setValidatedVotes([]);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedRound?.authorizedCoordinatorNpubs, selectedRound?.thresholdT, submittedVotes]);
 
   const validYesCount = validatedVotes.filter((entry) => entry.valid && entry.vote.choice === "Yes").length;
   const validNoCount = validatedVotes.filter((entry) => entry.valid && entry.vote.choice === "No").length;
@@ -222,7 +239,7 @@ export default function SimpleAuditorApp() {
                           <p className='simple-voter-note'>Ballot {vote.eventId}</p>
                         </div>
                         {vote.tokenId ? (
-                          <TokenFingerprint tokenId={vote.tokenId} compact size='large' showLabel={false} showQrLabel={false} />
+                          <TokenFingerprint tokenId={vote.tokenId} compact large hideMetadata />
                         ) : null}
                       </div>
                     </li>

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { validateSimpleSubmittedVotes } from "./simpleVoteValidation";
 
 vi.mock("./simpleShardCertificate", () => ({
-  parseSimplePublicShardProof: (proof: { id: string }) => (
+  verifySimplePublicShardProof: async (proof: { id: string }) => (
     proof.id === "valid-proof"
       ? {
           coordinatorNpub: "npub1coord",
@@ -35,11 +35,12 @@ vi.mock("./simpleShardCertificate", () => ({
             }
           : null
   ),
+  parseSimplePublicShardProof: () => null,
 }));
 
 describe("simpleVoteValidation", () => {
-  it("marks votes valid when enough signed shard proofs are present", () => {
-    const results = validateSimpleSubmittedVotes([
+  it("marks votes valid when enough signed shard proofs are present", async () => {
+    const results = await validateSimpleSubmittedVotes([
       {
         eventId: "vote-1",
         votingId: "vote-1",
@@ -66,8 +67,8 @@ describe("simpleVoteValidation", () => {
     });
   });
 
-  it("marks votes invalid when shard proofs are missing", () => {
-    const results = validateSimpleSubmittedVotes([
+  it("marks votes invalid when shard proofs are missing", async () => {
+    const results = await validateSimpleSubmittedVotes([
       {
         eventId: "vote-1",
         votingId: "vote-1",
@@ -83,8 +84,8 @@ describe("simpleVoteValidation", () => {
     expect(results[0].reason).toBe("Not enough valid shards");
   });
 
-  it("marks duplicate combined tokens invalid using canonical event ordering", () => {
-    const results = validateSimpleSubmittedVotes([
+  it("marks duplicate combined tokens invalid using canonical event ordering", async () => {
+    const results = await validateSimpleSubmittedVotes([
       {
         eventId: "vote-later",
         votingId: "vote-1",
@@ -111,8 +112,8 @@ describe("simpleVoteValidation", () => {
     expect(results[1].reason).toBe("Duplicate token");
   });
 
-  it("accepts distinct authorized coordinator shares even when share indexes match", () => {
-    const results = validateSimpleSubmittedVotes([
+  it("accepts distinct authorized coordinator shares even when share indexes match", async () => {
+    const results = await validateSimpleSubmittedVotes([
       {
         eventId: "vote-1",
         votingId: "vote-1",
@@ -128,8 +129,8 @@ describe("simpleVoteValidation", () => {
     expect(results[0].reason).toBe("Valid");
   });
 
-  it("rejects shares from unauthorized coordinators", () => {
-    const results = validateSimpleSubmittedVotes([
+  it("rejects shares from unauthorized coordinators", async () => {
+    const results = await validateSimpleSubmittedVotes([
       {
         eventId: "vote-1",
         votingId: "vote-1",
@@ -145,8 +146,8 @@ describe("simpleVoteValidation", () => {
     expect(results[0].reason).toBe("Unauthorized coordinator share");
   });
 
-  it("rejects proofs that bind to a different round", () => {
-    const results = validateSimpleSubmittedVotes([
+  it("rejects proofs that bind to a different round", async () => {
+    const results = await validateSimpleSubmittedVotes([
       {
         eventId: "vote-1",
         votingId: "vote-1",

@@ -40,7 +40,7 @@ describe("nip65RelayHints", () => {
     });
   });
 
-  it("resolves conversation relays using sender outbox and recipient inbox hints", async () => {
+  it("resolves conversation relays immediately from fallback relays, then uses cached hints after priming", async () => {
     const mod = await import("./nip65RelayHints");
 
     querySync.mockImplementation(async (_relays: string[], filter: { authors: string[] }) => {
@@ -65,13 +65,28 @@ describe("nip65RelayHints", () => {
       return [];
     });
 
-    const relays = await mod.resolveNip65ConversationRelays({
+    const immediateRelays = await mod.resolveNip65ConversationRelays({
       senderNpub: "npub1sender",
       recipientNpub: "npub1receiver",
       fallbackRelays: ["wss://fallback.example"],
     });
 
-    expect(relays).toEqual([
+    expect(immediateRelays).toEqual([
+      "wss://fallback.example",
+    ]);
+
+    await mod.primeNip65RelayHints(
+      ["npub1sender", "npub1receiver"],
+      ["wss://fallback.example"],
+    );
+
+    const primedRelays = await mod.resolveNip65ConversationRelays({
+      senderNpub: "npub1sender",
+      recipientNpub: "npub1receiver",
+      fallbackRelays: ["wss://fallback.example"],
+    });
+
+    expect(primedRelays).toEqual([
       "wss://recipient-inbox.example",
       "wss://fallback.example",
       "wss://sender-outbox.example",

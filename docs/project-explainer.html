@@ -1,4 +1,207 @@
-# Auditable Voting Explainer
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Auditable Voting Explainer</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f8fb;
+        --paper: #ffffff;
+        --ink: #142033;
+        --muted: #526079;
+        --line: #d8dfeb;
+        --accent: #1d4ed8;
+        --accent-soft: #e8f0ff;
+        --code: #f3f5f9;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+        line-height: 1.6;
+      }
+
+      .page {
+        width: min(980px, calc(100% - 32px));
+        margin: 24px auto 48px;
+        padding: 32px 40px 56px;
+        background: var(--paper);
+        border: 1px solid var(--line);
+        box-shadow: 0 16px 48px rgba(20, 32, 51, 0.08);
+      }
+
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 24px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .topbar p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+
+      .print-button {
+        border: 1px solid var(--accent);
+        background: var(--accent);
+        color: #fff;
+        padding: 10px 14px;
+        border-radius: 10px;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      #content h1,
+      #content h2,
+      #content h3,
+      #content h4 {
+        line-height: 1.2;
+        color: var(--ink);
+      }
+
+      #content h1 {
+        font-size: 2.2rem;
+        margin-top: 0;
+      }
+
+      #content h2 {
+        margin-top: 2.4rem;
+        font-size: 1.5rem;
+        padding-top: 0.3rem;
+        border-top: 1px solid var(--line);
+      }
+
+      #content h3 {
+        margin-top: 1.4rem;
+        font-size: 1.15rem;
+      }
+
+      #content p,
+      #content li {
+        color: var(--ink);
+      }
+
+      #content hr {
+        border: 0;
+        border-top: 1px solid var(--line);
+        margin: 2rem 0;
+      }
+
+      #content ul,
+      #content ol {
+        padding-left: 1.4rem;
+      }
+
+      #content a {
+        color: var(--accent);
+      }
+
+      #content code {
+        font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+        background: var(--code);
+        padding: 0.12rem 0.34rem;
+        border-radius: 0.32rem;
+        font-size: 0.92em;
+      }
+
+      #content pre {
+        overflow-x: auto;
+        padding: 14px 16px;
+        background: var(--code);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+      }
+
+      #content pre code {
+        padding: 0;
+        background: transparent;
+      }
+
+      .mermaid-wrap {
+        margin: 1rem 0 1.4rem;
+        padding: 16px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #fbfcff;
+        overflow-x: auto;
+      }
+
+      blockquote {
+        margin: 1.2rem 0;
+        padding: 0.6rem 1rem;
+        border-left: 4px solid var(--accent);
+        background: var(--accent-soft);
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 1rem 0;
+      }
+
+      th,
+      td {
+        border: 1px solid var(--line);
+        padding: 10px 12px;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        background: var(--code);
+      }
+
+      @media print {
+        body {
+          background: #fff;
+        }
+
+        .page {
+          width: auto;
+          margin: 0;
+          padding: 0;
+          border: 0;
+          box-shadow: none;
+        }
+
+        .topbar {
+          display: none;
+        }
+
+        #content h2,
+        #content h3 {
+          break-after: avoid;
+        }
+
+        #content pre,
+        .mermaid-wrap,
+        blockquote,
+        table {
+          break-inside: avoid;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+        <article id="content" aria-label="Project explainer"></article>
+    </main>
+
+    <script id="source" type="text/plain"># Auditable Voting Explainer
 
 This document is written for readers who want to understand:
 
@@ -546,3 +749,44 @@ The project is attempting to separate voter eligibility from public ballot ident
 ## 23. One-Sentence Summary
 
 **Auditable Voting is an attempt to combine anonymous credential issuance, public Nostr ballot publication, and independent tally verification in a client-heavy architecture.**
+</script>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+
+      const source = document.getElementById("source").textContent;
+      const content = document.getElementById("content");
+
+      marked.setOptions({
+        gfm: true,
+        breaks: false,
+      });
+
+      content.innerHTML = marked.parse(source);
+
+      for (const block of content.querySelectorAll("pre code.language-mermaid")) {
+        const wrapper = document.createElement("div");
+        wrapper.className = "mermaid-wrap";
+
+        const diagram = document.createElement("div");
+        diagram.className = "mermaid";
+        diagram.textContent = block.textContent;
+
+        wrapper.appendChild(diagram);
+        const pre = block.closest("pre");
+        pre.replaceWith(wrapper);
+      }
+
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: "default",
+        securityLevel: "loose",
+      });
+
+      await mermaid.run({
+        querySelector: ".mermaid",
+      });
+    </script>
+  </body>
+</html>

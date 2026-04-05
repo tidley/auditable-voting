@@ -15,7 +15,7 @@ type InternalResponse = {
   coordinatorId: string;
   thresholdLabel: string;
   createdAt: string;
-  voterNpub: string;
+  recipientNpub: string;
   votingPrompt?: string;
   blindShareResponse: any;
   shardCertificate?: any;
@@ -71,6 +71,7 @@ let shardRequests: Array<{
   coordinatorNpub: string;
   voterNpub: string;
   voterId: string;
+  replyNpub: string;
   votingId: string;
   blindRequest: any;
   createdAt: string;
@@ -99,7 +100,7 @@ let followerSubscribers: Array<{
   }>) => void;
 }> = [];
 let shardResponseSubscribers: Array<{
-  voterNpub: string;
+  recipientNpubs: string[];
   onResponses: (responses: InternalResponse[]) => void;
 }> = [];
 let liveVoteSubscribers: Array<{
@@ -144,13 +145,14 @@ let shardRequestSubscribers: Array<{
     dmEventId: string;
     voterNpub: string;
     voterId: string;
+    replyNpub: string;
     votingId: string;
     blindRequest: any;
     createdAt: string;
   }>) => void;
 }> = [];
 let dmAcknowledgementSubscribers: Array<{
-  actorNpub: string;
+  actorNpubs: string[];
   onAcknowledgements: (acknowledgements: Array<{
     id: string;
     ackedAction: string;
@@ -169,6 +171,7 @@ let blindAnnouncementSubscribers: Array<{
   onAnnouncement: (announcement: any | null) => void;
 }> = [];
 let suppressedShardResponseNotifications = new Set<string>();
+const originalWebSocket = globalThis.WebSocket;
 
 function sha(input: string) {
   return createHash("sha256").update(input).digest("hex");
@@ -216,11 +219,13 @@ function notifyFollowerSubscribers(coordinatorNpub: string) {
   }
 }
 
-function notifyShardResponseSubscribers(voterNpub: string) {
-  const nextResponses = shardResponses.filter((response) => response.voterNpub === voterNpub);
+function notifyShardResponseSubscribers(recipientNpub: string) {
+  const nextResponses = shardResponses.filter((response) => response.recipientNpub === recipientNpub);
   for (const subscriber of shardResponseSubscribers) {
-    if (subscriber.voterNpub === voterNpub) {
-      subscriber.onResponses(nextResponses);
+    if (subscriber.recipientNpubs.includes(recipientNpub)) {
+      subscriber.onResponses(
+        shardResponses.filter((response) => subscriber.recipientNpubs.includes(response.recipientNpub)),
+      );
     }
   }
 }
@@ -309,6 +314,7 @@ function shardRequestsForCoordinator(coordinatorNpub: string) {
       dmEventId: `request-event-${index + 1}:${entry.blindRequest.requestId}`,
       voterNpub: entry.voterNpub,
       voterId: entry.voterId,
+      replyNpub: entry.replyNpub,
       votingId: entry.votingId,
       blindRequest: entry.blindRequest,
       createdAt: entry.createdAt,
@@ -352,7 +358,7 @@ function notifyDmAcknowledgementSubscribers(recipientNpub: string) {
       createdAt: entry.createdAt,
     }));
   for (const subscriber of dmAcknowledgementSubscribers) {
-    if (subscriber.actorNpub === recipientNpub) {
+    if (subscriber.actorNpubs.includes(recipientNpub)) {
       subscriber.onAcknowledgements(nextAcknowledgements);
     }
   }
@@ -360,6 +366,17 @@ function notifyDmAcknowledgementSubscribers(recipientNpub: string) {
 
 vi.mock("./SimpleQrScanner", () => ({
   default: () => null,
+}));
+
+vi.mock("./SimpleRelayPanel", () => ({
+  default: () => null,
+}));
+
+vi.mock("./nip65RelayHints", () => ({
+  primeNip65RelayHints: vi.fn(async () => undefined),
+  resolveNip65InboxRelays: vi.fn(async ({ fallbackRelays }: { fallbackRelays: string[] }) => fallbackRelays),
+  resolveNip65OutboxRelays: vi.fn(async ({ fallbackRelays }: { fallbackRelays: string[] }) => fallbackRelays),
+  resolveNip65ConversationRelays: vi.fn(async ({ fallbackRelays }: { fallbackRelays: string[] }) => fallbackRelays),
 }));
 
 vi.mock("./TokenFingerprint", () => ({
@@ -486,21 +503,45 @@ vi.mock("./simpleShardCertificate", () => ({
         }
       : null
   )),
+  verifySimplePublicShardProof: vi.fn(async (proof: any) => (
+    proof
+      ? {
+          coordinatorNpub: proof.coordinatorNpub,
+          votingId: proof.votingId,
+          tokenCommitment: proof.tokenCommitment,
+          shareIndex: proof.shareIndex,
+          publicKey: proof.keyAnnouncementEvent?.content?.public_key ?? { keyId: proof.keyAnnouncementEvent?.id ?? "blind-key" },
+          keyAnnouncement: {
+            coordinatorNpub: proof.coordinatorNpub,
+            votingId: proof.votingId,
+            publicKey: proof.keyAnnouncementEvent?.content?.public_key ?? { keyId: proof.keyAnnouncementEvent?.id ?? "blind-key" },
+            createdAt: proof.keyAnnouncementEvent?.created_at ?? new Date().toISOString(),
+            event: proof.keyAnnouncementEvent,
+          },
+          event: proof,
+        }
+      : null
+  )),
   deriveTokenIdFromSimplePublicShardProofs: vi.fn(async (proofs: any[]) => makeTokenId(proofs)),
 }));
 
 vi.mock("./simpleShardDm", () => ({
+  SIMPLE_DM_RELAYS: [
+    "wss://nip17.com",
+    "wss://nip17.tomdwyer.uk",
+    "wss://relay.nostr.band",
+    "wss://nos.lol",
+  ],
   sendSimpleCoordinatorFollow: vi.fn(async (input: {
     voterSecretKey: Uint8Array;
     coordinatorNpub: string;
     voterNpub: string;
-    voterId: string;
     votingId?: string;
   }) => {
     coordinatorFollowers.push({
       coordinatorNpub: input.coordinatorNpub,
       voterNpub: input.voterNpub,
-      voterId: input.voterId,
+      voterId: sha(input.voterNpub).slice(0, 7),
       votingId: input.votingId,
       createdAt: new Date().toISOString(),
     });
@@ -532,12 +573,11 @@ vi.mock("./simpleShardDm", () => ({
   sendSimpleSubCoordinatorJoin: vi.fn(async (input: {
     leadCoordinatorNpub: string;
     coordinatorNpub: string;
-    coordinatorId: string;
   }) => {
     subCoordinatorApplications.push({
       leadCoordinatorNpub: input.leadCoordinatorNpub,
       coordinatorNpub: input.coordinatorNpub,
-      coordinatorId: input.coordinatorId,
+      coordinatorId: sha(input.coordinatorNpub).slice(0, 7),
       createdAt: new Date().toISOString(),
     });
     notifySubCoordinatorApplicationSubscribers(input.leadCoordinatorNpub);
@@ -607,14 +647,15 @@ vi.mock("./simpleShardDm", () => ({
   sendSimpleShardRequest: vi.fn(async (input: {
     coordinatorNpub: string;
     voterNpub: string;
-    voterId: string;
+    replyNpub: string;
     votingId: string;
     blindRequest: any;
   }) => {
     shardRequests.push({
       coordinatorNpub: input.coordinatorNpub,
       voterNpub: input.voterNpub,
-      voterId: input.voterId,
+      voterId: sha(input.voterNpub).slice(0, 7),
+      replyNpub: input.replyNpub,
       votingId: input.votingId,
       blindRequest: input.blindRequest,
       createdAt: new Date().toISOString(),
@@ -629,6 +670,7 @@ vi.mock("./simpleShardDm", () => ({
       dmEventId: string;
       voterNpub: string;
       voterId: string;
+      replyNpub: string;
       votingId: string;
       blindRequest: any;
       createdAt: string;
@@ -649,13 +691,12 @@ vi.mock("./simpleShardDm", () => ({
     coordinatorSecretKey: Uint8Array;
     blindPrivateKey: any;
     keyAnnouncementEvent: any;
-    voterNpub: string;
-    voterId: string;
+    recipientNpub: string;
     coordinatorNpub: string;
-    coordinatorId: string;
     thresholdLabel: string;
     request: {
       id: string;
+      replyNpub: string;
       votingId: string;
       blindRequest: {
         requestId: string;
@@ -672,10 +713,10 @@ vi.mock("./simpleShardDm", () => ({
       dmEventId: `dm-response-${responseCounter}`,
       requestId: input.request.blindRequest.requestId,
       coordinatorNpub: input.coordinatorNpub,
-      coordinatorId: input.coordinatorId,
+      coordinatorId: sha(input.coordinatorNpub).slice(0, 7),
       thresholdLabel: input.thresholdLabel,
       createdAt: new Date().toISOString(),
-      voterNpub: input.voterNpub,
+      recipientNpub: input.recipientNpub,
       votingPrompt: input.votingPrompt,
       blindShareResponse: {
         shareId: responseId,
@@ -690,26 +731,29 @@ vi.mock("./simpleShardDm", () => ({
       },
     };
     shardResponses.push(nextResponse);
-    if (!suppressedShardResponseNotifications.has(input.voterNpub)) {
-      notifyShardResponseSubscribers(input.voterNpub);
+    if (
+      !suppressedShardResponseNotifications.has(input.recipientNpub)
+    ) {
+      notifyShardResponseSubscribers(input.recipientNpub);
     }
     return { responseId, eventId: `dm-response-${responseCounter}`, successes: 1, failures: 0, relayResults: [] };
   }),
-  fetchSimpleShardResponses: vi.fn(async (input: { voterNsec: string }) => {
-    const voterNpub = nsecToNpub(input.voterNsec);
-    return shardResponses.filter((response) => response.voterNpub === voterNpub);
+  fetchSimpleShardResponses: vi.fn(async (input: { voterNsec: string; voterNsecs?: string[] }) => {
+    const voterNpubs = [input.voterNsec, ...(input.voterNsecs ?? [])].map((value) => nsecToNpub(value) as string);
+    return shardResponses.filter((response) => voterNpubs.includes(response.recipientNpub));
   }),
   subscribeSimpleShardResponses: vi.fn((input: {
     voterNsec: string;
+    voterNsecs?: string[];
     onResponses: (responses: InternalResponse[]) => void;
   }) => {
-    const voterNpub = nsecToNpub(input.voterNsec);
+    const recipientNpubs = [input.voterNsec, ...(input.voterNsecs ?? [])].map((value) => nsecToNpub(value) as string);
     const subscriber = {
-      voterNpub,
+      recipientNpubs,
       onResponses: input.onResponses,
     };
     shardResponseSubscribers.push(subscriber);
-    input.onResponses(shardResponses.filter((response) => response.voterNpub === voterNpub));
+    input.onResponses(shardResponses.filter((response) => recipientNpubs.includes(response.recipientNpub)));
     return () => {
       shardResponseSubscribers = shardResponseSubscribers.filter((entry) => entry !== subscriber);
     };
@@ -719,7 +763,6 @@ vi.mock("./simpleShardDm", () => ({
     ackedAction: string;
     ackedEventId: string;
     actorNpub: string;
-    actorId?: string;
     votingId?: string;
     requestId?: string;
     responseId?: string;
@@ -729,7 +772,7 @@ vi.mock("./simpleShardDm", () => ({
       ackedAction: input.ackedAction,
       ackedEventId: input.ackedEventId,
       actorNpub: input.actorNpub,
-      actorId: input.actorId,
+      actorId: sha(input.actorNpub).slice(0, 7),
       votingId: input.votingId,
       requestId: input.requestId,
       responseId: input.responseId,
@@ -740,6 +783,7 @@ vi.mock("./simpleShardDm", () => ({
   }),
   subscribeSimpleDmAcknowledgements: vi.fn((input: {
     actorNsec: string;
+    actorNsecs?: string[];
     onAcknowledgements: (acknowledgements: Array<{
       id: string;
       ackedAction: string;
@@ -752,13 +796,15 @@ vi.mock("./simpleShardDm", () => ({
       createdAt: string;
     }>) => void;
   }) => {
-    const actorNpub = nsecToNpub(input.actorNsec);
+    const actorNpubs = [input.actorNsec, ...(input.actorNsecs ?? [])].map((value) => nsecToNpub(value));
     const subscriber = {
-      actorNpub,
+      actorNpubs,
       onAcknowledgements: input.onAcknowledgements,
     };
     dmAcknowledgementSubscribers.push(subscriber);
-    notifyDmAcknowledgementSubscribers(actorNpub);
+    for (const actorNpub of actorNpubs) {
+      notifyDmAcknowledgementSubscribers(actorNpub);
+    }
     return () => {
       dmAcknowledgementSubscribers = dmAcknowledgementSubscribers.filter((entry) => entry !== subscriber);
     };
@@ -766,6 +812,12 @@ vi.mock("./simpleShardDm", () => ({
 }));
 
 vi.mock("./simpleVotingSession", () => ({
+  SIMPLE_PUBLIC_RELAYS: [
+    "wss://nos.lol",
+    "wss://relay.snort.social",
+    "wss://relay.nostr.band",
+    "wss://relay.damus.io",
+  ],
   publishSimpleLiveVote: vi.fn(async (input: {
     coordinatorNsec: string;
     prompt: string;
@@ -886,6 +938,29 @@ vi.mock("./simpleVotingSession", () => ({
 
 describe("Simple round flow", () => {
   beforeEach(async () => {
+    class MockWebSocket extends EventTarget {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSING = 2;
+      static readonly CLOSED = 3;
+      readonly url: string;
+      readyState = MockWebSocket.OPEN;
+
+      constructor(url: string | URL) {
+        super();
+        this.url = String(url);
+        queueMicrotask(() => {
+          this.dispatchEvent(new Event("open"));
+        });
+      }
+
+      close() {
+        this.readyState = MockWebSocket.CLOSED;
+        this.dispatchEvent(new Event("close"));
+      }
+    }
+
+    globalThis.WebSocket = MockWebSocket as unknown as typeof WebSocket;
     responseCounter = 0;
     voteCounter = 0;
     liveVotes = [{
@@ -895,6 +970,7 @@ describe("Simple round flow", () => {
       createdAt: "2026-03-31T11:00:00.000Z",
       thresholdT: 1,
       thresholdN: 1,
+      authorizedCoordinatorNpubs: [secretToNpub(new Uint8Array(32).fill(7))],
       eventId: "live-old",
     }];
     shardResponses = [];
@@ -921,6 +997,7 @@ describe("Simple round flow", () => {
   });
 
   afterEach(async () => {
+    globalThis.WebSocket = originalWebSocket;
     cleanup();
     vi.useRealTimers();
     window.sessionStorage.clear();
@@ -959,8 +1036,16 @@ describe("Simple round flow", () => {
       expect(voterUi.getByText("Identity restored from nsec.")).toBeTruthy();
       expect(coordinatorUi.getByText("Identity restored from nsec.")).toBeTruthy();
       expect(voter.container.querySelectorAll("code.simple-identity-code")[0]?.textContent).toBe(voterNpub);
-      expect(voter.container.querySelectorAll("code.simple-identity-code")[1]?.textContent).toBe(voterNsec);
+      expect(voter.container.querySelectorAll("code.simple-identity-code")[1]?.textContent).toBe("Hidden");
       expect(coordinator.container.querySelectorAll("code.simple-identity-code")[0]?.textContent).toBe(coordinatorNpub);
+      expect(coordinator.container.querySelectorAll("code.simple-identity-code")[1]?.textContent).toBe("Hidden");
+    });
+
+    await user.click(voterUi.getByRole("button", { name: "Click to reveal" }));
+    await user.click(coordinatorUi.getByRole("button", { name: "Click to reveal" }));
+
+    await waitFor(() => {
+      expect(voter.container.querySelectorAll("code.simple-identity-code")[1]?.textContent).toBe(voterNsec);
       expect(coordinator.container.querySelectorAll("code.simple-identity-code")[1]?.textContent).toBe(coordinatorNsec);
     });
   });
@@ -1359,7 +1444,11 @@ describe("Simple round flow", () => {
     await user.click(coordinatorUi.getByRole("button", { name: /Send ticket/i }));
 
     await waitFor(() => {
-      expect(voterUi.getByText(/Waiting for ticket\./i)).toBeTruthy();
+      const bodyText = voter.container.textContent ?? "";
+      expect(
+        /Waiting for ticket\./i.test(bodyText)
+        || /Tickets ready: 1 of 1/i.test(bodyText),
+      ).toBe(true);
     });
 
     await new Promise((resolve) => window.setTimeout(resolve, 5200));

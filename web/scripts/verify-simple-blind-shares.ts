@@ -10,9 +10,9 @@ import {
   generateSimpleBlindKeyPair,
   parseSimpleBlindKeyAnnouncement,
   toSimplePublicShardProof,
-  parseSimpleShardCertificate,
   toSimpleBlindPublicKey,
   unblindSimpleBlindShare,
+  verifySimpleShardCertificate,
 } from "../src/simpleShardCertificate";
 
 const webcrypto = nodeCrypto.webcrypto as unknown as Crypto;
@@ -76,7 +76,7 @@ async function main() {
     webCrypto: webcrypto,
   });
 
-  const responseOne = createSimpleBlindShareResponse({
+  const responseOne = await createSimpleBlindShareResponse({
     privateKey: keyOne,
     keyAnnouncementEvent: announcementOne,
     coordinatorNpub: coordinatorOneNpub,
@@ -86,7 +86,7 @@ async function main() {
     thresholdN: 2,
     webCrypto: webcrypto,
   });
-  const responseTwo = createSimpleBlindShareResponse({
+  const responseTwo = await createSimpleBlindShareResponse({
     privateKey: keyTwo,
     keyAnnouncementEvent: makeAnnouncementEvent(keyTwo, coordinatorTwoSecret, votingId),
     coordinatorNpub: coordinatorTwoNpub,
@@ -97,16 +97,16 @@ async function main() {
     webCrypto: webcrypto,
   });
 
-  const shareOne = unblindSimpleBlindShare({
+  const shareOne = await unblindSimpleBlindShare({
     response: responseOne,
     secret: requestOne.secret,
   });
-  const shareTwo = unblindSimpleBlindShare({
+  const shareTwo = await unblindSimpleBlindShare({
     response: responseTwo,
     secret: requestTwo.secret,
   });
 
-  const parsedShare = parseSimpleShardCertificate(shareOne, coordinatorOneNpub);
+  const parsedShare = await verifySimpleShardCertificate(shareOne, coordinatorOneNpub);
   assert(parsedShare, "expected blind share to validate");
   assert.equal(parsedShare.votingId, votingId);
   assert.equal(parsedShare.thresholdT, 2);
@@ -123,7 +123,7 @@ async function main() {
     votingId,
     webCrypto: webcrypto,
   });
-  const wrongResponse = createSimpleBlindShareResponse({
+  const wrongResponse = await createSimpleBlindShareResponse({
     privateKey: keyOne,
     keyAnnouncementEvent: announcementOne,
     coordinatorNpub: coordinatorOneNpub,
@@ -132,7 +132,7 @@ async function main() {
     webCrypto: webcrypto,
   });
 
-  assert.throws(() => unblindSimpleBlindShare({
+  await assert.rejects(async () => unblindSimpleBlindShare({
     response: wrongResponse,
     secret: wrongRequest.secret,
   }), /wrong public key/i);
@@ -143,14 +143,14 @@ async function main() {
     tokenMessage: `${votingId}:different-token`,
     webCrypto: webcrypto,
   });
-  const mismatchedShare = unblindSimpleBlindShare({
-    response: createSimpleBlindShareResponse({
+  const mismatchedShare = await unblindSimpleBlindShare({
+    response: await createSimpleBlindShareResponse({
       privateKey: keyTwo,
       keyAnnouncementEvent: makeAnnouncementEvent(keyTwo, coordinatorTwoSecret, votingId),
       coordinatorNpub: coordinatorTwoNpub,
       request: mismatchedRequest.request,
       shareIndex: 2,
-    webCrypto: webcrypto,
+      webCrypto: webcrypto,
     }),
     secret: mismatchedRequest.secret,
   });
