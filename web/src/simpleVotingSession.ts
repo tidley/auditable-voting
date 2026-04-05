@@ -9,8 +9,10 @@ import {
   type SimpleShardCertificate,
   type SimplePublicShardProof,
 } from "./simpleShardCertificate";
+import { sortRecordsByCreatedAtDescRust } from "./wasm/auditableVotingCore";
 
 export const SIMPLE_PUBLIC_RELAYS = [
+  "wss://strfry.bitsbytom.com",
   "wss://nos.lol",
   "wss://relay.primal.net",
   "wss://relay.snort.social",
@@ -59,7 +61,7 @@ function buildPublicRelays(relays?: string[]) {
 }
 
 function sortByCreatedAtDescending<T extends { createdAt: string }>(values: T[]) {
-  return [...values].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  return sortRecordsByCreatedAtDescRust(values);
 }
 
 function parseSimpleLiveVoteEvent(

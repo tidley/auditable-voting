@@ -4,10 +4,12 @@ export default function SimpleCollapsibleSection({
   title,
   children,
   defaultCollapsed = false,
+  renderWhenExpanded = false,
 }: {
   title: string;
   children: ReactNode;
   defaultCollapsed?: boolean;
+  renderWhenExpanded?: boolean;
 }) {
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
   const titleId = useId();
@@ -32,7 +34,7 @@ export default function SimpleCollapsibleSection({
       </div>
       <div id={bodyId} className="simple-collapsible-body">
         <div className="simple-collapsible-body-inner">
-          {children}
+          {!renderWhenExpanded || !collapsed ? children : null}
         </div>
       </div>
     </section>

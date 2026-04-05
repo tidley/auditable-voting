@@ -11,13 +11,10 @@ import {
   validateSimpleSubmittedVotes,
   type SimpleValidatedVote,
 } from "./simpleVoteValidation";
+import { sortRecordsByCreatedAtDescRust } from "./wasm/auditableVotingCore";
 
 function shortVotingId(votingId: string) {
   return votingId.slice(0, 12);
-}
-
-function byCreatedAtDescending<T extends { createdAt: string }>(values: T[]) {
-  return [...values].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
 export default function SimpleAuditorApp() {
@@ -48,7 +45,7 @@ export default function SimpleAuditorApp() {
               merged.set(round.votingId, round);
             }
           }
-          return byCreatedAtDescending([...merged.values()]);
+          return sortRecordsByCreatedAtDescRust([...merged.values()]);
         });
         setRefreshStatus(rounds.length > 0 ? "Rounds refreshed from Nostr." : "No public rounds discovered yet.");
       } catch {
@@ -125,7 +122,7 @@ export default function SimpleAuditorApp() {
     setRefreshStatus("Refreshing public rounds...");
     try {
       const rounds = await fetchSimpleLiveVotes();
-      setDiscoveredRounds(byCreatedAtDescending(rounds));
+      setDiscoveredRounds(sortRecordsByCreatedAtDescRust(rounds));
       setRefreshStatus(rounds.length > 0 ? "Rounds refreshed from Nostr." : "No public rounds discovered yet.");
     } catch {
       setRefreshStatus("Failed to refresh public rounds.");

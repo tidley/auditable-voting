@@ -12,14 +12,15 @@ import {
   type SimpleBlindShareResponse,
   type SimpleShardCertificate,
 } from "./simpleShardCertificate";
+import { sortRecordsByCreatedAtDescRust } from "./wasm/auditableVotingCore";
 
 export const SIMPLE_DM_RELAYS = [
   'wss://nip17.tomdwyer.uk',
+  'wss://strfry.bitsbytom.com',
   'wss://nos.lol',
   'wss://nip17.com',
   'wss://auth.nostr1.com',
   'wss://relay.0xchat.com',
-  'wss://inbox.nostr.wine',
   'wss://relay.primal.net',
   'wss://relay.snort.social',
   'wss://relay.nostr.bg',
@@ -155,7 +156,7 @@ function getNpubFromNsec(nsec: string, actorLabel: string) {
 }
 
 function sortByCreatedAtDescending<T extends { createdAt: string }>(values: T[]) {
-  return [...values].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  return sortRecordsByCreatedAtDescRust(values);
 }
 
 function uniqueNonEmpty(values: Array<string | undefined>) {
