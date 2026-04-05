@@ -4,13 +4,13 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build:wasm": "cd rust-core && wasm-pack build --target bundler --out-dir ../src/wasm/auditable_voting_core/pkg",
-    "predev": "npm run build:wasm",
-    "prebuild": "npm run build:wasm",
-    "pretest": "npm run build:wasm",
-    "pretest:watch": "npm run build:wasm",
-    "preverify:simple-blind-shares": "npm run build:wasm",
-    "pretest:live-relays": "npm run build:wasm",
+    "build:wasm": "cd rust-core && wasm-pack build --mode no-install --target bundler --out-dir ../src/wasm/auditable_voting_core/pkg",
+    "predev": "node scripts/ensure-wasm-artifacts.mjs",
+    "prebuild": "node scripts/ensure-wasm-artifacts.mjs",
+    "pretest": "node scripts/ensure-wasm-artifacts.mjs",
+    "pretest:watch": "node scripts/ensure-wasm-artifacts.mjs",
+    "preverify:simple-blind-shares": "node scripts/ensure-wasm-artifacts.mjs",
+    "pretest:live-relays": "node scripts/ensure-wasm-artifacts.mjs",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0 --port 5173",
@@ -43,7 +43,6 @@
     "tsx": "^4.20.6",
     "typescript": "^5.4.0",
     "vite": "^5.0.0",
-    "vite-plugin-wasm": "^3.6.0",
     "vitest": "^4.1.0"
   }
 }
