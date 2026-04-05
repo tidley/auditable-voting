@@ -20,10 +20,14 @@ import {
   subscribeSimpleLiveVotes,
   subscribeSimpleSubmittedVotes,
   publishSimpleLiveVote,
+  SIMPLE_PUBLIC_RELAYS,
   type SimpleLiveVoteSession,
   type SimpleSubmittedVote,
 } from "./simpleVotingSession";
-import { validateSimpleSubmittedVotes } from "./simpleVoteValidation";
+import {
+  validateSimpleSubmittedVotes,
+  type SimpleValidatedVote,
+} from "./simpleVoteValidation";
 import { sha256Hex } from "./tokenIdentity";
 import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
@@ -31,6 +35,7 @@ import SimpleQrScanner from "./SimpleQrScanner";
 import SimpleUnlockGate from "./SimpleUnlockGate";
 import TokenFingerprint from "./TokenFingerprint";
 import { extractNpubFromScan } from "./npubScan";
+import { primeNip65RelayHints } from "./nip65RelayHints";
 import {
   generateSimpleBlindKeyPair,
   publishSimpleBlindKeyAnnouncement,
@@ -190,6 +195,7 @@ export default function SimpleCoordinatorApp() {
   const [selectedSubmittedVotingId, setSelectedSubmittedVotingId] =
     useState('');
   const [submittedVotes, setSubmittedVotes] = useState<SimpleSubmittedVote[]>([]);
+  const [validatedVotes, setValidatedVotes] = useState<SimpleValidatedVote[]>([]);
   const isLeadCoordinator = !leadCoordinatorNpub.trim() || leadCoordinatorNpub.trim() === (keypair?.npub ?? "");
   const activeShareIndex = isLeadCoordinator ? 1 : (Number.parseInt(questionShareIndex, 10) || 0);
   const hasAssignedShareIndex = !isLeadCoordinator && activeShareIndex > 0;
@@ -1264,11 +1270,28 @@ export default function SimpleCoordinatorApp() {
     1,
     selectedSubmittedVote?.thresholdT ?? 1,
   );
-  const validatedVotes = validateSimpleSubmittedVotes(
-    submittedVotes,
-    requiredShardCount,
-    selectedSubmittedVote?.authorizedCoordinatorNpubs ?? [],
-  );
+  useEffect(() => {
+    let cancelled = false;
+
+    void validateSimpleSubmittedVotes(
+      submittedVotes,
+      requiredShardCount,
+      selectedSubmittedVote?.authorizedCoordinatorNpubs ?? [],
+    ).then((nextValidatedVotes) => {
+      if (!cancelled) {
+        setValidatedVotes(nextValidatedVotes);
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setValidatedVotes([]);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [requiredShardCount, selectedSubmittedVote?.authorizedCoordinatorNpubs, submittedVotes]);
+
   const validYesCount = validatedVotes.filter((entry) => entry.valid && entry.vote.choice === "Yes").length;
   const validNoCount = validatedVotes.filter((entry) => entry.valid && entry.vote.choice === "No").length;
   const visibleFollowers = activeVotingId
@@ -1306,6 +1329,19 @@ export default function SimpleCoordinatorApp() {
 
     return () => window.clearInterval(intervalId);
   }, [dmAcknowledgements, selectedPublishedVote, ticketDeliveries, visibleFollowers]);
+
+  useEffect(() => {
+    const knownParticipants = sortCoordinatorRoster([
+      leadCoordinatorNpub,
+      ...followers.map((follower) => follower.voterNpub),
+      ...subCoordinators.map((application) => application.coordinatorNpub),
+    ]);
+    if (knownParticipants.length === 0) {
+      return;
+    }
+
+    void primeNip65RelayHints(knownParticipants, SIMPLE_PUBLIC_RELAYS);
+  }, [followers, leadCoordinatorNpub, subCoordinators]);
 
   if (storageLocked && !identityReady) {
     return (

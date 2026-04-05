@@ -12,9 +12,15 @@ import {
 
 export const SIMPLE_PUBLIC_RELAYS = [
   "wss://nos.lol",
+  "wss://relay.primal.net",
   "wss://relay.snort.social",
+  "wss://relay.nostr.bg",
+  "wss://nostr.mom",
+  "wss://eden.nostr.land",
+  "wss://relay.nostr.wine",
+  "wss://relay.plebstr.com",
+  "wss://purplepag.es",
   "wss://relay.nostr.band",
-  "wss://relay.damus.io",
 ];
 
 export const SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS = 1500;

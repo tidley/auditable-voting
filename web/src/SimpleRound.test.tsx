@@ -171,6 +171,7 @@ let blindAnnouncementSubscribers: Array<{
   onAnnouncement: (announcement: any | null) => void;
 }> = [];
 let suppressedShardResponseNotifications = new Set<string>();
+const originalWebSocket = globalThis.WebSocket;
 
 function sha(input: string) {
   return createHash("sha256").update(input).digest("hex");
@@ -367,6 +368,17 @@ vi.mock("./SimpleQrScanner", () => ({
   default: () => null,
 }));
 
+vi.mock("./SimpleRelayPanel", () => ({
+  default: () => null,
+}));
+
+vi.mock("./nip65RelayHints", () => ({
+  primeNip65RelayHints: vi.fn(async () => undefined),
+  resolveNip65InboxRelays: vi.fn(async ({ fallbackRelays }: { fallbackRelays: string[] }) => fallbackRelays),
+  resolveNip65OutboxRelays: vi.fn(async ({ fallbackRelays }: { fallbackRelays: string[] }) => fallbackRelays),
+  resolveNip65ConversationRelays: vi.fn(async ({ fallbackRelays }: { fallbackRelays: string[] }) => fallbackRelays),
+}));
+
 vi.mock("./TokenFingerprint", () => ({
   default: ({ tokenId }: { tokenId: string }) => <div data-testid="token-fingerprint">{tokenId}</div>,
 }));
@@ -473,6 +485,25 @@ vi.mock("./simpleShardCertificate", () => ({
       : null
   )),
   parseSimplePublicShardProof: vi.fn((proof: any) => (
+    proof
+      ? {
+          coordinatorNpub: proof.coordinatorNpub,
+          votingId: proof.votingId,
+          tokenCommitment: proof.tokenCommitment,
+          shareIndex: proof.shareIndex,
+          publicKey: proof.keyAnnouncementEvent?.content?.public_key ?? { keyId: proof.keyAnnouncementEvent?.id ?? "blind-key" },
+          keyAnnouncement: {
+            coordinatorNpub: proof.coordinatorNpub,
+            votingId: proof.votingId,
+            publicKey: proof.keyAnnouncementEvent?.content?.public_key ?? { keyId: proof.keyAnnouncementEvent?.id ?? "blind-key" },
+            createdAt: proof.keyAnnouncementEvent?.created_at ?? new Date().toISOString(),
+            event: proof.keyAnnouncementEvent,
+          },
+          event: proof,
+        }
+      : null
+  )),
+  verifySimplePublicShardProof: vi.fn(async (proof: any) => (
     proof
       ? {
           coordinatorNpub: proof.coordinatorNpub,
@@ -907,6 +938,29 @@ vi.mock("./simpleVotingSession", () => ({
 
 describe("Simple round flow", () => {
   beforeEach(async () => {
+    class MockWebSocket extends EventTarget {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSING = 2;
+      static readonly CLOSED = 3;
+      readonly url: string;
+      readyState = MockWebSocket.OPEN;
+
+      constructor(url: string | URL) {
+        super();
+        this.url = String(url);
+        queueMicrotask(() => {
+          this.dispatchEvent(new Event("open"));
+        });
+      }
+
+      close() {
+        this.readyState = MockWebSocket.CLOSED;
+        this.dispatchEvent(new Event("close"));
+      }
+    }
+
+    globalThis.WebSocket = MockWebSocket as unknown as typeof WebSocket;
     responseCounter = 0;
     voteCounter = 0;
     liveVotes = [{
@@ -943,6 +997,7 @@ describe("Simple round flow", () => {
   });
 
   afterEach(async () => {
+    globalThis.WebSocket = originalWebSocket;
     cleanup();
     vi.useRealTimers();
     window.sessionStorage.clear();

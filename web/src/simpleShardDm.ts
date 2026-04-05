@@ -14,10 +14,17 @@ import {
 } from "./simpleShardCertificate";
 
 export const SIMPLE_DM_RELAYS = [
-  'wss://nip17.com',
   'wss://nip17.tomdwyer.uk',
-  'wss://relay.nostr.band',
   'wss://nos.lol',
+  'wss://nip17.com',
+  'wss://auth.nostr1.com',
+  'wss://relay.0xchat.com',
+  'wss://inbox.nostr.wine',
+  'wss://relay.primal.net',
+  'wss://relay.snort.social',
+  'wss://relay.nostr.bg',
+  'wss://nostr.mom',
+  'wss://relay.nostr.band',
 ];
 
 const SIMPLE_DM_PUBLISH_MAX_WAIT_MS = 1500;
@@ -1231,7 +1238,7 @@ export async function sendSimpleShardResponse(input: {
     input.coordinatorNpub,
     input.relays,
   );
-  const blindShareResponse = createSimpleBlindShareResponse({
+  const blindShareResponse = await createSimpleBlindShareResponse({
     privateKey: input.blindPrivateKey,
     keyAnnouncementEvent: input.keyAnnouncementEvent,
     coordinatorNpub: input.coordinatorNpub,
@@ -1315,7 +1322,7 @@ export async function sendSimpleRoundTicket(input: {
     input.coordinatorNpub,
     input.relays,
   );
-  const blindShareResponse = createSimpleBlindShareResponse({
+  const blindShareResponse = await createSimpleBlindShareResponse({
     privateKey: input.blindPrivateKey,
     keyAnnouncementEvent: input.keyAnnouncementEvent,
     coordinatorNpub: input.coordinatorNpub,

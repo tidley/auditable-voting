@@ -8,6 +8,7 @@ import SimpleQrScanner from "./SimpleQrScanner";
 import SimpleUnlockGate from "./SimpleUnlockGate";
 import TokenFingerprint from "./TokenFingerprint";
 import { extractNpubFromScan } from "./npubScan";
+import { primeNip65RelayHints } from "./nip65RelayHints";
 import {
   deriveTokenIdFromSimplePublicShardProofs,
   createSimpleBlindIssuanceRequest,
@@ -30,6 +31,7 @@ import {
 } from "./simpleShardDm";
 import {
   publishSimpleSubmittedVote,
+  SIMPLE_PUBLIC_RELAYS,
   subscribeLatestSimpleLiveVote,
   type SimpleLiveVoteSession,
 } from "./simpleVotingSession";
@@ -140,9 +142,9 @@ function equalReceivedShards(
   });
 }
 
-function createRoundTokenMessage(votingId: string, voterNpub: string) {
+function createRoundTokenMessage(votingId: string) {
   const randomPart = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  return `${votingId}:${voterNpub}:${randomPart}`;
+  return `${votingId}:${randomPart}`;
 }
 
 function makeRoundBlindKeyId(coordinatorNpub: string, votingId: string) {
@@ -188,8 +190,8 @@ export default function SimpleUiApp() {
     }, storagePassphrase ? { passphrase: storagePassphrase } : undefined);
   }
 
-  function reconcileIncomingShardResponses(nextResponses: SimpleShardResponse[]) {
-    const nextIssuedShares = nextResponses.flatMap((response) => {
+  async function reconcileIncomingShardResponses(nextResponses: SimpleShardResponse[]) {
+    const nextIssuedShares = (await Promise.all(nextResponses.map(async (response) => {
       const existingShare = response.shardCertificate;
       if (existingShare) {
         return [response];
@@ -202,7 +204,7 @@ export default function SimpleUiApp() {
       }
 
       try {
-        const shardCertificate = unblindSimpleBlindShare({
+        const shardCertificate = await unblindSimpleBlindShare({
           response: response.blindShareResponse,
           secret: pending.secret,
         });
@@ -210,7 +212,7 @@ export default function SimpleUiApp() {
       } catch {
         return [];
       }
-    });
+    }))).flat();
 
     setReceivedShards((current) => (
       equalReceivedShards(current, nextIssuedShares) ? current : nextIssuedShares
@@ -387,7 +389,9 @@ export default function SimpleUiApp() {
     return subscribeSimpleShardResponses({
       voterNsec,
       voterNsecs: Object.values(roundReplyKeypairs).map((keypair) => keypair.nsec),
-      onResponses: reconcileIncomingShardResponses,
+      onResponses: (responses) => {
+        void reconcileIncomingShardResponses(responses);
+      },
     });
   }, [configuredCoordinatorTargets.length, pendingBlindRequests, roundReplyKeypairs, voterKeypair?.nsec]);
 
@@ -414,7 +418,7 @@ export default function SimpleUiApp() {
         voterNsecs: Object.values(roundReplyKeypairs).map((keypair) => keypair.nsec),
       }).then((nextResponses) => {
         if (!cancelled) {
-          reconcileIncomingShardResponses(nextResponses);
+          void reconcileIncomingShardResponses(nextResponses);
         }
       }).catch(() => undefined);
     };
@@ -461,6 +465,18 @@ export default function SimpleUiApp() {
       }
     };
   }, [configuredCoordinatorTargets]);
+
+  useEffect(() => {
+    const knownParticipants = [
+      ...configuredCoordinatorTargets,
+      ...Object.values(roundReplyKeypairs).map((keypair) => keypair.npub),
+    ];
+    if (knownParticipants.length === 0) {
+      return;
+    }
+
+    void primeNip65RelayHints(knownParticipants, SIMPLE_PUBLIC_RELAYS);
+  }, [configuredCoordinatorTargets, roundReplyKeypairs]);
 
   useEffect(() => {
     if (configuredCoordinatorTargets.length === 0 || knownRoundVotingIds.length === 0) {
@@ -971,7 +987,7 @@ export default function SimpleUiApp() {
           const parsed = response.shardCertificate ? parseSimpleShardCertificate(response.shardCertificate) : null;
           return parsed?.votingId === round.votingId;
         })?.shardCertificate?.tokenMessage
-        ?? createRoundTokenMessage(round.votingId, voterNpub);
+        ?? createRoundTokenMessage(round.votingId);
       const replyKeypair = roundReplyKeypairs[round.votingId] ?? createSimpleVoterKeypair();
 
       const createdEntries = await Promise.all(coordinatorsToRequest.map(async (coordinatorNpub) => {

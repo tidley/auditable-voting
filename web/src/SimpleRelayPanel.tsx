@@ -111,7 +111,7 @@ export default function SimpleRelayPanel() {
   return (
     <SimpleCollapsibleSection title="Relays" defaultCollapsed>
       <p className="simple-voter-note">
-        Public round traffic uses the public relay set plus NIP-65 outbox hints. Private issuance DMs use the default DM relays plus sender outbox and recipient inbox hints. Relay health is probed locally over WebSocket, similar to Pushstr’s lightweight relay check.
+        Public round traffic uses the public relay set plus NIP-65 outbox hints. Private issuance DMs use the default DM relays plus sender outbox and recipient inbox hints. The default sets are now biased towards the healthier relays also favoured in the local Pushstr repo, and relay health is probed locally over WebSocket in the same lightweight style.
       </p>
       <RelayProbeList title="Public relays" relays={publicRelays} />
       <RelayProbeList title="DM relays" relays={dmRelays} />
