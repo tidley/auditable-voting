@@ -582,30 +582,30 @@ code {
 }
 
 .simple-voter-page {
-  border-top: 10px solid #4da3ff;
+  border-top: 8px solid #4da3ff;
   background: #0f172a;
   color: #f8fafc;
-  padding: 32px;
-  box-shadow: 0 20px 48px rgba(2, 6, 23, 0.5);
+  padding: 26px;
+  box-shadow: 0 18px 40px rgba(2, 6, 23, 0.45);
 }
 
 .simple-voter-tabs {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 28px;
-  padding-bottom: 12px;
+  gap: 10px;
+  margin-bottom: 22px;
+  padding-bottom: 10px;
   border-bottom: 1px solid #334155;
 }
 
 .simple-voter-tab {
-  min-height: 56px;
+  min-height: 48px;
   border: 0;
   border-bottom: 3px solid transparent;
   background: transparent;
   color: #94a3b8;
   font: inherit;
-  font-size: 1.2rem;
+  font-size: 1.05rem;
   font-weight: 700;
   cursor: pointer;
   transition: color 180ms ease, border-color 180ms ease, background 180ms ease;
@@ -623,7 +623,7 @@ code {
 
 .simple-voter-tab-panel {
   display: grid;
-  gap: 24px;
+  gap: 18px;
 }
 
 .simple-voter-title,
@@ -635,16 +635,16 @@ code {
 }
 
 .simple-voter-title {
-  font-size: clamp(2rem, 4vw, 3rem);
-  margin-bottom: 28px;
+  font-size: clamp(1.9rem, 3.7vw, 2.7rem);
+  margin-bottom: 22px;
 }
 
 .simple-voter-header-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 28px;
+  gap: 12px;
+  margin-bottom: 22px;
 }
 
 .simple-voter-header-row .simple-voter-title {
@@ -652,7 +652,7 @@ code {
 }
 
 .simple-voter-action-row {
-  margin-bottom: 28px;
+  margin-bottom: 22px;
 }
 
 .simple-voter-action-row-inline {
@@ -662,13 +662,13 @@ code {
 }
 
 .simple-voter-action-row-tight {
-  margin-top: 18px;
+  margin-top: 14px;
   margin-bottom: 0;
 }
 
 .simple-voter-primary {
-  min-width: 220px;
-  padding: 14px 18px;
+  min-width: 0;
+  padding: 12px 16px;
   border: 0;
   background: #2563eb;
   color: #f8fafc;
@@ -679,6 +679,12 @@ code {
 
 .simple-voter-primary-wide {
   width: 100%;
+}
+
+.simple-voter-header-row .simple-voter-primary {
+  flex: 0 0 auto;
+  min-width: 84px;
+  padding: 10px 14px;
 }
 
 .simple-voter-primary:hover {
@@ -693,7 +699,7 @@ code {
 
 .simple-voter-secondary {
   align-self: flex-start;
-  padding: 10px 14px;
+  padding: 9px 12px;
   border: 1px solid #475569;
   background: #0f172a;
   color: #cbd5e1;
@@ -777,8 +783,8 @@ code {
 .simple-voter-list-item,
 .simple-voter-empty,
 .simple-voter-question {
-  font-size: 1.125rem;
-  line-height: 1.5;
+  font-size: 1.05rem;
+  line-height: 1.45;
 }
 
 .simple-voter-list-item {
@@ -792,15 +798,15 @@ code {
 
 .simple-voter-note {
   margin: 0;
-  font-size: 1rem;
-  line-height: 1.5;
+  font-size: 0.96rem;
+  line-height: 1.45;
   color: #7dd3fc;
 }
 
 .simple-delivery-diagnostics {
   display: grid;
-  gap: 6px;
-  margin: 12px 0 0;
+  gap: 5px;
+  margin: 10px 0 0;
   padding-left: 18px;
 }
 
@@ -809,8 +815,8 @@ code {
 }
 
 .simple-delivery-diagnostics li {
-  font-size: 0.95rem;
-  line-height: 1.45;
+  font-size: 0.92rem;
+  line-height: 1.4;
 }
 
 .simple-delivery-ok {
@@ -827,8 +833,8 @@ code {
 
 .simple-voter-label {
   display: block;
-  margin-bottom: 10px;
-  font-size: 1rem;
+  margin-bottom: 8px;
+  font-size: 0.96rem;
   font-weight: 700;
 }
 
@@ -839,8 +845,8 @@ code {
 .simple-voter-textarea {
   width: 100%;
   min-height: 96px;
-  margin-bottom: 16px;
-  padding: 12px 14px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
   border: 1px solid #475569;
   background: #0f172a;
   color: #f8fafc;
@@ -853,8 +859,8 @@ code {
 
 .simple-voter-input {
   width: 100%;
-  margin-bottom: 16px;
-  padding: 12px 14px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
   border: 1px solid #475569;
   background: #0f172a;
   color: #f8fafc;
@@ -900,8 +906,8 @@ code {
 
 .simple-voter-field-stack {
   display: grid;
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: 10px;
+  margin-bottom: 12px;
 }
 
 .simple-voter-field-stack-tight {
@@ -1060,15 +1066,49 @@ code {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+  gap: 14px;
+}
+
+.simple-follower-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: 18px;
+}
+
+.simple-follower-row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.simple-follower-row-controls {
+  display: grid;
+  justify-items: end;
+  gap: 10px;
+  min-width: 152px;
+}
+
+.simple-follower-auto-send {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #cbd5e1;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.simple-follower-auto-send input {
+  width: 16px;
+  height: 16px;
+  accent-color: #2563eb;
 }
 
 .simple-vote-card {
   display: grid;
-  gap: 14px;
-  padding: 24px;
+  gap: 10px;
+  padding: 18px;
   border: 1px solid #334155;
-  border-radius: 18px;
+  border-radius: 14px;
   background: #182238;
   box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.08);
 }
@@ -1088,15 +1128,15 @@ code {
 
 .simple-vote-card-title {
   margin: 0;
-  font-size: clamp(2rem, 4vw, 3rem);
+  font-size: clamp(1.85rem, 3.8vw, 2.7rem);
   line-height: 1.12;
   font-weight: 700;
 }
 
 .simple-vote-card-meta {
   color: #cbd5e1;
-  font-size: 1.15rem;
-  line-height: 1.5;
+  font-size: 1rem;
+  line-height: 1.4;
 }
 
 .simple-vote-card-meta-compact {
@@ -1108,7 +1148,7 @@ code {
 .simple-vote-button-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
+  gap: 12px;
 }
 
 .simple-vote-entry-copy {
@@ -1319,14 +1359,14 @@ code {
 }
 
 .simple-voter-choice {
-  min-width: 120px;
-  min-height: 92px;
-  padding: 16px 18px;
+  min-width: 0;
+  min-height: 72px;
+  padding: 12px 14px;
   border: 1px solid #64748b;
   background: #0f172a;
   color: #f8fafc;
   font: inherit;
-  font-size: 2rem;
+  font-size: 1.55rem;
   font-weight: 700;
   cursor: pointer;
 }
@@ -1358,22 +1398,22 @@ code {
 }
 
 .simple-vote-submit {
-  min-height: 64px;
-  font-size: 1.35rem;
+  min-height: 56px;
+  font-size: 1.2rem;
 }
 
 .simple-vote-status-card {
   display: grid;
-  gap: 18px;
-  padding: 24px;
+  gap: 14px;
+  padding: 18px;
   border: 1px solid #334155;
-  border-radius: 18px;
+  border-radius: 14px;
   background: #131d31;
 }
 
 .simple-vote-status-title {
   margin: 0;
-  font-size: 2rem;
+  font-size: 1.7rem;
   line-height: 1.1;
   font-weight: 700;
 }
@@ -1381,7 +1421,7 @@ code {
 .simple-vote-status-list {
   list-style: none;
   display: grid;
-  gap: 14px;
+  gap: 12px;
   margin: 0;
   padding: 0;
 }
@@ -1389,8 +1429,8 @@ code {
 .simple-vote-status-list li {
   display: flex;
   align-items: center;
-  gap: 14px;
-  font-size: 1.3rem;
+  gap: 12px;
+  font-size: 1.08rem;
   line-height: 1.35;
   color: #cbd5e1;
 }
@@ -1402,11 +1442,11 @@ code {
 .simple-vote-status-icon {
   display: inline-grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   border-radius: 999px;
   border: 2px solid currentColor;
-  font-size: 1rem;
+  font-size: 0.94rem;
   line-height: 1;
   flex: 0 0 auto;
 }
@@ -1437,8 +1477,8 @@ code {
 
 .simple-vote-details {
   display: grid;
-  gap: 20px;
-  padding-top: 18px;
+  gap: 16px;
+  padding-top: 14px;
   border-top: 1px solid #334155;
 }
 
@@ -3613,40 +3653,90 @@ body.demo-page .demo-workspace {
 
 @media (max-width: 768px) {
   .simple-voter-page {
-    padding: 24px 18px;
+    padding: 18px 14px;
   }
 
   .simple-voter-header-row {
-    flex-direction: column;
-    align-items: stretch;
+    align-items: center;
+    gap: 10px;
   }
 
-  .simple-voter-tabs,
+  .simple-voter-title {
+    font-size: clamp(1.72rem, 7vw, 2rem);
+  }
+
+  .simple-voter-tabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .simple-voter-tab {
+    min-height: 44px;
+    font-size: 0.96rem;
+  }
+
   .simple-vote-button-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
   }
 
-  .simple-vote-entry,
+  .simple-follower-row,
   .simple-identity-grid {
     grid-template-columns: 1fr;
     display: grid;
   }
 
+  .simple-follower-row-controls {
+    min-width: 0;
+    justify-items: start;
+  }
+
   .simple-vote-card-title {
-    font-size: 2.2rem;
+    font-size: 2rem;
   }
 
   .simple-vote-status-title {
-    font-size: 1.7rem;
+    font-size: 1.5rem;
   }
 
   .simple-vote-status-list li {
-    font-size: 1.1rem;
+    font-size: 1rem;
   }
 
   .simple-voter-choice {
-    min-height: 76px;
-    font-size: 1.7rem;
+    min-height: 64px;
+    font-size: 1.35rem;
+  }
+
+  .simple-vote-entry {
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .simple-vote-entry .token-fingerprint-symbols {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .simple-vote-entry .token-fingerprint-large .token-fingerprint-grid {
+    width: 96px;
+    height: 96px;
+    padding: 6px;
+    border-radius: 14px;
+  }
+
+  .simple-vote-entry .token-fingerprint-large .token-fingerprint-qr-shell {
+    min-width: 106px;
+    min-height: 106px;
+    padding: 8px;
+    border-radius: 14px;
+  }
+
+  .simple-vote-entry .token-fingerprint-large .token-fingerprint-qr {
+    width: 90px;
+    height: 90px;
+    border-radius: 10px;
   }
 }
 

@@ -103,13 +103,6 @@ export default function TokenFingerprint({
           </div>
         )}
       </div>
-      {!compact && !hideMetadata && (
-        <>
-          <code className='token-fingerprint-label'>
-            Vote fingerprint: {qrPayload}
-          </code>
-        </>
-      )}
     </div>
   );
 }

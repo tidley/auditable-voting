@@ -32,6 +32,7 @@ import {
 import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
 import SimpleQrScanner from "./SimpleQrScanner";
+import SimpleRelayPanel from "./SimpleRelayPanel";
 import SimpleUnlockGate from "./SimpleUnlockGate";
 import TokenFingerprint from "./TokenFingerprint";
 import { extractNpubFromScan } from "./npubScan";
@@ -59,8 +60,9 @@ import {
 import {
   buildCoordinatorFollowerRowsRust,
   mergeSimpleFollowersRust,
-  selectTicketRetryTargetsRust,
 } from "./wasm/auditableVotingCore";
+
+type CoordinatorTab = "configure" | "voting" | "settings";
 
 type SimpleCoordinatorKeypair = {
   npub: string;
@@ -75,6 +77,7 @@ type SimpleCoordinatorCache = {
     string,
     { status: string; eventId?: string; responseId?: string; attempts?: number; lastAttemptAt?: string }
   >;
+  autoSendFollowers: Record<string, boolean>;
   pendingRequests: SimpleShardRequest[];
   registrationStatus: string | null;
   assignmentStatus: string | null;
@@ -173,6 +176,7 @@ export default function SimpleCoordinatorApp() {
   const [followers, setFollowers] = useState<SimpleCoordinatorFollower[]>([]);
   const [subCoordinators, setSubCoordinators] = useState<SimpleSubCoordinatorApplication[]>([]);
   const [ticketDeliveries, setTicketDeliveries] = useState<Record<string, { status: string; eventId?: string; responseId?: string; attempts?: number; lastAttemptAt?: string }>>({});
+  const [autoSendFollowers, setAutoSendFollowers] = useState<Record<string, boolean>>({});
   const [pendingRequests, setPendingRequests] = useState<SimpleShardRequest[]>([]);
   const [dmAcknowledgements, setDmAcknowledgements] = useState<SimpleDmAcknowledgement[]>([]);
   const [registrationStatus, setRegistrationStatus] = useState<string | null>(null);
@@ -190,7 +194,9 @@ export default function SimpleCoordinatorApp() {
     useState('');
   const [submittedVotes, setSubmittedVotes] = useState<SimpleSubmittedVote[]>([]);
   const [validatedVotes, setValidatedVotes] = useState<SimpleValidatedVote[]>([]);
+  const [activeTab, setActiveTab] = useState<CoordinatorTab>("configure");
   const blindKeyRepublishAtRef = useRef<Record<string, number>>({});
+  const autoSendInFlightRef = useRef<Set<string>>(new Set());
   const isLeadCoordinator = !leadCoordinatorNpub.trim() || leadCoordinatorNpub.trim() === (keypair?.npub ?? "");
   const activeShareIndex = isLeadCoordinator ? 1 : (Number.parseInt(questionShareIndex, 10) || 0);
   const hasAssignedShareIndex = !isLeadCoordinator && activeShareIndex > 0;
@@ -248,6 +254,11 @@ export default function SimpleCoordinatorApp() {
           setFollowers(Array.isArray(cache.followers) ? cache.followers : []);
           setSubCoordinators(Array.isArray(cache.subCoordinators) ? cache.subCoordinators : []);
           setTicketDeliveries(cache.ticketDeliveries && typeof cache.ticketDeliveries === "object" ? cache.ticketDeliveries : {});
+          setAutoSendFollowers(
+            cache.autoSendFollowers && typeof cache.autoSendFollowers === "object"
+              ? cache.autoSendFollowers
+              : {},
+          );
           setPendingRequests(Array.isArray(cache.pendingRequests) ? cache.pendingRequests : []);
           setRegistrationStatus(typeof cache.registrationStatus === "string" ? cache.registrationStatus : null);
           setAssignmentStatus(typeof cache.assignmentStatus === "string" ? cache.assignmentStatus : null);
@@ -327,6 +338,7 @@ export default function SimpleCoordinatorApp() {
       followers,
       subCoordinators,
       ticketDeliveries,
+      autoSendFollowers,
       pendingRequests,
       registrationStatus,
       assignmentStatus,
@@ -351,6 +363,7 @@ export default function SimpleCoordinatorApp() {
     }, storagePassphrase ? { passphrase: storagePassphrase } : undefined);
   }, [
     assignmentStatus,
+    autoSendFollowers,
     followers,
     identityReady,
     keypair,
@@ -760,6 +773,7 @@ export default function SimpleCoordinatorApp() {
     setFollowers([]);
     setSubCoordinators([]);
     setTicketDeliveries({});
+    setAutoSendFollowers({});
     setPendingRequests([]);
     setDmAcknowledgements([]);
     setRegistrationStatus(null);
@@ -775,6 +789,7 @@ export default function SimpleCoordinatorApp() {
     setSelectedVotingId("");
     setSelectedSubmittedVotingId('');
     setSubmittedVotes([]);
+    setActiveTab("configure");
     sentFollowAckIdsRef.current.clear();
     sentRequestAckIdsRef.current.clear();
     sentSubCoordinatorAckIdsRef.current.clear();
@@ -807,6 +822,7 @@ export default function SimpleCoordinatorApp() {
     setFollowers([]);
     setSubCoordinators([]);
     setTicketDeliveries({});
+    setAutoSendFollowers({});
     setPendingRequests([]);
     setDmAcknowledgements([]);
     setRegistrationStatus(null);
@@ -822,6 +838,7 @@ export default function SimpleCoordinatorApp() {
     setSelectedVotingId("");
     setSelectedSubmittedVotingId('');
     setSubmittedVotes([]);
+    setActiveTab("configure");
     sentFollowAckIdsRef.current.clear();
     sentRequestAckIdsRef.current.clear();
     sentSubCoordinatorAckIdsRef.current.clear();
@@ -855,6 +872,7 @@ export default function SimpleCoordinatorApp() {
       followers,
       subCoordinators,
       ticketDeliveries,
+      autoSendFollowers,
       pendingRequests,
       registrationStatus,
       assignmentStatus,
@@ -908,6 +926,11 @@ export default function SimpleCoordinatorApp() {
       setTicketDeliveries(
         cache?.ticketDeliveries && typeof cache.ticketDeliveries === "object" ? cache.ticketDeliveries : {},
       );
+      setAutoSendFollowers(
+        cache?.autoSendFollowers && typeof cache.autoSendFollowers === "object"
+          ? cache.autoSendFollowers
+          : {},
+      );
       setPendingRequests(Array.isArray(cache?.pendingRequests) ? cache.pendingRequests : []);
       setDmAcknowledgements([]);
       setRegistrationStatus(typeof cache?.registrationStatus === "string" ? cache.registrationStatus : null);
@@ -941,6 +964,7 @@ export default function SimpleCoordinatorApp() {
           : '',
       );
       setSubmittedVotes(Array.isArray(cache?.submittedVotes) ? cache.submittedVotes : []);
+      setActiveTab("configure");
       sentFollowAckIdsRef.current.clear();
       sentRequestAckIdsRef.current.clear();
       sentSubCoordinatorAckIdsRef.current.clear();
@@ -980,6 +1004,11 @@ export default function SimpleCoordinatorApp() {
       setFollowers(Array.isArray(cache?.followers) ? cache.followers : []);
       setSubCoordinators(Array.isArray(cache?.subCoordinators) ? cache.subCoordinators : []);
       setTicketDeliveries(cache?.ticketDeliveries && typeof cache.ticketDeliveries === "object" ? cache.ticketDeliveries : {});
+      setAutoSendFollowers(
+        cache?.autoSendFollowers && typeof cache.autoSendFollowers === "object"
+          ? cache.autoSendFollowers
+          : {},
+      );
       setPendingRequests(Array.isArray(cache?.pendingRequests) ? cache.pendingRequests : []);
       setRegistrationStatus(typeof cache?.registrationStatus === "string" ? cache.registrationStatus : null);
       setAssignmentStatus(typeof cache?.assignmentStatus === "string" ? cache.assignmentStatus : null);
@@ -1000,6 +1029,7 @@ export default function SimpleCoordinatorApp() {
       setSelectedVotingId(typeof cache?.selectedVotingId === "string" ? cache.selectedVotingId : "");
       setSelectedSubmittedVotingId(typeof cache?.selectedSubmittedVotingId === "string" ? cache.selectedSubmittedVotingId : "");
       setSubmittedVotes(Array.isArray(cache?.submittedVotes) ? cache.submittedVotes : []);
+      setActiveTab("configure");
       setStorageLocked(false);
       setStorageStatus("Local coordinator state unlocked.");
       setIdentityReady(true);
@@ -1312,6 +1342,7 @@ export default function SimpleCoordinatorApp() {
         return [nextVote, ...current.filter((vote) => vote.votingId !== nextVote.votingId)];
       });
       setSelectedVotingId(result.votingId);
+      setSelectedSubmittedVotingId(result.votingId);
       setPublishStatus(result.successes > 0 ? "Vote broadcast." : "Vote broadcast failed.");
     } catch {
       setPublishStatus("Vote broadcast failed.");
@@ -1320,6 +1351,10 @@ export default function SimpleCoordinatorApp() {
 
   function selectRound(votingId: string) {
     setSelectedVotingId(votingId);
+  }
+
+  function selectTab(nextTab: CoordinatorTab) {
+    setActiveTab(nextTab);
   }
 
   async function submitToLeadCoordinator() {
@@ -1420,6 +1455,23 @@ export default function SimpleCoordinatorApp() {
     };
   }, [requiredShardCount, selectedSubmittedVote?.authorizedCoordinatorNpubs, submittedVotes]);
 
+  useEffect(() => {
+    const knownFollowerNpubs = new Set(followers.map((follower) => follower.voterNpub));
+    setAutoSendFollowers((current) => {
+      let changed = false;
+      const next = Object.fromEntries(
+        Object.entries(current).filter(([voterNpub]) => {
+          const keep = knownFollowerNpubs.has(voterNpub);
+          if (!keep) {
+            changed = true;
+          }
+          return keep;
+        }),
+      );
+      return changed ? next : current;
+    });
+  }, [followers]);
+
   const validYesCount = validatedVotes.filter((entry) => entry.valid && entry.vote.choice === "Yes").length;
   const validNoCount = validatedVotes.filter((entry) => entry.valid && entry.vote.choice === "No").length;
   const visibleFollowers = activeVotingId
@@ -1458,35 +1510,6 @@ export default function SimpleCoordinatorApp() {
     [visibleFollowers],
   );
   const expectedSubCoordinatorCount = Math.max(0, (Number.parseInt(questionThresholdN, 10) || 1) - 1);
-
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      if (!selectedPublishedVote) {
-        return;
-      }
-
-      const retryFollowerIds = new Set(selectTicketRetryTargetsRust({
-        followers: visibleFollowers,
-        selectedPublishedVotingId: selectedPublishedVote.votingId,
-        ticketDeliveries,
-        acknowledgements: dmAcknowledgements.map((ack) => ({
-          actorNpub: ack.actorNpub,
-          ackedAction: ack.ackedAction,
-          ackedEventId: ack.ackedEventId,
-        })),
-        nowMs: Date.now(),
-        minRetryAgeMs: 10000,
-        maxAttempts: 4,
-      }));
-      const retries = visibleFollowers.filter((follower) => retryFollowerIds.has(follower.id));
-
-      for (const follower of retries) {
-        void sendTicket(follower);
-      }
-    }, 5000);
-
-    return () => window.clearInterval(intervalId);
-  }, [dmAcknowledgements, selectedPublishedVote, ticketDeliveries, visibleFollowers]);
 
   useEffect(() => {
     if (!selectedPublishedVote || !activeBlindPrivateKey || !keypair?.npub) {
@@ -1550,6 +1573,33 @@ export default function SimpleCoordinatorApp() {
     void primeNip65RelayHints(knownParticipants, SIMPLE_PUBLIC_RELAYS);
   }, [followers, leadCoordinatorNpub, subCoordinators]);
 
+  useEffect(() => {
+    if (!activeVotingId) {
+      return;
+    }
+
+    for (const follower of visibleFollowers) {
+      if (!autoSendFollowers[follower.voterNpub]) {
+        continue;
+      }
+
+      const ticketStatusKey = `${follower.voterNpub}:${activeVotingId}`;
+      if (ticketDeliveries[ticketStatusKey]) {
+        continue;
+      }
+
+      const row = coordinatorFollowerRows.find((entry) => entry.id === follower.id);
+      if (!row?.canSendTicket || autoSendInFlightRef.current.has(ticketStatusKey)) {
+        continue;
+      }
+
+      autoSendInFlightRef.current.add(ticketStatusKey);
+      void sendTicket(follower).finally(() => {
+        autoSendInFlightRef.current.delete(ticketStatusKey);
+      });
+    }
+  }, [activeVotingId, autoSendFollowers, coordinatorFollowerRows, ticketDeliveries, visibleFollowers]);
+
   if (storageLocked && !identityReady) {
     return (
       <SimpleUnlockGate
@@ -1587,393 +1637,433 @@ export default function SimpleCoordinatorApp() {
             Refresh ID
           </button>
         </div>
-
-        <SimpleIdentityPanel
-          npub={keypair?.npub ?? ''}
-          nsec={keypair?.nsec ?? ''}
-          title='Identity'
-          onRestoreNsec={restoreIdentity}
-          restoreMessage={identityStatus}
-          onDownloadBackup={identityReady ? downloadBackup : undefined}
-          onRestoreBackupFile={restoreBackup}
-          backupMessage={backupStatus}
-          onProtectLocalState={identityReady ? protectLocalState : undefined}
-          onDisableLocalStateProtection={identityReady ? disableLocalStateProtection : undefined}
-          localStateProtected={Boolean(storagePassphrase)}
-          localStateMessage={storageStatus}
-        />
-
-        <SimpleCollapsibleSection title='Coordinator management'>
-          <label
-            className='simple-voter-label'
-            htmlFor='simple-lead-coordinator-npub'
+        <div
+          className='simple-voter-tabs'
+          role='tablist'
+          aria-label='Coordinator sections'
+        >
+          <button
+            type='button'
+            role='tab'
+            aria-selected={activeTab === 'configure'}
+            className={`simple-voter-tab${activeTab === 'configure' ? ' is-active' : ''}`}
+            onClick={() => selectTab('configure')}
           >
-            Lead coordinator npub
-          </label>
-          <div className='simple-voter-inline-field'>
-            <input
-              id='simple-lead-coordinator-npub'
-              className='simple-voter-input simple-voter-input-inline'
-              value={leadCoordinatorNpub}
-              onChange={(event) => {
-                const nextLeadCoordinatorNpub = event.target.value;
-                setLeadCoordinatorNpub(nextLeadCoordinatorNpub);
-                setLeadScannerStatus(null);
-                if (nextLeadCoordinatorNpub.trim() !== (keypair?.npub ?? '')) {
-                  setQuestionShareIndex('');
-                }
-                setRegistrationStatus(null);
-                setAssignmentStatus(null);
-              }}
-              placeholder='Leave blank if this coordinator is the lead'
-            />
-            <button
-              type='button'
-              className='simple-voter-secondary simple-voter-scan-button'
-              onClick={() => {
-                setLeadScannerStatus(null);
-                setLeadScannerActive(true);
-              }}
-            >
-              Scan
-            </button>
-            {!isLeadCoordinator ? (
-              <button
-                type='button'
-                className='simple-voter-secondary'
-                onClick={() => void submitToLeadCoordinator()}
-                disabled={
-                  !keypair?.nsec ||
-                  !leadCoordinatorNpub.trim() ||
-                  leadCoordinatorNpub.trim() === (keypair?.npub ?? '') ||
-                  hasAssignedShareIndex
-                }
-              >
-                {hasAssignedShareIndex
-                  ? 'Registered with lead'
-                  : 'Submit to lead'}
-              </button>
-            ) : null}
-          </div>
-          <SimpleQrScanner
-            active={leadScannerActive}
-            onDetected={handleLeadCoordinatorScanDetected}
-            onClose={() => setLeadScannerActive(false)}
-            prompt='Point the camera at the lead coordinator npub QR code.'
-          />
-          {leadScannerStatus ? <p className='simple-voter-note'>{leadScannerStatus}</p> : null}
-          <p className='simple-voter-question'>
-            {isLeadCoordinator
-              ? 'This coordinator publishes the live question.'
-              : 'This coordinator follows the lead question and only issues shares.'}
-          </p>
-          {publishedVotes.length > 0 ? (
-            <>
+            Configure
+          </button>
+          <button
+            type='button'
+            role='tab'
+            aria-selected={activeTab === 'voting'}
+            className={`simple-voter-tab${activeTab === 'voting' ? ' is-active' : ''}`}
+            onClick={() => selectTab('voting')}
+          >
+            Voting
+          </button>
+          <button
+            type='button'
+            role='tab'
+            aria-selected={activeTab === 'settings'}
+            className={`simple-voter-tab${activeTab === 'settings' ? ' is-active' : ''}`}
+            onClick={() => selectTab('settings')}
+          >
+            Settings
+          </button>
+        </div>
+
+        {activeTab === 'configure' ? (
+          <section className='simple-voter-tab-panel' role='tabpanel' aria-label='Configure'>
+            <SimpleCollapsibleSection title='Coordinator management'>
               <label
                 className='simple-voter-label'
-                htmlFor='simple-active-round'
+                htmlFor='simple-lead-coordinator-npub'
               >
-                Current round
+                Lead coordinator npub
               </label>
-              <select
-                id='simple-active-round'
-                className='simple-voter-input'
-                value={selectedPublishedVote?.votingId ?? ''}
-                onChange={(event) => selectRound(event.target.value)}
-              >
-                {publishedVotes.map((vote) => (
-                  <option key={vote.eventId} value={vote.votingId}>
-                    {formatRoundOptionLabel(vote)}
-                  </option>
-                ))}
-              </select>
-            </>
-          ) : null}
-          {isLeadCoordinator ? (
-            <>
-              <div className='simple-voter-action-row'>
+              <div className='simple-voter-inline-field'>
+                <input
+                  id='simple-lead-coordinator-npub'
+                  className='simple-voter-input simple-voter-input-inline'
+                  value={leadCoordinatorNpub}
+                  onChange={(event) => {
+                    const nextLeadCoordinatorNpub = event.target.value;
+                    setLeadCoordinatorNpub(nextLeadCoordinatorNpub);
+                    setLeadScannerStatus(null);
+                    if (nextLeadCoordinatorNpub.trim() !== (keypair?.npub ?? '')) {
+                      setQuestionShareIndex('');
+                    }
+                    setRegistrationStatus(null);
+                    setAssignmentStatus(null);
+                  }}
+                  placeholder='Leave blank if this coordinator is the lead'
+                />
                 <button
                   type='button'
-                  className='simple-voter-secondary'
-                  onClick={() => void distributeShareIndexes()}
-                  disabled={!keypair?.nsec || subCoordinators.length === 0}
+                  className='simple-voter-secondary simple-voter-scan-button'
+                  onClick={() => {
+                    setLeadScannerStatus(null);
+                    setLeadScannerActive(true);
+                  }}
                 >
-                  Distribute share indexes
+                  Scan
                 </button>
-                <button
-                  type='button'
-                  className='simple-voter-secondary'
-                  onClick={() => void republishActiveBlindKey()}
-                  disabled={!activeVotingId || !activeBlindPrivateKey}
-                >
-                  Republish blind key
-                </button>
+                {!isLeadCoordinator ? (
+                  <button
+                    type='button'
+                    className='simple-voter-secondary'
+                    onClick={() => void submitToLeadCoordinator()}
+                    disabled={
+                      !keypair?.nsec ||
+                      !leadCoordinatorNpub.trim() ||
+                      leadCoordinatorNpub.trim() === (keypair?.npub ?? '') ||
+                      hasAssignedShareIndex
+                    }
+                  >
+                    {hasAssignedShareIndex
+                      ? 'Registered with lead'
+                      : 'Submit to lead'}
+                  </button>
+                ) : null}
               </div>
-            </>
-          ) : (
-            <>
-              <div className='simple-vote-threshold-grid'>
-                <div>
+              <SimpleQrScanner
+                active={leadScannerActive}
+                onDetected={handleLeadCoordinatorScanDetected}
+                onClose={() => setLeadScannerActive(false)}
+                prompt='Point the camera at the lead coordinator npub QR code.'
+              />
+              {leadScannerStatus ? <p className='simple-voter-note'>{leadScannerStatus}</p> : null}
+              <p className='simple-voter-question'>
+                {isLeadCoordinator
+                  ? 'This coordinator publishes the live question.'
+                  : 'This coordinator follows the lead question and only issues shares.'}
+              </p>
+              {registrationStatus &&
+                !isLeadCoordinator &&
+                !hasAssignedShareIndex && (
+                  <p className='simple-voter-note'>{registrationStatus}</p>
+                )}
+              {assignmentStatus && (
+                <p className='simple-voter-note'>{assignmentStatus}</p>
+              )}
+            </SimpleCollapsibleSection>
+
+            {isLeadCoordinator && (
+              <SimpleCollapsibleSection title='Sub-coordinators'>
+                {subCoordinators.length > 0 ? (
+                  <>
+                    <p className='simple-voter-question'>
+                      {subCoordinators.length} sub-coordinator
+                      {subCoordinators.length === 1 ? '' : 's'} submitted
+                      {expectedSubCoordinatorCount > 0
+                        ? ` of ${expectedSubCoordinatorCount} expected`
+                        : ''}
+                      .
+                    </p>
+                    <ul className='simple-voter-list'>
+                      {subCoordinators.map((application, index) => (
+                        <li key={application.id} className='simple-voter-list-item'>
+                          <p className='simple-voter-question'>
+                            Coordinator {application.coordinatorId} submitted as
+                            sub-coordinator #{index + 1}.
+                          </p>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                ) : (
+                  <p className='simple-voter-empty'>
+                    No sub-coordinators have submitted yet.
+                  </p>
+                )}
+              </SimpleCollapsibleSection>
+            )}
+
+            <SimpleCollapsibleSection title='Question'>
+              {isLeadCoordinator ? (
+                <>
                   <label
                     className='simple-voter-label'
-                    htmlFor='simple-share-index'
+                    htmlFor='simple-question-prompt'
                   >
-                    Share Index
+                    Question
                   </label>
-                  <input
-                    id='simple-share-index'
-                    className='simple-voter-input'
-                    value={questionShareIndex || 'Awaiting assignment'}
-                    readOnly
-                    disabled
+                  <textarea
+                    id='simple-question-prompt'
+                    className='simple-voter-textarea'
+                    value={questionPrompt}
+                    onChange={(event) => setQuestionPrompt(event.target.value)}
+                    rows={3}
                   />
-                </div>
-              </div>
-            </>
-          )}
-          <p className='simple-voter-question'>
-            Threshold:{' '}
-            {activeThresholdT && activeThresholdN
-              ? `${activeThresholdT} of ${activeThresholdN}`
-              : getThresholdLabel()}
-          </p>
-          {publishStatus && (
-            <p className='simple-voter-note'>{publishStatus}</p>
-          )}
-          {registrationStatus &&
-            !isLeadCoordinator &&
-            !hasAssignedShareIndex && (
-              <p className='simple-voter-note'>{registrationStatus}</p>
-            )}
-          {assignmentStatus && (
-            <p className='simple-voter-note'>{assignmentStatus}</p>
-          )}
-          {selectedPublishedVote && (
-            <>
-              <p className='simple-voter-question'>
-                Voting ID {selectedPublishedVote.votingId.slice(0, 12)}
-              </p>
-              <p className='simple-voter-question'>
-                Live prompt: {selectedPublishedVote.prompt}
-              </p>
-              <p className='simple-voter-question'>
-                Question source:{' '}
-                {selectedPublishedVote.coordinatorNpub === (keypair?.npub ?? '')
-                  ? 'This coordinator'
-                  : 'Lead coordinator'}
-              </p>
-              <p className='simple-voter-question'>
-                This coordinator share index:{' '}
-                {activeShareIndex || 'Awaiting assignment'}
-              </p>
-            </>
-          )}
-        </SimpleCollapsibleSection>
-
-        {isLeadCoordinator && (
-          <SimpleCollapsibleSection title='Sub-coordinators'>
-            {subCoordinators.length > 0 ? (
-              <>
-                <p className='simple-voter-question'>
-                  {subCoordinators.length} sub-coordinator
-                  {subCoordinators.length === 1 ? '' : 's'} submitted
-                  {expectedSubCoordinatorCount > 0
-                    ? ` of ${expectedSubCoordinatorCount} expected`
-                    : ''}
-                  .
-                </p>
-                <ul className='simple-voter-list'>
-                  {subCoordinators.map((application, index) => (
-                    <li key={application.id} className='simple-voter-list-item'>
-                      <p className='simple-voter-question'>
-                        Coordinator {application.coordinatorId} submitted as
-                        sub-coordinator #{index + 1}.
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            ) : (
-              <p className='simple-voter-empty'>
-                No sub-coordinators have submitted yet.
-              </p>
-            )}
-          </SimpleCollapsibleSection>
-        )}
-
-        <SimpleCollapsibleSection title='Following voters'>
-          {coordinatorFollowerRows.length > 0 ? (
-            <ul className='simple-voter-list'>
-              {coordinatorFollowerRows.map((row) => {
-                const follower = visibleFollowersById.get(row.id);
-                if (!follower) {
-                  return null;
-                }
-
-                const waitingForBlindedRequest = Boolean(
-                  selectedPublishedVote
-                  && !findLatestRoundRequest(
-                    pendingRequests,
-                    follower.voterNpub,
-                    selectedPublishedVote.votingId,
-                  ),
-                );
-
-                return (
-                  <li key={row.id} className='simple-voter-list-item'>
-                    <p className='simple-voter-question'>{row.followingText}</p>
-                    {selectedPublishedVote ? (
-                      <div className='simple-voter-action-row simple-voter-action-row-inline'>
+                  <div className='simple-vote-threshold-grid'>
+                    <div>
+                      <label
+                        className='simple-voter-label'
+                        htmlFor='simple-threshold-t-value'
+                      >
+                        Threshold T
+                      </label>
+                      <div className='simple-threshold-stepper'>
                         <button
                           type='button'
-                          className='simple-voter-secondary'
-                          onClick={() => void sendTicket(follower)}
-                          disabled={!row.canSendTicket}
+                          className='simple-voter-secondary simple-threshold-stepper-button'
+                          aria-label='Decrease Threshold T'
+                          onClick={() =>
+                            setQuestionThresholdT((current) =>
+                              String(
+                                Math.max(
+                                  1,
+                                  (Number.parseInt(current, 10) || 1) - 1,
+                                ),
+                              ),
+                            )
+                          }
+                          disabled={
+                            (Number.parseInt(questionThresholdT, 10) || 1) <= 1
+                          }
                         >
-                          {row.sendLabel}
+                          -
                         </button>
-                        {waitingForBlindedRequest ? (
-                          <button
-                            type='button'
-                            className='simple-voter-secondary'
-                            onClick={() => void resendRoundInfo(follower)}
-                            disabled={!activeBlindPrivateKey}
-                          >
-                            Resend round info
-                          </button>
-                        ) : null}
+                        <output
+                          id='simple-threshold-t-value'
+                          className='simple-threshold-stepper-value'
+                          aria-live='polite'
+                        >
+                          {questionThresholdT}
+                        </output>
+                        <button
+                          type='button'
+                          className='simple-voter-secondary simple-threshold-stepper-button'
+                          aria-label='Increase Threshold T'
+                          onClick={() =>
+                            setQuestionThresholdT((current) =>
+                              String(
+                                Math.min(
+                                  maxThresholdT,
+                                  (Number.parseInt(current, 10) || 1) + 1,
+                                ),
+                              ),
+                            )
+                          }
+                          disabled={
+                            (Number.parseInt(questionThresholdT, 10) || 1) >=
+                            maxThresholdT
+                          }
+                        >
+                          +
+                        </button>
                       </div>
-                    ) : null}
-                    <ul className='simple-delivery-diagnostics'>
-                      <li className={deliveryToneClass(row.follow.tone)}>{row.follow.text}</li>
-                      <li className={deliveryToneClass(row.pendingRequest.tone)}>{row.pendingRequest.text}</li>
-                      <li className={deliveryToneClass(row.ticket.tone)}>{row.ticket.text}</li>
-                      {row.receipt ? (
-                        <li className={deliveryToneClass(row.receipt.tone)}>{row.receipt.text}</li>
-                      ) : null}
-                    </ul>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : (
-            <p className='simple-voter-empty'>
-              No voters are following this coordinator yet.
-            </p>
-          )}
-        </SimpleCollapsibleSection>
-
-        <SimpleCollapsibleSection title='Question'>
-          {isLeadCoordinator ? (
-            <>
-              <label
-                className='simple-voter-label'
-                htmlFor='simple-question-prompt'
-              >
-                Question
-              </label>
-              <textarea
-                id='simple-question-prompt'
-                className='simple-voter-textarea'
-                value={questionPrompt}
-                onChange={(event) => setQuestionPrompt(event.target.value)}
-                rows={3}
-              />
-              <div className='simple-vote-threshold-grid'>
-                <div>
-                  <label
-                    className='simple-voter-label'
-                    htmlFor='simple-threshold-t-value'
-                  >
-                    Threshold T
-                  </label>
-                  <div className='simple-threshold-stepper'>
+                      <p className='simple-voter-note'>
+                        T = {questionThresholdT}, capped to 1-{maxThresholdT}. N is
+                        fixed at {questionThresholdN}.
+                      </p>
+                    </div>
+                  </div>
+                  <div className='simple-voter-action-row'>
                     <button
                       type='button'
-                      className='simple-voter-secondary simple-threshold-stepper-button'
-                      aria-label='Decrease Threshold T'
-                      onClick={() =>
-                        setQuestionThresholdT((current) =>
-                          String(
-                            Math.max(
-                              1,
-                              (Number.parseInt(current, 10) || 1) - 1,
-                            ),
-                          ),
-                        )
-                      }
+                      className='simple-voter-primary'
+                      onClick={() => void broadcastQuestion()}
                       disabled={
-                        (Number.parseInt(questionThresholdT, 10) || 1) <= 1
+                        !keypair?.nsec || questionPrompt.trim().length === 0
                       }
                     >
-                      -
-                    </button>
-                    <output
-                      id='simple-threshold-t-value'
-                      className='simple-threshold-stepper-value'
-                      aria-live='polite'
-                    >
-                      {questionThresholdT}
-                    </output>
-                    <button
-                      type='button'
-                      className='simple-voter-secondary simple-threshold-stepper-button'
-                      aria-label='Increase Threshold T'
-                      onClick={() =>
-                        setQuestionThresholdT((current) =>
-                          String(
-                            Math.min(
-                              maxThresholdT,
-                              (Number.parseInt(current, 10) || 1) + 1,
-                            ),
-                          ),
-                        )
-                      }
-                      disabled={
-                        (Number.parseInt(questionThresholdT, 10) || 1) >=
-                        maxThresholdT
-                      }
-                    >
-                      +
+                      Broadcast live vote
                     </button>
                   </div>
-                  <p className='simple-voter-note'>
-                    T = {questionThresholdT}, capped to 1-{maxThresholdT}. N is
-                    fixed at {questionThresholdN}.
-                  </p>
-                </div>
-              </div>
-              <div className='simple-voter-action-row'>
-                <button
-                  type='button'
-                  className='simple-voter-primary'
-                  onClick={() => void broadcastQuestion()}
-                  disabled={
-                    !keypair?.nsec || questionPrompt.trim().length === 0
-                  }
-                >
-                  Broadcast live vote
-                </button>
-              </div>
-            </>
-          ) : selectedPublishedVote ? (
-            <>
-              <p className='simple-voter-question'>
-                {selectedPublishedVote.prompt}
-              </p>
-              <p className='simple-voter-note'>
-                Vote {shortVotingId(selectedPublishedVote.votingId)}
-              </p>
-            </>
-          ) : (
-            <p className='simple-voter-empty'>No question selected yet.</p>
-          )}
-        </SimpleCollapsibleSection>
+                </>
+              ) : selectedPublishedVote ? (
+                <p className='simple-voter-question'>
+                  {selectedPublishedVote.prompt}
+                </p>
+              ) : (
+                <p className='simple-voter-empty'>No question selected yet.</p>
+              )}
+            </SimpleCollapsibleSection>
+          </section>
+        ) : null}
 
-        <SimpleCollapsibleSection title='Submitted votes'>
-          {selectedSubmittedVote ? (
-            <>
-              {publishedVotes.length > 1 ? (
+        {activeTab === 'voting' ? (
+          <section className='simple-voter-tab-panel' role='tabpanel' aria-label='Voting'>
+            <SimpleCollapsibleSection title='Round'>
+              {publishedVotes.length > 0 ? (
+                <>
+                  <label
+                    className='simple-voter-label'
+                    htmlFor='simple-active-round'
+                  >
+                    Current round
+                  </label>
+                  <select
+                    id='simple-active-round'
+                    className='simple-voter-input'
+                    value={selectedPublishedVote?.votingId ?? ''}
+                    onChange={(event) => selectRound(event.target.value)}
+                  >
+                    {publishedVotes.map((vote) => (
+                      <option key={vote.eventId} value={vote.votingId}>
+                        {formatRoundOptionLabel(vote)}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              ) : (
+                <p className='simple-voter-empty'>No live vote has been broadcast yet.</p>
+              )}
+              {isLeadCoordinator ? (
+                <div className='simple-voter-action-row simple-voter-action-row-inline'>
+                  <button
+                    type='button'
+                    className='simple-voter-secondary'
+                    onClick={() => void distributeShareIndexes()}
+                    disabled={!keypair?.nsec || subCoordinators.length === 0}
+                  >
+                    Distribute share indexes
+                  </button>
+                  <button
+                    type='button'
+                    className='simple-voter-secondary'
+                    onClick={() => void republishActiveBlindKey()}
+                    disabled={!activeVotingId || !activeBlindPrivateKey}
+                  >
+                    Republish blind key
+                  </button>
+                </div>
+              ) : (
+                <div className='simple-vote-threshold-grid'>
+                  <div>
+                    <label
+                      className='simple-voter-label'
+                      htmlFor='simple-share-index'
+                    >
+                      Share index
+                    </label>
+                    <input
+                      id='simple-share-index'
+                      className='simple-voter-input'
+                      value={questionShareIndex || 'Awaiting assignment'}
+                      readOnly
+                      disabled
+                    />
+                  </div>
+                </div>
+              )}
+              <p className='simple-voter-question'>
+                Threshold:{' '}
+                {activeThresholdT && activeThresholdN
+                  ? `${activeThresholdT} of ${activeThresholdN}`
+                  : getThresholdLabel()}
+              </p>
+              {publishStatus ? (
+                <p className='simple-voter-note'>{publishStatus}</p>
+              ) : null}
+              {selectedPublishedVote ? (
+                <>
+                  <p className='simple-voter-question'>
+                    Live prompt: {selectedPublishedVote.prompt}
+                  </p>
+                  <p className='simple-voter-question'>
+                    Question source:{' '}
+                    {selectedPublishedVote.coordinatorNpub === (keypair?.npub ?? '')
+                      ? 'This coordinator'
+                      : 'Lead coordinator'}
+                  </p>
+                  <p className='simple-voter-question'>
+                    This coordinator share index:{' '}
+                    {activeShareIndex || 'Awaiting assignment'}
+                  </p>
+                </>
+              ) : null}
+            </SimpleCollapsibleSection>
+
+            <SimpleCollapsibleSection title='Following voters'>
+              {coordinatorFollowerRows.length > 0 ? (
+                <ul className='simple-voter-list'>
+                  {coordinatorFollowerRows.map((row) => {
+                    const follower = visibleFollowersById.get(row.id);
+                    if (!follower) {
+                      return null;
+                    }
+
+                    const waitingForBlindedRequest = Boolean(
+                      selectedPublishedVote
+                      && !findLatestRoundRequest(
+                        pendingRequests,
+                        follower.voterNpub,
+                        selectedPublishedVote.votingId,
+                      ),
+                    );
+                    const ticketStatusKey = selectedPublishedVote
+                      ? `${follower.voterNpub}:${selectedPublishedVote.votingId}`
+                      : '';
+                    const ticketDelivery = ticketStatusKey
+                      ? ticketDeliveries[ticketStatusKey]
+                      : undefined;
+                    const isTicketSending =
+                      ticketDelivery?.status === 'Sending ticket...';
+
+                    return (
+                      <li key={row.id} className='simple-voter-list-item'>
+                        <div className='simple-follower-row'>
+                          <div className='simple-follower-row-main'>
+                            <p className='simple-voter-question'>{row.followingText}</p>
+                            <ul className='simple-delivery-diagnostics'>
+                              <li className={deliveryToneClass(row.follow.tone)}>{row.follow.text}</li>
+                              <li className={deliveryToneClass(row.pendingRequest.tone)}>{row.pendingRequest.text}</li>
+                              <li className={deliveryToneClass(row.ticket.tone)}>{row.ticket.text}</li>
+                              {row.receipt ? (
+                                <li className={deliveryToneClass(row.receipt.tone)}>{row.receipt.text}</li>
+                              ) : null}
+                            </ul>
+                          </div>
+                          <div className='simple-follower-row-controls'>
+                            <label className='simple-follower-auto-send'>
+                              <input
+                                type='checkbox'
+                                checked={Boolean(autoSendFollowers[follower.voterNpub])}
+                                onChange={(event) => {
+                                  setAutoSendFollowers((current) => ({
+                                    ...current,
+                                    [follower.voterNpub]: event.target.checked,
+                                  }));
+                                }}
+                              />
+                              <span>Auto send</span>
+                            </label>
+                            {selectedPublishedVote ? (
+                              <button
+                                type='button'
+                                className='simple-voter-secondary'
+                                onClick={() => void sendTicket(follower)}
+                                disabled={!row.canSendTicket || isTicketSending}
+                              >
+                                Resend on fail
+                              </button>
+                            ) : null}
+                            {waitingForBlindedRequest ? (
+                              <button
+                                type='button'
+                                className='simple-voter-secondary'
+                                onClick={() => void resendRoundInfo(follower)}
+                                disabled={!activeBlindPrivateKey}
+                              >
+                                Resend round info
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <p className='simple-voter-empty'>
+                  No voters are following this coordinator yet.
+                </p>
+              )}
+            </SimpleCollapsibleSection>
+
+            <SimpleCollapsibleSection title='Submitted votes'>
+              {selectedSubmittedVote ? (
                 <>
                   <label
                     className='simple-voter-label'
@@ -1995,59 +2085,73 @@ export default function SimpleCoordinatorApp() {
                       </option>
                     ))}
                   </select>
+                  <p className='simple-submitted-score'>
+                    Yes: {validYesCount} | No: {validNoCount}
+                  </p>
+                  {validatedVotes.length > 0 ? (
+                    <ul className='simple-voter-list'>
+                      {validatedVotes.map(({ vote, valid, reason }) => (
+                        <li key={vote.eventId} className='simple-voter-list-item'>
+                          <div className='simple-vote-entry'>
+                            <div className='simple-vote-entry-copy'>
+                              <p className='simple-voter-question simple-vote-result-line'>
+                                <span>{vote.choice}</span>{' '}
+                                <span
+                                  className={
+                                    valid
+                                      ? 'simple-vote-valid'
+                                      : 'simple-vote-invalid'
+                                  }
+                                >
+                                  {valid
+                                    ? '[Valid]'
+                                    : `[Invalid${reason ? `: ${reason}` : ''}]`}
+                                </span>
+                              </p>
+                            </div>
+                            {vote.tokenId ? (
+                              <TokenFingerprint
+                                tokenId={vote.tokenId}
+                                large
+                                hideMetadata
+                              />
+                            ) : null}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className='simple-voter-empty'>No votes received yet.</p>
+                  )}
                 </>
-              ) : null}
-              <p className='simple-voter-question'>
-                {selectedSubmittedVote.prompt}
-              </p>
-              <p className='simple-voter-note'>
-                Vote {shortVotingId(selectedSubmittedVote.votingId)}
-              </p>
-              <p className='simple-submitted-score'>
-                Yes: {validYesCount} | No: {validNoCount}
-              </p>
-              {validatedVotes.length > 0 ? (
-                <ul className='simple-voter-list'>
-                  {validatedVotes.map(({ vote, valid, reason }) => (
-                    <li key={vote.eventId} className='simple-voter-list-item'>
-                      <div className='simple-vote-entry'>
-                        <div className='simple-vote-entry-copy'>
-                          <p className='simple-voter-question simple-vote-result-line'>
-                            <span>{vote.choice}</span>{' '}
-                            <span
-                              className={
-                                valid
-                                  ? 'simple-vote-valid'
-                                  : 'simple-vote-invalid'
-                              }
-                            >
-                              {valid
-                                ? '[Valid]'
-                                : `[Invalid${reason ? `: ${reason}` : ''}]`}
-                            </span>
-                          </p>
-                        </div>
-                        {vote.tokenId && (
-                          <TokenFingerprint
-                            tokenId={vote.tokenId}
-                            large
-                            hideMetadata
-                          />
-                        )}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
               ) : (
-                <p className='simple-voter-empty'>No votes received yet.</p>
+                <p className='simple-voter-empty'>
+                  No live vote has been broadcast yet.
+                </p>
               )}
-            </>
-          ) : (
-            <p className='simple-voter-empty'>
-              No live vote has been broadcast yet.
-            </p>
-          )}
-        </SimpleCollapsibleSection>
+            </SimpleCollapsibleSection>
+          </section>
+        ) : null}
+
+        {activeTab === 'settings' ? (
+          <section className='simple-voter-tab-panel' role='tabpanel' aria-label='Settings'>
+            <SimpleIdentityPanel
+              npub={keypair?.npub ?? ''}
+              nsec={keypair?.nsec ?? ''}
+              title='Identity'
+              onRestoreNsec={restoreIdentity}
+              restoreMessage={identityStatus}
+              onDownloadBackup={identityReady ? downloadBackup : undefined}
+              onRestoreBackupFile={restoreBackup}
+              backupMessage={backupStatus}
+              onProtectLocalState={identityReady ? protectLocalState : undefined}
+              onDisableLocalStateProtection={identityReady ? disableLocalStateProtection : undefined}
+              localStateProtected={Boolean(storagePassphrase)}
+              localStateMessage={storageStatus}
+            />
+            <SimpleRelayPanel />
+          </section>
+        ) : null}
       </section>
     </main>
   );

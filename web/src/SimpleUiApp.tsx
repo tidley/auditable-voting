@@ -1431,7 +1431,7 @@ export default function SimpleUiApp() {
             className='simple-voter-primary'
             onClick={refreshIdentity}
           >
-            Refresh ID
+            New
           </button>
         </div>
         <div
@@ -1761,7 +1761,7 @@ export default function SimpleUiApp() {
                       </span>
                     </li>
                   </ul>
-                  {submitStatus ? (
+                  {submitStatus && !voteSubmittedSuccessfully ? (
                     <p className='simple-voter-note'>{submitStatus}</p>
                   ) : null}
                   <button
