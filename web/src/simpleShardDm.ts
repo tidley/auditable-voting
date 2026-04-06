@@ -28,6 +28,7 @@ const SIMPLE_DM_PUBLISH_MAX_WAIT_MS = 1500;
 const SIMPLE_DM_SUBSCRIPTION_MAX_WAIT_MS = 3000;
 const SIMPLE_DM_PUBLISH_STAGGER_MS = 250;
 const SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS = 300;
+const SIMPLE_DM_READ_RELAYS_MAX = 2;
 
 export type SimpleDmAcknowledgedAction =
   | 'simple_coordinator_follow'
@@ -123,6 +124,11 @@ export type SimpleShareAssignment = {
 
 function buildDmRelays(relays?: string[]) {
   return normalizeRelaysRust([...SIMPLE_DM_RELAYS, ...(relays ?? [])]);
+}
+
+function selectDmReadRelays(relays: string[]) {
+  const normalized = normalizeRelaysRust(relays);
+  return normalized.slice(0, Math.min(SIMPLE_DM_READ_RELAYS_MAX, normalized.length));
 }
 
 function buildDmPublishChannel(recipientNpub: string) {
@@ -902,7 +908,7 @@ export async function fetchSimpleShardRequests(input: {
     input.coordinatorNsec,
     "Coordinator",
   );
-  const dmRelays = await resolveRecipientInboxRelays(coordinatorNpub, input.relays);
+  const dmRelays = selectDmReadRelays(await resolveRecipientInboxRelays(coordinatorNpub, input.relays));
   const pool = getSharedNostrPool();
   const wrappedEvents = await pool.querySync(dmRelays, {
     kinds: [1059],
@@ -956,10 +962,11 @@ export function subscribeSimpleShardRequests(input: {
     }
   });
 
-  void resolveRecipientInboxRelays(coordinatorNpub, input.relays).then((dmRelays) => {
+  void resolveRecipientInboxRelays(coordinatorNpub, input.relays).then((resolvedRelays) => {
     if (closed) {
       return;
     }
+    const dmRelays = selectDmReadRelays(resolvedRelays);
 
     subscription = pool.subscribeMany(dmRelays, {
       kinds: [1059],
@@ -1007,7 +1014,7 @@ export async function fetchSimpleCoordinatorFollowers(input: {
     input.coordinatorNsec,
     "Coordinator",
   );
-  const dmRelays = await resolveRecipientInboxRelays(coordinatorNpub, input.relays);
+  const dmRelays = selectDmReadRelays(await resolveRecipientInboxRelays(coordinatorNpub, input.relays));
   const pool = getSharedNostrPool();
   const wrappedEvents = await pool.querySync(dmRelays, {
     kinds: [1059],
@@ -1042,7 +1049,7 @@ export async function fetchSimpleDmAcknowledgements(input: {
   const inboxRelaySets = await Promise.all(
     actorNpubs.map((actorNpub) => resolveRecipientInboxRelays(actorNpub, input.relays)),
   );
-  const dmRelays = Array.from(new Set(inboxRelaySets.flat()));
+  const dmRelays = selectDmReadRelays(Array.from(new Set(inboxRelaySets.flat())));
   const pool = getSharedNostrPool();
   const wrappedEvents = await pool.querySync(dmRelays, {
     kinds: [1059],
@@ -1077,7 +1084,7 @@ export async function fetchSimpleCoordinatorRosterAnnouncements(input: {
     input.voterNsec,
     'Voter',
   );
-  const dmRelays = await resolveRecipientInboxRelays(voterNpub, input.relays);
+  const dmRelays = selectDmReadRelays(await resolveRecipientInboxRelays(voterNpub, input.relays));
   const pool = getSharedNostrPool();
   const wrappedEvents = await pool.querySync(dmRelays, {
     kinds: [1059],
@@ -1150,7 +1157,7 @@ export function subscribeSimpleDmAcknowledgements(input: {
       return;
     }
 
-    const dmRelays = Array.from(new Set(relaySets.flat()));
+    const dmRelays = selectDmReadRelays(Array.from(new Set(relaySets.flat())));
 
     subscription = pool.subscribeMany(
       dmRelays,
@@ -1243,10 +1250,11 @@ export function subscribeSimpleCoordinatorRosterAnnouncements(input: {
     });
 
   void resolveRecipientInboxRelays(voterNpub, input.relays)
-    .then((dmRelays) => {
+    .then((resolvedRelays) => {
       if (closed) {
         return;
       }
+      const dmRelays = selectDmReadRelays(resolvedRelays);
 
       subscription = pool.subscribeMany(
         dmRelays,
@@ -1332,10 +1340,11 @@ export function subscribeSimpleCoordinatorFollowers(input: {
     }
   });
 
-  void resolveRecipientInboxRelays(coordinatorNpub, input.relays).then((dmRelays) => {
+  void resolveRecipientInboxRelays(coordinatorNpub, input.relays).then((resolvedRelays) => {
     if (closed) {
       return;
     }
+    const dmRelays = selectDmReadRelays(resolvedRelays);
 
     subscription = pool.subscribeMany(dmRelays, {
       kinds: [1059],
@@ -1383,7 +1392,7 @@ export async function fetchSimpleSubCoordinatorApplications(input: {
     input.leadCoordinatorNsec,
     "Lead coordinator",
   );
-  const dmRelays = await resolveRecipientInboxRelays(leadCoordinatorNpub, input.relays);
+  const dmRelays = selectDmReadRelays(await resolveRecipientInboxRelays(leadCoordinatorNpub, input.relays));
   const pool = getSharedNostrPool();
   const wrappedEvents = await pool.querySync(dmRelays, {
     kinds: [1059],
@@ -1437,10 +1446,11 @@ export function subscribeSimpleSubCoordinatorApplications(input: {
     }
   });
 
-  void resolveRecipientInboxRelays(leadCoordinatorNpub, input.relays).then((dmRelays) => {
+  void resolveRecipientInboxRelays(leadCoordinatorNpub, input.relays).then((resolvedRelays) => {
     if (closed) {
       return;
     }
+    const dmRelays = selectDmReadRelays(resolvedRelays);
 
     subscription = pool.subscribeMany(dmRelays, {
       kinds: [1059],
@@ -1747,7 +1757,7 @@ export async function fetchSimpleShardResponses(input: {
   const inboxRelaySets = await Promise.all(
     voterNpubs.map((voterNpub) => resolveRecipientInboxRelays(voterNpub, input.relays)),
   );
-  const dmRelays = Array.from(new Set(inboxRelaySets.flat()));
+  const dmRelays = selectDmReadRelays(Array.from(new Set(inboxRelaySets.flat())));
   const pool = getSharedNostrPool();
   const wrappedEvents = await pool.querySync(dmRelays, {
     kinds: [1059],
@@ -1810,7 +1820,7 @@ export function subscribeSimpleShardResponses(input: {
       return;
     }
 
-    const dmRelays = Array.from(new Set(relaySets.flat()));
+    const dmRelays = selectDmReadRelays(Array.from(new Set(relaySets.flat())));
 
     subscription = pool.subscribeMany(dmRelays, {
       kinds: [1059],
@@ -1858,7 +1868,7 @@ export async function fetchSimpleCoordinatorShareAssignments(input: {
     input.coordinatorNsec,
     "Coordinator",
   );
-  const dmRelays = await resolveRecipientInboxRelays(coordinatorNpub, input.relays);
+  const dmRelays = selectDmReadRelays(await resolveRecipientInboxRelays(coordinatorNpub, input.relays));
   const pool = getSharedNostrPool();
   const wrappedEvents = await pool.querySync(dmRelays, {
     kinds: [1059],
@@ -1912,10 +1922,11 @@ export function subscribeSimpleCoordinatorShareAssignments(input: {
     }
   });
 
-  void resolveRecipientInboxRelays(coordinatorNpub, input.relays).then((dmRelays) => {
+  void resolveRecipientInboxRelays(coordinatorNpub, input.relays).then((resolvedRelays) => {
     if (closed) {
       return;
     }
+    const dmRelays = selectDmReadRelays(resolvedRelays);
 
     subscription = pool.subscribeMany(dmRelays, {
       kinds: [1059],

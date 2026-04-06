@@ -28,6 +28,7 @@ export const SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS = 1500;
 export const SIMPLE_PUBLIC_SUBSCRIPTION_MAX_WAIT_MS = 1500;
 export const SIMPLE_PUBLIC_PUBLISH_STAGGER_MS = 300;
 export const SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS = 500;
+const SIMPLE_PUBLIC_READ_RELAYS_MAX = 2;
 
 export const SIMPLE_LIVE_VOTE_KIND = 38990;
 export const SIMPLE_LIVE_VOTE_BALLOT_KIND = 38991;
@@ -55,6 +56,11 @@ export type SimpleSubmittedVote = {
 
 function buildPublicRelays(relays?: string[]) {
   return normalizeRelaysRust([...SIMPLE_PUBLIC_RELAYS, ...(relays ?? [])]);
+}
+
+function selectPublicReadRelays(relays: string[]) {
+  const normalized = normalizeRelaysRust(relays);
+  return normalized.slice(0, Math.min(SIMPLE_PUBLIC_READ_RELAYS_MAX, normalized.length));
 }
 
 function sortByCreatedAtDescending<T extends { createdAt: string }>(values: T[]) {
@@ -240,10 +246,10 @@ export async function fetchLatestSimpleLiveVote(input: {
   }
 
   const coordinatorHex = decoded.data as string;
-  const relays = await resolveNip65OutboxRelays({
+  const relays = selectPublicReadRelays(await resolveNip65OutboxRelays({
     npub: input.coordinatorNpub,
     fallbackRelays: buildPublicRelays(input.relays),
-  });
+  }));
   const pool = getSharedNostrPool();
   const events = await pool.querySync(relays, {
     kinds: [SIMPLE_LIVE_VOTE_KIND],
@@ -280,10 +286,11 @@ export function subscribeLatestSimpleLiveVote(input: {
   void resolveNip65OutboxRelays({
     npub: input.coordinatorNpub,
     fallbackRelays,
-  }).then((relays) => {
+  }).then((resolvedRelays) => {
     if (closed) {
       return;
     }
+    const relays = selectPublicReadRelays(resolvedRelays);
 
     subscription = pool.subscribeMany(relays, {
       kinds: [SIMPLE_LIVE_VOTE_KIND],
@@ -344,10 +351,11 @@ export function subscribeSimpleLiveVotes(input: {
   void resolveNip65OutboxRelays({
     npub: input.coordinatorNpub,
     fallbackRelays,
-  }).then((relays) => {
+  }).then((resolvedRelays) => {
     if (closed) {
       return;
     }
+    const relays = selectPublicReadRelays(resolvedRelays);
 
     subscription = pool.subscribeMany(relays, {
       kinds: [SIMPLE_LIVE_VOTE_KIND],
@@ -390,7 +398,7 @@ export function subscribeSimpleLiveVotes(input: {
 export async function fetchSimpleLiveVotes(input?: {
   relays?: string[];
 }): Promise<SimpleLiveVoteSession[]> {
-  const relays = buildPublicRelays(input?.relays);
+  const relays = selectPublicReadRelays(buildPublicRelays(input?.relays));
   const pool = getSharedNostrPool();
   const events = await pool.querySync(relays, {
     kinds: [SIMPLE_LIVE_VOTE_KIND],
@@ -490,7 +498,7 @@ export async function fetchSimpleSubmittedVotes(input: {
   votingId: string;
   relays?: string[];
 }): Promise<SimpleSubmittedVote[]> {
-  const relays = buildPublicRelays(input.relays);
+  const relays = selectPublicReadRelays(buildPublicRelays(input.relays));
   const pool = getSharedNostrPool();
   const events = await pool.querySync(relays, {
     kinds: [SIMPLE_LIVE_VOTE_BALLOT_KIND],
@@ -516,7 +524,7 @@ export function subscribeSimpleSubmittedVotes(input: {
   onVotes: (votes: SimpleSubmittedVote[]) => void;
   onError?: (error: Error) => void;
 }): () => void {
-  const relays = buildPublicRelays(input.relays);
+  const relays = selectPublicReadRelays(buildPublicRelays(input.relays));
   const pool = getSharedNostrPool();
   const votes = new Map<string, SimpleSubmittedVote>();
   let closed = false;

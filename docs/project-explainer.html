@@ -628,6 +628,13 @@ In this repo, relay selection can optionally use **NIP-65 inbox/outbox hints** s
 
 That path is currently **disabled by default** in the UI, because a tighter curated relay set has been more reliable in practice than always expanding through public relay hints.
 
+The current client also distinguishes between:
+
+- **publish fanout**, which can still send to several relays
+- **read/subscription fanout**, which is intentionally kept to a smaller primary subset
+
+That split reduces relay-side `too many concurrent REQs` failures while keeping the write path reasonably redundant.
+
 ---
 
 ## 16. Why Local State Still Exists

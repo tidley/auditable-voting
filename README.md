@@ -120,7 +120,7 @@ The app currently uses:
 - DM relays for NIP-17 gift-wrapped messages
 - optional NIP-65 inbox/outbox hints for relay discovery when enabled in `Settings`
 
-The default path currently prefers a tighter curated relay set. NIP-65 is available as an option, but it is not the default transport path.
+The default path currently prefers a tighter curated relay set. Publishes can still fan out more broadly, but live reads and subscriptions are intentionally kept to a smaller primary subset to reduce relay-side `too many concurrent REQs` pressure. NIP-65 is available as an option, but it is not the default transport path.
 
 ## Known limitations
 

@@ -552,6 +552,7 @@
           <li>Non-lead ticket sends are slightly staggered by share index to reduce same-recipient relay bursts</li>
           <li>Coordinator follower rows now expose per-ticket relay publish diagnostics for debugging delivery gaps</li>
           <li>The default path currently prefers a tight curated relay set over broad hint expansion</li>
+          <li>Reads and live subscriptions are kept to a smaller primary subset to reduce relay-side `too many concurrent REQs` pressure</li>
           <li>The protocol remains inspectable by any third party</li>
         </ul>
       </div>

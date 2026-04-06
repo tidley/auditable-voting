@@ -25,6 +25,7 @@ export const SIMPLE_BLIND_KEY_BITS = 3072;
 export const SIMPLE_BLIND_HASH = "SHA-384";
 export const SIMPLE_BLIND_SALT_LENGTH = 48;
 const SIMPLE_BLIND_DOMAIN_SEPARATOR = "auditable-voting/simple-blind/v2";
+const SIMPLE_PUBLIC_READ_RELAYS_MAX = 2;
 
 export type SimpleBlindPublicKey = {
   scheme: typeof SIMPLE_BLIND_SCHEME;
@@ -153,6 +154,11 @@ function buildPublicRelays(relays?: string[]) {
   return normalizeRelaysRust([...SIMPLE_PUBLIC_RELAYS, ...(relays ?? [])]);
 }
 
+function selectPublicReadRelays(relays: string[]) {
+  const normalized = normalizeRelaysRust(relays);
+  return normalized.slice(0, Math.min(SIMPLE_PUBLIC_READ_RELAYS_MAX, normalized.length));
+}
+
 function buildBlindKeySubscriptionKey(coordinatorNpub: string, relays?: string[]) {
   return `${coordinatorNpub.trim()}::${buildPublicRelays(relays).join("|")}`;
 }
@@ -213,7 +219,8 @@ async function ensureBlindKeySubscription(input: {
       return;
     }
 
-    const events = await pool.querySync(relays, {
+    const readRelays = selectPublicReadRelays(relays);
+    const events = await pool.querySync(readRelays, {
       kinds: [SIMPLE_BLIND_KEY_KIND],
       authors: [decoded.data as string],
       limit: 50,
@@ -230,7 +237,7 @@ async function ensureBlindKeySubscription(input: {
     }
     notifyBlindKeySubscribers(state);
 
-    state.subscription = pool.subscribeMany(relays, {
+    state.subscription = pool.subscribeMany(readRelays, {
       kinds: [SIMPLE_BLIND_KEY_KIND],
       authors: [decoded.data as string],
       limit: 50,
@@ -575,7 +582,7 @@ export async function fetchLatestSimpleBlindKeyAnnouncement(input: {
     fallbackRelays: buildPublicRelays(input.relays),
   });
   const pool = getSharedNostrPool();
-  const events = await pool.querySync(relays, {
+  const events = await pool.querySync(selectPublicReadRelays(relays), {
     kinds: [SIMPLE_BLIND_KEY_KIND],
     authors: [decoded.data as string],
     limit: 20,

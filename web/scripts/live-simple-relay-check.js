@@ -157,10 +157,17 @@ async function clickAllEnabled(page, matcher) {
   let clicked = 0;
   for (let index = 0; index < count; index += 1) {
     const button = buttons.nth(index);
-    if (!(await button.isDisabled())) {
-      await button.click();
-      clicked += 1;
-      await sleep(100);
+    try {
+      if (!(await button.isVisible({ timeout: 1000 }))) {
+        continue;
+      }
+      if (!(await button.isDisabled({ timeout: 1000 }))) {
+        await button.click();
+        clicked += 1;
+        await sleep(100);
+      }
+    } catch {
+      continue;
     }
   }
   return clicked;
