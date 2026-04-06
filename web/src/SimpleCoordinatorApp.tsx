@@ -1889,8 +1889,8 @@ export default function SimpleCoordinatorApp() {
         responseId: ack.responseId,
       })),
       nowMs,
-      minRetryAgeMs: 8000,
-      maxAttempts: 4,
+      minRetryAgeMs: 4000,
+      maxAttempts: 8,
     }));
 
     if (retryFollowerIds.size === 0) {

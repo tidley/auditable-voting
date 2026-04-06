@@ -1466,8 +1466,8 @@ export default function SimpleUiApp() {
         })),
         receivedRequestIds: receivedShards.map((response) => response.requestId),
         nowMs: now,
-        minRetryAgeMs: 10000,
-        maxAttempts: 4,
+        minRetryAgeMs: 4000,
+        maxAttempts: 8,
       }));
       const retryEntries = Object.entries(pendingBlindRequests).filter(([key]) => retryKeys.has(key));
 
@@ -1511,7 +1511,7 @@ export default function SimpleUiApp() {
           return next;
         });
       }).catch(() => undefined);
-    }, 5000);
+    }, 3000);
 
     return () => window.clearInterval(intervalId);
   }, [dmAcknowledgements, pendingBlindRequests, receivedShards, requestDeliveries, roundReplyKeypairs, voterKeypair?.npub]);

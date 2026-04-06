@@ -21,12 +21,11 @@ export const SIMPLE_DM_RELAYS = [
   'wss://strfry.bitsbytom.com',
   'wss://relay.primal.net',
   'wss://nos.lol',
-  'wss://auth.nostr1.com',
   'wss://relay.0xchat.com',
 ];
 
 const SIMPLE_DM_PUBLISH_MAX_WAIT_MS = 1500;
-const SIMPLE_DM_SUBSCRIPTION_MAX_WAIT_MS = 1500;
+const SIMPLE_DM_SUBSCRIPTION_MAX_WAIT_MS = 3000;
 const SIMPLE_DM_PUBLISH_STAGGER_MS = 250;
 const SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS = 300;
 
@@ -1753,7 +1752,7 @@ export async function fetchSimpleShardResponses(input: {
   const wrappedEvents = await pool.querySync(dmRelays, {
     kinds: [1059],
     "#p": voterHexes,
-    limit: 100,
+    limit: 200,
   });
 
   const responses = new Map<string, SimpleShardResponse>();
@@ -1816,7 +1815,7 @@ export function subscribeSimpleShardResponses(input: {
     subscription = pool.subscribeMany(dmRelays, {
       kinds: [1059],
       "#p": voterHexes,
-      limit: 100,
+      limit: 200,
     }, {
       onevent: (wrappedEvent) => {
         const response = parseWithAnySecretKey(wrappedEvent, voterEntries, parseSimpleShardResponse);
