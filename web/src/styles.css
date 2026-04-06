@@ -325,12 +325,12 @@ code {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 76px;
-  min-height: 76px;
-  padding: 6px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.72);
-  border: 1px solid rgba(88, 59, 39, 0.12);
+  min-width: 64px;
+  min-height: 64px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .token-fingerprint-qr-button {
@@ -346,23 +346,18 @@ code {
 }
 
 .token-fingerprint-compact .token-fingerprint-qr-shell {
-  min-width: 56px;
-  min-height: 56px;
-  border-radius: 10px;
+  min-width: 44px;
+  min-height: 44px;
 }
 
 .token-fingerprint-large .token-fingerprint-qr-shell {
-  min-width: 140px;
-  min-height: 140px;
-  padding: 10px;
-  border-radius: 18px;
+  min-width: 120px;
+  min-height: 120px;
 }
 
 .token-fingerprint-xlarge .token-fingerprint-qr-shell {
-  min-width: 210px;
-  min-height: 210px;
-  padding: 14px;
-  border-radius: 24px;
+  min-width: 180px;
+  min-height: 180px;
 }
 
 .token-fingerprint-qr {
@@ -1282,6 +1277,30 @@ code {
   line-height: 1.2;
   font-weight: 800;
   color: #f8fafc;
+}
+
+.simple-submitted-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.simple-submitted-column {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.simple-submitted-column-title {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 1.2rem;
+  font-weight: 800;
+}
+
+.simple-submitted-vote-list {
+  display: grid;
+  gap: 12px;
 }
 
 .simple-vote-threshold-grid {
@@ -3915,6 +3934,10 @@ body.demo-page .demo-workspace {
     gap: 10px;
   }
 
+  .simple-submitted-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .simple-vote-entry-ballot {
     gap: 10px;
   }
@@ -3933,10 +3956,8 @@ body.demo-page .demo-workspace {
   }
 
   .simple-vote-entry .token-fingerprint-large .token-fingerprint-qr-shell {
-    min-width: 106px;
-    min-height: 106px;
-    padding: 8px;
-    border-radius: 14px;
+    min-width: 90px;
+    min-height: 90px;
   }
 
   .simple-vote-entry .token-fingerprint-large .token-fingerprint-qr {
