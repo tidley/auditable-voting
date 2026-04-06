@@ -91,7 +91,7 @@ At a high level:
 1. A coordinator publishes a live round.
 2. Coordinators publish per-round blind-signing keys, and the lead auto-sends share indexes to sub-coordinators.
 3. A voter adds coordinators in `Configure`, the client follows them over DMs, and then sends blinded issuance requests.
-4. Coordinators return blind-signature shares over DMs.
+4. Coordinators return blind-signature shares over DMs, and automatically retry unacknowledged ticket delivery.
 5. The voter unblinds enough shares locally and submits a ballot from an ephemeral key.
 6. Coordinators and auditors validate ballots and recompute the tally from public data.
 

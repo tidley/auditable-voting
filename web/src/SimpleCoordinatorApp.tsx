@@ -64,6 +64,7 @@ import {
 import {
   buildCoordinatorFollowerRowsRust,
   mergeSimpleFollowersRust,
+  selectTicketRetryTargetsRust,
 } from "./wasm/auditableVotingCore";
 
 type CoordinatorTab = "configure" | "voting" | "settings";
@@ -1845,6 +1846,65 @@ export default function SimpleCoordinatorApp() {
       });
     }
   }, [activeVotingId, autoSendFollowers, coordinatorFollowerRows, ticketDeliveries, visibleFollowers]);
+
+  useEffect(() => {
+    if (!activeVotingId) {
+      return;
+    }
+
+    const retryFollowerIds = new Set(selectTicketRetryTargetsRust({
+      followers: visibleFollowers.map((follower) => ({
+        id: follower.id,
+        voterNpub: follower.voterNpub,
+        voterId: follower.voterId,
+        votingId: follower.votingId ?? null,
+        createdAt: follower.createdAt,
+      })),
+      selectedPublishedVotingId: activeVotingId,
+      ticketDeliveries,
+      acknowledgements: dmAcknowledgements.map((ack) => ({
+        actorNpub: ack.actorNpub,
+        ackedAction: ack.ackedAction,
+        ackedEventId: ack.ackedEventId,
+      })),
+      nowMs,
+      minRetryAgeMs: 8000,
+      maxAttempts: 4,
+    }));
+
+    if (retryFollowerIds.size === 0) {
+      return;
+    }
+
+    for (const follower of visibleFollowers) {
+      if (!retryFollowerIds.has(follower.id) || !autoSendFollowers[follower.voterNpub]) {
+        continue;
+      }
+
+      const ticketStatusKey = `${follower.voterNpub}:${activeVotingId}`;
+      if (autoSendInFlightRef.current.has(ticketStatusKey)) {
+        continue;
+      }
+
+      const row = coordinatorFollowerRows.find((entry) => entry.id === follower.id);
+      if (!row?.canSendTicket) {
+        continue;
+      }
+
+      autoSendInFlightRef.current.add(ticketStatusKey);
+      void sendTicket(follower).finally(() => {
+        autoSendInFlightRef.current.delete(ticketStatusKey);
+      });
+    }
+  }, [
+    activeVotingId,
+    autoSendFollowers,
+    coordinatorFollowerRows,
+    dmAcknowledgements,
+    nowMs,
+    ticketDeliveries,
+    visibleFollowers,
+  ]);
 
   if (storageLocked && !identityReady) {
     return (

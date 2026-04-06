@@ -187,6 +187,7 @@ That mix matters scientifically because the system is not just a protocol sketch
 - blind issuance requests
 - blind issuance responses
 - acknowledgements
+- automatic retry of unacknowledged ticket delivery
 
 ---
 
