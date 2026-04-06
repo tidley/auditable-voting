@@ -667,7 +667,7 @@ fn build_coordinator_follower_rows_inner(
                         &voting_id[..12.min(voting_id.len())]
                     ),
                     _ => format!(
-                        "Voter {} is following this coordinator and is waiting for the next live vote",
+                        "Voter {}",
                         follower.voter_id
                     ),
                 },

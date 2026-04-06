@@ -1797,7 +1797,7 @@ export default function SimpleUiApp() {
                 <p className='simple-voter-empty'>No coordinators added yet.</p>
               )}
             </div>
-            {followAcknowledgedByAllConfiguredCoordinators ? (
+            {coordinatorsHaveBeenNotified ? (
               <div className='simple-voter-action-row simple-voter-action-row-tight'>
                 <button
                   type='button'
@@ -1808,7 +1808,7 @@ export default function SimpleUiApp() {
                     configuredCoordinatorTargets.length === 0
                   }
                 >
-                  Next
+                  Vote
                 </button>
               </div>
             ) : hasUnresponsiveCoordinators ? (

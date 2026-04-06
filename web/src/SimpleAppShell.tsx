@@ -38,6 +38,11 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
   const [role, setRole] = useState<SimpleRole>(() => readRoleFromUrl() ?? initialRole);
   const [roleSwitchMinimized, setRoleSwitchMinimized] = useState(false);
 
+  const handleRoleSelect = (nextRole: SimpleRole) => {
+    setRole(nextRole);
+    setRoleSwitchMinimized(true);
+  };
+
   useEffect(() => {
     writeRoleToUrl(role);
   }, [role]);
@@ -80,7 +85,7 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
               role='tab'
               aria-selected={role === 'voter'}
               className={`simple-role-switch-button${role === 'voter' ? ' is-active' : ''}`}
-              onClick={() => setRole('voter')}
+              onClick={() => handleRoleSelect('voter')}
             >
               Voter
             </button>
@@ -89,7 +94,7 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
               role='tab'
               aria-selected={role === 'coordinator'}
               className={`simple-role-switch-button${role === 'coordinator' ? ' is-active' : ''}`}
-              onClick={() => setRole('coordinator')}
+              onClick={() => handleRoleSelect('coordinator')}
             >
               Coordinator
             </button>
@@ -98,7 +103,7 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
               role='tab'
               aria-selected={role === 'auditor'}
               className={`simple-role-switch-button${role === 'auditor' ? ' is-active' : ''}`}
-              onClick={() => setRole('auditor')}
+              onClick={() => handleRoleSelect('auditor')}
             >
               Auditor
             </button>
