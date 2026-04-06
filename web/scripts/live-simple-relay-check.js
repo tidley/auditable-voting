@@ -10,14 +10,39 @@ function envInt(name, fallback) {
 }
 
 async function getNpub(page) {
-  return (await page.locator("code.simple-identity-code").nth(0).innerText()).trim();
+  await ensureTab(page, "Settings");
+  const codeLocator = page.locator("code.simple-identity-code").first();
+  if (await codeLocator.count()) {
+    await codeLocator.waitFor({ state: "visible", timeout: 30000 });
+    return (await codeLocator.innerText()).trim();
+  }
+
+  const body = await readBody(page);
+  const match = body.match(/npub1[023456789acdefghjklmnpqrstuvwxyz]+/i);
+  if (match) {
+    return match[0];
+  }
+
+  throw new Error("Could not find npub on page");
 }
 
 async function clickByText(page, role, name) {
-  await page.getByRole(role, { name }).click();
+  const locator = page.getByRole(role, { name }).first();
+  await locator.waitFor({ state: "visible", timeout: 30000 });
+  await locator.click();
 }
 
 async function ensureVoterTab(page, name) {
+  const tab = page.getByRole("button", { name: new RegExp(`^${name}$`, "i") });
+  if (await tab.count() === 0) {
+    return false;
+  }
+  await tab.first().click();
+  await sleep(100);
+  return true;
+}
+
+async function ensureTab(page, name) {
   const tab = page.getByRole("button", { name: new RegExp(`^${name}$`, "i") });
   if (await tab.count() === 0) {
     return false;
@@ -104,7 +129,6 @@ async function addCoordinatorsToVoter(page, coordinatorNpubs) {
     await clickByText(page, "button", "Add coordinator");
     await sleep(100);
   }
-  await clickByText(page, "button", /Notify coordinators/i);
 }
 
 function parseTicketReady(text) {
@@ -148,14 +172,17 @@ async function main() {
 
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext();
+  const voterBaseUrl = new URL(base);
+  const coordinatorBaseUrl = new URL(base);
+  coordinatorBaseUrl.pathname = coordinatorBaseUrl.pathname.replace(/simple(?:-coordinator)?\.html$/i, "simple-coordinator.html");
+  voterBaseUrl.pathname = voterBaseUrl.pathname.replace(/simple(?:-coordinator)?\.html$/i, "simple.html");
 
   const coordinators = [];
   const voters = [];
 
   for (let index = 0; index < coordinatorCount; index += 1) {
     const page = await context.newPage();
-    const url = new URL(base);
-    url.searchParams.set("role", "coordinator");
+    const url = new URL(coordinatorBaseUrl.toString());
     if (nip65Mode !== "on") {
       url.searchParams.set("nip65", "off");
     }
@@ -165,8 +192,7 @@ async function main() {
 
   for (let index = 0; index < voterCount; index += 1) {
     const page = await context.newPage();
-    const url = new URL(base);
-    url.searchParams.set("role", "voter");
+    const url = new URL(voterBaseUrl.toString());
     if (nip65Mode !== "on") {
       url.searchParams.set("nip65", "off");
     }
@@ -174,8 +200,13 @@ async function main() {
     voters.push(page);
   }
 
-  for (const page of [...coordinators, ...voters]) {
+  for (const page of coordinators) {
     await clickByText(page, 'button', /New ID/i);
+    await ensureTab(page, "Settings");
+  }
+  for (const page of voters) {
+    await clickByText(page, 'button', /^New$/i);
+    await ensureTab(page, "Settings");
   }
   await sleep(1500);
 
@@ -185,11 +216,13 @@ async function main() {
   }
 
   for (let index = 1; index < coordinators.length; index += 1) {
+    await ensureTab(coordinators[index], "Configure");
     await coordinators[index].getByPlaceholder("Leave blank if this coordinator is the lead").fill(coordinatorNpubs[0]);
-    await clickByText(coordinators[index], "button", /Submit to lead/i);
+    await clickByText(coordinators[index], "button", /Notify coordinator/i);
   }
 
   for (const page of voters) {
+    await ensureTab(page, "Configure");
     await addCoordinatorsToVoter(page, coordinatorNpubs);
   }
 
@@ -201,7 +234,7 @@ async function main() {
     const lead = coordinators[0];
     const questionBox = lead.getByRole("textbox", { name: "Question" });
     await questionBox.fill(prompt);
-    await clickByText(lead, "button", /Broadcast live vote/i);
+    await clickByText(lead, "button", /Broadcast live vote|Vote broadcast/i);
 
     const distributeButton = lead.getByRole("button", { name: /Distribute share indexes/i });
     if (!(await distributeButton.isDisabled())) {
@@ -221,7 +254,7 @@ async function main() {
       if (ticketReady && ticketReady.ready >= ticketReady.required) {
         const voteChoice = index % 2 === 0 ? "Yes" : "No";
         const button = page.getByRole("button", { name: new RegExp(`^${voteChoice}$`, "i") });
-        const submit = page.getByRole("button", { name: /^Submit$/i });
+        const submit = page.getByRole("button", { name: /^Submit vote$/i });
         if (!(await submit.isDisabled())) {
           await button.click();
           await submit.click();

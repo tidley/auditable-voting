@@ -183,6 +183,7 @@ export default function SimpleCoordinatorApp() {
   const [subCoordinators, setSubCoordinators] = useState<SimpleSubCoordinatorApplication[]>([]);
   const [ticketDeliveries, setTicketDeliveries] = useState<Record<string, { status: string; eventId?: string; responseId?: string; attempts?: number; lastAttemptAt?: string }>>({});
   const [autoSendFollowers, setAutoSendFollowers] = useState<Record<string, boolean>>({});
+  const [followerSearch, setFollowerSearch] = useState("");
   const [pendingRequests, setPendingRequests] = useState<SimpleShardRequest[]>([]);
   const [dmAcknowledgements, setDmAcknowledgements] = useState<SimpleDmAcknowledgement[]>([]);
   const [registrationStatus, setRegistrationStatus] = useState<string | null>(null);
@@ -1576,7 +1577,22 @@ export default function SimpleCoordinatorApp() {
     () => new Map(visibleFollowers.map((follower) => [follower.id, follower])),
     [visibleFollowers],
   );
+  const normalizedFollowerSearch = followerSearch.trim().toLowerCase();
+  const filteredCoordinatorFollowerRows = useMemo(() => (
+    normalizedFollowerSearch
+      ? coordinatorFollowerRows.filter((row) => {
+        return (
+          row.voterId.toLowerCase().includes(normalizedFollowerSearch)
+        );
+      })
+      : coordinatorFollowerRows
+  ), [
+    coordinatorFollowerRows,
+    normalizedFollowerSearch,
+    visibleFollowersById,
+  ]);
   const expectedSubCoordinatorCount = Math.max(0, (Number.parseInt(questionThresholdN, 10) || 1) - 1);
+  const voteBroadcasted = publishStatus?.startsWith("Vote broadcast.") ?? false;
 
   useEffect(() => {
     if (!selectedPublishedVote || !activeBlindPrivateKey || !keypair?.npub) {
@@ -1858,8 +1874,25 @@ export default function SimpleCoordinatorApp() {
 
             <SimpleCollapsibleSection title='Following voters'>
               {coordinatorFollowerRows.length > 0 ? (
+                <>
+                  <label
+                    className='simple-voter-label'
+                    htmlFor='simple-follower-search'
+                  >
+                    Search voters
+                  </label>
+                  <input
+                    id='simple-follower-search'
+                    className='simple-voter-input'
+                    value={followerSearch}
+                    onChange={(event) => setFollowerSearch(event.target.value)}
+                    placeholder='Search by voter ID...'
+                  />
+                </>
+              ) : null}
+              {filteredCoordinatorFollowerRows.length > 0 ? (
                 <ul className='simple-voter-list'>
-                  {coordinatorFollowerRows.map((row) => {
+                  {filteredCoordinatorFollowerRows.map((row) => {
                     const follower = visibleFollowersById.get(row.id);
                     if (!follower) {
                       return null;
@@ -1960,6 +1993,10 @@ export default function SimpleCoordinatorApp() {
                     );
                   })}
                 </ul>
+              ) : coordinatorFollowerRows.length > 0 ? (
+                <p className='simple-voter-empty'>
+                  No matching voters found.
+                </p>
               ) : (
                 <p className='simple-voter-empty'>
                   No voters are following this coordinator yet.
@@ -2076,7 +2113,7 @@ export default function SimpleCoordinatorApp() {
                         !keypair?.nsec || questionPrompt.trim().length === 0
                       }
                     >
-                      Broadcast live vote
+                      {voteBroadcasted ? 'Vote broadcast' : 'Broadcast live vote'}
                     </button>
                   </div>
                 </>

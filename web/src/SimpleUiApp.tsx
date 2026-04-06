@@ -1880,14 +1880,14 @@ export default function SimpleUiApp() {
                 <div className='simple-vote-button-grid'>
                   <button
                     type='button'
-                    className={`simple-voter-choice simple-voter-choice-yes${liveVoteChoice === 'Yes' ? ' is-active' : ''}${voteTicketReady && !liveVoteChoice ? ' is-awaiting-choice' : ''}`}
+                    className={`simple-voter-choice simple-voter-choice-yes${liveVoteChoice === 'Yes' ? ' is-active' : ''}${liveVoteChoice === 'No' ? ' is-dimmed' : ''}${voteTicketReady && !liveVoteChoice ? ' is-awaiting-choice' : ''}`}
                     onClick={() => setLiveVoteChoice('Yes')}
                   >
                     Yes
                   </button>
                   <button
                     type='button'
-                    className={`simple-voter-choice simple-voter-choice-no${liveVoteChoice === 'No' ? ' is-active' : ''}${voteTicketReady && !liveVoteChoice ? ' is-awaiting-choice' : ''}`}
+                    className={`simple-voter-choice simple-voter-choice-no${liveVoteChoice === 'No' ? ' is-active' : ''}${liveVoteChoice === 'Yes' ? ' is-dimmed' : ''}${voteTicketReady && !liveVoteChoice ? ' is-awaiting-choice' : ''}`}
                     onClick={() => setLiveVoteChoice('No')}
                   >
                     No
