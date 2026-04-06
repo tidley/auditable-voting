@@ -75,6 +75,9 @@ npm run verify:simple-blind-shares
 - Use `rg` for searches.
 - Use `apply_patch` for manual file edits.
 - Do not reintroduce backend, Python, Ansible, or Cashu-specific repo structure unless the user explicitly asks for it.
+- When protocol, relay, security, UX, or role behaviour changes, update the relevant documentation and presentation artefacts in the same pass.
+  - At minimum, review `README.md`, `docs/project-explainer.md`, `web/public/project-explainer.html`, and `presentation/project-overview.html`.
+  - Keep visible copy in those files aligned with the shipped app behaviour and current limitations.
 
 ## Frontend notes
 

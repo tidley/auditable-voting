@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const finalizeEvent = vi.fn();
 const getPublicKey = vi.fn();
@@ -61,9 +61,16 @@ vi.mock("./nostrPublishQueue", () => ({
 describe("nip65RelayHints", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    Reflect.set(globalThis as object, "__AUDITABLE_VOTING_DISABLE_NIP65__", false);
     getPublicKey.mockReturnValue("deadbeef");
     finalizeEvent.mockImplementation((event) => ({ id: "relay-list-1", ...event }));
     publish.mockImplementation((relays: string[]) => relays.map(() => Promise.resolve(undefined)));
+  });
+
+  afterEach(async () => {
+    Reflect.deleteProperty(globalThis as object, "__AUDITABLE_VOTING_DISABLE_NIP65__");
+    const mod = await import("./nip65RelayHints");
+    mod.resetNip65RelayHintsForTests();
   });
 
   it("parses inbox and outbox relay markers from a NIP-65 event", async () => {

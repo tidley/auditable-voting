@@ -20,6 +20,14 @@ const relayHintsCache = new Map<string, Nip65RelayHints | null>();
 const relayHintsInflight = new Map<string, Promise<Nip65RelayHints | null>>();
 const publishedRelayHintKeys = new Set<string>();
 
+export function setNip65EnabledForSession(enabled: boolean) {
+  Reflect.set(globalThis as object, "__AUDITABLE_VOTING_DISABLE_NIP65__", !enabled);
+}
+
+export function isNip65EnabledForSession() {
+  return !isNip65Disabled();
+}
+
 function isNip65Disabled() {
   const explicitOverride = Reflect.get(globalThis as object, "__AUDITABLE_VOTING_DISABLE_NIP65__");
   if (explicitOverride === true) {
@@ -370,5 +378,6 @@ export async function resolveNip65ConversationRelays(input: {
 
 export function resetNip65RelayHintsForTests() {
   relayHintsCache.clear();
+  relayHintsInflight.clear();
   publishedRelayHintKeys.clear();
 }

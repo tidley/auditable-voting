@@ -37,7 +37,10 @@ import SimpleRelayPanel from "./SimpleRelayPanel";
 import SimpleUnlockGate from "./SimpleUnlockGate";
 import TokenFingerprint from "./TokenFingerprint";
 import { extractNpubFromScan } from "./npubScan";
-import { primeNip65RelayHints } from "./nip65RelayHints";
+import {
+  primeNip65RelayHints,
+  setNip65EnabledForSession,
+} from "./nip65RelayHints";
 import { formatRoundOptionLabel } from "./roundLabel";
 import {
   fetchLatestSimpleBlindKeyAnnouncement,
@@ -72,6 +75,7 @@ type SimpleCoordinatorKeypair = {
 
 type SimpleCoordinatorCache = {
   leadCoordinatorNpub: string;
+  nip65Enabled: boolean;
   followers: SimpleCoordinatorFollower[];
   subCoordinators: SimpleSubCoordinatorApplication[];
   ticketDeliveries: Record<
@@ -172,6 +176,7 @@ export default function SimpleCoordinatorApp() {
   const [storageLocked, setStorageLocked] = useState(false);
   const [storageStatus, setStorageStatus] = useState<string | null>(null);
   const [leadCoordinatorNpub, setLeadCoordinatorNpub] = useState("");
+  const [nip65Enabled, setNip65Enabled] = useState(false);
   const [leadScannerActive, setLeadScannerActive] = useState(false);
   const [leadScannerStatus, setLeadScannerStatus] = useState<string | null>(null);
   const [followers, setFollowers] = useState<SimpleCoordinatorFollower[]>([]);
@@ -253,6 +258,7 @@ export default function SimpleCoordinatorApp() {
               : [],
           );
           setLeadCoordinatorNpub(typeof cache.leadCoordinatorNpub === "string" ? cache.leadCoordinatorNpub : "");
+          setNip65Enabled(cache?.nip65Enabled === true);
           setFollowers(Array.isArray(cache.followers) ? cache.followers : []);
           setSubCoordinators(Array.isArray(cache.subCoordinators) ? cache.subCoordinators : []);
           setTicketDeliveries(cache.ticketDeliveries && typeof cache.ticketDeliveries === "object" ? cache.ticketDeliveries : {});
@@ -331,12 +337,17 @@ export default function SimpleCoordinatorApp() {
   }, []);
 
   useEffect(() => {
+    setNip65EnabledForSession(nip65Enabled);
+  }, [nip65Enabled]);
+
+  useEffect(() => {
     if (!identityReady || !keypair) {
       return;
     }
 
     const cache: SimpleCoordinatorCache = {
       leadCoordinatorNpub,
+      nip65Enabled,
       followers,
       subCoordinators,
       ticketDeliveries,
@@ -370,6 +381,7 @@ export default function SimpleCoordinatorApp() {
     identityReady,
     keypair,
     leadCoordinatorNpub,
+    nip65Enabled,
     pendingRequests,
     publishStatus,
     publishedVotes,
@@ -919,6 +931,7 @@ export default function SimpleCoordinatorApp() {
 
     void downloadSimpleActorBackup('coordinator', keypair as SimpleActorKeypair, {
       leadCoordinatorNpub,
+      nip65Enabled,
       followers,
       subCoordinators,
       ticketDeliveries,
@@ -971,6 +984,7 @@ export default function SimpleCoordinatorApp() {
           : [],
       );
       setLeadCoordinatorNpub(typeof cache?.leadCoordinatorNpub === "string" ? cache.leadCoordinatorNpub : "");
+      setNip65Enabled(cache?.nip65Enabled === true);
       setFollowers(Array.isArray(cache?.followers) ? cache.followers : []);
       setSubCoordinators(Array.isArray(cache?.subCoordinators) ? cache.subCoordinators : []);
       setTicketDeliveries(
@@ -2225,6 +2239,20 @@ export default function SimpleCoordinatorApp() {
               localStateProtected={Boolean(storagePassphrase)}
               localStateMessage={storageStatus}
             />
+            <section className='simple-settings-card' aria-label='Relay hint settings'>
+              <h3 className='simple-voter-question'>Relay hints</h3>
+              <label className='simple-settings-toggle'>
+                <input
+                  type='checkbox'
+                  checked={nip65Enabled}
+                  onChange={(event) => setNip65Enabled(event.target.checked)}
+                />
+                <span>Enable NIP-65 relay hints</span>
+              </label>
+              <p className='simple-voter-note'>
+                Disabled by default. Turn this on only if you want to publish and use NIP-65 inbox/outbox relay hints.
+              </p>
+            </section>
             <SimpleRelayPanel />
           </section>
         ) : null}

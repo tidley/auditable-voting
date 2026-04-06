@@ -8,7 +8,10 @@ import SimpleRelayPanel from "./SimpleRelayPanel";
 import SimpleUnlockGate from "./SimpleUnlockGate";
 import TokenFingerprint from "./TokenFingerprint";
 import { extractNpubFromScan } from "./npubScan";
-import { primeNip65RelayHints } from "./nip65RelayHints";
+import {
+  primeNip65RelayHints,
+  setNip65EnabledForSession,
+} from "./nip65RelayHints";
 import { formatRoundOptionLabel } from "./roundLabel";
 import {
   deriveTokenIdFromSimplePublicShardProofs,
@@ -83,6 +86,7 @@ type RoundReplyKeypair = {
 
 type SimpleVoterCache = {
   manualCoordinators: string[];
+  nip65Enabled: boolean;
   requestStatus: string | null;
   receivedShards: SimpleShardResponse[];
   pendingBlindRequests: Record<string, PendingBlindRequest>;
@@ -97,6 +101,7 @@ type SimpleVoterCache = {
 function createEmptyVoterCache(): SimpleVoterCache {
   return {
     manualCoordinators: [],
+    nip65Enabled: false,
     requestStatus: null,
     receivedShards: [],
     pendingBlindRequests: {},
@@ -162,6 +167,7 @@ export default function SimpleUiApp() {
   const [identityReady, setIdentityReady] = useState(false);
   const [voterId, setVoterId] = useState<string>("pending");
   const [manualCoordinators, setManualCoordinators] = useState<string[]>([]);
+  const [nip65Enabled, setNip65Enabled] = useState(false);
   const [coordinatorDraft, setCoordinatorDraft] = useState("");
   const [coordinatorScannerActive, setCoordinatorScannerActive] = useState(false);
   const [coordinatorScannerStatus, setCoordinatorScannerStatus] = useState<string | null>(null);
@@ -366,6 +372,7 @@ export default function SimpleUiApp() {
         setVoterKeypair(storedState.keypair);
         const cache = (storedState.cache ?? null) as Partial<SimpleVoterCache> | null;
         setManualCoordinators(Array.isArray(cache?.manualCoordinators) ? cache.manualCoordinators : []);
+        setNip65Enabled(cache?.nip65Enabled === true);
         setRequestStatus(typeof cache?.requestStatus === "string" ? cache.requestStatus : null);
         setReceivedShards(Array.isArray(cache?.receivedShards) ? cache.receivedShards : []);
         setPendingBlindRequests(
@@ -428,12 +435,17 @@ export default function SimpleUiApp() {
   }, []);
 
   useEffect(() => {
+    setNip65EnabledForSession(nip65Enabled);
+  }, [nip65Enabled]);
+
+  useEffect(() => {
     if (!identityReady || !voterKeypair) {
       return;
     }
 
     const cache: SimpleVoterCache = {
       manualCoordinators,
+      nip65Enabled,
       requestStatus,
       receivedShards,
       pendingBlindRequests,
@@ -455,6 +467,7 @@ export default function SimpleUiApp() {
     identityReady,
     liveVoteChoice,
     manualCoordinators,
+    nip65Enabled,
     followDeliveries,
     pendingBlindRequests,
     roundReplyKeypairs,
@@ -784,6 +797,7 @@ export default function SimpleUiApp() {
 
     void downloadSimpleActorBackup("voter", voterKeypair as SimpleActorKeypair, {
       manualCoordinators,
+      nip65Enabled,
       requestStatus,
       receivedShards,
       pendingBlindRequests,
@@ -818,6 +832,7 @@ export default function SimpleUiApp() {
       setBackupStatus(`Backup restored from ${bundle.exportedAt}.`);
       const cache = (bundle.cache ?? null) as Partial<SimpleVoterCache> | null;
       setManualCoordinators(Array.isArray(cache?.manualCoordinators) ? cache.manualCoordinators : []);
+      setNip65Enabled(cache?.nip65Enabled === true);
       setLiveVoteChoice(cache?.liveVoteChoice === "Yes" || cache?.liveVoteChoice === "No" ? cache.liveVoteChoice : null);
       setRequestStatus(typeof cache?.requestStatus === "string" ? cache.requestStatus : null);
       setSubmitStatus(typeof cache?.submitStatus === "string" ? cache.submitStatus : null);
@@ -2017,6 +2032,20 @@ export default function SimpleUiApp() {
               localStateProtected={Boolean(storagePassphrase)}
               localStateMessage={storageStatus}
             />
+            <section className='simple-settings-card' aria-label='Relay hint settings'>
+              <h3 className='simple-voter-question'>Relay hints</h3>
+              <label className='simple-settings-toggle'>
+                <input
+                  type='checkbox'
+                  checked={nip65Enabled}
+                  onChange={(event) => setNip65Enabled(event.target.checked)}
+                />
+                <span>Enable NIP-65 relay hints</span>
+              </label>
+              <p className='simple-voter-note'>
+                Disabled by default. Turn this on only if you want to publish and use NIP-65 inbox/outbox relay hints.
+              </p>
+            </section>
             <SimpleRelayPanel />
           </section>
         ) : null}

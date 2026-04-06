@@ -410,6 +410,7 @@ vi.mock("./SimpleRelayPanel", () => ({
 vi.mock("./nip65RelayHints", () => ({
   publishOwnNip65RelayHints: vi.fn(async () => ({ successes: 1 })),
   primeNip65RelayHints: vi.fn(async () => undefined),
+  setNip65EnabledForSession: vi.fn(() => undefined),
   resolveNip65InboxRelays: vi.fn(async ({ fallbackRelays }: { fallbackRelays: string[] }) => fallbackRelays),
   resolveNip65OutboxRelays: vi.fn(async ({ fallbackRelays }: { fallbackRelays: string[] }) => fallbackRelays),
   resolveNip65ConversationRelays: vi.fn(async ({ fallbackRelays }: { fallbackRelays: string[] }) => fallbackRelays),

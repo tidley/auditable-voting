@@ -34,6 +34,7 @@ export default function SimpleIdentityPanel({
 }) {
   const [copied, setCopied] = useState(false);
   const [qrSrc, setQrSrc] = useState<string | null>(null);
+  const [qrExpanded, setQrExpanded] = useState(false);
   const [restoreNsec, setRestoreNsec] = useState('');
   const [backupPassphrase, setBackupPassphrase] = useState('');
   const [showPrivateKey, setShowPrivateKey] = useState(false);
@@ -71,6 +72,23 @@ export default function SimpleIdentityPanel({
     };
   }, [npub]);
 
+  useEffect(() => {
+    if (!qrExpanded) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setQrExpanded(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [qrExpanded]);
+
   async function copyNpub() {
     try {
       await navigator.clipboard.writeText(npub);
@@ -90,11 +108,18 @@ export default function SimpleIdentityPanel({
       <div className='simple-identity-grid'>
         <div className='simple-identity-qr-wrap'>
           {qrSrc ? (
-            <img
-              className='simple-identity-qr'
-              src={qrSrc}
-              alt='QR code for npub'
-            />
+            <button
+              type='button'
+              className='simple-identity-qr-button'
+              onClick={() => setQrExpanded(true)}
+              aria-label='Expand npub QR code'
+            >
+              <img
+                className='simple-identity-qr'
+                src={qrSrc}
+                alt='QR code for npub'
+              />
+            </button>
           ) : (
             <div
               className='simple-identity-qr simple-identity-qr-fallback'
@@ -253,6 +278,34 @@ export default function SimpleIdentityPanel({
           ) : null}
         </div>
       </div>
+      {qrExpanded && qrSrc ? (
+        <div
+          className='simple-identity-qr-overlay'
+          role='dialog'
+          aria-modal='true'
+          aria-label='Expanded npub QR code'
+          onClick={() => setQrExpanded(false)}
+        >
+          <button
+            type='button'
+            className='simple-identity-qr-overlay-close'
+            onClick={() => setQrExpanded(false)}
+            aria-label='Close QR preview'
+          >
+            Close
+          </button>
+          <div
+            className='simple-identity-qr-overlay-card'
+            onClick={(event) => event.stopPropagation()}
+          >
+            <img
+              className='simple-identity-qr-overlay-image'
+              src={qrSrc}
+              alt='Expanded QR code for npub'
+            />
+          </div>
+        </div>
+      ) : null}
     </SimpleCollapsibleSection>
   );
 }
