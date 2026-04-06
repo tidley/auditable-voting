@@ -21,6 +21,7 @@ import {
   type SimpleBlindRequestSecret,
 } from "./simpleShardCertificate";
 import {
+  subscribeSimpleCoordinatorRosterAnnouncements,
   fetchSimpleShardResponses,
   sendSimpleCoordinatorFollow,
   sendSimpleDmAcknowledgement,
@@ -484,6 +485,38 @@ export default function SimpleUiApp() {
       },
     });
   }, [roundReplyKeypairs, voterKeypair?.nsec]);
+
+  useEffect(() => {
+    const voterNsec = voterKeypair?.nsec?.trim() ?? "";
+
+    if (!voterNsec) {
+      return;
+    }
+
+    return subscribeSimpleCoordinatorRosterAnnouncements({
+      voterNsec,
+      onAnnouncements: (announcements) => {
+        const discoveredCoordinatorNpubs = normalizeCoordinatorNpubsRust(
+          announcements.flatMap((announcement) => announcement.coordinatorNpubs),
+        );
+
+        if (discoveredCoordinatorNpubs.length === 0) {
+          return;
+        }
+
+        setManualCoordinators((current) => {
+          const next = normalizeCoordinatorNpubsRust([
+            ...current,
+            ...discoveredCoordinatorNpubs,
+          ]);
+          return next.length === current.length
+            && next.every((value, index) => value === current[index])
+            ? current
+            : next;
+        });
+      },
+    });
+  }, [voterKeypair?.nsec]);
 
   useEffect(() => {
     const voterNsec = voterKeypair?.nsec?.trim() ?? "";

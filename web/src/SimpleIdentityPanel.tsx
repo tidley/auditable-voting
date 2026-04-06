@@ -88,6 +88,20 @@ export default function SimpleIdentityPanel({
   return (
     <SimpleCollapsibleSection title={title}>
       <div className='simple-identity-grid'>
+        <div className='simple-identity-qr-wrap'>
+          {qrSrc ? (
+            <img
+              className='simple-identity-qr'
+              src={qrSrc}
+              alt='QR code for npub'
+            />
+          ) : (
+            <div
+              className='simple-identity-qr simple-identity-qr-fallback'
+              aria-hidden='true'
+            />
+          )}
+        </div>
         <div className='simple-identity-fields'>
           <div className='simple-identity-field'>
             <div className='simple-identity-label'>Public key</div>
@@ -237,20 +251,6 @@ export default function SimpleIdentityPanel({
               ) : null}
             </div>
           ) : null}
-        </div>
-        <div className='simple-identity-qr-wrap'>
-          {qrSrc ? (
-            <img
-              className='simple-identity-qr'
-              src={qrSrc}
-              alt='QR code for npub'
-            />
-          ) : (
-            <div
-              className='simple-identity-qr simple-identity-qr-fallback'
-              aria-hidden='true'
-            />
-          )}
         </div>
       </div>
     </SimpleCollapsibleSection>

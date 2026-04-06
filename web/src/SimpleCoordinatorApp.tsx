@@ -8,6 +8,7 @@ import {
   subscribeSimpleCoordinatorShareAssignments,
   subscribeSimpleShardRequests,
   subscribeSimpleSubCoordinatorApplications,
+  sendSimpleCoordinatorRoster,
   sendSimpleDmAcknowledgement,
   sendSimpleShareAssignment,
   sendSimpleSubCoordinatorJoin,
@@ -225,6 +226,7 @@ export default function SimpleCoordinatorApp() {
     Math.min(Number.parseInt(questionThresholdN, 10) || 1, availableCoordinatorCount),
   );
   const sentFollowAckStateRef = useRef<Record<string, string>>({});
+  const sentRosterStateRef = useRef<Record<string, string>>({});
   const sentRequestAckIdsRef = useRef<Set<string>>(new Set());
   const sentSubCoordinatorAckIdsRef = useRef<Set<string>>(new Set());
   const sentAssignmentAckIdsRef = useRef<Set<string>>(new Set());
@@ -662,6 +664,37 @@ export default function SimpleCoordinatorApp() {
     const coordinatorSecretKey = decodeNsec(keypair?.nsec ?? "");
     const coordinatorNpub = keypair?.npub ?? "";
 
+    if (!isLeadCoordinator || !coordinatorSecretKey || !coordinatorNpub || followers.length === 0) {
+      return;
+    }
+
+    const coordinatorRoster = sortCoordinatorRoster([
+      coordinatorNpub,
+      ...subCoordinators.map((application) => application.coordinatorNpub),
+    ]);
+    const rosterSignature = coordinatorRoster.join("|");
+
+    for (const follower of followers) {
+      if (sentRosterStateRef.current[follower.voterNpub] === rosterSignature) {
+        continue;
+      }
+
+      sentRosterStateRef.current[follower.voterNpub] = rosterSignature;
+      void sendSimpleCoordinatorRoster({
+        leadCoordinatorSecretKey: coordinatorSecretKey,
+        recipientNpub: follower.voterNpub,
+        leadCoordinatorNpub: coordinatorNpub,
+        coordinatorNpubs: coordinatorRoster,
+      }).catch(() => {
+        delete sentRosterStateRef.current[follower.voterNpub];
+      });
+    }
+  }, [followers, isLeadCoordinator, keypair?.nsec, keypair?.npub, subCoordinators]);
+
+  useEffect(() => {
+    const coordinatorSecretKey = decodeNsec(keypair?.nsec ?? "");
+    const coordinatorNpub = keypair?.npub ?? "";
+
     if (!coordinatorSecretKey || !coordinatorNpub) {
       return;
     }
@@ -806,6 +839,7 @@ export default function SimpleCoordinatorApp() {
     setSubmittedVotes([]);
     setActiveTab("configure");
     sentFollowAckStateRef.current = {};
+    sentRosterStateRef.current = {};
     sentRequestAckIdsRef.current.clear();
     sentSubCoordinatorAckIdsRef.current.clear();
     sentAssignmentAckIdsRef.current.clear();
@@ -855,6 +889,7 @@ export default function SimpleCoordinatorApp() {
     setSubmittedVotes([]);
     setActiveTab("configure");
     sentFollowAckStateRef.current = {};
+    sentRosterStateRef.current = {};
     sentRequestAckIdsRef.current.clear();
     sentSubCoordinatorAckIdsRef.current.clear();
     sentAssignmentAckIdsRef.current.clear();
@@ -981,6 +1016,7 @@ export default function SimpleCoordinatorApp() {
       setSubmittedVotes(Array.isArray(cache?.submittedVotes) ? cache.submittedVotes : []);
       setActiveTab("configure");
       sentFollowAckStateRef.current = {};
+      sentRosterStateRef.current = {};
       sentRequestAckIdsRef.current.clear();
       sentSubCoordinatorAckIdsRef.current.clear();
       sentAssignmentAckIdsRef.current.clear();

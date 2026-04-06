@@ -166,6 +166,22 @@ let dmAcknowledgementSubscribers: Array<{
     createdAt: string;
   }>) => void;
 }> = [];
+let coordinatorRosterAnnouncements: Array<{
+  recipientNpub: string;
+  leadCoordinatorNpub: string;
+  coordinatorNpubs: string[];
+  createdAt: string;
+}> = [];
+let coordinatorRosterSubscribers: Array<{
+  recipientNpub: string;
+  onAnnouncements: (announcements: Array<{
+    id: string;
+    dmEventId: string;
+    leadCoordinatorNpub: string;
+    coordinatorNpubs: string[];
+    createdAt: string;
+  }>) => void;
+}> = [];
 let blindAnnouncementSubscribers: Array<{
   coordinatorNpub: string;
   votingId?: string;
@@ -362,6 +378,23 @@ function notifyDmAcknowledgementSubscribers(recipientNpub: string) {
   for (const subscriber of dmAcknowledgementSubscribers) {
     if (subscriber.actorNpubs.includes(recipientNpub)) {
       subscriber.onAcknowledgements(nextAcknowledgements);
+    }
+  }
+}
+
+function notifyCoordinatorRosterSubscribers(recipientNpub: string) {
+  const nextAnnouncements = coordinatorRosterAnnouncements
+    .filter((entry) => entry.recipientNpub === recipientNpub)
+    .map((entry, index) => ({
+      id: `roster-${index + 1}`,
+      dmEventId: `roster-event-${index + 1}`,
+      leadCoordinatorNpub: entry.leadCoordinatorNpub,
+      coordinatorNpubs: entry.coordinatorNpubs,
+      createdAt: entry.createdAt,
+    }));
+  for (const subscriber of coordinatorRosterSubscribers) {
+    if (subscriber.recipientNpub === recipientNpub) {
+      subscriber.onAnnouncements(nextAnnouncements);
     }
   }
 }
@@ -827,6 +860,41 @@ vi.mock("./simpleShardDm", () => ({
     const actorNpubs = [input.actorNsec, ...(input.actorNsecs ?? [])].map((value) => nsecToNpub(value) as string);
     return dmAcknowledgements.filter((ack) => actorNpubs.includes(ack.recipientNpub));
   }),
+  sendSimpleCoordinatorRoster: vi.fn(async (input: {
+    recipientNpub: string;
+    leadCoordinatorNpub: string;
+    coordinatorNpubs: string[];
+  }) => {
+    coordinatorRosterAnnouncements.push({
+      recipientNpub: input.recipientNpub,
+      leadCoordinatorNpub: input.leadCoordinatorNpub,
+      coordinatorNpubs: input.coordinatorNpubs,
+      createdAt: new Date().toISOString(),
+    });
+    notifyCoordinatorRosterSubscribers(input.recipientNpub);
+    return { eventId: `roster-event-${coordinatorRosterAnnouncements.length}`, successes: 1, failures: 0, relayResults: [] };
+  }),
+  subscribeSimpleCoordinatorRosterAnnouncements: vi.fn((input: {
+    voterNsec: string;
+    onAnnouncements: (announcements: Array<{
+      id: string;
+      dmEventId: string;
+      leadCoordinatorNpub: string;
+      coordinatorNpubs: string[];
+      createdAt: string;
+    }>) => void;
+  }) => {
+    const recipientNpub = nsecToNpub(input.voterNsec);
+    const subscriber = {
+      recipientNpub,
+      onAnnouncements: input.onAnnouncements,
+    };
+    coordinatorRosterSubscribers.push(subscriber);
+    notifyCoordinatorRosterSubscribers(recipientNpub);
+    return () => {
+      coordinatorRosterSubscribers = coordinatorRosterSubscribers.filter((entry) => entry !== subscriber);
+    };
+  }),
 }));
 
 vi.mock("./simpleVotingSession", () => ({
@@ -1002,6 +1070,7 @@ describe("Simple round flow", () => {
     shardRequests = [];
     blindAnnouncements = {};
     dmAcknowledgements = [];
+    coordinatorRosterAnnouncements = [];
     followerSubscribers = [];
     shardResponseSubscribers = [];
     liveVoteSubscribers = [];
@@ -1011,6 +1080,7 @@ describe("Simple round flow", () => {
     shareAssignmentSubscribers = [];
     shardRequestSubscribers = [];
     dmAcknowledgementSubscribers = [];
+    coordinatorRosterSubscribers = [];
     blindAnnouncementSubscribers = [];
     suppressedShardResponseNotifications = new Set();
     window.sessionStorage.clear();

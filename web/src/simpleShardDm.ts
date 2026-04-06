@@ -38,6 +38,14 @@ export type SimpleDmAcknowledgedAction =
   | 'simple_shard_response'
   | 'simple_round_ticket';
 
+export type SimpleCoordinatorRosterAnnouncement = {
+  id: string;
+  dmEventId: string;
+  leadCoordinatorNpub: string;
+  coordinatorNpubs: string[];
+  createdAt: string;
+};
+
 export type SimpleDmAcknowledgement = {
   id: string;
   ackedAction: SimpleDmAcknowledgedAction;
@@ -463,6 +471,50 @@ function parseSimpleDmAcknowledgement(
   }
 }
 
+function parseSimpleCoordinatorRosterAnnouncement(
+  wrappedEvent: Record<string, unknown> & { id?: string; created_at: number },
+  secretKey: Uint8Array,
+): SimpleCoordinatorRosterAnnouncement | null {
+  try {
+    const rumor = nip17.unwrapEvent(wrappedEvent as never, secretKey) as {
+      content: string;
+    };
+    const payload = JSON.parse(rumor.content) as {
+      action?: string;
+      roster_id?: string;
+      lead_coordinator_npub?: string;
+      coordinator_npubs?: string[];
+      created_at?: string;
+    };
+
+    if (
+      payload.action !== 'simple_coordinator_roster' ||
+      !payload.roster_id ||
+      !payload.lead_coordinator_npub ||
+      !Array.isArray(payload.coordinator_npubs)
+    ) {
+      return null;
+    }
+
+    const coordinatorNpubs = uniqueNonEmpty(payload.coordinator_npubs);
+    if (coordinatorNpubs.length === 0) {
+      return null;
+    }
+
+    return {
+      id: payload.roster_id,
+      dmEventId: String(wrappedEvent.id ?? payload.roster_id),
+      leadCoordinatorNpub: payload.lead_coordinator_npub,
+      coordinatorNpubs,
+      createdAt:
+        payload.created_at ??
+        new Date(wrappedEvent.created_at * 1000).toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function sendSimpleCoordinatorFollow(input: {
   voterSecretKey: Uint8Array;
   coordinatorNpub: string;
@@ -588,6 +640,89 @@ export async function sendSimpleDmAcknowledgement(input: {
     () =>
       publishToRelaysStaggered(
         (relay) => pool.publish([relay], event, { maxWait: SIMPLE_DM_PUBLISH_MAX_WAIT_MS })[0],
+        dmRelays,
+        { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
+      ),
+    {
+      channel: buildDmPublishChannel(input.recipientNpub),
+      minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
+    },
+  );
+  const relayResults = results.map((result, index) =>
+    result.status === 'fulfilled'
+      ? { relay: dmRelays[index], success: true }
+      : {
+          relay: dmRelays[index],
+          success: false,
+          error:
+            result.reason instanceof Error
+              ? result.reason.message
+              : String(result.reason),
+        },
+  );
+
+  return {
+    eventId: event.id,
+    successes: relayResults.filter((result) => result.success).length,
+    failures: relayResults.filter((result) => !result.success).length,
+    relayResults,
+  };
+}
+
+export async function sendSimpleCoordinatorRoster(input: {
+  leadCoordinatorSecretKey: Uint8Array;
+  recipientNpub: string;
+  leadCoordinatorNpub: string;
+  coordinatorNpubs: string[];
+  relays?: string[];
+}): Promise<DmPublishResult> {
+  const decoded = nip19.decode(input.recipientNpub);
+  if (decoded.type !== 'npub') {
+    throw new Error('Recipient value must be an npub.');
+  }
+
+  const coordinatorNpubs = uniqueNonEmpty(input.coordinatorNpubs);
+  if (coordinatorNpubs.length === 0) {
+    throw new Error('Coordinator roster must contain at least one npub.');
+  }
+
+  const dmRelays = await resolveConversationDmRelays(
+    input.recipientNpub,
+    input.leadCoordinatorNpub,
+    input.relays,
+  );
+  await publishOwnNip65RelayHints({
+    secretKey: input.leadCoordinatorSecretKey,
+    inboxRelays: dmRelays,
+    outboxRelays: dmRelays,
+    publishRelays: dmRelays,
+    channel: `nip65:${input.leadCoordinatorNpub}`,
+  }).catch(() => null);
+
+  const event = nip17.wrapEvent(
+    input.leadCoordinatorSecretKey,
+    {
+      publicKey: decoded.data as string,
+      relayUrl: dmRelays[0],
+    },
+    JSON.stringify({
+      action: 'simple_coordinator_roster',
+      roster_id: crypto.randomUUID(),
+      lead_coordinator_npub: input.leadCoordinatorNpub,
+      coordinator_npubs: coordinatorNpubs,
+      created_at: new Date().toISOString(),
+    }),
+    'Coordinator roster',
+  );
+
+  const pool = getSharedNostrPool();
+  const results = await queueNostrPublish(
+    () =>
+      publishToRelaysStaggered(
+        (relay) =>
+          pool.publish([relay], event, {
+            maxWait: SIMPLE_DM_PUBLISH_MAX_WAIT_MS,
+          })[0],
         dmRelays,
         { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
       ),
@@ -935,6 +1070,37 @@ export async function fetchSimpleDmAcknowledgements(input: {
   return sortByCreatedAtDescending([...acknowledgements.values()]);
 }
 
+export async function fetchSimpleCoordinatorRosterAnnouncements(input: {
+  voterNsec: string;
+  relays?: string[];
+}): Promise<SimpleCoordinatorRosterAnnouncement[]> {
+  const { secretKey, publicHex: voterHex, npub: voterNpub } = getNpubFromNsec(
+    input.voterNsec,
+    'Voter',
+  );
+  const dmRelays = await resolveRecipientInboxRelays(voterNpub, input.relays);
+  const pool = getSharedNostrPool();
+  const wrappedEvents = await pool.querySync(dmRelays, {
+    kinds: [1059],
+    '#p': [voterHex],
+    limit: 100,
+  });
+
+  const announcements = new Map<string, SimpleCoordinatorRosterAnnouncement>();
+
+  for (const wrappedEvent of wrappedEvents) {
+    const announcement = parseSimpleCoordinatorRosterAnnouncement(
+      wrappedEvent,
+      secretKey,
+    );
+    if (announcement) {
+      announcements.set(announcement.leadCoordinatorNpub, announcement);
+    }
+  }
+
+  return sortByCreatedAtDescending([...announcements.values()]);
+}
+
 export function subscribeSimpleDmAcknowledgements(input: {
   actorNsec: string;
   actorNsecs?: string[];
@@ -1033,6 +1199,99 @@ export function subscribeSimpleDmAcknowledgements(input: {
       input.onError?.(error);
     }
   });
+
+  return () => {
+    closed = true;
+    void subscription?.close('closed by caller');
+  };
+}
+
+export function subscribeSimpleCoordinatorRosterAnnouncements(input: {
+  voterNsec: string;
+  relays?: string[];
+  onAnnouncements: (announcements: SimpleCoordinatorRosterAnnouncement[]) => void;
+  onError?: (error: Error) => void;
+}): () => void {
+  const { secretKey, publicHex: voterHex, npub: voterNpub } = getNpubFromNsec(
+    input.voterNsec,
+    'Voter',
+  );
+  const pool = getSharedNostrPool();
+  const announcements = new Map<string, SimpleCoordinatorRosterAnnouncement>();
+  let closed = false;
+  let subscription: { close: (reason?: string) => Promise<void> | void } | null =
+    null;
+
+  void fetchSimpleCoordinatorRosterAnnouncements({
+    voterNsec: input.voterNsec,
+    relays: input.relays,
+  })
+    .then((initialAnnouncements) => {
+      if (closed) {
+        return;
+      }
+
+      for (const announcement of initialAnnouncements) {
+        announcements.set(announcement.leadCoordinatorNpub, announcement);
+      }
+
+      input.onAnnouncements(sortByCreatedAtDescending([...announcements.values()]));
+    })
+    .catch((error) => {
+      if (!closed && error instanceof Error) {
+        input.onError?.(error);
+      }
+    });
+
+  void resolveRecipientInboxRelays(voterNpub, input.relays)
+    .then((dmRelays) => {
+      if (closed) {
+        return;
+      }
+
+      subscription = pool.subscribeMany(
+        dmRelays,
+        {
+          kinds: [1059],
+          '#p': [voterHex],
+          limit: 100,
+        },
+        {
+          onevent: (wrappedEvent) => {
+            const announcement = parseSimpleCoordinatorRosterAnnouncement(
+              wrappedEvent,
+              secretKey,
+            );
+            if (!announcement) {
+              return;
+            }
+
+            announcements.set(announcement.leadCoordinatorNpub, announcement);
+            input.onAnnouncements(
+              sortByCreatedAtDescending([...announcements.values()]),
+            );
+          },
+          onclose: (reasons) => {
+            if (closed) {
+              return;
+            }
+
+            const errors = reasons.filter(
+              (reason) => !reason.startsWith('closed by caller'),
+            );
+            if (errors.length > 0) {
+              input.onError?.(new Error(errors.join('; ')));
+            }
+          },
+          maxWait: SIMPLE_DM_SUBSCRIPTION_MAX_WAIT_MS,
+        },
+      );
+    })
+    .catch((error) => {
+      if (!closed && error instanceof Error) {
+        input.onError?.(error);
+      }
+    });
 
   return () => {
     closed = true;

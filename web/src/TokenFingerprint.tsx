@@ -29,6 +29,7 @@ export default function TokenFingerprint({
   hideMetadata?: boolean;
 }) {
   const [qrSrc, setQrSrc] = useState<string | null>(null);
+  const [qrExpanded, setQrExpanded] = useState(false);
   const cells = tokenPatternDetail(tokenId, size);
   const qrPayload = qrValue ?? tokenQrPayload(tokenId);
 
@@ -63,46 +64,103 @@ export default function TokenFingerprint({
     };
   }, [compact, qrPayload, showQr]);
 
+  useEffect(() => {
+    if (!qrExpanded) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setQrExpanded(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [qrExpanded]);
+
   return (
-    <div
-      className={`token-fingerprint${compact ? ' token-fingerprint-compact' : ''}${large ? ' token-fingerprint-large' : ''}${xlarge ? ' token-fingerprint-xlarge' : ''}`}
-    >
-      <div className='token-fingerprint-symbols'>
-        <div
-          className='token-fingerprint-grid'
-          role='img'
-          aria-label={label ?? `Token fingerprint ${tokenIdLabel(tokenId)}`}
-          style={{ gridTemplateColumns: `repeat(${size}, minmax(0, 1fr))` }}
-        >
-          {cells.map((cell, index) => (
-            <span
-              key={`${tokenId}-${index}`}
-              className={`token-fingerprint-cell${cell.filled ? ' is-filled' : ' is-empty'}`}
-              style={{
-                backgroundColor: cell.filled
-                  ? TOKEN_FINGERPRINT_PALETTE[cell.colorIndex]
-                  : '#efe6d6',
-              }}
-            />
-          ))}
-        </div>
-        {showQr && (
-          <div className='token-fingerprint-qr-shell'>
-            {qrSrc ? (
-              <img
-                className='token-fingerprint-qr'
-                src={qrSrc}
-                alt={`Scannable QR for token ${tokenIdLabel(tokenId)}`}
+    <>
+      <div
+        className={`token-fingerprint${compact ? ' token-fingerprint-compact' : ''}${large ? ' token-fingerprint-large' : ''}${xlarge ? ' token-fingerprint-xlarge' : ''}`}
+      >
+        <div className='token-fingerprint-symbols'>
+          <div
+            className='token-fingerprint-grid'
+            role='img'
+            aria-label={label ?? `Token fingerprint ${tokenIdLabel(tokenId)}`}
+            style={{ gridTemplateColumns: `repeat(${size}, minmax(0, 1fr))` }}
+          >
+            {cells.map((cell, index) => (
+              <span
+                key={`${tokenId}-${index}`}
+                className={`token-fingerprint-cell${cell.filled ? ' is-filled' : ' is-empty'}`}
+                style={{
+                  backgroundColor: cell.filled
+                    ? TOKEN_FINGERPRINT_PALETTE[cell.colorIndex]
+                    : '#efe6d6',
+                }}
               />
-            ) : (
-              <div
-                className='token-fingerprint-qr token-fingerprint-qr-fallback'
-                aria-hidden='true'
-              />
-            )}
+            ))}
           </div>
-        )}
+          {showQr && (
+            <button
+              type='button'
+              className='token-fingerprint-qr-shell token-fingerprint-qr-button'
+              onClick={() => {
+                if (qrSrc) {
+                  setQrExpanded(true);
+                }
+              }}
+              aria-label={`Expand QR for token ${tokenIdLabel(tokenId)}`}
+              disabled={!qrSrc}
+            >
+              {qrSrc ? (
+                <img
+                  className='token-fingerprint-qr'
+                  src={qrSrc}
+                  alt={`Scannable QR for token ${tokenIdLabel(tokenId)}`}
+                />
+              ) : (
+                <div
+                  className='token-fingerprint-qr token-fingerprint-qr-fallback'
+                  aria-hidden='true'
+                />
+              )}
+            </button>
+          )}
+        </div>
       </div>
-    </div>
+      {qrExpanded && qrSrc ? (
+        <div
+          className='token-fingerprint-overlay'
+          role='dialog'
+          aria-modal='true'
+          aria-label={`Expanded QR for token ${tokenIdLabel(tokenId)}`}
+          onClick={() => setQrExpanded(false)}
+        >
+          <button
+            type='button'
+            className='token-fingerprint-overlay-close'
+            onClick={() => setQrExpanded(false)}
+            aria-label='Close QR preview'
+          >
+            Close
+          </button>
+          <div
+            className='token-fingerprint-overlay-card'
+            onClick={(event) => event.stopPropagation()}
+          >
+            <img
+              className='token-fingerprint-overlay-qr'
+              src={qrSrc}
+              alt={`Expanded QR for token ${tokenIdLabel(tokenId)}`}
+            />
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }
