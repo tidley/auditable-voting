@@ -10,12 +10,9 @@ import {
   subscribeSimpleSubCoordinatorApplications,
   sendSimpleCoordinatorRoster,
   sendSimpleDmAcknowledgement,
-  sendSimpleForwardedRoundTicketToLead,
-  sendSimpleForwardedRoundTicketToRecipient,
   sendSimpleShareAssignment,
   sendSimpleSubCoordinatorJoin,
   sendSimpleRoundTicket,
-  subscribeSimpleForwardedRoundTickets,
   type SimpleDmAcknowledgement,
   type SimpleCoordinatorFollower,
   type SimpleShardRequest,
@@ -250,7 +247,6 @@ export default function SimpleCoordinatorApp() {
   const blindKeyRepublishAtRef = useRef<Record<string, number>>({});
   const autoSendInFlightRef = useRef<Set<string>>(new Set());
   const autoShareAssignmentAttemptRef = useRef('');
-  const forwardedTicketIdsRef = useRef<Set<string>>(new Set());
   const verifyAllVisibleRef = useRef<HTMLInputElement | null>(null);
   const isLeadCoordinator = !leadCoordinatorNpub.trim() || leadCoordinatorNpub.trim() === (keypair?.npub ?? "");
   const canShowNotifyLeadButton = Boolean(
@@ -516,38 +512,6 @@ export default function SimpleCoordinatorApp() {
       },
     });
   }, [isLeadCoordinator, keypair?.nsec]);
-
-  useEffect(() => {
-    const leadCoordinatorNsec = keypair?.nsec ?? "";
-    const leadCoordinatorNpub = keypair?.npub ?? "";
-    const leadCoordinatorSecretKey = decodeNsec(leadCoordinatorNsec);
-
-    if (!isLeadCoordinator || !leadCoordinatorNsec || !leadCoordinatorNpub || !leadCoordinatorSecretKey) {
-      forwardedTicketIdsRef.current.clear();
-      return;
-    }
-
-    return subscribeSimpleForwardedRoundTickets({
-      leadCoordinatorNsec,
-      onTickets: (nextTickets) => {
-        for (const ticket of nextTickets) {
-          if (forwardedTicketIdsRef.current.has(ticket.dmEventId)) {
-            continue;
-          }
-
-          forwardedTicketIdsRef.current.add(ticket.dmEventId);
-          void sendSimpleForwardedRoundTicketToRecipient({
-            forwarderSecretKey: leadCoordinatorSecretKey,
-            forwarderNpub: leadCoordinatorNpub,
-            recipientNpub: ticket.recipientNpub,
-            forwardedTicket: ticket,
-          }).catch(() => {
-            forwardedTicketIdsRef.current.delete(ticket.dmEventId);
-          });
-        }
-      },
-    });
-  }, [isLeadCoordinator, keypair?.nsec, keypair?.npub]);
 
   useEffect(() => {
     const coordinatorNsec = keypair?.nsec ?? "";
@@ -1403,33 +1367,19 @@ export default function SimpleCoordinatorApp() {
       const thresholdLabel = activeThresholdT && activeThresholdN
         ? `${activeThresholdT} of ${activeThresholdN}`
         : getThresholdLabel();
-      const result = isLeadCoordinator
-        ? await sendSimpleRoundTicket({
-            coordinatorSecretKey,
-            blindPrivateKey: activeBlindPrivateKey,
-            keyAnnouncementEvent: keyAnnouncement.event,
-            recipientNpub: matchingRequest.replyNpub,
-            coordinatorNpub,
-            thresholdLabel,
-            request: matchingRequest,
-            votingPrompt: prompt,
-            shareIndex: activeShareIndex,
-            thresholdT: activeThresholdT,
-            thresholdN: activeThresholdN,
-          })
-        : await sendSimpleForwardedRoundTicketToLead({
-            coordinatorSecretKey,
-            blindPrivateKey: activeBlindPrivateKey,
-            keyAnnouncementEvent: keyAnnouncement.event,
-            leadCoordinatorNpub: leadCoordinatorNpub.trim(),
-            coordinatorNpub,
-            thresholdLabel,
-            request: matchingRequest,
-            votingPrompt: prompt,
-            shareIndex: activeShareIndex,
-            thresholdT: activeThresholdT,
-            thresholdN: activeThresholdN,
-          });
+      const result = await sendSimpleRoundTicket({
+        coordinatorSecretKey,
+        blindPrivateKey: activeBlindPrivateKey,
+        keyAnnouncementEvent: keyAnnouncement.event,
+        recipientNpub: matchingRequest.replyNpub,
+        coordinatorNpub,
+        thresholdLabel,
+        request: matchingRequest,
+        votingPrompt: prompt,
+        shareIndex: activeShareIndex,
+        thresholdT: activeThresholdT,
+        thresholdN: activeThresholdN,
+      });
 
       setTicketDeliveries((current) => ({
         ...current,

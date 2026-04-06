@@ -27,7 +27,7 @@ Today the app uses:
 
 - Nostr public events for rounds, blind keys, ballots, and results
 - NIP-17 gift-wrapped DMs for issuance traffic
-- lead-mediated forwarding for non-lead ticket shares
+- direct coordinator-to-voter ticket delivery for all coordinators
 
 That means the current private plane is still relay-driven and message-heavy, even though the auditable public plane is already in the right place.
 
@@ -59,7 +59,7 @@ Move to Marmot:
 
 - The lead remains the public round publisher.
 - Sub-coordinators remain independent share issuers.
-- Non-lead shares can continue to be forwarded by the lead as an operational simplification, but the forwarding hop should be implemented inside the Marmot private plane rather than over NIP-17.
+- The lead should remain the public round publisher, but non-lead coordinators should send their own shares directly to voters over the Marmot private plane.
 
 ## Migration phases
 
@@ -142,6 +142,91 @@ Once Marmot is stable:
 ## What it would take to Wasm MDK/Marmot
 
 The realistic browser design is not "compile everything and call it done". It would need a deliberate Rust/Wasm adapter layer.
+
+### Dependency audit snapshot
+
+Audited against the current upstream MDK workspace at the time of review:
+
+- workspace version: `0.7.1`
+- checked crates:
+  - `mdk-core`
+  - `mdk-memory-storage`
+  - `mdk-sqlite-storage`
+
+Commands run:
+
+```bash
+cargo check -p mdk-core --target wasm32-unknown-unknown
+cargo check -p mdk-memory-storage --target wasm32-unknown-unknown
+cargo check -p mdk-sqlite-storage --target wasm32-unknown-unknown
+```
+
+#### Immediate findings
+
+1. `mdk-core` is **not browser-ready as-is**.
+   - The first hard build blocker is `nostr -> secp256k1 -> secp256k1-sys`.
+   - In the audited build, that path failed before the Rust code could finish checking for `wasm32-unknown-unknown`.
+   - Concretely, the failure was in the `secp256k1-sys` C build step.
+
+2. `mdk-sqlite-storage` is **not suitable for browser Wasm**.
+   - It depends on:
+     - `rusqlite`
+     - `libsqlite3-sys`
+     - `refinery`
+     - `keyring-core`
+   - That is a native SQLite/SQLCipher path, not a browser persistence path.
+   - Even if forced to compile with extra toolchain work, it is still the wrong storage backend for a browser app.
+
+3. `mdk-memory-storage` is the only plausible starting point for a browser integration.
+   - It still inherits the `nostr -> secp256k1-sys` blocker.
+   - But architecturally it is much closer to what a browser/Wasm integration would want.
+
+#### Dependency classification
+
+Likely acceptable or plausible for browser Wasm:
+
+- `mdk-storage-traits`
+- `mdk-memory-storage`
+- `openmls`
+- `openmls_traits`
+- `openmls_basic_credential`
+- `openmls_rust_crypto`
+- `serde`
+- `postcard`
+- `chacha20poly1305`
+- `hkdf`
+- `sha2`
+
+Immediate blockers or strong friction points:
+
+- `nostr` because the current path pulls in `secp256k1-sys`
+- `secp256k1-sys` because it requires a native C build step in the audited target path
+- `mdk-sqlite-storage`
+- `libsqlite3-sys`
+- `rusqlite`
+- `refinery`
+- `mdk-uniffi` for browser use, because UniFFI is not the right boundary for a web app
+
+#### Secondary risks
+
+Even after the `secp256k1-sys` issue is resolved, there are still areas that need validation rather than assumption:
+
+- `openmls` currently pulls in `rayon`, which may be awkward in browser Wasm depending on threading assumptions
+- `mdk-core` includes mandatory image-processing dependencies:
+  - `image`
+  - `blurhash`
+  - `fast-thumbhash`
+  - `kamadak-exif`
+- these may compile, but they increase code size and are not obviously essential to the minimal private-control-plane use case
+
+#### Practical conclusion
+
+The audit says:
+
+- **do not** plan around `mdk-sqlite-storage` in the browser
+- **do** plan around a browser-specific storage adapter, replacing SQLite entirely
+- **do not** assume `mdk-core` can be dropped into Wasm unchanged
+- **do** expect to patch or feature-gate the `nostr`/`secp256k1-sys` path before a browser build will work reliably
 
 ### Likely shape
 

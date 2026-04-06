@@ -356,7 +356,7 @@ The present web client is built with:
 - **TypeScript 5** for the browser application logic
 - **Vite 5** for local development and static-site bundling
 - **`nostr-tools` 2.x** for Nostr keys, event signing, subscriptions, and relay publishing
-- **NIP-17 gift-wrapped DMs** for follow, issuance, lead-forwarded ticket delivery, and acknowledgement traffic
+- **NIP-17 gift-wrapped DMs** for follow, issuance, direct ticket delivery, and acknowledgement traffic
 - **optional NIP-65 relay hints**, disabled by default, for relay discovery experiments
 - **`@cloudflare/blindrsa-ts`** for the RSABSSA blind-signature primitive used in the current issuance path
 - **Rust compiled to WebAssembly** for deterministic protocol logic, including parts of validation and relay-set handling
@@ -389,7 +389,7 @@ That mix matters scientifically because the system is not just a protocol sketch
 
 - follow / join coordination
 - blind issuance requests
-- blind issuance responses, with non-lead shares forwarded through the lead coordinator
+- blind issuance responses sent directly from each coordinator to the voter
 - acknowledgements
 - automatic retry of unacknowledged ticket delivery
 
@@ -412,8 +412,7 @@ sequenceDiagram
   V->>L: Send blinded issuance request (DM)
   V->>C: Send blinded issuance request (DM)
   L->>V: Send lead signature share (DM)
-  C->>L: Send sub-share to lead (DM)
-  L->>V: Forward sub-share to voter (DM)
+  C->>V: Send sub-signature share (DM)
   V->>V: Unblind and assemble token locally
   V->>N: Publish ballot from ephemeral key
   O->>N: Read ballot stream
