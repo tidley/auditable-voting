@@ -6,7 +6,7 @@ import {
   type VerifiedEvent,
 } from "nostr-tools";
 import { RSABSSA } from "@cloudflare/blindrsa-ts";
-import { publishToRelayTiers, queueNostrPublish } from "./nostrPublishQueue";
+import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import { publishOwnNip65RelayHints, resolveNip65OutboxRelays } from "./nip65RelayHints";
 import { getSharedNostrPool } from "./sharedNostrPool";
 import {
@@ -153,32 +153,6 @@ function buildPublicRelays(relays?: string[]) {
   return normalizeRelaysRust([...SIMPLE_PUBLIC_RELAYS, ...(relays ?? [])]);
 }
 
-function primaryBlindKeyRelays(relays: string[]) {
-  return relays.slice(0, Math.min(2, relays.length));
-}
-
-async function queryBlindKeyRelaysPrimaryFirst(
-  filters: Parameters<ReturnType<typeof getSharedNostrPool>["querySync"]>[1],
-  relays: string[],
-) {
-  const pool = getSharedNostrPool();
-  const primaryRelays = primaryBlindKeyRelays(relays);
-  const fallbackRelays = relays.slice(primaryRelays.length);
-
-  try {
-    const primaryEvents = await pool.querySync(primaryRelays, filters);
-    if (primaryEvents.length > 0 || fallbackRelays.length === 0) {
-      return primaryEvents;
-    }
-  } catch {
-    if (fallbackRelays.length === 0) {
-      throw new Error("Primary blind-key relay query failed.");
-    }
-  }
-
-  return pool.querySync(fallbackRelays, filters);
-}
-
 function buildBlindKeySubscriptionKey(coordinatorNpub: string, relays?: string[]) {
   return `${coordinatorNpub.trim()}::${buildPublicRelays(relays).join("|")}`;
 }
@@ -239,11 +213,11 @@ async function ensureBlindKeySubscription(input: {
       return;
     }
 
-    const events = await queryBlindKeyRelaysPrimaryFirst({
+    const events = await pool.querySync(relays, {
       kinds: [SIMPLE_BLIND_KEY_KIND],
       authors: [decoded.data as string],
       limit: 50,
-    }, relays);
+    });
 
     for (const event of events) {
       const announcement = parseSimpleBlindKeyAnnouncement(
@@ -256,7 +230,7 @@ async function ensureBlindKeySubscription(input: {
     }
     notifyBlindKeySubscribers(state);
 
-    state.subscription = pool.subscribeMany(primaryBlindKeyRelays(relays), {
+    state.subscription = pool.subscribeMany(relays, {
       kinds: [SIMPLE_BLIND_KEY_KIND],
       authors: [decoded.data as string],
       limit: 50,
@@ -506,20 +480,17 @@ export async function publishSimpleBlindKeyAnnouncement(input: {
 
   const pool = getSharedNostrPool();
   const results = await queueNostrPublish(
-    () => publishToRelayTiers(
+    () => publishToRelaysStaggered(
       (relay) => pool.publish([relay], event, { maxWait: SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS })[0],
       relays,
-      {
-        primaryCount: 2,
-        staggerMs: SIMPLE_PUBLIC_PUBLISH_STAGGER_MS,
-      },
+      { staggerMs: SIMPLE_PUBLIC_PUBLISH_STAGGER_MS },
     ),
     { channel: "simple-public", minIntervalMs: SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS },
   );
   return {
     eventId: event.id,
-    successes: results.filter((result) => result.success).length,
-    failures: results.filter((result) => !result.success).length,
+    successes: results.filter((result) => result.status === "fulfilled").length,
+    failures: results.filter((result) => result.status === "rejected").length,
     createdAt,
     event,
   };
@@ -604,11 +575,11 @@ export async function fetchLatestSimpleBlindKeyAnnouncement(input: {
     fallbackRelays: buildPublicRelays(input.relays),
   });
   const pool = getSharedNostrPool();
-  const events = await queryBlindKeyRelaysPrimaryFirst({
+  const events = await pool.querySync(relays, {
     kinds: [SIMPLE_BLIND_KEY_KIND],
     authors: [decoded.data as string],
     limit: 20,
-  }, relays);
+  });
   const parsed = events
     .map((event) =>
       parseSimpleBlindKeyAnnouncement(

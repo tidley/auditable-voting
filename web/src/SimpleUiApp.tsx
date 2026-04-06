@@ -32,7 +32,6 @@ import {
   type SimpleShardResponse,
 } from "./simpleShardDm";
 import {
-  fetchLatestSimpleLiveVote,
   publishSimpleSubmittedVote,
   SIMPLE_PUBLIC_RELAYS,
   subscribeLatestSimpleLiveVote,
@@ -571,51 +570,6 @@ export default function SimpleUiApp() {
       for (const cleanup of cleanups) {
         cleanup();
       }
-    };
-  }, [configuredCoordinatorTargets]);
-
-  useEffect(() => {
-    if (configuredCoordinatorTargets.length === 0) {
-      return;
-    }
-
-    let cancelled = false;
-
-    const refreshLatestRounds = () => {
-      void Promise.all(
-        configuredCoordinatorTargets.map(async (coordinatorNpub) => {
-          const session = await fetchLatestSimpleLiveVote({ coordinatorNpub });
-          return session;
-        }),
-      ).then((sessions) => {
-        if (cancelled) {
-          return;
-        }
-
-        const nextSessions = sessions.filter((session): session is SimpleLiveVoteSession => session !== null);
-        if (nextSessions.length === 0) {
-          return;
-        }
-
-        setDiscoveredSessions((current) => {
-          const merged = new Map(
-            current.map((session) => [`${session.coordinatorNpub}:${session.votingId}`, session] as const),
-          );
-          for (const session of nextSessions) {
-            merged.set(`${session.coordinatorNpub}:${session.votingId}`, session);
-          }
-          return [...merged.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-        });
-      }).catch(() => undefined);
-    };
-
-    const timeoutId = window.setTimeout(refreshLatestRounds, 2500);
-    const intervalId = window.setInterval(refreshLatestRounds, 8000);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeoutId);
-      window.clearInterval(intervalId);
     };
   }, [configuredCoordinatorTargets]);
 
@@ -1170,6 +1124,19 @@ export default function SimpleUiApp() {
     () => new Map(coordinatorDiagnostics.map((entry) => [entry.coordinatorNpub, entry])),
     [coordinatorDiagnostics],
   );
+  const followAcknowledgedByAllConfiguredCoordinators =
+    configuredCoordinatorTargets.length > 0 &&
+    configuredCoordinatorTargets.every(
+      (coordinatorNpub) =>
+        coordinatorDiagnosticsByNpub.get(coordinatorNpub)?.follow.tone === 'ok',
+    );
+  const coordinatorsHaveBeenNotified =
+    followAcknowledgedByAllConfiguredCoordinators ||
+    configuredCoordinatorTargets.some(
+      (coordinatorNpub) =>
+        followDeliveries[coordinatorNpub]?.eventId ||
+        followDeliveries[coordinatorNpub]?.status?.startsWith('Follow request'),
+    );
 
   useEffect(() => {
     const voterSecretKey = decodeNsec(voterKeypair?.nsec ?? "");
@@ -1508,12 +1475,6 @@ export default function SimpleUiApp() {
             aria-label='Configure'
           >
             <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
-              <label
-                className='simple-voter-label simple-voter-label-tight'
-                htmlFor='simple-coordinator-draft'
-              >
-                Coordinator npubs
-              </label>
               <div className='simple-voter-add-row simple-voter-add-row-with-scan'>
                 <input
                   id='simple-coordinator-draft'
@@ -1529,7 +1490,7 @@ export default function SimpleUiApp() {
                       addCoordinatorInput();
                     }
                   }}
-                  placeholder='Enter npub...'
+                  placeholder='Enter coordinator npub...'
                 />
                 <button
                   type='button'
@@ -1650,19 +1611,21 @@ export default function SimpleUiApp() {
                 <p className='simple-voter-empty'>No coordinators added yet.</p>
               )}
             </div>
-            <div className='simple-voter-action-row simple-voter-action-row-tight'>
-              <button
-                type='button'
-                className='simple-voter-primary simple-voter-primary-wide'
-                onClick={() => void notifyCoordinators()}
-                disabled={
-                  !voterKeypair?.npub ||
-                  configuredCoordinatorTargets.length === 0
-                }
-              >
-                Notify coordinators
-              </button>
-            </div>
+            {!followAcknowledgedByAllConfiguredCoordinators ? (
+              <div className='simple-voter-action-row simple-voter-action-row-tight'>
+                <button
+                  type='button'
+                  className='simple-voter-primary simple-voter-primary-wide'
+                  onClick={() => void notifyCoordinators()}
+                  disabled={
+                    !voterKeypair?.npub ||
+                    configuredCoordinatorTargets.length === 0
+                  }
+                >
+                  Notify coordinators
+                </button>
+              </div>
+            ) : null}
             {requestStatus ? (
               <p className='simple-voter-note'>{requestStatus}</p>
             ) : null}
@@ -1879,8 +1842,9 @@ export default function SimpleUiApp() {
                   No live vote ticket yet.
                 </p>
                 <p className='simple-voter-note'>
-                  Add coordinators in Configure, then wait for the next live
-                  round and ticket.
+                  {coordinatorsHaveBeenNotified
+                    ? 'Waiting for the next live round and ticket.'
+                    : 'Add coordinators in Configure, then wait for the next live round and ticket.'}
                 </p>
               </div>
             )}

@@ -1271,7 +1271,9 @@ describe("Simple round flow", () => {
     const firstUi = within(firstRender.container);
 
     await user.click(firstUi.getByRole("button", { name: /Refresh ID/i }));
-    const coordinatorInput = await firstUi.findByPlaceholderText("Enter npub...");
+    const coordinatorInput = await firstUi.findByPlaceholderText(
+      'Enter coordinator npub...',
+    );
     await user.type(coordinatorInput, "npub1examplecoordinatorxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
     await user.click(firstUi.getByRole("button", { name: /Add coordinator/i }));
 
@@ -1354,13 +1356,25 @@ describe("Simple round flow", () => {
     });
     await user.click(voterOneUi.getByRole("tab", { name: /^Configure$/i }));
     await user.click(voterTwoUi.getByRole("tab", { name: /^Configure$/i }));
-    await user.type(voterOneUi.getByPlaceholderText("Enter npub..."), coordinatorOneNpub);
+    await user.type(
+      voterOneUi.getByPlaceholderText('Enter coordinator npub...'),
+      coordinatorOneNpub,
+    );
     await user.click(voterOneUi.getByRole("button", { name: /Add coordinator/i }));
-    await user.type(voterOneUi.getByPlaceholderText("Enter npub..."), coordinatorTwoNpub);
+    await user.type(
+      voterOneUi.getByPlaceholderText('Enter coordinator npub...'),
+      coordinatorTwoNpub,
+    );
     await user.click(voterOneUi.getByRole("button", { name: /Add coordinator/i }));
-    await user.type(voterTwoUi.getByPlaceholderText("Enter npub..."), coordinatorOneNpub);
+    await user.type(
+      voterTwoUi.getByPlaceholderText('Enter coordinator npub...'),
+      coordinatorOneNpub,
+    );
     await user.click(voterTwoUi.getByRole("button", { name: /Add coordinator/i }));
-    await user.type(voterTwoUi.getByPlaceholderText("Enter npub..."), coordinatorTwoNpub);
+    await user.type(
+      voterTwoUi.getByPlaceholderText('Enter coordinator npub...'),
+      coordinatorTwoNpub,
+    );
     await user.click(voterTwoUi.getByRole("button", { name: /Add coordinator/i }));
 
     await user.click(voterOneUi.getByRole("button", { name: /Notify coordinators/i }));
@@ -1480,7 +1494,10 @@ describe("Simple round flow", () => {
     suppressedShardResponseNotifications = new Set([voterNpub]);
 
     await user.click(voterUi.getByRole("tab", { name: /^Configure$/i }));
-    await user.type(voterUi.getByPlaceholderText("Enter npub..."), coordinatorNpub);
+    await user.type(
+      voterUi.getByPlaceholderText('Enter coordinator npub...'),
+      coordinatorNpub,
+    );
     await user.click(voterUi.getByRole("button", { name: /Add coordinator/i }));
     await user.click(voterUi.getByRole("button", { name: /Notify coordinators/i }));
 

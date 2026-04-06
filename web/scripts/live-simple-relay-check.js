@@ -98,7 +98,7 @@ async function clickEnabledTicketsDuringWindow(coordinators, voters, durationMs)
 }
 
 async function addCoordinatorsToVoter(page, coordinatorNpubs) {
-  const draft = page.getByPlaceholder("Enter npub...");
+  const draft = page.getByPlaceholder('Enter coordinator npub...');
   for (const coordinatorNpub of coordinatorNpubs) {
     await draft.fill(coordinatorNpub);
     await clickByText(page, "button", "Add coordinator");

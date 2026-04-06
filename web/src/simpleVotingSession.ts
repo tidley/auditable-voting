@@ -1,5 +1,5 @@
 import { finalizeEvent, getPublicKey, nip19 } from "nostr-tools";
-import { publishToRelayTiers, queueNostrPublish } from "./nostrPublishQueue";
+import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import {
   publishOwnNip65RelayHints,
   resolveNip65OutboxRelays,
@@ -28,7 +28,6 @@ export const SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS = 1500;
 export const SIMPLE_PUBLIC_SUBSCRIPTION_MAX_WAIT_MS = 1500;
 export const SIMPLE_PUBLIC_PUBLISH_STAGGER_MS = 300;
 export const SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS = 500;
-const SIMPLE_PUBLIC_PRIMARY_RELAY_COUNT = 2;
 
 export const SIMPLE_LIVE_VOTE_KIND = 38990;
 export const SIMPLE_LIVE_VOTE_BALLOT_KIND = 38991;
@@ -56,32 +55,6 @@ export type SimpleSubmittedVote = {
 
 function buildPublicRelays(relays?: string[]) {
   return normalizeRelaysRust([...SIMPLE_PUBLIC_RELAYS, ...(relays ?? [])]);
-}
-
-function primaryPublicRelays(relays: string[]) {
-  return relays.slice(0, Math.min(SIMPLE_PUBLIC_PRIMARY_RELAY_COUNT, relays.length));
-}
-
-async function queryPublicRelaysPrimaryFirst(
-  filters: Parameters<ReturnType<typeof getSharedNostrPool>["querySync"]>[1],
-  relays: string[],
-) {
-  const pool = getSharedNostrPool();
-  const primaryRelays = primaryPublicRelays(relays);
-  const fallbackRelays = relays.slice(primaryRelays.length);
-
-  try {
-    const primaryEvents = await pool.querySync(primaryRelays, filters);
-    if (primaryEvents.length > 0 || fallbackRelays.length === 0) {
-      return primaryEvents;
-    }
-  } catch {
-    if (fallbackRelays.length === 0) {
-      throw new Error("Primary public relay query failed.");
-    }
-  }
-
-  return pool.querySync(fallbackRelays, filters);
 }
 
 function sortByCreatedAtDescending<T extends { createdAt: string }>(values: T[]) {
@@ -229,17 +202,22 @@ export async function publishSimpleLiveVote(input: {
 
   const pool = getSharedNostrPool();
   const results = await queueNostrPublish(
-    () => publishToRelayTiers(
+    () => publishToRelaysStaggered(
       (relay) => pool.publish([relay], event, { maxWait: SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS })[0],
       relays,
-      {
-        primaryCount: SIMPLE_PUBLIC_PRIMARY_RELAY_COUNT,
-        staggerMs: SIMPLE_PUBLIC_PUBLISH_STAGGER_MS,
-      },
+      { staggerMs: SIMPLE_PUBLIC_PUBLISH_STAGGER_MS },
     ),
     { channel: "simple-public", minIntervalMs: SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS },
   );
-  const relayResults = results;
+  const relayResults = results.map((result, index) => (
+    result.status === "fulfilled"
+      ? { relay: relays[index], success: true }
+      : {
+          relay: relays[index],
+          success: false,
+          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        }
+  ));
 
   return {
     votingId,
@@ -267,11 +245,11 @@ export async function fetchLatestSimpleLiveVote(input: {
     fallbackRelays: buildPublicRelays(input.relays),
   });
   const pool = getSharedNostrPool();
-  const events = await queryPublicRelaysPrimaryFirst({
+  const events = await pool.querySync(relays, {
     kinds: [SIMPLE_LIVE_VOTE_KIND],
     authors: [coordinatorHex],
     limit: 20,
-  }, relays);
+  });
 
   const sessions = events
     .map((event) => parseSimpleLiveVoteEvent(event, input.coordinatorNpub))
@@ -307,7 +285,7 @@ export function subscribeLatestSimpleLiveVote(input: {
       return;
     }
 
-    subscription = pool.subscribeMany(primaryPublicRelays(relays), {
+    subscription = pool.subscribeMany(relays, {
       kinds: [SIMPLE_LIVE_VOTE_KIND],
       authors: [coordinatorHex],
       limit: 20,
@@ -371,7 +349,7 @@ export function subscribeSimpleLiveVotes(input: {
       return;
     }
 
-    subscription = pool.subscribeMany(primaryPublicRelays(relays), {
+    subscription = pool.subscribeMany(relays, {
       kinds: [SIMPLE_LIVE_VOTE_KIND],
       authors: [coordinatorHex],
       limit: 100,
@@ -414,10 +392,10 @@ export async function fetchSimpleLiveVotes(input?: {
 }): Promise<SimpleLiveVoteSession[]> {
   const relays = buildPublicRelays(input?.relays);
   const pool = getSharedNostrPool();
-  const events = await queryPublicRelaysPrimaryFirst({
+  const events = await pool.querySync(relays, {
     kinds: [SIMPLE_LIVE_VOTE_KIND],
     limit: 200,
-  }, relays);
+  });
 
   return sortByCreatedAtDescending(
     events
@@ -480,17 +458,22 @@ export async function publishSimpleSubmittedVote(input: {
 
   const pool = getSharedNostrPool();
   const results = await queueNostrPublish(
-    () => publishToRelayTiers(
+    () => publishToRelaysStaggered(
       (relay) => pool.publish([relay], event, { maxWait: SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS })[0],
       relays,
-      {
-        primaryCount: SIMPLE_PUBLIC_PRIMARY_RELAY_COUNT,
-        staggerMs: SIMPLE_PUBLIC_PUBLISH_STAGGER_MS,
-      },
+      { staggerMs: SIMPLE_PUBLIC_PUBLISH_STAGGER_MS },
     ),
     { channel: "simple-public", minIntervalMs: SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS },
   );
-  const relayResults = results;
+  const relayResults = results.map((result, index) => (
+    result.status === "fulfilled"
+      ? { relay: relays[index], success: true }
+      : {
+          relay: relays[index],
+          success: false,
+          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        }
+  ));
 
   return {
     eventId: event.id,
@@ -509,11 +492,11 @@ export async function fetchSimpleSubmittedVotes(input: {
 }): Promise<SimpleSubmittedVote[]> {
   const relays = buildPublicRelays(input.relays);
   const pool = getSharedNostrPool();
-  const events = await queryPublicRelaysPrimaryFirst({
+  const events = await pool.querySync(relays, {
     kinds: [SIMPLE_LIVE_VOTE_BALLOT_KIND],
     "#d": [input.votingId],
     limit: 200,
-  }, relays);
+  });
 
   const votes = new Map<string, SimpleSubmittedVote>();
 
@@ -538,7 +521,7 @@ export function subscribeSimpleSubmittedVotes(input: {
   const votes = new Map<string, SimpleSubmittedVote>();
   let closed = false;
 
-  const subscription = pool.subscribeMany(primaryPublicRelays(relays), {
+  const subscription = pool.subscribeMany(relays, {
     kinds: [SIMPLE_LIVE_VOTE_BALLOT_KIND],
     "#d": [input.votingId],
     limit: 200,

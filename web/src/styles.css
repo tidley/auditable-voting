@@ -1411,6 +1411,18 @@ code {
   flex: 0 0 auto;
 }
 
+.simple-vote-status-list li.is-complete .simple-vote-status-icon {
+  color: #052e16;
+  background: #4ade80;
+  border-color: #4ade80;
+  font-weight: 800;
+}
+
+.simple-vote-status-list li.is-pending .simple-vote-status-icon {
+  color: #94a3b8;
+  border-color: #475569;
+}
+
 .simple-vote-details-toggle {
   padding: 0;
   border: 0;

@@ -3,9 +3,6 @@ import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 import { decodeNsec, deriveNpubFromNsec } from "./nostrIdentity";
 import { deriveActorDisplayId } from "./actorDisplay";
 import {
-  fetchSimpleCoordinatorFollowers,
-  fetchSimpleDmAcknowledgements,
-  fetchSimpleShardRequests,
   subscribeSimpleCoordinatorFollowers,
   subscribeSimpleDmAcknowledgements,
   subscribeSimpleCoordinatorShareAssignments,
@@ -395,32 +392,6 @@ export default function SimpleCoordinatorApp() {
   }, [keypair?.nsec]);
 
   useEffect(() => {
-    const coordinatorNsec = keypair?.nsec ?? "";
-
-    if (!coordinatorNsec) {
-      return;
-    }
-
-    let cancelled = false;
-    const refreshFollowers = () => {
-      void fetchSimpleCoordinatorFollowers({ coordinatorNsec }).then((nextFollowers) => {
-        if (!cancelled && nextFollowers.length > 0) {
-          setFollowers((current) => mergeSimpleFollowersRust(current, nextFollowers));
-        }
-      }).catch(() => undefined);
-    };
-
-    const timeoutId = window.setTimeout(refreshFollowers, 2500);
-    const intervalId = window.setInterval(refreshFollowers, 8000);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeoutId);
-      window.clearInterval(intervalId);
-    };
-  }, [keypair?.nsec]);
-
-  useEffect(() => {
     const actorNsec = keypair?.nsec ?? "";
 
     if (!actorNsec) {
@@ -436,31 +407,6 @@ export default function SimpleCoordinatorApp() {
         setDmAcknowledgements(nextAcknowledgements);
       },
     });
-  }, [keypair?.nsec]);
-
-  useEffect(() => {
-    const actorNsec = keypair?.nsec ?? "";
-    if (!actorNsec) {
-      return;
-    }
-
-    let cancelled = false;
-    const refreshAcknowledgements = () => {
-      void fetchSimpleDmAcknowledgements({ actorNsec }).then((nextAcknowledgements) => {
-        if (!cancelled && nextAcknowledgements.length > 0) {
-          setDmAcknowledgements(nextAcknowledgements);
-        }
-      }).catch(() => undefined);
-    };
-
-    const timeoutId = window.setTimeout(refreshAcknowledgements, 3000);
-    const intervalId = window.setInterval(refreshAcknowledgements, 9000);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeoutId);
-      window.clearInterval(intervalId);
-    };
   }, [keypair?.nsec]);
 
   useEffect(() => {
@@ -655,31 +601,6 @@ export default function SimpleCoordinatorApp() {
         setPendingRequests(nextRequests);
       },
     });
-  }, [keypair?.nsec]);
-
-  useEffect(() => {
-    const coordinatorNsec = keypair?.nsec ?? "";
-    if (!coordinatorNsec) {
-      return;
-    }
-
-    let cancelled = false;
-    const refreshRequests = () => {
-      void fetchSimpleShardRequests({ coordinatorNsec }).then((nextRequests) => {
-        if (!cancelled && nextRequests.length > 0) {
-          setPendingRequests(nextRequests);
-        }
-      }).catch(() => undefined);
-    };
-
-    const timeoutId = window.setTimeout(refreshRequests, 3000);
-    const intervalId = window.setInterval(refreshRequests, 7000);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeoutId);
-      window.clearInterval(intervalId);
-    };
   }, [keypair?.nsec]);
 
   useEffect(() => {
