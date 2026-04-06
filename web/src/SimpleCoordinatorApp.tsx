@@ -1699,7 +1699,7 @@ export default function SimpleCoordinatorApp() {
             className='simple-voter-primary'
             onClick={refreshIdentity}
           >
-            Refresh ID
+            New ID
           </button>
         </div>
         <div
@@ -1737,7 +1737,11 @@ export default function SimpleCoordinatorApp() {
         </div>
 
         {activeTab === 'configure' ? (
-          <section className='simple-voter-tab-panel' role='tabpanel' aria-label='Configure'>
+          <section
+            className='simple-voter-tab-panel'
+            role='tabpanel'
+            aria-label='Configure'
+          >
             <SimpleCollapsibleSection title='Coordinator management'>
               <label
                 className='simple-voter-label'
@@ -1754,7 +1758,9 @@ export default function SimpleCoordinatorApp() {
                     const nextLeadCoordinatorNpub = event.target.value;
                     setLeadCoordinatorNpub(nextLeadCoordinatorNpub);
                     setLeadScannerStatus(null);
-                    if (nextLeadCoordinatorNpub.trim() !== (keypair?.npub ?? '')) {
+                    if (
+                      nextLeadCoordinatorNpub.trim() !== (keypair?.npub ?? '')
+                    ) {
                       setQuestionShareIndex('');
                     }
                     setRegistrationStatus(null);
@@ -1796,7 +1802,9 @@ export default function SimpleCoordinatorApp() {
                 onClose={() => setLeadScannerActive(false)}
                 prompt='Point the camera at the lead coordinator npub QR code.'
               />
-              {leadScannerStatus ? <p className='simple-voter-note'>{leadScannerStatus}</p> : null}
+              {leadScannerStatus ? (
+                <p className='simple-voter-note'>{leadScannerStatus}</p>
+              ) : null}
               <p className='simple-voter-question'>
                 {isLeadCoordinator
                   ? 'This coordinator publishes the live question.'
@@ -1826,7 +1834,10 @@ export default function SimpleCoordinatorApp() {
                     </p>
                     <ul className='simple-voter-list'>
                       {subCoordinators.map((application, index) => (
-                        <li key={application.id} className='simple-voter-list-item'>
+                        <li
+                          key={application.id}
+                          className='simple-voter-list-item'
+                        >
                           <p className='simple-voter-question'>
                             Coordinator {application.coordinatorId} submitted as
                             sub-coordinator #{index + 1}.
@@ -1842,12 +1853,91 @@ export default function SimpleCoordinatorApp() {
                 )}
               </SimpleCollapsibleSection>
             )}
-
           </section>
         ) : null}
 
         {activeTab === 'voting' ? (
-          <section className='simple-voter-tab-panel' role='tabpanel' aria-label='Voting'>
+          <section
+            className='simple-voter-tab-panel'
+            role='tabpanel'
+            aria-label='Voting'
+          >
+            <SimpleCollapsibleSection title='Threshold'>
+              {isLeadCoordinator ? (
+                <div className='simple-vote-threshold-grid'>
+                  <div>
+                    <label
+                      className='simple-voter-label'
+                      htmlFor='simple-threshold-t-value'
+                    >
+                      Threshold T
+                    </label>
+                    <div className='simple-threshold-stepper'>
+                      <button
+                        type='button'
+                        className='simple-voter-secondary simple-threshold-stepper-button'
+                        aria-label='Decrease Threshold T'
+                        onClick={() =>
+                          setQuestionThresholdT((current) =>
+                            String(
+                              Math.max(
+                                1,
+                                (Number.parseInt(current, 10) || 1) - 1,
+                              ),
+                            ),
+                          )
+                        }
+                        disabled={
+                          (Number.parseInt(questionThresholdT, 10) || 1) <= 1
+                        }
+                      >
+                        -
+                      </button>
+                      <output
+                        id='simple-threshold-t-value'
+                        className='simple-threshold-stepper-value'
+                        aria-live='polite'
+                      >
+                        {questionThresholdT}
+                      </output>
+                      <button
+                        type='button'
+                        className='simple-voter-secondary simple-threshold-stepper-button'
+                        aria-label='Increase Threshold T'
+                        onClick={() =>
+                          setQuestionThresholdT((current) =>
+                            String(
+                              Math.min(
+                                maxThresholdT,
+                                (Number.parseInt(current, 10) || 1) + 1,
+                              ),
+                            ),
+                          )
+                        }
+                        disabled={
+                          (Number.parseInt(questionThresholdT, 10) || 1) >=
+                          maxThresholdT
+                        }
+                      >
+                        +
+                      </button>
+                    </div>
+                    <p className='simple-voter-note'>
+                      T = {questionThresholdT}, capped to 1-{maxThresholdT}. N
+                      is fixed at {questionThresholdN}.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <p className='simple-voter-question'>
+                  Threshold:{' '}
+                  {activeThresholdT && activeThresholdN
+                    ? `${activeThresholdT} of ${activeThresholdN}`
+                    : getThresholdLabel()}
+                </p>
+              )}
+            </SimpleCollapsibleSection>
+
             <SimpleCollapsibleSection title='Question'>
               {isLeadCoordinator ? (
                 <>
@@ -1864,70 +1954,6 @@ export default function SimpleCoordinatorApp() {
                     onChange={(event) => setQuestionPrompt(event.target.value)}
                     rows={3}
                   />
-                  <div className='simple-vote-threshold-grid'>
-                    <div>
-                      <label
-                        className='simple-voter-label'
-                        htmlFor='simple-threshold-t-value'
-                      >
-                        Threshold T
-                      </label>
-                      <div className='simple-threshold-stepper'>
-                        <button
-                          type='button'
-                          className='simple-voter-secondary simple-threshold-stepper-button'
-                          aria-label='Decrease Threshold T'
-                          onClick={() =>
-                            setQuestionThresholdT((current) =>
-                              String(
-                                Math.max(
-                                  1,
-                                  (Number.parseInt(current, 10) || 1) - 1,
-                                ),
-                              ),
-                            )
-                          }
-                          disabled={
-                            (Number.parseInt(questionThresholdT, 10) || 1) <= 1
-                          }
-                        >
-                          -
-                        </button>
-                        <output
-                          id='simple-threshold-t-value'
-                          className='simple-threshold-stepper-value'
-                          aria-live='polite'
-                        >
-                          {questionThresholdT}
-                        </output>
-                        <button
-                          type='button'
-                          className='simple-voter-secondary simple-threshold-stepper-button'
-                          aria-label='Increase Threshold T'
-                          onClick={() =>
-                            setQuestionThresholdT((current) =>
-                              String(
-                                Math.min(
-                                  maxThresholdT,
-                                  (Number.parseInt(current, 10) || 1) + 1,
-                                ),
-                              ),
-                            )
-                          }
-                          disabled={
-                            (Number.parseInt(questionThresholdT, 10) || 1) >=
-                            maxThresholdT
-                          }
-                        >
-                          +
-                        </button>
-                      </div>
-                      <p className='simple-voter-note'>
-                        T = {questionThresholdT}, capped to 1-{maxThresholdT}. N is
-                        fixed at {questionThresholdN}.
-                      </p>
-                    </div>
-                  </div>
                   <div className='simple-voter-action-row'>
                     <button
                       type='button'
@@ -1973,7 +1999,9 @@ export default function SimpleCoordinatorApp() {
                   </select>
                 </>
               ) : (
-                <p className='simple-voter-empty'>No live vote has been broadcast yet.</p>
+                <p className='simple-voter-empty'>
+                  No live vote has been broadcast yet.
+                </p>
               )}
               {isLeadCoordinator ? (
                 <div className='simple-voter-action-row simple-voter-action-row-inline'>
@@ -2029,7 +2057,8 @@ export default function SimpleCoordinatorApp() {
                   </p>
                   <p className='simple-voter-question'>
                     Question source:{' '}
-                    {selectedPublishedVote.coordinatorNpub === (keypair?.npub ?? '')
+                    {selectedPublishedVote.coordinatorNpub ===
+                    (keypair?.npub ?? '')
                       ? 'This coordinator'
                       : 'Lead coordinator'}
                   </p>
@@ -2051,8 +2080,8 @@ export default function SimpleCoordinatorApp() {
                     }
 
                     const waitingForBlindedRequest = Boolean(
-                      selectedPublishedVote
-                      && !findLatestRoundRequest(
+                      selectedPublishedVote &&
+                      !findLatestRoundRequest(
                         pendingRequests,
                         follower.voterNpub,
                         selectedPublishedVote.votingId,
@@ -2181,7 +2210,10 @@ export default function SimpleCoordinatorApp() {
                   {validatedVotes.length > 0 ? (
                     <ul className='simple-voter-list'>
                       {validatedVotes.map(({ vote, valid, reason }) => (
-                        <li key={vote.eventId} className='simple-voter-list-item'>
+                        <li
+                          key={vote.eventId}
+                          className='simple-voter-list-item'
+                        >
                           <div className='simple-vote-entry'>
                             <div className='simple-vote-entry-copy'>
                               <p className='simple-voter-question simple-vote-result-line'>
@@ -2224,7 +2256,11 @@ export default function SimpleCoordinatorApp() {
         ) : null}
 
         {activeTab === 'settings' ? (
-          <section className='simple-voter-tab-panel' role='tabpanel' aria-label='Settings'>
+          <section
+            className='simple-voter-tab-panel'
+            role='tabpanel'
+            aria-label='Settings'
+          >
             <SimpleIdentityPanel
               npub={keypair?.npub ?? ''}
               nsec={keypair?.nsec ?? ''}
@@ -2234,12 +2270,19 @@ export default function SimpleCoordinatorApp() {
               onDownloadBackup={identityReady ? downloadBackup : undefined}
               onRestoreBackupFile={restoreBackup}
               backupMessage={backupStatus}
-              onProtectLocalState={identityReady ? protectLocalState : undefined}
-              onDisableLocalStateProtection={identityReady ? disableLocalStateProtection : undefined}
+              onProtectLocalState={
+                identityReady ? protectLocalState : undefined
+              }
+              onDisableLocalStateProtection={
+                identityReady ? disableLocalStateProtection : undefined
+              }
               localStateProtected={Boolean(storagePassphrase)}
               localStateMessage={storageStatus}
             />
-            <section className='simple-settings-card' aria-label='Relay hint settings'>
+            <section
+              className='simple-settings-card'
+              aria-label='Relay hint settings'
+            >
               <h3 className='simple-voter-question'>Relay hints</h3>
               <label className='simple-settings-toggle'>
                 <input
@@ -2250,7 +2293,8 @@ export default function SimpleCoordinatorApp() {
                 <span>Enable NIP-65 relay hints</span>
               </label>
               <p className='simple-voter-note'>
-                Disabled by default. Turn this on only if you want to publish and use NIP-65 inbox/outbox relay hints.
+                Disabled by default. Turn this on only if you want to publish
+                and use NIP-65 inbox/outbox relay hints.
               </p>
             </section>
             <SimpleRelayPanel />

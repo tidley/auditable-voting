@@ -952,19 +952,31 @@ export default function SimpleUiApp() {
     setManualCoordinators((current) => current.filter((_, currentIndex) => currentIndex !== index));
   }
 
-  async function notifyCoordinators() {
+  async function sendFollowRequests(
+    targetCoordinatorNpubs: string[],
+    messages?: {
+      pending?: string;
+      success?: string;
+      failure?: string;
+    },
+  ) {
     const voterNpub = voterKeypair?.npub ?? "";
     const voterNsec = voterKeypair?.nsec ?? "";
     const voterSecretKey = decodeNsec(voterNsec);
 
-    if (!voterNpub || voterId === "pending" || !voterSecretKey || configuredCoordinatorTargets.length === 0) {
+    if (
+      !voterNpub
+      || voterId === "pending"
+      || !voterSecretKey
+      || targetCoordinatorNpubs.length === 0
+    ) {
       return;
     }
 
-    setRequestStatus("Notifying coordinators...");
+    setRequestStatus(messages?.pending ?? "Contacting coordinators...");
 
     try {
-      const followResults = await Promise.all(configuredCoordinatorTargets.map(async (coordinatorNpub) => {
+      const followResults = await Promise.all(targetCoordinatorNpubs.map(async (coordinatorNpub) => {
         const result = await sendSimpleCoordinatorFollow({
           voterSecretKey,
           coordinatorNpub,
@@ -990,12 +1002,23 @@ export default function SimpleUiApp() {
 
       setRequestStatus(
         followSuccesses > 0
-          ? "Coordinators notified. Waiting for round tickets."
-          : "Coordinator notification failed.",
+          ? (messages?.success ?? "Coordinators notified. Waiting for round tickets.")
+          : (messages?.failure ?? "Coordinator notification failed."),
       );
     } catch {
-      setRequestStatus("Coordinator notification failed.");
+      setRequestStatus(messages?.failure ?? "Coordinator notification failed.");
     }
+  }
+
+  async function retryUnresponsiveCoordinators() {
+    const retryTargets = configuredCoordinatorTargets.filter(
+      (coordinatorNpub) => coordinatorDiagnosticsByNpub.get(coordinatorNpub)?.follow.tone !== "ok",
+    );
+    await sendFollowRequests(retryTargets, {
+      pending: "Retrying unresponsive coordinators...",
+      success: "Retry sent. Waiting for round tickets.",
+      failure: "Coordinator retry failed.",
+    });
   }
 
   useEffect(() => {
@@ -1185,6 +1208,11 @@ export default function SimpleUiApp() {
         followDeliveries[coordinatorNpub]?.eventId ||
         followDeliveries[coordinatorNpub]?.status?.startsWith('Follow request'),
     );
+  const hasUnresponsiveCoordinators =
+    configuredCoordinatorTargets.length > 0
+    && configuredCoordinatorTargets.some(
+      (coordinatorNpub) => coordinatorDiagnosticsByNpub.get(coordinatorNpub)?.follow.tone !== 'ok',
+    );
 
   useEffect(() => {
     const discoveredCoordinatorNpubs = normalizeCoordinatorNpubsRust(
@@ -1236,7 +1264,7 @@ export default function SimpleUiApp() {
     const voterSecretKey = decodeNsec(voterKeypair?.nsec ?? "");
     const voterNpub = voterKeypair?.npub ?? "";
 
-    if (!coordinatorsHaveBeenNotified || !voterSecretKey || !voterNpub) {
+    if (!voterSecretKey || !voterNpub) {
       return;
     }
 
@@ -1281,13 +1309,16 @@ export default function SimpleUiApp() {
         ),
       }));
       if (results.some((result) => result.success)) {
-        setRequestStatus('Additional coordinators received. Waiting for round tickets.');
+        setRequestStatus(
+          configuredCoordinatorTargets.length === results.length
+            ? 'Coordinators notified. Waiting for round tickets.'
+            : 'Additional coordinators received. Waiting for round tickets.',
+        );
       }
     }).catch(() => undefined);
   }, [
     configuredCoordinatorTargets,
     coordinatorDiagnosticsByNpub,
-    coordinatorsHaveBeenNotified,
     followDeliveries,
     voterKeypair?.npub,
     voterKeypair?.nsec,
@@ -1766,18 +1797,32 @@ export default function SimpleUiApp() {
                 <p className='simple-voter-empty'>No coordinators added yet.</p>
               )}
             </div>
-            {!followAcknowledgedByAllConfiguredCoordinators ? (
+            {followAcknowledgedByAllConfiguredCoordinators ? (
               <div className='simple-voter-action-row simple-voter-action-row-tight'>
                 <button
                   type='button'
                   className='simple-voter-primary simple-voter-primary-wide'
-                  onClick={() => void notifyCoordinators()}
+                  onClick={() => selectTab('vote')}
                   disabled={
                     !voterKeypair?.npub ||
                     configuredCoordinatorTargets.length === 0
                   }
                 >
-                  Notify coordinators
+                  Next
+                </button>
+              </div>
+            ) : hasUnresponsiveCoordinators ? (
+              <div className='simple-voter-action-row simple-voter-action-row-tight'>
+                <button
+                  type='button'
+                  className='simple-voter-secondary simple-voter-primary-wide'
+                  onClick={() => void retryUnresponsiveCoordinators()}
+                  disabled={
+                    !voterKeypair?.npub ||
+                    configuredCoordinatorTargets.length === 0
+                  }
+                >
+                  Retry
                 </button>
               </div>
             ) : null}
@@ -1834,14 +1879,14 @@ export default function SimpleUiApp() {
                 <div className='simple-vote-button-grid'>
                   <button
                     type='button'
-                    className={`simple-voter-choice simple-voter-choice-yes${liveVoteChoice === 'Yes' ? ' is-active' : ''}`}
+                    className={`simple-voter-choice simple-voter-choice-yes${liveVoteChoice === 'Yes' ? ' is-active' : ''}${voteTicketReady && !liveVoteChoice ? ' is-awaiting-choice' : ''}`}
                     onClick={() => setLiveVoteChoice('Yes')}
                   >
                     Yes
                   </button>
                   <button
                     type='button'
-                    className={`simple-voter-choice simple-voter-choice-no${liveVoteChoice === 'No' ? ' is-active' : ''}`}
+                    className={`simple-voter-choice simple-voter-choice-no${liveVoteChoice === 'No' ? ' is-active' : ''}${voteTicketReady && !liveVoteChoice ? ' is-awaiting-choice' : ''}`}
                     onClick={() => setLiveVoteChoice('No')}
                   >
                     No

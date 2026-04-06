@@ -175,7 +175,7 @@ async function main() {
   }
 
   for (const page of [...coordinators, ...voters]) {
-    await clickByText(page, "button", /Refresh ID/i);
+    await clickByText(page, 'button', /New ID/i);
   }
   await sleep(1500);
 

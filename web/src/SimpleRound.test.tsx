@@ -1404,8 +1404,8 @@ describe("Simple round flow", () => {
     const voterOneUi = within(voterOne.container);
     const voterTwoUi = within(voterTwo.container);
 
-    await user.click(coordinatorOneUi.getByRole("button", { name: /Refresh ID/i }));
-    await user.click(coordinatorTwoUi.getByRole("button", { name: /Refresh ID/i }));
+    await user.click(coordinatorOneUi.getByRole('button', { name: /New ID/i }));
+    await user.click(coordinatorTwoUi.getByRole('button', { name: /New ID/i }));
     await user.click(voterOneUi.getByRole("button", { name: /New/i }));
     await user.click(voterTwoUi.getByRole("button", { name: /New/i }));
     await user.click(coordinatorOneUi.getByRole("tab", { name: /^Settings$/i }));
@@ -1452,9 +1452,6 @@ describe("Simple round flow", () => {
       coordinatorOneNpub,
     );
     await user.click(voterTwoUi.getByRole("button", { name: /Add coordinator/i }));
-
-    await user.click(voterOneUi.getByRole("button", { name: /Notify coordinators/i }));
-    await user.click(voterTwoUi.getByRole("button", { name: /Notify coordinators/i }));
 
     await waitFor(() => {
       expect(
@@ -1564,7 +1561,7 @@ describe("Simple round flow", () => {
     const coordinatorUi = within(coordinator.container);
     const voterUi = within(voter.container);
 
-    await user.click(coordinatorUi.getByRole("button", { name: /Refresh ID/i }));
+    await user.click(coordinatorUi.getByRole('button', { name: /New ID/i }));
     await user.click(voterUi.getByRole("button", { name: /New/i }));
     await user.click(coordinatorUi.getByRole("tab", { name: /^Settings$/i }));
     await user.click(voterUi.getByRole("tab", { name: /^Settings$/i }));
@@ -1587,7 +1584,6 @@ describe("Simple round flow", () => {
       coordinatorNpub,
     );
     await user.click(voterUi.getByRole("button", { name: /Add coordinator/i }));
-    await user.click(voterUi.getByRole("button", { name: /Notify coordinators/i }));
 
     await waitFor(() => {
       expect(coordinatorUi.getByRole("tab", { name: /^Voting$/i })).toBeTruthy();
