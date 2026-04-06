@@ -1855,6 +1855,117 @@ export default function SimpleCoordinatorApp() {
                 )}
               </SimpleCollapsibleSection>
             )}
+
+            <SimpleCollapsibleSection title='Following voters'>
+              {coordinatorFollowerRows.length > 0 ? (
+                <ul className='simple-voter-list'>
+                  {coordinatorFollowerRows.map((row) => {
+                    const follower = visibleFollowersById.get(row.id);
+                    if (!follower) {
+                      return null;
+                    }
+
+                    const waitingForBlindedRequest = Boolean(
+                      selectedPublishedVote &&
+                      !findLatestRoundRequest(
+                        pendingRequests,
+                        follower.voterNpub,
+                        selectedPublishedVote.votingId,
+                      ),
+                    );
+                    const ticketStatusKey = selectedPublishedVote
+                      ? `${follower.voterNpub}:${selectedPublishedVote.votingId}`
+                      : '';
+                    const ticketDelivery = ticketStatusKey
+                      ? ticketDeliveries[ticketStatusKey]
+                      : undefined;
+                    const isTicketSending =
+                      ticketDelivery?.status === 'Sending ticket...';
+
+                    return (
+                      <li key={row.id} className='simple-voter-list-item'>
+                        <div className='simple-follower-row'>
+                          <div className='simple-follower-row-main'>
+                            <p className='simple-voter-question'>
+                              {row.followingText}
+                            </p>
+                            <ul className='simple-delivery-diagnostics'>
+                              <li
+                                className={deliveryToneClass(row.follow.tone)}
+                              >
+                                {row.follow.text}
+                              </li>
+                              <li
+                                className={deliveryToneClass(
+                                  row.pendingRequest.tone,
+                                )}
+                              >
+                                {row.pendingRequest.text}
+                              </li>
+                              <li
+                                className={deliveryToneClass(row.ticket.tone)}
+                              >
+                                {row.ticket.text}
+                              </li>
+                              {row.receipt ? (
+                                <li
+                                  className={deliveryToneClass(
+                                    row.receipt.tone,
+                                  )}
+                                >
+                                  {row.receipt.text}
+                                </li>
+                              ) : null}
+                            </ul>
+                          </div>
+                          <div className='simple-follower-row-controls'>
+                            <label className='simple-follower-auto-send'>
+                              <input
+                                type='checkbox'
+                                checked={Boolean(
+                                  autoSendFollowers[follower.voterNpub],
+                                )}
+                                onChange={(event) => {
+                                  setAutoSendFollowers((current) => ({
+                                    ...current,
+                                    [follower.voterNpub]: event.target.checked,
+                                  }));
+                                }}
+                              />
+                              <span>Verified</span>
+                            </label>
+                            {selectedPublishedVote ? (
+                              <button
+                                type='button'
+                                className='simple-voter-secondary'
+                                onClick={() => void sendTicket(follower)}
+                                disabled={!row.canSendTicket || isTicketSending}
+                              >
+                                Resend on fail
+                              </button>
+                            ) : null}
+                            {waitingForBlindedRequest ? (
+                              <button
+                                type='button'
+                                className='simple-voter-secondary'
+                                onClick={() => void resendRoundInfo(follower)}
+                                disabled={!activeBlindPrivateKey}
+                              >
+                                Resend round info
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <p className='simple-voter-empty'>
+                  No voters are following this coordinator yet.
+                </p>
+              )}
+            </SimpleCollapsibleSection>
           </section>
         ) : null}
 
@@ -2072,117 +2183,6 @@ export default function SimpleCoordinatorApp() {
               ) : null}
             </SimpleCollapsibleSection>
 
-            <SimpleCollapsibleSection title='Following voters'>
-              {coordinatorFollowerRows.length > 0 ? (
-                <ul className='simple-voter-list'>
-                  {coordinatorFollowerRows.map((row) => {
-                    const follower = visibleFollowersById.get(row.id);
-                    if (!follower) {
-                      return null;
-                    }
-
-                    const waitingForBlindedRequest = Boolean(
-                      selectedPublishedVote &&
-                      !findLatestRoundRequest(
-                        pendingRequests,
-                        follower.voterNpub,
-                        selectedPublishedVote.votingId,
-                      ),
-                    );
-                    const ticketStatusKey = selectedPublishedVote
-                      ? `${follower.voterNpub}:${selectedPublishedVote.votingId}`
-                      : '';
-                    const ticketDelivery = ticketStatusKey
-                      ? ticketDeliveries[ticketStatusKey]
-                      : undefined;
-                    const isTicketSending =
-                      ticketDelivery?.status === 'Sending ticket...';
-
-                    return (
-                      <li key={row.id} className='simple-voter-list-item'>
-                        <div className='simple-follower-row'>
-                          <div className='simple-follower-row-main'>
-                            <p className='simple-voter-question'>
-                              {row.followingText}
-                            </p>
-                            <ul className='simple-delivery-diagnostics'>
-                              <li
-                                className={deliveryToneClass(row.follow.tone)}
-                              >
-                                {row.follow.text}
-                              </li>
-                              <li
-                                className={deliveryToneClass(
-                                  row.pendingRequest.tone,
-                                )}
-                              >
-                                {row.pendingRequest.text}
-                              </li>
-                              <li
-                                className={deliveryToneClass(row.ticket.tone)}
-                              >
-                                {row.ticket.text}
-                              </li>
-                              {row.receipt ? (
-                                <li
-                                  className={deliveryToneClass(
-                                    row.receipt.tone,
-                                  )}
-                                >
-                                  {row.receipt.text}
-                                </li>
-                              ) : null}
-                            </ul>
-                          </div>
-                          <div className='simple-follower-row-controls'>
-                            <label className='simple-follower-auto-send'>
-                              <input
-                                type='checkbox'
-                                checked={Boolean(
-                                  autoSendFollowers[follower.voterNpub],
-                                )}
-                                onChange={(event) => {
-                                  setAutoSendFollowers((current) => ({
-                                    ...current,
-                                    [follower.voterNpub]: event.target.checked,
-                                  }));
-                                }}
-                              />
-                              <span>Verified</span>
-                            </label>
-                            {selectedPublishedVote ? (
-                              <button
-                                type='button'
-                                className='simple-voter-secondary'
-                                onClick={() => void sendTicket(follower)}
-                                disabled={!row.canSendTicket || isTicketSending}
-                              >
-                                Resend on fail
-                              </button>
-                            ) : null}
-                            {waitingForBlindedRequest ? (
-                              <button
-                                type='button'
-                                className='simple-voter-secondary'
-                                onClick={() => void resendRoundInfo(follower)}
-                                disabled={!activeBlindPrivateKey}
-                              >
-                                Resend round info
-                              </button>
-                            ) : null}
-                          </div>
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              ) : (
-                <p className='simple-voter-empty'>
-                  No voters are following this coordinator yet.
-                </p>
-              )}
-            </SimpleCollapsibleSection>
-
             <SimpleCollapsibleSection title='Submitted votes'>
               {selectedSubmittedVote ? (
                 <>
@@ -2214,12 +2214,9 @@ export default function SimpleCoordinatorApp() {
                       <section className='simple-submitted-column'>
                         <h3 className='simple-submitted-column-title'>Yes</h3>
                         {yesValidatedVotes.length > 0 ? (
-                          <ul className='simple-voter-list simple-submitted-vote-list'>
+                          <ul className='simple-submitted-vote-list'>
                             {yesValidatedVotes.map(({ vote, valid, reason }) => (
-                              <li
-                                key={vote.eventId}
-                                className='simple-voter-list-item'
-                              >
+                              <li key={vote.eventId} className='simple-submitted-vote-item'>
                                 <div className='simple-vote-entry'>
                                   <div className='simple-vote-entry-copy'>
                                     <p className='simple-voter-question simple-vote-result-line'>
@@ -2255,12 +2252,9 @@ export default function SimpleCoordinatorApp() {
                       <section className='simple-submitted-column'>
                         <h3 className='simple-submitted-column-title'>No</h3>
                         {noValidatedVotes.length > 0 ? (
-                          <ul className='simple-voter-list simple-submitted-vote-list'>
+                          <ul className='simple-submitted-vote-list'>
                             {noValidatedVotes.map(({ vote, valid, reason }) => (
-                              <li
-                                key={vote.eventId}
-                                className='simple-voter-list-item'
-                              >
+                              <li key={vote.eventId} className='simple-submitted-vote-item'>
                                 <div className='simple-vote-entry'>
                                   <div className='simple-vote-entry-copy'>
                                     <p className='simple-voter-question simple-vote-result-line'>

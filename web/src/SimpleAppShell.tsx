@@ -65,7 +65,7 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
             aria-expanded={!roleSwitchMinimized}
             aria-controls='simple-role-switch-panel'
           >
-            {roleSwitchMinimized ? 'Show' : 'Minimise'}
+            {roleSwitchMinimized ? 'Change' : 'Hide'}
           </button>
         </div>
         {!roleSwitchMinimized ? (
@@ -106,7 +106,13 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
         ) : null}
       </div>
 
-      {role === 'voter' ? <SimpleUiApp /> : role === 'coordinator' ? <SimpleCoordinatorApp /> : <SimpleAuditorApp />}
+      {role === 'voter' ? (
+        <SimpleUiApp />
+      ) : role === 'coordinator' ? (
+        <SimpleCoordinatorApp />
+      ) : (
+        <SimpleAuditorApp />
+      )}
       {role === 'auditor' ? <SimpleRelayPanel /> : null}
       <footer className='simple-app-version' aria-label='App version'>
         <span>{SIMPLE_APP_VERSION}</span>

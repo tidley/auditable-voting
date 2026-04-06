@@ -521,6 +521,37 @@ export function subscribeSimpleSubmittedVotes(input: {
   const votes = new Map<string, SimpleSubmittedVote>();
   let closed = false;
 
+  const publishVotes = () => {
+    input.onVotes(sortByCreatedAtDescending([...votes.values()]));
+  };
+
+  const refreshFromHistory = async () => {
+    const events = await pool.querySync(relays, {
+      kinds: [SIMPLE_LIVE_VOTE_BALLOT_KIND],
+      "#d": [input.votingId],
+      limit: 200,
+    });
+
+    for (const event of events) {
+      const vote = await parseSimpleSubmittedVoteEvent(event, input.votingId);
+      if (vote) {
+        votes.set(vote.eventId, vote);
+      }
+    }
+
+    publishVotes();
+  };
+
+  void refreshFromHistory().catch((error) => {
+    if (!closed && error instanceof Error) {
+      input.onError?.(error);
+    }
+  });
+
+  const intervalId = window.setInterval(() => {
+    void refreshFromHistory().catch(() => undefined);
+  }, 5000);
+
   const subscription = pool.subscribeMany(relays, {
     kinds: [SIMPLE_LIVE_VOTE_BALLOT_KIND],
     "#d": [input.votingId],
@@ -533,7 +564,7 @@ export function subscribeSimpleSubmittedVotes(input: {
       }
 
       votes.set(vote.eventId, vote);
-      input.onVotes(sortByCreatedAtDescending([...votes.values()]));
+      publishVotes();
     },
     onclose: (reasons) => {
       if (closed) {
@@ -550,6 +581,7 @@ export function subscribeSimpleSubmittedVotes(input: {
 
   return () => {
     closed = true;
+    window.clearInterval(intervalId);
     void subscription.close("closed by caller");
   };
 }

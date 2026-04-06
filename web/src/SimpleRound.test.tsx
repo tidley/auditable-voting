@@ -1322,7 +1322,7 @@ describe("Simple round flow", () => {
     const coordinator = render(<SimpleCoordinatorApp />);
     const coordinatorUi = within(coordinator.container);
 
-    await user.click(coordinatorUi.getByRole("tab", { name: /^Voting$/i }));
+    await user.click(coordinatorUi.getByRole("tab", { name: /^Configure$/i }));
 
     await waitFor(() => {
       expect(
@@ -1467,6 +1467,12 @@ describe("Simple round flow", () => {
       expect(coordinatorOneUi.getByText(/submitted as sub-coordinator/i)).toBeTruthy();
     });
 
+    await user.click(coordinatorOneUi.getByRole("tab", { name: /^Configure$/i }));
+    await user.click(coordinatorTwoUi.getByRole("tab", { name: /^Configure$/i }));
+    await waitFor(() => {
+      expect(coordinatorOneUi.getAllByText(/is following this coordinator/i).length).toBeGreaterThanOrEqual(2);
+      expect(coordinatorTwoUi.getAllByText(/is following this coordinator/i).length).toBeGreaterThanOrEqual(2);
+    });
     await user.click(coordinatorOneUi.getByRole("tab", { name: /^Voting$/i }));
     await user.click(coordinatorTwoUi.getByRole("tab", { name: /^Voting$/i }));
     await user.click(coordinatorOneUi.getByRole("button", { name: /Increase Threshold T/i }));
@@ -1481,12 +1487,13 @@ describe("Simple round flow", () => {
     await waitFor(() => {
       expect(voterOneUi.getByText(/Tickets ready: 0 of 2/i)).toBeTruthy();
       expect(voterTwoUi.getByText(/Tickets ready: 0 of 2/i)).toBeTruthy();
-      expect(coordinatorOneUi.getAllByText(/is following this coordinator/i).length).toBeGreaterThanOrEqual(2);
-      expect(coordinatorTwoUi.getAllByText(/is following this coordinator/i).length).toBeGreaterThanOrEqual(2);
       expect(coordinatorTwoUi.getByDisplayValue("2")).toBeTruthy();
     });
     expect(voterOneUi.queryByText("Old stale prompt")).toBeNull();
     expect(voterTwoUi.queryByText("Old stale prompt")).toBeNull();
+
+    await user.click(coordinatorOneUi.getByRole("tab", { name: /^Configure$/i }));
+    await user.click(coordinatorTwoUi.getByRole("tab", { name: /^Configure$/i }));
 
     await waitFor(() => {
       expect(coordinatorOneUi.getAllByRole("button", { name: /Resend on fail/i })).toHaveLength(2);
@@ -1538,6 +1545,9 @@ describe("Simple round flow", () => {
     await user.click(coordinatorTwoUi.getByRole("tab", { name: /^Voting$/i }));
     await waitFor(() => {
       expect(coordinatorTwoUi.getByText(/Live prompt: Second question/i)).toBeTruthy();
+    });
+    await user.click(coordinatorTwoUi.getByRole("tab", { name: /^Configure$/i }));
+    await waitFor(() => {
       expect(coordinatorTwoUi.getAllByRole("button", { name: /Resend on fail/i }).length).toBeGreaterThanOrEqual(2);
     });
     const voterOneRoundSelector = voterOne.container.querySelector("select#simple-live-round") as HTMLSelectElement | null;
@@ -1589,7 +1599,7 @@ describe("Simple round flow", () => {
       expect(coordinatorUi.getByRole("tab", { name: /^Voting$/i })).toBeTruthy();
     });
 
-    await user.click(coordinatorUi.getByRole("tab", { name: /^Voting$/i }));
+    await user.click(coordinatorUi.getByRole("tab", { name: /^Configure$/i }));
     await waitFor(() => {
       expect(coordinatorUi.getByText(/is following this coordinator/i)).toBeTruthy();
     });
@@ -1600,9 +1610,12 @@ describe("Simple round flow", () => {
 
     await waitFor(() => {
       expect(voterUi.getByText(/Tickets ready: 0 of 1/i)).toBeTruthy();
-      expect(coordinatorUi.getByRole("button", { name: /Resend on fail/i })).toBeTruthy();
     });
 
+    await user.click(coordinatorUi.getByRole("tab", { name: /^Configure$/i }));
+    await waitFor(() => {
+      expect(coordinatorUi.getByRole("button", { name: /Resend on fail/i })).toBeTruthy();
+    });
     await user.click(coordinatorUi.getByRole("button", { name: /Resend on fail/i }));
 
     await waitFor(() => {

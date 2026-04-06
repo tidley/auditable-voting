@@ -1299,8 +1299,29 @@ code {
 }
 
 .simple-submitted-vote-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: grid;
   gap: 12px;
+}
+
+.simple-submitted-vote-item {
+  margin: 0;
+}
+
+.simple-submitted-vote-list .simple-vote-entry {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+
+.simple-submitted-vote-list .simple-vote-entry-copy {
+  width: 100%;
+}
+
+.simple-submitted-vote-list .token-fingerprint {
+  align-items: flex-start;
 }
 
 .simple-vote-threshold-grid {
