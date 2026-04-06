@@ -17,6 +17,16 @@ async function clickByText(page, role, name) {
   await page.getByRole(role, { name }).click();
 }
 
+async function ensureVoterTab(page, name) {
+  const tab = page.getByRole("button", { name: new RegExp(`^${name}$`, "i") });
+  if (await tab.count() === 0) {
+    return false;
+  }
+  await tab.first().click();
+  await sleep(100);
+  return true;
+}
+
 async function coordinatorDiagnostics(page) {
   return page.locator(".simple-delivery-diagnostics").allInnerTexts().catch(() => []);
 }
@@ -52,6 +62,7 @@ async function clickAllEnabled(page, matcher) {
 
 async function allVotersTicketReady(voters) {
   for (const page of voters) {
+    await ensureVoterTab(page, "Vote");
     const body = await readBody(page);
     const ticketReady = parseTicketReady(body);
     if (!ticketReady || ticketReady.ready < ticketReady.required) {
@@ -112,6 +123,7 @@ async function captureRoundState(coordinators, voters) {
 
   const voterStates = {};
   for (const [index, page] of voters.entries()) {
+    await ensureVoterTab(page, "Vote");
     const body = await readBody(page);
     voterStates[`voter${index + 1}`] = {
       cards: await voterCardDiagnostics(page),
@@ -203,6 +215,7 @@ async function main() {
     await sleep(4000);
 
     for (const [index, page] of voters.entries()) {
+      await ensureVoterTab(page, "Vote");
       const body = await readBody(page);
       const ticketReady = parseTicketReady(body);
       if (ticketReady && ticketReady.ready >= ticketReady.required) {
