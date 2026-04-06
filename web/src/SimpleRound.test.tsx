@@ -83,6 +83,7 @@ let dmAcknowledgements: Array<{
   ackedEventId: string;
   actorNpub: string;
   actorId?: string;
+  coordinatorNpubs?: string[];
   votingId?: string;
   requestId?: string;
   responseId?: string;
@@ -352,6 +353,7 @@ function notifyDmAcknowledgementSubscribers(recipientNpub: string) {
       ackedEventId: entry.ackedEventId,
       actorNpub: entry.actorNpub,
       actorId: entry.actorId,
+      coordinatorNpubs: entry.coordinatorNpubs,
       votingId: entry.votingId,
       requestId: entry.requestId,
       responseId: entry.responseId,
@@ -772,6 +774,7 @@ vi.mock("./simpleShardDm", () => ({
     ackedAction: string;
     ackedEventId: string;
     actorNpub: string;
+    coordinatorNpubs?: string[];
     votingId?: string;
     requestId?: string;
     responseId?: string;
@@ -782,6 +785,7 @@ vi.mock("./simpleShardDm", () => ({
       ackedEventId: input.ackedEventId,
       actorNpub: input.actorNpub,
       actorId: sha(input.actorNpub).slice(0, 7),
+      coordinatorNpubs: input.coordinatorNpubs,
       votingId: input.votingId,
       requestId: input.requestId,
       responseId: input.responseId,
@@ -799,6 +803,7 @@ vi.mock("./simpleShardDm", () => ({
       ackedEventId: string;
       actorNpub: string;
       actorId?: string;
+      coordinatorNpubs?: string[];
       votingId?: string;
       requestId?: string;
       responseId?: string;
@@ -1372,18 +1377,8 @@ describe("Simple round flow", () => {
     );
     await user.click(voterOneUi.getByRole("button", { name: /Add coordinator/i }));
     await user.type(
-      voterOneUi.getByPlaceholderText('Enter coordinator npub...'),
-      coordinatorTwoNpub,
-    );
-    await user.click(voterOneUi.getByRole("button", { name: /Add coordinator/i }));
-    await user.type(
       voterTwoUi.getByPlaceholderText('Enter coordinator npub...'),
       coordinatorOneNpub,
-    );
-    await user.click(voterTwoUi.getByRole("button", { name: /Add coordinator/i }));
-    await user.type(
-      voterTwoUi.getByPlaceholderText('Enter coordinator npub...'),
-      coordinatorTwoNpub,
     );
     await user.click(voterTwoUi.getByRole("button", { name: /Add coordinator/i }));
 
@@ -1391,8 +1386,16 @@ describe("Simple round flow", () => {
     await user.click(voterTwoUi.getByRole("button", { name: /Notify coordinators/i }));
 
     await waitFor(() => {
-      expect(voterOneUi.getByText(/Coordinators notified\. Waiting for round tickets\./i)).toBeTruthy();
-      expect(voterTwoUi.getByText(/Coordinators notified\. Waiting for round tickets\./i)).toBeTruthy();
+      expect(
+        voterOneUi.getByText(
+          /(?:Coordinators notified|Additional coordinators received)\..*Waiting for round tickets\./i,
+        ),
+      ).toBeTruthy();
+      expect(
+        voterTwoUi.getByText(
+          /(?:Coordinators notified|Additional coordinators received)\..*Waiting for round tickets\./i,
+        ),
+      ).toBeTruthy();
       expect(coordinatorOneUi.getByText(/submitted as sub-coordinator/i)).toBeTruthy();
     });
 

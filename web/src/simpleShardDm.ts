@@ -44,6 +44,7 @@ export type SimpleDmAcknowledgement = {
   ackedEventId: string;
   actorNpub: string;
   actorId?: string;
+  coordinatorNpubs?: string[];
   votingId?: string;
   requestId?: string;
   responseId?: string;
@@ -424,6 +425,7 @@ function parseSimpleDmAcknowledgement(
       acked_action?: SimpleDmAcknowledgedAction;
       acked_event_id?: string;
       actor_npub?: string;
+      coordinator_npubs?: string[];
       voting_id?: string;
       request_id?: string;
       response_id?: string;
@@ -446,6 +448,9 @@ function parseSimpleDmAcknowledgement(
       ackedEventId: payload.acked_event_id,
       actorNpub: payload.actor_npub,
       actorId: deriveActorDisplayId(payload.actor_npub),
+      coordinatorNpubs: Array.isArray(payload.coordinator_npubs)
+        ? uniqueNonEmpty(payload.coordinator_npubs)
+        : undefined,
       votingId: payload.voting_id?.trim() || undefined,
       requestId: payload.request_id?.trim() || undefined,
       responseId: payload.response_id?.trim() || undefined,
@@ -534,6 +539,7 @@ export async function sendSimpleDmAcknowledgement(input: {
   actorNpub: string;
   ackedAction: SimpleDmAcknowledgedAction;
   ackedEventId: string;
+  coordinatorNpubs?: string[];
   votingId?: string;
   requestId?: string;
   responseId?: string;
@@ -568,6 +574,7 @@ export async function sendSimpleDmAcknowledgement(input: {
       acked_action: input.ackedAction,
       acked_event_id: input.ackedEventId,
       actor_npub: input.actorNpub,
+      coordinator_npubs: input.coordinatorNpubs,
       voting_id: input.votingId,
       request_id: input.requestId,
       response_id: input.responseId,

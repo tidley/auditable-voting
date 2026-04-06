@@ -1091,16 +1091,21 @@ code {
 .simple-follower-auto-send {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;              /* slightly increased for larger control */
   color: #cbd5e1;
   font-size: 0.95rem;
   font-weight: 700;
 }
 
-.simple-follower-auto-send input {
-  width: 16px;
-  height: 16px;
+.simple-follower-auto-send input[type="checkbox"] {
+  width: 22px;            /* increased from 16px */
+  height: 22px;
   accent-color: #2563eb;
+  cursor: pointer;
+}
+
+.simple-follower-auto-send input[type="checkbox"] {
+  vertical-align: middle;
 }
 
 .simple-vote-card {
@@ -1154,6 +1159,16 @@ code {
 .simple-vote-entry-copy {
   flex: 1 1 280px;
   min-width: 0;
+}
+
+.simple-vote-entry-ballot {
+  display: grid;
+  gap: 12px;
+}
+
+.simple-vote-entry-media {
+  display: flex;
+  justify-content: flex-start;
 }
 
 .simple-vote-result-line {
@@ -3710,6 +3725,10 @@ body.demo-page .demo-workspace {
 
   .simple-vote-entry {
     align-items: flex-start;
+    gap: 10px;
+  }
+
+  .simple-vote-entry-ballot {
     gap: 10px;
   }
 

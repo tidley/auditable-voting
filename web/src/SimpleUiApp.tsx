@@ -1139,6 +1139,113 @@ export default function SimpleUiApp() {
     );
 
   useEffect(() => {
+    const discoveredCoordinatorNpubs = normalizeCoordinatorNpubsRust(
+      dmAcknowledgements.flatMap((ack) => (
+        ack.ackedAction === 'simple_coordinator_follow'
+          ? ack.coordinatorNpubs ?? []
+          : []
+      )),
+    );
+
+    if (discoveredCoordinatorNpubs.length === 0) {
+      return;
+    }
+
+    setManualCoordinators((current) => {
+      const next = normalizeCoordinatorNpubsRust([
+        ...current,
+        ...discoveredCoordinatorNpubs,
+      ]);
+      return next.length === current.length
+        && next.every((value, index) => value === current[index])
+        ? current
+        : next;
+    });
+  }, [dmAcknowledgements]);
+
+  useEffect(() => {
+    const roundCoordinatorNpubs = normalizeCoordinatorNpubsRust(
+      reconciledRoundState.knownRounds.flatMap((round) => round.authorizedCoordinatorNpubs),
+    );
+
+    if (roundCoordinatorNpubs.length === 0) {
+      return;
+    }
+
+    setManualCoordinators((current) => {
+      const next = normalizeCoordinatorNpubsRust([
+        ...current,
+        ...roundCoordinatorNpubs,
+      ]);
+      return next.length === current.length
+        && next.every((value, index) => value === current[index])
+        ? current
+        : next;
+    });
+  }, [reconciledRoundState.knownRounds]);
+
+  useEffect(() => {
+    const voterSecretKey = decodeNsec(voterKeypair?.nsec ?? "");
+    const voterNpub = voterKeypair?.npub ?? "";
+
+    if (!coordinatorsHaveBeenNotified || !voterSecretKey || !voterNpub) {
+      return;
+    }
+
+    const undispatchedCoordinators = configuredCoordinatorTargets.filter(
+      (coordinatorNpub) =>
+        !followDeliveries[coordinatorNpub]?.eventId
+        && coordinatorDiagnosticsByNpub.get(coordinatorNpub)?.follow.tone !== 'ok',
+    );
+
+    if (undispatchedCoordinators.length === 0) {
+      return;
+    }
+
+    void Promise.all(
+      undispatchedCoordinators.map(async (coordinatorNpub) => {
+        const result = await sendSimpleCoordinatorFollow({
+          voterSecretKey,
+          coordinatorNpub,
+          voterNpub,
+        });
+        return {
+          coordinatorNpub,
+          success: result.successes > 0,
+          eventId: result.eventId,
+        };
+      }),
+    ).then((results) => {
+      setFollowDeliveries((current) => ({
+        ...current,
+        ...Object.fromEntries(
+          results.map((result) => [
+            result.coordinatorNpub,
+            {
+              status: result.success
+                ? 'Follow request sent.'
+                : 'Follow request failed.',
+              eventId: result.eventId,
+              attempts: (current[result.coordinatorNpub]?.attempts ?? 0) + 1,
+              lastAttemptAt: new Date().toISOString(),
+            },
+          ]),
+        ),
+      }));
+      if (results.some((result) => result.success)) {
+        setRequestStatus('Additional coordinators received. Waiting for round tickets.');
+      }
+    }).catch(() => undefined);
+  }, [
+    configuredCoordinatorTargets,
+    coordinatorDiagnosticsByNpub,
+    coordinatorsHaveBeenNotified,
+    followDeliveries,
+    voterKeypair?.npub,
+    voterKeypair?.nsec,
+  ]);
+
+  useEffect(() => {
     const voterSecretKey = decodeNsec(voterKeypair?.nsec ?? "");
     const voterNpub = voterKeypair?.npub ?? "";
     const round = effectiveLiveVoteSession;
@@ -1775,13 +1882,15 @@ export default function SimpleUiApp() {
                   {showVoteDetails ? (
                     <div className='simple-vote-details'>
                       {ballotTokenId ? (
-                        <div className='simple-vote-entry'>
+                        <div className='simple-vote-entry simple-vote-entry-ballot'>
                           <div className='simple-vote-entry-copy'>
                             <h3 className='simple-voter-question'>
-                              Ballot fingerprint
+                              Ballot footprint
                             </h3>
                           </div>
-                          <TokenFingerprint tokenId={ballotTokenId} large />
+                          <div className='simple-vote-entry-media'>
+                            <TokenFingerprint tokenId={ballotTokenId} large />
+                          </div>
                         </div>
                       ) : null}
                       <div className='simple-voter-ticket-area'>

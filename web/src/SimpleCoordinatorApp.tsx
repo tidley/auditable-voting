@@ -224,7 +224,7 @@ export default function SimpleCoordinatorApp() {
     1,
     Math.min(Number.parseInt(questionThresholdN, 10) || 1, availableCoordinatorCount),
   );
-  const sentFollowAckIdsRef = useRef<Set<string>>(new Set());
+  const sentFollowAckStateRef = useRef<Record<string, string>>({});
   const sentRequestAckIdsRef = useRef<Set<string>>(new Set());
   const sentSubCoordinatorAckIdsRef = useRef<Set<string>>(new Set());
   const sentAssignmentAckIdsRef = useRef<Set<string>>(new Set());
@@ -624,24 +624,39 @@ export default function SimpleCoordinatorApp() {
       return;
     }
 
+    const coordinatorRoster = isLeadCoordinator
+      ? sortCoordinatorRoster([
+          coordinatorNpub,
+          ...subCoordinators.map((application) => application.coordinatorNpub),
+        ])
+      : [];
+
     for (const follower of followers) {
-      if (!follower.dmEventId || sentFollowAckIdsRef.current.has(follower.dmEventId)) {
+      if (!follower.dmEventId) {
         continue;
       }
 
-      sentFollowAckIdsRef.current.add(follower.dmEventId);
+      const rosterSignature = isLeadCoordinator
+        ? `follow:${coordinatorRoster.join("|")}`
+        : "follow";
+      if (sentFollowAckStateRef.current[follower.dmEventId] === rosterSignature) {
+        continue;
+      }
+
+      sentFollowAckStateRef.current[follower.dmEventId] = rosterSignature;
       void sendSimpleDmAcknowledgement({
         senderSecretKey: coordinatorSecretKey,
         recipientNpub: follower.voterNpub,
         actorNpub: coordinatorNpub,
         ackedAction: "simple_coordinator_follow",
         ackedEventId: follower.dmEventId,
+        coordinatorNpubs: isLeadCoordinator ? coordinatorRoster : undefined,
         votingId: follower.votingId,
       }).catch(() => {
-        sentFollowAckIdsRef.current.delete(follower.dmEventId);
+        delete sentFollowAckStateRef.current[follower.dmEventId];
       });
     }
-  }, [coordinatorId, followers, keypair?.nsec, keypair?.npub]);
+  }, [followers, isLeadCoordinator, keypair?.nsec, keypair?.npub, subCoordinators]);
 
   useEffect(() => {
     const coordinatorSecretKey = decodeNsec(keypair?.nsec ?? "");
@@ -790,7 +805,7 @@ export default function SimpleCoordinatorApp() {
     setSelectedSubmittedVotingId('');
     setSubmittedVotes([]);
     setActiveTab("configure");
-    sentFollowAckIdsRef.current.clear();
+    sentFollowAckStateRef.current = {};
     sentRequestAckIdsRef.current.clear();
     sentSubCoordinatorAckIdsRef.current.clear();
     sentAssignmentAckIdsRef.current.clear();
@@ -839,7 +854,7 @@ export default function SimpleCoordinatorApp() {
     setSelectedSubmittedVotingId('');
     setSubmittedVotes([]);
     setActiveTab("configure");
-    sentFollowAckIdsRef.current.clear();
+    sentFollowAckStateRef.current = {};
     sentRequestAckIdsRef.current.clear();
     sentSubCoordinatorAckIdsRef.current.clear();
     sentAssignmentAckIdsRef.current.clear();
@@ -965,7 +980,7 @@ export default function SimpleCoordinatorApp() {
       );
       setSubmittedVotes(Array.isArray(cache?.submittedVotes) ? cache.submittedVotes : []);
       setActiveTab("configure");
-      sentFollowAckIdsRef.current.clear();
+      sentFollowAckStateRef.current = {};
       sentRequestAckIdsRef.current.clear();
       sentSubCoordinatorAckIdsRef.current.clear();
       sentAssignmentAckIdsRef.current.clear();
@@ -2006,13 +2021,35 @@ export default function SimpleCoordinatorApp() {
                       <li key={row.id} className='simple-voter-list-item'>
                         <div className='simple-follower-row'>
                           <div className='simple-follower-row-main'>
-                            <p className='simple-voter-question'>{row.followingText}</p>
+                            <p className='simple-voter-question'>
+                              {row.followingText}
+                            </p>
                             <ul className='simple-delivery-diagnostics'>
-                              <li className={deliveryToneClass(row.follow.tone)}>{row.follow.text}</li>
-                              <li className={deliveryToneClass(row.pendingRequest.tone)}>{row.pendingRequest.text}</li>
-                              <li className={deliveryToneClass(row.ticket.tone)}>{row.ticket.text}</li>
+                              <li
+                                className={deliveryToneClass(row.follow.tone)}
+                              >
+                                {row.follow.text}
+                              </li>
+                              <li
+                                className={deliveryToneClass(
+                                  row.pendingRequest.tone,
+                                )}
+                              >
+                                {row.pendingRequest.text}
+                              </li>
+                              <li
+                                className={deliveryToneClass(row.ticket.tone)}
+                              >
+                                {row.ticket.text}
+                              </li>
                               {row.receipt ? (
-                                <li className={deliveryToneClass(row.receipt.tone)}>{row.receipt.text}</li>
+                                <li
+                                  className={deliveryToneClass(
+                                    row.receipt.tone,
+                                  )}
+                                >
+                                  {row.receipt.text}
+                                </li>
                               ) : null}
                             </ul>
                           </div>
@@ -2020,7 +2057,9 @@ export default function SimpleCoordinatorApp() {
                             <label className='simple-follower-auto-send'>
                               <input
                                 type='checkbox'
-                                checked={Boolean(autoSendFollowers[follower.voterNpub])}
+                                checked={Boolean(
+                                  autoSendFollowers[follower.voterNpub],
+                                )}
                                 onChange={(event) => {
                                   setAutoSendFollowers((current) => ({
                                     ...current,
@@ -2028,7 +2067,7 @@ export default function SimpleCoordinatorApp() {
                                   }));
                                 }}
                               />
-                              <span>Auto send</span>
+                              <span>Verified</span>
                             </label>
                             {selectedPublishedVote ? (
                               <button
