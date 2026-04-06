@@ -1434,7 +1434,7 @@ describe("Simple round flow", () => {
     const coordinatorTwoLeadInput = coordinatorTwoUi.getByPlaceholderText("Leave blank if this coordinator is the lead");
     await user.clear(coordinatorTwoLeadInput);
     await user.type(coordinatorTwoLeadInput, coordinatorOneNpub);
-    await user.click(coordinatorTwoUi.getByRole("button", { name: /Submit to lead/i }));
+    await user.click(coordinatorTwoUi.getByRole("button", { name: /Notify coordinator/i }));
 
     await waitFor(() => {
       expect(voterOne.container.querySelectorAll("code.simple-identity-code")[0]?.textContent?.startsWith("npub1")).toBe(true);

@@ -1437,7 +1437,7 @@ export default function SimpleCoordinatorApp() {
       return;
     }
 
-    setRegistrationStatus("Submitting to lead coordinator...");
+    setRegistrationStatus("Notifying lead coordinator...");
 
     try {
       const result = await sendSimpleSubCoordinatorJoin({
@@ -1448,11 +1448,11 @@ export default function SimpleCoordinatorApp() {
 
       setRegistrationStatus(
         result.successes > 0
-          ? "Submitted to lead coordinator. Waiting for share index assignment."
-          : "Lead coordinator submission failed.",
+          ? "Lead coordinator notified. Waiting for share index assignment."
+          : "Lead coordinator notification failed.",
       );
     } catch {
-      setRegistrationStatus("Lead coordinator submission failed.");
+      setRegistrationStatus("Lead coordinator notification failed.");
     }
   }
 
@@ -1793,8 +1793,8 @@ export default function SimpleCoordinatorApp() {
                     }
                   >
                     {hasAssignedShareIndex
-                      ? 'Registered with lead'
-                      : 'Submit to lead'}
+                      ? 'Coordinator notified'
+                      : 'Notify coordinator'}
                   </button>
                 ) : null}
               </div>
