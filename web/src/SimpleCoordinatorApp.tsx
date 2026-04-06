@@ -2214,12 +2214,12 @@ export default function SimpleCoordinatorApp() {
                       <h3 className='simple-submitted-column-title'>Yes</h3>
                       {yesValidatedVotes.length > 0 ? (
                         <ul className='simple-submitted-vote-list'>
-                          {yesValidatedVotes.map(({ vote, valid, reason }) => (
+                          {yesValidatedVotes.map(({ vote, valid, reason }, index) => (
                             <li key={vote.eventId} className='simple-submitted-vote-item'>
                               <div className='simple-vote-entry'>
                                 <div className='simple-vote-entry-copy'>
                                   <p className='simple-voter-question simple-vote-result-line'>
-                                    <span>Yes</span>{' '}
+                                    <span>Vote {index + 1}</span>{' '}
                                     <span
                                       className={
                                         valid
@@ -2250,12 +2250,12 @@ export default function SimpleCoordinatorApp() {
                       <h3 className='simple-submitted-column-title'>No</h3>
                       {noValidatedVotes.length > 0 ? (
                         <ul className='simple-submitted-vote-list'>
-                          {noValidatedVotes.map(({ vote, valid, reason }) => (
+                          {noValidatedVotes.map(({ vote, valid, reason }, index) => (
                             <li key={vote.eventId} className='simple-submitted-vote-item'>
                               <div className='simple-vote-entry'>
                                 <div className='simple-vote-entry-copy'>
                                   <p className='simple-voter-question simple-vote-result-line'>
-                                    <span>No</span>{' '}
+                                    <span>Vote {index + 1}</span>{' '}
                                     <span
                                       className={
                                         valid

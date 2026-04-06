@@ -1537,6 +1537,7 @@ export default function SimpleUiApp() {
 
   const requiredShardCount = Math.max(1, effectiveLiveVoteSession?.thresholdT ?? 1);
   const voteSubmittedSuccessfully = submitStatus?.startsWith("Vote submitted:") ?? false;
+  const voteSubmitting = submitStatus === "Submitting vote...";
   const voteTicketReady = uniqueShardResponses.length >= requiredShardCount && requiredShardCount > 0;
   const hasCoordinatorConnection = coordinatorDiagnostics.some((entry) => (
     entry.follow.tone === "ok"
@@ -1898,12 +1899,17 @@ export default function SimpleUiApp() {
                   className={`simple-voter-primary simple-voter-primary-wide simple-vote-submit${voteSubmittedSuccessfully ? ' is-success' : ''}`}
                   onClick={() => void submitVote()}
                   disabled={
+                    voteSubmitting ||
                     voteSubmittedSuccessfully ||
                     !liveVoteChoice ||
                     uniqueShardResponses.length < requiredShardCount
                   }
                 >
-                  {voteSubmittedSuccessfully ? 'Vote submitted' : 'Submit vote'}
+                  {voteSubmitting
+                    ? 'Submitting vote...'
+                    : voteSubmittedSuccessfully
+                      ? 'Vote submitted'
+                      : 'Submit vote'}
                 </button>
 
                 <section
