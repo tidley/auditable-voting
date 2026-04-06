@@ -162,6 +162,22 @@ function makeRoundBlindKeyId(coordinatorNpub: string, votingId: string) {
   return `${coordinatorNpub}:${votingId}`;
 }
 
+function formatMissingCoordinatorKeyText(indices: number[]) {
+  if (indices.length === 0) {
+    return 'Waiting for a coordinator key before preparing ticket request.';
+  }
+  if (indices.length === 1) {
+    return `Waiting for Coordinator ${indices[0]}'s key before preparing ticket request.`;
+  }
+  if (indices.length === 2) {
+    return `Waiting for Coordinators ${indices[0]} and ${indices[1]}' keys before preparing ticket request.`;
+  }
+
+  const leading = indices.slice(0, -1).join(', ');
+  const trailing = indices[indices.length - 1];
+  return `Waiting for Coordinators ${leading}, and ${trailing}' keys before preparing ticket request.`;
+}
+
 export default function SimpleUiApp() {
   const [voterKeypair, setVoterKeypair] = useState<SimpleVoterKeypair | null>(null);
   const [identityReady, setIdentityReady] = useState(false);
@@ -1545,15 +1561,19 @@ export default function SimpleUiApp() {
     || entry.request.tone === "ok"
     || entry.ticket.tone === "ok"
   ));
-  const activeVoteCoordinatorIndex = effectiveLiveVoteSession
-    ? configuredCoordinatorTargets.findIndex((value) => (
-      effectiveLiveVoteSession.authorizedCoordinatorNpubs.includes(value)
-      && !knownBlindKeys[makeRoundBlindKeyId(value, effectiveLiveVoteSession.votingId)]
-    ))
-    : -1;
-  const waitingForCoordinatorKeyText = activeVoteCoordinatorIndex >= 0
-    ? `Waiting for Coordinator ${activeVoteCoordinatorIndex + 1}'s key before preparing ticket request.`
-    : "Waiting for a coordinator key before preparing ticket request.";
+  const missingActiveVoteCoordinatorIndices = effectiveLiveVoteSession
+    ? configuredCoordinatorTargets
+      .map((value, index) => (
+        effectiveLiveVoteSession.authorizedCoordinatorNpubs.includes(value)
+        && !knownBlindKeys[makeRoundBlindKeyId(value, effectiveLiveVoteSession.votingId)]
+          ? index + 1
+          : null
+      ))
+      .filter((value): value is number => value !== null)
+    : [];
+  const waitingForCoordinatorKeyText = formatMissingCoordinatorKeyText(
+    missingActiveVoteCoordinatorIndices,
+  );
 
   function selectTab(nextTab: VoterTab) {
     setActiveTab(nextTab);
@@ -1761,7 +1781,7 @@ export default function SimpleUiApp() {
                                 )}
                               >
                                 {diagnostic?.blindKey.text ??
-                                  `Waiting for Coordinator ${index + 1}'s key before preparing ticket request.`}
+                                  formatMissingCoordinatorKeyText([index + 1])}
                               </li>
                               <li
                                 className={toneClass(

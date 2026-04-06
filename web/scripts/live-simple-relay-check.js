@@ -83,27 +83,49 @@ async function clickByText(page, role, name) {
 }
 
 async function ensureVoterTab(page, name) {
-  const tab = page.getByRole("button", { name: new RegExp(`^${name}$`, "i") });
-  if (await tab.count() === 0) {
+  const tab = page.getByRole("tab", { name: new RegExp(`^${name}$`, "i") });
+  if (await tab.count() > 0) {
+    await tab.first().click();
+    await sleep(100);
+    return true;
+  }
+  const button = page.getByRole("button", { name: new RegExp(`^${name}$`, "i") });
+  if (await button.count() === 0) {
     return false;
   }
-  await tab.first().click();
+  await button.first().click();
   await sleep(100);
   return true;
 }
 
 async function ensureTab(page, name) {
-  const tab = page.getByRole("button", { name: new RegExp(`^${name}$`, "i") });
-  if (await tab.count() === 0) {
+  const tab = page.getByRole("tab", { name: new RegExp(`^${name}$`, "i") });
+  if (await tab.count() > 0) {
+    await tab.first().click();
+    await sleep(100);
+    return true;
+  }
+  const button = page.getByRole("button", { name: new RegExp(`^${name}$`, "i") });
+  if (await button.count() === 0) {
     return false;
   }
-  await tab.first().click();
+  await button.first().click();
   await sleep(100);
   return true;
 }
 
 async function coordinatorDiagnostics(page) {
   return page.locator(".simple-delivery-diagnostics").allInnerTexts().catch(() => []);
+}
+
+async function coordinatorFollowerRows(page) {
+  const rows = page.locator(".simple-voter-list-item");
+  const count = await rows.count();
+  const results = [];
+  for (let index = 0; index < count; index += 1) {
+    results.push((await rows.nth(index).innerText()).replace(/\s+/g, " ").trim());
+  }
+  return results;
 }
 
 async function voterCardDiagnostics(page) {
@@ -118,6 +140,15 @@ async function voterCardDiagnostics(page) {
 
 async function readBody(page) {
   return (await page.locator("body").innerText()).replace(/\s+/g, " ");
+}
+
+async function getDisplayedActorId(page, prefix) {
+  const body = await readBody(page);
+  const match = body.match(new RegExp(`${prefix} ID ([0-9a-f]+)`, "i"));
+  if (!match) {
+    throw new Error(`Could not find ${prefix} ID on page`);
+  }
+  return match[1];
 }
 
 async function clickAllEnabled(page, matcher) {
@@ -135,6 +166,20 @@ async function clickAllEnabled(page, matcher) {
   return clicked;
 }
 
+async function setVerifyAll(page) {
+  await ensureTab(page, "Configure");
+  const checkbox = page.getByRole("checkbox", { name: /Verify all/i }).first();
+  if (await checkbox.count() === 0) {
+    return false;
+  }
+  await checkbox.waitFor({ state: "visible", timeout: 30000 });
+  if (!(await checkbox.isChecked())) {
+    await checkbox.click();
+    await sleep(100);
+  }
+  return true;
+}
+
 async function allVotersTicketReady(voters) {
   for (const page of voters) {
     await ensureVoterTab(page, "Vote");
@@ -147,7 +192,105 @@ async function allVotersTicketReady(voters) {
   return true;
 }
 
-async function clickEnabledTicketsDuringWindow(coordinators, voters, durationMs) {
+function createRoundStageTracker({ round, prompt, voterIds, coordinatorCount }) {
+  return {
+    round,
+    prompt,
+    startedAtMs: Date.now(),
+    lastObservedAtMs: 0,
+    totalPairs: voterIds.length * coordinatorCount,
+    voterIds,
+    stages: {
+      roundSeen: new Map(),
+      blindKeySeen: new Map(),
+      blindedRequestSent: new Map(),
+      ticketSent: new Map(),
+      receiptAcknowledged: new Map(),
+    },
+  };
+}
+
+function recordStage(stageTracker, stageName, pairKey, nowMs) {
+  const stageMap = stageTracker.stages[stageName];
+  if (!stageMap.has(pairKey)) {
+    stageMap.set(pairKey, nowMs);
+  }
+}
+
+function summariseStageMap(stageMap, startedAtMs, totalPairs) {
+  const timings = [...stageMap.values()]
+    .map((value) => value - startedAtMs)
+    .sort((left, right) => left - right);
+  const midpoint = timings.length
+    ? timings[Math.floor((timings.length - 1) / 2)]
+    : null;
+
+  return {
+    count: stageMap.size,
+    totalPairs,
+    firstMs: timings[0] ?? null,
+    medianMs: midpoint,
+    lastMs: timings[timings.length - 1] ?? null,
+  };
+}
+
+function summariseRoundStages(stageTracker) {
+  return Object.fromEntries(
+    Object.entries(stageTracker.stages).map(([stageName, stageMap]) => [
+      stageName,
+      summariseStageMap(stageMap, stageTracker.startedAtMs, stageTracker.totalPairs),
+    ]),
+  );
+}
+
+async function observeRoundStages(stageTracker, coordinators, voters) {
+  const nowMs = Date.now();
+
+  for (const [voterIndex, page] of voters.entries()) {
+    const voterId = stageTracker.voterIds[voterIndex] ?? `voter${voterIndex + 1}`;
+    await ensureTab(page, "Configure");
+    const cards = await voterCardDiagnostics(page);
+    for (let coordinatorIndex = 0; coordinatorIndex < cards.length; coordinatorIndex += 1) {
+      const text = cards[coordinatorIndex];
+      const pairKey = `${voterId}:coord${coordinatorIndex + 1}`;
+      if (/Live round seen\./i.test(text)) {
+        recordStage(stageTracker, "roundSeen", pairKey, nowMs);
+      }
+      if (/Blind key seen\./i.test(text)) {
+        recordStage(stageTracker, "blindKeySeen", pairKey, nowMs);
+      }
+      if (/Blinded ticket request acknowledged\./i.test(text)) {
+        recordStage(stageTracker, "blindedRequestSent", pairKey, nowMs);
+      }
+    }
+  }
+
+  for (const [coordinatorIndex, page] of coordinators.entries()) {
+    await ensureTab(page, "Configure");
+    const rows = await coordinatorFollowerRows(page);
+    for (const text of rows) {
+      const match = text.match(/Voter ([0-9a-f]+)/i);
+      if (!match) {
+        continue;
+      }
+      const voterId = match[1];
+      const pairKey = `${voterId}:coord${coordinatorIndex + 1}`;
+      if (/Blinded ticket request received\./i.test(text)) {
+        recordStage(stageTracker, "blindedRequestSent", pairKey, nowMs);
+      }
+      if (/Ticket sent\./i.test(text)) {
+        recordStage(stageTracker, "ticketSent", pairKey, nowMs);
+      }
+      if (/Voter acknowledged ticket receipt\./i.test(text)) {
+        recordStage(stageTracker, "receiptAcknowledged", pairKey, nowMs);
+      }
+    }
+  }
+
+  stageTracker.lastObservedAtMs = nowMs;
+}
+
+async function clickEnabledTicketsDuringWindow(coordinators, voters, durationMs, stageTracker) {
   const deadline = Date.now() + durationMs;
   const sendCounts = coordinators.map((_, index) => ({
     coordinator: index + 1,
@@ -157,13 +300,17 @@ async function clickEnabledTicketsDuringWindow(coordinators, voters, durationMs)
   while (Date.now() < deadline) {
     let clickedThisPass = 0;
     for (const [index, page] of coordinators.entries()) {
-      const clicked = await clickAllEnabled(page, /Send ticket|Resend/i);
+      const clicked = await clickAllEnabled(page, /^(Send ticket|Resend ticket)$/i);
       sendCounts[index].clicked += clicked;
       clickedThisPass += clicked;
     }
 
     if (await allVotersTicketReady(voters)) {
       break;
+    }
+
+    if (!stageTracker.lastObservedAtMs || Date.now() - stageTracker.lastObservedAtMs >= 4000) {
+      await observeRoundStages(stageTracker, coordinators, voters);
     }
 
     await sleep(clickedThisPass > 0 ? 750 : 1500);
@@ -266,6 +413,11 @@ async function main() {
     coordinatorNpubs.push(await getNpub(page));
   }
 
+  const voterIds = [];
+  for (const page of voters) {
+    voterIds.push(await getDisplayedActorId(page, "Voter"));
+  }
+
   for (let index = 1; index < coordinators.length; index += 1) {
     await ensureTab(coordinators[index], "Configure");
     await coordinators[index].getByPlaceholder("Leave blank if this coordinator is the lead").fill(coordinatorNpubs[0]);
@@ -279,21 +431,50 @@ async function main() {
 
   await sleep(startupWaitMs);
 
+  for (const page of coordinators) {
+    await setVerifyAll(page);
+  }
+
   const rounds = [];
   for (let roundIndex = 0; roundIndex < roundCount; roundIndex += 1) {
     const prompt = `Round ${roundIndex + 1}: Should the proposal pass?`;
+    const stageTracker = createRoundStageTracker({
+      round: roundIndex + 1,
+      prompt,
+      voterIds,
+      coordinatorCount,
+    });
     const lead = coordinators[0];
     await ensureTab(lead, "Voting");
+    if (coordinatorCount > 1) {
+      const increaseThreshold = lead.getByRole("button", { name: /Increase Threshold T/i }).first();
+      if (await increaseThreshold.count()) {
+        await increaseThreshold.click();
+        await sleep(100);
+      }
+    }
     const questionBox = lead.locator("#simple-question-prompt").first();
     await questionBox.waitFor({ state: "visible", timeout: 30000 });
     await questionBox.fill(prompt);
     await clickByText(lead, "button", /Broadcast live vote|Vote broadcast/i);
 
-    await sleep(roundWaitMs);
+    await observeRoundStages(stageTracker, coordinators, voters);
 
-    const sendCounts = await clickEnabledTicketsDuringWindow(coordinators, voters, ticketWaitMs);
+    const roundDiscoveryDeadline = Date.now() + roundWaitMs;
+    while (Date.now() < roundDiscoveryDeadline) {
+      await sleep(4000);
+      await observeRoundStages(stageTracker, coordinators, voters);
+    }
+
+    const sendCounts = await clickEnabledTicketsDuringWindow(
+      coordinators,
+      voters,
+      ticketWaitMs,
+      stageTracker,
+    );
 
     await sleep(4000);
+    await observeRoundStages(stageTracker, coordinators, voters);
 
     for (const [index, page] of voters.entries()) {
       await ensureVoterTab(page, "Vote");
@@ -302,11 +483,13 @@ async function main() {
       if (ticketReady && ticketReady.ready >= ticketReady.required) {
         const voteChoice = index % 2 === 0 ? "Yes" : "No";
         const button = page.getByRole("button", { name: new RegExp(`^${voteChoice}$`, "i") });
+        await button.click({ force: true });
         const submit = page.getByRole("button", { name: /^Submit vote$/i });
-        if (!(await submit.isDisabled())) {
-          await button.click();
-          await submit.click();
-          await sleep(200);
+        if (await submit.count()) {
+          if (!(await submit.isDisabled())) {
+            await submit.click({ force: true });
+            await sleep(200);
+          }
         }
       }
     }
@@ -315,6 +498,7 @@ async function main() {
       round: roundIndex + 1,
       prompt,
       sendCounts,
+      stageMetrics: summariseRoundStages(stageTracker),
       state: await captureRoundState(coordinators, voters),
     });
   }
@@ -332,6 +516,7 @@ async function main() {
       votersWithTickets: voterTicketSummary.filter((entry) => entry.hasTicket).length,
       totalVoters: voterTicketSummary.length,
       voterTicketSummary,
+      stageMetrics: round.stageMetrics,
       coordinatorFailureHints: Object.entries(round.state.coordinatorStates).map(([key, value]) => ({
         coordinator: key,
         waitingForRequests: value.diagnostics.filter((line) => line.includes("Waiting for this voter's blinded ticket request")).length,
