@@ -593,7 +593,7 @@ export default function SimpleUiApp() {
     };
 
     refresh();
-    const intervalId = window.setInterval(refresh, 5000);
+    const intervalId = window.setInterval(refresh, 2000);
 
     return () => {
       cancelled = true;
@@ -1511,7 +1511,7 @@ export default function SimpleUiApp() {
           return next;
         });
       }).catch(() => undefined);
-    }, 3000);
+    }, 2000);
 
     return () => window.clearInterval(intervalId);
   }, [dmAcknowledgements, pendingBlindRequests, receivedShards, requestDeliveries, roundReplyKeypairs, voterKeypair?.npub]);

@@ -112,8 +112,14 @@ type SimpleCoordinatorCache = {
   submittedVotes: SimpleSubmittedVote[];
 };
 
+const SIMPLE_TICKET_SEND_STAGGER_MS = 900;
+
 function sortCoordinatorRoster(values: string[]) {
   return [...new Set(values.filter((value) => value.trim().length > 0))].sort();
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function normalizeLiveVoteSession(
@@ -1364,6 +1370,9 @@ export default function SimpleCoordinatorApp() {
     }));
 
     try {
+      if (activeShareIndex > 1) {
+        await wait((activeShareIndex - 1) * SIMPLE_TICKET_SEND_STAGGER_MS);
+      }
       const thresholdLabel = activeThresholdT && activeThresholdN
         ? `${activeThresholdT} of ${activeThresholdN}`
         : getThresholdLabel();
@@ -1889,7 +1898,7 @@ export default function SimpleCoordinatorApp() {
         responseId: ack.responseId,
       })),
       nowMs,
-      minRetryAgeMs: 4000,
+      minRetryAgeMs: 2000,
       maxAttempts: 8,
     }));
 

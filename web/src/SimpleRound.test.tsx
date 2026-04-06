@@ -188,6 +188,7 @@ let blindAnnouncementSubscribers: Array<{
   onAnnouncement: (announcement: any | null) => void;
 }> = [];
 let suppressedShardResponseNotifications = new Set<string>();
+let suppressedShardResponseNotificationRoutes = new Set<string>();
 let droppedTicketAttemptsByRoute = new Map<string, number>();
 const originalWebSocket = globalThis.WebSocket;
 
@@ -794,6 +795,7 @@ vi.mock("./simpleShardDm", () => ({
     shardResponses.push(nextResponse);
     if (
       !suppressedShardResponseNotifications.has(input.recipientNpub)
+      && !suppressedShardResponseNotificationRoutes.has(`${input.coordinatorNpub}:${input.recipientNpub}`)
     ) {
       notifyShardResponseSubscribers(input.recipientNpub);
     }
@@ -1109,6 +1111,7 @@ describe("Simple round flow", () => {
     coordinatorRosterSubscribers = [];
     blindAnnouncementSubscribers = [];
     suppressedShardResponseNotifications = new Set();
+    suppressedShardResponseNotificationRoutes = new Set();
     droppedTicketAttemptsByRoute = new Map();
     window.sessionStorage.clear();
     await resetSimpleActorStateForTests();
@@ -1688,6 +1691,99 @@ describe("Simple round flow", () => {
       expect(
         coordinatorTwoUi.getByText(/strfry\.bitsbytom\.com/i),
       ).toBeTruthy();
+    });
+  }, 40000);
+
+  it("recovers a second-coordinator ticket from DM history when live delivery is missed", async () => {
+    const user = userEvent.setup();
+    const { default: SimpleCoordinatorApp } = await import("./SimpleCoordinatorApp");
+    const { default: SimpleUiApp } = await import("./SimpleUiApp");
+
+    const coordinatorOne = render(<SimpleCoordinatorApp />);
+    const coordinatorTwo = render(<SimpleCoordinatorApp />);
+    const voter = render(<SimpleUiApp />);
+
+    const coordinatorOneUi = within(coordinatorOne.container);
+    const coordinatorTwoUi = within(coordinatorTwo.container);
+    const voterUi = within(voter.container);
+
+    await user.click(coordinatorOneUi.getByRole("button", { name: /New ID/i }));
+    await user.click(coordinatorTwoUi.getByRole("button", { name: /New ID/i }));
+    await user.click(voterUi.getByRole("button", { name: /New/i }));
+
+    await user.click(coordinatorOneUi.getByRole("tab", { name: /^Settings$/i }));
+    await user.click(coordinatorTwoUi.getByRole("tab", { name: /^Settings$/i }));
+    await user.click(voterUi.getByRole("tab", { name: /^Settings$/i }));
+
+    await waitFor(() => {
+      expect(coordinatorOne.container.querySelectorAll("code.simple-identity-code")[0]?.textContent?.startsWith("npub1")).toBe(true);
+      expect(coordinatorTwo.container.querySelectorAll("code.simple-identity-code")[0]?.textContent?.startsWith("npub1")).toBe(true);
+      expect(voter.container.querySelectorAll("code.simple-identity-code")[0]?.textContent?.startsWith("npub1")).toBe(true);
+    });
+
+    const coordinatorOneNpub =
+      coordinatorOne.container.querySelectorAll("code.simple-identity-code")[0]?.textContent ?? "";
+    const coordinatorTwoNpub =
+      coordinatorTwo.container.querySelectorAll("code.simple-identity-code")[0]?.textContent ?? "";
+
+    await user.click(coordinatorTwoUi.getByRole("tab", { name: /^Configure$/i }));
+    await user.type(
+      coordinatorTwoUi.getByLabelText(/^Lead coordinator npub$/i),
+      coordinatorOneNpub,
+    );
+    await user.click(coordinatorTwoUi.getByRole("button", { name: /Notify coordinator/i }));
+
+    await user.click(voterUi.getByRole("tab", { name: /^Configure$/i }));
+    await user.type(
+      voterUi.getByPlaceholderText('Enter coordinator npub...'),
+      coordinatorOneNpub,
+    );
+    await user.click(voterUi.getByRole("button", { name: /Add coordinator/i }));
+    await user.type(
+      voterUi.getByPlaceholderText('Enter coordinator npub...'),
+      coordinatorTwoNpub,
+    );
+    await user.click(voterUi.getByRole("button", { name: /Add coordinator/i }));
+
+    await user.click(coordinatorOneUi.getByRole("tab", { name: /^Configure$/i }));
+    await user.click(coordinatorTwoUi.getByRole("tab", { name: /^Configure$/i }));
+
+    await waitFor(() => {
+      expect(coordinatorOneUi.getAllByText(/Follow request received\./i).length).toBeGreaterThanOrEqual(1);
+      expect(coordinatorTwoUi.getAllByText(/Follow request received\./i).length).toBeGreaterThanOrEqual(1);
+    });
+
+    await user.click(coordinatorOneUi.getByRole("checkbox", { name: /Verify all/i }));
+    await user.click(coordinatorOneUi.getByRole("tab", { name: /^Voting$/i }));
+    await user.click(coordinatorTwoUi.getByRole("tab", { name: /^Voting$/i }));
+    await user.click(coordinatorOneUi.getByRole("button", { name: /Increase Threshold T/i }));
+    await user.click(coordinatorOneUi.getByRole("button", { name: /Broadcast live vote|Vote broadcast/i }));
+    await user.click(voterUi.getByRole("tab", { name: /^Vote$/i }));
+
+    await user.click(coordinatorTwoUi.getByRole("tab", { name: /^Configure$/i }));
+    await waitFor(() => {
+      expect(coordinatorTwoUi.getByText(/Blinded ticket request received\./i)).toBeTruthy();
+      expect(shardRequests.some((entry) => entry.coordinatorNpub === coordinatorTwoNpub)).toBe(true);
+    });
+
+    const coordinatorTwoReplyNpub = shardRequests.find(
+      (entry) => entry.coordinatorNpub === coordinatorTwoNpub,
+    )?.replyNpub;
+    expect(coordinatorTwoReplyNpub).toBeTruthy();
+    suppressedShardResponseNotificationRoutes.add(`${coordinatorTwoNpub}:${coordinatorTwoReplyNpub}`);
+
+    await user.click(coordinatorTwoUi.getByRole("checkbox", { name: /^Verified$/i }));
+
+    await waitFor(() => {
+      const bodyText = voter.container.textContent ?? "";
+      expect(/Tickets ready: (?:1|2) of 2/i.test(bodyText)).toBe(true);
+    });
+
+    await new Promise((resolve) => window.setTimeout(resolve, 2500));
+
+    await waitFor(() => {
+      expect(voterUi.getByText(/Tickets ready: 2 of 2/i)).toBeTruthy();
+      expect(voterUi.getByText(/Vote ticket received/i)).toBeTruthy();
     });
   }, 40000);
 

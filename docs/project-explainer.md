@@ -188,6 +188,7 @@ That mix matters scientifically because the system is not just a protocol sketch
 - blind issuance responses sent directly from each coordinator to the voter
 - acknowledgements
 - automatic retry of unacknowledged ticket delivery
+- periodic history backfill for missed ticket DMs
 
 ---
 
@@ -487,7 +488,8 @@ The repository now focuses on the client-side web app only:
 - voter and coordinator flows use `Configure`, `Vote`/`Voting`, and `Settings` tabs
 - adding a coordinator in the voter flow immediately starts the follow/notify DM path
 - the lead coordinator now auto-sends share indexes to sub-coordinators
-- non-lead coordinators now send ticket shares to the lead, which forwards them to voters
+- each coordinator sends its own ticket share directly to the voter
+- non-lead ticket sends are slightly staggered by share index to reduce same-recipient relay bursts
 - coordinator follower rows expose per-ticket relay publish diagnostics
 - Nostr is the shared state layer
 - blind-share issuance is in the simple flow
