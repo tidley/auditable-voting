@@ -1157,6 +1157,54 @@ code {
   min-width: 0;
 }
 
+.simple-ticket-relay-results {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #243247;
+}
+
+.simple-ticket-relay-results-title {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.simple-ticket-relay-results-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.simple-ticket-relay-results-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+  font-size: 0.84rem;
+}
+
+.simple-ticket-relay-result-host {
+  color: #cbd5e1;
+  overflow-wrap: anywhere;
+}
+
+.simple-ticket-relay-result-status {
+  text-align: right;
+}
+
+.simple-ticket-relay-result-ok .simple-ticket-relay-result-status {
+  color: #4ade80;
+}
+
+.simple-ticket-relay-result-error .simple-ticket-relay-result-status {
+  color: #fca5a5;
+}
+
 .simple-follower-row-controls {
   display: grid;
   justify-items: end;

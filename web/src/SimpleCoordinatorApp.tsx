@@ -74,15 +74,27 @@ type SimpleCoordinatorKeypair = {
   nsec: string;
 };
 
+type TicketRelayResult = {
+  relay: string;
+  success: boolean;
+  error?: string;
+};
+
+type TicketDeliveryState = {
+  status: string;
+  eventId?: string;
+  responseId?: string;
+  attempts?: number;
+  lastAttemptAt?: string;
+  relayResults?: TicketRelayResult[];
+};
+
 type SimpleCoordinatorCache = {
   leadCoordinatorNpub: string;
   nip65Enabled: boolean;
   followers: SimpleCoordinatorFollower[];
   subCoordinators: SimpleSubCoordinatorApplication[];
-  ticketDeliveries: Record<
-    string,
-    { status: string; eventId?: string; responseId?: string; attempts?: number; lastAttemptAt?: string }
-  >;
+  ticketDeliveries: Record<string, TicketDeliveryState>;
   autoSendFollowers: Record<string, boolean>;
   pendingRequests: SimpleShardRequest[];
   registrationStatus: string | null;
@@ -149,6 +161,10 @@ function shortVotingId(votingId: string) {
   return votingId.slice(0, 12);
 }
 
+function formatRelayHost(relay: string) {
+  return relay.replace(/^wss?:\/\//, '').replace(/\/$/, '');
+}
+
 function deliveryToneClass(tone: string) {
   return tone === "error"
     ? "simple-delivery-error"
@@ -200,7 +216,7 @@ export default function SimpleCoordinatorApp() {
   const [leadScannerStatus, setLeadScannerStatus] = useState<string | null>(null);
   const [followers, setFollowers] = useState<SimpleCoordinatorFollower[]>([]);
   const [subCoordinators, setSubCoordinators] = useState<SimpleSubCoordinatorApplication[]>([]);
-  const [ticketDeliveries, setTicketDeliveries] = useState<Record<string, { status: string; eventId?: string; responseId?: string; attempts?: number; lastAttemptAt?: string }>>({});
+  const [ticketDeliveries, setTicketDeliveries] = useState<Record<string, TicketDeliveryState>>({});
   const [autoSendFollowers, setAutoSendFollowers] = useState<Record<string, boolean>>({});
   const [followerSearch, setFollowerSearch] = useState("");
   const [pendingRequests, setPendingRequests] = useState<SimpleShardRequest[]>([]);
@@ -1343,6 +1359,7 @@ export default function SimpleCoordinatorApp() {
         status: "Sending ticket...",
         attempts: (current[ticketStatusKey]?.attempts ?? 0) + 1,
         lastAttemptAt: new Date().toISOString(),
+        relayResults: undefined,
       },
     }));
 
@@ -1372,6 +1389,7 @@ export default function SimpleCoordinatorApp() {
           responseId: result.responseId,
           attempts: (current[ticketStatusKey]?.attempts ?? 0) + 1,
           lastAttemptAt: new Date().toISOString(),
+          relayResults: result.relayResults,
         },
       }));
     } catch {
@@ -1381,6 +1399,7 @@ export default function SimpleCoordinatorApp() {
           status: "Ticket send failed.",
           attempts: current[ticketStatusKey]?.attempts ?? 1,
           lastAttemptAt: new Date().toISOString(),
+          relayResults: undefined,
         },
       }));
     }
@@ -2210,6 +2229,28 @@ export default function SimpleCoordinatorApp() {
                                 </li>
                               ) : null}
                             </ul>
+                            {ticketDelivery?.relayResults?.length ? (
+                              <div className='simple-ticket-relay-results'>
+                                <p className='simple-ticket-relay-results-title'>
+                                  Ticket relay publish results
+                                </p>
+                                <ul className='simple-ticket-relay-results-list'>
+                                  {ticketDelivery.relayResults.map((result) => (
+                                    <li
+                                      key={`${ticketStatusKey}:${result.relay}`}
+                                      className={result.success ? 'simple-ticket-relay-result-ok' : 'simple-ticket-relay-result-error'}
+                                    >
+                                      <span className='simple-ticket-relay-result-host'>
+                                        {formatRelayHost(result.relay)}
+                                      </span>
+                                      <span className='simple-ticket-relay-result-status'>
+                                        {result.success ? 'sent' : (result.error ?? 'failed')}
+                                      </span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ) : null}
                           </div>
                           <div className='simple-follower-row-controls'>
                             {showResendTicket ? (

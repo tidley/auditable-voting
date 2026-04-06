@@ -483,6 +483,7 @@ The repository now focuses on the client-side web app only:
 - voter and coordinator flows use `Configure`, `Vote`/`Voting`, and `Settings` tabs
 - adding a coordinator in the voter flow immediately starts the follow/notify DM path
 - the lead coordinator now auto-sends share indexes to sub-coordinators
+- coordinator follower rows expose per-ticket relay publish diagnostics
 - Nostr is the shared state layer
 - blind-share issuance is in the simple flow
 - NIP-65 relay hints are optional and disabled by default

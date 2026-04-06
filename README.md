@@ -14,6 +14,7 @@ The shipped app currently includes:
 - NIP-17 DM traffic for follow, blind request, ticket, and acknowledgement flows
 - per-round blind-signature key announcements
 - blind-signature share issuance and public ballot verification
+- coordinator-side per-ticket relay publish diagnostics for issued shares
 - local browser persistence, backup, and optional passphrase protection
 - optional relay hint resolution via NIP-65, disabled by default
 - a growing Rust/Wasm core for deterministic protocol logic

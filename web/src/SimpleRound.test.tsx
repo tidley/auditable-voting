@@ -758,7 +758,16 @@ vi.mock("./simpleShardDm", () => ({
     const remainingDrops = droppedTicketAttemptsByRoute.get(dropRouteKey) ?? 0;
     if (remainingDrops > 0) {
       droppedTicketAttemptsByRoute.set(dropRouteKey, remainingDrops - 1);
-      return { responseId, eventId: `dm-response-${responseCounter}`, successes: 1, failures: 0, relayResults: [] };
+      return {
+        responseId,
+        eventId: `dm-response-${responseCounter}`,
+        successes: 1,
+        failures: 0,
+        relayResults: [
+          { relay: "wss://nip17.tomdwyer.uk", success: true },
+          { relay: "wss://strfry.bitsbytom.com", success: true },
+        ],
+      };
     }
     const nextResponse = {
       id: responseId,
@@ -788,7 +797,16 @@ vi.mock("./simpleShardDm", () => ({
     ) {
       notifyShardResponseSubscribers(input.recipientNpub);
     }
-    return { responseId, eventId: `dm-response-${responseCounter}`, successes: 1, failures: 0, relayResults: [] };
+    return {
+      responseId,
+      eventId: `dm-response-${responseCounter}`,
+      successes: 1,
+      failures: 0,
+      relayResults: [
+        { relay: "wss://nip17.tomdwyer.uk", success: true },
+        { relay: "wss://strfry.bitsbytom.com", success: true },
+      ],
+    };
   }),
   fetchSimpleShardResponses: vi.fn(async (input: { voterNsec: string; voterNsecs?: string[] }) => {
     const voterNpubs = [input.voterNsec, ...(input.voterNsecs ?? [])].map((value) => nsecToNpub(value) as string);
@@ -1655,6 +1673,20 @@ describe("Simple round flow", () => {
       expect(voterUi.getByText(/Coord 2/i)).toBeTruthy();
       expect(voterUi.getAllByText("1").length).toBeGreaterThanOrEqual(2);
     }, { timeout: 20000 });
+
+    await user.click(coordinatorTwoUi.getByRole("tab", { name: /^Configure$/i }));
+
+    await waitFor(() => {
+      expect(
+        coordinatorTwoUi.getByText(/Ticket relay publish results/i),
+      ).toBeTruthy();
+      expect(
+        coordinatorTwoUi.getByText(/nip17\.tomdwyer\.uk/i),
+      ).toBeTruthy();
+      expect(
+        coordinatorTwoUi.getByText(/strfry\.bitsbytom\.com/i),
+      ).toBeTruthy();
+    });
   }, 40000);
 
   it("recovers a ticket from DM history when the live delivery is missed", async () => {
