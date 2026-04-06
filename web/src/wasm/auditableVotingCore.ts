@@ -25,6 +25,7 @@ import {
 export type RustDeliveryState = {
   status?: string | null;
   eventId?: string | null;
+  responseId?: string | null;
   attempts?: number | null;
   lastAttemptAt?: string | null;
 };
@@ -33,6 +34,7 @@ export type RustAckSummary = {
   actorNpub: string;
   ackedAction: string;
   ackedEventId: string;
+  responseId?: string | null;
 };
 
 export type VoterCoordinatorDiagnosticRust = {

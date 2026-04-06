@@ -42,11 +42,25 @@ type InternalSubmittedVote = {
   createdAt: string;
 };
 
+type InternalForwardedRoundTicket = {
+  id: string;
+  dmEventId: string;
+  leadCoordinatorNpub: string;
+  recipientNpub: string;
+  requestId: string;
+  coordinatorNpub: string;
+  thresholdLabel: string;
+  createdAt: string;
+  votingPrompt?: string;
+  blindShareResponse: any;
+};
+
 let responseCounter = 0;
 let voteCounter = 0;
 let liveVotes: InternalLiveVote[] = [];
 let shardResponses: InternalResponse[] = [];
 let submittedVotes: InternalSubmittedVote[] = [];
+let forwardedRoundTickets: InternalForwardedRoundTicket[] = [];
 let coordinatorFollowers: Array<{
   coordinatorNpub: string;
   voterNpub: string;
@@ -151,6 +165,10 @@ let shardRequestSubscribers: Array<{
     blindRequest: any;
     createdAt: string;
   }>) => void;
+}> = [];
+let forwardedRoundTicketSubscribers: Array<{
+  leadCoordinatorNpub: string;
+  onTickets: (tickets: InternalForwardedRoundTicket[]) => void;
 }> = [];
 let dmAcknowledgementSubscribers: Array<{
   actorNpubs: string[];
@@ -344,6 +362,21 @@ function notifyShardRequestSubscribers(coordinatorNpub: string) {
   for (const subscriber of shardRequestSubscribers) {
     if (subscriber.coordinatorNpub === coordinatorNpub) {
       subscriber.onRequests(nextRequests);
+    }
+  }
+}
+
+function forwardedRoundTicketsForLead(leadCoordinatorNpub: string) {
+  return forwardedRoundTickets
+    .filter((entry) => entry.leadCoordinatorNpub === leadCoordinatorNpub)
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+}
+
+function notifyForwardedRoundTicketSubscribers(leadCoordinatorNpub: string) {
+  const nextTickets = forwardedRoundTicketsForLead(leadCoordinatorNpub);
+  for (const subscriber of forwardedRoundTicketSubscribers) {
+    if (subscriber.leadCoordinatorNpub === leadCoordinatorNpub) {
+      subscriber.onTickets(nextTickets);
     }
   }
 }
@@ -808,6 +841,120 @@ vi.mock("./simpleShardDm", () => ({
       ],
     };
   }),
+  sendSimpleForwardedRoundTicketToLead: vi.fn(async (input: {
+    leadCoordinatorNpub: string;
+    coordinatorNpub: string;
+    thresholdLabel: string;
+    request: {
+      replyNpub: string;
+      blindRequest: {
+        requestId: string;
+      };
+    };
+    votingPrompt: string;
+    shareIndex: number;
+    thresholdT?: number;
+    thresholdN?: number;
+    keyAnnouncementEvent: any;
+  }) => {
+    const responseId = `response-${++responseCounter}`;
+    const nextTicket: InternalForwardedRoundTicket = {
+      id: responseId,
+      dmEventId: `dm-forwarded-response-${responseCounter}`,
+      leadCoordinatorNpub: input.leadCoordinatorNpub,
+      recipientNpub: input.request.replyNpub,
+      requestId: input.request.blindRequest.requestId,
+      coordinatorNpub: input.coordinatorNpub,
+      thresholdLabel: input.thresholdLabel,
+      createdAt: new Date().toISOString(),
+      votingPrompt: input.votingPrompt,
+      blindShareResponse: {
+        shareId: responseId,
+        requestId: input.request.blindRequest.requestId,
+        coordinatorNpub: input.coordinatorNpub,
+        blindedSignature: `blind-signature:${responseId}`,
+        shareIndex: input.shareIndex,
+        thresholdT: input.thresholdT,
+        thresholdN: input.thresholdN,
+        createdAt: new Date().toISOString(),
+        keyAnnouncementEvent: input.keyAnnouncementEvent,
+      },
+    };
+    forwardedRoundTickets.push(nextTicket);
+    notifyForwardedRoundTicketSubscribers(input.leadCoordinatorNpub);
+    return {
+      responseId,
+      eventId: nextTicket.dmEventId,
+      successes: 1,
+      failures: 0,
+      relayResults: [
+        { relay: "wss://nip17.tomdwyer.uk", success: true },
+        { relay: "wss://strfry.bitsbytom.com", success: true },
+      ],
+    };
+  }),
+  sendSimpleForwardedRoundTicketToRecipient: vi.fn(async (input: {
+    recipientNpub: string;
+    forwardedTicket: InternalForwardedRoundTicket;
+  }) => {
+    const dropRouteKey = `${input.forwardedTicket.coordinatorNpub}:${input.recipientNpub}`;
+    const remainingDrops = droppedTicketAttemptsByRoute.get(dropRouteKey) ?? 0;
+    if (remainingDrops > 0) {
+      droppedTicketAttemptsByRoute.set(dropRouteKey, remainingDrops - 1);
+      return {
+        responseId: input.forwardedTicket.id,
+        eventId: `forwarded-${input.forwardedTicket.dmEventId}`,
+        successes: 1,
+        failures: 0,
+        relayResults: [
+          { relay: "wss://nip17.tomdwyer.uk", success: true },
+          { relay: "wss://strfry.bitsbytom.com", success: true },
+        ],
+      };
+    }
+
+    const nextResponse: InternalResponse = {
+      id: input.forwardedTicket.id,
+      dmEventId: `forwarded-${input.forwardedTicket.dmEventId}`,
+      requestId: input.forwardedTicket.requestId,
+      coordinatorNpub: input.forwardedTicket.coordinatorNpub,
+      coordinatorId: sha(input.forwardedTicket.coordinatorNpub).slice(0, 7),
+      thresholdLabel: input.forwardedTicket.thresholdLabel,
+      createdAt: input.forwardedTicket.createdAt,
+      recipientNpub: input.recipientNpub,
+      votingPrompt: input.forwardedTicket.votingPrompt,
+      blindShareResponse: input.forwardedTicket.blindShareResponse,
+    };
+    shardResponses.push(nextResponse);
+    if (!suppressedShardResponseNotifications.has(input.recipientNpub)) {
+      notifyShardResponseSubscribers(input.recipientNpub);
+    }
+    return {
+      responseId: input.forwardedTicket.id,
+      eventId: nextResponse.dmEventId,
+      successes: 1,
+      failures: 0,
+      relayResults: [
+        { relay: "wss://nip17.tomdwyer.uk", success: true },
+        { relay: "wss://strfry.bitsbytom.com", success: true },
+      ],
+    };
+  }),
+  subscribeSimpleForwardedRoundTickets: vi.fn((input: {
+    leadCoordinatorNsec: string;
+    onTickets: (tickets: InternalForwardedRoundTicket[]) => void;
+  }) => {
+    const leadCoordinatorNpub = nsecToNpub(input.leadCoordinatorNsec);
+    const subscriber = {
+      leadCoordinatorNpub,
+      onTickets: input.onTickets,
+    };
+    forwardedRoundTicketSubscribers.push(subscriber);
+    input.onTickets(forwardedRoundTicketsForLead(leadCoordinatorNpub));
+    return () => {
+      forwardedRoundTicketSubscribers = forwardedRoundTicketSubscribers.filter((entry) => entry !== subscriber);
+    };
+  }),
   fetchSimpleShardResponses: vi.fn(async (input: { voterNsec: string; voterNsecs?: string[] }) => {
     const voterNpubs = [input.voterNsec, ...(input.voterNsecs ?? [])].map((value) => nsecToNpub(value) as string);
     return shardResponses.filter((response) => voterNpubs.includes(response.recipientNpub));
@@ -1090,6 +1237,7 @@ describe("Simple round flow", () => {
     }];
     shardResponses = [];
     submittedVotes = [];
+    forwardedRoundTickets = [];
     coordinatorFollowers = [];
     subCoordinatorApplications = [];
     shareAssignments = [];
@@ -1105,6 +1253,7 @@ describe("Simple round flow", () => {
     subCoordinatorApplicationSubscribers = [];
     shareAssignmentSubscribers = [];
     shardRequestSubscribers = [];
+    forwardedRoundTicketSubscribers = [];
     dmAcknowledgementSubscribers = [];
     coordinatorRosterSubscribers = [];
     blindAnnouncementSubscribers = [];

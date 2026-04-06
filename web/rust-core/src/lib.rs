@@ -42,6 +42,7 @@ pub struct SimpleVoteTicketRow {
 pub struct DeliveryState {
     status: Option<String>,
     event_id: Option<String>,
+    response_id: Option<String>,
     attempts: Option<u32>,
     last_attempt_at: Option<String>,
 }
@@ -52,6 +53,7 @@ pub struct AckSummary {
     actor_npub: String,
     acked_action: String,
     acked_event_id: String,
+    response_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -357,12 +359,18 @@ fn status_is_failure(status: Option<&str>) -> bool {
 fn ack_exists(
     acknowledgements: &[AckSummary],
     action: &str,
-    event_id: &str,
+    event_id: Option<&str>,
+    response_id: Option<&str>,
     actor_npub: Option<&str>,
 ) -> bool {
     acknowledgements.iter().any(|ack| {
         ack.acked_action == action
-            && ack.acked_event_id == event_id
+            && (
+                event_id.map(|value| ack.acked_event_id == value).unwrap_or(false)
+                    || response_id
+                        .map(|value| ack.response_id.as_deref() == Some(value))
+                        .unwrap_or(false)
+            )
             && actor_npub.map(|value| ack.actor_npub == value).unwrap_or(true)
     })
 }
@@ -412,7 +420,8 @@ fn build_voter_coordinator_diagnostics_inner(
                     ack_exists(
                         &input.acknowledgements,
                         "simple_coordinator_follow",
-                        event_id,
+                        Some(event_id),
+                        None,
                         Some(&coordinator_npub),
                     )
                 })
@@ -439,7 +448,8 @@ fn build_voter_coordinator_diagnostics_inner(
                     ack_exists(
                         &input.acknowledgements,
                         "simple_shard_request",
-                        event_id,
+                        Some(event_id),
+                        None,
                         Some(&coordinator_npub),
                     )
                 })
@@ -522,7 +532,8 @@ fn select_follow_retry_targets_inner(input: FollowRetrySelectionInput) -> Vec<St
         if ack_exists(
             &input.acknowledgements,
             "simple_coordinator_follow",
-            event_id,
+            Some(event_id),
+            None,
             None,
         ) {
             continue;
@@ -559,7 +570,8 @@ fn select_request_retry_keys_inner(input: RequestRetrySelectionInput) -> Vec<Str
         if ack_exists(
             &input.acknowledgements,
             "simple_shard_request",
-            event_id,
+            Some(event_id),
+            None,
             None,
         ) || received_request_ids.contains(&request.request_id)
         {
@@ -650,7 +662,8 @@ fn build_coordinator_follower_rows_inner(
                     ack_exists(
                         &input.acknowledgements,
                         "simple_round_ticket",
-                        event_id,
+                        Some(event_id),
+                        ticket_delivery.and_then(|delivery| delivery.response_id.as_deref()),
                         None,
                     )
                 })
@@ -742,7 +755,8 @@ fn select_ticket_retry_targets_inner(input: TicketRetrySelectionInput) -> Vec<St
         if ack_exists(
             &input.acknowledgements,
             "simple_round_ticket",
-            event_id,
+            Some(event_id),
+            delivery.response_id.as_deref(),
             None,
         ) {
             continue;
@@ -1148,6 +1162,7 @@ mod tests {
                     DeliveryState {
                         status: Some("Follow request sent.".to_string()),
                         event_id: Some("event-a".to_string()),
+                        response_id: None,
                         attempts: Some(1),
                         last_attempt_at: Some("2026-04-05T00:00:00.000Z".to_string()),
                     },
@@ -1157,6 +1172,7 @@ mod tests {
                     DeliveryState {
                         status: Some("Follow request sent.".to_string()),
                         event_id: Some("event-b".to_string()),
+                        response_id: None,
                         attempts: Some(1),
                         last_attempt_at: Some("2026-04-05T00:00:09.000Z".to_string()),
                     },
@@ -1166,6 +1182,7 @@ mod tests {
                 actor_npub: "npub-b".to_string(),
                 acked_action: "simple_coordinator_follow".to_string(),
                 acked_event_id: "event-b".to_string(),
+                response_id: None,
             }],
             now_ms: 1_775_347_212_000,
             min_retry_age_ms: 8_000,

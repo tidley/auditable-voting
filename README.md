@@ -11,7 +11,7 @@ The shipped app currently includes:
 - voter, coordinator, and auditor screens
 - tabbed voter and coordinator flows with `Configure`, `Vote`/`Voting`, and `Settings`
 - round announcements over Nostr
-- NIP-17 DM traffic for follow, blind request, ticket, and acknowledgement flows
+- NIP-17 DM traffic for follow, blind request, forwarded ticket, and acknowledgement flows
 - per-round blind-signature key announcements
 - blind-signature share issuance and public ballot verification
 - coordinator-side per-ticket relay publish diagnostics for issued shares
@@ -92,7 +92,7 @@ At a high level:
 1. A coordinator publishes a live round.
 2. Coordinators publish per-round blind-signing keys, and the lead auto-sends share indexes to sub-coordinators.
 3. A voter adds coordinators in `Configure`, the client follows them over DMs, and then sends blinded issuance requests.
-4. Coordinators return blind-signature shares over DMs, and automatically retry unacknowledged ticket delivery.
+4. The lead coordinator returns its own blind-signature share directly, while non-lead coordinators send their shares to the lead for forwarding to voters; ticket delivery is retried automatically when acknowledgements are missing.
 5. The voter unblinds enough shares locally and submits a ballot from an ephemeral key.
 6. Coordinators and auditors validate ballots and recompute the tally from public data.
 
@@ -108,6 +108,7 @@ Private or local state:
 - actor secret keys
 - blind request secrets
 - issuance DM traffic
+- lead-mediated forwarding of non-lead ticket shares
 - ticket acknowledgements
 - browser-local cache and backup bundles
 
@@ -148,4 +149,5 @@ VITE_BASE_PATH=/auditable-voting/ npm --prefix web run build
 ## Related material
 
 - [Project explainer](./docs/project-explainer.md)
+- [Marmot migration plan](./docs/marmot-migration-plan.md)
 - [Portable presentation](./presentation/project-overview.html)

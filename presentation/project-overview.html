@@ -535,7 +535,7 @@
         <h3>What Nostr contributes</h3>
         <ul>
           <li>Public, signed event publication for rounds, ballots, and results</li>
-          <li>Private NIP-17 DM transport for issuance requests and responses, with retry for unacknowledged ticket delivery</li>
+          <li>Private NIP-17 DM transport for issuance requests and lead-forwarded ticket delivery, with retry for unacknowledged tickets</li>
           <li>Optional NIP-65 inbox/outbox hints for relay discovery when enabled</li>
           <li>Relay diversity instead of one central database</li>
           <li>Portable identities and signed announcements</li>
@@ -548,6 +548,7 @@
           <li>Static clients can participate without a proprietary backend</li>
           <li>Coordinator rosters and per-round keys can be announced in public</li>
           <li>The lead coordinator can push share-index assignments to sub-coordinators before issuance starts</li>
+          <li>Non-lead coordinators can send ticket shares to the lead, which forwards them to voters</li>
           <li>Coordinator follower rows now expose per-ticket relay publish diagnostics for debugging delivery gaps</li>
           <li>The default path currently prefers a tight curated relay set over broad hint expansion</li>
           <li>The protocol remains inspectable by any third party</li>

@@ -356,7 +356,7 @@ The present web client is built with:
 - **TypeScript 5** for the browser application logic
 - **Vite 5** for local development and static-site bundling
 - **`nostr-tools` 2.x** for Nostr keys, event signing, subscriptions, and relay publishing
-- **NIP-17 gift-wrapped DMs** for follow, issuance, ticket, and acknowledgement traffic
+- **NIP-17 gift-wrapped DMs** for follow, issuance, lead-forwarded ticket delivery, and acknowledgement traffic
 - **optional NIP-65 relay hints**, disabled by default, for relay discovery experiments
 - **`@cloudflare/blindrsa-ts`** for the RSABSSA blind-signature primitive used in the current issuance path
 - **Rust compiled to WebAssembly** for deterministic protocol logic, including parts of validation and relay-set handling
@@ -389,7 +389,7 @@ That mix matters scientifically because the system is not just a protocol sketch
 
 - follow / join coordination
 - blind issuance requests
-- blind issuance responses
+- blind issuance responses, with non-lead shares forwarded through the lead coordinator
 - acknowledgements
 - automatic retry of unacknowledged ticket delivery
 
@@ -401,14 +401,19 @@ That mix matters scientifically because the system is not just a protocol sketch
 sequenceDiagram
   participant V as Voter
   participant N as Nostr
-  participant C as Coordinator
+  participant L as Lead
+  participant C as Sub-coordinator
   participant O as Observer
 
-  C->>N: Publish round announcement
-  C->>N: Publish round blind key
-  V->>N: Discover round + coordinator key
+  L->>N: Publish round announcement
+  L->>N: Publish round blind key
+  C->>N: Publish sub-coordinator blind key
+  V->>N: Discover round + coordinator keys
+  V->>L: Send blinded issuance request (DM)
   V->>C: Send blinded issuance request (DM)
-  C->>V: Send blind signature share (DM)
+  L->>V: Send lead signature share (DM)
+  C->>L: Send sub-share to lead (DM)
+  L->>V: Forward sub-share to voter (DM)
   V->>V: Unblind and assemble token locally
   V->>N: Publish ballot from ephemeral key
   O->>N: Read ballot stream
@@ -687,6 +692,7 @@ The repository now focuses on the client-side web app only:
 - voter and coordinator flows use `Configure`, `Vote`/`Voting`, and `Settings` tabs
 - adding a coordinator in the voter flow immediately starts the follow/notify DM path
 - the lead coordinator now auto-sends share indexes to sub-coordinators
+- non-lead coordinators now send ticket shares to the lead, which forwards them to voters
 - coordinator follower rows expose per-ticket relay publish diagnostics
 - voter, coordinator, and auditor flows all live in `web/`
 - Nostr is the shared state layer
