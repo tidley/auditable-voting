@@ -1146,9 +1146,9 @@ code {
 }
 
 .simple-follower-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: flex-start;
-  justify-content: space-between;
   gap: 18px;
 }
 
@@ -1160,6 +1160,7 @@ code {
 .simple-follower-row-controls {
   display: grid;
   justify-items: end;
+  align-content: start;
   gap: 10px;
   min-width: 152px;
 }
@@ -1173,6 +1174,15 @@ code {
   font-weight: 700;
 }
 
+.simple-follower-auto-send-inline {
+  align-self: start;
+  padding-top: 2px;
+}
+
+.simple-follower-auto-send-bulk {
+  justify-self: end;
+}
+
 .simple-follower-auto-send input[type="checkbox"] {
   width: 22px;            /* increased from 16px */
   height: 22px;
@@ -1182,6 +1192,13 @@ code {
 
 .simple-follower-auto-send input[type="checkbox"] {
   vertical-align: middle;
+}
+
+.simple-follower-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
 }
 
 .simple-vote-card {
@@ -1589,33 +1606,33 @@ code {
 }
 
 .simple-voter-choice-yes {
-  background: linear-gradient(180deg, rgba(34, 197, 94, 0.14), rgba(21, 128, 61, 0.2));
+  background: rgba(21, 128, 61, 0.2);
   border-color: rgba(74, 222, 128, 0.35);
 }
 
 .simple-voter-choice-no {
-  background: linear-gradient(180deg, rgba(239, 68, 68, 0.14), rgba(153, 27, 27, 0.22));
+  background: rgba(153, 27, 27, 0.22);
   border-color: rgba(248, 113, 113, 0.35);
 }
 
 .simple-voter-choice-yes.is-active {
-  background: linear-gradient(180deg, #34d399, #22c55e);
+  background: #22c55e;
   border-color: #34d399;
 }
 
 .simple-voter-choice-no.is-active {
-  background: linear-gradient(180deg, #f87171, #ef4444);
+  background: #ef4444;
   border-color: #f87171;
 }
 
 .simple-voter-choice-yes.is-dimmed {
-  background: linear-gradient(180deg, rgba(18, 63, 39, 0.9), rgba(10, 32, 22, 0.96));
+  background: rgba(10, 32, 22, 0.96);
   border-color: rgba(52, 211, 153, 0.16);
   color: rgba(248, 250, 252, 0.78);
 }
 
 .simple-voter-choice-no.is-dimmed {
-  background: linear-gradient(180deg, rgba(78, 27, 35, 0.9), rgba(37, 12, 18, 0.96));
+  background: rgba(37, 12, 18, 0.96);
   border-color: rgba(248, 113, 113, 0.16);
   color: rgba(248, 250, 252, 0.78);
 }
@@ -3943,6 +3960,11 @@ body.demo-page .demo-workspace {
   .simple-identity-grid {
     grid-template-columns: 1fr;
     display: grid;
+  }
+
+  .simple-follower-toolbar {
+    grid-template-columns: 1fr;
+    justify-items: start;
   }
 
   .simple-follower-row-controls {

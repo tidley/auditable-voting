@@ -1331,8 +1331,8 @@ describe("Simple round flow", () => {
     });
 
     expect(
-      (coordinatorUi.getByRole("button", { name: /Resend on fail/i }) as HTMLButtonElement).disabled,
-    ).toBe(true);
+      coordinatorUi.queryByRole("button", { name: /Resend ticket/i }),
+    ).toBeNull();
 
     await user.click(coordinatorUi.getByRole("button", { name: /Resend round info/i }));
 
@@ -1473,11 +1473,16 @@ describe("Simple round flow", () => {
       expect(coordinatorOneUi.getAllByText(/Follow request received\./i).length).toBeGreaterThanOrEqual(2);
       expect(coordinatorTwoUi.getAllByText(/Follow request received\./i).length).toBeGreaterThanOrEqual(2);
     }, { timeout: 5000 });
+    await user.click(
+      coordinatorOneUi.getByRole("checkbox", { name: /Verify all/i }),
+    );
+    await user.click(
+      coordinatorTwoUi.getByRole("checkbox", { name: /Verify all/i }),
+    );
     await user.click(coordinatorOneUi.getByRole("tab", { name: /^Voting$/i }));
     await user.click(coordinatorTwoUi.getByRole("tab", { name: /^Voting$/i }));
     await user.click(coordinatorOneUi.getByRole("button", { name: /Increase Threshold T/i }));
     await user.click(coordinatorOneUi.getByRole("button", { name: /Broadcast live vote|Vote broadcast/i }));
-    await user.click(coordinatorOneUi.getByRole("button", { name: /Distribute share indexes/i }));
     await user.click(voterOneUi.getByRole("tab", { name: /^Vote$/i }));
     await user.click(voterTwoUi.getByRole("tab", { name: /^Vote$/i }));
 
@@ -1485,27 +1490,24 @@ describe("Simple round flow", () => {
     expect(firstRoundId).toBeTruthy();
 
     await waitFor(() => {
-      expect(voterOneUi.getByText(/Tickets ready: 0 of 2/i)).toBeTruthy();
-      expect(voterTwoUi.getByText(/Tickets ready: 0 of 2/i)).toBeTruthy();
+      const voterOneText = voterOne.container.textContent ?? "";
+      const voterTwoText = voterTwo.container.textContent ?? "";
+      expect(
+        /Tickets ready: (?:0|2) of 2/i.test(voterOneText),
+      ).toBe(true);
+      expect(
+        /Tickets ready: (?:0|2) of 2/i.test(voterTwoText),
+      ).toBe(true);
       expect(coordinatorTwoUi.getByDisplayValue("2")).toBeTruthy();
+      expect(
+        coordinatorOneUi.getByRole("button", { name: /Resend share indexes|Retry share indexes|Sending share indexes/i }),
+      ).toBeTruthy();
     });
     expect(voterOneUi.queryByText("Old stale prompt")).toBeNull();
     expect(voterTwoUi.queryByText("Old stale prompt")).toBeNull();
 
     await user.click(coordinatorOneUi.getByRole("tab", { name: /^Configure$/i }));
     await user.click(coordinatorTwoUi.getByRole("tab", { name: /^Configure$/i }));
-
-    await waitFor(() => {
-      expect(coordinatorOneUi.getAllByRole("button", { name: /Resend on fail/i })).toHaveLength(2);
-      expect(coordinatorTwoUi.getAllByRole("button", { name: /Resend on fail/i })).toHaveLength(2);
-    });
-
-    for (const button of coordinatorOneUi.getAllByRole("button", { name: /Resend on fail/i })) {
-      await user.click(button);
-    }
-    for (const button of coordinatorTwoUi.getAllByRole("button", { name: /Resend on fail/i })) {
-      await user.click(button);
-    }
 
     await user.click(voterOneUi.getByRole("button", { name: /Show details/i }));
     await user.click(voterTwoUi.getByRole("button", { name: /Show details/i }));
@@ -1545,10 +1547,6 @@ describe("Simple round flow", () => {
     await user.click(coordinatorTwoUi.getByRole("tab", { name: /^Voting$/i }));
     await waitFor(() => {
       expect(coordinatorTwoUi.getByText(/Live prompt: Second question/i)).toBeTruthy();
-    });
-    await user.click(coordinatorTwoUi.getByRole("tab", { name: /^Configure$/i }));
-    await waitFor(() => {
-      expect(coordinatorTwoUi.getAllByRole("button", { name: /Resend on fail/i }).length).toBeGreaterThanOrEqual(2);
     });
     const voterOneRoundSelector = voterOne.container.querySelector("select#simple-live-round") as HTMLSelectElement | null;
     const voterTwoRoundSelector = voterTwo.container.querySelector("select#simple-live-round") as HTMLSelectElement | null;
@@ -1603,20 +1601,18 @@ describe("Simple round flow", () => {
     await waitFor(() => {
       expect(coordinatorUi.getByText(/Follow request received\./i)).toBeTruthy();
     }, { timeout: 5000 });
+    await user.click(
+      coordinatorUi.getByRole("checkbox", { name: /Verified/i }),
+    );
 
     await user.click(coordinatorUi.getByRole("tab", { name: /^Voting$/i }));
     await user.click(coordinatorUi.getByRole("button", { name: /Broadcast live vote|Vote broadcast/i }));
     await user.click(voterUi.getByRole("tab", { name: /^Vote$/i }));
 
     await waitFor(() => {
-      expect(voterUi.getByText(/Tickets ready: 0 of 1/i)).toBeTruthy();
+      const bodyText = voter.container.textContent ?? "";
+      expect(/Tickets ready: (?:0|1) of 1/i.test(bodyText)).toBe(true);
     });
-
-    await user.click(coordinatorUi.getByRole("tab", { name: /^Configure$/i }));
-    await waitFor(() => {
-      expect(coordinatorUi.getByRole("button", { name: /Resend on fail/i })).toBeTruthy();
-    });
-    await user.click(coordinatorUi.getByRole("button", { name: /Resend on fail/i }));
 
     await waitFor(() => {
       const bodyText = voter.container.textContent ?? "";

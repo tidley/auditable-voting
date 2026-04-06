@@ -9,12 +9,13 @@ This repo now contains only the static web app in `web/`.
 The shipped app currently includes:
 
 - voter, coordinator, and auditor screens
+- tabbed voter and coordinator flows with `Configure`, `Vote`/`Voting`, and `Settings`
 - round announcements over Nostr
 - NIP-17 DM traffic for follow, blind request, ticket, and acknowledgement flows
 - per-round blind-signature key announcements
 - blind-signature share issuance and public ballot verification
 - local browser persistence, backup, and optional passphrase protection
-- relay hint resolution via NIP-65
+- optional relay hint resolution via NIP-65, disabled by default
 - a growing Rust/Wasm core for deterministic protocol logic
 
 The client-only architecture is in place, but live relay reliability and recovery behaviour still need hardening.
@@ -88,8 +89,8 @@ npm run build
 At a high level:
 
 1. A coordinator publishes a live round.
-2. Coordinators publish per-round blind-signing keys.
-3. A voter follows coordinators and sends blinded issuance requests over DMs.
+2. Coordinators publish per-round blind-signing keys, and the lead auto-sends share indexes to sub-coordinators.
+3. A voter adds coordinators in `Configure`, the client follows them over DMs, and then sends blinded issuance requests.
 4. Coordinators return blind-signature shares over DMs.
 5. The voter unblinds enough shares locally and submits a ballot from an ephemeral key.
 6. Coordinators and auditors validate ballots and recompute the tally from public data.
@@ -115,9 +116,9 @@ The app currently uses:
 
 - public relays for round and ballot events
 - DM relays for NIP-17 gift-wrapped messages
-- NIP-65 inbox/outbox hints for relay discovery
+- optional NIP-65 inbox/outbox hints for relay discovery when enabled in `Settings`
 
-The app now also publishes its own NIP-65 relay hints when voter/coordinator communication starts.
+The default path currently prefers a tighter curated relay set. NIP-65 is available as an option, but it is not the default transport path.
 
 ## Known limitations
 

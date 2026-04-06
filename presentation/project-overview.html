@@ -536,7 +536,7 @@
         <ul>
           <li>Public, signed event publication for rounds, ballots, and results</li>
           <li>Private NIP-17 DM transport for issuance requests and responses</li>
-          <li>NIP-65 inbox/outbox hints for relay discovery and relay-list publication</li>
+          <li>Optional NIP-65 inbox/outbox hints for relay discovery when enabled</li>
           <li>Relay diversity instead of one central database</li>
           <li>Portable identities and signed announcements</li>
         </ul>
@@ -547,7 +547,8 @@
           <li>Auditors can read the same public state as coordinators</li>
           <li>Static clients can participate without a proprietary backend</li>
           <li>Coordinator rosters and per-round keys can be announced in public</li>
-          <li>Participants can publish their own preferred relay hints as communication starts</li>
+          <li>The lead coordinator can push share-index assignments to sub-coordinators before issuance starts</li>
+          <li>The default path currently prefers a tight curated relay set over broad hint expansion</li>
           <li>The protocol remains inspectable by any third party</li>
         </ul>
       </div>

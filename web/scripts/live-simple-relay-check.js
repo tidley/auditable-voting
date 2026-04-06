@@ -10,11 +10,61 @@ function envInt(name, fallback) {
 }
 
 async function getNpub(page) {
+  const indexedDbNpub = await page.evaluate(async () => {
+    const database = await new Promise((resolve, reject) => {
+      const request = indexedDB.open("auditable-voting-simple", 1);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error ?? new Error("Unable to open IndexedDB."));
+    });
+
+    const roles = ["coordinator", "voter"];
+    for (const role of roles) {
+      const value = await new Promise((resolve, reject) => {
+        const transaction = database.transaction("actor-state", "readonly");
+        const store = transaction.objectStore("actor-state");
+        const request = store.get(role);
+        request.onsuccess = () => resolve(request.result ?? null);
+        request.onerror = () => reject(request.error ?? new Error("Unable to read actor state."));
+      });
+
+      if (value && typeof value === "object" && "keypair" in value) {
+        const npub = value.keypair?.npub;
+        if (typeof npub === "string" && npub.trim()) {
+          database.close();
+          return npub.trim();
+        }
+      }
+    }
+
+    database.close();
+    return null;
+  }).catch(() => null);
+
+  if (indexedDbNpub) {
+    return indexedDbNpub;
+  }
+
   await ensureTab(page, "Settings");
   const codeLocator = page.locator("code.simple-identity-code").first();
   if (await codeLocator.count()) {
-    await codeLocator.waitFor({ state: "visible", timeout: 30000 });
-    return (await codeLocator.innerText()).trim();
+    await codeLocator.waitFor({ state: "attached", timeout: 30000 });
+    const text = (await codeLocator.textContent())?.trim();
+    if (text) {
+      return text;
+    }
+  }
+
+  const copyButton = page.getByRole("button", { name: /Copy npub/i }).first();
+  if (await copyButton.count()) {
+    await copyButton.waitFor({ state: "visible", timeout: 30000 });
+    const identityField = page.locator(".simple-identity-field").first();
+    const identityCode = identityField.locator("code.simple-identity-code").first();
+    if (await identityCode.count()) {
+      const text = (await identityCode.textContent())?.trim();
+      if (text) {
+        return text;
+      }
+    }
   }
 
   const body = await readBody(page);
@@ -171,7 +221,6 @@ async function main() {
   const ticketWaitMs = envInt("LIVE_TICKET_WAIT_MS", 20000);
 
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext();
   const voterBaseUrl = new URL(base);
   const coordinatorBaseUrl = new URL(base);
   coordinatorBaseUrl.pathname = coordinatorBaseUrl.pathname.replace(/simple(?:-coordinator)?\.html$/i, "simple-coordinator.html");
@@ -181,6 +230,7 @@ async function main() {
   const voters = [];
 
   for (let index = 0; index < coordinatorCount; index += 1) {
+    const context = await browser.newContext();
     const page = await context.newPage();
     const url = new URL(coordinatorBaseUrl.toString());
     if (nip65Mode !== "on") {
@@ -191,6 +241,7 @@ async function main() {
   }
 
   for (let index = 0; index < voterCount; index += 1) {
+    const context = await browser.newContext();
     const page = await context.newPage();
     const url = new URL(voterBaseUrl.toString());
     if (nip65Mode !== "on") {
@@ -232,14 +283,11 @@ async function main() {
   for (let roundIndex = 0; roundIndex < roundCount; roundIndex += 1) {
     const prompt = `Round ${roundIndex + 1}: Should the proposal pass?`;
     const lead = coordinators[0];
-    const questionBox = lead.getByRole("textbox", { name: "Question" });
+    await ensureTab(lead, "Voting");
+    const questionBox = lead.locator("#simple-question-prompt").first();
+    await questionBox.waitFor({ state: "visible", timeout: 30000 });
     await questionBox.fill(prompt);
     await clickByText(lead, "button", /Broadcast live vote|Vote broadcast/i);
-
-    const distributeButton = lead.getByRole("button", { name: /Distribute share indexes/i });
-    if (!(await distributeButton.isDisabled())) {
-      await distributeButton.click();
-    }
 
     await sleep(roundWaitMs);
 

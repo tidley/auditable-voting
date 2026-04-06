@@ -166,6 +166,24 @@ function findLatestRoundRequest(
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null;
 }
 
+function buildShareAssignmentSignature(
+  applications: SimpleSubCoordinatorApplication[],
+  thresholdN: number | undefined,
+) {
+  const sortedApplications = [...applications].sort(
+    (left, right) =>
+      left.createdAt.localeCompare(right.createdAt) ||
+      left.coordinatorNpub.localeCompare(right.coordinatorNpub),
+  );
+
+  return [
+    String(thresholdN ?? ''),
+    ...sortedApplications.map(
+      (application, index) => `${application.coordinatorNpub}:${index + 2}`,
+    ),
+  ].join('|');
+}
+
 export default function SimpleCoordinatorApp() {
   const [keypair, setKeypair] = useState<SimpleCoordinatorKeypair | null>(null);
   const [identityReady, setIdentityReady] = useState(false);
@@ -202,8 +220,17 @@ export default function SimpleCoordinatorApp() {
   const [submittedVotes, setSubmittedVotes] = useState<SimpleSubmittedVote[]>([]);
   const [validatedVotes, setValidatedVotes] = useState<SimpleValidatedVote[]>([]);
   const [activeTab, setActiveTab] = useState<CoordinatorTab>("configure");
+  const [shareAssignmentsInFlight, setShareAssignmentsInFlight] =
+    useState(false);
+  const [
+    lastSuccessfulShareAssignmentSignature,
+    setLastSuccessfulShareAssignmentSignature,
+  ] = useState('');
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const blindKeyRepublishAtRef = useRef<Record<string, number>>({});
   const autoSendInFlightRef = useRef<Set<string>>(new Set());
+  const autoShareAssignmentAttemptRef = useRef('');
+  const verifyAllVisibleRef = useRef<HTMLInputElement | null>(null);
   const isLeadCoordinator = !leadCoordinatorNpub.trim() || leadCoordinatorNpub.trim() === (keypair?.npub ?? "");
   const activeShareIndex = isLeadCoordinator ? 1 : (Number.parseInt(questionShareIndex, 10) || 0);
   const hasAssignedShareIndex = !isLeadCoordinator && activeShareIndex > 0;
@@ -340,6 +367,16 @@ export default function SimpleCoordinatorApp() {
   useEffect(() => {
     setNip65EnabledForSession(nip65Enabled);
   }, [nip65Enabled]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 1000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, []);
 
   useEffect(() => {
     if (!identityReady || !keypair) {
@@ -846,6 +883,8 @@ export default function SimpleCoordinatorApp() {
     setRoundBlindPrivateKeys({});
     setRoundBlindKeyAnnouncements({});
     setPublishStatus(null);
+    setShareAssignmentsInFlight(false);
+    setLastSuccessfulShareAssignmentSignature('');
     setPublishedVotes([]);
     setSelectedVotingId("");
     setSelectedSubmittedVotingId('');
@@ -856,6 +895,7 @@ export default function SimpleCoordinatorApp() {
     sentRequestAckIdsRef.current.clear();
     sentSubCoordinatorAckIdsRef.current.clear();
     sentAssignmentAckIdsRef.current.clear();
+    autoShareAssignmentAttemptRef.current = '';
   }
 
   function restoreIdentity(nextNsec: string) {
@@ -896,6 +936,8 @@ export default function SimpleCoordinatorApp() {
     setRoundBlindPrivateKeys({});
     setRoundBlindKeyAnnouncements({});
     setPublishStatus(null);
+    setShareAssignmentsInFlight(false);
+    setLastSuccessfulShareAssignmentSignature('');
     setPublishedVotes([]);
     setSelectedVotingId("");
     setSelectedSubmittedVotingId('');
@@ -906,6 +948,7 @@ export default function SimpleCoordinatorApp() {
     sentRequestAckIdsRef.current.clear();
     sentSubCoordinatorAckIdsRef.current.clear();
     sentAssignmentAckIdsRef.current.clear();
+    autoShareAssignmentAttemptRef.current = '';
   }
 
   function handleLeadCoordinatorScanDetected(rawValue: string) {
@@ -1289,7 +1332,14 @@ export default function SimpleCoordinatorApp() {
     }
 
     const ticketStatusKey = `${follower.voterNpub}:${votingId}`;
-    setTicketDeliveries((current) => ({ ...current, [ticketStatusKey]: { status: "Sending ticket..." } }));
+    setTicketDeliveries((current) => ({
+      ...current,
+      [ticketStatusKey]: {
+        status: "Sending ticket...",
+        attempts: (current[ticketStatusKey]?.attempts ?? 0) + 1,
+        lastAttemptAt: new Date().toISOString(),
+      },
+    }));
 
     try {
       const thresholdLabel = activeThresholdT && activeThresholdN
@@ -1322,7 +1372,11 @@ export default function SimpleCoordinatorApp() {
     } catch {
       setTicketDeliveries((current) => ({
         ...current,
-        [ticketStatusKey]: { status: "Ticket send failed." },
+        [ticketStatusKey]: {
+          status: "Ticket send failed.",
+          attempts: current[ticketStatusKey]?.attempts ?? 1,
+          lastAttemptAt: new Date().toISOString(),
+        },
       }));
     }
   }
@@ -1457,41 +1511,65 @@ export default function SimpleCoordinatorApp() {
     }
   }
 
-  async function distributeShareIndexes() {
-    const leadCoordinatorSecretKey = decodeNsec(keypair?.nsec ?? "");
-    const leadCoordinatorNpub = keypair?.npub ?? "";
+  async function distributeShareIndexes(options?: {
+    automatic?: boolean;
+    signature?: string;
+  }) {
+    const leadCoordinatorSecretKey = decodeNsec(keypair?.nsec ?? '');
+    const leadCoordinatorNpub = keypair?.npub ?? '';
 
-    if (!isLeadCoordinator || !leadCoordinatorSecretKey || !leadCoordinatorNpub || subCoordinators.length === 0) {
+    if (
+      !isLeadCoordinator ||
+      !leadCoordinatorSecretKey ||
+      !leadCoordinatorNpub ||
+      subCoordinators.length === 0
+    ) {
       return;
     }
 
-    setAssignmentStatus("Distributing share indexes...");
+    setShareAssignmentsInFlight(true);
+    setAssignmentStatus(
+      options?.automatic
+        ? 'Sending share indexes automatically...'
+        : 'Sending share indexes...',
+    );
 
     try {
       const thresholdN = Number.parseInt(questionThresholdN, 10) || undefined;
-      const sortedApplications = [...subCoordinators].sort((left, right) => (
-        left.createdAt.localeCompare(right.createdAt) || left.coordinatorNpub.localeCompare(right.coordinatorNpub)
-      ));
+      const sortedApplications = [...subCoordinators].sort(
+        (left, right) =>
+          left.createdAt.localeCompare(right.createdAt) ||
+          left.coordinatorNpub.localeCompare(right.coordinatorNpub),
+      );
 
-      const results = await Promise.all(sortedApplications.map(async (application, index) => {
-        const shareIndex = index + 2;
-        const result = await sendSimpleShareAssignment({
-          leadCoordinatorSecretKey,
-          leadCoordinatorNpub,
-          coordinatorNpub: application.coordinatorNpub,
-          shareIndex,
-          thresholdN,
-        });
-        return result.successes > 0;
-      }));
+      const results = await Promise.all(
+        sortedApplications.map(async (application, index) => {
+          const shareIndex = index + 2;
+          const result = await sendSimpleShareAssignment({
+            leadCoordinatorSecretKey,
+            leadCoordinatorNpub,
+            coordinatorNpub: application.coordinatorNpub,
+            shareIndex,
+            thresholdN,
+          });
+          return result.successes > 0;
+        }),
+      );
 
       setAssignmentStatus(
         results.every(Boolean)
-          ? "Share indexes distributed."
-          : "Some share index assignments failed.",
+          ? options?.automatic
+            ? 'Share indexes sent automatically.'
+            : 'Share indexes sent.'
+          : 'Some share index assignments failed.',
       );
+      if (results.every(Boolean) && options?.signature) {
+        setLastSuccessfulShareAssignmentSignature(options.signature);
+      }
     } catch {
-      setAssignmentStatus("Share index distribution failed.");
+      setAssignmentStatus('Share index distribution failed.');
+    } finally {
+      setShareAssignmentsInFlight(false);
     }
   }
 
@@ -1591,8 +1669,82 @@ export default function SimpleCoordinatorApp() {
     normalizedFollowerSearch,
     visibleFollowersById,
   ]);
+  const filteredFollowers = useMemo(
+    () =>
+      filteredCoordinatorFollowerRows
+        .map((row) => visibleFollowersById.get(row.id))
+        .filter((follower): follower is SimpleCoordinatorFollower => Boolean(follower)),
+    [filteredCoordinatorFollowerRows, visibleFollowersById],
+  );
+  const verifiedVisibleFollowerCount = filteredFollowers.filter(
+    (follower) => autoSendFollowers[follower.voterNpub],
+  ).length;
+  const allVisibleFollowersVerified =
+    filteredFollowers.length > 0
+    && verifiedVisibleFollowerCount === filteredFollowers.length;
+  const someVisibleFollowersVerified =
+    verifiedVisibleFollowerCount > 0
+    && verifiedVisibleFollowerCount < filteredFollowers.length;
   const expectedSubCoordinatorCount = Math.max(0, (Number.parseInt(questionThresholdN, 10) || 1) - 1);
   const voteBroadcasted = publishStatus?.startsWith("Vote broadcast.") ?? false;
+  const desiredShareAssignmentSignature = useMemo(
+    () =>
+      isLeadCoordinator && subCoordinators.length > 0
+        ? buildShareAssignmentSignature(
+            subCoordinators,
+            Number.parseInt(questionThresholdN, 10) || undefined,
+          )
+        : '',
+    [isLeadCoordinator, questionThresholdN, subCoordinators],
+  );
+  const shareAssignmentsCurrent = Boolean(
+    desiredShareAssignmentSignature &&
+    lastSuccessfulShareAssignmentSignature === desiredShareAssignmentSignature,
+  );
+  const shareAssignmentButtonLabel = !subCoordinators.length
+    ? 'No share indexes needed'
+    : shareAssignmentsInFlight
+      ? 'Sending share indexes...'
+      : shareAssignmentsCurrent
+        ? 'Resend share indexes'
+        : assignmentStatus?.toLowerCase().includes('fail') ||
+            assignmentStatus?.toLowerCase().includes('some')
+          ? 'Retry share indexes'
+          : 'Send share indexes';
+
+  useEffect(() => {
+    if (verifyAllVisibleRef.current) {
+      verifyAllVisibleRef.current.indeterminate = someVisibleFollowersVerified;
+    }
+  }, [someVisibleFollowersVerified]);
+
+  useEffect(() => {
+    if (!desiredShareAssignmentSignature) {
+      autoShareAssignmentAttemptRef.current = '';
+      setLastSuccessfulShareAssignmentSignature('');
+    }
+  }, [desiredShareAssignmentSignature]);
+
+  useEffect(() => {
+    if (
+      !isLeadCoordinator ||
+      !desiredShareAssignmentSignature ||
+      shareAssignmentsInFlight ||
+      autoShareAssignmentAttemptRef.current === desiredShareAssignmentSignature
+    ) {
+      return;
+    }
+
+    autoShareAssignmentAttemptRef.current = desiredShareAssignmentSignature;
+    void distributeShareIndexes({
+      automatic: true,
+      signature: desiredShareAssignmentSignature,
+    });
+  }, [
+    desiredShareAssignmentSignature,
+    isLeadCoordinator,
+    shareAssignmentsInFlight,
+  ]);
 
   useEffect(() => {
     if (!selectedPublishedVote || !activeBlindPrivateKey || !keypair?.npub) {
@@ -1872,15 +2024,9 @@ export default function SimpleCoordinatorApp() {
               </SimpleCollapsibleSection>
             )}
 
-            <SimpleCollapsibleSection title='Following voters'>
+            <SimpleCollapsibleSection title='Voters'>
               {coordinatorFollowerRows.length > 0 ? (
-                <>
-                  <label
-                    className='simple-voter-label'
-                    htmlFor='simple-follower-search'
-                  >
-                    Search voters
-                  </label>
+                <div className='simple-follower-toolbar'>
                   <input
                     id='simple-follower-search'
                     className='simple-voter-input'
@@ -1888,7 +2034,24 @@ export default function SimpleCoordinatorApp() {
                     onChange={(event) => setFollowerSearch(event.target.value)}
                     placeholder='Search by voter ID...'
                   />
-                </>
+                  <label className='simple-follower-auto-send simple-follower-auto-send-bulk'>
+                    <input
+                      ref={verifyAllVisibleRef}
+                      type='checkbox'
+                      checked={allVisibleFollowersVerified}
+                      onChange={(event) => {
+                        const checked = event.target.checked;
+                        setAutoSendFollowers((current) => ({
+                          ...current,
+                          ...Object.fromEntries(
+                            filteredFollowers.map((follower) => [follower.voterNpub, checked]),
+                          ),
+                        }));
+                      }}
+                    />
+                    <span>Verify all</span>
+                  </label>
+                </div>
               ) : null}
               {filteredCoordinatorFollowerRows.length > 0 ? (
                 <ul className='simple-voter-list'>
@@ -1914,10 +2077,36 @@ export default function SimpleCoordinatorApp() {
                       : undefined;
                     const isTicketSending =
                       ticketDelivery?.status === 'Sending ticket...';
+                    const ticketReceiptConfirmed = row.receipt?.tone === 'ok';
+                    const lastAttemptAtMs = ticketDelivery?.lastAttemptAt
+                      ? Date.parse(ticketDelivery.lastAttemptAt)
+                      : Number.NaN;
+                    const showResendTicket = Boolean(
+                      selectedPublishedVote &&
+                      ticketDelivery &&
+                      !ticketReceiptConfirmed &&
+                      Number.isFinite(lastAttemptAtMs) &&
+                      nowMs - lastAttemptAtMs >= 30_000,
+                    );
 
                     return (
                       <li key={row.id} className='simple-voter-list-item'>
                         <div className='simple-follower-row'>
+                          <label className='simple-follower-auto-send simple-follower-auto-send-inline'>
+                            <input
+                              type='checkbox'
+                              checked={Boolean(
+                                autoSendFollowers[follower.voterNpub],
+                              )}
+                              onChange={(event) => {
+                                setAutoSendFollowers((current) => ({
+                                  ...current,
+                                  [follower.voterNpub]: event.target.checked,
+                                }));
+                              }}
+                            />
+                            <span>Verified</span>
+                          </label>
                           <div className='simple-follower-row-main'>
                             <p className='simple-voter-question'>
                               {row.followingText}
@@ -1952,29 +2141,14 @@ export default function SimpleCoordinatorApp() {
                             </ul>
                           </div>
                           <div className='simple-follower-row-controls'>
-                            <label className='simple-follower-auto-send'>
-                              <input
-                                type='checkbox'
-                                checked={Boolean(
-                                  autoSendFollowers[follower.voterNpub],
-                                )}
-                                onChange={(event) => {
-                                  setAutoSendFollowers((current) => ({
-                                    ...current,
-                                    [follower.voterNpub]: event.target.checked,
-                                  }));
-                                }}
-                              />
-                              <span>Verified</span>
-                            </label>
-                            {selectedPublishedVote ? (
+                            {showResendTicket ? (
                               <button
                                 type='button'
                                 className='simple-voter-secondary'
                                 onClick={() => void sendTicket(follower)}
                                 disabled={!row.canSendTicket || isTicketSending}
                               >
-                                Resend on fail
+                                Resend ticket
                               </button>
                             ) : null}
                             {waitingForBlindedRequest ? (
@@ -1994,9 +2168,7 @@ export default function SimpleCoordinatorApp() {
                   })}
                 </ul>
               ) : coordinatorFollowerRows.length > 0 ? (
-                <p className='simple-voter-empty'>
-                  No matching voters found.
-                </p>
+                <p className='simple-voter-empty'>No matching voters found.</p>
               ) : (
                 <p className='simple-voter-empty'>
                   No voters are following this coordinator yet.
@@ -2113,7 +2285,9 @@ export default function SimpleCoordinatorApp() {
                         !keypair?.nsec || questionPrompt.trim().length === 0
                       }
                     >
-                      {voteBroadcasted ? 'Vote broadcast' : 'Broadcast live vote'}
+                      {voteBroadcasted
+                        ? 'Vote broadcast'
+                        : 'Broadcast live vote'}
                     </button>
                   </div>
                 </>
@@ -2158,10 +2332,18 @@ export default function SimpleCoordinatorApp() {
                   <button
                     type='button'
                     className='simple-voter-secondary'
-                    onClick={() => void distributeShareIndexes()}
-                    disabled={!keypair?.nsec || subCoordinators.length === 0}
+                    onClick={() =>
+                      void distributeShareIndexes({
+                        signature: desiredShareAssignmentSignature,
+                      })
+                    }
+                    disabled={
+                      !keypair?.nsec ||
+                      subCoordinators.length === 0 ||
+                      shareAssignmentsInFlight
+                    }
                   >
-                    Distribute share indexes
+                    {shareAssignmentButtonLabel}
                   </button>
                   <button
                     type='button'
@@ -2251,35 +2433,40 @@ export default function SimpleCoordinatorApp() {
                       <h3 className='simple-submitted-column-title'>Yes</h3>
                       {yesValidatedVotes.length > 0 ? (
                         <ul className='simple-submitted-vote-list'>
-                          {yesValidatedVotes.map(({ vote, valid, reason }, index) => (
-                            <li key={vote.eventId} className='simple-submitted-vote-item'>
-                              <div className='simple-vote-entry'>
-                                <div className='simple-vote-entry-copy'>
-                                  <p className='simple-voter-question simple-vote-result-line'>
-                                    <span>Vote {index + 1}</span>{' '}
-                                    <span
-                                      className={
-                                        valid
-                                          ? 'simple-vote-valid'
-                                          : 'simple-vote-invalid'
-                                      }
-                                    >
-                                      {valid
-                                        ? '[Valid]'
-                                        : `[Invalid${reason ? `: ${reason}` : ''}]`}
-                                    </span>
-                                  </p>
+                          {yesValidatedVotes.map(
+                            ({ vote, valid, reason }, index) => (
+                              <li
+                                key={vote.eventId}
+                                className='simple-submitted-vote-item'
+                              >
+                                <div className='simple-vote-entry'>
+                                  <div className='simple-vote-entry-copy'>
+                                    <p className='simple-voter-question simple-vote-result-line'>
+                                      <span>Vote {index + 1}</span>{' '}
+                                      <span
+                                        className={
+                                          valid
+                                            ? 'simple-vote-valid'
+                                            : 'simple-vote-invalid'
+                                        }
+                                      >
+                                        {valid
+                                          ? '[Valid]'
+                                          : `[Invalid${reason ? `: ${reason}` : ''}]`}
+                                      </span>
+                                    </p>
+                                  </div>
+                                  {vote.tokenId ? (
+                                    <TokenFingerprint
+                                      tokenId={vote.tokenId}
+                                      large
+                                      hideMetadata
+                                    />
+                                  ) : null}
                                 </div>
-                                {vote.tokenId ? (
-                                  <TokenFingerprint
-                                    tokenId={vote.tokenId}
-                                    large
-                                    hideMetadata
-                                  />
-                                ) : null}
-                              </div>
-                            </li>
-                          ))}
+                              </li>
+                            ),
+                          )}
                         </ul>
                       ) : null}
                     </section>
@@ -2287,35 +2474,40 @@ export default function SimpleCoordinatorApp() {
                       <h3 className='simple-submitted-column-title'>No</h3>
                       {noValidatedVotes.length > 0 ? (
                         <ul className='simple-submitted-vote-list'>
-                          {noValidatedVotes.map(({ vote, valid, reason }, index) => (
-                            <li key={vote.eventId} className='simple-submitted-vote-item'>
-                              <div className='simple-vote-entry'>
-                                <div className='simple-vote-entry-copy'>
-                                  <p className='simple-voter-question simple-vote-result-line'>
-                                    <span>Vote {index + 1}</span>{' '}
-                                    <span
-                                      className={
-                                        valid
-                                          ? 'simple-vote-valid'
-                                          : 'simple-vote-invalid'
-                                      }
-                                    >
-                                      {valid
-                                        ? '[Valid]'
-                                        : `[Invalid${reason ? `: ${reason}` : ''}]`}
-                                    </span>
-                                  </p>
+                          {noValidatedVotes.map(
+                            ({ vote, valid, reason }, index) => (
+                              <li
+                                key={vote.eventId}
+                                className='simple-submitted-vote-item'
+                              >
+                                <div className='simple-vote-entry'>
+                                  <div className='simple-vote-entry-copy'>
+                                    <p className='simple-voter-question simple-vote-result-line'>
+                                      <span>Vote {index + 1}</span>{' '}
+                                      <span
+                                        className={
+                                          valid
+                                            ? 'simple-vote-valid'
+                                            : 'simple-vote-invalid'
+                                        }
+                                      >
+                                        {valid
+                                          ? '[Valid]'
+                                          : `[Invalid${reason ? `: ${reason}` : ''}]`}
+                                      </span>
+                                    </p>
+                                  </div>
+                                  {vote.tokenId ? (
+                                    <TokenFingerprint
+                                      tokenId={vote.tokenId}
+                                      large
+                                      hideMetadata
+                                    />
+                                  ) : null}
                                 </div>
-                                {vote.tokenId ? (
-                                  <TokenFingerprint
-                                    tokenId={vote.tokenId}
-                                    large
-                                    hideMetadata
-                                  />
-                                ) : null}
-                              </div>
-                            </li>
-                          ))}
+                              </li>
+                            ),
+                          )}
                         </ul>
                       ) : null}
                     </section>

@@ -203,12 +203,14 @@
 
     <script id="source" type="text/plain"># Auditable Voting Explainer
 
-This document is written for readers who want to understand:
+This document is written as a technical explainer for readers who want to understand:
 
 - what the system is trying to achieve
 - why it uses Nostr and blind signatures
 - how voters, coordinators, and observers interact
 - what is public, what is private, and what can be verified
+
+It is intended to read more like a protocol note than a product brochure: it describes the design goals, the concrete technologies used in the current implementation, the trust boundaries, and the places where the live system is still operationally weak.
 
 ---
 
@@ -344,6 +346,23 @@ The migration direction is:
 - **Blossom**: planned encrypted backup bundles
 
 This matters because the system is trying to move toward a client-side model, not a traditional central server.
+
+### Technologies used in the current implementation
+
+The present web client is built with:
+
+- **React 18** for the voter, coordinator, and auditor interfaces
+- **TypeScript 5** for the browser application logic
+- **Vite 5** for local development and static-site bundling
+- **`nostr-tools` 2.x** for Nostr keys, event signing, subscriptions, and relay publishing
+- **NIP-17 gift-wrapped DMs** for follow, issuance, ticket, and acknowledgement traffic
+- **optional NIP-65 relay hints**, disabled by default, for relay discovery experiments
+- **`@cloudflare/blindrsa-ts`** for the RSABSSA blind-signature primitive used in the current issuance path
+- **Rust compiled to WebAssembly** for deterministic protocol logic, including parts of validation and relay-set handling
+- **IndexedDB** for browser-local active state
+- **WebCrypto** for local encryption and passphrase-protected state
+
+That mix matters scientifically because the system is not just a protocol sketch. It is a concrete static web application built from standard browser primitives, a public event network, and a conservative blind-signature library.
 
 ---
 
@@ -599,7 +618,9 @@ Benefits:
 - portable client architecture
 - no single relay is supposed to be the whole truth
 
-In this repo, relay selection uses **NIP-65 inbox/outbox hints** so senders and receivers can better choose where to publish and subscribe.
+In this repo, relay selection can optionally use **NIP-65 inbox/outbox hints** so senders and receivers can better choose where to publish and subscribe.
+
+That path is currently **disabled by default** in the UI, because a tighter curated relay set has been more reliable in practice than always expanding through public relay hints.
 
 ---
 
@@ -661,8 +682,12 @@ Threshold issuance means one coordinator alone should not define the whole syste
 The repository now focuses on the client-side web app only:
 
 - `simple.html` is the main client-side shell
+- voter and coordinator flows use `Configure`, `Vote`/`Voting`, and `Settings` tabs
+- adding a coordinator in the voter flow immediately starts the follow/notify DM path
+- the lead coordinator now auto-sends share indexes to sub-coordinators
 - Nostr is the shared state layer
 - blind-share issuance is in the simple flow
+- NIP-65 relay hints are optional and disabled by default
 - local browser state is used for active session data
 
 The older backend-oriented stack has been removed from this repository.
