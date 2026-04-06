@@ -21,7 +21,50 @@ The private side should move off plain NIP-17:
 - ticket-share delivery
 - ticket receipts and other acknowledgements
 
-## Current state
+## Feasibility verdict
+
+This is **possible**, but not as a drop-in `cargo add mdk-core` browser integration.
+
+It is realistic if we do all of the following:
+
+- maintain a browser-specific MDK/Wasm integration layer
+- replace the SQLite/keyring backend with an IndexedDB-backed storage backend
+- remove or isolate the current `nostr -> secp256k1-sys` dependency path from the Wasm core
+- keep the public auditable voting plane on Nostr and move only the private control plane to Marmot
+
+It is **not** realistic to:
+
+- ship upstream `mdk-core` unchanged to the browser today
+- use `mdk-sqlite-storage` in the browser
+- claim there will be no security risk without a dedicated browser-side review and test programme
+
+The right claim is:
+
+- feasible with a browser fork / adapter strategy
+- secure enough to pursue if the security constraints in this document are enforced
+- not ready to trust without additional implementation, review, and adversarial testing
+
+## Sources and audit basis
+
+This plan is based on:
+
+- current upstream MDK workspace at commit `93ae32479211d7a241ff379c34d3fe87ac161e7a`
+- current upstream workspace version `0.7.1`
+- current upstream `SECURITY.md`
+- Least Authority audit of MDK
+
+Local checks performed during this planning pass:
+
+```bash
+git clone --depth 1 https://github.com/marmot-protocol/mdk /home/tom/code/mdk-plan-audit
+cd /home/tom/code/mdk-plan-audit
+cargo check -p mdk-core --target wasm32-unknown-unknown
+cargo tree -p mdk-core -i secp256k1-sys
+cargo tree -p mdk-core -i rayon
+cargo tree -p mdk-sqlite-storage -i libsqlite3-sys
+```
+
+## Current state in this repo
 
 Today the app uses:
 
@@ -29,7 +72,7 @@ Today the app uses:
 - NIP-17 gift-wrapped DMs for issuance traffic
 - direct coordinator-to-voter ticket delivery for all coordinators
 
-That means the current private plane is still relay-driven and message-heavy, even though the auditable public plane is already in the right place.
+This is already the correct public/private split at a conceptual level, but the private plane is still relay-driven and message-heavy.
 
 ## Target architecture
 
@@ -57,15 +100,292 @@ Move to Marmot:
 
 ### Routing model
 
-- The lead remains the public round publisher.
+- The lead remains the public round publisher and coordinator orchestrator.
 - Sub-coordinators remain independent share issuers.
-- The lead should remain the public round publisher, but non-lead coordinators should send their own shares directly to voters over the Marmot private plane.
+- Each coordinator sends its own ticket share directly to the voter over the private Marmot plane.
+- The lead is not used as a forwarding bottleneck for non-lead shares.
 
-## Migration phases
+That preserves the current threshold semantics better than a lead-forwarding model.
 
-### Phase 1: transport abstraction
+## Hard blockers and concrete resolutions
 
-Create a private-message transport interface in the web app and move all NIP-17 calls behind it.
+### 1. `nostr -> secp256k1 -> secp256k1-sys`
+
+#### Current finding
+
+Current upstream `mdk-core` depends on:
+
+- `nostr v0.44.2`
+- which depends on `secp256k1`
+- which depends on `secp256k1-sys`
+
+The current `wasm32-unknown-unknown` check still fails in that path. In the checked environment the immediate error was the `secp256k1-sys` C build step needing `clang`.
+
+#### Why this matters
+
+Even if this can be made to build in a controlled CI environment, it is the wrong browser boundary:
+
+- it pulls native C tooling into the Wasm build
+- it couples the MDK core tightly to Nostr event/signing concerns
+- it expands the trusted and fragile part of the browser build
+
+#### Preferred solution
+
+Create a **browser fork of MDK** that removes the `nostr` crate from the Wasm-critical core.
+
+Concretely:
+
+- define browser-safe MDK message/event types inside the fork
+- move Nostr event signing, verification, relay URL parsing, and key handling to the TypeScript host layer
+- feed the Wasm core only the minimal verified data it actually needs
+
+That changes the boundary from:
+
+- `TS UI -> Wasm MDK+Nostr+secp`
+
+to:
+
+- `TS UI + Nostr host adapter -> Wasm MDK core`
+
+This is the cleanest path because the browser app already has a strong Nostr/TS layer.
+
+#### Acceptable fallback
+
+If the forked-boundary approach is too slow initially:
+
+- build the browser fork with a dedicated Wasm C toolchain in CI
+- pin the toolchain
+- ship prebuilt Wasm artefacts only
+
+This can prove feasibility, but it should be treated as a spike path, not the final architecture.
+
+#### Go / no-go rule
+
+Do not move past prototype stage unless one of these is true:
+
+- the browser fork no longer requires `secp256k1-sys`, or
+- the Wasm build is reproducible and pinned under CI with explicit review of the native toolchain
+
+The first option is preferred.
+
+### 2. SQLite and keyring storage
+
+#### Current finding
+
+`mdk-sqlite-storage` depends on:
+
+- `rusqlite`
+- `libsqlite3-sys`
+- `refinery`
+- `keyring-core`
+
+This is not a browser backend.
+
+#### Resolution
+
+Do not use `mdk-sqlite-storage` in the browser.
+
+Instead build a new browser backend:
+
+- `mdk-indexeddb-storage` in Rust, or
+- a thinner Wasm adapter over TS-owned IndexedDB calls
+
+The key fact making this feasible is that MDK storage is already trait-based via `MdkStorageProvider` and related storage traits.
+
+#### Recommended browser storage design
+
+Use IndexedDB object stores for:
+
+- groups
+- snapshots
+- messages
+- welcomes
+- pending outbound messages
+- identity and membership metadata
+
+Do **not** store raw sensitive state unencrypted.
+
+Use this key hierarchy:
+
+1. Generate a random per-device **DEK** for Marmot state.
+2. Encrypt all persisted Marmot state with that DEK.
+3. Wrap the DEK with a **KEK** derived from:
+   - a user passphrase using Argon2id, initially
+   - optional WebAuthn-backed wrapping later
+
+Do not use:
+
+- plaintext IndexedDB
+- plaintext `localStorage`
+- `npub`/`nsec` self-encryption tricks
+
+#### Security note
+
+Upstream MDK `SECURITY.md` focuses heavily on SQLCipher and platform keyrings. For the browser fork, those guarantees must be replaced by:
+
+- authenticated encryption of persisted state
+- strong KEK derivation
+- explicit locking / unlock flow
+- no assumption that the browser provides a secure keyring equivalent
+
+### 3. `openmls -> rayon`
+
+#### Current finding
+
+Current upstream `openmls` still pulls in `rayon`.
+
+That is not automatically fatal for Wasm, but it is a risk area.
+
+#### Resolution
+
+Treat this as a prototype gate, not a theoretical blocker.
+
+Prototype in this order:
+
+1. Try a single-threaded Wasm build of the browser fork.
+2. If `rayon` compiles but is unused in the browser execution path, keep it documented as tolerated technical debt.
+3. If `rayon` breaks the Wasm build or forces an undesirable browser threading model:
+   - patch or fork the dependency path to disable parallelism in browser builds
+   - do not require `SharedArrayBuffer`, COOP, or COEP for the first web deployment
+
+The first production browser version should be single-threaded unless there is a compelling need otherwise.
+
+### 4. Mandatory media-processing dependencies
+
+#### Current finding
+
+Current upstream `mdk-core` includes mandatory image/media dependencies:
+
+- `image`
+- `blurhash`
+- `fast-thumbhash`
+- `kamadak-exif`
+
+These are not the core need for auditable voting.
+
+#### Resolution
+
+For the browser fork, split media features from the control-plane minimum.
+
+Create a browser MVP feature set that includes only:
+
+- MLS state
+- group membership
+- message encode / decode
+- acknowledgements
+- persistence
+
+Do not carry media/image features into the first browser voting integration unless they are actually required.
+
+This reduces:
+
+- bundle size
+- attack surface
+- review burden
+
+### 5. `mdk-uniffi` is not the browser boundary
+
+#### Current finding
+
+UniFFI is useful for native/mobile bindings, not as the primary boundary for a web app.
+
+#### Resolution
+
+The web integration should use:
+
+- `wasm-bindgen`
+- typed serialisable DTOs
+- a narrow API surface
+
+The browser-facing Wasm API should expose:
+
+- identity creation / import
+- group creation / join
+- outbound private message generation
+- inbound private message ingestion
+- receipt generation
+- state export / import
+- recovery / replay operations
+
+## Security constraints
+
+This migration should not proceed unless these rules are enforced.
+
+### Boundary rules
+
+- Public auditable data stays on Nostr.
+- Private coordination data stays off the public event plane.
+- The Wasm core owns private protocol state.
+- The TS layer must not receive raw MLS exporter secrets unless there is no practical alternative.
+
+### Storage rules
+
+- No plaintext Marmot state in IndexedDB.
+- No secrets in `localStorage`.
+- Use authenticated encryption for persisted records or snapshots.
+- Passphrase-based unlock must be mandatory for persisted Marmot state in the first browser release.
+
+### Logging and diagnostics
+
+- Never log:
+  - private keys
+  - MLS exporter secrets
+  - group identifiers
+  - per-group secret material
+  - decrypted message contents
+- UI diagnostics may show delivery state, but not raw cryptographic payloads.
+- Browser error reporting must not send private-plane data to third parties.
+
+### Web hardening
+
+- no third-party scripts on the voting app
+- strict CSP
+- `Referrer-Policy: no-referrer`
+- explicit `Permissions-Policy`
+- pinned dependency versions
+- reproducible Wasm artefacts in CI
+
+### Review gates
+
+Before the NIP-17 path is removed:
+
+- internal protocol review
+- external cryptography / protocol review
+- browser-state persistence review
+- adversarial delivery / replay / recovery testing
+
+This plan can reduce obvious security weaknesses, but it cannot honestly guarantee the absence of all cybersecurity weaknesses. That still requires review and testing.
+
+## Concrete migration phases
+
+### Phase 0: feasibility spike
+
+Objective:
+
+- prove that a browser fork is viable before changing app protocol behaviour
+
+Deliverables:
+
+- fork `mdk-core` into a browser branch
+- remove or isolate direct `nostr` dependency from the Wasm-critical path
+- compile minimal Wasm artefact
+- prove:
+  - create identity
+  - create group
+  - ingest outbound/inbound private message payloads
+  - serialise and restore state
+
+Exit criteria:
+
+- successful browser Wasm build
+- no SQLite/keyring dependency in browser artefact
+- documented API boundary
+
+### Phase 1: transport abstraction in this repo
+
+Objective:
+
+- move all private messaging behind a transport interface without changing user-visible protocol behaviour
 
 The interface should cover:
 
@@ -80,22 +400,56 @@ The interface should cover:
 - send receipt acknowledgement
 - subscribe / fetch for each of the above
 
-Do not change public round or ballot code in this phase.
+Exit criteria:
 
-### Phase 2: Marmot committee-only path
+- NIP-17 implementation is behind one interface
+- no direct NIP-17 calls from UI components
 
-Use Marmot first for coordinator-only traffic:
+### Phase 2: browser storage backend
+
+Objective:
+
+- provide a browser-safe MDK storage implementation
+
+Deliverables:
+
+- IndexedDB storage design
+- encrypted persistence
+- snapshot support
+- recovery tests
+
+Exit criteria:
+
+- all MDK state needed for reconnect survives reload
+- locked-state and unlock flow work
+- no plaintext secret persistence
+
+### Phase 3: coordinator-only Marmot path
+
+Objective:
+
+- move coordinator-only private traffic first
+
+Move:
 
 - sub-coordinator join
 - share-index assignment
 - coordinator roster maintenance
-- lead/non-lead forwarding coordination
 
-This is the safest first move because it removes some of the highest-value private control traffic without changing the voter flow yet.
+Keep voter issuance on NIP-17 for this phase.
 
-### Phase 3: Marmot voter issuance path
+Exit criteria:
 
-Move voter issuance traffic next:
+- lead/sub-coordinator coordination is stable without NIP-17
+- coordinator recovery works after reload / reconnect
+
+### Phase 4: voter issuance over Marmot
+
+Objective:
+
+- move voter private traffic after the committee path is stable
+
+Move:
 
 - follow
 - follow acknowledgement
@@ -103,193 +457,77 @@ Move voter issuance traffic next:
 - ticket share
 - receipt acknowledgement
 
-Keep the voter UI and ballot logic unchanged. Only swap the private transport.
+Keep:
 
-### Phase 4: reliability and recovery
+- round announcements public on Nostr
+- blind keys public on Nostr
+- ballots public on Nostr
 
-Rebuild the current retry/reconcile logic around Marmot session state:
+Exit criteria:
 
-- delivery receipt semantics
-- reconnect and resync
-- missed-message recovery
-- per-stage diagnostics in the UI
+- `1 / 20 / 3` live run equals or beats current reliability
+- `2 / 2 / 1` threshold run equals or beats current reliability
 
-### Phase 5: remove NIP-17 issuance path
+### Phase 5: hardening and scale
 
-Once Marmot is stable:
+Objective:
 
-- keep NIP-17 optional only behind a feature flag for fallback testing
-- then remove it from the private issuance path entirely
+- prove the Marmot path is not just functionally correct, but operationally better
 
-## Pros and cons
+Required tests:
 
-### Marmot migration pros
+- reconnect
+- duplicate inbound messages
+- out-of-order delivery
+- missed receipt recovery
+- multi-coordinator scale runs
+- browser refresh / restore in the middle of a round
 
-- better private messaging model than ad hoc NIP-17 flows
-- richer acknowledgement and session semantics
-- cleaner coordinator-group behaviour
-- lower dependence on public-relay behaviour for private issuance
-- better long-term privacy story for private coordination
+Required live targets:
 
-### Marmot migration cons
+- `1 / 20 / 3`
+- `2 / 10 / 3`
+- `5 / 10 / 3`
 
-- substantial implementation effort
-- browser integration complexity
-- larger Rust/Wasm boundary
-- likely new persistence and synchronisation work
-- more protocol/state-machine complexity than the current DM wrappers
+Exit criteria:
 
-## What it would take to Wasm MDK/Marmot
+- private-plane stage metrics are better than NIP-17 baseline
+- no obvious new privacy regressions
+- no plaintext persistence regressions
 
-The realistic browser design is not "compile everything and call it done". It would need a deliberate Rust/Wasm adapter layer.
+### Phase 6: cutover
 
-### Dependency audit snapshot
+Objective:
 
-Audited against the current upstream MDK workspace at the time of review:
+- retire NIP-17 for issuance traffic once Marmot is at feature parity
 
-- workspace version: `0.7.1`
-- checked crates:
-  - `mdk-core`
-  - `mdk-memory-storage`
-  - `mdk-sqlite-storage`
+Steps:
 
-Commands run:
+- keep NIP-17 as a feature flag for one transition period
+- switch default private path to Marmot
+- remove NIP-17 issuance only after the review gates pass
 
-```bash
-cargo check -p mdk-core --target wasm32-unknown-unknown
-cargo check -p mdk-memory-storage --target wasm32-unknown-unknown
-cargo check -p mdk-sqlite-storage --target wasm32-unknown-unknown
-```
+## Practical recommendation
 
-#### Immediate findings
+The strongest practical strategy is:
 
-1. `mdk-core` is **not browser-ready as-is**.
-   - The first hard build blocker is `nostr -> secp256k1 -> secp256k1-sys`.
-   - In the audited build, that path failed before the Rust code could finish checking for `wasm32-unknown-unknown`.
-   - Concretely, the failure was in the `secp256k1-sys` C build step.
+1. keep rounds, blind keys, ballots, and tallying public on Nostr
+2. build a browser-specific MDK/Wasm fork rather than forcing upstream desktop assumptions into the browser
+3. replace SQLite/keyring with encrypted IndexedDB
+4. keep direct coordinator-to-voter ticket delivery in the private plane
+5. do not centralise private issuance through the lead
 
-2. `mdk-sqlite-storage` is **not suitable for browser Wasm**.
-   - It depends on:
-     - `rusqlite`
-     - `libsqlite3-sys`
-     - `refinery`
-     - `keyring-core`
-   - That is a native SQLite/SQLCipher path, not a browser persistence path.
-   - Even if forced to compile with extra toolchain work, it is still the wrong storage backend for a browser app.
+## Final assessment
 
-3. `mdk-memory-storage` is the only plausible starting point for a browser integration.
-   - It still inherits the `nostr -> secp256k1-sys` blocker.
-   - But architecturally it is much closer to what a browser/Wasm integration would want.
+The migration is feasible, but only under this interpretation:
 
-#### Dependency classification
+- **possible** as a browser-specific Marmot integration
+- **not possible as a zero-change upstream MDK drop-in**
 
-Likely acceptable or plausible for browser Wasm:
+The main blockers are solvable:
 
-- `mdk-storage-traits`
-- `mdk-memory-storage`
-- `openmls`
-- `openmls_traits`
-- `openmls_basic_credential`
-- `openmls_rust_crypto`
-- `serde`
-- `postcard`
-- `chacha20poly1305`
-- `hkdf`
-- `sha2`
+- `secp256k1-sys` by removing or isolating the `nostr` dependency from the browser Wasm core
+- SQLite/keyring by replacing them with encrypted IndexedDB storage
+- `rayon` and media dependencies by treating them as explicit browser-fork feature-gating work
 
-Immediate blockers or strong friction points:
-
-- `nostr` because the current path pulls in `secp256k1-sys`
-- `secp256k1-sys` because it requires a native C build step in the audited target path
-- `mdk-sqlite-storage`
-- `libsqlite3-sys`
-- `rusqlite`
-- `refinery`
-- `mdk-uniffi` for browser use, because UniFFI is not the right boundary for a web app
-
-#### Secondary risks
-
-Even after the `secp256k1-sys` issue is resolved, there are still areas that need validation rather than assumption:
-
-- `openmls` currently pulls in `rayon`, which may be awkward in browser Wasm depending on threading assumptions
-- `mdk-core` includes mandatory image-processing dependencies:
-  - `image`
-  - `blurhash`
-  - `fast-thumbhash`
-  - `kamadak-exif`
-- these may compile, but they increase code size and are not obviously essential to the minimal private-control-plane use case
-
-#### Practical conclusion
-
-The audit says:
-
-- **do not** plan around `mdk-sqlite-storage` in the browser
-- **do** plan around a browser-specific storage adapter, replacing SQLite entirely
-- **do not** assume `mdk-core` can be dropped into Wasm unchanged
-- **do** expect to patch or feature-gate the `nostr`/`secp256k1-sys` path before a browser build will work reliably
-
-### Likely shape
-
-- Rust/Wasm owns:
-  - Marmot state machines
-  - group/session state
-  - message encode/decode
-  - acknowledgement / receipt handling
-  - recovery state
-- TypeScript owns:
-  - UI
-  - browser timers
-  - IndexedDB adapter
-  - transport adapter to whichever network path is used
-
-### Expected work items
-
-1. Audit MDK crate dependencies for wasm compatibility.
-2. Expose a `wasm-bindgen` API for:
-   - creating identities
-   - joining groups
-   - ingesting inbound messages
-   - producing outbound messages
-   - persisting / restoring group state
-3. Add a browser storage adapter:
-   - IndexedDB-backed state snapshots
-   - encryption of persisted private state
-4. Add a JS transport adapter:
-   - outbound message publishing
-   - inbound message delivery into the Wasm core
-5. Define a stable TS <-> Wasm schema for:
-   - voter follow state
-   - coordinator roster state
-   - blinded request state
-   - ticket / receipt state
-6. Add deterministic tests for:
-   - reconnect
-   - duplicate inbound messages
-   - out-of-order delivery
-   - missed receipt recovery
-
-### Likely blockers
-
-- if MDK assumes native async/runtime patterns that do not fit browser Wasm cleanly
-- if its crypto or storage assumptions are not browser-friendly
-- if the current transport expectations are closer to native peers than to browser clients
-
-### Practical assessment
-
-Wasm integration looks feasible, but it is a medium-to-large engineering project, not a small swap.
-
-The right strategy is:
-
-- keep the public auditable plane on Nostr
-- move the private coordination plane behind a transport abstraction first
-- integrate Marmot through a Rust/Wasm core only after that boundary is clean
-
-## Recommendation
-
-If the goal is operational improvement without losing public auditability:
-
-1. keep rounds, blind keys, ballots, and results public on Nostr
-2. move all private issuance traffic behind a transport interface
-3. use Marmot for coordinator-only traffic first
-4. then migrate voter issuance traffic
-5. only remove NIP-17 after the Marmot path has equivalent recovery, diagnostics, and tests
+If that work is accepted, Marmot is a credible long-term replacement for the private NIP-17 control plane in this repo.

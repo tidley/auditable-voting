@@ -1549,6 +1549,8 @@ describe("Simple round flow", () => {
       expect(voterTwoUi.getByText(/Vote ticket received/i)).toBeTruthy();
       expect(coordinatorOneUi.getAllByText(/Voter acknowledged ticket receipt\./i).length).toBeGreaterThanOrEqual(2);
       expect(coordinatorTwoUi.getAllByText(/Voter acknowledged ticket receipt\./i).length).toBeGreaterThanOrEqual(2);
+      expect(voterOneUi.queryByText(/Coordinator 2[\s\S]*Waiting for live round\./i)).toBeNull();
+      expect(voterTwoUi.queryByText(/Coordinator 2[\s\S]*Waiting for live round\./i)).toBeNull();
     });
 
     await user.click(coordinatorOneUi.getByRole("tab", { name: /^Voting$/i }));

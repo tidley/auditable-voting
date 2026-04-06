@@ -427,12 +427,6 @@ fn build_voter_coordinator_diagnostics_inner(
                 })
                 .unwrap_or(false);
 
-            let round_seen = !active_voting_id.is_empty()
-                && input.discovered_round_sources.iter().any(|session| {
-                    session.coordinator_npub == coordinator_npub
-                        && session.voting_id == active_voting_id
-                });
-
             let blind_key_seen = !active_voting_id.is_empty()
                 && known_blind_key_ids.contains(&format!("{coordinator_npub}:{active_voting_id}"));
 
@@ -455,6 +449,16 @@ fn build_voter_coordinator_diagnostics_inner(
                 })
                 .unwrap_or(false);
             let ticket_received = ticket_received_set.contains(&coordinator_npub);
+            let round_seen = !active_voting_id.is_empty()
+                && (
+                    input.discovered_round_sources.iter().any(|session| {
+                        session.coordinator_npub == coordinator_npub
+                            && session.voting_id == active_voting_id
+                    })
+                    || blind_key_seen
+                    || request_delivery.is_some()
+                    || ticket_received
+                );
 
             VoterCoordinatorDiagnostic {
                 coordinator_npub: coordinator_npub.clone(),
