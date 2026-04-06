@@ -1396,11 +1396,10 @@ describe("Simple round flow", () => {
       expect(coordinatorOneUi.getByText(/submitted as sub-coordinator/i)).toBeTruthy();
     });
 
-    await user.click(coordinatorOneUi.getByRole("button", { name: /Increase Threshold T/i }));
-
-    await user.click(coordinatorOneUi.getByRole("button", { name: /Broadcast live vote/i }));
     await user.click(coordinatorOneUi.getByRole("tab", { name: /^Voting$/i }));
     await user.click(coordinatorTwoUi.getByRole("tab", { name: /^Voting$/i }));
+    await user.click(coordinatorOneUi.getByRole("button", { name: /Increase Threshold T/i }));
+    await user.click(coordinatorOneUi.getByRole("button", { name: /Broadcast live vote/i }));
     await user.click(coordinatorOneUi.getByRole("button", { name: /Distribute share indexes/i }));
     await user.click(voterOneUi.getByRole("tab", { name: /^Vote$/i }));
     await user.click(voterTwoUi.getByRole("tab", { name: /^Vote$/i }));
@@ -1446,14 +1445,13 @@ describe("Simple round flow", () => {
       expect(coordinatorTwoUi.getAllByText(/Voter acknowledged ticket receipt\./i).length).toBeGreaterThanOrEqual(2);
     });
 
-    await user.click(coordinatorOneUi.getByRole("tab", { name: /^Configure$/i }));
+    await user.click(coordinatorOneUi.getByRole("tab", { name: /^Voting$/i }));
     const questionSection = coordinatorOneUi.getByRole("heading", { name: /^Question$/i }).closest("section");
     expect(questionSection).toBeTruthy();
     const leadQuestionInput = within(questionSection as HTMLElement).getByLabelText(/^Question$/i);
     await user.clear(leadQuestionInput);
     await user.type(leadQuestionInput, "Second question");
     await user.click(coordinatorOneUi.getByRole("button", { name: /Broadcast live vote/i }));
-    await user.click(coordinatorOneUi.getByRole("tab", { name: /^Voting$/i }));
 
     await waitFor(() => {
       const roundSelector = coordinatorOne.container.querySelector("select#simple-active-round");
@@ -1526,9 +1524,8 @@ describe("Simple round flow", () => {
       expect(coordinatorUi.getByText(/is following this coordinator/i)).toBeTruthy();
     });
 
-    await user.click(coordinatorUi.getByRole("tab", { name: /^Configure$/i }));
-    await user.click(coordinatorUi.getByRole("button", { name: /Broadcast live vote/i }));
     await user.click(coordinatorUi.getByRole("tab", { name: /^Voting$/i }));
+    await user.click(coordinatorUi.getByRole("button", { name: /Broadcast live vote/i }));
     await user.click(voterUi.getByRole("tab", { name: /^Vote$/i }));
 
     await waitFor(() => {

@@ -1777,9 +1777,9 @@ export default function SimpleUiApp() {
                       {ballotTokenId ? (
                         <div className='simple-vote-entry'>
                           <div className='simple-vote-entry-copy'>
-                            <p className='simple-voter-question'>
+                            <h3 className='simple-voter-question'>
                               Ballot fingerprint
-                            </p>
+                            </h3>
                           </div>
                           <TokenFingerprint tokenId={ballotTokenId} large />
                         </div>

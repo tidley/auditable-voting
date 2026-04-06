@@ -1778,6 +1778,11 @@ export default function SimpleCoordinatorApp() {
               </SimpleCollapsibleSection>
             )}
 
+          </section>
+        ) : null}
+
+        {activeTab === 'voting' ? (
+          <section className='simple-voter-tab-panel' role='tabpanel' aria-label='Voting'>
             <SimpleCollapsibleSection title='Question'>
               {isLeadCoordinator ? (
                 <>
@@ -1879,11 +1884,7 @@ export default function SimpleCoordinatorApp() {
                 <p className='simple-voter-empty'>No question selected yet.</p>
               )}
             </SimpleCollapsibleSection>
-          </section>
-        ) : null}
 
-        {activeTab === 'voting' ? (
-          <section className='simple-voter-tab-panel' role='tabpanel' aria-label='Voting'>
             <SimpleCollapsibleSection title='Round'>
               {publishedVotes.length > 0 ? (
                 <>
