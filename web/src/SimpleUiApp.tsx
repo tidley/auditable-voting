@@ -1909,7 +1909,9 @@ export default function SimpleUiApp() {
                     ? 'Submitting vote...'
                     : voteSubmittedSuccessfully
                       ? 'Vote submitted'
-                      : 'Submit vote'}
+                      : !liveVoteChoice || uniqueShardResponses.length < requiredShardCount
+                        ? 'Preparing vote'
+                        : 'Submit vote'}
                 </button>
 
                 <section

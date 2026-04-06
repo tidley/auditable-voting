@@ -232,6 +232,10 @@ export default function SimpleCoordinatorApp() {
   const autoShareAssignmentAttemptRef = useRef('');
   const verifyAllVisibleRef = useRef<HTMLInputElement | null>(null);
   const isLeadCoordinator = !leadCoordinatorNpub.trim() || leadCoordinatorNpub.trim() === (keypair?.npub ?? "");
+  const canShowNotifyLeadButton = Boolean(
+    leadCoordinatorNpub.trim()
+    && leadCoordinatorNpub.trim() !== (keypair?.npub ?? ""),
+  );
   const activeShareIndex = isLeadCoordinator ? 1 : (Number.parseInt(questionShareIndex, 10) || 0);
   const hasAssignedShareIndex = !isLeadCoordinator && activeShareIndex > 0;
   const availableCoordinatorCount = Math.max(1, subCoordinators.length + 1);
@@ -1620,6 +1624,13 @@ export default function SimpleCoordinatorApp() {
   const validNoCount = validatedVotes.filter((entry) => entry.valid && entry.vote.choice === "No").length;
   const yesValidatedVotes = validatedVotes.filter((entry) => entry.vote.choice === "Yes");
   const noValidatedVotes = validatedVotes.filter((entry) => entry.vote.choice === "No");
+  const submittedVoteNumbers = useMemo(() => {
+    const nextNumbers = new Map<string, number>();
+    validatedVotes.forEach((entry, index) => {
+      nextNumbers.set(entry.vote.eventId, index + 1);
+    });
+    return nextNumbers;
+  }, [validatedVotes]);
   const visibleFollowers = activeVotingId
     ? followers.filter((follower) => !follower.votingId || follower.votingId === activeVotingId)
     : followers;
@@ -1948,7 +1959,7 @@ export default function SimpleCoordinatorApp() {
                 >
                   Scan
                 </button>
-                {!isLeadCoordinator ? (
+                {canShowNotifyLeadButton ? (
                   <button
                     type='button'
                     className='simple-voter-secondary'
@@ -2434,7 +2445,7 @@ export default function SimpleCoordinatorApp() {
                       {yesValidatedVotes.length > 0 ? (
                         <ul className='simple-submitted-vote-list'>
                           {yesValidatedVotes.map(
-                            ({ vote, valid, reason }, index) => (
+                            ({ vote, valid, reason }) => (
                               <li
                                 key={vote.eventId}
                                 className='simple-submitted-vote-item'
@@ -2442,7 +2453,7 @@ export default function SimpleCoordinatorApp() {
                                 <div className='simple-vote-entry'>
                                   <div className='simple-vote-entry-copy'>
                                     <p className='simple-voter-question simple-vote-result-line'>
-                                      <span>Vote {index + 1}</span>{' '}
+                                      <span>Vote {submittedVoteNumbers.get(vote.eventId) ?? '?'}</span>{' '}
                                       <span
                                         className={
                                           valid
@@ -2475,7 +2486,7 @@ export default function SimpleCoordinatorApp() {
                       {noValidatedVotes.length > 0 ? (
                         <ul className='simple-submitted-vote-list'>
                           {noValidatedVotes.map(
-                            ({ vote, valid, reason }, index) => (
+                            ({ vote, valid, reason }) => (
                               <li
                                 key={vote.eventId}
                                 className='simple-submitted-vote-item'
@@ -2483,7 +2494,7 @@ export default function SimpleCoordinatorApp() {
                                 <div className='simple-vote-entry'>
                                   <div className='simple-vote-entry-copy'>
                                     <p className='simple-voter-question simple-vote-result-line'>
-                                      <span>Vote {index + 1}</span>{' '}
+                                      <span>Vote {submittedVoteNumbers.get(vote.eventId) ?? '?'}</span>{' '}
                                       <span
                                         className={
                                           valid
