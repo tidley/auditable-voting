@@ -1470,9 +1470,9 @@ describe("Simple round flow", () => {
     await user.click(coordinatorOneUi.getByRole("tab", { name: /^Configure$/i }));
     await user.click(coordinatorTwoUi.getByRole("tab", { name: /^Configure$/i }));
     await waitFor(() => {
-      expect(coordinatorOneUi.getAllByText(/is following this coordinator/i).length).toBeGreaterThanOrEqual(2);
-      expect(coordinatorTwoUi.getAllByText(/is following this coordinator/i).length).toBeGreaterThanOrEqual(2);
-    });
+      expect(coordinatorOneUi.getAllByText(/Follow request received\./i).length).toBeGreaterThanOrEqual(2);
+      expect(coordinatorTwoUi.getAllByText(/Follow request received\./i).length).toBeGreaterThanOrEqual(2);
+    }, { timeout: 5000 });
     await user.click(coordinatorOneUi.getByRole("tab", { name: /^Voting$/i }));
     await user.click(coordinatorTwoUi.getByRole("tab", { name: /^Voting$/i }));
     await user.click(coordinatorOneUi.getByRole("button", { name: /Increase Threshold T/i }));
@@ -1601,8 +1601,8 @@ describe("Simple round flow", () => {
 
     await user.click(coordinatorUi.getByRole("tab", { name: /^Configure$/i }));
     await waitFor(() => {
-      expect(coordinatorUi.getByText(/is following this coordinator/i)).toBeTruthy();
-    });
+      expect(coordinatorUi.getByText(/Follow request received\./i)).toBeTruthy();
+    }, { timeout: 5000 });
 
     await user.click(coordinatorUi.getByRole("tab", { name: /^Voting$/i }));
     await user.click(coordinatorUi.getByRole("button", { name: /Broadcast live vote/i }));

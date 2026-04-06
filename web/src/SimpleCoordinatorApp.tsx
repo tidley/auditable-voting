@@ -2209,88 +2209,80 @@ export default function SimpleCoordinatorApp() {
                   <p className='simple-submitted-score'>
                     Yes: {validYesCount} | No: {validNoCount}
                   </p>
-                  {validatedVotes.length > 0 ? (
-                    <div className='simple-submitted-columns'>
-                      <section className='simple-submitted-column'>
-                        <h3 className='simple-submitted-column-title'>Yes</h3>
-                        {yesValidatedVotes.length > 0 ? (
-                          <ul className='simple-submitted-vote-list'>
-                            {yesValidatedVotes.map(({ vote, valid, reason }) => (
-                              <li key={vote.eventId} className='simple-submitted-vote-item'>
-                                <div className='simple-vote-entry'>
-                                  <div className='simple-vote-entry-copy'>
-                                    <p className='simple-voter-question simple-vote-result-line'>
-                                      <span>Yes</span>{' '}
-                                      <span
-                                        className={
-                                          valid
-                                            ? 'simple-vote-valid'
-                                            : 'simple-vote-invalid'
-                                        }
-                                      >
-                                        {valid
-                                          ? '[Valid]'
-                                          : `[Invalid${reason ? `: ${reason}` : ''}]`}
-                                      </span>
-                                    </p>
-                                  </div>
-                                  {vote.tokenId ? (
-                                    <TokenFingerprint
-                                      tokenId={vote.tokenId}
-                                      large
-                                      hideMetadata
-                                    />
-                                  ) : null}
+                  <div className='simple-submitted-columns'>
+                    <section className='simple-submitted-column'>
+                      <h3 className='simple-submitted-column-title'>Yes</h3>
+                      {yesValidatedVotes.length > 0 ? (
+                        <ul className='simple-submitted-vote-list'>
+                          {yesValidatedVotes.map(({ vote, valid, reason }) => (
+                            <li key={vote.eventId} className='simple-submitted-vote-item'>
+                              <div className='simple-vote-entry'>
+                                <div className='simple-vote-entry-copy'>
+                                  <p className='simple-voter-question simple-vote-result-line'>
+                                    <span>Yes</span>{' '}
+                                    <span
+                                      className={
+                                        valid
+                                          ? 'simple-vote-valid'
+                                          : 'simple-vote-invalid'
+                                      }
+                                    >
+                                      {valid
+                                        ? '[Valid]'
+                                        : `[Invalid${reason ? `: ${reason}` : ''}]`}
+                                    </span>
+                                  </p>
                                 </div>
-                              </li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <p className='simple-voter-empty'>No Yes votes received.</p>
-                        )}
-                      </section>
-                      <section className='simple-submitted-column'>
-                        <h3 className='simple-submitted-column-title'>No</h3>
-                        {noValidatedVotes.length > 0 ? (
-                          <ul className='simple-submitted-vote-list'>
-                            {noValidatedVotes.map(({ vote, valid, reason }) => (
-                              <li key={vote.eventId} className='simple-submitted-vote-item'>
-                                <div className='simple-vote-entry'>
-                                  <div className='simple-vote-entry-copy'>
-                                    <p className='simple-voter-question simple-vote-result-line'>
-                                      <span>No</span>{' '}
-                                      <span
-                                        className={
-                                          valid
-                                            ? 'simple-vote-valid'
-                                            : 'simple-vote-invalid'
-                                        }
-                                      >
-                                        {valid
-                                          ? '[Valid]'
-                                          : `[Invalid${reason ? `: ${reason}` : ''}]`}
-                                      </span>
-                                    </p>
-                                  </div>
-                                  {vote.tokenId ? (
-                                    <TokenFingerprint
-                                      tokenId={vote.tokenId}
-                                      large
-                                      hideMetadata
-                                    />
-                                  ) : null}
+                                {vote.tokenId ? (
+                                  <TokenFingerprint
+                                    tokenId={vote.tokenId}
+                                    large
+                                    hideMetadata
+                                  />
+                                ) : null}
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </section>
+                    <section className='simple-submitted-column'>
+                      <h3 className='simple-submitted-column-title'>No</h3>
+                      {noValidatedVotes.length > 0 ? (
+                        <ul className='simple-submitted-vote-list'>
+                          {noValidatedVotes.map(({ vote, valid, reason }) => (
+                            <li key={vote.eventId} className='simple-submitted-vote-item'>
+                              <div className='simple-vote-entry'>
+                                <div className='simple-vote-entry-copy'>
+                                  <p className='simple-voter-question simple-vote-result-line'>
+                                    <span>No</span>{' '}
+                                    <span
+                                      className={
+                                        valid
+                                          ? 'simple-vote-valid'
+                                          : 'simple-vote-invalid'
+                                      }
+                                    >
+                                      {valid
+                                        ? '[Valid]'
+                                        : `[Invalid${reason ? `: ${reason}` : ''}]`}
+                                    </span>
+                                  </p>
                                 </div>
-                              </li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <p className='simple-voter-empty'>No No votes received.</p>
-                        )}
-                      </section>
-                    </div>
-                  ) : (
-                    <p className='simple-voter-empty'>No votes received yet.</p>
-                  )}
+                                {vote.tokenId ? (
+                                  <TokenFingerprint
+                                    tokenId={vote.tokenId}
+                                    large
+                                    hideMetadata
+                                  />
+                                ) : null}
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </section>
+                  </div>
                 </>
               ) : (
                 <p className='simple-voter-empty'>

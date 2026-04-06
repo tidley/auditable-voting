@@ -50,10 +50,10 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
   const roleTitle = useMemo(
     () => (
       role === "voter"
-        ? "Voter view"
+        ? "Voter"
         : role === "coordinator"
-          ? "Coordinator view"
-          : "Auditor view"
+          ? "Coordinator"
+          : "Auditor"
     ),
     [role],
   );
@@ -62,15 +62,14 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
     <div className='simple-app-shell'>
       <div className='simple-role-switch-wrap'>
         <div className='simple-role-switch-topbar'>
-          <p className='simple-role-switch-summary'>{roleTitle}</p>
           <button
             type='button'
-            className='simple-role-switch-minimise'
+            className='simple-role-switch-toggle'
             onClick={() => setRoleSwitchMinimized((current) => !current)}
             aria-expanded={!roleSwitchMinimized}
             aria-controls='simple-role-switch-panel'
           >
-            {roleSwitchMinimized ? 'Change' : 'Hide'}
+            {roleTitle}
           </button>
         </div>
         {!roleSwitchMinimized ? (

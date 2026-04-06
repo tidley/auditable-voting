@@ -1895,14 +1895,15 @@ export default function SimpleUiApp() {
 
                 <button
                   type='button'
-                  className='simple-voter-primary simple-voter-primary-wide simple-vote-submit'
+                  className={`simple-voter-primary simple-voter-primary-wide simple-vote-submit${voteSubmittedSuccessfully ? ' is-success' : ''}`}
                   onClick={() => void submitVote()}
                   disabled={
+                    voteSubmittedSuccessfully ||
                     !liveVoteChoice ||
                     uniqueShardResponses.length < requiredShardCount
                   }
                 >
-                  Submit vote
+                  {voteSubmittedSuccessfully ? 'Vote submitted' : 'Submit vote'}
                 </button>
 
                 <section

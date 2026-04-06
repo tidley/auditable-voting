@@ -481,18 +481,11 @@ code {
   width: min(560px, 100%);
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   gap: 12px;
 }
 
-.simple-role-switch-summary {
-  margin: 0;
-  color: #cbd5e1;
-  font-size: 0.98rem;
-  font-weight: 700;
-}
-
-.simple-role-switch-minimise {
+.simple-role-switch-toggle {
   padding: 8px 12px;
   border: 1px solid #475569;
   background: #0f172a;
@@ -504,7 +497,7 @@ code {
   transition: background 180ms ease, border-color 180ms ease, color 180ms ease;
 }
 
-.simple-role-switch-minimise:hover {
+.simple-role-switch-toggle:hover {
   background: #1e293b;
   border-color: #64748b;
   color: #f8fafc;
@@ -1642,6 +1635,18 @@ code {
 .simple-vote-submit {
   min-height: 56px;
   font-size: 1.2rem;
+}
+
+.simple-vote-submit.is-success,
+.simple-vote-submit.is-success:hover {
+  background: linear-gradient(135deg, #15803d, #16a34a);
+  border-color: #22c55e;
+  color: #f8fafc;
+}
+
+.simple-vote-submit:disabled.is-success {
+  opacity: 1;
+  cursor: default;
 }
 
 .simple-vote-status-card {
