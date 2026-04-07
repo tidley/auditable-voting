@@ -29,7 +29,7 @@ impl WasmCoordinatorControlEngine {
         let config = serde_wasm_bindgen::from_value::<CoordinatorEngineConfig>(config)
             .map_err(to_js_error)?;
         Ok(Self {
-            inner: CoordinatorControlEngine::new(config),
+            inner: CoordinatorControlEngine::new(config).map_err(to_js_error)?,
         })
     }
 
@@ -38,7 +38,7 @@ impl WasmCoordinatorControlEngine {
         let snapshot = serde_wasm_bindgen::from_value::<CoordinatorEngineSnapshot>(snapshot)
             .map_err(to_js_error)?;
         Ok(Self {
-            inner: CoordinatorControlEngine::restore(snapshot),
+            inner: CoordinatorControlEngine::restore(snapshot).map_err(to_js_error)?,
         })
     }
 
@@ -50,6 +50,11 @@ impl WasmCoordinatorControlEngine {
     #[wasm_bindgen(js_name = getState)]
     pub fn get_state(&self) -> Result<JsValue, JsValue> {
         serde_wasm_bindgen::to_value(&self.inner.view()).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = getEngineStatus)]
+    pub fn get_engine_status(&self) -> Result<JsValue, JsValue> {
+        serde_wasm_bindgen::to_value(&self.inner.engine_status()).map_err(to_js_error)
     }
 
     #[wasm_bindgen(js_name = replayTransportMessages)]
@@ -65,6 +70,19 @@ impl WasmCoordinatorControlEngine {
         let event = serde_wasm_bindgen::from_value::<CoordinatorTransportEvent>(event)
             .map_err(to_js_error)?;
         let result = self.inner.apply_transport_message(event).map_err(to_js_error)?;
+        serde_wasm_bindgen::to_value(&result).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = applyPublishedLocalMessage)]
+    pub fn apply_published_local_message(
+        &mut self,
+        event_id: String,
+        local_echo: String,
+    ) -> Result<JsValue, JsValue> {
+        let result = self
+            .inner
+            .apply_published_local_message(event_id, local_echo)
+            .map_err(to_js_error)?;
         serde_wasm_bindgen::to_value(&result).map_err(to_js_error)
     }
 
@@ -174,6 +192,33 @@ impl WasmCoordinatorControlEngine {
             .approve_result(input.round_id, input.result_hash, input.created_at)
             .map_err(to_js_error)?;
         serde_wasm_bindgen::to_value(&result).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = exportSupervisoryJoinPackage)]
+    pub fn export_supervisory_join_package(&mut self) -> Result<JsValue, JsValue> {
+        let result = self
+            .inner
+            .export_supervisory_join_package()
+            .map_err(to_js_error)?;
+        serde_wasm_bindgen::to_value(&result).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = bootstrapSupervisoryGroup)]
+    pub fn bootstrap_supervisory_group(&mut self, join_packages: JsValue) -> Result<JsValue, JsValue> {
+        let join_packages = serde_wasm_bindgen::from_value::<Vec<String>>(join_packages)
+            .map_err(to_js_error)?;
+        let result = self
+            .inner
+            .bootstrap_supervisory_group(join_packages)
+            .map_err(to_js_error)?;
+        serde_wasm_bindgen::to_value(&result).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = joinSupervisoryGroup)]
+    pub fn join_supervisory_group(&mut self, welcome_bundle: String) -> Result<bool, JsValue> {
+        self.inner
+            .join_supervisory_group(welcome_bundle)
+            .map_err(to_js_error)
     }
 }
 

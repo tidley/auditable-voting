@@ -159,6 +159,49 @@ describe("simpleVotingSession", () => {
     });
   });
 
+  it("backfills live vote sessions from history before relying on subscription events", async () => {
+    const mod = await import("./simpleVotingSession");
+    const onSessions = vi.fn();
+    querySync.mockResolvedValue([
+      {
+        id: "event-history-1",
+        pubkey: "ab".repeat(32),
+        created_at: 40,
+        content: JSON.stringify({
+          voting_id: "vote-history-1",
+          prompt: "History question",
+          threshold_t: 2,
+          threshold_n: 2,
+          authorized_coordinators: ["npub1coord", "npub1coord2"],
+          created_at: "2026-03-31T00:00:00.000Z",
+        }),
+      },
+    ]);
+    subscribeMany.mockReturnValue({ close: vi.fn(async () => undefined) });
+
+    const unsubscribe = mod.subscribeSimpleLiveVotes({
+      coordinatorNpub: "npub1coord",
+      onSessions,
+    });
+
+    await vi.waitFor(() => {
+      expect(querySync).toHaveBeenCalled();
+      expect(onSessions).toHaveBeenCalledWith([
+        {
+          votingId: "vote-history-1",
+          prompt: "History question",
+          coordinatorNpub: "npub1coord",
+          createdAt: "1970-01-01T00:00:40.000Z",
+          thresholdT: 2,
+          thresholdN: 2,
+          authorizedCoordinatorNpubs: ["npub1coord", "npub1coord2"],
+          eventId: "event-history-1",
+        },
+      ]);
+    });
+    unsubscribe();
+  });
+
   it("publishes a submitted vote using public shard proofs", async () => {
     const mod = await import("./simpleVotingSession");
 

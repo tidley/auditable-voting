@@ -536,7 +536,7 @@
         <ul>
           <li>Public, signed event publication for rounds, ballots, and results</li>
           <li>Coordinator-control carrier events for round proposals, commits, tally coordination, and recovery checkpoints</li>
-          <li>Private NIP-17 DM transport for issuance requests and direct coordinator-to-voter ticket delivery, with retry and history backfill for missed tickets</li>
+          <li>Private NIP-17 DM transport for issuance requests and direct coordinator-to-voter ticket delivery, with retry and history backfill for missed tickets, plus live-round history backfill on the public plane</li>
           <li>Optional NIP-65 inbox/outbox hints for relay discovery when enabled</li>
           <li>Relay diversity instead of one central database</li>
           <li>Portable identities and signed announcements</li>
@@ -812,7 +812,7 @@
       </div>
     </div>
     <div class="quote">
-      <p>The current repo is already client-only and static-deployable, and the repaired small live gates now pass again: `1 / 2 / 2`, `2 / 2 / 2`, and `1 / 20 / 3` complete locally, while `5 / 10 / 3` is still not signed off and `5 / 10 / 10` on public relays remains non-viable.</p>
+        <p>The current repo is already client-only and static-deployable, and the repaired small live gates now pass again: `1 / 1 / 1` and `2 / 2 / 2` complete locally on the browser OpenMLS coordinator path, while `5 / 10 / 3` is still not signed off and `5 / 10 / 10` on public relays remains non-viable. The coordinator Wasm seam still supports explicit engine selection, but the live browser supervisory path is now using the OpenMLS bootstrap/join flow for the small repaired cases.</p>
     </div>
     <div class="speaker-note">Important credibility slide. This is where you show you understand the difference between “possible” and “finished.”</div>
   </section>

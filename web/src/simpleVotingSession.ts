@@ -282,6 +282,7 @@ export function subscribeLatestSimpleLiveVote(input: {
   const pool = getSharedNostrPool();
   const sessions = new Map<string, SimpleLiveVoteSession>();
   let closed = false;
+  let intervalId: number | null = null;
   let subscription: { close: (reason?: string) => Promise<void> | void } | null = null;
 
   void resolveNip65OutboxRelays({
@@ -292,6 +293,35 @@ export function subscribeLatestSimpleLiveVote(input: {
       return;
     }
     const relays = selectPublicReadRelays(resolvedRelays);
+    const publishLatest = () => {
+      input.onSession(sortByCreatedAtDescending([...sessions.values()])[0] ?? null);
+    };
+
+    const refreshFromHistory = async () => {
+      const events = await pool.querySync(relays, {
+        kinds: [SIMPLE_LIVE_VOTE_KIND],
+        authors: [coordinatorHex],
+        limit: 20,
+      });
+
+      for (const event of events) {
+        const session = parseSimpleLiveVoteEvent(event, input.coordinatorNpub);
+        if (session) {
+          sessions.set(session.eventId, session);
+        }
+      }
+
+      publishLatest();
+    };
+
+    void refreshFromHistory().catch((error) => {
+      if (!closed && error instanceof Error) {
+        input.onError?.(error);
+      }
+    });
+    intervalId = window.setInterval(() => {
+      void refreshFromHistory().catch(() => undefined);
+    }, 5000);
 
     subscription = pool.subscribeMany(relays, {
       kinds: [SIMPLE_LIVE_VOTE_KIND],
@@ -305,7 +335,7 @@ export function subscribeLatestSimpleLiveVote(input: {
         }
 
         sessions.set(session.eventId, session);
-        input.onSession(sortByCreatedAtDescending([...sessions.values()])[0] ?? null);
+        publishLatest();
       },
       onclose: (reasons) => {
         if (closed) {
@@ -327,6 +357,9 @@ export function subscribeLatestSimpleLiveVote(input: {
 
   return () => {
     closed = true;
+    if (intervalId !== null) {
+      window.clearInterval(intervalId);
+    }
     void subscription?.close("closed by caller");
   };
 }
@@ -347,6 +380,7 @@ export function subscribeSimpleLiveVotes(input: {
   const pool = getSharedNostrPool();
   const sessions = new Map<string, SimpleLiveVoteSession>();
   let closed = false;
+  let intervalId: number | null = null;
   let subscription: { close: (reason?: string) => Promise<void> | void } | null = null;
 
   void resolveNip65OutboxRelays({
@@ -357,6 +391,35 @@ export function subscribeSimpleLiveVotes(input: {
       return;
     }
     const relays = selectPublicReadRelays(resolvedRelays);
+    const publishSessions = () => {
+      input.onSessions(sortByCreatedAtDescending([...sessions.values()]));
+    };
+
+    const refreshFromHistory = async () => {
+      const events = await pool.querySync(relays, {
+        kinds: [SIMPLE_LIVE_VOTE_KIND],
+        authors: [coordinatorHex],
+        limit: 100,
+      });
+
+      for (const event of events) {
+        const session = parseSimpleLiveVoteEvent(event, input.coordinatorNpub);
+        if (session) {
+          sessions.set(session.eventId, session);
+        }
+      }
+
+      publishSessions();
+    };
+
+    void refreshFromHistory().catch((error) => {
+      if (!closed && error instanceof Error) {
+        input.onError?.(error);
+      }
+    });
+    intervalId = window.setInterval(() => {
+      void refreshFromHistory().catch(() => undefined);
+    }, 5000);
 
     subscription = pool.subscribeMany(relays, {
       kinds: [SIMPLE_LIVE_VOTE_KIND],
@@ -370,7 +433,7 @@ export function subscribeSimpleLiveVotes(input: {
         }
 
         sessions.set(session.eventId, session);
-        input.onSessions(sortByCreatedAtDescending([...sessions.values()]));
+        publishSessions();
       },
       onclose: (reasons) => {
         if (closed) {
@@ -392,6 +455,9 @@ export function subscribeSimpleLiveVotes(input: {
 
   return () => {
     closed = true;
+    if (intervalId !== null) {
+      window.clearInterval(intervalId);
+    }
     void subscription?.close("closed by caller");
   };
 }

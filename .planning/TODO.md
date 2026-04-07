@@ -1,8 +1,5 @@
 # TODO-llm.md
 
-> Status review comment (2026-04-07):
-> This brief is only partially implemented. The repo now has a real Rust/Wasm core, Rust-owned coordinator/public/ballot replay seams, snapshot/versioning/diagnostics modules, and a real OpenMLS-backed coordinator engine in Rust. The live browser path still does not use MLS end to end, threshold/proof expansion is not implemented, and larger live scale such as `5 / 10 / 3` is still not signed off.
-
 ## Purpose
 
 This file is the implementation brief for the LLM working on `auditable-voting`.
@@ -35,16 +32,23 @@ This file defines:
 - module layout
 - replay and recovery requirements
 - scaling constraints for 1,000+ voters
+- a strict MLS group size policy
 - testing requirements
 - anti-patterns to avoid
 - what “done” means
 
+> Status review context:
+> the repo already has a real Rust/Wasm core, Rust-owned coordinator/public/ballot replay seams, snapshot/versioning/diagnostics modules, and a real OpenMLS-backed coordinator engine in Rust, but the live browser path still is not using MLS end-to-end, proof/tally expansion is not implemented, and larger live scale is not signed off. This brief therefore assumes a migration from a partially-complete state rather than a clean start. :contentReference[oaicite:0]{index=0}
+>
+> Current concrete progress as of `v0.64`:
+> - recent local-preview live gates now pass again at `1 coordinator / 1 voter / 1 round` and `2 coordinators / 2 voters / 2 rounds`
+> - the most recent repair was public live-round history backfill in the browser path, which removed a first-round race where round 1 could be missed while round 2 succeeded
+> - the coordinator browser runtime now uses the OpenMLS supervisory engine on the repaired small live path; the main remaining gap is larger-scale live reliability rather than missing bootstrap/join carrier wiring
+> - larger committee scale is still not signed off; `5 coordinators / 10 voters / 3 rounds` remains the next unresolved live gate
+
 ---
 
 # 1. Core design goal
-
-> Status comment:
-> Partially done. Rust/Wasm owns much more protocol logic than before, and TS has been reduced materially, but TS still remains authoritative for private issuance/ticket flows in places. OpenMLS is implemented in Rust, but not yet wired through the live browser coordinator path.
 
 Build a system in which:
 
@@ -63,9 +67,6 @@ This is a **migration** of the existing repo, not a greenfield rewrite.
 ---
 
 # 2. Scale target must always be kept in mind
-
-> Status comment:
-> Not done as an achieved target. The architecture now explicitly accounts for replay, partitioning, snapshots, and disorder, but the repo is not yet operationally credible at the stated `1,000+ voters` goal. Current live evidence is good at `1 / 2 / 2`, `2 / 2 / 2`, and `1 / 20 / 3`, while `5 / 10 / 3` remains unresolved.
 
 The design must always assume the system will need to work for:
 
@@ -98,14 +99,9 @@ The design must **not** assume:
 
 # 3. Architectural overview
 
-> Status comment:
-> Partially done. The three-plane split exists conceptually and partly in code: coordinator control has its own Rust seam, public/ballot replay exists in Rust, and the voter issuance/ballot privacy path remains separate. The full end-state separation is not yet complete because private voter issuance is still largely TS-owned.
-
-## 3.1 Three logical planes
-
 The architecture must have three distinct protocol planes.
 
-### A. Coordinator control plane
+## 3.1 A. Coordinator control plane
 Private coordinator-only control traffic.
 
 Properties:
@@ -128,8 +124,9 @@ Used for:
 - result approval
 - dispute handling
 - recovery checkpoints
+- cross-group liaison traffic
 
-### B. Public audit plane
+## 3.2 B. Public audit plane
 Public Nostr events.
 
 Properties:
@@ -149,8 +146,9 @@ Used for:
 - final result publication
 - dispute records
 - public proof bundles
+- public group topology metadata if needed for audit context
 
-### C. Ballot submission plane
+## 3.3 C. Ballot submission plane
 Private ballot submission flow.
 
 Properties:
@@ -171,9 +169,6 @@ Used for:
 ---
 
 # 4. Why voters must not be MLS members
-
-> Status comment:
-> Done. Voters are not MLS members anywhere in the current implementation.
 
 This is non-negotiable.
 
@@ -200,10 +195,109 @@ Correct model:
 
 ---
 
-# 5. Non-negotiable constraints
+# 5. MLS group size policy
 
-> Status comment:
-> Mixed. Some are now true in practice, including no backend, browser-first, and no voters in MLS. Others remain partial, especially “Rust sole source of truth”, “all protocol-critical reducers in Rust”, and the `1,000+ voters` viability claim.
+This section is mandatory and overrides any vague assumption that “MLS supports large groups, therefore large browser groups are fine”.
+
+## 5.1 Policy
+
+All live browser MLS groups must be bounded in size.
+
+- **Preferred operating size:** **16 to 24 members**
+- **Hard cap:** **25 members**
+- **Emergency temporary ceiling:** **32 members**, only for short-lived, low-churn, one-day sessions
+- **Not allowed as normal design target:** **50+ members**
+
+If a workflow appears to require more than 25 private organisational participants, the correct response is:
+
+- **split the group**
+- **introduce cohort groups**
+- **coordinate through a smaller supervisory group**
+
+Do **not** respond by increasing the cap.
+
+## 5.2 Why the cap exists
+
+The cap exists because the current repo status does not yet sign off larger live scenarios and is not yet proven at the 1,000+ voter target; the main risks are replay, churn, browser recovery, transport disorder, and live end-to-end MLS wiring, not the raw MLS cryptographic model. :contentReference[oaicite:1]{index=1}
+
+## 5.3 Intended operating model
+
+For one-day voting sessions, the normal model should be:
+
+- one supervisory coordinator group
+- zero or more operational cohort groups
+- each cohort capped at 25
+- one or two liaisons per cohort
+- voters outside MLS entirely
+
+---
+
+# 6. Multi-group organisational model
+
+If there are more private organisational participants than the MLS cap allows, do **not** enlarge the group.
+
+Use a hierarchical layout.
+
+## 6.1 Supervisory group
+
+One supervisory coordinator/control group:
+
+- size: **5 to 9**
+- purpose:
+  - authoritative coordinator control
+  - election/round control
+  - cross-cohort coordination
+  - dispute handling
+  - checkpoint/recovery decisions
+  - tally coordination
+  - approval for public publication
+
+This group is OpenMLS-backed and is the only group allowed to coordinate final authoritative control decisions.
+
+## 6.2 Cohort groups
+
+One or more cohort groups:
+
+- size: **16 to 24 preferred**
+- hard cap: **25**
+- purpose:
+  - private organisational distribution
+  - notifications
+  - liaison-mediated backplane messaging
+  - bounded operational traffic
+
+These groups are OpenMLS-backed only if actually needed for private internal messaging. Do not create them by default if the workflow can be handled by the supervisory group alone.
+
+## 6.3 Liaisons
+
+Each cohort group must have **1 or 2 liaisons**.
+
+Liaison responsibilities:
+
+- receive supervisory-group traffic relevant to that cohort
+- re-emit or translate the permitted message into the cohort group
+- send cohort-derived status back to the supervisory group
+- never become an alternate source of protocol truth
+- never bypass the supervisory group for authoritative election control
+
+## 6.4 Cross-group coordination rule
+
+If a message must affect more than one group:
+
+- the supervisory group is the source of the authoritative private instruction
+- liaisons propagate cohort-scoped copies
+- the public audit plane carries public artefacts where appropriate
+- all cross-group messages must carry stable identifiers:
+  - `election_id`
+  - `round_id`
+  - `origin_group_id`
+  - `target_group_id`
+  - `message_class`
+  - `origin_event_id`
+
+---
+
+# 7. Non-negotiable constraints
 
 The LLM must respect all of these.
 
@@ -221,15 +315,15 @@ The LLM must respect all of these.
 12. **the app must remain browser-first and static-site compatible**
 13. **all protocol-critical reducers must end up in Rust**
 14. **the implementation must remain viable for 1,000+ voters**
+15. **all MLS groups in the browser must respect the hard cap of 25**
+16. **inter-group coordination must be explicit and replayable**
+17. **the public audit plane must remain compact and not devolve into noisy operational chatter**
 
 ---
 
-# 6. Required end-state architecture
+# 8. Required end-state architecture
 
-> Status comment:
-> Partially done. Rust now owns coordinator replay, public replay, ballot acceptance, validation helpers, snapshots, versioning, and diagnostics. Proof derivation, tally abstractions, and full removal of TS protocol truth are still outstanding.
-
-## 6.1 Rust/WASM owns
+## 8.1 Rust/WASM owns
 
 Rust must own:
 
@@ -240,6 +334,7 @@ Rust must own:
 - replay engine
 - coordinator control state
 - OpenMLS-backed coordinator engine
+- cohort-group coordination logic where used
 - public election state reducer
 - round reducer
 - ballot acceptance reducer
@@ -250,7 +345,7 @@ Rust must own:
 - versioning compatibility
 - threshold tally abstraction where implemented
 
-## 6.2 TypeScript owns
+## 8.2 TypeScript owns
 
 TypeScript may own only:
 
@@ -270,15 +365,13 @@ TypeScript must **not** own:
 - replay truth
 - coordinator truth
 - proof truth
+- group topology truth
 
 ---
 
-# 7. Coordinator control plane requirements
+# 9. Coordinator control plane requirements
 
-> Status comment:
-> Mostly done at the Rust seam, not done in the shipped browser workflow. `CoordinatorControlEngine` exists and hides engine internals from TypeScript. A real OpenMLS-backed engine now exists in Rust, but the live browser flow still runs through the deterministic engine because MLS bootstrap/join carriers are not yet wired end to end.
-
-## 7.1 OpenMLS must be used first
+## 9.1 OpenMLS must be used first
 
 Use OpenMLS first for the coordinator control plane.
 
@@ -286,7 +379,7 @@ But OpenMLS must be fully hidden behind a Rust abstraction.
 
 The app must not depend on OpenMLS directly.
 
-## 7.2 Required Rust abstraction
+## 9.2 Required Rust abstraction
 
 Define a stable domain-oriented abstraction, such as:
 
@@ -305,12 +398,12 @@ It should expose operations like:
 
 It must **not** expose raw OpenMLS state or OpenMLS-specific semantics to TypeScript.
 
-## 7.3 Coordinator group assumptions
+## 9.3 Coordinator group assumptions
 
 The implementation may assume, initially:
 
 - fixed coordinator roster
-- one coordinator group per election
+- one supervisory coordinator group per election
 - multiple rounds under one election
 - persistent coordinator state across reload
 - replay from transport history
@@ -324,10 +417,62 @@ It must **not** assume:
 
 ---
 
-# 8. Public state requirements
+# 10. Cohort-group requirements
 
-> Status comment:
-> Partially done. Rust defines public events and reduces public round state. Auditor, voter, and coordinator public-state consumers now use the shared Rust-derived adapter/service path. Full proof-bundle support is not implemented yet.
+This section is new and mandatory.
+
+## 10.1 When cohort groups exist
+
+Create cohort groups only if there are more private organisational participants than can comfortably fit into the supervisory group.
+
+Examples of cohort-group use:
+
+- organisational notification channels
+- distribution/operations channels
+- limited-scope private session logistics
+- bounded sub-group co-ordination
+
+Do **not** use cohort groups for:
+
+- ballot submission itself
+- voter membership
+- public audit artefacts
+- final authoritative decision source
+
+## 10.2 Rust abstraction
+
+Define a stable Rust abstraction such as:
+
+- `OrganisationalGroupEngine`
+
+It may share internals with the coordinator engine but must still be hidden from TS.
+
+Operations should include:
+
+- `create_group(...)`
+- `join_group(...)`
+- `receive_group_message(...)`
+- `emit_group_message(...)`
+- `snapshot_group(...)`
+- `restore_group(...)`
+
+## 10.3 Group metadata
+
+For each MLS group, persist:
+
+- `group_id`
+- `group_role` (`supervisory` or `cohort`)
+- `election_id`
+- current epoch metadata
+- member roster hash
+- liaison set
+- snapshot version
+- last applied event id
+- last replay checkpoint
+
+---
+
+# 11. Public state requirements
 
 Rust must define and reduce public events such as:
 
@@ -363,10 +508,7 @@ The auditor path must be able to use this without private coordinator state.
 
 ---
 
-# 9. Ballot plane requirements
-
-> Status comment:
-> Partially done. Rust owns ballot event types and deterministic ballot acceptance for the migrated slice, with `first valid ballot wins` already implemented. The private ballot/issuance transport path is still not fully Rust-owned.
+# 12. Ballot plane requirements
 
 Rust must define ballot-related events, such as:
 
@@ -383,30 +525,22 @@ Ballot submission must be:
 - scalable to 1,000+ voters
 - decoupled from coordinator group chat semantics
 
-## 9.1 Ballot acceptance rule must be explicit
+## 12.1 Ballot acceptance rule
 
-> Status comment:
-> Done. The current Rust reducer uses `first valid ballot wins`, and that rule is test-covered.
-
-Pick one and enforce it globally:
+Use:
 
 - **first valid ballot wins**
-- or
-- **latest valid ballot before close wins**
 
-That rule must be:
+Do not reconsider this unless there is a specific documented reason and the entire test suite is updated.
+
+The rule must be:
 
 - implemented in Rust only
 - documented
 - tested
 - used consistently across coordinator, voter, and auditor views
 
-No ambiguity is allowed.
-
-## 9.2 Ballot reduction must produce
-
-> Status comment:
-> Mostly done for the migrated slice. Accepted ballots, rejected ballots, rejection reasons, and round summaries exist in Rust. Receipt compatibility and richer tally input/public proof material are still incomplete.
+## 12.2 Ballot reduction must produce
 
 At minimum:
 
@@ -418,12 +552,7 @@ At minimum:
 
 ---
 
-# 10. Deterministic replay requirements
-
-> Status comment:
-> Largely done for the migrated slices. Rust owns canonical ordering and mixed replay across coordinator/public/ballot events. This is one of the stronger parts of the current repo state.
-
-This is one of the most important parts of the whole project.
+# 13. Deterministic replay requirements
 
 The system must support deterministic replay from mixed event streams.
 
@@ -440,16 +569,14 @@ Do not rely on relay arrival order.
 
 Do not allow multiple incompatible sorters in TS and Rust.
 
-## 10.1 Replay must support mixed streams
-
-> Status comment:
-> Done for the migrated core. The Rust engine can consume mixed coordinator/public/ballot streams and derive state plus diagnostics.
+## 13.1 Replay must support mixed streams
 
 Replay must support consuming:
 
 - public events
 - ballot events
 - coordinator control events
+- cohort-group private events if used
 
 and deriving:
 
@@ -459,11 +586,9 @@ and deriving:
 - receipt/proof state
 - final result state
 - diagnostics
+- group topology/health summaries if needed
 
-## 10.2 Replay parity
-
-> Status comment:
-> Partially done. Snapshot + suffix parity is covered for the shared protocol engine, but this still needs broader hardening around the live coordinator MLS path and more recovery scenarios.
+## 13.2 Replay parity
 
 The following must match:
 
@@ -474,10 +599,7 @@ Any divergence here is a correctness bug.
 
 ---
 
-# 11. Persistence and recovery requirements
-
-> Status comment:
-> Partially done. IndexedDB remains in TS, and Rust snapshots/version compatibility exist. Recovery is stronger than before, but still not robust enough to claim completion for relay disorder at larger multi-coordinator scale.
+# 14. Persistence and recovery requirements
 
 TypeScript should continue to manage IndexedDB.
 
@@ -487,6 +609,8 @@ Persist at minimum:
 - relay checkpoints
 - Rust snapshot blobs or JSON snapshots
 - metadata needed for suffix replay
+- per-group snapshot references
+- group membership metadata
 
 Rust must support:
 
@@ -495,10 +619,7 @@ Rust must support:
 - replay from scratch
 - replay from snapshot + suffix
 
-## 11.1 Recovery scenarios that must be supported
-
-> Status comment:
-> Partial. Duplicate and out-of-order replay are covered in Rust tests, and some live backfill/recovery logic exists. Full coverage of stale coordinator snapshots, interrupted tally workflows, and larger relay-disorder recovery is not complete.
+## 14.1 Recovery scenarios that must be supported
 
 The system must explicitly support recovery from:
 
@@ -508,24 +629,20 @@ The system must explicitly support recovery from:
 - out-of-order delivery
 - missing relay segment followed by backfill
 - stale coordinator snapshot
+- stale cohort snapshot
 - late coordinator control messages
 - partial tally workflows interrupted by reload
+- group join/bootstrap recovery for bounded one-day session groups
 
 These are normal operating conditions, not exceptional ones.
 
 ---
 
-# 12. Scaling requirements for 1,000+ voters
-
-> Status comment:
-> Not done as an achieved outcome. Some architectural preconditions are in place, especially partitioning, snapshots, and reducing relay-read scope, but the repo is not yet proven anywhere near the stated target.
+# 15. Scaling requirements for 1,000+ voters
 
 The architecture must always be evaluated against the 1,000+ voter target.
 
-## 12.1 What changes between 100 and 1,000 voters
-
-> Status comment:
-> Recognised architecturally, not completed operationally.
+## 15.1 What changes between 100 and 1,000 voters
 
 At 1,000 voters, the system must not rely on:
 
@@ -545,11 +662,9 @@ Instead, it must support:
 - deterministic merges across relays
 - structured diagnostics
 - transcript-tested recovery
+- bounded private group sizes
 
-## 12.2 Partitioning is mandatory
-
-> Status comment:
-> Partially done. Election/round partitioning is present in the newer Rust/public/coordinator paths, but the whole private issuance path has not been fully migrated to the same end-state model.
+## 15.2 Partitioning is mandatory
 
 All event types must be partitioned cleanly by:
 
@@ -557,6 +672,7 @@ All event types must be partitioned cleanly by:
 - `round_id`
 - event type
 - plane
+- `group_id` where relevant
 
 This is required for:
 
@@ -565,10 +681,7 @@ This is required for:
 - reduced client load
 - predictable recovery
 
-## 12.3 Receipt commitments must be structured
-
-> Status comment:
-> Not done in the intended end-state sense. There are public receipt and ballot-related structures, but not the compact structured commitment system described here.
+## 15.3 Receipt commitments must be structured
 
 For 1,000+ voters, receipt handling must move beyond ad hoc event visibility.
 
@@ -584,10 +697,7 @@ This allows:
 - compact public audit artefacts
 - efficient reconstruction
 
-## 12.4 Proof objects must be compact
-
-> Status comment:
-> Not done. Public proof bundles/compact proofs remain future work.
+## 15.4 Proof objects must be compact
 
 Public proof objects must not become a noisy per-action chat log.
 
@@ -599,129 +709,399 @@ Favour:
 - stable hashes
 - auditor-friendly derived views
 
----
+## 15.5 Group sizing must remain bounded
 
-# 13. Testing requirements
+At 1,000+ voters:
 
-> Status comment:
-> Partial. Rust truth tests now exist for coordinator replay, public reducer behaviour, ballot acceptance, ordering, and snapshot/versioning. The live e2e gate is still not strong enough at larger scale.
+- do not increase the MLS cap
+- do not place organisational participants into oversized browser MLS groups
+- do not trade replay tractability for fewer groups
 
-The migration is not acceptable without strong replay and recovery testing.
-
-## 13.1 Rust truth tests
-
-> Status comment:
-> Partially done and improving. Many of these tests now exist, but proof derivation correctness is not implemented because proofs are not implemented yet.
-
-Add Rust tests for:
-
-- deterministic ordering
-- coordinator replay
-- public reducer correctness
-- ballot reducer correctness
-- duplicate handling
-- contradictory event sequences
-- replay under out-of-order inputs
-- full replay vs snapshot+suffix parity
-- diagnostics correctness
-- proof derivation correctness where applicable
-
-## 13.2 Transcript-based fixtures are mandatory
-
-> Status comment:
-> Partial. There is transcript-style replay coverage in Rust and TS, but this area still needs expansion, especially around recovery/backfill and more pathological relay disorder.
-
-Use transcript fixtures for:
-
-- in-order delivery
-- out-of-order delivery
-- duplicate relay deliveries
-- missing segment followed by backfill
-- browser reload mid-workflow
-- close-boundary edge cases
-- contradictory public result publication
-- stale snapshot recovery
-
-At 1,000+ voter scale, transcript correctness matters more than superficial component tests.
-
-## 13.3 JS/TS integration tests
-
-> Status comment:
-> Partial. WASM loading, snapshot restore, and Rust-derived state consumption are covered in focused tests. IndexedDB reload/reconnect and larger live-relay scenarios still need stronger automated coverage.
-
-Add JS/TS integration tests for:
-
-- WASM loading
-- IndexedDB snapshot persistence/loading
-- reload and recovery
-- relay disorder integration
-- UI consumption of Rust-derived state
-- ensuring TS does not become authoritative again
-
-Truth tests should primarily live in Rust.
+If more than 25 private organisational participants are needed, split into cohorts.
 
 ---
 
-# 14. Required implementation order
+# 16. Concrete implementation plan
 
-> Status comment:
-> Followed broadly, but not completed. The repo has already passed through seams, Rust core growth, coordinator/public/ballot replay migration, and partial UI switching. The later hardening and proof/tally steps are still outstanding.
+This plan is deliberately detailed so the LLM has to do minimal design work and should mostly perform code and tests.
 
-The LLM must follow this internal order.
+Follow the steps in order.
 
-Do not start with a broad UI refactor.
+## Step 0 - read current repo and locate existing partial work
 
-## Step 1 - identify migration seams
-Inspect the repo and find the smallest safe seams where protocol truth can move into Rust without replacing the whole app.
+Before writing code:
 
-## Step 2 - build/refine Rust core
-Create or expand a Rust crate containing:
+1. locate the Rust/Wasm core crate
+2. list existing implemented modules:
+   - coordinator replay
+   - public replay
+   - ballot replay
+   - snapshot/versioning
+   - diagnostics
+   - openmls engine
+3. list remaining TS-authoritative private issuance/ticket flows
+4. list existing browser flow paths that still bypass MLS
+5. list existing tests and their gaps
 
-- types
-- events
-- ordering
-- replay
-- validation
-- coordinator abstraction
-- public reducer
-- ballot reducer
-- diagnostics
-- snapshots
-- versioning
+Then write a short internal implementation checklist and proceed. Do not ask for confirmation.
 
-## Step 3 - integrate OpenMLS behind abstraction
-Use OpenMLS first for the coordinator control plane, but keep it fully behind the Rust abstraction.
+## Step 1 - add MLS group-size policy to code-level configuration
 
-## Step 4 - move coordinator truth into Rust
-Coordinator control state, replay, and recovery must move into Rust first.
+Create or update a Rust config module:
 
-## Step 5 - move public and ballot reducers into Rust
-Public state and ballot acceptance must be migrated into Rust.
+- `auditable-voting-core/src/config.rs`
 
-## Step 6 - expose stable WASM APIs
-Expose a minimal, stable interface for TS to call.
+Add constants:
 
-## Step 7 - wire TS adapters/services to Rust
-TS should load WASM, pass in events, persist raw logs/snapshots, and read derived state.
+- `PREFERRED_MLS_GROUP_MIN = 16`
+- `PREFERRED_MLS_GROUP_MAX = 24`
+- `HARD_MLS_GROUP_CAP = 25`
+- `EMERGENCY_MLS_GROUP_CAP = 32`
+- `DEFAULT_SUPERVISORY_GROUP_MAX = 9`
 
-## Step 8 - switch UI flows to Rust-derived state
-Existing React screens should consume Rust-derived state rather than independent TS protocol logic.
+Create validation functions:
 
-## Step 9 - remove or demote legacy TS protocol truth
-Once parity is proven, remove old TS reducers/state machines or make them clearly non-authoritative.
+- `validate_group_size(count)`
+- `is_group_size_preferred(count)`
+- `is_group_size_emergency_only(count)`
 
-## Step 10 - harden recovery/diagnostics/proofs
-Strengthen snapshots, diagnostics, proof derivation, and recovery flows.
+Add tests for each.
 
-## Step 11 - update docs and tests
-Docs must match the actual shipped architecture.
+## Step 2 - add group topology types in Rust
+
+Create or update:
+
+- `src/types.rs`
+- `src/event.rs`
+
+Add types:
+
+- `GroupRole = Supervisory | Cohort`
+- `GroupId`
+- `LiaisonAssignment`
+- `GroupTopology`
+- `CrossGroupInstruction`
+- `CrossGroupReceipt`
+- `GroupSnapshotMeta`
+
+Ensure all are serialisable and versioned.
+
+Add tests for serialisation round-trips.
+
+## Step 3 - add Rust group topology reducer
+
+Create:
+
+- `src/group_topology.rs`
+
+Responsibilities:
+
+- enforce hard cap
+- allocate cohort groups when participant count exceeds cap
+- assign liaisons
+- derive stable topology summaries
+- reject invalid oversized groups
+- expose warnings when group sizes enter emergency range
+
+Add pure functions:
+
+- `plan_groups(participants, role, cap)`
+- `assign_liaisons(groups, supervisors_per_group)`
+- `validate_topology(topology)`
+
+Add deterministic tests:
+- 1 group, <= 9 coordinators
+- 10-25 operational members
+- 26 members -> split to 2 groups
+- 51 members -> split to multiple groups
+- invalid topology with >25 member group rejected
+
+## Step 4 - extend coordinator engine abstraction to include group routing metadata
+
+Update:
+
+- `src/coordinator_engine.rs`
+
+Add explicit support for:
+
+- origin group id
+- target group id
+- liaison forwarding metadata
+- cross-group instruction class
+
+Do not expose OpenMLS internals.
+
+Add tests ensuring the TS boundary still sees only stable domain types.
+
+## Step 5 - implement or complete supervisory-group routing in Rust
+
+Create:
+
+- `src/cross_group.rs`
+
+Responsibilities:
+
+- accept a supervisory instruction
+- derive cohort-targeted messages
+- preserve stable linkage from origin event to propagated event
+- reject illegal direct cohort-to-cohort authoritative control
+
+Rules:
+- only supervisory group can originate authoritative election-control messages
+- cohort groups may emit status/reporting messages upward
+- cohort groups may not publish final authoritative election-control state privately
+
+Add tests:
+- supervisory -> cohort allowed
+- cohort -> supervisory status allowed
+- cohort -> cohort authority transfer rejected
+
+## Step 6 - complete live browser OpenMLS carrier path for supervisory group
+
+Update Rust and TS bridge modules so the live browser coordinator path actually uses the OpenMLS-backed engine where intended.
+
+Status:
+- partially complete
+- the Rust side exists and the coordinator Wasm build includes the OpenMLS engine
+- the remaining gap is browser bootstrap/join carrier wiring plus a passing live gate on that MLS-backed runtime
+
+Required work:
+
+Rust:
+- ensure export/import snapshot for supervisory group is stable
+- ensure carrier encoding/decoding is complete
+
+TypeScript:
+- update Nostr carrier publish/subscribe path
+- load Rust snapshots
+- deliver carrier payloads to Rust
+- render Rust-derived state
+
+Add tests:
+- browser path uses OpenMLS-backed supervisory engine
+- reload after snapshot restores same state
+- replay after carrier backfill matches full replay
+
+## Step 7 - add cohort-group carrier support only if needed
+
+Do not add cohort-group MLS flows unless the code actually needs them.
+
+If needed:
+
+Rust:
+- reuse group engine abstractions
+- create separate group-role-specific wrappers
+
+TS:
+- support group-specific subscriptions
+- persist per-group snapshots/checkpoints
+
+Add tests:
+- multiple groups can coexist
+- each group snapshot restores independently
+- inter-group events remain scoped and deterministic
+
+## Step 8 - move remaining TS-authoritative private issuance/ticket truth into Rust
+
+This is mandatory.
+
+Audit existing TS modules such as:
+
+- `simpleVotingSession.ts`
+- `simpleRoundState.ts`
+- `simpleLocalState.ts`
+- `simpleShardDm.ts`
+
+For each module:
+
+1. identify protocol truth still held in TS
+2. create Rust equivalent type/reducer/service
+3. expose via WASM
+4. switch TS module to thin adapter
+5. delete or demote legacy reducer logic
+6. add regression tests
+
+Do not leave partial duplicated truth.
+
+## Step 9 - add or complete compact receipt commitment support in Rust
+
+Create or update:
+
+- `src/receipts.rs`
+- `src/public_state.rs`
+- `src/proofs.rs`
+
+Responsibilities:
+
+- generate stable receipt identifiers
+- batch or structure receipt commitments
+- derive public receipt summaries
+- expose voter inclusion compatibility data
+- keep public artefacts compact
+
+Add tests:
+- identical input ballots -> identical receipt commitments
+- duplicate events do not alter commitment set
+- receipt summaries reconstruct correctly from replay
+
+## Step 10 - add public proof bundle skeleton in Rust
+
+Even if full threshold work is not implemented yet, add the typed skeleton now.
+
+Create:
+
+- `src/proofs.rs`
+
+Add types:
+
+- `ReceiptSetCommitment`
+- `TallyInputCommitment`
+- `ResultProofBundle`
+- `CoordinatorApprovalSummary`
+- `DisputeProofRecord`
+
+Add reducers/derivers that populate what is currently available and leave explicit `NotAvailableYet` markers for unimplemented proof material.
+
+Add tests:
+- bundle serialisation
+- bundle replay determinism
+- bundle stable hashing
+- contradiction visibility
+
+## Step 11 - strengthen snapshot/versioning for multiple groups
+
+Update:
+
+- `src/snapshot.rs`
+- `src/versioning.rs`
+
+Requirements:
+
+- snapshot metadata must include group role and group id
+- snapshots must be loadable independently per group
+- full replay vs snapshot+suffix parity must be tested for:
+  - supervisory-only
+  - supervisory + cohort
+  - public + ballot + supervisory mixed streams
+
+Add tests for all cases.
+
+## Step 12 - extend diagnostics
+
+Update:
+
+- `src/diagnostics.rs`
+
+Add diagnostics for:
+
+- oversized group attempted
+- emergency-range group size
+- invalid liaison assignments
+- cross-group routing violations
+- stale cohort snapshot
+- stale supervisory snapshot
+- proof availability status
+- compact receipt generation status
+
+Expose through WASM.
+
+TS must display them, not compute them.
+
+## Step 13 - adapt TS adapter/service layer
+
+Under:
+
+- `web/src/core/`
+- `web/src/services/`
+- `web/src/nostr/`
+
+Perform the following:
+
+### `web/src/core/`
+- update wasm loader if needed
+- add group-topology bridge
+- add diagnostics reader
+- add snapshot group metadata helpers
+
+### `web/src/services/`
+- add `CoordinatorControlService` support for supervisory-group topology
+- add `GroupTopologyService`
+- add `ReceiptSummaryService`
+- adapt existing UI services to read Rust-derived values only
+
+### `web/src/nostr/`
+- scope subscriptions by `election_id`, `round_id`, `plane`, and `group_id` where relevant
+- avoid global oversized subscriptions
+- route incoming events to correct Rust apply/replay path
+
+Add TS integration tests after each change.
+
+## Step 14 - remove or demote legacy TS protocol engines
+
+For every migrated path:
+
+- remove old reducer logic
+- or mark it as compatibility-only and ensure it is not authoritative
+
+Required checks:
+- grep for old acceptance logic
+- grep for round-state derivation in TS
+- grep for ordering logic in TS
+- grep for private issuance truth remaining in TS
+
+Add a final test ensuring UI state still matches Rust-derived state.
+
+## Step 15 - add transcript fixtures for bounded-group model
+
+Create transcript fixtures covering:
+
+1. one supervisory group only
+2. supervisory + one cohort
+3. supervisory + multiple cohorts
+4. duplicate cross-group messages
+5. out-of-order cross-group arrival
+6. missing segment followed by backfill
+7. reload mid-session
+8. stale cohort snapshot recovery
+9. supervisory snapshot recovery
+10. public receipt commitment replay
+11. 1,000-voter-style ballot event volume simulation with voters outside MLS
+
+These fixtures are mandatory.
+
+## Step 16 - add scale-oriented simulation tests
+
+Add Rust and/or TS integration simulations for:
+
+- `5 coordinators / 1000 voters / 3 rounds`
+- `5 coordinators / 1000 voters / 5 rounds`
+- bounded private organisational groups under cap
+- large public ballot stream
+- snapshot+suffix replay under load
+
+These do not need to be full browser e2e performance tests, but they must validate:
+
+- deterministic replay
+- bounded group planning
+- public artefact compactness
+- no voter-in-MLS regression
+
+## Step 17 - docs update
+
+After code and tests pass, update docs:
+
+- architecture section
+- scaling section
+- MLS group size policy
+- multi-group coordination section
+- public/private plane separation
+- current limitations if threshold/proofs remain partial
+
+Do not claim capabilities not implemented.
 
 ---
 
-# 15. Suggested Rust crate layout
-
-> Status comment:
-> Partially done. The crate now contains many of the listed files: `lib.rs`, `types.rs`, `event.rs`, `order.rs`, `replay.rs`, `validation.rs`, `error.rs`, `diagnostics.rs`, `snapshot.rs`, `versioning.rs`, `public_state.rs`, `ballot_state.rs`, `coordinator_state.rs`, `coordinator_messages.rs`, `coordinator_engine.rs`, `openmls_engine.rs`, and `wasm.rs`. `proofs.rs`, `tally.rs`, and `threshold.rs` are still missing.
+# 17. Suggested Rust crate layout
 
 Create or expand a crate such as:
 
@@ -730,6 +1110,7 @@ Create or expand a crate such as:
 Suggested files:
 
 - `src/lib.rs`
+- `src/config.rs`
 - `src/types.rs`
 - `src/event.rs`
 - `src/order.rs`
@@ -739,12 +1120,15 @@ Suggested files:
 - `src/diagnostics.rs`
 - `src/snapshot.rs`
 - `src/versioning.rs`
+- `src/group_topology.rs`
+- `src/cross_group.rs`
 - `src/public_state.rs`
 - `src/ballot_state.rs`
 - `src/coordinator_state.rs`
 - `src/coordinator_messages.rs`
 - `src/coordinator_engine.rs`
 - `src/openmls_engine.rs`
+- `src/receipts.rs`
 - `src/proofs.rs`
 - `src/tally.rs`
 - `src/threshold.rs`
@@ -754,10 +1138,7 @@ Not every file must be fully populated immediately, but the design should head i
 
 ---
 
-# 16. Suggested TypeScript adapter layout
-
-> Status comment:
-> Mostly done for the migration seam. `web/src/core/`, `web/src/services/`, and `web/src/nostr/` now exist as the main adapter/service layers around the Rust core. Some legacy `simple*` modules still remain because the migration is not complete.
+# 18. Suggested TypeScript adapter layout
 
 TypeScript modules should remain thin.
 
@@ -783,19 +1164,18 @@ Likely responsibilities:
 ## `web/src/nostr/`
 - publish public events
 - publish coordinator control carrier events
+- publish cohort-group carrier events if needed
 - publish ballot events
 - subscribe to election streams
 - subscribe to coordinator streams
+- subscribe to cohort-group streams if needed
 - subscribe to ballot streams
 
 These modules must **not** become protocol engines.
 
 ---
 
-# 17. Existing files to adapt carefully
-
-> Status comment:
-> In progress. `SimpleCoordinatorApp.tsx`, `SimpleUiApp.tsx`, and `SimpleAuditorApp.tsx` now consume Rust-derived state for migrated slices. `simpleVotingSession.ts`, `simpleRoundState.ts`, `simpleLocalState.ts`, and `simpleShardDm.ts` still contain important compatibility and transport logic.
+# 19. Existing files to adapt carefully
 
 Do not broadly rewrite UI before the Rust seams are proven.
 
@@ -818,17 +1198,12 @@ Strategy:
 
 ---
 
-# 18. Threshold tally and proof expansion
-
-> Status comment:
-> Not done. This is still future architecture work.
+# 20. Threshold tally and proof expansion
 
 This may not need to land first, but the architecture must support it.
 
-## 18.1 Threshold abstraction
+## 20.1 Threshold abstraction
 
-> Status comment:
-> Not done.
 If stronger tally secrecy is introduced, it must sit behind a Rust abstraction such as:
 
 - `ThresholdTallyEngine`
@@ -845,10 +1220,8 @@ This abstraction may support:
 
 Do not leak specific threshold crypto library internals into the app boundary.
 
-## 18.2 Public proof derivation
+## 20.2 Public proof derivation
 
-> Status comment:
-> Not done.
 Public proof outputs should be generated in Rust and may include:
 
 - receipt set commitments
@@ -866,10 +1239,7 @@ These must be:
 
 ---
 
-# 19. Diagnostics requirements
-
-> Status comment:
-> Partially done. Rust now exposes structured diagnostics, replay status, and snapshot compatibility status through the wasm boundary. The richer quorum/proof/tally diagnostics described here are not implemented yet.
+# 21. Diagnostics requirements
 
 The system must expose structured diagnostics from Rust.
 
@@ -879,9 +1249,13 @@ Useful diagnostics include:
 - duplicate event count
 - contradictory transition warnings
 - stale snapshot warnings
+- stale cohort snapshot warnings
+- stale supervisory snapshot warnings
 - coordinator desync indicators
 - replay status
 - proof availability status
+- group size policy warnings
+- invalid liaison assignment warnings
 - quorum/threshold state if used
 
 TypeScript may display these diagnostics.
@@ -890,14 +1264,67 @@ TypeScript must not be responsible for inferring them from protocol rules.
 
 ---
 
-# 20. Anti-patterns to avoid
+# 22. Testing requirements
 
-> Status comment:
-> Mostly respected so far. The repo remains browser-first with no backend, OpenMLS is hidden from TS, and voters are not in MLS. The main remaining risk is leaving too much private issuance truth in TS for too long.
+The migration is not acceptable without strong replay and recovery testing.
+
+## 22.1 Rust truth tests
+
+Add Rust tests for:
+
+- deterministic ordering
+- coordinator replay
+- public reducer correctness
+- ballot reducer correctness
+- duplicate handling
+- contradictory event sequences
+- replay under out-of-order inputs
+- full replay vs snapshot+suffix parity
+- diagnostics correctness
+- proof derivation correctness where applicable
+- group-topology planning correctness
+- inter-group routing correctness
+- MLS cap enforcement
+
+## 22.2 Transcript-based fixtures are mandatory
+
+Use transcript fixtures for:
+
+- in-order delivery
+- out-of-order delivery
+- duplicate relay deliveries
+- missing segment followed by backfill
+- browser reload mid-workflow
+- close-boundary edge cases
+- contradictory public result publication
+- stale snapshot recovery
+- cohort/supervisory mixed recovery
+- cross-group liaison forwarding
+
+At 1,000+ voter scale, transcript correctness matters more than superficial component tests.
+
+## 22.3 JS/TS integration tests
+
+Add JS/TS integration tests for:
+
+- WASM loading
+- IndexedDB snapshot persistence/loading
+- reload and recovery
+- relay disorder integration
+- UI consumption of Rust-derived state
+- ensuring TS does not become authoritative again
+- group-topology adapter correctness
+- diagnostics display correctness
+
+Truth tests should primarily live in Rust.
+
+---
+
+# 23. Anti-patterns to avoid
 
 The LLM must avoid all of the following.
 
-## Forbidden architectural mistakes
+## 23.1 Forbidden architectural mistakes
 
 - putting voters into MLS
 - exposing OpenMLS internals to TS
@@ -909,23 +1336,22 @@ The LLM must avoid all of the following.
 - broad UI redesign before replay correctness
 - replacing working issuance logic casually
 - keeping dead legacy reducers “just in case”
+- enlarging MLS groups beyond 25 instead of sharding
 
-## Forbidden scaling mistakes
+## 23.2 Forbidden scaling mistakes
 
 - assuming full history replay is always acceptable
-- failing to partition by election/round
+- failing to partition by election/round/group
 - publishing excessively noisy public proof chatter
 - not compacting receipt/proof outputs
 - treating relay disorder as exceptional
 - ignoring snapshot/suffix parity
 - designing only for 100 voters instead of 1,000+
+- assuming one giant organisational MLS group is acceptable because the session is only one day
 
 ---
 
-# 21. Definition of done
-
-> Status comment:
-> Not done. The repo is materially closer than before, but the definition-of-done bar is not yet met.
+# 24. Definition of done
 
 The migration is complete only when:
 
@@ -938,15 +1364,23 @@ The migration is complete only when:
 - auditor reconstruction works from public artefacts only
 - diagnostics and recovery are surfaced cleanly
 - the architecture remains viable for 1,000+ voters
+- all browser MLS groups are capped at 25
+- multi-group coordination is explicit, replayable, and test-covered
 - tests pass
 - docs accurately describe the final architecture
 
+Current status against this definition:
+- not done
+- the repo is materially closer than before because the small live recovery gates are passing again and the Rust replay seams are in place
+- the biggest remaining gaps are:
+  - live browser use of the OpenMLS engine instead of the deterministic runtime seam
+  - moving the remaining private issuance/ticket truth out of TypeScript where required by this brief
+  - proof/tally expansion
+  - live scale sign-off beyond the current small gates
+
 ---
 
-# 22. Recommended practical mindset for the LLM
-
-> Status comment:
-> Broadly followed. The work so far has mostly been migration-underneath rather than UI rewrite.
+# 25. Recommended practical mindset for the LLM
 
 When working on this repo:
 
@@ -959,14 +1393,12 @@ When working on this repo:
 - never assume relay order is reliable
 - never make the browser do unnecessary full-history work if snapshots can be used
 - preserve current working surfaces until the new seam is proven
+- never solve oversized-group pressure by increasing the cap; shard instead
 
 ---
 
-# 23. Short mission statement
-
-> Status comment:
-> This still describes the intended end-state, not the current completed state.
+# 26. Short mission statement
 
 Build `auditable-voting` into a:
 
-**browser-first, replayable, multi-coordinator voting system with Rust-owned protocol logic, OpenMLS-backed coordinator control, private ballot handling, public auditability, and a design that remains credible at 1,000+ voters.**
+**browser-first, replayable, multi-coordinator voting system with Rust-owned protocol logic, OpenMLS-backed coordinator control, bounded-size organisational MLS groups, private ballot handling, public auditability, and a design that remains credible at 1,000+ voters.**

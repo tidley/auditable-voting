@@ -141,7 +141,8 @@ Recorded status:
 ### Notes
 
 - the Rust coordinator core now contains a real OpenMLS-backed group engine and the shipped coordinator Wasm build includes the `openmls-engine` feature
-- the live browser coordinator flow still uses the deterministic engine at runtime because MLS bootstrap and join carriers are not yet wired end to end
+- the live browser coordinator flow now uses the OpenMLS supervisory bootstrap/join carrier path for the repaired small gates (`1 / 1 / 1` and `2 / 2 / 2`)
+- larger-scale live runtime is still not signed off
 
 ---
 

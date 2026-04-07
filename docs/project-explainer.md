@@ -160,7 +160,7 @@ The present web client is built with:
 - **optional NIP-65 relay hints**, disabled by default, for relay discovery experiments
 - **`@cloudflare/blindrsa-ts`** for the RSABSSA blind-signature primitive used in the current issuance path
 - **Rust compiled to WebAssembly** for deterministic protocol logic, including validation helpers and the new coordinator control engine
-- **a real OpenMLS-backed coordinator engine inside the Rust core**, hidden behind a stable Rust abstraction so the browser code does not depend on MLS types directly; the live browser path still uses the deterministic engine until MLS bootstrap and join carriers are wired
+- **a real OpenMLS-backed coordinator engine inside the Rust core**, hidden behind a stable Rust abstraction so the browser code does not depend on MLS types directly; the browser coordinator path now bootstraps and joins the supervisory MLS group through Nostr carrier events for the repaired small live cases
 - **a Rust mixed-replay engine for public rounds and ballots**, now used by the voter, coordinator, and auditor public-state views to derive round state, accepted ballots, and rejection reasons
 - **versioned Rust snapshots and replay diagnostics** for the shared protocol engine, so the browser can restore state, validate snapshot compatibility, and surface replay issues without re-implementing protocol rules in TypeScript
 - **IndexedDB** for browser-local active state
@@ -197,7 +197,7 @@ That mix matters scientifically because the system is not just a protocol sketch
 - blind issuance responses sent directly from each coordinator to the voter
 - acknowledgements
 - automatic retry of unacknowledged ticket delivery
-- periodic history backfill for missed ticket DMs
+- periodic history backfill for missed live rounds and ticket DMs
 
 ### Coordinator control path
 
@@ -580,7 +580,7 @@ If coordinator signing keys are exposed in browser storage, an attacker can mint
 ### 4. Relay delivery is messy in the real world
 
 Live relay behavior is probabilistic, so follow requests, announcements, blind requests, and tickets all need recovery and reconciliation logic.
-The current app now does better at small scale by limiting live read fanout, aligning coordinator-control and DM traffic to the same primary relay subset, and backfilling from history, but that is still not enough to make large committee runs production-grade on public relays.
+The current app now does better at small scale by limiting live read fanout, aligning coordinator-control and DM traffic to the same primary relay subset, and backfilling both live rounds and ticket traffic from history, but that is still not enough to make large committee runs production-grade on public relays.
 
 ### 5. Cryptography must be conservative
 

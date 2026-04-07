@@ -20,10 +20,13 @@ export function buildCoordinatorControlTags(message: CoordinatorOutboundTranspor
   ];
 }
 
-export function transportEventFromNostrEvent(event: Pick<NostrEvent, "id" | "content">): CoordinatorTransportEvent {
+export function transportEventFromNostrEvent(
+  event: Pick<NostrEvent, "id" | "content" | "pubkey">,
+): CoordinatorTransportEvent {
   return {
     event_id: event.id,
     raw_content: event.content,
+    sender_pubkey: event.pubkey,
   };
 }
 

@@ -27,10 +27,25 @@ pub enum CoordinatorEngineError {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CoordinatorEngineKind {
+    Deterministic,
+    OpenMls,
+}
+
+impl Default for CoordinatorEngineKind {
+    fn default() -> Self {
+        Self::Deterministic
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CoordinatorEngineConfig {
     pub election_id: String,
     pub local_pubkey: String,
     pub coordinator_roster: Vec<String>,
+    #[serde(default)]
+    pub engine_kind: CoordinatorEngineKind,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -60,9 +75,16 @@ pub struct CoordinatorEngineView {
     pub election_id: String,
     pub local_pubkey: String,
     pub coordinator_roster: Vec<String>,
+    pub engine_kind: CoordinatorEngineKind,
     pub logical_epoch: u64,
     pub latest_round: Option<CoordinatorRoundView>,
     pub rounds: Vec<CoordinatorRoundView>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CoordinatorEngineStatus {
+    pub engine_kind: CoordinatorEngineKind,
+    pub group_ready: bool,
 }
 
 pub struct CoordinatorControlEngine {
@@ -72,29 +94,29 @@ pub struct CoordinatorControlEngine {
 }
 
 impl CoordinatorControlEngine {
-    pub fn new(config: CoordinatorEngineConfig) -> Self {
+    pub fn new(config: CoordinatorEngineConfig) -> Result<Self, CoordinatorEngineError> {
         let roster = normalise_roster(&config.coordinator_roster);
         let config = CoordinatorEngineConfig {
             coordinator_roster: roster.clone(),
             ..config
         };
 
-        Self {
+        Ok(Self {
             state: CoordinatorControlState::new(
                 config.election_id.clone(),
                 config.local_pubkey.clone(),
                 roster,
             ),
+            group_engine: create_group_engine(&config.engine_kind, &config.local_pubkey)?,
             config,
-            group_engine: Box::<DeterministicCoordinatorGroupEngine>::default(),
-        }
+        })
     }
 
-    pub fn restore(snapshot: CoordinatorEngineSnapshot) -> Self {
-        let mut engine = Self::new(snapshot.config.clone());
+    pub fn restore(snapshot: CoordinatorEngineSnapshot) -> Result<Self, CoordinatorEngineError> {
+        let mut engine = Self::new(snapshot.config.clone())?;
         engine.state = snapshot.state;
         engine.group_engine.restore(snapshot.group_engine);
-        engine
+        Ok(engine)
     }
 
     pub fn snapshot(&self) -> CoordinatorEngineSnapshot {
@@ -102,6 +124,13 @@ impl CoordinatorControlEngine {
             config: self.config.clone(),
             state: self.state.clone(),
             group_engine: self.group_engine.snapshot(),
+        }
+    }
+
+    pub fn engine_status(&self) -> CoordinatorEngineStatus {
+        CoordinatorEngineStatus {
+            engine_kind: self.config.engine_kind.clone(),
+            group_ready: self.group_engine.is_ready(),
         }
     }
 
@@ -162,6 +191,7 @@ impl CoordinatorControlEngine {
             election_id: self.config.election_id.clone(),
             local_pubkey: self.config.local_pubkey.clone(),
             coordinator_roster: self.state.coordinator_roster.clone(),
+            engine_kind: self.config.engine_kind.clone(),
             logical_epoch: self.state.logical_epoch,
             latest_round,
             rounds,
@@ -181,6 +211,31 @@ impl CoordinatorControlEngine {
         event: CoordinatorTransportEvent,
     ) -> Result<Vec<ReplayAppliedEvent>, CoordinatorEngineError> {
         self.replay_transport_messages(vec![event])
+    }
+
+    pub fn apply_published_local_message(
+        &mut self,
+        event_id: String,
+        local_echo: String,
+    ) -> Result<Vec<ReplayAppliedEvent>, CoordinatorEngineError> {
+        if self.state.has_processed_event(&event_id) {
+            return Ok(Vec::new());
+        }
+
+        let envelope = serde_json::from_str::<CoordinatorControlEnvelope>(&local_echo)
+            .map_err(|error| CoordinatorEngineError::Serialization(error.to_string()))?;
+        let event_type = envelope.payload.event_type();
+        let round_id = envelope.round_id.clone();
+        let created_at = envelope.created_at;
+
+        self.state.apply_envelope(&event_id, &envelope);
+
+        Ok(vec![ReplayAppliedEvent {
+            event_id,
+            event_type,
+            round_id,
+            created_at,
+        }])
     }
 
     pub fn record_round_draft(
@@ -297,6 +352,30 @@ impl CoordinatorControlEngine {
         self.create_outbound(Some(round_id), created_at, payload)
     }
 
+    pub fn export_supervisory_join_package(&mut self) -> Result<Option<String>, CoordinatorEngineError> {
+        self.group_engine
+            .export_join_package(&self.config.election_id)
+            .map_err(CoordinatorEngineError::from)
+    }
+
+    pub fn bootstrap_supervisory_group(
+        &mut self,
+        member_join_packages: Vec<String>,
+    ) -> Result<Option<String>, CoordinatorEngineError> {
+        self.group_engine
+            .bootstrap_group(&self.config.election_id, member_join_packages)
+            .map_err(CoordinatorEngineError::from)
+    }
+
+    pub fn join_supervisory_group(
+        &mut self,
+        welcome_bundle: String,
+    ) -> Result<bool, CoordinatorEngineError> {
+        self.group_engine
+            .join_group(&welcome_bundle)
+            .map_err(CoordinatorEngineError::from)
+    }
+
     fn create_outbound(
         &mut self,
         round_id: Option<String>,
@@ -313,6 +392,8 @@ impl CoordinatorControlEngine {
             logical_epoch,
             payload,
         );
+        let local_echo =
+            serde_json::to_string(&envelope).map_err(|error| CoordinatorEngineError::Serialization(error.to_string()))?;
         let content = self.group_engine.encode(&envelope)?;
         Ok(OutboundCoordinatorTransportMessage {
             schema_version: COORDINATOR_SCHEMA_VERSION,
@@ -323,7 +404,35 @@ impl CoordinatorControlEngine {
             sender_pubkey: self.config.local_pubkey.clone(),
             logical_epoch,
             content,
+            local_echo,
         })
+    }
+}
+
+fn create_group_engine(
+    engine_kind: &CoordinatorEngineKind,
+    local_pubkey: &str,
+) -> Result<Box<dyn CoordinatorGroupEngine>, CoordinatorEngineError> {
+    match engine_kind {
+        CoordinatorEngineKind::Deterministic => {
+            Ok(Box::<DeterministicCoordinatorGroupEngine>::default())
+        }
+        CoordinatorEngineKind::OpenMls => {
+            #[cfg(feature = "openmls-engine")]
+            {
+                Ok(Box::new(
+                    crate::openmls_engine::OpenMlsCoordinatorGroupEngine::new_with_identity(
+                        local_pubkey,
+                    )?,
+                ))
+            }
+            #[cfg(not(feature = "openmls-engine"))]
+            {
+                Err(CoordinatorEngineError::GroupEngine(
+                    GroupEngineError::OpenMlsUnavailable,
+                ))
+            }
+        }
     }
 }
 

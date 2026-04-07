@@ -25,12 +25,14 @@ pub struct OutboundCoordinatorTransportMessage {
     pub sender_pubkey: String,
     pub logical_epoch: Option<u64>,
     pub content: String,
+    pub local_echo: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CoordinatorTransportEvent {
     pub event_id: String,
     pub raw_content: String,
+    pub sender_pubkey: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -14,6 +14,14 @@ pub enum GroupEngineError {
 pub trait CoordinatorGroupEngine {
     fn encode(&mut self, envelope: &CoordinatorControlEnvelope) -> Result<String, GroupEngineError>;
     fn decode(&mut self, raw_content: &str) -> Result<CoordinatorControlEnvelope, GroupEngineError>;
+    fn export_join_package(&mut self, election_id: &str) -> Result<Option<String>, GroupEngineError>;
+    fn bootstrap_group(
+        &mut self,
+        election_id: &str,
+        member_join_packages: Vec<String>,
+    ) -> Result<Option<String>, GroupEngineError>;
+    fn join_group(&mut self, welcome_bundle: &str) -> Result<bool, GroupEngineError>;
+    fn is_ready(&self) -> bool;
     fn snapshot(&self) -> CoordinatorGroupEngineSnapshot;
     fn restore(&mut self, snapshot: CoordinatorGroupEngineSnapshot);
 }
@@ -45,9 +53,29 @@ impl CoordinatorGroupEngine for DeterministicCoordinatorGroupEngine {
         serde_json::from_str(raw_content).map_err(|error| GroupEngineError::InvalidPayload(error.to_string()))
     }
 
+    fn export_join_package(&mut self, _election_id: &str) -> Result<Option<String>, GroupEngineError> {
+        Ok(None)
+    }
+
+    fn bootstrap_group(
+        &mut self,
+        _election_id: &str,
+        _member_join_packages: Vec<String>,
+    ) -> Result<Option<String>, GroupEngineError> {
+        Ok(None)
+    }
+
+    fn join_group(&mut self, _welcome_bundle: &str) -> Result<bool, GroupEngineError> {
+        Ok(true)
+    }
+
+    fn is_ready(&self) -> bool {
+        true
+    }
+
     fn snapshot(&self) -> CoordinatorGroupEngineSnapshot {
         CoordinatorGroupEngineSnapshot {
-            engine_kind: "deterministic_stub".to_owned(),
+            engine_kind: "deterministic".to_owned(),
             openmls_state: None,
         }
     }
@@ -60,10 +88,10 @@ mod openmls_impl {
     use base64::Engine as _;
     use openmls::prelude::{
         tls_codec::{Deserialize as _, Serialize as _},
-        CredentialWithKey, GroupId, MlsGroup, MlsMessageIn, ProcessedMessageContent,
+        BasicCredential, CredentialWithKey, GroupId, KeyPackage, KeyPackageIn, MlsGroup, MlsGroupCreateConfig,
+        MlsGroupJoinConfig, MlsMessageBodyIn, MlsMessageIn, ProcessedMessageContent, RatchetTreeIn,
+        StagedWelcome, ProtocolVersion,
     };
-    #[cfg(test)]
-    use openmls::prelude::{BasicCredential, KeyPackage, MlsGroupCreateConfig, StagedWelcome};
     use openmls_basic_credential::SignatureKeyPair;
     use openmls_rust_crypto::OpenMlsRustCrypto;
     use openmls_traits::OpenMlsProvider as _;
@@ -72,9 +100,14 @@ mod openmls_impl {
 
     use super::{CoordinatorControlEnvelope, GroupEngineError, OpenMlsCoordinatorStateSnapshot};
 
-    #[cfg(test)]
     const CIPHERSUITE: openmls::prelude::Ciphersuite =
         openmls::prelude::Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    struct OpenMlsWelcomeBundle {
+        welcome_b64: String,
+        ratchet_tree_b64: String,
+    }
 
     #[derive(Debug, Default, Serialize, Deserialize)]
     struct SerializableStore {
@@ -99,8 +132,7 @@ mod openmls_impl {
             }
         }
 
-        #[cfg(test)]
-        pub fn create_lead(identity: &str) -> Result<Self, GroupEngineError> {
+        pub fn new_with_identity(identity: &str) -> Result<Self, GroupEngineError> {
             let provider = OpenMlsRustCrypto::default();
             let credential = BasicCredential::new(identity.as_bytes().to_vec());
             let signer = SignatureKeyPair::new(CIPHERSUITE.signature_algorithm())
@@ -121,9 +153,31 @@ mod openmls_impl {
             })
         }
 
+        pub fn export_join_key_package(&self) -> Result<String, GroupEngineError> {
+            let provider = self.provider.as_ref().ok_or(GroupEngineError::OpenMlsUnavailable)?;
+            let signer = self.signer.as_ref().ok_or(GroupEngineError::OpenMlsUnavailable)?;
+            let credential_with_key = self
+                .credential_with_key
+                .clone()
+                .ok_or(GroupEngineError::OpenMlsUnavailable)?;
+            let key_package = KeyPackage::builder()
+                .build(CIPHERSUITE, provider, signer, credential_with_key)
+                .map_err(|error| GroupEngineError::InvalidPayload(format!("{error:?}")))?;
+            let encoded = key_package
+                .key_package()
+                .tls_serialize_detached()
+                .map_err(|error| GroupEngineError::InvalidPayload(format!("{error:?}")))?;
+            Ok(base64::prelude::BASE64_STANDARD.encode(encoded))
+        }
+
+        #[cfg(test)]
+        pub fn create_lead(identity: &str) -> Result<Self, GroupEngineError> {
+            Self::new_with_identity(identity)
+        }
+
         #[cfg(test)]
         pub fn create_member(identity: &str) -> Result<(Self, KeyPackage), GroupEngineError> {
-            let engine = Self::create_lead(identity)?;
+            let engine = Self::new_with_identity(identity)?;
             let provider = engine.provider.as_ref().ok_or(GroupEngineError::OpenMlsUnavailable)?;
             let signer = engine.signer.as_ref().ok_or(GroupEngineError::OpenMlsUnavailable)?;
             let credential_with_key = engine
@@ -150,7 +204,6 @@ mod openmls_impl {
                 .unwrap_or_default()
         }
 
-        #[cfg(test)]
         pub fn bootstrap_lead(
             &mut self,
             election_id: &str,
@@ -176,19 +229,21 @@ mod openmls_impl {
                 credential,
             )
             .map_err(|error| GroupEngineError::InvalidPayload(format!("{error:?}")))?;
-
-            let add_refs = member_key_packages.iter().cloned().collect::<Vec<_>>();
-            let (_, welcome, _) = group
-                .add_members(provider, signer, &add_refs)
-                .map_err(|error| GroupEngineError::InvalidPayload(format!("{error:?}")))?;
-            group
-                .merge_pending_commit(provider)
-                .map_err(|error| GroupEngineError::InvalidPayload(format!("{error:?}")))?;
             self.group_id = Some(group_id);
-
-            let welcome_bytes = welcome
-                .tls_serialize_detached()
-                .map_err(|error| GroupEngineError::InvalidPayload(format!("{error:?}")))?;
+            let welcome_bytes = if member_key_packages.is_empty() {
+                Vec::new()
+            } else {
+                let add_refs = member_key_packages.iter().cloned().collect::<Vec<_>>();
+                let (_, welcome, _) = group
+                    .add_members(provider, signer, &add_refs)
+                    .map_err(|error| GroupEngineError::InvalidPayload(format!("{error:?}")))?;
+                group
+                    .merge_pending_commit(provider)
+                    .map_err(|error| GroupEngineError::InvalidPayload(format!("{error:?}")))?;
+                welcome
+                    .tls_serialize_detached()
+                    .map_err(|error| GroupEngineError::InvalidPayload(format!("{error:?}")))?
+            };
             let ratchet_tree_bytes = group
                 .export_ratchet_tree()
                 .tls_serialize_detached()
@@ -197,7 +252,6 @@ mod openmls_impl {
             Ok((welcome_bytes, ratchet_tree_bytes))
         }
 
-        #[cfg(test)]
         pub fn join_from_welcome(
             &mut self,
             welcome_bytes: &[u8],
@@ -208,7 +262,7 @@ mod openmls_impl {
             let welcome_message = MlsMessageIn::tls_deserialize(&mut welcome_slice)
                 .map_err(|error| GroupEngineError::InvalidPayload(format!("{error:?}")))?;
             let welcome = match welcome_message.extract() {
-                openmls::prelude::MlsMessageBodyIn::Welcome(welcome) => welcome,
+                MlsMessageBodyIn::Welcome(welcome) => welcome,
                 other => {
                     return Err(GroupEngineError::InvalidPayload(format!(
                         "Expected MLS welcome, got {other:?}"
@@ -216,9 +270,9 @@ mod openmls_impl {
                 }
             };
             let mut ratchet_tree_slice = ratchet_tree_bytes;
-            let ratchet_tree = openmls::prelude::RatchetTreeIn::tls_deserialize(&mut ratchet_tree_slice)
+            let ratchet_tree = RatchetTreeIn::tls_deserialize(&mut ratchet_tree_slice)
                 .map_err(|error| GroupEngineError::InvalidPayload(format!("{error:?}")))?;
-            let join_config = openmls::prelude::MlsGroupJoinConfig::default();
+            let join_config = MlsGroupJoinConfig::default();
             let group = StagedWelcome::new_from_welcome(
                 provider,
                 &join_config,
@@ -345,6 +399,79 @@ mod openmls_impl {
                     "Expected MLS application message, got {other:?}"
                 ))),
             }
+        }
+
+        fn export_join_package(&mut self, _election_id: &str) -> Result<Option<String>, GroupEngineError> {
+            if self.group_id.is_some() {
+                return Ok(None);
+            }
+
+            Ok(Some(self.export_join_key_package()?))
+        }
+
+        fn bootstrap_group(
+            &mut self,
+            election_id: &str,
+            member_join_packages: Vec<String>,
+        ) -> Result<Option<String>, GroupEngineError> {
+            if self.group_id.is_some() {
+                return Ok(None);
+            }
+
+            let provider = self.provider.as_ref().ok_or(GroupEngineError::OpenMlsUnavailable)?;
+
+            let member_packages = member_join_packages
+                .into_iter()
+                .map(|value| {
+                    let decoded = base64::prelude::BASE64_STANDARD
+                        .decode(value)
+                        .map_err(|error| GroupEngineError::InvalidPayload(error.to_string()))?;
+                    let mut slice = decoded.as_slice();
+                    KeyPackageIn::tls_deserialize(&mut slice)
+                        .map_err(|error| GroupEngineError::InvalidPayload(format!("{error:?}")))
+                        .and_then(|key_package_in| {
+                            key_package_in
+                                .validate(provider.crypto(), ProtocolVersion::default())
+                                .map_err(|error| GroupEngineError::InvalidPayload(format!("{error:?}")))
+                        })
+                        .map_err(|error| GroupEngineError::InvalidPayload(format!("{error:?}")))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+
+            let (welcome_bytes, ratchet_tree_bytes) = self.bootstrap_lead(election_id, &member_packages)?;
+            if member_packages.is_empty() {
+                return Ok(None);
+            }
+
+            let bundle = OpenMlsWelcomeBundle {
+                welcome_b64: base64::prelude::BASE64_STANDARD.encode(welcome_bytes),
+                ratchet_tree_b64: base64::prelude::BASE64_STANDARD.encode(ratchet_tree_bytes),
+            };
+            Ok(Some(
+                serde_json::to_string(&bundle)
+                    .map_err(|error| GroupEngineError::InvalidPayload(error.to_string()))?,
+            ))
+        }
+
+        fn join_group(&mut self, welcome_bundle: &str) -> Result<bool, GroupEngineError> {
+            if self.group_id.is_some() {
+                return Ok(false);
+            }
+
+            let bundle = serde_json::from_str::<OpenMlsWelcomeBundle>(welcome_bundle)
+                .map_err(|error| GroupEngineError::InvalidPayload(error.to_string()))?;
+            let welcome_bytes = base64::prelude::BASE64_STANDARD
+                .decode(bundle.welcome_b64)
+                .map_err(|error| GroupEngineError::InvalidPayload(error.to_string()))?;
+            let ratchet_tree_bytes = base64::prelude::BASE64_STANDARD
+                .decode(bundle.ratchet_tree_b64)
+                .map_err(|error| GroupEngineError::InvalidPayload(error.to_string()))?;
+            self.join_from_welcome(&welcome_bytes, &ratchet_tree_bytes)?;
+            Ok(true)
+        }
+
+        fn is_ready(&self) -> bool {
+            self.group_id.is_some()
         }
 
         fn snapshot(&self) -> super::CoordinatorGroupEngineSnapshot {

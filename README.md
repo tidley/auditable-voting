@@ -22,13 +22,13 @@ The shipped app currently includes:
 - per-round blind-signature key announcements
 - blind-signature share issuance and public ballot verification
 - coordinator-side per-ticket relay publish diagnostics for issued shares
-- periodic DM-history backfill for missed ticket delivery
+- periodic history backfill for missed live rounds and ticket delivery
 - smaller primary relay subsets for live reads and subscriptions, with the coordinator-control and DM planes aligned to the same primary relay subset used for recovery
 - local browser persistence, backup, and optional passphrase protection
 - optional relay hint resolution via NIP-65, disabled by default
 - a growing Rust/Wasm core for deterministic protocol logic
 
-The client-only architecture is in place, but live relay reliability and recovery behaviour still need hardening. The coordinator browser flow still uses the deterministic control engine at runtime today; the new OpenMLS-backed engine is now implemented and built in the Rust/Wasm core, but its bootstrap and join carriers are not yet wired into the live browser control path.
+The client-only architecture is in place, and the browser coordinator control path now runs through the OpenMLS-backed Rust/Wasm engine for the repaired small live cases. Live relay reliability and recovery behaviour still need further hardening at larger scale: local `1 / 1 / 1` and `2 / 2 / 2` gates are passing again, while `5 / 10 / 3` is still not signed off.
 Empirically, recent local-preview runs are now clean at `1 coordinator / 2 voters / 2 rounds` and `2 coordinators / 2 voters / 2 rounds`, and the single-coordinator path has also been strong at `1 coordinator / 20 voters / 3 rounds`. Larger public-relay committee runs remain unresolved: `5 coordinators / 10 voters / 3 rounds` is still not signed off, and `5 coordinators / 10 voters / 10 rounds` remains non-viable on the current public relay set.
 
 ## What is in this repo

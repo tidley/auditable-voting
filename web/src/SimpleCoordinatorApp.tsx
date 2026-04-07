@@ -6,9 +6,11 @@ import {
   subscribeSimpleCoordinatorFollowers,
   subscribeSimpleDmAcknowledgements,
   subscribeSimpleCoordinatorShareAssignments,
+  subscribeSimpleCoordinatorMlsWelcomes,
   subscribeSimpleShardRequests,
   subscribeSimpleSubCoordinatorApplications,
   sendSimpleCoordinatorRoster,
+  sendSimpleCoordinatorMlsWelcome,
   sendSimpleDmAcknowledgement,
   sendSimpleShareAssignment,
   sendSimpleSubCoordinatorJoin,
@@ -365,6 +367,9 @@ export default function SimpleCoordinatorApp() {
   const sentRequestAckIdsRef = useRef<Set<string>>(new Set());
   const sentSubCoordinatorAckIdsRef = useRef<Set<string>>(new Set());
   const sentAssignmentAckIdsRef = useRef<Set<string>>(new Set());
+  const sentMlsWelcomeStateRef = useRef<Record<string, string>>({});
+  const seenMlsWelcomeIdsRef = useRef<Set<string>>(new Set());
+  const mlsBootstrapInFlightRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -572,6 +577,7 @@ export default function SimpleCoordinatorApp() {
         electionId: coordinatorElectionId,
         localPubkey: localCoordinatorHexPubkey,
         roster: coordinatorHexRoster,
+        engineKind: "open_mls",
         snapshot: coordinatorControlCache?.snapshot ?? null,
       });
 
@@ -601,8 +607,12 @@ export default function SimpleCoordinatorApp() {
       }
 
       if (initialEvents.length > 0) {
-        service.ingestCoordinatorEvents(initialEvents);
-        syncState();
+        try {
+          service.ingestCoordinatorEvents(initialEvents);
+          syncState();
+        } catch {
+          setCoordinatorControlStateLabel("Waiting for coordinator-control replay.");
+        }
       }
 
       const maybeApprove = async () => {
@@ -637,8 +647,12 @@ export default function SimpleCoordinatorApp() {
           }
 
           if (events.length > 0) {
-            coordinatorControlServiceRef.current.ingestCoordinatorEvents(events);
-            syncState();
+            try {
+              coordinatorControlServiceRef.current.ingestCoordinatorEvents(events);
+              syncState();
+            } catch {
+              setCoordinatorControlStateLabel("Waiting for coordinator-control replay.");
+            }
           }
 
           await maybeApprove();
@@ -660,8 +674,12 @@ export default function SimpleCoordinatorApp() {
             return;
           }
 
-          coordinatorControlServiceRef.current.ingestCoordinatorEvents(events);
-          syncState();
+          try {
+            coordinatorControlServiceRef.current.ingestCoordinatorEvents(events);
+            syncState();
+          } catch {
+            setCoordinatorControlStateLabel("Waiting for coordinator-control replay.");
+          }
           void maybeApprove();
         },
       });
@@ -690,6 +708,45 @@ export default function SimpleCoordinatorApp() {
     keypair?.npub,
     keypair?.nsec,
   ]);
+
+  useEffect(() => {
+    if (isLeadCoordinator || !keypair?.nsec) {
+      return;
+    }
+
+    return subscribeSimpleCoordinatorMlsWelcomes({
+      coordinatorNsec: keypair.nsec,
+      onWelcomes: (welcomes) => {
+        const service = coordinatorControlServiceRef.current;
+        if (!service || service.getEngineStatus().engine_kind !== "open_mls") {
+          return;
+        }
+
+        for (const welcome of welcomes) {
+          if (
+            welcome.electionId !== coordinatorElectionId
+            || welcome.leadCoordinatorNpub !== leadCoordinatorNpub.trim()
+            || seenMlsWelcomeIdsRef.current.has(welcome.id)
+          ) {
+            continue;
+          }
+
+          seenMlsWelcomeIdsRef.current.add(welcome.id);
+          try {
+            const joined = service.joinSupervisoryGroup(welcome.welcomeBundle);
+            if (joined) {
+              setCoordinatorControlCache(service.snapshot());
+              setCoordinatorControlView(service.getState());
+              setCoordinatorControlStateLabel(formatCoordinatorControlStateLabel(service.getState()));
+              setRegistrationStatus("Coordinator MLS join completed.");
+            }
+          } catch {
+            seenMlsWelcomeIdsRef.current.delete(welcome.id);
+          }
+        }
+      },
+    });
+  }, [coordinatorElectionId, isLeadCoordinator, keypair?.nsec, leadCoordinatorNpub]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1822,6 +1879,10 @@ export default function SimpleCoordinatorApp() {
       return;
     }
 
+    if (!(await ensureCoordinatorControlGroupReady())) {
+      return;
+    }
+
     setPublishStatus("Proposing round open...");
 
     try {
@@ -1876,10 +1937,31 @@ export default function SimpleCoordinatorApp() {
     setRegistrationStatus("Notifying lead coordinator...");
 
     try {
+      const service = coordinatorControlServiceRef.current ?? (
+        coordinatorElectionId && localCoordinatorHexPubkey
+          ? await CoordinatorControlService.create({
+            electionId: coordinatorElectionId,
+            localPubkey: localCoordinatorHexPubkey,
+            roster: coordinatorHexRoster,
+            engineKind: "open_mls",
+            snapshot: coordinatorControlCache?.snapshot ?? null,
+          })
+          : null
+      );
+      if (service && coordinatorControlServiceRef.current !== service) {
+        coordinatorControlServiceRef.current = service;
+        setCoordinatorControlCache(service.snapshot());
+        setCoordinatorControlView(service.getState());
+        setCoordinatorControlStateLabel(formatCoordinatorControlStateLabel(service.getState()));
+      }
+      const mlsJoinPackage = service?.getEngineStatus().engine_kind === "open_mls"
+        ? service.exportSupervisoryJoinPackage() ?? undefined
+        : undefined;
       const result = await sendSimpleSubCoordinatorJoin({
         coordinatorSecretKey,
         leadCoordinatorNpub: nextLeadCoordinatorNpub,
         coordinatorNpub,
+        mlsJoinPackage,
       });
 
       setRegistrationStatus(
@@ -1889,6 +1971,73 @@ export default function SimpleCoordinatorApp() {
       );
     } catch {
       setRegistrationStatus("Lead coordinator notification failed.");
+    }
+  }
+
+  async function ensureCoordinatorControlGroupReady() {
+    const service = coordinatorControlServiceRef.current;
+    if (!service) {
+      setPublishStatus("Coordinator control engine is not ready.");
+      return false;
+    }
+
+    const status = service.getEngineStatus();
+    if (status.engine_kind !== "open_mls" || status.group_ready) {
+      return true;
+    }
+
+    if (!isLeadCoordinator) {
+      setPublishStatus("Waiting for MLS welcome from the lead coordinator.");
+      return false;
+    }
+
+    if (mlsBootstrapInFlightRef.current) {
+      setPublishStatus("Preparing coordinator MLS group...");
+      return false;
+    }
+
+    mlsBootstrapInFlightRef.current = true;
+    setPublishStatus("Preparing coordinator MLS group...");
+    try {
+      const joinPackages = subCoordinators
+        .map((application) => application.mlsJoinPackage?.trim() ?? "")
+        .filter((value) => value.length > 0);
+      const welcomeBundle = service.bootstrapSupervisoryGroup(joinPackages);
+      setCoordinatorControlCache(service.snapshot());
+      setCoordinatorControlView(service.getState());
+      setCoordinatorControlStateLabel(formatCoordinatorControlStateLabel(service.getState()));
+
+      if (welcomeBundle) {
+        const leadCoordinatorSecretKey = decodeNsec(keypair?.nsec ?? "");
+        const leadCoordinatorNpub = keypair?.npub ?? "";
+        if (!leadCoordinatorSecretKey || !leadCoordinatorNpub) {
+          setPublishStatus("Coordinator MLS bootstrap failed.");
+          return false;
+        }
+
+        for (const application of subCoordinators) {
+          const signature = `${coordinatorElectionId}:${application.id}:${welcomeBundle}`;
+          if (sentMlsWelcomeStateRef.current[application.coordinatorNpub] === signature) {
+            continue;
+          }
+          sentMlsWelcomeStateRef.current[application.coordinatorNpub] = signature;
+          await sendSimpleCoordinatorMlsWelcome({
+            leadCoordinatorSecretKey,
+            leadCoordinatorNpub,
+            coordinatorNpub: application.coordinatorNpub,
+            electionId: coordinatorElectionId,
+            welcomeBundle,
+          });
+        }
+      }
+
+      setPublishStatus(null);
+      return service.getEngineStatus().group_ready;
+    } catch {
+      setPublishStatus("Coordinator MLS bootstrap failed.");
+      return false;
+    } finally {
+      mlsBootstrapInFlightRef.current = false;
     }
   }
 

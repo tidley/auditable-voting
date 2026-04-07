@@ -2,6 +2,8 @@ import { nip19 } from "nostr-tools";
 import {
   CoordinatorCoreAdapter,
   type CoordinatorEngineSnapshot,
+  type CoordinatorEngineStatus,
+  type CoordinatorEngineConfig,
   type CoordinatorEngineView,
 } from "../core/coordinatorCoreAdapter";
 import { transportEventFromNostrEvent } from "../core/coordinatorEventBridge";
@@ -19,6 +21,7 @@ function snapshotMatchesInput(input: {
   electionId: string;
   localPubkey: string;
   roster: string[];
+  engineKind?: CoordinatorEngineConfig["engine_kind"];
   snapshot?: CoordinatorEngineSnapshot | null;
 }) {
   if (!input.snapshot) {
@@ -30,6 +33,7 @@ function snapshotMatchesInput(input: {
 
   return input.snapshot.config.election_id === input.electionId
     && input.snapshot.config.local_pubkey === input.localPubkey
+    && (input.snapshot.config.engine_kind ?? "deterministic") === (input.engineKind ?? "deterministic")
     && expectedRoster.length === actualRoster.length
     && expectedRoster.every((value, index) => value === actualRoster[index]);
 }
@@ -41,15 +45,17 @@ export class CoordinatorControlService {
     electionId: string;
     localPubkey: string;
     roster: string[];
+    engineKind?: CoordinatorEngineConfig["engine_kind"];
     snapshot?: CoordinatorEngineSnapshot | null;
   }) {
     const canRestore = snapshotMatchesInput(input);
     const adapter = canRestore && input.snapshot
       ? await CoordinatorCoreAdapter.restore(input.snapshot)
-      : await CoordinatorCoreAdapter.create({
+        : await CoordinatorCoreAdapter.create({
           election_id: input.electionId,
           local_pubkey: input.localPubkey,
           coordinator_roster: sortRoster(input.roster),
+          engine_kind: input.engineKind ?? "deterministic",
         });
 
     return new CoordinatorControlService(adapter);
@@ -63,9 +69,29 @@ export class CoordinatorControlService {
     return this.adapter.getState();
   }
 
-  ingestCoordinatorEvents(events: Array<{ id: string; content: string }>) {
+  getEngineStatus(): CoordinatorEngineStatus {
+    return this.adapter.getEngineStatus();
+  }
+
+  exportSupervisoryJoinPackage() {
+    return this.adapter.exportSupervisoryJoinPackage();
+  }
+
+  bootstrapSupervisoryGroup(joinPackages: string[]) {
+    return this.adapter.bootstrapSupervisoryGroup(joinPackages);
+  }
+
+  joinSupervisoryGroup(welcomeBundle: string) {
+    return this.adapter.joinSupervisoryGroup(welcomeBundle);
+  }
+
+  ingestCoordinatorEvents(events: Array<{ id: string; content: string; pubkey?: string }>) {
     return this.adapter.replayTransportMessages(
-      events.map((event) => transportEventFromNostrEvent({ id: event.id, content: event.content })),
+      events.map((event) => transportEventFromNostrEvent({
+        id: event.id,
+        content: event.content,
+        pubkey: event.pubkey ?? "",
+      })),
     );
   }
 
@@ -101,20 +127,14 @@ export class CoordinatorControlService {
       message: draft,
       relays: input.relays,
     });
-    this.adapter.applyTransportMessage({
-      event_id: draftPublish.eventId,
-      raw_content: draft.content,
-    });
+    this.adapter.applyPublishedLocalMessage(draftPublish.eventId, draft.local_echo);
 
     const proposalPublish = await publishCoordinatorControl({
       coordinatorNsec: input.coordinatorNsec,
       message: proposal,
       relays: input.relays,
     });
-    this.adapter.applyTransportMessage({
-      event_id: proposalPublish.eventId,
-      raw_content: proposal.content,
-    });
+    this.adapter.applyPublishedLocalMessage(proposalPublish.eventId, proposal.local_echo);
 
     const leadCommitMessage = this.adapter.commitRoundOpen({
       round_id: input.roundId,
@@ -126,10 +146,7 @@ export class CoordinatorControlService {
       message: leadCommitMessage,
       relays: input.relays,
     });
-    this.adapter.applyTransportMessage({
-      event_id: leadCommitPublish.eventId,
-      raw_content: leadCommitMessage.content,
-    });
+    this.adapter.applyPublishedLocalMessage(leadCommitPublish.eventId, leadCommitMessage.local_echo);
 
     return {
       draft: draftPublish,
@@ -172,10 +189,7 @@ export class CoordinatorControlService {
       message: outbound,
       relays: input.relays,
     });
-    this.adapter.applyTransportMessage({
-      event_id: published.eventId,
-      raw_content: outbound.content,
-    });
+    this.adapter.applyPublishedLocalMessage(published.eventId, outbound.local_echo);
     return {
       published,
       state: this.getState(),

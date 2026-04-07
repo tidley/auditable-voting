@@ -109,6 +109,7 @@ export type SimpleSubCoordinatorApplication = {
   coordinatorNpub: string;
   coordinatorId: string;
   leadCoordinatorNpub: string;
+  mlsJoinPackage?: string;
   createdAt: string;
 };
 
@@ -119,6 +120,15 @@ export type SimpleShareAssignment = {
   coordinatorNpub: string;
   shareIndex: number;
   thresholdN?: number;
+  createdAt: string;
+};
+
+export type SimpleCoordinatorMlsWelcome = {
+  id: string;
+  dmEventId: string;
+  leadCoordinatorNpub: string;
+  electionId: string;
+  welcomeBundle: string;
   createdAt: string;
 };
 
@@ -351,6 +361,7 @@ function parseSimpleSubCoordinatorApplication(
       application_id?: string;
       coordinator_npub?: string;
       lead_coordinator_npub?: string;
+      mls_join_package?: string;
       created_at?: string;
     };
 
@@ -369,6 +380,52 @@ function parseSimpleSubCoordinatorApplication(
       coordinatorNpub: payload.coordinator_npub,
       coordinatorId: deriveActorDisplayId(payload.coordinator_npub),
       leadCoordinatorNpub: payload.lead_coordinator_npub,
+      mlsJoinPackage:
+        typeof payload.mls_join_package === "string" && payload.mls_join_package.trim().length > 0
+          ? payload.mls_join_package
+          : undefined,
+      createdAt:
+        payload.created_at ??
+        new Date(wrappedEvent.created_at * 1000).toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseSimpleCoordinatorMlsWelcome(
+  wrappedEvent: Record<string, unknown> & { id?: string; created_at: number },
+  secretKey: Uint8Array,
+): SimpleCoordinatorMlsWelcome | null {
+  try {
+    const rumor = nip17.unwrapEvent(wrappedEvent as never, secretKey) as {
+      content: string;
+    };
+    const payload = JSON.parse(rumor.content) as {
+      action?: string;
+      welcome_id?: string;
+      lead_coordinator_npub?: string;
+      election_id?: string;
+      welcome_bundle?: string;
+      created_at?: string;
+    };
+
+    if (
+      payload.action !== "simple_mls_welcome" ||
+      !payload.welcome_id ||
+      !payload.lead_coordinator_npub ||
+      !payload.election_id ||
+      !payload.welcome_bundle
+    ) {
+      return null;
+    }
+
+    return {
+      id: payload.welcome_id,
+      dmEventId: String(wrappedEvent.id ?? payload.welcome_id),
+      leadCoordinatorNpub: payload.lead_coordinator_npub,
+      electionId: payload.election_id,
+      welcomeBundle: payload.welcome_bundle,
       createdAt:
         payload.created_at ??
         new Date(wrappedEvent.created_at * 1000).toISOString(),
@@ -762,6 +819,7 @@ export async function sendSimpleSubCoordinatorJoin(input: {
   coordinatorSecretKey: Uint8Array;
   leadCoordinatorNpub: string;
   coordinatorNpub: string;
+  mlsJoinPackage?: string;
   relays?: string[];
 }): Promise<DmPublishResult> {
   const decoded = nip19.decode(input.leadCoordinatorNpub);
@@ -792,6 +850,7 @@ export async function sendSimpleSubCoordinatorJoin(input: {
       application_id: crypto.randomUUID(),
       coordinator_npub: input.coordinatorNpub,
       lead_coordinator_npub: input.leadCoordinatorNpub,
+      mls_join_package: input.mlsJoinPackage,
       created_at: new Date().toISOString(),
     }),
     "Join lead coordinator",
@@ -806,6 +865,78 @@ export async function sendSimpleSubCoordinatorJoin(input: {
     ),
     {
       channel: buildDmPublishChannel(input.leadCoordinatorNpub),
+      minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
+    },
+  );
+  const relayResults = results.map((result, index) => (
+    result.status === "fulfilled"
+      ? { relay: dmRelays[index], success: true }
+      : {
+          relay: dmRelays[index],
+          success: false,
+          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        }
+  ));
+
+  return {
+    eventId: event.id,
+    successes: relayResults.filter((result) => result.success).length,
+    failures: relayResults.filter((result) => !result.success).length,
+    relayResults,
+  };
+}
+
+export async function sendSimpleCoordinatorMlsWelcome(input: {
+  leadCoordinatorSecretKey: Uint8Array;
+  leadCoordinatorNpub: string;
+  coordinatorNpub: string;
+  electionId: string;
+  welcomeBundle: string;
+  relays?: string[];
+}): Promise<DmPublishResult> {
+  const decoded = nip19.decode(input.coordinatorNpub);
+  if (decoded.type !== "npub") {
+    throw new Error("Coordinator value must be an npub.");
+  }
+
+  const dmRelays = await resolveConversationDmRelays(
+    input.coordinatorNpub,
+    input.leadCoordinatorNpub,
+    input.relays,
+  );
+  await publishOwnNip65RelayHints({
+    secretKey: input.leadCoordinatorSecretKey,
+    inboxRelays: dmRelays,
+    outboxRelays: dmRelays,
+    publishRelays: dmRelays,
+    channel: `nip65:${input.leadCoordinatorNpub}`,
+  }).catch(() => null);
+  const event = nip17.wrapEvent(
+    input.leadCoordinatorSecretKey,
+    {
+      publicKey: decoded.data as string,
+      relayUrl: dmRelays[0],
+    },
+    JSON.stringify({
+      action: "simple_mls_welcome",
+      welcome_id: crypto.randomUUID(),
+      lead_coordinator_npub: input.leadCoordinatorNpub,
+      election_id: input.electionId,
+      welcome_bundle: input.welcomeBundle,
+      created_at: new Date().toISOString(),
+    }),
+    "MLS welcome",
+  );
+
+  const pool = getSharedNostrPool();
+  const results = await queueNostrPublish(
+    () => publishToRelaysStaggered(
+      (relay) => pool.publish([relay], event, { maxWait: SIMPLE_DM_PUBLISH_MAX_WAIT_MS })[0],
+      dmRelays,
+      { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
+    ),
+    {
+      channel: buildDmPublishChannel(input.coordinatorNpub),
       minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
     },
   );
@@ -1466,6 +1597,112 @@ export function subscribeSimpleSubCoordinatorApplications(input: {
 
         applications.set(application.coordinatorNpub, application);
         input.onApplications(sortByCreatedAtDescending([...applications.values()]));
+      },
+      onclose: (reasons) => {
+        if (closed) {
+          return;
+        }
+
+        const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
+        if (errors.length > 0) {
+          input.onError?.(new Error(errors.join("; ")));
+        }
+      },
+      maxWait: SIMPLE_DM_SUBSCRIPTION_MAX_WAIT_MS,
+    });
+  }).catch((error) => {
+    if (!closed && error instanceof Error) {
+      input.onError?.(error);
+    }
+  });
+
+  return () => {
+    closed = true;
+    void subscription?.close("closed by caller");
+  };
+}
+
+export async function fetchSimpleCoordinatorMlsWelcomes(input: {
+  coordinatorNsec: string;
+  relays?: string[];
+}): Promise<SimpleCoordinatorMlsWelcome[]> {
+  const { secretKey, publicHex, npub } = getNpubFromNsec(
+    input.coordinatorNsec,
+    "Coordinator",
+  );
+  const dmRelays = selectDmReadRelays(await resolveRecipientInboxRelays(npub, input.relays));
+  const pool = getSharedNostrPool();
+  const wrappedEvents = await pool.querySync(dmRelays, {
+    kinds: [1059],
+    "#p": [publicHex],
+    limit: 100,
+  });
+
+  const welcomes = new Map<string, SimpleCoordinatorMlsWelcome>();
+
+  for (const wrappedEvent of wrappedEvents) {
+    const welcome = parseSimpleCoordinatorMlsWelcome(wrappedEvent, secretKey);
+    if (welcome) {
+      welcomes.set(welcome.id, welcome);
+    }
+  }
+
+  return sortByCreatedAtDescending([...welcomes.values()]);
+}
+
+export function subscribeSimpleCoordinatorMlsWelcomes(input: {
+  coordinatorNsec: string;
+  relays?: string[];
+  onWelcomes: (welcomes: SimpleCoordinatorMlsWelcome[]) => void;
+  onError?: (error: Error) => void;
+}): () => void {
+  const { secretKey, publicHex, npub } = getNpubFromNsec(
+    input.coordinatorNsec,
+    "Coordinator",
+  );
+  const pool = getSharedNostrPool();
+  const welcomes = new Map<string, SimpleCoordinatorMlsWelcome>();
+  let closed = false;
+  let subscription: { close: (reason?: string) => Promise<void> | void } | null = null;
+
+  void fetchSimpleCoordinatorMlsWelcomes({
+    coordinatorNsec: input.coordinatorNsec,
+    relays: input.relays,
+  }).then((initialWelcomes) => {
+    if (closed) {
+      return;
+    }
+
+    for (const welcome of initialWelcomes) {
+      welcomes.set(welcome.id, welcome);
+    }
+
+    input.onWelcomes(sortByCreatedAtDescending([...welcomes.values()]));
+  }).catch((error) => {
+    if (!closed && error instanceof Error) {
+      input.onError?.(error);
+    }
+  });
+
+  void resolveRecipientInboxRelays(npub, input.relays).then((resolvedRelays) => {
+    if (closed) {
+      return;
+    }
+    const dmRelays = selectDmReadRelays(resolvedRelays);
+
+    subscription = pool.subscribeMany(dmRelays, {
+      kinds: [1059],
+      "#p": [publicHex],
+      limit: 100,
+    }, {
+      onevent: (wrappedEvent) => {
+        const welcome = parseSimpleCoordinatorMlsWelcome(wrappedEvent, secretKey);
+        if (!welcome) {
+          return;
+        }
+
+        welcomes.set(welcome.id, welcome);
+        input.onWelcomes(sortByCreatedAtDescending([...welcomes.values()]));
       },
       onclose: (reasons) => {
         if (closed) {

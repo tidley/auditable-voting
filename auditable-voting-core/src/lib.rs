@@ -19,7 +19,8 @@ pub mod wasm;
 pub use diagnostics::{ProtocolDiagnostics, ReplayStatus, ValidationIssueCount};
 pub use error::ProtocolEngineError;
 pub use coordinator_engine::{
-    CoordinatorControlEngine, CoordinatorEngineConfig, CoordinatorEngineSnapshot,
+    CoordinatorControlEngine, CoordinatorEngineConfig, CoordinatorEngineKind, CoordinatorEngineSnapshot,
+    CoordinatorEngineStatus,
     CoordinatorEngineView, CoordinatorRoundView,
 };
 pub use coordinator_messages::{CoordinatorControlEnvelope, CoordinatorControlPayload};
@@ -40,7 +41,9 @@ pub use wasm::{WasmAuditableVotingProtocolEngine, WasmCoordinatorControlEngine};
 #[cfg(test)]
 mod tests {
     use crate::ballot_state::BallotAcceptanceRule;
-    use crate::coordinator_engine::{CoordinatorControlEngine, CoordinatorEngineConfig};
+    use crate::coordinator_engine::{
+        CoordinatorControlEngine, CoordinatorEngineConfig, CoordinatorEngineKind,
+    };
     use crate::event::{
         BallotEvent, CoordinatorControlEvent, ElectionDefinitionEvent, EncryptedBallotEvent,
         ProtocolEvent, PublicEvent, RoundLifecycleEvent,
@@ -54,7 +57,39 @@ mod tests {
             election_id: "election-1".to_owned(),
             local_pubkey: local_pubkey.to_owned(),
             coordinator_roster: vec!["coord-1".to_owned(), "coord-2".to_owned()],
+            engine_kind: CoordinatorEngineKind::Deterministic,
         })
+        .unwrap()
+    }
+
+    #[test]
+    fn deterministic_engine_selection_is_preserved_in_snapshot_and_view() {
+        let engine = create_engine("coord-1");
+        let snapshot = engine.snapshot();
+        assert_eq!(snapshot.config.engine_kind, CoordinatorEngineKind::Deterministic);
+        assert_eq!(engine.view().engine_kind, CoordinatorEngineKind::Deterministic);
+
+        let restored = CoordinatorControlEngine::restore(snapshot).unwrap();
+        assert_eq!(restored.view().engine_kind, CoordinatorEngineKind::Deterministic);
+    }
+
+    #[cfg(feature = "openmls-engine")]
+    #[test]
+    fn openmls_engine_selection_is_preserved_in_snapshot_and_view() {
+        let engine = CoordinatorControlEngine::new(CoordinatorEngineConfig {
+            election_id: "election-1".to_owned(),
+            local_pubkey: "coord-1".to_owned(),
+            coordinator_roster: vec!["coord-1".to_owned(), "coord-2".to_owned()],
+            engine_kind: CoordinatorEngineKind::OpenMls,
+        })
+        .unwrap();
+
+        let snapshot = engine.snapshot();
+        assert_eq!(snapshot.config.engine_kind, CoordinatorEngineKind::OpenMls);
+        assert_eq!(engine.view().engine_kind, CoordinatorEngineKind::OpenMls);
+
+        let restored = CoordinatorControlEngine::restore(snapshot).unwrap();
+        assert_eq!(restored.view().engine_kind, CoordinatorEngineKind::OpenMls);
     }
 
     fn publish_from_engine(
@@ -65,6 +100,7 @@ mod tests {
         let event = CoordinatorTransportEvent {
             event_id: event_id.to_owned(),
             raw_content: outbound.content,
+            sender_pubkey: None,
         };
         let _ = engine.apply_transport_message(event.clone()).unwrap();
         event
@@ -116,6 +152,7 @@ mod tests {
         let commit_event = CoordinatorTransportEvent {
             event_id: "event-commit-2".to_owned(),
             raw_content: commit.content,
+            sender_pubkey: None,
         };
 
         let _ = lead
@@ -313,18 +350,22 @@ mod tests {
                 CoordinatorTransportEvent {
                     event_id: "event-commit-1".to_owned(),
                     raw_content: lead_commit.content,
+                    sender_pubkey: None,
                 },
                 CoordinatorTransportEvent {
                     event_id: "event-commit-2".to_owned(),
                     raw_content: commit.content,
+                    sender_pubkey: None,
                 },
                 CoordinatorTransportEvent {
                     event_id: "event-proposal".to_owned(),
                     raw_content: proposal.content,
+                    sender_pubkey: None,
                 },
                 CoordinatorTransportEvent {
                     event_id: "event-draft".to_owned(),
                     raw_content: draft.content,
+                    sender_pubkey: None,
                 },
             ])
             .unwrap();
@@ -349,6 +390,7 @@ mod tests {
         let transport = CoordinatorTransportEvent {
             event_id: "event-proposal".to_owned(),
             raw_content: proposal.content,
+            sender_pubkey: None,
         };
         let _ = engine
             .replay_transport_messages(vec![transport.clone(), transport])
@@ -376,12 +418,14 @@ mod tests {
             .apply_transport_message(CoordinatorTransportEvent {
                 event_id: "event-proposal".to_owned(),
                 raw_content: proposal.content.clone(),
+                sender_pubkey: None,
             })
             .unwrap();
         let _ = engine
             .apply_transport_message(CoordinatorTransportEvent {
                 event_id: "event-commit-1".to_owned(),
                 raw_content: lead_commit.content,
+                sender_pubkey: None,
             })
             .unwrap();
 
@@ -390,6 +434,7 @@ mod tests {
             .apply_transport_message(CoordinatorTransportEvent {
                 event_id: "event-proposal".to_owned(),
                 raw_content: proposal.content,
+                sender_pubkey: None,
             })
             .unwrap();
         let commit = sub
@@ -406,6 +451,7 @@ mod tests {
             .apply_transport_message(CoordinatorTransportEvent {
                 event_id: "event-commit-2".to_owned(),
                 raw_content: commit.content,
+                sender_pubkey: None,
             })
             .unwrap();
 
@@ -433,17 +479,19 @@ mod tests {
             .apply_transport_message(CoordinatorTransportEvent {
                 event_id: "event-proposal".to_owned(),
                 raw_content: proposal.content.clone(),
+                sender_pubkey: None,
             })
             .unwrap();
         let _ = engine
             .apply_transport_message(CoordinatorTransportEvent {
                 event_id: "event-commit-1".to_owned(),
                 raw_content: lead_commit.content,
+                sender_pubkey: None,
             })
             .unwrap();
 
         let snapshot = engine.snapshot();
-        let mut restored = CoordinatorControlEngine::restore(snapshot);
+        let mut restored = CoordinatorControlEngine::restore(snapshot).unwrap();
         let commit = create_engine("coord-2")
             .commit_round_open("round-1".to_owned(), "event-proposal".to_owned(), 12)
             .unwrap();
@@ -451,6 +499,7 @@ mod tests {
             .apply_transport_message(CoordinatorTransportEvent {
                 event_id: "event-commit-2".to_owned(),
                 raw_content: commit.content,
+                sender_pubkey: None,
             })
             .unwrap();
 
@@ -470,6 +519,7 @@ mod tests {
             .apply_transport_message(CoordinatorTransportEvent {
                 event_id: "partial-1".to_owned(),
                 raw_content: partial.content,
+                sender_pubkey: None,
             })
             .unwrap();
 
@@ -481,6 +531,7 @@ mod tests {
             .apply_transport_message(CoordinatorTransportEvent {
                 event_id: "partial-2".to_owned(),
                 raw_content: partial_2.content,
+                sender_pubkey: None,
             })
             .unwrap();
 
@@ -496,6 +547,7 @@ mod tests {
             .apply_transport_message(CoordinatorTransportEvent {
                 event_id: "approval-1".to_owned(),
                 raw_content: approval.content,
+                sender_pubkey: None,
             })
             .unwrap();
         let approval_2 = sub
@@ -505,6 +557,7 @@ mod tests {
             .apply_transport_message(CoordinatorTransportEvent {
                 event_id: "approval-2".to_owned(),
                 raw_content: approval_2.content,
+                sender_pubkey: None,
             })
             .unwrap();
 
