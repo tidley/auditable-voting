@@ -24,7 +24,6 @@ export async function fetchCoordinatorControlEvents(input: {
   const relays = buildReadRelays(input.relays);
   const filter: Filter = {
     kinds: [SIMPLE_COORDINATOR_CONTROL_KIND],
-    authors: input.coordinatorHexPubkeys?.length ? input.coordinatorHexPubkeys : undefined,
     limit: input.limit ?? 200,
   };
   const events = await pool.querySync(relays, filter);
@@ -41,7 +40,6 @@ export function subscribeCoordinatorControl(input: {
   const relays = buildReadRelays(input.relays);
   const filter: Filter = {
     kinds: [SIMPLE_COORDINATOR_CONTROL_KIND],
-    authors: input.coordinatorHexPubkeys?.length ? input.coordinatorHexPubkeys : undefined,
     limit: 200,
   };
 

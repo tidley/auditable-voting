@@ -568,7 +568,7 @@ export default function SimpleCoordinatorApp() {
       const service = await CoordinatorControlService.create({
         electionId: coordinatorElectionId,
         localPubkey: localCoordinatorHexPubkey,
-        roster: coordinatorRoster,
+        roster: coordinatorHexRoster,
         snapshot: coordinatorControlCache?.snapshot ?? null,
       });
 
@@ -642,7 +642,6 @@ export default function SimpleCoordinatorApp() {
   }, [
     coordinatorElectionId,
     coordinatorHexRoster,
-    coordinatorRoster,
     identityReady,
     isLeadCoordinator,
     localCoordinatorHexPubkey,
@@ -1784,7 +1783,7 @@ export default function SimpleCoordinatorApp() {
         prompt,
         thresholdT: threshold.thresholdT,
         thresholdN: threshold.thresholdN,
-        roster: coordinatorRoster,
+        roster: coordinatorHexRoster,
       });
       setCoordinatorControlCache(service.snapshot());
       setCoordinatorControlView(result.state);
