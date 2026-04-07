@@ -30,6 +30,8 @@ debug/
 .fingerprint/
 
 # Rust / Wasm build artefacts
+auditable-voting-core/target/
 web/rust-core/target/
 web/rust-core/Cargo.lock
 web/src/wasm/auditable_voting_core/pkg/
+web/src/wasm/auditable_voting_coordinator_core/pkg/

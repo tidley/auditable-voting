@@ -9,10 +9,15 @@ const requiredFiles = [
   resolve(webDir, "src/wasm/auditable_voting_core/pkg/auditable_voting_rust_core.js"),
   resolve(webDir, "src/wasm/auditable_voting_core/pkg/auditable_voting_rust_core_bg.js"),
   resolve(webDir, "src/wasm/auditable_voting_core/pkg/auditable_voting_rust_core_bg.wasm"),
+  resolve(webDir, "src/wasm/auditable_voting_coordinator_core/pkg/auditable_voting_core.js"),
+  resolve(webDir, "src/wasm/auditable_voting_coordinator_core/pkg/auditable_voting_core_bg.js"),
+  resolve(webDir, "src/wasm/auditable_voting_coordinator_core/pkg/auditable_voting_core_bg.wasm"),
 ];
 const rustSourceRoots = [
   resolve(webDir, "rust-core/Cargo.toml"),
   resolve(webDir, "rust-core/src"),
+  resolve(webDir, "../auditable-voting-core/Cargo.toml"),
+  resolve(webDir, "../auditable-voting-core/src"),
 ];
 
 function collectFilePaths(path) {

@@ -1,0 +1,23 @@
+[package]
+name = "auditable-voting-core"
+version = "0.1.0"
+edition = "2021"
+description = "Rust/Wasm coordinator control and replay core for the auditable-voting browser client"
+repository = "https://github.com/tidley/auditable-voting"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+openmls-engine = ["dep:openmls", "dep:openmls_memory_keystore", "dep:openmls_traits"]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde-wasm-bindgen = "0.6"
+thiserror = "1.0"
+wasm-bindgen = "0.2"
+openmls = { version = "0.8.1", optional = true }
+openmls_memory_keystore = { version = "0.2.0", optional = true }
+openmls_traits = { version = "0.5.0", optional = true }

@@ -172,6 +172,13 @@ let coordinatorRosterAnnouncements: Array<{
   coordinatorNpubs: string[];
   createdAt: string;
 }> = [];
+let coordinatorControlEventCounter = 0;
+let coordinatorControlEvents: Array<{
+  id: string;
+  electionId: string;
+  authorPubkey: string;
+  content: string;
+}> = [];
 let coordinatorRosterSubscribers: Array<{
   recipientNpub: string;
   onAnnouncements: (announcements: Array<{
@@ -187,6 +194,55 @@ let blindAnnouncementSubscribers: Array<{
   votingId?: string;
   onAnnouncement: (announcement: any | null) => void;
 }> = [];
+let coordinatorControlSubscribers: Array<{
+  electionId: string;
+  coordinatorHexPubkeys?: string[];
+  onEvents: (events: Array<{ id: string; content: string }>) => void;
+}> = [];
+let coordinatorControlRoundCounter = 0;
+let coordinatorControlSnapshots = new Map<string, {
+  snapshot: {
+    config: {
+      election_id: string;
+      local_pubkey: string;
+      coordinator_roster: string[];
+    };
+    state: Record<string, never>;
+    group_engine: { engine_kind: string };
+  };
+  state: {
+    election_id: string;
+    local_pubkey: string;
+    coordinator_roster: string[];
+    logical_epoch: number;
+    latest_round: null | {
+      round_id: string;
+      prompt: string;
+      threshold_t: number;
+      threshold_n: number;
+      coordinator_roster: string[];
+      proposal_event_id: string | null;
+      phase: string;
+      open_committers: string[];
+      missing_open_committers: string[];
+      partial_tally_senders: string[];
+      result_approval_senders: string[];
+    };
+    rounds: Array<{
+      round_id: string;
+      prompt: string;
+      threshold_t: number;
+      threshold_n: number;
+      coordinator_roster: string[];
+      proposal_event_id: string | null;
+      phase: string;
+      open_committers: string[];
+      missing_open_committers: string[];
+      partial_tally_senders: string[];
+      result_approval_senders: string[];
+    }>;
+  };
+}>();
 let suppressedShardResponseNotifications = new Set<string>();
 let suppressedShardResponseNotificationRoutes = new Set<string>();
 let droppedTicketAttemptsByRoute = new Map<string, number>();
@@ -398,6 +454,21 @@ function notifyCoordinatorRosterSubscribers(recipientNpub: string) {
     if (subscriber.recipientNpub === recipientNpub) {
       subscriber.onAnnouncements(nextAnnouncements);
     }
+  }
+}
+
+function notifyCoordinatorControlSubscribers(electionId: string) {
+  const matchingEvents = coordinatorControlEvents.filter((event) => event.electionId === electionId);
+  for (const subscriber of coordinatorControlSubscribers) {
+    if (subscriber.electionId !== electionId) {
+      continue;
+    }
+
+    const visibleEvents = matchingEvents.filter((event) => (
+      !subscriber.coordinatorHexPubkeys?.length
+      || subscriber.coordinatorHexPubkeys.includes(event.authorPubkey)
+    ));
+    subscriber.onEvents(visibleEvents.map((event) => ({ id: event.id, content: event.content })));
   }
 }
 
@@ -1053,6 +1124,194 @@ vi.mock("./simpleVotingSession", () => ({
   }),
 }));
 
+vi.mock("./nostr/publishCoordinatorControl", () => ({
+  publishCoordinatorControl: vi.fn(async (input: {
+    coordinatorNsec: string;
+    message: { election_id: string; content: string };
+  }) => {
+    const authorPubkey = nsecToNpub(input.coordinatorNsec);
+    const eventId = `coordinator-control-${++coordinatorControlEventCounter}`;
+    coordinatorControlEvents.push({
+      id: eventId,
+      electionId: input.message.election_id,
+      authorPubkey: nip19.decode(authorPubkey).type === "npub"
+        ? (nip19.decode(authorPubkey).data as string)
+        : authorPubkey,
+      content: input.message.content,
+    });
+    notifyCoordinatorControlSubscribers(input.message.election_id);
+    return {
+      eventId,
+      successes: 1,
+      failures: 0,
+      relayResults: [],
+    };
+  }),
+}));
+
+vi.mock("./nostr/subscribeCoordinatorControl", () => ({
+  fetchCoordinatorControlEvents: vi.fn(async (input: {
+    electionId: string;
+    coordinatorHexPubkeys?: string[];
+  }) => (
+    coordinatorControlEvents
+      .filter((event) => (
+        event.electionId === input.electionId
+        && (!input.coordinatorHexPubkeys?.length || input.coordinatorHexPubkeys.includes(event.authorPubkey))
+      ))
+      .map((event) => ({ id: event.id, content: event.content }))
+  )),
+  subscribeCoordinatorControl: vi.fn((input: {
+    electionId: string;
+    coordinatorHexPubkeys?: string[];
+    onEvents: (events: Array<{ id: string; content: string }>) => void;
+  }) => {
+    const subscriber = {
+      electionId: input.electionId,
+      coordinatorHexPubkeys: input.coordinatorHexPubkeys,
+      onEvents: input.onEvents,
+    };
+    coordinatorControlSubscribers.push(subscriber);
+    input.onEvents(
+      coordinatorControlEvents
+        .filter((event) => (
+          event.electionId === input.electionId
+          && (!input.coordinatorHexPubkeys?.length || input.coordinatorHexPubkeys.includes(event.authorPubkey))
+        ))
+        .map((event) => ({ id: event.id, content: event.content })),
+    );
+    return () => {
+      coordinatorControlSubscribers = coordinatorControlSubscribers.filter((entry) => entry !== subscriber);
+    };
+  }),
+}));
+
+vi.mock("./services/CoordinatorControlService", () => {
+  class MockCoordinatorControlService {
+    private constructor(
+      private readonly key: string,
+      private readonly electionId: string,
+      private readonly localPubkey: string,
+      private readonly roster: string[],
+    ) {}
+
+    static async create(input: {
+      electionId: string;
+      localPubkey: string;
+      roster: string[];
+    }) {
+      const key = `${input.electionId}:${input.localPubkey}`;
+      const sortedRoster = [...new Set(input.roster.filter(Boolean))].sort();
+      const existing = coordinatorControlSnapshots.get(key);
+      if (!existing) {
+        coordinatorControlSnapshots.set(key, {
+          snapshot: {
+            config: {
+              election_id: input.electionId,
+              local_pubkey: input.localPubkey,
+              coordinator_roster: sortedRoster,
+            },
+            state: {},
+            group_engine: { engine_kind: "deterministic" },
+          },
+          state: {
+            election_id: input.electionId,
+            local_pubkey: input.localPubkey,
+            coordinator_roster: sortedRoster,
+            logical_epoch: 0,
+            latest_round: null,
+            rounds: [],
+          },
+        });
+      }
+      return new MockCoordinatorControlService(key, input.electionId, input.localPubkey, sortedRoster);
+    }
+
+    snapshot() {
+      return coordinatorControlSnapshots.get(this.key)!;
+    }
+
+    getState() {
+      return coordinatorControlSnapshots.get(this.key)!.state;
+    }
+
+    ingestCoordinatorEvents() {
+      return [];
+    }
+
+    async publishRoundOpenFlow(input: {
+      roundId: string;
+      prompt: string;
+      thresholdT: number;
+      thresholdN: number;
+      roster: string[];
+    }) {
+      const proposalEventId = `proposal-${++coordinatorControlRoundCounter}`;
+      const round = {
+        round_id: input.roundId,
+        prompt: input.prompt,
+        threshold_t: input.thresholdT,
+        threshold_n: input.thresholdN,
+        coordinator_roster: [...new Set(input.roster.filter(Boolean))].sort(),
+        proposal_event_id: proposalEventId,
+        phase: "open",
+        open_committers: [...new Set(input.roster.filter(Boolean))].sort(),
+        missing_open_committers: [],
+        partial_tally_senders: [],
+        result_approval_senders: [],
+      };
+      coordinatorControlSnapshots.set(this.key, {
+        snapshot: {
+          config: {
+            election_id: this.electionId,
+            local_pubkey: this.localPubkey,
+            coordinator_roster: this.roster,
+          },
+          state: {},
+          group_engine: { engine_kind: "deterministic" },
+        },
+        state: {
+          election_id: this.electionId,
+          local_pubkey: this.localPubkey,
+          coordinator_roster: this.roster,
+          logical_epoch: coordinatorControlRoundCounter,
+          latest_round: round,
+          rounds: [round],
+        },
+      });
+      return {
+        draft: { eventId: `draft-${coordinatorControlRoundCounter}` },
+        proposal: { eventId: proposalEventId },
+        leadCommit: { eventId: `commit-${coordinatorControlRoundCounter}` },
+        state: coordinatorControlSnapshots.get(this.key)!.state,
+      };
+    }
+
+    async maybeAutoApproveRoundOpen() {
+      return null;
+    }
+  }
+
+  return {
+    CoordinatorControlService: MockCoordinatorControlService,
+    deriveCoordinatorElectionId: ({ coordinatorNpub, leadCoordinatorNpub }: { coordinatorNpub: string; leadCoordinatorNpub?: string }) => (
+      `simple-election:${(leadCoordinatorNpub?.trim() || coordinatorNpub.trim())}`
+    ),
+    npubsToHexRoster: (values: string[]) => (
+      values
+        .map((value) => {
+          try {
+            const decoded = nip19.decode(value);
+            return decoded.type === "npub" ? decoded.data : null;
+          } catch {
+            return null;
+          }
+        })
+        .filter((value): value is string => typeof value === "string" && value.length > 0)
+    ),
+  };
+});
+
 describe("Simple round flow", () => {
   beforeEach(async () => {
     class MockWebSocket extends EventTarget {
@@ -1099,6 +1358,10 @@ describe("Simple round flow", () => {
     blindAnnouncements = {};
     dmAcknowledgements = [];
     coordinatorRosterAnnouncements = [];
+    coordinatorControlEventCounter = 0;
+    coordinatorControlEvents = [];
+    coordinatorControlRoundCounter = 0;
+    coordinatorControlSnapshots = new Map();
     followerSubscribers = [];
     shardResponseSubscribers = [];
     liveVoteSubscribers = [];
@@ -1110,6 +1373,7 @@ describe("Simple round flow", () => {
     dmAcknowledgementSubscribers = [];
     coordinatorRosterSubscribers = [];
     blindAnnouncementSubscribers = [];
+    coordinatorControlSubscribers = [];
     suppressedShardResponseNotifications = new Set();
     suppressedShardResponseNotificationRoutes = new Set();
     droppedTicketAttemptsByRoute = new Map();

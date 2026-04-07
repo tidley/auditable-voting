@@ -292,6 +292,7 @@ A coordinator:
 
 - verifies voter eligibility
 - publishes voting rounds
+- exchanges round-control messages with other coordinators
 - issues blind signature shares
 - validates ballots
 - tallies votes
@@ -309,6 +310,7 @@ An observer:
 
 Relays are the shared event layer:
 
+- coordinator control carrier events
 - public rounds
 - public ballots
 - public results
@@ -355,10 +357,13 @@ The present web client is built with:
 - **TypeScript 5** for the browser application logic
 - **Vite 5** for local development and static-site bundling
 - **`nostr-tools` 2.x** for Nostr keys, event signing, subscriptions, and relay publishing
+- **a dedicated coordinator-control carrier over Nostr** for round proposals, commits, tally coordination, and recovery checkpoints
 - **NIP-17 gift-wrapped DMs** for follow, issuance, direct ticket delivery, acknowledgement traffic, and history-based recovery
 - **optional NIP-65 relay hints**, disabled by default, for relay discovery experiments
 - **`@cloudflare/blindrsa-ts`** for the RSABSSA blind-signature primitive used in the current issuance path
-- **Rust compiled to WebAssembly** for deterministic protocol logic, including parts of validation and relay-set handling
+- **Rust compiled to WebAssembly** for deterministic protocol logic, including validation helpers and the new coordinator control engine
+- **an OpenMLS-shaped Rust abstraction** behind that coordinator engine, with a deterministic fixed-membership engine currently used in the browser build as the phase-1 migration seam
+- **a Rust mixed-replay engine for public rounds and ballots**, now used by the auditor flow to derive round state, accepted ballots, and rejection reasons
 - **IndexedDB** for browser-local active state
 - **WebCrypto** for local encryption and passphrase-protected state
 
@@ -370,6 +375,7 @@ That mix matters scientifically because the system is not just a protocol sketch
 
 ### Public on Nostr
 
+- coordinator-control carrier events
 - round announcements
 - coordinator identities
 - blind key announcements
@@ -382,6 +388,7 @@ That mix matters scientifically because the system is not just a protocol sketch
 - voter private keys
 - blind request secrets
 - unspent credential material
+- coordinator control snapshots and replay checkpoints
 - local cache / restore bundles
 
 ### Private DM traffic
@@ -393,6 +400,30 @@ That mix matters scientifically because the system is not just a protocol sketch
 - automatic retry of unacknowledged ticket delivery
 - periodic history backfill for missed ticket DMs
 
+### Coordinator control path
+
+The coordinator-to-coordinator control path is now separate from the voter issuance path.
+
+In the current migration phase:
+
+- coordinators publish typed control envelopes to a dedicated Nostr carrier stream
+- the browser feeds those events into a Rust/Wasm engine
+- the Rust engine applies canonical ordering, replay, and state transitions
+- the lead only publishes the public live round after that control state reaches round-open agreement
+
+That means coordinator round agreement is no longer inferred ad hoc from UI state or DM arrival order.
+
+### Public replay path
+
+The public round and ballot plane is also moving under Rust protocol control.
+
+In the current migration slice:
+
+- public round-open events and public ballot events are normalised by the browser bridge
+- the Rust/Wasm core replays those events under one canonical ordering rule
+- ballot acceptance uses one fixed rule, documented in code: **first valid ballot wins**
+- the auditor view consumes that Rust-derived state instead of a separate TypeScript reducer
+
 ---
 
 ## 7. The End-to-End Flow
@@ -403,8 +434,13 @@ sequenceDiagram
   participant N as Nostr
   participant L as Lead
   participant C as Sub-coordinator
+  participant R as Rust/Wasm Coordinator Engine
   participant O as Observer
 
+  L->>N: Publish coordinator control draft / proposal / commit
+  C->>N: Publish coordinator control commit
+  N->>R: Replay control events canonically
+  R->>L: Round open agreed
   L->>N: Publish round announcement
   L->>N: Publish round blind key
   C->>N: Publish sub-coordinator blind key
@@ -696,6 +732,9 @@ The repository now focuses on the client-side web app only:
 
 - `simple.html` is the main client-side shell
 - voter and coordinator flows use `Configure`, `Vote`/`Voting`, and `Settings` tabs
+- coordinator round-open agreement now goes through a Rust/Wasm coordinator-control service
+- coordinator control messages are replayed deterministically from Nostr history instead of being inferred from relay arrival order
+- the auditor’s public round and ballot view now uses Rust-derived replay state
 - adding a coordinator in the voter flow immediately starts the follow/notify DM path
 - the lead coordinator now auto-sends share indexes to sub-coordinators
 - each coordinator sends its own ticket share directly to the voter
@@ -710,6 +749,16 @@ The repository now focuses on the client-side web app only:
 The older backend-oriented stack has been removed from this repository.
 The client-only architecture is in place, but live relay reliability and recovery behaviour still need hardening.
 Current live evidence is mixed: single-coordinator runs up to `1 coordinator / 20 voters / 3 rounds` have completed cleanly in local-preview tests, and repeated `2 coordinators / 2 voters / 1 round` runs now complete, but larger public-relay runs such as `5 coordinators / 10 voters / 10 rounds` are still not operationally viable.
+
+### Migration seam status
+
+The current coordinator-control seam is intentionally incremental:
+
+- the voter issuance path still uses the existing blind-signature DM flow
+- the public ballot and auditor path still use public Nostr events, but the auditor’s reducer logic is now Rust-owned
+- the coordinator control path and the auditor’s public replay path now run behind the Rust/Wasm replay engine
+
+That keeps the user-facing flow largely intact while moving the most order-sensitive coordinator logic out of React components.
 
 ---
 

@@ -27,6 +27,14 @@ import {
   type SimpleSubmittedVote,
 } from "./simpleVotingSession";
 import {
+  deriveCoordinatorElectionId,
+  CoordinatorControlService,
+  npubsToHexRoster,
+  type CoordinatorControlCache,
+} from "./services/CoordinatorControlService";
+import type { CoordinatorEngineView } from "./core/coordinatorCoreAdapter";
+import { fetchCoordinatorControlEvents, subscribeCoordinatorControl } from "./nostr/subscribeCoordinatorControl";
+import {
   validateSimpleSubmittedVotes,
   type SimpleValidatedVote,
 } from "./simpleVoteValidation";
@@ -106,6 +114,7 @@ type SimpleCoordinatorCache = {
   roundBlindPrivateKeys: Record<string, SimpleBlindPrivateKey>;
   roundBlindKeyAnnouncements: Record<string, SimpleBlindKeyAnnouncement>;
   publishStatus: string | null;
+  coordinatorControlCache?: CoordinatorControlCache | null;
   publishedVotes: SimpleLiveVoteSession[];
   selectedVotingId: string;
   selectedSubmittedVotingId: string;
@@ -179,6 +188,35 @@ function deliveryToneClass(tone: string) {
       : "simple-delivery-waiting";
 }
 
+function formatCoordinatorControlStateLabel(view: CoordinatorEngineView | null) {
+  const latestRound = view?.latest_round ?? null;
+  if (!latestRound) {
+    return null;
+  }
+
+  if (latestRound.phase === "open") {
+    return `Coordinator round open agreed for ${shortVotingId(latestRound.round_id)}.`;
+  }
+
+  if (latestRound.phase === "open_proposed") {
+    if (latestRound.missing_open_committers.length === 0) {
+      return `Coordinator approvals received for ${shortVotingId(latestRound.round_id)}.`;
+    }
+
+    return `Waiting for coordinator approvals for ${shortVotingId(latestRound.round_id)}.`;
+  }
+
+  if (latestRound.phase === "draft") {
+    return `Round draft prepared for ${shortVotingId(latestRound.round_id)}.`;
+  }
+
+  if (latestRound.phase === "published") {
+    return `Coordinator result approval completed for ${shortVotingId(latestRound.round_id)}.`;
+  }
+
+  return `Coordinator control state: ${latestRound.phase.replace(/_/g, " ")}.`;
+}
+
 function findLatestRoundRequest(
   requests: SimpleShardRequest[],
   voterNpub: string,
@@ -236,6 +274,9 @@ export default function SimpleCoordinatorApp() {
   const [roundBlindPrivateKeys, setRoundBlindPrivateKeys] = useState<Record<string, SimpleBlindPrivateKey>>({});
   const [roundBlindKeyAnnouncements, setRoundBlindKeyAnnouncements] = useState<Record<string, SimpleBlindKeyAnnouncement>>({});
   const [publishStatus, setPublishStatus] = useState<string | null>(null);
+  const [coordinatorControlCache, setCoordinatorControlCache] = useState<CoordinatorControlCache | null>(null);
+  const [coordinatorControlView, setCoordinatorControlView] = useState<CoordinatorEngineView | null>(null);
+  const [coordinatorControlStateLabel, setCoordinatorControlStateLabel] = useState<string | null>(null);
   const [publishedVotes, setPublishedVotes] = useState<SimpleLiveVoteSession[]>([]);
   const [selectedVotingId, setSelectedVotingId] = useState("");
   const [selectedSubmittedVotingId, setSelectedSubmittedVotingId] =
@@ -253,6 +294,8 @@ export default function SimpleCoordinatorApp() {
   const blindKeyRepublishAtRef = useRef<Record<string, number>>({});
   const autoSendInFlightRef = useRef<Set<string>>(new Set());
   const autoShareAssignmentAttemptRef = useRef('');
+  const coordinatorControlServiceRef = useRef<CoordinatorControlService | null>(null);
+  const roundBroadcastInFlightRef = useRef<string | null>(null);
   const verifyAllVisibleRef = useRef<HTMLInputElement | null>(null);
   const isLeadCoordinator = !leadCoordinatorNpub.trim() || leadCoordinatorNpub.trim() === (keypair?.npub ?? "");
   const canShowNotifyLeadButton = Boolean(
@@ -263,6 +306,27 @@ export default function SimpleCoordinatorApp() {
   const hasAssignedShareIndex = !isLeadCoordinator && activeShareIndex > 0;
   const availableCoordinatorCount = Math.max(1, subCoordinators.length + 1);
   const liveVoteSourceNpub = isLeadCoordinator ? (keypair?.npub ?? "") : leadCoordinatorNpub.trim();
+  const coordinatorRoster = useMemo(
+    () => sortCoordinatorRoster([
+      keypair?.npub ?? "",
+      leadCoordinatorNpub.trim(),
+      ...subCoordinators.map((application) => application.coordinatorNpub),
+    ]),
+    [keypair?.npub, leadCoordinatorNpub, subCoordinators],
+  );
+  const coordinatorHexRoster = useMemo(
+    () => npubsToHexRoster(coordinatorRoster),
+    [coordinatorRoster],
+  );
+  const coordinatorElectionId = useMemo(
+    () => keypair?.npub
+      ? deriveCoordinatorElectionId({
+          coordinatorNpub: keypair.npub,
+          leadCoordinatorNpub: leadCoordinatorNpub.trim() || undefined,
+        })
+      : "",
+    [keypair?.npub, leadCoordinatorNpub],
+  );
   const selectedPublishedVote = useMemo(
     () => publishedVotes.find((vote) => vote.votingId === selectedVotingId) ?? publishedVotes[0] ?? null,
     [publishedVotes, selectedVotingId],
@@ -340,6 +404,11 @@ export default function SimpleCoordinatorApp() {
               : {},
           );
           setPublishStatus(typeof cache.publishStatus === "string" ? cache.publishStatus : null);
+          setCoordinatorControlCache(
+            cache.coordinatorControlCache && typeof cache.coordinatorControlCache === "object"
+              ? cache.coordinatorControlCache as CoordinatorControlCache
+              : null,
+          );
           setPublishedVotes(
             Array.isArray(cache.publishedVotes)
               ? cache.publishedVotes
@@ -427,6 +496,7 @@ export default function SimpleCoordinatorApp() {
       roundBlindPrivateKeys,
       roundBlindKeyAnnouncements,
       publishStatus,
+      coordinatorControlCache,
       publishedVotes,
       selectedVotingId,
       selectedSubmittedVotingId,
@@ -442,6 +512,7 @@ export default function SimpleCoordinatorApp() {
   }, [
     assignmentStatus,
     autoSendFollowers,
+    coordinatorControlCache,
     followers,
     identityReady,
     keypair,
@@ -466,6 +537,102 @@ export default function SimpleCoordinatorApp() {
   ]);
 
   useEffect(() => {
+    let cancelled = false;
+    let cleanup = () => {};
+
+    async function setupCoordinatorControl() {
+      if (!identityReady || !keypair?.npub || !keypair.nsec || !coordinatorElectionId) {
+        coordinatorControlServiceRef.current = null;
+        setCoordinatorControlView(null);
+        setCoordinatorControlStateLabel(null);
+        return;
+      }
+
+      const service = await CoordinatorControlService.create({
+        electionId: coordinatorElectionId,
+        localPubkey: keypair.npub,
+        roster: coordinatorRoster,
+        snapshot: coordinatorControlCache?.snapshot ?? null,
+      });
+
+      if (cancelled) {
+        return;
+      }
+
+      coordinatorControlServiceRef.current = service;
+
+      const syncState = () => {
+        const nextCache = service.snapshot();
+        const nextView = service.getState();
+        setCoordinatorControlCache(nextCache);
+        setCoordinatorControlView(nextView);
+        setCoordinatorControlStateLabel(formatCoordinatorControlStateLabel(nextView));
+      };
+
+      syncState();
+
+      const initialEvents = await fetchCoordinatorControlEvents({
+        electionId: coordinatorElectionId,
+        coordinatorHexPubkeys: coordinatorHexRoster,
+      });
+
+      if (cancelled) {
+        return;
+      }
+
+      if (initialEvents.length > 0) {
+        service.ingestCoordinatorEvents(initialEvents);
+        syncState();
+      }
+
+      const maybeApprove = async () => {
+        if (isLeadCoordinator) {
+          return;
+        }
+
+        const approval = await service.maybeAutoApproveRoundOpen({
+          coordinatorNsec: keypair.nsec,
+        });
+        if (approval) {
+          syncState();
+          setPublishStatus("Coordinator round-open approval sent.");
+        }
+      };
+
+      await maybeApprove();
+
+      cleanup = subscribeCoordinatorControl({
+        electionId: coordinatorElectionId,
+        coordinatorHexPubkeys: coordinatorHexRoster,
+        onEvents: (events) => {
+          if (!coordinatorControlServiceRef.current) {
+            return;
+          }
+
+          coordinatorControlServiceRef.current.ingestCoordinatorEvents(events);
+          syncState();
+          void maybeApprove();
+        },
+      });
+    }
+
+    void setupCoordinatorControl();
+
+    return () => {
+      cancelled = true;
+      cleanup();
+    };
+  }, [
+    coordinatorElectionId,
+    coordinatorHexRoster,
+    coordinatorRoster,
+    identityReady,
+    isLeadCoordinator,
+    keypair?.npub,
+    keypair?.nsec,
+  ]);
+
+  useEffect(() => {
     const coordinatorNsec = keypair?.nsec ?? "";
 
     if (!coordinatorNsec) {
@@ -482,6 +649,62 @@ export default function SimpleCoordinatorApp() {
       },
     });
   }, [keypair?.nsec]);
+
+  useEffect(() => {
+    if (!isLeadCoordinator || !keypair?.nsec || !coordinatorControlView?.latest_round) {
+      return;
+    }
+
+    const latestRound = coordinatorControlView.latest_round;
+    if (latestRound.phase !== "open") {
+      return;
+    }
+
+    if (!latestRound.prompt || latestRound.threshold_t == null || latestRound.threshold_n == null) {
+      return;
+    }
+
+    if (publishedVotes.some((vote) => vote.votingId === latestRound.round_id)) {
+      return;
+    }
+
+    if (roundBroadcastInFlightRef.current === latestRound.round_id) {
+      return;
+    }
+
+    roundBroadcastInFlightRef.current = latestRound.round_id;
+    setPublishStatus("Coordinator round open agreed. Broadcasting vote...");
+
+    void publishSimpleLiveVote({
+      coordinatorNsec: keypair.nsec,
+      prompt: latestRound.prompt,
+      votingId: latestRound.round_id,
+      thresholdT: latestRound.threshold_t,
+      thresholdN: latestRound.threshold_n,
+      authorizedCoordinatorNpubs: latestRound.coordinator_roster,
+    }).then((result) => {
+      setPublishedVotes((current) => {
+        const nextVote = {
+          votingId: result.votingId,
+          prompt: latestRound.prompt ?? "",
+          coordinatorNpub: result.coordinatorNpub,
+          createdAt: result.createdAt,
+          thresholdT: latestRound.threshold_t ?? undefined,
+          thresholdN: latestRound.threshold_n ?? undefined,
+          authorizedCoordinatorNpubs: latestRound.coordinator_roster,
+          eventId: result.eventId,
+        };
+        return [nextVote, ...current.filter((vote) => vote.votingId !== nextVote.votingId)];
+      });
+      setSelectedVotingId(result.votingId);
+      setSelectedSubmittedVotingId(result.votingId);
+      setPublishStatus(result.successes > 0 ? "Vote broadcast." : "Vote broadcast failed.");
+      roundBroadcastInFlightRef.current = null;
+    }).catch(() => {
+      setPublishStatus("Vote broadcast failed.");
+      roundBroadcastInFlightRef.current = null;
+    });
+  }, [coordinatorControlView, isLeadCoordinator, keypair?.nsec, publishedVotes]);
 
   useEffect(() => {
     const actorNsec = keypair?.nsec ?? "";
@@ -910,6 +1133,9 @@ export default function SimpleCoordinatorApp() {
     setRoundBlindPrivateKeys({});
     setRoundBlindKeyAnnouncements({});
     setPublishStatus(null);
+    setCoordinatorControlCache(null);
+    setCoordinatorControlView(null);
+    setCoordinatorControlStateLabel(null);
     setShareAssignmentsInFlight(false);
     setLastSuccessfulShareAssignmentSignature('');
     setPublishedVotes([]);
@@ -923,6 +1149,8 @@ export default function SimpleCoordinatorApp() {
     sentSubCoordinatorAckIdsRef.current.clear();
     sentAssignmentAckIdsRef.current.clear();
     autoShareAssignmentAttemptRef.current = '';
+    coordinatorControlServiceRef.current = null;
+    roundBroadcastInFlightRef.current = null;
   }
 
   function restoreIdentity(nextNsec: string) {
@@ -963,6 +1191,9 @@ export default function SimpleCoordinatorApp() {
     setRoundBlindPrivateKeys({});
     setRoundBlindKeyAnnouncements({});
     setPublishStatus(null);
+    setCoordinatorControlCache(null);
+    setCoordinatorControlView(null);
+    setCoordinatorControlStateLabel(null);
     setShareAssignmentsInFlight(false);
     setLastSuccessfulShareAssignmentSignature('');
     setPublishedVotes([]);
@@ -976,6 +1207,8 @@ export default function SimpleCoordinatorApp() {
     sentSubCoordinatorAckIdsRef.current.clear();
     sentAssignmentAckIdsRef.current.clear();
     autoShareAssignmentAttemptRef.current = '';
+    coordinatorControlServiceRef.current = null;
+    roundBroadcastInFlightRef.current = null;
   }
 
   function handleLeadCoordinatorScanDetected(rawValue: string) {
@@ -1017,6 +1250,7 @@ export default function SimpleCoordinatorApp() {
       roundBlindPrivateKeys,
       roundBlindKeyAnnouncements,
       publishStatus,
+      coordinatorControlCache,
       publishedVotes,
       selectedVotingId,
       selectedSubmittedVotingId,
@@ -1085,6 +1319,11 @@ export default function SimpleCoordinatorApp() {
           : {},
       );
       setPublishStatus(typeof cache?.publishStatus === "string" ? cache.publishStatus : null);
+      setCoordinatorControlCache(
+        cache?.coordinatorControlCache && typeof cache.coordinatorControlCache === "object"
+          ? cache.coordinatorControlCache as CoordinatorControlCache
+          : null,
+      );
       setPublishedVotes(
         Array.isArray(cache?.publishedVotes)
           ? cache.publishedVotes
@@ -1155,6 +1394,11 @@ export default function SimpleCoordinatorApp() {
       setRoundBlindPrivateKeys(cache?.roundBlindPrivateKeys && typeof cache.roundBlindPrivateKeys === "object" ? cache.roundBlindPrivateKeys as Record<string, SimpleBlindPrivateKey> : {});
       setRoundBlindKeyAnnouncements(cache?.roundBlindKeyAnnouncements && typeof cache.roundBlindKeyAnnouncements === "object" ? cache.roundBlindKeyAnnouncements as Record<string, SimpleBlindKeyAnnouncement> : {});
       setPublishStatus(typeof cache?.publishStatus === "string" ? cache.publishStatus : null);
+      setCoordinatorControlCache(
+        cache?.coordinatorControlCache && typeof cache.coordinatorControlCache === "object"
+          ? cache.coordinatorControlCache as CoordinatorControlCache
+          : null,
+      );
       setPublishedVotes(
         Array.isArray(cache?.publishedVotes)
           ? cache.publishedVotes
@@ -1458,47 +1702,43 @@ export default function SimpleCoordinatorApp() {
   }
 
   async function broadcastQuestion() {
-    const coordinatorNsec = keypair?.nsec ?? "";
     const prompt = questionPrompt.trim();
 
-    if (!coordinatorNsec || !prompt || !isLeadCoordinator) {
+    if (!keypair?.nsec || !prompt || !isLeadCoordinator) {
       return;
     }
 
-    setPublishStatus("Broadcasting vote...");
+    const service = coordinatorControlServiceRef.current;
+    if (!service) {
+      setPublishStatus("Coordinator control engine is not ready.");
+      return;
+    }
+
+    setPublishStatus("Proposing round open...");
 
     try {
       const threshold = getThresholdNumbers();
-      const authorizedCoordinatorNpubs = sortCoordinatorRoster([
-        keypair?.npub ?? "",
-        ...subCoordinators.map((application) => application.coordinatorNpub),
-      ]);
-      const result = await publishSimpleLiveVote({
-        coordinatorNsec,
+      const roundId = crypto.randomUUID();
+      const result = await service.publishRoundOpenFlow({
+        coordinatorNsec: keypair.nsec,
+        roundId,
         prompt,
         thresholdT: threshold.thresholdT,
         thresholdN: threshold.thresholdN,
-        authorizedCoordinatorNpubs,
+        roster: coordinatorRoster,
       });
-
-      setPublishedVotes((current) => {
-        const nextVote = {
-          votingId: result.votingId,
-          prompt,
-          coordinatorNpub: result.coordinatorNpub,
-          createdAt: result.createdAt,
-          thresholdT: threshold.thresholdT,
-          thresholdN: threshold.thresholdN,
-          authorizedCoordinatorNpubs,
-          eventId: result.eventId,
-        };
-        return [nextVote, ...current.filter((vote) => vote.votingId !== nextVote.votingId)];
-      });
-      setSelectedVotingId(result.votingId);
-      setSelectedSubmittedVotingId(result.votingId);
-      setPublishStatus(result.successes > 0 ? "Vote broadcast." : "Vote broadcast failed.");
+      setCoordinatorControlCache(service.snapshot());
+      setCoordinatorControlView(result.state);
+      setCoordinatorControlStateLabel(formatCoordinatorControlStateLabel(result.state));
+      setSelectedVotingId(roundId);
+      setSelectedSubmittedVotingId(roundId);
+      setPublishStatus(
+        result.state.latest_round?.phase === "open"
+          ? "Coordinator round open agreed. Broadcasting vote..."
+          : "Round-open proposal sent. Waiting for coordinator approvals.",
+      );
     } catch {
-      setPublishStatus("Vote broadcast failed.");
+      setPublishStatus("Round-open proposal failed.");
     }
   }
 
@@ -2413,6 +2653,9 @@ export default function SimpleCoordinatorApp() {
                         : 'Broadcast live vote'}
                     </button>
                   </div>
+                  {coordinatorControlStateLabel ? (
+                    <p className='simple-voter-note'>{coordinatorControlStateLabel}</p>
+                  ) : null}
                 </>
               ) : selectedPublishedVote ? (
                 <p className='simple-voter-question'>

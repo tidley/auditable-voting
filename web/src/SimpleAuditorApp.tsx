@@ -1,50 +1,90 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 import TokenFingerprint from "./TokenFingerprint";
 import {
   fetchSimpleLiveVotes,
-  subscribeSimpleSubmittedVotes,
+  fetchSimpleSubmittedVotes,
   type SimpleLiveVoteSession,
-  type SimpleSubmittedVote,
 } from "./simpleVotingSession";
-import {
-  validateSimpleSubmittedVotes,
-  type SimpleValidatedVote,
-} from "./simpleVoteValidation";
 import { formatRoundOptionLabel } from "./roundLabel";
 import { sortRecordsByCreatedAtDescRust } from "./wasm/auditableVotingCore";
+import { DerivedStateAdapter, type DerivedState, type ProtocolSnapshot } from "./core/derivedStateAdapter";
+import { ballotEventFromSubmittedVote } from "./core/ballotEventBridge";
+import {
+  buildElectionDefinitionEvent,
+  publicEventFromLiveVote,
+} from "./core/publicEventBridge";
+
+const SIMPLE_AUDITOR_ELECTION_ID = "simple-public-election";
+
+function roundToSession(round: DerivedState["public_state"]["rounds"][number]): SimpleLiveVoteSession {
+  const createdAtMs = round.opened_at ?? round.defined_at;
+  return {
+    votingId: round.round_id,
+    prompt: round.prompt,
+    coordinatorNpub: round.coordinator_roster[0] ?? "",
+    createdAt: new Date(createdAtMs).toISOString(),
+    thresholdT: round.threshold_t,
+    thresholdN: round.threshold_n,
+    authorizedCoordinatorNpubs: round.coordinator_roster,
+    eventId: `derived:${round.round_id}`,
+  };
+}
 
 export default function SimpleAuditorApp() {
-  const [discoveredRounds, setDiscoveredRounds] = useState<SimpleLiveVoteSession[]>([]);
+  const [derivedState, setDerivedState] = useState<DerivedState | null>(null);
   const [selectedVotingId, setSelectedVotingId] = useState("");
-  const [submittedVotes, setSubmittedVotes] = useState<SimpleSubmittedVote[]>([]);
-  const [validatedVotes, setValidatedVotes] = useState<SimpleValidatedVote[]>([]);
   const [refreshStatus, setRefreshStatus] = useState<string | null>(null);
+  const snapshotRef = useRef<ProtocolSnapshot | null>(null);
 
   useEffect(() => {
     let cancelled = false;
 
-    async function refreshRounds() {
+    async function refreshDerivedState() {
       try {
         const rounds = await fetchSimpleLiveVotes();
+        const orderedRounds = sortRecordsByCreatedAtDescRust(rounds);
+        const ballotsByRound = await Promise.all(
+          orderedRounds.map(async (round) => ({
+            round,
+            votes: await fetchSimpleSubmittedVotes({ votingId: round.votingId }),
+          })),
+        );
+
+        const protocolEvents = [
+          buildElectionDefinitionEvent({
+            electionId: SIMPLE_AUDITOR_ELECTION_ID,
+            authorPubkey: orderedRounds[0]?.coordinatorNpub ?? "auditor",
+            title: "Auditable Voting",
+          }),
+          ...orderedRounds.map((round) => publicEventFromLiveVote({
+            electionId: SIMPLE_AUDITOR_ELECTION_ID,
+            session: round,
+          })),
+          ...ballotsByRound.flatMap(({ votes }) => votes.map((vote) => ballotEventFromSubmittedVote({
+            electionId: SIMPLE_AUDITOR_ELECTION_ID,
+            vote,
+          }))),
+        ];
+
+        const adapter = snapshotRef.current
+          ? await DerivedStateAdapter.restore(snapshotRef.current)
+          : await DerivedStateAdapter.create(SIMPLE_AUDITOR_ELECTION_ID);
+
+        const nextDerivedState = adapter.replayAll(protocolEvents);
+        const nextSnapshot = adapter.exportSnapshot();
+
         if (cancelled) {
           return;
         }
 
-        setDiscoveredRounds((current) => {
-          const merged = new Map<string, SimpleLiveVoteSession>();
-          for (const round of current) {
-            merged.set(round.votingId, round);
-          }
-          for (const round of rounds) {
-            const existing = merged.get(round.votingId);
-            if (!existing || round.createdAt > existing.createdAt) {
-              merged.set(round.votingId, round);
-            }
-          }
-          return sortRecordsByCreatedAtDescRust([...merged.values()]);
-        });
-        setRefreshStatus(rounds.length > 0 ? "Rounds refreshed from Nostr." : "No public rounds discovered yet.");
+        setDerivedState(nextDerivedState);
+        snapshotRef.current = nextSnapshot;
+        setRefreshStatus(
+          orderedRounds.length > 0
+            ? "Rounds and ballots refreshed from Nostr."
+            : "No public rounds discovered yet.",
+        );
       } catch {
         if (!cancelled) {
           setRefreshStatus("Failed to refresh public rounds.");
@@ -52,9 +92,9 @@ export default function SimpleAuditorApp() {
       }
     }
 
-    void refreshRounds();
+    void refreshDerivedState();
     const intervalId = window.setInterval(() => {
-      void refreshRounds();
+      void refreshDerivedState();
     }, 5000);
 
     return () => {
@@ -63,6 +103,13 @@ export default function SimpleAuditorApp() {
     };
   }, []);
 
+  const discoveredRounds = useMemo(
+    () => sortRecordsByCreatedAtDescRust(
+      (derivedState?.public_state.rounds ?? []).map(roundToSession),
+    ),
+    [derivedState],
+  );
+
   useEffect(() => {
     if (!selectedVotingId && discoveredRounds.length > 0) {
       setSelectedVotingId(discoveredRounds[0].votingId);
@@ -70,60 +117,30 @@ export default function SimpleAuditorApp() {
   }, [discoveredRounds, selectedVotingId]);
 
   const selectedRound = useMemo(
-    () => discoveredRounds.find((round) => round.votingId === selectedVotingId) ?? discoveredRounds[0] ?? null,
-    [discoveredRounds, selectedVotingId],
+    () => derivedState?.public_state.rounds.find((round) => round.round_id === selectedVotingId)
+      ?? derivedState?.public_state.rounds[0]
+      ?? null,
+    [derivedState, selectedVotingId],
   );
 
-  useEffect(() => {
-    const votingId = selectedRound?.votingId;
-    if (!votingId) {
-      setSubmittedVotes([]);
-      return;
-    }
+  const selectedSummary = useMemo(
+    () => derivedState?.ballot_state.round_summaries.find((summary) => summary.round_id === selectedRound?.round_id) ?? null,
+    [derivedState, selectedRound?.round_id],
+  );
 
-    return subscribeSimpleSubmittedVotes({
-      votingId,
-      onVotes: (nextVotes) => {
-        setSubmittedVotes(nextVotes);
-      },
-    });
-  }, [selectedRound?.votingId]);
+  const acceptedBallots = useMemo(
+    () => derivedState?.ballot_state.accepted_ballots.filter((ballot) => ballot.round_id === selectedRound?.round_id) ?? [],
+    [derivedState, selectedRound?.round_id],
+  );
 
-  useEffect(() => {
-    let cancelled = false;
-
-    void validateSimpleSubmittedVotes(
-      submittedVotes,
-      Math.max(1, selectedRound?.thresholdT ?? 1),
-      selectedRound?.authorizedCoordinatorNpubs ?? [],
-    ).then((nextValidatedVotes) => {
-      if (!cancelled) {
-        setValidatedVotes(nextValidatedVotes);
-      }
-    }).catch(() => {
-      if (!cancelled) {
-        setValidatedVotes([]);
-      }
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedRound?.authorizedCoordinatorNpubs, selectedRound?.thresholdT, submittedVotes]);
-
-  const validYesCount = validatedVotes.filter((entry) => entry.valid && entry.vote.choice === "Yes").length;
-  const validNoCount = validatedVotes.filter((entry) => entry.valid && entry.vote.choice === "No").length;
-  const invalidCount = validatedVotes.filter((entry) => !entry.valid).length;
+  const rejectedBallots = useMemo(
+    () => derivedState?.ballot_state.rejected_ballots.filter((ballot) => ballot.round_id === selectedRound?.round_id) ?? [],
+    [derivedState, selectedRound?.round_id],
+  );
 
   async function refreshNow() {
+    snapshotRef.current = null;
     setRefreshStatus("Refreshing public rounds...");
-    try {
-      const rounds = await fetchSimpleLiveVotes();
-      setDiscoveredRounds(sortRecordsByCreatedAtDescRust(rounds));
-      setRefreshStatus(rounds.length > 0 ? "Rounds refreshed from Nostr." : "No public rounds discovered yet.");
-    } catch {
-      setRefreshStatus("Failed to refresh public rounds.");
-    }
   }
 
   return (
@@ -145,7 +162,7 @@ export default function SimpleAuditorApp() {
               <select
                 id='simple-auditor-round'
                 className='simple-voter-input'
-                value={selectedRound?.votingId ?? ''}
+                value={selectedRound?.round_id ?? ''}
                 onChange={(event) => setSelectedVotingId(event.target.value)}
               >
                 {discoveredRounds.map((round) => (
@@ -162,13 +179,17 @@ export default function SimpleAuditorApp() {
                   </div>
                   <div className='simple-auditor-summary-card'>
                     <p className='simple-auditor-summary-label'>Voting ID</p>
-                    <p className='simple-voter-question'>{selectedRound.votingId}</p>
+                    <p className='simple-voter-question'>{selectedRound.round_id}</p>
                   </div>
                   <div className='simple-auditor-summary-card'>
                     <p className='simple-auditor-summary-label'>Threshold</p>
                     <p className='simple-voter-question'>
-                      {(selectedRound.thresholdT ?? 1)} of {(selectedRound.thresholdN ?? Math.max(1, selectedRound.authorizedCoordinatorNpubs.length || 1))}
+                      {selectedRound.threshold_t} of {selectedRound.threshold_n}
                     </p>
+                  </div>
+                  <div className='simple-auditor-summary-card'>
+                    <p className='simple-auditor-summary-label'>Round phase</p>
+                    <p className='simple-voter-question'>{selectedRound.phase}</p>
                   </div>
                 </div>
               ) : null}
@@ -180,30 +201,43 @@ export default function SimpleAuditorApp() {
         </SimpleCollapsibleSection>
 
         <SimpleCollapsibleSection title='Audit summary'>
-          {selectedRound ? (
+          {selectedRound && selectedSummary ? (
             <>
               <div className='simple-auditor-summary-grid'>
                 <div className='simple-auditor-summary-card'>
-                  <p className='simple-auditor-summary-label'>Valid Yes</p>
-                  <p className='simple-auditor-score'>{validYesCount}</p>
+                  <p className='simple-auditor-summary-label'>Accepted Yes</p>
+                  <p className='simple-auditor-score'>{selectedSummary.yes_count}</p>
                 </div>
                 <div className='simple-auditor-summary-card'>
-                  <p className='simple-auditor-summary-label'>Valid No</p>
-                  <p className='simple-auditor-score'>{validNoCount}</p>
+                  <p className='simple-auditor-summary-label'>Accepted No</p>
+                  <p className='simple-auditor-score'>{selectedSummary.no_count}</p>
                 </div>
                 <div className='simple-auditor-summary-card'>
-                  <p className='simple-auditor-summary-label'>Invalid ballots</p>
-                  <p className='simple-auditor-score'>{invalidCount}</p>
+                  <p className='simple-auditor-summary-label'>Rejected ballots</p>
+                  <p className='simple-auditor-score'>{selectedSummary.rejected_ballot_count}</p>
+                </div>
+                <div className='simple-auditor-summary-card'>
+                  <p className='simple-auditor-summary-label'>Acceptance rule</p>
+                  <p className='simple-voter-question'>{derivedState?.ballot_state.acceptance_rule.replace(/_/g, ' ')}</p>
                 </div>
               </div>
               <p className='simple-voter-question'>
-                Authorized coordinators: {selectedRound.authorizedCoordinatorNpubs.length}
+                Authorized coordinators: {selectedRound.coordinator_roster.length}
               </p>
               <ul className='simple-delivery-diagnostics simple-delivery-diagnostics-compact'>
-                {selectedRound.authorizedCoordinatorNpubs.map((npub) => (
+                {selectedRound.coordinator_roster.map((npub) => (
                   <li key={npub} className='simple-delivery-ok'>{npub}</li>
                 ))}
               </ul>
+              {derivedState?.public_state.issues.length ? (
+                <ul className='simple-delivery-diagnostics simple-delivery-diagnostics-compact'>
+                  {derivedState.public_state.issues.map((issue) => (
+                    <li key={`${issue.code}:${issue.event_id ?? issue.detail}`} className='simple-delivery-error'>
+                      {issue.code}: {issue.detail}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </>
           ) : (
             <p className='simple-voter-empty'>Choose a public round to audit.</p>
@@ -212,29 +246,35 @@ export default function SimpleAuditorApp() {
 
         <SimpleCollapsibleSection title='Submitted votes'>
           {selectedRound ? (
-            validatedVotes.length > 0 ? (
+            acceptedBallots.length > 0 || rejectedBallots.length > 0 ? (
               <>
                 <p className='simple-voter-question'>{selectedRound.prompt}</p>
-                <p className='simple-voter-note'>Vote {selectedRound.votingId}</p>
                 <p className='simple-submitted-score'>
-                  Yes: {validYesCount} | No: {validNoCount}
+                  Yes: {selectedSummary?.yes_count ?? 0} | No: {selectedSummary?.no_count ?? 0}
                 </p>
                 <ul className='simple-voter-list'>
-                  {validatedVotes.map(({ vote, valid, reason }) => (
-                    <li key={vote.eventId} className='simple-voter-list-item'>
+                  {acceptedBallots.map((ballot) => (
+                    <li key={ballot.event_id} className='simple-voter-list-item'>
                       <div className='simple-submitted-vote-row'>
                         <div className='simple-submitted-vote-copy'>
                           <p className='simple-voter-question'>
-                            Vote {vote.choice}{" "}
-                            <span className={valid ? 'simple-status-valid' : 'simple-status-invalid'}>
-                              [{valid ? 'Valid' : `Invalid: ${reason}`}]
-                            </span>
+                            Vote {ballot.choice} <span className='simple-status-valid'>[Valid]</span>
                           </p>
-                          <p className='simple-voter-note'>Ballot {vote.eventId}</p>
+                          <p className='simple-voter-note'>Ballot {ballot.event_id}</p>
                         </div>
-                        {vote.tokenId ? (
-                          <TokenFingerprint tokenId={vote.tokenId} compact large hideMetadata />
-                        ) : null}
+                        <TokenFingerprint tokenId={ballot.token_id} compact large hideMetadata />
+                      </div>
+                    </li>
+                  ))}
+                  {rejectedBallots.map((ballot) => (
+                    <li key={ballot.event_id} className='simple-voter-list-item'>
+                      <div className='simple-submitted-vote-row'>
+                        <div className='simple-submitted-vote-copy'>
+                          <p className='simple-voter-question'>
+                            Vote {ballot.choice} <span className='simple-status-invalid'>[Invalid: {ballot.reason.detail}]</span>
+                          </p>
+                          <p className='simple-voter-note'>Ballot {ballot.event_id}</p>
+                        </div>
                       </div>
                     </li>
                   ))}
