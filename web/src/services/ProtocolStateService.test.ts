@@ -61,6 +61,9 @@ describe("ProtocolStateService", () => {
     expect(firstReplay.derivedState.ballot_state.round_summaries[0]).toEqual(
       expect.objectContaining({ yes_count: 1, no_count: 0, accepted_ballot_count: 1 }),
     );
+    expect(firstReplay.snapshotMetadata.compatibility).toBe("compatible");
+    expect(firstReplay.replayStatus.duplicate_events).toBe(0);
+    expect(firstReplay.diagnostics.snapshot_status).toBe("compatible");
 
     const restored = await ProtocolStateService.create({
       electionId: SIMPLE_PUBLIC_ELECTION_ID,
@@ -74,5 +77,7 @@ describe("ProtocolStateService", () => {
     });
 
     expect(secondReplay.derivedState).toEqual(firstReplay.derivedState);
+    expect(secondReplay.snapshotMetadata.compatibility).toBe("compatible");
+    expect(secondReplay.diagnostics.known_round_ids).toEqual(["vote-1"]);
   });
 });

@@ -143,11 +143,12 @@ async function resolveRecipientInboxRelays(recipientNpub: string, relays?: strin
 }
 
 async function resolveConversationDmRelays(recipientNpub: string, senderNpub?: string, relays?: string[]) {
-  return resolveNip65ConversationRelays({
+  const resolved = await resolveNip65ConversationRelays({
     senderNpub,
     recipientNpub,
     fallbackRelays: buildDmRelays(relays),
   });
+  return selectDmReadRelays(resolved);
 }
 
 function getNpubFromNsec(nsec: string, actorLabel: string) {

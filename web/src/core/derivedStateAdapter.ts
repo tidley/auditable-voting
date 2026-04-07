@@ -85,6 +85,37 @@ export type ProtocolSnapshot = {
   derived_state: DerivedState;
 };
 
+export type SnapshotCompatibilityStatus = "compatible" | "incompatible_version";
+
+export type SnapshotMetadata = {
+  snapshot_format_version: number;
+  protocol_schema_version: number;
+  election_id: string;
+  event_count: number;
+  compatibility: SnapshotCompatibilityStatus;
+};
+
+export type ReplayStatus = {
+  total_events: number;
+  unique_events: number;
+  duplicate_events: number;
+  last_event_id?: string | null;
+};
+
+export type ValidationIssueCount = {
+  code: string;
+  count: number;
+};
+
+export type ProtocolDiagnostics = {
+  replay_status: ReplayStatus;
+  public_issue_counts: ValidationIssueCount[];
+  rejected_ballot_count: number;
+  accepted_ballot_count: number;
+  known_round_ids: string[];
+  snapshot_status: SnapshotCompatibilityStatus;
+};
+
 export class DerivedStateAdapter {
   private constructor(
     private readonly module: any,
@@ -117,5 +148,17 @@ export class DerivedStateAdapter {
 
   exportSnapshot() {
     return this.engine.exportSnapshot() as ProtocolSnapshot;
+  }
+
+  getSnapshotMetadata() {
+    return this.engine.getSnapshotMetadata() as SnapshotMetadata;
+  }
+
+  getReplayStatus() {
+    return this.engine.getReplayStatus() as ReplayStatus;
+  }
+
+  getDiagnostics() {
+    return this.engine.getDiagnostics() as ProtocolDiagnostics;
   }
 }

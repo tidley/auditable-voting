@@ -36,6 +36,7 @@ import {
   type SimpleShardResponse,
 } from "./simpleShardDm";
 import {
+  fetchLatestSimpleLiveVote,
   publishSimpleSubmittedVote,
   SIMPLE_PUBLIC_RELAYS,
   subscribeLatestSimpleLiveVote,
@@ -103,6 +104,8 @@ type SimpleVoterCache = {
   selectedVotingId: string;
   liveVoteChoice: LiveVoteChoice;
 };
+
+const SIMPLE_PUBLIC_ROUND_BACKFILL_INTERVAL_MS = 4000;
 
 function createEmptyVoterCache(): SimpleVoterCache {
   return {
@@ -631,21 +634,48 @@ export default function SimpleUiApp() {
     }
 
     const sessions = new Map<string, SimpleLiveVoteSession>();
+    let cancelled = false;
+
+    const syncSession = (session: SimpleLiveVoteSession | null) => {
+      if (!session) {
+        return;
+      }
+
+      sessions.set(`${session.coordinatorNpub}:${session.votingId}`, session);
+      setDiscoveredSessions(
+        [...sessions.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
+      );
+    };
+
     const cleanups = configuredCoordinatorTargets.map((coordinatorNpub) => subscribeLatestSimpleLiveVote({
       coordinatorNpub,
       onSession: (session: SimpleLiveVoteSession | null) => {
-        if (!session) {
-          return;
-        }
-
-        sessions.set(`${session.coordinatorNpub}:${session.votingId}`, session);
-        setDiscoveredSessions(
-          [...sessions.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
-        );
+        syncSession(session);
       },
     }));
 
+    const refreshSessions = async () => {
+      const nextSessions = await Promise.all(
+        configuredCoordinatorTargets.map((coordinatorNpub) => fetchLatestSimpleLiveVote({ coordinatorNpub })),
+      );
+
+      if (cancelled) {
+        return;
+      }
+
+      for (const session of nextSessions) {
+        syncSession(session);
+      }
+    };
+
+    void refreshSessions();
+    const refreshHandle = window.setInterval(() => {
+      void refreshSessions();
+    }, SIMPLE_PUBLIC_ROUND_BACKFILL_INTERVAL_MS);
+
     return () => {
+      cancelled = true;
+      window.clearInterval(refreshHandle);
       for (const cleanup of cleanups) {
         cleanup();
       }
@@ -1475,6 +1505,13 @@ export default function SimpleUiApp() {
         ?? createRoundTokenMessage(round.votingId);
       const replyKeypair = roundReplyKeypairs[round.votingId] ?? createSimpleVoterKeypair();
 
+      // Register the per-round reply identity before requests go out so ticket responses cannot
+      // beat the voter subscription setup on the first round.
+      setRoundReplyKeypairs((current) => ({
+        ...current,
+        [round.votingId]: current[round.votingId] ?? replyKeypair,
+      }));
+
       const createdEntries = await Promise.all(coordinatorsToRequest.map(async (coordinatorNpub) => {
         const announcement = knownBlindKeys[makeRoundBlindKeyId(coordinatorNpub, round.votingId)];
         const created = await createSimpleBlindIssuanceRequest({
@@ -1509,10 +1546,6 @@ export default function SimpleUiApp() {
       const nextRequests = Object.fromEntries(
         successfulEntries.map((entry) => [`${entry.coordinatorNpub}:${entry.votingId}`, entry]),
       );
-      setRoundReplyKeypairs((current) => ({
-        ...current,
-        [round.votingId]: current[round.votingId] ?? replyKeypair,
-      }));
       setPendingBlindRequests((current) => ({ ...current, ...nextRequests }));
       const nextRequestDeliveries = Object.fromEntries(createdEntries.map((entry, index) => [
         `${entry.coordinatorNpub}:${entry.votingId}`,

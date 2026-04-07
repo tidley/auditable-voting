@@ -14,8 +14,11 @@ import {
 } from "../core/coordinatorEventBridge";
 import type { CoordinatorOutboundTransportMessage } from "../core/coordinatorCoreAdapter";
 
+const COORDINATOR_CONTROL_PRIMARY_RELAYS_MAX = 2;
+
 function buildControlRelays(relays?: string[]) {
-  return normalizeRelaysRust([...(relays ?? []), ...SIMPLE_PUBLIC_RELAYS]);
+  const normalized = normalizeRelaysRust([...(relays ?? []), ...SIMPLE_PUBLIC_RELAYS]);
+  return normalized.slice(0, Math.min(COORDINATOR_CONTROL_PRIMARY_RELAYS_MAX, normalized.length));
 }
 
 export async function publishCoordinatorControl(input: {

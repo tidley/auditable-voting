@@ -2,16 +2,22 @@ pub mod ballot_state;
 pub mod coordinator_engine;
 pub mod coordinator_messages;
 pub mod coordinator_state;
+pub mod diagnostics;
+pub mod error;
 pub mod event;
 pub mod openmls_engine;
 pub mod order;
 pub mod public_state;
 pub mod replay;
 pub mod reducer;
+pub mod snapshot;
 pub mod types;
 pub mod validation;
+pub mod versioning;
 pub mod wasm;
 
+pub use diagnostics::{ProtocolDiagnostics, ReplayStatus, ValidationIssueCount};
+pub use error::ProtocolEngineError;
 pub use coordinator_engine::{
     CoordinatorControlEngine, CoordinatorEngineConfig, CoordinatorEngineSnapshot,
     CoordinatorEngineView, CoordinatorRoundView,
@@ -20,10 +26,14 @@ pub use coordinator_messages::{CoordinatorControlEnvelope, CoordinatorControlPay
 pub use coordinator_state::{CoordinatorControlState, CoordinatorRoundPhase};
 pub use event::{BallotEvent, ProtocolEvent, PublicEvent};
 pub use public_state::{PublicRoundPhase, PublicState};
-pub use reducer::{AuditableVotingProtocolEngine, DerivedState, ProtocolSnapshot};
+pub use reducer::{AuditableVotingProtocolEngine, DerivedState};
+pub use snapshot::ProtocolSnapshot;
 pub use types::{
     CoordinatorEventType, CoordinatorTransportEvent, OutboundCoordinatorTransportMessage,
     ReplayAppliedEvent, COORDINATOR_SCHEMA_VERSION,
+};
+pub use versioning::{
+    SnapshotCompatibilityStatus, SnapshotMetadata, PROTOCOL_SCHEMA_VERSION, PROTOCOL_SNAPSHOT_VERSION,
 };
 pub use wasm::{WasmAuditableVotingProtocolEngine, WasmCoordinatorControlEngine};
 
@@ -252,7 +262,7 @@ mod tests {
         let snapshot = engine.snapshot().unwrap();
 
         let suffix = vec![ballot_event("ballot-2", 12, "token-2", "No")];
-        let mut restored = AuditableVotingProtocolEngine::restore(snapshot);
+        let mut restored = AuditableVotingProtocolEngine::restore(snapshot).unwrap();
         let restored_state = restored.apply_events(suffix.clone()).unwrap();
 
         let mut full = AuditableVotingProtocolEngine::new("election-1".to_owned());

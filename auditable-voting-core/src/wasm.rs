@@ -3,8 +3,9 @@ use wasm_bindgen::prelude::*;
 use crate::coordinator_engine::{
     CoordinatorControlEngine, CoordinatorEngineConfig, CoordinatorEngineSnapshot,
 };
-use crate::reducer::{AuditableVotingProtocolEngine, ProtocolSnapshot};
+use crate::reducer::AuditableVotingProtocolEngine;
 use crate::event::ProtocolEvent;
+use crate::snapshot::ProtocolSnapshot;
 use crate::types::CoordinatorTransportEvent;
 
 fn to_js_error(error: impl ToString) -> JsValue {
@@ -190,7 +191,7 @@ impl WasmAuditableVotingProtocolEngine {
         let snapshot = serde_wasm_bindgen::from_value::<ProtocolSnapshot>(snapshot)
             .map_err(to_js_error)?;
         Ok(Self {
-            inner: AuditableVotingProtocolEngine::restore(snapshot),
+            inner: AuditableVotingProtocolEngine::restore(snapshot).map_err(to_js_error)?,
         })
     }
 
@@ -214,6 +215,24 @@ impl WasmAuditableVotingProtocolEngine {
     pub fn get_derived_state(&self) -> Result<JsValue, JsValue> {
         let result = self.inner.current_state().map_err(to_js_error)?;
         serde_wasm_bindgen::to_value(&result).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = getSnapshotMetadata)]
+    pub fn get_snapshot_metadata(&self) -> Result<JsValue, JsValue> {
+        let metadata = self.inner.snapshot_metadata().map_err(to_js_error)?;
+        serde_wasm_bindgen::to_value(&metadata).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = getReplayStatus)]
+    pub fn get_replay_status(&self) -> Result<JsValue, JsValue> {
+        let status = self.inner.replay_status();
+        serde_wasm_bindgen::to_value(&status).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = getDiagnostics)]
+    pub fn get_diagnostics(&self) -> Result<JsValue, JsValue> {
+        let diagnostics = self.inner.diagnostics().map_err(to_js_error)?;
+        serde_wasm_bindgen::to_value(&diagnostics).map_err(to_js_error)
     }
 
     #[wasm_bindgen(js_name = exportSnapshot)]

@@ -124,6 +124,7 @@ type SimpleCoordinatorCache = {
 };
 
 const SIMPLE_TICKET_SEND_STAGGER_MS = 900;
+const SIMPLE_COORDINATOR_CONTROL_BACKFILL_INTERVAL_MS = 4000;
 
 function sortCoordinatorRoster(values: string[]) {
   return [...new Set(values.filter((value) => value.trim().length > 0))].sort();
@@ -556,6 +557,8 @@ export default function SimpleCoordinatorApp() {
   useEffect(() => {
     let cancelled = false;
     let cleanup = () => {};
+    let backfillHandle: number | null = null;
+    let backfillInFlight = false;
 
     async function setupCoordinatorControl() {
       if (!identityReady || !keypair?.npub || !keypair.nsec || !coordinatorElectionId || !localCoordinatorHexPubkey) {
@@ -616,9 +619,40 @@ export default function SimpleCoordinatorApp() {
         }
       };
 
-      await maybeApprove();
+      const backfillEvents = async () => {
+        if (cancelled || backfillInFlight) {
+          return;
+        }
 
-      cleanup = subscribeCoordinatorControl({
+        backfillInFlight = true;
+
+        try {
+          const events = await fetchCoordinatorControlEvents({
+            electionId: coordinatorElectionId,
+            coordinatorHexPubkeys: coordinatorHexRoster,
+          });
+
+          if (cancelled || !coordinatorControlServiceRef.current) {
+            return;
+          }
+
+          if (events.length > 0) {
+            coordinatorControlServiceRef.current.ingestCoordinatorEvents(events);
+            syncState();
+          }
+
+          await maybeApprove();
+        } finally {
+          backfillInFlight = false;
+        }
+      };
+
+      await maybeApprove();
+      backfillHandle = window.setInterval(() => {
+        void backfillEvents();
+      }, SIMPLE_COORDINATOR_CONTROL_BACKFILL_INTERVAL_MS);
+
+      const unsubscribe = subscribeCoordinatorControl({
         electionId: coordinatorElectionId,
         coordinatorHexPubkeys: coordinatorHexRoster,
         onEvents: (events) => {
@@ -631,6 +665,14 @@ export default function SimpleCoordinatorApp() {
           void maybeApprove();
         },
       });
+
+      cleanup = () => {
+        unsubscribe();
+        if (backfillHandle !== null) {
+          window.clearInterval(backfillHandle);
+          backfillHandle = null;
+        }
+      };
     }
 
     void setupCoordinatorControl();
@@ -722,6 +764,14 @@ export default function SimpleCoordinatorApp() {
       return;
     }
 
+    const authorizedCoordinatorNpubs = latestRound.coordinator_roster.flatMap((pubkey) => {
+      try {
+        return [nip19.npubEncode(pubkey)];
+      } catch {
+        return [];
+      }
+    });
+
     if (publishedVotes.some((vote) => vote.votingId === latestRound.round_id)) {
       return;
     }
@@ -739,7 +789,7 @@ export default function SimpleCoordinatorApp() {
       votingId: latestRound.round_id,
       thresholdT: latestRound.threshold_t,
       thresholdN: latestRound.threshold_n,
-      authorizedCoordinatorNpubs: latestRound.coordinator_roster,
+      authorizedCoordinatorNpubs,
     }).then((result) => {
       setPublishedVotes((current) => {
         const nextVote = {
@@ -749,7 +799,7 @@ export default function SimpleCoordinatorApp() {
           createdAt: result.createdAt,
           thresholdT: latestRound.threshold_t ?? undefined,
           thresholdN: latestRound.threshold_n ?? undefined,
-          authorizedCoordinatorNpubs: latestRound.coordinator_roster,
+          authorizedCoordinatorNpubs,
           eventId: result.eventId,
         };
         return [nextVote, ...current.filter((vote) => vote.votingId !== nextVote.votingId)];

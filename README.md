@@ -11,7 +11,11 @@ The shipped app currently includes:
 - voter, coordinator, and auditor screens
 - tabbed voter and coordinator flows with `Configure`, `Vote`/`Voting`, and `Settings`
 - a new Rust/Wasm-backed coordinator control seam for round-open agreement and replay
+- a real OpenMLS-backed coordinator group engine implemented inside the Rust core and compiled into the coordinator Wasm artefact
 - a new Rust/Wasm public and ballot replay seam now used by the voter, coordinator, and auditor public-state views
+- versioned Rust protocol snapshots with explicit compatibility checks
+- Rust-exposed replay status and structured diagnostics for the shared public-state engine
+- regular custom Nostr event kinds for coordinator control, live rounds, and ballots, avoiding replaceable-kind transcript loss
 - round announcements over Nostr
 - coordinator control carrier events over Nostr, replayed through a Rust state machine
 - NIP-17 DM traffic for follow, blind request, direct ticket, and acknowledgement flows
@@ -19,13 +23,13 @@ The shipped app currently includes:
 - blind-signature share issuance and public ballot verification
 - coordinator-side per-ticket relay publish diagnostics for issued shares
 - periodic DM-history backfill for missed ticket delivery
-- smaller primary relay subsets for live reads and subscriptions, with broader fanout reserved for publishes
+- smaller primary relay subsets for live reads and subscriptions, with the coordinator-control and DM planes aligned to the same primary relay subset used for recovery
 - local browser persistence, backup, and optional passphrase protection
 - optional relay hint resolution via NIP-65, disabled by default
 - a growing Rust/Wasm core for deterministic protocol logic
 
-The client-only architecture is in place, but live relay reliability and recovery behaviour still need hardening.
-Empirically, recent local-preview runs have been strong at `1 coordinator / 20 voters / 3 rounds` and repeated `2 coordinators / 2 voters / 1 round`, but `5 coordinators / 10 voters / 10 rounds` is still not operationally viable on public relays.
+The client-only architecture is in place, but live relay reliability and recovery behaviour still need hardening. The coordinator browser flow still uses the deterministic control engine at runtime today; the new OpenMLS-backed engine is now implemented and built in the Rust/Wasm core, but its bootstrap and join carriers are not yet wired into the live browser control path.
+Empirically, recent local-preview runs are now clean at `1 coordinator / 2 voters / 2 rounds` and `2 coordinators / 2 voters / 2 rounds`, and the single-coordinator path has also been strong at `1 coordinator / 20 voters / 3 rounds`. Larger public-relay committee runs remain unresolved: `5 coordinators / 10 voters / 3 rounds` is still not signed off, and `5 coordinators / 10 voters / 10 rounds` remains non-viable on the current public relay set.
 
 ## What is in this repo
 
@@ -130,6 +134,8 @@ Current Rust-derived public slice:
 - deterministic ballot acceptance with a fixed `first valid wins` rule
 - derived public receipt hashes for accepted ballots
 - shared round summaries and rejection reasons for voter, coordinator, and auditor views
+- versioned snapshot export/import with compatibility metadata
+- replay status and structured diagnostics exposed from Rust rather than inferred in the UI
 
 Private or local state:
 

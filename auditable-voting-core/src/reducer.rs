@@ -4,9 +4,13 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use crate::ballot_state::{BallotState, BallotStateReducer};
+use crate::diagnostics::{build_protocol_diagnostics, build_replay_status, ProtocolDiagnostics, ReplayStatus};
+use crate::error::ProtocolEngineError;
 use crate::event::{BallotEvent, BallotEventType, ProtocolEvent, PublicEvent, PublicEventType};
 use crate::public_state::{PublicState, PublicStateReducer};
 use crate::validation::ProtocolError;
+use crate::snapshot::ProtocolSnapshot;
+use crate::versioning::{SnapshotMetadata, PROTOCOL_SNAPSHOT_VERSION};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DerivedState {
@@ -14,14 +18,6 @@ pub struct DerivedState {
     pub public_state: PublicState,
     pub ballot_state: BallotState,
     pub coordinator_event_count: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ProtocolSnapshot {
-    pub schema_version: u32,
-    pub election_id: String,
-    pub events: Vec<ProtocolEvent>,
-    pub derived_state: DerivedState,
 }
 
 #[derive(Debug, Default)]
@@ -38,11 +34,18 @@ impl AuditableVotingProtocolEngine {
         }
     }
 
-    pub fn restore(snapshot: ProtocolSnapshot) -> Self {
-        Self {
+    pub fn restore(snapshot: ProtocolSnapshot) -> Result<Self, ProtocolEngineError> {
+        if snapshot.schema_version != PROTOCOL_SNAPSHOT_VERSION {
+            return Err(ProtocolEngineError::IncompatibleSnapshotVersion {
+                expected: PROTOCOL_SNAPSHOT_VERSION,
+                actual: snapshot.schema_version,
+            });
+        }
+
+        Ok(Self {
             election_id: snapshot.election_id,
             events: snapshot.events,
-        }
+        })
     }
 
     pub fn replay_all(&mut self, events: Vec<ProtocolEvent>) -> Result<DerivedState, ProtocolError> {
@@ -57,7 +60,7 @@ impl AuditableVotingProtocolEngine {
 
     pub fn snapshot(&self) -> Result<ProtocolSnapshot, ProtocolError> {
         Ok(ProtocolSnapshot {
-            schema_version: 1,
+            schema_version: PROTOCOL_SNAPSHOT_VERSION,
             election_id: self.election_id.clone(),
             events: self.events.clone(),
             derived_state: self.current_state()?,
@@ -66,6 +69,20 @@ impl AuditableVotingProtocolEngine {
 
     pub fn current_state(&self) -> Result<DerivedState, ProtocolError> {
         derive_state(self.election_id.clone(), self.events.clone())
+    }
+
+    pub fn snapshot_metadata(&self) -> Result<SnapshotMetadata, ProtocolError> {
+        Ok(self.snapshot()?.metadata())
+    }
+
+    pub fn replay_status(&self) -> ReplayStatus {
+        build_replay_status(&self.events)
+    }
+
+    pub fn diagnostics(&self) -> Result<ProtocolDiagnostics, ProtocolError> {
+        let derived_state = self.current_state()?;
+        let metadata = self.snapshot_metadata()?;
+        Ok(build_protocol_diagnostics(&self.events, &derived_state, &metadata))
     }
 
     fn derive_state(&mut self) -> Result<DerivedState, ProtocolError> {

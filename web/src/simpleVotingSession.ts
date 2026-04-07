@@ -30,8 +30,9 @@ export const SIMPLE_PUBLIC_PUBLISH_STAGGER_MS = 300;
 export const SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS = 500;
 const SIMPLE_PUBLIC_READ_RELAYS_MAX = 2;
 
-export const SIMPLE_LIVE_VOTE_KIND = 38990;
-export const SIMPLE_LIVE_VOTE_BALLOT_KIND = 38991;
+// Use regular custom event kinds so relays preserve the full transcript instead of replacing by author/d-tag.
+export const SIMPLE_LIVE_VOTE_KIND = 14090;
+export const SIMPLE_LIVE_VOTE_BALLOT_KIND = 14091;
 
 export type SimpleLiveVoteSession = {
   votingId: string;

@@ -6,7 +6,7 @@
   "scripts": {
     "build:wasm": "npm run build:wasm:legacy && npm run build:wasm:coordinator",
     "build:wasm:legacy": "cd rust-core && wasm-pack build --target bundler --out-dir ../src/wasm/auditable_voting_core/pkg",
-    "build:wasm:coordinator": "cd ../auditable-voting-core && wasm-pack build --target bundler --out-dir ../web/src/wasm/auditable_voting_coordinator_core/pkg",
+    "build:wasm:coordinator": "cd ../auditable-voting-core && wasm-pack build --target bundler --out-dir ../web/src/wasm/auditable_voting_coordinator_core/pkg -- --features openmls-engine",
     "predev": "node scripts/ensure-wasm-artifacts.mjs",
     "prebuild": "node scripts/ensure-wasm-artifacts.mjs",
     "pretest": "node scripts/ensure-wasm-artifacts.mjs",

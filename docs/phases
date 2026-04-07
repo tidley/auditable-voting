@@ -21,11 +21,14 @@ The app remains:
 
 ## Current headline
 
-As of `v0.59`, the repository has:
+As of `v0.62`, the repository has:
 
 - a Rust/Wasm coordinator-control seam
 - a Rust/Wasm mixed public-and-ballot replay seam
 - shared Rust-derived public-state consumption in the voter, coordinator, and auditor views
+- versioned protocol snapshots with compatibility checks in the Rust/Wasm replay engine
+- Rust-exposed replay status and structured diagnostics for the shared public-state path
+- regular custom Nostr event kinds for coordinator control, live rounds, and ballots, avoiding replaceable-kind relay loss
 - TypeScript still responsible for UI, relay transport, IndexedDB/browser persistence plumbing, and wasm bridging
 
 The architecture has moved materially towards the intended model, but the migration is not finished.
@@ -137,8 +140,8 @@ Recorded status:
 
 ### Notes
 
-- the browser build currently uses a deterministic fixed-membership engine behind the OpenMLS abstraction boundary
-- this is acceptable for the seam, but not the end-state goal
+- the Rust coordinator core now contains a real OpenMLS-backed group engine and the shipped coordinator Wasm build includes the `openmls-engine` feature
+- the live browser coordinator flow still uses the deterministic engine at runtime because MLS bootstrap and join carriers are not yet wired end to end
 
 ---
 
@@ -224,10 +227,15 @@ Required before sign-off:
 Current latest gate status:
 
 - harness threshold setup issue fixed
-- latest live `2 / 2 / 2` run completed but failed at runtime:
-  - no live round seen by voters
-  - both coordinators remained at `Waiting for this voter's blinded ticket request. Waiting for a live round.`
-- this means the Phase 2 migration work is not operationally signed off by e2e yet
+- coordinator-control replay, public round discovery, and DM ticket delivery were hardened with primary-relay alignment plus history backfill
+- a relay-semantics bug was then fixed by moving coordinator control, live round, and ballot carriers off parameterised-replaceable kinds and onto regular custom kinds
+- a voter first-round reply-key race was also fixed so shard-response subscriptions are live before blinded requests are sent
+- current verified live gates:
+  - `1 / 2 / 2` passes
+  - `2 / 2 / 2` passes
+- current remaining concern:
+  - `5 / 10 / 3` is still not operationally signed off
+  - larger relay/runtime behaviour remains unresolved
 
 ---
 
@@ -257,6 +265,8 @@ Harden the architecture so Rust is clearly the sole source of protocol truth and
   - ballot acceptance for the migrated slice
 - TS public-state consumers now go through:
   - `DerivedStateAdapter`
+ - protocol snapshot compatibility is now checked inside the Rust replay engine rather than assumed by the TS restore path
+ - replay metadata and diagnostics are now available as explicit Rust-derived outputs
   - `ProtocolStateService`
 - shared snapshot use is present for:
   - coordinator control

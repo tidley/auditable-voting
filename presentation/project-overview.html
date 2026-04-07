@@ -636,7 +636,7 @@
           <tr>
             <td><strong>Deterministic core</strong></td>
             <td>Rust/Wasm engine</td>
-            <td>Coordinator control plus the voter, coordinator, and auditor public-state replay can now move out of ad hoc UI code into one deterministic core.</td>
+            <td>Coordinator control plus the voter, coordinator, and auditor public-state replay can now move out of ad hoc UI code into one deterministic core, with versioned snapshots and Rust-derived replay diagnostics.</td>
           </tr>
           <tr>
             <td><strong>User control</strong></td>
@@ -812,7 +812,7 @@
       </div>
     </div>
     <div class="quote">
-      <p>The current repo is already client-only and static-deployable, but live relay reliability is still the main operational weakness: `1 / 20 / 3` and repeated `2 / 2 / 1` live runs now complete, while `5 / 10 / 10` on public relays is still not operationally viable.</p>
+      <p>The current repo is already client-only and static-deployable, and the repaired small live gates now pass again: `1 / 2 / 2`, `2 / 2 / 2`, and `1 / 20 / 3` complete locally, while `5 / 10 / 3` is still not signed off and `5 / 10 / 10` on public relays remains non-viable.</p>
     </div>
     <div class="speaker-note">Important credibility slide. This is where you show you understand the difference between “possible” and “finished.”</div>
   </section>
