@@ -173,6 +173,52 @@ async function clickAllEnabled(page, matcher) {
   return clicked;
 }
 
+async function getThresholdT(page) {
+  const output = page.locator("#simple-threshold-t-value").first();
+  if (await output.count() === 0) {
+    return null;
+  }
+  await output.waitFor({ state: "visible", timeout: 30000 });
+  const text = (await output.textContent())?.trim() ?? "";
+  const parsed = Number.parseInt(text, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+async function ensureThresholdT(page, desiredT) {
+  const increaseThreshold = page.getByRole("button", { name: /Increase Threshold T/i }).first();
+  if (await increaseThreshold.count() === 0) {
+    return { reached: false, value: null, reason: "threshold_stepper_missing" };
+  }
+
+  let currentT = await getThresholdT(page);
+  if (currentT === null) {
+    return { reached: false, value: null, reason: "threshold_value_missing" };
+  }
+
+  if (currentT >= desiredT) {
+    return { reached: true, value: currentT, reason: currentT === desiredT ? "already_target" : "already_above_target" };
+  }
+
+  for (let attempts = 0; attempts < 10 && currentT < desiredT; attempts += 1) {
+    if (await increaseThreshold.isDisabled()) {
+      return { reached: false, value: currentT, reason: "threshold_stepper_disabled" };
+    }
+    await increaseThreshold.click();
+    await sleep(150);
+    const nextT = await getThresholdT(page);
+    if (nextT === null) {
+      return { reached: false, value: currentT, reason: "threshold_value_missing_after_click" };
+    }
+    currentT = nextT;
+  }
+
+  return {
+    reached: currentT >= desiredT,
+    value: currentT,
+    reason: currentT >= desiredT ? "target_reached" : "target_not_reached",
+  };
+}
+
 async function setVerifyAll(page) {
   await ensureTab(page, "Configure");
   const checkbox = page.getByRole("checkbox", { name: /Verify all/i }).first();
@@ -454,10 +500,11 @@ async function main() {
     const lead = coordinators[0];
     await ensureTab(lead, "Voting");
     if (coordinatorCount > 1) {
-      const increaseThreshold = lead.getByRole("button", { name: /Increase Threshold T/i }).first();
-      if (await increaseThreshold.count()) {
-        await increaseThreshold.click();
-        await sleep(100);
+      const thresholdResult = await ensureThresholdT(lead, Math.min(coordinatorCount, 2));
+      if (!thresholdResult.reached) {
+        throw new Error(
+          `Could not reach desired Threshold T before round ${roundIndex + 1}: ${thresholdResult.reason} (current=${thresholdResult.value ?? "unknown"})`,
+        );
       }
     }
     const questionBox = lead.locator("#simple-question-prompt").first();

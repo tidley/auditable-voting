@@ -323,6 +323,10 @@ export default function SimpleCoordinatorApp() {
     () => npubsToHexRoster(coordinatorRoster),
     [coordinatorRoster],
   );
+  const localCoordinatorHexPubkey = useMemo(
+    () => npubsToHexRoster(keypair?.npub ? [keypair.npub] : [])[0] ?? "",
+    [keypair?.npub],
+  );
   const coordinatorElectionId = useMemo(
     () => keypair?.npub
       ? deriveCoordinatorElectionId({
@@ -554,7 +558,7 @@ export default function SimpleCoordinatorApp() {
     let cleanup = () => {};
 
     async function setupCoordinatorControl() {
-      if (!identityReady || !keypair?.npub || !keypair.nsec || !coordinatorElectionId) {
+      if (!identityReady || !keypair?.npub || !keypair.nsec || !coordinatorElectionId || !localCoordinatorHexPubkey) {
         coordinatorControlServiceRef.current = null;
         setCoordinatorControlView(null);
         setCoordinatorControlStateLabel(null);
@@ -563,7 +567,7 @@ export default function SimpleCoordinatorApp() {
 
       const service = await CoordinatorControlService.create({
         electionId: coordinatorElectionId,
-        localPubkey: keypair.npub,
+        localPubkey: localCoordinatorHexPubkey,
         roster: coordinatorRoster,
         snapshot: coordinatorControlCache?.snapshot ?? null,
       });
@@ -641,6 +645,7 @@ export default function SimpleCoordinatorApp() {
     coordinatorRoster,
     identityReady,
     isLeadCoordinator,
+    localCoordinatorHexPubkey,
     keypair?.npub,
     keypair?.nsec,
   ]);

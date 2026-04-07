@@ -39,6 +39,51 @@ The main remaining work is:
 
 ---
 
+## Cross-phase E2E Gate
+
+Every substantive protocol or state-management change must finish with a live browser end-to-end run against a local preview.
+
+Minimum mandatory gate:
+
+- `2 coordinators / 2 voters / 2 rounds`
+- NIP-65 off unless the phase explicitly targets NIP-65 behaviour
+- current shipped UI, not mocked UI shortcuts
+
+Recommended command shape:
+
+```bash
+LIVE_SIMPLE_BASE_URL=http://127.0.0.1:4179/simple.html \
+LIVE_COORDINATORS=2 \
+LIVE_VOTERS=2 \
+LIVE_ROUNDS=2 \
+LIVE_STARTUP_WAIT_MS=20000 \
+LIVE_ROUND_WAIT_MS=15000 \
+LIVE_TICKET_WAIT_MS=15000 \
+LIVE_NIP65=off \
+npm --prefix web run test:live-relays
+```
+
+This gate is required:
+
+- after each completed phase
+- after any protocol-seam refactor
+- after replay/snapshot changes
+- after harness changes
+
+The phase should not be treated as complete unless:
+
+- the gate runs to completion
+- the result is recorded
+- any harness failure is distinguished from a protocol failure
+
+If the gate fails, the failure must be logged under the relevant phase as one of:
+
+- `harness failure`
+- `protocol failure`
+- `relay/runtime failure`
+
+---
+
 ## Phase 1
 
 ### Goal
@@ -77,6 +122,18 @@ Move the coordinator control plane off ad hoc DM-heavy logic and into a Rust/Was
 ### Status
 
 `Completed as a migration seam.`
+
+### E2E gate
+
+Required before sign-off:
+
+- live `2 / 2 / 2` run after coordinator-control seam insertion
+- prove the migrated coordinator workflow still opens rounds end to end
+
+Recorded status:
+
+- the coordinator seam was verified in focused tests and local live runs
+- a standing live `2 / 2 / 2` gate must still be rerun whenever the coordinator-control seam changes
 
 ### Notes
 
@@ -157,6 +214,21 @@ Still not fully migrated:
 - remove or archive obsolete TS reducer helpers once their remaining tests/references are resolved cleanly
 - expand parity/integration coverage beyond the current focused tests
 
+### E2E gate
+
+Required before sign-off:
+
+- live `2 / 2 / 2` run after migrating voter/coordinator/auditor public-state consumers onto the Rust-derived path
+- confirm the Rust-derived public replay seam does not break live round discovery or ticket issuance
+
+Current latest gate status:
+
+- harness threshold setup issue fixed
+- latest live `2 / 2 / 2` run completed but failed at runtime:
+  - no live round seen by voters
+  - both coordinators remained at `Waiting for this voter's blinded ticket request. Waiting for a live round.`
+- this means the Phase 2 migration work is not operationally signed off by e2e yet
+
 ---
 
 ## Phase 3
@@ -232,6 +304,18 @@ Phase 3 should be considered complete only when:
 - reload + replay parity is demonstrated
 - remaining legacy TS reducer logic is removed or clearly non-authoritative
 
+### E2E gate
+
+Required before sign-off:
+
+- live `2 / 2 / 2` run after snapshot/versioning/diagnostics changes
+- at least one reload/recovery-oriented live run after snapshot changes
+
+The aim is to prove that:
+
+- snapshot changes did not break live round progression
+- replay recovery still converges after browser-local state changes
+
 ---
 
 ## Phase 4
@@ -274,6 +358,17 @@ Doing Phase 4 work before Phase 3 is complete would risk:
 3. Keep TS limited to display and transport wiring
 4. Measure replay and wasm-size impact before widening scope
 
+### E2E gate
+
+Required before sign-off:
+
+- live `2 / 2 / 2` run for the threshold/proof vertical slice
+- an additional larger stress run after the narrow slice is stable
+
+Minimum expectation:
+
+- end-to-end tally/proof workflow works live before broader Phase 4 claims are made
+
 ---
 
 ## Legacy TypeScript Logic Status
@@ -300,9 +395,10 @@ This is the recommended order from here:
 1. Complete Phase 3 snapshot/versioning work in `auditable-voting-core`
 2. Add structured diagnostics and replay status exports from Rust
 3. Add reload/recovery parity tests across snapshot + suffix replay
-4. Remove/demote remaining legacy TS protocol helpers
-5. Stabilise broader UI/integration tests
-6. Only then begin Phase 4 threshold/proof expansion
+4. Re-pass the live `2 / 2 / 2` gate for the current Rust-derived public-state path
+5. Remove/demote remaining legacy TS protocol helpers
+6. Stabilise broader UI/integration tests
+7. Only then begin Phase 4 threshold/proof expansion
 
 ---
 
