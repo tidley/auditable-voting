@@ -41,7 +41,7 @@ import {
   subscribeLatestSimpleLiveVote,
   type SimpleLiveVoteSession,
 } from "./simpleVotingSession";
-import { reconcileSimpleKnownRounds } from "./simpleRoundState";
+import { buildSimpleVoteTicketRows } from "./simpleRoundState";
 import {
   downloadSimpleActorBackup,
   clearSimpleActorState,
@@ -60,6 +60,11 @@ import {
   selectFollowRetryTargetsRust,
   selectRequestRetryKeysRust,
 } from "./wasm/auditableVotingCore";
+import {
+  ProtocolStateService,
+  SIMPLE_PUBLIC_ELECTION_ID,
+  type ProtocolStateCache,
+} from "./services/ProtocolStateService";
 
 type LiveVoteChoice = "Yes" | "No" | null;
 type VoterTab = "configure" | "vote" | "settings";
@@ -87,6 +92,7 @@ type RoundReplyKeypair = {
 type SimpleVoterCache = {
   manualCoordinators: string[];
   nip65Enabled: boolean;
+  protocolStateCache?: ProtocolStateCache | null;
   requestStatus: string | null;
   receivedShards: SimpleShardResponse[];
   pendingBlindRequests: Record<string, PendingBlindRequest>;
@@ -102,6 +108,7 @@ function createEmptyVoterCache(): SimpleVoterCache {
   return {
     manualCoordinators: [],
     nip65Enabled: false,
+    protocolStateCache: null,
     requestStatus: null,
     receivedShards: [],
     pendingBlindRequests: {},
@@ -201,6 +208,8 @@ export default function SimpleUiApp() {
   const [requestDeliveries, setRequestDeliveries] = useState<Record<string, { status: string; eventId?: string; requestId?: string; attempts?: number; lastAttemptAt?: string }>>({});
   const [dmAcknowledgements, setDmAcknowledgements] = useState<SimpleDmAcknowledgement[]>([]);
   const [discoveredSessions, setDiscoveredSessions] = useState<SimpleLiveVoteSession[]>([]);
+  const [protocolStateCache, setProtocolStateCache] = useState<ProtocolStateCache | null>(null);
+  const [derivedPublicRounds, setDerivedPublicRounds] = useState<SimpleLiveVoteSession[]>([]);
   const [knownBlindKeys, setKnownBlindKeys] = useState<Record<string, SimpleBlindKeyAnnouncement>>({});
   const [submitStatus, setSubmitStatus] = useState<string | null>(null);
   const [ballotTokenId, setBallotTokenId] = useState<string | null>(null);
@@ -210,6 +219,7 @@ export default function SimpleUiApp() {
   const sentTicketReceiptAckIdsRef = useRef<Set<string>>(new Set());
   const lastAutoSelectedVotingIdRef = useRef("");
   const manualRoundSelectionRef = useRef(false);
+  const protocolStateServiceRef = useRef<ProtocolStateService | null>(null);
 
   function persistVoterIdentity(nextKeypair: SimpleVoterKeypair, cache?: Partial<SimpleVoterCache>) {
     return saveSimpleActorState({
@@ -389,6 +399,11 @@ export default function SimpleUiApp() {
         const cache = (storedState.cache ?? null) as Partial<SimpleVoterCache> | null;
         setManualCoordinators(Array.isArray(cache?.manualCoordinators) ? cache.manualCoordinators : []);
         setNip65Enabled(cache?.nip65Enabled === true);
+        setProtocolStateCache(
+          cache?.protocolStateCache && typeof cache.protocolStateCache === "object"
+            ? cache.protocolStateCache as ProtocolStateCache
+            : null,
+        );
         setRequestStatus(typeof cache?.requestStatus === "string" ? cache.requestStatus : null);
         setReceivedShards(Array.isArray(cache?.receivedShards) ? cache.receivedShards : []);
         setPendingBlindRequests(
@@ -462,6 +477,7 @@ export default function SimpleUiApp() {
     const cache: SimpleVoterCache = {
       manualCoordinators,
       nip65Enabled,
+      protocolStateCache,
       requestStatus,
       receivedShards,
       pendingBlindRequests,
@@ -484,6 +500,7 @@ export default function SimpleUiApp() {
     liveVoteChoice,
     manualCoordinators,
     nip65Enabled,
+    protocolStateCache,
     followDeliveries,
     pendingBlindRequests,
     roundReplyKeypairs,
@@ -646,6 +663,39 @@ export default function SimpleUiApp() {
 
     void primeNip65RelayHints(knownParticipants, SIMPLE_PUBLIC_RELAYS);
   }, [configuredCoordinatorTargets, roundReplyKeypairs]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function replayProtocolState() {
+      const authorPubkey = voterKeypair?.npub ?? configuredCoordinatorTargets[0] ?? "voter";
+      const service = protocolStateServiceRef.current ?? await ProtocolStateService.create({
+        electionId: SIMPLE_PUBLIC_ELECTION_ID,
+        snapshot: protocolStateCache,
+      });
+      protocolStateServiceRef.current = service;
+
+      const replay = service.replayPublicState({
+        electionId: SIMPLE_PUBLIC_ELECTION_ID,
+        authorPubkey,
+        rounds: discoveredSessions,
+      });
+      const nextCache = service.snapshot();
+
+      if (cancelled) {
+        return;
+      }
+
+      setDerivedPublicRounds(replay.roundSessions);
+      setProtocolStateCache(nextCache);
+    }
+
+    void replayProtocolState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [configuredCoordinatorTargets, discoveredSessions, voterKeypair?.npub]);
 
   useEffect(() => {
     if (configuredCoordinatorTargets.length === 0 || knownRoundVotingIds.length === 0) {
@@ -1141,23 +1191,49 @@ export default function SimpleUiApp() {
     };
   }, [uniqueShardResponses]);
 
-  const reconciledRoundState = useMemo(() => reconcileSimpleKnownRounds({
-    configuredCoordinatorTargets,
-    discoveredSessions,
-    receivedShards,
-  }), [configuredCoordinatorTargets, discoveredSessions, receivedShards]);
+  const voteTicketRows = useMemo(
+    () => buildSimpleVoteTicketRows(receivedShards, configuredCoordinatorTargets),
+    [configuredCoordinatorTargets, receivedShards],
+  );
+  const knownRounds = useMemo(() => {
+    const sessionsByVotingId = new Map(
+      derivedPublicRounds.map((round) => [round.votingId, round] as const),
+    );
 
-  const voteTicketRows = reconciledRoundState.ticketRows;
+    for (const row of voteTicketRows) {
+      if (sessionsByVotingId.has(row.votingId)) {
+        continue;
+      }
+
+      const sourceShard = receivedShards.find((response) => {
+        const parsed = response.shardCertificate ? parseSimpleShardCertificate(response.shardCertificate) : null;
+        return parsed?.votingId === row.votingId && configuredCoordinatorTargets.includes(response.coordinatorNpub);
+      });
+
+      sessionsByVotingId.set(row.votingId, {
+        votingId: row.votingId,
+        prompt: row.prompt,
+        coordinatorNpub: sourceShard?.coordinatorNpub ?? "",
+        createdAt: row.createdAt,
+        thresholdT: row.thresholdT,
+        thresholdN: row.thresholdN,
+        authorizedCoordinatorNpubs: [...configuredCoordinatorTargets],
+        eventId: `ticket-row:${row.votingId}`,
+      });
+    }
+
+    return Array.from(sessionsByVotingId.values()).sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }, [configuredCoordinatorTargets, derivedPublicRounds, receivedShards, voteTicketRows]);
 
   useEffect(() => {
-    if (!reconciledRoundState.knownRounds.length) {
+    if (!knownRounds.length) {
       setSelectedVotingId("");
       lastAutoSelectedVotingIdRef.current = "";
       manualRoundSelectionRef.current = false;
       return;
     }
 
-    const latestVotingId = reconciledRoundState.knownRounds[0].votingId;
+    const latestVotingId = knownRounds[0].votingId;
     setSelectedVotingId((current) => {
       const canAutoAdvance =
         !manualRoundSelectionRef.current
@@ -1169,17 +1245,17 @@ export default function SimpleUiApp() {
         return latestVotingId;
       }
 
-      return reconciledRoundState.knownRounds.some((round) => round.votingId === current)
+      return knownRounds.some((round) => round.votingId === current)
         ? current
         : latestVotingId;
     });
-  }, [reconciledRoundState.knownRounds]);
+  }, [knownRounds]);
 
   const effectiveLiveVoteSession = useMemo<SimpleLiveVoteSession | null>(() => {
-    return reconciledRoundState.knownRounds.find((round) => round.votingId === selectedVotingId)
-      ?? reconciledRoundState.knownRounds[0]
+    return knownRounds.find((round) => round.votingId === selectedVotingId)
+      ?? knownRounds[0]
       ?? null;
-  }, [reconciledRoundState.knownRounds, selectedVotingId]);
+  }, [knownRounds, selectedVotingId]);
 
   const coordinatorDiagnostics = useMemo(() => buildVoterCoordinatorDiagnosticsRust({
     configuredCoordinatorTargets,
@@ -1257,7 +1333,7 @@ export default function SimpleUiApp() {
 
   useEffect(() => {
     const roundCoordinatorNpubs = normalizeCoordinatorNpubsRust(
-      reconciledRoundState.knownRounds.flatMap((round) => round.authorizedCoordinatorNpubs),
+      knownRounds.flatMap((round) => round.authorizedCoordinatorNpubs),
     );
 
     if (roundCoordinatorNpubs.length === 0) {
@@ -1274,7 +1350,7 @@ export default function SimpleUiApp() {
         ? current
         : next;
     });
-  }, [reconciledRoundState.knownRounds]);
+  }, [knownRounds]);
 
   useEffect(() => {
     const voterSecretKey = decodeNsec(voterKeypair?.nsec ?? "");
@@ -1861,7 +1937,7 @@ export default function SimpleUiApp() {
           >
             {effectiveLiveVoteSession ? (
               <>
-                {reconciledRoundState.knownRounds.length > 1 ? (
+                {knownRounds.length > 1 ? (
                   <div className='simple-voter-round-picker'>
                     <label
                       className='simple-voter-label'
@@ -1878,7 +1954,7 @@ export default function SimpleUiApp() {
                         setSelectedVotingId(event.target.value);
                       }}
                     >
-                      {reconciledRoundState.knownRounds.map((round) => (
+                      {knownRounds.map((round) => (
                         <option key={round.votingId} value={round.votingId}>
                           {formatRoundOptionLabel(round)}
                         </option>

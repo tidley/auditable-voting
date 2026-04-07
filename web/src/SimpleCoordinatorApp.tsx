@@ -32,12 +32,13 @@ import {
   npubsToHexRoster,
   type CoordinatorControlCache,
 } from "./services/CoordinatorControlService";
+import {
+  ProtocolStateService,
+  SIMPLE_PUBLIC_ELECTION_ID,
+  type ProtocolStateCache,
+} from "./services/ProtocolStateService";
 import type { CoordinatorEngineView } from "./core/coordinatorCoreAdapter";
 import { fetchCoordinatorControlEvents, subscribeCoordinatorControl } from "./nostr/subscribeCoordinatorControl";
-import {
-  validateSimpleSubmittedVotes,
-  type SimpleValidatedVote,
-} from "./simpleVoteValidation";
 import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
 import SimpleQrScanner from "./SimpleQrScanner";
@@ -115,6 +116,7 @@ type SimpleCoordinatorCache = {
   roundBlindKeyAnnouncements: Record<string, SimpleBlindKeyAnnouncement>;
   publishStatus: string | null;
   coordinatorControlCache?: CoordinatorControlCache | null;
+  protocolStateCache?: ProtocolStateCache | null;
   publishedVotes: SimpleLiveVoteSession[];
   selectedVotingId: string;
   selectedSubmittedVotingId: string;
@@ -275,6 +277,9 @@ export default function SimpleCoordinatorApp() {
   const [roundBlindKeyAnnouncements, setRoundBlindKeyAnnouncements] = useState<Record<string, SimpleBlindKeyAnnouncement>>({});
   const [publishStatus, setPublishStatus] = useState<string | null>(null);
   const [coordinatorControlCache, setCoordinatorControlCache] = useState<CoordinatorControlCache | null>(null);
+  const [protocolStateCache, setProtocolStateCache] = useState<ProtocolStateCache | null>(null);
+  const [derivedProtocolState, setDerivedProtocolState] = useState<Awaited<ReturnType<ProtocolStateService["replayPublicState"]>>["derivedState"] | null>(null);
+  const [derivedPublicRounds, setDerivedPublicRounds] = useState<SimpleLiveVoteSession[]>([]);
   const [coordinatorControlView, setCoordinatorControlView] = useState<CoordinatorEngineView | null>(null);
   const [coordinatorControlStateLabel, setCoordinatorControlStateLabel] = useState<string | null>(null);
   const [publishedVotes, setPublishedVotes] = useState<SimpleLiveVoteSession[]>([]);
@@ -282,7 +287,6 @@ export default function SimpleCoordinatorApp() {
   const [selectedSubmittedVotingId, setSelectedSubmittedVotingId] =
     useState('');
   const [submittedVotes, setSubmittedVotes] = useState<SimpleSubmittedVote[]>([]);
-  const [validatedVotes, setValidatedVotes] = useState<SimpleValidatedVote[]>([]);
   const [activeTab, setActiveTab] = useState<CoordinatorTab>("configure");
   const [shareAssignmentsInFlight, setShareAssignmentsInFlight] =
     useState(false);
@@ -295,6 +299,7 @@ export default function SimpleCoordinatorApp() {
   const autoSendInFlightRef = useRef<Set<string>>(new Set());
   const autoShareAssignmentAttemptRef = useRef('');
   const coordinatorControlServiceRef = useRef<CoordinatorControlService | null>(null);
+  const protocolStateServiceRef = useRef<ProtocolStateService | null>(null);
   const roundBroadcastInFlightRef = useRef<string | null>(null);
   const verifyAllVisibleRef = useRef<HTMLInputElement | null>(null);
   const isLeadCoordinator = !leadCoordinatorNpub.trim() || leadCoordinatorNpub.trim() === (keypair?.npub ?? "");
@@ -327,18 +332,19 @@ export default function SimpleCoordinatorApp() {
       : "",
     [keypair?.npub, leadCoordinatorNpub],
   );
+  const visiblePublishedVotes = derivedPublicRounds.length > 0 ? derivedPublicRounds : publishedVotes;
   const selectedPublishedVote = useMemo(
-    () => publishedVotes.find((vote) => vote.votingId === selectedVotingId) ?? publishedVotes[0] ?? null,
-    [publishedVotes, selectedVotingId],
+    () => visiblePublishedVotes.find((vote) => vote.votingId === selectedVotingId) ?? visiblePublishedVotes[0] ?? null,
+    [selectedVotingId, visiblePublishedVotes],
   );
   const selectedSubmittedVote = useMemo(
     () =>
-      publishedVotes.find(
+      visiblePublishedVotes.find(
         (vote) => vote.votingId === selectedSubmittedVotingId,
       ) ??
-      publishedVotes[0] ??
+      visiblePublishedVotes[0] ??
       null,
-    [publishedVotes, selectedSubmittedVotingId],
+    [selectedSubmittedVotingId, visiblePublishedVotes],
   );
   const activeVotingId = selectedPublishedVote?.votingId ?? "";
   const activeThresholdT = selectedPublishedVote?.thresholdT ?? (Number.parseInt(questionThresholdT, 10) || undefined);
@@ -407,6 +413,11 @@ export default function SimpleCoordinatorApp() {
           setCoordinatorControlCache(
             cache.coordinatorControlCache && typeof cache.coordinatorControlCache === "object"
               ? cache.coordinatorControlCache as CoordinatorControlCache
+              : null,
+          );
+          setProtocolStateCache(
+            cache.protocolStateCache && typeof cache.protocolStateCache === "object"
+              ? cache.protocolStateCache as ProtocolStateCache
               : null,
           );
           setPublishedVotes(
@@ -497,6 +508,7 @@ export default function SimpleCoordinatorApp() {
       roundBlindKeyAnnouncements,
       publishStatus,
       coordinatorControlCache,
+      protocolStateCache,
       publishedVotes,
       selectedVotingId,
       selectedSubmittedVotingId,
@@ -513,6 +525,7 @@ export default function SimpleCoordinatorApp() {
     assignmentStatus,
     autoSendFollowers,
     coordinatorControlCache,
+    protocolStateCache,
     followers,
     identityReady,
     keypair,
@@ -631,6 +644,47 @@ export default function SimpleCoordinatorApp() {
     keypair?.npub,
     keypair?.nsec,
   ]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function replayProtocolState() {
+      if (!identityReady || !keypair?.npub) {
+        protocolStateServiceRef.current = null;
+        setDerivedProtocolState(null);
+        setDerivedPublicRounds([]);
+        return;
+      }
+
+      const service = protocolStateServiceRef.current ?? await ProtocolStateService.create({
+        electionId: SIMPLE_PUBLIC_ELECTION_ID,
+        snapshot: protocolStateCache,
+      });
+      protocolStateServiceRef.current = service;
+
+      const replay = service.replayPublicState({
+        electionId: SIMPLE_PUBLIC_ELECTION_ID,
+        authorPubkey: keypair.npub,
+        rounds: publishedVotes,
+        votes: submittedVotes,
+      });
+      const nextCache = service.snapshot();
+
+      if (cancelled) {
+        return;
+      }
+
+      setDerivedProtocolState(replay.derivedState);
+      setDerivedPublicRounds(replay.roundSessions);
+      setProtocolStateCache(nextCache);
+    }
+
+    void replayProtocolState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [identityReady, keypair?.npub, publishedVotes, submittedVotes]);
 
   useEffect(() => {
     const coordinatorNsec = keypair?.nsec ?? "";
@@ -1066,28 +1120,28 @@ export default function SimpleCoordinatorApp() {
   }, [liveVoteSourceNpub]);
 
   useEffect(() => {
-    if (!publishedVotes.length) {
+    if (!visiblePublishedVotes.length) {
       setSelectedVotingId("");
       setSelectedSubmittedVotingId('');
       return;
     }
 
     if (!isLeadCoordinator) {
-      setSelectedVotingId(publishedVotes[0].votingId);
+      setSelectedVotingId(visiblePublishedVotes[0].votingId);
     } else {
       setSelectedVotingId((current) =>
-        publishedVotes.some((vote) => vote.votingId === current)
+        visiblePublishedVotes.some((vote) => vote.votingId === current)
           ? current
-          : publishedVotes[0].votingId,
+          : visiblePublishedVotes[0].votingId,
       );
     }
 
     setSelectedSubmittedVotingId((current) =>
-      publishedVotes.some((vote) => vote.votingId === current)
+      visiblePublishedVotes.some((vote) => vote.votingId === current)
         ? current
-        : publishedVotes[0].votingId,
+        : visiblePublishedVotes[0].votingId,
     );
-  }, [isLeadCoordinator, publishedVotes]);
+  }, [isLeadCoordinator, visiblePublishedVotes]);
 
   useEffect(() => {
     const votingId = selectedSubmittedVote?.votingId ?? '';
@@ -1846,32 +1900,6 @@ export default function SimpleCoordinatorApp() {
     }
   }
 
-  const requiredShardCount = Math.max(
-    1,
-    selectedSubmittedVote?.thresholdT ?? 1,
-  );
-  useEffect(() => {
-    let cancelled = false;
-
-    void validateSimpleSubmittedVotes(
-      submittedVotes,
-      requiredShardCount,
-      selectedSubmittedVote?.authorizedCoordinatorNpubs ?? [],
-    ).then((nextValidatedVotes) => {
-      if (!cancelled) {
-        setValidatedVotes(nextValidatedVotes);
-      }
-    }).catch(() => {
-      if (!cancelled) {
-        setValidatedVotes([]);
-      }
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [requiredShardCount, selectedSubmittedVote?.authorizedCoordinatorNpubs, submittedVotes]);
-
   useEffect(() => {
     const knownFollowerNpubs = new Set(followers.map((follower) => follower.voterNpub));
     setAutoSendFollowers((current) => {
@@ -1889,17 +1917,32 @@ export default function SimpleCoordinatorApp() {
     });
   }, [followers]);
 
-  const validYesCount = validatedVotes.filter((entry) => entry.valid && entry.vote.choice === "Yes").length;
-  const validNoCount = validatedVotes.filter((entry) => entry.valid && entry.vote.choice === "No").length;
-  const yesValidatedVotes = validatedVotes.filter((entry) => entry.vote.choice === "Yes");
-  const noValidatedVotes = validatedVotes.filter((entry) => entry.vote.choice === "No");
+  const selectedRoundId = selectedSubmittedVote?.votingId ?? "";
+  const selectedRoundSummary = useMemo(
+    () => derivedProtocolState?.ballot_state.round_summaries.find((summary) => summary.round_id === selectedRoundId) ?? null,
+    [derivedProtocolState, selectedRoundId],
+  );
+  const acceptedVotes = useMemo(
+    () => derivedProtocolState?.ballot_state.accepted_ballots.filter((entry) => entry.round_id === selectedRoundId) ?? [],
+    [derivedProtocolState, selectedRoundId],
+  );
+  const rejectedVotes = useMemo(
+    () => derivedProtocolState?.ballot_state.rejected_ballots.filter((entry) => entry.round_id === selectedRoundId) ?? [],
+    [derivedProtocolState, selectedRoundId],
+  );
+  const validYesCount = selectedRoundSummary?.yes_count ?? 0;
+  const validNoCount = selectedRoundSummary?.no_count ?? 0;
+  const yesValidatedVotes = acceptedVotes.filter((entry) => entry.choice === "Yes");
+  const noValidatedVotes = acceptedVotes.filter((entry) => entry.choice === "No");
+  const yesRejectedVotes = rejectedVotes.filter((entry) => entry.choice === "Yes");
+  const noRejectedVotes = rejectedVotes.filter((entry) => entry.choice === "No");
   const submittedVoteNumbers = useMemo(() => {
     const nextNumbers = new Map<string, number>();
-    validatedVotes.forEach((entry, index) => {
-      nextNumbers.set(entry.vote.eventId, index + 1);
+    [...acceptedVotes, ...rejectedVotes].forEach((entry, index) => {
+      nextNumbers.set(entry.event_id, index + 1);
     });
     return nextNumbers;
-  }, [validatedVotes]);
+  }, [acceptedVotes, rejectedVotes]);
   const visibleFollowers = activeVotingId
     ? followers.filter((follower) => !follower.votingId || follower.votingId === activeVotingId)
     : followers;
@@ -2569,7 +2612,7 @@ export default function SimpleCoordinatorApp() {
                                 1,
                                 (Number.parseInt(current, 10) || 1) - 1,
                               ),
-                            ),
+                            )
                           )
                         }
                         disabled={
@@ -2596,7 +2639,7 @@ export default function SimpleCoordinatorApp() {
                                 maxThresholdT,
                                 (Number.parseInt(current, 10) || 1) + 1,
                               ),
-                            ),
+                            )
                           )
                         }
                         disabled={
@@ -2667,7 +2710,7 @@ export default function SimpleCoordinatorApp() {
             </SimpleCollapsibleSection>
 
             <SimpleCollapsibleSection title='Round'>
-              {publishedVotes.length > 0 ? (
+              {visiblePublishedVotes.length > 0 ? (
                 <>
                   <label
                     className='simple-voter-label'
@@ -2681,7 +2724,7 @@ export default function SimpleCoordinatorApp() {
                     value={selectedPublishedVote?.votingId ?? ''}
                     onChange={(event) => selectRound(event.target.value)}
                   >
-                    {publishedVotes.map((vote) => (
+                    {visiblePublishedVotes.map((vote) => (
                       <option key={vote.eventId} value={vote.votingId}>
                         {formatRoundOptionLabel(vote)}
                       </option>
@@ -2785,7 +2828,7 @@ export default function SimpleCoordinatorApp() {
                       setSelectedSubmittedVotingId(event.target.value)
                     }
                   >
-                    {publishedVotes.map((vote) => (
+                    {visiblePublishedVotes.map((vote) => (
                       <option key={vote.eventId} value={vote.votingId}>
                         {formatRoundOptionLabel(vote)}
                       </option>
@@ -2797,83 +2840,101 @@ export default function SimpleCoordinatorApp() {
                   <div className='simple-submitted-columns'>
                     <section className='simple-submitted-column'>
                       <h3 className='simple-submitted-column-title'>Yes</h3>
-                      {yesValidatedVotes.length > 0 ? (
+                      {yesValidatedVotes.length > 0 || yesRejectedVotes.length > 0 ? (
                         <ul className='simple-submitted-vote-list'>
-                          {yesValidatedVotes.map(
-                            ({ vote, valid, reason }) => (
+                          {yesValidatedVotes.map((vote) => {
+                            return (
                               <li
-                                key={vote.eventId}
+                                key={vote.event_id}
                                 className='simple-submitted-vote-item'
                               >
                                 <div className='simple-vote-entry'>
                                   <div className='simple-vote-entry-copy'>
                                     <p className='simple-voter-question simple-vote-result-line'>
-                                      <span>Vote {submittedVoteNumbers.get(vote.eventId) ?? '?'}</span>{' '}
-                                      <span
-                                        className={
-                                          valid
-                                            ? 'simple-vote-valid'
-                                            : 'simple-vote-invalid'
-                                        }
-                                      >
-                                        {valid
-                                          ? '[Valid]'
-                                          : `[Invalid${reason ? `: ${reason}` : ''}]`}
-                                      </span>
+                                      <span>Vote {submittedVoteNumbers.get(vote.event_id) ?? '?'}</span>{' '}
+                                      <span className='simple-vote-valid'>[Valid]</span>
                                     </p>
                                   </div>
-                                  {vote.tokenId ? (
+                                  {vote.token_id ? (
                                     <TokenFingerprint
-                                      tokenId={vote.tokenId}
+                                      tokenId={vote.token_id}
                                       large
                                       hideMetadata
                                     />
                                   ) : null}
                                 </div>
                               </li>
-                            ),
-                          )}
+                            );
+                          })}
+                          {yesRejectedVotes.map((vote) => {
+                            return (
+                              <li
+                                key={vote.event_id}
+                                className='simple-submitted-vote-item'
+                              >
+                                <div className='simple-vote-entry'>
+                                  <div className='simple-vote-entry-copy'>
+                                    <p className='simple-voter-question simple-vote-result-line'>
+                                      <span>Vote {submittedVoteNumbers.get(vote.event_id) ?? '?'}</span>{' '}
+                                      <span className='simple-vote-invalid'>
+                                        [Invalid: {vote.reason.detail}]
+                                      </span>
+                                    </p>
+                                  </div>
+                                </div>
+                              </li>
+                            );
+                          })}
                         </ul>
                       ) : null}
                     </section>
                     <section className='simple-submitted-column'>
                       <h3 className='simple-submitted-column-title'>No</h3>
-                      {noValidatedVotes.length > 0 ? (
+                      {noValidatedVotes.length > 0 || noRejectedVotes.length > 0 ? (
                         <ul className='simple-submitted-vote-list'>
-                          {noValidatedVotes.map(
-                            ({ vote, valid, reason }) => (
+                          {noValidatedVotes.map((vote) => {
+                            return (
                               <li
-                                key={vote.eventId}
+                                key={vote.event_id}
                                 className='simple-submitted-vote-item'
                               >
                                 <div className='simple-vote-entry'>
                                   <div className='simple-vote-entry-copy'>
                                     <p className='simple-voter-question simple-vote-result-line'>
-                                      <span>Vote {submittedVoteNumbers.get(vote.eventId) ?? '?'}</span>{' '}
-                                      <span
-                                        className={
-                                          valid
-                                            ? 'simple-vote-valid'
-                                            : 'simple-vote-invalid'
-                                        }
-                                      >
-                                        {valid
-                                          ? '[Valid]'
-                                          : `[Invalid${reason ? `: ${reason}` : ''}]`}
-                                      </span>
+                                      <span>Vote {submittedVoteNumbers.get(vote.event_id) ?? '?'}</span>{' '}
+                                      <span className='simple-vote-valid'>[Valid]</span>
                                     </p>
                                   </div>
-                                  {vote.tokenId ? (
+                                  {vote.token_id ? (
                                     <TokenFingerprint
-                                      tokenId={vote.tokenId}
+                                      tokenId={vote.token_id}
                                       large
                                       hideMetadata
                                     />
                                   ) : null}
                                 </div>
                               </li>
-                            ),
-                          )}
+                            );
+                          })}
+                          {noRejectedVotes.map((vote) => {
+                            return (
+                              <li
+                                key={vote.event_id}
+                                className='simple-submitted-vote-item'
+                              >
+                                <div className='simple-vote-entry'>
+                                  <div className='simple-vote-entry-copy'>
+                                    <p className='simple-voter-question simple-vote-result-line'>
+                                      <span>Vote {submittedVoteNumbers.get(vote.event_id) ?? '?'}</span>{' '}
+                                      <span className='simple-vote-invalid'>
+                                        [Invalid: {vote.reason.detail}]
+                                      </span>
+                                    </p>
+                                  </div>
+                                </div>
+                              </li>
+                            );
+                          })}
                         </ul>
                       ) : null}
                     </section>

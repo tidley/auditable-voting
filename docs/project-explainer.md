@@ -160,7 +160,7 @@ The present web client is built with:
 - **`@cloudflare/blindrsa-ts`** for the RSABSSA blind-signature primitive used in the current issuance path
 - **Rust compiled to WebAssembly** for deterministic protocol logic, including validation helpers and the new coordinator control engine
 - **an OpenMLS-shaped Rust abstraction** behind that coordinator engine, with a deterministic fixed-membership engine currently used in the browser build as the phase-1 migration seam
-- **a Rust mixed-replay engine for public rounds and ballots**, now used by the auditor flow to derive round state, accepted ballots, and rejection reasons
+- **a Rust mixed-replay engine for public rounds and ballots**, now used by the voter, coordinator, and auditor public-state views to derive round state, accepted ballots, and rejection reasons
 - **IndexedDB** for browser-local active state
 - **WebCrypto** for local encryption and passphrase-protected state
 
@@ -219,7 +219,7 @@ In the current migration slice:
 - public round-open events and public ballot events are normalised by the browser bridge
 - the Rust/Wasm core replays those events under one canonical ordering rule
 - ballot acceptance uses one fixed rule, documented in code: **first valid ballot wins**
-- the auditor view consumes that Rust-derived state instead of a separate TypeScript reducer
+- the voter, coordinator, and auditor public-state views now consume that Rust-derived state instead of separate TypeScript reducers
 
 ---
 
@@ -531,7 +531,7 @@ The repository now focuses on the client-side web app only:
 - voter and coordinator flows use `Configure`, `Vote`/`Voting`, and `Settings` tabs
 - coordinator round-open agreement now goes through a Rust/Wasm coordinator-control service
 - coordinator control messages are replayed deterministically from Nostr history instead of being inferred from relay arrival order
-- the auditor’s public round and ballot view now uses Rust-derived replay state
+- the voter, coordinator, and auditor public-state views now use shared Rust-derived replay state
 - adding a coordinator in the voter flow immediately starts the follow/notify DM path
 - the lead coordinator now auto-sends share indexes to sub-coordinators
 - each coordinator sends its own ticket share directly to the voter

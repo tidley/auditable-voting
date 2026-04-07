@@ -11,7 +11,7 @@ The shipped app currently includes:
 - voter, coordinator, and auditor screens
 - tabbed voter and coordinator flows with `Configure`, `Vote`/`Voting`, and `Settings`
 - a new Rust/Wasm-backed coordinator control seam for round-open agreement and replay
-- a new Rust/Wasm public and ballot replay seam used by the auditor flow
+- a new Rust/Wasm public and ballot replay seam now used by the voter, coordinator, and auditor public-state views
 - round announcements over Nostr
 - coordinator control carrier events over Nostr, replayed through a Rust state machine
 - NIP-17 DM traffic for follow, blind request, direct ticket, and acknowledgement flows
@@ -109,7 +109,7 @@ At a high level:
 1. Coordinators exchange typed control messages for round draft / proposal / commit over a dedicated coordinator-control carrier on Nostr.
 2. Those coordinator-control events are replayed deterministically inside the `auditable-voting-core` Rust/Wasm engine.
 3. Once coordinator round-open agreement is reached, the lead publishes the public live round.
-4. Public round events and public ballot events can also be replayed through the Rust/Wasm core, which now drives the auditor’s derived public state.
+4. Public round events and public ballot events can also be replayed through the Rust/Wasm core, which now drives the shared voter, coordinator, and auditor public-state views.
 5. Coordinators publish per-round blind-signing keys, and the lead auto-sends share indexes to sub-coordinators.
 6. A voter adds coordinators in `Configure`, the client follows them over DMs, and then sends blinded issuance requests.
 7. Each coordinator returns its own blind-signature share directly to the voter; ticket delivery is retried automatically when acknowledgements are missing, and voters periodically backfill missed ticket DMs from relay history.
@@ -129,7 +129,7 @@ Current Rust-derived public slice:
 - public round lifecycle replay
 - deterministic ballot acceptance with a fixed `first valid wins` rule
 - derived public receipt hashes for accepted ballots
-- auditor-visible round summaries and rejection reasons
+- shared round summaries and rejection reasons for voter, coordinator, and auditor views
 
 Private or local state:
 
