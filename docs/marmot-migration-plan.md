@@ -71,8 +71,9 @@ Today the app uses:
 - Nostr public events for rounds, blind keys, ballots, and results
 - NIP-17 gift-wrapped DMs for issuance traffic
 - direct coordinator-to-voter ticket delivery for all coordinators
+- a small primary relay subset for live reads and subscriptions, with broader fanout reserved for publishes
 
-This is already the correct public/private split at a conceptual level, but the private plane is still relay-driven and message-heavy.
+This is already the correct public/private split at a conceptual level, but the private plane is still relay-driven and message-heavy. That shows up in practice: small live runs are now workable, but larger public-relay committee runs are still not operationally viable.
 
 ## Target architecture
 

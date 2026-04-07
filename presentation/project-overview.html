@@ -553,6 +553,7 @@
           <li>Coordinator follower rows now expose per-ticket relay publish diagnostics for debugging delivery gaps</li>
           <li>The default path currently prefers a tight curated relay set over broad hint expansion</li>
           <li>Reads and live subscriptions are kept to a smaller primary subset to reduce relay-side `too many concurrent REQs` pressure</li>
+          <li>Small live runs are now much stronger than large public-relay committee runs</li>
           <li>The protocol remains inspectable by any third party</li>
         </ul>
       </div>
@@ -801,7 +802,7 @@
       </div>
     </div>
     <div class="quote">
-      <p>The current repo is already client-only and static-deployable, but live relay reliability is still the main operational weakness.</p>
+      <p>The current repo is already client-only and static-deployable, but live relay reliability is still the main operational weakness: `1 / 20 / 3` and repeated `2 / 2 / 1` live runs now complete, while `5 / 10 / 10` on public relays is still not operationally viable.</p>
     </div>
     <div class="speaker-note">Important credibility slide. This is where you show you understand the difference between “possible” and “finished.”</div>
   </section>

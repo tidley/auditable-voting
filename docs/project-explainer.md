@@ -152,7 +152,7 @@ The present web client is built with:
 - **TypeScript 5** for the browser application logic
 - **Vite 5** for local development and static-site bundling
 - **`nostr-tools` 2.x** for Nostr keys, event signing, subscriptions, and relay publishing
-- **NIP-17 gift-wrapped DMs** for follow, issuance, direct ticket delivery, and acknowledgement traffic
+- **NIP-17 gift-wrapped DMs** for follow, issuance, direct ticket delivery, acknowledgement traffic, and history-based recovery
 - **optional NIP-65 relay hints**, disabled by default, for relay discovery experiments
 - **`@cloudflare/blindrsa-ts`** for the RSABSSA blind-signature primitive used in the current issuance path
 - **Rust compiled to WebAssembly** for deterministic protocol logic, including parts of validation and relay-set handling
@@ -501,10 +501,12 @@ The repository now focuses on the client-side web app only:
 - Nostr is the shared state layer
 - blind-share issuance is in the simple flow
 - NIP-65 relay hints are optional and disabled by default
+- live reads and subscriptions are capped to a small primary relay subset, while publishes can still fan out more broadly
 - local browser state is used for active session data
 
 The older backend-oriented stack has been removed from this repository.
 The client-only architecture is in place, but live relay reliability and recovery behaviour still need hardening.
+Current live evidence is mixed: single-coordinator runs up to `1 coordinator / 20 voters / 3 rounds` have completed cleanly in local-preview tests, and repeated `2 coordinators / 2 voters / 1 round` runs now complete, but larger public-relay runs such as `5 coordinators / 10 voters / 10 rounds` are still not operationally viable.
 
 ---
 
@@ -527,6 +529,7 @@ If coordinator signing keys are exposed in browser storage, an attacker can mint
 ### 4. Relay delivery is messy in the real world
 
 Live relay behavior is probabilistic, so follow requests, announcements, blind requests, and tickets all need recovery and reconciliation logic.
+The current app now does better at small scale by limiting live read fanout and backfilling from history, but that is still not enough to make large committee runs production-grade on public relays.
 
 ### 5. Cryptography must be conservative
 

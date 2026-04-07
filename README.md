@@ -16,11 +16,13 @@ The shipped app currently includes:
 - blind-signature share issuance and public ballot verification
 - coordinator-side per-ticket relay publish diagnostics for issued shares
 - periodic DM-history backfill for missed ticket delivery
+- smaller primary relay subsets for live reads and subscriptions, with broader fanout reserved for publishes
 - local browser persistence, backup, and optional passphrase protection
 - optional relay hint resolution via NIP-65, disabled by default
 - a growing Rust/Wasm core for deterministic protocol logic
 
 The client-only architecture is in place, but live relay reliability and recovery behaviour still need hardening.
+Empirically, recent local-preview runs have been strong at `1 coordinator / 20 voters / 3 rounds` and repeated `2 coordinators / 2 voters / 1 round`, but `5 coordinators / 10 voters / 10 rounds` is still not operationally viable on public relays.
 
 ## What is in this repo
 
@@ -125,6 +127,7 @@ The default path currently prefers a tighter curated relay set. Publishes can st
 ## Known limitations
 
 - live public relay convergence is still the main operational weakness
+- larger public-relay committee runs remain unreliable; `5 coordinators / 10 voters / 10 rounds` did not complete cleanly in the current live harness
 - the protocol works much better in tests than on unhealthy public relay sets
 - local secret material is still a browser-custody problem even with passphrase protection
 - the cryptographic path is materially improved, but still deserves external review before strong production claims
