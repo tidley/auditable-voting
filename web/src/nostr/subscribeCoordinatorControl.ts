@@ -2,7 +2,10 @@ import type { Filter, NostrEvent } from "nostr-tools";
 import { getSharedNostrPool } from "../sharedNostrPool";
 import { SIMPLE_PUBLIC_RELAYS } from "../simpleVotingSession";
 import { normalizeRelaysRust } from "../wasm/auditableVotingCore";
-import { SIMPLE_COORDINATOR_CONTROL_KIND } from "../core/coordinatorEventBridge";
+import {
+  matchesCoordinatorControlEvent,
+  SIMPLE_COORDINATOR_CONTROL_KIND,
+} from "../core/coordinatorEventBridge";
 
 const COORDINATOR_CONTROL_READ_RELAYS_MAX = 2;
 
@@ -21,11 +24,11 @@ export async function fetchCoordinatorControlEvents(input: {
   const relays = buildReadRelays(input.relays);
   const filter: Filter = {
     kinds: [SIMPLE_COORDINATOR_CONTROL_KIND],
-    "#election": [input.electionId],
     authors: input.coordinatorHexPubkeys?.length ? input.coordinatorHexPubkeys : undefined,
     limit: input.limit ?? 200,
   };
-  return pool.querySync(relays, filter);
+  const events = await pool.querySync(relays, filter);
+  return events.filter((event) => matchesCoordinatorControlEvent(event, input.electionId));
 }
 
 export function subscribeCoordinatorControl(input: {
@@ -38,7 +41,6 @@ export function subscribeCoordinatorControl(input: {
   const relays = buildReadRelays(input.relays);
   const filter: Filter = {
     kinds: [SIMPLE_COORDINATOR_CONTROL_KIND],
-    "#election": [input.electionId],
     authors: input.coordinatorHexPubkeys?.length ? input.coordinatorHexPubkeys : undefined,
     limit: 200,
   };
@@ -48,7 +50,9 @@ export function subscribeCoordinatorControl(input: {
     filter,
     {
       onevent(event) {
-        input.onEvents([event]);
+        if (matchesCoordinatorControlEvent(event, input.electionId)) {
+          input.onEvents([event]);
+        }
       },
     },
   );
