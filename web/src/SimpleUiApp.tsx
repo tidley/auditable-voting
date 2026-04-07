@@ -798,6 +798,9 @@ export default function SimpleUiApp() {
       setManualCoordinators([]);
       setCoordinatorDraft("");
     }
+    protocolStateServiceRef.current = null;
+    setProtocolStateCache(null);
+    setDerivedPublicRounds([]);
     setLiveVoteChoice(null);
     setRequestStatus(null);
     setSubmitStatus(null);
@@ -864,6 +867,7 @@ export default function SimpleUiApp() {
     void downloadSimpleActorBackup("voter", voterKeypair as SimpleActorKeypair, {
       manualCoordinators,
       nip65Enabled,
+      protocolStateCache,
       requestStatus,
       receivedShards,
       pendingBlindRequests,
@@ -897,8 +901,15 @@ export default function SimpleUiApp() {
       setIdentityStatus("Identity restored from backup.");
       setBackupStatus(`Backup restored from ${bundle.exportedAt}.`);
       const cache = (bundle.cache ?? null) as Partial<SimpleVoterCache> | null;
+      protocolStateServiceRef.current = null;
       setManualCoordinators(Array.isArray(cache?.manualCoordinators) ? cache.manualCoordinators : []);
       setNip65Enabled(cache?.nip65Enabled === true);
+      setProtocolStateCache(
+        cache?.protocolStateCache && typeof cache.protocolStateCache === "object"
+          ? cache.protocolStateCache as ProtocolStateCache
+          : null,
+      );
+      setDerivedPublicRounds([]);
       setLiveVoteChoice(cache?.liveVoteChoice === "Yes" || cache?.liveVoteChoice === "No" ? cache.liveVoteChoice : null);
       setRequestStatus(typeof cache?.requestStatus === "string" ? cache.requestStatus : null);
       setSubmitStatus(typeof cache?.submitStatus === "string" ? cache.submitStatus : null);
@@ -949,7 +960,14 @@ export default function SimpleUiApp() {
       const cache = (storedState.cache ?? null) as Partial<SimpleVoterCache> | null;
       setStoragePassphrase(trimmed);
       setVoterKeypair(storedState.keypair);
+      protocolStateServiceRef.current = null;
       setManualCoordinators(Array.isArray(cache?.manualCoordinators) ? cache.manualCoordinators : []);
+      setProtocolStateCache(
+        cache?.protocolStateCache && typeof cache.protocolStateCache === "object"
+          ? cache.protocolStateCache as ProtocolStateCache
+          : null,
+      );
+      setDerivedPublicRounds([]);
       setRequestStatus(typeof cache?.requestStatus === "string" ? cache.requestStatus : null);
       setReceivedShards(Array.isArray(cache?.receivedShards) ? cache.receivedShards : []);
       setPendingBlindRequests(cache?.pendingBlindRequests && typeof cache.pendingBlindRequests === "object" ? cache.pendingBlindRequests : {});

@@ -1,0 +1,327 @@
+# Auditable Voting Migration Phases
+
+This document replaces the earlier prompt-style phase notes with a repository-facing status and roadmap.
+
+It describes:
+
+- what each migration phase was meant to achieve
+- what is implemented in the current tree
+- what remains open
+- the recommended next order of work
+
+The app remains:
+
+- browser-first
+- static-site compatible
+- Nostr-based
+- Rust/Wasm-backed for growing protocol truth
+- free of any backend dependency for correctness
+
+---
+
+## Current headline
+
+As of `v0.59`, the repository has:
+
+- a Rust/Wasm coordinator-control seam
+- a Rust/Wasm mixed public-and-ballot replay seam
+- shared Rust-derived public-state consumption in the voter, coordinator, and auditor views
+- TypeScript still responsible for UI, relay transport, IndexedDB/browser persistence plumbing, and wasm bridging
+
+The architecture has moved materially towards the intended model, but the migration is not finished.
+
+The main remaining work is:
+
+- hardening snapshot/versioning/diagnostics
+- removing or fully demoting remaining legacy TS protocol helpers
+- improving replay/recovery correctness
+- eventually expanding towards stronger tally/proof capabilities
+
+---
+
+## Phase 1
+
+### Goal
+
+Move the coordinator control plane off ad hoc DM-heavy logic and into a Rust/Wasm engine behind a stable abstraction.
+
+### Intended scope
+
+- coordinator control messages in Rust
+- deterministic replay for coordinator events
+- TypeScript transport bridge only
+- one migrated coordinator workflow
+
+### Implemented
+
+- new Rust crate:
+  - `auditable-voting-core/`
+- Rust coordinator-control modules including:
+  - coordinator messages
+  - coordinator state
+  - ordering
+  - replay
+  - wasm bindings
+- stable coordinator abstraction in Rust
+- OpenMLS-shaped engine boundary kept inside Rust
+- TS adapter layer under:
+  - `web/src/core/`
+- compatibility service:
+  - `web/src/services/CoordinatorControlService.ts`
+- Nostr coordinator-control carrier modules:
+  - `web/src/nostr/publishCoordinatorControl.ts`
+  - `web/src/nostr/subscribeCoordinatorControl.ts`
+- migrated workflow:
+  - round-open proposal / commit flow
+
+### Status
+
+`Completed as a migration seam.`
+
+### Notes
+
+- the browser build currently uses a deterministic fixed-membership engine behind the OpenMLS abstraction boundary
+- this is acceptable for the seam, but not the end-state goal
+
+---
+
+## Phase 2
+
+### Goal
+
+Move public state and ballot reducers into Rust so Rust becomes the reducer source of truth rather than TypeScript.
+
+### Intended scope
+
+- public event types in Rust
+- ballot event types in Rust
+- public round reducer in Rust
+- ballot acceptance reducer in Rust
+- mixed replay for public + ballot + coordinator streams
+- UI consumption of Rust-derived state
+
+### Implemented
+
+Rust modules added/expanded:
+
+- `auditable-voting-core/src/event.rs`
+- `auditable-voting-core/src/public_state.rs`
+- `auditable-voting-core/src/ballot_state.rs`
+- `auditable-voting-core/src/reducer.rs`
+- `auditable-voting-core/src/validation.rs`
+- `auditable-voting-core/src/wasm.rs`
+
+TS adapter/bridge modules added:
+
+- `web/src/core/publicEventBridge.ts`
+- `web/src/core/ballotEventBridge.ts`
+- `web/src/core/derivedStateAdapter.ts`
+
+Shared protocol-state service added:
+
+- `web/src/services/ProtocolStateService.ts`
+
+Tests added:
+
+- `web/src/core/derivedStateAdapter.test.ts`
+- `web/src/services/ProtocolStateService.test.ts`
+
+### Rust-derived behaviour now present
+
+- deterministic mixed replay
+- public round lifecycle derivation
+- ballot acceptance with a fixed `first valid wins` rule
+- accepted/rejected ballot derivation
+- round summaries
+- snapshot export/import for the protocol replay engine
+
+### UI migration status
+
+Now on the Rust-derived public-state path:
+
+- auditor public-state view
+- coordinator submitted-votes public-state view
+- voter public round selection / known-round public-state view
+
+Still not fully migrated:
+
+- some private issuance/ticket state in voter and coordinator flows remains TypeScript-owned by design
+- some legacy TS helper modules still exist in the tree, even when no longer authoritative for the migrated slice
+
+### Status
+
+`Substantially completed for the public-state migration slice.`
+
+### Remaining gap inside Phase 2
+
+- remove or archive obsolete TS reducer helpers once their remaining tests/references are resolved cleanly
+- expand parity/integration coverage beyond the current focused tests
+
+---
+
+## Phase 3
+
+### Goal
+
+Harden the architecture so Rust is clearly the sole source of protocol truth and replay/recovery becomes operationally robust.
+
+### Required outcomes
+
+- stable snapshot/versioning model
+- explicit diagnostics model
+- replay/recovery hardening
+- removal or demotion of remaining authoritative TS protocol logic
+- cleaner adapter/service boundaries
+
+### Current status
+
+`Partially started, not complete.`
+
+### What is already in place
+
+- Rust is already authoritative for:
+  - coordinator control
+  - public round replay
+  - ballot acceptance for the migrated slice
+- TS public-state consumers now go through:
+  - `DerivedStateAdapter`
+  - `ProtocolStateService`
+- shared snapshot use is present for:
+  - coordinator control
+  - public/ballot replay service
+
+### What is still missing
+
+- formal snapshot format versioning in the Rust protocol core
+- explicit compatibility/invalidation behaviour for old snapshots
+- structured Rust diagnostics surfaced consistently to UI
+- snapshot + suffix replay parity tests at broader coverage
+- stronger reload/reconnect recovery tests
+- removal of remaining confusing legacy TS protocol helpers from the active codebase
+
+### Concrete next tasks
+
+1. Add Rust snapshot metadata and version enums:
+   - snapshot format version
+   - replay schema version
+   - compatibility status
+2. Add Rust diagnostics output:
+   - duplicate detection
+   - invalid transition attempts
+   - contradictory publications
+   - rejection counts by reason
+   - replay warnings
+3. Extend wasm API with:
+   - `get_snapshot_metadata()`
+   - `get_diagnostics()`
+   - `get_replay_status()`
+4. Add integration tests for:
+   - snapshot + suffix replay parity
+   - reload from cached snapshot
+   - duplicate/out-of-order recovery
+   - stale snapshot invalidation
+5. Remove or clearly demote legacy TS helpers that still imply protocol truth
+
+### Recommended exit criteria for Phase 3
+
+Phase 3 should be considered complete only when:
+
+- Rust is the sole source of truth for migrated protocol logic
+- snapshot compatibility rules are explicit and tested
+- diagnostics are typed and UI-consumable
+- reload + replay parity is demonstrated
+- remaining legacy TS reducer logic is removed or clearly non-authoritative
+
+---
+
+## Phase 4
+
+### Goal
+
+Expand protocol capability carefully without breaking the browser-first, replayable, Rust-owned architecture.
+
+### Intended scope
+
+- threshold-capable tally abstraction
+- richer public proof bundles
+- stronger coordinator workflows around tally/finalisation
+- production-readiness and performance work
+
+### Current status
+
+`Not started as a shipped implementation phase.`
+
+### Why it is deferred
+
+The repository still needs Phase 3 hardening before it should absorb:
+
+- threshold tally complexity
+- richer proof objects
+- more advanced coordinator workflows
+
+Doing Phase 4 work before Phase 3 is complete would risk:
+
+- duplicated logic
+- unstable interfaces
+- replay complexity without sufficient diagnostics
+
+### Suggested Phase 4 starting point
+
+1. Define Rust-only abstractions first:
+   - `ThresholdTallyEngine`
+   - proof/result bundle types
+2. Implement one narrow end-to-end tally/proof vertical slice
+3. Keep TS limited to display and transport wiring
+4. Measure replay and wasm-size impact before widening scope
+
+---
+
+## Legacy TypeScript Logic Status
+
+The repository used to hold more protocol truth in TypeScript.
+
+After the current migration work:
+
+- voter/coordinator/auditor public-state derivation is no longer primarily decided in React components
+- coordinator submitted-vote truth no longer comes from `simpleVoteValidation.ts`
+- voter public round selection no longer primarily comes from `reconcileSimpleKnownRounds(...)`
+
+Remaining caution:
+
+- legacy helper files still exist in the tree and may still be referenced by older tests or compatibility code
+- these should be removed or explicitly marked non-authoritative during Phase 3 cleanup
+
+---
+
+## Suggested Next Execution Order
+
+This is the recommended order from here:
+
+1. Complete Phase 3 snapshot/versioning work in `auditable-voting-core`
+2. Add structured diagnostics and replay status exports from Rust
+3. Add reload/recovery parity tests across snapshot + suffix replay
+4. Remove/demote remaining legacy TS protocol helpers
+5. Stabilise broader UI/integration tests
+6. Only then begin Phase 4 threshold/proof expansion
+
+---
+
+## Practical Definition Of Done For The Migration
+
+The migration should be considered operationally complete only when:
+
+- Rust/Wasm is the sole source of truth for protocol logic
+- TypeScript is limited to UI, transport, persistence plumbing, and wasm bridging
+- coordinator, voter, and auditor public-state views consume Rust-derived state
+- snapshots are versioned, tested, and reload-safe
+- diagnostics explain replay/state problems without reintroducing logic into TS
+- the app still builds and runs as a static client-only web app
+
+---
+
+## Summary
+
+Phase 1 is in place.
+Phase 2 is materially in place for the migrated public-state slice.
+Phase 3 is the correct next major milestone.
+Phase 4 should wait until Phase 3 hardening is complete.
