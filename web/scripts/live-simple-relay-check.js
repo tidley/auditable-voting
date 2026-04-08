@@ -36,6 +36,42 @@ function classifyHarnessFailure(error) {
   return "unknown_failure";
 }
 
+function classifyProtocolFailure(rounds) {
+  const latestRound = rounds.at(-1) ?? null;
+  if (!latestRound?.stageMetrics) {
+    return {
+      protocolFailureClass: "startup",
+      firstMissingStage: "roundSeen",
+    };
+  }
+
+  const stageMetrics = latestRound.stageMetrics;
+  const firstMissingStage = [
+    "roundSeen",
+    "blindKeySeen",
+    "blindedRequestSent",
+    "ticketSent",
+    "receiptAcknowledged",
+  ].find((stageName) => Number(stageMetrics[stageName]?.count ?? 0) === 0) ?? null;
+
+  const roundSeen = Number(stageMetrics.roundSeen?.count ?? 0);
+  const requestSeen = Number(stageMetrics.blindedRequestSent?.count ?? 0);
+  const ticketSent = Number(stageMetrics.ticketSent?.count ?? 0);
+  const ackSeen = Number(stageMetrics.receiptAcknowledged?.count ?? 0);
+
+  let protocolFailureClass = "mixed";
+  if (roundSeen === 0 && requestSeen === 0) {
+    protocolFailureClass = "startup";
+  } else if (roundSeen > 0 && (requestSeen > 0 || ticketSent > 0 || ackSeen > 0)) {
+    protocolFailureClass = "dm_pipeline";
+  }
+
+  return {
+    protocolFailureClass,
+    firstMissingStage,
+  };
+}
+
 async function ensureDebugDir() {
   await mkdir(DEBUG_DIR, { recursive: true });
 }
@@ -74,6 +110,8 @@ async function snapshotPage(actor, reason) {
     reason,
     url: null,
     body: null,
+    coordinatorDebug: null,
+    voterDebug: null,
     ticketLifecycleTraces: [],
     runtime: pageRuntimeState(actor.page),
     screenshotPath: pngPath,
@@ -87,7 +125,11 @@ async function snapshotPage(actor, reason) {
       const html = await actor.page.content().catch(() => null);
       const body = await actor.page.locator("body").innerText().catch(() => null);
       const traces = await readTicketLifecycleTraces(actor.page).catch(() => []);
+      const coordinatorDebug = await readCoordinatorDebug(actor.page).catch(() => null);
+      const voterDebug = await readVoterDebug(actor.page).catch(() => null);
       meta.body = typeof body === "string" ? body.replace(/\s+/g, " ").trim() : null;
+      meta.coordinatorDebug = coordinatorDebug;
+      meta.voterDebug = voterDebug;
       meta.ticketLifecycleTraces = Array.isArray(traces) ? traces : [];
       if (typeof html === "string") {
         await writeFile(htmlPath, html, "utf8");
@@ -293,6 +335,20 @@ async function readTicketLifecycleTraces(page) {
     }
     return Object.values(state.traces);
   }).catch(() => []);
+}
+
+async function readCoordinatorDebug(page) {
+  if (!(await isPageAlive(page))) {
+    return null;
+  }
+  return page.evaluate(() => globalThis.__simpleCoordinatorDebug ?? null).catch(() => null);
+}
+
+async function readVoterDebug(page) {
+  if (!(await isPageAlive(page))) {
+    return null;
+  }
+  return page.evaluate(() => globalThis.__simpleVoterDebug ?? null).catch(() => null);
 }
 
 async function getDisplayedActorId(page, prefix) {
@@ -578,6 +634,7 @@ async function captureRoundState(coordinators, voters) {
     coordinatorStates[`coord${index + 1}`] = {
       diagnostics: await coordinatorDiagnostics(page),
       body: await readBody(page),
+      coordinatorDebug: await readCoordinatorDebug(page),
       ticketLifecycleTraces: await readTicketLifecycleTraces(page),
       url: await isPageAlive(page) ? page.url() : null,
       runtime: pageRuntimeState(page),
@@ -592,6 +649,7 @@ async function captureRoundState(coordinators, voters) {
     voterStates[`voter${index + 1}`] = {
       cards: await voterCardDiagnostics(page),
       body,
+      voterDebug: await readVoterDebug(page),
       ticketLifecycleTraces: await readTicketLifecycleTraces(page),
       ticketReady: parseTicketReady(body),
       seesQuestion: /Round [0-9]+/i.test(body) || /Should the proposal pass\?/i.test(body),
@@ -790,6 +848,23 @@ async function main() {
       completedRounds: rounds,
       snapshots,
     };
+    const protocolFailure = classifyProtocolFailure(rounds);
+    diagnostic.protocolFailureClass = protocolFailure.protocolFailureClass;
+    diagnostic.firstMissingStage = protocolFailure.firstMissingStage;
+    diagnostic.coordinatorReadinessSummary = snapshots
+      .filter((snapshot) => snapshot.label.startsWith("coord"))
+      .map((snapshot) => ({
+        coordinator: snapshot.label,
+        readiness: snapshot.coordinatorDebug?.runtimeReadiness ?? null,
+        engineStatus: snapshot.coordinatorDebug?.engineStatus ?? null,
+        controlStateLabel: snapshot.coordinatorDebug?.controlStateLabel ?? null,
+      }));
+    diagnostic.voterRoundVisibilitySummary = snapshots
+      .filter((snapshot) => snapshot.label.startsWith("voter"))
+      .map((snapshot) => ({
+        voter: snapshot.label,
+        visibility: snapshot.voterDebug ?? null,
+      }));
     console.error(JSON.stringify(diagnostic, null, 2));
     if (timeoutId !== null) {
       globalThis.clearTimeout(timeoutId);

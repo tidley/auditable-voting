@@ -2,7 +2,7 @@
 
 Repository: `/home/tom/code/auditable-voting`  
 Date: `2026-04-08`  
-Current visible app version: `v0.73`
+Current visible app version: `v0.74`
 
 ## Current headline
 
@@ -11,13 +11,57 @@ The scale failure is now properly instrumented, and the small gate has moved for
 What is currently true:
 
 - `1 coordinator / 2 voters / 2 rounds` still passes locally
-- `2 coordinators / 2 voters / 2 rounds` has a fresh clean rerun on `v0.73`, but is still not signed off as repeatedly reliable
+- `2 coordinators / 2 voters / 2 rounds` has improved on `v0.73`, but is still not signed off as repeatedly reliable
 - the recurring small-case `round 1` stall was caused by opening the round before the non-lead had completed enough MLS/control-plane startup work, and the live harness had also been firing round 1 on a blind timer rather than waiting for visible readiness
 - `5 coordinators / 10 voters / 3 rounds` is still **not signed off**
-- the latest trustworthy scale failure before the latest request-id fix was **mixed, with acknowledgement visibility worse than send-side delivery under load**
-- the latest trustworthy `5 / 10 / 3` rerun now gets materially through round 1 before timing out later
+- repeated `2 / 2 / 2` runs on `v0.73` now came back `4/5` clean, with the only miss being a full round-1 startup miss and all `5/5` round-2 passes
+- the latest fresh `5 / 10 / 3` rerun on `v0.73` regressed to an earlier failure shape: first-round visibility never formed, so all stage metrics stayed at zero
+- `v0.74` now adds coordinator runtime readiness diagnostics and harness-side protocol failure classification (`startup | dm_pipeline | mixed`)
+- the fresh `5 / 10 / 3` rerun started during the `v0.74` observability pass did not complete in a useful window, so `v0.74` should be treated as a diagnostic build, not as a new scale result
 
 This file is intended as a handoff for another model to continue analysis, not as a claim that the whole migration plan is complete.
+
+---
+
+## New change in `v0.74`
+
+This tranche tightened observability rather than claiming another protocol fix.
+
+Implemented:
+
+- [web/src/SimpleCoordinatorApp.tsx](/home/tom/code/auditable-voting/web/src/SimpleCoordinatorApp.tsx)
+  - added runtime readiness diagnostics for:
+    - MLS join complete
+    - welcome acknowledgement satisfied
+    - initial control backfill complete
+    - auto-approval complete
+    - round-open publish safe
+    - blind-key publish safe
+    - ticket-plane safe
+  - exports these via `globalThis.__simpleCoordinatorDebug`
+- [web/src/SimpleUiApp.tsx](/home/tom/code/auditable-voting/web/src/SimpleUiApp.tsx)
+  - exports live-round visibility and ticket-readiness state via `globalThis.__simpleVoterDebug`
+- [web/scripts/live-simple-relay-check.js](/home/tom/code/auditable-voting/web/scripts/live-simple-relay-check.js)
+  - failed runs now emit:
+    - `protocolFailureClass`
+    - `firstMissingStage`
+    - `coordinatorReadinessSummary`
+    - `voterRoundVisibilitySummary`
+
+Verification:
+
+```bash
+node --check web/scripts/live-simple-relay-check.js
+node --check web/scripts/live-simple-relay-repeat.js
+cd web && npx vitest run src/services/CoordinatorControlService.test.ts src/simpleShardDm.test.ts src/simpleVotingSession.test.ts src/core/derivedStateAdapter.test.ts src/services/ProtocolStateService.test.ts
+cd web && npm run build
+```
+
+All of those passed.
+
+Live note:
+
+- I started a fresh `5 / 10 / 3` rerun on `v0.74` to confirm the richer failure dump, but I am not recording a final verdict from that run here because it did not complete in a useful window during this pass.
 
 ---
 
@@ -79,6 +123,43 @@ Observed:
 - round 2: `2/2` voters got `2 of 2`
 
 That is a useful repair, but it is still a single fresh rerun, not a final stability claim.
+
+### New repeatability evidence
+
+Using the new repeat harness wrapper:
+
+- [web/scripts/live-simple-relay-repeat.js](/home/tom/code/auditable-voting/web/scripts/live-simple-relay-repeat.js)
+
+Command:
+
+```bash
+LIVE_SIMPLE_BASE_URL=http://127.0.0.1:4220/simple.html \
+LIVE_COORDINATORS=2 \
+LIVE_VOTERS=2 \
+LIVE_ROUNDS=2 \
+LIVE_STARTUP_WAIT_MS=20000 \
+LIVE_ROUND_WAIT_MS=15000 \
+LIVE_TICKET_WAIT_MS=15000 \
+LIVE_NIP65=off \
+LIVE_REPEAT_COUNT=5 \
+npm --prefix web run test:live-relays:repeat
+```
+
+Observed:
+
+- passed runs: `4`
+- failed runs: `1`
+- round 1:
+  - `4/5` success
+  - one full miss with `ticketSent: 0` and `ackSeen: 0`
+- round 2:
+  - `5/5` success
+
+That shifts the interpretation:
+
+- the request-id fix likely removed one real later-round mismatch class
+- the remaining small-gate failure in this sample is once again concentrated in round-1 startup visibility
+- the small gate is better, but still not signed off
 
 ---
 
@@ -194,7 +275,7 @@ Round-1 startup remains the weak point in the small gate, even though it can suc
 
 ### 1. `5 / 10 / 3` is not signed off
 
-Latest trustworthy command:
+Earlier trustworthy command:
 
 ```bash
 LIVE_SIMPLE_BASE_URL=http://127.0.0.1:4213/simple.html \
@@ -208,11 +289,11 @@ LIVE_NIP65=off \
 npm --prefix web run test:live-relays
 ```
 
-Latest result:
+Earlier result:
 
 - the hardened harness timed out with a structured `protocol_timeout` dump instead of collapsing
 - per-ticket lifecycle tracing is now available in the dump
-- the latest trace summary for the failed `5 / 10 / 3` run shows:
+- the earlier trace summary for the failed `5 / 10 / 3` run shows:
   - `withRequestSeen: 100 / 100`
   - `withTicketBuilt: 100 / 100`
   - `withPublishStarted: 100 / 100`
@@ -256,11 +337,42 @@ Effect of those changes:
 - `5 / 10 / 3` is still timing out
 - `2 / 2 / 2` is still not stable enough to sign off
 
+Fresh `v0.73` rerun after the request-id fix:
+
+```bash
+LIVE_SIMPLE_BASE_URL=http://127.0.0.1:4220/simple.html \
+LIVE_COORDINATORS=5 \
+LIVE_VOTERS=10 \
+LIVE_ROUNDS=3 \
+LIVE_STARTUP_WAIT_MS=25000 \
+LIVE_ROUND_WAIT_MS=20000 \
+LIVE_TICKET_WAIT_MS=20000 \
+LIVE_NIP65=off \
+npm --prefix web run test:live-relays
+```
+
+Observed:
+
+- failure class: `protocol_timeout`
+- no completed rounds
+- round 1 stage metrics all zero:
+  - `roundSeen: 0 / 50`
+  - `blindKeySeen: 0 / 50`
+  - `blindedRequestSent: 0 / 50`
+  - `ticketSent: 0 / 50`
+  - `receiptAcknowledged: 0 / 50`
+- coordinators all showed:
+  - `Follow request received.`
+  - `Waiting for this voter's blinded ticket request.`
+  - `Waiting for a live round.`
+- voters all showed:
+  - `No live vote ticket yet. Waiting for the next live round and ticket.`
+
 So the current status is:
 
-- small gate: flaky
+- small gate: improved but still flaky
 - scale gate: unresolved
-- latest scale failure mode: trustworthy protocol timeout with mixed send/ack failure, ack-side dominant
+- latest scale failure mode is not stable enough to treat as one single bottleneck; it can still fall back to first-round visibility failure at `5 / 10 / 3`
 
 ### 2. `npx tsc --noEmit` is still red because of pre-existing drift in `SimpleRound.test.tsx`
 

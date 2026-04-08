@@ -15,6 +15,7 @@ The shipped app currently includes:
 - a new Rust/Wasm public and ballot replay seam now used by the voter, coordinator, and auditor public-state views
 - versioned Rust protocol snapshots with explicit compatibility checks
 - Rust-exposed replay status and structured diagnostics for the shared public-state engine
+- coordinator runtime readiness diagnostics for MLS join, welcome acknowledgement, initial control backfill, auto-approval, round-open safety, blind-key safety, and ticket-plane safety
 - regular custom Nostr event kinds for coordinator control, live rounds, and ballots, avoiding replaceable-kind transcript loss
 - round announcements over Nostr
 - coordinator control carrier events over Nostr, replayed through a Rust state machine
@@ -28,8 +29,8 @@ The shipped app currently includes:
 - optional relay hint resolution via NIP-65, disabled by default
 - a growing Rust/Wasm core for deterministic protocol logic
 
-The client-only architecture is in place, and the browser coordinator control path now runs through the OpenMLS-backed Rust/Wasm engine for the repaired small live cases. The first multi-coordinator round now waits for sub-coordinator MLS welcome acknowledgement only after the non-lead has completed an initial coordinator-control backfill pass, and the live harness now waits for the lead to be visibly ready before firing round 1. In `v0.73`, shard-request identity is also normalised end to end so the DM request id matches the blind-request id; that removes one later-round mismatch where retries and ticket acknowledgements could refer to the same logical request under different ids.
-Empirically, recent local-preview runs are solid at `1 coordinator / 2 voters / 2 rounds`, and the single-coordinator path has also been strong at `1 coordinator / 20 voters / 3 rounds`. On the current `v0.73` build, a fresh `2 coordinators / 2 voters / 2 rounds` rerun completed both rounds cleanly after the request-id fix. Larger multi-coordinator runs are still not signed off: the latest trustworthy `5 coordinators / 10 voters / 3 rounds` run before this tranche was getting materially through round 1 instead of stalling at zero, but still timing out later under mixed ticket-delivery and acknowledgement pressure. `5 coordinators / 10 voters / 10 rounds` remains non-viable on the current public relay set.
+The client-only architecture is in place, and the browser coordinator control path now runs through the OpenMLS-backed Rust/Wasm engine for the repaired small live cases. The first multi-coordinator round now waits for sub-coordinator MLS welcome acknowledgement only after the non-lead has completed an initial coordinator-control backfill pass, and the live harness now waits for the lead to be visibly ready before firing round 1. In `v0.73`, shard-request identity was normalised end to end so the DM request id matches the blind-request id; that removed one later-round mismatch where retries and ticket acknowledgements could refer to the same logical request under different ids. In `v0.74`, the app also exposes coordinator runtime readiness phases in the browser and the live harness now emits protocol-layer failure classes (`startup`, `dm_pipeline`, `mixed`) with coordinator readiness summaries and voter round-visibility snapshots, so scale failures can be separated into startup and downstream DM-pipeline cases without relying only on screenshots.
+Empirically, recent local-preview runs are solid at `1 coordinator / 2 voters / 2 rounds`, and the single-coordinator path has also been strong at `1 coordinator / 20 voters / 3 rounds`. Repeated `2 coordinators / 2 voters / 2 rounds` runs improved after the request-id fix, but are still not signed off as boringly reliable. Larger multi-coordinator runs are still not signed off: `5 coordinators / 10 voters / 3 rounds` can still fail either at first-round startup visibility or later under ticket-delivery / acknowledgement pressure. `5 coordinators / 10 voters / 10 rounds` remains non-viable on the current public relay set.
 
 ## What is in this repo
 
@@ -156,6 +157,8 @@ The app currently uses:
 - optional NIP-65 inbox/outbox hints for relay discovery when enabled in `Settings`
 
 The default path currently prefers a tighter curated relay set. Publishes can still fan out more broadly, but live reads and subscriptions are intentionally kept to a smaller primary subset to reduce relay-side `too many concurrent REQs` pressure. Coordinator-control and ticket/ack DM traffic now use a slightly wider primary subset than ordinary DM reads so the first control wave and receipt recovery are less dependent on only two relays. Request ids are now kept stable across the blinded request DM, ticket DM, and acknowledgement path so recovery and replay can treat retries as the same logical request. NIP-65 is available as an option, but it is not the default transport path.
+
+The live harness now also emits a protocol-facing failure classification alongside the raw timeout class. Failed runs are tagged as `startup`, `dm_pipeline`, or `mixed`, with the first missing stage and the current coordinator/voter readiness snapshots included in the debug dump.
 
 ## Known limitations
 

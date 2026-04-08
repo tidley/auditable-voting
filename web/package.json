@@ -13,6 +13,7 @@
     "pretest:watch": "node scripts/ensure-wasm-artifacts.mjs",
     "preverify:simple-blind-shares": "node scripts/ensure-wasm-artifacts.mjs",
     "pretest:live-relays": "node scripts/ensure-wasm-artifacts.mjs",
+    "pretest:live-relays:repeat": "node scripts/ensure-wasm-artifacts.mjs",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0 --port 5173",
@@ -20,7 +21,8 @@
     "test:rust": "cargo test --manifest-path rust-core/Cargo.toml",
     "test:watch": "vitest",
     "verify:simple-blind-shares": "tsx scripts/verify-simple-blind-shares.ts",
-    "test:live-relays": "node scripts/live-simple-relay-check.js"
+    "test:live-relays": "node scripts/live-simple-relay-check.js",
+    "test:live-relays:repeat": "node scripts/live-simple-relay-repeat.js"
   },
   "dependencies": {
     "@cloudflare/blindrsa-ts": "^0.4.5",

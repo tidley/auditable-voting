@@ -1714,6 +1714,28 @@ export default function SimpleUiApp() {
     missingActiveVoteCoordinatorIndices,
   );
 
+  useEffect(() => {
+    const owner = globalThis as typeof globalThis & {
+      __simpleVoterDebug?: unknown;
+    };
+    owner.__simpleVoterDebug = {
+      hasLiveRound: Boolean(effectiveLiveVoteSession),
+      selectedVotingId: effectiveLiveVoteSession?.votingId ?? null,
+      knownRoundCount: knownRounds.length,
+      ticketReady: {
+        ready: uniqueShardResponses.length,
+        required: requiredShardCount,
+      },
+      requestStatus,
+    };
+  }, [
+    effectiveLiveVoteSession,
+    knownRounds.length,
+    requestStatus,
+    requiredShardCount,
+    uniqueShardResponses.length,
+  ]);
+
   function selectTab(nextTab: VoterTab) {
     setActiveTab(nextTab);
   }

@@ -130,6 +130,17 @@ type SimpleCoordinatorCache = {
   submittedVotes: SimpleSubmittedVote[];
 };
 
+type CoordinatorRuntimeReadiness = {
+  phase: string;
+  mlsJoinComplete: boolean;
+  welcomeAckSent: boolean;
+  initialControlBackfillComplete: boolean;
+  autoApprovalComplete: boolean;
+  roundOpenPublishSafe: boolean;
+  blindKeyPublishSafe: boolean;
+  ticketPlaneSafe: boolean;
+};
+
 const SIMPLE_TICKET_SEND_STAGGER_MS = 900;
 const SIMPLE_COORDINATOR_CONTROL_BACKFILL_INTERVAL_MS = 4000;
 const SIMPLE_COORDINATOR_ROUND_OPEN_POST_WELCOME_GRACE_MS = 1200;
@@ -318,6 +329,9 @@ export default function SimpleCoordinatorApp() {
   const [derivedPublicRounds, setDerivedPublicRounds] = useState<SimpleLiveVoteSession[]>([]);
   const [coordinatorControlView, setCoordinatorControlView] = useState<CoordinatorEngineView | null>(null);
   const [coordinatorControlStateLabel, setCoordinatorControlStateLabel] = useState<string | null>(null);
+  const [initialControlBackfillComplete, setInitialControlBackfillComplete] = useState(false);
+  const [autoApprovalComplete, setAutoApprovalComplete] = useState(false);
+  const [welcomeAckSent, setWelcomeAckSent] = useState(false);
   const [publishedVotes, setPublishedVotes] = useState<SimpleLiveVoteSession[]>([]);
   const [selectedVotingId, setSelectedVotingId] = useState("");
   const [selectedSubmittedVotingId, setSelectedSubmittedVotingId] =
@@ -440,6 +454,86 @@ export default function SimpleCoordinatorApp() {
         ));
       });
   }
+
+  const coordinatorEngineStatus =
+    coordinatorControlServiceRef.current?.getEngineStatus() ?? null;
+  const coordinatorRuntimeReadiness = useMemo<CoordinatorRuntimeReadiness | null>(() => {
+    if (!coordinatorEngineStatus) {
+      return null;
+    }
+
+    const mlsJoinComplete =
+      coordinatorEngineStatus.engine_kind !== "open_mls"
+      || coordinatorEngineStatus.joined_group;
+    const welcomeAckSatisfied =
+      coordinatorEngineStatus.engine_kind !== "open_mls"
+        ? true
+        : isLeadCoordinator
+          ? getOutstandingMlsWelcomeAckNpubs().length === 0
+          : welcomeAckSent;
+    const roundOpenPublishSafe =
+      mlsJoinComplete
+      && welcomeAckSatisfied
+      && initialControlBackfillComplete
+      && autoApprovalComplete;
+    const blindKeyPublishSafe =
+      roundOpenPublishSafe
+      && ["open", "tallied", "published", "disputed"].includes(
+        coordinatorEngineStatus.public_round_visibility,
+      );
+    const ticketPlaneSafe =
+      blindKeyPublishSafe
+      && (!activeVotingId || Boolean(activeBlindKeyAnnouncement));
+
+    let phase = "ticket_plane_safe";
+    if (!mlsJoinComplete) {
+      phase = "mls_join_pending";
+    } else if (!welcomeAckSatisfied) {
+      phase = "welcome_ack_pending";
+    } else if (!initialControlBackfillComplete) {
+      phase = "initial_control_backfill_pending";
+    } else if (!autoApprovalComplete) {
+      phase = "auto_approval_pending";
+    } else if (!roundOpenPublishSafe) {
+      phase = "round_open_publish_pending";
+    } else if (!blindKeyPublishSafe) {
+      phase = "blind_key_publish_pending";
+    } else if (!ticketPlaneSafe) {
+      phase = "ticket_plane_pending";
+    }
+
+    return {
+      phase,
+      mlsJoinComplete,
+      welcomeAckSent: welcomeAckSatisfied,
+      initialControlBackfillComplete,
+      autoApprovalComplete,
+      roundOpenPublishSafe,
+      blindKeyPublishSafe,
+      ticketPlaneSafe,
+    };
+  }, [
+    activeBlindKeyAnnouncement,
+    activeVotingId,
+    autoApprovalComplete,
+    coordinatorEngineStatus,
+    initialControlBackfillComplete,
+    isLeadCoordinator,
+    welcomeAckSent,
+    subCoordinators,
+    dmAcknowledgements,
+  ]);
+
+  useEffect(() => {
+    const owner = globalThis as typeof globalThis & {
+      __simpleCoordinatorDebug?: unknown;
+    };
+    owner.__simpleCoordinatorDebug = {
+      engineStatus: coordinatorEngineStatus,
+      runtimeReadiness: coordinatorRuntimeReadiness,
+      controlStateLabel: coordinatorControlStateLabel,
+    };
+  }, [coordinatorControlStateLabel, coordinatorEngineStatus, coordinatorRuntimeReadiness]);
 
   useEffect(() => {
     let cancelled = false;
@@ -640,8 +734,15 @@ export default function SimpleCoordinatorApp() {
         coordinatorControlServiceRef.current = null;
         setCoordinatorControlView(null);
         setCoordinatorControlStateLabel(null);
+        setInitialControlBackfillComplete(false);
+        setAutoApprovalComplete(false);
+        setWelcomeAckSent(false);
         return;
       }
+
+      setInitialControlBackfillComplete(false);
+      setAutoApprovalComplete(false);
+      setWelcomeAckSent(false);
 
       const service = await CoordinatorControlService.create({
         electionId: coordinatorElectionId,
@@ -691,9 +792,11 @@ export default function SimpleCoordinatorApp() {
           syncStateWithReplayWarning();
         }
       }
+      setInitialControlBackfillComplete(true);
 
       const maybeApprove = async () => {
         if (isLeadCoordinator) {
+          setAutoApprovalComplete(true);
           return;
         }
 
@@ -707,6 +810,8 @@ export default function SimpleCoordinatorApp() {
           }
         } catch {
           setPublishStatus("Coordinator round-open approval failed.");
+        } finally {
+          setAutoApprovalComplete(true);
         }
       };
 
@@ -861,6 +966,7 @@ export default function SimpleCoordinatorApp() {
                         ackedAction: "simple_mls_welcome",
                         ackedEventId: welcome.dmEventId,
                       });
+                      setWelcomeAckSent(true);
                     } catch {
                       sentMlsWelcomeAckIdsRef.current.delete(welcome.dmEventId);
                     }
@@ -3232,6 +3338,22 @@ export default function SimpleCoordinatorApp() {
                   </div>
                   {coordinatorControlStateLabel ? (
                     <p className='simple-voter-note'>{coordinatorControlStateLabel}</p>
+                  ) : null}
+                  {coordinatorRuntimeReadiness ? (
+                    <>
+                      <p className='simple-voter-note'>
+                        Coordinator readiness: {coordinatorRuntimeReadiness.phase.replace(/_/g, ' ')}.
+                      </p>
+                      <div className='simple-voter-note'>
+                        MLS join {coordinatorRuntimeReadiness.mlsJoinComplete ? 'yes' : 'no'} ·
+                        welcome ack {coordinatorRuntimeReadiness.welcomeAckSent ? 'yes' : 'no'} ·
+                        backfill {coordinatorRuntimeReadiness.initialControlBackfillComplete ? 'yes' : 'no'} ·
+                        auto approval {coordinatorRuntimeReadiness.autoApprovalComplete ? 'yes' : 'no'} ·
+                        round-open safe {coordinatorRuntimeReadiness.roundOpenPublishSafe ? 'yes' : 'no'} ·
+                        blind-key safe {coordinatorRuntimeReadiness.blindKeyPublishSafe ? 'yes' : 'no'} ·
+                        ticket-plane safe {coordinatorRuntimeReadiness.ticketPlaneSafe ? 'yes' : 'no'}
+                      </div>
+                    </>
                   ) : null}
                 </>
               ) : selectedPublishedVote ? (

@@ -1,0 +1,120 @@
+import { spawn } from "node:child_process";
+
+function readIntEnv(name, fallback) {
+  const value = Number.parseInt(process.env[name] ?? "", 10);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function runHarness(env) {
+  return new Promise((resolve, reject) => {
+    const child = spawn("node", ["scripts/live-simple-relay-check.js"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        ...env,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`live harness exited with code ${code}\n${stderr || stdout}`));
+        return;
+      }
+
+      const trimmed = stdout.trim();
+      try {
+        resolve(JSON.parse(trimmed));
+      } catch (error) {
+        reject(new Error(`failed to parse harness JSON\n${trimmed}\n${stderr}\n${String(error)}`));
+      }
+    });
+  });
+}
+
+function summariseRun(run) {
+  const rounds = Array.isArray(run?.summary) ? run.summary : [];
+  const roundOutcomes = rounds.map((roundSummary) => {
+    const round = Number(roundSummary.round ?? 0);
+    const totalVoters = Number(roundSummary.totalVoters ?? 0);
+    const votersWithTickets = Number(roundSummary.votersWithTickets ?? 0);
+    const success = totalVoters > 0 && votersWithTickets === totalVoters;
+    const stageMetrics = roundSummary.stageMetrics ?? {};
+    return {
+      round,
+      success,
+      totalVoters,
+      votersWithTickets,
+      ticketSent: Number(stageMetrics.ticketSent?.count ?? 0),
+      ackSeen: Number(stageMetrics.receiptAcknowledged?.count ?? 0),
+      totalPairs: Number(stageMetrics.receiptAcknowledged?.totalPairs ?? stageMetrics.ticketSent?.totalPairs ?? 0),
+    };
+  });
+
+  return {
+    passed: roundOutcomes.length > 0 && roundOutcomes.every((round) => round.success),
+    roundOutcomes,
+  };
+}
+
+async function main() {
+  const repeatCount = readIntEnv("LIVE_REPEAT_COUNT", 10);
+  const results = [];
+
+  for (let index = 0; index < repeatCount; index += 1) {
+    const run = await runHarness({});
+    const summary = summariseRun(run);
+    results.push(summary);
+  }
+
+  const roundsByNumber = new Map();
+  for (const result of results) {
+    for (const round of result.roundOutcomes) {
+      const entry = roundsByNumber.get(round.round) ?? {
+        round: round.round,
+        successes: 0,
+        failures: 0,
+        votersWithTickets: [],
+        ticketSent: [],
+        ackSeen: [],
+        totalPairs: [],
+      };
+      if (round.success) {
+        entry.successes += 1;
+      } else {
+        entry.failures += 1;
+      }
+      entry.votersWithTickets.push(round.votersWithTickets);
+      entry.ticketSent.push(round.ticketSent);
+      entry.ackSeen.push(round.ackSeen);
+      entry.totalPairs.push(round.totalPairs);
+      roundsByNumber.set(round.round, entry);
+    }
+  }
+
+  const output = {
+    repeatCount,
+    passedRuns: results.filter((result) => result.passed).length,
+    failedRuns: results.filter((result) => !result.passed).length,
+    runs: results,
+    rounds: Array.from(roundsByNumber.values()).sort((left, right) => left.round - right.round),
+  };
+
+  console.log(JSON.stringify(output, null, 2));
+}
+
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+});
