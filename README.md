@@ -28,8 +28,8 @@ The shipped app currently includes:
 - optional relay hint resolution via NIP-65, disabled by default
 - a growing Rust/Wasm core for deterministic protocol logic
 
-The client-only architecture is in place, and the browser coordinator control path now runs through the OpenMLS-backed Rust/Wasm engine for the repaired small live cases. The first multi-coordinator round now waits for sub-coordinator MLS welcome acknowledgement only after the non-lead has completed an initial coordinator-control backfill pass, and the live harness now waits for the lead to be visibly ready before firing round 1. That removed the earlier blind round-1 startup miss, but it did not finish the job: `2 / 2 / 2` still is not stable enough to sign off because later-round ticket/ack behaviour can still degrade, and `5 / 10 / 3` is still not signed off.
-Empirically, recent local-preview runs are solid at `1 coordinator / 2 voters / 2 rounds`, and the single-coordinator path has also been strong at `1 coordinator / 20 voters / 3 rounds`. On the current `v0.72` build, a fresh `2 coordinators / 2 voters / 2 rounds` rerun now completed round 1 cleanly but still degraded in round 2 to `1 of 2` tickets per voter. The latest trustworthy `5 coordinators / 10 voters / 3 rounds` run now gets materially through round 1 instead of stalling at zero, but still times out later under mixed ticket-delivery and acknowledgement pressure. `5 coordinators / 10 voters / 10 rounds` remains non-viable on the current public relay set.
+The client-only architecture is in place, and the browser coordinator control path now runs through the OpenMLS-backed Rust/Wasm engine for the repaired small live cases. The first multi-coordinator round now waits for sub-coordinator MLS welcome acknowledgement only after the non-lead has completed an initial coordinator-control backfill pass, and the live harness now waits for the lead to be visibly ready before firing round 1. In `v0.73`, shard-request identity is also normalised end to end so the DM request id matches the blind-request id; that removes one later-round mismatch where retries and ticket acknowledgements could refer to the same logical request under different ids.
+Empirically, recent local-preview runs are solid at `1 coordinator / 2 voters / 2 rounds`, and the single-coordinator path has also been strong at `1 coordinator / 20 voters / 3 rounds`. On the current `v0.73` build, a fresh `2 coordinators / 2 voters / 2 rounds` rerun completed both rounds cleanly after the request-id fix. Larger multi-coordinator runs are still not signed off: the latest trustworthy `5 coordinators / 10 voters / 3 rounds` run before this tranche was getting materially through round 1 instead of stalling at zero, but still timing out later under mixed ticket-delivery and acknowledgement pressure. `5 coordinators / 10 voters / 10 rounds` remains non-viable on the current public relay set.
 
 ## What is in this repo
 
@@ -155,12 +155,12 @@ The app currently uses:
 - DM relays for NIP-17 gift-wrapped messages
 - optional NIP-65 inbox/outbox hints for relay discovery when enabled in `Settings`
 
-The default path currently prefers a tighter curated relay set. Publishes can still fan out more broadly, but live reads and subscriptions are intentionally kept to a smaller primary subset to reduce relay-side `too many concurrent REQs` pressure. Coordinator-control and ticket/ack DM traffic now use a slightly wider primary subset than ordinary DM reads so the first control wave and receipt recovery are less dependent on only two relays. NIP-65 is available as an option, but it is not the default transport path.
+The default path currently prefers a tighter curated relay set. Publishes can still fan out more broadly, but live reads and subscriptions are intentionally kept to a smaller primary subset to reduce relay-side `too many concurrent REQs` pressure. Coordinator-control and ticket/ack DM traffic now use a slightly wider primary subset than ordinary DM reads so the first control wave and receipt recovery are less dependent on only two relays. Request ids are now kept stable across the blinded request DM, ticket DM, and acknowledgement path so recovery and replay can treat retries as the same logical request. NIP-65 is available as an option, but it is not the default transport path.
 
 ## Known limitations
 
 - live public relay convergence is still the main operational weakness
-- the `2 coordinators / 2 voters / 2 rounds` gate no longer misses round 1 by default in the live harness, but it still is not reliable enough to sign off because later-round ticket/ack behaviour can still degrade
+- the `2 coordinators / 2 voters / 2 rounds` gate is improved, but it still is not signed off as repeatedly reliable yet
 - larger public-relay committee runs remain unreliable; `5 coordinators / 10 voters / 10 rounds` did not complete cleanly in the current live harness
 - the latest `5 coordinators / 10 voters / 3 rounds` traces show a mixed ticket-delivery / acknowledgement bottleneck, with acknowledgement visibility currently the larger gap
 - the protocol works much better in tests than on unhealthy public relay sets

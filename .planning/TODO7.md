@@ -1,5 +1,31 @@
 Here is the clearest staged programme from the latest update.
 
+## Progress update: `v0.73`
+
+One concrete later-round correctness bug is now fixed:
+
+- shard-request DM envelopes were using a different top-level `request_id` from the nested `blind_request.requestId`
+- later ticket and acknowledgement logic uses the blind-request id
+- that meant retries and later-round recovery could treat one logical request as two different requests
+
+Implemented:
+
+- [web/src/simpleShardDm.ts](/home/tom/code/auditable-voting/web/src/simpleShardDm.ts)
+  - outbound `simple_shard_request` now uses the blind-request id as the DM request id
+  - parsed shard requests now normalise to the blind-request id when present
+- [web/src/simpleShardDm.test.ts](/home/tom/code/auditable-voting/web/src/simpleShardDm.test.ts)
+  - added coverage for outbound id consistency
+  - added coverage for parser normalisation
+
+Fresh local live result after that fix:
+
+- `2 / 2 / 2`: one full clean rerun
+
+Still unresolved:
+
+- repeated reliability is not yet proven
+- `5 / 10 / 3` is still not signed off in this tranche
+
 The key change is that the failure is now classified well enough to stop guessing. The latest status says:
 
 * widened relay selection improved things

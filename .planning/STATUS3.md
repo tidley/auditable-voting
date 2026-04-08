@@ -1,23 +1,84 @@
 # STATUS3
 
 Repository: `/home/tom/code/auditable-voting`  
-Date: `2026-04-07`  
-Current visible app version: `v0.72`
+Date: `2026-04-08`  
+Current visible app version: `v0.73`
 
 ## Current headline
 
-The scale failure is now properly instrumented, and the blind round-1 harness miss is reduced, but the small gate is still not stable enough to call signed off.
+The scale failure is now properly instrumented, and the small gate has moved forward again with shard-request id normalisation, but the larger relay-scale gate is still unresolved.
 
 What is currently true:
 
 - `1 coordinator / 2 voters / 2 rounds` still passes locally
-- `2 coordinators / 2 voters / 2 rounds` is still flaky across reruns
+- `2 coordinators / 2 voters / 2 rounds` has a fresh clean rerun on `v0.73`, but is still not signed off as repeatedly reliable
 - the recurring small-case `round 1` stall was caused by opening the round before the non-lead had completed enough MLS/control-plane startup work, and the live harness had also been firing round 1 on a blind timer rather than waiting for visible readiness
 - `5 coordinators / 10 voters / 3 rounds` is still **not signed off**
-- the latest trustworthy scale failure is now **mixed, with acknowledgement visibility worse than send-side delivery under load**
+- the latest trustworthy scale failure before the latest request-id fix was **mixed, with acknowledgement visibility worse than send-side delivery under load**
 - the latest trustworthy `5 / 10 / 3` rerun now gets materially through round 1 before timing out later
 
 This file is intended as a handoff for another model to continue analysis, not as a claim that the whole migration plan is complete.
+
+---
+
+## New change in `v0.73`
+
+The voter/coordinator DM request path was carrying two ids for the same logical blinded request:
+
+- top-level DM `request_id`
+- nested `blind_request.requestId`
+
+Those ids were diverging because the DM envelope was generating a fresh UUID while later ticket and acknowledgement logic used the nested blind-request id. That created avoidable later-round mismatch risk in:
+
+- pending request cleanup
+- request retry selection
+- ticket trace correlation
+- acknowledgement matching
+
+### Fix made
+
+Main file:
+
+- [web/src/simpleShardDm.ts](/home/tom/code/auditable-voting/web/src/simpleShardDm.ts)
+
+Changes:
+
+1. `sendSimpleShardRequest(...)` now publishes `request_id: input.blindRequest.requestId` instead of a new random UUID.
+2. `parseSimpleShardRequest(...)` now normalises parsed request ids to `blind_request.requestId` when present, so older mixed-id events also replay more consistently.
+
+Supporting test:
+
+- [web/src/simpleShardDm.test.ts](/home/tom/code/auditable-voting/web/src/simpleShardDm.test.ts)
+  - asserts outbound request id matches the blind request id
+  - asserts parsed requests normalise to the blind request id even if the envelope id differed
+
+Verification for this tranche:
+
+```bash
+cd web && npx vitest run src/simpleShardDm.test.ts src/simpleVotingSession.test.ts src/services/CoordinatorControlService.test.ts src/core/derivedStateAdapter.test.ts src/services/ProtocolStateService.test.ts
+cd web && npm run build
+```
+
+Latest live small-gate rerun after this fix:
+
+```bash
+LIVE_SIMPLE_BASE_URL=http://127.0.0.1:4218/simple.html \
+LIVE_COORDINATORS=2 \
+LIVE_VOTERS=2 \
+LIVE_ROUNDS=2 \
+LIVE_STARTUP_WAIT_MS=20000 \
+LIVE_ROUND_WAIT_MS=15000 \
+LIVE_TICKET_WAIT_MS=15000 \
+LIVE_NIP65=off \
+npm --prefix web run test:live-relays
+```
+
+Observed:
+
+- round 1: `2/2` voters got `2 of 2`
+- round 2: `2/2` voters got `2 of 2`
+
+That is a useful repair, but it is still a single fresh rerun, not a final stability claim.
 
 ---
 
