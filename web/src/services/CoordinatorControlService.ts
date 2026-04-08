@@ -5,6 +5,7 @@ import {
   type CoordinatorEngineStatus,
   type CoordinatorEngineConfig,
   type CoordinatorEngineView,
+  type CoordinatorOutboundTransportMessage,
 } from "../core/coordinatorCoreAdapter";
 import { transportEventFromNostrEvent } from "../core/coordinatorEventBridge";
 import { publishCoordinatorControl } from "../nostr/publishCoordinatorControl";
@@ -13,14 +14,24 @@ export type CoordinatorControlCache = {
   snapshot: CoordinatorEngineSnapshot;
 };
 
+const COORDINATOR_CONTROL_PUBLISH_RETRY_MAX_ATTEMPTS = 3;
+const COORDINATOR_CONTROL_PUBLISH_RETRY_DELAY_MS = 1200;
+
 function sortRoster(values: string[]) {
   return [...new Set(values.filter((value) => value.trim().length > 0))].sort();
+}
+
+function delay(ms: number) {
+  return new Promise<void>((resolve) => {
+    globalThis.setTimeout(resolve, ms);
+  });
 }
 
 function snapshotMatchesInput(input: {
   electionId: string;
   localPubkey: string;
   roster: string[];
+  leadPubkey?: string | null;
   engineKind?: CoordinatorEngineConfig["engine_kind"];
   snapshot?: CoordinatorEngineSnapshot | null;
 }) {
@@ -33,6 +44,7 @@ function snapshotMatchesInput(input: {
 
   return input.snapshot.config.election_id === input.electionId
     && input.snapshot.config.local_pubkey === input.localPubkey
+    && (input.snapshot.config.lead_pubkey ?? null) === (input.leadPubkey ?? null)
     && (input.snapshot.config.engine_kind ?? "deterministic") === (input.engineKind ?? "deterministic")
     && expectedRoster.length === actualRoster.length
     && expectedRoster.every((value, index) => value === actualRoster[index]);
@@ -41,10 +53,49 @@ function snapshotMatchesInput(input: {
 export class CoordinatorControlService {
   private constructor(private adapter: CoordinatorCoreAdapter) {}
 
+  private async publishRequiredControl(input: {
+    coordinatorNsec: string;
+    message: CoordinatorOutboundTransportMessage;
+    relays?: string[];
+  }) {
+    let lastPublish: Awaited<ReturnType<typeof publishCoordinatorControl>> | null = null;
+
+    for (
+      let attempt = 0;
+      attempt < COORDINATOR_CONTROL_PUBLISH_RETRY_MAX_ATTEMPTS;
+      attempt += 1
+    ) {
+      const published = await publishCoordinatorControl({
+        ...input,
+        onPrepared: ({ eventId }) => {
+          this.adapter.applyPublishedLocalMessage(eventId, input.message.local_echo);
+        },
+      });
+      lastPublish = published;
+      if (published.successes > 0) {
+        this.adapter.applyPublishedLocalMessage(published.eventId, input.message.local_echo);
+        return published;
+      }
+
+      if (attempt + 1 < COORDINATOR_CONTROL_PUBLISH_RETRY_MAX_ATTEMPTS) {
+        await delay(
+          COORDINATOR_CONTROL_PUBLISH_RETRY_DELAY_MS * (attempt + 1),
+        );
+      }
+    }
+
+    throw new Error(
+      `Coordinator control publish failed across all relays for ${input.message.event_type}. Last result: ${
+        lastPublish ? JSON.stringify(lastPublish.relayResults) : "no publish result"
+      }`,
+    );
+  }
+
   static async create(input: {
     electionId: string;
     localPubkey: string;
     roster: string[];
+    leadPubkey?: string | null;
     engineKind?: CoordinatorEngineConfig["engine_kind"];
     snapshot?: CoordinatorEngineSnapshot | null;
   }) {
@@ -55,6 +106,7 @@ export class CoordinatorControlService {
           election_id: input.electionId,
           local_pubkey: input.localPubkey,
           coordinator_roster: sortRoster(input.roster),
+          lead_pubkey: input.leadPubkey ?? null,
           engine_kind: input.engineKind ?? "deterministic",
         });
 
@@ -122,31 +174,28 @@ export class CoordinatorControlService {
       coordinator_roster: sortRoster(input.roster),
     });
 
-    const draftPublish = await publishCoordinatorControl({
+    const draftPublish = await this.publishRequiredControl({
       coordinatorNsec: input.coordinatorNsec,
       message: draft,
       relays: input.relays,
     });
-    this.adapter.applyPublishedLocalMessage(draftPublish.eventId, draft.local_echo);
 
-    const proposalPublish = await publishCoordinatorControl({
+    const proposalPublish = await this.publishRequiredControl({
       coordinatorNsec: input.coordinatorNsec,
       message: proposal,
       relays: input.relays,
     });
-    this.adapter.applyPublishedLocalMessage(proposalPublish.eventId, proposal.local_echo);
 
     const leadCommitMessage = this.adapter.commitRoundOpen({
       round_id: input.roundId,
       proposal_event_id: proposalPublish.eventId,
       created_at: now + 2,
     });
-    const leadCommitPublish = await publishCoordinatorControl({
+    const leadCommitPublish = await this.publishRequiredControl({
       coordinatorNsec: input.coordinatorNsec,
       message: leadCommitMessage,
       relays: input.relays,
     });
-    this.adapter.applyPublishedLocalMessage(leadCommitPublish.eventId, leadCommitMessage.local_echo);
 
     return {
       draft: draftPublish,
@@ -184,12 +233,11 @@ export class CoordinatorControlService {
       proposal_event_id: proposalEventId,
       created_at: Date.now(),
     });
-    const published = await publishCoordinatorControl({
+    const published = await this.publishRequiredControl({
       coordinatorNsec: input.coordinatorNsec,
       message: outbound,
       relays: input.relays,
     });
-    this.adapter.applyPublishedLocalMessage(published.eventId, outbound.local_echo);
     return {
       published,
       state: this.getState(),

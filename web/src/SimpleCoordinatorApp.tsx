@@ -39,7 +39,10 @@ import {
   SIMPLE_PUBLIC_ELECTION_ID,
   type ProtocolStateCache,
 } from "./services/ProtocolStateService";
-import type { CoordinatorEngineView } from "./core/coordinatorCoreAdapter";
+import type {
+  CoordinatorEngineStatus,
+  CoordinatorEngineView,
+} from "./core/coordinatorCoreAdapter";
 import { fetchCoordinatorControlEvents, subscribeCoordinatorControl } from "./nostr/subscribeCoordinatorControl";
 import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
@@ -95,6 +98,8 @@ type TicketDeliveryState = {
   status: string;
   eventId?: string;
   responseId?: string;
+  priorEventIds?: string[];
+  priorResponseIds?: string[];
   attempts?: number;
   lastAttemptAt?: string;
   relayResults?: TicketRelayResult[];
@@ -127,6 +132,10 @@ type SimpleCoordinatorCache = {
 
 const SIMPLE_TICKET_SEND_STAGGER_MS = 900;
 const SIMPLE_COORDINATOR_CONTROL_BACKFILL_INTERVAL_MS = 4000;
+const SIMPLE_COORDINATOR_ROUND_OPEN_POST_WELCOME_GRACE_MS = 1200;
+const SIMPLE_COORDINATOR_ROUND_OPEN_RETRY_DELAY_MS = 5000;
+const SIMPLE_COORDINATOR_ROUND_OPEN_RETRY_MAX_ATTEMPTS = 3;
+const SIMPLE_TICKET_RETRY_MIN_AGE_MS = 2000;
 
 function sortCoordinatorRoster(values: string[]) {
   return [...new Set(values.filter((value) => value.trim().length > 0))].sort();
@@ -193,9 +202,22 @@ function deliveryToneClass(tone: string) {
       : "simple-delivery-waiting";
 }
 
-function formatCoordinatorControlStateLabel(view: CoordinatorEngineView | null) {
+function formatCoordinatorControlStateLabel(
+  view: CoordinatorEngineView | null,
+  status?: CoordinatorEngineStatus | null,
+) {
+  if (status?.blocked_reason) {
+    const latestRoundId = view?.latest_round?.round_id;
+    return latestRoundId
+      ? `${status.blocked_reason.replace(/\.$/, "")} for ${shortVotingId(latestRoundId)}.`
+      : status.blocked_reason;
+  }
+
   const latestRound = view?.latest_round ?? null;
   if (!latestRound) {
+    if (status?.engine_kind === "open_mls" && !status.group_ready) {
+      return "Waiting for supervisory group readiness.";
+    }
     return null;
   }
 
@@ -248,6 +270,17 @@ function buildShareAssignmentSignature(
       (application, index) => `${application.coordinatorNpub}:${index + 2}`,
     ),
   ].join('|');
+}
+
+function formatCoordinatorList(values: string[]) {
+  const labels = values.map((npub) => `Coordinator ${deriveActorDisplayId(npub)}`);
+  if (labels.length <= 1) {
+    return labels[0] ?? "Coordinator";
+  }
+  if (labels.length === 2) {
+    return `${labels[0]} and ${labels[1]}`;
+  }
+  return `${labels.slice(0, -1).join(", ")}, and ${labels.at(-1)}`;
 }
 
 export default function SimpleCoordinatorApp() {
@@ -304,6 +337,10 @@ export default function SimpleCoordinatorApp() {
   const coordinatorControlServiceRef = useRef<CoordinatorControlService | null>(null);
   const protocolStateServiceRef = useRef<ProtocolStateService | null>(null);
   const roundBroadcastInFlightRef = useRef<string | null>(null);
+  const pendingRoundOpenAttemptRef = useRef(false);
+  const roundOpenRetryAttemptsRef = useRef<Record<string, number>>({});
+  const sentMlsWelcomeEventIdsRef = useRef<Record<string, string>>({});
+  const sentMlsWelcomeAckIdsRef = useRef<Set<string>>(new Set());
   const verifyAllVisibleRef = useRef<HTMLInputElement | null>(null);
   const isLeadCoordinator = !leadCoordinatorNpub.trim() || leadCoordinatorNpub.trim() === (keypair?.npub ?? "");
   const canShowNotifyLeadButton = Boolean(
@@ -326,9 +363,17 @@ export default function SimpleCoordinatorApp() {
     () => npubsToHexRoster(coordinatorRoster),
     [coordinatorRoster],
   );
+  const coordinatorHexRosterSignature = useMemo(
+    () => coordinatorHexRoster.join("|"),
+    [coordinatorHexRoster],
+  );
   const localCoordinatorHexPubkey = useMemo(
     () => npubsToHexRoster(keypair?.npub ? [keypair.npub] : [])[0] ?? "",
     [keypair?.npub],
+  );
+  const leadCoordinatorHexPubkey = useMemo(
+    () => npubsToHexRoster(leadCoordinatorNpub.trim() ? [leadCoordinatorNpub.trim()] : [])[0] ?? "",
+    [leadCoordinatorNpub],
   );
   const coordinatorElectionId = useMemo(
     () => keypair?.npub
@@ -370,6 +415,31 @@ export default function SimpleCoordinatorApp() {
   const sentMlsWelcomeStateRef = useRef<Record<string, string>>({});
   const seenMlsWelcomeIdsRef = useRef<Set<string>>(new Set());
   const mlsBootstrapInFlightRef = useRef(false);
+
+  function getOutstandingMlsWelcomeAckNpubs() {
+    if (!isLeadCoordinator) {
+      return [];
+    }
+
+    const expectedSubCoordinators = subCoordinators.filter(
+      (application) => application.mlsJoinPackage?.trim(),
+    );
+
+    return expectedSubCoordinators
+      .map((application) => application.coordinatorNpub)
+      .filter((coordinatorNpub) => {
+        const welcomeEventId = sentMlsWelcomeEventIdsRef.current[coordinatorNpub];
+        if (!welcomeEventId) {
+          return true;
+        }
+
+        return !dmAcknowledgements.some((ack) => (
+          ack.actorNpub === coordinatorNpub
+          && ack.ackedAction === "simple_mls_welcome"
+          && ack.ackedEventId === welcomeEventId
+        ));
+      });
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -577,6 +647,7 @@ export default function SimpleCoordinatorApp() {
         electionId: coordinatorElectionId,
         localPubkey: localCoordinatorHexPubkey,
         roster: coordinatorHexRoster,
+        leadPubkey: isLeadCoordinator ? localCoordinatorHexPubkey : leadCoordinatorHexPubkey || null,
         engineKind: "open_mls",
         snapshot: coordinatorControlCache?.snapshot ?? null,
       });
@@ -590,9 +661,15 @@ export default function SimpleCoordinatorApp() {
       const syncState = () => {
         const nextCache = service.snapshot();
         const nextView = service.getState();
+        const nextStatus = service.getEngineStatus();
         setCoordinatorControlCache(nextCache);
         setCoordinatorControlView(nextView);
-        setCoordinatorControlStateLabel(formatCoordinatorControlStateLabel(nextView));
+        setCoordinatorControlStateLabel(formatCoordinatorControlStateLabel(nextView, nextStatus));
+      };
+
+      const syncStateWithReplayWarning = () => {
+        syncState();
+        setCoordinatorControlStateLabel("Waiting for coordinator-control replay.");
       };
 
       syncState();
@@ -611,7 +688,7 @@ export default function SimpleCoordinatorApp() {
           service.ingestCoordinatorEvents(initialEvents);
           syncState();
         } catch {
-          setCoordinatorControlStateLabel("Waiting for coordinator-control replay.");
+          syncStateWithReplayWarning();
         }
       }
 
@@ -620,12 +697,16 @@ export default function SimpleCoordinatorApp() {
           return;
         }
 
-        const approval = await service.maybeAutoApproveRoundOpen({
-          coordinatorNsec: keypair.nsec,
-        });
-        if (approval) {
-          syncState();
-          setPublishStatus("Coordinator round-open approval sent.");
+        try {
+          const approval = await service.maybeAutoApproveRoundOpen({
+            coordinatorNsec: keypair.nsec,
+          });
+          if (approval) {
+            syncState();
+            setPublishStatus("Coordinator round-open approval sent.");
+          }
+        } catch {
+          setPublishStatus("Coordinator round-open approval failed.");
         }
       };
 
@@ -651,7 +732,7 @@ export default function SimpleCoordinatorApp() {
               coordinatorControlServiceRef.current.ingestCoordinatorEvents(events);
               syncState();
             } catch {
-              setCoordinatorControlStateLabel("Waiting for coordinator-control replay.");
+              syncStateWithReplayWarning();
             }
           }
 
@@ -678,7 +759,7 @@ export default function SimpleCoordinatorApp() {
             coordinatorControlServiceRef.current.ingestCoordinatorEvents(events);
             syncState();
           } catch {
-            setCoordinatorControlStateLabel("Waiting for coordinator-control replay.");
+            syncStateWithReplayWarning();
           }
           void maybeApprove();
         },
@@ -701,9 +782,10 @@ export default function SimpleCoordinatorApp() {
     };
   }, [
     coordinatorElectionId,
-    coordinatorHexRoster,
+    coordinatorHexRosterSignature,
     identityReady,
     isLeadCoordinator,
+    leadCoordinatorHexPubkey,
     localCoordinatorHexPubkey,
     keypair?.npub,
     keypair?.nsec,
@@ -737,8 +819,56 @@ export default function SimpleCoordinatorApp() {
             if (joined) {
               setCoordinatorControlCache(service.snapshot());
               setCoordinatorControlView(service.getState());
-              setCoordinatorControlStateLabel(formatCoordinatorControlStateLabel(service.getState()));
+              setCoordinatorControlStateLabel(
+                formatCoordinatorControlStateLabel(service.getState(), service.getEngineStatus()),
+              );
               setRegistrationStatus("Coordinator MLS join completed.");
+
+              void (async () => {
+                try {
+                  const events = await fetchCoordinatorControlEvents({
+                    electionId: coordinatorElectionId,
+                    coordinatorHexPubkeys: coordinatorHexRoster,
+                  });
+                  if (events.length > 0) {
+                    service.ingestCoordinatorEvents(events);
+                  }
+                  const approval = await service.maybeAutoApproveRoundOpen({
+                    coordinatorNsec: keypair.nsec,
+                  });
+                  setCoordinatorControlCache(service.snapshot());
+                  setCoordinatorControlView(service.getState());
+                  setCoordinatorControlStateLabel(
+                    formatCoordinatorControlStateLabel(service.getState(), service.getEngineStatus()),
+                  );
+                  if (approval) {
+                    setPublishStatus("Coordinator round-open approval sent.");
+                  }
+
+                  const coordinatorSecretKey = decodeNsec(keypair?.nsec ?? "");
+                  const coordinatorNpub = keypair?.npub ?? "";
+                  if (
+                    coordinatorSecretKey
+                    && coordinatorNpub
+                    && !sentMlsWelcomeAckIdsRef.current.has(welcome.dmEventId)
+                  ) {
+                    sentMlsWelcomeAckIdsRef.current.add(welcome.dmEventId);
+                    try {
+                      await sendSimpleDmAcknowledgement({
+                        senderSecretKey: coordinatorSecretKey,
+                        recipientNpub: welcome.leadCoordinatorNpub,
+                        actorNpub: coordinatorNpub,
+                        ackedAction: "simple_mls_welcome",
+                        ackedEventId: welcome.dmEventId,
+                      });
+                    } catch {
+                      sentMlsWelcomeAckIdsRef.current.delete(welcome.dmEventId);
+                    }
+                  }
+                } catch {
+                  setCoordinatorControlStateLabel("Waiting for coordinator-control replay.");
+                }
+              })();
             }
           } catch {
             seenMlsWelcomeIdsRef.current.delete(welcome.id);
@@ -746,7 +876,140 @@ export default function SimpleCoordinatorApp() {
         }
       },
     });
-  }, [coordinatorElectionId, isLeadCoordinator, keypair?.nsec, leadCoordinatorNpub]);
+  }, [coordinatorElectionId, isLeadCoordinator, keypair?.npub, keypair?.nsec, leadCoordinatorNpub]);
+
+  useEffect(() => {
+    if (!pendingRoundOpenAttemptRef.current || !isLeadCoordinator || roundBroadcastInFlightRef.current) {
+      return;
+    }
+
+    const service = coordinatorControlServiceRef.current;
+    if (!service) {
+      return;
+    }
+
+    const status = service.getEngineStatus();
+    if (status.engine_kind !== "open_mls") {
+      return;
+    }
+
+    if (!status.group_ready || getOutstandingMlsWelcomeAckNpubs().length > 0) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      if (!pendingRoundOpenAttemptRef.current || roundBroadcastInFlightRef.current) {
+        return;
+      }
+
+      const latestService = coordinatorControlServiceRef.current;
+      if (!latestService) {
+        return;
+      }
+
+      const latestStatus = latestService.getEngineStatus();
+      if (latestStatus.engine_kind !== "open_mls" || !latestStatus.group_ready) {
+        return;
+      }
+
+      if (getOutstandingMlsWelcomeAckNpubs().length > 0) {
+        return;
+      }
+
+      pendingRoundOpenAttemptRef.current = false;
+      void broadcastQuestion();
+    }, SIMPLE_COORDINATOR_ROUND_OPEN_POST_WELCOME_GRACE_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    dmAcknowledgements,
+    isLeadCoordinator,
+    questionPrompt,
+    questionThresholdN,
+    questionThresholdT,
+    subCoordinators,
+  ]);
+
+  useEffect(() => {
+    if (!isLeadCoordinator || roundBroadcastInFlightRef.current) {
+      return;
+    }
+
+    const service = coordinatorControlServiceRef.current;
+    const latestRound = coordinatorControlView?.latest_round ?? null;
+    if (!service || !latestRound || latestRound.phase !== "open_proposed") {
+      return;
+    }
+
+    if (
+      !latestRound.prompt
+      || latestRound.threshold_t == null
+      || latestRound.threshold_n == null
+      || latestRound.missing_open_committers.length === 0
+    ) {
+      return;
+    }
+
+    const retryKey = latestRound.round_id;
+    const attemptCount = roundOpenRetryAttemptsRef.current[retryKey] ?? 0;
+    if (attemptCount >= SIMPLE_COORDINATOR_ROUND_OPEN_RETRY_MAX_ATTEMPTS) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      const latestService = coordinatorControlServiceRef.current;
+      const currentRound = latestService?.getState().latest_round ?? null;
+      if (
+        !latestService
+        || !currentRound
+        || currentRound.round_id !== retryKey
+        || currentRound.phase !== "open_proposed"
+        || currentRound.missing_open_committers.length === 0
+        || !currentRound.prompt
+        || currentRound.threshold_t == null
+        || currentRound.threshold_n == null
+        || !keypair?.nsec
+      ) {
+        return;
+      }
+
+      roundOpenRetryAttemptsRef.current[retryKey] = attemptCount + 1;
+      setPublishStatus(
+        `Retrying round-open proposal (${attemptCount + 1}/${SIMPLE_COORDINATOR_ROUND_OPEN_RETRY_MAX_ATTEMPTS})...`,
+      );
+
+      void latestService.publishRoundOpenFlow({
+        coordinatorNsec: keypair.nsec,
+        roundId: currentRound.round_id,
+        prompt: currentRound.prompt,
+        thresholdT: currentRound.threshold_t,
+        thresholdN: currentRound.threshold_n,
+        roster: coordinatorHexRoster,
+      }).then((result) => {
+        setCoordinatorControlCache(latestService.snapshot());
+        setCoordinatorControlView(result.state);
+        setCoordinatorControlStateLabel(
+          formatCoordinatorControlStateLabel(
+            result.state,
+            coordinatorControlServiceRef.current?.getEngineStatus() ?? null,
+          ),
+        );
+        setPublishStatus(
+          result.state.latest_round?.phase === "open"
+            ? "Coordinator round open agreed. Broadcasting vote..."
+            : "Round-open proposal resent. Waiting for coordinator approvals.",
+        );
+      }).catch(() => {
+        setPublishStatus("Round-open retry failed.");
+      });
+    }, SIMPLE_COORDINATOR_ROUND_OPEN_RETRY_DELAY_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [coordinatorControlView, coordinatorHexRoster, isLeadCoordinator, keypair?.nsec]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1799,17 +2062,35 @@ export default function SimpleCoordinatorApp() {
         thresholdN: activeThresholdN,
       });
 
-      setTicketDeliveries((current) => ({
-        ...current,
-        [ticketStatusKey]: {
+      setTicketDeliveries((current) => {
+        const previousDelivery = current[ticketStatusKey];
+        const priorEventIds = Array.from(new Set([
+          ...(previousDelivery?.priorEventIds ?? []),
+          ...(previousDelivery?.eventId && previousDelivery.eventId !== result.eventId
+            ? [previousDelivery.eventId]
+            : []),
+        ]));
+        const priorResponseIds = Array.from(new Set([
+          ...(previousDelivery?.priorResponseIds ?? []),
+          ...(previousDelivery?.responseId && previousDelivery.responseId !== result.responseId
+            ? [previousDelivery.responseId]
+            : []),
+        ]));
+
+        return {
+          ...current,
+          [ticketStatusKey]: {
           status: result.successes > 0 ? "Ticket sent." : "Ticket send failed.",
           eventId: result.eventId,
           responseId: result.responseId,
-          attempts: (current[ticketStatusKey]?.attempts ?? 0) + 1,
+          priorEventIds,
+          priorResponseIds,
+          attempts: (previousDelivery?.attempts ?? 0) + 1,
           lastAttemptAt: new Date().toISOString(),
           relayResults: result.relayResults,
         },
-      }));
+        };
+      });
     } catch {
       setTicketDeliveries((current) => ({
         ...current,
@@ -1873,6 +2154,8 @@ export default function SimpleCoordinatorApp() {
       return;
     }
 
+    pendingRoundOpenAttemptRef.current = true;
+
     const service = coordinatorControlServiceRef.current;
     if (!service) {
       setPublishStatus("Coordinator control engine is not ready.");
@@ -1898,7 +2181,13 @@ export default function SimpleCoordinatorApp() {
       });
       setCoordinatorControlCache(service.snapshot());
       setCoordinatorControlView(result.state);
-      setCoordinatorControlStateLabel(formatCoordinatorControlStateLabel(result.state));
+      setCoordinatorControlStateLabel(
+        formatCoordinatorControlStateLabel(
+          result.state,
+          coordinatorControlServiceRef.current?.getEngineStatus() ?? null,
+        ),
+      );
+      pendingRoundOpenAttemptRef.current = false;
       setSelectedVotingId(roundId);
       setSelectedSubmittedVotingId(roundId);
       setPublishStatus(
@@ -1907,6 +2196,15 @@ export default function SimpleCoordinatorApp() {
           : "Round-open proposal sent. Waiting for coordinator approvals.",
       );
     } catch {
+      setCoordinatorControlCache(service.snapshot());
+      setCoordinatorControlView(service.getState());
+      setCoordinatorControlStateLabel(
+        formatCoordinatorControlStateLabel(
+          service.getState(),
+          coordinatorControlServiceRef.current?.getEngineStatus() ?? null,
+        ),
+      );
+      pendingRoundOpenAttemptRef.current = false;
       setPublishStatus("Round-open proposal failed.");
     }
   }
@@ -1943,6 +2241,7 @@ export default function SimpleCoordinatorApp() {
             electionId: coordinatorElectionId,
             localPubkey: localCoordinatorHexPubkey,
             roster: coordinatorHexRoster,
+            leadPubkey: isLeadCoordinator ? localCoordinatorHexPubkey : leadCoordinatorHexPubkey || null,
             engineKind: "open_mls",
             snapshot: coordinatorControlCache?.snapshot ?? null,
           })
@@ -1952,7 +2251,9 @@ export default function SimpleCoordinatorApp() {
         coordinatorControlServiceRef.current = service;
         setCoordinatorControlCache(service.snapshot());
         setCoordinatorControlView(service.getState());
-        setCoordinatorControlStateLabel(formatCoordinatorControlStateLabel(service.getState()));
+        setCoordinatorControlStateLabel(
+          formatCoordinatorControlStateLabel(service.getState(), service.getEngineStatus()),
+        );
       }
       const mlsJoinPackage = service?.getEngineStatus().engine_kind === "open_mls"
         ? service.exportSupervisoryJoinPackage() ?? undefined
@@ -1982,7 +2283,11 @@ export default function SimpleCoordinatorApp() {
     }
 
     const status = service.getEngineStatus();
-    if (status.engine_kind !== "open_mls" || status.group_ready) {
+    if (status.engine_kind !== "open_mls") {
+      return true;
+    }
+
+    if (status.group_ready && (!isLeadCoordinator || getOutstandingMlsWelcomeAckNpubs().length === 0)) {
       return true;
     }
 
@@ -2005,7 +2310,9 @@ export default function SimpleCoordinatorApp() {
       const welcomeBundle = service.bootstrapSupervisoryGroup(joinPackages);
       setCoordinatorControlCache(service.snapshot());
       setCoordinatorControlView(service.getState());
-      setCoordinatorControlStateLabel(formatCoordinatorControlStateLabel(service.getState()));
+      setCoordinatorControlStateLabel(
+        formatCoordinatorControlStateLabel(service.getState(), service.getEngineStatus()),
+      );
 
       if (welcomeBundle) {
         const leadCoordinatorSecretKey = decodeNsec(keypair?.nsec ?? "");
@@ -2021,14 +2328,38 @@ export default function SimpleCoordinatorApp() {
             continue;
           }
           sentMlsWelcomeStateRef.current[application.coordinatorNpub] = signature;
-          await sendSimpleCoordinatorMlsWelcome({
+          const welcomeResult = await sendSimpleCoordinatorMlsWelcome({
             leadCoordinatorSecretKey,
             leadCoordinatorNpub,
             coordinatorNpub: application.coordinatorNpub,
             electionId: coordinatorElectionId,
             welcomeBundle,
           });
+          sentMlsWelcomeEventIdsRef.current[application.coordinatorNpub] = welcomeResult.eventId;
         }
+      }
+
+      const outstandingCoordinatorNpubs = subCoordinators
+        .filter((application) => application.mlsJoinPackage?.trim())
+        .map((application) => application.coordinatorNpub)
+        .filter((coordinatorNpub) => {
+          const welcomeEventId = sentMlsWelcomeEventIdsRef.current[coordinatorNpub];
+          if (!welcomeEventId) {
+            return true;
+          }
+
+          return !dmAcknowledgements.some((ack) => (
+            ack.actorNpub === coordinatorNpub
+            && ack.ackedAction === "simple_mls_welcome"
+            && ack.ackedEventId === welcomeEventId
+          ));
+        });
+
+      if (outstandingCoordinatorNpubs.length > 0) {
+        setPublishStatus(
+          `Waiting for MLS welcome acknowledgements from ${formatCoordinatorList(outstandingCoordinatorNpubs)}.`,
+        );
+        return false;
       }
 
       setPublishStatus(null);
@@ -2384,7 +2715,7 @@ export default function SimpleCoordinatorApp() {
         responseId: ack.responseId,
       })),
       nowMs,
-      minRetryAgeMs: 2000,
+      minRetryAgeMs: SIMPLE_TICKET_RETRY_MIN_AGE_MS,
       maxAttempts: 8,
     }));
 

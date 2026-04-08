@@ -26,6 +26,7 @@ import {
 import {
   subscribeSimpleCoordinatorRosterAnnouncements,
   fetchSimpleShardResponses,
+  recordSimpleTicketLifecycleTrace,
   sendSimpleCoordinatorFollow,
   sendSimpleDmAcknowledgement,
   sendSimpleShardRequest,
@@ -1538,13 +1539,13 @@ export default function SimpleUiApp() {
         blindRequest: entry.request,
       })));
 
-      const successfulEntries = createdEntries.flatMap((entry, index) => (
-        results[index].successes > 0
-          ? [{ ...entry, dmEventId: results[index].eventId }]
-          : []
-      ));
       const nextRequests = Object.fromEntries(
-        successfulEntries.map((entry) => [`${entry.coordinatorNpub}:${entry.votingId}`, entry]),
+        createdEntries.map((entry, index) => [
+          `${entry.coordinatorNpub}:${entry.votingId}`,
+          results[index].successes > 0
+            ? { ...entry, dmEventId: results[index].eventId }
+            : entry,
+        ]),
       );
       setPendingBlindRequests((current) => ({ ...current, ...nextRequests }));
       const nextRequestDeliveries = Object.fromEntries(createdEntries.map((entry, index) => [
@@ -1553,7 +1554,7 @@ export default function SimpleUiApp() {
           status: results[index].successes > 0 ? "Blinded ticket request sent." : "Blinded ticket request failed.",
           eventId: results[index].eventId,
           requestId: entry.request.requestId,
-          attempts: results[index].successes > 0 ? 1 : 0,
+          attempts: 1,
           lastAttemptAt: new Date().toISOString(),
         },
       ]));
@@ -1662,6 +1663,17 @@ export default function SimpleUiApp() {
         continue;
       }
 
+      recordSimpleTicketLifecycleTrace({
+        votingId: responseVotingId,
+        coordinatorNpub: response.coordinatorNpub,
+        voterNpub: voterKeypair.npub,
+        requestId: response.requestId,
+        responseId: response.id,
+        updates: {
+          ticketObservedByVoterAt: Date.now(),
+          ackSentAt: Date.now(),
+        },
+      });
       sentTicketReceiptAckIdsRef.current.add(response.dmEventId);
       void sendSimpleDmAcknowledgement({
         senderSecretKey,

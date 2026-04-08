@@ -20,7 +20,8 @@ pub use diagnostics::{ProtocolDiagnostics, ReplayStatus, ValidationIssueCount};
 pub use error::ProtocolEngineError;
 pub use coordinator_engine::{
     CoordinatorControlEngine, CoordinatorEngineConfig, CoordinatorEngineKind, CoordinatorEngineSnapshot,
-    CoordinatorEngineStatus,
+    CoordinatorEngineStatus, CoordinatorPublicRoundVisibility, CoordinatorReadiness,
+    CoordinatorSnapshotFreshness,
     CoordinatorEngineView, CoordinatorRoundView,
 };
 pub use coordinator_messages::{CoordinatorControlEnvelope, CoordinatorControlPayload};
@@ -57,6 +58,7 @@ mod tests {
             election_id: "election-1".to_owned(),
             local_pubkey: local_pubkey.to_owned(),
             coordinator_roster: vec!["coord-1".to_owned(), "coord-2".to_owned()],
+            lead_pubkey: None,
             engine_kind: CoordinatorEngineKind::Deterministic,
         })
         .unwrap()
@@ -80,6 +82,7 @@ mod tests {
             election_id: "election-1".to_owned(),
             local_pubkey: "coord-1".to_owned(),
             coordinator_roster: vec!["coord-1".to_owned(), "coord-2".to_owned()],
+            lead_pubkey: None,
             engine_kind: CoordinatorEngineKind::OpenMls,
         })
         .unwrap();

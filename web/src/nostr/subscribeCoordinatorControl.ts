@@ -7,7 +7,7 @@ import {
   SIMPLE_COORDINATOR_CONTROL_KIND,
 } from "../core/coordinatorEventBridge";
 
-const COORDINATOR_CONTROL_READ_RELAYS_MAX = 2;
+const COORDINATOR_CONTROL_READ_RELAYS_MAX = 3;
 
 function buildReadRelays(relays?: string[]) {
   const normalized = normalizeRelaysRust([...(relays ?? []), ...SIMPLE_PUBLIC_RELAYS]);

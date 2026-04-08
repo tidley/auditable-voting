@@ -4,6 +4,7 @@ export type CoordinatorEngineConfig = {
   election_id: string;
   local_pubkey: string;
   coordinator_roster: string[];
+  lead_pubkey?: string | null;
   engine_kind?: "deterministic" | "open_mls";
 };
 
@@ -52,6 +53,27 @@ export type CoordinatorEngineView = {
 export type CoordinatorEngineStatus = {
   engine_kind: "deterministic" | "open_mls";
   group_ready: boolean;
+  joined_group: boolean;
+  welcome_applied?: boolean | null;
+  current_epoch: number;
+  snapshot_freshness: "live" | "restored";
+  public_round_visibility:
+    | "not_visible"
+    | "draft"
+    | "open_proposed"
+    | "open"
+    | "tallied"
+    | "published"
+    | "disputed";
+  readiness:
+    | "ready"
+    | "waiting_for_group_ready"
+    | "waiting_for_own_open_commit"
+    | "waiting_for_coordinator_approvals"
+    | "round_open"
+    | "published"
+    | "no_round";
+  blocked_reason?: string | null;
 };
 
 export type CoordinatorEngineSnapshot = {

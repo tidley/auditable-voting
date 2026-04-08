@@ -1,4 +1,37 @@
-Here is the concrete finish plan, tuned to the current progress in the attached brief, especially the facts that `1c/1v/1r` and `2c/2v/2r` are passing again, round-history backfill was recently repaired, the real OpenMLS engine already exists in Rust/Wasm, and the next unresolved live gate is `5 coordinators / 10 voters / 3 rounds`. 
+Here is the concrete finish plan, updated to the current repo state.
+
+## Current status
+
+- `1c / 1v / 1r`: passing locally
+- `2c / 2v / 2r`: passing on some local runs, but still flaky across reruns
+- `5c / 10v / 3r`: not passing yet
+- the browser coordinator path now does use the Rust/OpenMLS supervisory engine
+- the remaining problem is runtime stability of the first multi-coordinator round, not missing MLS carrier wiring
+- Rust remains the protocol source of truth for the migrated coordinator/public/ballot slices
+
+So this file is no longer about “wire OpenMLS in at all”. It is now about finishing and hardening the live OpenMLS browser path, then clearing the larger gates.
+
+## Current performance picture
+
+- small local runs are acceptable:
+  - `1 / 1 / 1` completes comfortably
+  - `2 / 2 / 2` can complete cleanly, but not yet reliably enough to treat as stable
+- the main performance problem is not single-coordinator throughput; it is multi-coordinator startup and first-round coordination latency
+- the most expensive phase is still the first multi-coordinator round, where coordinator join/bootstrap, public round visibility, blind-key visibility, and first ticket delivery all stack together
+- once a multi-coordinator run gets past the first round, later rounds are often materially faster and cleaner than round 1
+- larger live scale is still not viable:
+  - `5 / 10 / 3` is not passing
+  - prior evidence already showed `5 / 10 / 10` is not operationally credible on the current relay/runtime path
+- current bottleneck shape:
+  - coordination-plane readiness and relay/runtime disorder dominate
+  - not raw ballot rendering or basic single-voter UX
+
+This means the next performance work should focus on:
+
+1. making first-round supervisory-group readiness deterministic
+2. reducing multi-coordinator relay startup races
+3. improving observability around join/bootstrap vs round-open timing
+4. only then optimising larger-scale replay/load behaviour
 
 ## Finish strategy
 
@@ -6,31 +39,41 @@ Do **not** broaden scope yet.
 
 The shortest path to “substantially finished” is:
 
-1. **Make the live browser coordinator path actually use the OpenMLS engine**
+1. **Stabilise the live browser coordinator path on the OpenMLS engine**
 2. **Pass the `5 / 10 / 3` live gate**
 3. **Remove remaining TS authority in private issuance/ticket flows**
 4. **Add compact receipt commitments and proof skeletons**
 5. **Add bounded-group and 1,000-style replay/load simulations**
 6. **Only then expand proof/tally depth**
 
-That sequence matters because the biggest current architectural gap is not reducers or snapshots in general; it is that the shipped browser runtime still bypasses the real MLS path. 
+That sequence matters because the biggest current architectural gap is no longer “MLS missing”; it is live reliability and scale on the MLS-backed browser runtime.
 
 ---
 
 # Concrete plan to finish
 
-## Stage 1 - land the real browser OpenMLS path
+## Stage 1 - stabilise the real browser OpenMLS path
 
 ### Goal
 
-Replace the live coordinator browser runtime’s deterministic-engine path with the real OpenMLS-backed engine already present in Rust/Wasm. 
+Finish hardening the browser coordinator runtime that now uses the real OpenMLS-backed engine already present in Rust/Wasm.
 
 ### Deliverables
 
 * browser bootstrap/join carrier wiring complete
 * OpenMLS-backed supervisory group used in live browser flow
+* sender-local publish path no longer relies on decrypting self-authored MLS ciphertext
+* replay skips self-authored carrier echoes deterministically
 * snapshot/restore stable on the MLS path
 * replay/backfill stable on the MLS path
+
+### Progress
+
+- `done`: OpenMLS engine selection is live in Rust/Wasm
+- `done`: browser join package export, lead bootstrap, and welcome delivery are wired
+- `done`: local-echo handling for self-authored coordinator control messages is in place
+- `done`: replay skips self-authored coordinator carrier events in Rust
+- `partial`: multi-coordinator first-round stability is still flaky in some reruns
 
 ### Code tasks
 
@@ -50,6 +93,7 @@ Implement or finish:
 * restore-from-snapshot on MLS path
 * deterministic apply of inbound carrier messages
 * explicit engine identity in diagnostics, e.g. `deterministic` vs `openmls`
+* first-round readiness handling for multi-coordinator runs
 
 Add/finish exported Wasm calls for:
 
@@ -77,6 +121,11 @@ Implement:
 * engine-status display hook for debugging
 * strict routing by `election_id`, `round_id`, `group_id`
 
+Still needed here:
+
+* reduce or eliminate the remaining first-round join/race window in `2 / 2 / 2`
+* add better coordinator-path diagnostics around join completion vs round-open timing
+
 ### Required tests
 
 Add before moving on:
@@ -86,10 +135,11 @@ Add before moving on:
 * reload both coordinators from snapshot
 * replay backfill after missed welcome/commit
 * verify browser path is using `openmls`, not `deterministic`
+* repeated `2 / 2 / 2` runs without first-round dropout
 
 ### Exit condition
 
-`2 coordinators / 2 voters / 2 rounds` must pass **on the OpenMLS browser path**, not only on the deterministic seam.
+`2 coordinators / 2 voters / 2 rounds` must pass **reliably** on the OpenMLS browser path, not just intermittently.
 
 ---
 
@@ -98,6 +148,11 @@ Add before moving on:
 ### Goal
 
 Make the first non-trivial multi-coordinator live gate pass reliably. This is the correct next milestone because it is already identified as the next unresolved live gate in the brief. 
+
+### Progress
+
+- `not done`: `5 / 10 / 3` still does not pass cleanly
+- `blocked by`: current multi-coordinator runtime stability is not yet strong enough even at `2 / 2 / 2` across repeated reruns
 
 ### Deliverables
 
@@ -430,7 +485,13 @@ Use these milestones exactly.
 **MLS browser path live**
 
 * OpenMLS browser bootstrap/join wired
-* `2 / 2 / 2` passes on real MLS path
+* `2 / 2 / 2` passes on real MLS path reliably
+
+Status:
+
+- `partial`
+- browser OpenMLS path is wired and live
+- `2 / 2 / 2` has passed on the real MLS path, but is not stable enough to call complete
 
 ## Milestone B
 
@@ -438,6 +499,10 @@ Use these milestones exactly.
 
 * `5 / 10 / 3` passes reliably
 * reload/recovery parity holds
+
+Status:
+
+- `not done`
 
 ## Milestone C
 
@@ -527,6 +592,16 @@ I would treat the repo as “finished enough for this migration” when all of t
 * 1,000-style replay simulations pass
 * docs state clearly what is implemented vs not yet implemented
 
-That is the shortest credible path from the current attached state to a strong, defensible finish. 
+Progress against that bar right now:
+
+- `done`: real OpenMLS engine is used in the live browser coordinator path
+- `not done`: `5 / 10 / 3` passes reliably
+- `not done`: no remaining critical private issuance/ticket truth lives in TS
+- `not done`: receipt commitments and proof bundle skeleton exist in Rust
+- `not done`: MLS cap is enforced in code
+- `not done`: 1,000-style replay simulations pass
+- `partial`: docs are improved, but still need to track the remaining live-flakiness boundary carefully
+
+That is still the shortest credible path from the current state to a strong, defensible finish. 
 
 If you want, I can turn this into a paste-ready replacement section for `TODO-llm.md` under “Current concrete progress” and “Concrete implementation plan”.

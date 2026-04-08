@@ -14,7 +14,7 @@ import {
 } from "../core/coordinatorEventBridge";
 import type { CoordinatorOutboundTransportMessage } from "../core/coordinatorCoreAdapter";
 
-const COORDINATOR_CONTROL_PRIMARY_RELAYS_MAX = 2;
+const COORDINATOR_CONTROL_PRIMARY_RELAYS_MAX = 3;
 
 function buildControlRelays(relays?: string[]) {
   const normalized = normalizeRelaysRust([...(relays ?? []), ...SIMPLE_PUBLIC_RELAYS]);
@@ -25,6 +25,10 @@ export async function publishCoordinatorControl(input: {
   coordinatorNsec: string;
   message: CoordinatorOutboundTransportMessage;
   relays?: string[];
+  onPrepared?: (prepared: {
+    eventId: string;
+    rawEvent: ReturnType<typeof finalizeEvent>;
+  }) => void;
 }) {
   const decoded = nip19.decode(input.coordinatorNsec.trim());
   if (decoded.type !== "nsec") {
@@ -43,6 +47,10 @@ export async function publishCoordinatorControl(input: {
   if (event.pubkey !== expectedPubkey) {
     throw new Error("Coordinator control publish signer mismatch.");
   }
+  input.onPrepared?.({
+    eventId: event.id,
+    rawEvent: event,
+  });
 
   const pool = getSharedNostrPool();
   const results = await queueNostrPublish(

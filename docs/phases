@@ -21,7 +21,7 @@ The app remains:
 
 ## Current headline
 
-As of `v0.62`, the repository has:
+As of `v0.72`, the repository has:
 
 - a Rust/Wasm coordinator-control seam
 - a Rust/Wasm mixed public-and-ballot replay seam
@@ -29,6 +29,9 @@ As of `v0.62`, the repository has:
 - versioned protocol snapshots with compatibility checks in the Rust/Wasm replay engine
 - Rust-exposed replay status and structured diagnostics for the shared public-state path
 - regular custom Nostr event kinds for coordinator control, live rounds, and ballots, avoiding replaceable-kind relay loss
+- a first-round OpenMLS readiness barrier that waits for non-lead initial coordinator-control sync before the lead opens the round
+- slightly wider primary relay subsets for coordinator-control and ticket/ack traffic than for ordinary DM reads
+- a live harness that now waits for the lead coordinator to be visibly ready before firing round 1
 - TypeScript still responsible for UI, relay transport, IndexedDB/browser persistence plumbing, and wasm bridging
 
 The architecture has moved materially towards the intended model, but the migration is not finished.
@@ -141,7 +144,7 @@ Recorded status:
 ### Notes
 
 - the Rust coordinator core now contains a real OpenMLS-backed group engine and the shipped coordinator Wasm build includes the `openmls-engine` feature
-- the live browser coordinator flow now uses the OpenMLS supervisory bootstrap/join carrier path for the repaired small gates (`1 / 1 / 1` and `2 / 2 / 2`)
+- the live browser coordinator flow now uses the OpenMLS supervisory bootstrap/join carrier path for the repaired small gates (`1 / 1 / 1`, `1 / 2 / 2`, and repeated `2 / 2 / 2`)
 - larger-scale live runtime is still not signed off
 
 ---
@@ -233,10 +236,13 @@ Current latest gate status:
 - a voter first-round reply-key race was also fixed so shard-response subscriptions are live before blinded requests are sent
 - current verified live gates:
   - `1 / 2 / 2` passes
-  - `2 / 2 / 2` passes
+- current live instability:
+  - `2 / 2 / 2` is still flaky across reruns
+  - the latest repaired harness no longer misses round 1 by default, but later-round ticket/ack degradation still prevents sign-off
 - current remaining concern:
   - `5 / 10 / 3` is still not operationally signed off
-  - larger relay/runtime behaviour remains unresolved
+  - the latest trustworthy scale failure is no longer a harness collapse or blind round-1 visibility miss
+  - it now gets materially through round 1 and then shows a mixed send/ack bottleneck, with acknowledgement visibility currently the larger gap
 
 ---
 

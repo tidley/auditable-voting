@@ -45,6 +45,8 @@ pub struct CoordinatorEngineConfig {
     pub local_pubkey: String,
     pub coordinator_roster: Vec<String>,
     #[serde(default)]
+    pub lead_pubkey: Option<String>,
+    #[serde(default)]
     pub engine_kind: CoordinatorEngineKind,
 }
 
@@ -85,12 +87,51 @@ pub struct CoordinatorEngineView {
 pub struct CoordinatorEngineStatus {
     pub engine_kind: CoordinatorEngineKind,
     pub group_ready: bool,
+    pub joined_group: bool,
+    pub welcome_applied: Option<bool>,
+    pub current_epoch: u64,
+    pub snapshot_freshness: CoordinatorSnapshotFreshness,
+    pub public_round_visibility: CoordinatorPublicRoundVisibility,
+    pub readiness: CoordinatorReadiness,
+    pub blocked_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CoordinatorSnapshotFreshness {
+    Live,
+    Restored,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CoordinatorPublicRoundVisibility {
+    NotVisible,
+    Draft,
+    OpenProposed,
+    Open,
+    Tallied,
+    Published,
+    Disputed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CoordinatorReadiness {
+    Ready,
+    WaitingForGroupReady,
+    WaitingForOwnOpenCommit,
+    WaitingForCoordinatorApprovals,
+    RoundOpen,
+    Published,
+    NoRound,
 }
 
 pub struct CoordinatorControlEngine {
     config: CoordinatorEngineConfig,
     state: CoordinatorControlState,
     group_engine: Box<dyn CoordinatorGroupEngine>,
+    restored_from_snapshot: bool,
 }
 
 impl CoordinatorControlEngine {
@@ -109,6 +150,7 @@ impl CoordinatorControlEngine {
             ),
             group_engine: create_group_engine(&config.engine_kind, &config.local_pubkey)?,
             config,
+            restored_from_snapshot: false,
         })
     }
 
@@ -116,6 +158,7 @@ impl CoordinatorControlEngine {
         let mut engine = Self::new(snapshot.config.clone())?;
         engine.state = snapshot.state;
         engine.group_engine.restore(snapshot.group_engine);
+        engine.restored_from_snapshot = true;
         Ok(engine)
     }
 
@@ -128,9 +171,89 @@ impl CoordinatorControlEngine {
     }
 
     pub fn engine_status(&self) -> CoordinatorEngineStatus {
+        let group_ready = self.group_engine.is_ready();
+        let latest_round = self.state.latest_round();
+        let public_round_visibility = match latest_round.map(|round| &round.phase) {
+            None => CoordinatorPublicRoundVisibility::NotVisible,
+            Some(CoordinatorRoundPhase::Draft) => CoordinatorPublicRoundVisibility::Draft,
+            Some(CoordinatorRoundPhase::OpenProposed) => CoordinatorPublicRoundVisibility::OpenProposed,
+            Some(CoordinatorRoundPhase::Open) => CoordinatorPublicRoundVisibility::Open,
+            Some(CoordinatorRoundPhase::Tallied) => CoordinatorPublicRoundVisibility::Tallied,
+            Some(CoordinatorRoundPhase::Published) => CoordinatorPublicRoundVisibility::Published,
+            Some(CoordinatorRoundPhase::Disputed) => CoordinatorPublicRoundVisibility::Disputed,
+        };
+        let local_missing_open_commit = latest_round
+            .map(|round| {
+                round.coordinator_roster.iter().any(|pubkey| pubkey == &self.config.local_pubkey)
+                    && !round
+                        .open_commit_event_ids
+                        .contains_key(self.config.local_pubkey.as_str())
+            })
+            .unwrap_or(false);
+        let readiness = if latest_round.is_none() {
+            if matches!(self.config.engine_kind, CoordinatorEngineKind::OpenMls) && !group_ready {
+                CoordinatorReadiness::WaitingForGroupReady
+            } else {
+                CoordinatorReadiness::NoRound
+            }
+        } else {
+            match latest_round.expect("latest_round checked").phase {
+                CoordinatorRoundPhase::Open => CoordinatorReadiness::RoundOpen,
+                CoordinatorRoundPhase::Published => CoordinatorReadiness::Published,
+                CoordinatorRoundPhase::OpenProposed => {
+                    if !group_ready {
+                        CoordinatorReadiness::WaitingForGroupReady
+                    } else if local_missing_open_commit {
+                        CoordinatorReadiness::WaitingForOwnOpenCommit
+                    } else {
+                        CoordinatorReadiness::WaitingForCoordinatorApprovals
+                    }
+                }
+                _ => {
+                    if matches!(self.config.engine_kind, CoordinatorEngineKind::OpenMls) && !group_ready {
+                        CoordinatorReadiness::WaitingForGroupReady
+                    } else {
+                        CoordinatorReadiness::Ready
+                    }
+                }
+            }
+        };
+        let is_non_lead = self
+            .config
+            .lead_pubkey
+            .as_ref()
+            .map(|lead_pubkey| !lead_pubkey.is_empty() && lead_pubkey != &self.config.local_pubkey)
+            .unwrap_or(false);
+
         CoordinatorEngineStatus {
             engine_kind: self.config.engine_kind.clone(),
-            group_ready: self.group_engine.is_ready(),
+            group_ready,
+            joined_group: group_ready,
+            welcome_applied: if matches!(self.config.engine_kind, CoordinatorEngineKind::OpenMls) && is_non_lead {
+                Some(group_ready)
+            } else {
+                None
+            },
+            current_epoch: self.state.logical_epoch,
+            snapshot_freshness: if self.restored_from_snapshot {
+                CoordinatorSnapshotFreshness::Restored
+            } else {
+                CoordinatorSnapshotFreshness::Live
+            },
+            public_round_visibility,
+            readiness: readiness.clone(),
+            blocked_reason: match readiness {
+                CoordinatorReadiness::WaitingForGroupReady => {
+                    Some("Waiting for supervisory group readiness.".to_owned())
+                }
+                CoordinatorReadiness::WaitingForOwnOpenCommit => {
+                    Some("Waiting for this coordinator's round-open commit.".to_owned())
+                }
+                CoordinatorReadiness::WaitingForCoordinatorApprovals => {
+                    Some("Waiting for coordinator approvals.".to_owned())
+                }
+                _ => None,
+            },
         }
     }
 
@@ -202,8 +325,12 @@ impl CoordinatorControlEngine {
         &mut self,
         events: Vec<CoordinatorTransportEvent>,
     ) -> Result<Vec<ReplayAppliedEvent>, CoordinatorEngineError> {
-        replay_transport_events(&mut self.state, self.group_engine.as_mut(), events)
-            .map_err(CoordinatorEngineError::from)
+        let applied = replay_transport_events(&mut self.state, self.group_engine.as_mut(), events)
+            .map_err(CoordinatorEngineError::from)?;
+        if !applied.is_empty() {
+            self.restored_from_snapshot = false;
+        }
+        Ok(applied)
     }
 
     pub fn apply_transport_message(
@@ -229,6 +356,7 @@ impl CoordinatorControlEngine {
         let created_at = envelope.created_at;
 
         self.state.apply_envelope(&event_id, &envelope);
+        self.restored_from_snapshot = false;
 
         Ok(vec![ReplayAppliedEvent {
             event_id,

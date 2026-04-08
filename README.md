@@ -23,13 +23,13 @@ The shipped app currently includes:
 - blind-signature share issuance and public ballot verification
 - coordinator-side per-ticket relay publish diagnostics for issued shares
 - periodic history backfill for missed live rounds and ticket delivery
-- smaller primary relay subsets for live reads and subscriptions, with the coordinator-control and DM planes aligned to the same primary relay subset used for recovery
+- smaller primary relay subsets for live reads and subscriptions, with ordinary DM traffic kept tight while coordinator-control and ticket/ack traffic use a slightly wider primary subset for recovery and first-round reliability
 - local browser persistence, backup, and optional passphrase protection
 - optional relay hint resolution via NIP-65, disabled by default
 - a growing Rust/Wasm core for deterministic protocol logic
 
-The client-only architecture is in place, and the browser coordinator control path now runs through the OpenMLS-backed Rust/Wasm engine for the repaired small live cases. Live relay reliability and recovery behaviour still need further hardening at larger scale: local `1 / 1 / 1` and `2 / 2 / 2` gates are passing again, while `5 / 10 / 3` is still not signed off.
-Empirically, recent local-preview runs are now clean at `1 coordinator / 2 voters / 2 rounds` and `2 coordinators / 2 voters / 2 rounds`, and the single-coordinator path has also been strong at `1 coordinator / 20 voters / 3 rounds`. Larger public-relay committee runs remain unresolved: `5 coordinators / 10 voters / 3 rounds` is still not signed off, and `5 coordinators / 10 voters / 10 rounds` remains non-viable on the current public relay set.
+The client-only architecture is in place, and the browser coordinator control path now runs through the OpenMLS-backed Rust/Wasm engine for the repaired small live cases. The first multi-coordinator round now waits for sub-coordinator MLS welcome acknowledgement only after the non-lead has completed an initial coordinator-control backfill pass, and the live harness now waits for the lead to be visibly ready before firing round 1. That removed the earlier blind round-1 startup miss, but it did not finish the job: `2 / 2 / 2` still is not stable enough to sign off because later-round ticket/ack behaviour can still degrade, and `5 / 10 / 3` is still not signed off.
+Empirically, recent local-preview runs are solid at `1 coordinator / 2 voters / 2 rounds`, and the single-coordinator path has also been strong at `1 coordinator / 20 voters / 3 rounds`. On the current `v0.72` build, a fresh `2 coordinators / 2 voters / 2 rounds` rerun now completed round 1 cleanly but still degraded in round 2 to `1 of 2` tickets per voter. The latest trustworthy `5 coordinators / 10 voters / 3 rounds` run now gets materially through round 1 instead of stalling at zero, but still times out later under mixed ticket-delivery and acknowledgement pressure. `5 coordinators / 10 voters / 10 rounds` remains non-viable on the current public relay set.
 
 ## What is in this repo
 
@@ -112,7 +112,7 @@ At a high level:
 
 1. Coordinators exchange typed control messages for round draft / proposal / commit over a dedicated coordinator-control carrier on Nostr.
 2. Those coordinator-control events are replayed deterministically inside the `auditable-voting-core` Rust/Wasm engine.
-3. Once coordinator round-open agreement is reached, the lead publishes the public live round.
+3. Once coordinator round-open agreement is reached, and the supervisory MLS group is acknowledged ready for the round after initial non-lead control-plane sync, the lead publishes the public live round.
 4. Public round events and public ballot events can also be replayed through the Rust/Wasm core, which now drives the shared voter, coordinator, and auditor public-state views.
 5. Coordinators publish per-round blind-signing keys, and the lead auto-sends share indexes to sub-coordinators.
 6. A voter adds coordinators in `Configure`, the client follows them over DMs, and then sends blinded issuance requests.
@@ -155,12 +155,14 @@ The app currently uses:
 - DM relays for NIP-17 gift-wrapped messages
 - optional NIP-65 inbox/outbox hints for relay discovery when enabled in `Settings`
 
-The default path currently prefers a tighter curated relay set. Publishes can still fan out more broadly, but live reads and subscriptions are intentionally kept to a smaller primary subset to reduce relay-side `too many concurrent REQs` pressure. NIP-65 is available as an option, but it is not the default transport path.
+The default path currently prefers a tighter curated relay set. Publishes can still fan out more broadly, but live reads and subscriptions are intentionally kept to a smaller primary subset to reduce relay-side `too many concurrent REQs` pressure. Coordinator-control and ticket/ack DM traffic now use a slightly wider primary subset than ordinary DM reads so the first control wave and receipt recovery are less dependent on only two relays. NIP-65 is available as an option, but it is not the default transport path.
 
 ## Known limitations
 
 - live public relay convergence is still the main operational weakness
+- the `2 coordinators / 2 voters / 2 rounds` gate no longer misses round 1 by default in the live harness, but it still is not reliable enough to sign off because later-round ticket/ack behaviour can still degrade
 - larger public-relay committee runs remain unreliable; `5 coordinators / 10 voters / 10 rounds` did not complete cleanly in the current live harness
+- the latest `5 coordinators / 10 voters / 3 rounds` traces show a mixed ticket-delivery / acknowledgement bottleneck, with acknowledgement visibility currently the larger gap
 - the protocol works much better in tests than on unhealthy public relay sets
 - local secret material is still a browser-custody problem even with passphrase protection
 - the cryptographic path is materially improved, but still deserves external review before strong production claims

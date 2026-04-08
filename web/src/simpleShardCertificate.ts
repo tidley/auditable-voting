@@ -26,6 +26,7 @@ export const SIMPLE_BLIND_HASH = "SHA-384";
 export const SIMPLE_BLIND_SALT_LENGTH = 48;
 const SIMPLE_BLIND_DOMAIN_SEPARATOR = "auditable-voting/simple-blind/v2";
 const SIMPLE_PUBLIC_READ_RELAYS_MAX = 2;
+const SIMPLE_BLIND_KEY_BACKFILL_INTERVAL_MS = 5000;
 
 export type SimpleBlindPublicKey = {
   scheme: typeof SIMPLE_BLIND_SCHEME;
@@ -144,6 +145,7 @@ type BlindKeySubscriptionState = {
   subscribers: Map<number, BlindKeySubscriber>;
   announcements: Map<string, SimpleBlindKeyAnnouncement>;
   subscription: { close: (reason?: string) => Promise<void> | void } | null;
+  intervalId: ReturnType<typeof globalThis.setInterval> | null;
   closed: boolean;
 };
 
@@ -204,6 +206,7 @@ async function ensureBlindKeySubscription(input: {
     subscribers: new Map(),
     announcements: new Map(),
     subscription: null,
+    intervalId: null,
     closed: false,
   };
   blindKeySubscriptions.set(subscriptionKey, state);
@@ -220,22 +223,29 @@ async function ensureBlindKeySubscription(input: {
     }
 
     const readRelays = selectPublicReadRelays(relays);
-    const events = await pool.querySync(readRelays, {
-      kinds: [SIMPLE_BLIND_KEY_KIND],
-      authors: [decoded.data as string],
-      limit: 50,
-    });
+    const refreshFromHistory = async () => {
+      const events = await pool.querySync(readRelays, {
+        kinds: [SIMPLE_BLIND_KEY_KIND],
+        authors: [decoded.data as string],
+        limit: 50,
+      });
 
-    for (const event of events) {
-      const announcement = parseSimpleBlindKeyAnnouncement(
-        event as VerifiedEvent,
-        input.coordinatorNpub,
-      );
-      if (announcement) {
-        state.announcements.set(announcement.event.id, announcement);
+      for (const event of events) {
+        const announcement = parseSimpleBlindKeyAnnouncement(
+          event as VerifiedEvent,
+          input.coordinatorNpub,
+        );
+        if (announcement) {
+          state.announcements.set(announcement.event.id, announcement);
+        }
       }
-    }
-    notifyBlindKeySubscribers(state);
+      notifyBlindKeySubscribers(state);
+    };
+
+    await refreshFromHistory();
+    state.intervalId = globalThis.setInterval(() => {
+      void refreshFromHistory().catch(() => undefined);
+    }, SIMPLE_BLIND_KEY_BACKFILL_INTERVAL_MS);
 
     state.subscription = pool.subscribeMany(readRelays, {
       kinds: [SIMPLE_BLIND_KEY_KIND],
@@ -648,6 +658,9 @@ export function subscribeLatestSimpleBlindKeyAnnouncement(input: {
 
     state.closed = true;
     blindKeySubscriptions.delete(subscriptionKey);
+    if (state.intervalId !== null) {
+      globalThis.clearInterval(state.intervalId);
+    }
     void state.subscription?.close("closed by caller");
   };
 }

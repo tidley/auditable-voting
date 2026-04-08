@@ -26,13 +26,20 @@ export const SIMPLE_DM_RELAYS = [
 
 const SIMPLE_DM_PUBLISH_MAX_WAIT_MS = 1500;
 const SIMPLE_DM_SUBSCRIPTION_MAX_WAIT_MS = 3000;
+const SIMPLE_DM_ACK_BACKFILL_INTERVAL_MS = 2000;
+const SIMPLE_DM_WELCOME_BACKFILL_INTERVAL_MS = 4000;
 const SIMPLE_DM_PUBLISH_STAGGER_MS = 250;
 const SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS = 300;
 const SIMPLE_DM_READ_RELAYS_MAX = 2;
+const SIMPLE_DM_TICKET_READ_RELAYS_MAX = 3;
+const SIMPLE_DM_ACK_READ_RELAYS_MAX = 3;
+const SIMPLE_DM_TICKET_PUBLISH_RELAYS_MAX = 3;
+const SIMPLE_DM_ACK_PUBLISH_RELAYS_MAX = 3;
 
 export type SimpleDmAcknowledgedAction =
   | 'simple_coordinator_follow'
   | 'simple_subcoordinator_join'
+  | 'simple_mls_welcome'
   | 'simple_shard_request'
   | 'simple_share_assignment'
   | 'simple_shard_response'
@@ -132,17 +139,178 @@ export type SimpleCoordinatorMlsWelcome = {
   createdAt: string;
 };
 
+export type SimpleTicketLifecycleTrace = {
+  conversationKey: string;
+  votingId?: string;
+  coordinatorNpub?: string;
+  coordinatorId?: string;
+  voterNpub?: string;
+  voterId?: string;
+  requestId?: string;
+  responseId?: string;
+  blindedRequestSeenAt?: number;
+  ticketBuiltAt?: number;
+  publishStartedAt?: number;
+  publishSucceededAt?: number;
+  publishTimedOutAt?: number;
+  ticketObservedByVoterAt?: number;
+  ackSentAt?: number;
+  ackSeenByCoordinatorAt?: number;
+  publishSuccesses?: number;
+  publishFailures?: number;
+  lastRelayError?: string;
+  lastUpdatedAt: number;
+};
+
+type TicketTraceStore = {
+  traces: Record<string, SimpleTicketLifecycleTrace>;
+  requestIndex: Record<string, string>;
+  responseIndex: Record<string, string>;
+};
+
+const SIMPLE_TICKET_TRACE_STATE_KEY = "__simpleTicketLifecycleTraceState";
+
+function getTicketTraceStore(): TicketTraceStore {
+  const owner = globalThis as typeof globalThis & {
+    [SIMPLE_TICKET_TRACE_STATE_KEY]?: TicketTraceStore;
+  };
+  if (!owner[SIMPLE_TICKET_TRACE_STATE_KEY]) {
+    owner[SIMPLE_TICKET_TRACE_STATE_KEY] = {
+      traces: {},
+      requestIndex: {},
+      responseIndex: {},
+    };
+  }
+  return owner[SIMPLE_TICKET_TRACE_STATE_KEY]!;
+}
+
+function buildTicketConversationKey(input: {
+  votingId?: string;
+  coordinatorNpub?: string;
+  voterNpub?: string;
+}) {
+  const votingId = input.votingId?.trim() || "unknown-round";
+  const coordinatorNpub = input.coordinatorNpub?.trim() || "unknown-coordinator";
+  const voterNpub = input.voterNpub?.trim() || "unknown-voter";
+  return `${votingId}:${coordinatorNpub}:${voterNpub}`;
+}
+
+function resolveTicketConversationKey(input: {
+  votingId?: string;
+  coordinatorNpub?: string;
+  voterNpub?: string;
+  requestId?: string;
+  responseId?: string;
+}) {
+  const store = getTicketTraceStore();
+  if (input.responseId?.trim() && store.responseIndex[input.responseId.trim()]) {
+    return store.responseIndex[input.responseId.trim()];
+  }
+  if (input.requestId?.trim() && store.requestIndex[input.requestId.trim()]) {
+    return store.requestIndex[input.requestId.trim()];
+  }
+  if (input.coordinatorNpub?.trim() && input.voterNpub?.trim()) {
+    return buildTicketConversationKey(input);
+  }
+  return null;
+}
+
+export function recordSimpleTicketLifecycleTrace(input: {
+  votingId?: string;
+  coordinatorNpub?: string;
+  voterNpub?: string;
+  requestId?: string;
+  responseId?: string;
+  updates: Partial<Omit<SimpleTicketLifecycleTrace, "conversationKey" | "lastUpdatedAt">>;
+}) {
+  const key = resolveTicketConversationKey(input);
+  if (!key) {
+    return null;
+  }
+
+  const store = getTicketTraceStore();
+  const existing = store.traces[key];
+  const base: SimpleTicketLifecycleTrace = existing ?? {
+    conversationKey: key,
+    votingId: input.votingId?.trim() || undefined,
+    coordinatorNpub: input.coordinatorNpub?.trim() || undefined,
+    coordinatorId: input.coordinatorNpub ? deriveActorDisplayId(input.coordinatorNpub) : undefined,
+    voterNpub: input.voterNpub?.trim() || undefined,
+    voterId: input.voterNpub ? deriveActorDisplayId(input.voterNpub) : undefined,
+    requestId: input.requestId?.trim() || undefined,
+    responseId: input.responseId?.trim() || undefined,
+    lastUpdatedAt: Date.now(),
+  };
+
+  const next: SimpleTicketLifecycleTrace = {
+    ...base,
+    votingId: base.votingId ?? input.votingId?.trim() ?? input.updates.votingId,
+    coordinatorNpub: base.coordinatorNpub ?? input.coordinatorNpub?.trim() ?? input.updates.coordinatorNpub,
+    coordinatorId:
+      base.coordinatorId
+      ?? (input.coordinatorNpub ? deriveActorDisplayId(input.coordinatorNpub) : undefined)
+      ?? input.updates.coordinatorId,
+    voterNpub: base.voterNpub ?? input.voterNpub?.trim() ?? input.updates.voterNpub,
+    voterId:
+      base.voterId
+      ?? (input.voterNpub ? deriveActorDisplayId(input.voterNpub) : undefined)
+      ?? input.updates.voterId,
+    requestId: base.requestId ?? input.requestId?.trim() ?? input.updates.requestId,
+    responseId: base.responseId ?? input.responseId?.trim() ?? input.updates.responseId,
+    lastUpdatedAt: Date.now(),
+  };
+
+  for (const [field, value] of Object.entries(input.updates)) {
+    if (value === undefined || value === null) {
+      continue;
+    }
+    const keyField = field as keyof SimpleTicketLifecycleTrace;
+    if (
+      next[keyField] === undefined
+      || keyField === "publishSuccesses"
+      || keyField === "publishFailures"
+      || keyField === "lastRelayError"
+      || keyField === "lastUpdatedAt"
+    ) {
+      (next as Record<string, unknown>)[field] = value;
+    }
+  }
+
+  store.traces[key] = next;
+  if (next.requestId) {
+    store.requestIndex[next.requestId] = key;
+  }
+  if (next.responseId) {
+    store.responseIndex[next.responseId] = key;
+  }
+  return next;
+}
+
+export function listSimpleTicketLifecycleTraces() {
+  const store = getTicketTraceStore();
+  return Object.values(store.traces).sort((left, right) => left.conversationKey.localeCompare(right.conversationKey));
+}
+
+export function clearSimpleTicketLifecycleTraces() {
+  const store = getTicketTraceStore();
+  store.traces = {};
+  store.requestIndex = {};
+  store.responseIndex = {};
+}
+
 function buildDmRelays(relays?: string[]) {
   return normalizeRelaysRust([...SIMPLE_DM_RELAYS, ...(relays ?? [])]);
 }
 
-function selectDmReadRelays(relays: string[]) {
+function selectDmReadRelays(relays: string[], maxRelays = SIMPLE_DM_READ_RELAYS_MAX) {
   const normalized = normalizeRelaysRust(relays);
-  return normalized.slice(0, Math.min(SIMPLE_DM_READ_RELAYS_MAX, normalized.length));
+  return normalized.slice(0, Math.min(maxRelays, normalized.length));
 }
 
-function buildDmPublishChannel(recipientNpub: string) {
-  return `simple-dm:${recipientNpub.trim()}`;
+function buildDmPublishChannel(recipientNpub: string, senderNpub?: string) {
+  const recipient = recipientNpub.trim();
+  const sender = senderNpub?.trim() || "unknown-sender";
+  return `simple-dm:${sender}:${recipient}`;
 }
 
 async function resolveRecipientInboxRelays(recipientNpub: string, relays?: string[]) {
@@ -152,13 +320,18 @@ async function resolveRecipientInboxRelays(recipientNpub: string, relays?: strin
   });
 }
 
-async function resolveConversationDmRelays(recipientNpub: string, senderNpub?: string, relays?: string[]) {
+async function resolveConversationDmRelays(
+  recipientNpub: string,
+  senderNpub?: string,
+  relays?: string[],
+  maxRelays = SIMPLE_DM_READ_RELAYS_MAX,
+) {
   const resolved = await resolveNip65ConversationRelays({
     senderNpub,
     recipientNpub,
     fallbackRelays: buildDmRelays(relays),
   });
-  return selectDmReadRelays(resolved);
+  return selectDmReadRelays(resolved, maxRelays);
 }
 
 function getNpubFromNsec(nsec: string, actorLabel: string) {
@@ -238,7 +411,7 @@ function parseSimpleShardRequest(
     }
 
     return {
-      id: payload.request_id,
+      id: payload.blind_request.requestId?.trim() || payload.request_id,
       dmEventId: String(wrappedEvent.id ?? payload.request_id),
       voterNpub: payload.voter_npub,
       voterId: deriveActorDisplayId(payload.voter_npub),
@@ -626,7 +799,7 @@ export async function sendSimpleCoordinatorFollow(input: {
       { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
     ),
     {
-      channel: buildDmPublishChannel(input.coordinatorNpub),
+      channel: buildDmPublishChannel(input.coordinatorNpub, input.voterNpub),
       minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
     },
   );
@@ -669,6 +842,7 @@ export async function sendSimpleDmAcknowledgement(input: {
     input.recipientNpub,
     input.actorNpub,
     input.relays,
+    SIMPLE_DM_ACK_PUBLISH_RELAYS_MAX,
   );
   await publishOwnNip65RelayHints({
     secretKey: input.senderSecretKey,
@@ -699,6 +873,17 @@ export async function sendSimpleDmAcknowledgement(input: {
   );
 
   const pool = getSharedNostrPool();
+  if (input.ackedAction === "simple_round_ticket") {
+    recordSimpleTicketLifecycleTrace({
+      votingId: input.votingId,
+      coordinatorNpub: input.recipientNpub,
+      requestId: input.requestId,
+      responseId: input.responseId,
+      updates: {
+        ackSentAt: Date.now(),
+      },
+    });
+  }
   const results = await queueNostrPublish(
     () =>
       publishToRelaysStaggered(
@@ -707,7 +892,7 @@ export async function sendSimpleDmAcknowledgement(input: {
         { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
       ),
     {
-      channel: buildDmPublishChannel(input.recipientNpub),
+      channel: buildDmPublishChannel(input.recipientNpub, input.actorNpub),
       minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
     },
   );
@@ -790,7 +975,7 @@ export async function sendSimpleCoordinatorRoster(input: {
         { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
       ),
     {
-      channel: buildDmPublishChannel(input.recipientNpub),
+      channel: buildDmPublishChannel(input.recipientNpub, input.leadCoordinatorNpub),
       minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
     },
   );
@@ -864,7 +1049,7 @@ export async function sendSimpleSubCoordinatorJoin(input: {
       { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
     ),
     {
-      channel: buildDmPublishChannel(input.leadCoordinatorNpub),
+      channel: buildDmPublishChannel(input.leadCoordinatorNpub, input.coordinatorNpub),
       minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
     },
   );
@@ -936,7 +1121,7 @@ export async function sendSimpleCoordinatorMlsWelcome(input: {
       { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
     ),
     {
-      channel: buildDmPublishChannel(input.coordinatorNpub),
+      channel: buildDmPublishChannel(input.coordinatorNpub, input.voterNpub),
       minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
     },
   );
@@ -992,7 +1177,7 @@ export async function sendSimpleShardRequest(input: {
     },
     JSON.stringify({
       action: "simple_shard_request",
-      request_id: crypto.randomUUID(),
+      request_id: input.blindRequest.requestId,
       voter_npub: input.voterNpub,
       reply_npub: input.replyNpub,
       voting_id: input.votingId,
@@ -1010,7 +1195,7 @@ export async function sendSimpleShardRequest(input: {
       { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
     ),
     {
-      channel: buildDmPublishChannel(input.coordinatorNpub),
+      channel: buildDmPublishChannel(input.coordinatorNpub, input.leadCoordinatorNpub),
       minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
     },
   );
@@ -1054,6 +1239,15 @@ export async function fetchSimpleShardRequests(input: {
     const request = parseSimpleShardRequest(wrappedEvent, secretKey);
     if (request) {
       requests.set(request.id, request);
+      recordSimpleTicketLifecycleTrace({
+        votingId: request.votingId,
+        coordinatorNpub,
+        voterNpub: request.voterNpub,
+        requestId: request.id,
+        updates: {
+          blindedRequestSeenAt: Date.now(),
+        },
+      });
     }
   }
 
@@ -1112,6 +1306,15 @@ export function subscribeSimpleShardRequests(input: {
         }
 
         requests.set(request.id, request);
+        recordSimpleTicketLifecycleTrace({
+          votingId: request.votingId,
+          coordinatorNpub,
+          voterNpub: request.voterNpub,
+          requestId: request.id,
+          updates: {
+            blindedRequestSeenAt: Date.now(),
+          },
+        });
         input.onRequests(sortByCreatedAtDescending([...requests.values()]));
       },
       onclose: (reasons) => {
@@ -1181,12 +1384,15 @@ export async function fetchSimpleDmAcknowledgements(input: {
   const inboxRelaySets = await Promise.all(
     actorNpubs.map((actorNpub) => resolveRecipientInboxRelays(actorNpub, input.relays)),
   );
-  const dmRelays = selectDmReadRelays(Array.from(new Set(inboxRelaySets.flat())));
+  const dmRelays = selectDmReadRelays(
+    Array.from(new Set(inboxRelaySets.flat())),
+    SIMPLE_DM_ACK_READ_RELAYS_MAX,
+  );
   const pool = getSharedNostrPool();
   const wrappedEvents = await pool.querySync(dmRelays, {
     kinds: [1059],
     '#p': actorHexes,
-    limit: 100,
+    limit: 200,
   });
 
   const acknowledgements = new Map<string, SimpleDmAcknowledgement>();
@@ -1198,6 +1404,16 @@ export async function fetchSimpleDmAcknowledgements(input: {
       parseSimpleDmAcknowledgement,
     );
     if (acknowledgement) {
+      if (acknowledgement.ackedAction === "simple_round_ticket") {
+        recordSimpleTicketLifecycleTrace({
+          votingId: acknowledgement.votingId,
+          requestId: acknowledgement.requestId,
+          responseId: acknowledgement.responseId,
+          updates: {
+            ackSeenByCoordinatorAt: Date.now(),
+          },
+        });
+      }
       acknowledgements.set(
         `${acknowledgement.actorNpub}:${acknowledgement.ackedAction}:${acknowledgement.ackedEventId}`,
         acknowledgement,
@@ -1255,48 +1471,73 @@ export function subscribeSimpleDmAcknowledgements(input: {
   const pool = getSharedNostrPool();
   const acknowledgements = new Map<string, SimpleDmAcknowledgement>();
   let closed = false;
+  let intervalId: ReturnType<typeof globalThis.setInterval> | null = null;
   let subscription: { close: (reason?: string) => Promise<void> | void } | null = null;
 
-  void fetchSimpleDmAcknowledgements({
-    actorNsec: input.actorNsec,
-    actorNsecs: input.actorNsecs,
-    relays: input.relays,
-  })
-    .then((initialAcknowledgements) => {
+  const refreshAcknowledgements = async () => {
+    const nextAcknowledgements = await fetchSimpleDmAcknowledgements({
+      actorNsec: input.actorNsec,
+      actorNsecs: input.actorNsecs,
+      relays: input.relays,
+    });
+
+    if (closed) {
+      return;
+    }
+
+    for (const acknowledgement of nextAcknowledgements) {
+      if (acknowledgement.ackedAction === "simple_round_ticket") {
+        recordSimpleTicketLifecycleTrace({
+          votingId: acknowledgement.votingId,
+          requestId: acknowledgement.requestId,
+          responseId: acknowledgement.responseId,
+          updates: {
+            ackSeenByCoordinatorAt: Date.now(),
+          },
+        });
+      }
+      acknowledgements.set(
+        `${acknowledgement.actorNpub}:${acknowledgement.ackedAction}:${acknowledgement.ackedEventId}`,
+        acknowledgement,
+      );
+    }
+
+    input.onAcknowledgements(
+      sortByCreatedAtDescending([...acknowledgements.values()]),
+    );
+  };
+
+  void refreshAcknowledgements()
+    .catch((error) => {
       if (closed) {
         return;
       }
 
-      for (const acknowledgement of initialAcknowledgements) {
-        acknowledgements.set(
-          `${acknowledgement.actorNpub}:${acknowledgement.ackedAction}:${acknowledgement.ackedEventId}`,
-          acknowledgement,
-        );
-      }
-
-      input.onAcknowledgements(
-        sortByCreatedAtDescending([...acknowledgements.values()]),
-      );
-    })
-    .catch((error) => {
       if (!closed && error instanceof Error) {
         input.onError?.(error);
       }
     });
+
+  intervalId = globalThis.setInterval(() => {
+    void refreshAcknowledgements().catch(() => undefined);
+  }, SIMPLE_DM_ACK_BACKFILL_INTERVAL_MS);
 
   void Promise.all(actorNpubs.map((actorNpub) => resolveRecipientInboxRelays(actorNpub, input.relays))).then((relaySets) => {
     if (closed) {
       return;
     }
 
-    const dmRelays = selectDmReadRelays(Array.from(new Set(relaySets.flat())));
+    const dmRelays = selectDmReadRelays(
+      Array.from(new Set(relaySets.flat())),
+      SIMPLE_DM_ACK_READ_RELAYS_MAX,
+    );
 
     subscription = pool.subscribeMany(
       dmRelays,
       {
         kinds: [1059],
         '#p': actorHexes,
-        limit: 100,
+        limit: 200,
       },
       {
         onevent: (wrappedEvent) => {
@@ -1305,14 +1546,24 @@ export function subscribeSimpleDmAcknowledgements(input: {
             actorEntries,
             parseSimpleDmAcknowledgement,
           );
-          if (!acknowledgement) {
-            return;
-          }
+        if (!acknowledgement) {
+          return;
+        }
 
-          acknowledgements.set(
-            `${acknowledgement.actorNpub}:${acknowledgement.ackedAction}:${acknowledgement.ackedEventId}`,
-            acknowledgement,
-          );
+        if (acknowledgement.ackedAction === "simple_round_ticket") {
+          recordSimpleTicketLifecycleTrace({
+            votingId: acknowledgement.votingId,
+            requestId: acknowledgement.requestId,
+            responseId: acknowledgement.responseId,
+            updates: {
+              ackSeenByCoordinatorAt: Date.now(),
+            },
+          });
+        }
+        acknowledgements.set(
+          `${acknowledgement.actorNpub}:${acknowledgement.ackedAction}:${acknowledgement.ackedEventId}`,
+          acknowledgement,
+        );
           input.onAcknowledgements(
             sortByCreatedAtDescending([...acknowledgements.values()]),
           );
@@ -1340,6 +1591,9 @@ export function subscribeSimpleDmAcknowledgements(input: {
 
   return () => {
     closed = true;
+    if (intervalId !== null) {
+      globalThis.clearInterval(intervalId);
+    }
     void subscription?.close('closed by caller');
   };
 }
@@ -1663,26 +1917,35 @@ export function subscribeSimpleCoordinatorMlsWelcomes(input: {
   const pool = getSharedNostrPool();
   const welcomes = new Map<string, SimpleCoordinatorMlsWelcome>();
   let closed = false;
+  let intervalId: ReturnType<typeof globalThis.setInterval> | null = null;
   let subscription: { close: (reason?: string) => Promise<void> | void } | null = null;
 
-  void fetchSimpleCoordinatorMlsWelcomes({
-    coordinatorNsec: input.coordinatorNsec,
-    relays: input.relays,
-  }).then((initialWelcomes) => {
+  const refreshWelcomes = async () => {
+    const nextWelcomes = await fetchSimpleCoordinatorMlsWelcomes({
+      coordinatorNsec: input.coordinatorNsec,
+      relays: input.relays,
+    });
+
     if (closed) {
       return;
     }
 
-    for (const welcome of initialWelcomes) {
+    for (const welcome of nextWelcomes) {
       welcomes.set(welcome.id, welcome);
     }
 
     input.onWelcomes(sortByCreatedAtDescending([...welcomes.values()]));
-  }).catch((error) => {
+  };
+
+  void refreshWelcomes().catch((error) => {
     if (!closed && error instanceof Error) {
       input.onError?.(error);
     }
   });
+
+  intervalId = globalThis.setInterval(() => {
+    void refreshWelcomes().catch(() => undefined);
+  }, SIMPLE_DM_WELCOME_BACKFILL_INTERVAL_MS);
 
   void resolveRecipientInboxRelays(npub, input.relays).then((resolvedRelays) => {
     if (closed) {
@@ -1724,6 +1987,9 @@ export function subscribeSimpleCoordinatorMlsWelcomes(input: {
 
   return () => {
     closed = true;
+    if (intervalId !== null) {
+      globalThis.clearInterval(intervalId);
+    }
     void subscription?.close("closed by caller");
   };
 }
@@ -1750,6 +2016,7 @@ export async function sendSimpleShardResponse(input: {
     input.recipientNpub,
     input.coordinatorNpub,
     input.relays,
+    SIMPLE_DM_TICKET_PUBLISH_RELAYS_MAX,
   );
   await publishOwnNip65RelayHints({
     secretKey: input.coordinatorSecretKey,
@@ -1768,6 +2035,16 @@ export async function sendSimpleShardResponse(input: {
     thresholdN: input.thresholdN,
   });
   const responseId = blindShareResponse.shareId;
+  recordSimpleTicketLifecycleTrace({
+    votingId: input.request.votingId,
+    coordinatorNpub: input.coordinatorNpub,
+    voterNpub: input.request.voterNpub,
+    requestId: input.request.id,
+    responseId,
+    updates: {
+      ticketBuiltAt: Date.now(),
+    },
+  });
   const event = nip17.wrapEvent(
     input.coordinatorSecretKey,
     {
@@ -1787,6 +2064,16 @@ export async function sendSimpleShardResponse(input: {
   );
 
   const pool = getSharedNostrPool();
+  recordSimpleTicketLifecycleTrace({
+    votingId: input.request.votingId,
+    coordinatorNpub: input.coordinatorNpub,
+    voterNpub: input.request.voterNpub,
+    requestId: input.request.id,
+    responseId,
+    updates: {
+      publishStartedAt: Date.now(),
+    },
+  });
   const results = await queueNostrPublish(
     () => publishToRelaysStaggered(
       (relay) => pool.publish([relay], event, { maxWait: SIMPLE_DM_PUBLISH_MAX_WAIT_MS })[0],
@@ -1794,7 +2081,7 @@ export async function sendSimpleShardResponse(input: {
       { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
     ),
     {
-      channel: buildDmPublishChannel(input.recipientNpub),
+      channel: buildDmPublishChannel(input.recipientNpub, input.coordinatorNpub),
       minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
     },
   );
@@ -1807,12 +2094,28 @@ export async function sendSimpleShardResponse(input: {
           error: result.reason instanceof Error ? result.reason.message : String(result.reason),
         }
   ));
+  const successes = relayResults.filter((result) => result.success).length;
+  const failures = relayResults.filter((result) => !result.success).length;
+  recordSimpleTicketLifecycleTrace({
+    votingId: input.request.votingId,
+    coordinatorNpub: input.coordinatorNpub,
+    voterNpub: input.request.voterNpub,
+    requestId: input.request.id,
+    responseId,
+    updates: {
+      publishSucceededAt: successes > 0 ? Date.now() : undefined,
+      publishTimedOutAt: successes === 0 ? Date.now() : undefined,
+      publishSuccesses: successes,
+      publishFailures: failures,
+      lastRelayError: relayResults.find((result) => !result.success)?.error,
+    },
+  });
 
   return {
     responseId,
     eventId: event.id,
-    successes: relayResults.filter((result) => result.success).length,
-    failures: relayResults.filter((result) => !result.success).length,
+    successes,
+    failures,
     relayResults,
   };
 }
@@ -1858,6 +2161,16 @@ export async function sendSimpleRoundTicket(input: {
     thresholdN: input.thresholdN,
   });
   const responseId = blindShareResponse.shareId;
+  recordSimpleTicketLifecycleTrace({
+    votingId: input.request.votingId,
+    coordinatorNpub: input.coordinatorNpub,
+    voterNpub: input.request.voterNpub,
+    requestId: input.request.id,
+    responseId,
+    updates: {
+      ticketBuiltAt: Date.now(),
+    },
+  });
   const event = nip17.wrapEvent(
     input.coordinatorSecretKey,
     {
@@ -1878,6 +2191,16 @@ export async function sendSimpleRoundTicket(input: {
   );
 
   const pool = getSharedNostrPool();
+  recordSimpleTicketLifecycleTrace({
+    votingId: input.request.votingId,
+    coordinatorNpub: input.coordinatorNpub,
+    voterNpub: input.request.voterNpub,
+    requestId: input.request.id,
+    responseId,
+    updates: {
+      publishStartedAt: Date.now(),
+    },
+  });
   const results = await queueNostrPublish(
     () => publishToRelaysStaggered(
       (relay) => pool.publish([relay], event, { maxWait: SIMPLE_DM_PUBLISH_MAX_WAIT_MS })[0],
@@ -1885,7 +2208,7 @@ export async function sendSimpleRoundTicket(input: {
       { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
     ),
     {
-      channel: buildDmPublishChannel(input.recipientNpub),
+      channel: buildDmPublishChannel(input.recipientNpub, input.coordinatorNpub),
       minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
     },
   );
@@ -1898,12 +2221,28 @@ export async function sendSimpleRoundTicket(input: {
           error: result.reason instanceof Error ? result.reason.message : String(result.reason),
         }
   ));
+  const successes = relayResults.filter((result) => result.success).length;
+  const failures = relayResults.filter((result) => !result.success).length;
+  recordSimpleTicketLifecycleTrace({
+    votingId: input.request.votingId,
+    coordinatorNpub: input.coordinatorNpub,
+    voterNpub: input.request.voterNpub,
+    requestId: input.request.id,
+    responseId,
+    updates: {
+      publishSucceededAt: successes > 0 ? Date.now() : undefined,
+      publishTimedOutAt: successes === 0 ? Date.now() : undefined,
+      publishSuccesses: successes,
+      publishFailures: failures,
+      lastRelayError: relayResults.find((result) => !result.success)?.error,
+    },
+  });
 
   return {
     responseId,
     eventId: event.id,
-    successes: relayResults.filter((result) => result.success).length,
-    failures: relayResults.filter((result) => !result.success).length,
+    successes,
+    failures,
     relayResults,
   };
 }
@@ -1959,7 +2298,7 @@ export async function sendSimpleShareAssignment(input: {
       { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
     ),
     {
-      channel: buildDmPublishChannel(input.coordinatorNpub),
+      channel: buildDmPublishChannel(input.coordinatorNpub, input.leadCoordinatorNpub),
       minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
     },
   );
@@ -1995,7 +2334,10 @@ export async function fetchSimpleShardResponses(input: {
   const inboxRelaySets = await Promise.all(
     voterNpubs.map((voterNpub) => resolveRecipientInboxRelays(voterNpub, input.relays)),
   );
-  const dmRelays = selectDmReadRelays(Array.from(new Set(inboxRelaySets.flat())));
+  const dmRelays = selectDmReadRelays(
+    Array.from(new Set(inboxRelaySets.flat())),
+    SIMPLE_DM_TICKET_READ_RELAYS_MAX,
+  );
   const pool = getSharedNostrPool();
   const wrappedEvents = await pool.querySync(dmRelays, {
     kinds: [1059],
@@ -2009,6 +2351,14 @@ export async function fetchSimpleShardResponses(input: {
     const response = parseWithAnySecretKey(wrappedEvent, voterEntries, parseSimpleShardResponse);
     if (response) {
       responses.set(response.id, response);
+      recordSimpleTicketLifecycleTrace({
+        coordinatorNpub: response.coordinatorNpub,
+        requestId: response.requestId,
+        responseId: response.id,
+        updates: {
+          ticketObservedByVoterAt: Date.now(),
+        },
+      });
     }
   }
 
@@ -2058,7 +2408,10 @@ export function subscribeSimpleShardResponses(input: {
       return;
     }
 
-    const dmRelays = selectDmReadRelays(Array.from(new Set(relaySets.flat())));
+    const dmRelays = selectDmReadRelays(
+      Array.from(new Set(relaySets.flat())),
+      SIMPLE_DM_TICKET_READ_RELAYS_MAX,
+    );
 
     subscription = pool.subscribeMany(dmRelays, {
       kinds: [1059],
@@ -2072,6 +2425,14 @@ export function subscribeSimpleShardResponses(input: {
         }
 
         responses.set(response.id, response);
+        recordSimpleTicketLifecycleTrace({
+          coordinatorNpub: response.coordinatorNpub,
+          requestId: response.requestId,
+          responseId: response.id,
+          updates: {
+            ticketObservedByVoterAt: Date.now(),
+          },
+        });
         input.onResponses(sortByCreatedAtDescending([...responses.values()]));
       },
       onclose: (reasons) => {

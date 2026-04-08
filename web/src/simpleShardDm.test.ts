@@ -113,7 +113,9 @@ describe("simpleShardDm", () => {
     });
 
     expect(wrapEvent).toHaveBeenCalled();
-    expect(JSON.parse(wrapEvent.mock.calls[0][2]).blind_request).toEqual({
+    const payload = JSON.parse(wrapEvent.mock.calls[0][2]);
+    expect(payload.request_id).toBe("request-1");
+    expect(payload.blind_request).toEqual({
       requestId: "request-1",
       votingId: "vote-1",
       blindedMessage: "blind-msg-1",
@@ -242,6 +244,40 @@ describe("simpleShardDm", () => {
     ]);
   });
 
+  it("normalises shard request ids to the blind request id when parsing", async () => {
+    const mod = await import("./simpleShardDm");
+
+    querySync.mockResolvedValue([{ id: "evt-request-1", created_at: 10 }]);
+    unwrapEvent.mockReturnValueOnce({
+      content: JSON.stringify({
+        action: "simple_shard_request",
+        request_id: "top-level-request-id",
+        voter_npub: "npub1voter",
+        reply_npub: "npub1reply",
+        voting_id: "vote-1",
+        blind_request: {
+          requestId: "blind-request-id",
+          votingId: "vote-1",
+          blindedMessage: "blind-msg-1",
+          createdAt: "2026-04-02T00:00:00.000Z",
+        },
+        created_at: "2026-04-02T00:00:00.000Z",
+      }),
+    });
+
+    const requests = await mod.fetchSimpleShardRequests({
+      coordinatorNsec: "nsec1coord",
+    });
+
+    expect(requests).toEqual([
+      expect.objectContaining({
+        id: "blind-request-id",
+        dmEventId: "evt-request-1",
+        votingId: "vote-1",
+      }),
+    ]);
+  });
+
   it("subscribes to blinded shard requests for a coordinator", async () => {
     const mod = await import("./simpleShardDm");
     const onRequests = vi.fn();
@@ -360,5 +396,91 @@ describe("simpleShardDm", () => {
         createdAt: "2026-04-02T00:00:03.000Z",
       },
     ]);
+  });
+
+  it("backfills missed DM acknowledgements after subscription setup", async () => {
+    vi.useFakeTimers();
+    const mod = await import("./simpleShardDm");
+    const onAcknowledgements = vi.fn();
+
+    querySync
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ created_at: 10, id: "ack-event-1" }]);
+    subscribeMany.mockReturnValue({ close: vi.fn(async () => undefined) });
+    unwrapEvent.mockReturnValue({
+      content: JSON.stringify({
+        action: "simple_dm_ack",
+        ack_id: "ack-1",
+        acked_action: "simple_mls_welcome",
+        acked_event_id: "welcome-event-1",
+        actor_npub: "npub1coord",
+        created_at: "2026-04-02T00:00:03.000Z",
+      }),
+    });
+
+    const unsubscribe = mod.subscribeSimpleDmAcknowledgements({
+      actorNsec: "nsec1actor",
+      onAcknowledgements,
+    });
+
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(querySync).toHaveBeenCalledTimes(2);
+    expect(onAcknowledgements).toHaveBeenLastCalledWith([
+      {
+        id: "ack-1",
+        ackedAction: "simple_mls_welcome",
+        ackedEventId: "welcome-event-1",
+        actorNpub: "npub1coord",
+        actorId: deriveActorDisplayId("npub1coord"),
+        createdAt: "2026-04-02T00:00:03.000Z",
+      },
+    ]);
+
+    unsubscribe();
+    vi.useRealTimers();
+  });
+
+  it("backfills missed coordinator MLS welcomes after subscription setup", async () => {
+    vi.useFakeTimers();
+    const mod = await import("./simpleShardDm");
+    const onWelcomes = vi.fn();
+
+    querySync
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ created_at: 10, id: "welcome-event-1" }]);
+    subscribeMany.mockReturnValue({ close: vi.fn(async () => undefined) });
+    unwrapEvent.mockReturnValue({
+      content: JSON.stringify({
+        action: "simple_mls_welcome",
+        welcome_id: "welcome-1",
+        lead_coordinator_npub: "npub1lead",
+        election_id: "simple-election:npub1lead",
+        welcome_bundle: "welcome-bundle-1",
+        created_at: "2026-04-02T00:00:04.000Z",
+      }),
+    });
+
+    const unsubscribe = mod.subscribeSimpleCoordinatorMlsWelcomes({
+      coordinatorNsec: "nsec1coord",
+      onWelcomes,
+    });
+
+    await vi.advanceTimersByTimeAsync(4000);
+
+    expect(querySync).toHaveBeenCalledTimes(2);
+    expect(onWelcomes).toHaveBeenLastCalledWith([
+      {
+        id: "welcome-1",
+        dmEventId: "welcome-event-1",
+        leadCoordinatorNpub: "npub1lead",
+        electionId: "simple-election:npub1lead",
+        welcomeBundle: "welcome-bundle-1",
+        createdAt: "2026-04-02T00:00:04.000Z",
+      },
+    ]);
+
+    unsubscribe();
+    vi.useRealTimers();
   });
 });
