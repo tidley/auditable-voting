@@ -1029,9 +1029,28 @@ async function main() {
         firstMissingStage,
       };
     });
+    const ticketObservedLiveCount = Object.values(round.state.voterStates).filter(
+      (value) => Number(value?.voterDebug?.ticketObservedLiveCount ?? 0) > 0,
+    ).length;
+    const ticketObservedBackfillCount = Object.values(round.state.voterStates).filter(
+      (value) => Number(value?.voterDebug?.ticketObservedBackfillCount ?? 0) > 0,
+    ).length;
+    const ticketRecoveredByResendCount = Array.isArray(primaryCoordinatorDebug?.voters)
+      ? primaryCoordinatorDebug.voters.filter((entry) => (
+        Number(entry?.ticketResentCount ?? 0) > 0
+        && (Boolean(entry?.ballotAccepted) || Boolean(entry?.ticketAckSeen))
+      )).length
+      : 0;
+    const ticketStillMissingCount = Number(primaryCoordinatorDebug?.ticketStillMissingCount ?? 0);
     const rowsWithPublishSuccessNoObservation = unmatchedRowDiagnostics.filter((entry) => (
       Boolean(entry.ticketPublishSucceededAt)
       && !entry.ticketObserved
+    )).length;
+    const rowsWithFullRelaySuccessNoObservation = unmatchedRowDiagnostics.filter((entry) => (
+      !entry.ticketObserved
+      && Array.isArray(entry.ticketRelayTargets)
+      && entry.ticketRelayTargets.length > 0
+      && entry.ticketRelaySuccessCount >= entry.ticketRelayTargets.length
     )).length;
     const rowsWithPartialRelaySuccessNoObservation = unmatchedRowDiagnostics.filter((entry) => (
       !entry.ticketObserved
@@ -1092,6 +1111,10 @@ async function main() {
       coordinatorTicketPublishSucceededCount: Number(primaryCoordinatorDebug?.ticketPublishSucceededCount ?? 0),
       coordinatorTicketStillMissingCount: Number(primaryCoordinatorDebug?.ticketStillMissingCount ?? 0),
       coordinatorTicketResentCount: Number(primaryCoordinatorDebug?.ticketResentCount ?? 0),
+      ticketObservedLiveCount,
+      ticketObservedBackfillCount,
+      ticketRecoveredByResendCount,
+      ticketStillMissingCount,
       sendQueueEligibleCount,
       sendQueueStartedCount,
       sendQueueBlockedCount,
@@ -1102,6 +1125,7 @@ async function main() {
       lastTicketSendStartedAt,
       unsentRowsAtRoundTimeout,
       rowsWithPublishSuccessNoObservation,
+      rowsWithFullRelaySuccessNoObservation,
       rowsWithPartialRelaySuccessNoObservation,
       rowsWithPublishUnconfirmedEventuallyObserved,
       rowsObservedOnlyAfterBackfill,

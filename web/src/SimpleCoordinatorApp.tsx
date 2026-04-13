@@ -160,6 +160,7 @@ const SIMPLE_COORDINATOR_ROUND_OPEN_RETRY_MAX_ATTEMPTS = 3;
 const SIMPLE_TICKET_RETRY_MIN_AGE_MS = 10000;
 const SIMPLE_TICKET_RETRY_MAX_ATTEMPTS = 3;
 const SIMPLE_TICKET_SEND_MAX_CONCURRENCY = 3;
+const SIMPLE_TICKET_OBSERVE_RECOVERY_AGE_MS = 5000;
 
 function sortCoordinatorRoster(values: string[]) {
   return [...new Set(values.filter((value) => value.trim().length > 0))].sort();
@@ -398,6 +399,10 @@ export default function SimpleCoordinatorApp() {
   );
   const ticketSendMaxConcurrency = useMemo(
     () => readRuntimeIntOverride("SIMPLE_TICKET_SEND_MAX_CONCURRENCY", SIMPLE_TICKET_SEND_MAX_CONCURRENCY),
+    [],
+  );
+  const ticketObserveRecoveryAgeMs = useMemo(
+    () => readRuntimeIntOverride("SIMPLE_TICKET_OBSERVE_RECOVERY_AGE_MS", SIMPLE_TICKET_OBSERVE_RECOVERY_AGE_MS),
     [],
   );
   const blindKeyRepublishAtRef = useRef<Record<string, number>>({});
@@ -2881,6 +2886,10 @@ export default function SimpleCoordinatorApp() {
     const attempts = Number(delivery?.attempts ?? 0);
     const publishStarted = Boolean(delivery?.ticketPublishStartedAt);
     const publishSucceeded = Boolean(delivery?.ticketPublishSucceededAt);
+    const publishSucceededAtMs = Date.parse(delivery?.ticketPublishSucceededAt ?? "");
+    const observeRecoveryAgeElapsed = Number.isFinite(publishSucceededAtMs)
+      ? nowMs - publishSucceededAtMs >= ticketObserveRecoveryAgeMs
+      : false;
     const retryAgeElapsed = Boolean(
       delivery?.lastAttemptAt
       && Number.isFinite(Date.parse(delivery.lastAttemptAt))
@@ -2895,6 +2904,10 @@ export default function SimpleCoordinatorApp() {
       resendBlockedReason = "publish_not_started";
     } else if (attempts >= ticketRetryMaxAttempts) {
       resendBlockedReason = "retry_cap_reached";
+    } else if (publishSucceeded && !observeRecoveryAgeElapsed) {
+      resendBlockedReason = "observe_recovery_age_not_elapsed";
+    } else if (publishSucceeded && !delivery?.ticketLastBackfillAttemptAt) {
+      resendBlockedReason = "backfill_not_attempted";
     } else if (!retryAgeElapsed) {
       resendBlockedReason = "retry_age_not_elapsed";
     }
@@ -2973,6 +2986,7 @@ export default function SimpleCoordinatorApp() {
     pendingRequests,
     nowMs,
     selectedPublishedVote?.votingId,
+    ticketObserveRecoveryAgeMs,
     ticketRetryMaxAttempts,
     ticketRetryMinAgeMs,
     ticketDeliveries,
@@ -3417,6 +3431,24 @@ export default function SimpleCoordinatorApp() {
       }
       const follower = candidate.follower;
       const ticketStatusKey = candidate.ticketStatusKey;
+      const existingBeforeResend = ticketDeliveries[ticketStatusKey];
+      if (existingBeforeResend?.ticketPublishSucceededAt && !existingBeforeResend.ticketLastBackfillAttemptAt) {
+        setTicketDeliveries((current) => {
+          const existing = current[ticketStatusKey];
+          if (!existing) {
+            return current;
+          }
+          return {
+            ...current,
+            [ticketStatusKey]: {
+              ...existing,
+              ticketLastBackfillAttemptAt: new Date().toISOString(),
+              ticketStillMissing: true,
+            },
+          };
+        });
+        continue;
+      }
       setTicketDeliveries((current) => {
         const existing = current[ticketStatusKey];
         if (!existing) {

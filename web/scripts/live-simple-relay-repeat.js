@@ -92,9 +92,14 @@ function summariseRun(run) {
       coordinatorTicketStillMissingCount: Number(roundSummary.coordinatorTicketStillMissingCount ?? 0),
       coordinatorTicketResentCount: Number(roundSummary.coordinatorTicketResentCount ?? 0),
       rowsWithPublishSuccessNoObservation: Number(roundSummary.rowsWithPublishSuccessNoObservation ?? 0),
+      rowsWithFullRelaySuccessNoObservation: Number(roundSummary.rowsWithFullRelaySuccessNoObservation ?? 0),
       rowsWithPartialRelaySuccessNoObservation: Number(roundSummary.rowsWithPartialRelaySuccessNoObservation ?? 0),
       rowsWithPublishUnconfirmedEventuallyObserved: Number(roundSummary.rowsWithPublishUnconfirmedEventuallyObserved ?? 0),
       rowsObservedOnlyAfterBackfill: Number(roundSummary.rowsObservedOnlyAfterBackfill ?? 0),
+      ticketObservedLiveCount: Number(roundSummary.ticketObservedLiveCount ?? 0),
+      ticketObservedBackfillCount: Number(roundSummary.ticketObservedBackfillCount ?? 0),
+      ticketRecoveredByResendCount: Number(roundSummary.ticketRecoveredByResendCount ?? 0),
+      ticketStillMissingCount: Number(roundSummary.ticketStillMissingCount ?? 0),
       sendQueueEligibleCount: Number(roundSummary.sendQueueEligibleCount ?? 0),
       sendQueueStartedCount: Number(roundSummary.sendQueueStartedCount ?? 0),
       sendQueueBlockedCount: Number(roundSummary.sendQueueBlockedCount ?? 0),
@@ -152,9 +157,14 @@ async function main() {
         coordinatorTicketStillMissingCount: [],
         coordinatorTicketResentCount: [],
         rowsWithPublishSuccessNoObservation: [],
+        rowsWithFullRelaySuccessNoObservation: [],
         rowsWithPartialRelaySuccessNoObservation: [],
         rowsWithPublishUnconfirmedEventuallyObserved: [],
         rowsObservedOnlyAfterBackfill: [],
+        ticketObservedLiveCount: [],
+        ticketObservedBackfillCount: [],
+        ticketRecoveredByResendCount: [],
+        ticketStillMissingCount: [],
         sendQueueEligibleCount: [],
         sendQueueStartedCount: [],
         sendQueueBlockedCount: [],
@@ -191,9 +201,14 @@ async function main() {
       entry.coordinatorTicketStillMissingCount.push(round.coordinatorTicketStillMissingCount);
       entry.coordinatorTicketResentCount.push(round.coordinatorTicketResentCount);
       entry.rowsWithPublishSuccessNoObservation.push(round.rowsWithPublishSuccessNoObservation);
+      entry.rowsWithFullRelaySuccessNoObservation.push(round.rowsWithFullRelaySuccessNoObservation);
       entry.rowsWithPartialRelaySuccessNoObservation.push(round.rowsWithPartialRelaySuccessNoObservation);
       entry.rowsWithPublishUnconfirmedEventuallyObserved.push(round.rowsWithPublishUnconfirmedEventuallyObserved);
       entry.rowsObservedOnlyAfterBackfill.push(round.rowsObservedOnlyAfterBackfill);
+      entry.ticketObservedLiveCount.push(round.ticketObservedLiveCount);
+      entry.ticketObservedBackfillCount.push(round.ticketObservedBackfillCount);
+      entry.ticketRecoveredByResendCount.push(round.ticketRecoveredByResendCount);
+      entry.ticketStillMissingCount.push(round.ticketStillMissingCount);
       entry.sendQueueEligibleCount.push(round.sendQueueEligibleCount);
       entry.sendQueueStartedCount.push(round.sendQueueStartedCount);
       entry.sendQueueBlockedCount.push(round.sendQueueBlockedCount);
