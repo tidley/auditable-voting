@@ -103,6 +103,13 @@ type TicketBackfillRequestDebug = {
   lastSourceRelays: string[];
 };
 
+type TicketMailboxMismatch = {
+  requestId: string;
+  expectedMailboxId: string;
+  observedMailboxId: string;
+  observedAt: string;
+};
+
 type SimpleVoterCache = {
   manualCoordinators: string[];
   nip65Enabled: boolean;
@@ -259,6 +266,7 @@ export default function SimpleUiApp() {
   const ticketLiveQueryDebugRef = useRef<MailboxReadQueryDebug | null>(null);
   const ticketBackfillQueryDebugRef = useRef<MailboxReadQueryDebug | null>(null);
   const ticketBackfillRequestDebugRef = useRef<Record<string, TicketBackfillRequestDebug>>({});
+  const ticketMailboxMismatchRef = useRef<Record<string, TicketMailboxMismatch>>({});
   const lastAutoSelectedVotingIdRef = useRef("");
   const manualRoundSelectionRef = useRef(false);
   const identityHydrationEpochRef = useRef(0);
@@ -283,8 +291,9 @@ export default function SimpleUiApp() {
         return [response];
       }
 
-      const pending = pendingBlindRequests[`${response.coordinatorNpub}:${response.requestId}`]
-        ?? Object.values(pendingBlindRequests).find((request) => request.request.requestId === response.requestId);
+      const pending = Object.values(pendingBlindRequests).find(
+        (request) => request.request.requestId === response.requestId,
+      );
       if (!pending) {
         return [];
       }
@@ -303,6 +312,20 @@ export default function SimpleUiApp() {
     setReceivedShards((current) => {
       const merged = new Map(current.map((response) => [response.id, response]));
       for (const response of nextIssuedShares) {
+        const expectedMailboxId = (
+          Object.values(pendingBlindRequests).find((entry) => entry.request.requestId === response.requestId)?.mailboxId
+          ?? ""
+        ).trim();
+        const observedMailboxId = (response.mailboxId ?? "").trim();
+        if (expectedMailboxId && observedMailboxId && expectedMailboxId !== observedMailboxId) {
+          ticketMailboxMismatchRef.current[response.requestId] = {
+            requestId: response.requestId,
+            expectedMailboxId,
+            observedMailboxId,
+            observedAt: new Date().toISOString(),
+          };
+          setRequestStatus("Ticket mailbox mismatch detected. Waiting for aligned mailbox ticket.");
+        }
         merged.set(response.id, response);
         const existing = ticketObservationMetaRef.current[response.id] ?? {};
         if (source === "live" && !existing.liveAt) {
@@ -343,15 +366,22 @@ export default function SimpleUiApp() {
 
     return [...values];
   }, [discoveredSessions, pendingBlindRequests, receivedShards]);
+  const activeRoundPendingBlindRequests = useMemo(() => {
+    const activeVotingId = selectedVotingId.trim();
+    if (!activeVotingId) {
+      return [] as PendingBlindRequest[];
+    }
+    return Object.values(pendingBlindRequests).filter((request) => request.votingId === activeVotingId);
+  }, [pendingBlindRequests, selectedVotingId]);
   const pendingTicketMailboxIds = useMemo(() => {
     return Array.from(
       new Set(
-        Object.values(pendingBlindRequests)
+        activeRoundPendingBlindRequests
           .map((request) => request.mailboxId?.trim() ?? "")
           .filter(Boolean),
       ),
     );
-  }, [pendingBlindRequests]);
+  }, [activeRoundPendingBlindRequests]);
 
   useEffect(() => {
     const receivedRequestIds = new Set(receivedShards.map((response) => response.requestId));
@@ -658,7 +688,7 @@ export default function SimpleUiApp() {
       return;
     }
 
-    const hasPendingTicket = Object.values(pendingBlindRequests).some((request) => {
+    const hasPendingTicket = activeRoundPendingBlindRequests.some((request) => {
       return !receivedShards.some((response) => response.requestId === request.request.requestId);
     });
 
@@ -669,7 +699,7 @@ export default function SimpleUiApp() {
     let cancelled = false;
 
     const refresh = () => {
-      const pendingEntries = Object.values(pendingBlindRequests);
+      const pendingEntries = [...activeRoundPendingBlindRequests];
       const nowIso = new Date().toISOString();
       for (const requestEntry of pendingEntries) {
         const requestId = requestEntry.request.requestId;
@@ -727,7 +757,7 @@ export default function SimpleUiApp() {
     };
   }, [
     configuredCoordinatorTargets.length,
-    pendingBlindRequests,
+    activeRoundPendingBlindRequests,
     pendingTicketMailboxIds,
     receivedShards,
     roundReplyKeypairs,
@@ -1865,6 +1895,7 @@ export default function SimpleUiApp() {
     ticketLiveQueryDebugRef.current = null;
     ticketBackfillQueryDebugRef.current = null;
     ticketBackfillRequestDebugRef.current = {};
+    ticketMailboxMismatchRef.current = {};
   }, [effectiveLiveVoteSession?.votingId]);
 
   useEffect(() => {
@@ -1875,6 +1906,19 @@ export default function SimpleUiApp() {
     const blindKeySeen = coordinatorDiagnostics.some((entry) => entry.blindKey.tone === "ok");
     const ticketBackfillByRequestId = Object.fromEntries(
       Object.entries(ticketBackfillRequestDebugRef.current).map(([requestId, value]) => {
+        const observedByRequest = uniqueShardResponses.find((response) => response.requestId === requestId);
+        const mismatch = ticketMailboxMismatchRef.current[requestId];
+        const requestMailboxId = value.requestMailboxId ?? null;
+        const ticketReadMailboxId = observedByRequest?.mailboxId?.trim() || mismatch?.observedMailboxId || null;
+        const ticketBackfillMailboxId = Array.isArray(ticketBackfillQueryDebugRef.current?.mailboxIds)
+          ? ticketBackfillQueryDebugRef.current.mailboxIds[0] ?? null
+          : null;
+        const mailboxIdConsistent = Boolean(
+          requestMailboxId
+          && ticketBackfillMailboxId
+          && requestMailboxId === ticketBackfillMailboxId
+          && (!ticketReadMailboxId || ticketReadMailboxId === requestMailboxId),
+        );
         const observed = uniqueShardResponses.some((response) => (
           response.requestId === requestId
           || (value.requestMailboxId && response.mailboxId?.trim() === value.requestMailboxId)
@@ -1890,6 +1934,9 @@ export default function SimpleUiApp() {
                 : "backfill_match_found_not_reconciled";
         return [requestId, {
           ...value,
+          ticketReadMailboxId,
+          ticketBackfillMailboxId,
+          mailboxIdConsistent,
           observed,
           backfillClass,
         }];
@@ -1922,6 +1969,7 @@ export default function SimpleUiApp() {
           : ticketObserved
             ? "backfill_match_found_observed"
             : "backfill_match_found_not_reconciled";
+    const ticketMailboxMismatches = Object.values(ticketMailboxMismatchRef.current);
     owner.__simpleVoterDebug = {
       voterNpub: voterKeypair?.npub ?? null,
       hasLiveRound: Boolean(effectiveLiveVoteSession),
@@ -1946,6 +1994,14 @@ export default function SimpleUiApp() {
       ticketBackfillLastSourceRelays,
       ticketBackfillFailureClass,
       ticketBackfillByRequestId,
+      ticketLiveMailboxIds: Array.isArray(ticketLiveQueryDebugRef.current?.mailboxIds)
+        ? ticketLiveQueryDebugRef.current.mailboxIds
+        : [],
+      ticketBackfillMailboxIds: Array.isArray(ticketBackfillQueryDebugRef.current?.mailboxIds)
+        ? ticketBackfillQueryDebugRef.current.mailboxIds
+        : [],
+      ticketMailboxMismatchCount: ticketMailboxMismatches.length,
+      ticketMailboxMismatches,
       ticketAckSent,
       ballotSubmitted,
       ballotAccepted,

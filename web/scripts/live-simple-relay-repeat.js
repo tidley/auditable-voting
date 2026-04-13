@@ -100,6 +100,7 @@ function summariseRun(run) {
       rowsWithNoRelayOverlapNoObservation: Number(roundSummary.rowsWithNoRelayOverlapNoObservation ?? 0),
       rowsWithReadRelaySetUnknown: Number(roundSummary.rowsWithReadRelaySetUnknown ?? 0),
       rowsWithMailboxFilterMismatchNoObservation: Number(roundSummary.rowsWithMailboxFilterMismatchNoObservation ?? 0),
+      rowsWithMailboxIdMismatchNoObservation: Number(roundSummary.rowsWithMailboxIdMismatchNoObservation ?? 0),
       backfillFailureClassCounts: roundSummary.backfillFailureClassCounts ?? {},
       publishSuccessObservationGapRatio: Number(roundSummary.publishSuccessObservationGapRatio ?? 0),
       fullRelaySuccessObservationGapRatio: Number(roundSummary.fullRelaySuccessObservationGapRatio ?? 0),
@@ -174,6 +175,7 @@ async function main() {
         rowsWithNoRelayOverlapNoObservation: [],
         rowsWithReadRelaySetUnknown: [],
         rowsWithMailboxFilterMismatchNoObservation: [],
+        rowsWithMailboxIdMismatchNoObservation: [],
         backfillFailureClassCounts: {},
         publishSuccessObservationGapRatio: [],
         fullRelaySuccessObservationGapRatio: [],
@@ -227,6 +229,7 @@ async function main() {
       entry.rowsWithNoRelayOverlapNoObservation.push(round.rowsWithNoRelayOverlapNoObservation);
       entry.rowsWithReadRelaySetUnknown.push(round.rowsWithReadRelaySetUnknown);
       entry.rowsWithMailboxFilterMismatchNoObservation.push(round.rowsWithMailboxFilterMismatchNoObservation);
+      entry.rowsWithMailboxIdMismatchNoObservation.push(round.rowsWithMailboxIdMismatchNoObservation);
       entry.publishSuccessObservationGapRatio.push(round.publishSuccessObservationGapRatio);
       entry.fullRelaySuccessObservationGapRatio.push(round.fullRelaySuccessObservationGapRatio);
       entry.backfillObservationRecoveryRatio.push(round.backfillObservationRecoveryRatio);

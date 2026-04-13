@@ -1104,14 +1104,31 @@ async function main() {
       const ticketPendingMailboxIds = Array.isArray(voterState?.voterDebug?.ticketPendingMailboxIds)
         ? voterState.voterDebug.ticketPendingMailboxIds
         : [];
+      const ticketBackfillByRequestIdState = voterState?.voterDebug?.ticketBackfillByRequestId ?? {};
       const liveMailboxIds = Array.isArray(ticketLiveQuery?.mailboxIds) ? ticketLiveQuery.mailboxIds : [];
       const backfillMailboxIds = Array.isArray(ticketBackfillQuery?.mailboxIds) ? ticketBackfillQuery.mailboxIds : [];
+      const ticketReadMailboxId = requestId
+        ? ticketBackfillByRequestIdState?.[requestId]?.ticketReadMailboxId ?? null
+        : null;
+      const ticketBackfillMailboxId = requestId
+        ? ticketBackfillByRequestIdState?.[requestId]?.ticketBackfillMailboxId ?? null
+        : null;
+      const ticketPublishMailboxId = typeof coordinatorVoter?.ticketPublishMailboxId === "string"
+        ? coordinatorVoter.ticketPublishMailboxId.trim()
+        : "";
       const liveMailboxFilterMatchesRequest = requestMailboxId
         ? liveMailboxIds.includes(requestMailboxId)
         : null;
       const backfillMailboxFilterMatchesRequest = requestMailboxId
         ? ticketPendingMailboxIds.includes(requestMailboxId) || backfillMailboxIds.includes(requestMailboxId)
         : null;
+      const mailboxIdConsistent = Boolean(
+        requestMailboxId
+        && ticketPublishMailboxId
+        && requestMailboxId === ticketPublishMailboxId
+        && (ticketBackfillMailboxId ? ticketBackfillMailboxId === requestMailboxId : true)
+        && (ticketReadMailboxId ? ticketReadMailboxId === requestMailboxId : true),
+      );
       const ballotSubmitted = Boolean(voterState?.voterDebug?.ballotSubmitted);
       const ballotAccepted = Boolean(voterState?.voterDebug?.ballotAccepted);
       const ticketSent = Boolean(coordinatorVoter?.ticketSent || ticketObserved);
@@ -1131,7 +1148,7 @@ async function main() {
         : Boolean(ticketPublishStartedAt) && !Boolean(ticketPublishSucceededAt) && !ticketObserved
           ? "ticket_publish_unconfirmed"
           : Boolean(ticketPublishSucceededAt) && !ticketObserved
-            ? ticketBackfillFailureClass
+            ? (!mailboxIdConsistent ? "mailbox_id_mismatch" : ticketBackfillFailureClass)
         : !ticketObserved
           ? "ticket_not_observed"
           : ticketObserved && !inAcceptedByRequestId && !inAcceptedByTicketId
@@ -1145,6 +1162,10 @@ async function main() {
         voterPubkey,
         requestId: requestId || null,
         requestMailboxId: requestMailboxId || null,
+        ticketPublishMailboxId: ticketPublishMailboxId || null,
+        ticketReadMailboxId,
+        ticketBackfillMailboxId,
+        mailboxIdConsistent,
         ticketId: ticketId || null,
         ticketSent,
         ticketObserved,
@@ -1265,6 +1286,11 @@ async function main() {
       }
       return entry.liveMailboxFilterMatchesRequest === false || entry.backfillMailboxFilterMatchesRequest === false;
     }).length;
+    const rowsWithMailboxIdMismatchNoObservation = unmatchedRowDiagnostics.filter((entry) => (
+      !entry.ticketObserved
+      && entry.requestMailboxId
+      && entry.mailboxIdConsistent === false
+    )).length;
     const publishSuccessObservationGapRatio = rowsWithPublishSuccessNoObservation > 0
       ? Number((rowsWithPublishSuccessNoObservation / Math.max(1, ticketPublishSucceededCount)).toFixed(3))
       : 0;
@@ -1347,6 +1373,7 @@ async function main() {
       rowsWithNoRelayOverlapNoObservation,
       rowsWithReadRelaySetUnknown,
       rowsWithMailboxFilterMismatchNoObservation,
+      rowsWithMailboxIdMismatchNoObservation,
       backfillFailureClassCounts,
       publishSuccessObservationGapRatio,
       fullRelaySuccessObservationGapRatio,
@@ -1435,6 +1462,9 @@ async function main() {
       filterComparison: {
         kindMatchesLive: Number(liveQuery?.kinds?.[0] ?? 0) === Number(candidate.ticketPublishEventKind ?? 0),
         kindMatchesBackfill: Number(backfillQuery?.kinds?.[0] ?? 0) === Number(candidate.ticketPublishEventKind ?? 0),
+        publishedMailboxMatchesRequest: Boolean(candidate.requestMailboxId && publishedMailboxTag)
+          ? candidate.requestMailboxId === publishedMailboxTag
+          : null,
         mailboxMatchesLive: Boolean(candidate.requestMailboxId)
           ? Array.isArray(liveQuery?.mailboxIds) && liveQuery.mailboxIds.includes(candidate.requestMailboxId)
           : null,
@@ -1482,6 +1512,7 @@ async function main() {
   if (timeoutId !== null) {
     globalThis.clearTimeout(timeoutId);
   }
+  relayProbePool.destroy?.();
   await browser.close();
 }
 void main();

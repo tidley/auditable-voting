@@ -2881,11 +2881,23 @@ export default function SimpleCoordinatorApp() {
         request.voterNpub === row.voterNpub
         && request.votingId === selectedVotingId,
     )?.id?.trim();
-    const requestMailboxId = pendingRequests.find(
-      (request) =>
-        request.voterNpub === row.voterNpub
-        && request.votingId === selectedVotingId,
-    )?.mailboxId?.trim();
+    const requestMailboxId = (
+      requestId
+        ? pendingRequests.find((request) => request.id === requestId)?.mailboxId
+        : pendingRequests.find(
+          (request) =>
+            request.voterNpub === row.voterNpub
+            && request.votingId === selectedVotingId,
+        )?.mailboxId
+    )?.trim();
+    const ticketPublishMailboxId = Array.isArray(delivery?.ticketPublishEventTags)
+      ? delivery.ticketPublishEventTags.find((tag) => tag[0] === "mailbox")?.[1]?.trim()
+      : undefined;
+    const mailboxIdConsistentPublishRequest = Boolean(
+      requestMailboxId
+      && ticketPublishMailboxId
+      && requestMailboxId === ticketPublishMailboxId,
+    );
     const ticketId = delivery?.responseId?.trim();
     const acceptedByTicket = Boolean(ticketId && activeAcceptedTicketIds.has(ticketId));
     const acceptedByRequest = Boolean(requestId && activeAcceptedRequestIds.has(requestId));
@@ -2971,6 +2983,8 @@ export default function SimpleCoordinatorApp() {
       requestId,
       requestMailboxId,
       ticketId,
+      ticketPublishMailboxId,
+      mailboxIdConsistentPublishRequest,
       ticketDeliveryConfirmed,
       ticketSent,
       ticketPublishEventId: delivery?.eventId ?? null,
@@ -3162,6 +3176,8 @@ export default function SimpleCoordinatorApp() {
         requestId: row.requestId,
         ticketPublishEventId: row.ticketPublishEventId,
         requestMailboxId: row.requestMailboxId,
+        ticketPublishMailboxId: row.ticketPublishMailboxId,
+        mailboxIdConsistentPublishRequest: row.mailboxIdConsistentPublishRequest,
         ticketId: row.ticketId,
         ticketBuiltAt: row.ticketBuiltAt,
         ticketPublishStartedAt: row.ticketPublishStartedAt,
