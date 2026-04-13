@@ -450,6 +450,10 @@ async function publishMailboxEvent(input: {
 
   return {
     eventId: event.id,
+    eventKind: event.kind,
+    eventCreatedAt: event.created_at,
+    eventTags: event.tags,
+    eventContent: event.content,
     successes: relayResults.filter((result) => result.success).length,
     failures: relayResults.filter((result) => !result.success).length,
     relayResults,
@@ -646,6 +650,7 @@ export async function sendMailboxRoundTicket(input: {
     ...published,
     responseId: ticketId,
     ticketId,
+    envelope,
     blindShareResponse,
   };
 }

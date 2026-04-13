@@ -111,6 +111,10 @@ type TicketDeliveryState = {
   ticketStillMissing?: boolean;
   ticketRelayTargets?: string[];
   ticketRelaySuccessCount?: number;
+  ticketPublishEventKind?: number;
+  ticketPublishEventCreatedAt?: number;
+  ticketPublishEventTags?: string[][];
+  ticketPublishEventContent?: string;
   lastAttemptAt?: string;
   relayResults?: TicketRelayResult[];
 };
@@ -2305,6 +2309,10 @@ export default function SimpleCoordinatorApp() {
           ticketStillMissing: result.successes > 0,
           ticketRelayTargets: result.relayResults.map((entry) => entry.relay),
           ticketRelaySuccessCount: result.relayResults.filter((entry) => entry.success).length,
+          ticketPublishEventKind: result.eventKind,
+          ticketPublishEventCreatedAt: result.eventCreatedAt,
+          ticketPublishEventTags: result.eventTags,
+          ticketPublishEventContent: result.eventContent,
           priorEventIds,
           priorResponseIds,
           attempts: (previousDelivery?.attempts ?? 0) + 1,
@@ -2965,6 +2973,7 @@ export default function SimpleCoordinatorApp() {
       ticketId,
       ticketDeliveryConfirmed,
       ticketSent,
+      ticketPublishEventId: delivery?.eventId ?? null,
       ticketBuiltAt: delivery?.ticketBuiltAt,
       ticketPublishStartedAt: delivery?.ticketPublishStartedAt,
       ticketPublishSucceededAt: delivery?.ticketPublishSucceededAt,
@@ -2972,6 +2981,11 @@ export default function SimpleCoordinatorApp() {
       ticketResentCount: delivery?.resendCount ?? 0,
       ticketRelayTargets: delivery?.ticketRelayTargets ?? [],
       ticketRelaySuccessCount: delivery?.ticketRelaySuccessCount ?? 0,
+      ticketRelayResults: delivery?.relayResults ?? [],
+      ticketPublishEventKind: delivery?.ticketPublishEventKind ?? null,
+      ticketPublishEventCreatedAt: delivery?.ticketPublishEventCreatedAt ?? null,
+      ticketPublishEventTags: delivery?.ticketPublishEventTags ?? [],
+      ticketPublishEventContent: delivery?.ticketPublishEventContent ?? null,
       ticketStillMissing,
       sendEligible,
       sendBlockedReason,
@@ -3146,6 +3160,7 @@ export default function SimpleCoordinatorApp() {
         acceptedByRequest: row.acceptedByRequest,
         acceptedByTicket: row.acceptedByTicket,
         requestId: row.requestId,
+        ticketPublishEventId: row.ticketPublishEventId,
         requestMailboxId: row.requestMailboxId,
         ticketId: row.ticketId,
         ticketBuiltAt: row.ticketBuiltAt,
@@ -3155,6 +3170,11 @@ export default function SimpleCoordinatorApp() {
         ticketResentCount: row.ticketResentCount,
         ticketRelayTargets: row.ticketRelayTargets,
         ticketRelaySuccessCount: row.ticketRelaySuccessCount,
+        ticketRelayResults: row.ticketRelayResults,
+        ticketPublishEventKind: row.ticketPublishEventKind,
+        ticketPublishEventCreatedAt: row.ticketPublishEventCreatedAt,
+        ticketPublishEventTags: row.ticketPublishEventTags,
+        ticketPublishEventContent: row.ticketPublishEventContent,
         ticketStillMissing: row.ticketStillMissing,
         sendEligible: row.sendEligible,
         sendBlockedReason: row.sendBlockedReason,

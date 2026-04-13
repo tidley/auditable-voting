@@ -1,12 +1,17 @@
 import { chromium } from "playwright";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { SimplePool } from "nostr-tools";
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 const DEBUG_DIR = path.resolve(process.cwd(), ".planning/debug/live-harness");
+const relayProbePool = new SimplePool({
+  enablePing: true,
+  enableReconnect: true,
+});
 
 function envInt(name, fallback) {
   const parsed = Number.parseInt(process.env[name] ?? "", 10);
@@ -78,6 +83,89 @@ async function ensureDebugDir() {
 
 function safeErrorMessage(error) {
   return error instanceof Error ? error.message : String(error);
+}
+
+async function runRelayProbe(input) {
+  const relay = String(input?.relay ?? "").trim();
+  const kind = Number(input?.kind ?? 0);
+  const mailboxId = typeof input?.mailboxId === "string" ? input.mailboxId.trim() : "";
+  const etype = typeof input?.etype === "string" ? input.etype.trim() : "";
+  const eventId = typeof input?.eventId === "string" ? input.eventId.trim() : "";
+  const ticketId = typeof input?.ticketId === "string" ? input.ticketId.trim() : "";
+  const requestId = typeof input?.requestId === "string" ? input.requestId.trim() : "";
+
+  if (!relay || !Number.isFinite(kind) || kind <= 0) {
+    return null;
+  }
+
+  const filters = [
+    {
+      name: "kind_only",
+      filter: { kinds: [kind], limit: 200 },
+    },
+    {
+      name: "kind_mailbox",
+      filter: { kinds: [kind], "#mailbox": mailboxId ? [mailboxId] : undefined, limit: 200 },
+    },
+    {
+      name: "kind_mailbox_etype",
+      filter: {
+        kinds: [kind],
+        "#mailbox": mailboxId ? [mailboxId] : undefined,
+        "#etype": etype ? [etype] : undefined,
+        limit: 200,
+      },
+    },
+  ];
+
+  const probes = [];
+  const queryWithTimeout = async (relay, filter, timeoutMs = 8000) => {
+    let timeoutId;
+    try {
+      return await Promise.race([
+        relayProbePool.querySync([relay], filter),
+        new Promise((_, reject) => {
+          timeoutId = setTimeout(() => {
+            reject(new Error(`Relay probe timeout after ${timeoutMs}ms`));
+          }, timeoutMs);
+          timeoutId.unref?.();
+        }),
+      ]);
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    }
+  };
+  for (const entry of filters) {
+    const filter = Object.fromEntries(
+      Object.entries(entry.filter).filter(([, value]) => value !== undefined),
+    );
+    try {
+      const events = await queryWithTimeout(relay, filter, 8000);
+      probes.push({
+        name: entry.name,
+        relay,
+        filter,
+        count: events.length,
+        matchedEventId: Boolean(eventId) && events.some((event) => event.id === eventId),
+        matchedTicketTag: Boolean(ticketId) && events.some((event) => (
+          Array.isArray(event.tags) && event.tags.some((tag) => tag[0] === "ticket" && tag[1] === ticketId)
+        )),
+        matchedRequestTag: Boolean(requestId) && events.some((event) => (
+          Array.isArray(event.tags) && event.tags.some((tag) => tag[0] === "request" && tag[1] === requestId)
+        )),
+      });
+    } catch (error) {
+      probes.push({
+        name: entry.name,
+        relay,
+        filter,
+        error: safeErrorMessage(error),
+      });
+    }
+  }
+  return probes;
 }
 
 function pageRuntimeState(page) {
@@ -1068,8 +1156,16 @@ async function main() {
         ballotAccepted,
         ticketPublishStartedAt,
         ticketPublishSucceededAt,
+        ticketPublishEventId: coordinatorVoter?.ticketPublishEventId ?? null,
+        ticketPublishEventKind: coordinatorVoter?.ticketPublishEventKind ?? null,
+        ticketPublishEventCreatedAt: coordinatorVoter?.ticketPublishEventCreatedAt ?? null,
+        ticketPublishEventTags: Array.isArray(coordinatorVoter?.ticketPublishEventTags) ? coordinatorVoter.ticketPublishEventTags : [],
+        ticketPublishEventContent: typeof coordinatorVoter?.ticketPublishEventContent === "string"
+          ? coordinatorVoter.ticketPublishEventContent
+          : null,
         ticketResentCount,
         ticketRelayTargets: Array.isArray(coordinatorVoter?.ticketRelayTargets) ? coordinatorVoter.ticketRelayTargets : [],
+        ticketRelayResults: Array.isArray(coordinatorVoter?.ticketRelayResults) ? coordinatorVoter.ticketRelayResults : [],
         ticketRelaySuccessCount: Number(coordinatorVoter?.ticketRelaySuccessCount ?? 0),
         ticketBackfillAttemptCount,
         ticketBackfillLastAttemptAt,
@@ -1276,6 +1372,95 @@ async function main() {
       })),
     };
   });
+
+  for (const roundSummary of summary) {
+    const diagnostics = Array.isArray(roundSummary.unmatchedRowDiagnostics)
+      ? roundSummary.unmatchedRowDiagnostics
+      : [];
+    const candidate = diagnostics.find((entry) => (
+      Boolean(entry.ticketPublishSucceededAt)
+      && !entry.ticketObserved
+      && Number(entry.ticketPublishEventKind ?? 0) > 0
+      && Array.isArray(entry.ticketRelayResults)
+      && entry.ticketRelayResults.some((result) => result?.success)
+    ));
+    if (!candidate) {
+      roundSummary.phase10ObservationProbe = null;
+      continue;
+    }
+
+    const successfulRelay = candidate.ticketRelayResults.find((result) => result?.success)?.relay
+      ?? candidate.ticketRelayTargets[0]
+      ?? null;
+    const ticketTags = Array.isArray(candidate.ticketPublishEventTags) ? candidate.ticketPublishEventTags : [];
+    const publishedMailboxTag = ticketTags.find((tag) => tag?.[0] === "mailbox")?.[1] ?? null;
+    const publishedEtypeTag = ticketTags.find((tag) => tag?.[0] === "etype")?.[1] ?? null;
+    const publishedTicketTag = ticketTags.find((tag) => tag?.[0] === "ticket")?.[1] ?? null;
+    const publishedRequestTag = ticketTags.find((tag) => tag?.[0] === "request")?.[1] ?? null;
+    const liveQuery = candidate.ticketLiveQuery ?? null;
+    const backfillQuery = candidate.ticketBackfillQuery ?? null;
+    const relayProbe = successfulRelay
+      ? await runRelayProbe({
+        relay: successfulRelay,
+        kind: candidate.ticketPublishEventKind,
+        mailboxId: candidate.requestMailboxId ?? publishedMailboxTag,
+        etype: publishedEtypeTag ?? "mailbox_ticket_envelope",
+        eventId: candidate.ticketPublishEventId,
+        ticketId: candidate.ticketId ?? publishedTicketTag,
+        requestId: candidate.requestId ?? publishedRequestTag,
+      })
+      : null;
+
+    roundSummary.phase10ObservationProbe = {
+      voterPubkey: candidate.voterPubkey,
+      requestId: candidate.requestId,
+      requestMailboxId: candidate.requestMailboxId,
+      ticketId: candidate.ticketId,
+      published: {
+        eventId: candidate.ticketPublishEventId,
+        kind: candidate.ticketPublishEventKind,
+        createdAt: candidate.ticketPublishEventCreatedAt,
+        tags: ticketTags,
+        mailboxTag: publishedMailboxTag,
+        etypeTag: publishedEtypeTag,
+        requestTag: publishedRequestTag,
+        ticketTag: publishedTicketTag,
+        relayTargets: candidate.ticketRelayTargets,
+        relayResults: candidate.ticketRelayResults,
+      },
+      readerFilters: {
+        live: liveQuery,
+        backfill: backfillQuery,
+      },
+      filterComparison: {
+        kindMatchesLive: Number(liveQuery?.kinds?.[0] ?? 0) === Number(candidate.ticketPublishEventKind ?? 0),
+        kindMatchesBackfill: Number(backfillQuery?.kinds?.[0] ?? 0) === Number(candidate.ticketPublishEventKind ?? 0),
+        mailboxMatchesLive: Boolean(candidate.requestMailboxId)
+          ? Array.isArray(liveQuery?.mailboxIds) && liveQuery.mailboxIds.includes(candidate.requestMailboxId)
+          : null,
+        mailboxMatchesBackfill: Boolean(candidate.requestMailboxId)
+          ? (
+            (Array.isArray(backfillQuery?.mailboxIds) && backfillQuery.mailboxIds.includes(candidate.requestMailboxId))
+            || (Array.isArray(candidate.ticketPendingMailboxIds) && candidate.ticketPendingMailboxIds.includes(candidate.requestMailboxId))
+          )
+          : null,
+        etypeMatchesLive: Boolean(publishedEtypeTag)
+          ? Array.isArray(liveQuery?.eventTypes) && liveQuery.eventTypes.includes(publishedEtypeTag)
+          : null,
+        etypeMatchesBackfill: Boolean(publishedEtypeTag)
+          ? Array.isArray(backfillQuery?.eventTypes) && backfillQuery.eventTypes.includes(publishedEtypeTag)
+          : null,
+        relayOverlap: Array.isArray(candidate.ticketRelayTargets)
+          ? candidate.ticketRelayTargets.filter((relay) => (
+            Array.isArray(liveQuery?.relays) && liveQuery.relays.includes(relay)
+          ) || (
+            Array.isArray(backfillQuery?.relays) && backfillQuery.relays.includes(relay)
+          ))
+          : [],
+      },
+      relayProbe,
+    };
+  }
 
   console.log(JSON.stringify({
     config: {

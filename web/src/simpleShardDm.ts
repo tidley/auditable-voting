@@ -2057,7 +2057,14 @@ export async function sendSimpleRoundTicket(input: {
   attemptNo?: number;
   supersedesEventId?: string;
   ticketId?: string;
-}): Promise<DmPublishResult & { responseId: string }> {
+}): Promise<DmPublishResult & {
+  responseId: string;
+  eventKind?: number;
+  eventCreatedAt?: number;
+  eventTags?: string[][];
+  eventContent?: string;
+  envelope?: unknown;
+}> {
   const responseId = input.ticketId ?? input.request.id;
   recordSimpleTicketLifecycleTrace({
     votingId: input.request.votingId,
@@ -2100,6 +2107,11 @@ export async function sendSimpleRoundTicket(input: {
   return {
     responseId: result.responseId,
     eventId: result.eventId,
+    eventKind: result.eventKind,
+    eventCreatedAt: result.eventCreatedAt,
+    eventTags: result.eventTags,
+    eventContent: result.eventContent,
+    envelope: result.envelope,
     successes: result.successes,
     failures: result.failures,
     relayResults: result.relayResults,
