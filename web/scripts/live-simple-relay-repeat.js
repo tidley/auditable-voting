@@ -56,6 +56,14 @@ function summariseRun(run) {
     const coordinatorAcceptedByLineage = Number(roundSummary.coordinatorAcceptedByLineage ?? 0);
     const voterPublishedBallots = Number(roundSummary.voterPublishedBallots ?? 0);
     const voterObservedTickets = Number(roundSummary.voterObservedTickets ?? 0);
+    const unmatchedRowDiagnostics = Array.isArray(roundSummary.unmatchedRowDiagnostics)
+      ? roundSummary.unmatchedRowDiagnostics
+      : [];
+    const unmatchedStageCounts = unmatchedRowDiagnostics.reduce((acc, item) => {
+      const key = String(item?.firstMissingStage ?? "unknown");
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    }, {});
     const ticketSent = Number(roundSummary.ticketSentCount ?? roundSummary.stageMetrics?.ticketSent?.count ?? 0);
     const totalPairs = Number(roundSummary.stageMetrics?.ticketSent?.totalPairs ?? 0);
     const success = deploymentMode === "course_feedback"
@@ -74,6 +82,9 @@ function summariseRun(run) {
       coordinatorAcceptedByLineage,
       voterPublishedBallots,
       voterObservedTickets,
+      rowsWithoutAcceptedBallotCount: Number(roundSummary.rowsWithoutAcceptedBallotCount ?? unmatchedRowDiagnostics.length),
+      unmatchedRowDiagnostics,
+      unmatchedStageCounts,
       ticketSent,
       ballotSubmitted: Number(roundSummary.ballotSubmittedCount ?? stageMetrics.ballotSubmitted?.count ?? 0),
       ballotAccepted: Number(roundSummary.ballotAcceptedCount ?? stageMetrics.ballotAccepted?.count ?? 0),
@@ -114,6 +125,9 @@ async function main() {
         coordinatorAcceptedByLineage: [],
         voterPublishedBallots: [],
         voterObservedTickets: [],
+        rowsWithoutAcceptedBallotCount: [],
+        unmatchedStageCounts: {},
+        unmatchedRows: [],
         ballotSubmitted: [],
         ballotAccepted: [],
         completionByBallot: [],
@@ -133,6 +147,18 @@ async function main() {
       entry.coordinatorAcceptedByLineage.push(round.coordinatorAcceptedByLineage);
       entry.voterPublishedBallots.push(round.voterPublishedBallots);
       entry.voterObservedTickets.push(round.voterObservedTickets);
+      entry.rowsWithoutAcceptedBallotCount.push(round.rowsWithoutAcceptedBallotCount);
+      for (const [stage, count] of Object.entries(round.unmatchedStageCounts ?? {})) {
+        entry.unmatchedStageCounts[stage] = (entry.unmatchedStageCounts[stage] ?? 0) + Number(count ?? 0);
+      }
+      for (const row of round.unmatchedRowDiagnostics ?? []) {
+        entry.unmatchedRows.push({
+          voterPubkey: row.voterPubkey,
+          firstMissingStage: row.firstMissingStage,
+          requestId: row.requestId,
+          ticketId: row.ticketId,
+        });
+      }
       entry.ballotSubmitted.push(round.ballotSubmitted);
       entry.ballotAccepted.push(round.ballotAccepted);
       entry.completionByBallot.push(round.completionByBallot);

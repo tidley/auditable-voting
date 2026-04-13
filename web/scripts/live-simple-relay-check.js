@@ -932,6 +932,75 @@ async function main() {
       0,
       ...coordinatorStates.map((state) => Number(state.coordinatorDebug?.voters?.filter((entry) => entry.ballotAccepted).length ?? 0)),
     );
+    const primaryCoordinatorDebug = coordinatorStates[0]?.coordinatorDebug ?? null;
+    const rowsWithoutAcceptedBallot = Array.isArray(primaryCoordinatorDebug?.rowsWithoutAcceptedBallot)
+      ? primaryCoordinatorDebug.rowsWithoutAcceptedBallot
+      : [];
+    const acceptedBallotsByRequestId = Array.isArray(primaryCoordinatorDebug?.acceptedBallotsByRequestId)
+      ? primaryCoordinatorDebug.acceptedBallotsByRequestId
+      : [];
+    const acceptedBallotsByTicketId = Array.isArray(primaryCoordinatorDebug?.acceptedBallotsByTicketId)
+      ? primaryCoordinatorDebug.acceptedBallotsByTicketId
+      : [];
+    const acceptedRequestIds = new Set(
+      acceptedBallotsByRequestId
+        .map((entry) => (Array.isArray(entry) ? String(entry[0] ?? "").trim() : ""))
+        .filter(Boolean),
+    );
+    const acceptedTicketIds = new Set(
+      acceptedBallotsByTicketId
+        .map((entry) => (Array.isArray(entry) ? String(entry[0] ?? "").trim() : ""))
+        .filter(Boolean),
+    );
+    const voterStateByNpub = new Map(
+      Object.values(round.state.voterStates)
+        .map((value) => [
+          typeof value?.voterDebug?.voterNpub === "string" ? value.voterDebug.voterNpub.trim() : "",
+          value,
+        ])
+        .filter(([npub]) => Boolean(npub)),
+    );
+    const coordinatorVoterByNpub = new Map(
+      Array.isArray(primaryCoordinatorDebug?.voters)
+        ? primaryCoordinatorDebug.voters
+          .map((entry) => [String(entry?.voterPubkey ?? ""), entry])
+          .filter(([npub]) => Boolean(npub))
+        : [],
+    );
+    const unmatchedRowDiagnostics = rowsWithoutAcceptedBallot.map((row) => {
+      const voterPubkey = String(row?.voterPubkey ?? "");
+      const requestId = typeof row?.requestId === "string" ? row.requestId.trim() : "";
+      const ticketId = typeof row?.ticketId === "string" ? row.ticketId.trim() : "";
+      const voterState = voterStateByNpub.get(voterPubkey);
+      const coordinatorVoter = coordinatorVoterByNpub.get(voterPubkey);
+      const ticketObserved = Boolean(voterState?.ticketReady && voterState.ticketReady.ready >= voterState.ticketReady.required);
+      const ballotSubmitted = Boolean(voterState?.voterDebug?.ballotSubmitted);
+      const ballotAccepted = Boolean(voterState?.voterDebug?.ballotAccepted);
+      const ticketSent = Boolean(coordinatorVoter?.ticketSent);
+      const inAcceptedByRequestId = Boolean(requestId && acceptedRequestIds.has(requestId));
+      const inAcceptedByTicketId = Boolean(ticketId && acceptedTicketIds.has(ticketId));
+      const firstMissingStage = !ticketSent
+        ? "ticket_not_sent"
+        : !ticketObserved
+          ? "ticket_not_observed"
+          : !ballotSubmitted
+            ? "ballot_not_submitted"
+            : !inAcceptedByRequestId && !inAcceptedByTicketId
+              ? "ballot_not_accepted_by_lineage"
+              : "accepted_not_mapped";
+      return {
+        voterPubkey,
+        requestId: requestId || null,
+        ticketId: ticketId || null,
+        ticketSent,
+        ticketObserved,
+        ballotSubmitted,
+        ballotAccepted,
+        inAcceptedByRequestId,
+        inAcceptedByTicketId,
+        firstMissingStage,
+      };
+    });
     const stageMetrics = round.stageMetrics ?? {};
     const ticketSentCount = Number(stageMetrics.ticketSent?.count ?? 0);
     const ticketObservedCount = Number(stageMetrics.ticketObserved?.count ?? 0);
@@ -961,6 +1030,8 @@ async function main() {
       coordinatorAcceptedBallots,
       coordinatorRejectedBallots,
       coordinatorAcceptedByLineage,
+      rowsWithoutAcceptedBallotCount: rowsWithoutAcceptedBallot.length,
+      unmatchedRowDiagnostics,
       totalVoters: voterTicketSummary.length,
       voterTicketSummary,
       stageMetrics,

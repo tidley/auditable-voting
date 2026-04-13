@@ -1776,6 +1776,7 @@ export default function SimpleUiApp() {
     const roundSeen = coordinatorDiagnostics.some((entry) => entry.round.tone === "ok");
     const blindKeySeen = coordinatorDiagnostics.some((entry) => entry.blindKey.tone === "ok");
     owner.__simpleVoterDebug = {
+      voterNpub: voterKeypair?.npub ?? null,
       hasLiveRound: Boolean(effectiveLiveVoteSession),
       selectedVotingId: effectiveLiveVoteSession?.votingId ?? null,
       knownRoundCount: knownRounds.length,
@@ -1800,6 +1801,7 @@ export default function SimpleUiApp() {
     ticketAckSent,
     ballotSubmitted,
     ballotAccepted,
+    voterKeypair?.npub,
     coordinatorDiagnostics,
     uniqueShardResponses.length,
   ]);
