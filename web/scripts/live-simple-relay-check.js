@@ -1129,6 +1129,12 @@ async function main() {
         && (ticketBackfillMailboxId ? ticketBackfillMailboxId === requestMailboxId : true)
         && (ticketReadMailboxId ? ticketReadMailboxId === requestMailboxId : true),
       );
+      const mailboxIdConsistentReadRequest = requestMailboxId
+        ? ticketReadMailboxId === requestMailboxId
+        : null;
+      const mailboxIdConsistentBackfillRequest = requestMailboxId
+        ? ticketBackfillMailboxId === requestMailboxId
+        : null;
       const ballotSubmitted = Boolean(voterState?.voterDebug?.ballotSubmitted);
       const ballotAccepted = Boolean(voterState?.voterDebug?.ballotAccepted);
       const ticketSent = Boolean(coordinatorVoter?.ticketSent || ticketObserved);
@@ -1166,6 +1172,8 @@ async function main() {
         ticketReadMailboxId,
         ticketBackfillMailboxId,
         mailboxIdConsistent,
+        mailboxIdConsistentReadRequest,
+        mailboxIdConsistentBackfillRequest,
         ticketId: ticketId || null,
         ticketSent,
         ticketObserved,

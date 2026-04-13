@@ -87,6 +87,8 @@ type PendingBlindRequest = {
   dmEventId?: string;
   mailboxId?: string;
   mailboxSalt?: string;
+  mailboxFrozenAt?: string;
+  mailboxFrozenValue?: string;
 };
 
 type RoundReplyKeypair = {
@@ -100,6 +102,8 @@ type TicketBackfillRequestDebug = {
   lastResultCount: number;
   lastMatchedCount: number;
   requestMailboxId: string | null;
+  ticketReadMailboxId: string | null;
+  ticketBackfillMailboxId: string | null;
   lastSourceRelays: string[];
 };
 
@@ -266,6 +270,8 @@ export default function SimpleUiApp() {
   const ticketLiveQueryDebugRef = useRef<MailboxReadQueryDebug | null>(null);
   const ticketBackfillQueryDebugRef = useRef<MailboxReadQueryDebug | null>(null);
   const ticketBackfillRequestDebugRef = useRef<Record<string, TicketBackfillRequestDebug>>({});
+  const ticketLiveQueryByRequestRef = useRef<Record<string, MailboxReadQueryDebug>>({});
+  const ticketBackfillQueryByRequestRef = useRef<Record<string, MailboxReadQueryDebug>>({});
   const ticketMailboxMismatchRef = useRef<Record<string, TicketMailboxMismatch>>({});
   const lastAutoSelectedVotingIdRef = useRef("");
   const manualRoundSelectionRef = useRef(false);
@@ -313,7 +319,8 @@ export default function SimpleUiApp() {
       const merged = new Map(current.map((response) => [response.id, response]));
       for (const response of nextIssuedShares) {
         const expectedMailboxId = (
-          Object.values(pendingBlindRequests).find((entry) => entry.request.requestId === response.requestId)?.mailboxId
+          Object.values(pendingBlindRequests).find((entry) => entry.request.requestId === response.requestId)?.mailboxFrozenValue
+          ?? Object.values(pendingBlindRequests).find((entry) => entry.request.requestId === response.requestId)?.mailboxId
           ?? ""
         ).trim();
         const observedMailboxId = (response.mailboxId ?? "").trim();
@@ -373,15 +380,24 @@ export default function SimpleUiApp() {
     }
     return Object.values(pendingBlindRequests).filter((request) => request.votingId === activeVotingId);
   }, [pendingBlindRequests, selectedVotingId]);
+  const unresolvedActiveRoundPendingBlindRequests = useMemo(() => {
+    return activeRoundPendingBlindRequests.filter((request) => (
+      !receivedShards.some((response) => response.requestId === request.request.requestId)
+    ));
+  }, [activeRoundPendingBlindRequests, receivedShards]);
   const pendingTicketMailboxIds = useMemo(() => {
     return Array.from(
       new Set(
-        activeRoundPendingBlindRequests
-          .map((request) => request.mailboxId?.trim() ?? "")
+        unresolvedActiveRoundPendingBlindRequests
+          .map((request) => (
+            request.mailboxFrozenValue?.trim()
+            || request.mailboxId?.trim()
+            || ""
+          ))
           .filter(Boolean),
       ),
     );
-  }, [activeRoundPendingBlindRequests]);
+  }, [unresolvedActiveRoundPendingBlindRequests]);
 
   useEffect(() => {
     const receivedRequestIds = new Set(receivedShards.map((response) => response.requestId));
@@ -666,20 +682,65 @@ export default function SimpleUiApp() {
       return;
     }
 
-    return subscribeSimpleShardResponses({
-      voterNsec,
-      voterNsecs: Object.values(roundReplyKeypairs).map((keypair) => keypair.nsec),
-      mailboxIds: pendingTicketMailboxIds,
-      onMailboxQueryDebug: (query) => {
-        if (query.source === "subscribe") {
+    if (unresolvedActiveRoundPendingBlindRequests.length === 0) {
+      return;
+    }
+
+    const cleanups = unresolvedActiveRoundPendingBlindRequests.map((requestEntry) => {
+      const requestId = requestEntry.request.requestId;
+      const canonicalMailboxId = (
+        requestEntry.mailboxFrozenValue?.trim()
+        || requestEntry.mailboxId?.trim()
+        || ""
+      );
+      if (!canonicalMailboxId) {
+        return () => undefined;
+      }
+      return subscribeSimpleShardResponses({
+        voterNsec,
+        voterNsecs: Object.values(roundReplyKeypairs).map((keypair) => keypair.nsec),
+        mailboxIds: [canonicalMailboxId],
+        onMailboxQueryDebug: (query) => {
+          if (query.source !== "subscribe") {
+            return;
+          }
           ticketLiveQueryDebugRef.current = query;
-        }
-      },
-      onResponses: (responses) => {
-        void reconcileIncomingShardResponses(responses, "live");
-      },
+          ticketLiveQueryByRequestRef.current[requestId] = query;
+          const previous = ticketBackfillRequestDebugRef.current[requestId];
+          ticketBackfillRequestDebugRef.current[requestId] = {
+            attemptCount: previous?.attemptCount ?? 0,
+            lastAttemptAt: previous?.lastAttemptAt ?? null,
+            lastResultCount: previous?.lastResultCount ?? 0,
+            lastMatchedCount: previous?.lastMatchedCount ?? 0,
+            requestMailboxId: previous?.requestMailboxId ?? canonicalMailboxId,
+            ticketReadMailboxId: canonicalMailboxId,
+            ticketBackfillMailboxId: previous?.ticketBackfillMailboxId ?? null,
+            lastSourceRelays: previous?.lastSourceRelays ?? [],
+          };
+        },
+        onResponses: (responses) => {
+          const filtered = responses.filter((response) => (
+            response.requestId === requestId
+            || response.mailboxId?.trim() === canonicalMailboxId
+          ));
+          if (filtered.length > 0) {
+            void reconcileIncomingShardResponses(filtered, "live");
+          }
+        },
+      });
     });
-  }, [configuredCoordinatorTargets.length, pendingTicketMailboxIds, roundReplyKeypairs, voterKeypair?.nsec]);
+
+    return () => {
+      for (const cleanup of cleanups) {
+        cleanup();
+      }
+    };
+  }, [
+    configuredCoordinatorTargets.length,
+    unresolvedActiveRoundPendingBlindRequests,
+    roundReplyKeypairs,
+    voterKeypair?.nsec,
+  ]);
 
   useEffect(() => {
     const voterNsec = voterKeypair?.nsec?.trim() ?? "";
@@ -688,64 +749,82 @@ export default function SimpleUiApp() {
       return;
     }
 
-    const hasPendingTicket = activeRoundPendingBlindRequests.some((request) => {
-      return !receivedShards.some((response) => response.requestId === request.request.requestId);
-    });
-
-    if (!hasPendingTicket) {
+    if (unresolvedActiveRoundPendingBlindRequests.length === 0) {
       return;
     }
 
     let cancelled = false;
 
     const refresh = () => {
-      const pendingEntries = [...activeRoundPendingBlindRequests];
+      const pendingEntries = [...unresolvedActiveRoundPendingBlindRequests];
       const nowIso = new Date().toISOString();
       for (const requestEntry of pendingEntries) {
         const requestId = requestEntry.request.requestId;
+        const canonicalMailboxId = (
+          requestEntry.mailboxFrozenValue?.trim()
+          || requestEntry.mailboxId?.trim()
+          || ""
+        );
+        if (!canonicalMailboxId) {
+          continue;
+        }
         const previous = ticketBackfillRequestDebugRef.current[requestId];
         ticketBackfillRequestDebugRef.current[requestId] = {
           attemptCount: (previous?.attemptCount ?? 0) + 1,
           lastAttemptAt: nowIso,
           lastResultCount: previous?.lastResultCount ?? 0,
           lastMatchedCount: previous?.lastMatchedCount ?? 0,
-          requestMailboxId: requestEntry.mailboxId?.trim() ?? previous?.requestMailboxId ?? null,
+          requestMailboxId: canonicalMailboxId,
+          ticketReadMailboxId: previous?.ticketReadMailboxId ?? null,
+          ticketBackfillMailboxId: canonicalMailboxId,
           lastSourceRelays: previous?.lastSourceRelays ?? [],
         };
       }
 
-      void fetchSimpleShardResponses({
-        voterNsec,
-        voterNsecs: Object.values(roundReplyKeypairs).map((keypair) => keypair.nsec),
-        mailboxIds: pendingTicketMailboxIds,
-        onMailboxQueryDebug: (query) => {
-          ticketBackfillQueryDebugRef.current = query;
-        },
-      }).then((nextResponses) => {
-        if (!cancelled) {
-          const lastBackfillQuery = ticketBackfillQueryDebugRef.current;
-          for (const requestEntry of pendingEntries) {
-            const requestId = requestEntry.request.requestId;
-            const mailboxId = requestEntry.mailboxId?.trim();
-            const matchedCount = nextResponses.filter((response) => (
-              response.requestId === requestId
-              || (mailboxId ? response.mailboxId?.trim() === mailboxId : false)
-            )).length;
-            const previous = ticketBackfillRequestDebugRef.current[requestId];
-            ticketBackfillRequestDebugRef.current[requestId] = {
-              attemptCount: previous?.attemptCount ?? 1,
-              lastAttemptAt: previous?.lastAttemptAt ?? nowIso,
-              lastResultCount: Number(lastBackfillQuery?.resultCount ?? nextResponses.length),
-              lastMatchedCount: matchedCount,
-              requestMailboxId: mailboxId ?? previous?.requestMailboxId ?? null,
-              lastSourceRelays: Array.isArray(lastBackfillQuery?.relays)
-                ? [...lastBackfillQuery.relays]
-                : [],
-            };
-          }
-          void reconcileIncomingShardResponses(nextResponses, "backfill");
+      void Promise.all(pendingEntries.map(async (requestEntry) => {
+        const requestId = requestEntry.request.requestId;
+        const canonicalMailboxId = (
+          requestEntry.mailboxFrozenValue?.trim()
+          || requestEntry.mailboxId?.trim()
+          || ""
+        );
+        if (!canonicalMailboxId) {
+          return;
         }
-      }).catch(() => undefined);
+        const nextResponses = await fetchSimpleShardResponses({
+          voterNsec,
+          voterNsecs: Object.values(roundReplyKeypairs).map((keypair) => keypair.nsec),
+          mailboxIds: [canonicalMailboxId],
+          onMailboxQueryDebug: (query) => {
+            ticketBackfillQueryDebugRef.current = query;
+            ticketBackfillQueryByRequestRef.current[requestId] = query;
+          },
+        });
+        if (cancelled) {
+          return;
+        }
+        const filtered = nextResponses.filter((response) => (
+          response.requestId === requestId
+          || response.mailboxId?.trim() === canonicalMailboxId
+        ));
+        const previous = ticketBackfillRequestDebugRef.current[requestId];
+        const requestQuery = ticketBackfillQueryByRequestRef.current[requestId];
+        ticketBackfillRequestDebugRef.current[requestId] = {
+          attemptCount: previous?.attemptCount ?? 1,
+          lastAttemptAt: previous?.lastAttemptAt ?? nowIso,
+          lastResultCount: Number(requestQuery?.resultCount ?? nextResponses.length),
+          lastMatchedCount: filtered.length,
+          requestMailboxId: canonicalMailboxId,
+          ticketReadMailboxId: previous?.ticketReadMailboxId ?? null,
+          ticketBackfillMailboxId: canonicalMailboxId,
+          lastSourceRelays: Array.isArray(requestQuery?.relays)
+            ? [...requestQuery.relays]
+            : [],
+        };
+        if (filtered.length > 0) {
+          await reconcileIncomingShardResponses(filtered, "backfill");
+        }
+      })).catch(() => undefined);
     };
 
     refresh();
@@ -757,9 +836,7 @@ export default function SimpleUiApp() {
     };
   }, [
     configuredCoordinatorTargets.length,
-    activeRoundPendingBlindRequests,
-    pendingTicketMailboxIds,
-    receivedShards,
+    unresolvedActiveRoundPendingBlindRequests,
     roundReplyKeypairs,
     voterKeypair?.nsec,
   ]);
@@ -1693,6 +1770,8 @@ export default function SimpleUiApp() {
                 dmEventId: results[index].eventId,
                 mailboxId: results[index].mailboxId,
                 mailboxSalt: results[index].mailboxSalt,
+                mailboxFrozenAt: results[index].mailboxId ? new Date().toISOString() : undefined,
+                mailboxFrozenValue: results[index].mailboxId,
               }
             : entry,
         ]),
@@ -1778,6 +1857,28 @@ export default function SimpleUiApp() {
         if (!completed.length) {
           return;
         }
+        setPendingBlindRequests((current) => {
+          const next = { ...current };
+          for (const { key, result } of completed) {
+            if (!result.successes) {
+              continue;
+            }
+            const previous = next[key];
+            if (!previous) {
+              continue;
+            }
+            const resolvedMailboxId = result.mailboxId?.trim() || previous.mailboxId?.trim();
+            next[key] = {
+              ...previous,
+              dmEventId: result.eventId,
+              mailboxId: resolvedMailboxId,
+              mailboxSalt: result.mailboxSalt ?? previous.mailboxSalt,
+              mailboxFrozenValue: previous.mailboxFrozenValue ?? resolvedMailboxId,
+              mailboxFrozenAt: previous.mailboxFrozenAt ?? (resolvedMailboxId ? new Date().toISOString() : undefined),
+            };
+          }
+          return next;
+        });
         setRequestDeliveries((current) => {
           const next = { ...current };
           for (const { key, result, requestId } of completed) {
@@ -1895,6 +1996,8 @@ export default function SimpleUiApp() {
     ticketLiveQueryDebugRef.current = null;
     ticketBackfillQueryDebugRef.current = null;
     ticketBackfillRequestDebugRef.current = {};
+    ticketLiveQueryByRequestRef.current = {};
+    ticketBackfillQueryByRequestRef.current = {};
     ticketMailboxMismatchRef.current = {};
   }, [effectiveLiveVoteSession?.votingId]);
 
@@ -1909,14 +2012,19 @@ export default function SimpleUiApp() {
         const observedByRequest = uniqueShardResponses.find((response) => response.requestId === requestId);
         const mismatch = ticketMailboxMismatchRef.current[requestId];
         const requestMailboxId = value.requestMailboxId ?? null;
-        const ticketReadMailboxId = observedByRequest?.mailboxId?.trim() || mismatch?.observedMailboxId || null;
-        const ticketBackfillMailboxId = Array.isArray(ticketBackfillQueryDebugRef.current?.mailboxIds)
-          ? ticketBackfillQueryDebugRef.current.mailboxIds[0] ?? null
-          : null;
+        const liveQuery = ticketLiveQueryByRequestRef.current[requestId];
+        const backfillQuery = ticketBackfillQueryByRequestRef.current[requestId];
+        const ticketReadMailboxId = observedByRequest?.mailboxId?.trim()
+          || liveQuery?.mailboxIds?.[0]
+          || value.ticketReadMailboxId
+          || mismatch?.observedMailboxId
+          || null;
+        const ticketBackfillMailboxId = backfillQuery?.mailboxIds?.[0]
+          || value.ticketBackfillMailboxId
+          || null;
         const mailboxIdConsistent = Boolean(
           requestMailboxId
-          && ticketBackfillMailboxId
-          && requestMailboxId === ticketBackfillMailboxId
+          && (ticketBackfillMailboxId ? requestMailboxId === ticketBackfillMailboxId : true)
           && (!ticketReadMailboxId || ticketReadMailboxId === requestMailboxId),
         );
         const observed = uniqueShardResponses.some((response) => (

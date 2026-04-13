@@ -28,6 +28,7 @@ The shipped app currently includes:
 - explicit ticket recovery diagnostics for publish-started vs publish-succeeded, live vs backfill observation, resend eligibility, resend blocked reasons, and relay-target outcomes
 - first-send queue prioritisation over resend work for ticket scheduling, with runtime-tunable send concurrency and retry-age thresholds for relay reliability experiments
 - separate observation-recovery timing for published-but-unobserved tickets, with live/backfill/resend recovery counters promoted in harness summaries
+- request-id keyed mailbox reads with frozen per-request mailbox bindings for ticket live/backfill recovery, plus explicit read/backfill mailbox consistency diagnostics
 - periodic history backfill for missed live rounds and ticket delivery
 - smaller primary relay subsets for live reads and subscriptions, with ordinary DM traffic kept tight while coordinator-control and ticket/ack traffic use a slightly wider primary subset for recovery and first-round reliability
 - randomised automatic follow/request/ticket/ack send pacing, plus slower retry windows, to reduce relay-side rate limiting when many browser actors act at once
