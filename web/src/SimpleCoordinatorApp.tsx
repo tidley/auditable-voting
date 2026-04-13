@@ -179,6 +179,26 @@ function randomHumanActionDelayMs() {
   return Math.floor(Math.random() * SIMPLE_HUMAN_ACTION_JITTER_MAX_MS);
 }
 
+function readRuntimeIntOverride(name: string, fallback: number) {
+  const processEnv = (globalThis as typeof globalThis & {
+    process?: { env?: Record<string, string | undefined> };
+  }).process?.env ?? {};
+  const importMetaEnv = ((import.meta as unknown as { env?: Record<string, string | undefined> }).env) ?? {};
+  const candidates = [
+    importMetaEnv[`VITE_${name}`],
+    importMetaEnv[name],
+    processEnv[`VITE_${name}`],
+    processEnv[name],
+  ];
+  for (const candidate of candidates) {
+    const parsed = Number.parseInt(candidate ?? "", 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return fallback;
+}
+
 function normalizeLiveVoteSession(
   vote: Partial<SimpleLiveVoteSession> | null | undefined,
   fallbackCoordinatorNpubs: string[] = [],
@@ -368,6 +388,18 @@ export default function SimpleCoordinatorApp() {
     setLastSuccessfulShareAssignmentSignature,
   ] = useState('');
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const ticketRetryMinAgeMs = useMemo(
+    () => readRuntimeIntOverride("SIMPLE_TICKET_RETRY_AGE_MS", SIMPLE_TICKET_RETRY_MIN_AGE_MS),
+    [],
+  );
+  const ticketRetryMaxAttempts = useMemo(
+    () => readRuntimeIntOverride("SIMPLE_TICKET_RETRY_MAX_ATTEMPTS", SIMPLE_TICKET_RETRY_MAX_ATTEMPTS),
+    [],
+  );
+  const ticketSendMaxConcurrency = useMemo(
+    () => readRuntimeIntOverride("SIMPLE_TICKET_SEND_MAX_CONCURRENCY", SIMPLE_TICKET_SEND_MAX_CONCURRENCY),
+    [],
+  );
   const blindKeyRepublishAtRef = useRef<Record<string, number>>({});
   const autoSendInFlightRef = useRef<Set<string>>(new Set());
   const autoShareAssignmentAttemptRef = useRef('');
@@ -2203,6 +2235,9 @@ export default function SimpleCoordinatorApp() {
         ticketBuiltAt: current[ticketStatusKey]?.ticketBuiltAt ?? new Date().toISOString(),
         ticketPublishStartedAt: new Date().toISOString(),
         ticketStillMissing: true,
+        resendCount: (current[ticketStatusKey]?.attempts ?? 0) > 0
+          ? (current[ticketStatusKey]?.resendCount ?? 0) + 1
+          : (current[ticketStatusKey]?.resendCount ?? 0),
         attempts: (current[ticketStatusKey]?.attempts ?? 0) + 1,
         lastAttemptAt: new Date().toISOString(),
         relayResults: undefined,
@@ -2843,6 +2878,27 @@ export default function SimpleCoordinatorApp() {
       || acceptedByVoterPubkeyFallback,
     );
     const ticketDeliveryConfirmed = isDeliveryConfirmed({ ackSeen, ballotAccepted });
+    const attempts = Number(delivery?.attempts ?? 0);
+    const publishStarted = Boolean(delivery?.ticketPublishStartedAt);
+    const publishSucceeded = Boolean(delivery?.ticketPublishSucceededAt);
+    const retryAgeElapsed = Boolean(
+      delivery?.lastAttemptAt
+      && Number.isFinite(Date.parse(delivery.lastAttemptAt))
+      && nowMs - Date.parse(delivery.lastAttemptAt) >= ticketRetryMinAgeMs,
+    );
+    let resendBlockedReason: string | null = null;
+    if (ticketDeliveryConfirmed) {
+      resendBlockedReason = "ticket_already_observed";
+    } else if (!delivery) {
+      resendBlockedReason = "publish_not_started";
+    } else if (!publishStarted) {
+      resendBlockedReason = "publish_not_started";
+    } else if (attempts >= ticketRetryMaxAttempts) {
+      resendBlockedReason = "retry_cap_reached";
+    } else if (!retryAgeElapsed) {
+      resendBlockedReason = "retry_age_not_elapsed";
+    }
+    const resendEligible = resendBlockedReason === null;
 
     const receipt = ballotAccepted
       ? { tone: "ok", text: "Valid ballot accepted." }
@@ -2871,6 +2927,8 @@ export default function SimpleCoordinatorApp() {
       ticketRelayTargets: delivery?.ticketRelayTargets ?? [],
       ticketRelaySuccessCount: delivery?.ticketRelaySuccessCount ?? 0,
       ticketStillMissing,
+      resendEligible,
+      resendBlockedReason,
     };
   }), [
     activeAcceptedRequestIds,
@@ -2879,7 +2937,10 @@ export default function SimpleCoordinatorApp() {
     coordinatorFollowerRows,
     dmAcknowledgements,
     pendingRequests,
+    nowMs,
     selectedPublishedVote?.votingId,
+    ticketRetryMaxAttempts,
+    ticketRetryMinAgeMs,
     ticketDeliveries,
   ]);
   const visibleFollowersById = useMemo(
@@ -3013,6 +3074,8 @@ export default function SimpleCoordinatorApp() {
         ticketRelayTargets: row.ticketRelayTargets,
         ticketRelaySuccessCount: row.ticketRelaySuccessCount,
         ticketStillMissing: row.ticketStillMissing,
+        resendEligible: row.resendEligible,
+        resendBlockedReason: row.resendBlockedReason,
         ticketDeliveryConfirmed: row.ticketDeliveryConfirmed,
       })),
     };
@@ -3164,7 +3227,7 @@ export default function SimpleCoordinatorApp() {
     }
 
     for (const follower of visibleFollowers) {
-      if (autoSendInFlightRef.current.size >= SIMPLE_TICKET_SEND_MAX_CONCURRENCY) {
+      if (autoSendInFlightRef.current.size >= ticketSendMaxConcurrency) {
         break;
       }
       if (!autoSendFollowers[follower.voterNpub]) {
@@ -3186,7 +3249,7 @@ export default function SimpleCoordinatorApp() {
         autoSendInFlightRef.current.delete(ticketStatusKey);
       });
     }
-  }, [activeVotingId, autoSendFollowers, coordinatorFollowerRows, nowMs, ticketDeliveries, visibleFollowers]);
+  }, [activeVotingId, autoSendFollowers, coordinatorFollowerRows, nowMs, ticketDeliveries, ticketSendMaxConcurrency, visibleFollowers]);
 
   useEffect(() => {
     if (!activeVotingId) {
@@ -3213,16 +3276,21 @@ export default function SimpleCoordinatorApp() {
         ...deliveryCompletionAcknowledgements,
       ],
       nowMs,
-      minRetryAgeMs: SIMPLE_TICKET_RETRY_MIN_AGE_MS,
-      maxAttempts: SIMPLE_TICKET_RETRY_MAX_ATTEMPTS,
+      minRetryAgeMs: ticketRetryMinAgeMs,
+      maxAttempts: ticketRetryMaxAttempts,
     }));
+    for (const row of enhancedCoordinatorFollowerRows) {
+      if (row.resendEligible && row.ticketSent) {
+        retryFollowerIds.add(row.id);
+      }
+    }
 
     if (retryFollowerIds.size === 0) {
       return;
     }
 
     for (const follower of visibleFollowers) {
-      if (autoSendInFlightRef.current.size >= SIMPLE_TICKET_SEND_MAX_CONCURRENCY) {
+      if (autoSendInFlightRef.current.size >= ticketSendMaxConcurrency) {
         break;
       }
       if (!retryFollowerIds.has(follower.id) || !autoSendFollowers[follower.voterNpub]) {
@@ -3248,8 +3316,8 @@ export default function SimpleCoordinatorApp() {
         continue;
       }
 
-      const row = coordinatorFollowerRows.find((entry) => entry.id === follower.id);
-      if (!row?.canSendTicket) {
+      const row = enhancedCoordinatorFollowerRows.find((entry) => entry.id === follower.id);
+      if (!row?.resendEligible) {
         continue;
       }
 
@@ -3261,11 +3329,14 @@ export default function SimpleCoordinatorApp() {
   }, [
     activeVotingId,
     autoSendFollowers,
-    coordinatorFollowerRows,
+    enhancedCoordinatorFollowerRows,
     deliveryCompletionAcknowledgements,
     dmAcknowledgements,
     nowMs,
     ticketDeliveries,
+    ticketRetryMaxAttempts,
+    ticketRetryMinAgeMs,
+    ticketSendMaxConcurrency,
     visibleFollowers,
   ]);
 
@@ -3520,7 +3591,7 @@ export default function SimpleCoordinatorApp() {
                       ticketDelivery &&
                       !ticketDeliveryConfirmed &&
                       Number.isFinite(lastAttemptAtMs) &&
-                      nowMs - lastAttemptAtMs >= SIMPLE_TICKET_RETRY_MIN_AGE_MS,
+                      nowMs - lastAttemptAtMs >= ticketRetryMinAgeMs,
                     );
 
                     return (

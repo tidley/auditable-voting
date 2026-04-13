@@ -91,6 +91,10 @@ function summariseRun(run) {
       coordinatorTicketPublishSucceededCount: Number(roundSummary.coordinatorTicketPublishSucceededCount ?? 0),
       coordinatorTicketStillMissingCount: Number(roundSummary.coordinatorTicketStillMissingCount ?? 0),
       coordinatorTicketResentCount: Number(roundSummary.coordinatorTicketResentCount ?? 0),
+      rowsWithPublishSuccessNoObservation: Number(roundSummary.rowsWithPublishSuccessNoObservation ?? 0),
+      rowsWithPartialRelaySuccessNoObservation: Number(roundSummary.rowsWithPartialRelaySuccessNoObservation ?? 0),
+      rowsWithPublishUnconfirmedEventuallyObserved: Number(roundSummary.rowsWithPublishUnconfirmedEventuallyObserved ?? 0),
+      rowsObservedOnlyAfterBackfill: Number(roundSummary.rowsObservedOnlyAfterBackfill ?? 0),
       unmatchedRowDiagnostics,
       unmatchedStageCounts,
       ticketSent,
@@ -140,6 +144,10 @@ async function main() {
         coordinatorTicketPublishSucceededCount: [],
         coordinatorTicketStillMissingCount: [],
         coordinatorTicketResentCount: [],
+        rowsWithPublishSuccessNoObservation: [],
+        rowsWithPartialRelaySuccessNoObservation: [],
+        rowsWithPublishUnconfirmedEventuallyObserved: [],
+        rowsObservedOnlyAfterBackfill: [],
         unmatchedStageCounts: {},
         unmatchedRows: [],
         ballotSubmitted: [],
@@ -168,6 +176,10 @@ async function main() {
       entry.coordinatorTicketPublishSucceededCount.push(round.coordinatorTicketPublishSucceededCount);
       entry.coordinatorTicketStillMissingCount.push(round.coordinatorTicketStillMissingCount);
       entry.coordinatorTicketResentCount.push(round.coordinatorTicketResentCount);
+      entry.rowsWithPublishSuccessNoObservation.push(round.rowsWithPublishSuccessNoObservation);
+      entry.rowsWithPartialRelaySuccessNoObservation.push(round.rowsWithPartialRelaySuccessNoObservation);
+      entry.rowsWithPublishUnconfirmedEventuallyObserved.push(round.rowsWithPublishUnconfirmedEventuallyObserved);
+      entry.rowsObservedOnlyAfterBackfill.push(round.rowsObservedOnlyAfterBackfill);
       for (const [stage, count] of Object.entries(round.unmatchedStageCounts ?? {})) {
         entry.unmatchedStageCounts[stage] = (entry.unmatchedStageCounts[stage] ?? 0) + Number(count ?? 0);
       }

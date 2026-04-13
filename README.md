@@ -25,6 +25,7 @@ The shipped app currently includes:
 - per-round blind-signature key announcements
 - blind-signature share issuance and public ballot verification
 - coordinator-side per-ticket relay publish diagnostics for issued shares
+- explicit ticket recovery diagnostics for publish-started vs publish-succeeded, live vs backfill observation, resend eligibility, resend blocked reasons, and relay-target outcomes
 - periodic history backfill for missed live rounds and ticket delivery
 - smaller primary relay subsets for live reads and subscriptions, with ordinary DM traffic kept tight while coordinator-control and ticket/ack traffic use a slightly wider primary subset for recovery and first-round reliability
 - randomised automatic follow/request/ticket/ack send pacing, plus slower retry windows, to reduce relay-side rate limiting when many browser actors act at once

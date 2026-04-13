@@ -981,12 +981,25 @@ async function main() {
       const ticketSent = Boolean(coordinatorVoter?.ticketSent || ticketObserved);
       const inAcceptedByRequestId = Boolean(requestId && acceptedRequestIds.has(requestId));
       const inAcceptedByTicketId = Boolean(ticketId && acceptedTicketIds.has(ticketId));
-      const firstMissingStage = !ticketSent
+      const ticketPublishStartedAt = coordinatorVoter?.ticketPublishStartedAt ?? null;
+      const ticketPublishSucceededAt = coordinatorVoter?.ticketPublishSucceededAt ?? null;
+      const ticketResentCount = Number(coordinatorVoter?.ticketResentCount ?? 0);
+      const recoveredByBackfill = !ticketObservedLiveCount && ticketObservedBackfillCount > 0;
+      const recoveredByResend = ticketResentCount > 0 && (ticketObserved || inAcceptedByRequestId || inAcceptedByTicketId);
+      const firstMissingStage = recoveredByResend
+        ? "ticket_recovered_by_resend"
+        : recoveredByBackfill
+          ? "ticket_recovered_by_backfill"
+          : !ticketSent
         ? "ticket_not_sent"
+        : Boolean(ticketPublishStartedAt) && !Boolean(ticketPublishSucceededAt) && !ticketObserved
+          ? "ticket_publish_unconfirmed"
+          : Boolean(ticketPublishSucceededAt) && !ticketObserved
+            ? "ticket_published_not_observed"
         : !ticketObserved
           ? "ticket_not_observed"
-          : !coordinatorVoter?.ticketSent
-            ? "ticket_publish_unconfirmed"
+          : ticketObserved && !inAcceptedByRequestId && !inAcceptedByTicketId
+            ? "ticket_observed_unmapped"
           : !ballotSubmitted
             ? "ballot_not_submitted"
             : !inAcceptedByRequestId && !inAcceptedByTicketId
@@ -1004,16 +1017,36 @@ async function main() {
         ticketObservedBackfillAt: voterState?.voterDebug?.ticketObservedBackfillAt ?? null,
         ballotSubmitted,
         ballotAccepted,
-        ticketPublishStartedAt: coordinatorVoter?.ticketPublishStartedAt ?? null,
-        ticketPublishSucceededAt: coordinatorVoter?.ticketPublishSucceededAt ?? null,
-        ticketResentCount: Number(coordinatorVoter?.ticketResentCount ?? 0),
+        ticketPublishStartedAt,
+        ticketPublishSucceededAt,
+        ticketResentCount,
         ticketRelayTargets: Array.isArray(coordinatorVoter?.ticketRelayTargets) ? coordinatorVoter.ticketRelayTargets : [],
         ticketRelaySuccessCount: Number(coordinatorVoter?.ticketRelaySuccessCount ?? 0),
+        resendEligible: Boolean(coordinatorVoter?.resendEligible),
+        resendBlockedReason: coordinatorVoter?.resendBlockedReason ?? null,
         inAcceptedByRequestId,
         inAcceptedByTicketId,
         firstMissingStage,
       };
     });
+    const rowsWithPublishSuccessNoObservation = unmatchedRowDiagnostics.filter((entry) => (
+      Boolean(entry.ticketPublishSucceededAt)
+      && !entry.ticketObserved
+    )).length;
+    const rowsWithPartialRelaySuccessNoObservation = unmatchedRowDiagnostics.filter((entry) => (
+      !entry.ticketObserved
+      && entry.ticketRelaySuccessCount > 0
+      && Array.isArray(entry.ticketRelayTargets)
+      && entry.ticketRelaySuccessCount < entry.ticketRelayTargets.length
+    )).length;
+    const rowsWithPublishUnconfirmedEventuallyObserved = unmatchedRowDiagnostics.filter((entry) => (
+      !entry.ticketPublishSucceededAt
+      && entry.ticketObserved
+    )).length;
+    const rowsObservedOnlyAfterBackfill = unmatchedRowDiagnostics.filter((entry) => (
+      Number(entry.ticketObservedBackfillCount ?? 0) > 0
+      && Number(entry.ticketObservedLiveCount ?? 0) === 0
+    )).length;
     const stageMetrics = round.stageMetrics ?? {};
     const ticketSentCount = Number(stageMetrics.ticketSent?.count ?? 0);
     const ticketObservedCount = Number(stageMetrics.ticketObserved?.count ?? 0);
@@ -1047,6 +1080,10 @@ async function main() {
       coordinatorTicketPublishSucceededCount: Number(primaryCoordinatorDebug?.ticketPublishSucceededCount ?? 0),
       coordinatorTicketStillMissingCount: Number(primaryCoordinatorDebug?.ticketStillMissingCount ?? 0),
       coordinatorTicketResentCount: Number(primaryCoordinatorDebug?.ticketResentCount ?? 0),
+      rowsWithPublishSuccessNoObservation,
+      rowsWithPartialRelaySuccessNoObservation,
+      rowsWithPublishUnconfirmedEventuallyObserved,
+      rowsObservedOnlyAfterBackfill,
       rowsWithoutAcceptedBallotCount: rowsWithoutAcceptedBallot.length,
       unmatchedRowDiagnostics,
       totalVoters: voterTicketSummary.length,
