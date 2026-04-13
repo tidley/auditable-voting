@@ -15,6 +15,7 @@ import {
   sendSimpleShareAssignment,
   sendSimpleSubCoordinatorJoin,
   sendSimpleRoundTicket,
+  isDeliveryConfirmed,
   type SimpleDmAcknowledgement,
   type SimpleCoordinatorFollower,
   type SimpleShardRequest,
@@ -97,6 +98,7 @@ type TicketRelayResult = {
 type TicketDeliveryState = {
   status: string;
   eventId?: string;
+  requestId?: string;
   responseId?: string;
   priorEventIds?: string[];
   priorResponseIds?: string[];
@@ -142,11 +144,12 @@ type CoordinatorRuntimeReadiness = {
 };
 
 const SIMPLE_TICKET_SEND_STAGGER_MS = 900;
+const SIMPLE_HUMAN_ACTION_JITTER_MAX_MS = 30000;
 const SIMPLE_COORDINATOR_CONTROL_BACKFILL_INTERVAL_MS = 4000;
 const SIMPLE_COORDINATOR_ROUND_OPEN_POST_WELCOME_GRACE_MS = 1200;
 const SIMPLE_COORDINATOR_ROUND_OPEN_RETRY_DELAY_MS = 5000;
 const SIMPLE_COORDINATOR_ROUND_OPEN_RETRY_MAX_ATTEMPTS = 3;
-const SIMPLE_TICKET_RETRY_MIN_AGE_MS = 2000;
+const SIMPLE_TICKET_RETRY_MIN_AGE_MS = 45000;
 
 function sortCoordinatorRoster(values: string[]) {
   return [...new Set(values.filter((value) => value.trim().length > 0))].sort();
@@ -154,6 +157,16 @@ function sortCoordinatorRoster(values: string[]) {
 
 function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function randomHumanActionDelayMs() {
+  const processEnv = (globalThis as typeof globalThis & {
+    process?: { env?: Record<string, string | undefined> };
+  }).process?.env;
+  if (import.meta.env.MODE === "test" || processEnv?.VITEST) {
+    return 0;
+  }
+  return Math.floor(Math.random() * SIMPLE_HUMAN_ACTION_JITTER_MAX_MS);
 }
 
 function normalizeLiveVoteSession(
@@ -353,6 +366,7 @@ export default function SimpleCoordinatorApp() {
   const roundBroadcastInFlightRef = useRef<string | null>(null);
   const pendingRoundOpenAttemptRef = useRef(false);
   const roundOpenRetryAttemptsRef = useRef<Record<string, number>>({});
+  const identityHydrationEpochRef = useRef(0);
   const sentMlsWelcomeEventIdsRef = useRef<Record<string, string>>({});
   const sentMlsWelcomeAckIdsRef = useRef<Set<string>>(new Set());
   const verifyAllVisibleRef = useRef<HTMLInputElement | null>(null);
@@ -525,21 +539,11 @@ export default function SimpleCoordinatorApp() {
   ]);
 
   useEffect(() => {
-    const owner = globalThis as typeof globalThis & {
-      __simpleCoordinatorDebug?: unknown;
-    };
-    owner.__simpleCoordinatorDebug = {
-      engineStatus: coordinatorEngineStatus,
-      runtimeReadiness: coordinatorRuntimeReadiness,
-      controlStateLabel: coordinatorControlStateLabel,
-    };
-  }, [coordinatorControlStateLabel, coordinatorEngineStatus, coordinatorRuntimeReadiness]);
-
-  useEffect(() => {
     let cancelled = false;
+    const hydrationEpoch = identityHydrationEpochRef.current;
 
     void loadSimpleActorState("coordinator").then((storedState) => {
-      if (cancelled) {
+      if (cancelled || hydrationEpoch !== identityHydrationEpochRef.current) {
         return;
       }
 
@@ -624,7 +628,7 @@ export default function SimpleCoordinatorApp() {
       setStorageLocked(false);
       setIdentityReady(true);
     }).catch(async (error) => {
-      if (cancelled) {
+      if (cancelled || hydrationEpoch !== identityHydrationEpochRef.current) {
         return;
       }
 
@@ -795,11 +799,6 @@ export default function SimpleCoordinatorApp() {
       setInitialControlBackfillComplete(true);
 
       const maybeApprove = async () => {
-        if (isLeadCoordinator) {
-          setAutoApprovalComplete(true);
-          return;
-        }
-
         try {
           const approval = await service.maybeAutoApproveRoundOpen({
             coordinatorNsec: keypair.nsec,
@@ -1082,6 +1081,38 @@ export default function SimpleCoordinatorApp() {
       }
 
       roundOpenRetryAttemptsRef.current[retryKey] = attemptCount + 1;
+      const localPubkey = localCoordinatorHexPubkey;
+      const localCommitMissing = Boolean(
+        localPubkey && currentRound.missing_open_committers.includes(localPubkey),
+      );
+
+      if (localCommitMissing) {
+        setPublishStatus(
+          `Retrying round-open commit (${attemptCount + 1}/${SIMPLE_COORDINATOR_ROUND_OPEN_RETRY_MAX_ATTEMPTS})...`,
+        );
+
+        void latestService.maybeAutoApproveRoundOpen({
+          coordinatorNsec: keypair.nsec,
+        }).then((approval) => {
+          setCoordinatorControlCache(latestService.snapshot());
+          setCoordinatorControlView(latestService.getState());
+          setCoordinatorControlStateLabel(
+            formatCoordinatorControlStateLabel(
+              latestService.getState(),
+              coordinatorControlServiceRef.current?.getEngineStatus() ?? null,
+            ),
+          );
+          if (approval) {
+            setPublishStatus("Coordinator round-open approval sent.");
+          } else {
+            setPublishStatus("Round-open commit retry had nothing to send.");
+          }
+        }).catch(() => {
+          setPublishStatus("Round-open retry failed.");
+        });
+        return;
+      }
+
       setPublishStatus(
         `Retrying round-open proposal (${attemptCount + 1}/${SIMPLE_COORDINATOR_ROUND_OPEN_RETRY_MAX_ATTEMPTS})...`,
       );
@@ -1115,7 +1146,13 @@ export default function SimpleCoordinatorApp() {
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [coordinatorControlView, coordinatorHexRoster, isLeadCoordinator, keypair?.nsec]);
+  }, [
+    coordinatorControlView,
+    coordinatorHexRoster,
+    isLeadCoordinator,
+    keypair?.nsec,
+    localCoordinatorHexPubkey,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1642,6 +1679,7 @@ export default function SimpleCoordinatorApp() {
   }, [selectedSubmittedVote?.votingId]);
 
   function refreshIdentity() {
+    identityHydrationEpochRef.current += 1;
     const nextKeypair = createSimpleCoordinatorKeypair();
     void saveSimpleActorState({
       role: "coordinator",
@@ -1696,6 +1734,7 @@ export default function SimpleCoordinatorApp() {
       return;
     }
 
+    identityHydrationEpochRef.current += 1;
     const nextKeypair = {
       nsec: trimmed,
       npub: derivedNpub,
@@ -1809,6 +1848,7 @@ export default function SimpleCoordinatorApp() {
         updatedAt: new Date().toISOString(),
         cache: bundle.cache,
       }, storagePassphrase ? { passphrase: storagePassphrase } : undefined);
+      identityHydrationEpochRef.current += 1;
       setKeypair(bundle.keypair);
       setIdentityStatus("Identity restored from backup.");
       setBackupStatus(`Backup restored from ${bundle.exportedAt}.`);
@@ -1908,6 +1948,7 @@ export default function SimpleCoordinatorApp() {
           : [],
       );
       setStoragePassphrase(trimmed);
+      identityHydrationEpochRef.current += 1;
       setKeypair(storedState.keypair);
       setLeadCoordinatorNpub(typeof cache?.leadCoordinatorNpub === "string" ? cache.leadCoordinatorNpub : "");
       setFollowers(Array.isArray(cache?.followers) ? cache.followers : []);
@@ -2099,7 +2140,10 @@ export default function SimpleCoordinatorApp() {
     });
   }
 
-  async function sendTicket(follower: SimpleCoordinatorFollower) {
+  async function sendTicket(
+    follower: SimpleCoordinatorFollower,
+    options?: { preSendDelayMs?: number },
+  ) {
     const coordinatorNpub = keypair?.npub ?? "";
     const coordinatorSecretKey = decodeNsec(keypair?.nsec ?? "");
     const votingId = selectedPublishedVote?.votingId ?? "";
@@ -2118,6 +2162,10 @@ export default function SimpleCoordinatorApp() {
       || activeShareIndex <= 0
     ) {
       return;
+    }
+
+    if (options?.preSendDelayMs && options.preSendDelayMs > 0) {
+      await wait(options.preSendDelayMs);
     }
 
     const keyAnnouncement = await ensureBlindKeyAnnouncementForRound({
@@ -2141,6 +2189,7 @@ export default function SimpleCoordinatorApp() {
       ...current,
       [ticketStatusKey]: {
         status: "Sending ticket...",
+        requestId: matchingRequest.id,
         attempts: (current[ticketStatusKey]?.attempts ?? 0) + 1,
         lastAttemptAt: new Date().toISOString(),
         relayResults: undefined,
@@ -2166,6 +2215,9 @@ export default function SimpleCoordinatorApp() {
         shareIndex: activeShareIndex,
         thresholdT: activeThresholdT,
         thresholdN: activeThresholdN,
+        attemptNo: (ticketDeliveries[ticketStatusKey]?.attempts ?? 0) + 1,
+        supersedesEventId: ticketDeliveries[ticketStatusKey]?.eventId,
+        ticketId: ticketDeliveries[ticketStatusKey]?.responseId,
       });
 
       setTicketDeliveries((current) => {
@@ -2188,6 +2240,7 @@ export default function SimpleCoordinatorApp() {
           [ticketStatusKey]: {
           status: result.successes > 0 ? "Ticket sent." : "Ticket send failed.",
           eventId: result.eventId,
+          requestId: matchingRequest.id,
           responseId: result.responseId,
           priorEventIds,
           priorResponseIds,
@@ -2202,6 +2255,7 @@ export default function SimpleCoordinatorApp() {
         ...current,
         [ticketStatusKey]: {
           status: "Ticket send failed.",
+          requestId: matchingRequest.id,
           attempts: current[ticketStatusKey]?.attempts ?? 1,
           lastAttemptAt: new Date().toISOString(),
           relayResults: undefined,
@@ -2576,6 +2630,122 @@ export default function SimpleCoordinatorApp() {
   const noValidatedVotes = acceptedVotes.filter((entry) => entry.choice === "No");
   const yesRejectedVotes = rejectedVotes.filter((entry) => entry.choice === "Yes");
   const noRejectedVotes = rejectedVotes.filter((entry) => entry.choice === "No");
+  const activeAcceptedVotes = useMemo(
+    () => derivedProtocolState?.ballot_state.accepted_ballots.filter(
+      (entry) => entry.round_id === (selectedPublishedVote?.votingId ?? ""),
+    ) ?? [],
+    [derivedProtocolState, selectedPublishedVote?.votingId],
+  );
+  const activeRejectedVotes = useMemo(
+    () => derivedProtocolState?.ballot_state.rejected_ballots.filter(
+      (entry) => entry.round_id === (selectedPublishedVote?.votingId ?? ""),
+    ) ?? [],
+    [derivedProtocolState, selectedPublishedVote?.votingId],
+  );
+  const activeAcceptedTicketIds = useMemo(
+    () =>
+      new Set(
+        activeAcceptedVotes
+          .map((vote) => vote.ticket_id?.trim())
+          .filter((value): value is string => Boolean(value)),
+      ),
+    [activeAcceptedVotes],
+  );
+  const activeAcceptedRequestIds = useMemo(
+    () =>
+      new Set(
+        activeAcceptedVotes
+          .map((vote) => vote.request_id?.trim())
+          .filter((value): value is string => Boolean(value)),
+      ),
+    [activeAcceptedVotes],
+  );
+  const activeAcceptedVoterPubkeys = useMemo(
+    () =>
+      new Set(
+        activeAcceptedVotes
+          .map((vote) => vote.voter_pubkey?.trim())
+          .filter((value): value is string => Boolean(value)),
+      ),
+    [activeAcceptedVotes],
+  );
+  const acceptedBallotsByRequestId = useMemo(() => {
+    const map = new Map<string, Array<{
+      eventId: string;
+      requestId?: string;
+      ticketId?: string;
+      roundId: string;
+      voterPubkey: string;
+      choice: string;
+    }>>();
+    for (const ballot of activeAcceptedVotes) {
+      const key = ballot.request_id?.trim();
+      if (!key) {
+        continue;
+      }
+      const next = map.get(key) ?? [];
+      next.push({
+        eventId: ballot.event_id,
+        requestId: ballot.request_id,
+        ticketId: ballot.ticket_id,
+        roundId: ballot.round_id,
+        voterPubkey: ballot.voter_pubkey,
+        choice: ballot.choice,
+      });
+      map.set(key, next);
+    }
+    return map;
+  }, [activeAcceptedVotes]);
+  const acceptedBallotsByTicketId = useMemo(() => {
+    const map = new Map<string, Array<{
+      eventId: string;
+      requestId?: string;
+      ticketId?: string;
+      roundId: string;
+      voterPubkey: string;
+      choice: string;
+    }>>();
+    for (const ballot of activeAcceptedVotes) {
+      const key = ballot.ticket_id?.trim();
+      if (!key) {
+        continue;
+      }
+      const next = map.get(key) ?? [];
+      next.push({
+        eventId: ballot.event_id,
+        requestId: ballot.request_id,
+        ticketId: ballot.ticket_id,
+        roundId: ballot.round_id,
+        voterPubkey: ballot.voter_pubkey,
+        choice: ballot.choice,
+      });
+      map.set(key, next);
+    }
+    return map;
+  }, [activeAcceptedVotes]);
+  const deliveryCompletionAcknowledgements = useMemo(() => {
+    if (!selectedPublishedVote?.votingId) {
+      return [] as Array<{ actorNpub: string; ackedAction: string; ackedEventId: string; responseId: string }>;
+    }
+    const synthetic: Array<{ actorNpub: string; ackedAction: string; ackedEventId: string; responseId: string }> = [];
+    for (const [key, delivery] of Object.entries(ticketDeliveries)) {
+      const [voterNpub, votingId] = key.split(":");
+      if (votingId !== selectedPublishedVote.votingId) {
+        continue;
+      }
+      const responseId = delivery.responseId?.trim();
+      if (!responseId || !activeAcceptedTicketIds.has(responseId)) {
+        continue;
+      }
+      synthetic.push({
+        actorNpub: voterNpub,
+        ackedAction: "simple_round_ticket",
+        ackedEventId: responseId,
+        responseId,
+      });
+    }
+    return synthetic;
+  }, [activeAcceptedTicketIds, selectedPublishedVote?.votingId, ticketDeliveries]);
   const submittedVoteNumbers = useMemo(() => {
     const nextNumbers = new Map<string, number>();
     [...acceptedVotes, ...rejectedVotes].forEach((entry, index) => {
@@ -2600,17 +2770,79 @@ export default function SimpleCoordinatorApp() {
       createdAt: request.createdAt,
     })),
     ticketDeliveries,
-    acknowledgements: dmAcknowledgements.map((ack) => ({
-      actorNpub: ack.actorNpub,
-      ackedAction: ack.ackedAction,
-      ackedEventId: ack.ackedEventId,
-      responseId: ack.responseId,
-    })),
+    acknowledgements: [
+      ...dmAcknowledgements.map((ack) => ({
+        actorNpub: ack.actorNpub,
+        ackedAction: ack.ackedAction,
+        ackedEventId: ack.ackedEventId,
+        responseId: ack.responseId,
+      })),
+      ...deliveryCompletionAcknowledgements,
+    ],
     canIssueTickets,
   }), [
     canIssueTickets,
     dmAcknowledgements,
+    deliveryCompletionAcknowledgements,
     followers,
+    pendingRequests,
+    selectedPublishedVote?.votingId,
+    ticketDeliveries,
+  ]);
+  const enhancedCoordinatorFollowerRows = useMemo(() => coordinatorFollowerRows.map((row) => {
+    const selectedVotingId = selectedPublishedVote?.votingId ?? "";
+    const ticketStatusKey = selectedVotingId ? `${row.voterNpub}:${selectedVotingId}` : "";
+    const delivery = ticketStatusKey ? ticketDeliveries[ticketStatusKey] : undefined;
+    const ticketSent = Boolean(delivery?.status?.startsWith("Ticket sent."));
+    const ackSeen = Boolean(
+      row.receipt?.tone === "ok"
+      || (delivery?.responseId
+        && dmAcknowledgements.some((ack) => (
+          ack.ackedAction === "simple_round_ticket"
+          && ack.responseId === delivery.responseId
+        ))),
+    );
+    const requestId = delivery?.requestId?.trim() || pendingRequests.find(
+      (request) =>
+        request.voterNpub === row.voterNpub
+        && request.votingId === selectedVotingId,
+    )?.id?.trim();
+    const ticketId = delivery?.responseId?.trim();
+    const acceptedByTicket = Boolean(ticketId && activeAcceptedTicketIds.has(ticketId));
+    const acceptedByRequest = Boolean(requestId && activeAcceptedRequestIds.has(requestId));
+    const acceptedByVoterPubkeyFallback = activeAcceptedVoterPubkeys.has(row.voterNpub);
+    const ballotAccepted = Boolean(
+      acceptedByTicket
+      || acceptedByRequest
+      || acceptedByVoterPubkeyFallback,
+    );
+    const ticketDeliveryConfirmed = isDeliveryConfirmed({ ackSeen, ballotAccepted });
+
+    const receipt = ballotAccepted
+      ? { tone: "ok", text: "Valid ballot accepted." }
+      : ticketSent && !ackSeen
+        ? { tone: "pending", text: "Ticket issued. Waiting for acknowledgement or valid ballot submission." }
+        : row.receipt;
+
+    return {
+      ...row,
+      receipt,
+      ackSeen,
+      ballotAccepted,
+      acceptedByRequest,
+      acceptedByTicket,
+      acceptedByVoterPubkeyFallback,
+      requestId,
+      ticketId,
+      ticketDeliveryConfirmed,
+      ticketSent,
+    };
+  }), [
+    activeAcceptedRequestIds,
+    activeAcceptedTicketIds,
+    activeAcceptedVoterPubkeys,
+    coordinatorFollowerRows,
+    dmAcknowledgements,
     pendingRequests,
     selectedPublishedVote?.votingId,
     ticketDeliveries,
@@ -2622,14 +2854,14 @@ export default function SimpleCoordinatorApp() {
   const normalizedFollowerSearch = followerSearch.trim().toLowerCase();
   const filteredCoordinatorFollowerRows = useMemo(() => (
     normalizedFollowerSearch
-      ? coordinatorFollowerRows.filter((row) => {
+      ? enhancedCoordinatorFollowerRows.filter((row) => {
         return (
           row.voterId.toLowerCase().includes(normalizedFollowerSearch)
         );
       })
-      : coordinatorFollowerRows
+      : enhancedCoordinatorFollowerRows
   ), [
-    coordinatorFollowerRows,
+    enhancedCoordinatorFollowerRows,
     normalizedFollowerSearch,
     visibleFollowersById,
   ]);
@@ -2640,6 +2872,99 @@ export default function SimpleCoordinatorApp() {
         .filter((follower): follower is SimpleCoordinatorFollower => Boolean(follower)),
     [filteredCoordinatorFollowerRows, visibleFollowersById],
   );
+  useEffect(() => {
+    const waitingForAcknowledgements = enhancedCoordinatorFollowerRows.filter(
+      (row) => row.ticketSent && !row.ackSeen,
+    ).length;
+    const waitingForCompletionConfirmation = enhancedCoordinatorFollowerRows.filter(
+      (row) => row.ticketSent && !row.ticketDeliveryConfirmed,
+    ).length;
+    const matchedRequestIds = new Set(
+      enhancedCoordinatorFollowerRows
+        .filter((row) => row.ballotAccepted && row.requestId)
+        .map((row) => String(row.requestId)),
+    );
+    const matchedTicketIds = new Set(
+      enhancedCoordinatorFollowerRows
+        .filter((row) => row.ballotAccepted && row.ticketId)
+        .map((row) => String(row.ticketId)),
+    );
+    const unmatchedAcceptedBallots = activeAcceptedVotes
+      .filter((entry) => {
+        const requestId = entry.request_id?.trim();
+        const ticketId = entry.ticket_id?.trim();
+        if (!requestId && !ticketId) {
+          return true;
+        }
+        return Boolean(
+          (requestId && !matchedRequestIds.has(requestId))
+          || (ticketId && !matchedTicketIds.has(ticketId)),
+        );
+      })
+      .map((entry) => ({
+        eventId: entry.event_id,
+        voterPubkey: entry.voter_pubkey,
+        requestId: entry.request_id,
+        ticketId: entry.ticket_id,
+        roundId: entry.round_id,
+      }));
+    const rowsWithoutAcceptedBallot = enhancedCoordinatorFollowerRows
+      .filter((row) => row.ticketSent && !row.ballotAccepted)
+      .map((row) => ({
+        voterPubkey: row.voterNpub,
+        requestId: row.requestId ?? null,
+        ticketId: row.ticketId ?? null,
+      }));
+    const owner = globalThis as typeof globalThis & {
+      __simpleCoordinatorDebug?: unknown;
+    };
+    owner.__simpleCoordinatorDebug = {
+      engineStatus: coordinatorEngineStatus,
+      runtimeReadiness: coordinatorRuntimeReadiness,
+      controlStateLabel: coordinatorControlStateLabel,
+      waitingForAcknowledgements,
+      waitingForCompletionConfirmation,
+      acceptedBallotCount: activeAcceptedVotes.length,
+      rejectedBallotCount: activeRejectedVotes.length,
+      acceptedBallotsByRequestId: Array.from(acceptedBallotsByRequestId.entries()),
+      acceptedBallotsByTicketId: Array.from(acceptedBallotsByTicketId.entries()),
+      unmatchedAcceptedBallots,
+      rowsWithoutAcceptedBallot,
+      acceptedBallots: activeAcceptedVotes.map((entry) => ({
+        eventId: entry.event_id,
+        voterPubkey: entry.voter_pubkey,
+        requestId: entry.request_id,
+        ticketId: entry.ticket_id,
+        roundId: entry.round_id,
+      })),
+      rejectedBallots: activeRejectedVotes.map((entry) => ({
+        eventId: entry.event_id,
+        voterPubkey: entry.voter_pubkey,
+        code: entry.reason.code,
+        detail: entry.reason.detail,
+      })),
+      voters: enhancedCoordinatorFollowerRows.map((row) => ({
+        voterPubkey: row.voterNpub,
+        ticketSent: row.ticketSent,
+        ticketAckSeen: row.ackSeen,
+        ballotAccepted: row.ballotAccepted,
+        acceptedByRequest: row.acceptedByRequest,
+        acceptedByTicket: row.acceptedByTicket,
+        requestId: row.requestId,
+        ticketId: row.ticketId,
+        ticketDeliveryConfirmed: row.ticketDeliveryConfirmed,
+      })),
+    };
+  }, [
+    acceptedBallotsByRequestId,
+    acceptedBallotsByTicketId,
+    coordinatorControlStateLabel,
+    coordinatorEngineStatus,
+    coordinatorRuntimeReadiness,
+    activeAcceptedVotes,
+    activeRejectedVotes,
+    enhancedCoordinatorFollowerRows,
+  ]);
   const verifiedVisibleFollowerCount = filteredFollowers.filter(
     (follower) => autoSendFollowers[follower.voterNpub],
   ).length;
@@ -2793,7 +3118,7 @@ export default function SimpleCoordinatorApp() {
       }
 
       autoSendInFlightRef.current.add(ticketStatusKey);
-      void sendTicket(follower).finally(() => {
+      void sendTicket(follower, { preSendDelayMs: randomHumanActionDelayMs() }).finally(() => {
         autoSendInFlightRef.current.delete(ticketStatusKey);
       });
     }
@@ -2814,12 +3139,15 @@ export default function SimpleCoordinatorApp() {
       })),
       selectedPublishedVotingId: activeVotingId,
       ticketDeliveries,
-      acknowledgements: dmAcknowledgements.map((ack) => ({
-        actorNpub: ack.actorNpub,
-        ackedAction: ack.ackedAction,
-        ackedEventId: ack.ackedEventId,
-        responseId: ack.responseId,
-      })),
+      acknowledgements: [
+        ...dmAcknowledgements.map((ack) => ({
+          actorNpub: ack.actorNpub,
+          ackedAction: ack.ackedAction,
+          ackedEventId: ack.ackedEventId,
+          responseId: ack.responseId,
+        })),
+        ...deliveryCompletionAcknowledgements,
+      ],
       nowMs,
       minRetryAgeMs: SIMPLE_TICKET_RETRY_MIN_AGE_MS,
       maxAttempts: 8,
@@ -2845,7 +3173,7 @@ export default function SimpleCoordinatorApp() {
       }
 
       autoSendInFlightRef.current.add(ticketStatusKey);
-      void sendTicket(follower).finally(() => {
+      void sendTicket(follower, { preSendDelayMs: randomHumanActionDelayMs() }).finally(() => {
         autoSendInFlightRef.current.delete(ticketStatusKey);
       });
     }
@@ -2853,6 +3181,7 @@ export default function SimpleCoordinatorApp() {
     activeVotingId,
     autoSendFollowers,
     coordinatorFollowerRows,
+    deliveryCompletionAcknowledgements,
     dmAcknowledgements,
     nowMs,
     ticketDeliveries,
@@ -3101,16 +3430,16 @@ export default function SimpleCoordinatorApp() {
                       : undefined;
                     const isTicketSending =
                       ticketDelivery?.status === 'Sending ticket...';
-                    const ticketReceiptConfirmed = row.receipt?.tone === 'ok';
+                    const ticketDeliveryConfirmed = row.ticketDeliveryConfirmed;
                     const lastAttemptAtMs = ticketDelivery?.lastAttemptAt
                       ? Date.parse(ticketDelivery.lastAttemptAt)
                       : Number.NaN;
                     const showResendTicket = Boolean(
                       selectedPublishedVote &&
                       ticketDelivery &&
-                      !ticketReceiptConfirmed &&
+                      !ticketDeliveryConfirmed &&
                       Number.isFinite(lastAttemptAtMs) &&
-                      nowMs - lastAttemptAtMs >= 30_000,
+                      nowMs - lastAttemptAtMs >= SIMPLE_TICKET_RETRY_MIN_AGE_MS,
                     );
 
                     return (

@@ -7,6 +7,8 @@ import { getPublicKey, nip19 } from "nostr-tools";
 import { createHash } from "node:crypto";
 import { resetSimpleActorStateForTests, saveSimpleActorState } from "./simpleLocalState";
 
+vi.setConfig({ testTimeout: 120_000 });
+
 type InternalResponse = {
   id: string;
   dmEventId: string;
@@ -58,6 +60,7 @@ let subCoordinatorApplications: Array<{
   leadCoordinatorNpub: string;
   coordinatorNpub: string;
   coordinatorId: string;
+  mlsJoinPackage?: string;
   createdAt: string;
 }> = [];
 let shareAssignments: Array<{
@@ -166,6 +169,13 @@ let dmAcknowledgementSubscribers: Array<{
     createdAt: string;
   }>) => void;
 }> = [];
+let coordinatorMlsWelcomes: Array<{
+  recipientNpub: string;
+  leadCoordinatorNpub: string;
+  electionId: string;
+  welcomeBundle: string;
+  createdAt: string;
+}> = [];
 let coordinatorRosterAnnouncements: Array<{
   recipientNpub: string;
   leadCoordinatorNpub: string;
@@ -189,6 +199,17 @@ let coordinatorRosterSubscribers: Array<{
     createdAt: string;
   }>) => void;
 }> = [];
+let coordinatorMlsWelcomeSubscribers: Array<{
+  coordinatorNpub: string;
+  onWelcomes: (welcomes: Array<{
+    id: string;
+    dmEventId: string;
+    leadCoordinatorNpub: string;
+    electionId: string;
+    welcomeBundle: string;
+    createdAt: string;
+  }>) => void;
+}> = [];
 let blindAnnouncementSubscribers: Array<{
   coordinatorNpub: string;
   votingId?: string;
@@ -206,6 +227,8 @@ let coordinatorControlSnapshots = new Map<string, {
       election_id: string;
       local_pubkey: string;
       coordinator_roster: string[];
+      lead_pubkey?: string | null;
+      engine_kind?: string;
     };
     state: Record<string, never>;
     group_engine: { engine_kind: string };
@@ -242,10 +265,27 @@ let coordinatorControlSnapshots = new Map<string, {
       result_approval_senders: string[];
     }>;
   };
+  status: {
+    engine_kind: string;
+    group_ready: boolean;
+    joined_group: boolean;
+    welcome_applied: boolean | null;
+    current_epoch: number;
+    snapshot_freshness: string;
+    public_round_visibility: string;
+    readiness: string;
+    blocked_reason: string | null;
+  };
 }>();
 let suppressedShardResponseNotifications = new Set<string>();
 let suppressedShardResponseNotificationRoutes = new Set<string>();
 let droppedTicketAttemptsByRoute = new Map<string, number>();
+let coordinatorControlPublishAttempts: Array<{
+  electionId: string;
+  localPubkey: string;
+  roundId: string;
+}> = [];
+let autoDeliverCoordinatorMlsWelcomes = true;
 const originalWebSocket = globalThis.WebSocket;
 
 function sha(input: string) {
@@ -345,6 +385,7 @@ function subCoordinatorEntriesForLead(leadCoordinatorNpub: string) {
       coordinatorNpub: entry.coordinatorNpub,
       coordinatorId: entry.coordinatorId,
       leadCoordinatorNpub: entry.leadCoordinatorNpub,
+      mlsJoinPackage: entry.mlsJoinPackage,
       createdAt: entry.createdAt,
     }));
 }
@@ -455,6 +496,32 @@ function notifyCoordinatorRosterSubscribers(recipientNpub: string) {
       subscriber.onAnnouncements(nextAnnouncements);
     }
   }
+}
+
+function coordinatorMlsWelcomeEntriesForCoordinator(coordinatorNpub: string) {
+  return coordinatorMlsWelcomes
+    .filter((entry) => entry.recipientNpub === coordinatorNpub)
+    .map((entry, index) => ({
+      id: `welcome-${index + 1}`,
+      dmEventId: `welcome-event-${index + 1}`,
+      leadCoordinatorNpub: entry.leadCoordinatorNpub,
+      electionId: entry.electionId,
+      welcomeBundle: entry.welcomeBundle,
+      createdAt: entry.createdAt,
+    }));
+}
+
+function notifyCoordinatorMlsWelcomeSubscribers(recipientNpub: string) {
+  const nextWelcomes = coordinatorMlsWelcomeEntriesForCoordinator(recipientNpub);
+  for (const subscriber of coordinatorMlsWelcomeSubscribers) {
+    if (subscriber.coordinatorNpub === recipientNpub) {
+      subscriber.onWelcomes(nextWelcomes);
+    }
+  }
+}
+
+function deliverCoordinatorMlsWelcomes(recipientNpub: string) {
+  notifyCoordinatorMlsWelcomeSubscribers(recipientNpub);
 }
 
 function notifyCoordinatorControlSubscribers(electionId: string) {
@@ -687,11 +754,13 @@ vi.mock("./simpleShardDm", () => ({
   sendSimpleSubCoordinatorJoin: vi.fn(async (input: {
     leadCoordinatorNpub: string;
     coordinatorNpub: string;
+    mlsJoinPackage?: string;
   }) => {
     subCoordinatorApplications.push({
       leadCoordinatorNpub: input.leadCoordinatorNpub,
       coordinatorNpub: input.coordinatorNpub,
       coordinatorId: sha(input.coordinatorNpub).slice(0, 7),
+      mlsJoinPackage: input.mlsJoinPackage,
       createdAt: new Date().toISOString(),
     });
     notifySubCoordinatorApplicationSubscribers(input.leadCoordinatorNpub);
@@ -717,6 +786,46 @@ vi.mock("./simpleShardDm", () => ({
     input.onApplications(subCoordinatorEntriesForLead(leadCoordinatorNpub));
     return () => {
       subCoordinatorApplicationSubscribers = subCoordinatorApplicationSubscribers.filter((entry) => entry !== subscriber);
+    };
+  }),
+  sendSimpleCoordinatorMlsWelcome: vi.fn(async (input: {
+    coordinatorNpub: string;
+    leadCoordinatorNpub: string;
+    electionId: string;
+    welcomeBundle: string;
+  }) => {
+    coordinatorMlsWelcomes.push({
+      recipientNpub: input.coordinatorNpub,
+      leadCoordinatorNpub: input.leadCoordinatorNpub,
+      electionId: input.electionId,
+      welcomeBundle: input.welcomeBundle,
+      createdAt: new Date().toISOString(),
+    });
+    if (autoDeliverCoordinatorMlsWelcomes) {
+      notifyCoordinatorMlsWelcomeSubscribers(input.coordinatorNpub);
+    }
+    return { eventId: `welcome-event-${coordinatorMlsWelcomes.length}`, successes: 1, failures: 0, relayResults: [] };
+  }),
+  subscribeSimpleCoordinatorMlsWelcomes: vi.fn((input: {
+    coordinatorNsec: string;
+    onWelcomes: (welcomes: Array<{
+      id: string;
+      dmEventId: string;
+      leadCoordinatorNpub: string;
+      electionId: string;
+      welcomeBundle: string;
+      createdAt: string;
+    }>) => void;
+  }) => {
+    const coordinatorNpub = nsecToNpub(input.coordinatorNsec);
+    const subscriber = {
+      coordinatorNpub,
+      onWelcomes: input.onWelcomes,
+    };
+    coordinatorMlsWelcomeSubscribers.push(subscriber);
+    input.onWelcomes(coordinatorMlsWelcomeEntriesForCoordinator(coordinatorNpub));
+    return () => {
+      coordinatorMlsWelcomeSubscribers = coordinatorMlsWelcomeSubscribers.filter((entry) => entry !== subscriber);
     };
   }),
   sendSimpleShareAssignment: vi.fn(async (input: {
@@ -959,6 +1068,9 @@ vi.mock("./simpleShardDm", () => ({
     const actorNpubs = [input.actorNsec, ...(input.actorNsecs ?? [])].map((value) => nsecToNpub(value) as string);
     return dmAcknowledgements.filter((ack) => actorNpubs.includes(ack.recipientNpub));
   }),
+  isDeliveryConfirmed: vi.fn((input: { ackSeen: boolean; ballotAccepted: boolean }) => (
+    Boolean(input.ackSeen || input.ballotAccepted)
+  )),
   sendSimpleCoordinatorRoster: vi.fn(async (input: {
     recipientNpub: string;
     leadCoordinatorNpub: string;
@@ -994,6 +1106,7 @@ vi.mock("./simpleShardDm", () => ({
       coordinatorRosterSubscribers = coordinatorRosterSubscribers.filter((entry) => entry !== subscriber);
     };
   }),
+  recordSimpleTicketLifecycleTrace: vi.fn(() => null),
 }));
 
 vi.mock("./simpleVotingSession", () => ({

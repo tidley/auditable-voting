@@ -154,6 +154,8 @@ pub struct EncryptedBallotEvent {
     pub schema_version: u32,
     pub election_id: String,
     pub round_id: String,
+    pub request_id: Option<String>,
+    pub ticket_id: Option<String>,
     pub created_at: i64,
     pub author_pubkey: String,
     pub event_id: String,

@@ -536,7 +536,9 @@
         <ul>
           <li>Public, signed event publication for rounds, ballots, and results</li>
           <li>Coordinator-control carrier events for round proposals, commits, tally coordination, and recovery checkpoints</li>
-          <li>Private NIP-17 DM transport for issuance requests and direct coordinator-to-voter ticket delivery, with retry and history backfill for missed tickets, plus live-round history backfill on the public plane</li>
+          <li>Private encrypted mailbox objects for issuance requests, ticket delivery, and ticket acknowledgements, with stable ids and relay-history backfill</li>
+          <li>In initial course-feedback mode, acknowledgements are diagnostic and valid ballot acceptance is the completion signal</li>
+          <li>Ballot events now carry stable `request_id` / `ticket_id` lineage so coordinator mapping and harness acceptance counts follow Rust truth</li>
           <li>Optional NIP-65 inbox/outbox hints for relay discovery when enabled</li>
           <li>Relay diversity instead of one central database</li>
           <li>Portable identities and signed announcements</li>
@@ -551,6 +553,8 @@
           <li>The lead coordinator can push share-index assignments to sub-coordinators before issuance starts</li>
           <li>Each coordinator now sends its own ticket share directly to the voter</li>
           <li>Non-lead ticket sends are slightly staggered by share index to reduce same-recipient relay bursts</li>
+          <li>Automatic follow, blind-request, ticket, and acknowledgement sends now use random 0-30s human-style pacing with slower retries</li>
+          <li>Mailbox ticket publishes now keep one deterministic anchor relay, rotate secondary relays by recipient, and temporarily cool down relays that rate-limit</li>
           <li>Coordinator follower rows now expose per-ticket relay publish diagnostics for debugging delivery gaps</li>
           <li>The default path currently prefers a tight curated relay set over broad hint expansion</li>
           <li>Reads and live subscriptions are kept to a smaller primary subset to reduce relay-side `too many concurrent REQs` pressure</li>
@@ -615,7 +619,7 @@
           </tr>
           <tr>
             <td><strong>Private issuance</strong></td>
-            <td>NIP-17 DMs</td>
+            <td>Encrypted mailbox objects</td>
             <td>The voter issuance path is preserved in phase 1, so blind requests and blind responses still move privately without redesigning the credential flow.</td>
           </tr>
           <tr>
@@ -716,7 +720,7 @@
         </div>
         <div class="flow-box">
           <h4>3. Issue blind shares</h4>
-          <p>Private over DMs: blinded request in, blind signature share out.</p>
+          <p>Private over mailbox objects: blinded request in, blind signature share out, acknowledgement back through the same mailbox lineage.</p>
         </div>
         <div class="flow-box">
           <h4>4. Publish ballots</h4>
@@ -812,7 +816,7 @@
       </div>
     </div>
     <div class="quote">
-        <p>The current repo is already client-only and static-deployable. Small local gates are better but still not fully boring: `1 / 1 / 1` and `1 / 2 / 2` are good, the live harness no longer blind-fires round 1 before the lead is visibly ready, and a fresh `v0.73` rerun of `2 / 2 / 2` completed cleanly after normalising shard-request ids across the request, ticket, and acknowledgement path. That said, `2 / 2 / 2` still is not signed off as repeatedly reliable, and `5 / 10 / 3` is still not signed off. The live browser supervisory path now uses the OpenMLS bootstrap/join flow, blocks the first round until sub-coordinator welcome acknowledgement is visible after the non-lead has completed an initial coordinator-control sync, gives coordinator-control and ticket/ack traffic a slightly wider primary relay subset than ordinary DMs, queues DM publishes per sender-recipient conversation rather than serialising every sender behind one recipient queue, preserves prior ticket attempt ids so later acknowledgements are not lost when retries replace the latest tracked response, keeps shard-request ids stable end to end instead of letting the DM envelope and blind request disagree about the logical request id, and now surfaces coordinator runtime-readiness phases plus protocol-layer failure classes (`startup`, `dm_pipeline`, `mixed`) with coordinator/voter readiness snapshots in the debug evidence. The current large-run blocker is still unstable enough to present as more than one failure shape.</p>
+        <p>The current repo is already client-only and static-deployable. Small local gates are better but still not fully boring: `1 / 1 / 1` and `1 / 2 / 2` are good, the live harness no longer blind-fires round 1 before the lead is visibly ready, and a fresh `v0.73` rerun of `2 / 2 / 2` completed cleanly after normalising shard-request ids across the request, ticket, and acknowledgement path. That said, `2 / 2 / 2` still is not signed off as repeatedly reliable, and `5 / 10 / 3` is still not signed off. A fresh `1 / 20 / 1` run exposed relay-side `you are noting too much` limits in the private ticket/ack path before the current pacing change. The live browser supervisory path now uses the OpenMLS bootstrap/join flow, blocks the first round until sub-coordinator welcome acknowledgement is visible after the non-lead has completed an initial coordinator-control sync, gives coordinator-control and ticket/ack traffic a slightly wider primary relay subset than ordinary DMs, queues DM publishes per sender-recipient conversation rather than serialising every sender behind one recipient queue, serialises one coordinator's mailbox ticket publishes through a sender-scoped queue, keeps one deterministic mailbox anchor relay while rotating secondary relays by recipient, temporarily cools down relays that return rate-limit or policy failures, adds random 0-30s human-style delays before automatic follow/request/ticket/ack sends, preserves prior ticket attempt ids so later acknowledgements are not lost when retries replace the latest tracked response, keeps shard-request ids stable end to end instead of letting the DM envelope and blind request disagree about the logical request id, and now surfaces coordinator runtime-readiness phases plus protocol-layer failure classes (`startup`, `dm_pipeline`, `mixed`) with coordinator/voter readiness snapshots in the debug evidence. The current large-run blocker is still unstable enough to present as more than one failure shape.</p>
     </div>
     <div class="speaker-note">Important credibility slide. This is where you show you understand the difference between “possible” and “finished.”</div>
   </section>

@@ -17,10 +17,13 @@ export const SIMPLE_PUBLIC_RELAYS = [
   "wss://strfry.bitsbytom.com",
   "wss://nos.lol",
   "wss://relay.primal.net",
+  "wss://offchain.pub",
+  "wss://nostr.mom",
+  "wss://relay.snort.social",
+  "wss://nostr-pub.wellorder.net",
   "wss://relay.damus.io",
   "wss://nostr.mutinywallet.com",
   "wss://purplepag.es",
-  "wss://nostr.mom",
   "wss://eden.nostr.land",
 ];
 
@@ -47,11 +50,14 @@ export type SimpleLiveVoteSession = {
 
 export type SimpleSubmittedVote = {
   eventId: string;
+  ballotId?: string;
   votingId: string;
   voterNpub: string;
   choice: "Yes" | "No";
   shardProofs: SimplePublicShardProof[];
   tokenId: string | null;
+  requestId?: string;
+  ticketId?: string;
   createdAt: string;
 };
 
@@ -114,10 +120,13 @@ async function parseSimpleSubmittedVoteEvent(
 ): Promise<SimpleSubmittedVote | null> {
   try {
     const payload = JSON.parse(event.content) as {
+      ballot_id?: string;
       voting_id?: string;
       choice?: "Yes" | "No";
       shard_proofs?: SimplePublicShardProof[];
       shard_certificates?: SimpleShardCertificate[];
+      request_id?: string;
+      ticket_id?: string;
       created_at?: string;
     };
 
@@ -136,11 +145,20 @@ async function parseSimpleSubmittedVoteEvent(
 
     return {
       eventId: event.id,
+      ballotId: typeof payload.ballot_id === "string" && payload.ballot_id.trim().length > 0
+        ? payload.ballot_id.trim()
+        : event.id,
       votingId: payload.voting_id,
       voterNpub: nip19.npubEncode(event.pubkey),
       choice: payload.choice,
       shardProofs,
       tokenId: await deriveTokenIdFromSimplePublicShardProofs(shardProofs),
+      requestId: typeof payload.request_id === "string" && payload.request_id.trim().length > 0
+        ? payload.request_id.trim()
+        : undefined,
+      ticketId: typeof payload.ticket_id === "string" && payload.ticket_id.trim().length > 0
+        ? payload.ticket_id.trim()
+        : undefined,
       createdAt: new Date(event.created_at * 1000).toISOString(),
     };
   } catch {
@@ -484,6 +502,9 @@ export async function publishSimpleSubmittedVote(input: {
   votingId: string;
   choice: "Yes" | "No";
   shardCertificates: SimpleShardCertificate[];
+  ballotId?: string;
+  requestId?: string;
+  ticketId?: string;
   relays?: string[];
 }) {
   const ballotDecoded = nip19.decode(input.ballotNsec.trim());
@@ -509,6 +530,7 @@ export async function publishSimpleSubmittedVote(input: {
     channel: `nip65:${ballotNpub}`,
   }).catch(() => null);
   const createdAt = new Date().toISOString();
+  const ballotId = input.ballotId?.trim() || crypto.randomUUID();
   const shardProofs = input.shardCertificates.map((certificate) =>
     toSimplePublicShardProof(certificate),
   );
@@ -520,13 +542,19 @@ export async function publishSimpleSubmittedVote(input: {
     tags: [
       ["t", "simple-live-vote-ballot"],
       ["d", input.votingId],
+      ["ballot-id", ballotId],
+      ...(input.requestId?.trim() ? [["request-id", input.requestId.trim()]] : []),
+      ...(input.ticketId?.trim() ? [["ticket-id", input.ticketId.trim()]] : []),
       ...(tokenId ? [["token-id", tokenId]] : []),
       ...shardProofs.map((proof) => ["coordinator", proof.coordinatorNpub] as [string, string]),
     ],
     content: JSON.stringify({
+      ballot_id: ballotId,
       voting_id: input.votingId,
       choice: input.choice,
       shard_proofs: shardProofs,
+      request_id: input.requestId?.trim() || undefined,
+      ticket_id: input.ticketId?.trim() || undefined,
       created_at: createdAt,
     }),
   }, secretKey);
@@ -552,6 +580,7 @@ export async function publishSimpleSubmittedVote(input: {
 
   return {
     eventId: event.id,
+    ballotId,
     ballotNpub,
     tokenId,
     createdAt,

@@ -15,12 +15,26 @@ import {
 } from "./simpleShardCertificate";
 import { getSharedNostrPool } from "./sharedNostrPool";
 import { normalizeRelaysRust, sortRecordsByCreatedAtDescRust } from "./wasm/auditableVotingCore";
+import {
+  fetchMailboxShardRequests,
+  fetchMailboxShardResponses,
+  fetchMailboxTicketAcknowledgements,
+  sendMailboxRoundTicket,
+  sendMailboxShardRequest,
+  sendMailboxTicketAck,
+  subscribeMailboxShardRequests,
+  subscribeMailboxShardResponses,
+} from "./simpleMailbox";
 
 export const SIMPLE_DM_RELAYS = [
   'wss://nip17.tomdwyer.uk',
   'wss://strfry.bitsbytom.com',
   'wss://relay.primal.net',
   'wss://nos.lol',
+  'wss://offchain.pub',
+  'wss://nostr.mom',
+  'wss://relay.snort.social',
+  'wss://nostr-pub.wellorder.net',
   'wss://relay.0xchat.com',
 ];
 
@@ -63,8 +77,16 @@ export type SimpleDmAcknowledgement = {
   votingId?: string;
   requestId?: string;
   responseId?: string;
+  mailboxId?: string;
   createdAt: string;
 };
+
+export function isDeliveryConfirmed(params: {
+  ackSeen: boolean;
+  ballotAccepted: boolean;
+}) {
+  return params.ackSeen || params.ballotAccepted;
+}
 
 export type DmPublishResult = {
   eventId: string;
@@ -86,6 +108,8 @@ export type SimpleShardRequest = {
   votingId: string;
   blindRequest: SimpleBlindIssuanceRequest;
   createdAt: string;
+  mailboxId?: string;
+  mailboxSalt?: string;
 };
 
 export type SimpleShardResponse = {
@@ -99,6 +123,7 @@ export type SimpleShardResponse = {
   votingPrompt?: string;
   blindShareResponse: SimpleBlindShareResponse;
   shardCertificate?: SimpleShardCertificate;
+  mailboxId?: string;
 };
 
 export type SimpleCoordinatorFollower = {
@@ -831,8 +856,35 @@ export async function sendSimpleDmAcknowledgement(input: {
   votingId?: string;
   requestId?: string;
   responseId?: string;
+  mailboxId?: string;
   relays?: string[];
 }): Promise<DmPublishResult> {
+  if (input.ackedAction === "simple_round_ticket") {
+    if (!input.votingId || !input.requestId || !input.responseId) {
+      throw new Error("Ticket mailbox acknowledgements require votingId, requestId, and responseId.");
+    }
+    const result = await sendMailboxTicketAck({
+      senderSecretKey: input.senderSecretKey,
+      recipientNpub: input.recipientNpub,
+      actorNpub: input.actorNpub,
+      votingId: input.votingId,
+      mailboxId: input.mailboxId ?? "",
+      requestId: input.requestId,
+      ticketId: input.responseId,
+      relays: input.relays,
+    });
+    recordSimpleTicketLifecycleTrace({
+      votingId: input.votingId,
+      coordinatorNpub: input.recipientNpub,
+      requestId: input.requestId,
+      responseId: input.responseId,
+      updates: {
+        ackSentAt: Date.now(),
+      },
+    });
+    return result;
+  }
+
   const decoded = nip19.decode(input.recipientNpub);
   if (decoded.type !== 'npub') {
     throw new Error('Recipient value must be an npub.');
@@ -873,17 +925,6 @@ export async function sendSimpleDmAcknowledgement(input: {
   );
 
   const pool = getSharedNostrPool();
-  if (input.ackedAction === "simple_round_ticket") {
-    recordSimpleTicketLifecycleTrace({
-      votingId: input.votingId,
-      coordinatorNpub: input.recipientNpub,
-      requestId: input.requestId,
-      responseId: input.responseId,
-      updates: {
-        ackSentAt: Date.now(),
-      },
-    });
-  }
   const results = await queueNostrPublish(
     () =>
       publishToRelaysStaggered(
@@ -1121,7 +1162,7 @@ export async function sendSimpleCoordinatorMlsWelcome(input: {
       { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
     ),
     {
-      channel: buildDmPublishChannel(input.coordinatorNpub, input.voterNpub),
+      channel: buildDmPublishChannel(input.coordinatorNpub, input.leadCoordinatorNpub),
       minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
     },
   );
@@ -1151,107 +1192,31 @@ export async function sendSimpleShardRequest(input: {
   votingId: string;
   blindRequest: SimpleBlindIssuanceRequest;
   relays?: string[];
-}): Promise<DmPublishResult> {
-  const decoded = nip19.decode(input.coordinatorNpub);
-  if (decoded.type !== "npub") {
-    throw new Error("Coordinator value must be an npub.");
-  }
-
-  const dmRelays = await resolveConversationDmRelays(
-    input.coordinatorNpub,
-    input.voterNpub,
-    input.relays,
-  );
-  await publishOwnNip65RelayHints({
-    secretKey: input.voterSecretKey,
-    inboxRelays: dmRelays,
-    outboxRelays: dmRelays,
-    publishRelays: dmRelays,
-    channel: `nip65:${input.replyNpub}`,
-  }).catch(() => null);
-  const event = nip17.wrapEvent(
-    input.voterSecretKey,
-    {
-      publicKey: decoded.data as string,
-      relayUrl: dmRelays[0],
-    },
-    JSON.stringify({
-      action: "simple_shard_request",
-      request_id: input.blindRequest.requestId,
-      voter_npub: input.voterNpub,
-      reply_npub: input.replyNpub,
-      voting_id: input.votingId,
-      blind_request: input.blindRequest,
-      created_at: new Date().toISOString(),
-    }),
-    "Voting shard request",
-  );
-
-  const pool = getSharedNostrPool();
-  const results = await queueNostrPublish(
-    () => publishToRelaysStaggered(
-      (relay) => pool.publish([relay], event, { maxWait: SIMPLE_DM_PUBLISH_MAX_WAIT_MS })[0],
-      dmRelays,
-      { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
-    ),
-    {
-      channel: buildDmPublishChannel(input.coordinatorNpub, input.leadCoordinatorNpub),
-      minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
-    },
-  );
-  const relayResults = results.map((result, index) => (
-    result.status === "fulfilled"
-      ? { relay: dmRelays[index], success: true }
-      : {
-          relay: dmRelays[index],
-          success: false,
-          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-        }
-  ));
-
-  return {
-    eventId: event.id,
-    successes: relayResults.filter((result) => result.success).length,
-    failures: relayResults.filter((result) => !result.success).length,
-    relayResults,
-  };
+  mailboxSalt?: string;
+  attemptNo?: number;
+  supersedesEventId?: string;
+}): Promise<DmPublishResult & { mailboxId?: string; mailboxSalt?: string; requestId?: string }> {
+  return sendMailboxShardRequest(input);
 }
 
 export async function fetchSimpleShardRequests(input: {
   coordinatorNsec: string;
   relays?: string[];
 }): Promise<SimpleShardRequest[]> {
-  const { secretKey, publicHex: coordinatorHex, npub: coordinatorNpub } = getNpubFromNsec(
-    input.coordinatorNsec,
-    "Coordinator",
-  );
-  const dmRelays = selectDmReadRelays(await resolveRecipientInboxRelays(coordinatorNpub, input.relays));
-  const pool = getSharedNostrPool();
-  const wrappedEvents = await pool.querySync(dmRelays, {
-    kinds: [1059],
-    "#p": [coordinatorHex],
-    limit: 100,
-  });
-
-  const requests = new Map<string, SimpleShardRequest>();
-
-  for (const wrappedEvent of wrappedEvents) {
-    const request = parseSimpleShardRequest(wrappedEvent, secretKey);
-    if (request) {
-      requests.set(request.id, request);
-      recordSimpleTicketLifecycleTrace({
-        votingId: request.votingId,
-        coordinatorNpub,
-        voterNpub: request.voterNpub,
-        requestId: request.id,
-        updates: {
-          blindedRequestSeenAt: Date.now(),
-        },
-      });
-    }
+  const keys = getNpubFromNsec(input.coordinatorNsec, "Coordinator");
+  const requests = await fetchMailboxShardRequests(input);
+  for (const request of requests) {
+    recordSimpleTicketLifecycleTrace({
+      votingId: request.votingId,
+      coordinatorNpub: keys.npub,
+      voterNpub: request.voterNpub,
+      requestId: request.id,
+      updates: {
+        blindedRequestSeenAt: Date.now(),
+      },
+    });
   }
-
-  return sortByCreatedAtDescending([...requests.values()]);
+  return requests;
 }
 
 export function subscribeSimpleShardRequests(input: {
@@ -1260,85 +1225,24 @@ export function subscribeSimpleShardRequests(input: {
   onRequests: (requests: SimpleShardRequest[]) => void;
   onError?: (error: Error) => void;
 }): () => void {
-  const { secretKey, publicHex: coordinatorHex, npub: coordinatorNpub } = getNpubFromNsec(
-    input.coordinatorNsec,
-    "Coordinator",
-  );
-  const pool = getSharedNostrPool();
-  const requests = new Map<string, SimpleShardRequest>();
-  let closed = false;
-  let subscription: { close: (reason?: string) => Promise<void> | void } | null = null;
-
-  void fetchSimpleShardRequests({
-    coordinatorNsec: input.coordinatorNsec,
-    relays: input.relays,
-  }).then((initialRequests) => {
-    if (closed) {
-      return;
-    }
-
-    for (const request of initialRequests) {
-      requests.set(request.id, request);
-    }
-
-    input.onRequests(sortByCreatedAtDescending([...requests.values()]));
-  }).catch((error) => {
-    if (!closed && error instanceof Error) {
-      input.onError?.(error);
-    }
-  });
-
-  void resolveRecipientInboxRelays(coordinatorNpub, input.relays).then((resolvedRelays) => {
-    if (closed) {
-      return;
-    }
-    const dmRelays = selectDmReadRelays(resolvedRelays);
-
-    subscription = pool.subscribeMany(dmRelays, {
-      kinds: [1059],
-      "#p": [coordinatorHex],
-      limit: 100,
-    }, {
-      onevent: (wrappedEvent) => {
-        const request = parseSimpleShardRequest(wrappedEvent, secretKey);
-        if (!request) {
-          return;
-        }
-
-        requests.set(request.id, request);
+  const keys = getNpubFromNsec(input.coordinatorNsec, "Coordinator");
+  return subscribeMailboxShardRequests({
+    ...input,
+    onRequests: (requests) => {
+      for (const request of requests) {
         recordSimpleTicketLifecycleTrace({
           votingId: request.votingId,
-          coordinatorNpub,
+          coordinatorNpub: keys.npub,
           voterNpub: request.voterNpub,
           requestId: request.id,
           updates: {
             blindedRequestSeenAt: Date.now(),
           },
         });
-        input.onRequests(sortByCreatedAtDescending([...requests.values()]));
-      },
-      onclose: (reasons) => {
-        if (closed) {
-          return;
-        }
-
-        const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
-        if (errors.length > 0) {
-          input.onError?.(new Error(errors.join("; ")));
-        }
-      },
-      maxWait: SIMPLE_DM_SUBSCRIPTION_MAX_WAIT_MS,
-    });
-  }).catch((error) => {
-    if (!closed && error instanceof Error) {
-      input.onError?.(error);
-    }
+      }
+      input.onRequests(requests);
+    },
   });
-
-  return () => {
-    closed = true;
-    void subscription?.close("closed by caller");
-  };
 }
 
 export async function fetchSimpleCoordinatorFollowers(input: {
@@ -1419,6 +1323,22 @@ export async function fetchSimpleDmAcknowledgements(input: {
         acknowledgement,
       );
     }
+  }
+
+  const mailboxAcknowledgements = await fetchMailboxTicketAcknowledgements(input);
+  for (const acknowledgement of mailboxAcknowledgements) {
+    recordSimpleTicketLifecycleTrace({
+      votingId: acknowledgement.votingId,
+      requestId: acknowledgement.requestId,
+      responseId: acknowledgement.responseId,
+      updates: {
+        ackSeenByCoordinatorAt: Date.now(),
+      },
+    });
+    acknowledgements.set(
+      `${acknowledgement.actorNpub}:${acknowledgement.ackedAction}:${acknowledgement.ackedEventId}`,
+      acknowledgement,
+    );
   }
 
   return sortByCreatedAtDescending([...acknowledgements.values()]);
@@ -2133,34 +2053,11 @@ export async function sendSimpleRoundTicket(input: {
   thresholdT?: number;
   thresholdN?: number;
   relays?: string[];
+  attemptNo?: number;
+  supersedesEventId?: string;
+  ticketId?: string;
 }): Promise<DmPublishResult & { responseId: string }> {
-  const decoded = nip19.decode(input.recipientNpub);
-  if (decoded.type !== "npub") {
-    throw new Error("Voter value must be an npub.");
-  }
-
-  const dmRelays = await resolveConversationDmRelays(
-    input.recipientNpub,
-    input.coordinatorNpub,
-    input.relays,
-  );
-  await publishOwnNip65RelayHints({
-    secretKey: input.coordinatorSecretKey,
-    inboxRelays: dmRelays,
-    outboxRelays: dmRelays,
-    publishRelays: dmRelays,
-    channel: `nip65:${input.coordinatorNpub}`,
-  }).catch(() => null);
-  const blindShareResponse = await createSimpleBlindShareResponse({
-    privateKey: input.blindPrivateKey,
-    keyAnnouncementEvent: input.keyAnnouncementEvent,
-    coordinatorNpub: input.coordinatorNpub,
-    request: input.request.blindRequest,
-    shareIndex: input.shareIndex,
-    thresholdT: input.thresholdT,
-    thresholdN: input.thresholdN,
-  });
-  const responseId = blindShareResponse.shareId;
+  const responseId = input.ticketId ?? input.request.id;
   recordSimpleTicketLifecycleTrace({
     votingId: input.request.votingId,
     coordinatorNpub: input.coordinatorNpub,
@@ -2171,26 +2068,6 @@ export async function sendSimpleRoundTicket(input: {
       ticketBuiltAt: Date.now(),
     },
   });
-  const event = nip17.wrapEvent(
-    input.coordinatorSecretKey,
-    {
-      publicKey: decoded.data as string,
-      relayUrl: dmRelays[0],
-    },
-    JSON.stringify({
-      action: "simple_round_ticket",
-      response_id: responseId,
-      request_id: input.request.blindRequest.requestId,
-      coordinator_npub: input.coordinatorNpub,
-      threshold_label: input.thresholdLabel,
-      voting_prompt: input.votingPrompt,
-      blind_share_response: blindShareResponse,
-      created_at: new Date().toISOString(),
-    }),
-    "Round ticket",
-  );
-
-  const pool = getSharedNostrPool();
   recordSimpleTicketLifecycleTrace({
     votingId: input.request.votingId,
     coordinatorNpub: input.coordinatorNpub,
@@ -2201,28 +2078,9 @@ export async function sendSimpleRoundTicket(input: {
       publishStartedAt: Date.now(),
     },
   });
-  const results = await queueNostrPublish(
-    () => publishToRelaysStaggered(
-      (relay) => pool.publish([relay], event, { maxWait: SIMPLE_DM_PUBLISH_MAX_WAIT_MS })[0],
-      dmRelays,
-      { staggerMs: SIMPLE_DM_PUBLISH_STAGGER_MS },
-    ),
-    {
-      channel: buildDmPublishChannel(input.recipientNpub, input.coordinatorNpub),
-      minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
-    },
-  );
-  const relayResults = results.map((result, index) => (
-    result.status === "fulfilled"
-      ? { relay: dmRelays[index], success: true }
-      : {
-          relay: dmRelays[index],
-          success: false,
-          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-        }
-  ));
-  const successes = relayResults.filter((result) => result.success).length;
-  const failures = relayResults.filter((result) => !result.success).length;
+  const result = await sendMailboxRoundTicket(input);
+  const successes = result.successes;
+  const failures = result.failures;
   recordSimpleTicketLifecycleTrace({
     votingId: input.request.votingId,
     coordinatorNpub: input.coordinatorNpub,
@@ -2234,16 +2092,16 @@ export async function sendSimpleRoundTicket(input: {
       publishTimedOutAt: successes === 0 ? Date.now() : undefined,
       publishSuccesses: successes,
       publishFailures: failures,
-      lastRelayError: relayResults.find((result) => !result.success)?.error,
+      lastRelayError: result.relayResults.find((relay) => !relay.success)?.error,
     },
   });
 
   return {
-    responseId,
-    eventId: event.id,
-    successes,
-    failures,
-    relayResults,
+    responseId: result.responseId,
+    eventId: result.eventId,
+    successes: result.successes,
+    failures: result.failures,
+    relayResults: result.relayResults,
   };
 }
 
@@ -2325,44 +2183,18 @@ export async function fetchSimpleShardResponses(input: {
   voterNsecs?: string[];
   relays?: string[];
 }): Promise<SimpleShardResponse[]> {
-  const voterEntries = collectActorSecrets(input.voterNsec, input.voterNsecs);
-  if (voterEntries.length === 0) {
-    return [];
+  const responses = await fetchMailboxShardResponses(input);
+  for (const response of responses) {
+    recordSimpleTicketLifecycleTrace({
+      coordinatorNpub: response.coordinatorNpub,
+      requestId: response.requestId,
+      responseId: response.id,
+      updates: {
+        ticketObservedByVoterAt: Date.now(),
+      },
+    });
   }
-  const voterHexes = Array.from(new Set(voterEntries.map((entry) => entry.publicHex)));
-  const voterNpubs = Array.from(new Set(voterEntries.map((entry) => entry.npub)));
-  const inboxRelaySets = await Promise.all(
-    voterNpubs.map((voterNpub) => resolveRecipientInboxRelays(voterNpub, input.relays)),
-  );
-  const dmRelays = selectDmReadRelays(
-    Array.from(new Set(inboxRelaySets.flat())),
-    SIMPLE_DM_TICKET_READ_RELAYS_MAX,
-  );
-  const pool = getSharedNostrPool();
-  const wrappedEvents = await pool.querySync(dmRelays, {
-    kinds: [1059],
-    "#p": voterHexes,
-    limit: 200,
-  });
-
-  const responses = new Map<string, SimpleShardResponse>();
-
-  for (const wrappedEvent of wrappedEvents) {
-    const response = parseWithAnySecretKey(wrappedEvent, voterEntries, parseSimpleShardResponse);
-    if (response) {
-      responses.set(response.id, response);
-      recordSimpleTicketLifecycleTrace({
-        coordinatorNpub: response.coordinatorNpub,
-        requestId: response.requestId,
-        responseId: response.id,
-        updates: {
-          ticketObservedByVoterAt: Date.now(),
-        },
-      });
-    }
-  }
-
-  return sortByCreatedAtDescending([...responses.values()]);
+  return responses;
 }
 
 export function subscribeSimpleShardResponses(input: {
@@ -2372,59 +2204,10 @@ export function subscribeSimpleShardResponses(input: {
   onResponses: (responses: SimpleShardResponse[]) => void;
   onError?: (error: Error) => void;
 }): () => void {
-  const voterEntries = collectActorSecrets(input.voterNsec, input.voterNsecs);
-  if (voterEntries.length === 0) {
-    return () => undefined;
-  }
-  const voterHexes = Array.from(new Set(voterEntries.map((entry) => entry.publicHex)));
-  const voterNpubs = Array.from(new Set(voterEntries.map((entry) => entry.npub)));
-  const pool = getSharedNostrPool();
-  const responses = new Map<string, SimpleShardResponse>();
-  let closed = false;
-  let subscription: { close: (reason?: string) => Promise<void> | void } | null = null;
-
-  void fetchSimpleShardResponses({
-    voterNsec: input.voterNsec,
-    voterNsecs: input.voterNsecs,
-    relays: input.relays,
-  }).then((initialResponses) => {
-    if (closed) {
-      return;
-    }
-
-    for (const response of initialResponses) {
-      responses.set(response.id, response);
-    }
-
-    input.onResponses(sortByCreatedAtDescending([...responses.values()]));
-  }).catch((error) => {
-    if (!closed && error instanceof Error) {
-      input.onError?.(error);
-    }
-  });
-
-  void Promise.all(voterNpubs.map((voterNpub) => resolveRecipientInboxRelays(voterNpub, input.relays))).then((relaySets) => {
-    if (closed) {
-      return;
-    }
-
-    const dmRelays = selectDmReadRelays(
-      Array.from(new Set(relaySets.flat())),
-      SIMPLE_DM_TICKET_READ_RELAYS_MAX,
-    );
-
-    subscription = pool.subscribeMany(dmRelays, {
-      kinds: [1059],
-      "#p": voterHexes,
-      limit: 200,
-    }, {
-      onevent: (wrappedEvent) => {
-        const response = parseWithAnySecretKey(wrappedEvent, voterEntries, parseSimpleShardResponse);
-        if (!response) {
-          return;
-        }
-
-        responses.set(response.id, response);
+  return subscribeMailboxShardResponses({
+    ...input,
+    onResponses: (responses) => {
+      for (const response of responses) {
         recordSimpleTicketLifecycleTrace({
           coordinatorNpub: response.coordinatorNpub,
           requestId: response.requestId,
@@ -2433,30 +2216,10 @@ export function subscribeSimpleShardResponses(input: {
             ticketObservedByVoterAt: Date.now(),
           },
         });
-        input.onResponses(sortByCreatedAtDescending([...responses.values()]));
-      },
-      onclose: (reasons) => {
-        if (closed) {
-          return;
-        }
-
-        const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
-        if (errors.length > 0) {
-          input.onError?.(new Error(errors.join("; ")));
-        }
-      },
-      maxWait: SIMPLE_DM_SUBSCRIPTION_MAX_WAIT_MS,
-    });
-  }).catch((error) => {
-    if (!closed && error instanceof Error) {
-      input.onError?.(error);
-    }
+      }
+      input.onResponses(responses);
+    },
   });
-
-  return () => {
-    closed = true;
-    void subscription?.close("closed by caller");
-  };
 }
 
 export async function fetchSimpleCoordinatorShareAssignments(input: {

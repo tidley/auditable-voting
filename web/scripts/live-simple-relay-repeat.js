@@ -45,18 +45,39 @@ function runHarness(env) {
 
 function summariseRun(run) {
   const rounds = Array.isArray(run?.summary) ? run.summary : [];
+  const deploymentMode = String(run?.config?.deploymentMode ?? process.env.LIVE_DEPLOYMENT_MODE ?? "course_feedback").trim().toLowerCase();
   const roundOutcomes = rounds.map((roundSummary) => {
     const round = Number(roundSummary.round ?? 0);
     const totalVoters = Number(roundSummary.totalVoters ?? 0);
     const votersWithTickets = Number(roundSummary.votersWithTickets ?? 0);
-    const success = totalVoters > 0 && votersWithTickets === totalVoters;
+    const votersWithAcceptedBallots = Number(roundSummary.votersWithAcceptedBallots ?? 0);
+    const coordinatorAcceptedBallots = Number(roundSummary.coordinatorAcceptedBallots ?? 0);
+    const coordinatorRejectedBallots = Number(roundSummary.coordinatorRejectedBallots ?? 0);
+    const coordinatorAcceptedByLineage = Number(roundSummary.coordinatorAcceptedByLineage ?? 0);
+    const voterPublishedBallots = Number(roundSummary.voterPublishedBallots ?? 0);
+    const voterObservedTickets = Number(roundSummary.voterObservedTickets ?? 0);
+    const ticketSent = Number(roundSummary.ticketSentCount ?? roundSummary.stageMetrics?.ticketSent?.count ?? 0);
+    const totalPairs = Number(roundSummary.stageMetrics?.ticketSent?.totalPairs ?? 0);
+    const success = deploymentMode === "course_feedback"
+      ? totalVoters > 0 && coordinatorAcceptedBallots >= totalVoters
+      : totalVoters > 0 && votersWithTickets === totalVoters;
     const stageMetrics = roundSummary.stageMetrics ?? {};
     return {
       round,
       success,
+      deploymentMode,
       totalVoters,
       votersWithTickets,
-      ticketSent: Number(stageMetrics.ticketSent?.count ?? 0),
+      votersWithAcceptedBallots,
+      coordinatorAcceptedBallots,
+      coordinatorRejectedBallots,
+      coordinatorAcceptedByLineage,
+      voterPublishedBallots,
+      voterObservedTickets,
+      ticketSent,
+      ballotSubmitted: Number(roundSummary.ballotSubmittedCount ?? stageMetrics.ballotSubmitted?.count ?? 0),
+      ballotAccepted: Number(roundSummary.ballotAcceptedCount ?? stageMetrics.ballotAccepted?.count ?? 0),
+      completionByBallot: Number(roundSummary.ticketDeliveryConfirmedByBallotCount ?? stageMetrics.ticketDeliveryConfirmedByBallot?.count ?? 0),
       ackSeen: Number(stageMetrics.receiptAcknowledged?.count ?? 0),
       totalPairs: Number(stageMetrics.receiptAcknowledged?.totalPairs ?? stageMetrics.ticketSent?.totalPairs ?? 0),
     };
@@ -87,6 +108,15 @@ async function main() {
         failures: 0,
         votersWithTickets: [],
         ticketSent: [],
+        votersWithAcceptedBallots: [],
+        coordinatorAcceptedBallots: [],
+        coordinatorRejectedBallots: [],
+        coordinatorAcceptedByLineage: [],
+        voterPublishedBallots: [],
+        voterObservedTickets: [],
+        ballotSubmitted: [],
+        ballotAccepted: [],
+        completionByBallot: [],
         ackSeen: [],
         totalPairs: [],
       };
@@ -97,6 +127,15 @@ async function main() {
       }
       entry.votersWithTickets.push(round.votersWithTickets);
       entry.ticketSent.push(round.ticketSent);
+      entry.votersWithAcceptedBallots.push(round.votersWithAcceptedBallots);
+      entry.coordinatorAcceptedBallots.push(round.coordinatorAcceptedBallots);
+      entry.coordinatorRejectedBallots.push(round.coordinatorRejectedBallots);
+      entry.coordinatorAcceptedByLineage.push(round.coordinatorAcceptedByLineage);
+      entry.voterPublishedBallots.push(round.voterPublishedBallots);
+      entry.voterObservedTickets.push(round.voterObservedTickets);
+      entry.ballotSubmitted.push(round.ballotSubmitted);
+      entry.ballotAccepted.push(round.ballotAccepted);
+      entry.completionByBallot.push(round.completionByBallot);
       entry.ackSeen.push(round.ackSeen);
       entry.totalPairs.push(round.totalPairs);
       roundsByNumber.set(round.round, entry);

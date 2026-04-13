@@ -18,6 +18,7 @@
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0 --port 5173",
     "test": "vitest run",
+    "test:relay-load": "vitest run src/simpleRelayLoad.test.ts",
     "test:rust": "cargo test --manifest-path rust-core/Cargo.toml",
     "test:watch": "vitest",
     "verify:simple-blind-shares": "tsx scripts/verify-simple-blind-shares.ts",

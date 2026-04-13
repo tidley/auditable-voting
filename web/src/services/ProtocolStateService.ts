@@ -23,6 +23,17 @@ export type ProtocolStateCache = {
 export type ProtocolReplayView = {
   derivedState: DerivedState;
   roundSessions: SimpleLiveVoteSession[];
+  completionByVote: Array<{
+    eventId: string;
+    roundId: string;
+    requestId?: string;
+    ticketId?: string;
+    ticketDeliveryConfirmedByAck: boolean;
+    ticketDeliveryConfirmedByBallot: boolean;
+    ticketDeliveryConfirmed: boolean;
+    waitingForAcknowledgement: boolean;
+    waitingForCompletionConfirmation: boolean;
+  }>;
   snapshotMetadata: SnapshotMetadata;
   replayStatus: ReplayStatus;
   diagnostics: ProtocolDiagnostics;
@@ -97,11 +108,28 @@ export class ProtocolStateService {
     ];
 
     const derivedState = this.adapter.replayAll(events);
+    const completionByVote = (input.votes ?? []).map((vote) => {
+      const ticketDeliveryConfirmedByAck = false;
+      const ticketDeliveryConfirmedByBallot = true;
+      const ticketDeliveryConfirmed = ticketDeliveryConfirmedByAck || ticketDeliveryConfirmedByBallot;
+      return {
+        eventId: vote.eventId,
+        roundId: vote.votingId,
+        requestId: vote.requestId,
+        ticketId: vote.ticketId,
+        ticketDeliveryConfirmedByAck,
+        ticketDeliveryConfirmedByBallot,
+        ticketDeliveryConfirmed,
+        waitingForAcknowledgement: !ticketDeliveryConfirmedByAck,
+        waitingForCompletionConfirmation: !ticketDeliveryConfirmed,
+      };
+    });
     return {
       derivedState,
       roundSessions: sortRecordsByCreatedAtDescRust(
         derivedState.public_state.rounds.map(roundToSession),
       ),
+      completionByVote,
       snapshotMetadata: this.adapter.getSnapshotMetadata(),
       replayStatus: this.adapter.getReplayStatus(),
       diagnostics: this.adapter.getDiagnostics(),

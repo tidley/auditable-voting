@@ -190,6 +190,8 @@ mod tests {
                 schema_version: 1,
                 election_id: "election-1".to_owned(),
                 round_id: "round-1".to_owned(),
+                request_id: Some(format!("request-{event_id}")),
+                ticket_id: Some(token_id.to_owned()),
                 created_at,
                 author_pubkey: format!("voter-{event_id}"),
                 event_id: event_id.to_owned(),

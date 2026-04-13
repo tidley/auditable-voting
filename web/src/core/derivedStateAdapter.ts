@@ -46,6 +46,12 @@ export type AcceptedBallot = {
   token_id: string;
   created_at: number;
   receipt_hash: string;
+  ballot_id?: string;
+  request_id?: string;
+  ticket_id?: string;
+  ticketDeliveryConfirmedByAck?: boolean;
+  ticketDeliveryConfirmedByBallot?: boolean;
+  ticketDeliveryConfirmed?: boolean;
 };
 
 export type RejectedBallot = {
@@ -68,6 +74,10 @@ export type DerivedBallotState = {
     rejected_ballot_count: number;
     yes_count: number;
     no_count: number;
+    ticketDeliveryConfirmedByAck?: number;
+    ticketDeliveryConfirmedByBallot?: number;
+    ticketDeliveryConfirmed?: number;
+    ballotAccepted?: number;
   }>;
 };
 

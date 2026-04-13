@@ -314,7 +314,7 @@ Relays are the shared event layer:
 - public rounds
 - public ballots
 - public results
-- private DMs for issuance-related traffic
+- private encrypted mailbox objects for issuance-related traffic
 
 ---
 
@@ -359,7 +359,8 @@ The present web client is built with:
 - **`nostr-tools` 2.x** for Nostr keys, event signing, subscriptions, and relay publishing
 - **a dedicated coordinator-control carrier over Nostr** for round proposals, commits, tally coordination, and recovery checkpoints
 - **regular custom Nostr event kinds** for coordinator control, live rounds, and ballots, so relays preserve the full transcript instead of replacing events in the `30000`-range
-- **NIP-17 gift-wrapped DMs** for follow, issuance, direct ticket delivery, acknowledgement traffic, and history-based recovery; the current client now keeps the shard-request DM id aligned with the blind-request id so retries and acknowledgement recovery treat one logical request consistently
+- **NIP-17 gift-wrapped DMs** for follow, roster, MLS welcome, and share-assignment traffic
+- **encrypted mailbox objects** for blind requests, ticket delivery, acknowledgement traffic, and history-based recovery, with stable `request_id`, `ticket_id`, and `ack_id` lineages
 - **optional NIP-65 relay hints**, disabled by default, for relay discovery experiments
 - **`@cloudflare/blindrsa-ts`** for the RSABSSA blind-signature primitive used in the current issuance path
 - **Rust compiled to WebAssembly** for deterministic protocol logic, including validation helpers and the new coordinator control engine
@@ -393,14 +394,15 @@ That mix matters scientifically because the system is not just a protocol sketch
 - coordinator control snapshots and replay checkpoints
 - local cache / restore bundles
 
-### Private DM traffic
+### Private mailbox traffic
 
 - follow / join coordination
 - blind issuance requests
 - blind issuance responses sent directly from each coordinator to the voter
 - acknowledgements
+- for initial course-feedback mode (`1 coordinator / 25 voters / 1 round`), acknowledgement visibility is best-effort and valid ballot acceptance is treated as delivery confirmation
 - automatic retry of unacknowledged ticket delivery
-- periodic history backfill for missed live rounds and ticket DMs
+- periodic history backfill for missed live rounds and mailbox objects
 
 ### Coordinator control path
 
@@ -424,6 +426,7 @@ In the current migration slice:
 - public round-open events and public ballot events are normalised by the browser bridge
 - the Rust/Wasm core replays those events under one canonical ordering rule
 - ballot acceptance uses one fixed rule, documented in code: **first valid ballot wins**
+- accepted ballots now carry stable `request_id` / `ticket_id` lineage through Rust replay for coordinator row mapping and harness truth
 - the voter, coordinator, and auditor public-state views now consume that Rust-derived state instead of separate TypeScript reducers
 
 ---
@@ -672,6 +675,7 @@ The current client also distinguishes between:
 - **read/subscription fanout**, which is intentionally kept to a smaller primary subset
 
 That split reduces relay-side `too many concurrent REQs` failures while keeping the write path reasonably redundant.
+Automatic voter and coordinator actions are also paced with a random `0-30s` delay, slower retry windows, and a sender-scoped ticket publish queue so many browser actors do not all publish into the same public relays at once. The default relay lists now include the Bits By Tom general relay, the Tom Dwyer NIP-17 relay, and extra public relays including `offchain.pub`, `nostr.mom`, `relay.snort.social`, and `nostr-pub.wellorder.net`; mailbox publishes keep one deterministic anchor relay, rotate secondary relays by recipient, and apply temporary cooldowns when relays return rate-limit/pow/spam/policy failures.
 
 ---
 
@@ -741,6 +745,7 @@ The repository now focuses on the client-side web app only:
 - the lead coordinator now auto-sends share indexes to sub-coordinators
 - each coordinator sends its own ticket share directly to the voter
 - non-lead ticket sends are slightly staggered by share index to reduce same-recipient relay bursts
+- automatic follow, blind-request, ticket, and acknowledgement sends are randomly delayed by up to `30s` to better match real participants and reduce relay rate limiting
 - coordinator follower rows expose per-ticket relay publish diagnostics
 - Nostr is the shared state layer
 - blind-share issuance is in the simple flow
@@ -750,7 +755,7 @@ The repository now focuses on the client-side web app only:
 
 The older backend-oriented stack has been removed from this repository.
 The client-only architecture is in place, but live relay reliability and recovery behaviour still need hardening.
-Current live evidence is mixed: `1 coordinator / 2 voters / 2 rounds` and single-coordinator runs up to `1 coordinator / 20 voters / 3 rounds` have completed cleanly in recent local-preview tests, and the live harness now waits for the lead coordinator to be visibly ready before firing round 1, which removed the earlier blind first-round startup miss. A fresh `v0.73` rerun of `2 coordinators / 2 voters / 2 rounds` also completed cleanly after normalising shard-request ids across the request/ticket/ack path, and repeated `2 / 2 / 2` runs improved after that repair. In `v0.74`, coordinator pages also expose explicit runtime-readiness phases, and failed live harness runs now carry protocol-layer classification plus coordinator/voter readiness snapshots. But that small multi-coordinator case is still not signed off as repeatedly reliable across reruns, larger public-relay runs such as `5 coordinators / 10 voters / 3 rounds` are not yet signed off, and `5 coordinators / 10 voters / 10 rounds` is still not operationally viable.
+Current live evidence is mixed: `1 coordinator / 2 voters / 2 rounds` has completed cleanly in recent local-preview tests, while a fresh `1 coordinator / 20 voters / 1 round` run exposed relay-side `you are noting too much` rate limiting in the private ticket/ack path before the current pacing change. The live harness now waits for the lead coordinator to be visibly ready before firing round 1, which removed the earlier blind first-round startup miss. A fresh `v0.73` rerun of `2 coordinators / 2 voters / 2 rounds` also completed cleanly after normalising shard-request ids across the request/ticket/ack path, and repeated `2 / 2 / 2` runs improved after that repair. In `v0.74`, coordinator pages also expose explicit runtime-readiness phases, failed live harness runs now carry protocol-layer classification plus coordinator/voter readiness snapshots, and automatic follow/request/ticket/ack sends are spread with random human-style delays plus longer retry windows. But that small multi-coordinator case is still not signed off as repeatedly reliable across reruns, larger public-relay runs such as `5 coordinators / 10 voters / 3 rounds` are not yet signed off, and `5 coordinators / 10 voters / 10 rounds` is still not operationally viable.
 
 ### Migration seam status
 
@@ -783,7 +788,7 @@ If coordinator signing keys are exposed in browser storage, an attacker can mint
 ### 4. Relay delivery is messy in the real world
 
 Live relay behavior is probabilistic, so follow requests, announcements, blind requests, and tickets all need recovery and reconciliation logic.
-The current app now does better at small scale by limiting live read fanout, widening coordinator-control and ticket/ack traffic slightly beyond ordinary DM reads, backfilling both live rounds and ticket traffic from history, gating the first multi-coordinator round on MLS welcome acknowledgement after non-lead control-plane sync, waiting in the live harness until the lead is visibly ready before firing round 1, queueing DM publishes per sender-recipient conversation instead of per recipient only, preserving prior ticket attempt identifiers so later acknowledgements are not lost when a resend replaces the latest tracked response, keeping shard-request ids stable end to end instead of letting the DM envelope and blind request disagree about the logical request id, and exposing coordinator runtime-readiness phases plus protocol-layer failure classification in the harness dump. That is enough to make the failure mode much clearer and to repair the latest small multi-round rerun, but it is still not enough to make large committee runs production-grade on public relays: the latest trustworthy `5 / 10 / 3` run before this request-id fix was getting materially through round 1, then timing out later under a mixed send/ack bottleneck, with acknowledgement visibility still worse than send-side delivery.
+The current app now does better at small scale by limiting live read fanout, widening coordinator-control and ticket/ack traffic slightly beyond ordinary DM reads, backfilling both live rounds and ticket traffic from history, gating the first multi-coordinator round on MLS welcome acknowledgement after non-lead control-plane sync, waiting in the live harness until the lead is visibly ready before firing round 1, queueing DM publishes per sender-recipient conversation instead of per recipient only, serialising one coordinator's mailbox ticket publishes through a sender-scoped queue, keeping one deterministic mailbox anchor relay while rotating secondary relays by recipient, temporarily cooling down relays that return rate-limit/pow/spam/policy failures, adding random `0-30s` human-style delays before automatic follow/request/ticket/ack sends, increasing retry windows, preserving prior ticket attempt identifiers so later acknowledgements are not lost when a resend replaces the latest tracked response, keeping shard-request ids stable end to end instead of letting the DM envelope and blind request disagree about the logical request id, and exposing coordinator runtime-readiness phases plus protocol-layer failure classification in the harness dump. That is enough to make the failure mode much clearer and to reduce relay-rate bursts, but it is still not enough to make large committee runs production-grade on public relays: the latest trustworthy `5 / 10 / 3` run before this request-id fix was getting materially through round 1, then timing out later under a mixed send/ack bottleneck, with acknowledgement visibility still worse than send-side delivery.
 
 ### 5. Cryptography must be conservative
 

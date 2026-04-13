@@ -51,18 +51,18 @@ function classifyProtocolFailure(rounds) {
     "blindKeySeen",
     "blindedRequestSent",
     "ticketSent",
-    "receiptAcknowledged",
+    "ticketDeliveryConfirmed",
   ].find((stageName) => Number(stageMetrics[stageName]?.count ?? 0) === 0) ?? null;
 
   const roundSeen = Number(stageMetrics.roundSeen?.count ?? 0);
   const requestSeen = Number(stageMetrics.blindedRequestSent?.count ?? 0);
   const ticketSent = Number(stageMetrics.ticketSent?.count ?? 0);
-  const ackSeen = Number(stageMetrics.receiptAcknowledged?.count ?? 0);
+  const completionSeen = Number(stageMetrics.ticketDeliveryConfirmed?.count ?? 0);
 
   let protocolFailureClass = "mixed";
   if (roundSeen === 0 && requestSeen === 0) {
     protocolFailureClass = "startup";
-  } else if (roundSeen > 0 && (requestSeen > 0 || ticketSent > 0 || ackSeen > 0)) {
+  } else if (roundSeen > 0 && (requestSeen > 0 || ticketSent > 0 || completionSeen > 0)) {
     protocolFailureClass = "dm_pipeline";
   }
 
@@ -497,6 +497,12 @@ function createRoundStageTracker({ round, prompt, voterIds, coordinatorCount }) 
       blindKeySeen: new Map(),
       blindedRequestSent: new Map(),
       ticketSent: new Map(),
+      ticketObserved: new Map(),
+      ballotSubmitted: new Map(),
+      ballotAccepted: new Map(),
+      ticketDeliveryConfirmedByAck: new Map(),
+      ticketDeliveryConfirmedByBallot: new Map(),
+      ticketDeliveryConfirmed: new Map(),
       receiptAcknowledged: new Map(),
     },
   };
@@ -535,6 +541,13 @@ function summariseRoundStages(stageTracker) {
   );
 }
 
+function recordStageForAllCoordinators(stageTracker, stageName, voterId, coordinatorCount, nowMs) {
+  for (let coordinatorIndex = 0; coordinatorIndex < coordinatorCount; coordinatorIndex += 1) {
+    const pairKey = `${voterId}:coord${coordinatorIndex + 1}`;
+    recordStage(stageTracker, stageName, pairKey, nowMs);
+  }
+}
+
 async function observeRoundStages(stageTracker, coordinators, voters) {
   const nowMs = Date.now();
 
@@ -554,6 +567,22 @@ async function observeRoundStages(stageTracker, coordinators, voters) {
       }
       if (/Blinded ticket request acknowledged\./i.test(text)) {
         recordStage(stageTracker, "blindedRequestSent", pairKey, nowMs);
+      }
+    }
+    const voterDebug = await readVoterDebug(page);
+    if (voterDebug && typeof voterDebug === "object") {
+      const coordinatorCount = coordinators.length;
+      if (voterDebug.ticketObserved === true) {
+        recordStageForAllCoordinators(stageTracker, "ticketObserved", voterId, coordinatorCount, nowMs);
+      }
+      if (voterDebug.ticketAckSent === true) {
+        recordStageForAllCoordinators(stageTracker, "ticketDeliveryConfirmedByAck", voterId, coordinatorCount, nowMs);
+      }
+      if (voterDebug.ballotSubmitted === true) {
+        recordStageForAllCoordinators(stageTracker, "ballotSubmitted", voterId, coordinatorCount, nowMs);
+      }
+      if (voterDebug.ticketAckSent === true) {
+        recordStageForAllCoordinators(stageTracker, "ticketDeliveryConfirmed", voterId, coordinatorCount, nowMs);
       }
     }
   }
@@ -577,6 +606,13 @@ async function observeRoundStages(stageTracker, coordinators, voters) {
       }
       if (/Voter acknowledged ticket receipt\./i.test(text)) {
         recordStage(stageTracker, "receiptAcknowledged", pairKey, nowMs);
+        recordStage(stageTracker, "ticketDeliveryConfirmedByAck", pairKey, nowMs);
+        recordStage(stageTracker, "ticketDeliveryConfirmed", pairKey, nowMs);
+      }
+      if (/Valid ballot accepted\./i.test(text)) {
+        recordStage(stageTracker, "ballotAccepted", pairKey, nowMs);
+        recordStage(stageTracker, "ticketDeliveryConfirmedByBallot", pairKey, nowMs);
+        recordStage(stageTracker, "ticketDeliveryConfirmed", pairKey, nowMs);
       }
     }
   }
@@ -594,7 +630,7 @@ async function clickEnabledTicketsDuringWindow(coordinators, voters, durationMs,
   while (Date.now() < deadline) {
     let clickedThisPass = 0;
     for (const [index, actor] of coordinators.entries()) {
-      const clicked = await clickAllEnabled(actor.page, /^(Send ticket|Resend ticket)$/i);
+      const clicked = await clickAllEnabled(actor.page, /^Send ticket$/i);
       sendCounts[index].clicked += clicked;
       clickedThisPass += clicked;
     }
@@ -665,6 +701,7 @@ async function main() {
   const coordinatorCount = envInt("LIVE_COORDINATORS", 5);
   const voterCount = envInt("LIVE_VOTERS", 10);
   const roundCount = envInt("LIVE_ROUNDS", 3);
+  const deploymentMode = (process.env.LIVE_DEPLOYMENT_MODE ?? "course_feedback").trim().toLowerCase();
   const base = process.env.LIVE_SIMPLE_BASE_URL ?? "http://127.0.0.1:4175/simple.html";
   const nip65Mode = (process.env.LIVE_NIP65 ?? "off").trim().toLowerCase();
   const startupWaitMs = envInt("LIVE_STARTUP_WAIT_MS", 45000);
@@ -836,6 +873,7 @@ async function main() {
       error: safeErrorMessage(error),
       config: {
         base,
+        deploymentMode,
         nip65Mode,
         coordinatorCount,
         voterCount,
@@ -878,19 +916,66 @@ async function main() {
       voter: key,
       ticketReady: value.ticketReady,
       hasTicket: Boolean(value.ticketReady && value.ticketReady.ready >= value.ticketReady.required),
+      ballotSubmitted: Boolean(value.voterDebug?.ballotSubmitted),
+      ballotAccepted: Boolean(value.voterDebug?.ballotAccepted),
     }));
+    const coordinatorStates = Object.values(round.state.coordinatorStates ?? {});
+    const coordinatorAcceptedBallots = Math.max(
+      0,
+      ...coordinatorStates.map((state) => Number(state.coordinatorDebug?.acceptedBallotCount ?? 0)),
+    );
+    const coordinatorRejectedBallots = Math.max(
+      0,
+      ...coordinatorStates.map((state) => Number(state.coordinatorDebug?.rejectedBallotCount ?? 0)),
+    );
+    const coordinatorAcceptedByLineage = Math.max(
+      0,
+      ...coordinatorStates.map((state) => Number(state.coordinatorDebug?.voters?.filter((entry) => entry.ballotAccepted).length ?? 0)),
+    );
+    const stageMetrics = round.stageMetrics ?? {};
+    const ticketSentCount = Number(stageMetrics.ticketSent?.count ?? 0);
+    const ticketObservedCount = Number(stageMetrics.ticketObserved?.count ?? 0);
+    const ballotSubmittedCount = Number(stageMetrics.ballotSubmitted?.count ?? 0);
+    const ballotAcceptedCount = Number(stageMetrics.ballotAccepted?.count ?? 0);
+    const ticketDeliveryConfirmedByAckCount = Number(stageMetrics.ticketDeliveryConfirmedByAck?.count ?? 0);
+    const ticketDeliveryConfirmedByBallotCount = Number(stageMetrics.ticketDeliveryConfirmedByBallot?.count ?? 0);
+    const ticketDeliveryConfirmedCount = Number(stageMetrics.ticketDeliveryConfirmed?.count ?? 0);
+    const expectedPairs = Number(stageMetrics.ticketSent?.totalPairs ?? 0);
+    const expectedAcceptedThreshold = round.state.voterStates ? Object.keys(round.state.voterStates).length : 0;
+    const roundSuccess = deploymentMode === "course_feedback"
+      ? expectedAcceptedThreshold > 0 && coordinatorAcceptedBallots >= expectedAcceptedThreshold
+      : voterTicketSummary.length > 0 && voterTicketSummary.every((entry) => entry.hasTicket);
+    const voterPublishedBallots = voterTicketSummary.filter((entry) => entry.ballotSubmitted).length;
+    const voterObservedTickets = voterTicketSummary.filter((entry) => entry.hasTicket).length;
     return {
       round: round.round,
       prompt: round.prompt,
+      deploymentMode,
+      roundSuccess,
       sendCounts: round.sendCounts,
       votersWithTickets: voterTicketSummary.filter((entry) => entry.hasTicket).length,
+      votersWithSubmittedBallots: voterTicketSummary.filter((entry) => entry.ballotSubmitted).length,
+      votersWithAcceptedBallots: voterTicketSummary.filter((entry) => entry.ballotAccepted).length,
+      voterPublishedBallots,
+      voterObservedTickets,
+      coordinatorAcceptedBallots,
+      coordinatorRejectedBallots,
+      coordinatorAcceptedByLineage,
       totalVoters: voterTicketSummary.length,
       voterTicketSummary,
-      stageMetrics: round.stageMetrics,
+      stageMetrics,
+      ticketSentCount,
+      ticketObservedCount,
+      ballotSubmittedCount,
+      ballotAcceptedCount,
+      ticketDeliveryConfirmedByAckCount,
+      ticketDeliveryConfirmedByBallotCount,
+      ticketDeliveryConfirmedCount,
       coordinatorFailureHints: Object.entries(round.state.coordinatorStates).map(([key, value]) => ({
         coordinator: key,
         waitingForRequests: value.diagnostics.filter((line) => line.includes("Waiting for this voter's blinded ticket request")).length,
-        waitingForReceipts: value.diagnostics.filter((line) => line.includes("Waiting for voter ticket receipt acknowledgement")).length,
+        waitingForAcknowledgements: value.diagnostics.filter((line) => line.includes("acknowledgement")).length,
+        waitingForCompletionConfirmation: value.diagnostics.filter((line) => line.includes("valid ballot submission")).length,
       })),
     };
   });
@@ -898,6 +983,7 @@ async function main() {
   console.log(JSON.stringify({
     config: {
       base,
+      deploymentMode,
       nip65Mode,
       coordinatorCount,
       voterCount,

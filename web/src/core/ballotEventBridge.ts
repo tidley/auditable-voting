@@ -7,6 +7,8 @@ export type ProtocolBallotEvent = {
     schema_version: number;
     election_id: string;
     round_id: string;
+    request_id?: string;
+    ticket_id?: string;
     created_at: number;
     author_pubkey: string;
     event_id: string;
@@ -32,6 +34,8 @@ export function ballotEventFromSubmittedVote(input: {
       schema_version: 1,
       election_id: input.electionId,
       round_id: input.vote.votingId,
+      request_id: input.vote.requestId,
+      ticket_id: input.vote.ticketId,
       created_at: createdAtMs(input.vote.createdAt),
       author_pubkey: input.vote.voterNpub,
       event_id: input.vote.eventId,

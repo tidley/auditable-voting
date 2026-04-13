@@ -265,3 +265,10 @@ export function npubsToHexRoster(values: string[]) {
     })
     .filter((value): value is string => typeof value === "string" && value.length > 0);
 }
+
+export function isVoterComplete(input: {
+  ticketAckSeen: boolean;
+  ballotAccepted: boolean;
+}) {
+  return input.ticketAckSeen || input.ballotAccepted;
+}

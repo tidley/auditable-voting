@@ -265,6 +265,7 @@ describe("simpleVotingSession", () => {
     expect(votes).toEqual([
       {
         eventId: "ballot-1",
+        ballotId: "ballot-1",
         votingId: "vote-2",
         voterNpub: "npub1coord",
         choice: "Yes",
