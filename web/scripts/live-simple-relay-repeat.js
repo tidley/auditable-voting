@@ -106,6 +106,7 @@ function summariseRun(run) {
       fullRelaySuccessObservationGapRatio: Number(roundSummary.fullRelaySuccessObservationGapRatio ?? 0),
       backfillObservationRecoveryRatio: Number(roundSummary.backfillObservationRecoveryRatio ?? 0),
       backfillTriggeredRatio: Number(roundSummary.backfillTriggeredRatio ?? 0),
+      startupJoinFailureBucket: roundSummary.startupJoinFailureBucket ?? null,
       ticketObservedLiveCount: Number(roundSummary.ticketObservedLiveCount ?? 0),
       ticketObservedBackfillCount: Number(roundSummary.ticketObservedBackfillCount ?? 0),
       ticketRecoveredByResendCount: Number(roundSummary.ticketRecoveredByResendCount ?? 0),
@@ -181,6 +182,7 @@ async function main() {
         fullRelaySuccessObservationGapRatio: [],
         backfillObservationRecoveryRatio: [],
         backfillTriggeredRatio: [],
+        startupJoinFailureBucketCounts: {},
         ticketObservedLiveCount: [],
         ticketObservedBackfillCount: [],
         ticketRecoveredByResendCount: [],
@@ -234,6 +236,10 @@ async function main() {
       entry.fullRelaySuccessObservationGapRatio.push(round.fullRelaySuccessObservationGapRatio);
       entry.backfillObservationRecoveryRatio.push(round.backfillObservationRecoveryRatio);
       entry.backfillTriggeredRatio.push(round.backfillTriggeredRatio);
+      if (round.startupJoinFailureBucket) {
+        const key = String(round.startupJoinFailureBucket);
+        entry.startupJoinFailureBucketCounts[key] = (entry.startupJoinFailureBucketCounts[key] ?? 0) + 1;
+      }
       entry.ticketObservedLiveCount.push(round.ticketObservedLiveCount);
       entry.ticketObservedBackfillCount.push(round.ticketObservedBackfillCount);
       entry.ticketRecoveredByResendCount.push(round.ticketRecoveredByResendCount);

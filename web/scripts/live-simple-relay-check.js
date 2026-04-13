@@ -77,6 +77,24 @@ function classifyProtocolFailure(rounds) {
   };
 }
 
+function classifyStartupJoinFailure(snapshots) {
+  const coordinatorSnapshots = snapshots.filter((snapshot) => snapshot.label.startsWith("coord"));
+  return coordinatorSnapshots.map((snapshot) => {
+    const startup = snapshot.coordinatorDebug?.startupDiagnostics ?? null;
+    const readiness = snapshot.coordinatorDebug?.runtimeReadiness ?? null;
+    const engineStatus = snapshot.coordinatorDebug?.engineStatus ?? null;
+    const bucket = startup?.startupJoinFailureBucket ?? null;
+    return {
+      coordinator: snapshot.label,
+      bucket,
+      phase: readiness?.phase ?? null,
+      joinedGroup: engineStatus?.joined_group ?? null,
+      groupReady: engineStatus?.group_ready ?? null,
+      startupDiagnostics: startup,
+    };
+  });
+}
+
 async function ensureDebugDir() {
   await mkdir(DEBUG_DIR, { recursive: true });
 }
@@ -983,8 +1001,10 @@ async function main() {
         coordinator: snapshot.label,
         readiness: snapshot.coordinatorDebug?.runtimeReadiness ?? null,
         engineStatus: snapshot.coordinatorDebug?.engineStatus ?? null,
+        startupDiagnostics: snapshot.coordinatorDebug?.startupDiagnostics ?? null,
         controlStateLabel: snapshot.coordinatorDebug?.controlStateLabel ?? null,
       }));
+    diagnostic.startupJoinSummary = classifyStartupJoinFailure(snapshots);
     diagnostic.voterRoundVisibilitySummary = snapshots
       .filter((snapshot) => snapshot.label.startsWith("voter"))
       .map((snapshot) => ({
@@ -1405,6 +1425,8 @@ async function main() {
         waitingForAcknowledgements: value.diagnostics.filter((line) => line.includes("acknowledgement")).length,
         waitingForCompletionConfirmation: value.diagnostics.filter((line) => line.includes("valid ballot submission")).length,
       })),
+      startupJoinFailureBucket: primaryCoordinatorDebug?.startupDiagnostics?.startupJoinFailureBucket ?? null,
+      startupDiagnostics: primaryCoordinatorDebug?.startupDiagnostics ?? null,
     };
   });
 
