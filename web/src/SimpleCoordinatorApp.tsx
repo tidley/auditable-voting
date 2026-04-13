@@ -2873,6 +2873,11 @@ export default function SimpleCoordinatorApp() {
         request.voterNpub === row.voterNpub
         && request.votingId === selectedVotingId,
     )?.id?.trim();
+    const requestMailboxId = pendingRequests.find(
+      (request) =>
+        request.voterNpub === row.voterNpub
+        && request.votingId === selectedVotingId,
+    )?.mailboxId?.trim();
     const ticketId = delivery?.responseId?.trim();
     const acceptedByTicket = Boolean(ticketId && activeAcceptedTicketIds.has(ticketId));
     const acceptedByRequest = Boolean(requestId && activeAcceptedRequestIds.has(requestId));
@@ -2956,6 +2961,7 @@ export default function SimpleCoordinatorApp() {
       acceptedByTicket,
       acceptedByVoterPubkeyFallback,
       requestId,
+      requestMailboxId,
       ticketId,
       ticketDeliveryConfirmed,
       ticketSent,
@@ -3076,6 +3082,7 @@ export default function SimpleCoordinatorApp() {
         voterPubkey: row.voterNpub,
         ticketSent: row.ticketSent,
         requestId: row.requestId ?? null,
+        requestMailboxId: row.requestMailboxId ?? null,
         ticketId: row.ticketId ?? null,
       }));
     const ticketPublishStartedCount = enhancedCoordinatorFollowerRows.filter(
@@ -3139,6 +3146,7 @@ export default function SimpleCoordinatorApp() {
         acceptedByRequest: row.acceptedByRequest,
         acceptedByTicket: row.acceptedByTicket,
         requestId: row.requestId,
+        requestMailboxId: row.requestMailboxId,
         ticketId: row.ticketId,
         ticketBuiltAt: row.ticketBuiltAt,
         ticketPublishStartedAt: row.ticketPublishStartedAt,

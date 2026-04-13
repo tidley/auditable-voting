@@ -96,6 +96,15 @@ function summariseRun(run) {
       rowsWithPartialRelaySuccessNoObservation: Number(roundSummary.rowsWithPartialRelaySuccessNoObservation ?? 0),
       rowsWithPublishUnconfirmedEventuallyObserved: Number(roundSummary.rowsWithPublishUnconfirmedEventuallyObserved ?? 0),
       rowsObservedOnlyAfterBackfill: Number(roundSummary.rowsObservedOnlyAfterBackfill ?? 0),
+      rowsWithRelayOverlapNoObservation: Number(roundSummary.rowsWithRelayOverlapNoObservation ?? 0),
+      rowsWithNoRelayOverlapNoObservation: Number(roundSummary.rowsWithNoRelayOverlapNoObservation ?? 0),
+      rowsWithReadRelaySetUnknown: Number(roundSummary.rowsWithReadRelaySetUnknown ?? 0),
+      rowsWithMailboxFilterMismatchNoObservation: Number(roundSummary.rowsWithMailboxFilterMismatchNoObservation ?? 0),
+      backfillFailureClassCounts: roundSummary.backfillFailureClassCounts ?? {},
+      publishSuccessObservationGapRatio: Number(roundSummary.publishSuccessObservationGapRatio ?? 0),
+      fullRelaySuccessObservationGapRatio: Number(roundSummary.fullRelaySuccessObservationGapRatio ?? 0),
+      backfillObservationRecoveryRatio: Number(roundSummary.backfillObservationRecoveryRatio ?? 0),
+      backfillTriggeredRatio: Number(roundSummary.backfillTriggeredRatio ?? 0),
       ticketObservedLiveCount: Number(roundSummary.ticketObservedLiveCount ?? 0),
       ticketObservedBackfillCount: Number(roundSummary.ticketObservedBackfillCount ?? 0),
       ticketRecoveredByResendCount: Number(roundSummary.ticketRecoveredByResendCount ?? 0),
@@ -161,6 +170,15 @@ async function main() {
         rowsWithPartialRelaySuccessNoObservation: [],
         rowsWithPublishUnconfirmedEventuallyObserved: [],
         rowsObservedOnlyAfterBackfill: [],
+        rowsWithRelayOverlapNoObservation: [],
+        rowsWithNoRelayOverlapNoObservation: [],
+        rowsWithReadRelaySetUnknown: [],
+        rowsWithMailboxFilterMismatchNoObservation: [],
+        backfillFailureClassCounts: {},
+        publishSuccessObservationGapRatio: [],
+        fullRelaySuccessObservationGapRatio: [],
+        backfillObservationRecoveryRatio: [],
+        backfillTriggeredRatio: [],
         ticketObservedLiveCount: [],
         ticketObservedBackfillCount: [],
         ticketRecoveredByResendCount: [],
@@ -205,6 +223,14 @@ async function main() {
       entry.rowsWithPartialRelaySuccessNoObservation.push(round.rowsWithPartialRelaySuccessNoObservation);
       entry.rowsWithPublishUnconfirmedEventuallyObserved.push(round.rowsWithPublishUnconfirmedEventuallyObserved);
       entry.rowsObservedOnlyAfterBackfill.push(round.rowsObservedOnlyAfterBackfill);
+      entry.rowsWithRelayOverlapNoObservation.push(round.rowsWithRelayOverlapNoObservation);
+      entry.rowsWithNoRelayOverlapNoObservation.push(round.rowsWithNoRelayOverlapNoObservation);
+      entry.rowsWithReadRelaySetUnknown.push(round.rowsWithReadRelaySetUnknown);
+      entry.rowsWithMailboxFilterMismatchNoObservation.push(round.rowsWithMailboxFilterMismatchNoObservation);
+      entry.publishSuccessObservationGapRatio.push(round.publishSuccessObservationGapRatio);
+      entry.fullRelaySuccessObservationGapRatio.push(round.fullRelaySuccessObservationGapRatio);
+      entry.backfillObservationRecoveryRatio.push(round.backfillObservationRecoveryRatio);
+      entry.backfillTriggeredRatio.push(round.backfillTriggeredRatio);
       entry.ticketObservedLiveCount.push(round.ticketObservedLiveCount);
       entry.ticketObservedBackfillCount.push(round.ticketObservedBackfillCount);
       entry.ticketRecoveredByResendCount.push(round.ticketRecoveredByResendCount);
@@ -220,6 +246,9 @@ async function main() {
       }
       for (const [stage, count] of Object.entries(round.unmatchedStageCounts ?? {})) {
         entry.unmatchedStageCounts[stage] = (entry.unmatchedStageCounts[stage] ?? 0) + Number(count ?? 0);
+      }
+      for (const [reason, count] of Object.entries(round.backfillFailureClassCounts ?? {})) {
+        entry.backfillFailureClassCounts[reason] = (entry.backfillFailureClassCounts[reason] ?? 0) + Number(count ?? 0);
       }
       for (const row of round.unmatchedRowDiagnostics ?? []) {
         entry.unmatchedRows.push({

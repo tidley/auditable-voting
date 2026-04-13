@@ -970,12 +970,60 @@ async function main() {
     const unmatchedRowDiagnostics = rowsWithoutAcceptedBallot.map((row) => {
       const voterPubkey = String(row?.voterPubkey ?? "");
       const requestId = typeof row?.requestId === "string" ? row.requestId.trim() : "";
+      const requestMailboxId = typeof row?.requestMailboxId === "string" ? row.requestMailboxId.trim() : "";
       const ticketId = typeof row?.ticketId === "string" ? row.ticketId.trim() : "";
       const voterState = voterStateByNpub.get(voterPubkey);
       const coordinatorVoter = coordinatorVoterByNpub.get(voterPubkey);
       const ticketObserved = Boolean(voterState?.ticketReady && voterState.ticketReady.ready >= voterState.ticketReady.required);
       const ticketObservedLiveCount = Number(voterState?.voterDebug?.ticketObservedLiveCount ?? 0);
       const ticketObservedBackfillCount = Number(voterState?.voterDebug?.ticketObservedBackfillCount ?? 0);
+      const ticketBackfillByRequestId = voterState?.voterDebug?.ticketBackfillByRequestId ?? {};
+      const backfillDebugByRequestId = requestId ? ticketBackfillByRequestId[requestId] : null;
+      const ticketBackfillAttemptCount = Number(
+        backfillDebugByRequestId?.attemptCount
+        ?? voterState?.voterDebug?.ticketBackfillAttemptCount
+        ?? 0,
+      );
+      const ticketBackfillLastResultCount = Number(
+        backfillDebugByRequestId?.lastResultCount
+        ?? voterState?.voterDebug?.ticketBackfillLastResultCount
+        ?? 0,
+      );
+      const ticketBackfillLastMatchedCount = Number(
+        backfillDebugByRequestId?.lastMatchedCount
+        ?? voterState?.voterDebug?.ticketBackfillLastMatchedCount
+        ?? 0,
+      );
+      const ticketBackfillLastAttemptAt = backfillDebugByRequestId?.lastAttemptAt
+        ?? voterState?.voterDebug?.ticketBackfillLastAttemptAt
+        ?? null;
+      const ticketBackfillLastSourceRelays = Array.isArray(backfillDebugByRequestId?.lastSourceRelays)
+        ? backfillDebugByRequestId.lastSourceRelays
+        : Array.isArray(voterState?.voterDebug?.ticketBackfillLastSourceRelays)
+          ? voterState.voterDebug.ticketBackfillLastSourceRelays
+          : [];
+      const ticketBackfillFailureClass = ticketBackfillAttemptCount <= 0
+        ? "backfill_not_triggered"
+        : ticketBackfillLastResultCount <= 0
+          ? "backfill_no_events_returned"
+          : ticketBackfillLastMatchedCount <= 0
+            ? "backfill_events_returned_no_match"
+            : ticketObserved
+              ? "backfill_match_found_observed"
+              : "backfill_match_found_not_reconciled";
+      const ticketLiveQuery = voterState?.voterDebug?.ticketLiveQuery ?? null;
+      const ticketBackfillQuery = voterState?.voterDebug?.ticketBackfillQuery ?? null;
+      const ticketPendingMailboxIds = Array.isArray(voterState?.voterDebug?.ticketPendingMailboxIds)
+        ? voterState.voterDebug.ticketPendingMailboxIds
+        : [];
+      const liveMailboxIds = Array.isArray(ticketLiveQuery?.mailboxIds) ? ticketLiveQuery.mailboxIds : [];
+      const backfillMailboxIds = Array.isArray(ticketBackfillQuery?.mailboxIds) ? ticketBackfillQuery.mailboxIds : [];
+      const liveMailboxFilterMatchesRequest = requestMailboxId
+        ? liveMailboxIds.includes(requestMailboxId)
+        : null;
+      const backfillMailboxFilterMatchesRequest = requestMailboxId
+        ? ticketPendingMailboxIds.includes(requestMailboxId) || backfillMailboxIds.includes(requestMailboxId)
+        : null;
       const ballotSubmitted = Boolean(voterState?.voterDebug?.ballotSubmitted);
       const ballotAccepted = Boolean(voterState?.voterDebug?.ballotAccepted);
       const ticketSent = Boolean(coordinatorVoter?.ticketSent || ticketObserved);
@@ -995,7 +1043,7 @@ async function main() {
         : Boolean(ticketPublishStartedAt) && !Boolean(ticketPublishSucceededAt) && !ticketObserved
           ? "ticket_publish_unconfirmed"
           : Boolean(ticketPublishSucceededAt) && !ticketObserved
-            ? "ticket_published_not_observed"
+            ? ticketBackfillFailureClass
         : !ticketObserved
           ? "ticket_not_observed"
           : ticketObserved && !inAcceptedByRequestId && !inAcceptedByTicketId
@@ -1008,6 +1056,7 @@ async function main() {
       return {
         voterPubkey,
         requestId: requestId || null,
+        requestMailboxId: requestMailboxId || null,
         ticketId: ticketId || null,
         ticketSent,
         ticketObserved,
@@ -1022,6 +1071,17 @@ async function main() {
         ticketResentCount,
         ticketRelayTargets: Array.isArray(coordinatorVoter?.ticketRelayTargets) ? coordinatorVoter.ticketRelayTargets : [],
         ticketRelaySuccessCount: Number(coordinatorVoter?.ticketRelaySuccessCount ?? 0),
+        ticketBackfillAttemptCount,
+        ticketBackfillLastAttemptAt,
+        ticketBackfillLastResultCount,
+        ticketBackfillLastMatchedCount,
+        ticketBackfillLastSourceRelays,
+        ticketBackfillFailureClass,
+        ticketPendingMailboxIds,
+        liveMailboxFilterMatchesRequest,
+        backfillMailboxFilterMatchesRequest,
+        ticketLiveQuery,
+        ticketBackfillQuery,
         resendEligible: Boolean(coordinatorVoter?.resendEligible),
         resendBlockedReason: coordinatorVoter?.resendBlockedReason ?? null,
         inAcceptedByRequestId,
@@ -1066,6 +1126,64 @@ async function main() {
       Number(entry.ticketObservedBackfillCount ?? 0) > 0
       && Number(entry.ticketObservedLiveCount ?? 0) === 0
     )).length;
+    const ticketPublishSucceededCount = Number(primaryCoordinatorDebug?.ticketPublishSucceededCount ?? 0);
+    const backfillFailureClassCounts = unmatchedRowDiagnostics.reduce((acc, row) => {
+      const key = String(row.ticketBackfillFailureClass ?? "unknown");
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    }, {});
+    const rowsWithRelayOverlapNoObservation = unmatchedRowDiagnostics.filter((entry) => {
+      const writeRelays = Array.isArray(entry.ticketRelayTargets) ? entry.ticketRelayTargets : [];
+      const readRelays = Array.from(new Set([
+        ...(Array.isArray(entry.ticketLiveQuery?.relays) ? entry.ticketLiveQuery.relays : []),
+        ...(Array.isArray(entry.ticketBackfillLastSourceRelays) ? entry.ticketBackfillLastSourceRelays : []),
+      ]));
+      if (entry.ticketObserved || writeRelays.length === 0 || readRelays.length === 0) {
+        return false;
+      }
+      const overlap = writeRelays.filter((relay) => readRelays.includes(relay)).length;
+      return overlap > 0;
+    }).length;
+    const rowsWithNoRelayOverlapNoObservation = unmatchedRowDiagnostics.filter((entry) => {
+      const writeRelays = Array.isArray(entry.ticketRelayTargets) ? entry.ticketRelayTargets : [];
+      const readRelays = Array.from(new Set([
+        ...(Array.isArray(entry.ticketLiveQuery?.relays) ? entry.ticketLiveQuery.relays : []),
+        ...(Array.isArray(entry.ticketBackfillLastSourceRelays) ? entry.ticketBackfillLastSourceRelays : []),
+      ]));
+      if (entry.ticketObserved || writeRelays.length === 0 || readRelays.length === 0) {
+        return false;
+      }
+      const overlap = writeRelays.filter((relay) => readRelays.includes(relay)).length;
+      return overlap === 0;
+    }).length;
+    const rowsWithReadRelaySetUnknown = unmatchedRowDiagnostics.filter((entry) => {
+      const readRelays = Array.from(new Set([
+        ...(Array.isArray(entry.ticketLiveQuery?.relays) ? entry.ticketLiveQuery.relays : []),
+        ...(Array.isArray(entry.ticketBackfillLastSourceRelays) ? entry.ticketBackfillLastSourceRelays : []),
+      ]));
+      return !entry.ticketObserved && readRelays.length === 0;
+    }).length;
+    const rowsWithMailboxFilterMismatchNoObservation = unmatchedRowDiagnostics.filter((entry) => {
+      if (entry.ticketObserved || !entry.requestMailboxId) {
+        return false;
+      }
+      return entry.liveMailboxFilterMatchesRequest === false || entry.backfillMailboxFilterMatchesRequest === false;
+    }).length;
+    const publishSuccessObservationGapRatio = rowsWithPublishSuccessNoObservation > 0
+      ? Number((rowsWithPublishSuccessNoObservation / Math.max(1, ticketPublishSucceededCount)).toFixed(3))
+      : 0;
+    const fullRelaySuccessObservationGapRatio = rowsWithFullRelaySuccessNoObservation > 0
+      ? Number((rowsWithFullRelaySuccessNoObservation / Math.max(1, rowsWithPublishSuccessNoObservation)).toFixed(3))
+      : 0;
+    const backfillObservationRecoveryRatio = rowsWithPublishSuccessNoObservation > 0
+      ? Number((rowsObservedOnlyAfterBackfill / rowsWithPublishSuccessNoObservation).toFixed(3))
+      : 0;
+    const backfillTriggeredRatio = rowsWithPublishSuccessNoObservation > 0
+      ? Number((
+        (rowsWithPublishSuccessNoObservation - Number(backfillFailureClassCounts.backfill_not_triggered ?? 0))
+        / rowsWithPublishSuccessNoObservation
+      ).toFixed(3))
+      : 0;
     const sendQueueEligibleCount = Number(primaryCoordinatorDebug?.sendQueueEligibleCount ?? 0);
     const sendQueueStartedCount = Number(primaryCoordinatorDebug?.sendQueueStartedCount ?? 0);
     const sendQueueBlockedCount = Number(primaryCoordinatorDebug?.sendQueueBlockedCount ?? 0);
@@ -1129,6 +1247,15 @@ async function main() {
       rowsWithPartialRelaySuccessNoObservation,
       rowsWithPublishUnconfirmedEventuallyObserved,
       rowsObservedOnlyAfterBackfill,
+      rowsWithRelayOverlapNoObservation,
+      rowsWithNoRelayOverlapNoObservation,
+      rowsWithReadRelaySetUnknown,
+      rowsWithMailboxFilterMismatchNoObservation,
+      backfillFailureClassCounts,
+      publishSuccessObservationGapRatio,
+      fullRelaySuccessObservationGapRatio,
+      backfillObservationRecoveryRatio,
+      backfillTriggeredRatio,
       rowsWithoutAcceptedBallotCount: rowsWithoutAcceptedBallot.length,
       unmatchedRowDiagnostics,
       totalVoters: voterTicketSummary.length,

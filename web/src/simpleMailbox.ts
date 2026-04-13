@@ -129,6 +129,19 @@ export type MailboxCompletionState = {
   ticketDeliveryConfirmed: boolean;
 };
 
+export type MailboxReadQueryDebug = {
+  source: "fetch" | "subscribe";
+  relays: string[];
+  recipientNpubs: string[];
+  recipientHexes: string[];
+  mailboxIds: string[];
+  eventTypes: string[];
+  kinds: number[];
+  limit: number;
+  resultCount?: number;
+  queriedAt: string;
+};
+
 export function deriveMailboxCompletionState(input: {
   ticketSent: boolean;
   ackSeen: boolean;
@@ -829,8 +842,11 @@ function decryptAckEvent(
 async function fetchMailboxEvents(input: {
   kinds: number[];
   recipientNpubs: string[];
+  mailboxIds?: string[];
+  eventTypes?: string[];
   relays?: string[];
   limit?: number;
+  onQueryDebug?: (debug: MailboxReadQueryDebug) => void;
 }) {
   const inboxRelaySets = await Promise.all(
     input.recipientNpubs.map((recipientNpub) => resolveNip65InboxRelays({
@@ -852,12 +868,45 @@ async function fetchMailboxEvents(input: {
     }
     return decoded.data as string;
   });
-  const pool = getSharedNostrPool();
-  return pool.querySync(relays, {
+  const mailboxIds = Array.from(
+    new Set((input.mailboxIds ?? []).map((value) => value.trim()).filter(Boolean)),
+  );
+  const eventTypes = Array.from(
+    new Set((input.eventTypes ?? []).map((value) => value.trim()).filter(Boolean)),
+  );
+  const limit = input.limit ?? 200;
+  const filter: {
+    kinds: number[];
+    "#p": string[];
+    "#mailbox"?: string[];
+    "#etype"?: string[];
+    limit: number;
+  } = {
     kinds: input.kinds,
     "#p": recipientHexes,
-    limit: input.limit ?? 200,
+    limit,
+  };
+  if (mailboxIds.length > 0) {
+    filter["#mailbox"] = mailboxIds;
+  }
+  if (eventTypes.length > 0) {
+    filter["#etype"] = eventTypes;
+  }
+  const pool = getSharedNostrPool();
+  const events = await pool.querySync(relays, filter);
+  input.onQueryDebug?.({
+    source: "fetch",
+    relays: [...relays],
+    recipientNpubs: [...input.recipientNpubs],
+    recipientHexes,
+    mailboxIds,
+    eventTypes,
+    kinds: [...input.kinds],
+    limit,
+    resultCount: events.length,
+    queriedAt: new Date().toISOString(),
   });
+  return events;
 }
 
 export async function fetchMailboxShardRequests(input: {
@@ -884,7 +933,9 @@ export async function fetchMailboxShardRequests(input: {
 export async function fetchMailboxShardResponses(input: {
   voterNsec: string;
   voterNsecs?: string[];
+  mailboxIds?: string[];
   relays?: string[];
+  onQueryDebug?: (debug: MailboxReadQueryDebug) => void;
 }) {
   const keyEntries = [input.voterNsec, ...(input.voterNsecs ?? [])]
     .map((value) => value.trim())
@@ -893,8 +944,11 @@ export async function fetchMailboxShardResponses(input: {
   const events = await fetchMailboxEvents({
     kinds: [SIMPLE_MAILBOX_TICKET_KIND],
     recipientNpubs: keyEntries.map((entry) => entry.npub),
+    mailboxIds: input.mailboxIds,
+    eventTypes: ["mailbox_ticket_envelope"],
     relays: input.relays,
     limit: 200,
+    onQueryDebug: input.onQueryDebug,
   });
   const responses = new Map<string, SimpleShardResponse>();
   for (const event of events) {
@@ -1015,8 +1069,10 @@ export function subscribeMailboxShardRequests(input: {
 export function subscribeMailboxShardResponses(input: {
   voterNsec: string;
   voterNsecs?: string[];
+  mailboxIds?: string[];
   relays?: string[];
   onResponses: (responses: SimpleShardResponse[]) => void;
+  onQueryDebug?: (debug: MailboxReadQueryDebug) => void;
   onError?: (error: Error) => void;
 }) {
   const keyEntries = [input.voterNsec, ...(input.voterNsecs ?? [])]
@@ -1049,19 +1105,45 @@ export function subscribeMailboxShardResponses(input: {
       return;
     }
     const recipientHexes = keyEntries.map((entry) => entry.publicHex);
+    const mailboxIds = Array.from(
+      new Set((input.mailboxIds ?? []).map((value) => value.trim()).filter(Boolean)),
+    );
+    const filter: {
+      kinds: number[];
+      "#p": string[];
+      "#mailbox"?: string[];
+      "#etype": string[];
+      limit: number;
+    } = {
+      kinds: [SIMPLE_MAILBOX_TICKET_KIND],
+      "#p": recipientHexes,
+      "#etype": ["mailbox_ticket_envelope"],
+      limit: 200,
+    };
+    if (mailboxIds.length > 0) {
+      filter["#mailbox"] = mailboxIds;
+    }
+    const subscriptionRelays = selectRecipientRelayUnion(
+      keyEntries.map((entry, index) => ({
+        recipientNpub: entry.npub,
+        relays: relaySets[index] ?? [],
+      })),
+      SIMPLE_MAILBOX_READ_RELAYS_MAX,
+    );
+    input.onQueryDebug?.({
+      source: "subscribe",
+      relays: [...subscriptionRelays],
+      recipientNpubs: keyEntries.map((entry) => entry.npub),
+      recipientHexes,
+      mailboxIds,
+      eventTypes: ["mailbox_ticket_envelope"],
+      kinds: [SIMPLE_MAILBOX_TICKET_KIND],
+      limit: 200,
+      queriedAt: new Date().toISOString(),
+    });
     subscription = getSharedNostrPool().subscribeMany(
-      selectRecipientRelayUnion(
-        keyEntries.map((entry, index) => ({
-          recipientNpub: entry.npub,
-          relays: relaySets[index] ?? [],
-        })),
-        SIMPLE_MAILBOX_READ_RELAYS_MAX,
-      ),
-      {
-        kinds: [SIMPLE_MAILBOX_TICKET_KIND],
-        "#p": recipientHexes,
-        limit: 200,
-      },
+      subscriptionRelays,
+      filter,
       {
         onevent: (event) => {
           for (const entry of keyEntries) {

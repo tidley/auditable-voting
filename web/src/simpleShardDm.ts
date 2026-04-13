@@ -19,6 +19,7 @@ import {
   fetchMailboxShardRequests,
   fetchMailboxShardResponses,
   fetchMailboxTicketAcknowledgements,
+  type MailboxReadQueryDebug,
   sendMailboxRoundTicket,
   sendMailboxShardRequest,
   sendMailboxTicketAck,
@@ -2181,9 +2182,17 @@ export async function sendSimpleShareAssignment(input: {
 export async function fetchSimpleShardResponses(input: {
   voterNsec: string;
   voterNsecs?: string[];
+  mailboxIds?: string[];
   relays?: string[];
+  onMailboxQueryDebug?: (debug: MailboxReadQueryDebug) => void;
 }): Promise<SimpleShardResponse[]> {
-  const responses = await fetchMailboxShardResponses(input);
+  const responses = await fetchMailboxShardResponses({
+    voterNsec: input.voterNsec,
+    voterNsecs: input.voterNsecs,
+    mailboxIds: input.mailboxIds,
+    relays: input.relays,
+    onQueryDebug: input.onMailboxQueryDebug,
+  });
   for (const response of responses) {
     recordSimpleTicketLifecycleTrace({
       coordinatorNpub: response.coordinatorNpub,
@@ -2200,12 +2209,19 @@ export async function fetchSimpleShardResponses(input: {
 export function subscribeSimpleShardResponses(input: {
   voterNsec: string;
   voterNsecs?: string[];
+  mailboxIds?: string[];
   relays?: string[];
   onResponses: (responses: SimpleShardResponse[]) => void;
+  onMailboxQueryDebug?: (debug: MailboxReadQueryDebug) => void;
   onError?: (error: Error) => void;
 }): () => void {
   return subscribeMailboxShardResponses({
-    ...input,
+    voterNsec: input.voterNsec,
+    voterNsecs: input.voterNsecs,
+    mailboxIds: input.mailboxIds,
+    relays: input.relays,
+    onQueryDebug: input.onMailboxQueryDebug,
+    onError: input.onError,
     onResponses: (responses) => {
       for (const response of responses) {
         recordSimpleTicketLifecycleTrace({

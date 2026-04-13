@@ -67,6 +67,7 @@ import {
   SIMPLE_PUBLIC_ELECTION_ID,
   type ProtocolStateCache,
 } from "./services/ProtocolStateService";
+import { type MailboxReadQueryDebug } from "./simpleMailbox";
 
 type LiveVoteChoice = "Yes" | "No" | null;
 type VoterTab = "configure" | "vote" | "settings";
@@ -91,6 +92,15 @@ type PendingBlindRequest = {
 type RoundReplyKeypair = {
   npub: string;
   nsec: string;
+};
+
+type TicketBackfillRequestDebug = {
+  attemptCount: number;
+  lastAttemptAt: string | null;
+  lastResultCount: number;
+  lastMatchedCount: number;
+  requestMailboxId: string | null;
+  lastSourceRelays: string[];
 };
 
 type SimpleVoterCache = {
@@ -246,6 +256,9 @@ export default function SimpleUiApp() {
   const [showVoteDetails, setShowVoteDetails] = useState(false);
   const sentTicketReceiptAckIdsRef = useRef<Set<string>>(new Set());
   const ticketObservationMetaRef = useRef<Record<string, { liveAt?: number; backfillAt?: number }>>({});
+  const ticketLiveQueryDebugRef = useRef<MailboxReadQueryDebug | null>(null);
+  const ticketBackfillQueryDebugRef = useRef<MailboxReadQueryDebug | null>(null);
+  const ticketBackfillRequestDebugRef = useRef<Record<string, TicketBackfillRequestDebug>>({});
   const lastAutoSelectedVotingIdRef = useRef("");
   const manualRoundSelectionRef = useRef(false);
   const identityHydrationEpochRef = useRef(0);
@@ -330,6 +343,15 @@ export default function SimpleUiApp() {
 
     return [...values];
   }, [discoveredSessions, pendingBlindRequests, receivedShards]);
+  const pendingTicketMailboxIds = useMemo(() => {
+    return Array.from(
+      new Set(
+        Object.values(pendingBlindRequests)
+          .map((request) => request.mailboxId?.trim() ?? "")
+          .filter(Boolean),
+      ),
+    );
+  }, [pendingBlindRequests]);
 
   useEffect(() => {
     const receivedRequestIds = new Set(receivedShards.map((response) => response.requestId));
@@ -617,11 +639,17 @@ export default function SimpleUiApp() {
     return subscribeSimpleShardResponses({
       voterNsec,
       voterNsecs: Object.values(roundReplyKeypairs).map((keypair) => keypair.nsec),
+      mailboxIds: pendingTicketMailboxIds,
+      onMailboxQueryDebug: (query) => {
+        if (query.source === "subscribe") {
+          ticketLiveQueryDebugRef.current = query;
+        }
+      },
       onResponses: (responses) => {
         void reconcileIncomingShardResponses(responses, "live");
       },
     });
-  }, [configuredCoordinatorTargets.length, roundReplyKeypairs, voterKeypair?.nsec]);
+  }, [configuredCoordinatorTargets.length, pendingTicketMailboxIds, roundReplyKeypairs, voterKeypair?.nsec]);
 
   useEffect(() => {
     const voterNsec = voterKeypair?.nsec?.trim() ?? "";
@@ -641,11 +669,50 @@ export default function SimpleUiApp() {
     let cancelled = false;
 
     const refresh = () => {
+      const pendingEntries = Object.values(pendingBlindRequests);
+      const nowIso = new Date().toISOString();
+      for (const requestEntry of pendingEntries) {
+        const requestId = requestEntry.request.requestId;
+        const previous = ticketBackfillRequestDebugRef.current[requestId];
+        ticketBackfillRequestDebugRef.current[requestId] = {
+          attemptCount: (previous?.attemptCount ?? 0) + 1,
+          lastAttemptAt: nowIso,
+          lastResultCount: previous?.lastResultCount ?? 0,
+          lastMatchedCount: previous?.lastMatchedCount ?? 0,
+          requestMailboxId: requestEntry.mailboxId?.trim() ?? previous?.requestMailboxId ?? null,
+          lastSourceRelays: previous?.lastSourceRelays ?? [],
+        };
+      }
+
       void fetchSimpleShardResponses({
         voterNsec,
         voterNsecs: Object.values(roundReplyKeypairs).map((keypair) => keypair.nsec),
+        mailboxIds: pendingTicketMailboxIds,
+        onMailboxQueryDebug: (query) => {
+          ticketBackfillQueryDebugRef.current = query;
+        },
       }).then((nextResponses) => {
         if (!cancelled) {
+          const lastBackfillQuery = ticketBackfillQueryDebugRef.current;
+          for (const requestEntry of pendingEntries) {
+            const requestId = requestEntry.request.requestId;
+            const mailboxId = requestEntry.mailboxId?.trim();
+            const matchedCount = nextResponses.filter((response) => (
+              response.requestId === requestId
+              || (mailboxId ? response.mailboxId?.trim() === mailboxId : false)
+            )).length;
+            const previous = ticketBackfillRequestDebugRef.current[requestId];
+            ticketBackfillRequestDebugRef.current[requestId] = {
+              attemptCount: previous?.attemptCount ?? 1,
+              lastAttemptAt: previous?.lastAttemptAt ?? nowIso,
+              lastResultCount: Number(lastBackfillQuery?.resultCount ?? nextResponses.length),
+              lastMatchedCount: matchedCount,
+              requestMailboxId: mailboxId ?? previous?.requestMailboxId ?? null,
+              lastSourceRelays: Array.isArray(lastBackfillQuery?.relays)
+                ? [...lastBackfillQuery.relays]
+                : [],
+            };
+          }
           void reconcileIncomingShardResponses(nextResponses, "backfill");
         }
       }).catch(() => undefined);
@@ -661,6 +728,7 @@ export default function SimpleUiApp() {
   }, [
     configuredCoordinatorTargets.length,
     pendingBlindRequests,
+    pendingTicketMailboxIds,
     receivedShards,
     roundReplyKeypairs,
     voterKeypair?.nsec,
@@ -1793,6 +1861,10 @@ export default function SimpleUiApp() {
     setTicketAckSent(false);
     setBallotSubmitted(false);
     setBallotAccepted(false);
+    ticketObservationMetaRef.current = {};
+    ticketLiveQueryDebugRef.current = null;
+    ticketBackfillQueryDebugRef.current = null;
+    ticketBackfillRequestDebugRef.current = {};
   }, [effectiveLiveVoteSession?.votingId]);
 
   useEffect(() => {
@@ -1801,6 +1873,55 @@ export default function SimpleUiApp() {
     };
     const roundSeen = coordinatorDiagnostics.some((entry) => entry.round.tone === "ok");
     const blindKeySeen = coordinatorDiagnostics.some((entry) => entry.blindKey.tone === "ok");
+    const ticketBackfillByRequestId = Object.fromEntries(
+      Object.entries(ticketBackfillRequestDebugRef.current).map(([requestId, value]) => {
+        const observed = uniqueShardResponses.some((response) => (
+          response.requestId === requestId
+          || (value.requestMailboxId && response.mailboxId?.trim() === value.requestMailboxId)
+        ));
+        const backfillClass = value.attemptCount <= 0
+          ? "backfill_not_triggered"
+          : value.lastResultCount <= 0
+            ? "backfill_no_events_returned"
+            : value.lastMatchedCount <= 0
+              ? "backfill_events_returned_no_match"
+              : observed
+                ? "backfill_match_found_observed"
+                : "backfill_match_found_not_reconciled";
+        return [requestId, {
+          ...value,
+          observed,
+          backfillClass,
+        }];
+      }),
+    );
+    const backfillRequestDebugRows = Object.values(ticketBackfillByRequestId);
+    const ticketBackfillAttemptCount = backfillRequestDebugRows.reduce(
+      (total, entry) => total + Number(entry.attemptCount ?? 0),
+      0,
+    );
+    const ticketBackfillLastAttemptAt = backfillRequestDebugRows
+      .map((entry) => Date.parse(entry.lastAttemptAt ?? ""))
+      .filter((value) => Number.isFinite(value))
+      .sort((left, right) => right - left)[0];
+    const ticketBackfillLastResultCount = backfillRequestDebugRows
+      .map((entry) => Number(entry.lastResultCount ?? 0))
+      .sort((left, right) => right - left)[0] ?? 0;
+    const ticketBackfillLastMatchedCount = backfillRequestDebugRows
+      .map((entry) => Number(entry.lastMatchedCount ?? 0))
+      .sort((left, right) => right - left)[0] ?? 0;
+    const ticketBackfillLastSourceRelays = Array.from(
+      new Set(backfillRequestDebugRows.flatMap((entry) => entry.lastSourceRelays ?? [])),
+    );
+    const ticketBackfillFailureClass = ticketBackfillAttemptCount <= 0
+      ? "backfill_not_triggered"
+      : ticketBackfillLastResultCount <= 0
+        ? "backfill_no_events_returned"
+        : ticketBackfillLastMatchedCount <= 0
+          ? "backfill_events_returned_no_match"
+          : ticketObserved
+            ? "backfill_match_found_observed"
+            : "backfill_match_found_not_reconciled";
     owner.__simpleVoterDebug = {
       voterNpub: voterKeypair?.npub ?? null,
       hasLiveRound: Boolean(effectiveLiveVoteSession),
@@ -1813,6 +1934,18 @@ export default function SimpleUiApp() {
       ticketObservedBackfillCount,
       ticketObservedLiveAt: ticketObservedLiveAt ? new Date(ticketObservedLiveAt).toISOString() : null,
       ticketObservedBackfillAt: ticketObservedBackfillAt ? new Date(ticketObservedBackfillAt).toISOString() : null,
+      ticketPendingMailboxIds: pendingTicketMailboxIds,
+      ticketLiveQuery: ticketLiveQueryDebugRef.current,
+      ticketBackfillQuery: ticketBackfillQueryDebugRef.current,
+      ticketBackfillAttemptCount,
+      ticketBackfillLastAttemptAt: Number.isFinite(ticketBackfillLastAttemptAt)
+        ? new Date(ticketBackfillLastAttemptAt).toISOString()
+        : null,
+      ticketBackfillLastResultCount,
+      ticketBackfillLastMatchedCount,
+      ticketBackfillLastSourceRelays,
+      ticketBackfillFailureClass,
+      ticketBackfillByRequestId,
       ticketAckSent,
       ballotSubmitted,
       ballotAccepted,
@@ -1832,12 +1965,13 @@ export default function SimpleUiApp() {
     ticketObservedBackfillCount,
     ticketObservedLiveAt,
     ticketObservedBackfillAt,
+    pendingTicketMailboxIds,
     ticketAckSent,
     ballotSubmitted,
     ballotAccepted,
     voterKeypair?.npub,
     coordinatorDiagnostics,
-    uniqueShardResponses.length,
+    uniqueShardResponses,
   ]);
 
   function selectTab(nextTab: VoterTab) {
