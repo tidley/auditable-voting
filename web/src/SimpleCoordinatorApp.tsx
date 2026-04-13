@@ -2906,6 +2906,33 @@ export default function SimpleCoordinatorApp() {
         ? { tone: "pending", text: "Ticket issued. Waiting for acknowledgement or valid ballot submission." }
         : row.receipt;
     const ticketStillMissing = Boolean(ticketSent && !ballotAccepted && !ackSeen);
+    const rowInFlight = autoSendInFlightRef.current.has(ticketStatusKey);
+    const requestCreatedAtMs = requestId
+      ? Date.parse(
+        pendingRequests.find((request) => request.id === requestId)?.createdAt ?? "",
+      )
+      : Number.NaN;
+    const sendAttempted = Boolean(delivery?.attempts && delivery.attempts > 0);
+    const sendStartedAt = delivery?.ticketPublishStartedAt ?? null;
+    let sendBlockedReason: string | null = null;
+    if (!selectedVotingId) {
+      sendBlockedReason = "no_active_round";
+    } else if (!autoSendFollowers[row.voterNpub]) {
+      sendBlockedReason = "not_selected_for_auto_send";
+    } else if (ticketDeliveryConfirmed) {
+      sendBlockedReason = "ticket_already_complete";
+    } else if (!requestId) {
+      sendBlockedReason = "waiting_for_request";
+    } else if (!row.canSendTicket) {
+      sendBlockedReason = "row_not_sendable";
+    } else if (Boolean(delivery?.ticketPublishStartedAt)) {
+      sendBlockedReason = "ticket_already_started";
+    } else if (rowInFlight) {
+      sendBlockedReason = "send_in_flight";
+    } else if (autoSendInFlightRef.current.size >= ticketSendMaxConcurrency) {
+      sendBlockedReason = "concurrency_limit";
+    }
+    const sendEligible = sendBlockedReason === null;
 
     return {
       ...row,
@@ -2927,6 +2954,11 @@ export default function SimpleCoordinatorApp() {
       ticketRelayTargets: delivery?.ticketRelayTargets ?? [],
       ticketRelaySuccessCount: delivery?.ticketRelaySuccessCount ?? 0,
       ticketStillMissing,
+      sendEligible,
+      sendBlockedReason,
+      sendAttempted,
+      sendStartedAt,
+      requestCreatedAtMs: Number.isFinite(requestCreatedAtMs) ? requestCreatedAtMs : null,
       resendEligible,
       resendBlockedReason,
     };
@@ -2934,8 +2966,10 @@ export default function SimpleCoordinatorApp() {
     activeAcceptedRequestIds,
     activeAcceptedTicketIds,
     activeAcceptedVoterPubkeys,
+    autoSendFollowers,
     coordinatorFollowerRows,
     dmAcknowledgements,
+    ticketSendMaxConcurrency,
     pendingRequests,
     nowMs,
     selectedPublishedVote?.votingId,
@@ -2975,6 +3009,24 @@ export default function SimpleCoordinatorApp() {
     const waitingForCompletionConfirmation = enhancedCoordinatorFollowerRows.filter(
       (row) => row.ticketSent && !row.ticketDeliveryConfirmed,
     ).length;
+    const sendQueueEligibleCount = enhancedCoordinatorFollowerRows.filter((row) => row.sendEligible).length;
+    const sendQueueStartedCount = enhancedCoordinatorFollowerRows.filter((row) => row.sendAttempted).length;
+    const sendQueueBlockedRows = enhancedCoordinatorFollowerRows.filter((row) => !row.sendEligible);
+    const sendQueueBlockedCount = sendQueueBlockedRows.length;
+    const sendQueueBlockedReasons = sendQueueBlockedRows.reduce((acc, row) => {
+      const key = String(row.sendBlockedReason ?? "unknown");
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+    const sendQueueInFlightCount = autoSendInFlightRef.current.size;
+    const sendQueueUnsentCount = enhancedCoordinatorFollowerRows.filter((row) => !row.sendAttempted).length;
+    const ticketSendStartedTimestamps = enhancedCoordinatorFollowerRows
+      .map((row) => Date.parse(row.sendStartedAt ?? ""))
+      .filter((value) => Number.isFinite(value));
+    const lastTicketSendStartedAt = ticketSendStartedTimestamps.length > 0
+      ? new Date(Math.max(...ticketSendStartedTimestamps)).toISOString()
+      : null;
+    const roundOpenAt = selectedPublishedVote?.createdAt ?? null;
     const matchedRequestIds = new Set(
       enhancedCoordinatorFollowerRows
         .filter((row) => row.ballotAccepted && row.requestId)
@@ -3034,6 +3086,14 @@ export default function SimpleCoordinatorApp() {
       controlStateLabel: coordinatorControlStateLabel,
       waitingForAcknowledgements,
       waitingForCompletionConfirmation,
+      sendQueueEligibleCount,
+      sendQueueStartedCount,
+      sendQueueBlockedCount,
+      sendQueueBlockedReasons,
+      sendQueueInFlightCount,
+      sendQueueUnsentCount,
+      roundOpenAt,
+      lastTicketSendStartedAt,
       ticketPublishStartedCount,
       ticketPublishSucceededCount,
       ticketStillMissingCount,
@@ -3074,6 +3134,11 @@ export default function SimpleCoordinatorApp() {
         ticketRelayTargets: row.ticketRelayTargets,
         ticketRelaySuccessCount: row.ticketRelaySuccessCount,
         ticketStillMissing: row.ticketStillMissing,
+        sendEligible: row.sendEligible,
+        sendBlockedReason: row.sendBlockedReason,
+        sendAttempted: row.sendAttempted,
+        sendStartedAt: row.sendStartedAt,
+        requestCreatedAtMs: row.requestCreatedAtMs,
         resendEligible: row.resendEligible,
         resendBlockedReason: row.resendBlockedReason,
         ticketDeliveryConfirmed: row.ticketDeliveryConfirmed,
@@ -3082,6 +3147,7 @@ export default function SimpleCoordinatorApp() {
   }, [
     acceptedBallotsByRequestId,
     acceptedBallotsByTicketId,
+    selectedPublishedVote?.createdAt,
     coordinatorControlStateLabel,
     coordinatorEngineStatus,
     coordinatorRuntimeReadiness,
@@ -3226,30 +3292,52 @@ export default function SimpleCoordinatorApp() {
       return;
     }
 
-    for (const follower of visibleFollowers) {
+    const enhancedById = new Map(
+      enhancedCoordinatorFollowerRows.map((row) => [row.id, row]),
+    );
+    const firstSendCandidates = visibleFollowers
+      .map((follower) => {
+        const ticketStatusKey = `${follower.voterNpub}:${activeVotingId}`;
+        const row = enhancedById.get(follower.id);
+        if (!row?.sendEligible || autoSendInFlightRef.current.has(ticketStatusKey)) {
+          return null;
+        }
+        return {
+          follower,
+          requestCreatedAtMs: Number.isFinite(Number(row.requestCreatedAtMs))
+            ? Number(row.requestCreatedAtMs)
+            : Number.MAX_SAFE_INTEGER,
+          voterId: follower.voterId,
+          ticketStatusKey,
+        };
+      })
+      .filter((value): value is {
+        follower: SimpleCoordinatorFollower;
+        requestCreatedAtMs: number;
+        voterId: string;
+        ticketStatusKey: string;
+      } => Boolean(value))
+      .sort((left, right) => (
+        left.requestCreatedAtMs - right.requestCreatedAtMs
+        || left.voterId.localeCompare(right.voterId)
+      ));
+
+    for (const candidate of firstSendCandidates) {
       if (autoSendInFlightRef.current.size >= ticketSendMaxConcurrency) {
         break;
       }
-      if (!autoSendFollowers[follower.voterNpub]) {
-        continue;
-      }
-
-      const ticketStatusKey = `${follower.voterNpub}:${activeVotingId}`;
-      if (ticketDeliveries[ticketStatusKey]) {
-        continue;
-      }
-
-      const row = coordinatorFollowerRows.find((entry) => entry.id === follower.id);
-      if (!row?.canSendTicket || autoSendInFlightRef.current.has(ticketStatusKey)) {
-        continue;
-      }
-
-      autoSendInFlightRef.current.add(ticketStatusKey);
-      void sendTicket(follower, { preSendDelayMs: randomHumanActionDelayMs() }).finally(() => {
-        autoSendInFlightRef.current.delete(ticketStatusKey);
+      autoSendInFlightRef.current.add(candidate.ticketStatusKey);
+      void sendTicket(candidate.follower, { preSendDelayMs: randomHumanActionDelayMs() }).finally(() => {
+        autoSendInFlightRef.current.delete(candidate.ticketStatusKey);
       });
     }
-  }, [activeVotingId, autoSendFollowers, coordinatorFollowerRows, nowMs, ticketDeliveries, ticketSendMaxConcurrency, visibleFollowers]);
+  }, [
+    activeVotingId,
+    enhancedCoordinatorFollowerRows,
+    nowMs,
+    ticketSendMaxConcurrency,
+    visibleFollowers,
+  ]);
 
   useEffect(() => {
     if (!activeVotingId) {
@@ -3284,20 +3372,51 @@ export default function SimpleCoordinatorApp() {
         retryFollowerIds.add(row.id);
       }
     }
+    const unsentEligibleCount = enhancedCoordinatorFollowerRows.filter((row) => row.sendEligible).length;
+
+    if (unsentEligibleCount > 0) {
+      return;
+    }
 
     if (retryFollowerIds.size === 0) {
       return;
     }
 
-    for (const follower of visibleFollowers) {
+    const enhancedById = new Map(
+      enhancedCoordinatorFollowerRows.map((row) => [row.id, row]),
+    );
+    const resendCandidates = visibleFollowers
+      .map((follower) => {
+        const ticketStatusKey = `${follower.voterNpub}:${activeVotingId}`;
+        const row = enhancedById.get(follower.id);
+        if (!retryFollowerIds.has(follower.id) || !autoSendFollowers[follower.voterNpub] || !row?.resendEligible) {
+          return null;
+        }
+        const lastAttemptMs = Date.parse(row.ticketPublishSucceededAt ?? row.ticketPublishStartedAt ?? "");
+        return {
+          follower,
+          ticketStatusKey,
+          lastAttemptMs: Number.isFinite(lastAttemptMs) ? lastAttemptMs : 0,
+          voterId: follower.voterId,
+        };
+      })
+      .filter((value): value is {
+        follower: SimpleCoordinatorFollower;
+        ticketStatusKey: string;
+        lastAttemptMs: number;
+        voterId: string;
+      } => Boolean(value))
+      .sort((left, right) => (
+        left.lastAttemptMs - right.lastAttemptMs
+        || left.voterId.localeCompare(right.voterId)
+      ));
+
+    for (const candidate of resendCandidates) {
       if (autoSendInFlightRef.current.size >= ticketSendMaxConcurrency) {
         break;
       }
-      if (!retryFollowerIds.has(follower.id) || !autoSendFollowers[follower.voterNpub]) {
-        continue;
-      }
-
-      const ticketStatusKey = `${follower.voterNpub}:${activeVotingId}`;
+      const follower = candidate.follower;
+      const ticketStatusKey = candidate.ticketStatusKey;
       setTicketDeliveries((current) => {
         const existing = current[ticketStatusKey];
         if (!existing) {
@@ -3313,11 +3432,6 @@ export default function SimpleCoordinatorApp() {
         };
       });
       if (autoSendInFlightRef.current.has(ticketStatusKey)) {
-        continue;
-      }
-
-      const row = enhancedCoordinatorFollowerRows.find((entry) => entry.id === follower.id);
-      if (!row?.resendEligible) {
         continue;
       }
 

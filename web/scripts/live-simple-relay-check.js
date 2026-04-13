@@ -1047,6 +1047,18 @@ async function main() {
       Number(entry.ticketObservedBackfillCount ?? 0) > 0
       && Number(entry.ticketObservedLiveCount ?? 0) === 0
     )).length;
+    const sendQueueEligibleCount = Number(primaryCoordinatorDebug?.sendQueueEligibleCount ?? 0);
+    const sendQueueStartedCount = Number(primaryCoordinatorDebug?.sendQueueStartedCount ?? 0);
+    const sendQueueBlockedCount = Number(primaryCoordinatorDebug?.sendQueueBlockedCount ?? 0);
+    const sendQueueBlockedReasons = primaryCoordinatorDebug?.sendQueueBlockedReasons ?? {};
+    const sendQueueInFlightCount = Number(primaryCoordinatorDebug?.sendQueueInFlightCount ?? 0);
+    const sendQueueUnsentCount = Number(primaryCoordinatorDebug?.sendQueueUnsentCount ?? 0);
+    const roundOpenAt = primaryCoordinatorDebug?.roundOpenAt ?? null;
+    const lastTicketSendStartedAt = primaryCoordinatorDebug?.lastTicketSendStartedAt ?? null;
+    const unsentRowsAtRoundTimeout = unmatchedRowDiagnostics.filter((entry) => (
+      entry.firstMissingStage === "ticket_not_sent"
+      || entry.firstMissingStage === "ticket_publish_unconfirmed"
+    )).length;
     const stageMetrics = round.stageMetrics ?? {};
     const ticketSentCount = Number(stageMetrics.ticketSent?.count ?? 0);
     const ticketObservedCount = Number(stageMetrics.ticketObserved?.count ?? 0);
@@ -1080,6 +1092,15 @@ async function main() {
       coordinatorTicketPublishSucceededCount: Number(primaryCoordinatorDebug?.ticketPublishSucceededCount ?? 0),
       coordinatorTicketStillMissingCount: Number(primaryCoordinatorDebug?.ticketStillMissingCount ?? 0),
       coordinatorTicketResentCount: Number(primaryCoordinatorDebug?.ticketResentCount ?? 0),
+      sendQueueEligibleCount,
+      sendQueueStartedCount,
+      sendQueueBlockedCount,
+      sendQueueBlockedReasons,
+      sendQueueInFlightCount,
+      sendQueueUnsentCount,
+      roundOpenAt,
+      lastTicketSendStartedAt,
+      unsentRowsAtRoundTimeout,
       rowsWithPublishSuccessNoObservation,
       rowsWithPartialRelaySuccessNoObservation,
       rowsWithPublishUnconfirmedEventuallyObserved,

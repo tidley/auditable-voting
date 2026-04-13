@@ -539,6 +539,7 @@
           <li>Private encrypted mailbox objects for issuance requests, ticket delivery, and ticket acknowledgements, with stable ids and relay-history backfill</li>
           <li>In initial course-feedback mode, acknowledgements are diagnostic and valid ballot acceptance is the completion signal</li>
           <li>Ballot events now carry stable `request_id` / `ticket_id` lineage so coordinator mapping and harness acceptance counts follow Rust truth</li>
+          <li>Ticket scheduler now surfaces first-send vs resend queue diagnostics with env-tunable concurrency and retry age for live reliability tuning</li>
           <li>Optional NIP-65 inbox/outbox hints for relay discovery when enabled</li>
           <li>Relay diversity instead of one central database</li>
           <li>Portable identities and signed announcements</li>

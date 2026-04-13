@@ -95,6 +95,13 @@ function summariseRun(run) {
       rowsWithPartialRelaySuccessNoObservation: Number(roundSummary.rowsWithPartialRelaySuccessNoObservation ?? 0),
       rowsWithPublishUnconfirmedEventuallyObserved: Number(roundSummary.rowsWithPublishUnconfirmedEventuallyObserved ?? 0),
       rowsObservedOnlyAfterBackfill: Number(roundSummary.rowsObservedOnlyAfterBackfill ?? 0),
+      sendQueueEligibleCount: Number(roundSummary.sendQueueEligibleCount ?? 0),
+      sendQueueStartedCount: Number(roundSummary.sendQueueStartedCount ?? 0),
+      sendQueueBlockedCount: Number(roundSummary.sendQueueBlockedCount ?? 0),
+      sendQueueBlockedReasons: roundSummary.sendQueueBlockedReasons ?? {},
+      sendQueueInFlightCount: Number(roundSummary.sendQueueInFlightCount ?? 0),
+      sendQueueUnsentCount: Number(roundSummary.sendQueueUnsentCount ?? 0),
+      unsentRowsAtRoundTimeout: Number(roundSummary.unsentRowsAtRoundTimeout ?? 0),
       unmatchedRowDiagnostics,
       unmatchedStageCounts,
       ticketSent,
@@ -148,6 +155,13 @@ async function main() {
         rowsWithPartialRelaySuccessNoObservation: [],
         rowsWithPublishUnconfirmedEventuallyObserved: [],
         rowsObservedOnlyAfterBackfill: [],
+        sendQueueEligibleCount: [],
+        sendQueueStartedCount: [],
+        sendQueueBlockedCount: [],
+        sendQueueBlockedReasons: {},
+        sendQueueInFlightCount: [],
+        sendQueueUnsentCount: [],
+        unsentRowsAtRoundTimeout: [],
         unmatchedStageCounts: {},
         unmatchedRows: [],
         ballotSubmitted: [],
@@ -180,6 +194,15 @@ async function main() {
       entry.rowsWithPartialRelaySuccessNoObservation.push(round.rowsWithPartialRelaySuccessNoObservation);
       entry.rowsWithPublishUnconfirmedEventuallyObserved.push(round.rowsWithPublishUnconfirmedEventuallyObserved);
       entry.rowsObservedOnlyAfterBackfill.push(round.rowsObservedOnlyAfterBackfill);
+      entry.sendQueueEligibleCount.push(round.sendQueueEligibleCount);
+      entry.sendQueueStartedCount.push(round.sendQueueStartedCount);
+      entry.sendQueueBlockedCount.push(round.sendQueueBlockedCount);
+      entry.sendQueueInFlightCount.push(round.sendQueueInFlightCount);
+      entry.sendQueueUnsentCount.push(round.sendQueueUnsentCount);
+      entry.unsentRowsAtRoundTimeout.push(round.unsentRowsAtRoundTimeout);
+      for (const [reason, count] of Object.entries(round.sendQueueBlockedReasons ?? {})) {
+        entry.sendQueueBlockedReasons[reason] = (entry.sendQueueBlockedReasons[reason] ?? 0) + Number(count ?? 0);
+      }
       for (const [stage, count] of Object.entries(round.unmatchedStageCounts ?? {})) {
         entry.unmatchedStageCounts[stage] = (entry.unmatchedStageCounts[stage] ?? 0) + Number(count ?? 0);
       }
