@@ -974,15 +974,19 @@ async function main() {
       const voterState = voterStateByNpub.get(voterPubkey);
       const coordinatorVoter = coordinatorVoterByNpub.get(voterPubkey);
       const ticketObserved = Boolean(voterState?.ticketReady && voterState.ticketReady.ready >= voterState.ticketReady.required);
+      const ticketObservedLiveCount = Number(voterState?.voterDebug?.ticketObservedLiveCount ?? 0);
+      const ticketObservedBackfillCount = Number(voterState?.voterDebug?.ticketObservedBackfillCount ?? 0);
       const ballotSubmitted = Boolean(voterState?.voterDebug?.ballotSubmitted);
       const ballotAccepted = Boolean(voterState?.voterDebug?.ballotAccepted);
-      const ticketSent = Boolean(coordinatorVoter?.ticketSent);
+      const ticketSent = Boolean(coordinatorVoter?.ticketSent || ticketObserved);
       const inAcceptedByRequestId = Boolean(requestId && acceptedRequestIds.has(requestId));
       const inAcceptedByTicketId = Boolean(ticketId && acceptedTicketIds.has(ticketId));
       const firstMissingStage = !ticketSent
         ? "ticket_not_sent"
         : !ticketObserved
           ? "ticket_not_observed"
+          : !coordinatorVoter?.ticketSent
+            ? "ticket_publish_unconfirmed"
           : !ballotSubmitted
             ? "ballot_not_submitted"
             : !inAcceptedByRequestId && !inAcceptedByTicketId
@@ -994,8 +998,17 @@ async function main() {
         ticketId: ticketId || null,
         ticketSent,
         ticketObserved,
+        ticketObservedLiveCount,
+        ticketObservedBackfillCount,
+        ticketObservedLiveAt: voterState?.voterDebug?.ticketObservedLiveAt ?? null,
+        ticketObservedBackfillAt: voterState?.voterDebug?.ticketObservedBackfillAt ?? null,
         ballotSubmitted,
         ballotAccepted,
+        ticketPublishStartedAt: coordinatorVoter?.ticketPublishStartedAt ?? null,
+        ticketPublishSucceededAt: coordinatorVoter?.ticketPublishSucceededAt ?? null,
+        ticketResentCount: Number(coordinatorVoter?.ticketResentCount ?? 0),
+        ticketRelayTargets: Array.isArray(coordinatorVoter?.ticketRelayTargets) ? coordinatorVoter.ticketRelayTargets : [],
+        ticketRelaySuccessCount: Number(coordinatorVoter?.ticketRelaySuccessCount ?? 0),
         inAcceptedByRequestId,
         inAcceptedByTicketId,
         firstMissingStage,
@@ -1030,6 +1043,10 @@ async function main() {
       coordinatorAcceptedBallots,
       coordinatorRejectedBallots,
       coordinatorAcceptedByLineage,
+      coordinatorTicketPublishStartedCount: Number(primaryCoordinatorDebug?.ticketPublishStartedCount ?? 0),
+      coordinatorTicketPublishSucceededCount: Number(primaryCoordinatorDebug?.ticketPublishSucceededCount ?? 0),
+      coordinatorTicketStillMissingCount: Number(primaryCoordinatorDebug?.ticketStillMissingCount ?? 0),
+      coordinatorTicketResentCount: Number(primaryCoordinatorDebug?.ticketResentCount ?? 0),
       rowsWithoutAcceptedBallotCount: rowsWithoutAcceptedBallot.length,
       unmatchedRowDiagnostics,
       totalVoters: voterTicketSummary.length,

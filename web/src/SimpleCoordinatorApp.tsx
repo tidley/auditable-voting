@@ -103,6 +103,14 @@ type TicketDeliveryState = {
   priorEventIds?: string[];
   priorResponseIds?: string[];
   attempts?: number;
+  resendCount?: number;
+  ticketBuiltAt?: string;
+  ticketPublishStartedAt?: string;
+  ticketPublishSucceededAt?: string;
+  ticketLastBackfillAttemptAt?: string;
+  ticketStillMissing?: boolean;
+  ticketRelayTargets?: string[];
+  ticketRelaySuccessCount?: number;
   lastAttemptAt?: string;
   relayResults?: TicketRelayResult[];
 };
@@ -149,7 +157,9 @@ const SIMPLE_COORDINATOR_CONTROL_BACKFILL_INTERVAL_MS = 4000;
 const SIMPLE_COORDINATOR_ROUND_OPEN_POST_WELCOME_GRACE_MS = 1200;
 const SIMPLE_COORDINATOR_ROUND_OPEN_RETRY_DELAY_MS = 5000;
 const SIMPLE_COORDINATOR_ROUND_OPEN_RETRY_MAX_ATTEMPTS = 3;
-const SIMPLE_TICKET_RETRY_MIN_AGE_MS = 45000;
+const SIMPLE_TICKET_RETRY_MIN_AGE_MS = 10000;
+const SIMPLE_TICKET_RETRY_MAX_ATTEMPTS = 3;
+const SIMPLE_TICKET_SEND_MAX_CONCURRENCY = 3;
 
 function sortCoordinatorRoster(values: string[]) {
   return [...new Set(values.filter((value) => value.trim().length > 0))].sort();
@@ -2190,6 +2200,9 @@ export default function SimpleCoordinatorApp() {
       [ticketStatusKey]: {
         status: "Sending ticket...",
         requestId: matchingRequest.id,
+        ticketBuiltAt: current[ticketStatusKey]?.ticketBuiltAt ?? new Date().toISOString(),
+        ticketPublishStartedAt: new Date().toISOString(),
+        ticketStillMissing: true,
         attempts: (current[ticketStatusKey]?.attempts ?? 0) + 1,
         lastAttemptAt: new Date().toISOString(),
         relayResults: undefined,
@@ -2242,6 +2255,16 @@ export default function SimpleCoordinatorApp() {
           eventId: result.eventId,
           requestId: matchingRequest.id,
           responseId: result.responseId,
+          resendCount: previousDelivery?.eventId
+            ? (previousDelivery?.resendCount ?? 0) + 1
+            : (previousDelivery?.resendCount ?? 0),
+          ticketBuiltAt: previousDelivery?.ticketBuiltAt ?? new Date().toISOString(),
+          ticketPublishStartedAt: previousDelivery?.ticketPublishStartedAt ?? new Date().toISOString(),
+          ticketPublishSucceededAt: result.successes > 0 ? new Date().toISOString() : previousDelivery?.ticketPublishSucceededAt,
+          ticketLastBackfillAttemptAt: previousDelivery?.ticketLastBackfillAttemptAt,
+          ticketStillMissing: result.successes > 0,
+          ticketRelayTargets: result.relayResults.map((entry) => entry.relay),
+          ticketRelaySuccessCount: result.relayResults.filter((entry) => entry.success).length,
           priorEventIds,
           priorResponseIds,
           attempts: (previousDelivery?.attempts ?? 0) + 1,
@@ -2256,6 +2279,9 @@ export default function SimpleCoordinatorApp() {
         [ticketStatusKey]: {
           status: "Ticket send failed.",
           requestId: matchingRequest.id,
+          ticketBuiltAt: current[ticketStatusKey]?.ticketBuiltAt ?? new Date().toISOString(),
+          ticketPublishStartedAt: current[ticketStatusKey]?.ticketPublishStartedAt ?? new Date().toISOString(),
+          ticketStillMissing: true,
           attempts: current[ticketStatusKey]?.attempts ?? 1,
           lastAttemptAt: new Date().toISOString(),
           relayResults: undefined,
@@ -2823,6 +2849,7 @@ export default function SimpleCoordinatorApp() {
       : ticketSent && !ackSeen
         ? { tone: "pending", text: "Ticket issued. Waiting for acknowledgement or valid ballot submission." }
         : row.receipt;
+    const ticketStillMissing = Boolean(ticketSent && !ballotAccepted && !ackSeen);
 
     return {
       ...row,
@@ -2836,6 +2863,14 @@ export default function SimpleCoordinatorApp() {
       ticketId,
       ticketDeliveryConfirmed,
       ticketSent,
+      ticketBuiltAt: delivery?.ticketBuiltAt,
+      ticketPublishStartedAt: delivery?.ticketPublishStartedAt,
+      ticketPublishSucceededAt: delivery?.ticketPublishSucceededAt,
+      ticketLastBackfillAttemptAt: delivery?.ticketLastBackfillAttemptAt,
+      ticketResentCount: delivery?.resendCount ?? 0,
+      ticketRelayTargets: delivery?.ticketRelayTargets ?? [],
+      ticketRelaySuccessCount: delivery?.ticketRelaySuccessCount ?? 0,
+      ticketStillMissing,
     };
   }), [
     activeAcceptedRequestIds,
@@ -2909,12 +2944,26 @@ export default function SimpleCoordinatorApp() {
         roundId: entry.round_id,
       }));
     const rowsWithoutAcceptedBallot = enhancedCoordinatorFollowerRows
-      .filter((row) => row.ticketSent && !row.ballotAccepted)
+      .filter((row) => !row.ballotAccepted)
       .map((row) => ({
         voterPubkey: row.voterNpub,
+        ticketSent: row.ticketSent,
         requestId: row.requestId ?? null,
         ticketId: row.ticketId ?? null,
       }));
+    const ticketPublishStartedCount = enhancedCoordinatorFollowerRows.filter(
+      (row) => Boolean(row.ticketPublishStartedAt),
+    ).length;
+    const ticketPublishSucceededCount = enhancedCoordinatorFollowerRows.filter(
+      (row) => Boolean(row.ticketPublishSucceededAt),
+    ).length;
+    const ticketStillMissingCount = enhancedCoordinatorFollowerRows.filter(
+      (row) => row.ticketStillMissing,
+    ).length;
+    const ticketResentCount = enhancedCoordinatorFollowerRows.reduce(
+      (total, row) => total + Number(row.ticketResentCount ?? 0),
+      0,
+    );
     const owner = globalThis as typeof globalThis & {
       __simpleCoordinatorDebug?: unknown;
     };
@@ -2924,6 +2973,10 @@ export default function SimpleCoordinatorApp() {
       controlStateLabel: coordinatorControlStateLabel,
       waitingForAcknowledgements,
       waitingForCompletionConfirmation,
+      ticketPublishStartedCount,
+      ticketPublishSucceededCount,
+      ticketStillMissingCount,
+      ticketResentCount,
       acceptedBallotCount: activeAcceptedVotes.length,
       rejectedBallotCount: activeRejectedVotes.length,
       acceptedBallotsByRequestId: Array.from(acceptedBallotsByRequestId.entries()),
@@ -2952,6 +3005,14 @@ export default function SimpleCoordinatorApp() {
         acceptedByTicket: row.acceptedByTicket,
         requestId: row.requestId,
         ticketId: row.ticketId,
+        ticketBuiltAt: row.ticketBuiltAt,
+        ticketPublishStartedAt: row.ticketPublishStartedAt,
+        ticketPublishSucceededAt: row.ticketPublishSucceededAt,
+        ticketLastBackfillAttemptAt: row.ticketLastBackfillAttemptAt,
+        ticketResentCount: row.ticketResentCount,
+        ticketRelayTargets: row.ticketRelayTargets,
+        ticketRelaySuccessCount: row.ticketRelaySuccessCount,
+        ticketStillMissing: row.ticketStillMissing,
         ticketDeliveryConfirmed: row.ticketDeliveryConfirmed,
       })),
     };
@@ -3103,6 +3164,9 @@ export default function SimpleCoordinatorApp() {
     }
 
     for (const follower of visibleFollowers) {
+      if (autoSendInFlightRef.current.size >= SIMPLE_TICKET_SEND_MAX_CONCURRENCY) {
+        break;
+      }
       if (!autoSendFollowers[follower.voterNpub]) {
         continue;
       }
@@ -3122,7 +3186,7 @@ export default function SimpleCoordinatorApp() {
         autoSendInFlightRef.current.delete(ticketStatusKey);
       });
     }
-  }, [activeVotingId, autoSendFollowers, coordinatorFollowerRows, ticketDeliveries, visibleFollowers]);
+  }, [activeVotingId, autoSendFollowers, coordinatorFollowerRows, nowMs, ticketDeliveries, visibleFollowers]);
 
   useEffect(() => {
     if (!activeVotingId) {
@@ -3150,7 +3214,7 @@ export default function SimpleCoordinatorApp() {
       ],
       nowMs,
       minRetryAgeMs: SIMPLE_TICKET_RETRY_MIN_AGE_MS,
-      maxAttempts: 8,
+      maxAttempts: SIMPLE_TICKET_RETRY_MAX_ATTEMPTS,
     }));
 
     if (retryFollowerIds.size === 0) {
@@ -3158,11 +3222,28 @@ export default function SimpleCoordinatorApp() {
     }
 
     for (const follower of visibleFollowers) {
+      if (autoSendInFlightRef.current.size >= SIMPLE_TICKET_SEND_MAX_CONCURRENCY) {
+        break;
+      }
       if (!retryFollowerIds.has(follower.id) || !autoSendFollowers[follower.voterNpub]) {
         continue;
       }
 
       const ticketStatusKey = `${follower.voterNpub}:${activeVotingId}`;
+      setTicketDeliveries((current) => {
+        const existing = current[ticketStatusKey];
+        if (!existing) {
+          return current;
+        }
+        return {
+          ...current,
+          [ticketStatusKey]: {
+            ...existing,
+            ticketLastBackfillAttemptAt: new Date().toISOString(),
+            ticketStillMissing: true,
+          },
+        };
+      });
       if (autoSendInFlightRef.current.has(ticketStatusKey)) {
         continue;
       }

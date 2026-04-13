@@ -59,6 +59,8 @@ function summariseRun(run) {
     const unmatchedRowDiagnostics = Array.isArray(roundSummary.unmatchedRowDiagnostics)
       ? roundSummary.unmatchedRowDiagnostics
       : [];
+    const unmatchedLiveObserved = unmatchedRowDiagnostics.filter((entry) => Number(entry.ticketObservedLiveCount ?? 0) > 0).length;
+    const unmatchedBackfillObserved = unmatchedRowDiagnostics.filter((entry) => Number(entry.ticketObservedBackfillCount ?? 0) > 0).length;
     const unmatchedStageCounts = unmatchedRowDiagnostics.reduce((acc, item) => {
       const key = String(item?.firstMissingStage ?? "unknown");
       acc[key] = (acc[key] ?? 0) + 1;
@@ -82,7 +84,13 @@ function summariseRun(run) {
       coordinatorAcceptedByLineage,
       voterPublishedBallots,
       voterObservedTickets,
+      unmatchedLiveObserved,
+      unmatchedBackfillObserved,
       rowsWithoutAcceptedBallotCount: Number(roundSummary.rowsWithoutAcceptedBallotCount ?? unmatchedRowDiagnostics.length),
+      coordinatorTicketPublishStartedCount: Number(roundSummary.coordinatorTicketPublishStartedCount ?? 0),
+      coordinatorTicketPublishSucceededCount: Number(roundSummary.coordinatorTicketPublishSucceededCount ?? 0),
+      coordinatorTicketStillMissingCount: Number(roundSummary.coordinatorTicketStillMissingCount ?? 0),
+      coordinatorTicketResentCount: Number(roundSummary.coordinatorTicketResentCount ?? 0),
       unmatchedRowDiagnostics,
       unmatchedStageCounts,
       ticketSent,
@@ -126,6 +134,12 @@ async function main() {
         voterPublishedBallots: [],
         voterObservedTickets: [],
         rowsWithoutAcceptedBallotCount: [],
+        unmatchedLiveObserved: [],
+        unmatchedBackfillObserved: [],
+        coordinatorTicketPublishStartedCount: [],
+        coordinatorTicketPublishSucceededCount: [],
+        coordinatorTicketStillMissingCount: [],
+        coordinatorTicketResentCount: [],
         unmatchedStageCounts: {},
         unmatchedRows: [],
         ballotSubmitted: [],
@@ -148,6 +162,12 @@ async function main() {
       entry.voterPublishedBallots.push(round.voterPublishedBallots);
       entry.voterObservedTickets.push(round.voterObservedTickets);
       entry.rowsWithoutAcceptedBallotCount.push(round.rowsWithoutAcceptedBallotCount);
+      entry.unmatchedLiveObserved.push(round.unmatchedLiveObserved);
+      entry.unmatchedBackfillObserved.push(round.unmatchedBackfillObserved);
+      entry.coordinatorTicketPublishStartedCount.push(round.coordinatorTicketPublishStartedCount);
+      entry.coordinatorTicketPublishSucceededCount.push(round.coordinatorTicketPublishSucceededCount);
+      entry.coordinatorTicketStillMissingCount.push(round.coordinatorTicketStillMissingCount);
+      entry.coordinatorTicketResentCount.push(round.coordinatorTicketResentCount);
       for (const [stage, count] of Object.entries(round.unmatchedStageCounts ?? {})) {
         entry.unmatchedStageCounts[stage] = (entry.unmatchedStageCounts[stage] ?? 0) + Number(count ?? 0);
       }

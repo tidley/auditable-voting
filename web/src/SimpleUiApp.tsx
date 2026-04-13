@@ -245,6 +245,7 @@ export default function SimpleUiApp() {
   const [activeTab, setActiveTab] = useState<VoterTab>("configure");
   const [showVoteDetails, setShowVoteDetails] = useState(false);
   const sentTicketReceiptAckIdsRef = useRef<Set<string>>(new Set());
+  const ticketObservationMetaRef = useRef<Record<string, { liveAt?: number; backfillAt?: number }>>({});
   const lastAutoSelectedVotingIdRef = useRef("");
   const manualRoundSelectionRef = useRef(false);
   const identityHydrationEpochRef = useRef(0);
@@ -259,7 +260,10 @@ export default function SimpleUiApp() {
     }, storagePassphrase ? { passphrase: storagePassphrase } : undefined);
   }
 
-  async function reconcileIncomingShardResponses(nextResponses: SimpleShardResponse[]) {
+  async function reconcileIncomingShardResponses(
+    nextResponses: SimpleShardResponse[],
+    source: "live" | "backfill",
+  ) {
     const nextIssuedShares = (await Promise.all(nextResponses.map(async (response) => {
       const existingShare = response.shardCertificate;
       if (existingShare) {
@@ -287,6 +291,14 @@ export default function SimpleUiApp() {
       const merged = new Map(current.map((response) => [response.id, response]));
       for (const response of nextIssuedShares) {
         merged.set(response.id, response);
+        const existing = ticketObservationMetaRef.current[response.id] ?? {};
+        if (source === "live" && !existing.liveAt) {
+          existing.liveAt = Date.now();
+        }
+        if (source === "backfill" && !existing.backfillAt) {
+          existing.backfillAt = Date.now();
+        }
+        ticketObservationMetaRef.current[response.id] = existing;
       }
 
       const nextMergedShares = [...merged.values()];
@@ -606,7 +618,7 @@ export default function SimpleUiApp() {
       voterNsec,
       voterNsecs: Object.values(roundReplyKeypairs).map((keypair) => keypair.nsec),
       onResponses: (responses) => {
-        void reconcileIncomingShardResponses(responses);
+        void reconcileIncomingShardResponses(responses, "live");
       },
     });
   }, [configuredCoordinatorTargets.length, roundReplyKeypairs, voterKeypair?.nsec]);
@@ -634,7 +646,7 @@ export default function SimpleUiApp() {
         voterNsecs: Object.values(roundReplyKeypairs).map((keypair) => keypair.nsec),
       }).then((nextResponses) => {
         if (!cancelled) {
-          void reconcileIncomingShardResponses(nextResponses);
+          void reconcileIncomingShardResponses(nextResponses, "backfill");
         }
       }).catch(() => undefined);
     };
@@ -1743,6 +1755,20 @@ export default function SimpleUiApp() {
   const voteSubmitting = submitStatus === "Submitting vote...";
   const voteTicketReady = uniqueShardResponses.length >= requiredShardCount && requiredShardCount > 0;
   const ticketObserved = uniqueShardResponses.length > 0;
+  const ticketObservedLiveCount = uniqueShardResponses.filter((response) => (
+    Boolean(ticketObservationMetaRef.current[response.id]?.liveAt)
+  )).length;
+  const ticketObservedBackfillCount = uniqueShardResponses.filter((response) => (
+    Boolean(ticketObservationMetaRef.current[response.id]?.backfillAt)
+  )).length;
+  const ticketObservedLiveAt = uniqueShardResponses
+    .map((response) => ticketObservationMetaRef.current[response.id]?.liveAt)
+    .filter((value): value is number => typeof value === "number")
+    .sort((left, right) => left - right)[0];
+  const ticketObservedBackfillAt = uniqueShardResponses
+    .map((response) => ticketObservationMetaRef.current[response.id]?.backfillAt)
+    .filter((value): value is number => typeof value === "number")
+    .sort((left, right) => left - right)[0];
   const hasCoordinatorConnection = coordinatorDiagnostics.some((entry) => (
     entry.follow.tone === "ok"
     || entry.round.tone === "ok"
@@ -1783,6 +1809,10 @@ export default function SimpleUiApp() {
       roundSeen,
       blindKeySeen,
       ticketObserved,
+      ticketObservedLiveCount,
+      ticketObservedBackfillCount,
+      ticketObservedLiveAt: ticketObservedLiveAt ? new Date(ticketObservedLiveAt).toISOString() : null,
+      ticketObservedBackfillAt: ticketObservedBackfillAt ? new Date(ticketObservedBackfillAt).toISOString() : null,
       ticketAckSent,
       ballotSubmitted,
       ballotAccepted,
@@ -1798,6 +1828,10 @@ export default function SimpleUiApp() {
     requestStatus,
     requiredShardCount,
     ticketObserved,
+    ticketObservedLiveCount,
+    ticketObservedBackfillCount,
+    ticketObservedLiveAt,
+    ticketObservedBackfillAt,
     ticketAckSent,
     ballotSubmitted,
     ballotAccepted,
