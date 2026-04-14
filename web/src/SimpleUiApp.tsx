@@ -295,6 +295,8 @@ export default function SimpleUiApp() {
   const manualRoundSelectionRef = useRef(false);
   const identityHydrationEpochRef = useRef(0);
   const protocolStateServiceRef = useRef<ProtocolStateService | null>(null);
+  const saveStateDebounceTimerRef = useRef<number | null>(null);
+  const lastSavedStateSignatureRef = useRef<string>("");
   const deploymentMode = useMemo(() => readDeploymentModeFromUrl(), []);
   const isCourseFeedbackMode = deploymentMode === "course_feedback";
 
@@ -375,7 +377,8 @@ export default function SimpleUiApp() {
   );
   const hasConfiguredCoordinators = configuredCoordinatorTargets.length > 0;
   const voteTabActive = activeTab === "vote";
-  const shouldActivateStartupRelayTraffic = voteTabActive || hasConfiguredCoordinators;
+  const questionnaireModeActive = questionnaireContext.hasDefinition;
+  const shouldActivateStartupRelayTraffic = (voteTabActive || hasConfiguredCoordinators) && !questionnaireModeActive;
   const knownRoundVotingIds = useMemo(() => {
     const values = new Set<string>();
 
@@ -622,12 +625,43 @@ export default function SimpleUiApp() {
       liveVoteChoice,
     };
 
-    void saveSimpleActorState({
-      role: "voter",
-      keypair: voterKeypair,
-      updatedAt: new Date().toISOString(),
-      cache,
-    }, storagePassphrase ? { passphrase: storagePassphrase } : undefined);
+    const cacheSignature = JSON.stringify({
+      manualCoordinators,
+      nip65Enabled,
+      protocolStateCache,
+      requestStatus,
+      receivedShards,
+      pendingBlindRequests,
+      roundReplyKeypairs,
+      followDeliveries,
+      requestDeliveries,
+      submitStatus,
+      selectedVotingId,
+      liveVoteChoice,
+    });
+    if (cacheSignature === lastSavedStateSignatureRef.current) {
+      return;
+    }
+    if (saveStateDebounceTimerRef.current !== null) {
+      window.clearTimeout(saveStateDebounceTimerRef.current);
+      saveStateDebounceTimerRef.current = null;
+    }
+    saveStateDebounceTimerRef.current = window.setTimeout(() => {
+      saveStateDebounceTimerRef.current = null;
+      lastSavedStateSignatureRef.current = cacheSignature;
+      void saveSimpleActorState({
+        role: "voter",
+        keypair: voterKeypair,
+        updatedAt: new Date().toISOString(),
+        cache,
+      }, storagePassphrase ? { passphrase: storagePassphrase } : undefined);
+    }, 800);
+    return () => {
+      if (saveStateDebounceTimerRef.current !== null) {
+        window.clearTimeout(saveStateDebounceTimerRef.current);
+        saveStateDebounceTimerRef.current = null;
+      }
+    };
   }, [
     identityReady,
     liveVoteChoice,
@@ -866,7 +900,7 @@ export default function SimpleUiApp() {
   ]);
 
   useEffect(() => {
-    if (!voteTabActive || configuredCoordinatorTargets.length === 0) {
+    if (!voteTabActive || questionnaireModeActive || configuredCoordinatorTargets.length === 0) {
       return;
     }
 
@@ -917,7 +951,7 @@ export default function SimpleUiApp() {
         cleanup();
       }
     };
-  }, [configuredCoordinatorTargets, voteTabActive]);
+  }, [configuredCoordinatorTargets, questionnaireModeActive, voteTabActive]);
 
   useEffect(() => {
     if (!shouldActivateStartupRelayTraffic) {
@@ -968,7 +1002,7 @@ export default function SimpleUiApp() {
   }, [configuredCoordinatorTargets, discoveredSessions, voterKeypair?.npub]);
 
   useEffect(() => {
-    if (!voteTabActive || configuredCoordinatorTargets.length === 0 || knownRoundVotingIds.length === 0) {
+    if (!voteTabActive || questionnaireModeActive || configuredCoordinatorTargets.length === 0 || knownRoundVotingIds.length === 0) {
       setKnownBlindKeys({});
       return;
     }
@@ -995,10 +1029,10 @@ export default function SimpleUiApp() {
         cleanup();
       }
     };
-  }, [configuredCoordinatorTargets, knownRoundVotingIds, voteTabActive]);
+  }, [configuredCoordinatorTargets, knownRoundVotingIds, questionnaireModeActive, voteTabActive]);
 
   useEffect(() => {
-    if (!voteTabActive) {
+    if (!voteTabActive || questionnaireModeActive) {
       return;
     }
     const roundsMissingBlindKeys = configuredCoordinatorTargets.flatMap((coordinatorNpub) => {
@@ -1049,7 +1083,7 @@ export default function SimpleUiApp() {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [configuredCoordinatorTargets, knownBlindKeys, knownRoundVotingIds, voteTabActive]);
+  }, [configuredCoordinatorTargets, knownBlindKeys, knownRoundVotingIds, questionnaireModeActive, voteTabActive]);
 
   useEffect(() => {
     const npub = voterKeypair?.npub?.trim() ?? "";

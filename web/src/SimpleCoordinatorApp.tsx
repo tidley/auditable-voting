@@ -706,6 +706,8 @@ export default function SimpleCoordinatorApp() {
   const startupForcedRecoveryAttemptedRef = useRef(false);
   const latestCoordinatorHexRosterRef = useRef<string[]>([]);
   const latestCoordinatorElectionIdRef = useRef("");
+  const saveStateDebounceTimerRef = useRef<number | null>(null);
+  const lastSavedStateSignatureRef = useRef<string>("");
 
   useEffect(() => {
     latestCoordinatorHexRosterRef.current = coordinatorHexRoster;
@@ -1331,7 +1333,7 @@ export default function SimpleCoordinatorApp() {
   useEffect(() => {
     const intervalId = window.setInterval(() => {
       setNowMs(Date.now());
-    }, 1000);
+    }, 15000);
 
     return () => {
       window.clearInterval(intervalId);
@@ -1368,12 +1370,53 @@ export default function SimpleCoordinatorApp() {
       submittedVotes,
     };
 
-    void saveSimpleActorState({
-      role: 'coordinator',
-      keypair,
-      updatedAt: new Date().toISOString(),
-      cache,
-    }, storagePassphrase ? { passphrase: storagePassphrase } : undefined);
+    const cacheSignature = JSON.stringify({
+      leadCoordinatorNpub,
+      nip65Enabled,
+      followers,
+      subCoordinators,
+      ticketDeliveries,
+      autoSendFollowers,
+      pendingRequests,
+      registrationStatus,
+      assignmentStatus,
+      questionPrompt,
+      questionThresholdT,
+      questionThresholdN,
+      questionShareIndex,
+      roundBlindPrivateKeys,
+      roundBlindKeyAnnouncements,
+      publishStatus,
+      coordinatorControlCache,
+      protocolStateCache,
+      publishedVotes,
+      selectedVotingId,
+      selectedSubmittedVotingId,
+      submittedVotes,
+    });
+    if (cacheSignature === lastSavedStateSignatureRef.current) {
+      return;
+    }
+    if (saveStateDebounceTimerRef.current !== null) {
+      window.clearTimeout(saveStateDebounceTimerRef.current);
+      saveStateDebounceTimerRef.current = null;
+    }
+    saveStateDebounceTimerRef.current = window.setTimeout(() => {
+      saveStateDebounceTimerRef.current = null;
+      lastSavedStateSignatureRef.current = cacheSignature;
+      void saveSimpleActorState({
+        role: 'coordinator',
+        keypair,
+        updatedAt: new Date().toISOString(),
+        cache,
+      }, storagePassphrase ? { passphrase: storagePassphrase } : undefined);
+    }, 800);
+    return () => {
+      if (saveStateDebounceTimerRef.current !== null) {
+        window.clearTimeout(saveStateDebounceTimerRef.current);
+        saveStateDebounceTimerRef.current = null;
+      }
+    };
   }, [
     assignmentStatus,
     autoSendFollowers,

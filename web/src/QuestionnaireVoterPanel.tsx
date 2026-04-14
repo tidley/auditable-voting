@@ -2,12 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { generateSecretKey, nip19 } from "nostr-tools";
 import { fetchQuestionnaireEvents, fetchQuestionnaireEventsWithFallback, getQuestionnaireReadRelays, parseQuestionnaireDefinitionEvent, parseQuestionnaireStateEvent, publishEncryptedQuestionnaireResponse, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND } from "./questionnaireNostr";
 import { deriveEffectiveQuestionnaireState, formatQuestionnaireStateLabel, formatQuestionnaireTokenStatusLabel, parseQuestionnaireResultSummaryEvent, selectLatestQuestionnaireDefinition, selectLatestQuestionnaireState } from "./questionnaireRuntime";
-import { loadSimpleActorState } from "./simpleLocalState";
+import { buildSimpleNamespacedLocalStorageKey, loadSimpleActorState } from "./simpleLocalState";
 import { validateQuestionnaireResponsePayload, type QuestionnaireDefinition, type QuestionnaireResponseAnswer, type QuestionnaireResponsePayload, type QuestionnaireResultSummary } from "./questionnaireProtocol";
 import { getSharedNostrPool } from "./sharedNostrPool";
 import TokenFingerprint from "./TokenFingerprint";
 
-const RESTORED_QUESTIONNAIRE_IDS_STORAGE_KEY = "auditable-voting.restored-questionnaire-ids.v1";
+const RESTORED_QUESTIONNAIRE_IDS_STORAGE_KEY = "voter.restored-questionnaire-ids.v1";
 const VOTER_QUESTIONNAIRE_LOOKBACK_SECONDS = 7 * 24 * 60 * 60;
 const REFRESH_INTERVAL_MS = 15000;
 
@@ -22,7 +22,9 @@ function readRestoredQuestionnaireIds() {
     return [] as string[];
   }
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(RESTORED_QUESTIONNAIRE_IDS_STORAGE_KEY) ?? "[]") as string[];
+    const parsed = JSON.parse(
+      window.localStorage.getItem(buildSimpleNamespacedLocalStorageKey(RESTORED_QUESTIONNAIRE_IDS_STORAGE_KEY)) ?? "[]",
+    ) as string[];
     if (!Array.isArray(parsed)) {
       return [] as string[];
     }
@@ -135,7 +137,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
       return;
     }
     window.localStorage.setItem(
-      RESTORED_QUESTIONNAIRE_IDS_STORAGE_KEY,
+      buildSimpleNamespacedLocalStorageKey(RESTORED_QUESTIONNAIRE_IDS_STORAGE_KEY),
       JSON.stringify(restoredQuestionnaireIds),
     );
   }, [restoredQuestionnaireIds]);

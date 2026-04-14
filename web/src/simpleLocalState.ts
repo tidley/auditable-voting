@@ -160,6 +160,14 @@ function getStorageNamespace() {
   return cachedStorageNamespace;
 }
 
+export function getSimpleStorageNamespace() {
+  return getStorageNamespace();
+}
+
+export function buildSimpleNamespacedLocalStorageKey(key: string) {
+  return `app:auditable-voting:${getStorageNamespace()}:${key}`;
+}
+
 function getStorageDbName() {
   const namespace = getStorageNamespace();
   return namespace === DEFAULT_STORAGE_NAMESPACE

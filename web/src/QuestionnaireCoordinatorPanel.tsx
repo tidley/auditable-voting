@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { NostrEvent } from "nostr-tools";
 import { fetchQuestionnaireEventsWithFallback, getQuestionnaireReadRelays, parseQuestionnaireDefinitionEvent, parseQuestionnaireStateEvent, publishQuestionnaireDefinition, publishQuestionnaireResultSummary, publishQuestionnaireState, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESPONSE_PRIVATE_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND, subscribeQuestionnaireEvents } from "./questionnaireNostr";
 import { buildQuestionnaireResultSummary, deriveEffectiveQuestionnaireState, processQuestionnaireResponses, selectLatestQuestionnaireDefinition, selectLatestQuestionnaireResultSummary, selectLatestQuestionnaireState, type QuestionnaireAcceptedResponse } from "./questionnaireRuntime";
-import { loadSimpleActorState } from "./simpleLocalState";
+import { buildSimpleNamespacedLocalStorageKey, loadSimpleActorState } from "./simpleLocalState";
 import {
   validateQuestionnaireDefinition,
   type QuestionnaireDefinition,
@@ -16,7 +16,7 @@ import { deriveActorDisplayId } from "./actorDisplay";
 import { getSharedNostrPool } from "./sharedNostrPool";
 
 const DEFAULT_QUESTIONNAIRE_ID_PREFIX = "q";
-const QUESTIONNAIRE_DRAFT_ID_STORAGE_KEY = "auditable-voting.coordinator.questionnaire-draft-id.v1";
+const QUESTIONNAIRE_DRAFT_ID_STORAGE_KEY = "coordinator.questionnaire-draft-id.v1";
 const IDENTITY_REFRESH_INTERVAL_MS = 10000;
 
 type QuestionnairePublishDiagnostic = {
@@ -86,7 +86,7 @@ function readStoredQuestionnaireDraftId() {
   if (typeof window === "undefined") {
     return generateQuestionnaireId();
   }
-  const stored = window.localStorage.getItem(QUESTIONNAIRE_DRAFT_ID_STORAGE_KEY)?.trim() ?? "";
+  const stored = window.localStorage.getItem(buildSimpleNamespacedLocalStorageKey(QUESTIONNAIRE_DRAFT_ID_STORAGE_KEY))?.trim() ?? "";
   return stored || generateQuestionnaireId();
 }
 
@@ -630,7 +630,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     if (!nextId) {
       return;
     }
-    window.localStorage.setItem(QUESTIONNAIRE_DRAFT_ID_STORAGE_KEY, nextId);
+    window.localStorage.setItem(buildSimpleNamespacedLocalStorageKey(QUESTIONNAIRE_DRAFT_ID_STORAGE_KEY), nextId);
   }, [questionnaireId]);
 
   function addYesNoQuestion() {
