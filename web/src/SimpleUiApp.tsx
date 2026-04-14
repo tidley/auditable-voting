@@ -232,6 +232,15 @@ function formatMissingCoordinatorKeyText(indices: number[]) {
   return `Waiting for Coordinators ${leading}, and ${trailing}' keys before preparing ticket request.`;
 }
 
+function readDeploymentModeFromUrl() {
+  if (typeof window === "undefined") {
+    return "legacy";
+  }
+  return (new URLSearchParams(window.location.search).get("deployment") ?? "legacy")
+    .trim()
+    .toLowerCase();
+}
+
 export default function SimpleUiApp() {
   const [voterKeypair, setVoterKeypair] = useState<SimpleVoterKeypair | null>(null);
   const [identityReady, setIdentityReady] = useState(false);
@@ -278,6 +287,8 @@ export default function SimpleUiApp() {
   const manualRoundSelectionRef = useRef(false);
   const identityHydrationEpochRef = useRef(0);
   const protocolStateServiceRef = useRef<ProtocolStateService | null>(null);
+  const deploymentMode = useMemo(() => readDeploymentModeFromUrl(), []);
+  const isCourseFeedbackMode = deploymentMode === "course_feedback";
 
   function persistVoterIdentity(nextKeypair: SimpleVoterKeypair, cache?: Partial<SimpleVoterCache>) {
     return saveSimpleActorState({
@@ -2080,6 +2091,7 @@ export default function SimpleUiApp() {
             : "backfill_match_found_not_reconciled";
     const ticketMailboxMismatches = Object.values(ticketMailboxMismatchRef.current);
     owner.__simpleVoterDebug = {
+      deploymentMode,
       voterNpub: voterKeypair?.npub ?? null,
       hasLiveRound: Boolean(effectiveLiveVoteSession),
       selectedVotingId: effectiveLiveVoteSession?.votingId ?? null,
@@ -2121,6 +2133,7 @@ export default function SimpleUiApp() {
       requestStatus,
     };
   }, [
+    deploymentMode,
     effectiveLiveVoteSession,
     knownRounds.length,
     requestStatus,
@@ -2433,7 +2446,8 @@ export default function SimpleUiApp() {
             aria-label='Vote'
           >
             <QuestionnaireVoterPanel />
-            {effectiveLiveVoteSession ? (
+            {isCourseFeedbackMode ? null : (
+            effectiveLiveVoteSession ? (
               <>
                 {knownRounds.length > 1 ? (
                   <div className='simple-voter-round-picker'>
@@ -2652,6 +2666,7 @@ export default function SimpleUiApp() {
                     : 'Add coordinators in Configure, then wait for the next live round and ticket.'}
                 </p>
               </div>
+            )
             )}
           </section>
         ) : null}

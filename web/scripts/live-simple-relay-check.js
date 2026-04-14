@@ -41,16 +41,40 @@ function classifyHarnessFailure(error) {
   return "unknown_failure";
 }
 
-function classifyProtocolFailure(rounds) {
+function classifyProtocolFailure(rounds, deploymentMode = "course_feedback") {
   const latestRound = rounds.at(-1) ?? null;
   if (!latestRound?.stageMetrics) {
     return {
       protocolFailureClass: "startup",
-      firstMissingStage: "roundSeen",
+      firstMissingStage: deploymentMode === "course_feedback"
+        ? "questionnaireSeen"
+        : "roundSeen",
     };
   }
 
   const stageMetrics = latestRound.stageMetrics;
+  if (deploymentMode === "course_feedback") {
+    const firstMissingStage = [
+      "questionnaireSeen",
+      "questionnaireOpen",
+      "responsePublished",
+      "resultSummaryPublished",
+    ].find((stageName) => Number(stageMetrics[stageName]?.count ?? 0) === 0) ?? null;
+    const questionnaireSeen = Number(stageMetrics.questionnaireSeen?.count ?? 0);
+    const responsePublished = Number(stageMetrics.responsePublished?.count ?? 0);
+    const resultSummaryPublished = Number(stageMetrics.resultSummaryPublished?.count ?? 0);
+    let protocolFailureClass = "mixed";
+    if (questionnaireSeen === 0) {
+      protocolFailureClass = "startup";
+    } else if (responsePublished > 0 || resultSummaryPublished > 0) {
+      protocolFailureClass = "dm_pipeline";
+    }
+    return {
+      protocolFailureClass,
+      firstMissingStage,
+    };
+  }
+
   const firstMissingStage = [
     "roundSeen",
     "blindKeySeen",
@@ -101,6 +125,391 @@ async function ensureDebugDir() {
 
 function safeErrorMessage(error) {
   return error instanceof Error ? error.message : String(error);
+}
+
+async function withTimeout(promise, timeoutMs, label) {
+  let timeoutId;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+        timeoutId.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
+function createTimelineArtifact(input) {
+  return {
+    runId: input.runId,
+    startedAtMs: input.startedAtMs,
+    config: {
+      coordinators: input.coordinatorCount,
+      voters: input.voterCount,
+      rounds: input.roundCount,
+      deploymentMode: input.deploymentMode,
+    },
+    globalTimeline: [],
+    coordinatorTimeline: [],
+    voterTimelines: {},
+    finalSnapshot: null,
+    summary: null,
+    _seenKeys: new Set(),
+  };
+}
+
+function timelineEventTMs(timeline, nowMs = Date.now()) {
+  return Math.max(0, nowMs - timeline.startedAtMs);
+}
+
+function recordTimelineEvent(timeline, actor, kind, details = null) {
+  const event = {
+    tMs: timelineEventTMs(timeline),
+    actor,
+    kind,
+    ...(details ? { details } : {}),
+  };
+  timeline.globalTimeline.push(event);
+  if (actor.startsWith("coord")) {
+    timeline.coordinatorTimeline.push(event);
+    return;
+  }
+  if (!timeline.voterTimelines[actor]) {
+    timeline.voterTimelines[actor] = [];
+  }
+  timeline.voterTimelines[actor].push(event);
+}
+
+function recordTimelineEventOnce(timeline, dedupeKey, actor, kind, details = null) {
+  if (timeline._seenKeys.has(dedupeKey)) {
+    return;
+  }
+  timeline._seenKeys.add(dedupeKey);
+  recordTimelineEvent(timeline, actor, kind, details);
+}
+
+function deriveVoterPhase(debug) {
+  if (!debug) {
+    return "no_debug_state";
+  }
+  if (debug.responsePublished) {
+    return "response_published";
+  }
+  if (debug.questionnaireOpen) {
+    return "questionnaire_open";
+  }
+  if (debug.questionnaireSeen) {
+    return "questionnaire_seen";
+  }
+  return "waiting_for_questionnaire";
+}
+
+function buildQuestionnaireFinalSnapshotFromRound(roundState) {
+  const coordinator = roundState?.coordinatorStates?.coord1?.questionnaireCoordinatorDebug ?? null;
+  const voterEntries = Object.entries(roundState?.voterStates ?? {});
+  const voters = Object.fromEntries(
+    voterEntries.map(([label, state]) => {
+      const voterDebug = state?.questionnaireVoterDebug ?? null;
+      return [label, {
+        questionnaireSeen: Boolean(voterDebug?.questionnaireSeen),
+        questionnaireOpen: Boolean(voterDebug?.questionnaireOpen),
+        eligibilityRequested: false,
+        blindIssueReceived: false,
+        tokenReady: false,
+        responsePublished: Boolean(voterDebug?.responsePublished),
+        currentPhase: deriveVoterPhase(voterDebug),
+      }];
+    }),
+  );
+  return {
+    coordinator: {
+      phase: coordinator?.status ?? null,
+      questionnaireId: coordinator?.questionnaireId ?? null,
+      questionnairePublishAttempted: Boolean(coordinator?.definitionPublishDiagnostic?.attempted),
+      questionnairePublishSucceeded: Boolean(coordinator?.definitionPublishDiagnostic?.succeeded),
+      questionnaireOpenPublishAttempted: Boolean(coordinator?.statePublishDiagnostic?.attempted),
+      questionnaireOpenPublishSucceeded: Boolean(coordinator?.statePublishDiagnostic?.succeeded),
+      eligibilityRequestsReceived: 0,
+      blindIssuesSucceeded: 0,
+      responsesSeen: Number(coordinator?.responseEventCount ?? 0),
+      responsesAccepted: Number(coordinator?.latestAcceptedCount ?? 0),
+      responsesRejected: Number(coordinator?.latestRejectedCount ?? 0),
+    },
+    voters,
+  };
+}
+
+function buildQuestionnaireFinalSnapshotFromActorSnapshots(snapshots) {
+  const coordinatorSnapshot = snapshots.find((entry) => entry.label === "coord1");
+  const coordinatorDebug = coordinatorSnapshot?.questionnaireCoordinatorDebug ?? null;
+  const voters = Object.fromEntries(
+    snapshots
+      .filter((entry) => entry.label.startsWith("voter"))
+      .map((entry) => {
+        const voterDebug = entry.questionnaireVoterDebug ?? null;
+        return [entry.label, {
+          questionnaireSeen: Boolean(voterDebug?.questionnaireSeen),
+          questionnaireOpen: Boolean(voterDebug?.questionnaireOpen),
+          eligibilityRequested: false,
+          blindIssueReceived: false,
+          tokenReady: false,
+          responsePublished: Boolean(voterDebug?.responsePublished),
+          currentPhase: deriveVoterPhase(voterDebug),
+        }];
+      }),
+  );
+  return {
+    coordinator: {
+      phase: coordinatorDebug?.status ?? null,
+      questionnaireId: coordinatorDebug?.questionnaireId ?? null,
+      questionnairePublishAttempted: Boolean(coordinatorDebug?.definitionPublishDiagnostic?.attempted),
+      questionnairePublishSucceeded: Boolean(coordinatorDebug?.definitionPublishDiagnostic?.succeeded),
+      questionnaireOpenPublishAttempted: Boolean(coordinatorDebug?.statePublishDiagnostic?.attempted),
+      questionnaireOpenPublishSucceeded: Boolean(coordinatorDebug?.statePublishDiagnostic?.succeeded),
+      eligibilityRequestsReceived: 0,
+      blindIssuesSucceeded: 0,
+      responsesSeen: Number(coordinatorDebug?.responseEventCount ?? 0),
+      responsesAccepted: Number(coordinatorDebug?.latestAcceptedCount ?? 0),
+      responsesRejected: Number(coordinatorDebug?.latestRejectedCount ?? 0),
+    },
+    voters,
+  };
+}
+
+async function collectQuestionnaireTimelineEvents(input) {
+  const {
+    coordinators,
+    voters,
+    timeline,
+    state,
+  } = input;
+  const lead = coordinators[0];
+  if (!lead?.page) {
+    return;
+  }
+  const coordinatorDebug = await readQuestionnaireCoordinatorDebug(lead.page);
+  if (coordinatorDebug) {
+    recordTimelineEventOnce(
+      timeline,
+      "coord1:runtime_ready",
+      "coord1",
+      "coordinator_runtime_ready",
+    );
+    recordTimelineEventOnce(
+      timeline,
+      "coord1:mode_selected",
+      "coord1",
+      "coordinator_mode_selected",
+      { deploymentMode: "course_feedback" },
+    );
+    if (typeof coordinatorDebug.questionnaireId === "string" && coordinatorDebug.questionnaireId.trim()) {
+      if (state.coordinatorQuestionnaireId !== coordinatorDebug.questionnaireId) {
+        state.coordinatorQuestionnaireId = coordinatorDebug.questionnaireId;
+        recordTimelineEventOnce(
+          timeline,
+          `coord1:questionnaire_id_set:${coordinatorDebug.questionnaireId}`,
+          "coord1",
+          "questionnaire_id_set",
+          { questionnaireId: coordinatorDebug.questionnaireId },
+        );
+      }
+    }
+    const definitionPublish = coordinatorDebug.definitionPublishDiagnostic ?? null;
+    if (definitionPublish?.attempted) {
+      recordTimelineEventOnce(
+        timeline,
+        `coord1:questionnaire_publish_attempted:${coordinatorDebug.questionnaireId ?? "unknown"}`,
+        "coord1",
+        "questionnaire_publish_attempted",
+        { questionnaireId: coordinatorDebug.questionnaireId ?? null },
+      );
+    }
+    if (definitionPublish?.succeeded) {
+      recordTimelineEventOnce(
+        timeline,
+        `coord1:questionnaire_publish_succeeded:${definitionPublish.eventId ?? "none"}`,
+        "coord1",
+        "questionnaire_publish_succeeded",
+        {
+          questionnaireId: coordinatorDebug.questionnaireId ?? null,
+          eventId: definitionPublish.eventId ?? null,
+        },
+      );
+    }
+    const statePublish = coordinatorDebug.statePublishDiagnostic ?? null;
+    if (statePublish?.attempted) {
+      recordTimelineEventOnce(
+        timeline,
+        `coord1:questionnaire_open_publish_attempted:${coordinatorDebug.questionnaireId ?? "unknown"}`,
+        "coord1",
+        "questionnaire_open_publish_attempted",
+        { questionnaireId: coordinatorDebug.questionnaireId ?? null },
+      );
+    }
+    if (statePublish?.succeeded) {
+      recordTimelineEventOnce(
+        timeline,
+        `coord1:questionnaire_open_publish_succeeded:${statePublish.eventId ?? "none"}`,
+        "coord1",
+        "questionnaire_open_publish_succeeded",
+        {
+          questionnaireId: coordinatorDebug.questionnaireId ?? null,
+          eventId: statePublish.eventId ?? null,
+        },
+      );
+    }
+    const responseCount = Number(coordinatorDebug.responseEventCount ?? 0);
+    if (responseCount > state.lastCoordinatorResponseCount) {
+      for (let count = state.lastCoordinatorResponseCount + 1; count <= responseCount; count += 1) {
+        recordTimelineEvent(
+          timeline,
+          "coord1",
+          "response_event_seen",
+          { observedCount: count },
+        );
+        recordTimelineEvent(
+          timeline,
+          "coord1",
+          "response_decrypt_attempted",
+          { observedCount: count },
+        );
+        recordTimelineEvent(
+          timeline,
+          "coord1",
+          "response_decrypt_succeeded",
+          { observedCount: count },
+        );
+      }
+      state.lastCoordinatorResponseCount = responseCount;
+    }
+    const acceptedCount = Number(coordinatorDebug.latestAcceptedCount ?? 0);
+    if (acceptedCount > state.lastCoordinatorAcceptedCount) {
+      for (let count = state.lastCoordinatorAcceptedCount + 1; count <= acceptedCount; count += 1) {
+        recordTimelineEvent(
+          timeline,
+          "coord1",
+          "response_accepted",
+          { acceptedCount: count },
+        );
+      }
+      state.lastCoordinatorAcceptedCount = acceptedCount;
+    }
+    const rejectedCount = Number(coordinatorDebug.latestRejectedCount ?? 0);
+    if (rejectedCount > state.lastCoordinatorRejectedCount) {
+      for (let count = state.lastCoordinatorRejectedCount + 1; count <= rejectedCount; count += 1) {
+        recordTimelineEvent(
+          timeline,
+          "coord1",
+          "response_rejected",
+          { rejectedCount: count },
+        );
+      }
+      state.lastCoordinatorRejectedCount = rejectedCount;
+    }
+    const resultPublish = coordinatorDebug.resultPublishDiagnostic ?? null;
+    if (resultPublish?.attempted) {
+      recordTimelineEventOnce(
+        timeline,
+        "coord1:result_summary_publish_attempted",
+        "coord1",
+        "result_summary_publish_attempted",
+      );
+    }
+    if (resultPublish?.succeeded) {
+      recordTimelineEventOnce(
+        timeline,
+        `coord1:result_summary_publish_succeeded:${resultPublish.eventId ?? "none"}`,
+        "coord1",
+        "result_summary_publish_succeeded",
+        { eventId: resultPublish.eventId ?? null },
+      );
+    }
+    if (coordinatorDebug.latestResultAcceptedCount !== null && coordinatorDebug.latestResultAcceptedCount !== undefined) {
+      recordTimelineEventOnce(
+        timeline,
+        `coord1:result_summary_publish_succeeded:fallback:${coordinatorDebug.latestResultAcceptedCount}`,
+        "coord1",
+        "result_summary_publish_succeeded",
+        { acceptedCount: Number(coordinatorDebug.latestResultAcceptedCount) },
+      );
+    }
+  }
+
+  for (const actor of voters) {
+    const voterDebug = await readQuestionnaireVoterDebug(actor.page);
+    if (!voterDebug) {
+      continue;
+    }
+    const voterLabel = actor.label;
+    recordTimelineEventOnce(
+      timeline,
+      `${voterLabel}:runtime_ready`,
+      voterLabel,
+      "voter_runtime_ready",
+    );
+    if (typeof voterDebug.questionnaireId === "string" && voterDebug.questionnaireId.trim()) {
+      const previousQuestionnaireId = state.voterQuestionnaireIds[voterLabel] ?? null;
+      if (previousQuestionnaireId !== voterDebug.questionnaireId) {
+        state.voterQuestionnaireIds[voterLabel] = voterDebug.questionnaireId;
+        recordTimelineEventOnce(
+          timeline,
+          `${voterLabel}:questionnaire_id_set:${voterDebug.questionnaireId}`,
+          voterLabel,
+          "questionnaire_id_set",
+          { questionnaireId: voterDebug.questionnaireId },
+        );
+      }
+    }
+    if (voterDebug.questionnaireSeen) {
+      recordTimelineEventOnce(
+        timeline,
+        `${voterLabel}:questionnaire_seen`,
+        voterLabel,
+        "questionnaire_seen",
+      );
+    }
+    if (voterDebug.questionnaireOpen) {
+      recordTimelineEventOnce(
+        timeline,
+        `${voterLabel}:questionnaire_open_seen`,
+        voterLabel,
+        "questionnaire_open_seen",
+      );
+    }
+    if (typeof voterDebug.status === "string" && /Submitting encrypted response/i.test(voterDebug.status)) {
+      recordTimelineEventOnce(
+        timeline,
+        `${voterLabel}:response_publish_attempted`,
+        voterLabel,
+        "response_publish_attempted",
+      );
+    }
+    if (voterDebug.responsePublished) {
+      recordTimelineEventOnce(
+        timeline,
+        `${voterLabel}:response_publish_succeeded`,
+        voterLabel,
+        "response_publish_succeeded",
+        { submittedCount: Number(voterDebug.responseSubmittedCount ?? 0) },
+      );
+    }
+    if (voterDebug.latestResultAcceptedCount !== null && voterDebug.latestResultAcceptedCount !== undefined) {
+      recordTimelineEventOnce(
+        timeline,
+        `${voterLabel}:result_summary_seen`,
+        voterLabel,
+        "result_summary_seen",
+        { acceptedCount: Number(voterDebug.latestResultAcceptedCount) },
+      );
+    }
+  }
 }
 
 async function runRelayProbe(input) {
@@ -186,6 +595,78 @@ async function runRelayProbe(input) {
   return probes;
 }
 
+async function runQuestionnaireRelayProbe(input) {
+  const relay = String(input?.relay ?? "").trim();
+  const kind = Number(input?.kind ?? 0);
+  const questionnaireId = String(input?.questionnaireId ?? "").trim();
+  const tTag = String(input?.tTag ?? "").trim();
+  const eventId = String(input?.eventId ?? "").trim();
+  if (!relay || !Number.isFinite(kind) || kind <= 0 || !questionnaireId) {
+    return null;
+  }
+
+  const filters = [
+    {
+      name: "kind_only",
+      filter: { kinds: [kind], limit: 200 },
+    },
+    {
+      name: "kind_questionnaire_id",
+      filter: { kinds: [kind], "#questionnaire-id": [questionnaireId], limit: 200 },
+    },
+    {
+      name: "kind_questionnaire_id_t",
+      filter: {
+        kinds: [kind],
+        "#questionnaire-id": [questionnaireId],
+        ...(tTag ? { "#t": [tTag] } : {}),
+        limit: 200,
+      },
+    },
+  ];
+
+  const probes = [];
+  const queryWithTimeout = async (targetRelay, filter, timeoutMs = 8000) => {
+    let timeoutId;
+    try {
+      return await Promise.race([
+        relayProbePool.querySync([targetRelay], filter),
+        new Promise((_, reject) => {
+          timeoutId = setTimeout(() => {
+            reject(new Error(`Relay probe timeout after ${timeoutMs}ms`));
+          }, timeoutMs);
+          timeoutId.unref?.();
+        }),
+      ]);
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    }
+  };
+
+  for (const entry of filters) {
+    try {
+      const events = await queryWithTimeout(relay, entry.filter);
+      probes.push({
+        name: entry.name,
+        relay,
+        filter: entry.filter,
+        count: events.length,
+        matchedEventId: Boolean(eventId) && events.some((event) => event.id === eventId),
+      });
+    } catch (error) {
+      probes.push({
+        name: entry.name,
+        relay,
+        filter: entry.filter,
+        error: safeErrorMessage(error),
+      });
+    }
+  }
+  return probes;
+}
+
 function pageRuntimeState(page) {
   return {
     browserConnected: page.context().browser()?.isConnected?.() ?? false,
@@ -217,7 +698,9 @@ async function snapshotPage(actor, reason) {
     url: null,
     body: null,
     coordinatorDebug: null,
+    questionnaireCoordinatorDebug: null,
     voterDebug: null,
+    questionnaireVoterDebug: null,
     ticketLifecycleTraces: [],
     runtime: pageRuntimeState(actor.page),
     screenshotPath: pngPath,
@@ -232,10 +715,14 @@ async function snapshotPage(actor, reason) {
       const body = await actor.page.locator("body").innerText().catch(() => null);
       const traces = await readTicketLifecycleTraces(actor.page).catch(() => []);
       const coordinatorDebug = await readCoordinatorDebug(actor.page).catch(() => null);
+      const questionnaireCoordinatorDebug = await readQuestionnaireCoordinatorDebug(actor.page).catch(() => null);
       const voterDebug = await readVoterDebug(actor.page).catch(() => null);
+      const questionnaireVoterDebug = await readQuestionnaireVoterDebug(actor.page).catch(() => null);
       meta.body = typeof body === "string" ? body.replace(/\s+/g, " ").trim() : null;
       meta.coordinatorDebug = coordinatorDebug;
+      meta.questionnaireCoordinatorDebug = questionnaireCoordinatorDebug;
       meta.voterDebug = voterDebug;
+      meta.questionnaireVoterDebug = questionnaireVoterDebug;
       meta.ticketLifecycleTraces = Array.isArray(traces) ? traces : [];
       if (typeof html === "string") {
         await writeFile(htmlPath, html, "utf8");
@@ -256,7 +743,30 @@ async function snapshotAllActors(actors, reason) {
 }
 
 async function getNpub(page) {
-  const indexedDbNpub = await page.evaluate(async () => {
+  await ensureTab(page, "Settings");
+  const codeLocator = page.locator("code.simple-identity-code").first();
+  if (await codeLocator.count()) {
+    await codeLocator.waitFor({ state: "attached", timeout: 30000 });
+    const text = (await codeLocator.textContent())?.trim();
+    if (text) {
+      return text;
+    }
+  }
+
+  const copyButton = page.getByRole("button", { name: /Copy npub/i }).first();
+  if (await copyButton.count()) {
+    await copyButton.waitFor({ state: "visible", timeout: 30000 });
+    const identityField = page.locator(".simple-identity-field").first();
+    const identityCode = identityField.locator("code.simple-identity-code").first();
+    if (await identityCode.count()) {
+      const text = (await identityCode.textContent())?.trim();
+      if (text) {
+        return text;
+      }
+    }
+  }
+
+  const indexedDbNpub = await withTimeout(page.evaluate(async () => {
     const database = await new Promise((resolve, reject) => {
       const request = indexedDB.open("auditable-voting-simple", 1);
       request.onsuccess = () => resolve(request.result);
@@ -284,33 +794,10 @@ async function getNpub(page) {
 
     database.close();
     return null;
-  }).catch(() => null);
+  }).catch(() => null), 8000, "getNpub(indexeddb)").catch(() => null);
 
   if (indexedDbNpub) {
     return indexedDbNpub;
-  }
-
-  await ensureTab(page, "Settings");
-  const codeLocator = page.locator("code.simple-identity-code").first();
-  if (await codeLocator.count()) {
-    await codeLocator.waitFor({ state: "attached", timeout: 30000 });
-    const text = (await codeLocator.textContent())?.trim();
-    if (text) {
-      return text;
-    }
-  }
-
-  const copyButton = page.getByRole("button", { name: /Copy npub/i }).first();
-  if (await copyButton.count()) {
-    await copyButton.waitFor({ state: "visible", timeout: 30000 });
-    const identityField = page.locator(".simple-identity-field").first();
-    const identityCode = identityField.locator("code.simple-identity-code").first();
-    if (await identityCode.count()) {
-      const text = (await identityCode.textContent())?.trim();
-      if (text) {
-        return text;
-      }
-    }
   }
 
   const body = await readBody(page);
@@ -628,6 +1115,23 @@ function createRoundStageTracker({ round, prompt, voterIds, coordinatorCount }) 
   };
 }
 
+function createQuestionnaireStageTracker({ round, questionnaireId, voterIds }) {
+  return {
+    round,
+    questionnaireId,
+    startedAtMs: Date.now(),
+    lastObservedAtMs: 0,
+    totalPairs: voterIds.length,
+    voterIds,
+    stages: {
+      questionnaireSeen: new Map(),
+      questionnaireOpen: new Map(),
+      responsePublished: new Map(),
+      resultSummaryPublished: new Map(),
+    },
+  };
+}
+
 function recordStage(stageTracker, stageName, pairKey, nowMs) {
   const stageMap = stageTracker.stages[stageName];
   if (!stageMap.has(pairKey)) {
@@ -740,6 +1244,45 @@ async function observeRoundStages(stageTracker, coordinators, voters) {
   stageTracker.lastObservedAtMs = nowMs;
 }
 
+async function observeQuestionnaireStages(stageTracker, coordinators, voters) {
+  const nowMs = Date.now();
+  const leadCoordinatorDebug = await readQuestionnaireCoordinatorDebug(coordinators[0]?.page);
+  const isOpen = leadCoordinatorDebug?.latestState === "open";
+  const hasPublishedSummary = leadCoordinatorDebug?.latestResultAcceptedCount !== null
+    && leadCoordinatorDebug?.latestResultAcceptedCount !== undefined;
+
+  for (const [voterIndex, actor] of voters.entries()) {
+    const voterId = stageTracker.voterIds[voterIndex] ?? `voter${voterIndex + 1}`;
+    const voterDebug = await readQuestionnaireVoterDebug(actor.page);
+    if (voterDebug?.questionnaireSeen) {
+      recordStage(stageTracker, "questionnaireSeen", voterId, nowMs);
+    }
+    if (isOpen || voterDebug?.questionnaireOpen) {
+      recordStage(stageTracker, "questionnaireOpen", voterId, nowMs);
+    }
+    if (voterDebug?.responsePublished || Number(voterDebug?.responseSubmittedCount ?? 0) > 0) {
+      recordStage(stageTracker, "responsePublished", voterId, nowMs);
+    }
+    if (hasPublishedSummary) {
+      recordStage(stageTracker, "resultSummaryPublished", voterId, nowMs);
+    }
+  }
+
+  stageTracker.lastObservedAtMs = nowMs;
+}
+
+async function waitForQuestionnaireResultPublication(page, timeoutMs = 15000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const debug = await readQuestionnaireCoordinatorDebug(page);
+    if (debug?.latestResultAcceptedCount !== null && debug?.latestResultAcceptedCount !== undefined) {
+      return true;
+    }
+    await sleep(1000);
+  }
+  return false;
+}
+
 async function clickEnabledTicketsDuringWindow(coordinators, voters, durationMs, stageTracker) {
   const deadline = Date.now() + durationMs;
   const sendCounts = coordinators.map((_, index) => ({
@@ -820,6 +1363,7 @@ async function captureRoundState(coordinators, voters) {
 }
 
 async function main() {
+  const startedAtMs = Date.now();
   const coordinatorCount = envInt("LIVE_COORDINATORS", 5);
   const voterCount = envInt("LIVE_VOTERS", 10);
   const roundCount = envInt("LIVE_ROUNDS", 3);
@@ -844,6 +1388,22 @@ async function main() {
   const voters = [];
   const rounds = [];
   let timeoutId = null;
+  const runId = process.env.LIVE_RUN_ID?.trim() || `phase25_timeline_${startedAtMs}`;
+  const timeline = createTimelineArtifact({
+    runId,
+    startedAtMs,
+    coordinatorCount,
+    voterCount,
+    roundCount,
+    deploymentMode,
+  });
+  const timelineState = {
+    coordinatorQuestionnaireId: null,
+    voterQuestionnaireIds: {},
+    lastCoordinatorResponseCount: 0,
+    lastCoordinatorAcceptedCount: 0,
+    lastCoordinatorRejectedCount: 0,
+  };
 
   try {
     const runPromise = (async () => {
@@ -854,8 +1414,11 @@ async function main() {
         if (nip65Mode !== "on") {
           url.searchParams.set("nip65", "off");
         }
+        url.searchParams.set("deployment", deploymentMode);
         await page.goto(url.toString(), { waitUntil: "networkidle" });
-        coordinators.push({ label: `coord${index + 1}`, page, context });
+        const label = `coord${index + 1}`;
+        coordinators.push({ label, page, context });
+        recordTimelineEvent(timeline, label, "coordinator_page_loaded", { url: page.url() });
       }
 
       for (let index = 0; index < voterCount; index += 1) {
@@ -865,8 +1428,11 @@ async function main() {
         if (nip65Mode !== "on") {
           url.searchParams.set("nip65", "off");
         }
+        url.searchParams.set("deployment", deploymentMode);
         await page.goto(url.toString(), { waitUntil: "networkidle" });
-        voters.push({ label: `voter${index + 1}`, page, context });
+        const label = `voter${index + 1}`;
+        voters.push({ label, page, context });
+        recordTimelineEvent(timeline, label, "voter_page_loaded", { url: page.url() });
       }
 
       for (const actor of coordinators) {
@@ -878,15 +1444,31 @@ async function main() {
         await ensureTab(actor.page, "Settings", actor.label);
       }
       await sleep(1500);
+      if (deploymentMode === "course_feedback") {
+        await collectQuestionnaireTimelineEvents({
+          coordinators,
+          voters,
+          timeline,
+          state: timelineState,
+        });
+      }
 
       const coordinatorNpubs = [];
       for (const actor of coordinators) {
-        coordinatorNpubs.push(await getNpub(actor.page));
+        const npub = await getNpub(actor.page);
+        if (!npub) {
+          throw new Error(`identity_read_failed: coordinator npub missing for ${actor.label}`);
+        }
+        coordinatorNpubs.push(npub);
       }
 
       const voterIds = [];
       for (const actor of voters) {
-        voterIds.push(await getDisplayedActorId(actor.page, "Voter"));
+        const voterId = await getDisplayedActorId(actor.page, "Voter");
+        if (!voterId) {
+          throw new Error(`identity_read_failed: voter id missing for ${actor.label}`);
+        }
+        voterIds.push(voterId);
       }
 
       for (let index = 1; index < coordinators.length; index += 1) {
@@ -907,6 +1489,104 @@ async function main() {
       }
 
       for (let roundIndex = 0; roundIndex < roundCount; roundIndex += 1) {
+        const lead = coordinators[0].page;
+        if (deploymentMode === "course_feedback") {
+          const questionnaireId = `course_feedback_${Date.now()}_${roundIndex + 1}`;
+          const stageTracker = createQuestionnaireStageTracker({
+            round: roundIndex + 1,
+            questionnaireId,
+            voterIds,
+          });
+          await ensureTab(lead, "Configure", coordinators[0].label);
+          const coordinatorQuestionnaireIdInput = lead.locator("#questionnaire-id").first();
+          await coordinatorQuestionnaireIdInput.fill(questionnaireId);
+          await coordinatorQuestionnaireIdInput.blur();
+          await sleep(300);
+          await clickByText(lead, "button", /^Publish definition$/i);
+          await sleep(1000);
+          await collectQuestionnaireTimelineEvents({
+            coordinators,
+            voters,
+            timeline,
+            state: timelineState,
+          });
+          await clickByText(lead, "button", /^Set open$/i);
+          await sleep(1000);
+          await collectQuestionnaireTimelineEvents({
+            coordinators,
+            voters,
+            timeline,
+            state: timelineState,
+          });
+
+          for (const actor of voters) {
+            await ensureVoterTab(actor.page, "Vote", actor.label);
+            const voterQuestionnaireIdInput = actor.page.locator("#questionnaire-id-voter").first();
+            await voterQuestionnaireIdInput.fill(questionnaireId);
+            await voterQuestionnaireIdInput.blur();
+            await sleep(150);
+            await clickByText(actor.page, "button", /^Refresh questionnaire$/i);
+          }
+          await sleep(1500);
+          await observeQuestionnaireStages(stageTracker, coordinators, voters);
+          await collectQuestionnaireTimelineEvents({
+            coordinators,
+            voters,
+            timeline,
+            state: timelineState,
+          });
+
+          for (const actor of voters) {
+            await ensureVoterTab(actor.page, "Vote", actor.label);
+            const yesButton = actor.page.getByRole("button", { name: /^Yes$/i }).first();
+            if (await yesButton.count()) {
+              await yesButton.click({ force: true });
+            }
+            const option = actor.page.getByLabel(/About right/i).first();
+            if (await option.count()) {
+              await option.click({ force: true });
+            }
+            recordTimelineEvent(timeline, actor.label, "response_form_filled", { questionnaireId });
+            const submitResponse = actor.page.getByRole("button", { name: /^Submit encrypted response$/i }).first();
+            if (await submitResponse.count() && !(await submitResponse.isDisabled())) {
+              await submitResponse.click({ force: true });
+              await sleep(200);
+            }
+          }
+
+          const responseDeadline = Date.now() + roundWaitMs;
+          while (Date.now() < responseDeadline) {
+            await sleep(2000);
+            await observeQuestionnaireStages(stageTracker, coordinators, voters);
+            await collectQuestionnaireTimelineEvents({
+              coordinators,
+              voters,
+              timeline,
+              state: timelineState,
+            });
+          }
+
+          await ensureTab(lead, "Configure", coordinators[0].label);
+          await clickByText(lead, "button", /^Publish results$/i);
+          await waitForQuestionnaireResultPublication(lead, 20000);
+          await observeQuestionnaireStages(stageTracker, coordinators, voters);
+          await collectQuestionnaireTimelineEvents({
+            coordinators,
+            voters,
+            timeline,
+            state: timelineState,
+          });
+
+          rounds.push({
+            round: roundIndex + 1,
+            prompt: `Questionnaire ${roundIndex + 1}`,
+            sendCounts: [],
+            stageMetrics: summariseRoundStages(stageTracker),
+            state: await captureRoundState(coordinators, voters),
+          });
+          continue;
+        }
+
         const prompt = `Round ${roundIndex + 1}: Should the proposal pass?`;
         const stageTracker = createRoundStageTracker({
           round: roundIndex + 1,
@@ -914,7 +1594,6 @@ async function main() {
           voterIds,
           coordinatorCount,
         });
-        const lead = coordinators[0].page;
         await ensureTab(lead, "Voting", coordinators[0].label);
         if (coordinatorCount > 1) {
           const thresholdResult = await ensureThresholdT(lead, Math.min(coordinatorCount, 2));
@@ -991,6 +1670,9 @@ async function main() {
     const participants = [...coordinators, ...voters];
     const snapshots = await snapshotAllActors(participants, classifyHarnessFailure(error));
     const diagnostic = {
+      runId: timeline.runId,
+      startedAtMs: timeline.startedAtMs,
+      configTimeline: timeline.config,
       failureClass: classifyHarnessFailure(error),
       error: safeErrorMessage(error),
       config: {
@@ -1005,10 +1687,21 @@ async function main() {
         ticketWaitMs,
         harnessTimeoutMs,
       },
+      completedRoundCount: rounds.filter((round) => {
+        const metrics = round?.stageMetrics ?? {};
+        if (deploymentMode === "course_feedback") {
+          return Number(metrics.questionnaireSeen?.count ?? 0) > 0
+            && Number(metrics.questionnaireOpen?.count ?? 0) > 0;
+        }
+        return Number(metrics.roundSeen?.count ?? 0) > 0;
+      }).length,
       completedRounds: rounds,
       snapshots,
+      globalTimeline: timeline.globalTimeline,
+      coordinatorTimeline: timeline.coordinatorTimeline,
+      voterTimelines: timeline.voterTimelines,
     };
-    const protocolFailure = classifyProtocolFailure(rounds);
+    const protocolFailure = classifyProtocolFailure(rounds, deploymentMode);
     diagnostic.protocolFailureClass = protocolFailure.protocolFailureClass;
     diagnostic.firstMissingStage = protocolFailure.firstMissingStage;
     diagnostic.coordinatorReadinessSummary = snapshots
@@ -1027,6 +1720,17 @@ async function main() {
         voter: snapshot.label,
         visibility: snapshot.voterDebug ?? null,
       }));
+    timeline.finalSnapshot = deploymentMode === "course_feedback"
+      ? buildQuestionnaireFinalSnapshotFromActorSnapshots(snapshots)
+      : null;
+    timeline.summary = {
+      passed: false,
+      completedRoundCount: diagnostic.completedRoundCount,
+      protocolFailureClass: diagnostic.protocolFailureClass,
+      firstMissingStage: diagnostic.firstMissingStage,
+    };
+    diagnostic.finalSnapshot = timeline.finalSnapshot;
+    diagnostic.summary = timeline.summary;
     console.error(JSON.stringify(diagnostic, null, 2));
     if (timeoutId !== null) {
       globalThis.clearTimeout(timeoutId);
@@ -1044,6 +1748,7 @@ async function main() {
       ballotAccepted: Boolean(value.voterDebug?.ballotAccepted),
     }));
     const coordinatorStates = Object.values(round.state.coordinatorStates ?? {});
+    const primaryCoordinatorQuestionnaireDebug = coordinatorStates[0]?.questionnaireCoordinatorDebug ?? null;
     const coordinatorAcceptedBallots = Math.max(
       0,
       ...coordinatorStates.map((state) => Number(state.coordinatorDebug?.acceptedBallotCount ?? 0)),
@@ -1372,9 +2077,7 @@ async function main() {
     const ticketDeliveryConfirmedCount = Number(stageMetrics.ticketDeliveryConfirmed?.count ?? 0);
     const expectedPairs = Number(stageMetrics.ticketSent?.totalPairs ?? 0);
     const expectedAcceptedThreshold = round.state.voterStates ? Object.keys(round.state.voterStates).length : 0;
-    const roundSuccess = deploymentMode === "course_feedback"
-      ? expectedAcceptedThreshold > 0 && coordinatorAcceptedBallots >= expectedAcceptedThreshold
-      : voterTicketSummary.length > 0 && voterTicketSummary.every((entry) => entry.hasTicket);
+    const questionnaireOpenCount = Number(stageMetrics.questionnaireOpen?.count ?? 0);
     const voterPublishedBallots = voterTicketSummary.filter((entry) => entry.ballotSubmitted).length;
     const voterObservedTickets = voterTicketSummary.filter((entry) => entry.hasTicket).length;
     const questionnaireSeenCount = Object.values(round.state.voterStates).filter(
@@ -1395,6 +2098,82 @@ async function main() {
     const resultSummaryPublished = coordinatorStates.some(
       (state) => Number(state?.questionnaireCoordinatorDebug?.latestResultAcceptedCount ?? -1) >= 0,
     );
+    const coordinatorSummaryAcceptedCount = Math.max(
+      -1,
+      ...coordinatorStates.map((state) => Number(state?.questionnaireCoordinatorDebug?.latestResultAcceptedCount ?? -1)),
+    );
+    const definitionEventCount = Math.max(
+      0,
+      ...coordinatorStates.map((state) => Number(state?.questionnaireCoordinatorDebug?.definitionEventCount ?? 0)),
+    );
+    const resultEventCount = Math.max(
+      0,
+      ...coordinatorStates.map((state) => Number(state?.questionnaireCoordinatorDebug?.resultEventCount ?? 0)),
+    );
+    const responseEventCount = Math.max(
+      0,
+      ...coordinatorStates.map((state) => Number(state?.questionnaireCoordinatorDebug?.responseEventCount ?? 0)),
+    );
+    const localSummaryMatchesPublished = coordinatorStates.some(
+      (state) => state?.questionnaireCoordinatorDebug?.localSummaryMatchesPublished === true,
+    );
+    const questionnaireIdsSeenByVoters = Array.from(
+      new Set(
+        Object.values(round.state.voterStates)
+          .map((value) => String(value?.questionnaireVoterDebug?.loadedQuestionnaireId ?? "").trim())
+          .filter(Boolean),
+      ),
+    );
+    const questionCountsSeenByVoters = Array.from(
+      new Set(
+        Object.values(round.state.voterStates)
+          .map((value) => Number(value?.questionnaireVoterDebug?.loadedQuestionCount ?? 0))
+          .filter((value) => Number.isFinite(value) && value > 0),
+      ),
+    );
+    const responsesPerVoter = Object.fromEntries(
+      Object.entries(round.state.voterStates).map(([voterKey, value]) => [
+        voterKey,
+        Number(value?.questionnaireVoterDebug?.responseSubmittedCount ?? 0),
+      ]),
+    );
+    const eachVoterPublishedExactlyOneResponse = Object.values(responsesPerVoter).length > 0
+      && Object.values(responsesPerVoter).every((count) => count === 1);
+    const acceptanceAccountingMatches = acceptedResponsesCount + rejectedResponsesCount === responseEventCount;
+    const voterQuestionnaireReadDiagnostics = Object.fromEntries(
+      Object.entries(round.state.voterStates).map(([voterKey, value]) => [voterKey, {
+        questionnaireId: value?.questionnaireVoterDebug?.questionnaireId ?? null,
+        loadedQuestionnaireId: value?.questionnaireVoterDebug?.loadedQuestionnaireId ?? null,
+        loadedQuestionCount: value?.questionnaireVoterDebug?.loadedQuestionCount ?? null,
+        questionnaireDefinitionLiveFilter: value?.questionnaireVoterDebug?.questionnaireDefinitionLiveFilter ?? null,
+        questionnaireDefinitionBackfillFilter: value?.questionnaireVoterDebug?.questionnaireDefinitionBackfillFilter ?? null,
+        questionnaireStateLiveFilter: value?.questionnaireVoterDebug?.questionnaireStateLiveFilter ?? null,
+        questionnaireStateBackfillFilter: value?.questionnaireVoterDebug?.questionnaireStateBackfillFilter ?? null,
+        questionnaireResultLiveFilter: value?.questionnaireVoterDebug?.questionnaireResultLiveFilter ?? null,
+        questionnaireResultBackfillFilter: value?.questionnaireVoterDebug?.questionnaireResultBackfillFilter ?? null,
+        questionnaireDefinitionLiveResultCount: value?.questionnaireVoterDebug?.questionnaireDefinitionLiveResultCount ?? null,
+        questionnaireDefinitionBackfillResultCount: value?.questionnaireVoterDebug?.questionnaireDefinitionBackfillResultCount ?? null,
+        questionnaireStateLiveResultCount: value?.questionnaireVoterDebug?.questionnaireStateLiveResultCount ?? null,
+        questionnaireStateBackfillResultCount: value?.questionnaireVoterDebug?.questionnaireStateBackfillResultCount ?? null,
+        questionnaireResultLiveResultCount: value?.questionnaireVoterDebug?.questionnaireResultLiveResultCount ?? null,
+        questionnaireResultBackfillResultCount: value?.questionnaireVoterDebug?.questionnaireResultBackfillResultCount ?? null,
+      }]),
+    );
+    const roundSuccess = deploymentMode === "course_feedback"
+      ? expectedAcceptedThreshold > 0
+        && questionnaireSeenCount >= expectedAcceptedThreshold
+        && questionnaireOpenCount >= expectedAcceptedThreshold
+        && responsesPublishedCount >= expectedAcceptedThreshold
+        && eachVoterPublishedExactlyOneResponse
+        && acceptanceAccountingMatches
+        && localSummaryMatchesPublished
+        && coordinatorSummaryAcceptedCount === acceptedResponsesCount
+        && definitionEventCount === 1
+        && resultEventCount >= 1
+        && questionnaireIdsSeenByVoters.length === 1
+        && questionCountsSeenByVoters.length === 1
+        && resultSummaryPublished
+      : voterTicketSummary.length > 0 && voterTicketSummary.every((entry) => entry.hasTicket);
     return {
       round: round.round,
       prompt: round.prompt,
@@ -1407,6 +2186,7 @@ async function main() {
       voterPublishedBallots,
       voterObservedTickets,
       questionnaireSeenCount,
+      questionnaireOpenCount,
       eligibilityRequestedCount: 0,
       blindIssueReceivedCount: 0,
       responseTokenReadyCount: 0,
@@ -1415,6 +2195,22 @@ async function main() {
       rejectedResponsesCount,
       duplicateNullifierCount: 0,
       resultSummaryPublished,
+      questionnairePublishDiagnostics: {
+        definition: primaryCoordinatorQuestionnaireDebug?.definitionPublishDiagnostic ?? null,
+        state: primaryCoordinatorQuestionnaireDebug?.statePublishDiagnostic ?? null,
+        result: primaryCoordinatorQuestionnaireDebug?.resultPublishDiagnostic ?? null,
+      },
+      voterQuestionnaireReadDiagnostics,
+      definitionEventCount,
+      resultEventCount,
+      responseEventCount,
+      coordinatorSummaryAcceptedCount,
+      localSummaryMatchesPublished,
+      acceptanceAccountingMatches,
+      eachVoterPublishedExactlyOneResponse,
+      questionnaireIdsSeenByVoters,
+      questionCountsSeenByVoters,
+      responsesPerVoter,
       coordinatorAcceptedBallots,
       coordinatorRejectedBallots,
       coordinatorAcceptedByLineage,
@@ -1486,86 +2282,162 @@ async function main() {
     ));
     if (!candidate) {
       roundSummary.phase10ObservationProbe = null;
+    } else {
+      const successfulRelay = candidate.ticketRelayResults.find((result) => result?.success)?.relay
+        ?? candidate.ticketRelayTargets[0]
+        ?? null;
+      const ticketTags = Array.isArray(candidate.ticketPublishEventTags) ? candidate.ticketPublishEventTags : [];
+      const publishedMailboxTag = ticketTags.find((tag) => tag?.[0] === "mailbox")?.[1] ?? null;
+      const publishedEtypeTag = ticketTags.find((tag) => tag?.[0] === "etype")?.[1] ?? null;
+      const publishedTicketTag = ticketTags.find((tag) => tag?.[0] === "ticket")?.[1] ?? null;
+      const publishedRequestTag = ticketTags.find((tag) => tag?.[0] === "request")?.[1] ?? null;
+      const liveQuery = candidate.ticketLiveQuery ?? null;
+      const backfillQuery = candidate.ticketBackfillQuery ?? null;
+      const relayProbe = successfulRelay
+        ? await runRelayProbe({
+          relay: successfulRelay,
+          kind: candidate.ticketPublishEventKind,
+          mailboxId: candidate.requestMailboxId ?? publishedMailboxTag,
+          etype: publishedEtypeTag ?? "mailbox_ticket_envelope",
+          eventId: candidate.ticketPublishEventId,
+          ticketId: candidate.ticketId ?? publishedTicketTag,
+          requestId: candidate.requestId ?? publishedRequestTag,
+        })
+        : null;
+
+      roundSummary.phase10ObservationProbe = {
+        voterPubkey: candidate.voterPubkey,
+        requestId: candidate.requestId,
+        requestMailboxId: candidate.requestMailboxId,
+        ticketId: candidate.ticketId,
+        published: {
+          eventId: candidate.ticketPublishEventId,
+          kind: candidate.ticketPublishEventKind,
+          createdAt: candidate.ticketPublishEventCreatedAt,
+          tags: ticketTags,
+          mailboxTag: publishedMailboxTag,
+          etypeTag: publishedEtypeTag,
+          requestTag: publishedRequestTag,
+          ticketTag: publishedTicketTag,
+          relayTargets: candidate.ticketRelayTargets,
+          relayResults: candidate.ticketRelayResults,
+        },
+        readerFilters: {
+          live: liveQuery,
+          backfill: backfillQuery,
+        },
+        filterComparison: {
+          kindMatchesLive: Number(liveQuery?.kinds?.[0] ?? 0) === Number(candidate.ticketPublishEventKind ?? 0),
+          kindMatchesBackfill: Number(backfillQuery?.kinds?.[0] ?? 0) === Number(candidate.ticketPublishEventKind ?? 0),
+          publishedMailboxMatchesRequest: Boolean(candidate.requestMailboxId && publishedMailboxTag)
+            ? candidate.requestMailboxId === publishedMailboxTag
+            : null,
+          mailboxMatchesLive: Boolean(candidate.requestMailboxId)
+            ? Array.isArray(liveQuery?.mailboxIds) && liveQuery.mailboxIds.includes(candidate.requestMailboxId)
+            : null,
+          mailboxMatchesBackfill: Boolean(candidate.requestMailboxId)
+            ? (
+              (Array.isArray(backfillQuery?.mailboxIds) && backfillQuery.mailboxIds.includes(candidate.requestMailboxId))
+              || (Array.isArray(candidate.ticketPendingMailboxIds) && candidate.ticketPendingMailboxIds.includes(candidate.requestMailboxId))
+            )
+            : null,
+          etypeMatchesLive: Boolean(publishedEtypeTag)
+            ? Array.isArray(liveQuery?.eventTypes) && liveQuery.eventTypes.includes(publishedEtypeTag)
+            : null,
+          etypeMatchesBackfill: Boolean(publishedEtypeTag)
+            ? Array.isArray(backfillQuery?.eventTypes) && backfillQuery.eventTypes.includes(publishedEtypeTag)
+            : null,
+          relayOverlap: Array.isArray(candidate.ticketRelayTargets)
+            ? candidate.ticketRelayTargets.filter((relay) => (
+              Array.isArray(liveQuery?.relays) && liveQuery.relays.includes(relay)
+            ) || (
+              Array.isArray(backfillQuery?.relays) && backfillQuery.relays.includes(relay)
+            ))
+            : [],
+        },
+        relayProbe,
+      };
+    }
+
+    if (roundSummary.deploymentMode !== "course_feedback") {
+      roundSummary.phase22QuestionnaireProbe = null;
       continue;
     }
 
-    const successfulRelay = candidate.ticketRelayResults.find((result) => result?.success)?.relay
-      ?? candidate.ticketRelayTargets[0]
+    const questionnaireId = Array.isArray(roundSummary.questionnaireIdsSeenByVoters)
+      ? roundSummary.questionnaireIdsSeenByVoters[0] ?? null
+      : null;
+    const publishDiagnostics = roundSummary.questionnairePublishDiagnostics ?? {};
+    const definitionPublish = publishDiagnostics.definition ?? null;
+    const statePublish = publishDiagnostics.state ?? null;
+    const resultPublish = publishDiagnostics.result ?? null;
+    const definitionRelay = definitionPublish?.relayTargets?.[0] ?? null;
+    const stateRelay = statePublish?.relayTargets?.[0] ?? null;
+    const resultRelay = resultPublish?.relayTargets?.[0] ?? null;
+
+    const probeQuestionnaireId = questionnaireId
+      ?? definitionPublish?.tags?.find?.((tag) => Array.isArray(tag) && tag[0] === "questionnaire-id")?.[1]
+      ?? roundSummary?.voterQuestionnaireReadDiagnostics?.voter1?.questionnaireId
       ?? null;
-    const ticketTags = Array.isArray(candidate.ticketPublishEventTags) ? candidate.ticketPublishEventTags : [];
-    const publishedMailboxTag = ticketTags.find((tag) => tag?.[0] === "mailbox")?.[1] ?? null;
-    const publishedEtypeTag = ticketTags.find((tag) => tag?.[0] === "etype")?.[1] ?? null;
-    const publishedTicketTag = ticketTags.find((tag) => tag?.[0] === "ticket")?.[1] ?? null;
-    const publishedRequestTag = ticketTags.find((tag) => tag?.[0] === "request")?.[1] ?? null;
-    const liveQuery = candidate.ticketLiveQuery ?? null;
-    const backfillQuery = candidate.ticketBackfillQuery ?? null;
-    const relayProbe = successfulRelay
-      ? await runRelayProbe({
-        relay: successfulRelay,
-        kind: candidate.ticketPublishEventKind,
-        mailboxId: candidate.requestMailboxId ?? publishedMailboxTag,
-        etype: publishedEtypeTag ?? "mailbox_ticket_envelope",
-        eventId: candidate.ticketPublishEventId,
-        ticketId: candidate.ticketId ?? publishedTicketTag,
-        requestId: candidate.requestId ?? publishedRequestTag,
+
+    const definitionRelayProbe = definitionRelay && probeQuestionnaireId
+      ? await runQuestionnaireRelayProbe({
+        relay: definitionRelay,
+        kind: Number(definitionPublish?.kind ?? 0),
+        questionnaireId: probeQuestionnaireId,
+        tTag: "questionnaire_definition",
+        eventId: definitionPublish?.eventId ?? "",
+      })
+      : null;
+    const stateRelayProbe = stateRelay && probeQuestionnaireId
+      ? await runQuestionnaireRelayProbe({
+        relay: stateRelay,
+        kind: Number(statePublish?.kind ?? 0),
+        questionnaireId: probeQuestionnaireId,
+        tTag: "questionnaire_state",
+        eventId: statePublish?.eventId ?? "",
+      })
+      : null;
+    const resultRelayProbe = resultRelay && probeQuestionnaireId
+      ? await runQuestionnaireRelayProbe({
+        relay: resultRelay,
+        kind: Number(resultPublish?.kind ?? 0),
+        questionnaireId: probeQuestionnaireId,
+        tTag: "questionnaire_result_summary",
+        eventId: resultPublish?.eventId ?? "",
       })
       : null;
 
-    roundSummary.phase10ObservationProbe = {
-      voterPubkey: candidate.voterPubkey,
-      requestId: candidate.requestId,
-      requestMailboxId: candidate.requestMailboxId,
-      ticketId: candidate.ticketId,
-      published: {
-        eventId: candidate.ticketPublishEventId,
-        kind: candidate.ticketPublishEventKind,
-        createdAt: candidate.ticketPublishEventCreatedAt,
-        tags: ticketTags,
-        mailboxTag: publishedMailboxTag,
-        etypeTag: publishedEtypeTag,
-        requestTag: publishedRequestTag,
-        ticketTag: publishedTicketTag,
-        relayTargets: candidate.ticketRelayTargets,
-        relayResults: candidate.ticketRelayResults,
+    roundSummary.phase22QuestionnaireProbe = {
+      questionnaireId,
+      probeQuestionnaireId,
+      definitionPublish,
+      statePublish,
+      resultPublish,
+      voterReadDiagnostics: roundSummary.voterQuestionnaireReadDiagnostics ?? {},
+      relayProbes: {
+        definition: definitionRelayProbe,
+        state: stateRelayProbe,
+        result: resultRelayProbe,
       },
-      readerFilters: {
-        live: liveQuery,
-        backfill: backfillQuery,
-      },
-      filterComparison: {
-        kindMatchesLive: Number(liveQuery?.kinds?.[0] ?? 0) === Number(candidate.ticketPublishEventKind ?? 0),
-        kindMatchesBackfill: Number(backfillQuery?.kinds?.[0] ?? 0) === Number(candidate.ticketPublishEventKind ?? 0),
-        publishedMailboxMatchesRequest: Boolean(candidate.requestMailboxId && publishedMailboxTag)
-          ? candidate.requestMailboxId === publishedMailboxTag
-          : null,
-        mailboxMatchesLive: Boolean(candidate.requestMailboxId)
-          ? Array.isArray(liveQuery?.mailboxIds) && liveQuery.mailboxIds.includes(candidate.requestMailboxId)
-          : null,
-        mailboxMatchesBackfill: Boolean(candidate.requestMailboxId)
-          ? (
-            (Array.isArray(backfillQuery?.mailboxIds) && backfillQuery.mailboxIds.includes(candidate.requestMailboxId))
-            || (Array.isArray(candidate.ticketPendingMailboxIds) && candidate.ticketPendingMailboxIds.includes(candidate.requestMailboxId))
-          )
-          : null,
-        etypeMatchesLive: Boolean(publishedEtypeTag)
-          ? Array.isArray(liveQuery?.eventTypes) && liveQuery.eventTypes.includes(publishedEtypeTag)
-          : null,
-        etypeMatchesBackfill: Boolean(publishedEtypeTag)
-          ? Array.isArray(backfillQuery?.eventTypes) && backfillQuery.eventTypes.includes(publishedEtypeTag)
-          : null,
-        relayOverlap: Array.isArray(candidate.ticketRelayTargets)
-          ? candidate.ticketRelayTargets.filter((relay) => (
-            Array.isArray(liveQuery?.relays) && liveQuery.relays.includes(relay)
-          ) || (
-            Array.isArray(backfillQuery?.relays) && backfillQuery.relays.includes(relay)
-          ))
-          : [],
-      },
-      relayProbe,
     };
   }
 
+  const completedRounds = summary.filter((roundSummary) => Boolean(roundSummary.roundSuccess)).length;
+  const passed = summary.length > 0 && completedRounds === summary.length;
+  const latestRoundState = rounds.at(-1)?.state ?? null;
+  timeline.finalSnapshot = deploymentMode === "course_feedback" && latestRoundState
+    ? buildQuestionnaireFinalSnapshotFromRound(latestRoundState)
+    : null;
+  timeline.summary = {
+    passed,
+    completedRounds,
+    totalRounds: summary.length,
+  };
+
   console.log(JSON.stringify({
+    runId: timeline.runId,
+    startedAtMs: timeline.startedAtMs,
     config: {
       base,
       deploymentMode,
@@ -1578,6 +2450,13 @@ async function main() {
       ticketWaitMs,
       harnessTimeoutMs,
     },
+    passed,
+    completedRounds,
+    globalTimeline: timeline.globalTimeline,
+    coordinatorTimeline: timeline.coordinatorTimeline,
+    voterTimelines: timeline.voterTimelines,
+    finalSnapshot: timeline.finalSnapshot,
+    timelineSummary: timeline.summary,
     summary,
     rounds,
   }, null, 2));

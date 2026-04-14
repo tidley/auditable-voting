@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { fetchQuestionnaireEvents, publishQuestionnaireDefinition, publishQuestionnaireResultSummary, publishQuestionnaireState, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESPONSE_PRIVATE_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND } from "./questionnaireNostr";
+import { fetchQuestionnaireEventsWithFallback, parseQuestionnaireDefinitionEvent, parseQuestionnaireStateEvent, publishQuestionnaireDefinition, publishQuestionnaireResultSummary, publishQuestionnaireState, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESPONSE_PRIVATE_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND } from "./questionnaireNostr";
 import { buildQuestionnaireResultSummary, processQuestionnaireResponses, selectLatestQuestionnaireDefinition, selectLatestQuestionnaireResultSummary, selectLatestQuestionnaireState } from "./questionnaireRuntime";
 import { loadSimpleActorState } from "./simpleLocalState";
 import { validateQuestionnaireDefinition, type QuestionnaireDefinition, type QuestionnaireStateValue } from "./questionnaireProtocol";
@@ -7,8 +7,27 @@ import { validateQuestionnaireDefinition, type QuestionnaireDefinition, type Que
 const DEFAULT_QUESTIONNAIRE_ID = "course_feedback_2026_term1";
 const REFRESH_INTERVAL_MS = 15000;
 
+type QuestionnairePublishDiagnostic = {
+  attempted: boolean;
+  succeeded: boolean;
+  eventId: string | null;
+  kind: number | null;
+  tags: string[][];
+  relayTargets: string[];
+  relaySuccessCount: number;
+};
+
 function nowUnix() {
   return Math.floor(Date.now() / 1000);
+}
+
+function parseQuestionnaireIdFromResponseContent(content: string): string | null {
+  try {
+    const parsed = JSON.parse(content) as { questionnaireId?: string };
+    return typeof parsed.questionnaireId === "string" ? parsed.questionnaireId : null;
+  } catch {
+    return null;
+  }
 }
 
 function buildDefinition(input: {
@@ -76,6 +95,57 @@ export default function QuestionnaireCoordinatorPanel() {
   const [latestAcceptedCount, setLatestAcceptedCount] = useState(0);
   const [latestRejectedCount, setLatestRejectedCount] = useState(0);
   const [latestResultAcceptedCount, setLatestResultAcceptedCount] = useState<number | null>(null);
+  const [definitionEventCount, setDefinitionEventCount] = useState(0);
+  const [stateEventCount, setStateEventCount] = useState(0);
+  const [responseEventCount, setResponseEventCount] = useState(0);
+  const [resultEventCount, setResultEventCount] = useState(0);
+  const [definitionPublishDiagnostic, setDefinitionPublishDiagnostic] = useState<QuestionnairePublishDiagnostic>({
+    attempted: false,
+    succeeded: false,
+    eventId: null,
+    kind: null,
+    tags: [],
+    relayTargets: [],
+    relaySuccessCount: 0,
+  });
+  const [statePublishDiagnostic, setStatePublishDiagnostic] = useState<QuestionnairePublishDiagnostic>({
+    attempted: false,
+    succeeded: false,
+    eventId: null,
+    kind: null,
+    tags: [],
+    relayTargets: [],
+    relaySuccessCount: 0,
+  });
+  const [resultPublishDiagnostic, setResultPublishDiagnostic] = useState<QuestionnairePublishDiagnostic>({
+    attempted: false,
+    succeeded: false,
+    eventId: null,
+    kind: null,
+    tags: [],
+    relayTargets: [],
+    relaySuccessCount: 0,
+  });
+  const [definitionReadDiagnostics, setDefinitionReadDiagnostics] = useState({
+    mode: "filtered",
+    filteredCount: 0,
+    kindOnlyCount: 0,
+  });
+  const [stateReadDiagnostics, setStateReadDiagnostics] = useState({
+    mode: "filtered",
+    filteredCount: 0,
+    kindOnlyCount: 0,
+  });
+  const [resultReadDiagnostics, setResultReadDiagnostics] = useState({
+    mode: "filtered",
+    filteredCount: 0,
+    kindOnlyCount: 0,
+  });
+  const [responseReadDiagnostics, setResponseReadDiagnostics] = useState({
+    mode: "filtered",
+    filteredCount: 0,
+    kindOnlyCount: 0,
+  });
 
   useEffect(() => {
     void loadSimpleActorState("coordinator").then((state) => {
@@ -94,16 +164,51 @@ export default function QuestionnaireCoordinatorPanel() {
     }
 
     try {
-      const [definitionEvents, stateEvents, responseEvents, resultEvents] = await Promise.all([
-        fetchQuestionnaireEvents({ questionnaireId: id, kind: QUESTIONNAIRE_DEFINITION_KIND }),
-        fetchQuestionnaireEvents({ questionnaireId: id, kind: QUESTIONNAIRE_STATE_KIND }),
-        fetchQuestionnaireEvents({ questionnaireId: id, kind: QUESTIONNAIRE_RESPONSE_PRIVATE_KIND }),
-        fetchQuestionnaireEvents({ questionnaireId: id, kind: QUESTIONNAIRE_RESULT_SUMMARY_KIND }),
+      const [definitionFetch, stateFetch, responseFetch, resultFetch] = await Promise.all([
+        fetchQuestionnaireEventsWithFallback({
+          questionnaireId: id,
+          kind: QUESTIONNAIRE_DEFINITION_KIND,
+          parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireDefinitionEvent(event)?.questionnaireId ?? null,
+        }),
+        fetchQuestionnaireEventsWithFallback({
+          questionnaireId: id,
+          kind: QUESTIONNAIRE_STATE_KIND,
+          parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireStateEvent(event)?.questionnaireId ?? null,
+        }),
+        fetchQuestionnaireEventsWithFallback({
+          questionnaireId: id,
+          kind: QUESTIONNAIRE_RESPONSE_PRIVATE_KIND,
+          parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireIdFromResponseContent(event.content),
+        }),
+        fetchQuestionnaireEventsWithFallback({
+          questionnaireId: id,
+          kind: QUESTIONNAIRE_RESULT_SUMMARY_KIND,
+          parseQuestionnaireIdFromEvent: (event) => {
+            try {
+              const parsed = JSON.parse(event.content) as { questionnaireId?: string };
+              return typeof parsed.questionnaireId === "string" ? parsed.questionnaireId : null;
+            } catch {
+              return null;
+            }
+          },
+        }),
       ]);
+      const definitionEvents = definitionFetch.events;
+      const stateEvents = stateFetch.events;
+      const responseEvents = responseFetch.events;
+      const resultEvents = resultFetch.events;
+      setDefinitionReadDiagnostics(definitionFetch.diagnostics);
+      setStateReadDiagnostics(stateFetch.diagnostics);
+      setResponseReadDiagnostics(responseFetch.diagnostics);
+      setResultReadDiagnostics(resultFetch.diagnostics);
 
       const definition = selectLatestQuestionnaireDefinition(definitionEvents);
       const state = selectLatestQuestionnaireState(stateEvents);
       const resultSummary = selectLatestQuestionnaireResultSummary(resultEvents);
+      setDefinitionEventCount(definitionEvents.length);
+      setStateEventCount(stateEvents.length);
+      setResponseEventCount(responseEvents.length);
+      setResultEventCount(resultEvents.length);
 
       setLatestDefinition(definition);
       setLatestState(state?.state ?? null);
@@ -145,17 +250,44 @@ export default function QuestionnaireCoordinatorPanel() {
       latestAcceptedCount,
       latestRejectedCount,
       latestResultAcceptedCount,
+      definitionEventCount,
+      stateEventCount,
+      responseEventCount,
+      resultEventCount,
+      definitionReadDiagnostics,
+      stateReadDiagnostics,
+      responseReadDiagnostics,
+      resultReadDiagnostics,
+      definitionPublishDiagnostic,
+      statePublishDiagnostic,
+      resultPublishDiagnostic,
+      latestDefinitionQuestionCount: latestDefinition?.questions.length ?? 0,
+      latestDefinitionId: latestDefinition?.questionnaireId ?? null,
+      localSummaryMatchesPublished: latestResultAcceptedCount === null
+        ? null
+        : latestResultAcceptedCount === latestAcceptedCount,
       hasDefinition: Boolean(latestDefinition),
       status,
     };
   }, [
     coordinatorNpub,
+    definitionEventCount,
+    definitionPublishDiagnostic,
+    definitionReadDiagnostics,
     latestAcceptedCount,
     latestDefinition,
     latestRejectedCount,
     latestResultAcceptedCount,
     latestState,
     questionnaireId,
+    responseReadDiagnostics,
+    resultReadDiagnostics,
+    resultPublishDiagnostic,
+    responseEventCount,
+    statePublishDiagnostic,
+    stateReadDiagnostics,
+    resultEventCount,
+    stateEventCount,
     status,
   ]);
 
@@ -186,10 +318,29 @@ export default function QuestionnaireCoordinatorPanel() {
     }
 
     setStatus("Publishing questionnaire definition...");
+    setDefinitionPublishDiagnostic((current) => ({
+      ...current,
+      attempted: true,
+      succeeded: false,
+      eventId: null,
+      kind: null,
+      tags: [],
+      relayTargets: [],
+      relaySuccessCount: 0,
+    }));
     try {
       const result = await publishQuestionnaireDefinition({
         coordinatorNsec,
         definition: builtDefinition,
+      });
+      setDefinitionPublishDiagnostic({
+        attempted: true,
+        succeeded: result.successes > 0,
+        eventId: result.eventId,
+        kind: result.event.kind,
+        tags: result.event.tags,
+        relayTargets: result.relayResults.map((entry) => entry.relay),
+        relaySuccessCount: result.successes,
       });
       setStatus(
         result.successes > 0
@@ -198,6 +349,7 @@ export default function QuestionnaireCoordinatorPanel() {
       );
       await refresh();
     } catch {
+      setDefinitionPublishDiagnostic((current) => ({ ...current, attempted: true, succeeded: false }));
       setStatus("Questionnaire definition publish failed.");
     }
   }
@@ -210,6 +362,16 @@ export default function QuestionnaireCoordinatorPanel() {
     }
 
     setStatus(`Publishing questionnaire state (${state})...`);
+    setStatePublishDiagnostic((current) => ({
+      ...current,
+      attempted: true,
+      succeeded: false,
+      eventId: null,
+      kind: null,
+      tags: [],
+      relayTargets: [],
+      relaySuccessCount: 0,
+    }));
     try {
       const result = await publishQuestionnaireState({
         coordinatorNsec,
@@ -222,6 +384,15 @@ export default function QuestionnaireCoordinatorPanel() {
           coordinatorPubkey: coordinatorNpub,
         },
       });
+      setStatePublishDiagnostic({
+        attempted: true,
+        succeeded: result.successes > 0,
+        eventId: result.eventId,
+        kind: result.event.kind,
+        tags: result.event.tags,
+        relayTargets: result.relayResults.map((entry) => entry.relay),
+        relaySuccessCount: result.successes,
+      });
       setStatus(
         result.successes > 0
           ? `Questionnaire state '${state}' published (${result.successes}/${result.relayResults.length} relays).`
@@ -229,6 +400,7 @@ export default function QuestionnaireCoordinatorPanel() {
       );
       await refresh();
     } catch {
+      setStatePublishDiagnostic((current) => ({ ...current, attempted: true, succeeded: false }));
       setStatus(`Questionnaire state '${state}' publish failed.`);
     }
   }
@@ -240,11 +412,22 @@ export default function QuestionnaireCoordinatorPanel() {
     }
 
     setStatus("Computing and publishing questionnaire results...");
+    setResultPublishDiagnostic((current) => ({
+      ...current,
+      attempted: true,
+      succeeded: false,
+      eventId: null,
+      kind: null,
+      tags: [],
+      relayTargets: [],
+      relaySuccessCount: 0,
+    }));
     try {
-      const responseEvents = await fetchQuestionnaireEvents({
+      const responseEvents = (await fetchQuestionnaireEventsWithFallback({
         questionnaireId: latestDefinition.questionnaireId,
         kind: QUESTIONNAIRE_RESPONSE_PRIVATE_KIND,
-      });
+        parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireIdFromResponseContent(event.content),
+      })).events;
       const processed = processQuestionnaireResponses({
         definition: latestDefinition,
         responseEvents,
@@ -274,12 +457,23 @@ export default function QuestionnaireCoordinatorPanel() {
       });
 
       if (publishSummary.successes > 0 && publishStateResult.successes > 0) {
+        setResultPublishDiagnostic({
+          attempted: true,
+          succeeded: true,
+          eventId: publishSummary.eventId,
+          kind: publishSummary.event.kind,
+          tags: publishSummary.event.tags,
+          relayTargets: publishSummary.relayResults.map((entry) => entry.relay),
+          relaySuccessCount: publishSummary.successes,
+        });
         setStatus(`Results published. Accepted=${summary.acceptedResponseCount}, Rejected=${summary.rejectedResponseCount}.`);
       } else {
+        setResultPublishDiagnostic((current) => ({ ...current, attempted: true, succeeded: false }));
         setStatus("Result publish partially failed.");
       }
       await refresh();
     } catch {
+      setResultPublishDiagnostic((current) => ({ ...current, attempted: true, succeeded: false }));
       setStatus("Result publishing failed.");
     }
   }

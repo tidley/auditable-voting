@@ -248,6 +248,55 @@ export async function fetchQuestionnaireEvents(input: {
   return events;
 }
 
+export type QuestionnaireFetchDiagnostics = {
+  mode: "filtered" | "kind_only_fallback";
+  filteredCount: number;
+  kindOnlyCount: number;
+};
+
+export async function fetchQuestionnaireEventsWithFallback(input: {
+  questionnaireId: string;
+  kind: number;
+  relays?: string[];
+  limit?: number;
+  parseQuestionnaireIdFromEvent: (event: Pick<NostrEvent, "kind" | "content">) => string | null;
+}) {
+  const relays = selectPublicReadRelays(buildPublicRelays(input.relays));
+  const pool = getSharedNostrPool();
+  const filteredEvents = await pool.querySync(relays, {
+    kinds: [input.kind],
+    "#questionnaire-id": [input.questionnaireId],
+    limit: input.limit ?? 200,
+  });
+  if (filteredEvents.length > 0) {
+    return {
+      events: filteredEvents,
+      diagnostics: {
+        mode: "filtered" as const,
+        filteredCount: filteredEvents.length,
+        kindOnlyCount: 0,
+      },
+    };
+  }
+
+  const kindOnlyEvents = await pool.querySync(relays, {
+    kinds: [input.kind],
+    limit: input.limit ?? 200,
+  });
+  const locallyMatched = kindOnlyEvents.filter((event) => {
+    const questionnaireId = input.parseQuestionnaireIdFromEvent(event);
+    return questionnaireId === input.questionnaireId;
+  });
+  return {
+    events: locallyMatched,
+    diagnostics: {
+      mode: "kind_only_fallback" as const,
+      filteredCount: 0,
+      kindOnlyCount: kindOnlyEvents.length,
+    },
+  };
+}
+
 export function parseQuestionnaireDefinitionEvent(
   event: Pick<NostrEvent, "kind" | "content">,
 ): QuestionnaireDefinition | null {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { generateSecretKey, nip19 } from "nostr-tools";
-import { fetchQuestionnaireEvents, publishEncryptedQuestionnaireResponse, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND } from "./questionnaireNostr";
+import { fetchQuestionnaireEvents, fetchQuestionnaireEventsWithFallback, parseQuestionnaireDefinitionEvent, parseQuestionnaireStateEvent, publishEncryptedQuestionnaireResponse, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND } from "./questionnaireNostr";
 import { parseQuestionnaireResultSummaryEvent, selectLatestQuestionnaireDefinition, selectLatestQuestionnaireState } from "./questionnaireRuntime";
 import { loadSimpleActorState } from "./simpleLocalState";
 import { validateQuestionnaireResponsePayload, type QuestionnaireDefinition, type QuestionnaireResponseAnswer, type QuestionnaireResponsePayload, type QuestionnaireResultSummary } from "./questionnaireProtocol";
@@ -78,6 +78,18 @@ export default function QuestionnaireVoterPanel() {
   const [latestResult, setLatestResult] = useState<QuestionnaireResultSummary | null>(null);
   const [answerState, setAnswerState] = useState<QuestionnaireAnswerState>({});
   const [responseSubmittedCount, setResponseSubmittedCount] = useState(0);
+  const [definitionEventCount, setDefinitionEventCount] = useState(0);
+  const [stateEventCount, setStateEventCount] = useState(0);
+  const [resultEventCount, setResultEventCount] = useState(0);
+  const [definitionBackfillFilter, setDefinitionBackfillFilter] = useState<Record<string, unknown> | null>(null);
+  const [stateBackfillFilter, setStateBackfillFilter] = useState<Record<string, unknown> | null>(null);
+  const [resultBackfillFilter, setResultBackfillFilter] = useState<Record<string, unknown> | null>(null);
+  const [definitionReadMode, setDefinitionReadMode] = useState<"filtered" | "kind_only_fallback">("filtered");
+  const [stateReadMode, setStateReadMode] = useState<"filtered" | "kind_only_fallback">("filtered");
+  const [resultReadMode, setResultReadMode] = useState<"filtered" | "kind_only_fallback">("filtered");
+  const [definitionKindOnlyCount, setDefinitionKindOnlyCount] = useState(0);
+  const [stateKindOnlyCount, setStateKindOnlyCount] = useState(0);
+  const [resultKindOnlyCount, setResultKindOnlyCount] = useState(0);
 
   useEffect(() => {
     void loadSimpleActorState("voter").then((stored) => {
@@ -91,11 +103,54 @@ export default function QuestionnaireVoterPanel() {
       return;
     }
     try {
-      const [definitionEvents, stateEvents, resultEvents] = await Promise.all([
-        fetchQuestionnaireEvents({ questionnaireId: id, kind: QUESTIONNAIRE_DEFINITION_KIND }),
-        fetchQuestionnaireEvents({ questionnaireId: id, kind: QUESTIONNAIRE_STATE_KIND }),
-        fetchQuestionnaireEvents({ questionnaireId: id, kind: QUESTIONNAIRE_RESULT_SUMMARY_KIND }),
+      setDefinitionBackfillFilter({
+        kinds: [QUESTIONNAIRE_DEFINITION_KIND],
+        "#questionnaire-id": [id],
+      });
+      setStateBackfillFilter({
+        kinds: [QUESTIONNAIRE_STATE_KIND],
+        "#questionnaire-id": [id],
+      });
+      setResultBackfillFilter({
+        kinds: [QUESTIONNAIRE_RESULT_SUMMARY_KIND],
+        "#questionnaire-id": [id],
+      });
+      const [definitionFetch, stateFetch, resultFetch] = await Promise.all([
+        fetchQuestionnaireEventsWithFallback({
+          questionnaireId: id,
+          kind: QUESTIONNAIRE_DEFINITION_KIND,
+          parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireDefinitionEvent(event)?.questionnaireId ?? null,
+        }),
+        fetchQuestionnaireEventsWithFallback({
+          questionnaireId: id,
+          kind: QUESTIONNAIRE_STATE_KIND,
+          parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireStateEvent(event)?.questionnaireId ?? null,
+        }),
+        fetchQuestionnaireEventsWithFallback({
+          questionnaireId: id,
+          kind: QUESTIONNAIRE_RESULT_SUMMARY_KIND,
+          parseQuestionnaireIdFromEvent: (event) => {
+            try {
+              const parsed = JSON.parse(event.content) as { questionnaireId?: string };
+              return typeof parsed.questionnaireId === "string" ? parsed.questionnaireId : null;
+            } catch {
+              return null;
+            }
+          },
+        }),
       ]);
+      const definitionEvents = definitionFetch.events;
+      const stateEvents = stateFetch.events;
+      const resultEvents = resultFetch.events;
+      setDefinitionReadMode(definitionFetch.diagnostics.mode);
+      setStateReadMode(stateFetch.diagnostics.mode);
+      setResultReadMode(resultFetch.diagnostics.mode);
+      setDefinitionKindOnlyCount(definitionFetch.diagnostics.kindOnlyCount);
+      setStateKindOnlyCount(stateFetch.diagnostics.kindOnlyCount);
+      setResultKindOnlyCount(resultFetch.diagnostics.kindOnlyCount);
+      setDefinitionEventCount(definitionEvents.length);
+      setStateEventCount(stateEvents.length);
+      setResultEventCount(resultEvents.length);
       setDefinition(selectLatestQuestionnaireDefinition(definitionEvents));
       setState(selectLatestQuestionnaireState(stateEvents)?.state ?? null);
       setLatestResult(parseLatestResultSummary(resultEvents));
@@ -191,19 +246,56 @@ export default function QuestionnaireVoterPanel() {
     };
     owner.__questionnaireVoterDebug = {
       questionnaireId: questionnaireId.trim(),
+      loadedQuestionnaireId: definition?.questionnaireId ?? null,
+      loadedQuestionCount: definition?.questions.length ?? 0,
       voterNpubLoaded: Boolean(voterNpub),
       questionnaireSeen: Boolean(definition),
+      questionnaireOpen: state === "open",
       questionnaireState: state,
+      questionnaireDefinitionLiveFilter: null,
+      questionnaireDefinitionBackfillFilter: definitionBackfillFilter,
+      questionnaireDefinitionReadMode: definitionReadMode,
+      questionnaireStateLiveFilter: null,
+      questionnaireStateBackfillFilter: stateBackfillFilter,
+      questionnaireStateReadMode: stateReadMode,
+      questionnaireResultLiveFilter: null,
+      questionnaireResultBackfillFilter: resultBackfillFilter,
+      questionnaireResultReadMode: resultReadMode,
+      questionnaireDefinitionLiveResultCount: null,
+      questionnaireDefinitionBackfillResultCount: definitionEventCount,
+      questionnaireDefinitionKindOnlyCount: definitionKindOnlyCount,
+      questionnaireStateLiveResultCount: null,
+      questionnaireStateBackfillResultCount: stateEventCount,
+      questionnaireStateKindOnlyCount: stateKindOnlyCount,
+      questionnaireResultLiveResultCount: null,
+      questionnaireResultBackfillResultCount: resultEventCount,
+      questionnaireResultKindOnlyCount: resultKindOnlyCount,
+      definitionEventCount,
+      stateEventCount,
+      resultEventCount,
       latestResultAcceptedCount: latestResult?.acceptedResponseCount ?? null,
+      responsePublished: responseSubmittedCount > 0,
       responseSubmittedCount,
       status,
     };
   }, [
+    definitionBackfillFilter,
+    definitionEventCount,
+    definitionKindOnlyCount,
+    definitionReadMode,
     definition,
     latestResult?.acceptedResponseCount,
     questionnaireId,
+    resultBackfillFilter,
+    resultEventCount,
+    resultKindOnlyCount,
+    resultReadMode,
     responseSubmittedCount,
     state,
+    stateBackfillFilter,
+    stateEventCount,
+    stateKindOnlyCount,
+    stateReadMode,
     status,
     voterNpub,
   ]);

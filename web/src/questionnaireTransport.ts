@@ -1,6 +1,6 @@
 import type { NostrEvent } from "nostr-tools";
 import {
-  fetchQuestionnaireEvents,
+  fetchQuestionnaireEventsWithFallback,
   parseQuestionnaireDefinitionEvent,
   parseQuestionnaireStateEvent,
   QUESTIONNAIRE_DEFINITION_KIND,
@@ -42,12 +42,15 @@ export async function fetchQuestionnaireDefinitions(input: {
   const pool = getSharedNostrPool();
   const events = await pool.querySync(relays, {
     kinds: [QUESTIONNAIRE_DEFINITION_KIND],
-    ...(input.questionnaireId ? { "#questionnaire-id": [input.questionnaireId] } : {}),
     limit: input.limit ?? 200,
   });
 
   return events
     .map((event) => ({ event, definition: parseQuestionnaireDefinitionEvent(event) }))
+    .filter((entry) => (
+      !input.questionnaireId
+      || entry.definition?.questionnaireId === input.questionnaireId
+    ))
     .filter((entry): entry is { event: NostrEvent; definition: QuestionnaireDefinition } => Boolean(entry.definition));
 }
 
@@ -62,11 +65,13 @@ export function subscribeQuestionnaireDefinitions(input: {
 
   const subscription = pool.subscribeMany(relays, {
     kinds: [QUESTIONNAIRE_DEFINITION_KIND],
-    ...(input.questionnaireId ? { "#questionnaire-id": [input.questionnaireId] } : {}),
   }, {
     onevent(event) {
       const definition = parseQuestionnaireDefinitionEvent(event);
       if (!definition) {
+        return;
+      }
+      if (input.questionnaireId && definition.questionnaireId !== input.questionnaireId) {
         return;
       }
       eventsById.set(event.id, { event, definition });
@@ -88,12 +93,12 @@ export async function fetchQuestionnaireBlindResponses(input: {
   const pool = getSharedNostrPool();
   const events = await pool.querySync(relays, {
     kinds: [QUESTIONNAIRE_RESPONSE_BLIND_KIND],
-    "#questionnaire": [input.questionnaireId],
     limit: input.limit ?? 200,
   });
 
   return events
     .map((event) => ({ event, response: parseQuestionnaireBlindResponseEvent(event.content) }))
+    .filter((entry) => entry.response?.questionnaireId === input.questionnaireId)
     .filter((entry): entry is { event: NostrEvent; response: QuestionnaireBlindResponseEvent } => Boolean(entry.response));
 }
 
@@ -108,11 +113,13 @@ export function subscribeQuestionnaireBlindResponses(input: {
 
   const subscription = pool.subscribeMany(relays, {
     kinds: [QUESTIONNAIRE_RESPONSE_BLIND_KIND],
-    "#questionnaire": [input.questionnaireId],
   }, {
     onevent(event) {
       const response = parseQuestionnaireBlindResponseEvent(event.content);
       if (!response) {
+        return;
+      }
+      if (response.questionnaireId !== input.questionnaireId) {
         return;
       }
       eventsById.set(event.id, { event, response });
@@ -130,12 +137,13 @@ export async function fetchQuestionnaireState(input: {
   relays?: string[];
   limit?: number;
 }) {
-  const events = await fetchQuestionnaireEvents({
+  const events = (await fetchQuestionnaireEventsWithFallback({
     questionnaireId: input.questionnaireId,
     kind: QUESTIONNAIRE_STATE_KIND,
     relays: input.relays,
     limit: input.limit,
-  });
+    parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireStateEvent(event)?.questionnaireId ?? null,
+  })).events;
 
   return events
     .map((event) => ({ event, state: parseQuestionnaireStateEvent(event) }))
@@ -147,12 +155,20 @@ export async function fetchQuestionnaireResultSummary(input: {
   relays?: string[];
   limit?: number;
 }) {
-  const events = await fetchQuestionnaireEvents({
+  const events = (await fetchQuestionnaireEventsWithFallback({
     questionnaireId: input.questionnaireId,
     kind: QUESTIONNAIRE_RESULT_SUMMARY_KIND,
     relays: input.relays,
     limit: input.limit,
-  });
+    parseQuestionnaireIdFromEvent: (event) => {
+      try {
+        const parsed = JSON.parse(event.content) as { questionnaireId?: string };
+        return typeof parsed.questionnaireId === "string" ? parsed.questionnaireId : null;
+      } catch {
+        return null;
+      }
+    },
+  })).events;
 
   return events
     .map((event) => ({ event, summary: parseQuestionnaireResultSummaryEvent(event) }))
