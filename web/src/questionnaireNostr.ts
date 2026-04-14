@@ -1,6 +1,7 @@
 import { finalizeEvent, getPublicKey, nip19, nip44, type NostrEvent } from "nostr-tools";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import { getSharedNostrPool } from "./sharedNostrPool";
+import { recordRelayCloseReasons, recordRelayOutcome, rankRelaysByBackoff, selectRelaysWithBackoff } from "./relayBackoff";
 import {
   SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS,
   SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS,
@@ -30,12 +31,11 @@ export const QUESTIONNAIRE_RESULT_SUMMARY_KIND = IMPLEMENTATION_KIND_QUESTIONNAI
 const QUESTIONNAIRE_PUBLIC_READ_RELAYS_MAX = 2;
 
 function buildPublicRelays(relays?: string[]) {
-  return normalizeRelaysRust([...(relays ?? []), ...SIMPLE_PUBLIC_RELAYS]);
+  return rankRelaysByBackoff(normalizeRelaysRust([...(relays ?? []), ...SIMPLE_PUBLIC_RELAYS]));
 }
 
 function selectPublicReadRelays(relays: string[]) {
-  const normalized = normalizeRelaysRust(relays);
-  return normalized.slice(0, Math.min(QUESTIONNAIRE_PUBLIC_READ_RELAYS_MAX, normalized.length));
+  return selectRelaysWithBackoff(relays, QUESTIONNAIRE_PUBLIC_READ_RELAYS_MAX);
 }
 
 export function getQuestionnaireReadRelays(relays?: string[]) {
@@ -92,6 +92,9 @@ async function publishEvent(input: {
           error: result.reason instanceof Error ? result.reason.message : String(result.reason),
         }
   ));
+  for (const result of relayResults) {
+    recordRelayOutcome(result.relay, result.success, result.success ? undefined : result.error);
+  }
   return {
     eventId: event.id,
     event,
@@ -317,29 +320,74 @@ export function subscribeQuestionnaireEvents(input: {
   onEvent: (event: NostrEvent) => void;
   onError?: (error: Error) => void;
 }) {
-  const relays = getQuestionnaireReadRelays(input.relays);
   const pool = getSharedNostrPool();
-  const subscription = pool.subscribeMany(relays, {
-    kinds: [input.kind],
-    limit: input.limit ?? 200,
-  }, {
-    onevent: (event) => {
-      const matchedQuestionnaireId = input.parseQuestionnaireIdFromEvent(event);
-      if (matchedQuestionnaireId !== input.questionnaireId) {
-        return;
+  let closed = false;
+  let reconnectDelayMs = 2000;
+  let reconnectTimer: number | null = null;
+  let subscription: { close: (reason?: string) => Promise<void> | void } | null = null;
+
+  const connect = () => {
+    if (closed) {
+      return;
+    }
+    const relays = getQuestionnaireReadRelays(input.relays);
+    if (relays.length === 0) {
+      scheduleReconnect();
+      return;
+    }
+    subscription = pool.subscribeMany(relays, {
+      kinds: [input.kind],
+      limit: input.limit ?? 200,
+    }, {
+      onevent: (event) => {
+        reconnectDelayMs = 2000;
+        const matchedQuestionnaireId = input.parseQuestionnaireIdFromEvent(event);
+        if (matchedQuestionnaireId !== input.questionnaireId) {
+          return;
+        }
+        input.onEvent(event);
+      },
+      onclose: (reasons) => {
+        recordRelayCloseReasons(reasons);
+        const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
+        if (errors.length > 0) {
+          input.onError?.(new Error(errors.join("; ")));
+          if (!closed) {
+            scheduleReconnect();
+          }
+        }
+      },
+    });
+  };
+
+  const scheduleReconnect = () => {
+    if (closed || reconnectTimer !== null) {
+      return;
+    }
+    const delay = Math.min(60_000, reconnectDelayMs);
+    reconnectDelayMs = Math.min(60_000, reconnectDelayMs * 2);
+    reconnectTimer = window.setTimeout(() => {
+      reconnectTimer = null;
+      if (subscription) {
+        void subscription.close("closed by caller");
+        subscription = null;
       }
-      input.onEvent(event);
-    },
-    onclose: (reasons) => {
-      const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
-      if (errors.length > 0) {
-        input.onError?.(new Error(errors.join("; ")));
-      }
-    },
-  });
+      connect();
+    }, delay);
+  };
+
+  connect();
 
   return () => {
-    void subscription.close("closed by caller");
+    closed = true;
+    if (reconnectTimer !== null) {
+      window.clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    if (subscription) {
+      void subscription.close("closed by caller");
+      subscription = null;
+    }
   };
 }
 

@@ -1,4 +1,5 @@
 import type { NostrEvent } from "nostr-tools";
+import { recordRelayCloseReasons, selectRelaysWithBackoff, rankRelaysByBackoff } from "./relayBackoff";
 import {
   fetchQuestionnaireEventsWithFallback,
   parseQuestionnaireDefinitionEvent,
@@ -37,12 +38,11 @@ export type QuestionnaireBlindAdmissionDecision = {
 };
 
 function buildPublicRelays(relays?: string[]) {
-  return normalizeRelaysRust([...(relays ?? []), ...SIMPLE_PUBLIC_RELAYS]);
+  return rankRelaysByBackoff(normalizeRelaysRust([...(relays ?? []), ...SIMPLE_PUBLIC_RELAYS]));
 }
 
 function selectPublicReadRelays(relays: string[]) {
-  const normalized = normalizeRelaysRust(relays);
-  return normalized.slice(0, Math.min(QUESTIONNAIRE_PUBLIC_READ_RELAYS_MAX, normalized.length));
+  return selectRelaysWithBackoff(relays, QUESTIONNAIRE_PUBLIC_READ_RELAYS_MAX);
 }
 
 export async function fetchQuestionnaireDefinitions(input: {
@@ -88,6 +88,9 @@ export function subscribeQuestionnaireDefinitions(input: {
       }
       eventsById.set(event.id, { event, definition });
       input.onDefinitions([...eventsById.values()]);
+    },
+    onclose: (reasons) => {
+      recordRelayCloseReasons(reasons);
     },
   });
 
@@ -136,6 +139,9 @@ export function subscribeQuestionnaireBlindResponses(input: {
       }
       eventsById.set(event.id, { event, response });
       input.onResponses([...eventsById.values()]);
+    },
+    onclose: (reasons) => {
+      recordRelayCloseReasons(reasons);
     },
   });
 

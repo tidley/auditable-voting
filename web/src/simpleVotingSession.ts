@@ -11,6 +11,7 @@ import {
   type SimpleShardCertificate,
   type SimplePublicShardProof,
 } from "./simpleShardCertificate";
+import { recordRelayCloseReasons, recordRelayOutcome, rankRelaysByBackoff, selectRelaysWithBackoff } from "./relayBackoff";
 import { normalizeRelaysRust, sortRecordsByCreatedAtDescRust } from "./wasm/auditableVotingCore";
 
 export const SIMPLE_PUBLIC_RELAYS = [
@@ -22,7 +23,6 @@ export const SIMPLE_PUBLIC_RELAYS = [
   "wss://relay.snort.social",
   "wss://nostr-pub.wellorder.net",
   "wss://relay.damus.io",
-  "wss://nostr.mutinywallet.com",
   "wss://purplepag.es",
   "wss://eden.nostr.land",
 ];
@@ -62,12 +62,11 @@ export type SimpleSubmittedVote = {
 };
 
 function buildPublicRelays(relays?: string[]) {
-  return normalizeRelaysRust([...SIMPLE_PUBLIC_RELAYS, ...(relays ?? [])]);
+  return rankRelaysByBackoff(normalizeRelaysRust([...SIMPLE_PUBLIC_RELAYS, ...(relays ?? [])]));
 }
 
 function selectPublicReadRelays(relays: string[]) {
-  const normalized = normalizeRelaysRust(relays);
-  return normalized.slice(0, Math.min(SIMPLE_PUBLIC_READ_RELAYS_MAX, normalized.length));
+  return selectRelaysWithBackoff(relays, SIMPLE_PUBLIC_READ_RELAYS_MAX);
 }
 
 function sortByCreatedAtDescending<T extends { createdAt: string }>(values: T[]) {
@@ -243,6 +242,9 @@ export async function publishSimpleLiveVote(input: {
           error: result.reason instanceof Error ? result.reason.message : String(result.reason),
         }
   ));
+  for (const result of relayResults) {
+    recordRelayOutcome(result.relay, result.success, result.success ? undefined : result.error);
+  }
 
   return {
     votingId,
@@ -359,6 +361,7 @@ export function subscribeLatestSimpleLiveVote(input: {
         if (closed) {
           return;
         }
+        recordRelayCloseReasons(reasons);
 
         const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
         if (errors.length > 0) {
@@ -457,6 +460,7 @@ export function subscribeSimpleLiveVotes(input: {
         if (closed) {
           return;
         }
+        recordRelayCloseReasons(reasons);
 
         const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
         if (errors.length > 0) {
@@ -577,6 +581,9 @@ export async function publishSimpleSubmittedVote(input: {
           error: result.reason instanceof Error ? result.reason.message : String(result.reason),
         }
   ));
+  for (const result of relayResults) {
+    recordRelayOutcome(result.relay, result.success, result.success ? undefined : result.error);
+  }
 
   return {
     eventId: event.id,
@@ -674,6 +681,7 @@ export function subscribeSimpleSubmittedVotes(input: {
       if (closed) {
         return;
       }
+      recordRelayCloseReasons(reasons);
 
       const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
       if (errors.length > 0) {
