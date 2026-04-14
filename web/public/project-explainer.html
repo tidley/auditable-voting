@@ -373,6 +373,7 @@ The present web client is built with:
 - **single-coordinator deterministic startup bypass** so `1 coordinator` runs do not block on MLS join/group observation paths
 - **blind-key publication diagnostics** that classify not-attempted vs publish/observe/apply stalls and expose event/relay evidence
 - **private-first questionnaire flow** with coordinator/voter UI panels and **blind-token response foundations** (`questionnaire_response_blind`, transport helpers, harness metrics)
+- **staged questionnaire coordinator builder** (`Build` -> `Audience` -> `Publish` -> `Responses` -> `Results`) with zero default questions and explicit publish readiness checks
 - **ticket scheduler diagnostics and tunable transport knobs** for first-send prioritisation, resend eligibility reasons, bounded concurrency, and retry-age experimentation during live relay reliability testing
 - **observation-plane recovery diagnostics** that separate live vs backfill visibility and classify resend recoveries for published-but-unobserved tickets
 - **request-id keyed mailbox reader bindings** with immutable per-request mailbox ids for live/backfill ticket observation, plus explicit read/backfill mailbox-consistency diagnostics

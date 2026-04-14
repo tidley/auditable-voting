@@ -4639,10 +4639,11 @@ export default function SimpleCoordinatorApp() {
             role='tabpanel'
             aria-label='Questionnaire'
           >
-            <SimpleCollapsibleSection title='Private questionnaire'>
+            <SimpleCollapsibleSection title='Questionnaire draft'>
               <QuestionnaireCoordinatorPanel
                 coordinatorNsec={keypair?.nsec ?? null}
                 coordinatorNpub={keypair?.npub ?? null}
+                knownVoterCount={followers.length}
                 onStatusChange={(nextStatus) => {
                   setQuestionnaireSummary({
                     state: nextStatus.state,

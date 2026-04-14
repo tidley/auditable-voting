@@ -6,11 +6,15 @@ export default function SimpleQrPanel({
   title,
   description,
   copyLabel = "Copy value",
+  downloadLabel = "Download QR",
+  downloadFilename = "qr-code.png",
 }: {
   value: string;
   title: string;
   description?: string;
   copyLabel?: string;
+  downloadLabel?: string;
+  downloadFilename?: string;
 }) {
   const [copied, setCopied] = useState(false);
   const [qrSrc, setQrSrc] = useState<string | null>(null);
@@ -66,9 +70,16 @@ export default function SimpleQrPanel({
         <h3 className="simple-voter-question">{title}</h3>
         {description ? <p className="simple-voter-question">{description}</p> : null}
         <code className="simple-identity-code">{value}</code>
-        <button type="button" className="simple-voter-secondary" onClick={copyValue}>
-          {copied ? "Copied" : copyLabel}
-        </button>
+        <div className="simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight">
+          <button type="button" className="simple-voter-secondary" onClick={copyValue}>
+            {copied ? "Copied" : copyLabel}
+          </button>
+          {qrSrc ? (
+            <a className="simple-voter-secondary" href={qrSrc} download={downloadFilename}>
+              {downloadLabel}
+            </a>
+          ) : null}
+        </div>
       </div>
       <div className="simple-qr-image-wrap">
         {qrSrc ? (
