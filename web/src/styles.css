@@ -753,6 +753,125 @@ code {
   font-weight: 700;
 }
 
+.simple-questionnaire-responses-section {
+  display: grid;
+  gap: 12px;
+}
+
+.simple-questionnaire-metadata-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.simple-questionnaire-metadata-item {
+  padding: 12px;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  background: #0b1221;
+}
+
+.simple-questionnaire-metadata-item dt {
+  margin: 0 0 6px;
+  color: #93c5fd;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.simple-questionnaire-metadata-item dd {
+  margin: 0;
+  color: #e2e8f0;
+  overflow-wrap: anywhere;
+}
+
+.simple-questionnaire-summary-card {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 14px;
+  padding: 14px;
+  border: 1px solid #334155;
+  border-radius: 14px;
+  background: #0b1221;
+}
+
+.simple-questionnaire-summary-label {
+  margin: 0;
+  color: #93c5fd;
+  font-size: 0.92rem;
+}
+
+.simple-questionnaire-summary-value {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 1.3rem;
+  font-weight: 700;
+  text-align: right;
+}
+
+.simple-questionnaire-progress {
+  position: relative;
+  width: 100%;
+  height: 9px;
+  border-radius: 999px;
+  background: #1e293b;
+  overflow: hidden;
+}
+
+.simple-questionnaire-progress span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #38bdf8, #60a5fa);
+}
+
+.simple-questionnaire-summary-card .simple-questionnaire-progress {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+}
+
+.simple-questionnaire-results-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.simple-questionnaire-option-row {
+  display: grid;
+  gap: 6px;
+}
+
+.simple-questionnaire-responder-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.simple-questionnaire-responder-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  background: #0b1221;
+}
+
+@media (max-width: 760px) {
+  .simple-questionnaire-metadata-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .simple-questionnaire-responder-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .simple-questionnaire-responder-row .simple-voter-note {
+    grid-column: 1 / -1;
+  }
+}
+
 .simple-questionnaire-preview {
   padding: 16px;
   border: 1px solid #334155;

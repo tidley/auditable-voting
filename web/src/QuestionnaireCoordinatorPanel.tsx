@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { NostrEvent } from "nostr-tools";
-import { fetchQuestionnaireEventsWithFallback, parseQuestionnaireDefinitionEvent, parseQuestionnaireStateEvent, publishQuestionnaireDefinition, publishQuestionnaireResultSummary, publishQuestionnaireState, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESPONSE_PRIVATE_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND, subscribeQuestionnaireEvents } from "./questionnaireNostr";
-import { buildQuestionnaireResultSummary, deriveEffectiveQuestionnaireState, processQuestionnaireResponses, selectLatestQuestionnaireDefinition, selectLatestQuestionnaireResultSummary, selectLatestQuestionnaireState } from "./questionnaireRuntime";
+import { fetchQuestionnaireEventsWithFallback, getQuestionnaireReadRelays, parseQuestionnaireDefinitionEvent, parseQuestionnaireStateEvent, publishQuestionnaireDefinition, publishQuestionnaireResultSummary, publishQuestionnaireState, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESPONSE_PRIVATE_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND, subscribeQuestionnaireEvents } from "./questionnaireNostr";
+import { buildQuestionnaireResultSummary, deriveEffectiveQuestionnaireState, processQuestionnaireResponses, selectLatestQuestionnaireDefinition, selectLatestQuestionnaireResultSummary, selectLatestQuestionnaireState, type QuestionnaireAcceptedResponse } from "./questionnaireRuntime";
 import { loadSimpleActorState } from "./simpleLocalState";
 import {
   validateQuestionnaireDefinition,
@@ -11,6 +11,9 @@ import {
 } from "./questionnaireProtocol";
 import { QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN } from "./questionnaireProtocolConstants";
 import SimpleQrPanel from "./SimpleQrPanel";
+import TokenFingerprint from "./TokenFingerprint";
+import { deriveActorDisplayId } from "./actorDisplay";
+import { getSharedNostrPool } from "./sharedNostrPool";
 
 const DEFAULT_QUESTIONNAIRE_ID = "course_feedback_2026_term1";
 const IDENTITY_REFRESH_INTERVAL_MS = 10000;
@@ -78,6 +81,29 @@ function formatUnixTimestamp(timestampSeconds?: number | null) {
   return new Date(timestampSeconds * 1000).toLocaleString();
 }
 
+function formatQuestionnaireMetadataState(state: QuestionnaireStateValue | null, hasDefinition: boolean) {
+  if (!hasDefinition) {
+    return "Draft";
+  }
+  if (state === "open") {
+    return "Open";
+  }
+  if (state === "closed") {
+    return "Closed";
+  }
+  if (state === "results_published") {
+    return "Counted";
+  }
+  return "Published";
+}
+
+function percentageLabel(count: number, total: number) {
+  if (total <= 0) {
+    return "0%";
+  }
+  return `${Math.round((count / total) * 100)}%`;
+}
+
 function parseQuestionnaireIdFromResponseContent(content: string): string | null {
   try {
     const parsed = JSON.parse(content) as { questionnaireId?: string };
@@ -130,7 +156,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [latestState, setLatestState] = useState<QuestionnaireStateValue | null>(null);
   const [latestAcceptedCount, setLatestAcceptedCount] = useState(0);
   const [latestRejectedCount, setLatestRejectedCount] = useState(0);
+  const [latestAcceptedResponses, setLatestAcceptedResponses] = useState<QuestionnaireAcceptedResponse[]>([]);
   const [latestResultAcceptedCount, setLatestResultAcceptedCount] = useState<number | null>(null);
+  const [availableQuestionnaireIds, setAvailableQuestionnaireIds] = useState<string[]>([]);
+  const [expandedTextQuestionIds, setExpandedTextQuestionIds] = useState<Record<string, boolean>>({});
   const [definitionEventCount, setDefinitionEventCount] = useState(0);
   const [stateEventCount, setStateEventCount] = useState(0);
   const [responseEventCount, setResponseEventCount] = useState(0);
@@ -261,9 +290,11 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       });
       setLatestAcceptedCount(processed.accepted.length);
       setLatestRejectedCount(processed.rejected.length);
+      setLatestAcceptedResponses(processed.accepted);
     } else {
       setLatestAcceptedCount(0);
       setLatestRejectedCount(0);
+      setLatestAcceptedResponses([]);
     }
   }, [coordinatorNsec]);
 
@@ -319,6 +350,50 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       setStatus("Questionnaire refresh failed.");
     }
   }, [applyQuestionnaireSnapshot, questionnaireId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadQuestionnaireOptions = async () => {
+      try {
+        const relays = getQuestionnaireReadRelays();
+        const pool = getSharedNostrPool();
+        const events = await pool.querySync(relays, {
+          kinds: [QUESTIONNAIRE_DEFINITION_KIND],
+          limit: 400,
+        });
+        if (cancelled) {
+          return;
+        }
+
+        const coordinatorFilter = coordinatorNpub.trim();
+        const ids = new Set<string>();
+        for (const event of events) {
+          const parsed = parseQuestionnaireDefinitionEvent(event);
+          if (!parsed) {
+            continue;
+          }
+          if (coordinatorFilter && parsed.coordinatorPubkey !== coordinatorFilter) {
+            continue;
+          }
+          if (parsed.questionnaireId.trim()) {
+            ids.add(parsed.questionnaireId.trim());
+          }
+        }
+        const selectedId = questionnaireId.trim();
+        if (selectedId) {
+          ids.add(selectedId);
+        }
+        setAvailableQuestionnaireIds([...ids].sort((left, right) => left.localeCompare(right)));
+      } catch {
+        const selectedId = questionnaireId.trim();
+        setAvailableQuestionnaireIds(selectedId ? [selectedId] : []);
+      }
+    };
+    void loadQuestionnaireOptions();
+    return () => {
+      cancelled = true;
+    };
+  }, [coordinatorNpub, questionnaireId]);
 
   useEffect(() => {
     const id = questionnaireId.trim();
@@ -666,6 +741,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const responseCompletionPercent = knownVoterCount > 0
     ? Math.round((latestAcceptedCount / knownVoterCount) * 100)
     : 0;
+  const responseCompletionRatio = knownVoterCount > 0
+    ? Math.min(100, Math.max(0, (latestAcceptedCount / knownVoterCount) * 100))
+    : 0;
   const buildStateLabel = !publishedDefinition
     ? "Draft"
     : currentState === "results_published"
@@ -674,9 +752,124 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         ? "Ended"
         : currentState === "open"
           ? "Open"
-          : "Published";
+      : "Published";
   const checklistDescriptionAdded = description.trim().length > 0;
   const checklistNotPublished = !publishedDefinition;
+  const metadataStateLabel = formatQuestionnaireMetadataState(latestState, Boolean(latestDefinition));
+  const selectedQuestionnaireOptions = availableQuestionnaireIds.length > 0
+    ? availableQuestionnaireIds
+    : (questionnaireId.trim() ? [questionnaireId.trim()] : []);
+  const questionResultCards = useMemo(() => {
+    if (!latestDefinition) {
+      return [];
+    }
+    const acceptedTotal = latestAcceptedResponses.length;
+    return latestDefinition.questions.map((question, index) => {
+      if (question.type === "yes_no") {
+        let yesCount = 0;
+        let noCount = 0;
+        for (const response of latestAcceptedResponses) {
+          const answer = response.payload.answers.find((entry) => entry.questionId === question.questionId);
+          if (answer?.answerType === "yes_no") {
+            if (answer.value) {
+              yesCount += 1;
+            } else {
+              noCount += 1;
+            }
+          }
+        }
+        return {
+          questionId: question.questionId,
+          index,
+          prompt: question.prompt,
+          typeBadge: "Yes / No",
+          kind: "yes_no" as const,
+          yesCount,
+          noCount,
+          acceptedTotal,
+        };
+      }
+      if (question.type === "multiple_choice") {
+        const optionCounts = new Map(question.options.map((option) => [option.optionId, 0]));
+        for (const response of latestAcceptedResponses) {
+          const answer = response.payload.answers.find((entry) => entry.questionId === question.questionId);
+          if (answer?.answerType === "multiple_choice") {
+            for (const optionId of answer.selectedOptionIds) {
+              optionCounts.set(optionId, (optionCounts.get(optionId) ?? 0) + 1);
+            }
+          }
+        }
+        return {
+          questionId: question.questionId,
+          index,
+          prompt: question.prompt,
+          typeBadge: "Multiple choice",
+          kind: "multiple_choice" as const,
+          rows: question.options.map((option) => ({
+            optionId: option.optionId,
+            label: option.label,
+            count: optionCounts.get(option.optionId) ?? 0,
+          })),
+          acceptedTotal,
+        };
+      }
+
+      const responses = latestAcceptedResponses
+        .map((entry) => {
+          const answer = entry.payload.answers.find((answerEntry) => answerEntry.questionId === question.questionId);
+          if (answer?.answerType !== "free_text") {
+            return null;
+          }
+          const trimmed = answer.text.trim();
+          if (!trimmed) {
+            return null;
+          }
+          return {
+            responderId: deriveActorDisplayId(entry.authorPubkey),
+            text: trimmed,
+            submittedAt: entry.payload.submittedAt,
+          };
+        })
+        .filter((entry): entry is { responderId: string; text: string; submittedAt: number } => Boolean(entry));
+
+      return {
+        questionId: question.questionId,
+        index,
+        prompt: question.prompt,
+        typeBadge: "Text",
+        kind: "text" as const,
+        responses,
+      };
+    });
+  }, [latestAcceptedResponses, latestDefinition]);
+  const responders = useMemo(() => (
+    latestAcceptedResponses
+      .map((response) => ({
+        markerToken: response.authorPubkey,
+        responderId: deriveActorDisplayId(response.authorPubkey),
+        submittedAt: response.payload.submittedAt,
+      }))
+      .sort((left, right) => left.responderId.localeCompare(right.responderId))
+  ), [latestAcceptedResponses]);
+  const publishButtonDisabled = !canPublishResults || latestAcceptedCount <= 0;
+  const publishStatusText = useMemo(() => {
+    if (status === "Computing and publishing questionnaire results...") {
+      return "Publishing...";
+    }
+    if (status === "Result publishing failed." || status === "Result publish partially failed.") {
+      return "Publish failed";
+    }
+    if (latestState === "results_published") {
+      return "Already published";
+    }
+    if (latestAcceptedCount <= 0) {
+      return "Nothing to publish yet";
+    }
+    if (canPublishResults) {
+      return "Ready to publish";
+    }
+    return "Nothing to publish yet";
+  }, [canPublishResults, latestAcceptedCount, latestState, status]);
 
   async function publishDefinition() {
     if (!coordinatorNsec.trim() || !builtDefinition) {
@@ -863,30 +1056,166 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     return (
       <div className='simple-voter-card simple-questionnaire-panel'>
         <h3 className='simple-voter-question'>Responses</h3>
-        <p className='simple-voter-note'>State: {buildStateLabel}</p>
-        <ul className='simple-vote-status-list'>
-          <li>
-            <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-            Accepted responses: {latestAcceptedCount}
-          </li>
-          <li>
-            <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-            Rejected responses: {latestRejectedCount}
-          </li>
-          <li>
-            <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-            Percentage complete: {responseCompletionPercent}%
-          </li>
-          <li>
-            <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-            Latest published summary: {latestResultAcceptedCount === null ? "None" : `${latestResultAcceptedCount} accepted`}
-          </li>
-        </ul>
-        <div className='simple-voter-action-row simple-voter-action-row-inline'>
-          <button type='button' className='simple-voter-secondary' onClick={() => void refresh()}>
-            Refresh
-          </button>
+        <p className='simple-voter-note'>View submitted responses and publish the response summary.</p>
+
+        <div className='simple-questionnaire-responses-section'>
+          <h4 className='simple-voter-section-title'>Questionnaire</h4>
+          <label className='simple-voter-label' htmlFor='questionnaire-select'>Questionnaire</label>
+          <select
+            id='questionnaire-select'
+            className='simple-voter-input'
+            value={questionnaireId}
+            onChange={(event) => setQuestionnaireId(event.target.value)}
+          >
+            {selectedQuestionnaireOptions.map((id) => (
+              <option key={id} value={id}>{id}</option>
+            ))}
+          </select>
         </div>
+
+        <div className='simple-questionnaire-responses-section'>
+          <h4 className='simple-voter-section-title'>Metadata</h4>
+          <dl className='simple-questionnaire-metadata-grid'>
+            <div className='simple-questionnaire-metadata-item'>
+              <dt>Questionnaire ID</dt>
+              <dd>{questionnaireId.trim() || "Not set"}</dd>
+            </div>
+            <div className='simple-questionnaire-metadata-item'>
+              <dt>State</dt>
+              <dd>{metadataStateLabel}</dd>
+            </div>
+            <div className='simple-questionnaire-metadata-item'>
+              <dt>Opened</dt>
+              <dd>{latestDefinition?.openAt ? formatUnixTimestamp(latestDefinition.openAt) : "Not opened"}</dd>
+            </div>
+            <div className='simple-questionnaire-metadata-item'>
+              <dt>Closing / Closed</dt>
+              <dd>{latestDefinition?.closeAt ? formatUnixTimestamp(latestDefinition.closeAt) : "Not scheduled"}</dd>
+            </div>
+          </dl>
+        </div>
+
+        <div className='simple-questionnaire-responses-section'>
+          <h4 className='simple-voter-section-title'>Responses</h4>
+          <div className='simple-questionnaire-summary-card' aria-live='polite'>
+            <p className='simple-questionnaire-summary-label'>Responses</p>
+            <p className='simple-questionnaire-summary-value'>{latestAcceptedCount} / {knownVoterCount}</p>
+            <p className='simple-questionnaire-summary-label'>Completion</p>
+            <p className='simple-questionnaire-summary-value'>{responseCompletionPercent}%</p>
+            <div className='simple-questionnaire-progress' aria-hidden='true'>
+              <span style={{ width: `${responseCompletionRatio}%` }} />
+            </div>
+          </div>
+        </div>
+
+        <div className='simple-questionnaire-responses-section'>
+          <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
+            <button
+              type='button'
+              className='simple-voter-primary'
+              disabled={publishButtonDisabled}
+              onClick={() => void publishResults()}
+            >
+              Publish summary
+            </button>
+            <button type='button' className='simple-voter-secondary' onClick={() => void refresh()}>
+              Refresh
+            </button>
+          </div>
+          <p className='simple-voter-note'>{publishStatusText}</p>
+        </div>
+
+        <div className='simple-questionnaire-responses-section'>
+          <h4 className='simple-voter-section-title'>Question results</h4>
+          {questionResultCards.length === 0 ? (
+            <p className='simple-voter-empty'>No question results yet.</p>
+          ) : (
+            <div className='simple-questionnaire-question-list'>
+              {questionResultCards.map((card) => (
+                <article key={card.questionId} className='simple-questionnaire-question-card'>
+                  <div className='simple-questionnaire-question-head'>
+                    <p className='simple-voter-question'>Question {card.index + 1}</p>
+                    <span className='simple-questionnaire-question-type'>{card.typeBadge}</span>
+                  </div>
+                  <p className='simple-voter-note'>{card.prompt || "Untitled question"}</p>
+                  {card.kind === "yes_no" ? (
+                    <div className='simple-questionnaire-results-stack'>
+                      <div className='simple-questionnaire-progress' aria-hidden='true'>
+                        <span style={{ width: percentageLabel(card.yesCount, card.acceptedTotal) }} />
+                      </div>
+                      <p className='simple-voter-note'>
+                        Yes - {percentageLabel(card.yesCount, card.acceptedTotal)} ({card.yesCount})
+                      </p>
+                      <p className='simple-voter-note'>
+                        No - {percentageLabel(card.noCount, card.acceptedTotal)} ({card.noCount})
+                      </p>
+                    </div>
+                  ) : null}
+                  {card.kind === "multiple_choice" ? (
+                    <div className='simple-questionnaire-results-stack'>
+                      {card.rows.map((row) => (
+                        <div key={row.optionId} className='simple-questionnaire-option-row'>
+                          <div className='simple-questionnaire-progress' aria-hidden='true'>
+                            <span style={{ width: percentageLabel(row.count, card.acceptedTotal) }} />
+                          </div>
+                          <p className='simple-voter-note'>
+                            {row.label} - {percentageLabel(row.count, card.acceptedTotal)} ({row.count})
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  {card.kind === "text" ? (
+                    <div className='simple-questionnaire-results-stack'>
+                      <p className='simple-voter-note'>Responses: {card.responses.length}</p>
+                      <button
+                        type='button'
+                        className='simple-voter-secondary'
+                        onClick={() => setExpandedTextQuestionIds((current) => ({
+                          ...current,
+                          [card.questionId]: !current[card.questionId],
+                        }))}
+                      >
+                        {expandedTextQuestionIds[card.questionId] ? "Hide responses" : "Show responses"}
+                      </button>
+                      {expandedTextQuestionIds[card.questionId] ? (
+                        card.responses.length > 0 ? (
+                          <ul className='simple-voter-list'>
+                            {card.responses.map((entry, index) => (
+                              <li key={`${card.questionId}-${index}`} className='simple-voter-list-item'>
+                                {entry.text}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className='simple-voter-empty'>No text responses yet.</p>
+                        )
+                      ) : null}
+                    </div>
+                  ) : null}
+                </article>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className='simple-questionnaire-responses-section'>
+          <h4 className='simple-voter-section-title'>Responders</h4>
+          {responders.length === 0 ? (
+            <p className='simple-voter-empty'>No responders yet. Responders will appear here after submitting a response.</p>
+          ) : (
+            <ul className='simple-questionnaire-responder-list'>
+              {responders.map((responder) => (
+                <li key={responder.markerToken} className='simple-questionnaire-responder-row'>
+                  <TokenFingerprint tokenId={responder.markerToken} compact showQr={false} hideMetadata />
+                  <p className='simple-voter-question'>{responder.responderId}</p>
+                  <p className='simple-voter-note'>Submitted {formatUnixTimestamp(responder.submittedAt)}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
         {status ? <p className='simple-voter-note'>{status}</p> : null}
       </div>
     );
