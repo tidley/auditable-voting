@@ -15,7 +15,8 @@ import TokenFingerprint from "./TokenFingerprint";
 import { deriveActorDisplayId } from "./actorDisplay";
 import { getSharedNostrPool } from "./sharedNostrPool";
 
-const DEFAULT_QUESTIONNAIRE_ID = "course_feedback_2026_term1";
+const DEFAULT_QUESTIONNAIRE_ID_PREFIX = "q";
+const QUESTIONNAIRE_DRAFT_ID_STORAGE_KEY = "auditable-voting.coordinator.questionnaire-draft-id.v1";
 const IDENTITY_REFRESH_INTERVAL_MS = 10000;
 
 type QuestionnairePublishDiagnostic = {
@@ -75,7 +76,18 @@ function nowUnix() {
 }
 
 function generateQuestionnaireId() {
-  return `${DEFAULT_QUESTIONNAIRE_ID}_${Math.random().toString(36).slice(2, 7)}`;
+  const randomPart = (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}${Math.random().toString(16).slice(2)}`)
+    .replace(/-/g, "")
+    .slice(0, 12);
+  return `${DEFAULT_QUESTIONNAIRE_ID_PREFIX}_${randomPart}`;
+}
+
+function readStoredQuestionnaireDraftId() {
+  if (typeof window === "undefined") {
+    return generateQuestionnaireId();
+  }
+  const stored = window.localStorage.getItem(QUESTIONNAIRE_DRAFT_ID_STORAGE_KEY)?.trim() ?? "";
+  return stored || generateQuestionnaireId();
 }
 
 function formatUnixTimestamp(timestampSeconds?: number | null) {
@@ -146,7 +158,7 @@ function buildDefinition(input: {
 }
 
 export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordinatorPanelProps) {
-  const [questionnaireId, setQuestionnaireId] = useState(DEFAULT_QUESTIONNAIRE_ID);
+  const [questionnaireId, setQuestionnaireId] = useState(() => readStoredQuestionnaireDraftId());
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [closeAfterMinutes, setCloseAfterMinutes] = useState("60");
@@ -609,6 +621,17 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       payloadMode: "Encrypted",
     });
   }, [latestAcceptedCount, latestRejectedCount, latestState, props]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const nextId = questionnaireId.trim();
+    if (!nextId) {
+      return;
+    }
+    window.localStorage.setItem(QUESTIONNAIRE_DRAFT_ID_STORAGE_KEY, nextId);
+  }, [questionnaireId]);
 
   function addYesNoQuestion() {
     const index = questions.length + 1;
