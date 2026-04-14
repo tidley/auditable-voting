@@ -7,6 +7,25 @@ use std::cmp::Ordering;
 use wasm_bindgen::prelude::*;
 
 const TOKEN_FINGERPRINT_PALETTE_LEN: usize = 6;
+const QUESTIONNAIRE_BLIND_TOKEN_MESSAGE_DOMAIN: &str =
+    "auditable-voting/questionnaire-blind-token/v1";
+const QUESTIONNAIRE_NULLIFIER_DOMAIN: &str = "auditable-voting/questionnaire-nullifier/v1";
+const QUESTIONNAIRE_RESULT_HASH_DOMAIN: &str = "auditable-voting/questionnaire-result-hash/v1";
+
+fn json_escape(input: &str) -> String {
+    let mut out = String::with_capacity(input.len() + 8);
+    for character in input.chars() {
+        match character {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(character),
+        }
+    }
+    out
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -948,6 +967,49 @@ pub fn extract_npub_from_scan(value: &str) -> Option<String> {
 #[wasm_bindgen]
 pub fn sha256_hex(input: &str) -> String {
     hex_sha256(input.as_bytes())
+}
+
+#[wasm_bindgen]
+pub fn questionnaire_blind_token_message_domain() -> String {
+    QUESTIONNAIRE_BLIND_TOKEN_MESSAGE_DOMAIN.to_string()
+}
+
+#[wasm_bindgen]
+pub fn questionnaire_nullifier_domain() -> String {
+    QUESTIONNAIRE_NULLIFIER_DOMAIN.to_string()
+}
+
+#[wasm_bindgen]
+pub fn questionnaire_result_hash_domain() -> String {
+    QUESTIONNAIRE_RESULT_HASH_DOMAIN.to_string()
+}
+
+#[wasm_bindgen]
+pub fn derive_questionnaire_blind_token_message_hash(
+    questionnaire_id: &str,
+    token_secret_commitment: &str,
+) -> String {
+    let canonical = format!(
+        "{{\"domain\":\"{}\",\"message\":{{\"questionnaire_id\":\"{}\",\"response_mode\":\"blind_token\",\"schema_version\":1,\"token_secret_commitment\":\"{}\"}}}}",
+        json_escape(QUESTIONNAIRE_BLIND_TOKEN_MESSAGE_DOMAIN),
+        json_escape(questionnaire_id),
+        json_escape(token_secret_commitment),
+    );
+    hex_sha256(canonical.as_bytes())
+}
+
+#[wasm_bindgen]
+pub fn derive_questionnaire_token_nullifier(
+    questionnaire_id: &str,
+    token_secret: &str,
+) -> String {
+    let canonical = format!(
+        "{{\"domain\":\"{}\",\"questionnaire_id\":\"{}\",\"token_secret\":\"{}\"}}",
+        json_escape(QUESTIONNAIRE_NULLIFIER_DOMAIN),
+        json_escape(questionnaire_id),
+        json_escape(token_secret),
+    );
+    hex_sha256(canonical.as_bytes())
 }
 
 #[wasm_bindgen]

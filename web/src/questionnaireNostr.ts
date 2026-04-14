@@ -15,11 +15,18 @@ import type {
   QuestionnaireResultSummary,
   QuestionnaireStateEvent,
 } from "./questionnaireProtocol";
+import { normalizeQuestionnaireDefinition } from "./questionnaireProtocol";
+import {
+  IMPLEMENTATION_KIND_QUESTIONNAIRE_DEFINITION,
+  IMPLEMENTATION_KIND_QUESTIONNAIRE_RESULT_SUMMARY,
+  IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_PRIVATE,
+  IMPLEMENTATION_KIND_QUESTIONNAIRE_STATE,
+} from "./questionnaireProtocolConstants";
 
-export const QUESTIONNAIRE_DEFINITION_KIND = 14120;
-export const QUESTIONNAIRE_STATE_KIND = 14121;
-export const QUESTIONNAIRE_RESPONSE_PRIVATE_KIND = 14122;
-export const QUESTIONNAIRE_RESULT_SUMMARY_KIND = 14123;
+export const QUESTIONNAIRE_DEFINITION_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_DEFINITION;
+export const QUESTIONNAIRE_STATE_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_STATE;
+export const QUESTIONNAIRE_RESPONSE_PRIVATE_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_PRIVATE;
+export const QUESTIONNAIRE_RESULT_SUMMARY_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_RESULT_SUMMARY;
 const QUESTIONNAIRE_PUBLIC_READ_RELAYS_MAX = 2;
 
 function buildPublicRelays(relays?: string[]) {
@@ -304,7 +311,7 @@ export function parseQuestionnaireDefinitionEvent(
     return null;
   }
   try {
-    const parsed = JSON.parse(event.content) as QuestionnaireDefinition;
+    const parsed = JSON.parse(event.content) as QuestionnaireDefinition & { responseMode?: QuestionnaireDefinition["responseMode"] };
     if (
       parsed?.eventType !== "questionnaire_definition"
       || parsed?.schemaVersion !== 1
@@ -313,7 +320,7 @@ export function parseQuestionnaireDefinitionEvent(
     ) {
       return null;
     }
-    return parsed;
+    return normalizeQuestionnaireDefinition(parsed);
   } catch {
     return null;
   }

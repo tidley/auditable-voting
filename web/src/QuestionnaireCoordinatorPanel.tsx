@@ -1,8 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchQuestionnaireEventsWithFallback, parseQuestionnaireDefinitionEvent, parseQuestionnaireStateEvent, publishQuestionnaireDefinition, publishQuestionnaireResultSummary, publishQuestionnaireState, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESPONSE_PRIVATE_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND } from "./questionnaireNostr";
-import { buildQuestionnaireResultSummary, processQuestionnaireResponses, selectLatestQuestionnaireDefinition, selectLatestQuestionnaireResultSummary, selectLatestQuestionnaireState } from "./questionnaireRuntime";
+import { buildQuestionnaireResultSummary, deriveEffectiveQuestionnaireState, formatQuestionnaireStateLabel, processQuestionnaireResponses, selectLatestQuestionnaireDefinition, selectLatestQuestionnaireResultSummary, selectLatestQuestionnaireState } from "./questionnaireRuntime";
 import { loadSimpleActorState } from "./simpleLocalState";
-import { validateQuestionnaireDefinition, type QuestionnaireDefinition, type QuestionnaireStateValue } from "./questionnaireProtocol";
+import {
+  validateQuestionnaireDefinition,
+  type QuestionnaireDefinition,
+  type QuestionnaireQuestion,
+  type QuestionnaireStateValue,
+} from "./questionnaireProtocol";
+import { QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN } from "./questionnaireProtocolConstants";
+import SimpleQrPanel from "./SimpleQrPanel";
 
 const DEFAULT_QUESTIONNAIRE_ID = "course_feedback_2026_term1";
 const REFRESH_INTERVAL_MS = 15000;
@@ -21,7 +28,15 @@ type QuestionnairePublishDiagnostic = {
 type QuestionnaireCoordinatorPanelProps = {
   coordinatorNsec?: string | null;
   coordinatorNpub?: string | null;
+  onStatusChange?: (status: {
+    state: QuestionnaireStateValue | null;
+    acceptedCount: number;
+    rejectedCount: number;
+    payloadMode: "Encrypted" | "Public";
+  }) => void;
 };
+
+type QuestionnaireQuestionDraft = QuestionnaireQuestion;
 
 function nowUnix() {
   return Math.floor(Date.now() / 1000);
@@ -42,11 +57,13 @@ function buildDefinition(input: {
   title: string;
   description: string;
   closeAfterMinutes: number;
+  questions: QuestionnaireQuestionDraft[];
 }): QuestionnaireDefinition {
   const createdAt = nowUnix();
   return {
     schemaVersion: 1,
     eventType: "questionnaire_definition",
+    responseMode: QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN,
     questionnaireId: input.questionnaireId,
     title: input.title,
     description: input.description,
@@ -58,33 +75,7 @@ function buildDefinition(input: {
     responseVisibility: "private",
     eligibilityMode: "open",
     allowMultipleResponsesPerPubkey: false,
-    questions: [
-      {
-        questionId: "q1",
-        type: "yes_no",
-        prompt: "Was the course material clear?",
-        required: true,
-      },
-      {
-        questionId: "q2",
-        type: "multiple_choice",
-        prompt: "How would you rate the pace?",
-        required: true,
-        multiSelect: false,
-        options: [
-          { optionId: "slow", label: "Too slow" },
-          { optionId: "good", label: "About right" },
-          { optionId: "fast", label: "Too fast" },
-        ],
-      },
-      {
-        questionId: "q3",
-        type: "free_text",
-        prompt: "What should be improved?",
-        required: false,
-        maxLength: 1000,
-      },
-    ],
+    questions: input.questions,
   };
 }
 
@@ -93,6 +84,34 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [title, setTitle] = useState("Course feedback");
   const [description, setDescription] = useState("Please answer all required questions.");
   const [closeAfterMinutes, setCloseAfterMinutes] = useState("60");
+  const [questions, setQuestions] = useState<QuestionnaireQuestionDraft[]>([
+    {
+      questionId: "q1",
+      type: "yes_no",
+      prompt: "Was the course material clear?",
+      required: true,
+    },
+    {
+      questionId: "q2",
+      type: "multiple_choice",
+      prompt: "How would you rate the pace?",
+      required: true,
+      multiSelect: false,
+      options: [
+        { optionId: "slow", label: "Too slow" },
+        { optionId: "good", label: "About right" },
+        { optionId: "fast", label: "Too fast" },
+      ],
+    },
+    {
+      questionId: "q3",
+      type: "free_text",
+      prompt: "What should be improved?",
+      required: false,
+      maxLength: 1000,
+    },
+  ]);
+  const [showNpubQr, setShowNpubQr] = useState(false);
   const [coordinatorNsec, setCoordinatorNsec] = useState("");
   const [coordinatorNpub, setCoordinatorNpub] = useState("");
   const [status, setStatus] = useState<string | null>(null);
@@ -240,7 +259,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       setResultEventCount(resultEvents.length);
 
       setLatestDefinition(definition);
-      setLatestState(state?.state ?? null);
+      setLatestState(deriveEffectiveQuestionnaireState({
+        definition,
+        latestState: state,
+      }));
       setLatestResultAcceptedCount(resultSummary?.acceptedResponseCount ?? null);
 
       if (definition && coordinatorNsec.trim()) {
@@ -320,6 +342,92 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     status,
   ]);
 
+  useEffect(() => {
+    props.onStatusChange?.({
+      state: latestState,
+      acceptedCount: latestAcceptedCount,
+      rejectedCount: latestRejectedCount,
+      payloadMode: "Encrypted",
+    });
+  }, [latestAcceptedCount, latestRejectedCount, latestState, props]);
+
+  function addYesNoQuestion() {
+    const index = questions.length + 1;
+    setQuestions((current) => [
+      ...current,
+      {
+        questionId: `q${index}`,
+        type: "yes_no",
+        prompt: "",
+        required: true,
+      },
+    ]);
+  }
+
+  function addMultipleChoiceQuestion() {
+    const index = questions.length + 1;
+    setQuestions((current) => [
+      ...current,
+      {
+        questionId: `q${index}`,
+        type: "multiple_choice",
+        prompt: "",
+        required: true,
+        multiSelect: false,
+        options: [
+          { optionId: "option_1", label: "Option 1" },
+          { optionId: "option_2", label: "Option 2" },
+        ],
+      },
+    ]);
+  }
+
+  function addFreeTextQuestion() {
+    const index = questions.length + 1;
+    setQuestions((current) => [
+      ...current,
+      {
+        questionId: `q${index}`,
+        type: "free_text",
+        prompt: "",
+        required: false,
+        maxLength: 500,
+      },
+    ]);
+  }
+
+  function duplicateQuestion(index: number) {
+    setQuestions((current) => {
+      const source = current[index];
+      if (!source) {
+        return current;
+      }
+      const duplicated = {
+        ...source,
+        questionId: `${source.questionId}_copy`,
+      };
+      return [...current.slice(0, index + 1), duplicated, ...current.slice(index + 1)];
+    });
+  }
+
+  function moveQuestion(index: number, direction: -1 | 1) {
+    setQuestions((current) => {
+      const target = index + direction;
+      if (target < 0 || target >= current.length) {
+        return current;
+      }
+      const next = [...current];
+      const temp = next[index];
+      next[index] = next[target];
+      next[target] = temp;
+      return next;
+    });
+  }
+
+  function deleteQuestion(index: number) {
+    setQuestions((current) => current.filter((_, currentIndex) => currentIndex !== index));
+  }
+
   const builtDefinition = useMemo(() => {
     const closeMinutes = Number.parseInt(closeAfterMinutes, 10);
     if (!coordinatorNpub.trim() || !questionnaireId.trim() || !Number.isFinite(closeMinutes) || closeMinutes <= 0) {
@@ -331,8 +439,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       title: title.trim() || "Course feedback",
       description: description.trim(),
       closeAfterMinutes: closeMinutes,
+      questions,
     });
-  }, [closeAfterMinutes, coordinatorNpub, description, questionnaireId, title]);
+  }, [closeAfterMinutes, coordinatorNpub, description, questionnaireId, questions, title]);
 
   async function publishDefinition() {
     if (!coordinatorNsec.trim() || !builtDefinition) {
@@ -509,10 +618,39 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
 
   return (
     <div className='simple-voter-card'>
-      <h3 className='simple-voter-question'>Private questionnaire coordinator</h3>
-      <p className='simple-voter-note'>Phase 17 private-first flow: public questionnaire, private encrypted responses, public aggregate summary.</p>
+      <h3 className='simple-voter-question'>Questionnaire</h3>
+      <p className='simple-voter-note'>Blind token mode with encrypted payload responses.</p>
 
-      <label className='simple-voter-label' htmlFor='questionnaire-id'>Questionnaire id</label>
+      <div className='simple-voter-action-row simple-voter-action-row-tight'>
+        <button
+          type='button'
+          className='simple-voter-secondary'
+          onClick={() => {
+            if (!coordinatorNpub.trim()) {
+              return;
+            }
+            void navigator.clipboard.writeText(coordinatorNpub.trim());
+          }}
+        >
+          Copy npub
+        </button>
+        <button
+          type='button'
+          className='simple-voter-secondary'
+          onClick={() => setShowNpubQr((current) => !current)}
+        >
+          Show QR
+        </button>
+      </div>
+      {showNpubQr && coordinatorNpub.trim() ? (
+        <SimpleQrPanel
+          value={coordinatorNpub.trim()}
+          title='Coordinator npub'
+          copyLabel='Copy npub'
+        />
+      ) : null}
+
+      <label className='simple-voter-label' htmlFor='questionnaire-id'>Questionnaire ID</label>
       <input
         id='questionnaire-id'
         className='simple-voter-input'
@@ -550,38 +688,171 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           Refresh
         </button>
         <button type='button' className='simple-voter-primary' onClick={() => void publishDefinition()}>
-          Publish definition
+          Publish questionnaire
         </button>
-      </div>
-
-      <div className='simple-voter-action-row simple-voter-action-row-tight'>
         <button type='button' className='simple-voter-secondary' onClick={() => void publishState("open")}>
-          Set open
+          Open questionnaire
         </button>
         <button type='button' className='simple-voter-secondary' onClick={() => void publishState("closed")}>
-          Set closed
+          Close questionnaire
         </button>
         <button type='button' className='simple-voter-primary' onClick={() => void publishResults()}>
           Publish results
         </button>
       </div>
 
+      <h4 className='simple-voter-section-title'>Coordination</h4>
+      <p className='simple-voter-note'>Lead coordinator: {coordinatorNpub ? "This coordinator" : "Not loaded"}</p>
+      <p className='simple-voter-note'>Sub-coordinators: 0</p>
+      <p className='simple-voter-note'>Threshold: 1 of 1</p>
+      <p className='simple-voter-note'>Single coordinator mode: threshold is 1 of 1</p>
+
+      <h4 className='simple-voter-section-title'>Questions</h4>
+      <div className='simple-voter-action-row simple-voter-action-row-tight'>
+        <button type='button' className='simple-voter-secondary' onClick={addYesNoQuestion}>Add yes/no question</button>
+        <button type='button' className='simple-voter-secondary' onClick={addMultipleChoiceQuestion}>Add multiple choice question</button>
+        <button type='button' className='simple-voter-secondary' onClick={addFreeTextQuestion}>Add free text question</button>
+      </div>
+      <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
+        {questions.map((question, index) => (
+          <div key={`${question.questionId}-${index}`} className='simple-voter-card'>
+            <p className='simple-voter-question'>Question {index + 1}</p>
+            <p className='simple-voter-note'>Type: {question.type.replace("_", " ")}</p>
+            <label className='simple-voter-label' htmlFor={`question-prompt-${index}`}>Prompt</label>
+            <input
+              id={`question-prompt-${index}`}
+              className='simple-voter-input'
+              value={question.prompt}
+              onChange={(event) => {
+                const nextValue = event.target.value;
+                setQuestions((current) => current.map((entry, entryIndex) => (
+                  entryIndex === index ? { ...entry, prompt: nextValue } : entry
+                )));
+              }}
+            />
+            <label className='simple-voter-note'>
+              <input
+                type='checkbox'
+                checked={question.required}
+                onChange={(event) => {
+                  const checked = event.target.checked;
+                  setQuestions((current) => current.map((entry, entryIndex) => (
+                    entryIndex === index ? { ...entry, required: checked } : entry
+                  )));
+                }}
+              />
+              {" "}
+              Required
+            </label>
+            {question.type === "multiple_choice" ? (
+              <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
+                <p className='simple-voter-note'>Options</p>
+                {question.options.map((option, optionIndex) => (
+                  <input
+                    key={`${question.questionId}-option-${optionIndex}`}
+                    className='simple-voter-input'
+                    value={option.label}
+                    onChange={(event) => {
+                      const nextLabel = event.target.value;
+                      setQuestions((current) => current.map((entry, entryIndex) => {
+                        if (entryIndex !== index || entry.type !== "multiple_choice") {
+                          return entry;
+                        }
+                        return {
+                          ...entry,
+                          options: entry.options.map((entryOption, entryOptionIndex) => (
+                            entryOptionIndex === optionIndex ? { ...entryOption, label: nextLabel } : entryOption
+                          )),
+                        };
+                      }));
+                    }}
+                  />
+                ))}
+                <button
+                  type='button'
+                  className='simple-voter-secondary'
+                  onClick={() => {
+                    setQuestions((current) => current.map((entry, entryIndex) => {
+                      if (entryIndex !== index || entry.type !== "multiple_choice") {
+                        return entry;
+                      }
+                      const nextIndex = entry.options.length + 1;
+                      return {
+                        ...entry,
+                        options: [...entry.options, { optionId: `option_${nextIndex}`, label: `Option ${nextIndex}` }],
+                      };
+                    }));
+                  }}
+                >
+                  Add option
+                </button>
+                <label className='simple-voter-note'>
+                  <input
+                    type='checkbox'
+                    checked={question.multiSelect}
+                    onChange={(event) => {
+                      const checked = event.target.checked;
+                      setQuestions((current) => current.map((entry, entryIndex) => (
+                        entryIndex === index && entry.type === "multiple_choice"
+                          ? { ...entry, multiSelect: checked }
+                          : entry
+                      )));
+                    }}
+                  />
+                  {" "}
+                  Allow multiple selections
+                </label>
+              </div>
+            ) : null}
+            {question.type === "free_text" ? (
+              <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
+                <label className='simple-voter-label' htmlFor={`question-max-${index}`}>Maximum length</label>
+                <input
+                  id={`question-max-${index}`}
+                  className='simple-voter-input'
+                  value={String(question.maxLength)}
+                  onChange={(event) => {
+                    const parsed = Number.parseInt(event.target.value, 10);
+                    setQuestions((current) => current.map((entry, entryIndex) => (
+                      entryIndex === index && entry.type === "free_text"
+                        ? { ...entry, maxLength: Number.isFinite(parsed) && parsed > 0 ? parsed : entry.maxLength }
+                        : entry
+                    )));
+                  }}
+                />
+              </div>
+            ) : null}
+            <div className='simple-voter-action-row simple-voter-action-row-tight'>
+              <button type='button' className='simple-voter-secondary' onClick={() => duplicateQuestion(index)}>Duplicate</button>
+              <button type='button' className='simple-voter-secondary' onClick={() => moveQuestion(index, -1)}>Move up</button>
+              <button type='button' className='simple-voter-secondary' onClick={() => moveQuestion(index, 1)}>Move down</button>
+              <button type='button' className='simple-voter-secondary' onClick={() => deleteQuestion(index)}>Delete</button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <h4 className='simple-voter-section-title'>Status</h4>
       <ul className='simple-vote-status-list'>
         <li>
           <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-          Coordinator key loaded: {coordinatorNpub ? "yes" : "no"}
+          Coordinator key loaded: {coordinatorNpub ? "Yes" : "No"}
         </li>
         <li>
           <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-          Latest state: {latestState ?? "none"}
+          Latest state: {formatQuestionnaireStateLabel(latestState)}
         </li>
         <li>
           <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-          Decrypted responses: accepted {latestAcceptedCount}, rejected {latestRejectedCount}
+          Accepted responses: {latestAcceptedCount}
         </li>
         <li>
           <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-          Latest published result accepted count: {latestResultAcceptedCount ?? "none"}
+          Rejected responses: {latestRejectedCount}
+        </li>
+        <li>
+          <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
+          Latest published result: {latestResultAcceptedCount === null ? "none" : `${latestResultAcceptedCount} accepted`}
         </li>
       </ul>
 

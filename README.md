@@ -208,5 +208,7 @@ VITE_BASE_PATH=/auditable-voting/ npm --prefix web run build
 ## Related material
 
 - [Project explainer](./docs/project-explainer.md)
+- [Questionnaire blind-token protocol](./docs/questionnaire-blind-token-protocol.md)
+- [Questionnaire protocol decisions](./docs/questionnaire-protocol-decisions.md)
 - [Marmot migration plan](./docs/marmot-migration-plan.md)
 - [Portable presentation](./presentation/project-overview.html)

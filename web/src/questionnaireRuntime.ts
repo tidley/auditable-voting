@@ -1,6 +1,7 @@
 import type { NostrEvent } from "nostr-tools";
 import { decryptQuestionnaireResponseEnvelope, parseQuestionnaireDefinitionEvent, parseQuestionnaireResponseEnvelope, parseQuestionnaireStateEvent } from "./questionnaireNostr";
 import { validateQuestionnaireResponsePayload, type QuestionnaireDefinition, type QuestionnaireResponsePayload, type QuestionnaireResponsePrivateEnvelope, type QuestionnaireResultSummary, type QuestionnaireStateEvent } from "./questionnaireProtocol";
+import { deriveQuestionnaireResultHash } from "./questionnaireBlindToken";
 
 export type QuestionnaireRejectedReason =
   | "questionnaire_closed"
@@ -11,6 +12,38 @@ export type QuestionnaireRejectedReason =
   | "duplicate_response"
   | "decryption_failed"
   | "invalid_payload_shape";
+
+export function formatQuestionnaireStateLabel(state: string | null | undefined) {
+  if (state === "draft") {
+    return "Draft";
+  }
+  if (state === "open") {
+    return "Open";
+  }
+  if (state === "closed") {
+    return "Closed";
+  }
+  if (state === "results_published") {
+    return "Results published";
+  }
+  return "None";
+}
+
+export function formatQuestionnaireTokenStatusLabel(status: string) {
+  if (status === "token_ready") {
+    return "Token ready";
+  }
+  if (status === "response_submitted") {
+    return "Response submitted";
+  }
+  if (status === "duplicate_nullifier") {
+    return "Duplicate response token";
+  }
+  if (status === "invalid_token_proof") {
+    return "Invalid response token";
+  }
+  return status;
+}
 
 export type QuestionnaireAcceptedResponse = {
   eventId: string;
@@ -53,6 +86,27 @@ export function selectLatestQuestionnaireState(events: NostrEvent[]): Questionna
     }
   }
   return null;
+}
+
+export function deriveEffectiveQuestionnaireState(input: {
+  definition: QuestionnaireDefinition | null;
+  latestState: QuestionnaireStateEvent | null;
+  nowUnix?: number;
+}) {
+  if (input.latestState) {
+    return input.latestState.state;
+  }
+  if (!input.definition) {
+    return null;
+  }
+  const now = input.nowUnix ?? Math.floor(Date.now() / 1000);
+  if (now < input.definition.openAt) {
+    return "draft";
+  }
+  if (now >= input.definition.closeAt) {
+    return "closed";
+  }
+  return "open";
 }
 
 export function parseQuestionnaireResultSummaryEvent(event: NostrEvent): QuestionnaireResultSummary | null {
@@ -269,14 +323,25 @@ export function buildQuestionnaireResultSummary(input: {
     };
   });
 
+  const acceptedResponseCount = input.acceptedResponses.length;
+  const rejectedResponseCount = input.rejectedResponses.length;
+  const acceptedNullifierCount = acceptedResponseCount;
   return {
     schemaVersion: 1,
     eventType: "questionnaire_result_summary",
     questionnaireId: input.definition.questionnaireId,
     createdAt: Math.floor(Date.now() / 1000),
     coordinatorPubkey: input.coordinatorPubkey,
-    acceptedResponseCount: input.acceptedResponses.length,
-    rejectedResponseCount: input.rejectedResponses.length,
+    acceptedResponseCount,
+    rejectedResponseCount,
+    acceptedNullifierCount,
     questionSummaries,
+    resultHash: deriveQuestionnaireResultHash({
+      questionnaireId: input.definition.questionnaireId,
+      acceptedResponseCount,
+      rejectedResponseCount,
+      acceptedNullifierCount,
+      questionSummaries,
+    }),
   };
 }
