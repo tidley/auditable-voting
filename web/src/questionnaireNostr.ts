@@ -322,9 +322,10 @@ export function subscribeQuestionnaireEvents(input: {
 }) {
   const pool = getSharedNostrPool();
   let closed = false;
-  let reconnectDelayMs = 2000;
+  let reconnectAttempt = 0;
   let reconnectTimer: number | null = null;
   let subscription: { close: (reason?: string) => Promise<void> | void } | null = null;
+  const reconnectDelaysMs = [2000, 5000, 10_000, 30_000] as const;
 
   const connect = () => {
     if (closed) {
@@ -340,7 +341,7 @@ export function subscribeQuestionnaireEvents(input: {
       limit: input.limit ?? 200,
     }, {
       onevent: (event) => {
-        reconnectDelayMs = 2000;
+        reconnectAttempt = 0;
         const matchedQuestionnaireId = input.parseQuestionnaireIdFromEvent(event);
         if (matchedQuestionnaireId !== input.questionnaireId) {
           return;
@@ -364,8 +365,8 @@ export function subscribeQuestionnaireEvents(input: {
     if (closed || reconnectTimer !== null) {
       return;
     }
-    const delay = Math.min(60_000, reconnectDelayMs);
-    reconnectDelayMs = Math.min(60_000, reconnectDelayMs * 2);
+    const delay = reconnectDelaysMs[Math.min(reconnectAttempt, reconnectDelaysMs.length - 1)];
+    reconnectAttempt += 1;
     reconnectTimer = window.setTimeout(() => {
       reconnectTimer = null;
       if (subscription) {
