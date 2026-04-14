@@ -1291,9 +1291,18 @@ export default function SimpleUiApp() {
       return;
     }
 
+    const alreadyAdded = configuredCoordinatorTargets.includes(nextCoordinator);
     setManualCoordinators((current) => sanitizeCoordinatorNpubs([...current, nextCoordinator]));
     setCoordinatorDraft("");
-    setRequestStatus(null);
+    if (alreadyAdded) {
+      setRequestStatus("Coordinator already added.");
+      return;
+    }
+    void sendFollowRequests([nextCoordinator], {
+      pending: "Sending follow request...",
+      success: "Coordinator notified. Waiting for round tickets.",
+      failure: "Coordinator follow request failed.",
+    });
   }
 
   function handleCoordinatorScanDetected(rawValue: string) {
@@ -1303,9 +1312,18 @@ export default function SimpleUiApp() {
       return false;
     }
 
+    const alreadyAdded = configuredCoordinatorTargets.includes(scannedNpub);
     setManualCoordinators((current) => sanitizeCoordinatorNpubs([...current, scannedNpub]));
     setCoordinatorDraft("");
-    setRequestStatus(null);
+    if (alreadyAdded) {
+      setRequestStatus("Coordinator already added.");
+    } else {
+      void sendFollowRequests([scannedNpub], {
+        pending: "Sending follow request...",
+        success: "Coordinator notified. Waiting for round tickets.",
+        failure: "Coordinator follow request failed.",
+      });
+    }
     setCoordinatorScannerStatus(`Scanned ${shortenNpub(scannedNpub)}.`);
     return true;
   }
@@ -1355,7 +1373,7 @@ export default function SimpleUiApp() {
         {
           status: result.success ? "Follow request sent." : "Follow request failed.",
           eventId: result.eventId,
-          attempts: 1,
+          attempts: (followDeliveries[result.coordinatorNpub]?.attempts ?? 0) + 1,
           lastAttemptAt: new Date().toISOString(),
         },
       ]));
