@@ -38,6 +38,10 @@ function selectPublicReadRelays(relays: string[]) {
   return normalized.slice(0, Math.min(QUESTIONNAIRE_PUBLIC_READ_RELAYS_MAX, normalized.length));
 }
 
+export function getQuestionnaireReadRelays(relays?: string[]) {
+  return selectPublicReadRelays(buildPublicRelays(relays));
+}
+
 function decodeNsecSecretKey(nsec: string) {
   const decoded = nip19.decode(nsec.trim());
   if (decoded.type !== "nsec") {
@@ -245,7 +249,7 @@ export async function fetchQuestionnaireEvents(input: {
   relays?: string[];
   limit?: number;
 }) {
-  const relays = selectPublicReadRelays(buildPublicRelays(input.relays));
+  const relays = getQuestionnaireReadRelays(input.relays);
   const pool = getSharedNostrPool();
   const events = await pool.querySync(relays, {
     kinds: [input.kind],
@@ -268,7 +272,7 @@ export async function fetchQuestionnaireEventsWithFallback(input: {
   limit?: number;
   parseQuestionnaireIdFromEvent: (event: Pick<NostrEvent, "kind" | "content">) => string | null;
 }) {
-  const relays = selectPublicReadRelays(buildPublicRelays(input.relays));
+  const relays = getQuestionnaireReadRelays(input.relays);
   const pool = getSharedNostrPool();
   const filteredEvents = await pool.querySync(relays, {
     kinds: [input.kind],
@@ -301,6 +305,41 @@ export async function fetchQuestionnaireEventsWithFallback(input: {
       filteredCount: 0,
       kindOnlyCount: kindOnlyEvents.length,
     },
+  };
+}
+
+export function subscribeQuestionnaireEvents(input: {
+  questionnaireId: string;
+  kind: number;
+  relays?: string[];
+  limit?: number;
+  parseQuestionnaireIdFromEvent: (event: Pick<NostrEvent, "kind" | "content">) => string | null;
+  onEvent: (event: NostrEvent) => void;
+  onError?: (error: Error) => void;
+}) {
+  const relays = getQuestionnaireReadRelays(input.relays);
+  const pool = getSharedNostrPool();
+  const subscription = pool.subscribeMany(relays, {
+    kinds: [input.kind],
+    limit: input.limit ?? 200,
+  }, {
+    onevent: (event) => {
+      const matchedQuestionnaireId = input.parseQuestionnaireIdFromEvent(event);
+      if (matchedQuestionnaireId !== input.questionnaireId) {
+        return;
+      }
+      input.onEvent(event);
+    },
+    onclose: (reasons) => {
+      const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
+      if (errors.length > 0) {
+        input.onError?.(new Error(errors.join("; ")));
+      }
+    },
+  });
+
+  return () => {
+    void subscription.close("closed by caller");
   };
 }
 

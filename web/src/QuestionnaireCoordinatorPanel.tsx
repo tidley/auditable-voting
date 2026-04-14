@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { fetchQuestionnaireEventsWithFallback, parseQuestionnaireDefinitionEvent, parseQuestionnaireStateEvent, publishQuestionnaireDefinition, publishQuestionnaireResultSummary, publishQuestionnaireState, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESPONSE_PRIVATE_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND } from "./questionnaireNostr";
+import type { NostrEvent } from "nostr-tools";
+import { fetchQuestionnaireEventsWithFallback, parseQuestionnaireDefinitionEvent, parseQuestionnaireStateEvent, publishQuestionnaireDefinition, publishQuestionnaireResultSummary, publishQuestionnaireState, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESPONSE_PRIVATE_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND, subscribeQuestionnaireEvents } from "./questionnaireNostr";
 import { buildQuestionnaireResultSummary, deriveEffectiveQuestionnaireState, formatQuestionnaireStateLabel, processQuestionnaireResponses, selectLatestQuestionnaireDefinition, selectLatestQuestionnaireResultSummary, selectLatestQuestionnaireState } from "./questionnaireRuntime";
 import { loadSimpleActorState } from "./simpleLocalState";
 import {
@@ -12,8 +13,7 @@ import { QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN } from "./questionnaireProtocol
 import SimpleQrPanel from "./SimpleQrPanel";
 
 const DEFAULT_QUESTIONNAIRE_ID = "course_feedback_2026_term1";
-const REFRESH_INTERVAL_MS = 15000;
-const IDENTITY_REFRESH_INTERVAL_MS = 2000;
+const IDENTITY_REFRESH_INTERVAL_MS = 10000;
 
 type QuestionnairePublishDiagnostic = {
   attempted: boolean;
@@ -192,6 +192,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   useEffect(() => {
     let cancelled = false;
     const refreshIdentity = () => {
+      if (coordinatorNsec.trim() && coordinatorNpub.trim()) {
+        return;
+      }
       void loadSimpleActorState("coordinator").then((state) => {
         if (cancelled || !state?.keypair) {
           return;
@@ -209,7 +212,55 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [props.coordinatorNpub, props.coordinatorNsec]);
+  }, [coordinatorNpub, coordinatorNsec, props.coordinatorNpub, props.coordinatorNsec]);
+
+  const applyQuestionnaireSnapshot = useCallback((input: {
+    definitionEvents: NostrEvent[];
+    stateEvents: NostrEvent[];
+    responseEvents: NostrEvent[];
+    resultEvents: NostrEvent[];
+    diagnostics?: {
+      definition: { mode: "filtered" | "kind_only_fallback"; filteredCount: number; kindOnlyCount: number };
+      state: { mode: "filtered" | "kind_only_fallback"; filteredCount: number; kindOnlyCount: number };
+      response: { mode: "filtered" | "kind_only_fallback"; filteredCount: number; kindOnlyCount: number };
+      result: { mode: "filtered" | "kind_only_fallback"; filteredCount: number; kindOnlyCount: number };
+    };
+  }) => {
+    if (input.diagnostics) {
+      setDefinitionReadDiagnostics(input.diagnostics.definition);
+      setStateReadDiagnostics(input.diagnostics.state);
+      setResponseReadDiagnostics(input.diagnostics.response);
+      setResultReadDiagnostics(input.diagnostics.result);
+    }
+
+    const definition = selectLatestQuestionnaireDefinition(input.definitionEvents);
+    const state = selectLatestQuestionnaireState(input.stateEvents);
+    const resultSummary = selectLatestQuestionnaireResultSummary(input.resultEvents);
+    setDefinitionEventCount(input.definitionEvents.length);
+    setStateEventCount(input.stateEvents.length);
+    setResponseEventCount(input.responseEvents.length);
+    setResultEventCount(input.resultEvents.length);
+
+    setLatestDefinition(definition);
+    setLatestState(deriveEffectiveQuestionnaireState({
+      definition,
+      latestState: state,
+    }));
+    setLatestResultAcceptedCount(resultSummary?.acceptedResponseCount ?? null);
+
+    if (definition && coordinatorNsec.trim()) {
+      const processed = processQuestionnaireResponses({
+        definition,
+        responseEvents: input.responseEvents,
+        coordinatorNsec,
+      });
+      setLatestAcceptedCount(processed.accepted.length);
+      setLatestRejectedCount(processed.rejected.length);
+    } else {
+      setLatestAcceptedCount(0);
+      setLatestRejectedCount(0);
+    }
+  }, [coordinatorNsec]);
 
   const refresh = useCallback(async () => {
     const id = questionnaireId.trim();
@@ -247,54 +298,172 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           },
         }),
       ]);
-      const definitionEvents = definitionFetch.events;
-      const stateEvents = stateFetch.events;
-      const responseEvents = responseFetch.events;
-      const resultEvents = resultFetch.events;
-      setDefinitionReadDiagnostics(definitionFetch.diagnostics);
-      setStateReadDiagnostics(stateFetch.diagnostics);
-      setResponseReadDiagnostics(responseFetch.diagnostics);
-      setResultReadDiagnostics(resultFetch.diagnostics);
-
-      const definition = selectLatestQuestionnaireDefinition(definitionEvents);
-      const state = selectLatestQuestionnaireState(stateEvents);
-      const resultSummary = selectLatestQuestionnaireResultSummary(resultEvents);
-      setDefinitionEventCount(definitionEvents.length);
-      setStateEventCount(stateEvents.length);
-      setResponseEventCount(responseEvents.length);
-      setResultEventCount(resultEvents.length);
-
-      setLatestDefinition(definition);
-      setLatestState(deriveEffectiveQuestionnaireState({
-        definition,
-        latestState: state,
-      }));
-      setLatestResultAcceptedCount(resultSummary?.acceptedResponseCount ?? null);
-
-      if (definition && coordinatorNsec.trim()) {
-        const processed = processQuestionnaireResponses({
-          definition,
-          responseEvents,
-          coordinatorNsec,
-        });
-        setLatestAcceptedCount(processed.accepted.length);
-        setLatestRejectedCount(processed.rejected.length);
-      } else {
-        setLatestAcceptedCount(0);
-        setLatestRejectedCount(0);
-      }
+      applyQuestionnaireSnapshot({
+        definitionEvents: definitionFetch.events,
+        stateEvents: stateFetch.events,
+        responseEvents: responseFetch.events,
+        resultEvents: resultFetch.events,
+        diagnostics: {
+          definition: definitionFetch.diagnostics,
+          state: stateFetch.diagnostics,
+          response: responseFetch.diagnostics,
+          result: resultFetch.diagnostics,
+        },
+      });
     } catch {
       setStatus("Questionnaire refresh failed.");
     }
-  }, [coordinatorNsec, questionnaireId]);
+  }, [applyQuestionnaireSnapshot, questionnaireId]);
 
   useEffect(() => {
-    void refresh();
-    const intervalId = window.setInterval(() => {
-      void refresh();
-    }, REFRESH_INTERVAL_MS);
-    return () => window.clearInterval(intervalId);
-  }, [refresh]);
+    const id = questionnaireId.trim();
+    if (!id) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    const definitionById = new Map<string, NostrEvent>();
+    const stateById = new Map<string, NostrEvent>();
+    const responseById = new Map<string, NostrEvent>();
+    const resultById = new Map<string, NostrEvent>();
+    const applyFromMaps = () => {
+      if (cancelled) {
+        return;
+      }
+      applyQuestionnaireSnapshot({
+        definitionEvents: [...definitionById.values()],
+        stateEvents: [...stateById.values()],
+        responseEvents: [...responseById.values()],
+        resultEvents: [...resultById.values()],
+      });
+    };
+
+    const loadInitialBackfill = async () => {
+      const [definitionFetch, stateFetch, responseFetch, resultFetch] = await Promise.all([
+        fetchQuestionnaireEventsWithFallback({
+          questionnaireId: id,
+          kind: QUESTIONNAIRE_DEFINITION_KIND,
+          parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireDefinitionEvent(event)?.questionnaireId ?? null,
+        }),
+        fetchQuestionnaireEventsWithFallback({
+          questionnaireId: id,
+          kind: QUESTIONNAIRE_STATE_KIND,
+          parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireStateEvent(event)?.questionnaireId ?? null,
+        }),
+        fetchQuestionnaireEventsWithFallback({
+          questionnaireId: id,
+          kind: QUESTIONNAIRE_RESPONSE_PRIVATE_KIND,
+          parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireIdFromResponseContent(event.content),
+        }),
+        fetchQuestionnaireEventsWithFallback({
+          questionnaireId: id,
+          kind: QUESTIONNAIRE_RESULT_SUMMARY_KIND,
+          parseQuestionnaireIdFromEvent: (event) => {
+            try {
+              const parsed = JSON.parse(event.content) as { questionnaireId?: string };
+              return typeof parsed.questionnaireId === "string" ? parsed.questionnaireId : null;
+            } catch {
+              return null;
+            }
+          },
+        }),
+      ]);
+      if (cancelled) {
+        return;
+      }
+      definitionById.clear();
+      stateById.clear();
+      responseById.clear();
+      resultById.clear();
+      for (const event of definitionFetch.events) {
+        definitionById.set(event.id, event);
+      }
+      for (const event of stateFetch.events) {
+        stateById.set(event.id, event);
+      }
+      for (const event of responseFetch.events) {
+        responseById.set(event.id, event);
+      }
+      for (const event of resultFetch.events) {
+        resultById.set(event.id, event);
+      }
+      applyQuestionnaireSnapshot({
+        definitionEvents: definitionFetch.events,
+        stateEvents: stateFetch.events,
+        responseEvents: responseFetch.events,
+        resultEvents: resultFetch.events,
+        diagnostics: {
+          definition: definitionFetch.diagnostics,
+          state: stateFetch.diagnostics,
+          response: responseFetch.diagnostics,
+          result: resultFetch.diagnostics,
+        },
+      });
+    };
+
+    void loadInitialBackfill().catch(() => {
+      if (!cancelled) {
+        setStatus("Questionnaire refresh failed.");
+      }
+    });
+
+    const unsubscribers = [
+      subscribeQuestionnaireEvents({
+        questionnaireId: id,
+        kind: QUESTIONNAIRE_DEFINITION_KIND,
+        parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireDefinitionEvent(event)?.questionnaireId ?? null,
+        onEvent: (event) => {
+          definitionById.set(event.id, event);
+          applyFromMaps();
+        },
+        onError: () => setStatus("Questionnaire live stream disconnected."),
+      }),
+      subscribeQuestionnaireEvents({
+        questionnaireId: id,
+        kind: QUESTIONNAIRE_STATE_KIND,
+        parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireStateEvent(event)?.questionnaireId ?? null,
+        onEvent: (event) => {
+          stateById.set(event.id, event);
+          applyFromMaps();
+        },
+        onError: () => setStatus("Questionnaire live stream disconnected."),
+      }),
+      subscribeQuestionnaireEvents({
+        questionnaireId: id,
+        kind: QUESTIONNAIRE_RESPONSE_PRIVATE_KIND,
+        parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireIdFromResponseContent(event.content),
+        onEvent: (event) => {
+          responseById.set(event.id, event);
+          applyFromMaps();
+        },
+        onError: () => setStatus("Questionnaire live stream disconnected."),
+      }),
+      subscribeQuestionnaireEvents({
+        questionnaireId: id,
+        kind: QUESTIONNAIRE_RESULT_SUMMARY_KIND,
+        parseQuestionnaireIdFromEvent: (event) => {
+          try {
+            const parsed = JSON.parse(event.content) as { questionnaireId?: string };
+            return typeof parsed.questionnaireId === "string" ? parsed.questionnaireId : null;
+          } catch {
+            return null;
+          }
+        },
+        onEvent: (event) => {
+          resultById.set(event.id, event);
+          applyFromMaps();
+        },
+        onError: () => setStatus("Questionnaire live stream disconnected."),
+      }),
+    ];
+
+    return () => {
+      cancelled = true;
+      for (const unsubscribe of unsubscribers) {
+        unsubscribe();
+      }
+    };
+  }, [applyQuestionnaireSnapshot, questionnaireId]);
 
   useEffect(() => {
     const owner = globalThis as typeof globalThis & {
