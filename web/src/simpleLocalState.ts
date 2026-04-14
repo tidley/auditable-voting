@@ -57,12 +57,15 @@ export type SimpleEncryptedActorState = {
   ciphertext: string;
 };
 
-const DB_NAME = "auditable-voting-simple";
+const DB_BASE_NAME = "auditable-voting-simple";
 const DB_VERSION = 1;
 const STORE_NAME = "actor-state";
 const memoryState = new Map<string, SimpleActorState>();
 const BACKUP_KDF_ITERATIONS = 250_000;
 const ACTIVE_STATE_KDF_ITERATIONS = 250_000;
+const DEFAULT_STORAGE_NAMESPACE = "default";
+const STORAGE_NAMESPACE_PATTERN = /^[a-z0-9_-]{1,64}$/;
+let cachedStorageNamespace: string | null = null;
 
 export class SimpleActorStateLockedError extends Error {
   constructor() {
@@ -139,9 +142,38 @@ function hasIndexedDb() {
   return typeof indexedDB !== "undefined";
 }
 
+function getStorageNamespace() {
+  if (cachedStorageNamespace) {
+    return cachedStorageNamespace;
+  }
+  if (typeof window === "undefined") {
+    cachedStorageNamespace = DEFAULT_STORAGE_NAMESPACE;
+    return cachedStorageNamespace;
+  }
+
+  const rawNamespace = new URLSearchParams(window.location.search).get("ns")?.trim().toLowerCase() ?? "";
+  if (!rawNamespace || !STORAGE_NAMESPACE_PATTERN.test(rawNamespace)) {
+    cachedStorageNamespace = DEFAULT_STORAGE_NAMESPACE;
+    return cachedStorageNamespace;
+  }
+  cachedStorageNamespace = rawNamespace;
+  return cachedStorageNamespace;
+}
+
+function getStorageDbName() {
+  const namespace = getStorageNamespace();
+  return namespace === DEFAULT_STORAGE_NAMESPACE
+    ? DB_BASE_NAME
+    : `${DB_BASE_NAME}--${namespace}`;
+}
+
+function getMemoryStateKey(role: SimpleActorRole) {
+  return `${getStorageNamespace()}:${role}`;
+}
+
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    const request = indexedDB.open(getStorageDbName(), DB_VERSION);
 
     request.onupgradeneeded = () => {
       const database = request.result;
@@ -198,7 +230,7 @@ export async function loadSimpleActorStateWithOptions(
   options?: { passphrase?: string },
 ): Promise<SimpleActorState | null> {
   if (!hasIndexedDb()) {
-    return memoryState.get(role) ?? null;
+    return memoryState.get(getMemoryStateKey(role)) ?? null;
   }
 
   const result = await withStore<SimpleActorState | SimpleEncryptedActorState | undefined>("readonly", (store) => store.get(role));
@@ -233,7 +265,7 @@ export async function saveSimpleActorState(
   options?: { passphrase?: string },
 ): Promise<void> {
   if (!hasIndexedDb()) {
-    memoryState.set(state.role, state);
+    memoryState.set(getMemoryStateKey(state.role), state);
     return;
   }
 
@@ -273,7 +305,7 @@ export async function saveSimpleActorState(
 
 export async function clearSimpleActorState(role: SimpleActorRole): Promise<void> {
   if (!hasIndexedDb()) {
-    memoryState.delete(role);
+    memoryState.delete(getMemoryStateKey(role));
     return;
   }
 

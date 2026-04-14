@@ -5,6 +5,7 @@ import { deriveEffectiveQuestionnaireState, formatQuestionnaireStateLabel, forma
 import { loadSimpleActorState } from "./simpleLocalState";
 import { validateQuestionnaireResponsePayload, type QuestionnaireDefinition, type QuestionnaireResponseAnswer, type QuestionnaireResponsePayload, type QuestionnaireResultSummary } from "./questionnaireProtocol";
 import { getSharedNostrPool } from "./sharedNostrPool";
+import TokenFingerprint from "./TokenFingerprint";
 
 const RESTORED_QUESTIONNAIRE_IDS_STORAGE_KEY = "auditable-voting.restored-questionnaire-ids.v1";
 const VOTER_QUESTIONNAIRE_LOOKBACK_SECONDS = 7 * 24 * 60 * 60;
@@ -102,7 +103,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
   const [latestResult, setLatestResult] = useState<QuestionnaireResultSummary | null>(null);
   const [answerState, setAnswerState] = useState<QuestionnaireAnswerState>({});
   const [responseSubmittedCount, setResponseSubmittedCount] = useState(0);
-  const [tokenStatus, setTokenStatus] = useState<"idle" | "waiting" | "ready" | "submitted">("idle");
+  const [tokenStatus, setTokenStatus] = useState<"ready" | "submitted">("ready");
   const [definitionEventCount, setDefinitionEventCount] = useState(0);
   const [stateEventCount, setStateEventCount] = useState(0);
   const [resultEventCount, setResultEventCount] = useState(0);
@@ -345,10 +346,6 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
       setStatus("Questionnaire is not open.");
       return;
     }
-    if (tokenStatus !== "ready" && tokenStatus !== "submitted") {
-      setStatus("Token ready");
-      return;
-    }
 
     const responseId = `resp_${crypto.randomUUID()}`;
     const payload: QuestionnaireResponsePayload = {
@@ -389,15 +386,6 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
     } catch {
       setStatus("Response submit failed.");
     }
-  }
-
-  function requestToken() {
-    setTokenStatus("waiting");
-    setStatus("Waiting for token");
-    window.setTimeout(() => {
-      setTokenStatus("ready");
-      setStatus("Token ready");
-    }, 300);
   }
 
   useEffect(() => {
@@ -486,6 +474,12 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
       <p className='simple-voter-note'>{definition?.title ?? "Questionnaire"}</p>
       <p className='simple-voter-note'>{definition?.description ?? "This response is submitted using a one-time token."}</p>
       <p className='simple-voter-note'>{definition?.responseVisibility === "private" ? "Answers are encrypted" : "Answers are public"}</p>
+      {voterNpub ? (
+        <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
+          <TokenFingerprint tokenId={voterNpub} compact showQr={false} hideMetadata />
+          <p className='simple-voter-note'>Your responder marker</p>
+        </div>
+      ) : null}
 
       <label className='simple-voter-label' htmlFor='questionnaire-id-voter'>Questionnaire ID</label>
       <select
@@ -525,14 +519,6 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
         <button type='button' className='simple-voter-secondary' onClick={() => void refresh()}>
           Refresh questionnaire
         </button>
-        <button
-          type='button'
-          className='simple-voter-secondary'
-          onClick={requestToken}
-          disabled={tokenStatus === "waiting" || tokenStatus === "ready" || tokenStatus === "submitted"}
-        >
-          Request token
-        </button>
       </div>
 
       <ul className='simple-vote-status-list'>
@@ -542,19 +528,15 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
         </li>
         <li>
           <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-          1. Request token: {tokenStatus === "idle" ? "Request token" : "Done"}
+          1. Token: Token ready
         </li>
         <li>
           <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-          2. Token received: {tokenStatus === "waiting" ? "Waiting for token" : tokenStatus === "ready" || tokenStatus === "submitted" ? "Token ready" : "Waiting for token"}
+          2. Response ready: {tokenStatus === "ready" || tokenStatus === "submitted" ? "Token ready" : "Waiting"}
         </li>
         <li>
           <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-          3. Response ready: {tokenStatus === "ready" || tokenStatus === "submitted" ? "Token ready" : "Waiting for token"}
-        </li>
-        <li>
-          <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-          4. Submitted: {tokenStatus === "submitted" ? "Response submitted" : "Not submitted"}
+          3. Submitted: {tokenStatus === "submitted" ? "Response submitted" : "Not submitted"}
         </li>
       </ul>
 
