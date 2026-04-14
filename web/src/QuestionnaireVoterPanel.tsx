@@ -86,7 +86,11 @@ function parseLatestResultSummary(events: Awaited<ReturnType<typeof fetchQuestio
   return null;
 }
 
-export default function QuestionnaireVoterPanel() {
+type QuestionnaireVoterPanelProps = {
+  onContextChange?: (context: { hasDefinition: boolean; state: string | null }) => void;
+};
+
+export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelProps) {
   const [questionnaireId, setQuestionnaireId] = useState("");
   const [availableQuestionnaireIds, setAvailableQuestionnaireIds] = useState<string[]>([]);
   const [restoredQuestionnaireIds, setRestoredQuestionnaireIds] = useState<string[]>(() => readRestoredQuestionnaireIds());
@@ -456,6 +460,13 @@ export default function QuestionnaireVoterPanel() {
     voterNpub,
   ]);
 
+  useEffect(() => {
+    props.onContextChange?.({
+      hasDefinition: Boolean(definition),
+      state,
+    });
+  }, [definition, props, state]);
+
   function restoreQuestionnaireId() {
     const restoredId = restoreQuestionnaireIdInput.trim();
     if (!restoredId) {
@@ -548,30 +559,34 @@ export default function QuestionnaireVoterPanel() {
       </ul>
 
       {definition ? (
-        <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
-          {definition.questions.map((question) => {
+        <div className='simple-questionnaire-voter-list'>
+          {definition.questions.map((question, index) => {
+            const questionPrompt = question.prompt.trim() || "Untitled question";
+            const requirementLabel = question.required ? "Required" : "Optional";
             if (question.type === "yes_no") {
               const selected = answerState[question.questionId];
               return (
-                <div key={question.questionId} className='simple-voter-card'>
-                  <p className='simple-voter-question'>{question.prompt}</p>
-                  <div className='simple-vote-button-grid'>
+                <article key={question.questionId} className='simple-questionnaire-voter-card'>
+                  <p className='simple-questionnaire-voter-number'>Question {index + 1}</p>
+                  <h4 className='simple-questionnaire-voter-prompt'>{questionPrompt}</h4>
+                  <p className='simple-questionnaire-voter-helper'>{requirementLabel}</p>
+                  <div className='simple-vote-button-grid simple-questionnaire-yes-no-grid'>
                     <button
                       type='button'
-                      className={`simple-voter-choice simple-voter-choice-yes${selected === true ? " is-active" : ""}`}
+                      className={`simple-voter-choice simple-questionnaire-yes-no-choice simple-voter-choice-yes${selected === true ? " is-active" : ""}`}
                       onClick={() => setYesNoAnswer(question.questionId, true)}
                     >
                       Yes
                     </button>
                     <button
                       type='button'
-                      className={`simple-voter-choice simple-voter-choice-no${selected === false ? " is-active" : ""}`}
+                      className={`simple-voter-choice simple-questionnaire-yes-no-choice simple-voter-choice-no${selected === false ? " is-active" : ""}`}
                       onClick={() => setYesNoAnswer(question.questionId, false)}
                     >
                       No
                     </button>
                   </div>
-                </div>
+                </article>
               );
             }
 
@@ -580,23 +595,24 @@ export default function QuestionnaireVoterPanel() {
                 ? (answerState[question.questionId] as string[])
                 : [];
               return (
-                <div key={question.questionId} className='simple-voter-card'>
-                  <p className='simple-voter-question'>{question.prompt}</p>
-                  <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
+                <article key={question.questionId} className='simple-questionnaire-voter-card'>
+                  <p className='simple-questionnaire-voter-number'>Question {index + 1}</p>
+                  <h4 className='simple-questionnaire-voter-prompt'>{questionPrompt}</h4>
+                  <p className='simple-questionnaire-voter-helper'>{requirementLabel}</p>
+                  <div className='simple-questionnaire-choice-list'>
                     {question.options.map((option) => (
-                      <label key={option.optionId} className='simple-voter-note'>
+                      <label key={option.optionId} className='simple-questionnaire-choice-row'>
                         <input
                           type={question.multiSelect ? "checkbox" : "radio"}
                           name={question.questionId}
                           checked={selected.includes(option.optionId)}
                           onChange={() => setMultipleChoiceAnswer(question.questionId, option.optionId, question.multiSelect)}
                         />
-                        {" "}
-                        {option.label}
+                        <span>{option.label}</span>
                       </label>
                     ))}
                   </div>
-                </div>
+                </article>
               );
             }
 
@@ -604,12 +620,19 @@ export default function QuestionnaireVoterPanel() {
               ? (answerState[question.questionId] as string)
               : "";
             return (
-              <div key={question.questionId} className='simple-voter-card'>
-                <p className='simple-voter-question'>{question.prompt}</p>
+              <article key={question.questionId} className='simple-questionnaire-voter-card'>
+                <p className='simple-questionnaire-voter-number'>Question {index + 1}</p>
+                <h4 className='simple-questionnaire-voter-prompt'>{questionPrompt}</h4>
+                <p className='simple-questionnaire-voter-helper'>{requirementLabel}</p>
+                <label className='simple-voter-label simple-voter-label-tight' htmlFor={`questionnaire-free-text-${question.questionId}`}>
+                  Additional comments
+                </label>
                 <textarea
-                  className='simple-voter-input'
+                  id={`questionnaire-free-text-${question.questionId}`}
+                  className='simple-voter-input simple-questionnaire-free-text'
                   rows={4}
                   maxLength={question.maxLength}
+                  placeholder='Type your response here...'
                   value={text}
                   onChange={(event) => {
                     const nextValue = event.target.value;
@@ -619,8 +642,8 @@ export default function QuestionnaireVoterPanel() {
                     }));
                   }}
                 />
-                <p className='simple-voter-note'>Max {question.maxLength} characters.</p>
-              </div>
+                <p className='simple-questionnaire-voter-helper'>Max {question.maxLength} characters.</p>
+              </article>
             );
           })}
 

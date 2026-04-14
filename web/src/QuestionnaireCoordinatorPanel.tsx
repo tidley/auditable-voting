@@ -98,7 +98,7 @@ function formatUnixTimestamp(timestampSeconds?: number | null) {
 }
 
 function formatQuestionnaireMetadataState(state: QuestionnaireStateValue | null, hasDefinition: boolean) {
-  if (!hasDefinition) {
+  if (!hasDefinition || state === "draft") {
     return "Draft";
   }
   if (state === "open") {
@@ -779,7 +779,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         ? "Ended"
         : currentState === "open"
           ? "Open"
-      : "Published";
+          : "Draft";
   const checklistDescriptionAdded = description.trim().length > 0;
   const checklistNotPublished = !publishedDefinition;
   const metadataStateLabel = formatQuestionnaireMetadataState(latestState, Boolean(latestDefinition));
@@ -942,7 +942,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       });
       if (result.successes > 0) {
         setStatus(`Questionnaire draft published (${result.successes}/${result.relayResults.length} relays).`);
-        await publishState("draft");
+        await publishState("open");
       } else {
         setStatus("Questionnaire draft publish failed.");
         await refresh();
