@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
-import { decodeNsec, deriveNpubFromNsec } from "./nostrIdentity";
+import { decodeNsec, deriveNpubFromNsec, isValidNpub } from "./nostrIdentity";
 import { deriveActorDisplayId } from "./actorDisplay";
 import QuestionnaireVoterPanel from "./QuestionnaireVoterPanel";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
@@ -129,6 +129,10 @@ type SimpleVoterCache = {
   selectedVotingId: string;
   liveVoteChoice: LiveVoteChoice;
 };
+
+function sanitizeCoordinatorNpubs(values: string[]) {
+  return normalizeCoordinatorNpubsRust(values).filter((value) => isValidNpub(value));
+}
 
 const SIMPLE_PUBLIC_ROUND_BACKFILL_INTERVAL_MS = 4000;
 const SIMPLE_HUMAN_ACTION_JITTER_MAX_MS = 30000;
@@ -362,7 +366,7 @@ export default function SimpleUiApp() {
   }
 
   const configuredCoordinatorTargets = useMemo(
-    () => normalizeCoordinatorNpubsRust(manualCoordinators),
+    () => sanitizeCoordinatorNpubs(manualCoordinators),
     [manualCoordinators],
   );
   const knownRoundVotingIds = useMemo(() => {
@@ -519,7 +523,7 @@ export default function SimpleUiApp() {
       if (storedState?.keypair) {
         setVoterKeypair(storedState.keypair);
         const cache = (storedState.cache ?? null) as Partial<SimpleVoterCache> | null;
-        setManualCoordinators(Array.isArray(cache?.manualCoordinators) ? cache.manualCoordinators : []);
+        setManualCoordinators(Array.isArray(cache?.manualCoordinators) ? sanitizeCoordinatorNpubs(cache.manualCoordinators) : []);
         setNip65Enabled(cache?.nip65Enabled === true);
         setProtocolStateCache(
           cache?.protocolStateCache && typeof cache.protocolStateCache === "object"
@@ -1161,7 +1165,7 @@ export default function SimpleUiApp() {
       setBackupStatus(`Backup restored from ${bundle.exportedAt}.`);
       const cache = (bundle.cache ?? null) as Partial<SimpleVoterCache> | null;
       protocolStateServiceRef.current = null;
-      setManualCoordinators(Array.isArray(cache?.manualCoordinators) ? cache.manualCoordinators : []);
+      setManualCoordinators(Array.isArray(cache?.manualCoordinators) ? sanitizeCoordinatorNpubs(cache.manualCoordinators) : []);
       setNip65Enabled(cache?.nip65Enabled === true);
       setProtocolStateCache(
         cache?.protocolStateCache && typeof cache.protocolStateCache === "object"
@@ -1221,7 +1225,7 @@ export default function SimpleUiApp() {
       identityHydrationEpochRef.current += 1;
       setVoterKeypair(storedState.keypair);
       protocolStateServiceRef.current = null;
-      setManualCoordinators(Array.isArray(cache?.manualCoordinators) ? cache.manualCoordinators : []);
+      setManualCoordinators(Array.isArray(cache?.manualCoordinators) ? sanitizeCoordinatorNpubs(cache.manualCoordinators) : []);
       setProtocolStateCache(
         cache?.protocolStateCache && typeof cache.protocolStateCache === "object"
           ? cache.protocolStateCache as ProtocolStateCache
@@ -1273,7 +1277,12 @@ export default function SimpleUiApp() {
       return;
     }
 
-    setManualCoordinators((current) => normalizeCoordinatorNpubsRust([...current, nextCoordinator]));
+    if (!isValidNpub(nextCoordinator)) {
+      setRequestStatus("Coordinator key must be a valid npub.");
+      return;
+    }
+
+    setManualCoordinators((current) => sanitizeCoordinatorNpubs([...current, nextCoordinator]));
     setCoordinatorDraft("");
     setRequestStatus(null);
   }
@@ -1285,7 +1294,7 @@ export default function SimpleUiApp() {
       return false;
     }
 
-    setManualCoordinators((current) => normalizeCoordinatorNpubsRust([...current, scannedNpub]));
+    setManualCoordinators((current) => sanitizeCoordinatorNpubs([...current, scannedNpub]));
     setCoordinatorDraft("");
     setRequestStatus(null);
     setCoordinatorScannerStatus(`Scanned ${shortenNpub(scannedNpub)}.`);
