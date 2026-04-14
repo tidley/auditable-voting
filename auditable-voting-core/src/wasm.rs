@@ -3,8 +3,9 @@ use wasm_bindgen::prelude::*;
 use crate::coordinator_engine::{
     CoordinatorControlEngine, CoordinatorEngineConfig, CoordinatorEngineSnapshot,
 };
-use crate::reducer::{AuditableVotingProtocolEngine, ProtocolSnapshot};
+use crate::reducer::AuditableVotingProtocolEngine;
 use crate::event::ProtocolEvent;
+use crate::snapshot::ProtocolSnapshot;
 use crate::types::CoordinatorTransportEvent;
 
 fn to_js_error(error: impl ToString) -> JsValue {
@@ -28,7 +29,7 @@ impl WasmCoordinatorControlEngine {
         let config = serde_wasm_bindgen::from_value::<CoordinatorEngineConfig>(config)
             .map_err(to_js_error)?;
         Ok(Self {
-            inner: CoordinatorControlEngine::new(config),
+            inner: CoordinatorControlEngine::new(config).map_err(to_js_error)?,
         })
     }
 
@@ -37,7 +38,7 @@ impl WasmCoordinatorControlEngine {
         let snapshot = serde_wasm_bindgen::from_value::<CoordinatorEngineSnapshot>(snapshot)
             .map_err(to_js_error)?;
         Ok(Self {
-            inner: CoordinatorControlEngine::restore(snapshot),
+            inner: CoordinatorControlEngine::restore(snapshot).map_err(to_js_error)?,
         })
     }
 
@@ -49,6 +50,11 @@ impl WasmCoordinatorControlEngine {
     #[wasm_bindgen(js_name = getState)]
     pub fn get_state(&self) -> Result<JsValue, JsValue> {
         serde_wasm_bindgen::to_value(&self.inner.view()).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = getEngineStatus)]
+    pub fn get_engine_status(&self) -> Result<JsValue, JsValue> {
+        serde_wasm_bindgen::to_value(&self.inner.engine_status()).map_err(to_js_error)
     }
 
     #[wasm_bindgen(js_name = replayTransportMessages)]
@@ -64,6 +70,19 @@ impl WasmCoordinatorControlEngine {
         let event = serde_wasm_bindgen::from_value::<CoordinatorTransportEvent>(event)
             .map_err(to_js_error)?;
         let result = self.inner.apply_transport_message(event).map_err(to_js_error)?;
+        serde_wasm_bindgen::to_value(&result).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = applyPublishedLocalMessage)]
+    pub fn apply_published_local_message(
+        &mut self,
+        event_id: String,
+        local_echo: String,
+    ) -> Result<JsValue, JsValue> {
+        let result = self
+            .inner
+            .apply_published_local_message(event_id, local_echo)
+            .map_err(to_js_error)?;
         serde_wasm_bindgen::to_value(&result).map_err(to_js_error)
     }
 
@@ -174,6 +193,33 @@ impl WasmCoordinatorControlEngine {
             .map_err(to_js_error)?;
         serde_wasm_bindgen::to_value(&result).map_err(to_js_error)
     }
+
+    #[wasm_bindgen(js_name = exportSupervisoryJoinPackage)]
+    pub fn export_supervisory_join_package(&mut self) -> Result<JsValue, JsValue> {
+        let result = self
+            .inner
+            .export_supervisory_join_package()
+            .map_err(to_js_error)?;
+        serde_wasm_bindgen::to_value(&result).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = bootstrapSupervisoryGroup)]
+    pub fn bootstrap_supervisory_group(&mut self, join_packages: JsValue) -> Result<JsValue, JsValue> {
+        let join_packages = serde_wasm_bindgen::from_value::<Vec<String>>(join_packages)
+            .map_err(to_js_error)?;
+        let result = self
+            .inner
+            .bootstrap_supervisory_group(join_packages)
+            .map_err(to_js_error)?;
+        serde_wasm_bindgen::to_value(&result).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = joinSupervisoryGroup)]
+    pub fn join_supervisory_group(&mut self, welcome_bundle: String) -> Result<bool, JsValue> {
+        self.inner
+            .join_supervisory_group(welcome_bundle)
+            .map_err(to_js_error)
+    }
 }
 
 #[wasm_bindgen]
@@ -190,7 +236,7 @@ impl WasmAuditableVotingProtocolEngine {
         let snapshot = serde_wasm_bindgen::from_value::<ProtocolSnapshot>(snapshot)
             .map_err(to_js_error)?;
         Ok(Self {
-            inner: AuditableVotingProtocolEngine::restore(snapshot),
+            inner: AuditableVotingProtocolEngine::restore(snapshot).map_err(to_js_error)?,
         })
     }
 
@@ -214,6 +260,24 @@ impl WasmAuditableVotingProtocolEngine {
     pub fn get_derived_state(&self) -> Result<JsValue, JsValue> {
         let result = self.inner.current_state().map_err(to_js_error)?;
         serde_wasm_bindgen::to_value(&result).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = getSnapshotMetadata)]
+    pub fn get_snapshot_metadata(&self) -> Result<JsValue, JsValue> {
+        let metadata = self.inner.snapshot_metadata().map_err(to_js_error)?;
+        serde_wasm_bindgen::to_value(&metadata).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = getReplayStatus)]
+    pub fn get_replay_status(&self) -> Result<JsValue, JsValue> {
+        let status = self.inner.replay_status();
+        serde_wasm_bindgen::to_value(&status).map_err(to_js_error)
+    }
+
+    #[wasm_bindgen(js_name = getDiagnostics)]
+    pub fn get_diagnostics(&self) -> Result<JsValue, JsValue> {
+        let diagnostics = self.inner.diagnostics().map_err(to_js_error)?;
+        serde_wasm_bindgen::to_value(&diagnostics).map_err(to_js_error)
     }
 
     #[wasm_bindgen(js_name = exportSnapshot)]

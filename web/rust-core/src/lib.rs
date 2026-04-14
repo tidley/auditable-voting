@@ -43,6 +43,10 @@ pub struct DeliveryState {
     status: Option<String>,
     event_id: Option<String>,
     response_id: Option<String>,
+    #[serde(default)]
+    prior_event_ids: Vec<String>,
+    #[serde(default)]
+    prior_response_ids: Vec<String>,
     attempts: Option<u32>,
     last_attempt_at: Option<String>,
 }
@@ -375,6 +379,41 @@ fn ack_exists(
     })
 }
 
+fn delivery_ack_exists(
+    acknowledgements: &[AckSummary],
+    action: &str,
+    delivery: &DeliveryState,
+    actor_npub: Option<&str>,
+) -> bool {
+    if ack_exists(
+        acknowledgements,
+        action,
+        delivery.event_id.as_deref(),
+        delivery.response_id.as_deref(),
+        actor_npub,
+    ) {
+        return true;
+    }
+
+    delivery.prior_event_ids.iter().any(|event_id| {
+        ack_exists(
+            acknowledgements,
+            action,
+            Some(event_id.as_str()),
+            None,
+            actor_npub,
+        )
+    }) || delivery.prior_response_ids.iter().any(|response_id| {
+        ack_exists(
+            acknowledgements,
+            action,
+            None,
+            Some(response_id.as_str()),
+            actor_npub,
+        )
+    })
+}
+
 fn parse_rfc3339_millis(value: Option<&str>) -> Option<i64> {
     let value = value?.trim();
     if value.is_empty() {
@@ -661,13 +700,11 @@ fn build_coordinator_follower_rows_inner(
                 )
             };
             let ticket_receipt_ack = ticket_delivery
-                .and_then(|delivery| delivery.event_id.as_deref())
-                .map(|event_id| {
-                    ack_exists(
+                .map(|delivery| {
+                    delivery_ack_exists(
                         &input.acknowledgements,
                         "simple_round_ticket",
-                        Some(event_id),
-                        ticket_delivery.and_then(|delivery| delivery.response_id.as_deref()),
+                        delivery,
                         None,
                     )
                 })
@@ -750,17 +787,13 @@ fn select_ticket_retry_targets_inner(input: TicketRetrySelectionInput) -> Vec<St
         let Some(delivery) = input.ticket_deliveries.get(&ticket_status_key) else {
             continue;
         };
-        let Some(event_id) = delivery.event_id.as_deref() else {
-            continue;
-        };
         if delivery.attempts.unwrap_or(0) >= input.max_attempts {
             continue;
         }
-        if ack_exists(
+        if delivery_ack_exists(
             &input.acknowledgements,
             "simple_round_ticket",
-            Some(event_id),
-            delivery.response_id.as_deref(),
+            delivery,
             None,
         ) {
             continue;
@@ -1167,6 +1200,8 @@ mod tests {
                         status: Some("Follow request sent.".to_string()),
                         event_id: Some("event-a".to_string()),
                         response_id: None,
+                        prior_event_ids: vec![],
+                        prior_response_ids: vec![],
                         attempts: Some(1),
                         last_attempt_at: Some("2026-04-05T00:00:00.000Z".to_string()),
                     },
@@ -1177,6 +1212,8 @@ mod tests {
                         status: Some("Follow request sent.".to_string()),
                         event_id: Some("event-b".to_string()),
                         response_id: None,
+                        prior_event_ids: vec![],
+                        prior_response_ids: vec![],
                         attempts: Some(1),
                         last_attempt_at: Some("2026-04-05T00:00:09.000Z".to_string()),
                     },
@@ -1218,5 +1255,49 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert!(rows[0].can_send_ticket);
         assert_eq!(rows[0].pending_request.text, "Blinded ticket request received.");
+    }
+
+    #[test]
+    fn ticket_receipt_ack_matches_prior_attempt_ids() {
+        let rows = build_coordinator_follower_rows_inner(CoordinatorFollowerRowsInput {
+            followers: vec![SimpleCoordinatorFollowerSummary {
+                id: "follower-1".to_string(),
+                voter_npub: "npub-voter".to_string(),
+                voter_id: "1234567".to_string(),
+                voting_id: Some("vote-123456789abc".to_string()),
+                created_at: "2026-04-05T00:00:00.000Z".to_string(),
+            }],
+            selected_published_voting_id: Some("vote-123456789abc".to_string()),
+            pending_requests: vec![SimpleRoundRequestSummary {
+                voter_npub: "npub-voter".to_string(),
+                voting_id: "vote-123456789abc".to_string(),
+                created_at: "2026-04-05T00:00:01.000Z".to_string(),
+            }],
+            ticket_deliveries: std::collections::BTreeMap::from([(
+                "npub-voter:vote-123456789abc".to_string(),
+                DeliveryState {
+                    status: Some("Ticket sent.".to_string()),
+                    event_id: Some("retry-event".to_string()),
+                    response_id: Some("retry-response".to_string()),
+                    prior_event_ids: vec!["first-event".to_string()],
+                    prior_response_ids: vec!["first-response".to_string()],
+                    attempts: Some(2),
+                    last_attempt_at: Some("2026-04-05T00:00:09.000Z".to_string()),
+                },
+            )]),
+            acknowledgements: vec![AckSummary {
+                actor_npub: "npub-reply".to_string(),
+                acked_action: "simple_round_ticket".to_string(),
+                acked_event_id: "first-event".to_string(),
+                response_id: Some("first-response".to_string()),
+            }],
+            can_issue_tickets: true,
+        });
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].receipt.as_ref().map(|receipt| receipt.text.as_str()),
+            Some("Voter acknowledged ticket receipt.")
+        );
     }
 }

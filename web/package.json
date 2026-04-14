@@ -6,21 +6,24 @@
   "scripts": {
     "build:wasm": "npm run build:wasm:legacy && npm run build:wasm:coordinator",
     "build:wasm:legacy": "cd rust-core && wasm-pack build --target bundler --out-dir ../src/wasm/auditable_voting_core/pkg",
-    "build:wasm:coordinator": "cd ../auditable-voting-core && wasm-pack build --target bundler --out-dir ../web/src/wasm/auditable_voting_coordinator_core/pkg",
+    "build:wasm:coordinator": "cd ../auditable-voting-core && wasm-pack build --target bundler --out-dir ../web/src/wasm/auditable_voting_coordinator_core/pkg -- --features openmls-engine",
     "predev": "node scripts/ensure-wasm-artifacts.mjs",
     "prebuild": "node scripts/ensure-wasm-artifacts.mjs",
     "pretest": "node scripts/ensure-wasm-artifacts.mjs",
     "pretest:watch": "node scripts/ensure-wasm-artifacts.mjs",
     "preverify:simple-blind-shares": "node scripts/ensure-wasm-artifacts.mjs",
     "pretest:live-relays": "node scripts/ensure-wasm-artifacts.mjs",
+    "pretest:live-relays:repeat": "node scripts/ensure-wasm-artifacts.mjs",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0 --port 5173",
     "test": "vitest run",
+    "test:relay-load": "vitest run src/simpleRelayLoad.test.ts",
     "test:rust": "cargo test --manifest-path rust-core/Cargo.toml",
     "test:watch": "vitest",
     "verify:simple-blind-shares": "tsx scripts/verify-simple-blind-shares.ts",
-    "test:live-relays": "node scripts/live-simple-relay-check.js"
+    "test:live-relays": "node scripts/live-simple-relay-check.js",
+    "test:live-relays:repeat": "node scripts/live-simple-relay-repeat.js"
   },
   "dependencies": {
     "@cloudflare/blindrsa-ts": "^0.4.5",

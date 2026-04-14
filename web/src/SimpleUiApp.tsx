@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 import { decodeNsec, deriveNpubFromNsec } from "./nostrIdentity";
 import { deriveActorDisplayId } from "./actorDisplay";
+import QuestionnaireVoterPanel from "./QuestionnaireVoterPanel";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
 import SimpleQrScanner from "./SimpleQrScanner";
 import SimpleRelayPanel from "./SimpleRelayPanel";
@@ -26,6 +27,7 @@ import {
 import {
   subscribeSimpleCoordinatorRosterAnnouncements,
   fetchSimpleShardResponses,
+  recordSimpleTicketLifecycleTrace,
   sendSimpleCoordinatorFollow,
   sendSimpleDmAcknowledgement,
   sendSimpleShardRequest,
@@ -36,6 +38,7 @@ import {
   type SimpleShardResponse,
 } from "./simpleShardDm";
 import {
+  fetchLatestSimpleLiveVote,
   publishSimpleSubmittedVote,
   SIMPLE_PUBLIC_RELAYS,
   subscribeLatestSimpleLiveVote,
@@ -65,6 +68,7 @@ import {
   SIMPLE_PUBLIC_ELECTION_ID,
   type ProtocolStateCache,
 } from "./services/ProtocolStateService";
+import { type MailboxReadQueryDebug } from "./simpleMailbox";
 
 type LiveVoteChoice = "Yes" | "No" | null;
 type VoterTab = "configure" | "vote" | "settings";
@@ -82,11 +86,33 @@ type PendingBlindRequest = {
   secret: SimpleBlindRequestSecret;
   createdAt: string;
   dmEventId?: string;
+  mailboxId?: string;
+  mailboxSalt?: string;
+  mailboxFrozenAt?: string;
+  mailboxFrozenValue?: string;
 };
 
 type RoundReplyKeypair = {
   npub: string;
   nsec: string;
+};
+
+type TicketBackfillRequestDebug = {
+  attemptCount: number;
+  lastAttemptAt: string | null;
+  lastResultCount: number;
+  lastMatchedCount: number;
+  requestMailboxId: string | null;
+  ticketReadMailboxId: string | null;
+  ticketBackfillMailboxId: string | null;
+  lastSourceRelays: string[];
+};
+
+type TicketMailboxMismatch = {
+  requestId: string;
+  expectedMailboxId: string;
+  observedMailboxId: string;
+  observedAt: string;
 };
 
 type SimpleVoterCache = {
@@ -103,6 +129,27 @@ type SimpleVoterCache = {
   selectedVotingId: string;
   liveVoteChoice: LiveVoteChoice;
 };
+
+const SIMPLE_PUBLIC_ROUND_BACKFILL_INTERVAL_MS = 4000;
+const SIMPLE_HUMAN_ACTION_JITTER_MAX_MS = 30000;
+const SIMPLE_FOLLOW_RETRY_MIN_AGE_MS = 30000;
+const SIMPLE_FOLLOW_RETRY_INTERVAL_MS = 10000;
+const SIMPLE_REQUEST_RETRY_MIN_AGE_MS = 30000;
+const SIMPLE_REQUEST_RETRY_INTERVAL_MS = 10000;
+
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function randomHumanActionDelayMs() {
+  const processEnv = (globalThis as typeof globalThis & {
+    process?: { env?: Record<string, string | undefined> };
+  }).process?.env;
+  if (import.meta.env.MODE === "test" || processEnv?.VITEST) {
+    return 0;
+  }
+  return Math.floor(Math.random() * SIMPLE_HUMAN_ACTION_JITTER_MAX_MS);
+}
 
 function createEmptyVoterCache(): SimpleVoterCache {
   return {
@@ -185,6 +232,15 @@ function formatMissingCoordinatorKeyText(indices: number[]) {
   return `Waiting for Coordinators ${leading}, and ${trailing}' keys before preparing ticket request.`;
 }
 
+function readDeploymentModeFromUrl() {
+  if (typeof window === "undefined") {
+    return "legacy";
+  }
+  return (new URLSearchParams(window.location.search).get("deployment") ?? "legacy")
+    .trim()
+    .toLowerCase();
+}
+
 export default function SimpleUiApp() {
   const [voterKeypair, setVoterKeypair] = useState<SimpleVoterKeypair | null>(null);
   const [identityReady, setIdentityReady] = useState(false);
@@ -213,13 +269,26 @@ export default function SimpleUiApp() {
   const [knownBlindKeys, setKnownBlindKeys] = useState<Record<string, SimpleBlindKeyAnnouncement>>({});
   const [submitStatus, setSubmitStatus] = useState<string | null>(null);
   const [ballotTokenId, setBallotTokenId] = useState<string | null>(null);
+  const [ticketAckSent, setTicketAckSent] = useState(false);
+  const [ballotSubmitted, setBallotSubmitted] = useState(false);
+  const [ballotAccepted, setBallotAccepted] = useState(false);
   const [selectedVotingId, setSelectedVotingId] = useState("");
   const [activeTab, setActiveTab] = useState<VoterTab>("configure");
   const [showVoteDetails, setShowVoteDetails] = useState(false);
   const sentTicketReceiptAckIdsRef = useRef<Set<string>>(new Set());
+  const ticketObservationMetaRef = useRef<Record<string, { liveAt?: number; backfillAt?: number }>>({});
+  const ticketLiveQueryDebugRef = useRef<MailboxReadQueryDebug | null>(null);
+  const ticketBackfillQueryDebugRef = useRef<MailboxReadQueryDebug | null>(null);
+  const ticketBackfillRequestDebugRef = useRef<Record<string, TicketBackfillRequestDebug>>({});
+  const ticketLiveQueryByRequestRef = useRef<Record<string, MailboxReadQueryDebug>>({});
+  const ticketBackfillQueryByRequestRef = useRef<Record<string, MailboxReadQueryDebug>>({});
+  const ticketMailboxMismatchRef = useRef<Record<string, TicketMailboxMismatch>>({});
   const lastAutoSelectedVotingIdRef = useRef("");
   const manualRoundSelectionRef = useRef(false);
+  const identityHydrationEpochRef = useRef(0);
   const protocolStateServiceRef = useRef<ProtocolStateService | null>(null);
+  const deploymentMode = useMemo(() => readDeploymentModeFromUrl(), []);
+  const isCourseFeedbackMode = deploymentMode === "course_feedback";
 
   function persistVoterIdentity(nextKeypair: SimpleVoterKeypair, cache?: Partial<SimpleVoterCache>) {
     return saveSimpleActorState({
@@ -230,15 +299,19 @@ export default function SimpleUiApp() {
     }, storagePassphrase ? { passphrase: storagePassphrase } : undefined);
   }
 
-  async function reconcileIncomingShardResponses(nextResponses: SimpleShardResponse[]) {
+  async function reconcileIncomingShardResponses(
+    nextResponses: SimpleShardResponse[],
+    source: "live" | "backfill",
+  ) {
     const nextIssuedShares = (await Promise.all(nextResponses.map(async (response) => {
       const existingShare = response.shardCertificate;
       if (existingShare) {
         return [response];
       }
 
-      const pending = pendingBlindRequests[`${response.coordinatorNpub}:${response.requestId}`]
-        ?? Object.values(pendingBlindRequests).find((request) => request.request.requestId === response.requestId);
+      const pending = Object.values(pendingBlindRequests).find(
+        (request) => request.request.requestId === response.requestId,
+      );
       if (!pending) {
         return [];
       }
@@ -257,7 +330,30 @@ export default function SimpleUiApp() {
     setReceivedShards((current) => {
       const merged = new Map(current.map((response) => [response.id, response]));
       for (const response of nextIssuedShares) {
+        const expectedMailboxId = (
+          Object.values(pendingBlindRequests).find((entry) => entry.request.requestId === response.requestId)?.mailboxFrozenValue
+          ?? Object.values(pendingBlindRequests).find((entry) => entry.request.requestId === response.requestId)?.mailboxId
+          ?? ""
+        ).trim();
+        const observedMailboxId = (response.mailboxId ?? "").trim();
+        if (expectedMailboxId && observedMailboxId && expectedMailboxId !== observedMailboxId) {
+          ticketMailboxMismatchRef.current[response.requestId] = {
+            requestId: response.requestId,
+            expectedMailboxId,
+            observedMailboxId,
+            observedAt: new Date().toISOString(),
+          };
+          setRequestStatus("Ticket mailbox mismatch detected. Waiting for aligned mailbox ticket.");
+        }
         merged.set(response.id, response);
+        const existing = ticketObservationMetaRef.current[response.id] ?? {};
+        if (source === "live" && !existing.liveAt) {
+          existing.liveAt = Date.now();
+        }
+        if (source === "backfill" && !existing.backfillAt) {
+          existing.backfillAt = Date.now();
+        }
+        ticketObservationMetaRef.current[response.id] = existing;
       }
 
       const nextMergedShares = [...merged.values()];
@@ -289,6 +385,31 @@ export default function SimpleUiApp() {
 
     return [...values];
   }, [discoveredSessions, pendingBlindRequests, receivedShards]);
+  const activeRoundPendingBlindRequests = useMemo(() => {
+    const activeVotingId = selectedVotingId.trim();
+    if (!activeVotingId) {
+      return [] as PendingBlindRequest[];
+    }
+    return Object.values(pendingBlindRequests).filter((request) => request.votingId === activeVotingId);
+  }, [pendingBlindRequests, selectedVotingId]);
+  const unresolvedActiveRoundPendingBlindRequests = useMemo(() => {
+    return activeRoundPendingBlindRequests.filter((request) => (
+      !receivedShards.some((response) => response.requestId === request.request.requestId)
+    ));
+  }, [activeRoundPendingBlindRequests, receivedShards]);
+  const pendingTicketMailboxIds = useMemo(() => {
+    return Array.from(
+      new Set(
+        unresolvedActiveRoundPendingBlindRequests
+          .map((request) => (
+            request.mailboxFrozenValue?.trim()
+            || request.mailboxId?.trim()
+            || ""
+          ))
+          .filter(Boolean),
+      ),
+    );
+  }, [unresolvedActiveRoundPendingBlindRequests]);
 
   useEffect(() => {
     const receivedRequestIds = new Set(receivedShards.map((response) => response.requestId));
@@ -388,9 +509,10 @@ export default function SimpleUiApp() {
 
   useEffect(() => {
     let cancelled = false;
+    const hydrationEpoch = identityHydrationEpochRef.current;
 
     void loadSimpleActorState("voter").then((storedState) => {
-      if (cancelled) {
+      if (cancelled || hydrationEpoch !== identityHydrationEpochRef.current) {
         return;
       }
 
@@ -444,7 +566,7 @@ export default function SimpleUiApp() {
       setStorageLocked(false);
       setIdentityReady(true);
     }).catch(async (error) => {
-      if (cancelled) {
+      if (cancelled || hydrationEpoch !== identityHydrationEpochRef.current) {
         return;
       }
 
@@ -572,14 +694,65 @@ export default function SimpleUiApp() {
       return;
     }
 
-    return subscribeSimpleShardResponses({
-      voterNsec,
-      voterNsecs: Object.values(roundReplyKeypairs).map((keypair) => keypair.nsec),
-      onResponses: (responses) => {
-        void reconcileIncomingShardResponses(responses);
-      },
+    if (unresolvedActiveRoundPendingBlindRequests.length === 0) {
+      return;
+    }
+
+    const cleanups = unresolvedActiveRoundPendingBlindRequests.map((requestEntry) => {
+      const requestId = requestEntry.request.requestId;
+      const canonicalMailboxId = (
+        requestEntry.mailboxFrozenValue?.trim()
+        || requestEntry.mailboxId?.trim()
+        || ""
+      );
+      if (!canonicalMailboxId) {
+        return () => undefined;
+      }
+      return subscribeSimpleShardResponses({
+        voterNsec,
+        voterNsecs: Object.values(roundReplyKeypairs).map((keypair) => keypair.nsec),
+        mailboxIds: [canonicalMailboxId],
+        onMailboxQueryDebug: (query) => {
+          if (query.source !== "subscribe") {
+            return;
+          }
+          ticketLiveQueryDebugRef.current = query;
+          ticketLiveQueryByRequestRef.current[requestId] = query;
+          const previous = ticketBackfillRequestDebugRef.current[requestId];
+          ticketBackfillRequestDebugRef.current[requestId] = {
+            attemptCount: previous?.attemptCount ?? 0,
+            lastAttemptAt: previous?.lastAttemptAt ?? null,
+            lastResultCount: previous?.lastResultCount ?? 0,
+            lastMatchedCount: previous?.lastMatchedCount ?? 0,
+            requestMailboxId: previous?.requestMailboxId ?? canonicalMailboxId,
+            ticketReadMailboxId: canonicalMailboxId,
+            ticketBackfillMailboxId: previous?.ticketBackfillMailboxId ?? null,
+            lastSourceRelays: previous?.lastSourceRelays ?? [],
+          };
+        },
+        onResponses: (responses) => {
+          const filtered = responses.filter((response) => (
+            response.requestId === requestId
+            || response.mailboxId?.trim() === canonicalMailboxId
+          ));
+          if (filtered.length > 0) {
+            void reconcileIncomingShardResponses(filtered, "live");
+          }
+        },
+      });
     });
-  }, [configuredCoordinatorTargets.length, roundReplyKeypairs, voterKeypair?.nsec]);
+
+    return () => {
+      for (const cleanup of cleanups) {
+        cleanup();
+      }
+    };
+  }, [
+    configuredCoordinatorTargets.length,
+    unresolvedActiveRoundPendingBlindRequests,
+    roundReplyKeypairs,
+    voterKeypair?.nsec,
+  ]);
 
   useEffect(() => {
     const voterNsec = voterKeypair?.nsec?.trim() ?? "";
@@ -588,25 +761,82 @@ export default function SimpleUiApp() {
       return;
     }
 
-    const hasPendingTicket = Object.values(pendingBlindRequests).some((request) => {
-      return !receivedShards.some((response) => response.requestId === request.request.requestId);
-    });
-
-    if (!hasPendingTicket) {
+    if (unresolvedActiveRoundPendingBlindRequests.length === 0) {
       return;
     }
 
     let cancelled = false;
 
     const refresh = () => {
-      void fetchSimpleShardResponses({
-        voterNsec,
-        voterNsecs: Object.values(roundReplyKeypairs).map((keypair) => keypair.nsec),
-      }).then((nextResponses) => {
-        if (!cancelled) {
-          void reconcileIncomingShardResponses(nextResponses);
+      const pendingEntries = [...unresolvedActiveRoundPendingBlindRequests];
+      const nowIso = new Date().toISOString();
+      for (const requestEntry of pendingEntries) {
+        const requestId = requestEntry.request.requestId;
+        const canonicalMailboxId = (
+          requestEntry.mailboxFrozenValue?.trim()
+          || requestEntry.mailboxId?.trim()
+          || ""
+        );
+        if (!canonicalMailboxId) {
+          continue;
         }
-      }).catch(() => undefined);
+        const previous = ticketBackfillRequestDebugRef.current[requestId];
+        ticketBackfillRequestDebugRef.current[requestId] = {
+          attemptCount: (previous?.attemptCount ?? 0) + 1,
+          lastAttemptAt: nowIso,
+          lastResultCount: previous?.lastResultCount ?? 0,
+          lastMatchedCount: previous?.lastMatchedCount ?? 0,
+          requestMailboxId: canonicalMailboxId,
+          ticketReadMailboxId: previous?.ticketReadMailboxId ?? null,
+          ticketBackfillMailboxId: canonicalMailboxId,
+          lastSourceRelays: previous?.lastSourceRelays ?? [],
+        };
+      }
+
+      void Promise.all(pendingEntries.map(async (requestEntry) => {
+        const requestId = requestEntry.request.requestId;
+        const canonicalMailboxId = (
+          requestEntry.mailboxFrozenValue?.trim()
+          || requestEntry.mailboxId?.trim()
+          || ""
+        );
+        if (!canonicalMailboxId) {
+          return;
+        }
+        const nextResponses = await fetchSimpleShardResponses({
+          voterNsec,
+          voterNsecs: Object.values(roundReplyKeypairs).map((keypair) => keypair.nsec),
+          mailboxIds: [canonicalMailboxId],
+          onMailboxQueryDebug: (query) => {
+            ticketBackfillQueryDebugRef.current = query;
+            ticketBackfillQueryByRequestRef.current[requestId] = query;
+          },
+        });
+        if (cancelled) {
+          return;
+        }
+        const filtered = nextResponses.filter((response) => (
+          response.requestId === requestId
+          || response.mailboxId?.trim() === canonicalMailboxId
+        ));
+        const previous = ticketBackfillRequestDebugRef.current[requestId];
+        const requestQuery = ticketBackfillQueryByRequestRef.current[requestId];
+        ticketBackfillRequestDebugRef.current[requestId] = {
+          attemptCount: previous?.attemptCount ?? 1,
+          lastAttemptAt: previous?.lastAttemptAt ?? nowIso,
+          lastResultCount: Number(requestQuery?.resultCount ?? nextResponses.length),
+          lastMatchedCount: filtered.length,
+          requestMailboxId: canonicalMailboxId,
+          ticketReadMailboxId: previous?.ticketReadMailboxId ?? null,
+          ticketBackfillMailboxId: canonicalMailboxId,
+          lastSourceRelays: Array.isArray(requestQuery?.relays)
+            ? [...requestQuery.relays]
+            : [],
+        };
+        if (filtered.length > 0) {
+          await reconcileIncomingShardResponses(filtered, "backfill");
+        }
+      })).catch(() => undefined);
     };
 
     refresh();
@@ -618,8 +848,7 @@ export default function SimpleUiApp() {
     };
   }, [
     configuredCoordinatorTargets.length,
-    pendingBlindRequests,
-    receivedShards,
+    unresolvedActiveRoundPendingBlindRequests,
     roundReplyKeypairs,
     voterKeypair?.nsec,
   ]);
@@ -631,21 +860,48 @@ export default function SimpleUiApp() {
     }
 
     const sessions = new Map<string, SimpleLiveVoteSession>();
+    let cancelled = false;
+
+    const syncSession = (session: SimpleLiveVoteSession | null) => {
+      if (!session) {
+        return;
+      }
+
+      sessions.set(`${session.coordinatorNpub}:${session.votingId}`, session);
+      setDiscoveredSessions(
+        [...sessions.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
+      );
+    };
+
     const cleanups = configuredCoordinatorTargets.map((coordinatorNpub) => subscribeLatestSimpleLiveVote({
       coordinatorNpub,
       onSession: (session: SimpleLiveVoteSession | null) => {
-        if (!session) {
-          return;
-        }
-
-        sessions.set(`${session.coordinatorNpub}:${session.votingId}`, session);
-        setDiscoveredSessions(
-          [...sessions.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
-        );
+        syncSession(session);
       },
     }));
 
+    const refreshSessions = async () => {
+      const nextSessions = await Promise.all(
+        configuredCoordinatorTargets.map((coordinatorNpub) => fetchLatestSimpleLiveVote({ coordinatorNpub })),
+      );
+
+      if (cancelled) {
+        return;
+      }
+
+      for (const session of nextSessions) {
+        syncSession(session);
+      }
+    };
+
+    void refreshSessions();
+    const refreshHandle = window.setInterval(() => {
+      void refreshSessions();
+    }, SIMPLE_PUBLIC_ROUND_BACKFILL_INTERVAL_MS);
+
     return () => {
+      cancelled = true;
+      window.clearInterval(refreshHandle);
       for (const cleanup of cleanups) {
         cleanup();
       }
@@ -822,6 +1078,7 @@ export default function SimpleUiApp() {
   }
 
   function refreshIdentity() {
+    identityHydrationEpochRef.current += 1;
     const nextKeypair = createSimpleVoterKeypair();
     void saveSimpleActorState({
       role: "voter",
@@ -843,6 +1100,7 @@ export default function SimpleUiApp() {
       return;
     }
 
+    identityHydrationEpochRef.current += 1;
     const nextKeypair = {
       nsec: trimmed,
       npub: derivedNpub,
@@ -897,6 +1155,7 @@ export default function SimpleUiApp() {
         updatedAt: new Date().toISOString(),
         cache: bundle.cache,
       }, storagePassphrase ? { passphrase: storagePassphrase } : undefined);
+      identityHydrationEpochRef.current += 1;
       setVoterKeypair(bundle.keypair);
       setIdentityStatus("Identity restored from backup.");
       setBackupStatus(`Backup restored from ${bundle.exportedAt}.`);
@@ -959,6 +1218,7 @@ export default function SimpleUiApp() {
 
       const cache = (storedState.cache ?? null) as Partial<SimpleVoterCache> | null;
       setStoragePassphrase(trimmed);
+      identityHydrationEpochRef.current += 1;
       setVoterKeypair(storedState.keypair);
       protocolStateServiceRef.current = null;
       setManualCoordinators(Array.isArray(cache?.manualCoordinators) ? cache.manualCoordinators : []);
@@ -1124,7 +1384,7 @@ export default function SimpleUiApp() {
           ackedEventId: ack.ackedEventId,
         })),
         nowMs: now,
-        minRetryAgeMs: 8000,
+        minRetryAgeMs: SIMPLE_FOLLOW_RETRY_MIN_AGE_MS,
         maxAttempts: 3,
       });
 
@@ -1133,6 +1393,7 @@ export default function SimpleUiApp() {
       }
 
       void Promise.all(retryTargets.map(async (coordinatorNpub) => {
+        await wait(randomHumanActionDelayMs());
         const result = await sendSimpleCoordinatorFollow({
           voterSecretKey,
           coordinatorNpub,
@@ -1154,7 +1415,7 @@ export default function SimpleUiApp() {
           return next;
         });
       }).catch(() => undefined);
-    }, 4000);
+    }, SIMPLE_FOLLOW_RETRY_INTERVAL_MS);
 
     return () => window.clearInterval(intervalId);
   }, [configuredCoordinatorTargets, dmAcknowledgements, followDeliveries, voterKeypair?.npub, voterKeypair?.nsec]);
@@ -1390,6 +1651,7 @@ export default function SimpleUiApp() {
 
     void Promise.all(
       undispatchedCoordinators.map(async (coordinatorNpub) => {
+        await wait(randomHumanActionDelayMs());
         const result = await sendSimpleCoordinatorFollow({
           voterSecretKey,
           coordinatorNpub,
@@ -1475,6 +1737,13 @@ export default function SimpleUiApp() {
         ?? createRoundTokenMessage(round.votingId);
       const replyKeypair = roundReplyKeypairs[round.votingId] ?? createSimpleVoterKeypair();
 
+      // Register the per-round reply identity before requests go out so ticket responses cannot
+      // beat the voter subscription setup on the first round.
+      setRoundReplyKeypairs((current) => ({
+        ...current,
+        [round.votingId]: current[round.votingId] ?? replyKeypair,
+      }));
+
       const createdEntries = await Promise.all(coordinatorsToRequest.map(async (coordinatorNpub) => {
         const announcement = knownBlindKeys[makeRoundBlindKeyId(coordinatorNpub, round.votingId)];
         const created = await createSimpleBlindIssuanceRequest({
@@ -1492,27 +1761,33 @@ export default function SimpleUiApp() {
         } satisfies PendingBlindRequest;
       }));
 
-      const results = await Promise.all(createdEntries.map(async (entry) => sendSimpleShardRequest({
-        voterSecretKey: decodeNsec(replyKeypair.nsec) ?? voterSecretKey,
-        coordinatorNpub: entry.coordinatorNpub,
-        voterNpub,
-        replyNpub: entry.replyNpub,
-        votingId: round.votingId,
-        blindRequest: entry.request,
-      })));
-
-      const successfulEntries = createdEntries.flatMap((entry, index) => (
-        results[index].successes > 0
-          ? [{ ...entry, dmEventId: results[index].eventId }]
-          : []
-      ));
-      const nextRequests = Object.fromEntries(
-        successfulEntries.map((entry) => [`${entry.coordinatorNpub}:${entry.votingId}`, entry]),
-      );
-      setRoundReplyKeypairs((current) => ({
-        ...current,
-        [round.votingId]: current[round.votingId] ?? replyKeypair,
+      const results = await Promise.all(createdEntries.map(async (entry) => {
+        await wait(randomHumanActionDelayMs());
+        return sendSimpleShardRequest({
+          voterSecretKey: decodeNsec(replyKeypair.nsec) ?? voterSecretKey,
+          coordinatorNpub: entry.coordinatorNpub,
+          voterNpub,
+          replyNpub: entry.replyNpub,
+          votingId: round.votingId,
+          blindRequest: entry.request,
+        });
       }));
+
+      const nextRequests = Object.fromEntries(
+        createdEntries.map((entry, index) => [
+          `${entry.coordinatorNpub}:${entry.votingId}`,
+          results[index].successes > 0
+            ? {
+                ...entry,
+                dmEventId: results[index].eventId,
+                mailboxId: results[index].mailboxId,
+                mailboxSalt: results[index].mailboxSalt,
+                mailboxFrozenAt: results[index].mailboxId ? new Date().toISOString() : undefined,
+                mailboxFrozenValue: results[index].mailboxId,
+              }
+            : entry,
+        ]),
+      );
       setPendingBlindRequests((current) => ({ ...current, ...nextRequests }));
       const nextRequestDeliveries = Object.fromEntries(createdEntries.map((entry, index) => [
         `${entry.coordinatorNpub}:${entry.votingId}`,
@@ -1520,7 +1795,7 @@ export default function SimpleUiApp() {
           status: results[index].successes > 0 ? "Blinded ticket request sent." : "Blinded ticket request failed.",
           eventId: results[index].eventId,
           requestId: entry.request.requestId,
-          attempts: results[index].successes > 0 ? 1 : 0,
+          attempts: 1,
           lastAttemptAt: new Date().toISOString(),
         },
       ]));
@@ -1560,7 +1835,7 @@ export default function SimpleUiApp() {
         })),
         receivedRequestIds: receivedShards.map((response) => response.requestId),
         nowMs: now,
-        minRetryAgeMs: 4000,
+        minRetryAgeMs: SIMPLE_REQUEST_RETRY_MIN_AGE_MS,
         maxAttempts: 8,
       }));
       const retryEntries = Object.entries(pendingBlindRequests).filter(([key]) => retryKeys.has(key));
@@ -1576,6 +1851,7 @@ export default function SimpleUiApp() {
         if (!senderSecretKey || !voterNpub) {
           return null;
         }
+        await wait(randomHumanActionDelayMs());
         const result = await sendSimpleShardRequest({
           voterSecretKey: senderSecretKey,
           coordinatorNpub: requestEntry.coordinatorNpub,
@@ -1583,6 +1859,9 @@ export default function SimpleUiApp() {
           replyNpub: requestEntry.replyNpub,
           votingId: requestEntry.votingId,
           blindRequest: requestEntry.request,
+          mailboxSalt: requestEntry.mailboxSalt,
+          attemptNo: (requestDeliveries[key]?.attempts ?? 0) + 1,
+          supersedesEventId: requestDeliveries[key]?.eventId,
         });
         return { key, result, requestId: requestEntry.request.requestId };
       })).then((results) => {
@@ -1590,6 +1869,28 @@ export default function SimpleUiApp() {
         if (!completed.length) {
           return;
         }
+        setPendingBlindRequests((current) => {
+          const next = { ...current };
+          for (const { key, result } of completed) {
+            if (!result.successes) {
+              continue;
+            }
+            const previous = next[key];
+            if (!previous) {
+              continue;
+            }
+            const resolvedMailboxId = result.mailboxId?.trim() || previous.mailboxId?.trim();
+            next[key] = {
+              ...previous,
+              dmEventId: result.eventId,
+              mailboxId: resolvedMailboxId,
+              mailboxSalt: result.mailboxSalt ?? previous.mailboxSalt,
+              mailboxFrozenValue: previous.mailboxFrozenValue ?? resolvedMailboxId,
+              mailboxFrozenAt: previous.mailboxFrozenAt ?? (resolvedMailboxId ? new Date().toISOString() : undefined),
+            };
+          }
+          return next;
+        });
         setRequestDeliveries((current) => {
           const next = { ...current };
           for (const { key, result, requestId } of completed) {
@@ -1605,7 +1906,7 @@ export default function SimpleUiApp() {
           return next;
         });
       }).catch(() => undefined);
-    }, 2000);
+    }, SIMPLE_REQUEST_RETRY_INTERVAL_MS);
 
     return () => window.clearInterval(intervalId);
   }, [dmAcknowledgements, pendingBlindRequests, receivedShards, requestDeliveries, roundReplyKeypairs, voterKeypair?.npub]);
@@ -1629,17 +1930,32 @@ export default function SimpleUiApp() {
         continue;
       }
 
-      sentTicketReceiptAckIdsRef.current.add(response.dmEventId);
-      void sendSimpleDmAcknowledgement({
-        senderSecretKey,
-        recipientNpub: response.coordinatorNpub,
-        actorNpub,
-        ackedAction: "simple_round_ticket",
-        ackedEventId: response.dmEventId,
+      recordSimpleTicketLifecycleTrace({
         votingId: responseVotingId,
+        coordinatorNpub: response.coordinatorNpub,
+        voterNpub: voterKeypair.npub,
         requestId: response.requestId,
         responseId: response.id,
-      }).catch(() => {
+        updates: {
+          ticketObservedByVoterAt: Date.now(),
+        },
+      });
+      sentTicketReceiptAckIdsRef.current.add(response.dmEventId);
+      void (async () => {
+        await wait(randomHumanActionDelayMs());
+        await sendSimpleDmAcknowledgement({
+          senderSecretKey,
+          recipientNpub: response.coordinatorNpub,
+          actorNpub,
+          ackedAction: "simple_round_ticket",
+          ackedEventId: response.dmEventId,
+          votingId: responseVotingId,
+          requestId: response.requestId,
+          responseId: response.id,
+          mailboxId: response.mailboxId,
+        });
+        setTicketAckSent(true);
+      })().catch(() => {
         sentTicketReceiptAckIdsRef.current.delete(response.dmEventId);
       });
     }
@@ -1649,6 +1965,21 @@ export default function SimpleUiApp() {
   const voteSubmittedSuccessfully = submitStatus?.startsWith("Vote submitted:") ?? false;
   const voteSubmitting = submitStatus === "Submitting vote...";
   const voteTicketReady = uniqueShardResponses.length >= requiredShardCount && requiredShardCount > 0;
+  const ticketObserved = uniqueShardResponses.length > 0;
+  const ticketObservedLiveCount = uniqueShardResponses.filter((response) => (
+    Boolean(ticketObservationMetaRef.current[response.id]?.liveAt)
+  )).length;
+  const ticketObservedBackfillCount = uniqueShardResponses.filter((response) => (
+    Boolean(ticketObservationMetaRef.current[response.id]?.backfillAt)
+  )).length;
+  const ticketObservedLiveAt = uniqueShardResponses
+    .map((response) => ticketObservationMetaRef.current[response.id]?.liveAt)
+    .filter((value): value is number => typeof value === "number")
+    .sort((left, right) => left - right)[0];
+  const ticketObservedBackfillAt = uniqueShardResponses
+    .map((response) => ticketObservationMetaRef.current[response.id]?.backfillAt)
+    .filter((value): value is number => typeof value === "number")
+    .sort((left, right) => left - right)[0];
   const hasCoordinatorConnection = coordinatorDiagnostics.some((entry) => (
     entry.follow.tone === "ok"
     || entry.round.tone === "ok"
@@ -1669,6 +2000,158 @@ export default function SimpleUiApp() {
     missingActiveVoteCoordinatorIndices,
   );
 
+  useEffect(() => {
+    setTicketAckSent(false);
+    setBallotSubmitted(false);
+    setBallotAccepted(false);
+    ticketObservationMetaRef.current = {};
+    ticketLiveQueryDebugRef.current = null;
+    ticketBackfillQueryDebugRef.current = null;
+    ticketBackfillRequestDebugRef.current = {};
+    ticketLiveQueryByRequestRef.current = {};
+    ticketBackfillQueryByRequestRef.current = {};
+    ticketMailboxMismatchRef.current = {};
+  }, [effectiveLiveVoteSession?.votingId]);
+
+  useEffect(() => {
+    const owner = globalThis as typeof globalThis & {
+      __simpleVoterDebug?: unknown;
+    };
+    const roundSeen = coordinatorDiagnostics.some((entry) => entry.round.tone === "ok");
+    const blindKeySeen = coordinatorDiagnostics.some((entry) => entry.blindKey.tone === "ok");
+    const ticketBackfillByRequestId = Object.fromEntries(
+      Object.entries(ticketBackfillRequestDebugRef.current).map(([requestId, value]) => {
+        const observedByRequest = uniqueShardResponses.find((response) => response.requestId === requestId);
+        const mismatch = ticketMailboxMismatchRef.current[requestId];
+        const requestMailboxId = value.requestMailboxId ?? null;
+        const liveQuery = ticketLiveQueryByRequestRef.current[requestId];
+        const backfillQuery = ticketBackfillQueryByRequestRef.current[requestId];
+        const ticketReadMailboxId = observedByRequest?.mailboxId?.trim()
+          || liveQuery?.mailboxIds?.[0]
+          || value.ticketReadMailboxId
+          || mismatch?.observedMailboxId
+          || null;
+        const ticketBackfillMailboxId = backfillQuery?.mailboxIds?.[0]
+          || value.ticketBackfillMailboxId
+          || null;
+        const mailboxIdConsistent = Boolean(
+          requestMailboxId
+          && (ticketBackfillMailboxId ? requestMailboxId === ticketBackfillMailboxId : true)
+          && (!ticketReadMailboxId || ticketReadMailboxId === requestMailboxId),
+        );
+        const observed = uniqueShardResponses.some((response) => (
+          response.requestId === requestId
+          || (value.requestMailboxId && response.mailboxId?.trim() === value.requestMailboxId)
+        ));
+        const backfillClass = value.attemptCount <= 0
+          ? "backfill_not_triggered"
+          : value.lastResultCount <= 0
+            ? "backfill_no_events_returned"
+            : value.lastMatchedCount <= 0
+              ? "backfill_events_returned_no_match"
+              : observed
+                ? "backfill_match_found_observed"
+                : "backfill_match_found_not_reconciled";
+        return [requestId, {
+          ...value,
+          ticketReadMailboxId,
+          ticketBackfillMailboxId,
+          mailboxIdConsistent,
+          observed,
+          backfillClass,
+        }];
+      }),
+    );
+    const backfillRequestDebugRows = Object.values(ticketBackfillByRequestId);
+    const ticketBackfillAttemptCount = backfillRequestDebugRows.reduce(
+      (total, entry) => total + Number(entry.attemptCount ?? 0),
+      0,
+    );
+    const ticketBackfillLastAttemptAt = backfillRequestDebugRows
+      .map((entry) => Date.parse(entry.lastAttemptAt ?? ""))
+      .filter((value) => Number.isFinite(value))
+      .sort((left, right) => right - left)[0];
+    const ticketBackfillLastResultCount = backfillRequestDebugRows
+      .map((entry) => Number(entry.lastResultCount ?? 0))
+      .sort((left, right) => right - left)[0] ?? 0;
+    const ticketBackfillLastMatchedCount = backfillRequestDebugRows
+      .map((entry) => Number(entry.lastMatchedCount ?? 0))
+      .sort((left, right) => right - left)[0] ?? 0;
+    const ticketBackfillLastSourceRelays = Array.from(
+      new Set(backfillRequestDebugRows.flatMap((entry) => entry.lastSourceRelays ?? [])),
+    );
+    const ticketBackfillFailureClass = ticketBackfillAttemptCount <= 0
+      ? "backfill_not_triggered"
+      : ticketBackfillLastResultCount <= 0
+        ? "backfill_no_events_returned"
+        : ticketBackfillLastMatchedCount <= 0
+          ? "backfill_events_returned_no_match"
+          : ticketObserved
+            ? "backfill_match_found_observed"
+            : "backfill_match_found_not_reconciled";
+    const ticketMailboxMismatches = Object.values(ticketMailboxMismatchRef.current);
+    owner.__simpleVoterDebug = {
+      deploymentMode,
+      voterNpub: voterKeypair?.npub ?? null,
+      hasLiveRound: Boolean(effectiveLiveVoteSession),
+      selectedVotingId: effectiveLiveVoteSession?.votingId ?? null,
+      knownRoundCount: knownRounds.length,
+      roundSeen,
+      blindKeySeen,
+      ticketObserved,
+      ticketObservedLiveCount,
+      ticketObservedBackfillCount,
+      ticketObservedLiveAt: ticketObservedLiveAt ? new Date(ticketObservedLiveAt).toISOString() : null,
+      ticketObservedBackfillAt: ticketObservedBackfillAt ? new Date(ticketObservedBackfillAt).toISOString() : null,
+      ticketPendingMailboxIds: pendingTicketMailboxIds,
+      ticketLiveQuery: ticketLiveQueryDebugRef.current,
+      ticketBackfillQuery: ticketBackfillQueryDebugRef.current,
+      ticketBackfillAttemptCount,
+      ticketBackfillLastAttemptAt: Number.isFinite(ticketBackfillLastAttemptAt)
+        ? new Date(ticketBackfillLastAttemptAt).toISOString()
+        : null,
+      ticketBackfillLastResultCount,
+      ticketBackfillLastMatchedCount,
+      ticketBackfillLastSourceRelays,
+      ticketBackfillFailureClass,
+      ticketBackfillByRequestId,
+      ticketLiveMailboxIds: Array.isArray(ticketLiveQueryDebugRef.current?.mailboxIds)
+        ? ticketLiveQueryDebugRef.current.mailboxIds
+        : [],
+      ticketBackfillMailboxIds: Array.isArray(ticketBackfillQueryDebugRef.current?.mailboxIds)
+        ? ticketBackfillQueryDebugRef.current.mailboxIds
+        : [],
+      ticketMailboxMismatchCount: ticketMailboxMismatches.length,
+      ticketMailboxMismatches,
+      ticketAckSent,
+      ballotSubmitted,
+      ballotAccepted,
+      ticketReady: {
+        ready: uniqueShardResponses.length,
+        required: requiredShardCount,
+      },
+      requestStatus,
+    };
+  }, [
+    deploymentMode,
+    effectiveLiveVoteSession,
+    knownRounds.length,
+    requestStatus,
+    requiredShardCount,
+    ticketObserved,
+    ticketObservedLiveCount,
+    ticketObservedBackfillCount,
+    ticketObservedLiveAt,
+    ticketObservedBackfillAt,
+    pendingTicketMailboxIds,
+    ticketAckSent,
+    ballotSubmitted,
+    ballotAccepted,
+    voterKeypair?.npub,
+    coordinatorDiagnostics,
+    uniqueShardResponses,
+  ]);
+
   function selectTab(nextTab: VoterTab) {
     setActiveTab(nextTab);
   }
@@ -1678,6 +2161,9 @@ export default function SimpleUiApp() {
       return;
     }
 
+    const primaryResponse = uniqueShardResponses[0];
+    const ballotId = crypto.randomUUID();
+    setBallotSubmitted(true);
     setSubmitStatus("Submitting vote...");
 
     try {
@@ -1685,13 +2171,19 @@ export default function SimpleUiApp() {
       const ballotNsec = nip19.nsecEncode(ballotSecretKey);
       const result = await publishSimpleSubmittedVote({
         ballotNsec,
+        ballotId,
         votingId: effectiveLiveVoteSession.votingId,
+        requestId: primaryResponse?.requestId,
+        ticketId: primaryResponse?.id,
         choice: liveVoteChoice,
         shardCertificates: uniqueShardResponses
           .map((shard) => shard.shardCertificate)
           .filter((certificate): certificate is NonNullable<typeof certificate> => certificate !== undefined),
       });
 
+      if (result.successes > 0) {
+        setBallotAccepted(true);
+      }
       setSubmitStatus(result.successes > 0 ? `Vote submitted: ${liveVoteChoice}.` : "Vote submission failed.");
     } catch {
       setSubmitStatus("Vote submission failed.");
@@ -1953,7 +2445,9 @@ export default function SimpleUiApp() {
             role='tabpanel'
             aria-label='Vote'
           >
-            {effectiveLiveVoteSession ? (
+            <QuestionnaireVoterPanel />
+            {isCourseFeedbackMode ? null : (
+            effectiveLiveVoteSession ? (
               <>
                 {knownRounds.length > 1 ? (
                   <div className='simple-voter-round-picker'>
@@ -2062,7 +2556,7 @@ export default function SimpleUiApp() {
                       </span>
                       <span>
                         {voteTicketReady
-                          ? 'Vote ticket received'
+                          ? 'Ticket received. You can now submit your ballot.'
                           : waitingForCoordinatorKeyText}
                       </span>
                     </li>
@@ -2172,6 +2666,7 @@ export default function SimpleUiApp() {
                     : 'Add coordinators in Configure, then wait for the next live round and ticket.'}
                 </p>
               </div>
+            )
             )}
           </section>
         ) : null}

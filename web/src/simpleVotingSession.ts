@@ -17,10 +17,13 @@ export const SIMPLE_PUBLIC_RELAYS = [
   "wss://strfry.bitsbytom.com",
   "wss://nos.lol",
   "wss://relay.primal.net",
+  "wss://offchain.pub",
+  "wss://nostr.mom",
+  "wss://relay.snort.social",
+  "wss://nostr-pub.wellorder.net",
   "wss://relay.damus.io",
   "wss://nostr.mutinywallet.com",
   "wss://purplepag.es",
-  "wss://nostr.mom",
   "wss://eden.nostr.land",
 ];
 
@@ -30,8 +33,9 @@ export const SIMPLE_PUBLIC_PUBLISH_STAGGER_MS = 300;
 export const SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS = 500;
 const SIMPLE_PUBLIC_READ_RELAYS_MAX = 2;
 
-export const SIMPLE_LIVE_VOTE_KIND = 38990;
-export const SIMPLE_LIVE_VOTE_BALLOT_KIND = 38991;
+// Use regular custom event kinds so relays preserve the full transcript instead of replacing by author/d-tag.
+export const SIMPLE_LIVE_VOTE_KIND = 14090;
+export const SIMPLE_LIVE_VOTE_BALLOT_KIND = 14091;
 
 export type SimpleLiveVoteSession = {
   votingId: string;
@@ -46,11 +50,14 @@ export type SimpleLiveVoteSession = {
 
 export type SimpleSubmittedVote = {
   eventId: string;
+  ballotId?: string;
   votingId: string;
   voterNpub: string;
   choice: "Yes" | "No";
   shardProofs: SimplePublicShardProof[];
   tokenId: string | null;
+  requestId?: string;
+  ticketId?: string;
   createdAt: string;
 };
 
@@ -113,10 +120,13 @@ async function parseSimpleSubmittedVoteEvent(
 ): Promise<SimpleSubmittedVote | null> {
   try {
     const payload = JSON.parse(event.content) as {
+      ballot_id?: string;
       voting_id?: string;
       choice?: "Yes" | "No";
       shard_proofs?: SimplePublicShardProof[];
       shard_certificates?: SimpleShardCertificate[];
+      request_id?: string;
+      ticket_id?: string;
       created_at?: string;
     };
 
@@ -135,11 +145,20 @@ async function parseSimpleSubmittedVoteEvent(
 
     return {
       eventId: event.id,
+      ballotId: typeof payload.ballot_id === "string" && payload.ballot_id.trim().length > 0
+        ? payload.ballot_id.trim()
+        : event.id,
       votingId: payload.voting_id,
       voterNpub: nip19.npubEncode(event.pubkey),
       choice: payload.choice,
       shardProofs,
       tokenId: await deriveTokenIdFromSimplePublicShardProofs(shardProofs),
+      requestId: typeof payload.request_id === "string" && payload.request_id.trim().length > 0
+        ? payload.request_id.trim()
+        : undefined,
+      ticketId: typeof payload.ticket_id === "string" && payload.ticket_id.trim().length > 0
+        ? payload.ticket_id.trim()
+        : undefined,
       createdAt: new Date(event.created_at * 1000).toISOString(),
     };
   } catch {
@@ -281,6 +300,7 @@ export function subscribeLatestSimpleLiveVote(input: {
   const pool = getSharedNostrPool();
   const sessions = new Map<string, SimpleLiveVoteSession>();
   let closed = false;
+  let intervalId: number | null = null;
   let subscription: { close: (reason?: string) => Promise<void> | void } | null = null;
 
   void resolveNip65OutboxRelays({
@@ -291,6 +311,35 @@ export function subscribeLatestSimpleLiveVote(input: {
       return;
     }
     const relays = selectPublicReadRelays(resolvedRelays);
+    const publishLatest = () => {
+      input.onSession(sortByCreatedAtDescending([...sessions.values()])[0] ?? null);
+    };
+
+    const refreshFromHistory = async () => {
+      const events = await pool.querySync(relays, {
+        kinds: [SIMPLE_LIVE_VOTE_KIND],
+        authors: [coordinatorHex],
+        limit: 20,
+      });
+
+      for (const event of events) {
+        const session = parseSimpleLiveVoteEvent(event, input.coordinatorNpub);
+        if (session) {
+          sessions.set(session.eventId, session);
+        }
+      }
+
+      publishLatest();
+    };
+
+    void refreshFromHistory().catch((error) => {
+      if (!closed && error instanceof Error) {
+        input.onError?.(error);
+      }
+    });
+    intervalId = window.setInterval(() => {
+      void refreshFromHistory().catch(() => undefined);
+    }, 5000);
 
     subscription = pool.subscribeMany(relays, {
       kinds: [SIMPLE_LIVE_VOTE_KIND],
@@ -304,7 +353,7 @@ export function subscribeLatestSimpleLiveVote(input: {
         }
 
         sessions.set(session.eventId, session);
-        input.onSession(sortByCreatedAtDescending([...sessions.values()])[0] ?? null);
+        publishLatest();
       },
       onclose: (reasons) => {
         if (closed) {
@@ -326,6 +375,9 @@ export function subscribeLatestSimpleLiveVote(input: {
 
   return () => {
     closed = true;
+    if (intervalId !== null) {
+      window.clearInterval(intervalId);
+    }
     void subscription?.close("closed by caller");
   };
 }
@@ -346,6 +398,7 @@ export function subscribeSimpleLiveVotes(input: {
   const pool = getSharedNostrPool();
   const sessions = new Map<string, SimpleLiveVoteSession>();
   let closed = false;
+  let intervalId: number | null = null;
   let subscription: { close: (reason?: string) => Promise<void> | void } | null = null;
 
   void resolveNip65OutboxRelays({
@@ -356,6 +409,35 @@ export function subscribeSimpleLiveVotes(input: {
       return;
     }
     const relays = selectPublicReadRelays(resolvedRelays);
+    const publishSessions = () => {
+      input.onSessions(sortByCreatedAtDescending([...sessions.values()]));
+    };
+
+    const refreshFromHistory = async () => {
+      const events = await pool.querySync(relays, {
+        kinds: [SIMPLE_LIVE_VOTE_KIND],
+        authors: [coordinatorHex],
+        limit: 100,
+      });
+
+      for (const event of events) {
+        const session = parseSimpleLiveVoteEvent(event, input.coordinatorNpub);
+        if (session) {
+          sessions.set(session.eventId, session);
+        }
+      }
+
+      publishSessions();
+    };
+
+    void refreshFromHistory().catch((error) => {
+      if (!closed && error instanceof Error) {
+        input.onError?.(error);
+      }
+    });
+    intervalId = window.setInterval(() => {
+      void refreshFromHistory().catch(() => undefined);
+    }, 5000);
 
     subscription = pool.subscribeMany(relays, {
       kinds: [SIMPLE_LIVE_VOTE_KIND],
@@ -369,7 +451,7 @@ export function subscribeSimpleLiveVotes(input: {
         }
 
         sessions.set(session.eventId, session);
-        input.onSessions(sortByCreatedAtDescending([...sessions.values()]));
+        publishSessions();
       },
       onclose: (reasons) => {
         if (closed) {
@@ -391,6 +473,9 @@ export function subscribeSimpleLiveVotes(input: {
 
   return () => {
     closed = true;
+    if (intervalId !== null) {
+      window.clearInterval(intervalId);
+    }
     void subscription?.close("closed by caller");
   };
 }
@@ -417,6 +502,9 @@ export async function publishSimpleSubmittedVote(input: {
   votingId: string;
   choice: "Yes" | "No";
   shardCertificates: SimpleShardCertificate[];
+  ballotId?: string;
+  requestId?: string;
+  ticketId?: string;
   relays?: string[];
 }) {
   const ballotDecoded = nip19.decode(input.ballotNsec.trim());
@@ -442,6 +530,7 @@ export async function publishSimpleSubmittedVote(input: {
     channel: `nip65:${ballotNpub}`,
   }).catch(() => null);
   const createdAt = new Date().toISOString();
+  const ballotId = input.ballotId?.trim() || crypto.randomUUID();
   const shardProofs = input.shardCertificates.map((certificate) =>
     toSimplePublicShardProof(certificate),
   );
@@ -453,13 +542,19 @@ export async function publishSimpleSubmittedVote(input: {
     tags: [
       ["t", "simple-live-vote-ballot"],
       ["d", input.votingId],
+      ["ballot-id", ballotId],
+      ...(input.requestId?.trim() ? [["request-id", input.requestId.trim()]] : []),
+      ...(input.ticketId?.trim() ? [["ticket-id", input.ticketId.trim()]] : []),
       ...(tokenId ? [["token-id", tokenId]] : []),
       ...shardProofs.map((proof) => ["coordinator", proof.coordinatorNpub] as [string, string]),
     ],
     content: JSON.stringify({
+      ballot_id: ballotId,
       voting_id: input.votingId,
       choice: input.choice,
       shard_proofs: shardProofs,
+      request_id: input.requestId?.trim() || undefined,
+      ticket_id: input.ticketId?.trim() || undefined,
       created_at: createdAt,
     }),
   }, secretKey);
@@ -485,6 +580,7 @@ export async function publishSimpleSubmittedVote(input: {
 
   return {
     eventId: event.id,
+    ballotId,
     ballotNpub,
     tokenId,
     createdAt,

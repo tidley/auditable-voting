@@ -11,6 +11,12 @@ pub fn replay_transport_events(
 ) -> Result<Vec<ReplayAppliedEvent>, GroupEngineError> {
     let mut ordered = events
         .into_iter()
+        .filter(|transport| {
+            transport
+                .sender_pubkey
+                .as_deref()
+                != Some(state.local_pubkey.as_str())
+        })
         .map(|transport| {
             let envelope = group_engine.decode(&transport.raw_content)?;
             Ok(OrderedCoordinatorEvent { transport, envelope })

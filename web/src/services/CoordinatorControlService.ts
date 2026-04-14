@@ -2,7 +2,10 @@ import { nip19 } from "nostr-tools";
 import {
   CoordinatorCoreAdapter,
   type CoordinatorEngineSnapshot,
+  type CoordinatorEngineStatus,
+  type CoordinatorEngineConfig,
   type CoordinatorEngineView,
+  type CoordinatorOutboundTransportMessage,
 } from "../core/coordinatorCoreAdapter";
 import { transportEventFromNostrEvent } from "../core/coordinatorEventBridge";
 import { publishCoordinatorControl } from "../nostr/publishCoordinatorControl";
@@ -11,14 +14,39 @@ export type CoordinatorControlCache = {
   snapshot: CoordinatorEngineSnapshot;
 };
 
+export type CoordinatorControlPublishDiagnostic = {
+  eventId: string;
+  eventType: string;
+  electionId: string;
+  roundId?: string | null;
+  kind: number;
+  tags: string[][];
+  createdAt: number;
+  relayTargets: string[];
+  relaySuccessCount: number;
+  relayResults: Array<{ relay: string; success: boolean; error?: string }>;
+  localEchoApplied: boolean;
+};
+
+const COORDINATOR_CONTROL_PUBLISH_RETRY_MAX_ATTEMPTS = 3;
+const COORDINATOR_CONTROL_PUBLISH_RETRY_DELAY_MS = 1200;
+
 function sortRoster(values: string[]) {
   return [...new Set(values.filter((value) => value.trim().length > 0))].sort();
+}
+
+function delay(ms: number) {
+  return new Promise<void>((resolve) => {
+    globalThis.setTimeout(resolve, ms);
+  });
 }
 
 function snapshotMatchesInput(input: {
   electionId: string;
   localPubkey: string;
   roster: string[];
+  leadPubkey?: string | null;
+  engineKind?: CoordinatorEngineConfig["engine_kind"];
   snapshot?: CoordinatorEngineSnapshot | null;
 }) {
   if (!input.snapshot) {
@@ -30,29 +58,94 @@ function snapshotMatchesInput(input: {
 
   return input.snapshot.config.election_id === input.electionId
     && input.snapshot.config.local_pubkey === input.localPubkey
+    && (input.snapshot.config.lead_pubkey ?? null) === (input.leadPubkey ?? null)
+    && (input.snapshot.config.engine_kind ?? "deterministic") === (input.engineKind ?? "deterministic")
     && expectedRoster.length === actualRoster.length
     && expectedRoster.every((value, index) => value === actualRoster[index]);
 }
 
 export class CoordinatorControlService {
-  private constructor(private adapter: CoordinatorCoreAdapter) {}
+  private constructor(
+    private adapter: CoordinatorCoreAdapter,
+    private options: {
+      onPublished?: (diagnostic: CoordinatorControlPublishDiagnostic) => void;
+    } = {},
+  ) {}
+
+  private async publishRequiredControl(input: {
+    coordinatorNsec: string;
+    message: CoordinatorOutboundTransportMessage;
+    relays?: string[];
+  }) {
+    let lastPublish: Awaited<ReturnType<typeof publishCoordinatorControl>> | null = null;
+
+    for (
+      let attempt = 0;
+      attempt < COORDINATOR_CONTROL_PUBLISH_RETRY_MAX_ATTEMPTS;
+      attempt += 1
+    ) {
+      const published = await publishCoordinatorControl({
+        ...input,
+        onPrepared: ({ eventId }) => {
+          this.adapter.applyPublishedLocalMessage(eventId, input.message.local_echo);
+        },
+      });
+      this.options.onPublished?.({
+        eventId: published.eventId,
+        eventType: input.message.event_type,
+        electionId: input.message.election_id,
+        roundId: input.message.round_id ?? null,
+        kind: published.rawEvent.kind,
+        tags: published.rawEvent.tags,
+        createdAt: published.rawEvent.created_at,
+        relayTargets: published.relayResults.map((entry) => entry.relay),
+        relaySuccessCount: published.successes,
+        relayResults: published.relayResults,
+        localEchoApplied: true,
+      });
+      lastPublish = published;
+      if (published.successes > 0) {
+        this.adapter.applyPublishedLocalMessage(published.eventId, input.message.local_echo);
+        return published;
+      }
+
+      if (attempt + 1 < COORDINATOR_CONTROL_PUBLISH_RETRY_MAX_ATTEMPTS) {
+        await delay(
+          COORDINATOR_CONTROL_PUBLISH_RETRY_DELAY_MS * (attempt + 1),
+        );
+      }
+    }
+
+    throw new Error(
+      `Coordinator control publish failed across all relays for ${input.message.event_type}. Last result: ${
+        lastPublish ? JSON.stringify(lastPublish.relayResults) : "no publish result"
+      }`,
+    );
+  }
 
   static async create(input: {
     electionId: string;
     localPubkey: string;
     roster: string[];
+    leadPubkey?: string | null;
+    engineKind?: CoordinatorEngineConfig["engine_kind"];
     snapshot?: CoordinatorEngineSnapshot | null;
+    onPublished?: (diagnostic: CoordinatorControlPublishDiagnostic) => void;
   }) {
     const canRestore = snapshotMatchesInput(input);
     const adapter = canRestore && input.snapshot
       ? await CoordinatorCoreAdapter.restore(input.snapshot)
-      : await CoordinatorCoreAdapter.create({
+        : await CoordinatorCoreAdapter.create({
           election_id: input.electionId,
           local_pubkey: input.localPubkey,
           coordinator_roster: sortRoster(input.roster),
+          lead_pubkey: input.leadPubkey ?? null,
+          engine_kind: input.engineKind ?? "deterministic",
         });
 
-    return new CoordinatorControlService(adapter);
+    return new CoordinatorControlService(adapter, {
+      onPublished: input.onPublished,
+    });
   }
 
   snapshot(): CoordinatorControlCache {
@@ -63,9 +156,29 @@ export class CoordinatorControlService {
     return this.adapter.getState();
   }
 
-  ingestCoordinatorEvents(events: Array<{ id: string; content: string }>) {
+  getEngineStatus(): CoordinatorEngineStatus {
+    return this.adapter.getEngineStatus();
+  }
+
+  exportSupervisoryJoinPackage() {
+    return this.adapter.exportSupervisoryJoinPackage();
+  }
+
+  bootstrapSupervisoryGroup(joinPackages: string[]) {
+    return this.adapter.bootstrapSupervisoryGroup(joinPackages);
+  }
+
+  joinSupervisoryGroup(welcomeBundle: string) {
+    return this.adapter.joinSupervisoryGroup(welcomeBundle);
+  }
+
+  ingestCoordinatorEvents(events: Array<{ id: string; content: string; pubkey?: string }>) {
     return this.adapter.replayTransportMessages(
-      events.map((event) => transportEventFromNostrEvent({ id: event.id, content: event.content })),
+      events.map((event) => transportEventFromNostrEvent({
+        id: event.id,
+        content: event.content,
+        pubkey: event.pubkey ?? "",
+      })),
     );
   }
 
@@ -96,24 +209,16 @@ export class CoordinatorControlService {
       coordinator_roster: sortRoster(input.roster),
     });
 
-    const draftPublish = await publishCoordinatorControl({
+    const draftPublish = await this.publishRequiredControl({
       coordinatorNsec: input.coordinatorNsec,
       message: draft,
       relays: input.relays,
     });
-    this.adapter.applyTransportMessage({
-      event_id: draftPublish.eventId,
-      raw_content: draft.content,
-    });
 
-    const proposalPublish = await publishCoordinatorControl({
+    const proposalPublish = await this.publishRequiredControl({
       coordinatorNsec: input.coordinatorNsec,
       message: proposal,
       relays: input.relays,
-    });
-    this.adapter.applyTransportMessage({
-      event_id: proposalPublish.eventId,
-      raw_content: proposal.content,
     });
 
     const leadCommitMessage = this.adapter.commitRoundOpen({
@@ -121,14 +226,10 @@ export class CoordinatorControlService {
       proposal_event_id: proposalPublish.eventId,
       created_at: now + 2,
     });
-    const leadCommitPublish = await publishCoordinatorControl({
+    const leadCommitPublish = await this.publishRequiredControl({
       coordinatorNsec: input.coordinatorNsec,
       message: leadCommitMessage,
       relays: input.relays,
-    });
-    this.adapter.applyTransportMessage({
-      event_id: leadCommitPublish.eventId,
-      raw_content: leadCommitMessage.content,
     });
 
     return {
@@ -167,14 +268,10 @@ export class CoordinatorControlService {
       proposal_event_id: proposalEventId,
       created_at: Date.now(),
     });
-    const published = await publishCoordinatorControl({
+    const published = await this.publishRequiredControl({
       coordinatorNsec: input.coordinatorNsec,
       message: outbound,
       relays: input.relays,
-    });
-    this.adapter.applyTransportMessage({
-      event_id: published.eventId,
-      raw_content: outbound.content,
     });
     return {
       published,
@@ -202,4 +299,11 @@ export function npubsToHexRoster(values: string[]) {
       }
     })
     .filter((value): value is string => typeof value === "string" && value.length > 0);
+}
+
+export function isVoterComplete(input: {
+  ticketAckSeen: boolean;
+  ballotAccepted: boolean;
+}) {
+  return input.ticketAckSeen || input.ballotAccepted;
 }

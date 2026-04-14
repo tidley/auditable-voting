@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import SimpleCollapsibleSection from './SimpleCollapsibleSection';
+import { SIMPLE_MAILBOX_RELAYS } from './simpleMailbox';
 import { SIMPLE_DM_RELAYS } from './simpleShardDm';
 import { SIMPLE_PUBLIC_RELAYS } from './simpleVotingSession';
 
@@ -181,6 +182,7 @@ export default function SimpleRelayPanel() {
     [],
   );
   const dmRelays = useMemo(() => Array.from(new Set(SIMPLE_DM_RELAYS)), []);
+  const mailboxRelays = useMemo(() => Array.from(new Set(SIMPLE_MAILBOX_RELAYS)), []);
 
   return (
     <SimpleCollapsibleSection
@@ -196,6 +198,7 @@ export default function SimpleRelayPanel() {
       </p>
       <RelayProbeList title='Public relays' relays={publicRelays} />
       <RelayProbeList title='DM relays' relays={dmRelays} />
+      <RelayProbeList title='Mailbox relays' relays={mailboxRelays} />
     </SimpleCollapsibleSection>
   );
 }

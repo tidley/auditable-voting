@@ -2,7 +2,10 @@ import type { SimpleLiveVoteSession, SimpleSubmittedVote } from "../simpleVoting
 import {
   DerivedStateAdapter,
   type DerivedState,
+  type ProtocolDiagnostics,
   type ProtocolSnapshot,
+  type ReplayStatus,
+  type SnapshotMetadata,
 } from "../core/derivedStateAdapter";
 import {
   buildElectionDefinitionEvent,
@@ -15,6 +18,25 @@ export const SIMPLE_PUBLIC_ELECTION_ID = "simple-public-election";
 
 export type ProtocolStateCache = {
   snapshot: ProtocolSnapshot;
+};
+
+export type ProtocolReplayView = {
+  derivedState: DerivedState;
+  roundSessions: SimpleLiveVoteSession[];
+  completionByVote: Array<{
+    eventId: string;
+    roundId: string;
+    requestId?: string;
+    ticketId?: string;
+    ticketDeliveryConfirmedByAck: boolean;
+    ticketDeliveryConfirmedByBallot: boolean;
+    ticketDeliveryConfirmed: boolean;
+    waitingForAcknowledgement: boolean;
+    waitingForCompletionConfirmation: boolean;
+  }>;
+  snapshotMetadata: SnapshotMetadata;
+  replayStatus: ReplayStatus;
+  diagnostics: ProtocolDiagnostics;
 };
 
 function snapshotMatchesElection(input: {
@@ -86,11 +108,31 @@ export class ProtocolStateService {
     ];
 
     const derivedState = this.adapter.replayAll(events);
+    const completionByVote = (input.votes ?? []).map((vote) => {
+      const ticketDeliveryConfirmedByAck = false;
+      const ticketDeliveryConfirmedByBallot = true;
+      const ticketDeliveryConfirmed = ticketDeliveryConfirmedByAck || ticketDeliveryConfirmedByBallot;
+      return {
+        eventId: vote.eventId,
+        roundId: vote.votingId,
+        requestId: vote.requestId,
+        ticketId: vote.ticketId,
+        ticketDeliveryConfirmedByAck,
+        ticketDeliveryConfirmedByBallot,
+        ticketDeliveryConfirmed,
+        waitingForAcknowledgement: !ticketDeliveryConfirmedByAck,
+        waitingForCompletionConfirmation: !ticketDeliveryConfirmed,
+      };
+    });
     return {
       derivedState,
       roundSessions: sortRecordsByCreatedAtDescRust(
         derivedState.public_state.rounds.map(roundToSession),
       ),
-    };
+      completionByVote,
+      snapshotMetadata: this.adapter.getSnapshotMetadata(),
+      replayStatus: this.adapter.getReplayStatus(),
+      diagnostics: this.adapter.getDiagnostics(),
+    } satisfies ProtocolReplayView;
   }
 }

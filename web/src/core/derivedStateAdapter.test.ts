@@ -65,4 +65,48 @@ describe("DerivedStateAdapter", () => {
       expect.objectContaining({ yes_count: 1, no_count: 0, accepted_ballot_count: 1 }),
     );
   });
+
+  it("exposes snapshot metadata, replay status, and diagnostics", async () => {
+    const adapter = await DerivedStateAdapter.create("simple-public-election");
+    adapter.replayAll([
+      buildElectionDefinitionEvent({
+        electionId: "simple-public-election",
+        authorPubkey: "npub1coord",
+        title: "Auditable Voting",
+      }),
+    ]);
+
+    expect(adapter.getSnapshotMetadata()).toEqual(
+      expect.objectContaining({
+        election_id: "simple-public-election",
+        snapshot_format_version: 1,
+        protocol_schema_version: 1,
+        compatibility: "compatible",
+      }),
+    );
+    expect(adapter.getReplayStatus()).toEqual(
+      expect.objectContaining({
+        total_events: 1,
+        unique_events: 1,
+        duplicate_events: 0,
+      }),
+    );
+    expect(adapter.getDiagnostics()).toEqual(
+      expect.objectContaining({
+        accepted_ballot_count: 0,
+        rejected_ballot_count: 0,
+        snapshot_status: "compatible",
+      }),
+    );
+  });
+
+  it("rejects incompatible snapshot versions on restore", async () => {
+    const adapter = await DerivedStateAdapter.create("simple-public-election");
+    const snapshot = adapter.exportSnapshot();
+    snapshot.schema_version = 999;
+
+    await expect(DerivedStateAdapter.restore(snapshot)).rejects.toThrow(
+      /Incompatible protocol snapshot version/,
+    );
+  });
 });

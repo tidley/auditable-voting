@@ -26,6 +26,8 @@ export type RustDeliveryState = {
   status?: string | null;
   eventId?: string | null;
   responseId?: string | null;
+  priorEventIds?: string[] | null;
+  priorResponseIds?: string[] | null;
   attempts?: number | null;
   lastAttemptAt?: string | null;
 };

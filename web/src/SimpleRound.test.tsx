@@ -7,6 +7,8 @@ import { getPublicKey, nip19 } from "nostr-tools";
 import { createHash } from "node:crypto";
 import { resetSimpleActorStateForTests, saveSimpleActorState } from "./simpleLocalState";
 
+vi.setConfig({ testTimeout: 120_000 });
+
 type InternalResponse = {
   id: string;
   dmEventId: string;
@@ -58,6 +60,7 @@ let subCoordinatorApplications: Array<{
   leadCoordinatorNpub: string;
   coordinatorNpub: string;
   coordinatorId: string;
+  mlsJoinPackage?: string;
   createdAt: string;
 }> = [];
 let shareAssignments: Array<{
@@ -166,6 +169,13 @@ let dmAcknowledgementSubscribers: Array<{
     createdAt: string;
   }>) => void;
 }> = [];
+let coordinatorMlsWelcomes: Array<{
+  recipientNpub: string;
+  leadCoordinatorNpub: string;
+  electionId: string;
+  welcomeBundle: string;
+  createdAt: string;
+}> = [];
 let coordinatorRosterAnnouncements: Array<{
   recipientNpub: string;
   leadCoordinatorNpub: string;
@@ -189,6 +199,17 @@ let coordinatorRosterSubscribers: Array<{
     createdAt: string;
   }>) => void;
 }> = [];
+let coordinatorMlsWelcomeSubscribers: Array<{
+  coordinatorNpub: string;
+  onWelcomes: (welcomes: Array<{
+    id: string;
+    dmEventId: string;
+    leadCoordinatorNpub: string;
+    electionId: string;
+    welcomeBundle: string;
+    createdAt: string;
+  }>) => void;
+}> = [];
 let blindAnnouncementSubscribers: Array<{
   coordinatorNpub: string;
   votingId?: string;
@@ -206,6 +227,8 @@ let coordinatorControlSnapshots = new Map<string, {
       election_id: string;
       local_pubkey: string;
       coordinator_roster: string[];
+      lead_pubkey?: string | null;
+      engine_kind?: string;
     };
     state: Record<string, never>;
     group_engine: { engine_kind: string };
@@ -242,10 +265,27 @@ let coordinatorControlSnapshots = new Map<string, {
       result_approval_senders: string[];
     }>;
   };
+  status: {
+    engine_kind: string;
+    group_ready: boolean;
+    joined_group: boolean;
+    welcome_applied: boolean | null;
+    current_epoch: number;
+    snapshot_freshness: string;
+    public_round_visibility: string;
+    readiness: string;
+    blocked_reason: string | null;
+  };
 }>();
 let suppressedShardResponseNotifications = new Set<string>();
 let suppressedShardResponseNotificationRoutes = new Set<string>();
 let droppedTicketAttemptsByRoute = new Map<string, number>();
+let coordinatorControlPublishAttempts: Array<{
+  electionId: string;
+  localPubkey: string;
+  roundId: string;
+}> = [];
+let autoDeliverCoordinatorMlsWelcomes = true;
 const originalWebSocket = globalThis.WebSocket;
 
 function sha(input: string) {
@@ -345,6 +385,7 @@ function subCoordinatorEntriesForLead(leadCoordinatorNpub: string) {
       coordinatorNpub: entry.coordinatorNpub,
       coordinatorId: entry.coordinatorId,
       leadCoordinatorNpub: entry.leadCoordinatorNpub,
+      mlsJoinPackage: entry.mlsJoinPackage,
       createdAt: entry.createdAt,
     }));
 }
@@ -455,6 +496,32 @@ function notifyCoordinatorRosterSubscribers(recipientNpub: string) {
       subscriber.onAnnouncements(nextAnnouncements);
     }
   }
+}
+
+function coordinatorMlsWelcomeEntriesForCoordinator(coordinatorNpub: string) {
+  return coordinatorMlsWelcomes
+    .filter((entry) => entry.recipientNpub === coordinatorNpub)
+    .map((entry, index) => ({
+      id: `welcome-${index + 1}`,
+      dmEventId: `welcome-event-${index + 1}`,
+      leadCoordinatorNpub: entry.leadCoordinatorNpub,
+      electionId: entry.electionId,
+      welcomeBundle: entry.welcomeBundle,
+      createdAt: entry.createdAt,
+    }));
+}
+
+function notifyCoordinatorMlsWelcomeSubscribers(recipientNpub: string) {
+  const nextWelcomes = coordinatorMlsWelcomeEntriesForCoordinator(recipientNpub);
+  for (const subscriber of coordinatorMlsWelcomeSubscribers) {
+    if (subscriber.coordinatorNpub === recipientNpub) {
+      subscriber.onWelcomes(nextWelcomes);
+    }
+  }
+}
+
+function deliverCoordinatorMlsWelcomes(recipientNpub: string) {
+  notifyCoordinatorMlsWelcomeSubscribers(recipientNpub);
 }
 
 function notifyCoordinatorControlSubscribers(electionId: string) {
@@ -687,11 +754,13 @@ vi.mock("./simpleShardDm", () => ({
   sendSimpleSubCoordinatorJoin: vi.fn(async (input: {
     leadCoordinatorNpub: string;
     coordinatorNpub: string;
+    mlsJoinPackage?: string;
   }) => {
     subCoordinatorApplications.push({
       leadCoordinatorNpub: input.leadCoordinatorNpub,
       coordinatorNpub: input.coordinatorNpub,
       coordinatorId: sha(input.coordinatorNpub).slice(0, 7),
+      mlsJoinPackage: input.mlsJoinPackage,
       createdAt: new Date().toISOString(),
     });
     notifySubCoordinatorApplicationSubscribers(input.leadCoordinatorNpub);
@@ -717,6 +786,46 @@ vi.mock("./simpleShardDm", () => ({
     input.onApplications(subCoordinatorEntriesForLead(leadCoordinatorNpub));
     return () => {
       subCoordinatorApplicationSubscribers = subCoordinatorApplicationSubscribers.filter((entry) => entry !== subscriber);
+    };
+  }),
+  sendSimpleCoordinatorMlsWelcome: vi.fn(async (input: {
+    coordinatorNpub: string;
+    leadCoordinatorNpub: string;
+    electionId: string;
+    welcomeBundle: string;
+  }) => {
+    coordinatorMlsWelcomes.push({
+      recipientNpub: input.coordinatorNpub,
+      leadCoordinatorNpub: input.leadCoordinatorNpub,
+      electionId: input.electionId,
+      welcomeBundle: input.welcomeBundle,
+      createdAt: new Date().toISOString(),
+    });
+    if (autoDeliverCoordinatorMlsWelcomes) {
+      notifyCoordinatorMlsWelcomeSubscribers(input.coordinatorNpub);
+    }
+    return { eventId: `welcome-event-${coordinatorMlsWelcomes.length}`, successes: 1, failures: 0, relayResults: [] };
+  }),
+  subscribeSimpleCoordinatorMlsWelcomes: vi.fn((input: {
+    coordinatorNsec: string;
+    onWelcomes: (welcomes: Array<{
+      id: string;
+      dmEventId: string;
+      leadCoordinatorNpub: string;
+      electionId: string;
+      welcomeBundle: string;
+      createdAt: string;
+    }>) => void;
+  }) => {
+    const coordinatorNpub = nsecToNpub(input.coordinatorNsec);
+    const subscriber = {
+      coordinatorNpub,
+      onWelcomes: input.onWelcomes,
+    };
+    coordinatorMlsWelcomeSubscribers.push(subscriber);
+    input.onWelcomes(coordinatorMlsWelcomeEntriesForCoordinator(coordinatorNpub));
+    return () => {
+      coordinatorMlsWelcomeSubscribers = coordinatorMlsWelcomeSubscribers.filter((entry) => entry !== subscriber);
     };
   }),
   sendSimpleShareAssignment: vi.fn(async (input: {
@@ -959,6 +1068,9 @@ vi.mock("./simpleShardDm", () => ({
     const actorNpubs = [input.actorNsec, ...(input.actorNsecs ?? [])].map((value) => nsecToNpub(value) as string);
     return dmAcknowledgements.filter((ack) => actorNpubs.includes(ack.recipientNpub));
   }),
+  isDeliveryConfirmed: vi.fn((input: { ackSeen: boolean; ballotAccepted: boolean }) => (
+    Boolean(input.ackSeen || input.ballotAccepted)
+  )),
   sendSimpleCoordinatorRoster: vi.fn(async (input: {
     recipientNpub: string;
     leadCoordinatorNpub: string;
@@ -994,6 +1106,7 @@ vi.mock("./simpleShardDm", () => ({
       coordinatorRosterSubscribers = coordinatorRosterSubscribers.filter((entry) => entry !== subscriber);
     };
   }),
+  recordSimpleTicketLifecycleTrace: vi.fn(() => null),
 }));
 
 vi.mock("./simpleVotingSession", () => ({
@@ -1193,15 +1306,20 @@ vi.mock("./services/CoordinatorControlService", () => {
       private readonly electionId: string,
       private readonly localPubkey: string,
       private readonly roster: string[],
+      private readonly leadPubkey: string | null,
     ) {}
 
     static async create(input: {
       electionId: string;
       localPubkey: string;
       roster: string[];
+      leadPubkey?: string | null;
+      engineKind?: "deterministic" | "open_mls";
     }) {
       const key = `${input.electionId}:${input.localPubkey}`;
       const sortedRoster = [...new Set(input.roster.filter(Boolean))].sort();
+      const engineKind = input.engineKind ?? "deterministic";
+      const leadPubkey = input.leadPubkey ?? null;
       const existing = coordinatorControlSnapshots.get(key);
       if (!existing) {
         coordinatorControlSnapshots.set(key, {
@@ -1210,9 +1328,11 @@ vi.mock("./services/CoordinatorControlService", () => {
               election_id: input.electionId,
               local_pubkey: input.localPubkey,
               coordinator_roster: sortedRoster,
+              lead_pubkey: leadPubkey,
+              engine_kind: engineKind,
             },
             state: {},
-            group_engine: { engine_kind: "deterministic" },
+            group_engine: { engine_kind: engineKind },
           },
           state: {
             election_id: input.electionId,
@@ -1222,9 +1342,24 @@ vi.mock("./services/CoordinatorControlService", () => {
             latest_round: null,
             rounds: [],
           },
+          status: {
+            engine_kind: engineKind,
+            group_ready: engineKind === "deterministic",
+            joined_group: engineKind === "deterministic",
+            welcome_applied: engineKind === "open_mls" && leadPubkey && leadPubkey !== input.localPubkey
+              ? false
+              : null,
+            current_epoch: 0,
+            snapshot_freshness: "live",
+            public_round_visibility: "not_visible",
+            readiness: engineKind === "open_mls" ? "waiting_for_group_ready" : "no_round",
+            blocked_reason: engineKind === "open_mls"
+              ? "Waiting for supervisory group readiness."
+              : null,
+          },
         });
       }
-      return new MockCoordinatorControlService(key, input.electionId, input.localPubkey, sortedRoster);
+      return new MockCoordinatorControlService(key, input.electionId, input.localPubkey, sortedRoster, leadPubkey);
     }
 
     snapshot() {
@@ -1233,6 +1368,44 @@ vi.mock("./services/CoordinatorControlService", () => {
 
     getState() {
       return coordinatorControlSnapshots.get(this.key)!.state;
+    }
+
+    getEngineStatus() {
+      return coordinatorControlSnapshots.get(this.key)!.status;
+    }
+
+    exportSupervisoryJoinPackage() {
+      const current = coordinatorControlSnapshots.get(this.key)!;
+      if (current.status.engine_kind !== "open_mls" || current.status.group_ready) {
+        return null;
+      }
+      return `join:${this.localPubkey}`;
+    }
+
+    bootstrapSupervisoryGroup(joinPackages: string[]) {
+      const current = coordinatorControlSnapshots.get(this.key)!;
+      if (current.status.engine_kind !== "open_mls") {
+        return null;
+      }
+      current.status = {
+        ...current.status,
+        group_ready: true,
+        joined_group: true,
+        blocked_reason: null,
+      };
+      return joinPackages.length > 0 ? `welcome:${joinPackages.join(",")}` : null;
+    }
+
+    joinSupervisoryGroup() {
+      const current = coordinatorControlSnapshots.get(this.key)!;
+      current.status = {
+        ...current.status,
+        group_ready: true,
+        joined_group: true,
+        welcome_applied: true,
+        blocked_reason: null,
+      };
+      return true;
     }
 
     ingestCoordinatorEvents() {
@@ -1246,6 +1419,16 @@ vi.mock("./services/CoordinatorControlService", () => {
       thresholdN: number;
       roster: string[];
     }) {
+      const current = coordinatorControlSnapshots.get(this.key)!;
+      if (current.status.engine_kind === "open_mls" && !current.status.group_ready) {
+        throw new Error("supervisory group not ready");
+      }
+
+      coordinatorControlPublishAttempts.push({
+        electionId: this.electionId,
+        localPubkey: this.localPubkey,
+        roundId: input.roundId,
+      });
       const proposalEventId = `proposal-${++coordinatorControlRoundCounter}`;
       const round = {
         round_id: input.roundId,
@@ -1266,9 +1449,11 @@ vi.mock("./services/CoordinatorControlService", () => {
             election_id: this.electionId,
             local_pubkey: this.localPubkey,
             coordinator_roster: this.roster,
+            lead_pubkey: this.leadPubkey,
+            engine_kind: current.status.engine_kind,
           },
           state: {},
-          group_engine: { engine_kind: "deterministic" },
+          group_engine: { engine_kind: current.status.engine_kind },
         },
         state: {
           election_id: this.electionId,
@@ -1277,6 +1462,13 @@ vi.mock("./services/CoordinatorControlService", () => {
           logical_epoch: coordinatorControlRoundCounter,
           latest_round: round,
           rounds: [round],
+        },
+        status: {
+          ...current.status,
+          current_epoch: coordinatorControlRoundCounter,
+          public_round_visibility: "open",
+          readiness: "round_open",
+          blocked_reason: null,
         },
       });
       return {
@@ -1357,6 +1549,7 @@ describe("Simple round flow", () => {
     shardRequests = [];
     blindAnnouncements = {};
     dmAcknowledgements = [];
+    coordinatorMlsWelcomes = [];
     coordinatorRosterAnnouncements = [];
     coordinatorControlEventCounter = 0;
     coordinatorControlEvents = [];
@@ -1371,12 +1564,15 @@ describe("Simple round flow", () => {
     shareAssignmentSubscribers = [];
     shardRequestSubscribers = [];
     dmAcknowledgementSubscribers = [];
+    coordinatorMlsWelcomeSubscribers = [];
     coordinatorRosterSubscribers = [];
     blindAnnouncementSubscribers = [];
     coordinatorControlSubscribers = [];
     suppressedShardResponseNotifications = new Set();
     suppressedShardResponseNotificationRoutes = new Set();
     droppedTicketAttemptsByRoute = new Map();
+    coordinatorControlPublishAttempts = [];
+    autoDeliverCoordinatorMlsWelcomes = true;
     window.sessionStorage.clear();
     await resetSimpleActorStateForTests();
   });
@@ -1679,6 +1875,74 @@ describe("Simple round flow", () => {
     await waitFor(() => {
       expect(secondUi.getByText(/No coordinators added yet\./i)).toBeTruthy();
       expect(secondUi.queryByText(/Coordinator 1/i)).toBeNull();
+    });
+  });
+
+  it("waits for MLS welcome acknowledgement before publishing the first coordinated round", async () => {
+    const user = userEvent.setup();
+    const { default: SimpleCoordinatorApp } = await import("./SimpleCoordinatorApp");
+    autoDeliverCoordinatorMlsWelcomes = false;
+
+    const lead = render(<SimpleCoordinatorApp />);
+    const sub = render(<SimpleCoordinatorApp />);
+
+    const leadUi = within(lead.container);
+    const subUi = within(sub.container);
+
+    await user.click(leadUi.getByRole("button", { name: /New ID/i }));
+    await user.click(subUi.getByRole("button", { name: /New ID/i }));
+    await user.click(leadUi.getByRole("tab", { name: /^Settings$/i }));
+    await user.click(subUi.getByRole("tab", { name: /^Settings$/i }));
+
+    await waitFor(() => {
+      expect(lead.container.querySelector("code.simple-identity-code")?.textContent?.startsWith("npub1")).toBe(true);
+      expect(sub.container.querySelector("code.simple-identity-code")?.textContent?.startsWith("npub1")).toBe(true);
+    });
+
+    const leadNpub = lead.container.querySelector("code.simple-identity-code")?.textContent ?? "";
+    const subNpub = sub.container.querySelector("code.simple-identity-code")?.textContent ?? "";
+
+    expect(leadNpub.startsWith("npub1")).toBe(true);
+    expect(subNpub.startsWith("npub1")).toBe(true);
+
+    await user.click(subUi.getByRole("tab", { name: /^Configure$/i }));
+    const leadInput = await subUi.findByPlaceholderText("Leave blank if this coordinator is the lead");
+    await user.clear(leadInput);
+    await user.type(leadInput, leadNpub);
+    await user.click(subUi.getByRole("button", { name: /Notify coordinator/i }));
+
+    await waitFor(() => {
+      expect(subCoordinatorApplications).toHaveLength(1);
+      expect(subCoordinatorApplications[0]?.mlsJoinPackage).toMatch(/^join:/);
+    });
+
+    await user.click(leadUi.getByRole("tab", { name: /^Voting$/i }));
+    const questionBox = lead.container.querySelector("#simple-question-prompt") as HTMLTextAreaElement | null;
+    expect(questionBox).toBeTruthy();
+    if (!questionBox) {
+      throw new Error("Lead question textarea missing");
+    }
+    await user.clear(questionBox);
+    await user.type(questionBox, "Round 1: MLS-gated publish");
+    await user.click(leadUi.getByRole("button", { name: /Broadcast live vote/i }));
+
+    await waitFor(() => {
+      expect(coordinatorMlsWelcomes).toHaveLength(1);
+      expect(coordinatorControlPublishAttempts).toHaveLength(0);
+      expect(
+        leadUi.getByText(/Waiting for MLS welcome acknowledgements from Coordinator /i),
+      ).toBeTruthy();
+    });
+
+    deliverCoordinatorMlsWelcomes(subNpub);
+
+    await waitFor(() => {
+      expect(dmAcknowledgements.some((ack) => (
+        ack.recipientNpub === leadNpub
+        && ack.actorNpub === subNpub
+        && ack.ackedAction === "simple_mls_welcome"
+      ))).toBe(true);
+      expect(coordinatorControlPublishAttempts).toHaveLength(1);
     });
   });
 

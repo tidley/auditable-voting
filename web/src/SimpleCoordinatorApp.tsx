@@ -6,13 +6,16 @@ import {
   subscribeSimpleCoordinatorFollowers,
   subscribeSimpleDmAcknowledgements,
   subscribeSimpleCoordinatorShareAssignments,
+  subscribeSimpleCoordinatorMlsWelcomes,
   subscribeSimpleShardRequests,
   subscribeSimpleSubCoordinatorApplications,
   sendSimpleCoordinatorRoster,
+  sendSimpleCoordinatorMlsWelcome,
   sendSimpleDmAcknowledgement,
   sendSimpleShareAssignment,
   sendSimpleSubCoordinatorJoin,
   sendSimpleRoundTicket,
+  isDeliveryConfirmed,
   type SimpleDmAcknowledgement,
   type SimpleCoordinatorFollower,
   type SimpleShardRequest,
@@ -31,20 +34,30 @@ import {
   CoordinatorControlService,
   npubsToHexRoster,
   type CoordinatorControlCache,
+  type CoordinatorControlPublishDiagnostic,
 } from "./services/CoordinatorControlService";
 import {
   ProtocolStateService,
   SIMPLE_PUBLIC_ELECTION_ID,
   type ProtocolStateCache,
 } from "./services/ProtocolStateService";
-import type { CoordinatorEngineView } from "./core/coordinatorCoreAdapter";
-import { fetchCoordinatorControlEvents, subscribeCoordinatorControl } from "./nostr/subscribeCoordinatorControl";
+import type {
+  CoordinatorEngineStatus,
+  CoordinatorEngineView,
+} from "./core/coordinatorCoreAdapter";
+import { SIMPLE_COORDINATOR_CONTROL_KIND } from "./core/coordinatorEventBridge";
+import {
+  fetchCoordinatorControlEvents,
+  subscribeCoordinatorControl,
+  type CoordinatorControlReadMode,
+} from "./nostr/subscribeCoordinatorControl";
 import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
 import SimpleQrScanner from "./SimpleQrScanner";
 import SimpleRelayPanel from "./SimpleRelayPanel";
 import SimpleUnlockGate from "./SimpleUnlockGate";
 import TokenFingerprint from "./TokenFingerprint";
+import QuestionnaireCoordinatorPanel from "./QuestionnaireCoordinatorPanel";
 import { extractNpubFromScan } from "./npubScan";
 import {
   primeNip65RelayHints,
@@ -73,6 +86,7 @@ import {
 import {
   buildCoordinatorFollowerRowsRust,
   mergeSimpleFollowersRust,
+  normalizeRelaysRust,
   selectTicketRetryTargetsRust,
 } from "./wasm/auditableVotingCore";
 
@@ -92,8 +106,23 @@ type TicketRelayResult = {
 type TicketDeliveryState = {
   status: string;
   eventId?: string;
+  requestId?: string;
   responseId?: string;
+  priorEventIds?: string[];
+  priorResponseIds?: string[];
   attempts?: number;
+  resendCount?: number;
+  ticketBuiltAt?: string;
+  ticketPublishStartedAt?: string;
+  ticketPublishSucceededAt?: string;
+  ticketLastBackfillAttemptAt?: string;
+  ticketStillMissing?: boolean;
+  ticketRelayTargets?: string[];
+  ticketRelaySuccessCount?: number;
+  ticketPublishEventKind?: number;
+  ticketPublishEventCreatedAt?: number;
+  ticketPublishEventTags?: string[][];
+  ticketPublishEventContent?: string;
   lastAttemptAt?: string;
   relayResults?: TicketRelayResult[];
 };
@@ -123,7 +152,123 @@ type SimpleCoordinatorCache = {
   submittedVotes: SimpleSubmittedVote[];
 };
 
+type CoordinatorRuntimeReadiness = {
+  phase: string;
+  mlsJoinComplete: boolean;
+  welcomeAckSent: boolean;
+  initialControlBackfillComplete: boolean;
+  autoApprovalComplete: boolean;
+  roundOpenPublishSafe: boolean;
+  blindKeyPublishSafe: boolean;
+  ticketPlaneSafe: boolean;
+};
+
+type StartupRelayResult = {
+  relay: string;
+  success: boolean;
+  error?: string;
+};
+
+type StartupControlReadFilter = {
+  mode: CoordinatorControlReadMode;
+  relays: string[];
+  kinds: number[];
+  tags: string[];
+  since: number | null;
+  until: number | null;
+  limit: number;
+  startedAt: string;
+};
+
+type BlindKeyDiagnostics = {
+  blindKeyPublishAttempted: boolean;
+  blindKeyPublishStartedAt: string | null;
+  blindKeyPublishSucceeded: boolean;
+  blindKeyPublishSucceededAt: string | null;
+  blindKeyObservedBackLocally: boolean;
+  blindKeyPublishAttemptCount: number;
+  blindKeyPublishLastError: string | null;
+  blindKeyEventId: string | null;
+  blindKeyRelayTargets: string[];
+  blindKeyRelaySuccessCount: number;
+  blindKeyFailureClass:
+    | "blind_key_not_attempted"
+    | "blind_key_publish_unconfirmed"
+    | "blind_key_published_not_observed"
+    | "blind_key_published_and_observed_but_not_applied"
+    | null;
+};
+
+type CoordinatorStartupDiagnostics = {
+  mlsJoinStartedAt: string | null;
+  mlsJoinLastAttemptAt: string | null;
+  mlsJoinAttemptCount: number;
+  mlsJoinLastResult: "pending" | "joined" | "not_joined" | "failed";
+  mlsJoinResolvedAt: string | null;
+  mlsJoinPackagePublishAttemptCount: number;
+  mlsJoinPackagePublishSuccessCount: number;
+  mlsJoinPackagePublishFailureCount: number;
+  mlsJoinPackageLastPublishAt: string | null;
+  mlsJoinPackageLastRelayResults: StartupRelayResult[];
+  mlsWelcomeObservedCount: number;
+  mlsWelcomeLastObservedAt: string | null;
+  mlsWelcomePublishAttemptCount: number;
+  mlsWelcomePublishSuccessCount: number;
+  mlsWelcomePublishFailureCount: number;
+  mlsWelcomeLastPublishAt: string | null;
+  mlsWelcomeLastRelayResults: StartupRelayResult[];
+  controlCarrierFetchAttemptCount: number;
+  controlCarrierFetchLastAt: string | null;
+  controlCarrierFetchLastCount: number;
+  controlCarrierFetchLastError: string | null;
+  controlCarrierSubscriptionObservedCount: number;
+  controlCarrierSubscriptionLastObservedAt: string | null;
+  controlCarrierLastObservedEventId: string | null;
+  controlCarrierLastObservedSource: "initial_backfill" | "periodic_backfill" | "subscription" | "post_join_backfill" | null;
+  startupPublishAttempted: boolean;
+  startupPublishSucceeded: boolean;
+  startupPublishEventId: string | null;
+  startupPublishEventType: string | null;
+  startupPublishEventKind: number | null;
+  startupPublishEventTags: string[][];
+  startupPublishEventCreatedAt: number | null;
+  startupPublishRelayTargets: string[];
+  startupPublishRelaySuccessCount: number;
+  startupPublishRelayResults: StartupRelayResult[];
+  startupPublishLocalEchoApplied: boolean;
+  startupPublishProbeEventFoundByKindOnly: boolean;
+  startupLiveFilter: StartupControlReadFilter | null;
+  startupBackfillFilter: StartupControlReadFilter | null;
+  startupObservedLive: boolean;
+  startupObservedBackfill: boolean;
+  startupProbeKindOnlyCount: number;
+  startupProbeFilteredCount: number;
+  startupProbeKindElectionCount: number;
+  startupProbeKindElectionGroupCount: number;
+  startupWriteSuccessRelays: string[];
+  startupReadLiveRelays: string[];
+  startupReadBackfillRelays: string[];
+  startupRelayOverlap: string[];
+  startupRelayNoOverlap: boolean;
+  startupWriteRelayQueriedByBackfill: boolean;
+  startupForcedRecoveryAttemptCount: number;
+  startupForcedRecoveryLastAttemptAt: string | null;
+  startupForcedRecoveryLastOutcome: "pending" | "recovered" | "not_recovered" | null;
+  startupJoinFailureBucket: "publish_failure" | "observation_failure" | "state_transition_failure" | null;
+};
+
 const SIMPLE_TICKET_SEND_STAGGER_MS = 900;
+const SIMPLE_HUMAN_ACTION_JITTER_MAX_MS = 30000;
+const SIMPLE_COORDINATOR_CONTROL_BACKFILL_INTERVAL_MS = 4000;
+const SIMPLE_COORDINATOR_ROUND_OPEN_POST_WELCOME_GRACE_MS = 1200;
+const SIMPLE_COORDINATOR_ROUND_OPEN_RETRY_DELAY_MS = 5000;
+const SIMPLE_COORDINATOR_ROUND_OPEN_RETRY_MAX_ATTEMPTS = 3;
+const SIMPLE_TICKET_RETRY_MIN_AGE_MS = 10000;
+const SIMPLE_TICKET_RETRY_MAX_ATTEMPTS = 3;
+const SIMPLE_TICKET_SEND_MAX_CONCURRENCY = 3;
+const SIMPLE_TICKET_OBSERVE_RECOVERY_AGE_MS = 5000;
+const SIMPLE_COORDINATOR_STARTUP_FORCED_RECOVERY_DELAY_MS = 6000;
+const SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT = 200;
 
 function sortCoordinatorRoster(values: string[]) {
   return [...new Set(values.filter((value) => value.trim().length > 0))].sort();
@@ -131,6 +276,112 @@ function sortCoordinatorRoster(values: string[]) {
 
 function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function randomHumanActionDelayMs() {
+  const processEnv = (globalThis as typeof globalThis & {
+    process?: { env?: Record<string, string | undefined> };
+  }).process?.env;
+  if (import.meta.env.MODE === "test" || processEnv?.VITEST) {
+    return 0;
+  }
+  return Math.floor(Math.random() * SIMPLE_HUMAN_ACTION_JITTER_MAX_MS);
+}
+
+function createCoordinatorStartupDiagnostics(): CoordinatorStartupDiagnostics {
+  return {
+    mlsJoinStartedAt: null,
+    mlsJoinLastAttemptAt: null,
+    mlsJoinAttemptCount: 0,
+    mlsJoinLastResult: "pending",
+    mlsJoinResolvedAt: null,
+    mlsJoinPackagePublishAttemptCount: 0,
+    mlsJoinPackagePublishSuccessCount: 0,
+    mlsJoinPackagePublishFailureCount: 0,
+    mlsJoinPackageLastPublishAt: null,
+    mlsJoinPackageLastRelayResults: [],
+    mlsWelcomeObservedCount: 0,
+    mlsWelcomeLastObservedAt: null,
+    mlsWelcomePublishAttemptCount: 0,
+    mlsWelcomePublishSuccessCount: 0,
+    mlsWelcomePublishFailureCount: 0,
+    mlsWelcomeLastPublishAt: null,
+    mlsWelcomeLastRelayResults: [],
+    controlCarrierFetchAttemptCount: 0,
+    controlCarrierFetchLastAt: null,
+    controlCarrierFetchLastCount: 0,
+    controlCarrierFetchLastError: null,
+    controlCarrierSubscriptionObservedCount: 0,
+    controlCarrierSubscriptionLastObservedAt: null,
+    controlCarrierLastObservedEventId: null,
+    controlCarrierLastObservedSource: null,
+    startupPublishAttempted: false,
+    startupPublishSucceeded: false,
+    startupPublishEventId: null,
+    startupPublishEventType: null,
+    startupPublishEventKind: null,
+    startupPublishEventTags: [],
+    startupPublishEventCreatedAt: null,
+    startupPublishRelayTargets: [],
+    startupPublishRelaySuccessCount: 0,
+    startupPublishRelayResults: [],
+    startupPublishLocalEchoApplied: false,
+    startupPublishProbeEventFoundByKindOnly: false,
+    startupLiveFilter: null,
+    startupBackfillFilter: null,
+    startupObservedLive: false,
+    startupObservedBackfill: false,
+    startupProbeKindOnlyCount: 0,
+    startupProbeFilteredCount: 0,
+    startupProbeKindElectionCount: 0,
+    startupProbeKindElectionGroupCount: 0,
+    startupWriteSuccessRelays: [],
+    startupReadLiveRelays: [],
+    startupReadBackfillRelays: [],
+    startupRelayOverlap: [],
+    startupRelayNoOverlap: true,
+    startupWriteRelayQueriedByBackfill: false,
+    startupForcedRecoveryAttemptCount: 0,
+    startupForcedRecoveryLastAttemptAt: null,
+    startupForcedRecoveryLastOutcome: null,
+    startupJoinFailureBucket: null,
+  };
+}
+
+function createBlindKeyDiagnostics(): BlindKeyDiagnostics {
+  return {
+    blindKeyPublishAttempted: false,
+    blindKeyPublishStartedAt: null,
+    blindKeyPublishSucceeded: false,
+    blindKeyPublishSucceededAt: null,
+    blindKeyObservedBackLocally: false,
+    blindKeyPublishAttemptCount: 0,
+    blindKeyPublishLastError: null,
+    blindKeyEventId: null,
+    blindKeyRelayTargets: [],
+    blindKeyRelaySuccessCount: 0,
+    blindKeyFailureClass: null,
+  };
+}
+
+function readRuntimeIntOverride(name: string, fallback: number) {
+  const processEnv = (globalThis as typeof globalThis & {
+    process?: { env?: Record<string, string | undefined> };
+  }).process?.env ?? {};
+  const importMetaEnv = ((import.meta as unknown as { env?: Record<string, string | undefined> }).env) ?? {};
+  const candidates = [
+    importMetaEnv[`VITE_${name}`],
+    importMetaEnv[name],
+    processEnv[`VITE_${name}`],
+    processEnv[name],
+  ];
+  for (const candidate of candidates) {
+    const parsed = Number.parseInt(candidate ?? "", 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return fallback;
 }
 
 function normalizeLiveVoteSession(
@@ -182,6 +433,27 @@ function formatRelayHost(relay: string) {
   return relay.replace(/^wss?:\/\//, '').replace(/\/$/, '');
 }
 
+function uniqueRelays(values: string[]) {
+  return [...new Set(values.filter((value) => value.trim().length > 0))];
+}
+
+function reconcileStartupRelayDiagnostics(current: CoordinatorStartupDiagnostics) {
+  const writeSuccessRelays = uniqueRelays(current.startupWriteSuccessRelays);
+  const liveRelays = uniqueRelays(current.startupReadLiveRelays);
+  const backfillRelays = uniqueRelays(current.startupReadBackfillRelays);
+  const readRelays = uniqueRelays([...liveRelays, ...backfillRelays]);
+  const overlap = writeSuccessRelays.filter((relay) => readRelays.includes(relay));
+  const backfillOverlap = writeSuccessRelays.some((relay) => backfillRelays.includes(relay));
+  return {
+    startupWriteSuccessRelays: writeSuccessRelays,
+    startupReadLiveRelays: liveRelays,
+    startupReadBackfillRelays: backfillRelays,
+    startupRelayOverlap: overlap,
+    startupRelayNoOverlap: writeSuccessRelays.length > 0 && overlap.length === 0,
+    startupWriteRelayQueriedByBackfill: backfillOverlap,
+  } satisfies Partial<CoordinatorStartupDiagnostics>;
+}
+
 function deliveryToneClass(tone: string) {
   return tone === "error"
     ? "simple-delivery-error"
@@ -190,9 +462,22 @@ function deliveryToneClass(tone: string) {
       : "simple-delivery-waiting";
 }
 
-function formatCoordinatorControlStateLabel(view: CoordinatorEngineView | null) {
+function formatCoordinatorControlStateLabel(
+  view: CoordinatorEngineView | null,
+  status?: CoordinatorEngineStatus | null,
+) {
+  if (status?.blocked_reason) {
+    const latestRoundId = view?.latest_round?.round_id;
+    return latestRoundId
+      ? `${status.blocked_reason.replace(/\.$/, "")} for ${shortVotingId(latestRoundId)}.`
+      : status.blocked_reason;
+  }
+
   const latestRound = view?.latest_round ?? null;
   if (!latestRound) {
+    if (status?.engine_kind === "open_mls" && !status.group_ready) {
+      return "Waiting for supervisory group readiness.";
+    }
     return null;
   }
 
@@ -247,6 +532,17 @@ function buildShareAssignmentSignature(
   ].join('|');
 }
 
+function formatCoordinatorList(values: string[]) {
+  const labels = values.map((npub) => `Coordinator ${deriveActorDisplayId(npub)}`);
+  if (labels.length <= 1) {
+    return labels[0] ?? "Coordinator";
+  }
+  if (labels.length === 2) {
+    return `${labels[0]} and ${labels[1]}`;
+  }
+  return `${labels.slice(0, -1).join(", ")}, and ${labels.at(-1)}`;
+}
+
 export default function SimpleCoordinatorApp() {
   const [keypair, setKeypair] = useState<SimpleCoordinatorKeypair | null>(null);
   const [identityReady, setIdentityReady] = useState(false);
@@ -282,6 +578,10 @@ export default function SimpleCoordinatorApp() {
   const [derivedPublicRounds, setDerivedPublicRounds] = useState<SimpleLiveVoteSession[]>([]);
   const [coordinatorControlView, setCoordinatorControlView] = useState<CoordinatorEngineView | null>(null);
   const [coordinatorControlStateLabel, setCoordinatorControlStateLabel] = useState<string | null>(null);
+  const [blindKeyDiagnosticsVersion, setBlindKeyDiagnosticsVersion] = useState(0);
+  const [initialControlBackfillComplete, setInitialControlBackfillComplete] = useState(false);
+  const [autoApprovalComplete, setAutoApprovalComplete] = useState(false);
+  const [welcomeAckSent, setWelcomeAckSent] = useState(false);
   const [publishedVotes, setPublishedVotes] = useState<SimpleLiveVoteSession[]>([]);
   const [selectedVotingId, setSelectedVotingId] = useState("");
   const [selectedSubmittedVotingId, setSelectedSubmittedVotingId] =
@@ -295,12 +595,33 @@ export default function SimpleCoordinatorApp() {
     setLastSuccessfulShareAssignmentSignature,
   ] = useState('');
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const ticketRetryMinAgeMs = useMemo(
+    () => readRuntimeIntOverride("SIMPLE_TICKET_RETRY_AGE_MS", SIMPLE_TICKET_RETRY_MIN_AGE_MS),
+    [],
+  );
+  const ticketRetryMaxAttempts = useMemo(
+    () => readRuntimeIntOverride("SIMPLE_TICKET_RETRY_MAX_ATTEMPTS", SIMPLE_TICKET_RETRY_MAX_ATTEMPTS),
+    [],
+  );
+  const ticketSendMaxConcurrency = useMemo(
+    () => readRuntimeIntOverride("SIMPLE_TICKET_SEND_MAX_CONCURRENCY", SIMPLE_TICKET_SEND_MAX_CONCURRENCY),
+    [],
+  );
+  const ticketObserveRecoveryAgeMs = useMemo(
+    () => readRuntimeIntOverride("SIMPLE_TICKET_OBSERVE_RECOVERY_AGE_MS", SIMPLE_TICKET_OBSERVE_RECOVERY_AGE_MS),
+    [],
+  );
   const blindKeyRepublishAtRef = useRef<Record<string, number>>({});
   const autoSendInFlightRef = useRef<Set<string>>(new Set());
   const autoShareAssignmentAttemptRef = useRef('');
   const coordinatorControlServiceRef = useRef<CoordinatorControlService | null>(null);
   const protocolStateServiceRef = useRef<ProtocolStateService | null>(null);
   const roundBroadcastInFlightRef = useRef<string | null>(null);
+  const pendingRoundOpenAttemptRef = useRef(false);
+  const roundOpenRetryAttemptsRef = useRef<Record<string, number>>({});
+  const identityHydrationEpochRef = useRef(0);
+  const sentMlsWelcomeEventIdsRef = useRef<Record<string, string>>({});
+  const sentMlsWelcomeAckIdsRef = useRef<Set<string>>(new Set());
   const verifyAllVisibleRef = useRef<HTMLInputElement | null>(null);
   const isLeadCoordinator = !leadCoordinatorNpub.trim() || leadCoordinatorNpub.trim() === (keypair?.npub ?? "");
   const canShowNotifyLeadButton = Boolean(
@@ -323,9 +644,19 @@ export default function SimpleCoordinatorApp() {
     () => npubsToHexRoster(coordinatorRoster),
     [coordinatorRoster],
   );
+  const singleCoordinatorMode = coordinatorHexRoster.length === 1;
+  const coordinatorRuntimeEngineKind = singleCoordinatorMode ? "deterministic" : "open_mls";
+  const coordinatorHexRosterSignature = useMemo(
+    () => coordinatorHexRoster.join("|"),
+    [coordinatorHexRoster],
+  );
   const localCoordinatorHexPubkey = useMemo(
     () => npubsToHexRoster(keypair?.npub ? [keypair.npub] : [])[0] ?? "",
     [keypair?.npub],
+  );
+  const leadCoordinatorHexPubkey = useMemo(
+    () => npubsToHexRoster(leadCoordinatorNpub.trim() ? [leadCoordinatorNpub.trim()] : [])[0] ?? "",
+    [leadCoordinatorNpub],
   );
   const coordinatorElectionId = useMemo(
     () => keypair?.npub
@@ -364,12 +695,530 @@ export default function SimpleCoordinatorApp() {
   const sentRequestAckIdsRef = useRef<Set<string>>(new Set());
   const sentSubCoordinatorAckIdsRef = useRef<Set<string>>(new Set());
   const sentAssignmentAckIdsRef = useRef<Set<string>>(new Set());
+  const sentMlsWelcomeStateRef = useRef<Record<string, string>>({});
+  const seenMlsWelcomeIdsRef = useRef<Set<string>>(new Set());
+  const mlsBootstrapInFlightRef = useRef(false);
+  const singleCoordinatorBootstrapAttemptRef = useRef("");
+  const startupDiagnosticsRef = useRef<CoordinatorStartupDiagnostics>(createCoordinatorStartupDiagnostics());
+  const blindKeyDiagnosticsRef = useRef<BlindKeyDiagnostics>(createBlindKeyDiagnostics());
+  const startupJoinPendingSinceRef = useRef<number | null>(null);
+  const startupForcedRecoveryInFlightRef = useRef(false);
+  const startupForcedRecoveryAttemptedRef = useRef(false);
+  const latestCoordinatorHexRosterRef = useRef<string[]>([]);
+  const latestCoordinatorElectionIdRef = useRef("");
+
+  useEffect(() => {
+    latestCoordinatorHexRosterRef.current = coordinatorHexRoster;
+    latestCoordinatorElectionIdRef.current = coordinatorElectionId;
+  }, [coordinatorElectionId, coordinatorHexRoster]);
+
+  function updateStartupDiagnostics(
+    update:
+      | Partial<CoordinatorStartupDiagnostics>
+      | ((current: CoordinatorStartupDiagnostics) => Partial<CoordinatorStartupDiagnostics>),
+  ) {
+    const current = startupDiagnosticsRef.current;
+    const patch = typeof update === "function" ? update(current) : update;
+    startupDiagnosticsRef.current = {
+      ...current,
+      ...patch,
+    };
+  }
+
+  function updateBlindKeyDiagnostics(
+    update:
+      | Partial<BlindKeyDiagnostics>
+      | ((current: BlindKeyDiagnostics) => Partial<BlindKeyDiagnostics>),
+  ) {
+    const current = blindKeyDiagnosticsRef.current;
+    const patch = typeof update === "function" ? update(current) : update;
+    blindKeyDiagnosticsRef.current = {
+      ...current,
+      ...patch,
+    };
+    setBlindKeyDiagnosticsVersion((value) => value + 1);
+  }
+
+  function recordStartupPublishDiagnostic(diagnostic: CoordinatorControlPublishDiagnostic) {
+    const successfulRelays = diagnostic.relayResults
+      .filter((entry) => entry.success)
+      .map((entry) => entry.relay);
+    updateStartupDiagnostics((current) => {
+      const next = {
+        ...current,
+        startupPublishAttempted: true,
+        startupPublishSucceeded: current.startupPublishSucceeded || diagnostic.relaySuccessCount > 0,
+        startupPublishEventId: diagnostic.eventId,
+        startupPublishEventType: diagnostic.eventType,
+        startupPublishEventKind: diagnostic.kind,
+        startupPublishEventTags: diagnostic.tags,
+        startupPublishEventCreatedAt: diagnostic.createdAt,
+        startupPublishRelayTargets: diagnostic.relayTargets,
+        startupPublishRelaySuccessCount: diagnostic.relaySuccessCount,
+        startupPublishRelayResults: diagnostic.relayResults.map((entry) => ({
+          relay: entry.relay,
+          success: entry.success,
+          error: entry.error,
+        })),
+        startupPublishLocalEchoApplied: diagnostic.localEchoApplied,
+        startupWriteSuccessRelays: uniqueRelays([
+          ...current.startupWriteSuccessRelays,
+          ...successfulRelays,
+        ]),
+      } satisfies CoordinatorStartupDiagnostics;
+      return {
+        ...next,
+        ...reconcileStartupRelayDiagnostics(next),
+      };
+    });
+
+    void (async () => {
+      try {
+        const kindOnlyEvents = await fetchCoordinatorControlEvents({
+          electionId: diagnostic.electionId,
+          coordinatorHexPubkeys: latestCoordinatorHexRosterRef.current,
+          mode: "kind_only",
+          limit: SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT,
+        });
+        updateStartupDiagnostics({
+          startupPublishProbeEventFoundByKindOnly: kindOnlyEvents.some((event) => event.id === diagnostic.eventId),
+        });
+      } catch {
+        updateStartupDiagnostics({
+          startupPublishProbeEventFoundByKindOnly: false,
+        });
+      }
+    })();
+  }
+
+  function getOutstandingMlsWelcomeAckNpubs() {
+    if (!isLeadCoordinator) {
+      return [];
+    }
+
+    const expectedSubCoordinators = subCoordinators.filter(
+      (application) => application.mlsJoinPackage?.trim(),
+    );
+
+    return expectedSubCoordinators
+      .map((application) => application.coordinatorNpub)
+      .filter((coordinatorNpub) => {
+        const welcomeEventId = sentMlsWelcomeEventIdsRef.current[coordinatorNpub];
+        if (!welcomeEventId) {
+          return true;
+        }
+
+        return !dmAcknowledgements.some((ack) => (
+          ack.actorNpub === coordinatorNpub
+          && ack.ackedAction === "simple_mls_welcome"
+          && ack.ackedEventId === welcomeEventId
+        ));
+      });
+  }
+
+  const coordinatorEngineStatus =
+    coordinatorControlServiceRef.current?.getEngineStatus() ?? null;
+  const coordinatorRuntimeReadiness = useMemo<CoordinatorRuntimeReadiness | null>(() => {
+    if (!coordinatorEngineStatus) {
+      return null;
+    }
+
+    const mlsJoinComplete =
+      coordinatorEngineStatus.engine_kind !== "open_mls"
+      || singleCoordinatorMode
+      || coordinatorEngineStatus.joined_group;
+    const welcomeAckSatisfied =
+      coordinatorEngineStatus.engine_kind !== "open_mls"
+        || singleCoordinatorMode
+        ? true
+        : isLeadCoordinator
+          ? getOutstandingMlsWelcomeAckNpubs().length === 0
+          : welcomeAckSent;
+    const roundOpenPublishSafe =
+      mlsJoinComplete
+      && welcomeAckSatisfied
+      && initialControlBackfillComplete
+      && autoApprovalComplete;
+    const blindKeyPublishSafe =
+      roundOpenPublishSafe
+      && ["open", "tallied", "published", "disputed"].includes(
+        coordinatorEngineStatus.public_round_visibility,
+      );
+    const ticketPlaneSafe =
+      blindKeyPublishSafe
+      && (!activeVotingId || Boolean(activeBlindKeyAnnouncement));
+
+    let phase = "ticket_plane_safe";
+    if (!mlsJoinComplete) {
+      phase = "mls_join_pending";
+    } else if (!welcomeAckSatisfied) {
+      phase = "welcome_ack_pending";
+    } else if (!initialControlBackfillComplete) {
+      phase = "initial_control_backfill_pending";
+    } else if (!autoApprovalComplete) {
+      phase = "auto_approval_pending";
+    } else if (!roundOpenPublishSafe) {
+      phase = "round_open_publish_pending";
+    } else if (!blindKeyPublishSafe) {
+      phase = "blind_key_publish_pending";
+    } else if (!ticketPlaneSafe) {
+      phase = "ticket_plane_pending";
+    }
+
+    return {
+      phase,
+      mlsJoinComplete,
+      welcomeAckSent: welcomeAckSatisfied,
+      initialControlBackfillComplete,
+      autoApprovalComplete,
+      roundOpenPublishSafe,
+      blindKeyPublishSafe,
+      ticketPlaneSafe,
+    };
+  }, [
+    activeBlindKeyAnnouncement,
+    activeVotingId,
+    autoApprovalComplete,
+    coordinatorEngineStatus,
+    initialControlBackfillComplete,
+    isLeadCoordinator,
+    singleCoordinatorMode,
+    welcomeAckSent,
+    subCoordinators,
+    dmAcknowledgements,
+  ]);
+
+  useEffect(() => {
+    if (singleCoordinatorMode) {
+      startupJoinPendingSinceRef.current = null;
+      return;
+    }
+    if (!coordinatorRuntimeReadiness) {
+      startupJoinPendingSinceRef.current = null;
+      return;
+    }
+    if (coordinatorRuntimeReadiness.phase === "mls_join_pending") {
+      startupJoinPendingSinceRef.current = startupJoinPendingSinceRef.current ?? Date.now();
+      updateStartupDiagnostics((current) => ({
+        mlsJoinStartedAt: current.mlsJoinStartedAt ?? new Date().toISOString(),
+      }));
+      return;
+    }
+    startupJoinPendingSinceRef.current = null;
+  }, [coordinatorRuntimeReadiness, singleCoordinatorMode]);
+
+  useEffect(() => {
+    if (!singleCoordinatorMode || !isLeadCoordinator || !keypair?.nsec) {
+      return;
+    }
+    if (!initialControlBackfillComplete) {
+      return;
+    }
+    const service = coordinatorControlServiceRef.current;
+    if (!service) {
+      return;
+    }
+    const status = service.getEngineStatus();
+    if (status.engine_kind !== "open_mls" || status.group_ready || mlsBootstrapInFlightRef.current) {
+      return;
+    }
+    const attemptKey = `${coordinatorElectionId}:${coordinatorHexRosterSignature}`;
+    if (singleCoordinatorBootstrapAttemptRef.current === attemptKey) {
+      return;
+    }
+    singleCoordinatorBootstrapAttemptRef.current = attemptKey;
+    void ensureCoordinatorControlGroupReady();
+  }, [
+    coordinatorElectionId,
+    coordinatorHexRosterSignature,
+    initialControlBackfillComplete,
+    isLeadCoordinator,
+    keypair?.nsec,
+    singleCoordinatorMode,
+  ]);
+
+  useEffect(() => {
+    if (singleCoordinatorMode) {
+      updateStartupDiagnostics({
+        startupJoinFailureBucket: null,
+        startupPublishAttempted: false,
+        startupPublishSucceeded: false,
+        startupObservedLive: true,
+        startupObservedBackfill: false,
+        controlCarrierFetchAttemptCount: 0,
+        controlCarrierFetchLastCount: 0,
+      });
+      return;
+    }
+    if (!coordinatorEngineStatus || coordinatorEngineStatus.engine_kind !== "open_mls") {
+      return;
+    }
+    if (coordinatorEngineStatus.joined_group || coordinatorEngineStatus.group_ready) {
+      updateStartupDiagnostics({
+        mlsJoinResolvedAt: startupDiagnosticsRef.current.mlsJoinResolvedAt ?? new Date().toISOString(),
+        mlsJoinLastResult: "joined",
+        startupJoinFailureBucket: null,
+      });
+      return;
+    }
+
+    if (coordinatorRuntimeReadiness?.phase !== "mls_join_pending") {
+      updateStartupDiagnostics({
+        startupJoinFailureBucket: null,
+      });
+      return;
+    }
+
+    const current = startupDiagnosticsRef.current;
+    let bucket: CoordinatorStartupDiagnostics["startupJoinFailureBucket"] = null;
+
+    if (isLeadCoordinator) {
+      if (
+        current.mlsWelcomePublishAttemptCount > 0
+        && current.mlsWelcomePublishSuccessCount === 0
+      ) {
+        bucket = "publish_failure";
+      } else if (
+        current.mlsWelcomePublishSuccessCount > 0
+        && current.controlCarrierSubscriptionObservedCount === 0
+        && current.controlCarrierFetchLastCount === 0
+      ) {
+        bucket = "observation_failure";
+      } else if (
+        current.mlsWelcomePublishSuccessCount > 0
+        && (current.controlCarrierSubscriptionObservedCount > 0 || current.controlCarrierFetchLastCount > 0)
+      ) {
+        bucket = "state_transition_failure";
+      }
+    } else if (
+      current.mlsJoinPackagePublishAttemptCount > 0
+      && current.mlsJoinPackagePublishSuccessCount === 0
+    ) {
+      bucket = "publish_failure";
+    } else if (
+      current.mlsWelcomeObservedCount === 0
+      && current.mlsJoinAttemptCount === 0
+    ) {
+      bucket = "observation_failure";
+    } else if (
+      current.mlsWelcomeObservedCount > 0
+      || current.mlsJoinAttemptCount > 0
+    ) {
+      bucket = "state_transition_failure";
+    }
+
+    if (!bucket) {
+      if (
+        current.controlCarrierFetchAttemptCount > 0
+        && current.controlCarrierFetchLastCount === 0
+        && current.controlCarrierSubscriptionObservedCount === 0
+      ) {
+        bucket = "observation_failure";
+      } else if (
+        current.mlsJoinAttemptCount > 0
+        || current.controlCarrierFetchLastCount > 0
+        || current.controlCarrierSubscriptionObservedCount > 0
+      ) {
+        bucket = "state_transition_failure";
+      } else {
+        bucket = "publish_failure";
+      }
+    }
+
+    updateStartupDiagnostics({
+      startupJoinFailureBucket: bucket,
+    });
+  }, [coordinatorEngineStatus, coordinatorRuntimeReadiness?.phase, isLeadCoordinator, singleCoordinatorMode]);
+
+  useEffect(() => {
+    const current = blindKeyDiagnosticsRef.current;
+    let blindKeyFailureClass: BlindKeyDiagnostics["blindKeyFailureClass"] = null;
+    if (coordinatorRuntimeReadiness?.phase === "blind_key_publish_pending") {
+      if (!current.blindKeyPublishAttempted) {
+        blindKeyFailureClass = "blind_key_not_attempted";
+      } else if (!current.blindKeyPublishSucceeded) {
+        blindKeyFailureClass = "blind_key_publish_unconfirmed";
+      } else if (!current.blindKeyObservedBackLocally) {
+        blindKeyFailureClass = "blind_key_published_not_observed";
+      } else {
+        blindKeyFailureClass = "blind_key_published_and_observed_but_not_applied";
+      }
+    }
+    updateBlindKeyDiagnostics({
+      blindKeyFailureClass,
+    });
+  }, [coordinatorRuntimeReadiness?.phase, activeBlindKeyAnnouncement?.event.id]);
+
+  useEffect(() => {
+    if (singleCoordinatorMode) {
+      startupForcedRecoveryAttemptedRef.current = false;
+      startupForcedRecoveryInFlightRef.current = false;
+      return;
+    }
+    if (
+      !coordinatorRuntimeReadiness
+      || coordinatorRuntimeReadiness.phase !== "mls_join_pending"
+      || !coordinatorEngineStatus
+      || coordinatorEngineStatus.engine_kind !== "open_mls"
+      || coordinatorEngineStatus.group_ready
+      || coordinatorEngineStatus.joined_group
+    ) {
+      startupForcedRecoveryAttemptedRef.current = false;
+      startupForcedRecoveryInFlightRef.current = false;
+      return;
+    }
+    if (startupForcedRecoveryAttemptedRef.current || startupForcedRecoveryInFlightRef.current) {
+      return;
+    }
+    const pendingSince = startupJoinPendingSinceRef.current;
+    if (!pendingSince || Date.now() - pendingSince < SIMPLE_COORDINATOR_STARTUP_FORCED_RECOVERY_DELAY_MS) {
+      return;
+    }
+
+    const service = coordinatorControlServiceRef.current;
+    if (!service) {
+      return;
+    }
+
+    startupForcedRecoveryAttemptedRef.current = true;
+    startupForcedRecoveryInFlightRef.current = true;
+
+    void (async () => {
+      const startupReadRelays = normalizeRelaysRust([...SIMPLE_PUBLIC_RELAYS]).slice(0, 3);
+      const since = Math.floor(pendingSince / 1000);
+      updateStartupDiagnostics((current) => {
+        const next = {
+          ...current,
+          startupForcedRecoveryAttemptCount: current.startupForcedRecoveryAttemptCount + 1,
+          startupForcedRecoveryLastAttemptAt: new Date().toISOString(),
+          startupForcedRecoveryLastOutcome: "pending",
+          startupBackfillFilter: {
+            mode: "kind_election_group",
+            relays: startupReadRelays,
+            kinds: [SIMPLE_COORDINATOR_CONTROL_KIND],
+            tags: ["election", "group"],
+            since,
+            until: null,
+            limit: SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT,
+            startedAt: new Date().toISOString(),
+          },
+          startupReadBackfillRelays: startupReadRelays,
+        } as CoordinatorStartupDiagnostics;
+        return {
+          ...next,
+          ...reconcileStartupRelayDiagnostics(next),
+        };
+      });
+      try {
+        updateStartupDiagnostics((current) => ({
+          controlCarrierFetchAttemptCount: current.controlCarrierFetchAttemptCount + 1,
+          controlCarrierFetchLastAt: new Date().toISOString(),
+          controlCarrierFetchLastError: null,
+        }));
+
+        const precise = await fetchCoordinatorControlEvents({
+          electionId: coordinatorElectionId,
+          coordinatorHexPubkeys: coordinatorHexRoster,
+          mode: "kind_election_group",
+          limit: SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT,
+          since,
+        });
+        let events = precise;
+        let kindOnlyCount = 0;
+        let kindElectionCount = 0;
+        let kindElectionGroupCount = precise.length;
+        if (events.length === 0) {
+          const kindOnly = await fetchCoordinatorControlEvents({
+            electionId: coordinatorElectionId,
+            coordinatorHexPubkeys: coordinatorHexRoster,
+            mode: "kind_only",
+            limit: SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT,
+            since,
+          });
+          const kindElection = await fetchCoordinatorControlEvents({
+            electionId: coordinatorElectionId,
+            coordinatorHexPubkeys: coordinatorHexRoster,
+            mode: "kind_election",
+            limit: SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT,
+            since,
+          });
+          const kindElectionGroup = await fetchCoordinatorControlEvents({
+            electionId: coordinatorElectionId,
+            coordinatorHexPubkeys: coordinatorHexRoster,
+            mode: "kind_election_group",
+            limit: SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT,
+            since,
+          });
+          kindOnlyCount = kindOnly.length;
+          kindElectionCount = kindElection.length;
+          kindElectionGroupCount = kindElectionGroup.length;
+          events = kindElectionGroup.length > 0
+            ? kindElectionGroup
+            : kindElection.length > 0
+              ? kindElection
+              : kindOnly;
+        }
+
+        updateStartupDiagnostics((current) => {
+          const next = {
+            ...current,
+            controlCarrierFetchLastCount: events.length,
+            controlCarrierFetchLastError: null,
+            startupProbeKindOnlyCount: kindOnlyCount,
+            startupProbeKindElectionCount: kindElectionCount,
+            startupProbeKindElectionGroupCount: kindElectionGroupCount,
+            startupProbeFilteredCount: kindElectionGroupCount,
+            startupObservedBackfill: current.startupObservedBackfill || events.length > 0,
+          } satisfies CoordinatorStartupDiagnostics;
+          return {
+            ...next,
+            ...reconcileStartupRelayDiagnostics(next),
+          };
+        });
+
+        if (events.length > 0) {
+          service.ingestCoordinatorEvents(events);
+          updateStartupDiagnostics((current) => ({
+            controlCarrierSubscriptionObservedCount: current.controlCarrierSubscriptionObservedCount + events.length,
+            controlCarrierSubscriptionLastObservedAt: new Date().toISOString(),
+            controlCarrierLastObservedEventId: events[events.length - 1]?.id ?? current.controlCarrierLastObservedEventId,
+            controlCarrierLastObservedSource: "periodic_backfill",
+            startupObservedBackfill: true,
+          }));
+        }
+
+        setCoordinatorControlCache(service.snapshot());
+        setCoordinatorControlView(service.getState());
+        setCoordinatorControlStateLabel(
+          formatCoordinatorControlStateLabel(service.getState(), service.getEngineStatus()),
+        );
+        updateStartupDiagnostics({
+          startupForcedRecoveryLastOutcome: service.getEngineStatus().group_ready ? "recovered" : "not_recovered",
+        });
+      } catch (error) {
+        updateStartupDiagnostics({
+          controlCarrierFetchLastCount: 0,
+          controlCarrierFetchLastError: error instanceof Error ? error.message : String(error),
+          startupForcedRecoveryLastOutcome: "not_recovered",
+        });
+      } finally {
+        startupForcedRecoveryInFlightRef.current = false;
+      }
+    })();
+  }, [
+    coordinatorElectionId,
+    coordinatorEngineStatus,
+    coordinatorHexRoster,
+    coordinatorRuntimeReadiness,
+    singleCoordinatorMode,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
+    const hydrationEpoch = identityHydrationEpochRef.current;
 
     void loadSimpleActorState("coordinator").then((storedState) => {
-      if (cancelled) {
+      if (cancelled || hydrationEpoch !== identityHydrationEpochRef.current) {
         return;
       }
 
@@ -454,7 +1303,7 @@ export default function SimpleCoordinatorApp() {
       setStorageLocked(false);
       setIdentityReady(true);
     }).catch(async (error) => {
-      if (cancelled) {
+      if (cancelled || hydrationEpoch !== identityHydrationEpochRef.current) {
         return;
       }
 
@@ -556,20 +1405,41 @@ export default function SimpleCoordinatorApp() {
   useEffect(() => {
     let cancelled = false;
     let cleanup = () => {};
+    let backfillHandle: number | null = null;
+    let backfillInFlight = false;
 
     async function setupCoordinatorControl() {
       if (!identityReady || !keypair?.npub || !keypair.nsec || !coordinatorElectionId || !localCoordinatorHexPubkey) {
         coordinatorControlServiceRef.current = null;
+        singleCoordinatorBootstrapAttemptRef.current = "";
+        startupDiagnosticsRef.current = createCoordinatorStartupDiagnostics();
+        blindKeyDiagnosticsRef.current = createBlindKeyDiagnostics();
         setCoordinatorControlView(null);
         setCoordinatorControlStateLabel(null);
+        setInitialControlBackfillComplete(false);
+        setAutoApprovalComplete(false);
+        setWelcomeAckSent(false);
         return;
       }
+
+      startupDiagnosticsRef.current = createCoordinatorStartupDiagnostics();
+      blindKeyDiagnosticsRef.current = createBlindKeyDiagnostics();
+      singleCoordinatorBootstrapAttemptRef.current = "";
+      startupForcedRecoveryAttemptedRef.current = false;
+      startupForcedRecoveryInFlightRef.current = false;
+      startupJoinPendingSinceRef.current = null;
+      setInitialControlBackfillComplete(false);
+      setAutoApprovalComplete(false);
+      setWelcomeAckSent(false);
 
       const service = await CoordinatorControlService.create({
         electionId: coordinatorElectionId,
         localPubkey: localCoordinatorHexPubkey,
         roster: coordinatorHexRoster,
+        leadPubkey: isLeadCoordinator ? localCoordinatorHexPubkey : leadCoordinatorHexPubkey || null,
+        engineKind: coordinatorRuntimeEngineKind,
         snapshot: coordinatorControlCache?.snapshot ?? null,
+        onPublished: recordStartupPublishDiagnostic,
       });
 
       if (cancelled) {
@@ -581,56 +1451,315 @@ export default function SimpleCoordinatorApp() {
       const syncState = () => {
         const nextCache = service.snapshot();
         const nextView = service.getState();
+        const nextStatus = service.getEngineStatus();
         setCoordinatorControlCache(nextCache);
         setCoordinatorControlView(nextView);
-        setCoordinatorControlStateLabel(formatCoordinatorControlStateLabel(nextView));
+        setCoordinatorControlStateLabel(formatCoordinatorControlStateLabel(nextView, nextStatus));
+      };
+
+      const syncStateWithReplayWarning = () => {
+        syncState();
+        setCoordinatorControlStateLabel("Waiting for coordinator-control replay.");
+      };
+
+      if (singleCoordinatorMode) {
+        syncState();
+        updateStartupDiagnostics({
+          startupJoinFailureBucket: null,
+          startupPublishAttempted: false,
+          startupPublishSucceeded: false,
+          startupObservedLive: true,
+          startupObservedBackfill: false,
+          controlCarrierFetchAttemptCount: 0,
+          controlCarrierFetchLastCount: 0,
+          startupProbeKindOnlyCount: 0,
+          startupProbeFilteredCount: 0,
+          startupProbeKindElectionCount: 0,
+          startupProbeKindElectionGroupCount: 0,
+        });
+        setInitialControlBackfillComplete(true);
+        setAutoApprovalComplete(true);
+        return;
+      }
+
+      const startupReadRelays = normalizeRelaysRust([...SIMPLE_PUBLIC_RELAYS]).slice(0, 3);
+      const startupReadKinds = [SIMPLE_COORDINATOR_CONTROL_KIND];
+      const startupSinceSeconds = Math.floor(Date.now() / 1000) - 900;
+
+      const recordStartupReadFilter = (
+        target: "startupLiveFilter" | "startupBackfillFilter",
+        mode: CoordinatorControlReadMode,
+        options?: { since?: number },
+      ) => {
+        updateStartupDiagnostics((current) => {
+          const next = {
+            ...current,
+            [target]: {
+              mode,
+              relays: startupReadRelays,
+              kinds: startupReadKinds,
+              tags: mode === "kind_only" ? [] : ["election", ...(mode === "kind_election_group" ? ["group"] : [])],
+              since: options?.since ?? null,
+              until: null,
+              limit: SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT,
+              startedAt: new Date().toISOString(),
+            },
+            startupReadLiveRelays: target === "startupLiveFilter"
+              ? startupReadRelays
+              : current.startupReadLiveRelays,
+            startupReadBackfillRelays: target === "startupBackfillFilter"
+              ? startupReadRelays
+              : current.startupReadBackfillRelays,
+          } as CoordinatorStartupDiagnostics;
+          return {
+            ...next,
+            ...reconcileStartupRelayDiagnostics(next),
+          };
+        });
+      };
+
+      const runStartupBackfill = async (options?: {
+        since?: number;
+        runDiagnosticFallback?: boolean;
+      }) => {
+        recordStartupReadFilter("startupBackfillFilter", "kind_election_group", {
+          since: options?.since,
+        });
+        const preciseEvents = await fetchCoordinatorControlEvents({
+          electionId: coordinatorElectionId,
+          coordinatorHexPubkeys: coordinatorHexRoster,
+          mode: "kind_election_group",
+          limit: SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT,
+          since: options?.since,
+        });
+        let selectedEvents = preciseEvents;
+        let kindOnlyCount = 0;
+        let kindElectionCount = 0;
+        let kindElectionGroupCount = preciseEvents.length;
+        if (preciseEvents.length === 0 || options?.runDiagnosticFallback) {
+          const kindOnlyEvents = await fetchCoordinatorControlEvents({
+            electionId: coordinatorElectionId,
+            coordinatorHexPubkeys: coordinatorHexRoster,
+            mode: "kind_only",
+            limit: SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT,
+            since: options?.since,
+          });
+          const kindElectionEvents = await fetchCoordinatorControlEvents({
+            electionId: coordinatorElectionId,
+            coordinatorHexPubkeys: coordinatorHexRoster,
+            mode: "kind_election",
+            limit: SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT,
+            since: options?.since,
+          });
+          const kindElectionGroupEvents = await fetchCoordinatorControlEvents({
+            electionId: coordinatorElectionId,
+            coordinatorHexPubkeys: coordinatorHexRoster,
+            mode: "kind_election_group",
+            limit: SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT,
+            since: options?.since,
+          });
+          kindOnlyCount = kindOnlyEvents.length;
+          kindElectionCount = kindElectionEvents.length;
+          kindElectionGroupCount = kindElectionGroupEvents.length;
+          if (selectedEvents.length === 0) {
+            selectedEvents = kindElectionGroupEvents.length > 0
+              ? kindElectionGroupEvents
+              : kindElectionEvents.length > 0
+                ? kindElectionEvents
+                : kindOnlyEvents;
+          }
+        }
+        updateStartupDiagnostics({
+          startupProbeKindOnlyCount: kindOnlyCount,
+          startupProbeKindElectionCount: kindElectionCount,
+          startupProbeKindElectionGroupCount: kindElectionGroupCount,
+          startupProbeFilteredCount: kindElectionGroupCount,
+        });
+        return selectedEvents;
       };
 
       syncState();
 
-      const initialEvents = await fetchCoordinatorControlEvents({
-        electionId: coordinatorElectionId,
-        coordinatorHexPubkeys: coordinatorHexRoster,
-      });
+      let initialEvents: Awaited<ReturnType<typeof fetchCoordinatorControlEvents>> = [];
+      updateStartupDiagnostics((current) => ({
+        controlCarrierFetchAttemptCount: current.controlCarrierFetchAttemptCount + 1,
+        controlCarrierFetchLastAt: new Date().toISOString(),
+        controlCarrierFetchLastError: null,
+      }));
+      try {
+        initialEvents = await runStartupBackfill({
+          since: startupSinceSeconds,
+          runDiagnosticFallback: true,
+        });
+        updateStartupDiagnostics((current) => {
+          const next = {
+            ...current,
+            controlCarrierFetchLastCount: initialEvents.length,
+            controlCarrierFetchLastError: null,
+            startupObservedBackfill: current.startupObservedBackfill || initialEvents.length > 0,
+          } satisfies CoordinatorStartupDiagnostics;
+          return {
+            ...next,
+            ...reconcileStartupRelayDiagnostics(next),
+          };
+        });
+      } catch (error) {
+        updateStartupDiagnostics({
+          controlCarrierFetchLastCount: 0,
+          controlCarrierFetchLastError: error instanceof Error ? error.message : String(error),
+        });
+      }
 
       if (cancelled) {
         return;
       }
 
       if (initialEvents.length > 0) {
-        service.ingestCoordinatorEvents(initialEvents);
-        syncState();
+        try {
+          service.ingestCoordinatorEvents(initialEvents);
+          syncState();
+          updateStartupDiagnostics((current) => ({
+            controlCarrierSubscriptionObservedCount: current.controlCarrierSubscriptionObservedCount + initialEvents.length,
+            controlCarrierSubscriptionLastObservedAt: new Date().toISOString(),
+            controlCarrierLastObservedEventId: initialEvents[initialEvents.length - 1]?.id ?? current.controlCarrierLastObservedEventId,
+            controlCarrierLastObservedSource: "initial_backfill",
+            startupObservedBackfill: true,
+          }));
+        } catch {
+          syncStateWithReplayWarning();
+        }
       }
+      setInitialControlBackfillComplete(true);
 
       const maybeApprove = async () => {
-        if (isLeadCoordinator) {
+        try {
+          const approval = await service.maybeAutoApproveRoundOpen({
+            coordinatorNsec: keypair.nsec,
+          });
+          if (approval) {
+            syncState();
+            setPublishStatus("Coordinator round-open approval sent.");
+          }
+        } catch {
+          setPublishStatus("Coordinator round-open approval failed.");
+        } finally {
+          setAutoApprovalComplete(true);
+        }
+      };
+
+      const backfillEvents = async () => {
+        if (cancelled || backfillInFlight) {
           return;
         }
 
-        const approval = await service.maybeAutoApproveRoundOpen({
-          coordinatorNsec: keypair.nsec,
-        });
-        if (approval) {
-          syncState();
-          setPublishStatus("Coordinator round-open approval sent.");
+        backfillInFlight = true;
+
+        try {
+          updateStartupDiagnostics((current) => ({
+            controlCarrierFetchAttemptCount: current.controlCarrierFetchAttemptCount + 1,
+            controlCarrierFetchLastAt: new Date().toISOString(),
+            controlCarrierFetchLastError: null,
+          }));
+          const events = await runStartupBackfill({
+            since: startupDiagnosticsRef.current.startupPublishEventCreatedAt ?? startupSinceSeconds,
+            runDiagnosticFallback: true,
+          });
+          updateStartupDiagnostics((current) => {
+            const next = {
+              ...current,
+              controlCarrierFetchLastCount: events.length,
+              controlCarrierFetchLastError: null,
+              startupObservedBackfill: current.startupObservedBackfill || events.length > 0,
+            } satisfies CoordinatorStartupDiagnostics;
+            return {
+              ...next,
+              ...reconcileStartupRelayDiagnostics(next),
+            };
+          });
+
+          if (cancelled || !coordinatorControlServiceRef.current) {
+            return;
+          }
+
+          if (events.length > 0) {
+            try {
+              coordinatorControlServiceRef.current.ingestCoordinatorEvents(events);
+              syncState();
+              updateStartupDiagnostics((current) => ({
+                controlCarrierSubscriptionObservedCount: current.controlCarrierSubscriptionObservedCount + events.length,
+                controlCarrierSubscriptionLastObservedAt: new Date().toISOString(),
+                controlCarrierLastObservedEventId: events[events.length - 1]?.id ?? current.controlCarrierLastObservedEventId,
+                controlCarrierLastObservedSource: "periodic_backfill",
+                startupObservedBackfill: true,
+              }));
+            } catch {
+              syncStateWithReplayWarning();
+            }
+          }
+
+          await maybeApprove();
+        } catch (error) {
+          updateStartupDiagnostics({
+            controlCarrierFetchLastCount: 0,
+            controlCarrierFetchLastError: error instanceof Error ? error.message : String(error),
+          });
+        } finally {
+          backfillInFlight = false;
         }
       };
 
       await maybeApprove();
+      backfillHandle = window.setInterval(() => {
+        void backfillEvents();
+      }, SIMPLE_COORDINATOR_CONTROL_BACKFILL_INTERVAL_MS);
 
-      cleanup = subscribeCoordinatorControl({
+      recordStartupReadFilter("startupLiveFilter", "kind_election_group", {
+        since: startupSinceSeconds,
+      });
+      const unsubscribe = subscribeCoordinatorControl({
         electionId: coordinatorElectionId,
         coordinatorHexPubkeys: coordinatorHexRoster,
+        mode: "kind_election_group",
+        since: startupSinceSeconds,
         onEvents: (events) => {
           if (!coordinatorControlServiceRef.current) {
             return;
           }
 
-          coordinatorControlServiceRef.current.ingestCoordinatorEvents(events);
-          syncState();
+          if (events.length > 0) {
+            updateStartupDiagnostics((current) => {
+              const next = {
+                ...current,
+                controlCarrierSubscriptionObservedCount: current.controlCarrierSubscriptionObservedCount + events.length,
+                controlCarrierSubscriptionLastObservedAt: new Date().toISOString(),
+                controlCarrierLastObservedEventId: events[events.length - 1]?.id ?? current.controlCarrierLastObservedEventId,
+                controlCarrierLastObservedSource: "subscription",
+                startupObservedLive: true,
+              } satisfies CoordinatorStartupDiagnostics;
+              return {
+                ...next,
+                ...reconcileStartupRelayDiagnostics(next),
+              };
+            });
+          }
+
+          try {
+            coordinatorControlServiceRef.current.ingestCoordinatorEvents(events);
+            syncState();
+          } catch {
+            syncStateWithReplayWarning();
+          }
           void maybeApprove();
         },
       });
+
+      cleanup = () => {
+        unsubscribe();
+        if (backfillHandle !== null) {
+          window.clearInterval(backfillHandle);
+          backfillHandle = null;
+        }
+      };
     }
 
     void setupCoordinatorControl();
@@ -641,12 +1770,353 @@ export default function SimpleCoordinatorApp() {
     };
   }, [
     coordinatorElectionId,
-    coordinatorHexRoster,
+    coordinatorHexRosterSignature,
+    coordinatorRuntimeEngineKind,
     identityReady,
     isLeadCoordinator,
+    leadCoordinatorHexPubkey,
     localCoordinatorHexPubkey,
+    singleCoordinatorMode,
     keypair?.npub,
     keypair?.nsec,
+  ]);
+
+  useEffect(() => {
+    if (isLeadCoordinator || !keypair?.nsec) {
+      return;
+    }
+
+    return subscribeSimpleCoordinatorMlsWelcomes({
+      coordinatorNsec: keypair.nsec,
+      onWelcomes: (welcomes) => {
+        const service = coordinatorControlServiceRef.current;
+        if (!service || service.getEngineStatus().engine_kind !== "open_mls") {
+          return;
+        }
+
+        for (const welcome of welcomes) {
+          if (
+            welcome.electionId !== coordinatorElectionId
+            || welcome.leadCoordinatorNpub !== leadCoordinatorNpub.trim()
+            || seenMlsWelcomeIdsRef.current.has(welcome.id)
+          ) {
+            continue;
+          }
+
+          seenMlsWelcomeIdsRef.current.add(welcome.id);
+          updateStartupDiagnostics((current) => ({
+            mlsWelcomeObservedCount: current.mlsWelcomeObservedCount + 1,
+            mlsWelcomeLastObservedAt: new Date().toISOString(),
+          }));
+          try {
+            updateStartupDiagnostics((current) => ({
+              mlsJoinAttemptCount: current.mlsJoinAttemptCount + 1,
+              mlsJoinLastAttemptAt: new Date().toISOString(),
+            }));
+            const joined = service.joinSupervisoryGroup(welcome.welcomeBundle);
+            if (joined) {
+              updateStartupDiagnostics({
+                mlsJoinLastResult: "joined",
+                mlsJoinResolvedAt: startupDiagnosticsRef.current.mlsJoinResolvedAt ?? new Date().toISOString(),
+              });
+              setCoordinatorControlCache(service.snapshot());
+              setCoordinatorControlView(service.getState());
+              setCoordinatorControlStateLabel(
+                formatCoordinatorControlStateLabel(service.getState(), service.getEngineStatus()),
+              );
+              setRegistrationStatus("Coordinator MLS join completed.");
+
+              void (async () => {
+                try {
+                  updateStartupDiagnostics((current) => ({
+                    controlCarrierFetchAttemptCount: current.controlCarrierFetchAttemptCount + 1,
+                    controlCarrierFetchLastAt: new Date().toISOString(),
+                    controlCarrierFetchLastError: null,
+                  }));
+                  const startupReadRelays = normalizeRelaysRust([...SIMPLE_PUBLIC_RELAYS]).slice(0, 3);
+                  updateStartupDiagnostics((current) => {
+                    const next = {
+                      ...current,
+                      startupBackfillFilter: {
+                        mode: "kind_election_group",
+                        relays: startupReadRelays,
+                        kinds: [SIMPLE_COORDINATOR_CONTROL_KIND],
+                        tags: ["election", "group"],
+                        since: startupDiagnosticsRef.current.startupPublishEventCreatedAt ?? Math.floor(Date.now() / 1000) - 900,
+                        until: null,
+                        limit: SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT,
+                        startedAt: new Date().toISOString(),
+                      },
+                      startupReadBackfillRelays: startupReadRelays,
+                    } as CoordinatorStartupDiagnostics;
+                    return {
+                      ...next,
+                      ...reconcileStartupRelayDiagnostics(next),
+                    };
+                  });
+                  const events = await fetchCoordinatorControlEvents({
+                    electionId: coordinatorElectionId,
+                    coordinatorHexPubkeys: coordinatorHexRoster,
+                    mode: "kind_election_group",
+                    limit: SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT,
+                    since: startupDiagnosticsRef.current.startupPublishEventCreatedAt
+                      ?? Math.floor(Date.now() / 1000) - 900,
+                  });
+                  updateStartupDiagnostics((current) => {
+                    const next = {
+                      ...current,
+                      controlCarrierFetchLastCount: events.length,
+                      controlCarrierFetchLastError: null,
+                      startupObservedBackfill: current.startupObservedBackfill || events.length > 0,
+                    } satisfies CoordinatorStartupDiagnostics;
+                    return {
+                      ...next,
+                      ...reconcileStartupRelayDiagnostics(next),
+                    };
+                  });
+                  if (events.length > 0) {
+                    service.ingestCoordinatorEvents(events);
+                    updateStartupDiagnostics((current) => {
+                      const next = {
+                        ...current,
+                        controlCarrierSubscriptionObservedCount: current.controlCarrierSubscriptionObservedCount + events.length,
+                        controlCarrierSubscriptionLastObservedAt: new Date().toISOString(),
+                        controlCarrierLastObservedEventId: events[events.length - 1]?.id ?? current.controlCarrierLastObservedEventId,
+                        controlCarrierLastObservedSource: "post_join_backfill",
+                        startupObservedBackfill: true,
+                      } satisfies CoordinatorStartupDiagnostics;
+                      return {
+                        ...next,
+                        ...reconcileStartupRelayDiagnostics(next),
+                      };
+                    });
+                  }
+                  const approval = await service.maybeAutoApproveRoundOpen({
+                    coordinatorNsec: keypair.nsec,
+                  });
+                  setCoordinatorControlCache(service.snapshot());
+                  setCoordinatorControlView(service.getState());
+                  setCoordinatorControlStateLabel(
+                    formatCoordinatorControlStateLabel(service.getState(), service.getEngineStatus()),
+                  );
+                  if (approval) {
+                    setPublishStatus("Coordinator round-open approval sent.");
+                  }
+
+                  const coordinatorSecretKey = decodeNsec(keypair?.nsec ?? "");
+                  const coordinatorNpub = keypair?.npub ?? "";
+                  if (
+                    coordinatorSecretKey
+                    && coordinatorNpub
+                    && !sentMlsWelcomeAckIdsRef.current.has(welcome.dmEventId)
+                  ) {
+                    sentMlsWelcomeAckIdsRef.current.add(welcome.dmEventId);
+                    try {
+                      await sendSimpleDmAcknowledgement({
+                        senderSecretKey: coordinatorSecretKey,
+                        recipientNpub: welcome.leadCoordinatorNpub,
+                        actorNpub: coordinatorNpub,
+                        ackedAction: "simple_mls_welcome",
+                        ackedEventId: welcome.dmEventId,
+                      });
+                      setWelcomeAckSent(true);
+                    } catch {
+                      sentMlsWelcomeAckIdsRef.current.delete(welcome.dmEventId);
+                    }
+                  }
+                } catch {
+                  updateStartupDiagnostics({
+                    controlCarrierFetchLastCount: 0,
+                    controlCarrierFetchLastError: "post_join_control_backfill_failed",
+                  });
+                  setCoordinatorControlStateLabel("Waiting for coordinator-control replay.");
+                }
+              })();
+            } else {
+              updateStartupDiagnostics({
+                mlsJoinLastResult: "not_joined",
+              });
+            }
+          } catch {
+            updateStartupDiagnostics({
+              mlsJoinLastResult: "failed",
+            });
+            seenMlsWelcomeIdsRef.current.delete(welcome.id);
+          }
+        }
+      },
+    });
+  }, [coordinatorElectionId, isLeadCoordinator, keypair?.npub, keypair?.nsec, leadCoordinatorNpub]);
+
+  useEffect(() => {
+    if (!pendingRoundOpenAttemptRef.current || !isLeadCoordinator || roundBroadcastInFlightRef.current) {
+      return;
+    }
+
+    const service = coordinatorControlServiceRef.current;
+    if (!service) {
+      return;
+    }
+
+    const status = service.getEngineStatus();
+    if (status.engine_kind !== "open_mls") {
+      return;
+    }
+
+    if (!status.group_ready || getOutstandingMlsWelcomeAckNpubs().length > 0) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      if (!pendingRoundOpenAttemptRef.current || roundBroadcastInFlightRef.current) {
+        return;
+      }
+
+      const latestService = coordinatorControlServiceRef.current;
+      if (!latestService) {
+        return;
+      }
+
+      const latestStatus = latestService.getEngineStatus();
+      if (latestStatus.engine_kind !== "open_mls" || !latestStatus.group_ready) {
+        return;
+      }
+
+      if (getOutstandingMlsWelcomeAckNpubs().length > 0) {
+        return;
+      }
+
+      pendingRoundOpenAttemptRef.current = false;
+      void broadcastQuestion();
+    }, SIMPLE_COORDINATOR_ROUND_OPEN_POST_WELCOME_GRACE_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    dmAcknowledgements,
+    isLeadCoordinator,
+    questionPrompt,
+    questionThresholdN,
+    questionThresholdT,
+    subCoordinators,
+  ]);
+
+  useEffect(() => {
+    if (!isLeadCoordinator || roundBroadcastInFlightRef.current) {
+      return;
+    }
+
+    const service = coordinatorControlServiceRef.current;
+    const latestRound = coordinatorControlView?.latest_round ?? null;
+    if (!service || !latestRound || latestRound.phase !== "open_proposed") {
+      return;
+    }
+
+    if (
+      !latestRound.prompt
+      || latestRound.threshold_t == null
+      || latestRound.threshold_n == null
+      || latestRound.missing_open_committers.length === 0
+    ) {
+      return;
+    }
+
+    const retryKey = latestRound.round_id;
+    const attemptCount = roundOpenRetryAttemptsRef.current[retryKey] ?? 0;
+    if (attemptCount >= SIMPLE_COORDINATOR_ROUND_OPEN_RETRY_MAX_ATTEMPTS) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      const latestService = coordinatorControlServiceRef.current;
+      const currentRound = latestService?.getState().latest_round ?? null;
+      if (
+        !latestService
+        || !currentRound
+        || currentRound.round_id !== retryKey
+        || currentRound.phase !== "open_proposed"
+        || currentRound.missing_open_committers.length === 0
+        || !currentRound.prompt
+        || currentRound.threshold_t == null
+        || currentRound.threshold_n == null
+        || !keypair?.nsec
+      ) {
+        return;
+      }
+
+      roundOpenRetryAttemptsRef.current[retryKey] = attemptCount + 1;
+      const localPubkey = localCoordinatorHexPubkey;
+      const localCommitMissing = Boolean(
+        localPubkey && currentRound.missing_open_committers.includes(localPubkey),
+      );
+
+      if (localCommitMissing) {
+        setPublishStatus(
+          `Retrying round-open commit (${attemptCount + 1}/${SIMPLE_COORDINATOR_ROUND_OPEN_RETRY_MAX_ATTEMPTS})...`,
+        );
+
+        void latestService.maybeAutoApproveRoundOpen({
+          coordinatorNsec: keypair.nsec,
+        }).then((approval) => {
+          setCoordinatorControlCache(latestService.snapshot());
+          setCoordinatorControlView(latestService.getState());
+          setCoordinatorControlStateLabel(
+            formatCoordinatorControlStateLabel(
+              latestService.getState(),
+              coordinatorControlServiceRef.current?.getEngineStatus() ?? null,
+            ),
+          );
+          if (approval) {
+            setPublishStatus("Coordinator round-open approval sent.");
+          } else {
+            setPublishStatus("Round-open commit retry had nothing to send.");
+          }
+        }).catch(() => {
+          setPublishStatus("Round-open retry failed.");
+        });
+        return;
+      }
+
+      setPublishStatus(
+        `Retrying round-open proposal (${attemptCount + 1}/${SIMPLE_COORDINATOR_ROUND_OPEN_RETRY_MAX_ATTEMPTS})...`,
+      );
+
+      void latestService.publishRoundOpenFlow({
+        coordinatorNsec: keypair.nsec,
+        roundId: currentRound.round_id,
+        prompt: currentRound.prompt,
+        thresholdT: currentRound.threshold_t,
+        thresholdN: currentRound.threshold_n,
+        roster: coordinatorHexRoster,
+      }).then((result) => {
+        setCoordinatorControlCache(latestService.snapshot());
+        setCoordinatorControlView(result.state);
+        setCoordinatorControlStateLabel(
+          formatCoordinatorControlStateLabel(
+            result.state,
+            coordinatorControlServiceRef.current?.getEngineStatus() ?? null,
+          ),
+        );
+        setPublishStatus(
+          result.state.latest_round?.phase === "open"
+            ? "Coordinator round open agreed. Broadcasting vote..."
+            : "Round-open proposal resent. Waiting for coordinator approvals.",
+        );
+      }).catch(() => {
+        setPublishStatus("Round-open retry failed.");
+      });
+    }, SIMPLE_COORDINATOR_ROUND_OPEN_RETRY_DELAY_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    coordinatorControlView,
+    coordinatorHexRoster,
+    isLeadCoordinator,
+    keypair?.nsec,
+    localCoordinatorHexPubkey,
   ]);
 
   useEffect(() => {
@@ -722,6 +2192,14 @@ export default function SimpleCoordinatorApp() {
       return;
     }
 
+    const authorizedCoordinatorNpubs = latestRound.coordinator_roster.flatMap((pubkey) => {
+      try {
+        return [nip19.npubEncode(pubkey)];
+      } catch {
+        return [];
+      }
+    });
+
     if (publishedVotes.some((vote) => vote.votingId === latestRound.round_id)) {
       return;
     }
@@ -739,7 +2217,7 @@ export default function SimpleCoordinatorApp() {
       votingId: latestRound.round_id,
       thresholdT: latestRound.threshold_t,
       thresholdN: latestRound.threshold_n,
-      authorizedCoordinatorNpubs: latestRound.coordinator_roster,
+      authorizedCoordinatorNpubs,
     }).then((result) => {
       setPublishedVotes((current) => {
         const nextVote = {
@@ -749,7 +2227,7 @@ export default function SimpleCoordinatorApp() {
           createdAt: result.createdAt,
           thresholdT: latestRound.threshold_t ?? undefined,
           thresholdN: latestRound.threshold_n ?? undefined,
-          authorizedCoordinatorNpubs: latestRound.coordinator_roster,
+          authorizedCoordinatorNpubs,
           eventId: result.eventId,
         };
         return [nextVote, ...current.filter((vote) => vote.votingId !== nextVote.votingId)];
@@ -977,6 +2455,16 @@ export default function SimpleCoordinatorApp() {
   }, [keypair?.nsec]);
 
   useEffect(() => {
+    if (!activeBlindKeyAnnouncement) {
+      return;
+    }
+    updateBlindKeyDiagnostics({
+      blindKeyObservedBackLocally: true,
+      blindKeyEventId: activeBlindKeyAnnouncement.event.id,
+    });
+  }, [activeBlindKeyAnnouncement]);
+
+  useEffect(() => {
     const coordinatorSecretKey = decodeNsec(keypair?.nsec ?? "");
     const coordinatorNpub = keypair?.npub ?? "";
 
@@ -1166,6 +2654,7 @@ export default function SimpleCoordinatorApp() {
   }, [selectedSubmittedVote?.votingId]);
 
   function refreshIdentity() {
+    identityHydrationEpochRef.current += 1;
     const nextKeypair = createSimpleCoordinatorKeypair();
     void saveSimpleActorState({
       role: "coordinator",
@@ -1208,6 +2697,7 @@ export default function SimpleCoordinatorApp() {
     sentAssignmentAckIdsRef.current.clear();
     autoShareAssignmentAttemptRef.current = '';
     coordinatorControlServiceRef.current = null;
+    blindKeyDiagnosticsRef.current = createBlindKeyDiagnostics();
     roundBroadcastInFlightRef.current = null;
   }
 
@@ -1220,6 +2710,7 @@ export default function SimpleCoordinatorApp() {
       return;
     }
 
+    identityHydrationEpochRef.current += 1;
     const nextKeypair = {
       nsec: trimmed,
       npub: derivedNpub,
@@ -1266,6 +2757,7 @@ export default function SimpleCoordinatorApp() {
     sentAssignmentAckIdsRef.current.clear();
     autoShareAssignmentAttemptRef.current = '';
     coordinatorControlServiceRef.current = null;
+    blindKeyDiagnosticsRef.current = createBlindKeyDiagnostics();
     roundBroadcastInFlightRef.current = null;
   }
 
@@ -1333,6 +2825,7 @@ export default function SimpleCoordinatorApp() {
         updatedAt: new Date().toISOString(),
         cache: bundle.cache,
       }, storagePassphrase ? { passphrase: storagePassphrase } : undefined);
+      identityHydrationEpochRef.current += 1;
       setKeypair(bundle.keypair);
       setIdentityStatus("Identity restored from backup.");
       setBackupStatus(`Backup restored from ${bundle.exportedAt}.`);
@@ -1432,6 +2925,7 @@ export default function SimpleCoordinatorApp() {
           : [],
       );
       setStoragePassphrase(trimmed);
+      identityHydrationEpochRef.current += 1;
       setKeypair(storedState.keypair);
       setLeadCoordinatorNpub(typeof cache?.leadCoordinatorNpub === "string" ? cache.leadCoordinatorNpub : "");
       setFollowers(Array.isArray(cache?.followers) ? cache.followers : []);
@@ -1539,14 +3033,33 @@ export default function SimpleCoordinatorApp() {
     const existingAnnouncement = roundBlindKeyAnnouncements[input.votingId];
     const existingAnnouncementKeyId = existingAnnouncement?.publicKey?.keyId;
     if (!input.force && existingAnnouncementKeyId === input.blindPrivateKey.keyId) {
+      updateBlindKeyDiagnostics({
+        blindKeyObservedBackLocally: true,
+        blindKeyEventId: existingAnnouncement?.event.id ?? blindKeyDiagnosticsRef.current.blindKeyEventId,
+      });
       return existingAnnouncement ?? null;
     }
 
-    const result = await publishSimpleBlindKeyAnnouncement({
-      coordinatorNsec,
-      votingId: input.votingId,
-      publicKey: input.blindPrivateKey,
-    });
+    updateBlindKeyDiagnostics((current) => ({
+      blindKeyPublishAttempted: true,
+      blindKeyPublishStartedAt: new Date().toISOString(),
+      blindKeyPublishAttemptCount: current.blindKeyPublishAttemptCount + 1,
+      blindKeyPublishLastError: null,
+    }));
+    let result: Awaited<ReturnType<typeof publishSimpleBlindKeyAnnouncement>>;
+    try {
+      result = await publishSimpleBlindKeyAnnouncement({
+        coordinatorNsec,
+        votingId: input.votingId,
+        publicKey: input.blindPrivateKey,
+      });
+    } catch (error) {
+      updateBlindKeyDiagnostics({
+        blindKeyPublishSucceeded: false,
+        blindKeyPublishLastError: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
 
     const nextAnnouncement: SimpleBlindKeyAnnouncement = {
       coordinatorNpub,
@@ -1560,6 +3073,18 @@ export default function SimpleCoordinatorApp() {
       ...current,
       [input.votingId]: nextAnnouncement,
     }));
+    updateBlindKeyDiagnostics({
+      blindKeyPublishSucceeded: result.successes > 0,
+      blindKeyPublishSucceededAt: result.successes > 0 ? new Date().toISOString() : null,
+      blindKeyObservedBackLocally: true,
+      blindKeyEventId: result.eventId,
+      blindKeyRelayTargets: result.relayResults.map((entry) => entry.relay),
+      blindKeyRelaySuccessCount: result.successes,
+      blindKeyPublishLastError: result.successes > 0
+        ? null
+        : result.relayResults.find((entry) => !entry.success)?.error
+          ?? "blind_key_publish_unconfirmed",
+    });
 
     return nextAnnouncement;
   }
@@ -1595,6 +3120,10 @@ export default function SimpleCoordinatorApp() {
 
     const existingAnnouncement = roundBlindKeyAnnouncements[input.votingId];
     if (existingAnnouncement && !input.forceRepublish) {
+      updateBlindKeyDiagnostics({
+        blindKeyObservedBackLocally: true,
+        blindKeyEventId: existingAnnouncement.event.id,
+      });
       return existingAnnouncement;
     }
 
@@ -1609,6 +3138,10 @@ export default function SimpleCoordinatorApp() {
             ...current,
             [input.votingId]: fetchedAnnouncement,
           }));
+          updateBlindKeyDiagnostics({
+            blindKeyObservedBackLocally: true,
+            blindKeyEventId: fetchedAnnouncement.event.id,
+          });
           return fetchedAnnouncement;
         }
       } catch {
@@ -1623,7 +3156,10 @@ export default function SimpleCoordinatorApp() {
     });
   }
 
-  async function sendTicket(follower: SimpleCoordinatorFollower) {
+  async function sendTicket(
+    follower: SimpleCoordinatorFollower,
+    options?: { preSendDelayMs?: number },
+  ) {
     const coordinatorNpub = keypair?.npub ?? "";
     const coordinatorSecretKey = decodeNsec(keypair?.nsec ?? "");
     const votingId = selectedPublishedVote?.votingId ?? "";
@@ -1642,6 +3178,10 @@ export default function SimpleCoordinatorApp() {
       || activeShareIndex <= 0
     ) {
       return;
+    }
+
+    if (options?.preSendDelayMs && options.preSendDelayMs > 0) {
+      await wait(options.preSendDelayMs);
     }
 
     const keyAnnouncement = await ensureBlindKeyAnnouncementForRound({
@@ -1665,6 +3205,13 @@ export default function SimpleCoordinatorApp() {
       ...current,
       [ticketStatusKey]: {
         status: "Sending ticket...",
+        requestId: matchingRequest.id,
+        ticketBuiltAt: current[ticketStatusKey]?.ticketBuiltAt ?? new Date().toISOString(),
+        ticketPublishStartedAt: new Date().toISOString(),
+        ticketStillMissing: true,
+        resendCount: (current[ticketStatusKey]?.attempts ?? 0) > 0
+          ? (current[ticketStatusKey]?.resendCount ?? 0) + 1
+          : (current[ticketStatusKey]?.resendCount ?? 0),
         attempts: (current[ticketStatusKey]?.attempts ?? 0) + 1,
         lastAttemptAt: new Date().toISOString(),
         relayResults: undefined,
@@ -1690,24 +3237,64 @@ export default function SimpleCoordinatorApp() {
         shareIndex: activeShareIndex,
         thresholdT: activeThresholdT,
         thresholdN: activeThresholdN,
+        attemptNo: (ticketDeliveries[ticketStatusKey]?.attempts ?? 0) + 1,
+        supersedesEventId: ticketDeliveries[ticketStatusKey]?.eventId,
+        ticketId: ticketDeliveries[ticketStatusKey]?.responseId,
       });
 
-      setTicketDeliveries((current) => ({
-        ...current,
-        [ticketStatusKey]: {
+      setTicketDeliveries((current) => {
+        const previousDelivery = current[ticketStatusKey];
+        const priorEventIds = Array.from(new Set([
+          ...(previousDelivery?.priorEventIds ?? []),
+          ...(previousDelivery?.eventId && previousDelivery.eventId !== result.eventId
+            ? [previousDelivery.eventId]
+            : []),
+        ]));
+        const priorResponseIds = Array.from(new Set([
+          ...(previousDelivery?.priorResponseIds ?? []),
+          ...(previousDelivery?.responseId && previousDelivery.responseId !== result.responseId
+            ? [previousDelivery.responseId]
+            : []),
+        ]));
+
+        return {
+          ...current,
+          [ticketStatusKey]: {
           status: result.successes > 0 ? "Ticket sent." : "Ticket send failed.",
           eventId: result.eventId,
+          requestId: matchingRequest.id,
           responseId: result.responseId,
-          attempts: (current[ticketStatusKey]?.attempts ?? 0) + 1,
+          resendCount: previousDelivery?.eventId
+            ? (previousDelivery?.resendCount ?? 0) + 1
+            : (previousDelivery?.resendCount ?? 0),
+          ticketBuiltAt: previousDelivery?.ticketBuiltAt ?? new Date().toISOString(),
+          ticketPublishStartedAt: previousDelivery?.ticketPublishStartedAt ?? new Date().toISOString(),
+          ticketPublishSucceededAt: result.successes > 0 ? new Date().toISOString() : previousDelivery?.ticketPublishSucceededAt,
+          ticketLastBackfillAttemptAt: previousDelivery?.ticketLastBackfillAttemptAt,
+          ticketStillMissing: result.successes > 0,
+          ticketRelayTargets: result.relayResults.map((entry) => entry.relay),
+          ticketRelaySuccessCount: result.relayResults.filter((entry) => entry.success).length,
+          ticketPublishEventKind: result.eventKind,
+          ticketPublishEventCreatedAt: result.eventCreatedAt,
+          ticketPublishEventTags: result.eventTags,
+          ticketPublishEventContent: result.eventContent,
+          priorEventIds,
+          priorResponseIds,
+          attempts: (previousDelivery?.attempts ?? 0) + 1,
           lastAttemptAt: new Date().toISOString(),
           relayResults: result.relayResults,
         },
-      }));
+        };
+      });
     } catch {
       setTicketDeliveries((current) => ({
         ...current,
         [ticketStatusKey]: {
           status: "Ticket send failed.",
+          requestId: matchingRequest.id,
+          ticketBuiltAt: current[ticketStatusKey]?.ticketBuiltAt ?? new Date().toISOString(),
+          ticketPublishStartedAt: current[ticketStatusKey]?.ticketPublishStartedAt ?? new Date().toISOString(),
+          ticketStillMissing: true,
           attempts: current[ticketStatusKey]?.attempts ?? 1,
           lastAttemptAt: new Date().toISOString(),
           relayResults: undefined,
@@ -1766,9 +3353,15 @@ export default function SimpleCoordinatorApp() {
       return;
     }
 
+    pendingRoundOpenAttemptRef.current = true;
+
     const service = coordinatorControlServiceRef.current;
     if (!service) {
       setPublishStatus("Coordinator control engine is not ready.");
+      return;
+    }
+
+    if (!(await ensureCoordinatorControlGroupReady())) {
       return;
     }
 
@@ -1787,7 +3380,13 @@ export default function SimpleCoordinatorApp() {
       });
       setCoordinatorControlCache(service.snapshot());
       setCoordinatorControlView(result.state);
-      setCoordinatorControlStateLabel(formatCoordinatorControlStateLabel(result.state));
+      setCoordinatorControlStateLabel(
+        formatCoordinatorControlStateLabel(
+          result.state,
+          coordinatorControlServiceRef.current?.getEngineStatus() ?? null,
+        ),
+      );
+      pendingRoundOpenAttemptRef.current = false;
       setSelectedVotingId(roundId);
       setSelectedSubmittedVotingId(roundId);
       setPublishStatus(
@@ -1796,6 +3395,15 @@ export default function SimpleCoordinatorApp() {
           : "Round-open proposal sent. Waiting for coordinator approvals.",
       );
     } catch {
+      setCoordinatorControlCache(service.snapshot());
+      setCoordinatorControlView(service.getState());
+      setCoordinatorControlStateLabel(
+        formatCoordinatorControlStateLabel(
+          service.getState(),
+          coordinatorControlServiceRef.current?.getEngineStatus() ?? null,
+        ),
+      );
+      pendingRoundOpenAttemptRef.current = false;
       setPublishStatus("Round-open proposal failed.");
     }
   }
@@ -1826,11 +3434,49 @@ export default function SimpleCoordinatorApp() {
     setRegistrationStatus("Notifying lead coordinator...");
 
     try {
+      const service = coordinatorControlServiceRef.current ?? (
+        coordinatorElectionId && localCoordinatorHexPubkey
+          ? await CoordinatorControlService.create({
+            electionId: coordinatorElectionId,
+            localPubkey: localCoordinatorHexPubkey,
+            roster: coordinatorHexRoster,
+            leadPubkey: isLeadCoordinator ? localCoordinatorHexPubkey : leadCoordinatorHexPubkey || null,
+            engineKind: coordinatorRuntimeEngineKind,
+            snapshot: coordinatorControlCache?.snapshot ?? null,
+            onPublished: recordStartupPublishDiagnostic,
+          })
+          : null
+      );
+      if (service && coordinatorControlServiceRef.current !== service) {
+        coordinatorControlServiceRef.current = service;
+        setCoordinatorControlCache(service.snapshot());
+        setCoordinatorControlView(service.getState());
+        setCoordinatorControlStateLabel(
+          formatCoordinatorControlStateLabel(service.getState(), service.getEngineStatus()),
+        );
+      }
+      const mlsJoinPackage = service?.getEngineStatus().engine_kind === "open_mls"
+        ? service.exportSupervisoryJoinPackage() ?? undefined
+        : undefined;
+      updateStartupDiagnostics((current) => ({
+        mlsJoinPackagePublishAttemptCount: current.mlsJoinPackagePublishAttemptCount + 1,
+        mlsJoinPackageLastPublishAt: new Date().toISOString(),
+      }));
       const result = await sendSimpleSubCoordinatorJoin({
         coordinatorSecretKey,
         leadCoordinatorNpub: nextLeadCoordinatorNpub,
         coordinatorNpub,
+        mlsJoinPackage,
       });
+      updateStartupDiagnostics((current) => ({
+        mlsJoinPackagePublishSuccessCount: current.mlsJoinPackagePublishSuccessCount + (result.successes > 0 ? 1 : 0),
+        mlsJoinPackagePublishFailureCount: current.mlsJoinPackagePublishFailureCount + (result.successes > 0 ? 0 : 1),
+        mlsJoinPackageLastRelayResults: result.relayResults.map((entry) => ({
+          relay: entry.relay,
+          success: entry.success,
+          error: entry.error,
+        })),
+      }));
 
       setRegistrationStatus(
         result.successes > 0
@@ -1838,7 +3484,123 @@ export default function SimpleCoordinatorApp() {
           : "Lead coordinator notification failed.",
       );
     } catch {
+      updateStartupDiagnostics((current) => ({
+        mlsJoinPackagePublishFailureCount: current.mlsJoinPackagePublishFailureCount + 1,
+      }));
       setRegistrationStatus("Lead coordinator notification failed.");
+    }
+  }
+
+  async function ensureCoordinatorControlGroupReady() {
+    const service = coordinatorControlServiceRef.current;
+    if (!service) {
+      setPublishStatus("Coordinator control engine is not ready.");
+      return false;
+    }
+
+    const status = service.getEngineStatus();
+    if (status.engine_kind !== "open_mls") {
+      return true;
+    }
+
+    if (status.group_ready && (!isLeadCoordinator || getOutstandingMlsWelcomeAckNpubs().length === 0)) {
+      return true;
+    }
+
+    if (!isLeadCoordinator) {
+      setPublishStatus("Waiting for MLS welcome from the lead coordinator.");
+      return false;
+    }
+
+    if (mlsBootstrapInFlightRef.current) {
+      setPublishStatus("Preparing coordinator MLS group...");
+      return false;
+    }
+
+    mlsBootstrapInFlightRef.current = true;
+    setPublishStatus("Preparing coordinator MLS group...");
+    updateStartupDiagnostics((current) => ({
+      mlsWelcomePublishAttemptCount: current.mlsWelcomePublishAttemptCount + 1,
+      mlsWelcomeLastPublishAt: new Date().toISOString(),
+    }));
+    try {
+      const joinPackages = subCoordinators
+        .map((application) => application.mlsJoinPackage?.trim() ?? "")
+        .filter((value) => value.length > 0);
+      const welcomeBundle = service.bootstrapSupervisoryGroup(joinPackages);
+      setCoordinatorControlCache(service.snapshot());
+      setCoordinatorControlView(service.getState());
+      setCoordinatorControlStateLabel(
+        formatCoordinatorControlStateLabel(service.getState(), service.getEngineStatus()),
+      );
+
+      if (welcomeBundle) {
+        const leadCoordinatorSecretKey = decodeNsec(keypair?.nsec ?? "");
+        const leadCoordinatorNpub = keypair?.npub ?? "";
+        if (!leadCoordinatorSecretKey || !leadCoordinatorNpub) {
+          setPublishStatus("Coordinator MLS bootstrap failed.");
+          return false;
+        }
+
+        for (const application of subCoordinators) {
+          const signature = `${coordinatorElectionId}:${application.id}:${welcomeBundle}`;
+          if (sentMlsWelcomeStateRef.current[application.coordinatorNpub] === signature) {
+            continue;
+          }
+          sentMlsWelcomeStateRef.current[application.coordinatorNpub] = signature;
+          const welcomeResult = await sendSimpleCoordinatorMlsWelcome({
+            leadCoordinatorSecretKey,
+            leadCoordinatorNpub,
+            coordinatorNpub: application.coordinatorNpub,
+            electionId: coordinatorElectionId,
+            welcomeBundle,
+          });
+          sentMlsWelcomeEventIdsRef.current[application.coordinatorNpub] = welcomeResult.eventId;
+          updateStartupDiagnostics((current) => ({
+            mlsWelcomePublishSuccessCount: current.mlsWelcomePublishSuccessCount + (welcomeResult.successes > 0 ? 1 : 0),
+            mlsWelcomePublishFailureCount: current.mlsWelcomePublishFailureCount + (welcomeResult.successes > 0 ? 0 : 1),
+            mlsWelcomeLastRelayResults: welcomeResult.relayResults.map((entry) => ({
+              relay: entry.relay,
+              success: entry.success,
+              error: entry.error,
+            })),
+          }));
+        }
+      }
+
+      const outstandingCoordinatorNpubs = subCoordinators
+        .filter((application) => application.mlsJoinPackage?.trim())
+        .map((application) => application.coordinatorNpub)
+        .filter((coordinatorNpub) => {
+          const welcomeEventId = sentMlsWelcomeEventIdsRef.current[coordinatorNpub];
+          if (!welcomeEventId) {
+            return true;
+          }
+
+          return !dmAcknowledgements.some((ack) => (
+            ack.actorNpub === coordinatorNpub
+            && ack.ackedAction === "simple_mls_welcome"
+            && ack.ackedEventId === welcomeEventId
+          ));
+        });
+
+      if (outstandingCoordinatorNpubs.length > 0) {
+        setPublishStatus(
+          `Waiting for MLS welcome acknowledgements from ${formatCoordinatorList(outstandingCoordinatorNpubs)}.`,
+        );
+        return false;
+      }
+
+      setPublishStatus(null);
+      return service.getEngineStatus().group_ready;
+    } catch {
+      updateStartupDiagnostics((current) => ({
+        mlsWelcomePublishFailureCount: current.mlsWelcomePublishFailureCount + 1,
+      }));
+      setPublishStatus("Coordinator MLS bootstrap failed.");
+      return false;
+    } finally {
+      mlsBootstrapInFlightRef.current = false;
     }
   }
 
@@ -1940,6 +3702,122 @@ export default function SimpleCoordinatorApp() {
   const noValidatedVotes = acceptedVotes.filter((entry) => entry.choice === "No");
   const yesRejectedVotes = rejectedVotes.filter((entry) => entry.choice === "Yes");
   const noRejectedVotes = rejectedVotes.filter((entry) => entry.choice === "No");
+  const activeAcceptedVotes = useMemo(
+    () => derivedProtocolState?.ballot_state.accepted_ballots.filter(
+      (entry) => entry.round_id === (selectedPublishedVote?.votingId ?? ""),
+    ) ?? [],
+    [derivedProtocolState, selectedPublishedVote?.votingId],
+  );
+  const activeRejectedVotes = useMemo(
+    () => derivedProtocolState?.ballot_state.rejected_ballots.filter(
+      (entry) => entry.round_id === (selectedPublishedVote?.votingId ?? ""),
+    ) ?? [],
+    [derivedProtocolState, selectedPublishedVote?.votingId],
+  );
+  const activeAcceptedTicketIds = useMemo(
+    () =>
+      new Set(
+        activeAcceptedVotes
+          .map((vote) => vote.ticket_id?.trim())
+          .filter((value): value is string => Boolean(value)),
+      ),
+    [activeAcceptedVotes],
+  );
+  const activeAcceptedRequestIds = useMemo(
+    () =>
+      new Set(
+        activeAcceptedVotes
+          .map((vote) => vote.request_id?.trim())
+          .filter((value): value is string => Boolean(value)),
+      ),
+    [activeAcceptedVotes],
+  );
+  const activeAcceptedVoterPubkeys = useMemo(
+    () =>
+      new Set(
+        activeAcceptedVotes
+          .map((vote) => vote.voter_pubkey?.trim())
+          .filter((value): value is string => Boolean(value)),
+      ),
+    [activeAcceptedVotes],
+  );
+  const acceptedBallotsByRequestId = useMemo(() => {
+    const map = new Map<string, Array<{
+      eventId: string;
+      requestId?: string;
+      ticketId?: string;
+      roundId: string;
+      voterPubkey: string;
+      choice: string;
+    }>>();
+    for (const ballot of activeAcceptedVotes) {
+      const key = ballot.request_id?.trim();
+      if (!key) {
+        continue;
+      }
+      const next = map.get(key) ?? [];
+      next.push({
+        eventId: ballot.event_id,
+        requestId: ballot.request_id,
+        ticketId: ballot.ticket_id,
+        roundId: ballot.round_id,
+        voterPubkey: ballot.voter_pubkey,
+        choice: ballot.choice,
+      });
+      map.set(key, next);
+    }
+    return map;
+  }, [activeAcceptedVotes]);
+  const acceptedBallotsByTicketId = useMemo(() => {
+    const map = new Map<string, Array<{
+      eventId: string;
+      requestId?: string;
+      ticketId?: string;
+      roundId: string;
+      voterPubkey: string;
+      choice: string;
+    }>>();
+    for (const ballot of activeAcceptedVotes) {
+      const key = ballot.ticket_id?.trim();
+      if (!key) {
+        continue;
+      }
+      const next = map.get(key) ?? [];
+      next.push({
+        eventId: ballot.event_id,
+        requestId: ballot.request_id,
+        ticketId: ballot.ticket_id,
+        roundId: ballot.round_id,
+        voterPubkey: ballot.voter_pubkey,
+        choice: ballot.choice,
+      });
+      map.set(key, next);
+    }
+    return map;
+  }, [activeAcceptedVotes]);
+  const deliveryCompletionAcknowledgements = useMemo(() => {
+    if (!selectedPublishedVote?.votingId) {
+      return [] as Array<{ actorNpub: string; ackedAction: string; ackedEventId: string; responseId: string }>;
+    }
+    const synthetic: Array<{ actorNpub: string; ackedAction: string; ackedEventId: string; responseId: string }> = [];
+    for (const [key, delivery] of Object.entries(ticketDeliveries)) {
+      const [voterNpub, votingId] = key.split(":");
+      if (votingId !== selectedPublishedVote.votingId) {
+        continue;
+      }
+      const responseId = delivery.responseId?.trim();
+      if (!responseId || !activeAcceptedTicketIds.has(responseId)) {
+        continue;
+      }
+      synthetic.push({
+        actorNpub: voterNpub,
+        ackedAction: "simple_round_ticket",
+        ackedEventId: responseId,
+        responseId,
+      });
+    }
+    return synthetic;
+  }, [activeAcceptedTicketIds, selectedPublishedVote?.votingId, ticketDeliveries]);
   const submittedVoteNumbers = useMemo(() => {
     const nextNumbers = new Map<string, number>();
     [...acceptedVotes, ...rejectedVotes].forEach((entry, index) => {
@@ -1964,19 +3842,185 @@ export default function SimpleCoordinatorApp() {
       createdAt: request.createdAt,
     })),
     ticketDeliveries,
-    acknowledgements: dmAcknowledgements.map((ack) => ({
-      actorNpub: ack.actorNpub,
-      ackedAction: ack.ackedAction,
-      ackedEventId: ack.ackedEventId,
-      responseId: ack.responseId,
-    })),
+    acknowledgements: [
+      ...dmAcknowledgements.map((ack) => ({
+        actorNpub: ack.actorNpub,
+        ackedAction: ack.ackedAction,
+        ackedEventId: ack.ackedEventId,
+        responseId: ack.responseId,
+      })),
+      ...deliveryCompletionAcknowledgements,
+    ],
     canIssueTickets,
   }), [
     canIssueTickets,
     dmAcknowledgements,
+    deliveryCompletionAcknowledgements,
     followers,
     pendingRequests,
     selectedPublishedVote?.votingId,
+    ticketDeliveries,
+  ]);
+  const enhancedCoordinatorFollowerRows = useMemo(() => coordinatorFollowerRows.map((row) => {
+    const selectedVotingId = selectedPublishedVote?.votingId ?? "";
+    const ticketStatusKey = selectedVotingId ? `${row.voterNpub}:${selectedVotingId}` : "";
+    const delivery = ticketStatusKey ? ticketDeliveries[ticketStatusKey] : undefined;
+    const ticketSent = Boolean(delivery?.status?.startsWith("Ticket sent."));
+    const ackSeen = Boolean(
+      row.receipt?.tone === "ok"
+      || (delivery?.responseId
+        && dmAcknowledgements.some((ack) => (
+          ack.ackedAction === "simple_round_ticket"
+          && ack.responseId === delivery.responseId
+        ))),
+    );
+    const requestId = delivery?.requestId?.trim() || pendingRequests.find(
+      (request) =>
+        request.voterNpub === row.voterNpub
+        && request.votingId === selectedVotingId,
+    )?.id?.trim();
+    const requestMailboxId = (
+      requestId
+        ? pendingRequests.find((request) => request.id === requestId)?.mailboxId
+        : pendingRequests.find(
+          (request) =>
+            request.voterNpub === row.voterNpub
+            && request.votingId === selectedVotingId,
+        )?.mailboxId
+    )?.trim();
+    const ticketPublishMailboxId = Array.isArray(delivery?.ticketPublishEventTags)
+      ? delivery.ticketPublishEventTags.find((tag) => tag[0] === "mailbox")?.[1]?.trim()
+      : undefined;
+    const mailboxIdConsistentPublishRequest = Boolean(
+      requestMailboxId
+      && ticketPublishMailboxId
+      && requestMailboxId === ticketPublishMailboxId,
+    );
+    const ticketId = delivery?.responseId?.trim();
+    const acceptedByTicket = Boolean(ticketId && activeAcceptedTicketIds.has(ticketId));
+    const acceptedByRequest = Boolean(requestId && activeAcceptedRequestIds.has(requestId));
+    const acceptedByVoterPubkeyFallback = activeAcceptedVoterPubkeys.has(row.voterNpub);
+    const ballotAccepted = Boolean(
+      acceptedByTicket
+      || acceptedByRequest
+      || acceptedByVoterPubkeyFallback,
+    );
+    const ticketDeliveryConfirmed = isDeliveryConfirmed({ ackSeen, ballotAccepted });
+    const attempts = Number(delivery?.attempts ?? 0);
+    const publishStarted = Boolean(delivery?.ticketPublishStartedAt);
+    const publishSucceeded = Boolean(delivery?.ticketPublishSucceededAt);
+    const publishSucceededAtMs = Date.parse(delivery?.ticketPublishSucceededAt ?? "");
+    const observeRecoveryAgeElapsed = Number.isFinite(publishSucceededAtMs)
+      ? nowMs - publishSucceededAtMs >= ticketObserveRecoveryAgeMs
+      : false;
+    const retryAgeElapsed = Boolean(
+      delivery?.lastAttemptAt
+      && Number.isFinite(Date.parse(delivery.lastAttemptAt))
+      && nowMs - Date.parse(delivery.lastAttemptAt) >= ticketRetryMinAgeMs,
+    );
+    let resendBlockedReason: string | null = null;
+    if (ticketDeliveryConfirmed) {
+      resendBlockedReason = "ticket_already_observed";
+    } else if (!delivery) {
+      resendBlockedReason = "publish_not_started";
+    } else if (!publishStarted) {
+      resendBlockedReason = "publish_not_started";
+    } else if (attempts >= ticketRetryMaxAttempts) {
+      resendBlockedReason = "retry_cap_reached";
+    } else if (publishSucceeded && !observeRecoveryAgeElapsed) {
+      resendBlockedReason = "observe_recovery_age_not_elapsed";
+    } else if (publishSucceeded && !delivery?.ticketLastBackfillAttemptAt) {
+      resendBlockedReason = "backfill_not_attempted";
+    } else if (!retryAgeElapsed) {
+      resendBlockedReason = "retry_age_not_elapsed";
+    }
+    const resendEligible = resendBlockedReason === null;
+
+    const receipt = ballotAccepted
+      ? { tone: "ok", text: "Valid ballot accepted." }
+      : ticketSent && !ackSeen
+        ? { tone: "pending", text: "Ticket issued. Waiting for acknowledgement or valid ballot submission." }
+        : row.receipt;
+    const ticketStillMissing = Boolean(ticketSent && !ballotAccepted && !ackSeen);
+    const rowInFlight = autoSendInFlightRef.current.has(ticketStatusKey);
+    const requestCreatedAtMs = requestId
+      ? Date.parse(
+        pendingRequests.find((request) => request.id === requestId)?.createdAt ?? "",
+      )
+      : Number.NaN;
+    const sendAttempted = Boolean(delivery?.attempts && delivery.attempts > 0);
+    const sendStartedAt = delivery?.ticketPublishStartedAt ?? null;
+    let sendBlockedReason: string | null = null;
+    if (!selectedVotingId) {
+      sendBlockedReason = "no_active_round";
+    } else if (!autoSendFollowers[row.voterNpub]) {
+      sendBlockedReason = "not_selected_for_auto_send";
+    } else if (ticketDeliveryConfirmed) {
+      sendBlockedReason = "ticket_already_complete";
+    } else if (!requestId) {
+      sendBlockedReason = "waiting_for_request";
+    } else if (!row.canSendTicket) {
+      sendBlockedReason = "row_not_sendable";
+    } else if (Boolean(delivery?.ticketPublishStartedAt)) {
+      sendBlockedReason = "ticket_already_started";
+    } else if (rowInFlight) {
+      sendBlockedReason = "send_in_flight";
+    } else if (autoSendInFlightRef.current.size >= ticketSendMaxConcurrency) {
+      sendBlockedReason = "concurrency_limit";
+    }
+    const sendEligible = sendBlockedReason === null;
+
+    return {
+      ...row,
+      receipt,
+      ackSeen,
+      ballotAccepted,
+      acceptedByRequest,
+      acceptedByTicket,
+      acceptedByVoterPubkeyFallback,
+      requestId,
+      requestMailboxId,
+      ticketId,
+      ticketPublishMailboxId,
+      mailboxIdConsistentPublishRequest,
+      ticketDeliveryConfirmed,
+      ticketSent,
+      ticketPublishEventId: delivery?.eventId ?? null,
+      ticketBuiltAt: delivery?.ticketBuiltAt,
+      ticketPublishStartedAt: delivery?.ticketPublishStartedAt,
+      ticketPublishSucceededAt: delivery?.ticketPublishSucceededAt,
+      ticketLastBackfillAttemptAt: delivery?.ticketLastBackfillAttemptAt,
+      ticketResentCount: delivery?.resendCount ?? 0,
+      ticketRelayTargets: delivery?.ticketRelayTargets ?? [],
+      ticketRelaySuccessCount: delivery?.ticketRelaySuccessCount ?? 0,
+      ticketRelayResults: delivery?.relayResults ?? [],
+      ticketPublishEventKind: delivery?.ticketPublishEventKind ?? null,
+      ticketPublishEventCreatedAt: delivery?.ticketPublishEventCreatedAt ?? null,
+      ticketPublishEventTags: delivery?.ticketPublishEventTags ?? [],
+      ticketPublishEventContent: delivery?.ticketPublishEventContent ?? null,
+      ticketStillMissing,
+      sendEligible,
+      sendBlockedReason,
+      sendAttempted,
+      sendStartedAt,
+      requestCreatedAtMs: Number.isFinite(requestCreatedAtMs) ? requestCreatedAtMs : null,
+      resendEligible,
+      resendBlockedReason,
+    };
+  }), [
+    activeAcceptedRequestIds,
+    activeAcceptedTicketIds,
+    activeAcceptedVoterPubkeys,
+    autoSendFollowers,
+    coordinatorFollowerRows,
+    dmAcknowledgements,
+    ticketSendMaxConcurrency,
+    pendingRequests,
+    nowMs,
+    selectedPublishedVote?.votingId,
+    ticketObserveRecoveryAgeMs,
+    ticketRetryMaxAttempts,
+    ticketRetryMinAgeMs,
     ticketDeliveries,
   ]);
   const visibleFollowersById = useMemo(
@@ -1986,14 +4030,14 @@ export default function SimpleCoordinatorApp() {
   const normalizedFollowerSearch = followerSearch.trim().toLowerCase();
   const filteredCoordinatorFollowerRows = useMemo(() => (
     normalizedFollowerSearch
-      ? coordinatorFollowerRows.filter((row) => {
+      ? enhancedCoordinatorFollowerRows.filter((row) => {
         return (
           row.voterId.toLowerCase().includes(normalizedFollowerSearch)
         );
       })
-      : coordinatorFollowerRows
+      : enhancedCoordinatorFollowerRows
   ), [
-    coordinatorFollowerRows,
+    enhancedCoordinatorFollowerRows,
     normalizedFollowerSearch,
     visibleFollowersById,
   ]);
@@ -2004,6 +4048,172 @@ export default function SimpleCoordinatorApp() {
         .filter((follower): follower is SimpleCoordinatorFollower => Boolean(follower)),
     [filteredCoordinatorFollowerRows, visibleFollowersById],
   );
+  useEffect(() => {
+    const waitingForAcknowledgements = enhancedCoordinatorFollowerRows.filter(
+      (row) => row.ticketSent && !row.ackSeen,
+    ).length;
+    const waitingForCompletionConfirmation = enhancedCoordinatorFollowerRows.filter(
+      (row) => row.ticketSent && !row.ticketDeliveryConfirmed,
+    ).length;
+    const sendQueueEligibleCount = enhancedCoordinatorFollowerRows.filter((row) => row.sendEligible).length;
+    const sendQueueStartedCount = enhancedCoordinatorFollowerRows.filter((row) => row.sendAttempted).length;
+    const sendQueueBlockedRows = enhancedCoordinatorFollowerRows.filter((row) => !row.sendEligible);
+    const sendQueueBlockedCount = sendQueueBlockedRows.length;
+    const sendQueueBlockedReasons = sendQueueBlockedRows.reduce((acc, row) => {
+      const key = String(row.sendBlockedReason ?? "unknown");
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+    const sendQueueInFlightCount = autoSendInFlightRef.current.size;
+    const sendQueueUnsentCount = enhancedCoordinatorFollowerRows.filter((row) => !row.sendAttempted).length;
+    const ticketSendStartedTimestamps = enhancedCoordinatorFollowerRows
+      .map((row) => Date.parse(row.sendStartedAt ?? ""))
+      .filter((value) => Number.isFinite(value));
+    const lastTicketSendStartedAt = ticketSendStartedTimestamps.length > 0
+      ? new Date(Math.max(...ticketSendStartedTimestamps)).toISOString()
+      : null;
+    const roundOpenAt = selectedPublishedVote?.createdAt ?? null;
+    const matchedRequestIds = new Set(
+      enhancedCoordinatorFollowerRows
+        .filter((row) => row.ballotAccepted && row.requestId)
+        .map((row) => String(row.requestId)),
+    );
+    const matchedTicketIds = new Set(
+      enhancedCoordinatorFollowerRows
+        .filter((row) => row.ballotAccepted && row.ticketId)
+        .map((row) => String(row.ticketId)),
+    );
+    const unmatchedAcceptedBallots = activeAcceptedVotes
+      .filter((entry) => {
+        const requestId = entry.request_id?.trim();
+        const ticketId = entry.ticket_id?.trim();
+        if (!requestId && !ticketId) {
+          return true;
+        }
+        return Boolean(
+          (requestId && !matchedRequestIds.has(requestId))
+          || (ticketId && !matchedTicketIds.has(ticketId)),
+        );
+      })
+      .map((entry) => ({
+        eventId: entry.event_id,
+        voterPubkey: entry.voter_pubkey,
+        requestId: entry.request_id,
+        ticketId: entry.ticket_id,
+        roundId: entry.round_id,
+      }));
+    const rowsWithoutAcceptedBallot = enhancedCoordinatorFollowerRows
+      .filter((row) => !row.ballotAccepted)
+      .map((row) => ({
+        voterPubkey: row.voterNpub,
+        ticketSent: row.ticketSent,
+        requestId: row.requestId ?? null,
+        requestMailboxId: row.requestMailboxId ?? null,
+        ticketId: row.ticketId ?? null,
+      }));
+    const ticketPublishStartedCount = enhancedCoordinatorFollowerRows.filter(
+      (row) => Boolean(row.ticketPublishStartedAt),
+    ).length;
+    const ticketPublishSucceededCount = enhancedCoordinatorFollowerRows.filter(
+      (row) => Boolean(row.ticketPublishSucceededAt),
+    ).length;
+    const ticketStillMissingCount = enhancedCoordinatorFollowerRows.filter(
+      (row) => row.ticketStillMissing,
+    ).length;
+    const ticketResentCount = enhancedCoordinatorFollowerRows.reduce(
+      (total, row) => total + Number(row.ticketResentCount ?? 0),
+      0,
+    );
+    const owner = globalThis as typeof globalThis & {
+      __simpleCoordinatorDebug?: unknown;
+    };
+    owner.__simpleCoordinatorDebug = {
+      engineStatus: coordinatorEngineStatus,
+      runtimeReadiness: coordinatorRuntimeReadiness,
+      startupDiagnostics: startupDiagnosticsRef.current,
+      blindKeyDiagnostics: blindKeyDiagnosticsRef.current,
+      controlStateLabel: coordinatorControlStateLabel,
+      waitingForAcknowledgements,
+      waitingForCompletionConfirmation,
+      sendQueueEligibleCount,
+      sendQueueStartedCount,
+      sendQueueBlockedCount,
+      sendQueueBlockedReasons,
+      sendQueueInFlightCount,
+      sendQueueUnsentCount,
+      roundOpenAt,
+      lastTicketSendStartedAt,
+      ticketPublishStartedCount,
+      ticketPublishSucceededCount,
+      ticketStillMissingCount,
+      ticketResentCount,
+      acceptedBallotCount: activeAcceptedVotes.length,
+      rejectedBallotCount: activeRejectedVotes.length,
+      acceptedBallotsByRequestId: Array.from(acceptedBallotsByRequestId.entries()),
+      acceptedBallotsByTicketId: Array.from(acceptedBallotsByTicketId.entries()),
+      unmatchedAcceptedBallots,
+      rowsWithoutAcceptedBallot,
+      acceptedBallots: activeAcceptedVotes.map((entry) => ({
+        eventId: entry.event_id,
+        voterPubkey: entry.voter_pubkey,
+        requestId: entry.request_id,
+        ticketId: entry.ticket_id,
+        roundId: entry.round_id,
+      })),
+      rejectedBallots: activeRejectedVotes.map((entry) => ({
+        eventId: entry.event_id,
+        voterPubkey: entry.voter_pubkey,
+        code: entry.reason.code,
+        detail: entry.reason.detail,
+      })),
+      voters: enhancedCoordinatorFollowerRows.map((row) => ({
+        voterPubkey: row.voterNpub,
+        ticketSent: row.ticketSent,
+        ticketAckSeen: row.ackSeen,
+        ballotAccepted: row.ballotAccepted,
+        acceptedByRequest: row.acceptedByRequest,
+        acceptedByTicket: row.acceptedByTicket,
+        requestId: row.requestId,
+        ticketPublishEventId: row.ticketPublishEventId,
+        requestMailboxId: row.requestMailboxId,
+        ticketPublishMailboxId: row.ticketPublishMailboxId,
+        mailboxIdConsistentPublishRequest: row.mailboxIdConsistentPublishRequest,
+        ticketId: row.ticketId,
+        ticketBuiltAt: row.ticketBuiltAt,
+        ticketPublishStartedAt: row.ticketPublishStartedAt,
+        ticketPublishSucceededAt: row.ticketPublishSucceededAt,
+        ticketLastBackfillAttemptAt: row.ticketLastBackfillAttemptAt,
+        ticketResentCount: row.ticketResentCount,
+        ticketRelayTargets: row.ticketRelayTargets,
+        ticketRelaySuccessCount: row.ticketRelaySuccessCount,
+        ticketRelayResults: row.ticketRelayResults,
+        ticketPublishEventKind: row.ticketPublishEventKind,
+        ticketPublishEventCreatedAt: row.ticketPublishEventCreatedAt,
+        ticketPublishEventTags: row.ticketPublishEventTags,
+        ticketPublishEventContent: row.ticketPublishEventContent,
+        ticketStillMissing: row.ticketStillMissing,
+        sendEligible: row.sendEligible,
+        sendBlockedReason: row.sendBlockedReason,
+        sendAttempted: row.sendAttempted,
+        sendStartedAt: row.sendStartedAt,
+        requestCreatedAtMs: row.requestCreatedAtMs,
+        resendEligible: row.resendEligible,
+        resendBlockedReason: row.resendBlockedReason,
+        ticketDeliveryConfirmed: row.ticketDeliveryConfirmed,
+      })),
+    };
+  }, [
+    acceptedBallotsByRequestId,
+    acceptedBallotsByTicketId,
+    blindKeyDiagnosticsVersion,
+    selectedPublishedVote?.createdAt,
+    coordinatorControlStateLabel,
+    coordinatorEngineStatus,
+    coordinatorRuntimeReadiness,
+    activeAcceptedVotes,
+    activeRejectedVotes,
+    enhancedCoordinatorFollowerRows,
+  ]);
   const verifiedVisibleFollowerCount = filteredFollowers.filter(
     (follower) => autoSendFollowers[follower.voterNpub],
   ).length;
@@ -2141,27 +4351,52 @@ export default function SimpleCoordinatorApp() {
       return;
     }
 
-    for (const follower of visibleFollowers) {
-      if (!autoSendFollowers[follower.voterNpub]) {
-        continue;
-      }
+    const enhancedById = new Map(
+      enhancedCoordinatorFollowerRows.map((row) => [row.id, row]),
+    );
+    const firstSendCandidates = visibleFollowers
+      .map((follower) => {
+        const ticketStatusKey = `${follower.voterNpub}:${activeVotingId}`;
+        const row = enhancedById.get(follower.id);
+        if (!row?.sendEligible || autoSendInFlightRef.current.has(ticketStatusKey)) {
+          return null;
+        }
+        return {
+          follower,
+          requestCreatedAtMs: Number.isFinite(Number(row.requestCreatedAtMs))
+            ? Number(row.requestCreatedAtMs)
+            : Number.MAX_SAFE_INTEGER,
+          voterId: follower.voterId,
+          ticketStatusKey,
+        };
+      })
+      .filter((value): value is {
+        follower: SimpleCoordinatorFollower;
+        requestCreatedAtMs: number;
+        voterId: string;
+        ticketStatusKey: string;
+      } => Boolean(value))
+      .sort((left, right) => (
+        left.requestCreatedAtMs - right.requestCreatedAtMs
+        || left.voterId.localeCompare(right.voterId)
+      ));
 
-      const ticketStatusKey = `${follower.voterNpub}:${activeVotingId}`;
-      if (ticketDeliveries[ticketStatusKey]) {
-        continue;
+    for (const candidate of firstSendCandidates) {
+      if (autoSendInFlightRef.current.size >= ticketSendMaxConcurrency) {
+        break;
       }
-
-      const row = coordinatorFollowerRows.find((entry) => entry.id === follower.id);
-      if (!row?.canSendTicket || autoSendInFlightRef.current.has(ticketStatusKey)) {
-        continue;
-      }
-
-      autoSendInFlightRef.current.add(ticketStatusKey);
-      void sendTicket(follower).finally(() => {
-        autoSendInFlightRef.current.delete(ticketStatusKey);
+      autoSendInFlightRef.current.add(candidate.ticketStatusKey);
+      void sendTicket(candidate.follower, { preSendDelayMs: randomHumanActionDelayMs() }).finally(() => {
+        autoSendInFlightRef.current.delete(candidate.ticketStatusKey);
       });
     }
-  }, [activeVotingId, autoSendFollowers, coordinatorFollowerRows, ticketDeliveries, visibleFollowers]);
+  }, [
+    activeVotingId,
+    enhancedCoordinatorFollowerRows,
+    nowMs,
+    ticketSendMaxConcurrency,
+    visibleFollowers,
+  ]);
 
   useEffect(() => {
     if (!activeVotingId) {
@@ -2178,48 +4413,121 @@ export default function SimpleCoordinatorApp() {
       })),
       selectedPublishedVotingId: activeVotingId,
       ticketDeliveries,
-      acknowledgements: dmAcknowledgements.map((ack) => ({
-        actorNpub: ack.actorNpub,
-        ackedAction: ack.ackedAction,
-        ackedEventId: ack.ackedEventId,
-        responseId: ack.responseId,
-      })),
+      acknowledgements: [
+        ...dmAcknowledgements.map((ack) => ({
+          actorNpub: ack.actorNpub,
+          ackedAction: ack.ackedAction,
+          ackedEventId: ack.ackedEventId,
+          responseId: ack.responseId,
+        })),
+        ...deliveryCompletionAcknowledgements,
+      ],
       nowMs,
-      minRetryAgeMs: 2000,
-      maxAttempts: 8,
+      minRetryAgeMs: ticketRetryMinAgeMs,
+      maxAttempts: ticketRetryMaxAttempts,
     }));
+    for (const row of enhancedCoordinatorFollowerRows) {
+      if (row.resendEligible && row.ticketSent) {
+        retryFollowerIds.add(row.id);
+      }
+    }
+    const unsentEligibleCount = enhancedCoordinatorFollowerRows.filter((row) => row.sendEligible).length;
+
+    if (unsentEligibleCount > 0) {
+      return;
+    }
 
     if (retryFollowerIds.size === 0) {
       return;
     }
 
-    for (const follower of visibleFollowers) {
-      if (!retryFollowerIds.has(follower.id) || !autoSendFollowers[follower.voterNpub]) {
+    const enhancedById = new Map(
+      enhancedCoordinatorFollowerRows.map((row) => [row.id, row]),
+    );
+    const resendCandidates = visibleFollowers
+      .map((follower) => {
+        const ticketStatusKey = `${follower.voterNpub}:${activeVotingId}`;
+        const row = enhancedById.get(follower.id);
+        if (!retryFollowerIds.has(follower.id) || !autoSendFollowers[follower.voterNpub] || !row?.resendEligible) {
+          return null;
+        }
+        const lastAttemptMs = Date.parse(row.ticketPublishSucceededAt ?? row.ticketPublishStartedAt ?? "");
+        return {
+          follower,
+          ticketStatusKey,
+          lastAttemptMs: Number.isFinite(lastAttemptMs) ? lastAttemptMs : 0,
+          voterId: follower.voterId,
+        };
+      })
+      .filter((value): value is {
+        follower: SimpleCoordinatorFollower;
+        ticketStatusKey: string;
+        lastAttemptMs: number;
+        voterId: string;
+      } => Boolean(value))
+      .sort((left, right) => (
+        left.lastAttemptMs - right.lastAttemptMs
+        || left.voterId.localeCompare(right.voterId)
+      ));
+
+    for (const candidate of resendCandidates) {
+      if (autoSendInFlightRef.current.size >= ticketSendMaxConcurrency) {
+        break;
+      }
+      const follower = candidate.follower;
+      const ticketStatusKey = candidate.ticketStatusKey;
+      const existingBeforeResend = ticketDeliveries[ticketStatusKey];
+      if (existingBeforeResend?.ticketPublishSucceededAt && !existingBeforeResend.ticketLastBackfillAttemptAt) {
+        setTicketDeliveries((current) => {
+          const existing = current[ticketStatusKey];
+          if (!existing) {
+            return current;
+          }
+          return {
+            ...current,
+            [ticketStatusKey]: {
+              ...existing,
+              ticketLastBackfillAttemptAt: new Date().toISOString(),
+              ticketStillMissing: true,
+            },
+          };
+        });
         continue;
       }
-
-      const ticketStatusKey = `${follower.voterNpub}:${activeVotingId}`;
+      setTicketDeliveries((current) => {
+        const existing = current[ticketStatusKey];
+        if (!existing) {
+          return current;
+        }
+        return {
+          ...current,
+          [ticketStatusKey]: {
+            ...existing,
+            ticketLastBackfillAttemptAt: new Date().toISOString(),
+            ticketStillMissing: true,
+          },
+        };
+      });
       if (autoSendInFlightRef.current.has(ticketStatusKey)) {
         continue;
       }
 
-      const row = coordinatorFollowerRows.find((entry) => entry.id === follower.id);
-      if (!row?.canSendTicket) {
-        continue;
-      }
-
       autoSendInFlightRef.current.add(ticketStatusKey);
-      void sendTicket(follower).finally(() => {
+      void sendTicket(follower, { preSendDelayMs: randomHumanActionDelayMs() }).finally(() => {
         autoSendInFlightRef.current.delete(ticketStatusKey);
       });
     }
   }, [
     activeVotingId,
     autoSendFollowers,
-    coordinatorFollowerRows,
+    enhancedCoordinatorFollowerRows,
+    deliveryCompletionAcknowledgements,
     dmAcknowledgements,
     nowMs,
     ticketDeliveries,
+    ticketRetryMaxAttempts,
+    ticketRetryMinAgeMs,
+    ticketSendMaxConcurrency,
     visibleFollowers,
   ]);
 
@@ -2300,6 +4608,12 @@ export default function SimpleCoordinatorApp() {
             role='tabpanel'
             aria-label='Configure'
           >
+            <SimpleCollapsibleSection title='Private questionnaire'>
+              <QuestionnaireCoordinatorPanel
+                coordinatorNsec={keypair?.nsec ?? null}
+                coordinatorNpub={keypair?.npub ?? null}
+              />
+            </SimpleCollapsibleSection>
             <SimpleCollapsibleSection title='Coordinator management'>
               <label
                 className='simple-voter-label'
@@ -2465,16 +4779,16 @@ export default function SimpleCoordinatorApp() {
                       : undefined;
                     const isTicketSending =
                       ticketDelivery?.status === 'Sending ticket...';
-                    const ticketReceiptConfirmed = row.receipt?.tone === 'ok';
+                    const ticketDeliveryConfirmed = row.ticketDeliveryConfirmed;
                     const lastAttemptAtMs = ticketDelivery?.lastAttemptAt
                       ? Date.parse(ticketDelivery.lastAttemptAt)
                       : Number.NaN;
                     const showResendTicket = Boolean(
                       selectedPublishedVote &&
                       ticketDelivery &&
-                      !ticketReceiptConfirmed &&
+                      !ticketDeliveryConfirmed &&
                       Number.isFinite(lastAttemptAtMs) &&
-                      nowMs - lastAttemptAtMs >= 30_000,
+                      nowMs - lastAttemptAtMs >= ticketRetryMinAgeMs,
                     );
 
                     return (
@@ -2702,6 +5016,22 @@ export default function SimpleCoordinatorApp() {
                   </div>
                   {coordinatorControlStateLabel ? (
                     <p className='simple-voter-note'>{coordinatorControlStateLabel}</p>
+                  ) : null}
+                  {coordinatorRuntimeReadiness ? (
+                    <>
+                      <p className='simple-voter-note'>
+                        Coordinator readiness: {coordinatorRuntimeReadiness.phase.replace(/_/g, ' ')}.
+                      </p>
+                      <div className='simple-voter-note'>
+                        MLS join {coordinatorRuntimeReadiness.mlsJoinComplete ? 'yes' : 'no'} ·
+                        welcome ack {coordinatorRuntimeReadiness.welcomeAckSent ? 'yes' : 'no'} ·
+                        backfill {coordinatorRuntimeReadiness.initialControlBackfillComplete ? 'yes' : 'no'} ·
+                        auto approval {coordinatorRuntimeReadiness.autoApprovalComplete ? 'yes' : 'no'} ·
+                        round-open safe {coordinatorRuntimeReadiness.roundOpenPublishSafe ? 'yes' : 'no'} ·
+                        blind-key safe {coordinatorRuntimeReadiness.blindKeyPublishSafe ? 'yes' : 'no'} ·
+                        ticket-plane safe {coordinatorRuntimeReadiness.ticketPlaneSafe ? 'yes' : 'no'}
+                      </div>
+                    </>
                   ) : null}
                 </>
               ) : selectedPublishedVote ? (
