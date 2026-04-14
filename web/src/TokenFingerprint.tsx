@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import QRCode from "qrcode";
 import {
   TOKEN_FINGERPRINT_PALETTE,
@@ -32,6 +32,16 @@ export default function TokenFingerprint({
   const [qrExpanded, setQrExpanded] = useState(false);
   const cells = tokenPatternDetail(tokenId, size);
   const qrPayload = qrValue ?? tokenQrPayload(tokenId);
+  const qrDarkColor = useMemo(
+    () => {
+      const filled = cells.find((cell) => cell.filled);
+      if (!filled) {
+        return "#2e2218";
+      }
+      return TOKEN_FINGERPRINT_PALETTE[filled.colorIndex] ?? "#2e2218";
+    },
+    [cells],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -46,7 +56,7 @@ export default function TokenFingerprint({
       margin: 1,
       width: compact ? 96 : (xlarge ? 432 : (large ? 288 : 144)),
       color: {
-        dark: "#2e2218",
+        dark: qrDarkColor,
         light: "#fffaf2",
       },
     }).then((value: string) => {
@@ -62,7 +72,7 @@ export default function TokenFingerprint({
     return () => {
       cancelled = true;
     };
-  }, [compact, qrPayload, showQr]);
+  }, [compact, qrDarkColor, qrPayload, showQr]);
 
   useEffect(() => {
     if (!qrExpanded) {
@@ -88,10 +98,27 @@ export default function TokenFingerprint({
       >
         <div className='token-fingerprint-symbols'>
           <div
-            className='token-fingerprint-grid'
-            role='img'
-            aria-label={label ?? `Token fingerprint ${tokenIdLabel(tokenId)}`}
+            className={`token-fingerprint-grid${showQr ? " token-fingerprint-grid-clickable" : ""}`}
+            role={showQr ? "button" : "img"}
+            tabIndex={showQr ? 0 : -1}
+            aria-label={showQr
+              ? `Expand QR for token ${tokenIdLabel(tokenId)}`
+              : (label ?? `Token fingerprint ${tokenIdLabel(tokenId)}`)}
             style={{ gridTemplateColumns: `repeat(${size}, minmax(0, 1fr))` }}
+            onClick={() => {
+              if (showQr && qrSrc) {
+                setQrExpanded(true);
+              }
+            }}
+            onKeyDown={(event) => {
+              if (!showQr || !qrSrc) {
+                return;
+              }
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                setQrExpanded(true);
+              }
+            }}
           >
             {cells.map((cell, index) => (
               <span

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { generateSecretKey, nip19 } from "nostr-tools";
 import { fetchQuestionnaireEvents, fetchQuestionnaireEventsWithFallback, getQuestionnaireReadRelays, parseQuestionnaireDefinitionEvent, parseQuestionnaireStateEvent, publishEncryptedQuestionnaireResponse, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND } from "./questionnaireNostr";
-import { deriveEffectiveQuestionnaireState, formatQuestionnaireStateLabel, formatQuestionnaireTokenStatusLabel, parseQuestionnaireResultSummaryEvent, selectLatestQuestionnaireDefinition, selectLatestQuestionnaireState } from "./questionnaireRuntime";
+import { formatQuestionnaireStateLabel, formatQuestionnaireTokenStatusLabel, parseQuestionnaireResultSummaryEvent, selectLatestQuestionnaireDefinition, selectLatestQuestionnaireState } from "./questionnaireRuntime";
 import { buildSimpleNamespacedLocalStorageKey, loadSimpleActorState } from "./simpleLocalState";
 import { validateQuestionnaireResponsePayload, type QuestionnaireDefinition, type QuestionnaireResponseAnswer, type QuestionnaireResponsePayload, type QuestionnaireResultSummary } from "./questionnaireProtocol";
 import { getSharedNostrPool } from "./sharedNostrPool";
@@ -138,6 +138,13 @@ function selectorStateBadge(lifecycle: SelectorLifecycle) {
     return "Counted";
   }
   return "Unknown";
+}
+
+function lifecycleFromExplicitState(state: string | null | undefined): SelectorLifecycle {
+  if (!state) {
+    return "draft";
+  }
+  return selectorLifecycleFromState(state);
 }
 
 function isDefinitionMarkedStale(definition: QuestionnaireDefinition) {
@@ -427,12 +434,8 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
           if (!id) {
             continue;
           }
-          const latestState = latestStateByQuestionnaireId.get(id)?.state ?? deriveEffectiveQuestionnaireState({
-            definition: parsed,
-            latestState: null,
-            nowUnix: now,
-          });
-          const lifecycle = selectorLifecycleFromState(latestState);
+          const explicitState = latestStateByQuestionnaireId.get(id)?.state ?? null;
+          const lifecycle = lifecycleFromExplicitState(explicitState);
           const restored = restoredQuestionnaireIds.includes(id);
           const createdAt = Number(parsed.createdAt ?? 0);
           const discoveredAt = Number(event.created_at ?? createdAt);
@@ -458,7 +461,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
             && !stale
             && isRecent
             && relevantByCoordinator;
-          const includeByRestore = restored && !stale;
+          const includeByRestore = restored && !stale && isActiveSelectorLifecycle(entry.lifecycle);
           if (!includeByDefault && !includeByRestore) {
             continue;
           }
@@ -535,11 +538,16 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
       setResultEventCount(resultEvents.length);
       const latestDefinition = selectLatestQuestionnaireDefinition(definitionEvents);
       const latestExplicitState = selectLatestQuestionnaireState(stateEvents);
+      const explicitState = latestExplicitState?.state ?? null;
+      const lifecycle = lifecycleFromExplicitState(explicitState);
+      if (!latestDefinition || !isActiveSelectorLifecycle(lifecycle)) {
+        setDefinition(null);
+        setState(null);
+        setLatestResult(null);
+        return;
+      }
       setDefinition(latestDefinition);
-      setState(deriveEffectiveQuestionnaireState({
-        definition: latestDefinition,
-        latestState: latestExplicitState,
-      }));
+      setState(explicitState);
       setLatestResult(parseLatestResultSummary(resultEvents));
     } catch {
       setStatus("Questionnaire refresh failed.");
@@ -746,13 +754,10 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
         setStatus("Restore failed. Questionnaire not found.");
         return;
       }
-      const restoredState = deriveEffectiveQuestionnaireState({
-        definition: restoredDefinition,
-        latestState: selectLatestQuestionnaireState(stateFetch.events),
-      });
-      const lifecycle = selectorLifecycleFromState(restoredState);
-      if (lifecycle === "unknown") {
-        setStatus("Restore failed. Questionnaire is invalid.");
+      const restoredState = selectLatestQuestionnaireState(stateFetch.events)?.state ?? null;
+      const lifecycle = lifecycleFromExplicitState(restoredState);
+      if (!isActiveSelectorLifecycle(lifecycle)) {
+        setStatus("Restore failed. Questionnaire is not published.");
         return;
       }
       setRestoredQuestionnaireIds((current) => (
