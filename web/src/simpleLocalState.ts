@@ -66,6 +66,10 @@ const ACTIVE_STATE_KDF_ITERATIONS = 250_000;
 const DEFAULT_STORAGE_NAMESPACE = "default";
 const STORAGE_NAMESPACE_PATTERN = /^[a-z0-9_-]{1,64}$/;
 let cachedStorageNamespace: string | null = null;
+const INDEXEDDB_FAILURE_BASE_BACKOFF_MS = 15_000;
+const INDEXEDDB_FAILURE_MAX_BACKOFF_MS = 5 * 60 * 1000;
+let indexedDbDisabledUntilMs = 0;
+let indexedDbFailureCount = 0;
 
 export class SimpleActorStateLockedError extends Error {
   constructor() {
@@ -140,6 +144,41 @@ async function derivePassphraseKey(
 
 function hasIndexedDb() {
   return typeof indexedDB !== "undefined";
+}
+
+function indexedDbAvailableNow() {
+  return hasIndexedDb() && Date.now() >= indexedDbDisabledUntilMs;
+}
+
+function isIndexedDbLockError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  const name = error instanceof Error ? error.name : "";
+  const lower = message.toLowerCase();
+  const lowerName = name.toLowerCase();
+  return lower.includes("lock")
+    || lower.includes("lockfile")
+    || lower.includes("leveldb")
+    || lower.includes("unable to open indexeddb")
+    || lower.includes("backing store")
+    || lower.includes("indexeddb.open")
+    || (lowerName === "unknownerror" && lower.includes("indexeddb"));
+}
+
+function recordIndexedDbFailure(error: unknown) {
+  if (!isIndexedDbLockError(error)) {
+    return;
+  }
+  indexedDbFailureCount = Math.min(indexedDbFailureCount + 1, 16);
+  const backoffMs = Math.min(
+    INDEXEDDB_FAILURE_MAX_BACKOFF_MS,
+    INDEXEDDB_FAILURE_BASE_BACKOFF_MS * (2 ** Math.max(0, indexedDbFailureCount - 1)),
+  );
+  indexedDbDisabledUntilMs = Date.now() + backoffMs;
+}
+
+function clearIndexedDbFailureBackoff() {
+  indexedDbFailureCount = 0;
+  indexedDbDisabledUntilMs = 0;
 }
 
 function getStorageNamespace() {
@@ -225,23 +264,36 @@ export async function loadSimpleActorState(role: SimpleActorRole): Promise<Simpl
 }
 
 export async function isSimpleActorStateLocked(role: SimpleActorRole): Promise<boolean> {
-  if (!hasIndexedDb()) {
+  if (!indexedDbAvailableNow()) {
     return false;
   }
 
-  const result = await withStore<SimpleActorState | SimpleEncryptedActorState | undefined>("readonly", (store) => store.get(role));
-  return Boolean(result && "type" in result && result.type === "auditable-voting.simple-state.encrypted");
+  try {
+    const result = await withStore<SimpleActorState | SimpleEncryptedActorState | undefined>("readonly", (store) => store.get(role));
+    clearIndexedDbFailureBackoff();
+    return Boolean(result && "type" in result && result.type === "auditable-voting.simple-state.encrypted");
+  } catch (error) {
+    recordIndexedDbFailure(error);
+    return false;
+  }
 }
 
 export async function loadSimpleActorStateWithOptions(
   role: SimpleActorRole,
   options?: { passphrase?: string },
 ): Promise<SimpleActorState | null> {
-  if (!hasIndexedDb()) {
+  if (!indexedDbAvailableNow()) {
     return memoryState.get(getMemoryStateKey(role)) ?? null;
   }
 
-  const result = await withStore<SimpleActorState | SimpleEncryptedActorState | undefined>("readonly", (store) => store.get(role));
+  let result: SimpleActorState | SimpleEncryptedActorState | undefined;
+  try {
+    result = await withStore<SimpleActorState | SimpleEncryptedActorState | undefined>("readonly", (store) => store.get(role));
+    clearIndexedDbFailureBackoff();
+  } catch (error) {
+    recordIndexedDbFailure(error);
+    return memoryState.get(getMemoryStateKey(role)) ?? null;
+  }
   if (!result) {
     return null;
   }
@@ -272,7 +324,7 @@ export async function saveSimpleActorState(
   state: SimpleActorState,
   options?: { passphrase?: string },
 ): Promise<void> {
-  if (!hasIndexedDb()) {
+  if (!indexedDbAvailableNow()) {
     memoryState.set(getMemoryStateKey(state.role), state);
     return;
   }
@@ -304,29 +356,55 @@ export async function saveSimpleActorState(
       },
       ciphertext: bytesToBase64(new Uint8Array(encrypted)),
     };
-    await withStore("readwrite", (store) => store.put(payload, state.role));
+    try {
+      await withStore("readwrite", (store) => store.put(payload, state.role));
+      clearIndexedDbFailureBackoff();
+    } catch (error) {
+      recordIndexedDbFailure(error);
+      memoryState.set(getMemoryStateKey(state.role), state);
+    }
     return;
   }
 
-  await withStore("readwrite", (store) => store.put(state, state.role));
+  try {
+    await withStore("readwrite", (store) => store.put(state, state.role));
+    clearIndexedDbFailureBackoff();
+  } catch (error) {
+    recordIndexedDbFailure(error);
+    memoryState.set(getMemoryStateKey(state.role), state);
+  }
 }
 
 export async function clearSimpleActorState(role: SimpleActorRole): Promise<void> {
-  if (!hasIndexedDb()) {
+  if (!indexedDbAvailableNow()) {
     memoryState.delete(getMemoryStateKey(role));
     return;
   }
 
-  await withStore("readwrite", (store) => store.delete(role));
+  try {
+    await withStore("readwrite", (store) => store.delete(role));
+    clearIndexedDbFailureBackoff();
+  } catch (error) {
+    recordIndexedDbFailure(error);
+    memoryState.delete(getMemoryStateKey(role));
+  }
 }
 
 export async function resetSimpleActorStateForTests(): Promise<void> {
-  if (!hasIndexedDb()) {
+  if (!indexedDbAvailableNow()) {
     memoryState.clear();
     return;
   }
 
-  const database = await openDatabase();
+  let database: IDBDatabase;
+  try {
+    database = await openDatabase();
+    clearIndexedDbFailureBackoff();
+  } catch (error) {
+    recordIndexedDbFailure(error);
+    memoryState.clear();
+    return;
+  }
   await new Promise<void>((resolve, reject) => {
     const transaction = database.transaction(STORE_NAME, "readwrite");
     const store = transaction.objectStore(STORE_NAME);

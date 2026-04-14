@@ -118,6 +118,13 @@ type TicketMailboxMismatch = {
 type SimpleVoterCache = {
   manualCoordinators: string[];
   nip65Enabled: boolean;
+  questionnaireParticipationHistory: Array<{
+    questionnaireId: string;
+    title: string;
+    coordinatorPubkey: string;
+    submissionCount: number;
+    lastSubmittedAt: number;
+  }>;
   protocolStateCache?: ProtocolStateCache | null;
   requestStatus: string | null;
   receivedShards: SimpleShardResponse[];
@@ -159,6 +166,7 @@ function createEmptyVoterCache(): SimpleVoterCache {
   return {
     manualCoordinators: [],
     nip65Enabled: false,
+    questionnaireParticipationHistory: [],
     protocolStateCache: null,
     requestStatus: null,
     receivedShards: [],
@@ -251,6 +259,9 @@ export default function SimpleUiApp() {
   const [voterId, setVoterId] = useState<string>("pending");
   const [manualCoordinators, setManualCoordinators] = useState<string[]>([]);
   const [nip65Enabled, setNip65Enabled] = useState(false);
+  const [questionnaireParticipationHistory, setQuestionnaireParticipationHistory] = useState<
+    SimpleVoterCache["questionnaireParticipationHistory"]
+  >([]);
   const [coordinatorDraft, setCoordinatorDraft] = useState("");
   const [coordinatorScannerActive, setCoordinatorScannerActive] = useState(false);
   const [coordinatorScannerStatus, setCoordinatorScannerStatus] = useState<string | null>(null);
@@ -535,6 +546,19 @@ export default function SimpleUiApp() {
         const cache = (storedState.cache ?? null) as Partial<SimpleVoterCache> | null;
         setManualCoordinators(Array.isArray(cache?.manualCoordinators) ? sanitizeCoordinatorNpubs(cache.manualCoordinators) : []);
         setNip65Enabled(cache?.nip65Enabled === true);
+        setQuestionnaireParticipationHistory(
+          Array.isArray(cache?.questionnaireParticipationHistory)
+            ? cache.questionnaireParticipationHistory.filter((entry): entry is SimpleVoterCache["questionnaireParticipationHistory"][number] => (
+              Boolean(entry)
+              && typeof entry === "object"
+              && typeof (entry as { questionnaireId?: unknown }).questionnaireId === "string"
+              && typeof (entry as { title?: unknown }).title === "string"
+              && typeof (entry as { coordinatorPubkey?: unknown }).coordinatorPubkey === "string"
+              && typeof (entry as { submissionCount?: unknown }).submissionCount === "number"
+              && Number.isFinite((entry as { lastSubmittedAt?: unknown }).lastSubmittedAt)
+            ))
+            : [],
+        );
         setProtocolStateCache(
           cache?.protocolStateCache && typeof cache.protocolStateCache === "object"
             ? cache.protocolStateCache as ProtocolStateCache
@@ -613,6 +637,7 @@ export default function SimpleUiApp() {
     const cache: SimpleVoterCache = {
       manualCoordinators,
       nip65Enabled,
+      questionnaireParticipationHistory,
       protocolStateCache,
       requestStatus,
       receivedShards,
@@ -628,6 +653,7 @@ export default function SimpleUiApp() {
     const cacheSignature = JSON.stringify({
       manualCoordinators,
       nip65Enabled,
+      questionnaireParticipationHistory,
       protocolStateCache,
       requestStatus,
       receivedShards,
@@ -667,6 +693,7 @@ export default function SimpleUiApp() {
     liveVoteChoice,
     manualCoordinators,
     nip65Enabled,
+    questionnaireParticipationHistory,
     protocolStateCache,
     followDeliveries,
     pendingBlindRequests,
@@ -1176,6 +1203,7 @@ export default function SimpleUiApp() {
     void downloadSimpleActorBackup("voter", voterKeypair as SimpleActorKeypair, {
       manualCoordinators,
       nip65Enabled,
+      questionnaireParticipationHistory,
       protocolStateCache,
       requestStatus,
       receivedShards,
@@ -1214,6 +1242,19 @@ export default function SimpleUiApp() {
       protocolStateServiceRef.current = null;
       setManualCoordinators(Array.isArray(cache?.manualCoordinators) ? sanitizeCoordinatorNpubs(cache.manualCoordinators) : []);
       setNip65Enabled(cache?.nip65Enabled === true);
+      setQuestionnaireParticipationHistory(
+        Array.isArray(cache?.questionnaireParticipationHistory)
+          ? cache.questionnaireParticipationHistory.filter((entry): entry is SimpleVoterCache["questionnaireParticipationHistory"][number] => (
+            Boolean(entry)
+            && typeof entry === "object"
+            && typeof (entry as { questionnaireId?: unknown }).questionnaireId === "string"
+            && typeof (entry as { title?: unknown }).title === "string"
+            && typeof (entry as { coordinatorPubkey?: unknown }).coordinatorPubkey === "string"
+            && typeof (entry as { submissionCount?: unknown }).submissionCount === "number"
+            && Number.isFinite((entry as { lastSubmittedAt?: unknown }).lastSubmittedAt)
+          ))
+          : [],
+      );
       setProtocolStateCache(
         cache?.protocolStateCache && typeof cache.protocolStateCache === "object"
           ? cache.protocolStateCache as ProtocolStateCache
@@ -1273,6 +1314,19 @@ export default function SimpleUiApp() {
       setVoterKeypair(storedState.keypair);
       protocolStateServiceRef.current = null;
       setManualCoordinators(Array.isArray(cache?.manualCoordinators) ? sanitizeCoordinatorNpubs(cache.manualCoordinators) : []);
+      setQuestionnaireParticipationHistory(
+        Array.isArray(cache?.questionnaireParticipationHistory)
+          ? cache.questionnaireParticipationHistory.filter((entry): entry is SimpleVoterCache["questionnaireParticipationHistory"][number] => (
+            Boolean(entry)
+            && typeof entry === "object"
+            && typeof (entry as { questionnaireId?: unknown }).questionnaireId === "string"
+            && typeof (entry as { title?: unknown }).title === "string"
+            && typeof (entry as { coordinatorPubkey?: unknown }).coordinatorPubkey === "string"
+            && typeof (entry as { submissionCount?: unknown }).submissionCount === "number"
+            && Number.isFinite((entry as { lastSubmittedAt?: unknown }).lastSubmittedAt)
+          ))
+          : [],
+      );
       setProtocolStateCache(
         cache?.protocolStateCache && typeof cache.protocolStateCache === "object"
           ? cache.protocolStateCache as ProtocolStateCache
@@ -2519,6 +2573,8 @@ export default function SimpleUiApp() {
               onContextChange={(nextContext) => {
                 setQuestionnaireContext(nextContext);
               }}
+              participationHistory={questionnaireParticipationHistory}
+              onParticipationHistoryChange={setQuestionnaireParticipationHistory}
             />
             {isCourseFeedbackMode || hideLegacyLiveVotePanel ? null : (
             effectiveLiveVoteSession ? (

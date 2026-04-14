@@ -560,6 +560,7 @@ The repository now focuses on the client-side web app only:
 - NIP-65 relay hints are optional and disabled by default
 - live reads and subscriptions are capped to a small primary relay subset, while publishes can still fan out more broadly
 - local browser state is used for active session data
+- voter questionnaire participation history is kept in local browser state and carried inside voter backup/restore bundles
 
 The older backend-oriented stack has been removed from this repository.
 The client-only architecture is in place, but live relay reliability and recovery behaviour still need hardening.

@@ -12,6 +12,7 @@ type BarcodeDetectorLike = {
 type BarcodeDetectorConstructorLike = new (options?: { formats?: string[] }) => BarcodeDetectorLike;
 
 type ScannerStatus = "idle" | "starting" | "scanning" | "error";
+const SCAN_INTERVAL_MS = 180;
 
 function getBarcodeDetectorConstructor(): BarcodeDetectorConstructorLike | null {
   if (typeof window === "undefined") {
@@ -38,6 +39,7 @@ export default function SimpleQrScanner({
   const streamRef = useRef<MediaStream | null>(null);
   const detectorRef = useRef<BarcodeDetectorLike | null>(null);
   const animationFrameRef = useRef<number | null>(null);
+  const lastScanAtRef = useRef<number>(0);
   const [status, setStatus] = useState<ScannerStatus>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -64,12 +66,40 @@ export default function SimpleQrScanner({
     setStatus("starting");
     setErrorMessage(null);
 
-    void navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: { ideal: "environment" },
+    const cameraConstraintAttempts: MediaStreamConstraints[] = [
+      {
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
       },
-      audio: false,
-    }).then(async (stream) => {
+      {
+        video: {
+          facingMode: "environment",
+        },
+        audio: false,
+      },
+      {
+        video: true,
+        audio: false,
+      },
+    ];
+
+    const openStream = async () => {
+      let lastError: unknown = null;
+      for (const constraints of cameraConstraintAttempts) {
+        try {
+          return await navigator.mediaDevices.getUserMedia(constraints);
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      throw lastError ?? new Error("Unable to open camera.");
+    };
+
+    void openStream().then(async (stream) => {
       if (cancelled) {
         stream.getTracks().forEach((track) => track.stop());
         return;
@@ -82,9 +112,21 @@ export default function SimpleQrScanner({
         return;
       }
 
+      video.setAttribute("playsinline", "true");
+      video.muted = true;
+      video.autoplay = true;
       video.srcObject = stream;
 
       try {
+        if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
+          await new Promise<void>((resolve) => {
+            const onMetadata = () => {
+              video.removeEventListener("loadedmetadata", onMetadata);
+              resolve();
+            };
+            video.addEventListener("loadedmetadata", onMetadata);
+          });
+        }
         await video.play();
       } catch {
         setStatus("error");
@@ -107,6 +149,13 @@ export default function SimpleQrScanner({
           animationFrameRef.current = window.requestAnimationFrame(scan);
           return;
         }
+
+        const now = Date.now();
+        if (now - lastScanAtRef.current < SCAN_INTERVAL_MS) {
+          animationFrameRef.current = window.requestAnimationFrame(scan);
+          return;
+        }
+        lastScanAtRef.current = now;
 
         const detectPromise = detector
           ? detector.detect(currentVideo).then((results) => (
