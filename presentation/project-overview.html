@@ -541,6 +541,10 @@
           <li>Ballot events now carry stable `request_id` / `ticket_id` lineage so coordinator mapping and harness acceptance counts follow Rust truth</li>
           <li>Ticket scheduler now surfaces first-send vs resend queue diagnostics with env-tunable concurrency and retry age for live reliability tuning</li>
           <li>Observation recovery now tracks live vs backfill visibility and resend-recovered tickets in top-level harness output</li>
+          <li>Startup control diagnostics now capture publish payloads, precise-vs-broad startup reads, and relay write/read overlap before mailbox tuning</li>
+          <li>Single-coordinator runs now bypass MLS startup waits and use deterministic control readiness for round setup gating</li>
+          <li>Blind-key stalls are now classified as not-attempted vs publish/observe/apply failures with event and relay diagnostics</li>
+          <li>Questionnaire protocol scaffolding now exists for private response bundles, state transitions, and public aggregate result events</li>
           <li>Voter mailbox reads now key by `request_id` with immutable per-request mailbox bindings, plus read/backfill mailbox consistency diagnostics</li>
           <li>Optional NIP-65 inbox/outbox hints for relay discovery when enabled</li>
           <li>Relay diversity instead of one central database</li>

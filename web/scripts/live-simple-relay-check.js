@@ -457,6 +457,20 @@ async function readVoterDebug(page) {
   return page.evaluate(() => globalThis.__simpleVoterDebug ?? null).catch(() => null);
 }
 
+async function readQuestionnaireCoordinatorDebug(page) {
+  if (!(await isPageAlive(page))) {
+    return null;
+  }
+  return page.evaluate(() => globalThis.__questionnaireCoordinatorDebug ?? null).catch(() => null);
+}
+
+async function readQuestionnaireVoterDebug(page) {
+  if (!(await isPageAlive(page))) {
+    return null;
+  }
+  return page.evaluate(() => globalThis.__questionnaireVoterDebug ?? null).catch(() => null);
+}
+
 async function getDisplayedActorId(page, prefix) {
   const body = await readBody(page);
   const match = body.match(new RegExp(`${prefix} ID ([0-9a-f]+)`, "i"));
@@ -777,6 +791,7 @@ async function captureRoundState(coordinators, voters) {
       diagnostics: await coordinatorDiagnostics(page),
       body: await readBody(page),
       coordinatorDebug: await readCoordinatorDebug(page),
+      questionnaireCoordinatorDebug: await readQuestionnaireCoordinatorDebug(page),
       ticketLifecycleTraces: await readTicketLifecycleTraces(page),
       url: await isPageAlive(page) ? page.url() : null,
       runtime: pageRuntimeState(page),
@@ -792,6 +807,7 @@ async function captureRoundState(coordinators, voters) {
       cards: await voterCardDiagnostics(page),
       body,
       voterDebug: await readVoterDebug(page),
+      questionnaireVoterDebug: await readQuestionnaireVoterDebug(page),
       ticketLifecycleTraces: await readTicketLifecycleTraces(page),
       ticketReady: parseTicketReady(body),
       seesQuestion: /Round [0-9]+/i.test(body) || /Should the proposal pass\?/i.test(body),
@@ -1361,6 +1377,24 @@ async function main() {
       : voterTicketSummary.length > 0 && voterTicketSummary.every((entry) => entry.hasTicket);
     const voterPublishedBallots = voterTicketSummary.filter((entry) => entry.ballotSubmitted).length;
     const voterObservedTickets = voterTicketSummary.filter((entry) => entry.hasTicket).length;
+    const questionnaireSeenCount = Object.values(round.state.voterStates).filter(
+      (value) => Boolean(value?.questionnaireVoterDebug?.questionnaireSeen),
+    ).length;
+    const responsesPublishedCount = Object.values(round.state.voterStates).reduce(
+      (total, value) => total + Number(value?.questionnaireVoterDebug?.responseSubmittedCount ?? 0),
+      0,
+    );
+    const acceptedResponsesCount = Math.max(
+      0,
+      ...coordinatorStates.map((state) => Number(state?.questionnaireCoordinatorDebug?.latestAcceptedCount ?? 0)),
+    );
+    const rejectedResponsesCount = Math.max(
+      0,
+      ...coordinatorStates.map((state) => Number(state?.questionnaireCoordinatorDebug?.latestRejectedCount ?? 0)),
+    );
+    const resultSummaryPublished = coordinatorStates.some(
+      (state) => Number(state?.questionnaireCoordinatorDebug?.latestResultAcceptedCount ?? -1) >= 0,
+    );
     return {
       round: round.round,
       prompt: round.prompt,
@@ -1372,6 +1406,15 @@ async function main() {
       votersWithAcceptedBallots: voterTicketSummary.filter((entry) => entry.ballotAccepted).length,
       voterPublishedBallots,
       voterObservedTickets,
+      questionnaireSeenCount,
+      eligibilityRequestedCount: 0,
+      blindIssueReceivedCount: 0,
+      responseTokenReadyCount: 0,
+      responsesPublishedCount,
+      acceptedResponsesCount,
+      rejectedResponsesCount,
+      duplicateNullifierCount: 0,
+      resultSummaryPublished,
       coordinatorAcceptedBallots,
       coordinatorRejectedBallots,
       coordinatorAcceptedByLineage,

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 import { decodeNsec, deriveNpubFromNsec } from "./nostrIdentity";
 import { deriveActorDisplayId } from "./actorDisplay";
+import QuestionnaireVoterPanel from "./QuestionnaireVoterPanel";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
 import SimpleQrScanner from "./SimpleQrScanner";
 import SimpleRelayPanel from "./SimpleRelayPanel";
@@ -2431,6 +2432,7 @@ export default function SimpleUiApp() {
             role='tabpanel'
             aria-label='Vote'
           >
+            <QuestionnaireVoterPanel />
             {effectiveLiveVoteSession ? (
               <>
                 {knownRounds.length > 1 ? (

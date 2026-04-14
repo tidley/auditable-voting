@@ -34,6 +34,7 @@ import {
   CoordinatorControlService,
   npubsToHexRoster,
   type CoordinatorControlCache,
+  type CoordinatorControlPublishDiagnostic,
 } from "./services/CoordinatorControlService";
 import {
   ProtocolStateService,
@@ -44,13 +45,19 @@ import type {
   CoordinatorEngineStatus,
   CoordinatorEngineView,
 } from "./core/coordinatorCoreAdapter";
-import { fetchCoordinatorControlEvents, subscribeCoordinatorControl } from "./nostr/subscribeCoordinatorControl";
+import { SIMPLE_COORDINATOR_CONTROL_KIND } from "./core/coordinatorEventBridge";
+import {
+  fetchCoordinatorControlEvents,
+  subscribeCoordinatorControl,
+  type CoordinatorControlReadMode,
+} from "./nostr/subscribeCoordinatorControl";
 import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
 import SimpleQrScanner from "./SimpleQrScanner";
 import SimpleRelayPanel from "./SimpleRelayPanel";
 import SimpleUnlockGate from "./SimpleUnlockGate";
 import TokenFingerprint from "./TokenFingerprint";
+import QuestionnaireCoordinatorPanel from "./QuestionnaireCoordinatorPanel";
 import { extractNpubFromScan } from "./npubScan";
 import {
   primeNip65RelayHints,
@@ -79,6 +86,7 @@ import {
 import {
   buildCoordinatorFollowerRowsRust,
   mergeSimpleFollowersRust,
+  normalizeRelaysRust,
   selectTicketRetryTargetsRust,
 } from "./wasm/auditableVotingCore";
 
@@ -161,6 +169,36 @@ type StartupRelayResult = {
   error?: string;
 };
 
+type StartupControlReadFilter = {
+  mode: CoordinatorControlReadMode;
+  relays: string[];
+  kinds: number[];
+  tags: string[];
+  since: number | null;
+  until: number | null;
+  limit: number;
+  startedAt: string;
+};
+
+type BlindKeyDiagnostics = {
+  blindKeyPublishAttempted: boolean;
+  blindKeyPublishStartedAt: string | null;
+  blindKeyPublishSucceeded: boolean;
+  blindKeyPublishSucceededAt: string | null;
+  blindKeyObservedBackLocally: boolean;
+  blindKeyPublishAttemptCount: number;
+  blindKeyPublishLastError: string | null;
+  blindKeyEventId: string | null;
+  blindKeyRelayTargets: string[];
+  blindKeyRelaySuccessCount: number;
+  blindKeyFailureClass:
+    | "blind_key_not_attempted"
+    | "blind_key_publish_unconfirmed"
+    | "blind_key_published_not_observed"
+    | "blind_key_published_and_observed_but_not_applied"
+    | null;
+};
+
 type CoordinatorStartupDiagnostics = {
   mlsJoinStartedAt: string | null;
   mlsJoinLastAttemptAt: string | null;
@@ -187,6 +225,35 @@ type CoordinatorStartupDiagnostics = {
   controlCarrierSubscriptionLastObservedAt: string | null;
   controlCarrierLastObservedEventId: string | null;
   controlCarrierLastObservedSource: "initial_backfill" | "periodic_backfill" | "subscription" | "post_join_backfill" | null;
+  startupPublishAttempted: boolean;
+  startupPublishSucceeded: boolean;
+  startupPublishEventId: string | null;
+  startupPublishEventType: string | null;
+  startupPublishEventKind: number | null;
+  startupPublishEventTags: string[][];
+  startupPublishEventCreatedAt: number | null;
+  startupPublishRelayTargets: string[];
+  startupPublishRelaySuccessCount: number;
+  startupPublishRelayResults: StartupRelayResult[];
+  startupPublishLocalEchoApplied: boolean;
+  startupPublishProbeEventFoundByKindOnly: boolean;
+  startupLiveFilter: StartupControlReadFilter | null;
+  startupBackfillFilter: StartupControlReadFilter | null;
+  startupObservedLive: boolean;
+  startupObservedBackfill: boolean;
+  startupProbeKindOnlyCount: number;
+  startupProbeFilteredCount: number;
+  startupProbeKindElectionCount: number;
+  startupProbeKindElectionGroupCount: number;
+  startupWriteSuccessRelays: string[];
+  startupReadLiveRelays: string[];
+  startupReadBackfillRelays: string[];
+  startupRelayOverlap: string[];
+  startupRelayNoOverlap: boolean;
+  startupWriteRelayQueriedByBackfill: boolean;
+  startupForcedRecoveryAttemptCount: number;
+  startupForcedRecoveryLastAttemptAt: string | null;
+  startupForcedRecoveryLastOutcome: "pending" | "recovered" | "not_recovered" | null;
   startupJoinFailureBucket: "publish_failure" | "observation_failure" | "state_transition_failure" | null;
 };
 
@@ -200,6 +267,8 @@ const SIMPLE_TICKET_RETRY_MIN_AGE_MS = 10000;
 const SIMPLE_TICKET_RETRY_MAX_ATTEMPTS = 3;
 const SIMPLE_TICKET_SEND_MAX_CONCURRENCY = 3;
 const SIMPLE_TICKET_OBSERVE_RECOVERY_AGE_MS = 5000;
+const SIMPLE_COORDINATOR_STARTUP_FORCED_RECOVERY_DELAY_MS = 6000;
+const SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT = 200;
 
 function sortCoordinatorRoster(values: string[]) {
   return [...new Set(values.filter((value) => value.trim().length > 0))].sort();
@@ -246,7 +315,52 @@ function createCoordinatorStartupDiagnostics(): CoordinatorStartupDiagnostics {
     controlCarrierSubscriptionLastObservedAt: null,
     controlCarrierLastObservedEventId: null,
     controlCarrierLastObservedSource: null,
+    startupPublishAttempted: false,
+    startupPublishSucceeded: false,
+    startupPublishEventId: null,
+    startupPublishEventType: null,
+    startupPublishEventKind: null,
+    startupPublishEventTags: [],
+    startupPublishEventCreatedAt: null,
+    startupPublishRelayTargets: [],
+    startupPublishRelaySuccessCount: 0,
+    startupPublishRelayResults: [],
+    startupPublishLocalEchoApplied: false,
+    startupPublishProbeEventFoundByKindOnly: false,
+    startupLiveFilter: null,
+    startupBackfillFilter: null,
+    startupObservedLive: false,
+    startupObservedBackfill: false,
+    startupProbeKindOnlyCount: 0,
+    startupProbeFilteredCount: 0,
+    startupProbeKindElectionCount: 0,
+    startupProbeKindElectionGroupCount: 0,
+    startupWriteSuccessRelays: [],
+    startupReadLiveRelays: [],
+    startupReadBackfillRelays: [],
+    startupRelayOverlap: [],
+    startupRelayNoOverlap: true,
+    startupWriteRelayQueriedByBackfill: false,
+    startupForcedRecoveryAttemptCount: 0,
+    startupForcedRecoveryLastAttemptAt: null,
+    startupForcedRecoveryLastOutcome: null,
     startupJoinFailureBucket: null,
+  };
+}
+
+function createBlindKeyDiagnostics(): BlindKeyDiagnostics {
+  return {
+    blindKeyPublishAttempted: false,
+    blindKeyPublishStartedAt: null,
+    blindKeyPublishSucceeded: false,
+    blindKeyPublishSucceededAt: null,
+    blindKeyObservedBackLocally: false,
+    blindKeyPublishAttemptCount: 0,
+    blindKeyPublishLastError: null,
+    blindKeyEventId: null,
+    blindKeyRelayTargets: [],
+    blindKeyRelaySuccessCount: 0,
+    blindKeyFailureClass: null,
   };
 }
 
@@ -317,6 +431,27 @@ function shortVotingId(votingId: string) {
 
 function formatRelayHost(relay: string) {
   return relay.replace(/^wss?:\/\//, '').replace(/\/$/, '');
+}
+
+function uniqueRelays(values: string[]) {
+  return [...new Set(values.filter((value) => value.trim().length > 0))];
+}
+
+function reconcileStartupRelayDiagnostics(current: CoordinatorStartupDiagnostics) {
+  const writeSuccessRelays = uniqueRelays(current.startupWriteSuccessRelays);
+  const liveRelays = uniqueRelays(current.startupReadLiveRelays);
+  const backfillRelays = uniqueRelays(current.startupReadBackfillRelays);
+  const readRelays = uniqueRelays([...liveRelays, ...backfillRelays]);
+  const overlap = writeSuccessRelays.filter((relay) => readRelays.includes(relay));
+  const backfillOverlap = writeSuccessRelays.some((relay) => backfillRelays.includes(relay));
+  return {
+    startupWriteSuccessRelays: writeSuccessRelays,
+    startupReadLiveRelays: liveRelays,
+    startupReadBackfillRelays: backfillRelays,
+    startupRelayOverlap: overlap,
+    startupRelayNoOverlap: writeSuccessRelays.length > 0 && overlap.length === 0,
+    startupWriteRelayQueriedByBackfill: backfillOverlap,
+  } satisfies Partial<CoordinatorStartupDiagnostics>;
 }
 
 function deliveryToneClass(tone: string) {
@@ -443,6 +578,7 @@ export default function SimpleCoordinatorApp() {
   const [derivedPublicRounds, setDerivedPublicRounds] = useState<SimpleLiveVoteSession[]>([]);
   const [coordinatorControlView, setCoordinatorControlView] = useState<CoordinatorEngineView | null>(null);
   const [coordinatorControlStateLabel, setCoordinatorControlStateLabel] = useState<string | null>(null);
+  const [blindKeyDiagnosticsVersion, setBlindKeyDiagnosticsVersion] = useState(0);
   const [initialControlBackfillComplete, setInitialControlBackfillComplete] = useState(false);
   const [autoApprovalComplete, setAutoApprovalComplete] = useState(false);
   const [welcomeAckSent, setWelcomeAckSent] = useState(false);
@@ -508,6 +644,8 @@ export default function SimpleCoordinatorApp() {
     () => npubsToHexRoster(coordinatorRoster),
     [coordinatorRoster],
   );
+  const singleCoordinatorMode = coordinatorHexRoster.length === 1;
+  const coordinatorRuntimeEngineKind = singleCoordinatorMode ? "deterministic" : "open_mls";
   const coordinatorHexRosterSignature = useMemo(
     () => coordinatorHexRoster.join("|"),
     [coordinatorHexRoster],
@@ -560,7 +698,19 @@ export default function SimpleCoordinatorApp() {
   const sentMlsWelcomeStateRef = useRef<Record<string, string>>({});
   const seenMlsWelcomeIdsRef = useRef<Set<string>>(new Set());
   const mlsBootstrapInFlightRef = useRef(false);
+  const singleCoordinatorBootstrapAttemptRef = useRef("");
   const startupDiagnosticsRef = useRef<CoordinatorStartupDiagnostics>(createCoordinatorStartupDiagnostics());
+  const blindKeyDiagnosticsRef = useRef<BlindKeyDiagnostics>(createBlindKeyDiagnostics());
+  const startupJoinPendingSinceRef = useRef<number | null>(null);
+  const startupForcedRecoveryInFlightRef = useRef(false);
+  const startupForcedRecoveryAttemptedRef = useRef(false);
+  const latestCoordinatorHexRosterRef = useRef<string[]>([]);
+  const latestCoordinatorElectionIdRef = useRef("");
+
+  useEffect(() => {
+    latestCoordinatorHexRosterRef.current = coordinatorHexRoster;
+    latestCoordinatorElectionIdRef.current = coordinatorElectionId;
+  }, [coordinatorElectionId, coordinatorHexRoster]);
 
   function updateStartupDiagnostics(
     update:
@@ -573,6 +723,72 @@ export default function SimpleCoordinatorApp() {
       ...current,
       ...patch,
     };
+  }
+
+  function updateBlindKeyDiagnostics(
+    update:
+      | Partial<BlindKeyDiagnostics>
+      | ((current: BlindKeyDiagnostics) => Partial<BlindKeyDiagnostics>),
+  ) {
+    const current = blindKeyDiagnosticsRef.current;
+    const patch = typeof update === "function" ? update(current) : update;
+    blindKeyDiagnosticsRef.current = {
+      ...current,
+      ...patch,
+    };
+    setBlindKeyDiagnosticsVersion((value) => value + 1);
+  }
+
+  function recordStartupPublishDiagnostic(diagnostic: CoordinatorControlPublishDiagnostic) {
+    const successfulRelays = diagnostic.relayResults
+      .filter((entry) => entry.success)
+      .map((entry) => entry.relay);
+    updateStartupDiagnostics((current) => {
+      const next = {
+        ...current,
+        startupPublishAttempted: true,
+        startupPublishSucceeded: current.startupPublishSucceeded || diagnostic.relaySuccessCount > 0,
+        startupPublishEventId: diagnostic.eventId,
+        startupPublishEventType: diagnostic.eventType,
+        startupPublishEventKind: diagnostic.kind,
+        startupPublishEventTags: diagnostic.tags,
+        startupPublishEventCreatedAt: diagnostic.createdAt,
+        startupPublishRelayTargets: diagnostic.relayTargets,
+        startupPublishRelaySuccessCount: diagnostic.relaySuccessCount,
+        startupPublishRelayResults: diagnostic.relayResults.map((entry) => ({
+          relay: entry.relay,
+          success: entry.success,
+          error: entry.error,
+        })),
+        startupPublishLocalEchoApplied: diagnostic.localEchoApplied,
+        startupWriteSuccessRelays: uniqueRelays([
+          ...current.startupWriteSuccessRelays,
+          ...successfulRelays,
+        ]),
+      } satisfies CoordinatorStartupDiagnostics;
+      return {
+        ...next,
+        ...reconcileStartupRelayDiagnostics(next),
+      };
+    });
+
+    void (async () => {
+      try {
+        const kindOnlyEvents = await fetchCoordinatorControlEvents({
+          electionId: diagnostic.electionId,
+          coordinatorHexPubkeys: latestCoordinatorHexRosterRef.current,
+          mode: "kind_only",
+          limit: SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT,
+        });
+        updateStartupDiagnostics({
+          startupPublishProbeEventFoundByKindOnly: kindOnlyEvents.some((event) => event.id === diagnostic.eventId),
+        });
+      } catch {
+        updateStartupDiagnostics({
+          startupPublishProbeEventFoundByKindOnly: false,
+        });
+      }
+    })();
   }
 
   function getOutstandingMlsWelcomeAckNpubs() {
@@ -609,9 +825,11 @@ export default function SimpleCoordinatorApp() {
 
     const mlsJoinComplete =
       coordinatorEngineStatus.engine_kind !== "open_mls"
+      || singleCoordinatorMode
       || coordinatorEngineStatus.joined_group;
     const welcomeAckSatisfied =
       coordinatorEngineStatus.engine_kind !== "open_mls"
+        || singleCoordinatorMode
         ? true
         : isLeadCoordinator
           ? getOutstandingMlsWelcomeAckNpubs().length === 0
@@ -664,23 +882,74 @@ export default function SimpleCoordinatorApp() {
     coordinatorEngineStatus,
     initialControlBackfillComplete,
     isLeadCoordinator,
+    singleCoordinatorMode,
     welcomeAckSent,
     subCoordinators,
     dmAcknowledgements,
   ]);
 
   useEffect(() => {
+    if (singleCoordinatorMode) {
+      startupJoinPendingSinceRef.current = null;
+      return;
+    }
     if (!coordinatorRuntimeReadiness) {
+      startupJoinPendingSinceRef.current = null;
       return;
     }
     if (coordinatorRuntimeReadiness.phase === "mls_join_pending") {
+      startupJoinPendingSinceRef.current = startupJoinPendingSinceRef.current ?? Date.now();
       updateStartupDiagnostics((current) => ({
         mlsJoinStartedAt: current.mlsJoinStartedAt ?? new Date().toISOString(),
       }));
+      return;
     }
-  }, [coordinatorRuntimeReadiness]);
+    startupJoinPendingSinceRef.current = null;
+  }, [coordinatorRuntimeReadiness, singleCoordinatorMode]);
 
   useEffect(() => {
+    if (!singleCoordinatorMode || !isLeadCoordinator || !keypair?.nsec) {
+      return;
+    }
+    if (!initialControlBackfillComplete) {
+      return;
+    }
+    const service = coordinatorControlServiceRef.current;
+    if (!service) {
+      return;
+    }
+    const status = service.getEngineStatus();
+    if (status.engine_kind !== "open_mls" || status.group_ready || mlsBootstrapInFlightRef.current) {
+      return;
+    }
+    const attemptKey = `${coordinatorElectionId}:${coordinatorHexRosterSignature}`;
+    if (singleCoordinatorBootstrapAttemptRef.current === attemptKey) {
+      return;
+    }
+    singleCoordinatorBootstrapAttemptRef.current = attemptKey;
+    void ensureCoordinatorControlGroupReady();
+  }, [
+    coordinatorElectionId,
+    coordinatorHexRosterSignature,
+    initialControlBackfillComplete,
+    isLeadCoordinator,
+    keypair?.nsec,
+    singleCoordinatorMode,
+  ]);
+
+  useEffect(() => {
+    if (singleCoordinatorMode) {
+      updateStartupDiagnostics({
+        startupJoinFailureBucket: null,
+        startupPublishAttempted: false,
+        startupPublishSucceeded: false,
+        startupObservedLive: true,
+        startupObservedBackfill: false,
+        controlCarrierFetchAttemptCount: 0,
+        controlCarrierFetchLastCount: 0,
+      });
+      return;
+    }
     if (!coordinatorEngineStatus || coordinatorEngineStatus.engine_kind !== "open_mls") {
       return;
     }
@@ -759,7 +1028,190 @@ export default function SimpleCoordinatorApp() {
     updateStartupDiagnostics({
       startupJoinFailureBucket: bucket,
     });
-  }, [coordinatorEngineStatus, coordinatorRuntimeReadiness?.phase, isLeadCoordinator]);
+  }, [coordinatorEngineStatus, coordinatorRuntimeReadiness?.phase, isLeadCoordinator, singleCoordinatorMode]);
+
+  useEffect(() => {
+    const current = blindKeyDiagnosticsRef.current;
+    let blindKeyFailureClass: BlindKeyDiagnostics["blindKeyFailureClass"] = null;
+    if (coordinatorRuntimeReadiness?.phase === "blind_key_publish_pending") {
+      if (!current.blindKeyPublishAttempted) {
+        blindKeyFailureClass = "blind_key_not_attempted";
+      } else if (!current.blindKeyPublishSucceeded) {
+        blindKeyFailureClass = "blind_key_publish_unconfirmed";
+      } else if (!current.blindKeyObservedBackLocally) {
+        blindKeyFailureClass = "blind_key_published_not_observed";
+      } else {
+        blindKeyFailureClass = "blind_key_published_and_observed_but_not_applied";
+      }
+    }
+    updateBlindKeyDiagnostics({
+      blindKeyFailureClass,
+    });
+  }, [coordinatorRuntimeReadiness?.phase, activeBlindKeyAnnouncement?.event.id]);
+
+  useEffect(() => {
+    if (singleCoordinatorMode) {
+      startupForcedRecoveryAttemptedRef.current = false;
+      startupForcedRecoveryInFlightRef.current = false;
+      return;
+    }
+    if (
+      !coordinatorRuntimeReadiness
+      || coordinatorRuntimeReadiness.phase !== "mls_join_pending"
+      || !coordinatorEngineStatus
+      || coordinatorEngineStatus.engine_kind !== "open_mls"
+      || coordinatorEngineStatus.group_ready
+      || coordinatorEngineStatus.joined_group
+    ) {
+      startupForcedRecoveryAttemptedRef.current = false;
+      startupForcedRecoveryInFlightRef.current = false;
+      return;
+    }
+    if (startupForcedRecoveryAttemptedRef.current || startupForcedRecoveryInFlightRef.current) {
+      return;
+    }
+    const pendingSince = startupJoinPendingSinceRef.current;
+    if (!pendingSince || Date.now() - pendingSince < SIMPLE_COORDINATOR_STARTUP_FORCED_RECOVERY_DELAY_MS) {
+      return;
+    }
+
+    const service = coordinatorControlServiceRef.current;
+    if (!service) {
+      return;
+    }
+
+    startupForcedRecoveryAttemptedRef.current = true;
+    startupForcedRecoveryInFlightRef.current = true;
+
+    void (async () => {
+      const startupReadRelays = normalizeRelaysRust([...SIMPLE_PUBLIC_RELAYS]).slice(0, 3);
+      const since = Math.floor(pendingSince / 1000);
+      updateStartupDiagnostics((current) => {
+        const next = {
+          ...current,
+          startupForcedRecoveryAttemptCount: current.startupForcedRecoveryAttemptCount + 1,
+          startupForcedRecoveryLastAttemptAt: new Date().toISOString(),
+          startupForcedRecoveryLastOutcome: "pending",
+          startupBackfillFilter: {
+            mode: "kind_election_group",
+            relays: startupReadRelays,
+            kinds: [SIMPLE_COORDINATOR_CONTROL_KIND],
+            tags: ["election", "group"],
+            since,
+            until: null,
+            limit: SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT,
+            startedAt: new Date().toISOString(),
+          },
+          startupReadBackfillRelays: startupReadRelays,
+        } as CoordinatorStartupDiagnostics;
+        return {
+          ...next,
+          ...reconcileStartupRelayDiagnostics(next),
+        };
+      });
+      try {
+        updateStartupDiagnostics((current) => ({
+          controlCarrierFetchAttemptCount: current.controlCarrierFetchAttemptCount + 1,
+          controlCarrierFetchLastAt: new Date().toISOString(),
+          controlCarrierFetchLastError: null,
+        }));
+
+        const precise = await fetchCoordinatorControlEvents({
+          electionId: coordinatorElectionId,
+          coordinatorHexPubkeys: coordinatorHexRoster,
+          mode: "kind_election_group",
+          limit: SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT,
+          since,
+        });
+        let events = precise;
+        let kindOnlyCount = 0;
+        let kindElectionCount = 0;
+        let kindElectionGroupCount = precise.length;
+        if (events.length === 0) {
+          const kindOnly = await fetchCoordinatorControlEvents({
+            electionId: coordinatorElectionId,
+            coordinatorHexPubkeys: coordinatorHexRoster,
+            mode: "kind_only",
+            limit: SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT,
+            since,
+          });
+          const kindElection = await fetchCoordinatorControlEvents({
+            electionId: coordinatorElectionId,
+            coordinatorHexPubkeys: coordinatorHexRoster,
+            mode: "kind_election",
+            limit: SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT,
+            since,
+          });
+          const kindElectionGroup = await fetchCoordinatorControlEvents({
+            electionId: coordinatorElectionId,
+            coordinatorHexPubkeys: coordinatorHexRoster,
+            mode: "kind_election_group",
+            limit: SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT,
+            since,
+          });
+          kindOnlyCount = kindOnly.length;
+          kindElectionCount = kindElection.length;
+          kindElectionGroupCount = kindElectionGroup.length;
+          events = kindElectionGroup.length > 0
+            ? kindElectionGroup
+            : kindElection.length > 0
+              ? kindElection
+              : kindOnly;
+        }
+
+        updateStartupDiagnostics((current) => {
+          const next = {
+            ...current,
+            controlCarrierFetchLastCount: events.length,
+            controlCarrierFetchLastError: null,
+            startupProbeKindOnlyCount: kindOnlyCount,
+            startupProbeKindElectionCount: kindElectionCount,
+            startupProbeKindElectionGroupCount: kindElectionGroupCount,
+            startupProbeFilteredCount: kindElectionGroupCount,
+            startupObservedBackfill: current.startupObservedBackfill || events.length > 0,
+          } satisfies CoordinatorStartupDiagnostics;
+          return {
+            ...next,
+            ...reconcileStartupRelayDiagnostics(next),
+          };
+        });
+
+        if (events.length > 0) {
+          service.ingestCoordinatorEvents(events);
+          updateStartupDiagnostics((current) => ({
+            controlCarrierSubscriptionObservedCount: current.controlCarrierSubscriptionObservedCount + events.length,
+            controlCarrierSubscriptionLastObservedAt: new Date().toISOString(),
+            controlCarrierLastObservedEventId: events[events.length - 1]?.id ?? current.controlCarrierLastObservedEventId,
+            controlCarrierLastObservedSource: "periodic_backfill",
+            startupObservedBackfill: true,
+          }));
+        }
+
+        setCoordinatorControlCache(service.snapshot());
+        setCoordinatorControlView(service.getState());
+        setCoordinatorControlStateLabel(
+          formatCoordinatorControlStateLabel(service.getState(), service.getEngineStatus()),
+        );
+        updateStartupDiagnostics({
+          startupForcedRecoveryLastOutcome: service.getEngineStatus().group_ready ? "recovered" : "not_recovered",
+        });
+      } catch (error) {
+        updateStartupDiagnostics({
+          controlCarrierFetchLastCount: 0,
+          controlCarrierFetchLastError: error instanceof Error ? error.message : String(error),
+          startupForcedRecoveryLastOutcome: "not_recovered",
+        });
+      } finally {
+        startupForcedRecoveryInFlightRef.current = false;
+      }
+    })();
+  }, [
+    coordinatorElectionId,
+    coordinatorEngineStatus,
+    coordinatorHexRoster,
+    coordinatorRuntimeReadiness,
+    singleCoordinatorMode,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -959,7 +1411,9 @@ export default function SimpleCoordinatorApp() {
     async function setupCoordinatorControl() {
       if (!identityReady || !keypair?.npub || !keypair.nsec || !coordinatorElectionId || !localCoordinatorHexPubkey) {
         coordinatorControlServiceRef.current = null;
+        singleCoordinatorBootstrapAttemptRef.current = "";
         startupDiagnosticsRef.current = createCoordinatorStartupDiagnostics();
+        blindKeyDiagnosticsRef.current = createBlindKeyDiagnostics();
         setCoordinatorControlView(null);
         setCoordinatorControlStateLabel(null);
         setInitialControlBackfillComplete(false);
@@ -969,6 +1423,11 @@ export default function SimpleCoordinatorApp() {
       }
 
       startupDiagnosticsRef.current = createCoordinatorStartupDiagnostics();
+      blindKeyDiagnosticsRef.current = createBlindKeyDiagnostics();
+      singleCoordinatorBootstrapAttemptRef.current = "";
+      startupForcedRecoveryAttemptedRef.current = false;
+      startupForcedRecoveryInFlightRef.current = false;
+      startupJoinPendingSinceRef.current = null;
       setInitialControlBackfillComplete(false);
       setAutoApprovalComplete(false);
       setWelcomeAckSent(false);
@@ -978,8 +1437,9 @@ export default function SimpleCoordinatorApp() {
         localPubkey: localCoordinatorHexPubkey,
         roster: coordinatorHexRoster,
         leadPubkey: isLeadCoordinator ? localCoordinatorHexPubkey : leadCoordinatorHexPubkey || null,
-        engineKind: "open_mls",
+        engineKind: coordinatorRuntimeEngineKind,
         snapshot: coordinatorControlCache?.snapshot ?? null,
+        onPublished: recordStartupPublishDiagnostic,
       });
 
       if (cancelled) {
@@ -1002,6 +1462,122 @@ export default function SimpleCoordinatorApp() {
         setCoordinatorControlStateLabel("Waiting for coordinator-control replay.");
       };
 
+      if (singleCoordinatorMode) {
+        syncState();
+        updateStartupDiagnostics({
+          startupJoinFailureBucket: null,
+          startupPublishAttempted: false,
+          startupPublishSucceeded: false,
+          startupObservedLive: true,
+          startupObservedBackfill: false,
+          controlCarrierFetchAttemptCount: 0,
+          controlCarrierFetchLastCount: 0,
+          startupProbeKindOnlyCount: 0,
+          startupProbeFilteredCount: 0,
+          startupProbeKindElectionCount: 0,
+          startupProbeKindElectionGroupCount: 0,
+        });
+        setInitialControlBackfillComplete(true);
+        setAutoApprovalComplete(true);
+        return;
+      }
+
+      const startupReadRelays = normalizeRelaysRust([...SIMPLE_PUBLIC_RELAYS]).slice(0, 3);
+      const startupReadKinds = [SIMPLE_COORDINATOR_CONTROL_KIND];
+      const startupSinceSeconds = Math.floor(Date.now() / 1000) - 900;
+
+      const recordStartupReadFilter = (
+        target: "startupLiveFilter" | "startupBackfillFilter",
+        mode: CoordinatorControlReadMode,
+        options?: { since?: number },
+      ) => {
+        updateStartupDiagnostics((current) => {
+          const next = {
+            ...current,
+            [target]: {
+              mode,
+              relays: startupReadRelays,
+              kinds: startupReadKinds,
+              tags: mode === "kind_only" ? [] : ["election", ...(mode === "kind_election_group" ? ["group"] : [])],
+              since: options?.since ?? null,
+              until: null,
+              limit: SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT,
+              startedAt: new Date().toISOString(),
+            },
+            startupReadLiveRelays: target === "startupLiveFilter"
+              ? startupReadRelays
+              : current.startupReadLiveRelays,
+            startupReadBackfillRelays: target === "startupBackfillFilter"
+              ? startupReadRelays
+              : current.startupReadBackfillRelays,
+          } as CoordinatorStartupDiagnostics;
+          return {
+            ...next,
+            ...reconcileStartupRelayDiagnostics(next),
+          };
+        });
+      };
+
+      const runStartupBackfill = async (options?: {
+        since?: number;
+        runDiagnosticFallback?: boolean;
+      }) => {
+        recordStartupReadFilter("startupBackfillFilter", "kind_election_group", {
+          since: options?.since,
+        });
+        const preciseEvents = await fetchCoordinatorControlEvents({
+          electionId: coordinatorElectionId,
+          coordinatorHexPubkeys: coordinatorHexRoster,
+          mode: "kind_election_group",
+          limit: SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT,
+          since: options?.since,
+        });
+        let selectedEvents = preciseEvents;
+        let kindOnlyCount = 0;
+        let kindElectionCount = 0;
+        let kindElectionGroupCount = preciseEvents.length;
+        if (preciseEvents.length === 0 || options?.runDiagnosticFallback) {
+          const kindOnlyEvents = await fetchCoordinatorControlEvents({
+            electionId: coordinatorElectionId,
+            coordinatorHexPubkeys: coordinatorHexRoster,
+            mode: "kind_only",
+            limit: SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT,
+            since: options?.since,
+          });
+          const kindElectionEvents = await fetchCoordinatorControlEvents({
+            electionId: coordinatorElectionId,
+            coordinatorHexPubkeys: coordinatorHexRoster,
+            mode: "kind_election",
+            limit: SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT,
+            since: options?.since,
+          });
+          const kindElectionGroupEvents = await fetchCoordinatorControlEvents({
+            electionId: coordinatorElectionId,
+            coordinatorHexPubkeys: coordinatorHexRoster,
+            mode: "kind_election_group",
+            limit: SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT,
+            since: options?.since,
+          });
+          kindOnlyCount = kindOnlyEvents.length;
+          kindElectionCount = kindElectionEvents.length;
+          kindElectionGroupCount = kindElectionGroupEvents.length;
+          if (selectedEvents.length === 0) {
+            selectedEvents = kindElectionGroupEvents.length > 0
+              ? kindElectionGroupEvents
+              : kindElectionEvents.length > 0
+                ? kindElectionEvents
+                : kindOnlyEvents;
+          }
+        }
+        updateStartupDiagnostics({
+          startupProbeKindOnlyCount: kindOnlyCount,
+          startupProbeKindElectionCount: kindElectionCount,
+          startupProbeKindElectionGroupCount: kindElectionGroupCount,
+          startupProbeFilteredCount: kindElectionGroupCount,
+        });
+        return selectedEvents;
+      };
+
       syncState();
 
       let initialEvents: Awaited<ReturnType<typeof fetchCoordinatorControlEvents>> = [];
@@ -1011,13 +1587,21 @@ export default function SimpleCoordinatorApp() {
         controlCarrierFetchLastError: null,
       }));
       try {
-        initialEvents = await fetchCoordinatorControlEvents({
-          electionId: coordinatorElectionId,
-          coordinatorHexPubkeys: coordinatorHexRoster,
+        initialEvents = await runStartupBackfill({
+          since: startupSinceSeconds,
+          runDiagnosticFallback: true,
         });
-        updateStartupDiagnostics({
-          controlCarrierFetchLastCount: initialEvents.length,
-          controlCarrierFetchLastError: null,
+        updateStartupDiagnostics((current) => {
+          const next = {
+            ...current,
+            controlCarrierFetchLastCount: initialEvents.length,
+            controlCarrierFetchLastError: null,
+            startupObservedBackfill: current.startupObservedBackfill || initialEvents.length > 0,
+          } satisfies CoordinatorStartupDiagnostics;
+          return {
+            ...next,
+            ...reconcileStartupRelayDiagnostics(next),
+          };
         });
       } catch (error) {
         updateStartupDiagnostics({
@@ -1039,6 +1623,7 @@ export default function SimpleCoordinatorApp() {
             controlCarrierSubscriptionLastObservedAt: new Date().toISOString(),
             controlCarrierLastObservedEventId: initialEvents[initialEvents.length - 1]?.id ?? current.controlCarrierLastObservedEventId,
             controlCarrierLastObservedSource: "initial_backfill",
+            startupObservedBackfill: true,
           }));
         } catch {
           syncStateWithReplayWarning();
@@ -1075,13 +1660,21 @@ export default function SimpleCoordinatorApp() {
             controlCarrierFetchLastAt: new Date().toISOString(),
             controlCarrierFetchLastError: null,
           }));
-          const events = await fetchCoordinatorControlEvents({
-            electionId: coordinatorElectionId,
-            coordinatorHexPubkeys: coordinatorHexRoster,
+          const events = await runStartupBackfill({
+            since: startupDiagnosticsRef.current.startupPublishEventCreatedAt ?? startupSinceSeconds,
+            runDiagnosticFallback: true,
           });
-          updateStartupDiagnostics({
-            controlCarrierFetchLastCount: events.length,
-            controlCarrierFetchLastError: null,
+          updateStartupDiagnostics((current) => {
+            const next = {
+              ...current,
+              controlCarrierFetchLastCount: events.length,
+              controlCarrierFetchLastError: null,
+              startupObservedBackfill: current.startupObservedBackfill || events.length > 0,
+            } satisfies CoordinatorStartupDiagnostics;
+            return {
+              ...next,
+              ...reconcileStartupRelayDiagnostics(next),
+            };
           });
 
           if (cancelled || !coordinatorControlServiceRef.current) {
@@ -1097,6 +1690,7 @@ export default function SimpleCoordinatorApp() {
                 controlCarrierSubscriptionLastObservedAt: new Date().toISOString(),
                 controlCarrierLastObservedEventId: events[events.length - 1]?.id ?? current.controlCarrierLastObservedEventId,
                 controlCarrierLastObservedSource: "periodic_backfill",
+                startupObservedBackfill: true,
               }));
             } catch {
               syncStateWithReplayWarning();
@@ -1119,21 +1713,34 @@ export default function SimpleCoordinatorApp() {
         void backfillEvents();
       }, SIMPLE_COORDINATOR_CONTROL_BACKFILL_INTERVAL_MS);
 
+      recordStartupReadFilter("startupLiveFilter", "kind_election_group", {
+        since: startupSinceSeconds,
+      });
       const unsubscribe = subscribeCoordinatorControl({
         electionId: coordinatorElectionId,
         coordinatorHexPubkeys: coordinatorHexRoster,
+        mode: "kind_election_group",
+        since: startupSinceSeconds,
         onEvents: (events) => {
           if (!coordinatorControlServiceRef.current) {
             return;
           }
 
           if (events.length > 0) {
-            updateStartupDiagnostics((current) => ({
-              controlCarrierSubscriptionObservedCount: current.controlCarrierSubscriptionObservedCount + events.length,
-              controlCarrierSubscriptionLastObservedAt: new Date().toISOString(),
-              controlCarrierLastObservedEventId: events[events.length - 1]?.id ?? current.controlCarrierLastObservedEventId,
-              controlCarrierLastObservedSource: "subscription",
-            }));
+            updateStartupDiagnostics((current) => {
+              const next = {
+                ...current,
+                controlCarrierSubscriptionObservedCount: current.controlCarrierSubscriptionObservedCount + events.length,
+                controlCarrierSubscriptionLastObservedAt: new Date().toISOString(),
+                controlCarrierLastObservedEventId: events[events.length - 1]?.id ?? current.controlCarrierLastObservedEventId,
+                controlCarrierLastObservedSource: "subscription",
+                startupObservedLive: true,
+              } satisfies CoordinatorStartupDiagnostics;
+              return {
+                ...next,
+                ...reconcileStartupRelayDiagnostics(next),
+              };
+            });
           }
 
           try {
@@ -1164,10 +1771,12 @@ export default function SimpleCoordinatorApp() {
   }, [
     coordinatorElectionId,
     coordinatorHexRosterSignature,
+    coordinatorRuntimeEngineKind,
     identityReady,
     isLeadCoordinator,
     leadCoordinatorHexPubkey,
     localCoordinatorHexPubkey,
+    singleCoordinatorMode,
     keypair?.npub,
     keypair?.nsec,
   ]);
@@ -1224,22 +1833,63 @@ export default function SimpleCoordinatorApp() {
                     controlCarrierFetchLastAt: new Date().toISOString(),
                     controlCarrierFetchLastError: null,
                   }));
+                  const startupReadRelays = normalizeRelaysRust([...SIMPLE_PUBLIC_RELAYS]).slice(0, 3);
+                  updateStartupDiagnostics((current) => {
+                    const next = {
+                      ...current,
+                      startupBackfillFilter: {
+                        mode: "kind_election_group",
+                        relays: startupReadRelays,
+                        kinds: [SIMPLE_COORDINATOR_CONTROL_KIND],
+                        tags: ["election", "group"],
+                        since: startupDiagnosticsRef.current.startupPublishEventCreatedAt ?? Math.floor(Date.now() / 1000) - 900,
+                        until: null,
+                        limit: SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT,
+                        startedAt: new Date().toISOString(),
+                      },
+                      startupReadBackfillRelays: startupReadRelays,
+                    } as CoordinatorStartupDiagnostics;
+                    return {
+                      ...next,
+                      ...reconcileStartupRelayDiagnostics(next),
+                    };
+                  });
                   const events = await fetchCoordinatorControlEvents({
                     electionId: coordinatorElectionId,
                     coordinatorHexPubkeys: coordinatorHexRoster,
+                    mode: "kind_election_group",
+                    limit: SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT,
+                    since: startupDiagnosticsRef.current.startupPublishEventCreatedAt
+                      ?? Math.floor(Date.now() / 1000) - 900,
                   });
-                  updateStartupDiagnostics({
-                    controlCarrierFetchLastCount: events.length,
-                    controlCarrierFetchLastError: null,
+                  updateStartupDiagnostics((current) => {
+                    const next = {
+                      ...current,
+                      controlCarrierFetchLastCount: events.length,
+                      controlCarrierFetchLastError: null,
+                      startupObservedBackfill: current.startupObservedBackfill || events.length > 0,
+                    } satisfies CoordinatorStartupDiagnostics;
+                    return {
+                      ...next,
+                      ...reconcileStartupRelayDiagnostics(next),
+                    };
                   });
                   if (events.length > 0) {
                     service.ingestCoordinatorEvents(events);
-                    updateStartupDiagnostics((current) => ({
-                      controlCarrierSubscriptionObservedCount: current.controlCarrierSubscriptionObservedCount + events.length,
-                      controlCarrierSubscriptionLastObservedAt: new Date().toISOString(),
-                      controlCarrierLastObservedEventId: events[events.length - 1]?.id ?? current.controlCarrierLastObservedEventId,
-                      controlCarrierLastObservedSource: "post_join_backfill",
-                    }));
+                    updateStartupDiagnostics((current) => {
+                      const next = {
+                        ...current,
+                        controlCarrierSubscriptionObservedCount: current.controlCarrierSubscriptionObservedCount + events.length,
+                        controlCarrierSubscriptionLastObservedAt: new Date().toISOString(),
+                        controlCarrierLastObservedEventId: events[events.length - 1]?.id ?? current.controlCarrierLastObservedEventId,
+                        controlCarrierLastObservedSource: "post_join_backfill",
+                        startupObservedBackfill: true,
+                      } satisfies CoordinatorStartupDiagnostics;
+                      return {
+                        ...next,
+                        ...reconcileStartupRelayDiagnostics(next),
+                      };
+                    });
                   }
                   const approval = await service.maybeAutoApproveRoundOpen({
                     coordinatorNsec: keypair.nsec,
@@ -1805,6 +2455,16 @@ export default function SimpleCoordinatorApp() {
   }, [keypair?.nsec]);
 
   useEffect(() => {
+    if (!activeBlindKeyAnnouncement) {
+      return;
+    }
+    updateBlindKeyDiagnostics({
+      blindKeyObservedBackLocally: true,
+      blindKeyEventId: activeBlindKeyAnnouncement.event.id,
+    });
+  }, [activeBlindKeyAnnouncement]);
+
+  useEffect(() => {
     const coordinatorSecretKey = decodeNsec(keypair?.nsec ?? "");
     const coordinatorNpub = keypair?.npub ?? "";
 
@@ -2037,6 +2697,7 @@ export default function SimpleCoordinatorApp() {
     sentAssignmentAckIdsRef.current.clear();
     autoShareAssignmentAttemptRef.current = '';
     coordinatorControlServiceRef.current = null;
+    blindKeyDiagnosticsRef.current = createBlindKeyDiagnostics();
     roundBroadcastInFlightRef.current = null;
   }
 
@@ -2096,6 +2757,7 @@ export default function SimpleCoordinatorApp() {
     sentAssignmentAckIdsRef.current.clear();
     autoShareAssignmentAttemptRef.current = '';
     coordinatorControlServiceRef.current = null;
+    blindKeyDiagnosticsRef.current = createBlindKeyDiagnostics();
     roundBroadcastInFlightRef.current = null;
   }
 
@@ -2371,14 +3033,33 @@ export default function SimpleCoordinatorApp() {
     const existingAnnouncement = roundBlindKeyAnnouncements[input.votingId];
     const existingAnnouncementKeyId = existingAnnouncement?.publicKey?.keyId;
     if (!input.force && existingAnnouncementKeyId === input.blindPrivateKey.keyId) {
+      updateBlindKeyDiagnostics({
+        blindKeyObservedBackLocally: true,
+        blindKeyEventId: existingAnnouncement?.event.id ?? blindKeyDiagnosticsRef.current.blindKeyEventId,
+      });
       return existingAnnouncement ?? null;
     }
 
-    const result = await publishSimpleBlindKeyAnnouncement({
-      coordinatorNsec,
-      votingId: input.votingId,
-      publicKey: input.blindPrivateKey,
-    });
+    updateBlindKeyDiagnostics((current) => ({
+      blindKeyPublishAttempted: true,
+      blindKeyPublishStartedAt: new Date().toISOString(),
+      blindKeyPublishAttemptCount: current.blindKeyPublishAttemptCount + 1,
+      blindKeyPublishLastError: null,
+    }));
+    let result: Awaited<ReturnType<typeof publishSimpleBlindKeyAnnouncement>>;
+    try {
+      result = await publishSimpleBlindKeyAnnouncement({
+        coordinatorNsec,
+        votingId: input.votingId,
+        publicKey: input.blindPrivateKey,
+      });
+    } catch (error) {
+      updateBlindKeyDiagnostics({
+        blindKeyPublishSucceeded: false,
+        blindKeyPublishLastError: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
 
     const nextAnnouncement: SimpleBlindKeyAnnouncement = {
       coordinatorNpub,
@@ -2392,6 +3073,18 @@ export default function SimpleCoordinatorApp() {
       ...current,
       [input.votingId]: nextAnnouncement,
     }));
+    updateBlindKeyDiagnostics({
+      blindKeyPublishSucceeded: result.successes > 0,
+      blindKeyPublishSucceededAt: result.successes > 0 ? new Date().toISOString() : null,
+      blindKeyObservedBackLocally: true,
+      blindKeyEventId: result.eventId,
+      blindKeyRelayTargets: result.relayResults.map((entry) => entry.relay),
+      blindKeyRelaySuccessCount: result.successes,
+      blindKeyPublishLastError: result.successes > 0
+        ? null
+        : result.relayResults.find((entry) => !entry.success)?.error
+          ?? "blind_key_publish_unconfirmed",
+    });
 
     return nextAnnouncement;
   }
@@ -2427,6 +3120,10 @@ export default function SimpleCoordinatorApp() {
 
     const existingAnnouncement = roundBlindKeyAnnouncements[input.votingId];
     if (existingAnnouncement && !input.forceRepublish) {
+      updateBlindKeyDiagnostics({
+        blindKeyObservedBackLocally: true,
+        blindKeyEventId: existingAnnouncement.event.id,
+      });
       return existingAnnouncement;
     }
 
@@ -2441,6 +3138,10 @@ export default function SimpleCoordinatorApp() {
             ...current,
             [input.votingId]: fetchedAnnouncement,
           }));
+          updateBlindKeyDiagnostics({
+            blindKeyObservedBackLocally: true,
+            blindKeyEventId: fetchedAnnouncement.event.id,
+          });
           return fetchedAnnouncement;
         }
       } catch {
@@ -2740,8 +3441,9 @@ export default function SimpleCoordinatorApp() {
             localPubkey: localCoordinatorHexPubkey,
             roster: coordinatorHexRoster,
             leadPubkey: isLeadCoordinator ? localCoordinatorHexPubkey : leadCoordinatorHexPubkey || null,
-            engineKind: "open_mls",
+            engineKind: coordinatorRuntimeEngineKind,
             snapshot: coordinatorControlCache?.snapshot ?? null,
+            onPublished: recordStartupPublishDiagnostic,
           })
           : null
       );
@@ -3429,6 +4131,7 @@ export default function SimpleCoordinatorApp() {
       engineStatus: coordinatorEngineStatus,
       runtimeReadiness: coordinatorRuntimeReadiness,
       startupDiagnostics: startupDiagnosticsRef.current,
+      blindKeyDiagnostics: blindKeyDiagnosticsRef.current,
       controlStateLabel: coordinatorControlStateLabel,
       waitingForAcknowledgements,
       waitingForCompletionConfirmation,
@@ -3502,6 +4205,7 @@ export default function SimpleCoordinatorApp() {
   }, [
     acceptedBallotsByRequestId,
     acceptedBallotsByTicketId,
+    blindKeyDiagnosticsVersion,
     selectedPublishedVote?.createdAt,
     coordinatorControlStateLabel,
     coordinatorEngineStatus,
@@ -3904,6 +4608,9 @@ export default function SimpleCoordinatorApp() {
             role='tabpanel'
             aria-label='Configure'
           >
+            <SimpleCollapsibleSection title='Private questionnaire'>
+              <QuestionnaireCoordinatorPanel />
+            </SimpleCollapsibleSection>
             <SimpleCollapsibleSection title='Coordinator management'>
               <label
                 className='simple-voter-label'

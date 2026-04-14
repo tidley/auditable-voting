@@ -14,6 +14,20 @@ export type CoordinatorControlCache = {
   snapshot: CoordinatorEngineSnapshot;
 };
 
+export type CoordinatorControlPublishDiagnostic = {
+  eventId: string;
+  eventType: string;
+  electionId: string;
+  roundId?: string | null;
+  kind: number;
+  tags: string[][];
+  createdAt: number;
+  relayTargets: string[];
+  relaySuccessCount: number;
+  relayResults: Array<{ relay: string; success: boolean; error?: string }>;
+  localEchoApplied: boolean;
+};
+
 const COORDINATOR_CONTROL_PUBLISH_RETRY_MAX_ATTEMPTS = 3;
 const COORDINATOR_CONTROL_PUBLISH_RETRY_DELAY_MS = 1200;
 
@@ -51,7 +65,12 @@ function snapshotMatchesInput(input: {
 }
 
 export class CoordinatorControlService {
-  private constructor(private adapter: CoordinatorCoreAdapter) {}
+  private constructor(
+    private adapter: CoordinatorCoreAdapter,
+    private options: {
+      onPublished?: (diagnostic: CoordinatorControlPublishDiagnostic) => void;
+    } = {},
+  ) {}
 
   private async publishRequiredControl(input: {
     coordinatorNsec: string;
@@ -70,6 +89,19 @@ export class CoordinatorControlService {
         onPrepared: ({ eventId }) => {
           this.adapter.applyPublishedLocalMessage(eventId, input.message.local_echo);
         },
+      });
+      this.options.onPublished?.({
+        eventId: published.eventId,
+        eventType: input.message.event_type,
+        electionId: input.message.election_id,
+        roundId: input.message.round_id ?? null,
+        kind: published.rawEvent.kind,
+        tags: published.rawEvent.tags,
+        createdAt: published.rawEvent.created_at,
+        relayTargets: published.relayResults.map((entry) => entry.relay),
+        relaySuccessCount: published.successes,
+        relayResults: published.relayResults,
+        localEchoApplied: true,
       });
       lastPublish = published;
       if (published.successes > 0) {
@@ -98,6 +130,7 @@ export class CoordinatorControlService {
     leadPubkey?: string | null;
     engineKind?: CoordinatorEngineConfig["engine_kind"];
     snapshot?: CoordinatorEngineSnapshot | null;
+    onPublished?: (diagnostic: CoordinatorControlPublishDiagnostic) => void;
   }) {
     const canRestore = snapshotMatchesInput(input);
     const adapter = canRestore && input.snapshot
@@ -110,7 +143,9 @@ export class CoordinatorControlService {
           engine_kind: input.engineKind ?? "deterministic",
         });
 
-    return new CoordinatorControlService(adapter);
+    return new CoordinatorControlService(adapter, {
+      onPublished: input.onPublished,
+    });
   }
 
   snapshot(): CoordinatorControlCache {

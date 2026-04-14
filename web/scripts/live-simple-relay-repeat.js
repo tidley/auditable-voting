@@ -56,6 +56,15 @@ function summariseRun(run) {
     const coordinatorAcceptedByLineage = Number(roundSummary.coordinatorAcceptedByLineage ?? 0);
     const voterPublishedBallots = Number(roundSummary.voterPublishedBallots ?? 0);
     const voterObservedTickets = Number(roundSummary.voterObservedTickets ?? 0);
+    const questionnaireSeenCount = Number(roundSummary.questionnaireSeenCount ?? 0);
+    const eligibilityRequestedCount = Number(roundSummary.eligibilityRequestedCount ?? 0);
+    const blindIssueReceivedCount = Number(roundSummary.blindIssueReceivedCount ?? 0);
+    const responseTokenReadyCount = Number(roundSummary.responseTokenReadyCount ?? 0);
+    const responsesPublishedCount = Number(roundSummary.responsesPublishedCount ?? 0);
+    const acceptedResponsesCount = Number(roundSummary.acceptedResponsesCount ?? 0);
+    const rejectedResponsesCount = Number(roundSummary.rejectedResponsesCount ?? 0);
+    const duplicateNullifierCount = Number(roundSummary.duplicateNullifierCount ?? 0);
+    const resultSummaryPublished = Boolean(roundSummary.resultSummaryPublished);
     const unmatchedRowDiagnostics = Array.isArray(roundSummary.unmatchedRowDiagnostics)
       ? roundSummary.unmatchedRowDiagnostics
       : [];
@@ -84,6 +93,15 @@ function summariseRun(run) {
       coordinatorAcceptedByLineage,
       voterPublishedBallots,
       voterObservedTickets,
+      questionnaireSeenCount,
+      eligibilityRequestedCount,
+      blindIssueReceivedCount,
+      responseTokenReadyCount,
+      responsesPublishedCount,
+      acceptedResponsesCount,
+      rejectedResponsesCount,
+      duplicateNullifierCount,
+      resultSummaryPublished,
       unmatchedLiveObserved,
       unmatchedBackfillObserved,
       rowsWithoutAcceptedBallotCount: Number(roundSummary.rowsWithoutAcceptedBallotCount ?? unmatchedRowDiagnostics.length),
@@ -160,6 +178,15 @@ async function main() {
         coordinatorAcceptedByLineage: [],
         voterPublishedBallots: [],
         voterObservedTickets: [],
+        questionnaireSeenCount: [],
+        eligibilityRequestedCount: [],
+        blindIssueReceivedCount: [],
+        responseTokenReadyCount: [],
+        responsesPublishedCount: [],
+        acceptedResponsesCount: [],
+        rejectedResponsesCount: [],
+        duplicateNullifierCount: [],
+        resultSummaryPublishedCount: 0,
         rowsWithoutAcceptedBallotCount: [],
         unmatchedLiveObserved: [],
         unmatchedBackfillObserved: [],
@@ -215,6 +242,15 @@ async function main() {
       entry.coordinatorAcceptedByLineage.push(round.coordinatorAcceptedByLineage);
       entry.voterPublishedBallots.push(round.voterPublishedBallots);
       entry.voterObservedTickets.push(round.voterObservedTickets);
+      entry.questionnaireSeenCount.push(round.questionnaireSeenCount);
+      entry.eligibilityRequestedCount.push(round.eligibilityRequestedCount);
+      entry.blindIssueReceivedCount.push(round.blindIssueReceivedCount);
+      entry.responseTokenReadyCount.push(round.responseTokenReadyCount);
+      entry.responsesPublishedCount.push(round.responsesPublishedCount);
+      entry.acceptedResponsesCount.push(round.acceptedResponsesCount);
+      entry.rejectedResponsesCount.push(round.rejectedResponsesCount);
+      entry.duplicateNullifierCount.push(round.duplicateNullifierCount);
+      entry.resultSummaryPublishedCount += round.resultSummaryPublished ? 1 : 0;
       entry.rowsWithoutAcceptedBallotCount.push(round.rowsWithoutAcceptedBallotCount);
       entry.unmatchedLiveObserved.push(round.unmatchedLiveObserved);
       entry.unmatchedBackfillObserved.push(round.unmatchedBackfillObserved);

@@ -504,10 +504,20 @@ export async function publishSimpleBlindKeyAnnouncement(input: {
     ),
     { channel: "simple-public", minIntervalMs: SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS },
   );
+  const relayResults = results.map((result, index) => (
+    result.status === "fulfilled"
+      ? { relay: relays[index], success: true as const }
+      : {
+          relay: relays[index],
+          success: false as const,
+          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        }
+  ));
   return {
     eventId: event.id,
-    successes: results.filter((result) => result.status === "fulfilled").length,
-    failures: results.filter((result) => result.status === "rejected").length,
+    successes: relayResults.filter((result) => result.success).length,
+    failures: relayResults.filter((result) => !result.success).length,
+    relayResults,
     createdAt,
     event,
   };

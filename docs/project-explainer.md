@@ -165,6 +165,10 @@ The present web client is built with:
 - **a Rust mixed-replay engine for public rounds and ballots**, now used by the voter, coordinator, and auditor public-state views to derive round state, accepted ballots, and rejection reasons
 - **versioned Rust snapshots and replay diagnostics** for the shared protocol engine, so the browser can restore state, validate snapshot compatibility, and surface replay issues without re-implementing protocol rules in TypeScript
 - **coordinator runtime readiness diagnostics** surfaced in the browser for MLS join, welcome acknowledgement, initial control backfill, auto-approval, round-open safety, blind-key safety, and ticket-plane safety
+- **startup control-carrier diagnostics** for exact publish payloads, live/backfill filter shapes, relay write/read overlap, and `kind_only` versus filtered startup probes
+- **single-coordinator deterministic startup bypass** so `1 coordinator` runs do not block on MLS join/group observation paths
+- **blind-key publication diagnostics** that classify not-attempted vs publish/observe/apply stalls and expose event/relay evidence
+- **private-first questionnaire flow** with coordinator/voter UI panels and **blind-token response foundations** (`questionnaire_response_blind`, transport helpers, harness metrics)
 - **ticket scheduler diagnostics and tunable transport knobs** for first-send prioritisation, resend eligibility reasons, bounded concurrency, and retry-age experimentation during live relay reliability testing
 - **observation-plane recovery diagnostics** that separate live vs backfill visibility and classify resend recoveries for published-but-unobserved tickets
 - **request-id keyed mailbox reader bindings** with immutable per-request mailbox ids for live/backfill ticket observation, plus explicit read/backfill mailbox-consistency diagnostics
