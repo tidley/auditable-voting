@@ -6,13 +6,29 @@ import { loadSimpleActorState } from "./simpleLocalState";
 import { validateQuestionnaireResponsePayload, type QuestionnaireDefinition, type QuestionnaireResponseAnswer, type QuestionnaireResponsePayload, type QuestionnaireResultSummary } from "./questionnaireProtocol";
 import { getSharedNostrPool } from "./sharedNostrPool";
 
-const DEFAULT_QUESTIONNAIRE_ID = "course_feedback_2026_term1";
+const RESTORED_QUESTIONNAIRE_IDS_STORAGE_KEY = "auditable-voting.restored-questionnaire-ids.v1";
+const VOTER_QUESTIONNAIRE_LOOKBACK_SECONDS = 7 * 24 * 60 * 60;
 const REFRESH_INTERVAL_MS = 15000;
 
 type QuestionnaireAnswerState = Record<string, boolean | string | string[]>;
 
 function nowUnix() {
   return Math.floor(Date.now() / 1000);
+}
+
+function readRestoredQuestionnaireIds() {
+  if (typeof window === "undefined") {
+    return [] as string[];
+  }
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(RESTORED_QUESTIONNAIRE_IDS_STORAGE_KEY) ?? "[]") as string[];
+    if (!Array.isArray(parsed)) {
+      return [] as string[];
+    }
+    return [...new Set(parsed.filter((value) => typeof value === "string" && value.trim().length > 0))];
+  } catch {
+    return [] as string[];
+  }
 }
 
 function buildResponseAnswers(definition: QuestionnaireDefinition, answerState: QuestionnaireAnswerState): QuestionnaireResponseAnswer[] {
@@ -71,8 +87,10 @@ function parseLatestResultSummary(events: Awaited<ReturnType<typeof fetchQuestio
 }
 
 export default function QuestionnaireVoterPanel() {
-  const [questionnaireId, setQuestionnaireId] = useState(DEFAULT_QUESTIONNAIRE_ID);
+  const [questionnaireId, setQuestionnaireId] = useState("");
   const [availableQuestionnaireIds, setAvailableQuestionnaireIds] = useState<string[]>([]);
+  const [restoredQuestionnaireIds, setRestoredQuestionnaireIds] = useState<string[]>(() => readRestoredQuestionnaireIds());
+  const [restoreQuestionnaireIdInput, setRestoreQuestionnaireIdInput] = useState("");
   const [voterNpub, setVoterNpub] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [definition, setDefinition] = useState<QuestionnaireDefinition | null>(null);
@@ -101,8 +119,21 @@ export default function QuestionnaireVoterPanel() {
     const fromQuery = new URLSearchParams(window.location.search).get("questionnaire")?.trim();
     if (fromQuery) {
       setQuestionnaireId(fromQuery);
+      setRestoredQuestionnaireIds((current) => (
+        current.includes(fromQuery) ? current : [...current, fromQuery]
+      ));
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(
+      RESTORED_QUESTIONNAIRE_IDS_STORAGE_KEY,
+      JSON.stringify(restoredQuestionnaireIds),
+    );
+  }, [restoredQuestionnaireIds]);
 
   useEffect(() => {
     void loadSimpleActorState("voter").then((stored) => {
@@ -120,34 +151,75 @@ export default function QuestionnaireVoterPanel() {
           kinds: [QUESTIONNAIRE_DEFINITION_KIND],
           limit: 400,
         });
+        const stateEvents = await pool.querySync(relays, {
+          kinds: [QUESTIONNAIRE_STATE_KIND],
+          limit: 400,
+        });
         if (cancelled) {
           return;
         }
-        const ids = new Set<string>();
+
+        const latestStateByQuestionnaireId = new Map<string, { state: string; createdAt: number }>();
+        for (const stateEvent of stateEvents) {
+          const parsed = parseQuestionnaireStateEvent(stateEvent);
+          if (!parsed?.questionnaireId) {
+            continue;
+          }
+          const previous = latestStateByQuestionnaireId.get(parsed.questionnaireId);
+          const createdAt = Number(stateEvent.created_at ?? 0);
+          if (!previous || createdAt > previous.createdAt) {
+            latestStateByQuestionnaireId.set(parsed.questionnaireId, {
+              state: parsed.state,
+              createdAt,
+            });
+          }
+        }
+
+        const visibleIds = new Set<string>();
+        const now = nowUnix();
         for (const event of events) {
           const parsed = parseQuestionnaireDefinitionEvent(event);
           if (!parsed) {
             continue;
           }
-          if (parsed.questionnaireId.trim()) {
-            ids.add(parsed.questionnaireId.trim());
+          const id = parsed.questionnaireId.trim();
+          if (!id) {
+            continue;
+          }
+          const latestState = latestStateByQuestionnaireId.get(id)?.state ?? deriveEffectiveQuestionnaireState({
+            definition: parsed,
+            latestState: null,
+            nowUnix: now,
+          });
+          const isOldByState = latestState === "results_published";
+          const isOldByWindow = parsed.closeAt < (now - VOTER_QUESTIONNAIRE_LOOKBACK_SECONDS);
+          const restored = restoredQuestionnaireIds.includes(id);
+          if (!isOldByState && !isOldByWindow || restored) {
+            visibleIds.add(id);
           }
         }
         const selectedId = questionnaireId.trim();
         if (selectedId) {
-          ids.add(selectedId);
+          visibleIds.add(selectedId);
         }
-        setAvailableQuestionnaireIds([...ids].sort((left, right) => left.localeCompare(right)));
+        for (const restoredId of restoredQuestionnaireIds) {
+          visibleIds.add(restoredId);
+        }
+        setAvailableQuestionnaireIds([...visibleIds].sort((left, right) => left.localeCompare(right)));
       } catch {
         const selectedId = questionnaireId.trim();
-        setAvailableQuestionnaireIds(selectedId ? [selectedId] : []);
+        const visibleIds = new Set<string>(restoredQuestionnaireIds);
+        if (selectedId) {
+          visibleIds.add(selectedId);
+        }
+        setAvailableQuestionnaireIds([...visibleIds].sort((left, right) => left.localeCompare(right)));
       }
     };
     void loadQuestionnaireOptions();
     return () => {
       cancelled = true;
     };
-  }, [questionnaireId]);
+  }, [questionnaireId, restoredQuestionnaireIds]);
 
   const refresh = useCallback(async () => {
     const id = questionnaireId.trim();
@@ -230,6 +302,16 @@ export default function QuestionnaireVoterPanel() {
   const selectedQuestionnaireOptions = availableQuestionnaireIds.length > 0
     ? availableQuestionnaireIds
     : (questionnaireId.trim() ? [questionnaireId.trim()] : []);
+
+  useEffect(() => {
+    if (questionnaireId.trim()) {
+      return;
+    }
+    const firstAvailable = selectedQuestionnaireOptions[0];
+    if (firstAvailable) {
+      setQuestionnaireId(firstAvailable);
+    }
+  }, [questionnaireId, selectedQuestionnaireOptions]);
 
   function setYesNoAnswer(questionId: string, value: boolean) {
     setAnswerState((current) => ({ ...current, [questionId]: value }));
@@ -374,6 +456,19 @@ export default function QuestionnaireVoterPanel() {
     voterNpub,
   ]);
 
+  function restoreQuestionnaireId() {
+    const restoredId = restoreQuestionnaireIdInput.trim();
+    if (!restoredId) {
+      return;
+    }
+    setRestoredQuestionnaireIds((current) => (
+      current.includes(restoredId) ? current : [...current, restoredId]
+    ));
+    setQuestionnaireId(restoredId);
+    setRestoreQuestionnaireIdInput("");
+    setStatus("Questionnaire ID restored.");
+  }
+
   return (
     <div className='simple-voter-card'>
       <h3 className='simple-voter-question'>Questionnaire</h3>
@@ -392,6 +487,28 @@ export default function QuestionnaireVoterPanel() {
           <option key={id} value={id}>{id}</option>
         ))}
       </select>
+      <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
+        <input
+          className='simple-voter-input simple-voter-input-inline'
+          value={restoreQuestionnaireIdInput}
+          placeholder='Restore questionnaire ID'
+          onChange={(event) => setRestoreQuestionnaireIdInput(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              restoreQuestionnaireId();
+            }
+          }}
+        />
+        <button
+          type='button'
+          className='simple-voter-secondary'
+          disabled={!restoreQuestionnaireIdInput.trim()}
+          onClick={restoreQuestionnaireId}
+        >
+          Restore ID
+        </button>
+      </div>
 
       <div className='simple-voter-action-row simple-voter-action-row-tight'>
         <button type='button' className='simple-voter-secondary' onClick={() => void refresh()}>
