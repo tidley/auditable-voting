@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildQuestionnaireResultSummary, type QuestionnaireAcceptedResponse } from "./questionnaireRuntime";
+import { buildQuestionnaireResultSummary, deriveEffectiveQuestionnaireState, type QuestionnaireAcceptedResponse } from "./questionnaireRuntime";
 import type { QuestionnaireDefinition } from "./questionnaireProtocol";
+import { QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN } from "./questionnaireProtocolConstants";
 
 const definition: QuestionnaireDefinition = {
   schemaVersion: 1,
   eventType: "questionnaire_definition",
+  responseMode: QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN,
   questionnaireId: "course_feedback_2026_term1",
   title: "Course feedback",
   createdAt: 1712530000,
@@ -76,6 +78,23 @@ function response(id: string, yes: boolean, option: string, freeText: string): Q
 }
 
 describe("questionnaireRuntime", () => {
+  it("uses explicit state over inferred time window", () => {
+    const state = deriveEffectiveQuestionnaireState({
+      definition,
+      latestState: {
+        schemaVersion: 1,
+        eventType: "questionnaire_state",
+        questionnaireId: definition.questionnaireId,
+        state: "closed",
+        createdAt: definition.openAt + 10,
+        coordinatorPubkey: definition.coordinatorPubkey,
+      },
+      nowUnix: definition.openAt + 20,
+    });
+
+    expect(state).toBe("closed");
+  });
+
   it("builds aggregate summary counts from accepted responses", () => {
     const summary = buildQuestionnaireResultSummary({
       definition,
@@ -94,6 +113,8 @@ describe("questionnaireRuntime", () => {
 
     expect(summary.acceptedResponseCount).toBe(2);
     expect(summary.rejectedResponseCount).toBe(1);
+    expect(summary.acceptedNullifierCount).toBe(2);
+    expect(typeof summary.resultHash).toBe("string");
 
     const yesNo = summary.questionSummaries.find((entry) => entry.questionId === "q1");
     expect(yesNo).toMatchObject({ answerType: "yes_no", yesCount: 1, noCount: 1 });

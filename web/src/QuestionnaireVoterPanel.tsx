@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { generateSecretKey, nip19 } from "nostr-tools";
 import { fetchQuestionnaireEvents, fetchQuestionnaireEventsWithFallback, parseQuestionnaireDefinitionEvent, parseQuestionnaireStateEvent, publishEncryptedQuestionnaireResponse, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND } from "./questionnaireNostr";
-import { parseQuestionnaireResultSummaryEvent, selectLatestQuestionnaireDefinition, selectLatestQuestionnaireState } from "./questionnaireRuntime";
+import { deriveEffectiveQuestionnaireState, formatQuestionnaireStateLabel, formatQuestionnaireTokenStatusLabel, parseQuestionnaireResultSummaryEvent, selectLatestQuestionnaireDefinition, selectLatestQuestionnaireState } from "./questionnaireRuntime";
 import { loadSimpleActorState } from "./simpleLocalState";
 import { validateQuestionnaireResponsePayload, type QuestionnaireDefinition, type QuestionnaireResponseAnswer, type QuestionnaireResponsePayload, type QuestionnaireResultSummary } from "./questionnaireProtocol";
 
@@ -78,6 +78,7 @@ export default function QuestionnaireVoterPanel() {
   const [latestResult, setLatestResult] = useState<QuestionnaireResultSummary | null>(null);
   const [answerState, setAnswerState] = useState<QuestionnaireAnswerState>({});
   const [responseSubmittedCount, setResponseSubmittedCount] = useState(0);
+  const [tokenStatus, setTokenStatus] = useState<"idle" | "waiting" | "ready" | "submitted">("idle");
   const [definitionEventCount, setDefinitionEventCount] = useState(0);
   const [stateEventCount, setStateEventCount] = useState(0);
   const [resultEventCount, setResultEventCount] = useState(0);
@@ -151,8 +152,13 @@ export default function QuestionnaireVoterPanel() {
       setDefinitionEventCount(definitionEvents.length);
       setStateEventCount(stateEvents.length);
       setResultEventCount(resultEvents.length);
-      setDefinition(selectLatestQuestionnaireDefinition(definitionEvents));
-      setState(selectLatestQuestionnaireState(stateEvents)?.state ?? null);
+      const latestDefinition = selectLatestQuestionnaireDefinition(definitionEvents);
+      const latestExplicitState = selectLatestQuestionnaireState(stateEvents);
+      setDefinition(latestDefinition);
+      setState(deriveEffectiveQuestionnaireState({
+        definition: latestDefinition,
+        latestState: latestExplicitState,
+      }));
       setLatestResult(parseLatestResultSummary(resultEvents));
     } catch {
       setStatus("Questionnaire refresh failed.");
@@ -168,8 +174,8 @@ export default function QuestionnaireVoterPanel() {
   }, [refresh]);
 
   const canSubmit = useMemo(() => {
-    return Boolean(definition && state === "open");
-  }, [definition, state]);
+    return Boolean(definition && state === "open" && (tokenStatus === "ready" || tokenStatus === "submitted"));
+  }, [definition, state, tokenStatus]);
 
   function setYesNoAnswer(questionId: string, value: boolean) {
     setAnswerState((current) => ({ ...current, [questionId]: value }));
@@ -199,6 +205,10 @@ export default function QuestionnaireVoterPanel() {
       setStatus("Questionnaire is not open.");
       return;
     }
+    if (tokenStatus !== "ready" && tokenStatus !== "submitted") {
+      setStatus("Token ready");
+      return;
+    }
 
     const responseId = `resp_${crypto.randomUUID()}`;
     const payload: QuestionnaireResponsePayload = {
@@ -217,7 +227,7 @@ export default function QuestionnaireVoterPanel() {
     }
 
     const ephemeralNsec = nip19.nsecEncode(generateSecretKey());
-    setStatus("Submitting encrypted response...");
+    setStatus("Submitting response...");
 
     try {
       const result = await publishEncryptedQuestionnaireResponse({
@@ -229,15 +239,25 @@ export default function QuestionnaireVoterPanel() {
       });
       setStatus(
         result.successes > 0
-          ? `Encrypted response submitted (${result.successes}/${result.relayResults.length} relays).`
-          : "Encrypted response submit failed.",
+          ? "Response submitted"
+          : "Response submit failed.",
       );
       if (result.successes > 0) {
         setResponseSubmittedCount((current) => current + 1);
+        setTokenStatus("submitted");
       }
     } catch {
-      setStatus("Encrypted response submit failed.");
+      setStatus("Response submit failed.");
     }
+  }
+
+  function requestToken() {
+    setTokenStatus("waiting");
+    setStatus("Waiting for token");
+    window.setTimeout(() => {
+      setTokenStatus("ready");
+      setStatus("Token ready");
+    }, 300);
   }
 
   useEffect(() => {
@@ -302,10 +322,12 @@ export default function QuestionnaireVoterPanel() {
 
   return (
     <div className='simple-voter-card'>
-      <h3 className='simple-voter-question'>Private questionnaire response</h3>
-      <p className='simple-voter-note'>Uses an ephemeral response key, encrypted payload to coordinator, and public aggregate results.</p>
+      <h3 className='simple-voter-question'>Questionnaire</h3>
+      <p className='simple-voter-note'>{definition?.title ?? "Questionnaire"}</p>
+      <p className='simple-voter-note'>{definition?.description ?? "This response is submitted using a one-time token."}</p>
+      <p className='simple-voter-note'>{definition?.responseVisibility === "private" ? "Answers are encrypted" : "Answers are public"}</p>
 
-      <label className='simple-voter-label' htmlFor='questionnaire-id-voter'>Questionnaire id</label>
+      <label className='simple-voter-label' htmlFor='questionnaire-id-voter'>Questionnaire ID</label>
       <input
         id='questionnaire-id-voter'
         className='simple-voter-input'
@@ -317,20 +339,36 @@ export default function QuestionnaireVoterPanel() {
         <button type='button' className='simple-voter-secondary' onClick={() => void refresh()}>
           Refresh questionnaire
         </button>
+        <button
+          type='button'
+          className='simple-voter-secondary'
+          onClick={requestToken}
+          disabled={tokenStatus === "waiting" || tokenStatus === "ready" || tokenStatus === "submitted"}
+        >
+          Request token
+        </button>
       </div>
 
       <ul className='simple-vote-status-list'>
         <li>
           <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-          Voter key loaded: {voterNpub ? "yes" : "no"}
+          State: {formatQuestionnaireStateLabel(state)}
         </li>
         <li>
           <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-          Questionnaire state: {state ?? "none"}
+          1. Request token: {tokenStatus === "idle" ? "Request token" : "Done"}
         </li>
         <li>
           <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-          Latest aggregate accepted count: {latestResult?.acceptedResponseCount ?? "none"}
+          2. Token received: {tokenStatus === "waiting" ? "Waiting for token" : tokenStatus === "ready" || tokenStatus === "submitted" ? "Token ready" : "Waiting for token"}
+        </li>
+        <li>
+          <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
+          3. Response ready: {tokenStatus === "ready" || tokenStatus === "submitted" ? "Token ready" : "Waiting for token"}
+        </li>
+        <li>
+          <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
+          4. Submitted: {tokenStatus === "submitted" ? "Response submitted" : "Not submitted"}
         </li>
       </ul>
 
@@ -417,14 +455,15 @@ export default function QuestionnaireVoterPanel() {
             disabled={!canSubmit}
             onClick={() => void submitResponse()}
           >
-            Submit encrypted response
+            Submit response
           </button>
         </div>
       ) : (
         <p className='simple-voter-note'>No questionnaire definition found for this id yet.</p>
       )}
 
-      {status ? <p className='simple-voter-note'>{status}</p> : null}
+      {status ? <p className='simple-voter-note'>{formatQuestionnaireTokenStatusLabel(status)}</p> : null}
+      {tokenStatus === "submitted" ? <p className='simple-voter-note'>You can close this page.</p> : null}
     </div>
   );
 }

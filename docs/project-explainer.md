@@ -9,6 +9,8 @@ This document is written as a technical explainer for readers who want to unders
 
 It is intended to read more like a protocol note than a product brochure: it describes the design goals, the concrete technologies used in the current implementation, the trust boundaries, and the places where the live system is still operationally weak.
 
+For the questionnaire-first flow specifically, see the formal protocol reference at [`docs/questionnaire-blind-token-protocol.md`](./questionnaire-blind-token-protocol.md).
+
 ---
 
 ## 1. The Short Version

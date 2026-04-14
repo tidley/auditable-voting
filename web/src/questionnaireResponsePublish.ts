@@ -9,8 +9,9 @@ import {
 } from "./simpleVotingSession";
 import { normalizeRelaysRust, sha256HexRust } from "./wasm/auditableVotingCore";
 import type { QuestionnaireResponseAnswer } from "./questionnaireProtocol";
+import { IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND } from "./questionnaireProtocolConstants";
 
-export const QUESTIONNAIRE_RESPONSE_BLIND_KIND = 14124;
+export const QUESTIONNAIRE_RESPONSE_BLIND_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND;
 
 export type BlindTokenProof = {
   tokenCommitment: string;

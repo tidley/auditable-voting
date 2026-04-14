@@ -1,15 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
+  normalizeQuestionnaireDefinition,
   validateQuestionnaireDefinition,
   validateQuestionnaireResponsePayload,
   type QuestionnaireDefinition,
   type QuestionnaireResponsePayload,
 } from "./questionnaireProtocol";
+import { QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN } from "./questionnaireProtocolConstants";
 
 function buildDefinition(): QuestionnaireDefinition {
   return {
     schemaVersion: 1,
     eventType: "questionnaire_definition",
+    responseMode: QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN,
     questionnaireId: "course_feedback_2026_term1",
     title: "Course feedback",
     description: "Please answer all required questions.",
@@ -56,6 +59,14 @@ describe("questionnaireProtocol", () => {
     const result = validateQuestionnaireDefinition(buildDefinition());
     expect(result.valid).toBe(true);
     expect(result.errors).toHaveLength(0);
+  });
+
+  it("normalizes missing response mode to legacy compatibility mode", () => {
+    const normalized = normalizeQuestionnaireDefinition({
+      ...buildDefinition(),
+      responseMode: undefined,
+    });
+    expect(normalized.responseMode).toBe("legacy_private_envelope");
   });
 
   it("rejects a malformed questionnaire definition", () => {

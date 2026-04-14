@@ -1,3 +1,9 @@
+import {
+  QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN,
+  QUESTIONNAIRE_RESPONSE_MODE_LEGACY_PRIVATE_ENVELOPE,
+  type QuestionnaireResponseMode,
+} from "./questionnaireProtocolConstants";
+
 export type QuestionnaireQuestionBase = {
   questionId: string;
   prompt: string;
@@ -32,6 +38,7 @@ export type QuestionnaireQuestion =
 export type QuestionnaireDefinition = {
   schemaVersion: 1;
   eventType: "questionnaire_definition";
+  responseMode: QuestionnaireResponseMode;
   questionnaireId: string;
   title: string;
   description?: string;
@@ -122,7 +129,9 @@ export type QuestionnaireResultSummary = {
   coordinatorPubkey: string;
   acceptedResponseCount: number;
   rejectedResponseCount: number;
+  acceptedNullifierCount?: number;
   questionSummaries: QuestionnaireResultQuestionSummary[];
+  resultHash?: string;
 };
 
 export type ValidationResult = {
@@ -136,6 +145,12 @@ function isNonEmpty(value: string | null | undefined) {
 
 export function validateQuestionnaireDefinition(input: QuestionnaireDefinition): ValidationResult {
   const errors: string[] = [];
+  if (
+    input.responseMode !== QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN
+    && input.responseMode !== QUESTIONNAIRE_RESPONSE_MODE_LEGACY_PRIVATE_ENVELOPE
+  ) {
+    errors.push("response_mode_invalid");
+  }
   if (!isNonEmpty(input.questionnaireId)) {
     errors.push("questionnaire_id_missing");
   }
@@ -188,6 +203,15 @@ export function validateQuestionnaireDefinition(input: QuestionnaireDefinition):
     }
   }
   return { valid: errors.length === 0, errors };
+}
+
+export function normalizeQuestionnaireDefinition(
+  input: Omit<QuestionnaireDefinition, "responseMode"> & { responseMode?: QuestionnaireResponseMode | null },
+): QuestionnaireDefinition {
+  return {
+    ...input,
+    responseMode: input.responseMode ?? QUESTIONNAIRE_RESPONSE_MODE_LEGACY_PRIVATE_ENVELOPE,
+  };
 }
 
 export function validateQuestionnaireResponsePayload(input: {

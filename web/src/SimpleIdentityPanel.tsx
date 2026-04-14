@@ -179,7 +179,7 @@ export default function SimpleIdentityPanel({
                   onClick={() => onRestoreNsec(restoreNsec)}
                   disabled={!restoreNsec.trim()}
                 >
-                  Restore
+                  Restore identity only
                 </button>
               </div>
               {restoreMessage ? (
@@ -212,7 +212,7 @@ export default function SimpleIdentityPanel({
                 ) : null}
                 {onRestoreBackupFile ? (
                   <label className='simple-voter-secondary simple-voter-file-button'>
-                    Restore backup
+                    Restore full local state
                     <input
                       className='simple-voter-file-input'
                       type='file'
