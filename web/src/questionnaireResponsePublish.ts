@@ -1,5 +1,6 @@
 import { finalizeEvent, getPublicKey, nip19, nip44 } from "nostr-tools";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
+import { recordRelayOutcome, rankRelaysByBackoff } from "./relayBackoff";
 import { getSharedNostrPool } from "./sharedNostrPool";
 import {
   SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS,
@@ -34,7 +35,7 @@ export type QuestionnaireBlindResponseEvent = {
 };
 
 function buildPublicRelays(relays?: string[]) {
-  return normalizeRelaysRust([...(relays ?? []), ...SIMPLE_PUBLIC_RELAYS]);
+  return rankRelaysByBackoff(normalizeRelaysRust([...(relays ?? []), ...SIMPLE_PUBLIC_RELAYS]));
 }
 
 function decodeNsecSecretKey(nsec: string) {
@@ -87,6 +88,9 @@ async function publishEvent(input: {
           error: result.reason instanceof Error ? result.reason.message : String(result.reason),
         }
   ));
+  for (const result of relayResults) {
+    recordRelayOutcome(result.relay, result.success, result.success ? undefined : result.error);
+  }
 
   return {
     eventId: event.id,
