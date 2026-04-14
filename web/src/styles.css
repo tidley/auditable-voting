@@ -317,6 +317,15 @@ code {
   opacity: 0.6;
 }
 
+.token-fingerprint-grid-clickable {
+  cursor: zoom-in;
+}
+
+.token-fingerprint-grid-clickable:focus-visible {
+  outline: 2px solid rgba(46, 34, 24, 0.45);
+  outline-offset: 2px;
+}
+
 .token-fingerprint-label {
   font-size: 0.76rem;
 }
