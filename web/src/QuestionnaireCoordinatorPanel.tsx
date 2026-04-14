@@ -74,6 +74,10 @@ function nowUnix() {
   return Math.floor(Date.now() / 1000);
 }
 
+function generateQuestionnaireId() {
+  return `${DEFAULT_QUESTIONNAIRE_ID}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
 function formatUnixTimestamp(timestampSeconds?: number | null) {
   if (!timestampSeconds || !Number.isFinite(timestampSeconds)) {
     return "Not set";
@@ -142,7 +146,7 @@ function buildDefinition(input: {
 }
 
 export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordinatorPanelProps) {
-  const [questionnaireId, setQuestionnaireId] = useState(() => `${DEFAULT_QUESTIONNAIRE_ID}_${Math.random().toString(36).slice(2, 7)}`);
+  const [questionnaireId, setQuestionnaireId] = useState(DEFAULT_QUESTIONNAIRE_ID);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [closeAfterMinutes, setCloseAfterMinutes] = useState("60");
@@ -1239,6 +1243,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         onChange={(event) => setQuestionnaireId(event.target.value)}
       />
       <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
+        <button type='button' className='simple-voter-secondary' onClick={() => setQuestionnaireId(generateQuestionnaireId())}>
+          Generate ID
+        </button>
         <button type='button' className='simple-voter-secondary' onClick={() => void navigator.clipboard.writeText(questionnaireId)}>
           Copy ID
         </button>
