@@ -18,3 +18,12 @@ export function deriveNpubFromNsec(value: string): string | null {
 
   return nip19.npubEncode(getPublicKey(secretKey));
 }
+
+export function isValidNpub(value: string): boolean {
+  try {
+    const decoded = nip19.decode(value.trim());
+    return decoded.type === "npub";
+  } catch {
+    return false;
+  }
+}
