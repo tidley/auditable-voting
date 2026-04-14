@@ -1283,6 +1283,18 @@ async function waitForQuestionnaireResultPublication(page, timeoutMs = 15000) {
   return false;
 }
 
+async function waitForQuestionnaireCoordinatorReady(page, timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const debug = await readQuestionnaireCoordinatorDebug(page);
+    if (debug?.coordinatorNpubLoaded) {
+      return true;
+    }
+    await sleep(500);
+  }
+  return false;
+}
+
 async function clickEnabledTicketsDuringWindow(coordinators, voters, durationMs, stageTracker) {
   const deadline = Date.now() + durationMs;
   const sendCounts = coordinators.map((_, index) => ({
@@ -1498,6 +1510,10 @@ async function main() {
             voterIds,
           });
           await ensureTab(lead, "Configure", coordinators[0].label);
+          const coordinatorReady = await waitForQuestionnaireCoordinatorReady(lead, 45000);
+          if (!coordinatorReady) {
+            throw new Error("questionnaire_coordinator_not_ready: coordinator identity/debug not loaded in time");
+          }
           const coordinatorQuestionnaireIdInput = lead.locator("#questionnaire-id").first();
           await coordinatorQuestionnaireIdInput.fill(questionnaireId);
           await coordinatorQuestionnaireIdInput.blur();

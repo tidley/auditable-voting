@@ -77,9 +77,11 @@ function summariseRun(run) {
     }, {});
     const ticketSent = Number(roundSummary.ticketSentCount ?? roundSummary.stageMetrics?.ticketSent?.count ?? 0);
     const totalPairs = Number(roundSummary.stageMetrics?.ticketSent?.totalPairs ?? 0);
-    const success = deploymentMode === "course_feedback"
-      ? totalVoters > 0 && coordinatorAcceptedBallots >= totalVoters
-      : totalVoters > 0 && votersWithTickets === totalVoters;
+    const success = typeof roundSummary.roundSuccess === "boolean"
+      ? roundSummary.roundSuccess
+      : deploymentMode === "course_feedback"
+        ? totalVoters > 0 && coordinatorAcceptedBallots >= totalVoters
+        : totalVoters > 0 && votersWithTickets === totalVoters;
     const stageMetrics = roundSummary.stageMetrics ?? {};
     return {
       round,
@@ -316,6 +318,8 @@ async function main() {
     repeatCount,
     passedRuns: results.filter((result) => result.passed).length,
     failedRuns: results.filter((result) => !result.passed).length,
+    passRate: repeatCount > 0 ? Number((results.filter((result) => result.passed).length / repeatCount).toFixed(3)) : 0,
+    allPassed: repeatCount > 0 && results.every((result) => result.passed),
     runs: results,
     rounds: Array.from(roundsByNumber.values()).sort((left, right) => left.round - right.round),
   };

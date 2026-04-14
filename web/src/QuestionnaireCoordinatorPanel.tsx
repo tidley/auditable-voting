@@ -6,6 +6,7 @@ import { validateQuestionnaireDefinition, type QuestionnaireDefinition, type Que
 
 const DEFAULT_QUESTIONNAIRE_ID = "course_feedback_2026_term1";
 const REFRESH_INTERVAL_MS = 15000;
+const IDENTITY_REFRESH_INTERVAL_MS = 2000;
 
 type QuestionnairePublishDiagnostic = {
   attempted: boolean;
@@ -15,6 +16,11 @@ type QuestionnairePublishDiagnostic = {
   tags: string[][];
   relayTargets: string[];
   relaySuccessCount: number;
+};
+
+type QuestionnaireCoordinatorPanelProps = {
+  coordinatorNsec?: string | null;
+  coordinatorNpub?: string | null;
 };
 
 function nowUnix() {
@@ -82,7 +88,7 @@ function buildDefinition(input: {
   };
 }
 
-export default function QuestionnaireCoordinatorPanel() {
+export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordinatorPanelProps) {
   const [questionnaireId, setQuestionnaireId] = useState(DEFAULT_QUESTIONNAIRE_ID);
   const [title, setTitle] = useState("Course feedback");
   const [description, setDescription] = useState("Please answer all required questions.");
@@ -148,14 +154,37 @@ export default function QuestionnaireCoordinatorPanel() {
   });
 
   useEffect(() => {
-    void loadSimpleActorState("coordinator").then((state) => {
-      if (!state?.keypair) {
-        return;
-      }
-      setCoordinatorNsec(state.keypair.nsec);
-      setCoordinatorNpub(state.keypair.npub);
-    }).catch(() => undefined);
-  }, []);
+    const nextNsec = typeof props.coordinatorNsec === "string" ? props.coordinatorNsec.trim() : "";
+    const nextNpub = typeof props.coordinatorNpub === "string" ? props.coordinatorNpub.trim() : "";
+    if (nextNsec) {
+      setCoordinatorNsec((current) => (current === nextNsec ? current : nextNsec));
+    }
+    if (nextNpub) {
+      setCoordinatorNpub((current) => (current === nextNpub ? current : nextNpub));
+    }
+  }, [props.coordinatorNsec, props.coordinatorNpub]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refreshIdentity = () => {
+      void loadSimpleActorState("coordinator").then((state) => {
+        if (cancelled || !state?.keypair) {
+          return;
+        }
+        if (props.coordinatorNsec?.trim() && props.coordinatorNpub?.trim()) {
+          return;
+        }
+        setCoordinatorNsec((current) => (current === state.keypair.nsec ? current : state.keypair.nsec));
+        setCoordinatorNpub((current) => (current === state.keypair.npub ? current : state.keypair.npub));
+      }).catch(() => undefined);
+    };
+    refreshIdentity();
+    const intervalId = window.setInterval(refreshIdentity, IDENTITY_REFRESH_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [props.coordinatorNpub, props.coordinatorNsec]);
 
   const refresh = useCallback(async () => {
     const id = questionnaireId.trim();

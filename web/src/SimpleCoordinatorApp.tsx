@@ -4609,7 +4609,10 @@ export default function SimpleCoordinatorApp() {
             aria-label='Configure'
           >
             <SimpleCollapsibleSection title='Private questionnaire'>
-              <QuestionnaireCoordinatorPanel />
+              <QuestionnaireCoordinatorPanel
+                coordinatorNsec={keypair?.nsec ?? null}
+                coordinatorNpub={keypair?.npub ?? null}
+              />
             </SimpleCollapsibleSection>
             <SimpleCollapsibleSection title='Coordinator management'>
               <label
