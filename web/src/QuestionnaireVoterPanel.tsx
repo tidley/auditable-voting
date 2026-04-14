@@ -9,8 +9,10 @@ import TokenFingerprint from "./TokenFingerprint";
 import { deriveActorDisplayId } from "./actorDisplay";
 
 const RESTORED_QUESTIONNAIRE_IDS_STORAGE_KEY = "voter.restored-questionnaire-ids.v1";
+const PARTICIPATION_HISTORY_STORAGE_KEY = "voter.questionnaire-participation-history.v1";
 const VOTER_QUESTIONNAIRE_LOOKBACK_SECONDS = 7 * 24 * 60 * 60;
 const REFRESH_INTERVAL_MS = 15000;
+const MAX_PARTICIPATION_HISTORY_ENTRIES = 16;
 
 type QuestionnaireAnswerState = Record<string, boolean | string | string[]>;
 type SelectorLifecycle = "open" | "published" | "draft" | "closed" | "counted" | "unknown";
@@ -25,6 +27,14 @@ type QuestionnaireSelectorEntry = {
   createdAt: number;
   discoveredAt: number;
   restored: boolean;
+};
+
+type QuestionnaireParticipationHistoryEntry = {
+  questionnaireId: string;
+  title: string;
+  coordinatorPubkey: string;
+  submissionCount: number;
+  lastSubmittedAt: number;
 };
 
 function nowUnix() {
@@ -44,6 +54,48 @@ function readRestoredQuestionnaireIds(storageKey: string) {
   } catch {
     return [] as string[];
   }
+}
+
+function readParticipationHistory(storageKey: string) {
+  if (typeof window === "undefined") {
+    return [] as QuestionnaireParticipationHistoryEntry[];
+  }
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(storageKey) ?? "[]") as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed
+      .filter((entry): entry is QuestionnaireParticipationHistoryEntry => (
+        Boolean(entry)
+        && typeof entry === "object"
+        && typeof (entry as { questionnaireId?: unknown }).questionnaireId === "string"
+        && typeof (entry as { title?: unknown }).title === "string"
+        && typeof (entry as { coordinatorPubkey?: unknown }).coordinatorPubkey === "string"
+        && typeof (entry as { submissionCount?: unknown }).submissionCount === "number"
+        && Number.isFinite((entry as { lastSubmittedAt?: unknown }).lastSubmittedAt)
+      ))
+      .sort((left, right) => right.lastSubmittedAt - left.lastSubmittedAt)
+      .slice(0, MAX_PARTICIPATION_HISTORY_ENTRIES);
+  } catch {
+    return [];
+  }
+}
+
+function mergeParticipationHistory(
+  existing: QuestionnaireParticipationHistoryEntry[],
+  incoming: QuestionnaireParticipationHistoryEntry[],
+) {
+  const merged = new Map<string, QuestionnaireParticipationHistoryEntry>();
+  for (const item of [...existing, ...incoming]) {
+    const previous = merged.get(item.questionnaireId);
+    if (!previous || item.lastSubmittedAt >= previous.lastSubmittedAt) {
+      merged.set(item.questionnaireId, item);
+    }
+  }
+  return [...merged.values()]
+    .sort((left, right) => right.lastSubmittedAt - left.lastSubmittedAt)
+    .slice(0, MAX_PARTICIPATION_HISTORY_ENTRIES);
 }
 
 function selectorLifecycleFromState(state: string | null | undefined): SelectorLifecycle {
@@ -120,6 +172,12 @@ function buildRestoredStorageKey(actorId: string, coordinatorContextNpubs: strin
     : "none";
   return buildSimpleNamespacedLocalStorageKey(
     `voter:${actorId}:coordinator:${coordinatorScope}:${RESTORED_QUESTIONNAIRE_IDS_STORAGE_KEY}`,
+  );
+}
+
+function buildParticipationHistoryStorageKey(actorId: string) {
+  return buildSimpleNamespacedLocalStorageKey(
+    `voter:${actorId}:${PARTICIPATION_HISTORY_STORAGE_KEY}`,
   );
 }
 
@@ -219,14 +277,20 @@ function parseLatestResultSummary(events: Awaited<ReturnType<typeof fetchQuestio
 
 type QuestionnaireVoterPanelProps = {
   onContextChange?: (context: { hasDefinition: boolean; state: string | null }) => void;
+  participationHistory?: QuestionnaireParticipationHistoryEntry[];
+  onParticipationHistoryChange?: (entries: QuestionnaireParticipationHistoryEntry[]) => void;
 };
 
 export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelProps) {
+  const onContextChange = props.onContextChange;
+  const onParticipationHistoryChange = props.onParticipationHistoryChange;
+  const incomingParticipationHistory = props.participationHistory;
   const [questionnaireId, setQuestionnaireId] = useState("");
   const [selectorEntries, setSelectorEntries] = useState<QuestionnaireSelectorEntry[]>([]);
   const [coordinatorContextNpubs, setCoordinatorContextNpubs] = useState<string[]>([]);
   const [restoredQuestionnaireIds, setRestoredQuestionnaireIds] = useState<string[]>([]);
   const [restoreQuestionnaireIdInput, setRestoreQuestionnaireIdInput] = useState("");
+  const [participationHistory, setParticipationHistory] = useState<QuestionnaireParticipationHistoryEntry[]>([]);
   const [voterNpub, setVoterNpub] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [definition, setDefinition] = useState<QuestionnaireDefinition | null>(null);
@@ -251,6 +315,10 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
   const restoredStorageKey = useMemo(
     () => buildRestoredStorageKey(actorId, coordinatorContextNpubs),
     [actorId, coordinatorContextNpubs],
+  );
+  const participationHistoryStorageKey = useMemo(
+    () => buildParticipationHistoryStorageKey(actorId),
+    [actorId],
   );
 
   useEffect(() => {
@@ -282,11 +350,36 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
   }, [restoredStorageKey]);
 
   useEffect(() => {
+    setParticipationHistory(readParticipationHistory(participationHistoryStorageKey));
+  }, [participationHistoryStorageKey]);
+
+  useEffect(() => {
+    const incoming = Array.isArray(incomingParticipationHistory)
+      ? incomingParticipationHistory
+      : [];
+    if (incoming.length === 0) {
+      return;
+    }
+    setParticipationHistory((current) => mergeParticipationHistory(current, incoming));
+  }, [incomingParticipationHistory]);
+
+  useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
     window.localStorage.setItem(restoredStorageKey, JSON.stringify(restoredQuestionnaireIds.slice(0, 8)));
   }, [restoredQuestionnaireIds, restoredStorageKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(
+      participationHistoryStorageKey,
+      JSON.stringify(participationHistory.slice(0, MAX_PARTICIPATION_HISTORY_ENTRIES)),
+    );
+    onParticipationHistoryChange?.(participationHistory);
+  }, [onParticipationHistoryChange, participationHistory, participationHistoryStorageKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -541,6 +634,21 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
       if (result.successes > 0) {
         setResponseSubmittedCount((current) => current + 1);
         setTokenStatus("submitted");
+        const submittedAt = Date.now();
+        setParticipationHistory((current) => {
+          const existing = current.find((entry) => entry.questionnaireId === definition.questionnaireId);
+          const nextEntry: QuestionnaireParticipationHistoryEntry = {
+            questionnaireId: definition.questionnaireId,
+            title: definition.title?.trim() ?? "",
+            coordinatorPubkey: definition.coordinatorPubkey,
+            submissionCount: Math.max(1, (existing?.submissionCount ?? 0) + 1),
+            lastSubmittedAt: submittedAt,
+          };
+          return mergeParticipationHistory(
+            current.filter((entry) => entry.questionnaireId !== definition.questionnaireId),
+            [nextEntry],
+          );
+        });
       }
     } catch {
       setStatus("Response submit failed.");
@@ -608,11 +716,11 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
   ]);
 
   useEffect(() => {
-    props.onContextChange?.({
+    onContextChange?.({
       hasDefinition: Boolean(definition),
       state,
     });
-  }, [definition, props, state]);
+  }, [definition, onContextChange, state]);
 
   async function restoreQuestionnaireId() {
     const restoredId = restoreQuestionnaireIdInput.trim();
@@ -725,6 +833,32 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
           Refresh questionnaire
         </button>
       </div>
+      {participationHistory.length > 0 ? (
+        <>
+          <p className='simple-voter-note'>Participation history</p>
+          <ul className='simple-vote-status-list'>
+            {participationHistory.slice(0, 6).map((entry) => (
+              <li key={entry.questionnaireId}>
+                <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
+                <button
+                  type='button'
+                  className='simple-voter-secondary'
+                  onClick={() => {
+                    setQuestionnaireId(entry.questionnaireId);
+                    setRestoredQuestionnaireIds((current) => (
+                      current.includes(entry.questionnaireId)
+                        ? current
+                        : [...current, entry.questionnaireId].slice(-8)
+                    ));
+                  }}
+                >
+                  {(entry.title || entry.questionnaireId)} ({new Date(entry.lastSubmittedAt).toLocaleString()})
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
 
       <ul className='simple-vote-status-list'>
         <li>

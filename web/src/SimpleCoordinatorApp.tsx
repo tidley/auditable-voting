@@ -4670,15 +4670,7 @@ export default function SimpleCoordinatorApp() {
             role='tabpanel'
             aria-label='Build'
           >
-            <SimpleCollapsibleSection title='Questionnaire draft'>
-              <QuestionnaireCoordinatorPanel
-                coordinatorNsec={keypair?.nsec ?? null}
-                coordinatorNpub={keypair?.npub ?? null}
-                knownVoterCount={followers.length}
-                view='build'
-              />
-            </SimpleCollapsibleSection>
-            <SimpleCollapsibleSection title='Coordinator management'>
+            <SimpleCollapsibleSection title='Coordinator management' defaultCollapsed>
               <label
                 className='simple-voter-label'
                 htmlFor='simple-lead-coordinator-npub'
@@ -4754,6 +4746,14 @@ export default function SimpleCoordinatorApp() {
               {assignmentStatus && (
                 <p className='simple-voter-note'>{assignmentStatus}</p>
               )}
+            </SimpleCollapsibleSection>
+            <SimpleCollapsibleSection title='Questionnaire draft'>
+              <QuestionnaireCoordinatorPanel
+                coordinatorNsec={keypair?.nsec ?? null}
+                coordinatorNpub={keypair?.npub ?? null}
+                knownVoterCount={followers.length}
+                view='build'
+              />
             </SimpleCollapsibleSection>
 
             {isLeadCoordinator && (

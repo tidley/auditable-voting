@@ -37,6 +37,7 @@ The shipped app currently includes:
 - smaller primary relay subsets for live reads and subscriptions, with ordinary DM traffic kept tight while coordinator-control and ticket/ack traffic use a slightly wider primary subset for recovery and first-round reliability
 - randomised automatic follow/request/ticket/ack send pacing, plus slower retry windows, to reduce relay-side rate limiting when many browser actors act at once
 - local browser persistence, backup, and optional passphrase protection
+- voter questionnaire participation history is now stored locally and included in voter backups/restores
 - optional relay hint resolution via NIP-65, disabled by default
 - a growing Rust/Wasm core for deterministic protocol logic
 

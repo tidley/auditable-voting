@@ -1331,11 +1331,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         </div>
       ) : (
         <>
-          <div className='simple-voter-action-row simple-voter-action-row-inline'>
-            <button type='button' className='simple-voter-secondary' onClick={addYesNoQuestion}>Add yes/no question</button>
-            <button type='button' className='simple-voter-secondary' onClick={addMultipleChoiceQuestion}>Add multiple choice question</button>
-            <button type='button' className='simple-voter-secondary' onClick={addFreeTextQuestion}>Add text question</button>
-          </div>
           <div className='simple-questionnaire-question-list'>
             {questions.map((question, index) => (
               <div key={`${question.questionId}-${index}`} className='simple-questionnaire-question-card'>
@@ -1455,6 +1450,11 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                 </div>
               </div>
             ))}
+          </div>
+          <div className='simple-voter-action-row simple-voter-action-row-inline'>
+            <button type='button' className='simple-voter-secondary' onClick={addYesNoQuestion}>Add yes/no question</button>
+            <button type='button' className='simple-voter-secondary' onClick={addMultipleChoiceQuestion}>Add multiple choice question</button>
+            <button type='button' className='simple-voter-secondary' onClick={addFreeTextQuestion}>Add text question</button>
           </div>
         </>
       )}
