@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { generateSecretKey, nip19 } from "nostr-tools";
-import { fetchQuestionnaireEvents, fetchQuestionnaireEventsWithFallback, parseQuestionnaireDefinitionEvent, parseQuestionnaireStateEvent, publishEncryptedQuestionnaireResponse, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND } from "./questionnaireNostr";
+import { fetchQuestionnaireEvents, fetchQuestionnaireEventsWithFallback, getQuestionnaireReadRelays, parseQuestionnaireDefinitionEvent, parseQuestionnaireStateEvent, publishEncryptedQuestionnaireResponse, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND } from "./questionnaireNostr";
 import { deriveEffectiveQuestionnaireState, formatQuestionnaireStateLabel, formatQuestionnaireTokenStatusLabel, parseQuestionnaireResultSummaryEvent, selectLatestQuestionnaireDefinition, selectLatestQuestionnaireState } from "./questionnaireRuntime";
 import { loadSimpleActorState } from "./simpleLocalState";
 import { validateQuestionnaireResponsePayload, type QuestionnaireDefinition, type QuestionnaireResponseAnswer, type QuestionnaireResponsePayload, type QuestionnaireResultSummary } from "./questionnaireProtocol";
+import { getSharedNostrPool } from "./sharedNostrPool";
 
 const DEFAULT_QUESTIONNAIRE_ID = "course_feedback_2026_term1";
 const REFRESH_INTERVAL_MS = 15000;
@@ -71,6 +72,7 @@ function parseLatestResultSummary(events: Awaited<ReturnType<typeof fetchQuestio
 
 export default function QuestionnaireVoterPanel() {
   const [questionnaireId, setQuestionnaireId] = useState(DEFAULT_QUESTIONNAIRE_ID);
+  const [availableQuestionnaireIds, setAvailableQuestionnaireIds] = useState<string[]>([]);
   const [voterNpub, setVoterNpub] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [definition, setDefinition] = useState<QuestionnaireDefinition | null>(null);
@@ -93,10 +95,59 @@ export default function QuestionnaireVoterPanel() {
   const [resultKindOnlyCount, setResultKindOnlyCount] = useState(0);
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const fromQuery = new URLSearchParams(window.location.search).get("questionnaire")?.trim();
+    if (fromQuery) {
+      setQuestionnaireId(fromQuery);
+    }
+  }, []);
+
+  useEffect(() => {
     void loadSimpleActorState("voter").then((stored) => {
       setVoterNpub(stored?.keypair?.npub ?? "");
     }).catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadQuestionnaireOptions = async () => {
+      try {
+        const relays = getQuestionnaireReadRelays();
+        const pool = getSharedNostrPool();
+        const events = await pool.querySync(relays, {
+          kinds: [QUESTIONNAIRE_DEFINITION_KIND],
+          limit: 400,
+        });
+        if (cancelled) {
+          return;
+        }
+        const ids = new Set<string>();
+        for (const event of events) {
+          const parsed = parseQuestionnaireDefinitionEvent(event);
+          if (!parsed) {
+            continue;
+          }
+          if (parsed.questionnaireId.trim()) {
+            ids.add(parsed.questionnaireId.trim());
+          }
+        }
+        const selectedId = questionnaireId.trim();
+        if (selectedId) {
+          ids.add(selectedId);
+        }
+        setAvailableQuestionnaireIds([...ids].sort((left, right) => left.localeCompare(right)));
+      } catch {
+        const selectedId = questionnaireId.trim();
+        setAvailableQuestionnaireIds(selectedId ? [selectedId] : []);
+      }
+    };
+    void loadQuestionnaireOptions();
+    return () => {
+      cancelled = true;
+    };
+  }, [questionnaireId]);
 
   const refresh = useCallback(async () => {
     const id = questionnaireId.trim();
@@ -176,6 +227,9 @@ export default function QuestionnaireVoterPanel() {
   const canSubmit = useMemo(() => {
     return Boolean(definition && state === "open" && (tokenStatus === "ready" || tokenStatus === "submitted"));
   }, [definition, state, tokenStatus]);
+  const selectedQuestionnaireOptions = availableQuestionnaireIds.length > 0
+    ? availableQuestionnaireIds
+    : (questionnaireId.trim() ? [questionnaireId.trim()] : []);
 
   function setYesNoAnswer(questionId: string, value: boolean) {
     setAnswerState((current) => ({ ...current, [questionId]: value }));
@@ -328,12 +382,16 @@ export default function QuestionnaireVoterPanel() {
       <p className='simple-voter-note'>{definition?.responseVisibility === "private" ? "Answers are encrypted" : "Answers are public"}</p>
 
       <label className='simple-voter-label' htmlFor='questionnaire-id-voter'>Questionnaire ID</label>
-      <input
+      <select
         id='questionnaire-id-voter'
         className='simple-voter-input'
         value={questionnaireId}
         onChange={(event) => setQuestionnaireId(event.target.value)}
-      />
+      >
+        {selectedQuestionnaireOptions.map((id) => (
+          <option key={id} value={id}>{id}</option>
+        ))}
+      </select>
 
       <div className='simple-voter-action-row simple-voter-action-row-tight'>
         <button type='button' className='simple-voter-secondary' onClick={() => void refresh()}>

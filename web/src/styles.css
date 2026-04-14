@@ -948,6 +948,14 @@ code {
   padding: 10px 14px;
 }
 
+.simple-coordinator-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .simple-voter-primary:hover {
   background: #1d4ed8;
 }

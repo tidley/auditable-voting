@@ -1255,11 +1255,11 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       </div>
       {showInviteQr && questionnaireId.trim() ? (
         <SimpleQrPanel
-          value={questionnaireId.trim()}
-          title='Questionnaire ID'
-          copyLabel='Copy ID'
+          value={inviteLink || questionnaireId.trim()}
+          title='Voter link'
+          copyLabel='Copy link'
           downloadLabel='Download QR'
-          downloadFilename='questionnaire-id-qr.png'
+          downloadFilename='questionnaire-voter-link-qr.png'
         />
       ) : null}
       <label className='simple-voter-label' htmlFor='questionnaire-title'>Name</label>

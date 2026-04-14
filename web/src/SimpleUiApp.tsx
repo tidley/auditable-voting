@@ -2353,12 +2353,7 @@ export default function SimpleUiApp() {
                 <ul className='simple-coordinator-card-list'>
                   {configuredCoordinatorTargets.map((value, index) => (
                     <li key={value} className='simple-coordinator-card'>
-                      <div
-                        className='simple-coordinator-card-avatar'
-                        aria-hidden='true'
-                      >
-                        •
-                      </div>
+                      <TokenFingerprint tokenId={value} compact showQr={false} hideMetadata />
                       <div className='simple-coordinator-card-copy'>
                         <p className='simple-coordinator-card-title'>
                           Coordinator {index + 1}

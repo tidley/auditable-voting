@@ -58,7 +58,6 @@ import SimpleRelayPanel from "./SimpleRelayPanel";
 import SimpleUnlockGate from "./SimpleUnlockGate";
 import TokenFingerprint from "./TokenFingerprint";
 import QuestionnaireCoordinatorPanel from "./QuestionnaireCoordinatorPanel";
-import { formatQuestionnaireStateLabel } from "./questionnaireRuntime";
 import { extractNpubFromScan } from "./npubScan";
 import {
   primeNip65RelayHints,
@@ -92,12 +91,6 @@ import {
 } from "./wasm/auditableVotingCore";
 
 type CoordinatorTab = "configure" | "voting" | "settings";
-type QuestionnaireSummaryStrip = {
-  state: "draft" | "open" | "closed" | "results_published" | null;
-  acceptedCount: number;
-  rejectedCount: number;
-  payloadMode: "Encrypted" | "Public";
-};
 
 type SimpleCoordinatorKeypair = {
   npub: string;
@@ -595,12 +588,6 @@ export default function SimpleCoordinatorApp() {
     useState('');
   const [submittedVotes, setSubmittedVotes] = useState<SimpleSubmittedVote[]>([]);
   const [activeTab, setActiveTab] = useState<CoordinatorTab>("configure");
-  const [questionnaireSummary, setQuestionnaireSummary] = useState<QuestionnaireSummaryStrip>({
-    state: null,
-    acceptedCount: 0,
-    rejectedCount: 0,
-    payloadMode: "Encrypted",
-  });
   const [shareAssignmentsInFlight, setShareAssignmentsInFlight] =
     useState(false);
   const [
@@ -4573,32 +4560,33 @@ export default function SimpleCoordinatorApp() {
       <section className='simple-voter-page'>
         <div className='simple-voter-header-row'>
           <h1 className='simple-voter-title'>Coordinator ID {coordinatorId}</h1>
-          <button
-            type='button'
-            className='simple-voter-primary'
-            onClick={refreshIdentity}
-          >
-            New ID
-          </button>
+          <div className='simple-coordinator-header-actions'>
+            {keypair?.npub ? (
+              <TokenFingerprint
+                tokenId={keypair.npub}
+                compact
+                showQr
+                hideMetadata
+                qrValue={keypair.npub}
+              />
+            ) : null}
+            <button
+              type='button'
+              className='simple-voter-secondary'
+              onClick={() => void navigator.clipboard.writeText(keypair?.npub ?? "")}
+              disabled={!keypair?.npub}
+            >
+              Copy npub
+            </button>
+            <button
+              type='button'
+              className='simple-voter-primary'
+              onClick={refreshIdentity}
+            >
+              New ID
+            </button>
+          </div>
         </div>
-        <ul className='simple-vote-status-list'>
-          <li>
-            <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-            State: {formatQuestionnaireStateLabel(questionnaireSummary.state)}
-          </li>
-          <li>
-            <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-            Responses: {questionnaireSummary.acceptedCount} accepted, {questionnaireSummary.rejectedCount} rejected
-          </li>
-          <li>
-            <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-            Mode: Blind token
-          </li>
-          <li>
-            <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-            Payload: {questionnaireSummary.payloadMode}
-          </li>
-        </ul>
         <div
           className='simple-voter-tabs'
           role='tablist'
@@ -4645,14 +4633,6 @@ export default function SimpleCoordinatorApp() {
                 coordinatorNpub={keypair?.npub ?? null}
                 knownVoterCount={followers.length}
                 view='build'
-                onStatusChange={(nextStatus) => {
-                  setQuestionnaireSummary({
-                    state: nextStatus.state,
-                    acceptedCount: nextStatus.acceptedCount,
-                    rejectedCount: nextStatus.rejectedCount,
-                    payloadMode: nextStatus.payloadMode,
-                  });
-                }}
               />
             </SimpleCollapsibleSection>
             <SimpleCollapsibleSection title='Coordinator management'>
@@ -4954,14 +4934,6 @@ export default function SimpleCoordinatorApp() {
               coordinatorNpub={keypair?.npub ?? null}
               knownVoterCount={followers.length}
               view='responses'
-              onStatusChange={(nextStatus) => {
-                setQuestionnaireSummary({
-                  state: nextStatus.state,
-                  acceptedCount: nextStatus.acceptedCount,
-                  rejectedCount: nextStatus.rejectedCount,
-                  payloadMode: nextStatus.payloadMode,
-                });
-              }}
             />
           </section>
         ) : null}
