@@ -279,6 +279,10 @@ export default function SimpleUiApp() {
   const [selectedVotingId, setSelectedVotingId] = useState("");
   const [activeTab, setActiveTab] = useState<VoterTab>("configure");
   const [showVoteDetails, setShowVoteDetails] = useState(false);
+  const [questionnaireContext, setQuestionnaireContext] = useState<{ hasDefinition: boolean; state: string | null }>({
+    hasDefinition: false,
+    state: null,
+  });
   const sentTicketReceiptAckIdsRef = useRef<Set<string>>(new Set());
   const ticketObservationMetaRef = useRef<Record<string, { liveAt?: number; backfillAt?: number }>>({});
   const ticketLiveQueryDebugRef = useRef<MailboxReadQueryDebug | null>(null);
@@ -2035,6 +2039,7 @@ export default function SimpleUiApp() {
   const waitingForCoordinatorKeyText = formatMissingCoordinatorKeyText(
     missingActiveVoteCoordinatorIndices,
   );
+  const hideLegacyLiveVotePanel = questionnaireContext.hasDefinition;
 
   useEffect(() => {
     setTicketAckSent(false);
@@ -2476,8 +2481,12 @@ export default function SimpleUiApp() {
             role='tabpanel'
             aria-label='Vote'
           >
-            <QuestionnaireVoterPanel />
-            {isCourseFeedbackMode ? null : (
+            <QuestionnaireVoterPanel
+              onContextChange={(nextContext) => {
+                setQuestionnaireContext(nextContext);
+              }}
+            />
+            {isCourseFeedbackMode || hideLegacyLiveVotePanel ? null : (
             effectiveLiveVoteSession ? (
               <>
                 {knownRounds.length > 1 ? (

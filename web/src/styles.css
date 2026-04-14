@@ -1490,6 +1490,87 @@ code {
   gap: 12px;
 }
 
+.simple-questionnaire-voter-list {
+  display: grid;
+  gap: 20px;
+}
+
+.simple-questionnaire-voter-card {
+  display: grid;
+  gap: 12px;
+  padding: 20px;
+  border: 1px solid #334155;
+  border-radius: 14px;
+  background: #0b1221;
+}
+
+.simple-questionnaire-voter-number {
+  margin: 0;
+  color: #93c5fd;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.simple-questionnaire-voter-prompt {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 1.35rem;
+  line-height: 1.28;
+  font-weight: 800;
+}
+
+.simple-questionnaire-voter-helper {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 0.92rem;
+}
+
+.simple-questionnaire-yes-no-grid {
+  justify-content: start;
+  grid-template-columns: repeat(2, minmax(120px, 180px));
+}
+
+.simple-questionnaire-yes-no-choice {
+  min-height: 52px;
+  font-size: 1.08rem;
+  padding: 10px 14px;
+}
+
+.simple-questionnaire-choice-list {
+  display: grid;
+  gap: 10px;
+}
+
+.simple-questionnaire-choice-row {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  background: #111827;
+  color: #e2e8f0;
+  font-size: 1.02rem;
+  line-height: 1.35;
+  cursor: pointer;
+}
+
+.simple-questionnaire-choice-row input[type="checkbox"],
+.simple-questionnaire-choice-row input[type="radio"] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #3b82f6;
+}
+
+.simple-questionnaire-free-text {
+  margin-top: 4px;
+}
+
 .simple-vote-entry-copy {
   flex: 1 1 280px;
   min-width: 0;
