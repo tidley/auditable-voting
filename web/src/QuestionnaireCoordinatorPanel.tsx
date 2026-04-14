@@ -28,6 +28,7 @@ type QuestionnairePublishDiagnostic = {
 type QuestionnaireCoordinatorPanelProps = {
   coordinatorNsec?: string | null;
   coordinatorNpub?: string | null;
+  knownVoterCount?: number;
   onStatusChange?: (status: {
     state: QuestionnaireStateValue | null;
     acceptedCount: number;
@@ -37,6 +38,34 @@ type QuestionnaireCoordinatorPanelProps = {
 };
 
 type QuestionnaireQuestionDraft = QuestionnaireQuestion;
+type QuestionnaireTab = "build" | "audience" | "publish" | "responses" | "results";
+type QuestionCardTypeLabel = "Text" | "Multiple choice" | "Free text";
+
+function questionTypeLabel(type: QuestionnaireQuestionDraft["type"]): QuestionCardTypeLabel {
+  if (type === "multiple_choice") {
+    return "Multiple choice";
+  }
+  if (type === "free_text") {
+    return "Free text";
+  }
+  return "Text";
+}
+
+function isQuestionDraftValid(question: QuestionnaireQuestionDraft): boolean {
+  if (!question.prompt.trim()) {
+    return false;
+  }
+  if (question.type === "multiple_choice") {
+    if (question.options.length < 2) {
+      return false;
+    }
+    return question.options.every((option) => option.label.trim().length > 0);
+  }
+  if (question.type === "free_text") {
+    return Number.isFinite(question.maxLength) && question.maxLength > 0;
+  }
+  return true;
+}
 
 function nowUnix() {
   return Math.floor(Date.now() / 1000);
@@ -84,34 +113,11 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [title, setTitle] = useState("Course feedback");
   const [description, setDescription] = useState("Please answer all required questions.");
   const [closeAfterMinutes, setCloseAfterMinutes] = useState("60");
-  const [questions, setQuestions] = useState<QuestionnaireQuestionDraft[]>([
-    {
-      questionId: "q1",
-      type: "yes_no",
-      prompt: "Was the course material clear?",
-      required: true,
-    },
-    {
-      questionId: "q2",
-      type: "multiple_choice",
-      prompt: "How would you rate the pace?",
-      required: true,
-      multiSelect: false,
-      options: [
-        { optionId: "slow", label: "Too slow" },
-        { optionId: "good", label: "About right" },
-        { optionId: "fast", label: "Too fast" },
-      ],
-    },
-    {
-      questionId: "q3",
-      type: "free_text",
-      prompt: "What should be improved?",
-      required: false,
-      maxLength: 1000,
-    },
-  ]);
+  const [questions, setQuestions] = useState<QuestionnaireQuestionDraft[]>([]);
+  const [activeTab, setActiveTab] = useState<QuestionnaireTab>("build");
   const [showNpubQr, setShowNpubQr] = useState(false);
+  const [showInviteQr, setShowInviteQr] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
   const [coordinatorNsec, setCoordinatorNsec] = useState("");
   const [coordinatorNpub, setCoordinatorNpub] = useState("");
   const [status, setStatus] = useState<string | null>(null);
@@ -436,16 +442,61 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     return buildDefinition({
       questionnaireId: questionnaireId.trim(),
       coordinatorPubkey: coordinatorNpub,
-      title: title.trim() || "Course feedback",
+      title: title.trim(),
       description: description.trim(),
       closeAfterMinutes: closeMinutes,
       questions,
     });
   }, [closeAfterMinutes, coordinatorNpub, description, questionnaireId, questions, title]);
 
+  const inviteLink = useMemo(() => {
+    const id = questionnaireId.trim();
+    if (!id) {
+      return "";
+    }
+    try {
+      const next = new URL("vote.html", window.location.href);
+      next.searchParams.set("questionnaire", id);
+      return next.toString();
+    } catch {
+      return "";
+    }
+  }, [questionnaireId]);
+
+  const titleReady = title.trim().length > 0;
+  const hasQuestion = questions.length > 0;
+  const hasKnownVoter = (props.knownVoterCount ?? 0) > 0;
+  const questionsValid = questions.length > 0 && questions.every((question) => isQuestionDraftValid(question));
+  const publishPreconditionsReady = titleReady && hasQuestion && hasKnownVoter && questionsValid;
+  const publishValidation = useMemo(
+    () => (builtDefinition ? validateQuestionnaireDefinition(builtDefinition) : null),
+    [builtDefinition],
+  );
+  const canPublishDraft = Boolean(
+    builtDefinition
+    && coordinatorNsec.trim()
+    && publishValidation?.valid
+    && publishPreconditionsReady,
+  );
+  const canOpenQuestionnaire = latestState !== "open" && Boolean(latestDefinition) && coordinatorNsec.trim() && coordinatorNpub.trim();
+  const canCloseQuestionnaire = latestState === "open" && Boolean(latestDefinition) && coordinatorNsec.trim() && coordinatorNpub.trim();
+  const canPublishResults = Boolean(
+    latestDefinition
+    && coordinatorNsec.trim()
+    && coordinatorNpub.trim()
+    && (latestState === "closed" || latestState === "results_published"),
+  );
+  const publishedDefinition = Boolean(latestDefinition);
+  const currentState: QuestionnaireStateValue = latestState ?? "draft";
+
   async function publishDefinition() {
     if (!coordinatorNsec.trim() || !builtDefinition) {
       setStatus("Coordinator key or questionnaire definition is missing.");
+      return;
+    }
+
+    if (!publishPreconditionsReady) {
+      setStatus("Publish draft is blocked until all readiness checks are complete.");
       return;
     }
 
@@ -480,15 +531,16 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         relayTargets: result.relayResults.map((entry) => entry.relay),
         relaySuccessCount: result.successes,
       });
-      setStatus(
-        result.successes > 0
-          ? `Questionnaire definition published (${result.successes}/${result.relayResults.length} relays).`
-          : "Questionnaire definition publish failed.",
-      );
-      await refresh();
+      if (result.successes > 0) {
+        setStatus(`Questionnaire draft published (${result.successes}/${result.relayResults.length} relays).`);
+        await publishState("draft");
+      } else {
+        setStatus("Questionnaire draft publish failed.");
+        await refresh();
+      }
     } catch {
       setDefinitionPublishDiagnostic((current) => ({ ...current, attempted: true, succeeded: false }));
-      setStatus("Questionnaire definition publish failed.");
+      setStatus("Questionnaire draft publish failed.");
     }
   }
 
@@ -617,244 +669,531 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   }
 
   return (
-    <div className='simple-voter-card'>
-      <h3 className='simple-voter-question'>Questionnaire</h3>
-      <p className='simple-voter-note'>Blind token mode with encrypted payload responses.</p>
-
-      <div className='simple-voter-action-row simple-voter-action-row-tight'>
-        <button
-          type='button'
-          className='simple-voter-secondary'
-          onClick={() => {
-            if (!coordinatorNpub.trim()) {
-              return;
-            }
-            void navigator.clipboard.writeText(coordinatorNpub.trim());
-          }}
-        >
-          Copy npub
-        </button>
-        <button
-          type='button'
-          className='simple-voter-secondary'
-          onClick={() => setShowNpubQr((current) => !current)}
-        >
-          Show QR
-        </button>
+    <div className='simple-voter-card simple-questionnaire-panel'>
+      <div className='simple-questionnaire-header'>
+        <div>
+          <h3 className='simple-voter-question'>{title.trim() || "Untitled questionnaire"}</h3>
+          <p className='simple-voter-note'>Status: {formatQuestionnaireStateLabel(currentState)}</p>
+        </div>
+        <div className='simple-voter-action-row-inline'>
+          <button
+            type='button'
+            className='simple-voter-secondary'
+            disabled={!coordinatorNpub.trim()}
+            onClick={() => {
+              if (!coordinatorNpub.trim()) {
+                return;
+              }
+              void navigator.clipboard.writeText(coordinatorNpub.trim());
+            }}
+          >
+            Copy npub
+          </button>
+          <button
+            type='button'
+            className='simple-voter-secondary'
+            disabled={!coordinatorNpub.trim()}
+            onClick={() => setShowNpubQr((current) => !current)}
+          >
+            Show QR
+          </button>
+        </div>
       </div>
       {showNpubQr && coordinatorNpub.trim() ? (
         <SimpleQrPanel
           value={coordinatorNpub.trim()}
           title='Coordinator npub'
           copyLabel='Copy npub'
+          downloadLabel='Download QR'
+          downloadFilename='coordinator-npub-qr.png'
         />
       ) : null}
 
-      <label className='simple-voter-label' htmlFor='questionnaire-id'>Questionnaire ID</label>
-      <input
-        id='questionnaire-id'
-        className='simple-voter-input'
-        value={questionnaireId}
-        onChange={(event) => setQuestionnaireId(event.target.value)}
-      />
-
-      <label className='simple-voter-label' htmlFor='questionnaire-title'>Title</label>
-      <input
-        id='questionnaire-title'
-        className='simple-voter-input'
-        value={title}
-        onChange={(event) => setTitle(event.target.value)}
-      />
-
-      <label className='simple-voter-label' htmlFor='questionnaire-description'>Description</label>
-      <textarea
-        id='questionnaire-description'
-        className='simple-voter-input'
-        rows={3}
-        value={description}
-        onChange={(event) => setDescription(event.target.value)}
-      />
-
-      <label className='simple-voter-label' htmlFor='questionnaire-close-minutes'>Close after (minutes)</label>
-      <input
-        id='questionnaire-close-minutes'
-        className='simple-voter-input'
-        value={closeAfterMinutes}
-        onChange={(event) => setCloseAfterMinutes(event.target.value)}
-      />
-
-      <div className='simple-voter-action-row simple-voter-action-row-tight'>
-        <button type='button' className='simple-voter-secondary' onClick={() => void refresh()}>
-          Refresh
+      <div
+        className='simple-questionnaire-tabs'
+        role='tablist'
+        aria-label='Questionnaire workflow'
+      >
+        <button
+          type='button'
+          role='tab'
+          aria-selected={activeTab === "build"}
+          className={`simple-voter-tab${activeTab === "build" ? " is-active" : ""}`}
+          onClick={() => setActiveTab("build")}
+        >
+          Build
         </button>
-        <button type='button' className='simple-voter-primary' onClick={() => void publishDefinition()}>
-          Publish questionnaire
+        <button
+          type='button'
+          role='tab'
+          aria-selected={activeTab === "audience"}
+          className={`simple-voter-tab${activeTab === "audience" ? " is-active" : ""}`}
+          onClick={() => setActiveTab("audience")}
+        >
+          Audience
         </button>
-        <button type='button' className='simple-voter-secondary' onClick={() => void publishState("open")}>
-          Open questionnaire
+        <button
+          type='button'
+          role='tab'
+          aria-selected={activeTab === "publish"}
+          className={`simple-voter-tab${activeTab === "publish" ? " is-active" : ""}`}
+          onClick={() => setActiveTab("publish")}
+        >
+          Publish
         </button>
-        <button type='button' className='simple-voter-secondary' onClick={() => void publishState("closed")}>
-          Close questionnaire
+        <button
+          type='button'
+          role='tab'
+          aria-selected={activeTab === "responses"}
+          className={`simple-voter-tab${activeTab === "responses" ? " is-active" : ""}`}
+          onClick={() => setActiveTab("responses")}
+        >
+          Responses
         </button>
-        <button type='button' className='simple-voter-primary' onClick={() => void publishResults()}>
-          Publish results
+        <button
+          type='button'
+          role='tab'
+          aria-selected={activeTab === "results"}
+          className={`simple-voter-tab${activeTab === "results" ? " is-active" : ""}`}
+          onClick={() => setActiveTab("results")}
+        >
+          Results
         </button>
       </div>
 
-      <h4 className='simple-voter-section-title'>Coordination</h4>
-      <p className='simple-voter-note'>Lead coordinator: {coordinatorNpub ? "This coordinator" : "Not loaded"}</p>
-      <p className='simple-voter-note'>Sub-coordinators: 0</p>
-      <p className='simple-voter-note'>Threshold: 1 of 1</p>
-      <p className='simple-voter-note'>Single coordinator mode: threshold is 1 of 1</p>
+      {activeTab === "build" ? (
+        <section className='simple-voter-tab-panel' role='tabpanel' aria-label='Build questionnaire'>
+          <h4 className='simple-voter-section-title'>Questionnaire details</h4>
+          <label className='simple-voter-label' htmlFor='questionnaire-id'>Questionnaire ID</label>
+          <input
+            id='questionnaire-id'
+            className='simple-voter-input'
+            value={questionnaireId}
+            onChange={(event) => setQuestionnaireId(event.target.value)}
+          />
 
-      <h4 className='simple-voter-section-title'>Questions</h4>
-      <div className='simple-voter-action-row simple-voter-action-row-tight'>
-        <button type='button' className='simple-voter-secondary' onClick={addYesNoQuestion}>Add yes/no question</button>
-        <button type='button' className='simple-voter-secondary' onClick={addMultipleChoiceQuestion}>Add multiple choice question</button>
-        <button type='button' className='simple-voter-secondary' onClick={addFreeTextQuestion}>Add free text question</button>
-      </div>
-      <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
-        {questions.map((question, index) => (
-          <div key={`${question.questionId}-${index}`} className='simple-voter-card'>
-            <p className='simple-voter-question'>Question {index + 1}</p>
-            <p className='simple-voter-note'>Type: {question.type.replace("_", " ")}</p>
-            <label className='simple-voter-label' htmlFor={`question-prompt-${index}`}>Prompt</label>
-            <input
-              id={`question-prompt-${index}`}
-              className='simple-voter-input'
-              value={question.prompt}
-              onChange={(event) => {
-                const nextValue = event.target.value;
-                setQuestions((current) => current.map((entry, entryIndex) => (
-                  entryIndex === index ? { ...entry, prompt: nextValue } : entry
-                )));
-              }}
-            />
-            <label className='simple-voter-note'>
-              <input
-                type='checkbox'
-                checked={question.required}
-                onChange={(event) => {
-                  const checked = event.target.checked;
-                  setQuestions((current) => current.map((entry, entryIndex) => (
-                    entryIndex === index ? { ...entry, required: checked } : entry
-                  )));
-                }}
-              />
-              {" "}
-              Required
-            </label>
-            {question.type === "multiple_choice" ? (
-              <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
-                <p className='simple-voter-note'>Options</p>
-                {question.options.map((option, optionIndex) => (
-                  <input
-                    key={`${question.questionId}-option-${optionIndex}`}
-                    className='simple-voter-input'
-                    value={option.label}
-                    onChange={(event) => {
-                      const nextLabel = event.target.value;
-                      setQuestions((current) => current.map((entry, entryIndex) => {
-                        if (entryIndex !== index || entry.type !== "multiple_choice") {
-                          return entry;
-                        }
-                        return {
-                          ...entry,
-                          options: entry.options.map((entryOption, entryOptionIndex) => (
-                            entryOptionIndex === optionIndex ? { ...entryOption, label: nextLabel } : entryOption
-                          )),
-                        };
-                      }));
-                    }}
-                  />
-                ))}
-                <button
-                  type='button'
-                  className='simple-voter-secondary'
-                  onClick={() => {
-                    setQuestions((current) => current.map((entry, entryIndex) => {
-                      if (entryIndex !== index || entry.type !== "multiple_choice") {
-                        return entry;
-                      }
-                      const nextIndex = entry.options.length + 1;
-                      return {
-                        ...entry,
-                        options: [...entry.options, { optionId: `option_${nextIndex}`, label: `Option ${nextIndex}` }],
-                      };
-                    }));
-                  }}
-                >
-                  Add option
-                </button>
-                <label className='simple-voter-note'>
-                  <input
-                    type='checkbox'
-                    checked={question.multiSelect}
-                    onChange={(event) => {
-                      const checked = event.target.checked;
-                      setQuestions((current) => current.map((entry, entryIndex) => (
-                        entryIndex === index && entry.type === "multiple_choice"
-                          ? { ...entry, multiSelect: checked }
-                          : entry
-                      )));
-                    }}
-                  />
-                  {" "}
-                  Allow multiple selections
-                </label>
-              </div>
-            ) : null}
-            {question.type === "free_text" ? (
-              <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
-                <label className='simple-voter-label' htmlFor={`question-max-${index}`}>Maximum length</label>
-                <input
-                  id={`question-max-${index}`}
-                  className='simple-voter-input'
-                  value={String(question.maxLength)}
-                  onChange={(event) => {
-                    const parsed = Number.parseInt(event.target.value, 10);
-                    setQuestions((current) => current.map((entry, entryIndex) => (
-                      entryIndex === index && entry.type === "free_text"
-                        ? { ...entry, maxLength: Number.isFinite(parsed) && parsed > 0 ? parsed : entry.maxLength }
-                        : entry
-                    )));
-                  }}
-                />
-              </div>
-            ) : null}
-            <div className='simple-voter-action-row simple-voter-action-row-tight'>
-              <button type='button' className='simple-voter-secondary' onClick={() => duplicateQuestion(index)}>Duplicate</button>
-              <button type='button' className='simple-voter-secondary' onClick={() => moveQuestion(index, -1)}>Move up</button>
-              <button type='button' className='simple-voter-secondary' onClick={() => moveQuestion(index, 1)}>Move down</button>
-              <button type='button' className='simple-voter-secondary' onClick={() => deleteQuestion(index)}>Delete</button>
-            </div>
+          <label className='simple-voter-label' htmlFor='questionnaire-title'>Questionnaire name</label>
+          <input
+            id='questionnaire-title'
+            className='simple-voter-input'
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+          />
+
+          <label className='simple-voter-label' htmlFor='questionnaire-description'>Short description</label>
+          <textarea
+            id='questionnaire-description'
+            className='simple-voter-input'
+            rows={3}
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+          />
+
+          <label className='simple-voter-label' htmlFor='questionnaire-close-minutes'>Close after (minutes)</label>
+          <input
+            id='questionnaire-close-minutes'
+            className='simple-voter-input'
+            value={closeAfterMinutes}
+            onChange={(event) => setCloseAfterMinutes(event.target.value)}
+          />
+
+          <div className='simple-voter-action-row simple-voter-action-row-inline'>
+            <button
+              type='button'
+              className='simple-voter-secondary'
+              onClick={() => setStatus("Draft saved locally.")}
+            >
+              Save draft
+            </button>
+            <button
+              type='button'
+              className='simple-voter-secondary'
+              onClick={() => setShowPreview((current) => !current)}
+            >
+              Preview questionnaire
+            </button>
+            <button
+              type='button'
+              className='simple-voter-secondary'
+              onClick={() => setActiveTab("audience")}
+            >
+              Invite voters
+            </button>
+            <button
+              type='button'
+              className='simple-voter-primary'
+              disabled={!canPublishDraft}
+              onClick={() => void publishDefinition()}
+            >
+              Publish draft
+            </button>
           </div>
-        ))}
-      </div>
+          <p className='simple-voter-note'>
+            Publishing is available after at least 1 voter is known and the questionnaire has at least 1 question.
+          </p>
+          {!coordinatorNsec.trim() ? (
+            <p className='simple-voter-note'>Coordinator key is not loaded yet.</p>
+          ) : null}
+          {publishValidation && !publishValidation.valid ? (
+            <p className='simple-voter-note'>Validation: {publishValidation.errors[0] ?? "unknown_error"}.</p>
+          ) : null}
 
-      <h4 className='simple-voter-section-title'>Status</h4>
-      <ul className='simple-vote-status-list'>
-        <li>
-          <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-          Coordinator key loaded: {coordinatorNpub ? "Yes" : "No"}
-        </li>
-        <li>
-          <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-          Latest state: {formatQuestionnaireStateLabel(latestState)}
-        </li>
-        <li>
-          <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-          Accepted responses: {latestAcceptedCount}
-        </li>
-        <li>
-          <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-          Rejected responses: {latestRejectedCount}
-        </li>
-        <li>
-          <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-          Latest published result: {latestResultAcceptedCount === null ? "none" : `${latestResultAcceptedCount} accepted`}
-        </li>
-      </ul>
+          <h4 className='simple-voter-section-title'>Questions</h4>
+          {questions.length === 0 ? (
+            <div className='simple-vote-empty-state'>
+              <p className='simple-voter-question'>No questions yet. Add your first question to begin building the questionnaire.</p>
+              <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
+                <button type='button' className='simple-voter-secondary' onClick={addYesNoQuestion}>Add text question</button>
+                <button type='button' className='simple-voter-secondary' onClick={addMultipleChoiceQuestion}>Add multiple choice question</button>
+                <button type='button' className='simple-voter-secondary' onClick={addFreeTextQuestion}>Add free text question</button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className='simple-voter-action-row simple-voter-action-row-inline'>
+                <button type='button' className='simple-voter-secondary' onClick={addYesNoQuestion}>Add text question</button>
+                <button type='button' className='simple-voter-secondary' onClick={addMultipleChoiceQuestion}>Add multiple choice question</button>
+                <button type='button' className='simple-voter-secondary' onClick={addFreeTextQuestion}>Add free text question</button>
+              </div>
+              <div className='simple-questionnaire-question-list'>
+                {questions.map((question, index) => (
+                  <div key={`${question.questionId}-${index}`} className='simple-questionnaire-question-card'>
+                    <div className='simple-questionnaire-question-head'>
+                      <p className='simple-voter-question'>Question {index + 1}</p>
+                      <span className='simple-questionnaire-question-type'>{questionTypeLabel(question.type)}</span>
+                    </div>
+                    <label className='simple-voter-label' htmlFor={`question-prompt-${index}`}>Prompt</label>
+                    <input
+                      id={`question-prompt-${index}`}
+                      className='simple-voter-input'
+                      value={question.prompt}
+                      onChange={(event) => {
+                        const nextValue = event.target.value;
+                        setQuestions((current) => current.map((entry, entryIndex) => (
+                          entryIndex === index ? { ...entry, prompt: nextValue } : entry
+                        )));
+                      }}
+                    />
+                    <label className='simple-voter-note'>
+                      <input
+                        type='checkbox'
+                        checked={question.required}
+                        onChange={(event) => {
+                          const checked = event.target.checked;
+                          setQuestions((current) => current.map((entry, entryIndex) => (
+                            entryIndex === index ? { ...entry, required: checked } : entry
+                          )));
+                        }}
+                      />
+                      {" "}
+                      Required
+                    </label>
+                    {question.type === "multiple_choice" ? (
+                      <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
+                        <p className='simple-voter-note'>Options</p>
+                        {question.options.map((option, optionIndex) => (
+                          <input
+                            key={`${question.questionId}-option-${optionIndex}`}
+                            className='simple-voter-input'
+                            value={option.label}
+                            onChange={(event) => {
+                              const nextLabel = event.target.value;
+                              setQuestions((current) => current.map((entry, entryIndex) => {
+                                if (entryIndex !== index || entry.type !== "multiple_choice") {
+                                  return entry;
+                                }
+                                return {
+                                  ...entry,
+                                  options: entry.options.map((entryOption, entryOptionIndex) => (
+                                    entryOptionIndex === optionIndex ? { ...entryOption, label: nextLabel } : entryOption
+                                  )),
+                                };
+                              }));
+                            }}
+                          />
+                        ))}
+                        <button
+                          type='button'
+                          className='simple-voter-secondary'
+                          onClick={() => {
+                            setQuestions((current) => current.map((entry, entryIndex) => {
+                              if (entryIndex !== index || entry.type !== "multiple_choice") {
+                                return entry;
+                              }
+                              const nextIndex = entry.options.length + 1;
+                              return {
+                                ...entry,
+                                options: [...entry.options, { optionId: `option_${nextIndex}`, label: `Option ${nextIndex}` }],
+                              };
+                            }));
+                          }}
+                        >
+                          Add option
+                        </button>
+                        <label className='simple-voter-note'>
+                          <input
+                            type='checkbox'
+                            checked={question.multiSelect}
+                            onChange={(event) => {
+                              const checked = event.target.checked;
+                              setQuestions((current) => current.map((entry, entryIndex) => (
+                                entryIndex === index && entry.type === "multiple_choice"
+                                  ? { ...entry, multiSelect: checked }
+                                  : entry
+                              )));
+                            }}
+                          />
+                          {" "}
+                          Allow multiple selections
+                        </label>
+                      </div>
+                    ) : null}
+                    {question.type === "free_text" ? (
+                      <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
+                        <label className='simple-voter-label' htmlFor={`question-max-${index}`}>Maximum length</label>
+                        <input
+                          id={`question-max-${index}`}
+                          className='simple-voter-input'
+                          value={String(question.maxLength)}
+                          onChange={(event) => {
+                            const parsed = Number.parseInt(event.target.value, 10);
+                            setQuestions((current) => current.map((entry, entryIndex) => (
+                              entryIndex === index && entry.type === "free_text"
+                                ? { ...entry, maxLength: Number.isFinite(parsed) && parsed > 0 ? parsed : entry.maxLength }
+                                : entry
+                            )));
+                          }}
+                        />
+                      </div>
+                    ) : null}
+                    <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
+                      <button type='button' className='simple-voter-secondary' onClick={() => duplicateQuestion(index)}>Duplicate</button>
+                      <button type='button' className='simple-voter-secondary' onClick={() => moveQuestion(index, -1)}>Move up</button>
+                      <button type='button' className='simple-voter-secondary' onClick={() => moveQuestion(index, 1)}>Move down</button>
+                      <button type='button' className='simple-voter-secondary' onClick={() => deleteQuestion(index)}>Delete</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          {showPreview ? (
+            <div className='simple-questionnaire-preview'>
+              <h4 className='simple-voter-section-title'>Draft preview</h4>
+              <pre>{JSON.stringify(builtDefinition, null, 2)}</pre>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
+      {activeTab === "audience" ? (
+        <section className='simple-voter-tab-panel' role='tabpanel' aria-label='Audience'>
+          <h4 className='simple-voter-section-title'>Invited voters</h4>
+          <p className='simple-voter-question'>{props.knownVoterCount ?? 0} known voter(s)</p>
+          <p className='simple-voter-note'>Share the invite link after the questionnaire draft is published.</p>
+          <div className='simple-voter-action-row simple-voter-action-row-inline'>
+            <button
+              type='button'
+              className='simple-voter-secondary'
+              disabled={!publishedDefinition || !inviteLink}
+              onClick={() => {
+                if (!inviteLink) {
+                  return;
+                }
+                void navigator.clipboard.writeText(inviteLink);
+              }}
+            >
+              Copy link
+            </button>
+            <button
+              type='button'
+              className='simple-voter-secondary'
+              disabled={!publishedDefinition || !inviteLink}
+              onClick={() => setShowInviteQr((current) => !current)}
+            >
+              Show QR
+            </button>
+          </div>
+          {!publishedDefinition ? (
+            <p className='simple-voter-note'>QR available after questionnaire is published.</p>
+          ) : null}
+          {showInviteQr && publishedDefinition && inviteLink ? (
+            <SimpleQrPanel
+              value={inviteLink}
+              title='Questionnaire invite link'
+              description='Voters can open this link to join and respond.'
+              copyLabel='Copy link'
+              downloadLabel='Download QR'
+              downloadFilename='questionnaire-invite-qr.png'
+            />
+          ) : null}
+
+          <h4 className='simple-voter-section-title'>Coordinator status</h4>
+          <p className='simple-voter-note'>Lead coordinator: {coordinatorNpub ? "This coordinator" : "Not loaded"}</p>
+          <p className='simple-voter-note'>Additional coordinators: 0</p>
+          <p className='simple-voter-note'>Threshold: 1 of 1</p>
+          <p className='simple-voter-note'>Default: all included coordinators.</p>
+        </section>
+      ) : null}
+
+      {activeTab === "publish" ? (
+        <section className='simple-voter-tab-panel' role='tabpanel' aria-label='Publish'>
+          <h4 className='simple-voter-section-title'>Readiness</h4>
+          <ul className='simple-vote-status-list'>
+            <li className={titleReady ? "is-complete" : "is-pending"}>
+              <span className='simple-vote-status-icon' aria-hidden='true'>{titleReady ? "✓" : "•"}</span>
+              Questionnaire title added
+            </li>
+            <li className={hasQuestion ? "is-complete" : "is-pending"}>
+              <span className='simple-vote-status-icon' aria-hidden='true'>{hasQuestion ? "✓" : "•"}</span>
+              At least one question added
+            </li>
+            <li className={hasKnownVoter ? "is-complete" : "is-pending"}>
+              <span className='simple-vote-status-icon' aria-hidden='true'>{hasKnownVoter ? "✓" : "•"}</span>
+              At least one voter invited
+            </li>
+            <li className={questionsValid ? "is-complete" : "is-pending"}>
+              <span className='simple-vote-status-icon' aria-hidden='true'>{questionsValid ? "✓" : "•"}</span>
+              All questions valid
+            </li>
+          </ul>
+
+          {!publishedDefinition ? (
+            <>
+              <div className='simple-voter-action-row simple-voter-action-row-inline'>
+                <button type='button' className='simple-voter-secondary' onClick={() => setStatus("Draft saved locally.")}>
+                  Save draft
+                </button>
+                <button type='button' className='simple-voter-secondary' onClick={() => setActiveTab("audience")}>
+                  Invite voters
+                </button>
+                <button type='button' className='simple-voter-secondary' onClick={() => setShowPreview((current) => !current)}>
+                  Preview
+                </button>
+                <button type='button' className='simple-voter-primary' disabled={!canPublishDraft} onClick={() => void publishDefinition()}>
+                  Publish draft
+                </button>
+              </div>
+              <p className='simple-voter-note'>
+                Publishing is available after at least 1 voter is known and the questionnaire has at least 1 question.
+              </p>
+            </>
+          ) : null}
+
+          {publishedDefinition && currentState !== "open" && currentState !== "closed" && currentState !== "results_published" ? (
+            <div className='simple-voter-action-row simple-voter-action-row-inline'>
+              <button
+                type='button'
+                className='simple-voter-primary'
+                disabled={!canOpenQuestionnaire}
+                onClick={() => void publishState("open")}
+              >
+                Start accepting responses
+              </button>
+              <button type='button' className='simple-voter-secondary' disabled={!inviteLink} onClick={() => {
+                if (!inviteLink) {
+                  return;
+                }
+                void navigator.clipboard.writeText(inviteLink);
+              }}
+              >
+                Copy link
+              </button>
+              <button type='button' className='simple-voter-secondary' disabled={!inviteLink} onClick={() => setShowInviteQr((current) => !current)}>
+                Show QR
+              </button>
+            </div>
+          ) : null}
+
+          {currentState === "open" ? (
+            <div className='simple-voter-action-row simple-voter-action-row-inline'>
+              <button
+                type='button'
+                className='simple-voter-primary'
+                disabled={!canCloseQuestionnaire}
+                onClick={() => void publishState("closed")}
+              >
+                Stop accepting responses
+              </button>
+              <button type='button' className='simple-voter-secondary' onClick={() => setActiveTab("responses")}>
+                View live responses
+              </button>
+            </div>
+          ) : null}
+
+          {(currentState === "closed" || currentState === "results_published") ? (
+            <div className='simple-voter-action-row simple-voter-action-row-inline'>
+              <button
+                type='button'
+                className='simple-voter-primary'
+                disabled={!canPublishResults}
+                onClick={() => void publishResults()}
+              >
+                Publish summary results
+              </button>
+            </div>
+          ) : null}
+
+          <p className='simple-voter-note'>Current state: {formatQuestionnaireStateLabel(currentState)}</p>
+        </section>
+      ) : null}
+
+      {activeTab === "responses" ? (
+        <section className='simple-voter-tab-panel' role='tabpanel' aria-label='Responses'>
+          <h4 className='simple-voter-section-title'>Live responses</h4>
+          <div className='simple-voter-action-row simple-voter-action-row-inline'>
+            <button type='button' className='simple-voter-secondary' onClick={() => void refresh()}>
+              Refresh
+            </button>
+          </div>
+          <ul className='simple-vote-status-list'>
+            <li>
+              <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
+              Latest state: {formatQuestionnaireStateLabel(currentState)}
+            </li>
+            <li>
+              <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
+              Accepted responses: {latestAcceptedCount}
+            </li>
+            <li>
+              <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
+              Rejected responses: {latestRejectedCount}
+            </li>
+          </ul>
+        </section>
+      ) : null}
+
+      {activeTab === "results" ? (
+        <section className='simple-voter-tab-panel' role='tabpanel' aria-label='Results'>
+          <h4 className='simple-voter-section-title'>Results</h4>
+          <ul className='simple-vote-status-list'>
+            <li>
+              <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
+              Latest published result: {latestResultAcceptedCount === null ? "none" : `${latestResultAcceptedCount} accepted`}
+            </li>
+            <li>
+              <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
+              Accepted responses: {latestAcceptedCount}
+            </li>
+            <li>
+              <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
+              Rejected responses: {latestRejectedCount}
+            </li>
+          </ul>
+          <div className='simple-voter-action-row simple-voter-action-row-inline'>
+            <button
+              type='button'
+              className='simple-voter-primary'
+              disabled={!canPublishResults}
+              onClick={() => void publishResults()}
+            >
+              Publish summary results
+            </button>
+          </div>
+          <p className='simple-voter-note'>State must be Closed before publishing summary results.</p>
+        </section>
+      ) : null}
 
       {status ? <p className='simple-voter-note'>{status}</p> : null}
       {!latestDefinition ? <p className='simple-voter-note'>No questionnaire definition found for this id yet.</p> : null}

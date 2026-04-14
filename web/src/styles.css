@@ -702,6 +702,72 @@ code {
   gap: 18px;
 }
 
+.simple-questionnaire-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.simple-questionnaire-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.simple-questionnaire-tabs {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.simple-questionnaire-question-list {
+  display: grid;
+  gap: 28px;
+}
+
+.simple-questionnaire-question-card {
+  display: grid;
+  gap: 12px;
+  padding: 22px;
+  border: 1px solid #334155;
+  border-radius: 18px;
+  background: #0b1221;
+}
+
+.simple-questionnaire-question-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.simple-questionnaire-question-type {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid #475569;
+  background: #111c31;
+  color: #cbd5e1;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.simple-questionnaire-preview {
+  padding: 16px;
+  border: 1px solid #334155;
+  border-radius: 16px;
+  background: #0b1221;
+}
+
+.simple-questionnaire-preview pre {
+  margin: 0;
+  overflow-x: auto;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: #e2e8f0;
+}
+
 .simple-voter-title,
 .simple-voter-section-title {
   margin: 0;
@@ -2585,6 +2651,10 @@ code {
   .panel {
     border-radius: 24px;
   }
+
+  .simple-questionnaire-tabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 640px) {
@@ -2615,6 +2685,15 @@ code {
   .simple-voter-header-row {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .simple-questionnaire-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .simple-questionnaire-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .simple-scanner-head {

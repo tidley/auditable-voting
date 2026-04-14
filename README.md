@@ -9,7 +9,7 @@ This repo now contains only the static web app in `web/`.
 The shipped app currently includes:
 
 - voter, coordinator, and auditor screens
-- tabbed voter and coordinator flows with `Configure`, `Vote`/`Voting`, and `Settings`
+- tabbed role flows, including a staged coordinator questionnaire builder with `Build`, `Audience`, `Publish`, `Responses`, and `Results`
 - a new Rust/Wasm-backed coordinator control seam for round-open agreement and replay
 - a real OpenMLS-backed coordinator group engine implemented inside the Rust core and compiled into the coordinator Wasm artefact
 - a new Rust/Wasm public and ballot replay seam now used by the voter, coordinator, and auditor public-state views
