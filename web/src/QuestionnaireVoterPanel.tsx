@@ -161,7 +161,7 @@ function isDefinitionMarkedStale(definition: QuestionnaireDefinition) {
 
 function isCoordinatorRelevant(entry: QuestionnaireSelectorEntry, coordinatorContextNpubs: string[]) {
   if (coordinatorContextNpubs.length === 0) {
-    return false;
+    return true;
   }
   return coordinatorContextNpubs.includes(entry.coordinatorPubkey);
 }

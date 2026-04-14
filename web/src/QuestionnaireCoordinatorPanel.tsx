@@ -889,6 +889,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     if (latestState === "results_published") {
       return "Already published";
     }
+    if (latestAcceptedCount > 0 && latestState === "open") {
+      return "Close questionnaire to publish";
+    }
     if (latestAcceptedCount <= 0) {
       return "Nothing to publish yet";
     }
@@ -1137,6 +1140,16 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
 
         <div className='simple-questionnaire-responses-section'>
           <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
+            {currentState === "open" ? (
+              <button
+                type='button'
+                className='simple-voter-secondary'
+                disabled={!canCloseQuestionnaire}
+                onClick={() => void publishState("closed")}
+              >
+                Close questionnaire
+              </button>
+            ) : null}
             <button
               type='button'
               className='simple-voter-primary'
