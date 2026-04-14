@@ -6,32 +6,160 @@ import { buildSimpleNamespacedLocalStorageKey, loadSimpleActorState } from "./si
 import { validateQuestionnaireResponsePayload, type QuestionnaireDefinition, type QuestionnaireResponseAnswer, type QuestionnaireResponsePayload, type QuestionnaireResultSummary } from "./questionnaireProtocol";
 import { getSharedNostrPool } from "./sharedNostrPool";
 import TokenFingerprint from "./TokenFingerprint";
+import { deriveActorDisplayId } from "./actorDisplay";
 
 const RESTORED_QUESTIONNAIRE_IDS_STORAGE_KEY = "voter.restored-questionnaire-ids.v1";
 const VOTER_QUESTIONNAIRE_LOOKBACK_SECONDS = 7 * 24 * 60 * 60;
 const REFRESH_INTERVAL_MS = 15000;
 
 type QuestionnaireAnswerState = Record<string, boolean | string | string[]>;
+type SelectorLifecycle = "open" | "published" | "draft" | "closed" | "counted" | "unknown";
+type QuestionnaireSelectorEntry = {
+  questionnaireId: string;
+  title: string;
+  description: string;
+  lifecycle: SelectorLifecycle;
+  coordinatorPubkey: string;
+  openAt: number | null;
+  closeAt: number | null;
+  createdAt: number;
+  discoveredAt: number;
+  restored: boolean;
+};
 
 function nowUnix() {
   return Math.floor(Date.now() / 1000);
 }
 
-function readRestoredQuestionnaireIds() {
+function readRestoredQuestionnaireIds(storageKey: string) {
   if (typeof window === "undefined") {
     return [] as string[];
   }
   try {
-    const parsed = JSON.parse(
-      window.localStorage.getItem(buildSimpleNamespacedLocalStorageKey(RESTORED_QUESTIONNAIRE_IDS_STORAGE_KEY)) ?? "[]",
-    ) as string[];
+    const parsed = JSON.parse(window.localStorage.getItem(storageKey) ?? "[]") as string[];
     if (!Array.isArray(parsed)) {
       return [] as string[];
     }
-    return [...new Set(parsed.filter((value) => typeof value === "string" && value.trim().length > 0))];
+    return [...new Set(parsed.filter((value) => typeof value === "string" && value.trim().length > 0))].slice(0, 8);
   } catch {
     return [] as string[];
   }
+}
+
+function selectorLifecycleFromState(state: string | null | undefined): SelectorLifecycle {
+  if (state === "open") {
+    return "open";
+  }
+  if (state === "published") {
+    return "published";
+  }
+  if (state === "draft" || state === "saved") {
+    return "draft";
+  }
+  if (state === "results_published" || state === "counted") {
+    return "counted";
+  }
+  if (state === "closed" || state === "ended" || state === "archived") {
+    return "closed";
+  }
+  return "unknown";
+}
+
+function isActiveSelectorLifecycle(lifecycle: SelectorLifecycle) {
+  return lifecycle === "open" || lifecycle === "published";
+}
+
+function selectorStateBadge(lifecycle: SelectorLifecycle) {
+  if (lifecycle === "open") {
+    return "Open";
+  }
+  if (lifecycle === "published") {
+    return "Published";
+  }
+  if (lifecycle === "draft") {
+    return "Draft";
+  }
+  if (lifecycle === "closed") {
+    return "Closed";
+  }
+  if (lifecycle === "counted") {
+    return "Counted";
+  }
+  return "Unknown";
+}
+
+function isDefinitionMarkedStale(definition: QuestionnaireDefinition) {
+  const asRecord = definition as QuestionnaireDefinition & {
+    stale?: boolean;
+    superseded?: boolean;
+    archived?: boolean;
+    deleted?: boolean;
+    invalid?: boolean;
+    testOnly?: boolean;
+  };
+  return Boolean(
+    asRecord.stale
+      || asRecord.superseded
+      || asRecord.archived
+      || asRecord.deleted
+      || asRecord.invalid
+      || asRecord.testOnly,
+  );
+}
+
+function isCoordinatorRelevant(entry: QuestionnaireSelectorEntry, coordinatorContextNpubs: string[]) {
+  if (coordinatorContextNpubs.length === 0) {
+    return false;
+  }
+  return coordinatorContextNpubs.includes(entry.coordinatorPubkey);
+}
+
+function buildRestoredStorageKey(actorId: string, coordinatorContextNpubs: string[]) {
+  const coordinatorScope = coordinatorContextNpubs.length > 0
+    ? [...new Set(coordinatorContextNpubs.map((value) => deriveActorDisplayId(value)))].sort().join(".")
+    : "none";
+  return buildSimpleNamespacedLocalStorageKey(
+    `voter:${actorId}:coordinator:${coordinatorScope}:${RESTORED_QUESTIONNAIRE_IDS_STORAGE_KEY}`,
+  );
+}
+
+function selectorComparator(left: QuestionnaireSelectorEntry, right: QuestionnaireSelectorEntry) {
+  const statePriority = (entry: QuestionnaireSelectorEntry) => (entry.lifecycle === "open" ? 0 : entry.lifecycle === "published" ? 1 : 2);
+  if (statePriority(left) !== statePriority(right)) {
+    return statePriority(left) - statePriority(right);
+  }
+  const leftOpenAt = left.openAt ?? 0;
+  const rightOpenAt = right.openAt ?? 0;
+  if (leftOpenAt !== rightOpenAt) {
+    return rightOpenAt - leftOpenAt;
+  }
+  const leftFreshness = Math.max(left.createdAt, left.discoveredAt);
+  const rightFreshness = Math.max(right.createdAt, right.discoveredAt);
+  if (leftFreshness !== rightFreshness) {
+    return rightFreshness - leftFreshness;
+  }
+  return left.questionnaireId.localeCompare(right.questionnaireId);
+}
+
+function choosePreferredEntry(
+  current: QuestionnaireSelectorEntry | undefined,
+  candidate: QuestionnaireSelectorEntry,
+  coordinatorContextNpubs: string[],
+) {
+  if (!current) {
+    return candidate;
+  }
+  const currentRelevant = isCoordinatorRelevant(current, coordinatorContextNpubs);
+  const candidateRelevant = isCoordinatorRelevant(candidate, coordinatorContextNpubs);
+  if (candidateRelevant !== currentRelevant) {
+    return candidateRelevant ? candidate : current;
+  }
+  const currentActive = isActiveSelectorLifecycle(current.lifecycle);
+  const candidateActive = isActiveSelectorLifecycle(candidate.lifecycle);
+  if (candidateActive !== currentActive) {
+    return candidateActive ? candidate : current;
+  }
+  return candidate.discoveredAt >= current.discoveredAt ? candidate : current;
 }
 
 function buildResponseAnswers(definition: QuestionnaireDefinition, answerState: QuestionnaireAnswerState): QuestionnaireResponseAnswer[] {
@@ -95,8 +223,9 @@ type QuestionnaireVoterPanelProps = {
 
 export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelProps) {
   const [questionnaireId, setQuestionnaireId] = useState("");
-  const [availableQuestionnaireIds, setAvailableQuestionnaireIds] = useState<string[]>([]);
-  const [restoredQuestionnaireIds, setRestoredQuestionnaireIds] = useState<string[]>(() => readRestoredQuestionnaireIds());
+  const [selectorEntries, setSelectorEntries] = useState<QuestionnaireSelectorEntry[]>([]);
+  const [coordinatorContextNpubs, setCoordinatorContextNpubs] = useState<string[]>([]);
+  const [restoredQuestionnaireIds, setRestoredQuestionnaireIds] = useState<string[]>([]);
   const [restoreQuestionnaireIdInput, setRestoreQuestionnaireIdInput] = useState("");
   const [voterNpub, setVoterNpub] = useState("");
   const [status, setStatus] = useState<string | null>(null);
@@ -118,6 +247,11 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
   const [definitionKindOnlyCount, setDefinitionKindOnlyCount] = useState(0);
   const [stateKindOnlyCount, setStateKindOnlyCount] = useState(0);
   const [resultKindOnlyCount, setResultKindOnlyCount] = useState(0);
+  const actorId = useMemo(() => deriveActorDisplayId(voterNpub || "unknown"), [voterNpub]);
+  const restoredStorageKey = useMemo(
+    () => buildRestoredStorageKey(actorId, coordinatorContextNpubs),
+    [actorId, coordinatorContextNpubs],
+  );
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -133,20 +267,26 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
   }, []);
 
   useEffect(() => {
+    void loadSimpleActorState("voter").then((stored) => {
+      setVoterNpub(stored?.keypair?.npub ?? "");
+      const cached = (stored?.cache ?? null) as { manualCoordinators?: unknown } | null;
+      const manualCoordinators = Array.isArray(cached?.manualCoordinators)
+        ? cached.manualCoordinators.filter((value): value is string => typeof value === "string" && value.trim().startsWith("npub"))
+        : [];
+      setCoordinatorContextNpubs([...new Set(manualCoordinators.map((value) => value.trim()))].sort());
+    }).catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    setRestoredQuestionnaireIds(readRestoredQuestionnaireIds(restoredStorageKey));
+  }, [restoredStorageKey]);
+
+  useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
-    window.localStorage.setItem(
-      buildSimpleNamespacedLocalStorageKey(RESTORED_QUESTIONNAIRE_IDS_STORAGE_KEY),
-      JSON.stringify(restoredQuestionnaireIds),
-    );
-  }, [restoredQuestionnaireIds]);
-
-  useEffect(() => {
-    void loadSimpleActorState("voter").then((stored) => {
-      setVoterNpub(stored?.keypair?.npub ?? "");
-    }).catch(() => undefined);
-  }, []);
+    window.localStorage.setItem(restoredStorageKey, JSON.stringify(restoredQuestionnaireIds.slice(0, 8)));
+  }, [restoredQuestionnaireIds, restoredStorageKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -182,8 +322,9 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
           }
         }
 
-        const visibleIds = new Set<string>();
+        const byQuestionnaireId = new Map<string, QuestionnaireSelectorEntry>();
         const now = nowUnix();
+        const minFreshUnix = now - VOTER_QUESTIONNAIRE_LOOKBACK_SECONDS;
         for (const event of events) {
           const parsed = parseQuestionnaireDefinitionEvent(event);
           if (!parsed) {
@@ -198,35 +339,52 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
             latestState: null,
             nowUnix: now,
           });
-          const isOldByState = latestState === "results_published";
-          const isOldByWindow = parsed.closeAt < (now - VOTER_QUESTIONNAIRE_LOOKBACK_SECONDS);
+          const lifecycle = selectorLifecycleFromState(latestState);
           const restored = restoredQuestionnaireIds.includes(id);
-          if (!isOldByState && !isOldByWindow || restored) {
-            visibleIds.add(id);
+          const createdAt = Number(parsed.createdAt ?? 0);
+          const discoveredAt = Number(event.created_at ?? createdAt);
+          const closeAt = Number.isFinite(parsed.closeAt) ? parsed.closeAt : null;
+          const isExpired = closeAt !== null && closeAt < now;
+          const isRecent = Math.max(createdAt, discoveredAt, parsed.openAt ?? 0) >= minFreshUnix;
+          const stale = isDefinitionMarkedStale(parsed);
+          const entry: QuestionnaireSelectorEntry = {
+            questionnaireId: id,
+            title: parsed.title?.trim() ?? "",
+            description: parsed.description?.trim() ?? "",
+            lifecycle,
+            coordinatorPubkey: parsed.coordinatorPubkey,
+            openAt: Number.isFinite(parsed.openAt) ? parsed.openAt : null,
+            closeAt,
+            createdAt,
+            discoveredAt,
+            restored,
+          };
+          const relevantByCoordinator = isCoordinatorRelevant(entry, coordinatorContextNpubs);
+          const includeByDefault = isActiveSelectorLifecycle(entry.lifecycle)
+            && !isExpired
+            && !stale
+            && isRecent
+            && relevantByCoordinator;
+          const includeByRestore = restored && !stale;
+          if (!includeByDefault && !includeByRestore) {
+            continue;
           }
+          byQuestionnaireId.set(
+            id,
+            choosePreferredEntry(byQuestionnaireId.get(id), entry, coordinatorContextNpubs),
+          );
         }
-        const selectedId = questionnaireId.trim();
-        if (selectedId) {
-          visibleIds.add(selectedId);
-        }
-        for (const restoredId of restoredQuestionnaireIds) {
-          visibleIds.add(restoredId);
-        }
-        setAvailableQuestionnaireIds([...visibleIds].sort((left, right) => left.localeCompare(right)));
+        const entries = [...byQuestionnaireId.values()].sort(selectorComparator);
+        setSelectorEntries(entries);
       } catch {
-        const selectedId = questionnaireId.trim();
-        const visibleIds = new Set<string>(restoredQuestionnaireIds);
-        if (selectedId) {
-          visibleIds.add(selectedId);
-        }
-        setAvailableQuestionnaireIds([...visibleIds].sort((left, right) => left.localeCompare(right)));
+        setSelectorEntries([]);
       }
     };
     void loadQuestionnaireOptions();
     return () => {
       cancelled = true;
     };
-  }, [questionnaireId, restoredQuestionnaireIds]);
+  }, [coordinatorContextNpubs, restoredQuestionnaireIds]);
 
   const refresh = useCallback(async () => {
     const id = questionnaireId.trim();
@@ -306,17 +464,16 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
   const canSubmit = useMemo(() => {
     return Boolean(definition && state === "open" && (tokenStatus === "ready" || tokenStatus === "submitted"));
   }, [definition, state, tokenStatus]);
-  const selectedQuestionnaireOptions = availableQuestionnaireIds.length > 0
-    ? availableQuestionnaireIds
-    : (questionnaireId.trim() ? [questionnaireId.trim()] : []);
+  const selectedQuestionnaireOptions = selectorEntries.map((entry) => entry.questionnaireId);
+  const selectedQuestionnaireEntry = selectorEntries.find((entry) => entry.questionnaireId === questionnaireId) ?? null;
 
   useEffect(() => {
-    if (questionnaireId.trim()) {
+    const current = questionnaireId.trim();
+    if (current && selectedQuestionnaireOptions.includes(current)) {
       return;
     }
-    const firstAvailable = selectedQuestionnaireOptions[0];
-    if (firstAvailable) {
-      setQuestionnaireId(firstAvailable);
+    if (selectedQuestionnaireOptions.length > 0) {
+      setQuestionnaireId(selectedQuestionnaireOptions[0]);
     }
   }, [questionnaireId, selectedQuestionnaireOptions]);
 
@@ -457,17 +614,48 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
     });
   }, [definition, props, state]);
 
-  function restoreQuestionnaireId() {
+  async function restoreQuestionnaireId() {
     const restoredId = restoreQuestionnaireIdInput.trim();
     if (!restoredId) {
       return;
     }
-    setRestoredQuestionnaireIds((current) => (
-      current.includes(restoredId) ? current : [...current, restoredId]
-    ));
-    setQuestionnaireId(restoredId);
-    setRestoreQuestionnaireIdInput("");
-    setStatus("Questionnaire ID restored.");
+    setStatus("Restoring questionnaire...");
+    try {
+      const [definitionFetch, stateFetch] = await Promise.all([
+        fetchQuestionnaireEventsWithFallback({
+          questionnaireId: restoredId,
+          kind: QUESTIONNAIRE_DEFINITION_KIND,
+          parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireDefinitionEvent(event)?.questionnaireId ?? null,
+        }),
+        fetchQuestionnaireEventsWithFallback({
+          questionnaireId: restoredId,
+          kind: QUESTIONNAIRE_STATE_KIND,
+          parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireStateEvent(event)?.questionnaireId ?? null,
+        }),
+      ]);
+      const restoredDefinition = selectLatestQuestionnaireDefinition(definitionFetch.events);
+      if (!restoredDefinition || isDefinitionMarkedStale(restoredDefinition)) {
+        setStatus("Restore failed. Questionnaire not found.");
+        return;
+      }
+      const restoredState = deriveEffectiveQuestionnaireState({
+        definition: restoredDefinition,
+        latestState: selectLatestQuestionnaireState(stateFetch.events),
+      });
+      const lifecycle = selectorLifecycleFromState(restoredState);
+      if (lifecycle === "unknown") {
+        setStatus("Restore failed. Questionnaire is invalid.");
+        return;
+      }
+      setRestoredQuestionnaireIds((current) => (
+        current.includes(restoredId) ? current : [...current, restoredId].slice(-8)
+      ));
+      setQuestionnaireId(restoredId);
+      setRestoreQuestionnaireIdInput("");
+      setStatus("Questionnaire ID restored.");
+    } catch {
+      setStatus("Restore failed. Questionnaire not found.");
+    }
   }
 
   return (
@@ -484,16 +672,31 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
       ) : null}
 
       <label className='simple-voter-label' htmlFor='questionnaire-id-voter'>Questionnaire ID</label>
-      <select
-        id='questionnaire-id-voter'
-        className='simple-voter-input'
-        value={questionnaireId}
-        onChange={(event) => setQuestionnaireId(event.target.value)}
-      >
-        {selectedQuestionnaireOptions.map((id) => (
-          <option key={id} value={id}>{id}</option>
-        ))}
-      </select>
+      {selectorEntries.length === 0 ? (
+        <p className='simple-voter-note'>No active questionnaire yet.</p>
+      ) : selectorEntries.length === 1 && selectedQuestionnaireEntry ? (
+        <div className='simple-questionnaire-voter-card'>
+          <p className='simple-questionnaire-voter-number'>{selectorStateBadge(selectedQuestionnaireEntry.lifecycle)}</p>
+          <h4 className='simple-questionnaire-voter-prompt'>{selectedQuestionnaireEntry.title || selectedQuestionnaireEntry.questionnaireId}</h4>
+          <p className='simple-questionnaire-voter-helper'>ID: {selectedQuestionnaireEntry.questionnaireId}</p>
+          {selectedQuestionnaireEntry.restored ? (
+            <p className='simple-questionnaire-voter-helper'>Restored questionnaire</p>
+          ) : null}
+        </div>
+      ) : (
+        <select
+          id='questionnaire-id-voter'
+          className='simple-voter-input'
+          value={questionnaireId}
+          onChange={(event) => setQuestionnaireId(event.target.value)}
+        >
+          {selectorEntries.map((entry) => (
+            <option key={entry.questionnaireId} value={entry.questionnaireId}>
+              {(entry.title || entry.questionnaireId)} · {entry.questionnaireId} · {selectorStateBadge(entry.lifecycle)}
+            </option>
+          ))}
+        </select>
+      )}
       <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
         <input
           className='simple-voter-input simple-voter-input-inline'
