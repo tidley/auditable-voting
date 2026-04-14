@@ -369,6 +369,9 @@ export default function SimpleUiApp() {
     () => sanitizeCoordinatorNpubs(manualCoordinators),
     [manualCoordinators],
   );
+  const hasConfiguredCoordinators = configuredCoordinatorTargets.length > 0;
+  const voteTabActive = activeTab === "vote";
+  const shouldActivateStartupRelayTraffic = voteTabActive || hasConfiguredCoordinators;
   const knownRoundVotingIds = useMemo(() => {
     const values = new Set<string>();
 
@@ -641,8 +644,9 @@ export default function SimpleUiApp() {
 
   useEffect(() => {
     const actorNsec = voterKeypair?.nsec?.trim() ?? "";
+    const replyNsecs = Object.values(roundReplyKeypairs).map((keypair) => keypair.nsec);
 
-    if (!actorNsec) {
+    if (!actorNsec || !shouldActivateStartupRelayTraffic) {
       setDmAcknowledgements([]);
       return;
     }
@@ -651,17 +655,17 @@ export default function SimpleUiApp() {
 
     return subscribeSimpleDmAcknowledgements({
       actorNsec,
-      actorNsecs: Object.values(roundReplyKeypairs).map((keypair) => keypair.nsec),
+      actorNsecs: replyNsecs,
       onAcknowledgements: (nextAcknowledgements) => {
         setDmAcknowledgements(nextAcknowledgements);
       },
     });
-  }, [roundReplyKeypairs, voterKeypair?.nsec]);
+  }, [roundReplyKeypairs, shouldActivateStartupRelayTraffic, voterKeypair?.nsec]);
 
   useEffect(() => {
     const voterNsec = voterKeypair?.nsec?.trim() ?? "";
 
-    if (!voterNsec) {
+    if (!voterNsec || !shouldActivateStartupRelayTraffic) {
       return;
     }
 
@@ -688,7 +692,7 @@ export default function SimpleUiApp() {
         });
       },
     });
-  }, [voterKeypair?.nsec]);
+  }, [shouldActivateStartupRelayTraffic, voterKeypair?.nsec]);
 
   useEffect(() => {
     const voterNsec = voterKeypair?.nsec?.trim() ?? "";
@@ -858,8 +862,7 @@ export default function SimpleUiApp() {
   ]);
 
   useEffect(() => {
-    if (configuredCoordinatorTargets.length === 0) {
-      setDiscoveredSessions([]);
+    if (!voteTabActive || configuredCoordinatorTargets.length === 0) {
       return;
     }
 
@@ -910,9 +913,12 @@ export default function SimpleUiApp() {
         cleanup();
       }
     };
-  }, [configuredCoordinatorTargets]);
+  }, [configuredCoordinatorTargets, voteTabActive]);
 
   useEffect(() => {
+    if (!shouldActivateStartupRelayTraffic) {
+      return;
+    }
     const knownParticipants = [
       ...configuredCoordinatorTargets,
       ...Object.values(roundReplyKeypairs).map((keypair) => keypair.npub),
@@ -922,7 +928,7 @@ export default function SimpleUiApp() {
     }
 
     void primeNip65RelayHints(knownParticipants, SIMPLE_PUBLIC_RELAYS);
-  }, [configuredCoordinatorTargets, roundReplyKeypairs]);
+  }, [configuredCoordinatorTargets, roundReplyKeypairs, shouldActivateStartupRelayTraffic]);
 
   useEffect(() => {
     let cancelled = false;
@@ -958,7 +964,7 @@ export default function SimpleUiApp() {
   }, [configuredCoordinatorTargets, discoveredSessions, voterKeypair?.npub]);
 
   useEffect(() => {
-    if (configuredCoordinatorTargets.length === 0 || knownRoundVotingIds.length === 0) {
+    if (!voteTabActive || configuredCoordinatorTargets.length === 0 || knownRoundVotingIds.length === 0) {
       setKnownBlindKeys({});
       return;
     }
@@ -985,9 +991,12 @@ export default function SimpleUiApp() {
         cleanup();
       }
     };
-  }, [configuredCoordinatorTargets, knownRoundVotingIds]);
+  }, [configuredCoordinatorTargets, knownRoundVotingIds, voteTabActive]);
 
   useEffect(() => {
+    if (!voteTabActive) {
+      return;
+    }
     const roundsMissingBlindKeys = configuredCoordinatorTargets.flatMap((coordinatorNpub) => {
       return knownRoundVotingIds.flatMap((votingId) => (
         knownBlindKeys[makeRoundBlindKeyId(coordinatorNpub, votingId)]
@@ -1036,7 +1045,7 @@ export default function SimpleUiApp() {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [configuredCoordinatorTargets, knownBlindKeys, knownRoundVotingIds]);
+  }, [configuredCoordinatorTargets, knownBlindKeys, knownRoundVotingIds, voteTabActive]);
 
   useEffect(() => {
     const npub = voterKeypair?.npub?.trim() ?? "";

@@ -4611,7 +4611,7 @@ export default function SimpleCoordinatorApp() {
             className={`simple-voter-tab${activeTab === 'configure' ? ' is-active' : ''}`}
             onClick={() => selectTab('configure')}
           >
-            Questionnaire
+            Build
           </button>
           <button
             type='button'
@@ -4620,7 +4620,7 @@ export default function SimpleCoordinatorApp() {
             className={`simple-voter-tab${activeTab === 'voting' ? ' is-active' : ''}`}
             onClick={() => selectTab('voting')}
           >
-            Results
+            Responses
           </button>
           <button
             type='button'
@@ -4637,13 +4637,14 @@ export default function SimpleCoordinatorApp() {
           <section
             className='simple-voter-tab-panel'
             role='tabpanel'
-            aria-label='Questionnaire'
+            aria-label='Build'
           >
             <SimpleCollapsibleSection title='Questionnaire draft'>
               <QuestionnaireCoordinatorPanel
                 coordinatorNsec={keypair?.nsec ?? null}
                 coordinatorNpub={keypair?.npub ?? null}
                 knownVoterCount={followers.length}
+                view='build'
                 onStatusChange={(nextStatus) => {
                   setQuestionnaireSummary({
                     state: nextStatus.state,
@@ -4946,8 +4947,24 @@ export default function SimpleCoordinatorApp() {
           <section
             className='simple-voter-tab-panel'
             role='tabpanel'
-            aria-label='Results'
+            aria-label='Responses'
           >
+            <SimpleCollapsibleSection title='Questionnaire responses'>
+              <QuestionnaireCoordinatorPanel
+                coordinatorNsec={keypair?.nsec ?? null}
+                coordinatorNpub={keypair?.npub ?? null}
+                knownVoterCount={followers.length}
+                view='responses'
+                onStatusChange={(nextStatus) => {
+                  setQuestionnaireSummary({
+                    state: nextStatus.state,
+                    acceptedCount: nextStatus.acceptedCount,
+                    rejectedCount: nextStatus.rejectedCount,
+                    payloadMode: nextStatus.payloadMode,
+                  });
+                }}
+              />
+            </SimpleCollapsibleSection>
             <SimpleCollapsibleSection title='Threshold'>
               {isLeadCoordinator ? (
                 <div className='simple-vote-threshold-grid'>
