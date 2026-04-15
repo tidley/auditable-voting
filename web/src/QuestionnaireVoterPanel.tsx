@@ -7,6 +7,7 @@ import { validateQuestionnaireResponsePayload, type QuestionnaireDefinition, typ
 import { getSharedNostrPool } from "./sharedNostrPool";
 import TokenFingerprint from "./TokenFingerprint";
 import { deriveActorDisplayId } from "./actorDisplay";
+import { resolveQuestionnaireResponderNpub } from "./questionnaireResponderIdentity";
 
 const RESTORED_QUESTIONNAIRE_IDS_STORAGE_KEY = "voter.restored-questionnaire-ids.v1";
 const PARTICIPATION_HISTORY_STORAGE_KEY = "voter.questionnaire-participation-history.v1";
@@ -374,6 +375,14 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
   const [stateKindOnlyCount, setStateKindOnlyCount] = useState(0);
   const [resultKindOnlyCount, setResultKindOnlyCount] = useState(0);
   const actorId = useMemo(() => deriveActorDisplayId(voterNpub || "unknown"), [voterNpub]);
+  const responderMarkerNpub = useMemo(
+    () => resolveQuestionnaireResponderNpub({
+      questionnaireId,
+      responseIdentityByQuestionnaireId,
+      fallbackVoterNpub: voterNpub,
+    }),
+    [questionnaireId, responseIdentityByQuestionnaireId, voterNpub],
+  );
   const restoredStorageKey = useMemo(
     () => buildRestoredStorageKey(actorId, coordinatorContextNpubs),
     [actorId, coordinatorContextNpubs],
@@ -914,9 +923,9 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
       <p className='simple-voter-note'>{definition?.title ?? "Questionnaire"}</p>
       <p className='simple-voter-note'>{definition?.description ?? "This response is submitted using a one-time token."}</p>
       <p className='simple-voter-note'>{definition?.responseVisibility === "private" ? "Answers are encrypted" : "Answers are public"}</p>
-      {voterNpub ? (
+      {responderMarkerNpub ? (
         <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
-          <TokenFingerprint tokenId={voterNpub} compact showQr={false} hideMetadata />
+          <TokenFingerprint tokenId={responderMarkerNpub} compact showQr={false} hideMetadata />
           <p className='simple-voter-note'>Your responder marker</p>
         </div>
       ) : null}
