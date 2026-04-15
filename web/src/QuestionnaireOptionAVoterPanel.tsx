@@ -71,6 +71,23 @@ export default function QuestionnaireOptionAVoterPanel() {
   }, [electionId]);
 
   useEffect(() => {
+    if (!runtime || !signedInNpub.trim()) {
+      return;
+    }
+    const intervalId = window.setInterval(() => {
+      try {
+        runtime.refreshIssuanceAndAcceptance();
+        setRefreshNonce((value) => value + 1);
+      } catch {
+        // Keep polling best-effort; explicit actions surface errors.
+      }
+    }, 1500);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [runtime, signedInNpub]);
+
+  useEffect(() => {
     if (!electionId) {
       return;
     }
