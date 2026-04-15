@@ -14,10 +14,21 @@ import SimpleQrPanel from "./SimpleQrPanel";
 import TokenFingerprint from "./TokenFingerprint";
 import { deriveActorDisplayId } from "./actorDisplay";
 import { getSharedNostrPool } from "./sharedNostrPool";
+import { getQuestionnaireFlowMode } from "./questionnaireFlowMode";
+import QuestionnaireOptionACoordinatorPanel from "./QuestionnaireOptionACoordinatorPanel";
 
 const DEFAULT_QUESTIONNAIRE_ID_PREFIX = "q";
 const QUESTIONNAIRE_DRAFT_ID_STORAGE_KEY = "coordinator.questionnaire-draft-id.v1";
 const IDENTITY_REFRESH_INTERVAL_MS = 10000;
+
+function readDeploymentModeFromUrl() {
+  if (typeof window === "undefined") {
+    return "legacy";
+  }
+  return (new URLSearchParams(window.location.search).get("deployment") ?? "legacy")
+    .trim()
+    .toLowerCase();
+}
 
 type QuestionnairePublishDiagnostic = {
   attempted: boolean;
@@ -121,9 +132,15 @@ function percentageLabel(count: number, total: number) {
   return `${Math.round((count / total) * 100)}%`;
 }
 
-function parseQuestionnaireIdFromResponseContent(content: string): string | null {
+function parseQuestionnaireIdFromResponseEvent(event: Pick<NostrEvent, "content" | "tags">): string | null {
+  const tagMatch = Array.isArray(event.tags)
+    ? event.tags.find((tag) => Array.isArray(tag) && tag[0] === "questionnaire-id" && typeof tag[1] === "string")
+    : null;
+  if (tagMatch?.[1]?.trim()) {
+    return tagMatch[1].trim();
+  }
   try {
-    const parsed = JSON.parse(content) as { questionnaireId?: string };
+    const parsed = JSON.parse(event.content) as { questionnaireId?: string };
     return typeof parsed.questionnaireId === "string" ? parsed.questionnaireId : null;
   } catch {
     return null;
@@ -159,6 +176,12 @@ function buildDefinition(input: {
 }
 
 export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordinatorPanelProps) {
+  const flowMode = useMemo(() => getQuestionnaireFlowMode(), []);
+  if (flowMode === "option_a") {
+    return <QuestionnaireOptionACoordinatorPanel />;
+  }
+  const deploymentMode = useMemo(() => readDeploymentModeFromUrl(), []);
+  const isCourseFeedbackMode = deploymentMode === "course_feedback";
   const [questionnaireId, setQuestionnaireId] = useState(() => readStoredQuestionnaireDraftId());
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -174,6 +197,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [latestAcceptedCount, setLatestAcceptedCount] = useState(0);
   const [latestRejectedCount, setLatestRejectedCount] = useState(0);
   const [latestAcceptedResponses, setLatestAcceptedResponses] = useState<QuestionnaireAcceptedResponse[]>([]);
+  const [lastResponseSeenEventId, setLastResponseSeenEventId] = useState<string | null>(null);
+  const [lastResponseRejectReason, setLastResponseRejectReason] = useState<string | null>(null);
   const [latestResultAcceptedCount, setLatestResultAcceptedCount] = useState<number | null>(null);
   const [availableQuestionnaireIds, setAvailableQuestionnaireIds] = useState<string[]>([]);
   const [expandedTextQuestionIds, setExpandedTextQuestionIds] = useState<Record<string, boolean>>({});
@@ -190,6 +215,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     relayTargets: [],
     relaySuccessCount: 0,
   });
+  const [definitionPublishStartedAt, setDefinitionPublishStartedAt] = useState<string | null>(null);
+  const [definitionPublishSucceededAt, setDefinitionPublishSucceededAt] = useState<string | null>(null);
   const [statePublishDiagnostic, setStatePublishDiagnostic] = useState<QuestionnairePublishDiagnostic>({
     attempted: false,
     succeeded: false,
@@ -199,6 +226,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     relayTargets: [],
     relaySuccessCount: 0,
   });
+  const [statePublishStartedAt, setStatePublishStartedAt] = useState<string | null>(null);
+  const [statePublishSucceededAt, setStatePublishSucceededAt] = useState<string | null>(null);
   const [resultPublishDiagnostic, setResultPublishDiagnostic] = useState<QuestionnairePublishDiagnostic>({
     attempted: false,
     succeeded: false,
@@ -291,6 +320,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     setStateEventCount(input.stateEvents.length);
     setResponseEventCount(input.responseEvents.length);
     setResultEventCount(input.resultEvents.length);
+    const latestResponseEvent = [...input.responseEvents]
+      .sort((left, right) => right.created_at - left.created_at)[0] ?? null;
+    setLastResponseSeenEventId(latestResponseEvent?.id ?? null);
 
     setLatestDefinition(definition);
     setLatestState(deriveEffectiveQuestionnaireState({
@@ -308,10 +340,12 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       setLatestAcceptedCount(processed.accepted.length);
       setLatestRejectedCount(processed.rejected.length);
       setLatestAcceptedResponses(processed.accepted);
+      setLastResponseRejectReason(processed.rejected.at(-1)?.reason ?? null);
     } else {
       setLatestAcceptedCount(0);
       setLatestRejectedCount(0);
       setLatestAcceptedResponses([]);
+      setLastResponseRejectReason(null);
     }
   }, [coordinatorNsec]);
 
@@ -327,16 +361,22 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           questionnaireId: id,
           kind: QUESTIONNAIRE_DEFINITION_KIND,
           parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireDefinitionEvent(event)?.questionnaireId ?? null,
+          preferKindOnly: true,
+          readRelayLimit: 8,
         }),
         fetchQuestionnaireEventsWithFallback({
           questionnaireId: id,
           kind: QUESTIONNAIRE_STATE_KIND,
           parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireStateEvent(event)?.questionnaireId ?? null,
+          preferKindOnly: true,
+          readRelayLimit: 8,
         }),
         fetchQuestionnaireEventsWithFallback({
           questionnaireId: id,
           kind: QUESTIONNAIRE_RESPONSE_PRIVATE_KIND,
-          parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireIdFromResponseContent(event.content),
+          parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireIdFromResponseEvent(event),
+          preferKindOnly: true,
+          readRelayLimit: 8,
         }),
         fetchQuestionnaireEventsWithFallback({
           questionnaireId: id,
@@ -441,16 +481,22 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           questionnaireId: id,
           kind: QUESTIONNAIRE_DEFINITION_KIND,
           parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireDefinitionEvent(event)?.questionnaireId ?? null,
+          preferKindOnly: true,
+          readRelayLimit: 8,
         }),
         fetchQuestionnaireEventsWithFallback({
           questionnaireId: id,
           kind: QUESTIONNAIRE_STATE_KIND,
           parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireStateEvent(event)?.questionnaireId ?? null,
+          preferKindOnly: true,
+          readRelayLimit: 8,
         }),
         fetchQuestionnaireEventsWithFallback({
           questionnaireId: id,
           kind: QUESTIONNAIRE_RESPONSE_PRIVATE_KIND,
-          parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireIdFromResponseContent(event.content),
+          parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireIdFromResponseEvent(event),
+          preferKindOnly: true,
+          readRelayLimit: 8,
         }),
         fetchQuestionnaireEventsWithFallback({
           questionnaireId: id,
@@ -509,6 +555,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         questionnaireId: id,
         kind: QUESTIONNAIRE_DEFINITION_KIND,
         parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireDefinitionEvent(event)?.questionnaireId ?? null,
+        useQuestionnaireIdTagFilter: false,
+        readRelayLimit: 8,
         onEvent: (event) => {
           definitionById.set(event.id, event);
           applyFromMaps();
@@ -519,6 +567,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         questionnaireId: id,
         kind: QUESTIONNAIRE_STATE_KIND,
         parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireStateEvent(event)?.questionnaireId ?? null,
+        useQuestionnaireIdTagFilter: false,
+        readRelayLimit: 8,
         onEvent: (event) => {
           stateById.set(event.id, event);
           applyFromMaps();
@@ -528,7 +578,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       subscribeQuestionnaireEvents({
         questionnaireId: id,
         kind: QUESTIONNAIRE_RESPONSE_PRIVATE_KIND,
-        parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireIdFromResponseContent(event.content),
+        parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireIdFromResponseEvent(event),
+        useQuestionnaireIdTagFilter: false,
+        readRelayLimit: 8,
         onEvent: (event) => {
           responseById.set(event.id, event);
           applyFromMaps();
@@ -563,15 +615,40 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   }, [applyQuestionnaireSnapshot, questionnaireId]);
 
   useEffect(() => {
+    const draftQuestionnaireId = questionnaireId.trim();
+    const stagedQuestionnaireId = draftQuestionnaireId || null;
+    const definitionPublishQuestionnaireIdTag = definitionPublishDiagnostic.tags.find((tag) => tag[0] === "questionnaire-id")?.[1] ?? null;
+    const statePublishQuestionnaireIdTag = statePublishDiagnostic.tags.find((tag) => tag[0] === "questionnaire-id")?.[1] ?? null;
+    const statePublishStateTag = statePublishDiagnostic.tags.find((tag) => tag[0] === "state")?.[1] ?? null;
+    const idsForContinuity = [
+      draftQuestionnaireId || null,
+      stagedQuestionnaireId,
+      definitionPublishQuestionnaireIdTag,
+      statePublishQuestionnaireIdTag,
+      latestDefinition?.questionnaireId ?? null,
+    ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+    const uniqueContinuityIds = [...new Set(idsForContinuity)];
     const owner = globalThis as typeof globalThis & {
       __questionnaireCoordinatorDebug?: unknown;
     };
     owner.__questionnaireCoordinatorDebug = {
-      questionnaireId: questionnaireId.trim(),
+      questionnaireId: draftQuestionnaireId,
+      draftQuestionnaireId,
+      stagedQuestionnaireId,
+      definitionPublishQuestionnaireIdTag,
+      statePublishQuestionnaireIdTag,
+      statePublishStateTag,
+      continuityIds: uniqueContinuityIds,
+      questionnaireIdentityContinuityOk: uniqueContinuityIds.length <= 1,
       coordinatorNpubLoaded: Boolean(coordinatorNpub),
       latestState,
       latestAcceptedCount,
       latestRejectedCount,
+      responseEventsSeen: responseEventCount,
+      acceptedResponseCount: latestAcceptedCount,
+      rejectedResponseCount: latestRejectedCount,
+      lastResponseSeenEventId,
+      lastResponseRejectReason,
       latestResultAcceptedCount,
       definitionEventCount,
       stateEventCount,
@@ -582,8 +659,18 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       responseReadDiagnostics,
       resultReadDiagnostics,
       definitionPublishDiagnostic,
+      definitionPublishStartedAt,
+      definitionPublishSucceededAt,
       statePublishDiagnostic,
+      statePublishStartedAt,
+      statePublishSucceededAt,
       resultPublishDiagnostic,
+      deploymentMode,
+      courseFeedbackAcceptanceEnabled: isCourseFeedbackMode,
+      legacyRoundGatingBypassed: isCourseFeedbackMode,
+      responseAcceptedViaQuestionnairePlane: latestAcceptedCount > 0,
+      responseRejectedBecauseLegacyRoundRequired:
+        isCourseFeedbackMode && responseEventCount > 0 && latestAcceptedCount <= 0,
       latestDefinitionQuestionCount: latestDefinition?.questions.length ?? 0,
       latestDefinitionId: latestDefinition?.questionnaireId ?? null,
       localSummaryMatchesPublished: latestResultAcceptedCount === null
@@ -594,12 +681,17 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     };
   }, [
     coordinatorNpub,
+    deploymentMode,
     definitionEventCount,
     definitionPublishDiagnostic,
+    definitionPublishStartedAt,
+    definitionPublishSucceededAt,
     definitionReadDiagnostics,
     latestAcceptedCount,
     latestDefinition,
     latestRejectedCount,
+    lastResponseSeenEventId,
+    lastResponseRejectReason,
     latestResultAcceptedCount,
     latestState,
     questionnaireId,
@@ -608,10 +700,13 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     resultPublishDiagnostic,
     responseEventCount,
     statePublishDiagnostic,
+    statePublishStartedAt,
+    statePublishSucceededAt,
     stateReadDiagnostics,
     resultEventCount,
     stateEventCount,
     status,
+    isCourseFeedbackMode,
   ]);
 
   useEffect(() => {
@@ -921,6 +1016,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     }
 
     setStatus("Publishing questionnaire definition...");
+    setDefinitionPublishStartedAt(new Date().toISOString());
+    setDefinitionPublishSucceededAt(null);
     setDefinitionPublishDiagnostic((current) => ({
       ...current,
       attempted: true,
@@ -946,6 +1043,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         relaySuccessCount: result.successes,
       });
       if (result.successes > 0) {
+        setDefinitionPublishSucceededAt(new Date().toISOString());
         setStatus(`Questionnaire draft published (${result.successes}/${result.relayResults.length} relays).`);
         await publishState("open");
       } else {
@@ -966,6 +1064,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     }
 
     setStatus(`Publishing questionnaire state (${state})...`);
+    setStatePublishStartedAt(new Date().toISOString());
+    setStatePublishSucceededAt(null);
     setStatePublishDiagnostic((current) => ({
       ...current,
       attempted: true,
@@ -997,6 +1097,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         relayTargets: result.relayResults.map((entry) => entry.relay),
         relaySuccessCount: result.successes,
       });
+      if (result.successes > 0) {
+        setStatePublishSucceededAt(new Date().toISOString());
+      }
       setStatus(
         result.successes > 0
           ? `Questionnaire state '${state}' published (${result.successes}/${result.relayResults.length} relays).`
@@ -1030,7 +1133,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       const responseEvents = (await fetchQuestionnaireEventsWithFallback({
         questionnaireId: latestDefinition.questionnaireId,
         kind: QUESTIONNAIRE_RESPONSE_PRIVATE_KIND,
-        parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireIdFromResponseContent(event.content),
+        parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireIdFromResponseEvent(event),
+        preferKindOnly: true,
+        readRelayLimit: 8,
       })).events;
       const processed = processQuestionnaireResponses({
         definition: latestDefinition,

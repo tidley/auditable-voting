@@ -3,6 +3,9 @@ export function deriveActorDisplayId(value: string) {
   if (!trimmed) {
     return "unknown";
   }
+  if (trimmed.startsWith("npub1") && trimmed.length > 12) {
+    return trimmed.slice(5, 12);
+  }
   if (trimmed.startsWith("npub") && trimmed.length > 11) {
     return trimmed.slice(4, 11);
   }

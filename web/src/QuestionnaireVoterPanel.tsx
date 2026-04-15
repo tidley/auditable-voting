@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { generateSecretKey, nip19 } from "nostr-tools";
-import { fetchQuestionnaireEvents, fetchQuestionnaireEventsWithFallback, getQuestionnaireReadRelays, parseQuestionnaireDefinitionEvent, parseQuestionnaireStateEvent, publishEncryptedQuestionnaireResponse, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND } from "./questionnaireNostr";
+import { fetchQuestionnaireEvents, fetchQuestionnaireEventsWithFallback, getQuestionnaireReadRelays, parseQuestionnaireDefinitionEvent, parseQuestionnaireResponseEnvelope, parseQuestionnaireStateEvent, publishEncryptedQuestionnaireResponse, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESPONSE_PRIVATE_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND, subscribeQuestionnaireEvents } from "./questionnaireNostr";
 import { formatQuestionnaireStateLabel, formatQuestionnaireTokenStatusLabel, parseQuestionnaireResultSummaryEvent, selectLatestQuestionnaireDefinition, selectLatestQuestionnaireState } from "./questionnaireRuntime";
 import { buildSimpleNamespacedLocalStorageKey, loadSimpleActorState } from "./simpleLocalState";
 import { validateQuestionnaireResponsePayload, type QuestionnaireDefinition, type QuestionnaireResponseAnswer, type QuestionnaireResponsePayload, type QuestionnaireResultSummary } from "./questionnaireProtocol";
@@ -8,14 +8,17 @@ import { getSharedNostrPool } from "./sharedNostrPool";
 import TokenFingerprint from "./TokenFingerprint";
 import { deriveActorDisplayId } from "./actorDisplay";
 import { resolveQuestionnaireResponderNpub } from "./questionnaireResponderIdentity";
+import { getQuestionnaireFlowMode } from "./questionnaireFlowMode";
+import QuestionnaireOptionAVoterPanel from "./QuestionnaireOptionAVoterPanel";
 
 const RESTORED_QUESTIONNAIRE_IDS_STORAGE_KEY = "voter.restored-questionnaire-ids.v1";
 const PARTICIPATION_HISTORY_STORAGE_KEY = "voter.questionnaire-participation-history.v1";
 const SUBMITTED_QUESTIONNAIRE_IDS_STORAGE_KEY = "voter.submitted-questionnaire-ids.v1";
 const RESPONSE_IDENTITY_STORAGE_KEY = "voter.questionnaire-response-identities.v1";
 const VOTER_QUESTIONNAIRE_LOOKBACK_SECONDS = 7 * 24 * 60 * 60;
-const REFRESH_INTERVAL_MS = 15000;
 const MAX_PARTICIPATION_HISTORY_ENTRIES = 16;
+const QUESTIONNAIRE_DISCOVERY_BACKFILL_RETRY_MAX = 1;
+const QUESTIONNAIRE_DISCOVERY_BACKFILL_RETRY_BASE_DELAY_MS = 1500;
 
 type QuestionnaireAnswerState = Record<string, boolean | string | string[]>;
 type SelectorLifecycle = "open" | "published" | "draft" | "closed" | "counted" | "unknown";
@@ -31,6 +34,45 @@ type QuestionnaireSelectorEntry = {
   discoveredAt: number;
   restored: boolean;
 };
+
+type QuestionnaireSelectorDiagnostics = {
+  scannedDefinitionEvents: number;
+  parsedDefinitionEvents: number;
+  scannedStateEvents: number;
+  parsedStateEvents: number;
+  includedQuestionnaireIds: string[];
+  rejectCounts: Record<string, number>;
+  lastRejectedQuestionnaireId: string | null;
+  lastRejectReason: string | null;
+  lastFilterUsed: {
+    lookbackSeconds: number;
+    minFreshUnix: number;
+    coordinatorContextNpubs: string[];
+    restoredQuestionnaireIds: string[];
+  } | null;
+};
+
+type QuestionnaireResponsePipelineDiagnostics = {
+  responseReady: boolean;
+  submitHandlerEntered: boolean;
+  submitClicked: boolean;
+  responsePayloadBuilt: boolean;
+  responsePayloadValidated: boolean;
+  responsePublishStarted: boolean;
+  responsePublishSucceeded: boolean;
+  responseSeenBackLocally: boolean;
+  responseSeenByCoordinator: boolean;
+  lastResponseRejectReason: string | null;
+  lastResponsePublishError: string | null;
+  lastResponseEventId: string | null;
+  lastResponseEventKind: number | null;
+  lastResponseEventCreatedAt: number | null;
+  lastResponseEventTags: string[][];
+  lastResponseRelayTargets: string[];
+  lastResponseRelaySuccessCount: number;
+};
+
+type QuestionnaireReadSource = "manual" | "backfill" | "live";
 
 type QuestionnaireParticipationHistoryEntry = {
   questionnaireId: string;
@@ -342,6 +384,10 @@ type QuestionnaireVoterPanelProps = {
 };
 
 export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelProps) {
+  const flowMode = useMemo(() => getQuestionnaireFlowMode(), []);
+  if (flowMode === "option_a") {
+    return <QuestionnaireOptionAVoterPanel />;
+  }
   const onContextChange = props.onContextChange;
   const onParticipationHistoryChange = props.onParticipationHistoryChange;
   const incomingParticipationHistory = props.participationHistory;
@@ -363,6 +409,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
   const [tokenStatus, setTokenStatus] = useState<"ready" | "submitted">("ready");
   const [definitionEventCount, setDefinitionEventCount] = useState(0);
   const [stateEventCount, setStateEventCount] = useState(0);
+  const [responseEventCount, setResponseEventCount] = useState(0);
   const [resultEventCount, setResultEventCount] = useState(0);
   const [definitionBackfillFilter, setDefinitionBackfillFilter] = useState<Record<string, unknown> | null>(null);
   const [stateBackfillFilter, setStateBackfillFilter] = useState<Record<string, unknown> | null>(null);
@@ -373,6 +420,52 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
   const [definitionKindOnlyCount, setDefinitionKindOnlyCount] = useState(0);
   const [stateKindOnlyCount, setStateKindOnlyCount] = useState(0);
   const [resultKindOnlyCount, setResultKindOnlyCount] = useState(0);
+  const [selectorDiagnostics, setSelectorDiagnostics] = useState<QuestionnaireSelectorDiagnostics>({
+    scannedDefinitionEvents: 0,
+    parsedDefinitionEvents: 0,
+    scannedStateEvents: 0,
+    parsedStateEvents: 0,
+    includedQuestionnaireIds: [],
+    rejectCounts: {},
+    lastRejectedQuestionnaireId: null,
+    lastRejectReason: null,
+    lastFilterUsed: null,
+  });
+  const [questionnaireDefinitionsSeen, setQuestionnaireDefinitionsSeen] = useState(0);
+  const [questionnaireOpenEventsSeen, setQuestionnaireOpenEventsSeen] = useState(0);
+  const [definitionSeenLiveCount, setDefinitionSeenLiveCount] = useState(0);
+  const [definitionSeenBackfillCount, setDefinitionSeenBackfillCount] = useState(0);
+  const [openSeenLiveCount, setOpenSeenLiveCount] = useState(0);
+  const [openSeenBackfillCount, setOpenSeenBackfillCount] = useState(0);
+  const [lastQuestionnaireDefinitionId, setLastQuestionnaireDefinitionId] = useState<string | null>(null);
+  const [lastQuestionnaireOpenId, setLastQuestionnaireOpenId] = useState<string | null>(null);
+  const [lastQuestionnaireFilterUsed, setLastQuestionnaireFilterUsed] = useState<Record<string, unknown> | null>(null);
+  const [lastQuestionnaireRejectReason, setLastQuestionnaireRejectReason] = useState<string | null>(null);
+  const [discoverySubscriptionStartedAt, setDiscoverySubscriptionStartedAt] = useState<string | null>(null);
+  const [firstDefinitionSeenAt, setFirstDefinitionSeenAt] = useState<string | null>(null);
+  const [firstOpenSeenAt, setFirstOpenSeenAt] = useState<string | null>(null);
+  const [discoveryBackfillStartedAt, setDiscoveryBackfillStartedAt] = useState<string | null>(null);
+  const [discoveryBackfillCompletedAt, setDiscoveryBackfillCompletedAt] = useState<string | null>(null);
+  const [discoveryBackfillAttemptCount, setDiscoveryBackfillAttemptCount] = useState(0);
+  const [responsePipelineDiagnostics, setResponsePipelineDiagnostics] = useState<QuestionnaireResponsePipelineDiagnostics>({
+    responseReady: false,
+    submitHandlerEntered: false,
+    submitClicked: false,
+    responsePayloadBuilt: false,
+    responsePayloadValidated: false,
+    responsePublishStarted: false,
+    responsePublishSucceeded: false,
+    responseSeenBackLocally: false,
+    responseSeenByCoordinator: false,
+    lastResponseRejectReason: null,
+    lastResponsePublishError: null,
+    lastResponseEventId: null,
+    lastResponseEventKind: null,
+    lastResponseEventCreatedAt: null,
+    lastResponseEventTags: [],
+    lastResponseRelayTargets: [],
+    lastResponseRelaySuccessCount: 0,
+  });
   const actorId = useMemo(() => deriveActorDisplayId(voterNpub || "unknown"), [voterNpub]);
   const responderMarkerNpub = useMemo(
     () => resolveQuestionnaireResponderNpub({
@@ -515,24 +608,55 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
       try {
         const relays = getQuestionnaireReadRelays();
         const pool = getSharedNostrPool();
-        const events = await pool.querySync(relays, {
-          kinds: [QUESTIONNAIRE_DEFINITION_KIND],
-          limit: 400,
-        });
-        const stateEvents = await pool.querySync(relays, {
-          kinds: [QUESTIONNAIRE_STATE_KIND],
-          limit: 400,
-        });
+        const authorScope = coordinatorContextNpubs.length > 0
+          ? [...coordinatorContextNpubs]
+          : undefined;
+        let events: Awaited<ReturnType<typeof pool.querySync>> = [];
+        let stateEvents: Awaited<ReturnType<typeof pool.querySync>> = [];
+        for (let attempt = 0; attempt <= QUESTIONNAIRE_DISCOVERY_BACKFILL_RETRY_MAX; attempt += 1) {
+          events = await pool.querySync(relays, {
+            kinds: [QUESTIONNAIRE_DEFINITION_KIND],
+            ...(authorScope ? { authors: authorScope } : {}),
+            limit: 400,
+          });
+          stateEvents = await pool.querySync(relays, {
+            kinds: [QUESTIONNAIRE_STATE_KIND],
+            ...(authorScope ? { authors: authorScope } : {}),
+            limit: 400,
+          });
+          const hasAnyEvents = events.length > 0 || stateEvents.length > 0;
+          if (hasAnyEvents || attempt >= QUESTIONNAIRE_DISCOVERY_BACKFILL_RETRY_MAX) {
+            break;
+          }
+          const delayMs = QUESTIONNAIRE_DISCOVERY_BACKFILL_RETRY_BASE_DELAY_MS * (2 ** attempt);
+          await new Promise((resolve) => {
+            window.setTimeout(resolve, delayMs);
+          });
+        }
         if (cancelled) {
           return;
         }
 
+        const rejectCounts: Record<string, number> = {};
+        let lastRejectedQuestionnaireId: string | null = null;
+        let lastRejectReason: string | null = null;
+        let parsedDefinitionEvents = 0;
+        const markRejected = (reason: string, questionnaireId: string | null) => {
+          rejectCounts[reason] = (rejectCounts[reason] ?? 0) + 1;
+          if (questionnaireId) {
+            lastRejectedQuestionnaireId = questionnaireId;
+          }
+          lastRejectReason = reason;
+        };
+
         const latestStateByQuestionnaireId = new Map<string, { state: string; createdAt: number }>();
+        let parsedStateEvents = 0;
         for (const stateEvent of stateEvents) {
           const parsed = parseQuestionnaireStateEvent(stateEvent);
           if (!parsed?.questionnaireId) {
             continue;
           }
+          parsedStateEvents += 1;
           const previous = latestStateByQuestionnaireId.get(parsed.questionnaireId);
           const createdAt = Number(stateEvent.created_at ?? 0);
           if (!previous || createdAt > previous.createdAt) {
@@ -549,10 +673,13 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
         for (const event of events) {
           const parsed = parseQuestionnaireDefinitionEvent(event);
           if (!parsed) {
+            markRejected("malformed_definition_event", null);
             continue;
           }
+          parsedDefinitionEvents += 1;
           const id = parsed.questionnaireId.trim();
           if (!id) {
+            markRejected("missing_questionnaire_id", null);
             continue;
           }
           const explicitState = latestStateByQuestionnaireId.get(id)?.state ?? null;
@@ -584,6 +711,19 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
             && relevantByCoordinator;
           const includeByRestore = restored && !stale && isActiveSelectorLifecycle(entry.lifecycle);
           if (!includeByDefault && !includeByRestore) {
+            if (!isActiveSelectorLifecycle(entry.lifecycle)) {
+              markRejected(`state_not_visible:${entry.lifecycle}`, id);
+            } else if (stale) {
+              markRejected("stale_definition", id);
+            } else if (!relevantByCoordinator) {
+              markRejected("coordinator_scope_mismatch", id);
+            } else if (isExpired) {
+              markRejected("expired_questionnaire", id);
+            } else if (!isRecent) {
+              markRejected("outside_active_lookback_window", id);
+            } else {
+              markRejected("filtered_out", id);
+            }
             continue;
           }
           byQuestionnaireId.set(
@@ -593,8 +733,35 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
         }
         const entries = [...byQuestionnaireId.values()].sort(selectorComparator);
         setSelectorEntries(entries);
+        setSelectorDiagnostics({
+          scannedDefinitionEvents: events.length,
+          parsedDefinitionEvents,
+          scannedStateEvents: stateEvents.length,
+          parsedStateEvents,
+          includedQuestionnaireIds: entries.map((entry) => entry.questionnaireId),
+          rejectCounts,
+          lastRejectedQuestionnaireId,
+          lastRejectReason,
+          lastFilterUsed: {
+            lookbackSeconds: VOTER_QUESTIONNAIRE_LOOKBACK_SECONDS,
+            minFreshUnix,
+            coordinatorContextNpubs: [...coordinatorContextNpubs],
+            restoredQuestionnaireIds: [...restoredQuestionnaireIds],
+          },
+        });
       } catch {
         setSelectorEntries([]);
+        setSelectorDiagnostics({
+          scannedDefinitionEvents: 0,
+          parsedDefinitionEvents: 0,
+          scannedStateEvents: 0,
+          parsedStateEvents: 0,
+          includedQuestionnaireIds: [],
+          rejectCounts: {},
+          lastRejectedQuestionnaireId: null,
+          lastRejectReason: "selector_load_failed",
+          lastFilterUsed: null,
+        });
       }
     };
     void loadQuestionnaireOptions();
@@ -603,10 +770,10 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
     };
   }, [coordinatorContextNpubs, restoredQuestionnaireIds]);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (source: QuestionnaireReadSource = "manual") => {
     const id = questionnaireId.trim();
     if (!id) {
-      return;
+      return null;
     }
     try {
       setDefinitionBackfillFilter({
@@ -621,7 +788,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
         kinds: [QUESTIONNAIRE_RESULT_SUMMARY_KIND],
         "#questionnaire-id": [id],
       });
-      const [definitionFetch, stateFetch, resultFetch] = await Promise.all([
+      const [definitionFetch, stateFetch, responseFetch, resultFetch] = await Promise.all([
         fetchQuestionnaireEventsWithFallback({
           questionnaireId: id,
           kind: QUESTIONNAIRE_DEFINITION_KIND,
@@ -631,6 +798,11 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
           questionnaireId: id,
           kind: QUESTIONNAIRE_STATE_KIND,
           parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireStateEvent(event)?.questionnaireId ?? null,
+        }),
+        fetchQuestionnaireEventsWithFallback({
+          questionnaireId: id,
+          kind: QUESTIONNAIRE_RESPONSE_PRIVATE_KIND,
+          parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireResponseEnvelope(event)?.questionnaireId ?? null,
         }),
         fetchQuestionnaireEventsWithFallback({
           questionnaireId: id,
@@ -647,6 +819,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
       ]);
       const definitionEvents = definitionFetch.events;
       const stateEvents = stateFetch.events;
+      const responseEvents = responseFetch.events;
       const resultEvents = resultFetch.events;
       setDefinitionReadMode(definitionFetch.diagnostics.mode);
       setStateReadMode(stateFetch.diagnostics.mode);
@@ -656,38 +829,265 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
       setResultKindOnlyCount(resultFetch.diagnostics.kindOnlyCount);
       setDefinitionEventCount(definitionEvents.length);
       setStateEventCount(stateEvents.length);
+      setResponseEventCount(responseEvents.length);
       setResultEventCount(resultEvents.length);
+      const parsedDefinitionEvents = definitionEvents
+        .map((event) => parseQuestionnaireDefinitionEvent(event))
+        .filter((value): value is QuestionnaireDefinition => Boolean(value));
+      const parsedStateEvents = stateEvents
+        .map((event) => parseQuestionnaireStateEvent(event))
+        .filter((value): value is NonNullable<ReturnType<typeof parseQuestionnaireStateEvent>> => Boolean(value));
+      const openStateEvents = parsedStateEvents.filter((entry) => entry.state === "open");
+      const latestOpenState = openStateEvents.sort((left, right) => right.createdAt - left.createdAt)[0] ?? null;
+      setQuestionnaireDefinitionsSeen(parsedDefinitionEvents.length);
+      setQuestionnaireOpenEventsSeen(openStateEvents.length);
+      if (parsedDefinitionEvents.length > 0) {
+        if (source === "live") {
+          setDefinitionSeenLiveCount((current) => current + 1);
+        } else if (source === "backfill") {
+          setDefinitionSeenBackfillCount((current) => current + 1);
+        }
+      }
+      if (openStateEvents.length > 0) {
+        if (source === "live") {
+          setOpenSeenLiveCount((current) => current + 1);
+        } else if (source === "backfill") {
+          setOpenSeenBackfillCount((current) => current + 1);
+        }
+      }
       const latestDefinition = selectLatestQuestionnaireDefinition(definitionEvents);
       const latestExplicitState = selectLatestQuestionnaireState(stateEvents);
+      const latestResultSummary = parseLatestResultSummary(resultEvents);
+      const ownResponseEvents = responseEvents
+        .map((event) => ({
+          event,
+          envelope: parseQuestionnaireResponseEnvelope(event),
+        }))
+        .filter((entry) => entry.envelope?.authorPubkey === responderMarkerNpub);
+      const latestOwnResponseEvent = ownResponseEvents
+        .sort((left, right) => right.event.created_at - left.event.created_at)[0]?.event ?? null;
+      const responseSeenBackLocally = ownResponseEvents.length > 0;
+      const responseSeenByCoordinator = responseSeenBackLocally
+        && (latestResultSummary?.acceptedResponseCount ?? 0) > 0;
+      setResponsePipelineDiagnostics((current) => ({
+        ...current,
+        responseSeenBackLocally,
+        responseSeenByCoordinator,
+        lastResponseEventId: current.lastResponseEventId ?? latestOwnResponseEvent?.id ?? null,
+        lastResponseEventKind: current.lastResponseEventKind ?? latestOwnResponseEvent?.kind ?? null,
+        lastResponseEventCreatedAt: current.lastResponseEventCreatedAt ?? latestOwnResponseEvent?.created_at ?? null,
+        lastResponseEventTags: current.lastResponseEventTags.length > 0
+          ? current.lastResponseEventTags
+          : (latestOwnResponseEvent?.tags ?? []),
+      }));
+      setLastQuestionnaireDefinitionId(latestDefinition?.questionnaireId ?? null);
+      setLastQuestionnaireOpenId(latestOpenState?.questionnaireId ?? null);
+      const definitionFilter = {
+        kinds: [QUESTIONNAIRE_DEFINITION_KIND],
+        "#questionnaire-id": [id],
+      };
+      const stateFilter = {
+        kinds: [QUESTIONNAIRE_STATE_KIND],
+        "#questionnaire-id": [id],
+      };
+      const resultFilter = {
+        kinds: [QUESTIONNAIRE_RESULT_SUMMARY_KIND],
+        "#questionnaire-id": [id],
+      };
+      setLastQuestionnaireFilterUsed({
+        questionnaireId: id,
+        definition: definitionFilter,
+        state: stateFilter,
+        result: resultFilter,
+        definitionReadMode: definitionFetch.diagnostics.mode,
+        stateReadMode: stateFetch.diagnostics.mode,
+        resultReadMode: resultFetch.diagnostics.mode,
+      });
       const explicitState = latestExplicitState?.state ?? null;
       const lifecycle = lifecycleFromExplicitState(explicitState);
+      if (definitionEvents.length === 0) {
+        setLastQuestionnaireRejectReason("no_definition_events");
+      } else if (parsedDefinitionEvents.length === 0) {
+        setLastQuestionnaireRejectReason("no_parseable_definition_events");
+      } else if (!latestDefinition) {
+        setLastQuestionnaireRejectReason("latest_definition_missing");
+      } else if (latestDefinition.questionnaireId !== id) {
+        setLastQuestionnaireRejectReason("definition_id_mismatch");
+      } else if (stateEvents.length === 0) {
+        setLastQuestionnaireRejectReason("no_state_events");
+      } else if (!isActiveSelectorLifecycle(lifecycle)) {
+        setLastQuestionnaireRejectReason(`state_not_visible:${explicitState ?? "unknown"}`);
+      } else {
+        setLastQuestionnaireRejectReason(null);
+      }
       if (!latestDefinition || !isActiveSelectorLifecycle(lifecycle)) {
         setDefinition(null);
         setState(null);
         setLatestResult(null);
-        return;
+        return {
+          questionnaireSeen: false,
+          questionnaireOpen: false,
+          rejectReason: !latestDefinition ? "latest_definition_missing" : `state_not_visible:${explicitState ?? "unknown"}`,
+        };
       }
       setDefinition(latestDefinition);
       setState(explicitState);
-      setLatestResult(parseLatestResultSummary(resultEvents));
+      setLatestResult(latestResultSummary);
+      return {
+        questionnaireSeen: true,
+        questionnaireOpen: explicitState === "open",
+        rejectReason: null,
+      };
     } catch {
       setStatus("Questionnaire refresh failed.");
+      return null;
     }
-  }, [questionnaireId]);
+  }, [questionnaireId, responderMarkerNpub]);
 
   useEffect(() => {
-    void refresh();
-    const intervalId = window.setInterval(() => {
-      void refresh();
-    }, REFRESH_INTERVAL_MS);
-    return () => window.clearInterval(intervalId);
+    const id = questionnaireId.trim();
+    if (!id) {
+      return undefined;
+    }
+    let cancelled = false;
+    setDiscoverySubscriptionStartedAt(new Date().toISOString());
+    setDiscoveryBackfillStartedAt(new Date().toISOString());
+    setDiscoveryBackfillCompletedAt(null);
+    setDiscoveryBackfillAttemptCount(0);
+
+    const runBackfillWithRetry = async () => {
+      let attempt = 0;
+      while (!cancelled) {
+        setDiscoveryBackfillAttemptCount(attempt + 1);
+        const outcome = await refresh("backfill");
+        if (cancelled) {
+          return;
+        }
+        const done = outcome?.questionnaireSeen && outcome?.questionnaireOpen;
+        if (done || attempt >= QUESTIONNAIRE_DISCOVERY_BACKFILL_RETRY_MAX) {
+          setDiscoveryBackfillCompletedAt(new Date().toISOString());
+          return;
+        }
+        const delayMs = QUESTIONNAIRE_DISCOVERY_BACKFILL_RETRY_BASE_DELAY_MS * (2 ** attempt);
+        await new Promise((resolve) => {
+          window.setTimeout(resolve, delayMs);
+        });
+        attempt += 1;
+      }
+    };
+    void runBackfillWithRetry();
+
+    const unsubscribers = [
+      subscribeQuestionnaireEvents({
+        questionnaireId: id,
+        kind: QUESTIONNAIRE_DEFINITION_KIND,
+        parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireDefinitionEvent(event)?.questionnaireId ?? null,
+        onEvent: () => {
+          void refresh("live");
+        },
+        onError: () => setStatus("Questionnaire live stream disconnected."),
+      }),
+      subscribeQuestionnaireEvents({
+        questionnaireId: id,
+        kind: QUESTIONNAIRE_STATE_KIND,
+        parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireStateEvent(event)?.questionnaireId ?? null,
+        onEvent: () => {
+          void refresh("live");
+        },
+        onError: () => setStatus("Questionnaire live stream disconnected."),
+      }),
+      subscribeQuestionnaireEvents({
+        questionnaireId: id,
+        kind: QUESTIONNAIRE_RESULT_SUMMARY_KIND,
+        parseQuestionnaireIdFromEvent: (event) => {
+          try {
+            const parsed = JSON.parse(event.content) as { questionnaireId?: string };
+            return typeof parsed.questionnaireId === "string" ? parsed.questionnaireId : null;
+          } catch {
+            return null;
+          }
+        },
+        onEvent: () => {
+          void refresh("live");
+        },
+        onError: () => setStatus("Questionnaire live stream disconnected."),
+      }),
+      subscribeQuestionnaireEvents({
+        questionnaireId: id,
+        kind: QUESTIONNAIRE_RESPONSE_PRIVATE_KIND,
+        parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireResponseEnvelope(event)?.questionnaireId ?? null,
+        onEvent: () => {
+          void refresh("live");
+        },
+        onError: () => setStatus("Questionnaire live stream disconnected."),
+      }),
+    ];
+
+    return () => {
+      cancelled = true;
+      for (const unsubscribe of unsubscribers) {
+        unsubscribe();
+      }
+    };
   }, [refresh]);
+
+  useEffect(() => {
+    if (definition && !firstDefinitionSeenAt) {
+      setFirstDefinitionSeenAt(new Date().toISOString());
+    }
+  }, [definition, firstDefinitionSeenAt]);
+
+  useEffect(() => {
+    if (state === "open" && !firstOpenSeenAt) {
+      setFirstOpenSeenAt(new Date().toISOString());
+    }
+  }, [firstOpenSeenAt, state]);
 
   const canSubmit = useMemo(() => {
     return Boolean(definition && state === "open" && tokenStatus === "ready");
   }, [definition, state, tokenStatus]);
   const selectedQuestionnaireOptions = selectorEntries.map((entry) => entry.questionnaireId);
   const selectedQuestionnaireEntry = selectorEntries.find((entry) => entry.questionnaireId === questionnaireId) ?? null;
+
+  useEffect(() => {
+    setResponsePipelineDiagnostics((current) => ({
+      ...current,
+      responseReady: canSubmit,
+    }));
+  }, [canSubmit]);
+
+  useEffect(() => {
+    setResponsePipelineDiagnostics({
+      responseReady: false,
+      submitHandlerEntered: false,
+      submitClicked: false,
+      responsePayloadBuilt: false,
+      responsePayloadValidated: false,
+      responsePublishStarted: false,
+      responsePublishSucceeded: false,
+      responseSeenBackLocally: false,
+      responseSeenByCoordinator: false,
+      lastResponseRejectReason: null,
+      lastResponsePublishError: null,
+      lastResponseEventId: null,
+      lastResponseEventKind: null,
+      lastResponseEventCreatedAt: null,
+      lastResponseEventTags: [],
+      lastResponseRelayTargets: [],
+      lastResponseRelaySuccessCount: 0,
+    });
+    setResponseEventCount(0);
+    setFirstDefinitionSeenAt(null);
+    setFirstOpenSeenAt(null);
+    setDiscoverySubscriptionStartedAt(null);
+    setDiscoveryBackfillStartedAt(null);
+    setDiscoveryBackfillCompletedAt(null);
+    setDiscoveryBackfillAttemptCount(0);
+    setDefinitionSeenLiveCount(0);
+    setDefinitionSeenBackfillCount(0);
+    setOpenSeenLiveCount(0);
+    setOpenSeenBackfillCount(0);
+  }, [questionnaireId]);
 
   useEffect(() => {
     const current = questionnaireId.trim();
@@ -741,15 +1141,34 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
   }
 
   async function submitResponse() {
+    setResponsePipelineDiagnostics((current) => ({
+      ...current,
+      submitHandlerEntered: true,
+      submitClicked: true,
+      lastResponseRejectReason: null,
+      lastResponsePublishError: null,
+    }));
     if (!definition) {
+      setResponsePipelineDiagnostics((current) => ({
+        ...current,
+        lastResponseRejectReason: "no_definition_loaded",
+      }));
       setStatus("No questionnaire loaded.");
       return;
     }
     if (state !== "open") {
+      setResponsePipelineDiagnostics((current) => ({
+        ...current,
+        lastResponseRejectReason: `questionnaire_not_open:${state ?? "unknown"}`,
+      }));
       setStatus("Questionnaire is not open.");
       return;
     }
     if (submittedQuestionnaireIds.includes(definition.questionnaireId)) {
+      setResponsePipelineDiagnostics((current) => ({
+        ...current,
+        lastResponseRejectReason: "already_submitted",
+      }));
       setTokenStatus("submitted");
       setStatus("Response already submitted for this questionnaire.");
       return;
@@ -764,14 +1183,34 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
       submittedAt: nowUnix(),
       answers: buildResponseAnswers(definition, answerState),
     };
+    setResponsePipelineDiagnostics((current) => ({
+      ...current,
+      responsePayloadBuilt: true,
+    }));
 
     const validation = validateQuestionnaireResponsePayload({ definition, payload });
     if (!validation.valid) {
+      setResponsePipelineDiagnostics((current) => ({
+        ...current,
+        responsePayloadValidated: false,
+        lastResponseRejectReason: `payload_invalid:${validation.errors[0] ?? "unknown_error"}`,
+      }));
       setStatus(`Response is invalid: ${validation.errors[0] ?? "unknown_error"}.`);
       return;
     }
+    setResponsePipelineDiagnostics((current) => ({
+      ...current,
+      responsePayloadValidated: true,
+    }));
 
     const responseNsec = getStableResponseNsec(definition.questionnaireId);
+    setResponsePipelineDiagnostics((current) => ({
+      ...current,
+      responsePublishStarted: true,
+      responsePublishSucceeded: false,
+      lastResponsePublishError: null,
+      lastResponseRejectReason: null,
+    }));
     setStatus("Submitting response...");
 
     try {
@@ -787,6 +1226,18 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
           ? "Response submitted"
           : "Response submit failed.",
       );
+      setResponsePipelineDiagnostics((current) => ({
+        ...current,
+        responsePublishSucceeded: result.successes > 0,
+        lastResponsePublishError: result.successes > 0 ? null : "publish_zero_success_relays",
+        lastResponseRejectReason: result.successes > 0 ? null : "publish_failed",
+        lastResponseEventId: result.eventId ?? current.lastResponseEventId,
+        lastResponseEventKind: result.event.kind ?? current.lastResponseEventKind,
+        lastResponseEventCreatedAt: result.event.created_at ?? current.lastResponseEventCreatedAt,
+        lastResponseEventTags: result.event.tags ?? current.lastResponseEventTags,
+        lastResponseRelayTargets: result.relayResults.map((entry) => entry.relay),
+        lastResponseRelaySuccessCount: result.successes,
+      }));
       if (result.successes > 0) {
         setResponseSubmittedCount((current) => current + 1);
         setTokenStatus("submitted");
@@ -811,12 +1262,33 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
           );
         });
       }
-    } catch {
+    } catch (error) {
+      setResponsePipelineDiagnostics((current) => ({
+        ...current,
+        responsePublishSucceeded: false,
+        lastResponseRejectReason: "publish_exception",
+        lastResponsePublishError: error instanceof Error ? error.message : String(error),
+      }));
       setStatus("Response submit failed.");
     }
   }
 
   useEffect(() => {
+    const submitButtonPresent = Boolean(definition);
+    const submitButtonVisible = Boolean(definition);
+    const submitButtonDisabled = !canSubmit;
+    let submitButtonReasonBlocked: string = "none";
+    if (!definition) {
+      submitButtonReasonBlocked = "no_questionnaire";
+    } else if (state !== "open") {
+      submitButtonReasonBlocked = "not_open";
+    } else if (tokenStatus === "submitted") {
+      submitButtonReasonBlocked = "already_submitted";
+    } else if (tokenStatus !== "ready") {
+      submitButtonReasonBlocked = "no_token";
+    } else if (!canSubmit) {
+      submitButtonReasonBlocked = "response_not_ready";
+    }
     const owner = globalThis as typeof globalThis & {
       __questionnaireVoterDebug?: unknown;
     };
@@ -840,6 +1312,27 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
       questionnaireDefinitionLiveResultCount: null,
       questionnaireDefinitionBackfillResultCount: definitionEventCount,
       questionnaireDefinitionKindOnlyCount: definitionKindOnlyCount,
+      questionnaireDefinitionsSeen,
+      questionnaireOpenEventsSeen,
+      definitionSeenLive: definitionSeenLiveCount > 0,
+      definitionSeenBackfill: definitionSeenBackfillCount > 0,
+      openSeenLive: openSeenLiveCount > 0,
+      openSeenBackfill: openSeenBackfillCount > 0,
+      definitionSeenLiveCount,
+      definitionSeenBackfillCount,
+      openSeenLiveCount,
+      openSeenBackfillCount,
+      lastQuestionnaireDefinitionId,
+      lastQuestionnaireOpenId,
+      lastQuestionnaireFilterUsed,
+      lastQuestionnaireRejectReason,
+      discoverySubscriptionStartedAt,
+      firstDefinitionSeenAt,
+      firstOpenSeenAt,
+      discoveryBackfillStartedAt,
+      discoveryBackfillCompletedAt,
+      discoveryBackfillAttemptCount,
+      selectorDiagnostics,
       questionnaireStateLiveResultCount: null,
       questionnaireStateBackfillResultCount: stateEventCount,
       questionnaireStateKindOnlyCount: stateKindOnlyCount,
@@ -848,16 +1341,58 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
       questionnaireResultKindOnlyCount: resultKindOnlyCount,
       definitionEventCount,
       stateEventCount,
+      responseEventCount,
       resultEventCount,
       latestResultAcceptedCount: latestResult?.acceptedResponseCount ?? null,
       responsePublished: responseSubmittedCount > 0,
+      tokenRequested: Boolean(definition && state === "open"),
+      tokenReceived: Boolean(definition && (tokenStatus === "ready" || tokenStatus === "submitted")),
       responseSubmittedCount,
+      responseReady: responsePipelineDiagnostics.responseReady,
+      submitHandlerEntered: responsePipelineDiagnostics.submitHandlerEntered,
+      submitClicked: responsePipelineDiagnostics.submitClicked,
+      submitButtonPresent,
+      submitButtonVisible,
+      submitButtonDisabled,
+      submitButtonText: "Submit response",
+      submitButtonReasonBlocked,
+      responsePayloadBuilt: responsePipelineDiagnostics.responsePayloadBuilt,
+      responsePayloadValidated: responsePipelineDiagnostics.responsePayloadValidated,
+      responsePublishStarted: responsePipelineDiagnostics.responsePublishStarted,
+      responsePublishSucceeded: responsePipelineDiagnostics.responsePublishSucceeded,
+      responseSeenBackLocally: responsePipelineDiagnostics.responseSeenBackLocally,
+      responseSeenByCoordinator: responsePipelineDiagnostics.responseSeenByCoordinator,
+      lastResponseRejectReason: responsePipelineDiagnostics.lastResponseRejectReason,
+      lastResponsePublishError: responsePipelineDiagnostics.lastResponsePublishError,
+      lastResponseEventId: responsePipelineDiagnostics.lastResponseEventId,
+      lastResponseEventKind: responsePipelineDiagnostics.lastResponseEventKind,
+      lastResponseEventCreatedAt: responsePipelineDiagnostics.lastResponseEventCreatedAt,
+      lastResponseEventTags: responsePipelineDiagnostics.lastResponseEventTags,
+      lastResponseRelayTargets: responsePipelineDiagnostics.lastResponseRelayTargets,
+      lastResponseRelaySuccessCount: responsePipelineDiagnostics.lastResponseRelaySuccessCount,
       status,
     };
   }, [
     definitionBackfillFilter,
     definitionEventCount,
     definitionKindOnlyCount,
+    questionnaireDefinitionsSeen,
+    questionnaireOpenEventsSeen,
+    definitionSeenLiveCount,
+    definitionSeenBackfillCount,
+    openSeenLiveCount,
+    openSeenBackfillCount,
+    lastQuestionnaireDefinitionId,
+    lastQuestionnaireOpenId,
+    lastQuestionnaireFilterUsed,
+    lastQuestionnaireRejectReason,
+    discoverySubscriptionStartedAt,
+    firstDefinitionSeenAt,
+    firstOpenSeenAt,
+    discoveryBackfillStartedAt,
+    discoveryBackfillCompletedAt,
+    discoveryBackfillAttemptCount,
+    selectorDiagnostics,
     definitionReadMode,
     definition,
     latestResult?.acceptedResponseCount,
@@ -866,6 +1401,8 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
     resultEventCount,
     resultKindOnlyCount,
     resultReadMode,
+    responseEventCount,
+    responsePipelineDiagnostics,
     responseSubmittedCount,
     state,
     stateBackfillFilter,
@@ -874,6 +1411,8 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
     stateReadMode,
     status,
     voterNpub,
+    canSubmit,
+    tokenStatus,
   ]);
 
   useEffect(() => {

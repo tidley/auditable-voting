@@ -38,6 +38,10 @@ The shipped app currently includes:
 - randomised automatic follow/request/ticket/ack send pacing, plus slower retry windows, to reduce relay-side rate limiting when many browser actors act at once
 - lead coordinator roster DMs now include active questionnaire ids (`open`/`published`) so accepted followers can auto-discover questionnaires without manual restore
 - voter vote-tab gating now verifies announced questionnaire ids against public definition+state (`open`/`published`) before enabling Vote, reducing manual restore races
+- questionnaire reads now prefer direct live subscriptions with a single startup backfill (+ one bounded retry) and emit per-voter discovery timing diagnostics (`subscription`, `first_definition_seen`, `first_open_seen`, backfill window)
+- in `course_feedback` deployment, coordinator runtime now bypasses legacy live-round/ticket queue gating so questionnaire response acceptance is not blocked by `no_active_round` or blinded-ticket prerequisites
+- course-feedback operational runs are now batch-gated by default (`LIVE_BATCH_SIZE=5`) so enrolment and submission progress in controlled waves with checkpointed harness state instead of full 25-voter cold-start fanout
+- coordinator questionnaire response reads now prefer kind-only bounded backfill with local questionnaire-id filtering (plus relay probes) to tolerate relays with unreliable custom tag indexing
 - questionnaire responses now use a stable per-questionnaire responder identity per voter profile, with one accepted submission per questionnaire in the voter flow
 - local browser persistence, backup, and optional passphrase protection
 - voter questionnaire participation history is now stored locally and included in voter backups/restores
@@ -217,3 +221,11 @@ VITE_BASE_PATH=/auditable-voting/ npm --prefix web run build
 - [Questionnaire protocol decisions](./docs/questionnaire-protocol-decisions.md)
 - [Marmot migration plan](./docs/marmot-migration-plan.md)
 - [Portable presentation](./presentation/project-overview.html)
+
+## Option A (Experimental)
+
+An explicit questionnaire flow gate is now available:
+
+- add `?qflow=option_a` (or `?questionnaire_flow=option_a`) to enable the reducer-driven Option A path
+- legacy questionnaire behaviour remains the default when the gate is not set
+- Option A currently uses signer login, coordinator whitelist/invite actions, blind request/issuance, and single-vote acceptance through the `questionnaireOptionA` runtime path

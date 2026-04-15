@@ -270,6 +270,15 @@ const SIMPLE_TICKET_OBSERVE_RECOVERY_AGE_MS = 5000;
 const SIMPLE_COORDINATOR_STARTUP_FORCED_RECOVERY_DELAY_MS = 6000;
 const SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT = 200;
 
+function readDeploymentModeFromUrl() {
+  if (typeof window === "undefined") {
+    return "legacy";
+  }
+  return (new URLSearchParams(window.location.search).get("deployment") ?? "legacy")
+    .trim()
+    .toLowerCase();
+}
+
 function sortCoordinatorRoster(values: string[]) {
   return [...new Set(values.filter((value) => value.trim().length > 0))].sort();
 }
@@ -602,6 +611,8 @@ export default function SimpleCoordinatorApp() {
     setLastSuccessfulShareAssignmentSignature,
   ] = useState('');
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const deploymentMode = useMemo(() => readDeploymentModeFromUrl(), []);
+  const isCourseFeedbackMode = deploymentMode === "course_feedback";
   const ticketRetryMinAgeMs = useMemo(
     () => readRuntimeIntOverride("SIMPLE_TICKET_RETRY_AGE_MS", SIMPLE_TICKET_RETRY_MIN_AGE_MS),
     [],
@@ -2426,6 +2437,10 @@ export default function SimpleCoordinatorApp() {
     const coordinatorNpub = keypair?.npub ?? "";
     const activeRound = selectedPublishedVote;
 
+    if (isCourseFeedbackMode) {
+      return;
+    }
+
     if (!coordinatorNpub || !activeRound || !activeRound.authorizedCoordinatorNpubs.includes(coordinatorNpub)) {
       return;
     }
@@ -2451,12 +2466,16 @@ export default function SimpleCoordinatorApp() {
     return () => {
       cancelled = true;
     };
-  }, [keypair?.npub, roundBlindPrivateKeys, selectedPublishedVote]);
+  }, [isCourseFeedbackMode, keypair?.npub, roundBlindPrivateKeys, selectedPublishedVote]);
 
   useEffect(() => {
     const coordinatorNsec = keypair?.nsec ?? "";
     const coordinatorNpub = keypair?.npub ?? "";
     const activeRound = selectedPublishedVote;
+
+    if (isCourseFeedbackMode) {
+      return;
+    }
 
     if (
       !coordinatorNsec
@@ -2485,11 +2504,16 @@ export default function SimpleCoordinatorApp() {
     return () => {
       cancelled = true;
     };
-  }, [keypair?.npub, keypair?.nsec, publishedVotes, roundBlindKeyAnnouncements, roundBlindPrivateKeys, selectedPublishedVote]);
+  }, [isCourseFeedbackMode, keypair?.npub, keypair?.nsec, publishedVotes, roundBlindKeyAnnouncements, roundBlindPrivateKeys, selectedPublishedVote]);
 
   useEffect(() => {
     const coordinatorNsec = keypair?.nsec ?? "";
     if (!coordinatorNsec) {
+      setPendingRequests([]);
+      return;
+    }
+
+    if (isCourseFeedbackMode) {
       setPendingRequests([]);
       return;
     }
@@ -2502,7 +2526,7 @@ export default function SimpleCoordinatorApp() {
         setPendingRequests(nextRequests);
       },
     });
-  }, [keypair?.nsec]);
+  }, [isCourseFeedbackMode, keypair?.nsec]);
 
   useEffect(() => {
     if (!activeBlindKeyAnnouncement) {
@@ -2664,6 +2688,11 @@ export default function SimpleCoordinatorApp() {
       return;
     }
 
+    if (isCourseFeedbackMode) {
+      setPublishedVotes([]);
+      return;
+    }
+
     setPublishedVotes([]);
 
     return subscribeSimpleLiveVotes({
@@ -2676,7 +2705,7 @@ export default function SimpleCoordinatorApp() {
         );
       },
     });
-  }, [liveVoteSourceNpub]);
+  }, [isCourseFeedbackMode, liveVoteSourceNpub]);
 
   useEffect(() => {
     if (!visiblePublishedVotes.length) {
@@ -2710,6 +2739,11 @@ export default function SimpleCoordinatorApp() {
       return;
     }
 
+    if (isCourseFeedbackMode) {
+      setSubmittedVotes([]);
+      return;
+    }
+
     setSubmittedVotes([]);
 
     return subscribeSimpleSubmittedVotes({
@@ -2718,7 +2752,7 @@ export default function SimpleCoordinatorApp() {
         setSubmittedVotes(nextVotes);
       },
     });
-  }, [selectedSubmittedVote?.votingId]);
+  }, [isCourseFeedbackMode, selectedSubmittedVote?.votingId]);
 
   function refreshIdentity() {
     identityHydrationEpochRef.current += 1;
@@ -3898,6 +3932,7 @@ export default function SimpleCoordinatorApp() {
   const canIssueTickets = Boolean(
     keypair?.nsec &&
     activeBlindPrivateKey &&
+    !isCourseFeedbackMode &&
     (isLeadCoordinator || activeShareIndex > 0),
   );
   const coordinatorFollowerRows = useMemo(() => buildCoordinatorFollowerRowsRust({
@@ -4018,7 +4053,9 @@ export default function SimpleCoordinatorApp() {
     const sendAttempted = Boolean(delivery?.attempts && delivery.attempts > 0);
     const sendStartedAt = delivery?.ticketPublishStartedAt ?? null;
     let sendBlockedReason: string | null = null;
-    if (!selectedVotingId) {
+    if (isCourseFeedbackMode) {
+      sendBlockedReason = "course_feedback_legacy_round_bypassed";
+    } else if (!selectedVotingId) {
       sendBlockedReason = "no_active_round";
     } else if (!autoSendFollowers[row.voterNpub]) {
       sendBlockedReason = "not_selected_for_auto_send";
@@ -4081,6 +4118,7 @@ export default function SimpleCoordinatorApp() {
     autoSendFollowers,
     coordinatorFollowerRows,
     dmAcknowledgements,
+    isCourseFeedbackMode,
     ticketSendMaxConcurrency,
     pendingRequests,
     nowMs,
@@ -4206,6 +4244,9 @@ export default function SimpleCoordinatorApp() {
       sendQueueStartedCount,
       sendQueueBlockedCount,
       sendQueueBlockedReasons,
+      deploymentMode,
+      courseFeedbackAcceptanceEnabled: isCourseFeedbackMode,
+      legacyRoundGatingBypassed: isCourseFeedbackMode,
       sendQueueInFlightCount,
       sendQueueUnsentCount,
       roundOpenAt,
@@ -4273,6 +4314,8 @@ export default function SimpleCoordinatorApp() {
     acceptedBallotsByRequestId,
     acceptedBallotsByTicketId,
     blindKeyDiagnosticsVersion,
+    deploymentMode,
+    isCourseFeedbackMode,
     selectedPublishedVote?.createdAt,
     coordinatorControlStateLabel,
     coordinatorEngineStatus,
@@ -4843,6 +4886,7 @@ export default function SimpleCoordinatorApp() {
                     }
 
                     const waitingForBlindedRequest = Boolean(
+                      !isCourseFeedbackMode &&
                       selectedPublishedVote &&
                       !findLatestRoundRequest(
                         pendingRequests,
@@ -4903,14 +4947,18 @@ export default function SimpleCoordinatorApp() {
                                   row.pendingRequest.tone,
                                 )}
                               >
-                                {row.pendingRequest.text}
+                                {isCourseFeedbackMode
+                                  ? 'Course-feedback mode bypasses legacy blinded ticket requests.'
+                                  : row.pendingRequest.text}
                               </li>
                               <li
                                 className={deliveryToneClass(row.ticket.tone)}
                               >
-                                {row.ticket.text}
+                                {isCourseFeedbackMode
+                                  ? 'Course-feedback mode accepts questionnaire responses without live-round ticket issuance.'
+                                  : row.ticket.text}
                               </li>
-                              {row.receipt ? (
+                              {row.receipt && !isCourseFeedbackMode ? (
                                 <li
                                   className={deliveryToneClass(
                                     row.receipt.tone,
@@ -4959,7 +5007,7 @@ export default function SimpleCoordinatorApp() {
                                 type='button'
                                 className='simple-voter-secondary'
                                 onClick={() => void resendRoundInfo(follower)}
-                                disabled={!activeBlindPrivateKey}
+                                disabled={!activeBlindPrivateKey || isCourseFeedbackMode}
                               >
                                 Resend round info
                               </button>
