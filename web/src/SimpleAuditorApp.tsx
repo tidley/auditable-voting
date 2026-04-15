@@ -34,6 +34,7 @@ function roundToSession(round: DerivedState["public_state"]["rounds"][number]): 
 export default function SimpleAuditorApp() {
   const [derivedState, setDerivedState] = useState<DerivedState | null>(null);
   const [selectedVotingId, setSelectedVotingId] = useState("");
+  const [selectedCoordinatorNpub, setSelectedCoordinatorNpub] = useState("");
   const [refreshStatus, setRefreshStatus] = useState<string | null>(null);
   const snapshotRef = useRef<ProtocolSnapshot | null>(null);
 
@@ -110,17 +111,48 @@ export default function SimpleAuditorApp() {
     [derivedState],
   );
 
+  const leadCoordinatorOptions = useMemo(
+    () => [...new Set(
+      discoveredRounds
+        .map((round) => round.coordinatorNpub.trim())
+        .filter((value) => value.length > 0),
+    )],
+    [discoveredRounds],
+  );
+
+  const filteredDiscoveredRounds = useMemo(
+    () => (
+      selectedCoordinatorNpub
+        ? discoveredRounds.filter((round) => round.coordinatorNpub === selectedCoordinatorNpub)
+        : discoveredRounds
+    ),
+    [discoveredRounds, selectedCoordinatorNpub],
+  );
+
   useEffect(() => {
-    if (!selectedVotingId && discoveredRounds.length > 0) {
-      setSelectedVotingId(discoveredRounds[0].votingId);
+    if (selectedCoordinatorNpub && !leadCoordinatorOptions.includes(selectedCoordinatorNpub)) {
+      setSelectedCoordinatorNpub("");
     }
-  }, [discoveredRounds, selectedVotingId]);
+  }, [leadCoordinatorOptions, selectedCoordinatorNpub]);
+
+  useEffect(() => {
+    if (filteredDiscoveredRounds.length === 0) {
+      if (selectedVotingId) {
+        setSelectedVotingId("");
+      }
+      return;
+    }
+    if (!selectedVotingId || !filteredDiscoveredRounds.some((round) => round.votingId === selectedVotingId)) {
+      setSelectedVotingId(filteredDiscoveredRounds[0].votingId);
+    }
+  }, [filteredDiscoveredRounds, selectedVotingId]);
+
+  const selectedRoundId = selectedVotingId || filteredDiscoveredRounds[0]?.votingId || "";
 
   const selectedRound = useMemo(
-    () => derivedState?.public_state.rounds.find((round) => round.round_id === selectedVotingId)
-      ?? derivedState?.public_state.rounds[0]
+    () => derivedState?.public_state.rounds.find((round) => round.round_id === selectedRoundId)
       ?? null,
-    [derivedState, selectedVotingId],
+    [derivedState, selectedRoundId],
   );
 
   const selectedSummary = useMemo(
@@ -156,21 +188,43 @@ export default function SimpleAuditorApp() {
         <SimpleCollapsibleSection title='Discovered rounds'>
           {discoveredRounds.length > 0 ? (
             <>
-              <label className='simple-voter-label' htmlFor='simple-auditor-round'>
-                Round
+              <label className='simple-voter-label' htmlFor='simple-auditor-lead-coordinator'>
+                Lead coordinator
               </label>
               <select
-                id='simple-auditor-round'
+                id='simple-auditor-lead-coordinator'
                 className='simple-voter-input'
-                value={selectedRound?.round_id ?? ''}
-                onChange={(event) => setSelectedVotingId(event.target.value)}
+                value={selectedCoordinatorNpub}
+                onChange={(event) => setSelectedCoordinatorNpub(event.target.value)}
               >
-                {discoveredRounds.map((round) => (
-                  <option key={round.eventId} value={round.votingId}>
-                    {formatRoundOptionLabel(round)}
+                <option value=''>All lead coordinators</option>
+                {leadCoordinatorOptions.map((coordinatorNpub) => (
+                  <option key={coordinatorNpub} value={coordinatorNpub}>
+                    {coordinatorNpub}
                   </option>
                 ))}
               </select>
+              {filteredDiscoveredRounds.length > 0 ? (
+                <>
+                  <label className='simple-voter-label' htmlFor='simple-auditor-round'>
+                    Round
+                  </label>
+                  <select
+                    id='simple-auditor-round'
+                    className='simple-voter-input'
+                    value={selectedRound?.round_id ?? ''}
+                    onChange={(event) => setSelectedVotingId(event.target.value)}
+                  >
+                    {filteredDiscoveredRounds.map((round) => (
+                      <option key={round.eventId} value={round.votingId}>
+                        {formatRoundOptionLabel(round)}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              ) : (
+                <p className='simple-voter-note'>No rounds found for the selected lead coordinator.</p>
+              )}
               {selectedRound ? (
                 <div className='simple-auditor-summary-grid'>
                   <div className='simple-auditor-summary-card'>

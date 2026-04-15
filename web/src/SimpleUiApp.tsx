@@ -44,6 +44,17 @@ import {
   subscribeLatestSimpleLiveVote,
   type SimpleLiveVoteSession,
 } from "./simpleVotingSession";
+import {
+  fetchQuestionnaireEventsWithFallback,
+  parseQuestionnaireDefinitionEvent,
+  parseQuestionnaireStateEvent,
+  QUESTIONNAIRE_DEFINITION_KIND,
+  QUESTIONNAIRE_STATE_KIND,
+} from "./questionnaireNostr";
+import {
+  selectLatestQuestionnaireDefinition,
+  selectLatestQuestionnaireState,
+} from "./questionnaireRuntime";
 import { buildSimpleVoteTicketRows } from "./simpleRoundState";
 import {
   downloadSimpleActorBackup,
@@ -147,6 +158,7 @@ const SIMPLE_FOLLOW_RETRY_MIN_AGE_MS = 30000;
 const SIMPLE_FOLLOW_RETRY_INTERVAL_MS = 10000;
 const SIMPLE_REQUEST_RETRY_MIN_AGE_MS = 30000;
 const SIMPLE_REQUEST_RETRY_INTERVAL_MS = 10000;
+const QUESTIONNAIRE_ANNOUNCEMENT_VERIFY_INTERVAL_MS = 7000;
 
 function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -253,6 +265,29 @@ function readDeploymentModeFromUrl() {
     .toLowerCase();
 }
 
+async function verifyAnnouncedQuestionnaireIsReady(questionnaireId: string) {
+  const [definitionFetch, stateFetch] = await Promise.all([
+    fetchQuestionnaireEventsWithFallback({
+      questionnaireId,
+      kind: QUESTIONNAIRE_DEFINITION_KIND,
+      parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireDefinitionEvent(event)?.questionnaireId ?? null,
+      limit: 50,
+    }),
+    fetchQuestionnaireEventsWithFallback({
+      questionnaireId,
+      kind: QUESTIONNAIRE_STATE_KIND,
+      parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireStateEvent(event)?.questionnaireId ?? null,
+      limit: 50,
+    }),
+  ]);
+  const latestDefinition = selectLatestQuestionnaireDefinition(definitionFetch.events);
+  const latestState = String(selectLatestQuestionnaireState(stateFetch.events)?.state ?? "");
+  if (!latestDefinition) {
+    return false;
+  }
+  return latestState === "open" || latestState === "published";
+}
+
 export default function SimpleUiApp() {
   const [voterKeypair, setVoterKeypair] = useState<SimpleVoterKeypair | null>(null);
   const [identityReady, setIdentityReady] = useState(false);
@@ -266,6 +301,7 @@ export default function SimpleUiApp() {
   const [coordinatorScannerActive, setCoordinatorScannerActive] = useState(false);
   const [coordinatorScannerStatus, setCoordinatorScannerStatus] = useState<string | null>(null);
   const [announcedQuestionnaireIds, setAnnouncedQuestionnaireIds] = useState<string[]>([]);
+  const [readyAnnouncedQuestionnaireIds, setReadyAnnouncedQuestionnaireIds] = useState<string[]>([]);
   const [liveVoteChoice, setLiveVoteChoice] = useState<LiveVoteChoice>(null);
   const [requestStatus, setRequestStatus] = useState<string | null>(null);
   const [identityStatus, setIdentityStatus] = useState<string | null>(null);
@@ -788,6 +824,60 @@ export default function SimpleUiApp() {
       },
     });
   }, [shouldActivateStartupRelayTraffic, voterKeypair?.nsec]);
+
+  useEffect(() => {
+    const announcedIds = [...new Set(
+      announcedQuestionnaireIds
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0),
+    )];
+    if (announcedIds.length === 0) {
+      setReadyAnnouncedQuestionnaireIds((current) => (current.length === 0 ? current : []));
+      return;
+    }
+
+    let cancelled = false;
+    const runVerification = async () => {
+      const checks = await Promise.all(announcedIds.map(async (questionnaireId) => {
+        try {
+          const ready = await verifyAnnouncedQuestionnaireIsReady(questionnaireId);
+          return { questionnaireId, ready };
+        } catch {
+          return { questionnaireId, ready: null as boolean | null };
+        }
+      }));
+      if (cancelled) {
+        return;
+      }
+
+      setReadyAnnouncedQuestionnaireIds((current) => {
+        const outcomeById = new Map(checks.map((entry) => [entry.questionnaireId, entry.ready]));
+        const next = announcedIds.filter((questionnaireId) => {
+          const outcome = outcomeById.get(questionnaireId);
+          if (outcome === true) {
+            return true;
+          }
+          if (outcome === false) {
+            return false;
+          }
+          return current.includes(questionnaireId);
+        });
+        return next.length === current.length
+          && next.every((value, index) => value === current[index])
+          ? current
+          : next;
+      });
+    };
+
+    void runVerification();
+    const intervalId = window.setInterval(() => {
+      void runVerification();
+    }, QUESTIONNAIRE_ANNOUNCEMENT_VERIFY_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [announcedQuestionnaireIds]);
 
   useEffect(() => {
     const voterNsec = voterKeypair?.nsec?.trim() ?? "";
@@ -2160,7 +2250,11 @@ export default function SimpleUiApp() {
   const hideLegacyLiveVotePanel = questionnaireContext.hasDefinition;
   const questionnaireVoteReady =
     questionnaireContext.hasDefinition
-    || announcedQuestionnaireIds.length > 0;
+    || readyAnnouncedQuestionnaireIds.length > 0;
+  const waitingForQuestionnaireData =
+    !questionnaireContext.hasDefinition
+    && announcedQuestionnaireIds.length > 0
+    && readyAnnouncedQuestionnaireIds.length === 0;
 
   useEffect(() => {
     setTicketAckSent(false);
@@ -2316,7 +2410,9 @@ export default function SimpleUiApp() {
 
   function selectTab(nextTab: VoterTab) {
     if (nextTab === "vote" && !questionnaireVoteReady) {
-      setRequestStatus("Waiting for questions to be published.");
+      setRequestStatus(waitingForQuestionnaireData
+        ? "Waiting for questionnaire data from coordinator."
+        : "Waiting for questions to be published.");
       setActiveTab("configure");
       return;
     }
@@ -2615,7 +2711,7 @@ export default function SimpleUiApp() {
               }}
               participationHistory={questionnaireParticipationHistory}
               onParticipationHistoryChange={setQuestionnaireParticipationHistory}
-              announcedQuestionnaireIds={announcedQuestionnaireIds}
+              announcedQuestionnaireIds={readyAnnouncedQuestionnaireIds}
             />
             {isCourseFeedbackMode || hideLegacyLiveVotePanel ? null : (
             effectiveLiveVoteSession ? (
