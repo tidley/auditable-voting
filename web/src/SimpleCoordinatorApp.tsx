@@ -58,6 +58,7 @@ import SimpleRelayPanel from "./SimpleRelayPanel";
 import SimpleUnlockGate from "./SimpleUnlockGate";
 import TokenFingerprint from "./TokenFingerprint";
 import QuestionnaireCoordinatorPanel from "./QuestionnaireCoordinatorPanel";
+import QuestionnaireOptionACoordinatorPanel from "./QuestionnaireOptionACoordinatorPanel";
 import { extractNpubFromScan } from "./npubScan";
 import {
   primeNip65RelayHints,
@@ -5068,6 +5069,10 @@ export default function SimpleCoordinatorApp() {
                   });
                 }}
               />
+            </SimpleCollapsibleSection>
+
+            <SimpleCollapsibleSection title='Known voters and invites (Option A)' defaultCollapsed>
+              <QuestionnaireOptionACoordinatorPanel />
             </SimpleCollapsibleSection>
           </section>
         ) : null}
