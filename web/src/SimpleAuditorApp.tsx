@@ -34,7 +34,8 @@ function roundToSession(round: DerivedState["public_state"]["rounds"][number]): 
 export default function SimpleAuditorApp() {
   const [derivedState, setDerivedState] = useState<DerivedState | null>(null);
   const [selectedVotingId, setSelectedVotingId] = useState("");
-  const [selectedCoordinatorNpub, setSelectedCoordinatorNpub] = useState("");
+  const [selectedLeadCoordinatorNpub, setSelectedLeadCoordinatorNpub] = useState("");
+  const [selectedRosterCoordinatorNpub, setSelectedRosterCoordinatorNpub] = useState("");
   const [refreshStatus, setRefreshStatus] = useState<string | null>(null);
   const snapshotRef = useRef<ProtocolSnapshot | null>(null);
 
@@ -120,20 +121,39 @@ export default function SimpleAuditorApp() {
     [discoveredRounds],
   );
 
+  const rosterCoordinatorOptions = useMemo(
+    () => [...new Set(
+      discoveredRounds.flatMap((round) => round.authorizedCoordinatorNpubs.map((value) => value.trim())),
+    )].filter((value) => value.length > 0),
+    [discoveredRounds],
+  );
+
   const filteredDiscoveredRounds = useMemo(
-    () => (
-      selectedCoordinatorNpub
-        ? discoveredRounds.filter((round) => round.coordinatorNpub === selectedCoordinatorNpub)
-        : discoveredRounds
-    ),
-    [discoveredRounds, selectedCoordinatorNpub],
+    () => discoveredRounds.filter((round) => {
+      if (selectedLeadCoordinatorNpub && round.coordinatorNpub !== selectedLeadCoordinatorNpub) {
+        return false;
+      }
+      if (selectedRosterCoordinatorNpub && !round.authorizedCoordinatorNpubs.includes(selectedRosterCoordinatorNpub)) {
+        return false;
+      }
+      return true;
+    }),
+    [discoveredRounds, selectedLeadCoordinatorNpub, selectedRosterCoordinatorNpub],
   );
 
   useEffect(() => {
-    if (selectedCoordinatorNpub && !leadCoordinatorOptions.includes(selectedCoordinatorNpub)) {
-      setSelectedCoordinatorNpub("");
+    if (selectedLeadCoordinatorNpub && !leadCoordinatorOptions.includes(selectedLeadCoordinatorNpub)) {
+      setSelectedLeadCoordinatorNpub("");
     }
-  }, [leadCoordinatorOptions, selectedCoordinatorNpub]);
+    if (selectedRosterCoordinatorNpub && !rosterCoordinatorOptions.includes(selectedRosterCoordinatorNpub)) {
+      setSelectedRosterCoordinatorNpub("");
+    }
+  }, [
+    leadCoordinatorOptions,
+    rosterCoordinatorOptions,
+    selectedLeadCoordinatorNpub,
+    selectedRosterCoordinatorNpub,
+  ]);
 
   useEffect(() => {
     if (filteredDiscoveredRounds.length === 0) {
@@ -194,11 +214,27 @@ export default function SimpleAuditorApp() {
               <select
                 id='simple-auditor-lead-coordinator'
                 className='simple-voter-input'
-                value={selectedCoordinatorNpub}
-                onChange={(event) => setSelectedCoordinatorNpub(event.target.value)}
+                value={selectedLeadCoordinatorNpub}
+                onChange={(event) => setSelectedLeadCoordinatorNpub(event.target.value)}
               >
                 <option value=''>All lead coordinators</option>
                 {leadCoordinatorOptions.map((coordinatorNpub) => (
+                  <option key={coordinatorNpub} value={coordinatorNpub}>
+                    {coordinatorNpub}
+                  </option>
+                ))}
+              </select>
+              <label className='simple-voter-label' htmlFor='simple-auditor-coordinator-npub'>
+                Coordinator npub
+              </label>
+              <select
+                id='simple-auditor-coordinator-npub'
+                className='simple-voter-input'
+                value={selectedRosterCoordinatorNpub}
+                onChange={(event) => setSelectedRosterCoordinatorNpub(event.target.value)}
+              >
+                <option value=''>Any coordinator npub</option>
+                {rosterCoordinatorOptions.map((coordinatorNpub) => (
                   <option key={coordinatorNpub} value={coordinatorNpub}>
                     {coordinatorNpub}
                   </option>
@@ -223,7 +259,7 @@ export default function SimpleAuditorApp() {
                   </select>
                 </>
               ) : (
-                <p className='simple-voter-note'>No rounds found for the selected lead coordinator.</p>
+                <p className='simple-voter-note'>No rounds found for the selected coordinator filters.</p>
               )}
               {selectedRound ? (
                 <div className='simple-auditor-summary-grid'>

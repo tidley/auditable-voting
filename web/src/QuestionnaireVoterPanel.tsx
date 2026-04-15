@@ -350,7 +350,6 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
   const [selectorEntries, setSelectorEntries] = useState<QuestionnaireSelectorEntry[]>([]);
   const [coordinatorContextNpubs, setCoordinatorContextNpubs] = useState<string[]>([]);
   const [restoredQuestionnaireIds, setRestoredQuestionnaireIds] = useState<string[]>([]);
-  const [restoreQuestionnaireIdInput, setRestoreQuestionnaireIdInput] = useState("");
   const [participationHistory, setParticipationHistory] = useState<QuestionnaireParticipationHistoryEntry[]>([]);
   const [voterNpub, setVoterNpub] = useState("");
   const [submittedQuestionnaireIds, setSubmittedQuestionnaireIds] = useState<string[]>([]);
@@ -884,47 +883,6 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
     });
   }, [definition, onContextChange, state]);
 
-  async function restoreQuestionnaireId() {
-    const restoredId = restoreQuestionnaireIdInput.trim();
-    if (!restoredId) {
-      return;
-    }
-    setStatus("Restoring questionnaire...");
-    try {
-      const [definitionFetch, stateFetch] = await Promise.all([
-        fetchQuestionnaireEventsWithFallback({
-          questionnaireId: restoredId,
-          kind: QUESTIONNAIRE_DEFINITION_KIND,
-          parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireDefinitionEvent(event)?.questionnaireId ?? null,
-        }),
-        fetchQuestionnaireEventsWithFallback({
-          questionnaireId: restoredId,
-          kind: QUESTIONNAIRE_STATE_KIND,
-          parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireStateEvent(event)?.questionnaireId ?? null,
-        }),
-      ]);
-      const restoredDefinition = selectLatestQuestionnaireDefinition(definitionFetch.events);
-      if (!restoredDefinition || isDefinitionMarkedStale(restoredDefinition)) {
-        setStatus("Restore failed. Questionnaire not found.");
-        return;
-      }
-      const restoredState = selectLatestQuestionnaireState(stateFetch.events)?.state ?? null;
-      const lifecycle = lifecycleFromExplicitState(restoredState);
-      if (!isActiveSelectorLifecycle(lifecycle)) {
-        setStatus("Restore failed. Questionnaire is not published.");
-        return;
-      }
-      setRestoredQuestionnaireIds((current) => (
-        current.includes(restoredId) ? current : [...current, restoredId].slice(-8)
-      ));
-      setQuestionnaireId(restoredId);
-      setRestoreQuestionnaireIdInput("");
-      setStatus("Questionnaire ID restored.");
-    } catch {
-      setStatus("Restore failed. Questionnaire not found.");
-    }
-  }
-
   return (
     <div className='simple-voter-card'>
       <h3 className='simple-voter-question'>Questionnaire</h3>
@@ -967,34 +925,6 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
           ))}
         </select>
       )}
-      <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
-        <input
-          className='simple-voter-input simple-voter-input-inline'
-          value={restoreQuestionnaireIdInput}
-          placeholder='Restore questionnaire ID'
-          onChange={(event) => setRestoreQuestionnaireIdInput(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              restoreQuestionnaireId();
-            }
-          }}
-        />
-        <button
-          type='button'
-          className='simple-voter-secondary'
-          disabled={!restoreQuestionnaireIdInput.trim()}
-          onClick={restoreQuestionnaireId}
-        >
-          Restore ID
-        </button>
-      </div>
-
-      <div className='simple-voter-action-row simple-voter-action-row-tight'>
-        <button type='button' className='simple-voter-secondary' onClick={() => void refresh()}>
-          Refresh questionnaire
-        </button>
-      </div>
       {participationHistory.length > 0 ? (
         <>
           <p className='simple-voter-note'>Participation history</p>
