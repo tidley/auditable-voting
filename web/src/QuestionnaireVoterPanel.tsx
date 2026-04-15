@@ -383,6 +383,10 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
     }),
     [questionnaireId, responseIdentityByQuestionnaireId, voterNpub],
   );
+  const responderMarkerId = useMemo(
+    () => deriveActorDisplayId(responderMarkerNpub || "unknown"),
+    [responderMarkerNpub],
+  );
   const restoredStorageKey = useMemo(
     () => buildRestoredStorageKey(actorId, coordinatorContextNpubs),
     [actorId, coordinatorContextNpubs],
@@ -459,10 +463,14 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
     if (announcedIds.length === 0) {
       return;
     }
+    const currentId = questionnaireId.trim();
+    if (!currentId) {
+      setQuestionnaireId(announcedIds[0]);
+    }
     setRestoredQuestionnaireIds((current) => (
       [...new Set([...current, ...announcedIds])].slice(-8)
     ));
-  }, [announcedQuestionnaireIds]);
+  }, [announcedQuestionnaireIds, questionnaireId]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -926,7 +934,10 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
       {responderMarkerNpub ? (
         <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
           <TokenFingerprint tokenId={responderMarkerNpub} compact showQr={false} hideMetadata />
-          <p className='simple-voter-note'>Your responder marker</p>
+          <div>
+            <p className='simple-voter-note'>Your responder marker</p>
+            <p className='simple-voter-note'>Voter ID {responderMarkerId}</p>
+          </div>
         </div>
       ) : null}
 
