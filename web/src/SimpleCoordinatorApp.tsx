@@ -4771,21 +4771,6 @@ export default function SimpleCoordinatorApp() {
                 <p className='simple-voter-note'>{assignmentStatus}</p>
               )}
             </SimpleCollapsibleSection>
-            <SimpleCollapsibleSection title='Questionnaire draft'>
-              <QuestionnaireCoordinatorPanel
-                coordinatorNsec={keypair?.nsec ?? null}
-                coordinatorNpub={keypair?.npub ?? null}
-                knownVoterCount={followers.length}
-                view='build'
-                onStatusChange={(nextStatus) => {
-                  setQuestionnaireRosterAnnouncement({
-                    questionnaireId: nextStatus.questionnaireId,
-                    state: nextStatus.state,
-                  });
-                }}
-              />
-            </SimpleCollapsibleSection>
-
             {isLeadCoordinator && (
               <SimpleCollapsibleSection title='Sub-coordinators'>
                 {subCoordinators.length > 0 ? (
@@ -4992,6 +4977,21 @@ export default function SimpleCoordinatorApp() {
                   No voters are following this coordinator yet.
                 </p>
               )}
+            </SimpleCollapsibleSection>
+
+            <SimpleCollapsibleSection title='Questionnaire draft'>
+              <QuestionnaireCoordinatorPanel
+                coordinatorNsec={keypair?.nsec ?? null}
+                coordinatorNpub={keypair?.npub ?? null}
+                knownVoterCount={followers.length}
+                view='build'
+                onStatusChange={(nextStatus) => {
+                  setQuestionnaireRosterAnnouncement({
+                    questionnaireId: nextStatus.questionnaireId,
+                    state: nextStatus.state,
+                  });
+                }}
+              />
             </SimpleCollapsibleSection>
           </section>
         ) : null}
