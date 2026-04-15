@@ -15,6 +15,7 @@ function deriveElectionId() {
 type Props = {
   title?: string;
   description?: string;
+  coordinatorNpub?: string | null;
 };
 
 export default function QuestionnaireOptionACoordinatorPanel(props: Props) {
@@ -29,6 +30,29 @@ export default function QuestionnaireOptionACoordinatorPanel(props: Props) {
 
   const snapshot = runtime.getSnapshot();
   const flags = runtime.getFlags();
+
+  useEffect(() => {
+    const npub = props.coordinatorNpub?.trim() ?? "";
+    if (!npub || signedInNpub.trim()) {
+      return;
+    }
+    try {
+      const next = runtime.bootstrapCoordinatorNpub({
+        coordinatorNpub: npub,
+        summary: {
+          electionId,
+          title,
+          description,
+          state: "open",
+        },
+      });
+      setSignedInNpub(next.election.coordinatorNpub);
+      setStatus(`Using coordinator identity ${deriveActorDisplayId(next.election.coordinatorNpub)}.`);
+      setRefreshNonce((value) => value + 1);
+    } catch {
+      // Keep manual signer login fallback.
+    }
+  }, [description, electionId, props.coordinatorNpub, runtime, signedInNpub, title]);
 
   async function login() {
     try {
@@ -161,7 +185,7 @@ export default function QuestionnaireOptionACoordinatorPanel(props: Props) {
           placeholder='npub1...'
           onChange={(event) => setWhitelistInput(event.target.value)}
         />
-        <button type='button' className='simple-voter-secondary' disabled={!signedInNpub} onClick={addWhitelist}>Add</button>
+        <button type='button' className='simple-voter-secondary' disabled={!signedInNpub.trim()} onClick={addWhitelist}>Add</button>
       </div>
 
       {whitelistRows.length === 0 ? <p className='simple-voter-note'>No whitelisted voters yet.</p> : (

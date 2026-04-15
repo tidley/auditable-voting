@@ -360,6 +360,21 @@ export class QuestionnaireOptionACoordinatorRuntime {
 
   async loginWithSigner(summary?: Partial<ElectionSummary>) {
     this.coordinatorNpub = toNpub(await this.signer.getPublicKey());
+    return this.ensureCoordinatorState(summary);
+  }
+
+  bootstrapCoordinatorNpub(input: {
+    coordinatorNpub: string;
+    summary?: Partial<ElectionSummary>;
+  }) {
+    this.coordinatorNpub = toNpub(input.coordinatorNpub);
+    return this.ensureCoordinatorState(input.summary);
+  }
+
+  private ensureCoordinatorState(summary?: Partial<ElectionSummary>) {
+    if (!this.coordinatorNpub) {
+      throw new OptionARuntimeError("coordinator_missing", "Coordinator npub is missing.");
+    }
     const existing = loadCoordinatorState({ coordinatorNpub: this.coordinatorNpub, electionId: this.electionId });
     if (existing) {
       this.state = restoreCoordinatorElectionState({ persisted: existing });
