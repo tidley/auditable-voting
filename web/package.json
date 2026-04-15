@@ -21,6 +21,7 @@
     "test:relay-load": "vitest run src/simpleRelayLoad.test.ts",
     "test:rust": "cargo test --manifest-path rust-core/Cargo.toml",
     "test:watch": "vitest",
+    "test:course-feedback-preflight": "vitest run src/questionnaireProtocol.test.ts src/questionnaireRuntime.test.ts src/questionnaireResponderIdentity.test.ts src/questionnaireTransport.test.ts src/questionnaireCourseFeedbackPreflight.test.ts",
     "verify:simple-blind-shares": "tsx scripts/verify-simple-blind-shares.ts",
     "test:live-relays": "node scripts/live-simple-relay-check.js",
     "test:live-relays:repeat": "node scripts/live-simple-relay-repeat.js"

@@ -1,6 +1,7 @@
 import { chromium } from "playwright";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { SimplePool } from "nostr-tools";
 
 function sleep(ms) {
@@ -125,6 +126,66 @@ async function ensureDebugDir() {
 
 function safeErrorMessage(error) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function splitIntoBatches(items, batchSize) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return [];
+  }
+  const size = Number.isFinite(batchSize) && batchSize > 0 ? Math.floor(batchSize) : items.length;
+  const batches = [];
+  for (let index = 0; index < items.length; index += size) {
+    batches.push(items.slice(index, index + size));
+  }
+  return batches;
+}
+
+function batchStageCount(stageMap, voterIds) {
+  return voterIds.reduce((count, voterId) => count + (stageMap.has(voterId) ? 1 : 0), 0);
+}
+
+async function runCommandOrThrow({ cmd, args, cwd }) {
+  await new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, {
+      cwd,
+      stdio: "inherit",
+      env: process.env,
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`${cmd} ${args.join(" ")} exited with code ${code ?? "unknown"}`));
+    });
+  });
+}
+
+async function runCourseFeedbackPreflight({ skip = false } = {}) {
+  if (skip) {
+    return { skipped: true, passed: true };
+  }
+  await runCommandOrThrow({
+    cmd: "npm",
+    args: ["--prefix", "web", "run", "test:course-feedback-preflight"],
+    cwd: process.cwd(),
+  });
+  return { skipped: false, passed: true };
+}
+
+async function loadCheckpoint(filePath) {
+  try {
+    const raw = await readFile(filePath, "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+async function writeCheckpoint(filePath, payload) {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, JSON.stringify(payload, null, 2), "utf8");
 }
 
 async function withTimeout(promise, timeoutMs, label) {
@@ -601,6 +662,7 @@ async function runQuestionnaireRelayProbe(input) {
   const questionnaireId = String(input?.questionnaireId ?? "").trim();
   const tTag = String(input?.tTag ?? "").trim();
   const eventId = String(input?.eventId ?? "").trim();
+  const author = String(input?.author ?? "").trim();
   if (!relay || !Number.isFinite(kind) || kind <= 0 || !questionnaireId) {
     return null;
   }
@@ -620,6 +682,14 @@ async function runQuestionnaireRelayProbe(input) {
         kinds: [kind],
         "#questionnaire-id": [questionnaireId],
         ...(tTag ? { "#t": [tTag] } : {}),
+        limit: 200,
+      },
+    },
+    {
+      name: "kind_author",
+      filter: {
+        kinds: [kind],
+        ...(author ? { authors: [author] } : {}),
         limit: 200,
       },
     },
@@ -815,6 +885,23 @@ async function clickByText(page, role, name) {
   await locator.click();
 }
 
+async function clickByTextIfAvailable(page, role, name, timeoutMs = 5000) {
+  const locator = page.getByRole(role, { name }).first();
+  if (await locator.count().catch(() => 0) === 0) {
+    return false;
+  }
+  try {
+    await locator.waitFor({ state: "visible", timeout: timeoutMs });
+  } catch {
+    return false;
+  }
+  if (await locator.isDisabled().catch(() => true)) {
+    return false;
+  }
+  await locator.click();
+  return true;
+}
+
 async function ensureVoterTab(page, name, actorLabel = "unknown-voter") {
   if (!(await isPageAlive(page))) {
     throw new Error(`Page is closed before ensureVoterTab(${name}) for ${actorLabel}`);
@@ -822,7 +909,11 @@ async function ensureVoterTab(page, name, actorLabel = "unknown-voter") {
   const tab = page.getByRole("tab", { name: new RegExp(`^${name}$`, "i") });
   try {
     if (await tab.count() > 0) {
-      await tab.first().click();
+      const first = tab.first();
+      if (await first.isDisabled().catch(() => true)) {
+        return false;
+      }
+      await first.click();
       await sleep(100);
       return true;
     }
@@ -830,7 +921,11 @@ async function ensureVoterTab(page, name, actorLabel = "unknown-voter") {
     if (await isPageAlive(page)) {
       await sleep(150);
       if (await tab.count().catch(() => 0) > 0) {
-        await tab.first().click();
+        const first = tab.first();
+        if (await first.isDisabled().catch(() => true)) {
+          return false;
+        }
+        await first.click();
         await sleep(100);
         return true;
       }
@@ -846,35 +941,54 @@ async function ensureVoterTab(page, name, actorLabel = "unknown-voter") {
   return true;
 }
 
+function tabNameCandidates(name) {
+  const aliases = new Map([
+    ["Configure", ["Build"]],
+    ["Build", ["Configure"]],
+    ["Voting", ["Responses"]],
+    ["Responses", ["Voting"]],
+  ]);
+  return [name, ...(aliases.get(name) ?? [])];
+}
+
 async function ensureTab(page, name, actorLabel = "unknown-actor") {
   if (!(await isPageAlive(page))) {
     throw new Error(`Page is closed before ensureTab(${name}) for ${actorLabel}`);
   }
-  const tab = page.getByRole("tab", { name: new RegExp(`^${name}$`, "i") });
+  const names = tabNameCandidates(name);
   try {
-    if (await tab.count() > 0) {
-      await tab.first().click();
-      await sleep(100);
-      return true;
-    }
-  } catch (error) {
-    if (await isPageAlive(page)) {
-      await sleep(150);
-      if (await tab.count().catch(() => 0) > 0) {
+    for (const candidate of names) {
+      const tab = page.getByRole("tab", { name: new RegExp(`^${candidate}$`, "i") });
+      if (await tab.count() > 0) {
         await tab.first().click();
         await sleep(100);
         return true;
       }
     }
+  } catch (error) {
+    if (await isPageAlive(page)) {
+      await sleep(150);
+      for (const candidate of names) {
+        const tab = page.getByRole("tab", { name: new RegExp(`^${candidate}$`, "i") });
+        if (await tab.count().catch(() => 0) > 0) {
+          await tab.first().click();
+          await sleep(100);
+          return true;
+        }
+      }
+    }
     throw new Error(`ensureTab(${name}) failed for ${actorLabel}: ${safeErrorMessage(error)}`);
   }
-  const button = page.getByRole("button", { name: new RegExp(`^${name}$`, "i") });
-  if (await button.count().catch(() => 0) === 0) {
-    return false;
+  for (const candidate of names) {
+    const button = page.getByRole("button", { name: new RegExp(`^${candidate}$`, "i") });
+    if (await button.count().catch(() => 0) === 0) {
+      continue;
+    }
+    await button.first().click();
+    await sleep(100);
+    return true;
   }
-  await button.first().click();
-  await sleep(100);
-  return true;
+  return false;
 }
 
 async function coordinatorDiagnostics(page) {
@@ -960,7 +1074,7 @@ async function readQuestionnaireVoterDebug(page) {
 
 async function getDisplayedActorId(page, prefix) {
   const body = await readBody(page);
-  const match = body.match(new RegExp(`${prefix} ID ([0-9a-f]+)`, "i"));
+  const match = body.match(new RegExp(`${prefix} ID ([a-z0-9]+)`, "i"));
   if (!match) {
     throw new Error(`Could not find ${prefix} ID on page`);
   }
@@ -1132,6 +1246,19 @@ function createQuestionnaireStageTracker({ round, questionnaireId, voterIds }) {
   };
 }
 
+function buildQuestionnaireVisibilityByVoter(stageTracker) {
+  return Object.fromEntries(
+    stageTracker.voterIds.map((voterId) => {
+      const seenAt = stageTracker.stages.questionnaireSeen.get(voterId);
+      const openAt = stageTracker.stages.questionnaireOpen.get(voterId);
+      return [voterId, {
+        questionnaireSeenAtMs: typeof seenAt === "number" ? Math.max(0, seenAt - stageTracker.startedAtMs) : null,
+        questionnaireOpenAtMs: typeof openAt === "number" ? Math.max(0, openAt - stageTracker.startedAtMs) : null,
+      }];
+    }),
+  );
+}
+
 function recordStage(stageTracker, stageName, pairKey, nowMs) {
   const stageMap = stageTracker.stages[stageName];
   if (!stageMap.has(pairKey)) {
@@ -1216,7 +1343,7 @@ async function observeRoundStages(stageTracker, coordinators, voters) {
     await ensureTab(page, "Configure", actor.label);
     const rows = await coordinatorFollowerRows(page);
     for (const text of rows) {
-      const match = text.match(/Voter ([0-9a-f]+)/i);
+      const match = text.match(/Voter ([a-z0-9]+)/i);
       if (!match) {
         continue;
       }
@@ -1244,20 +1371,22 @@ async function observeRoundStages(stageTracker, coordinators, voters) {
   stageTracker.lastObservedAtMs = nowMs;
 }
 
-async function observeQuestionnaireStages(stageTracker, coordinators, voters) {
+async function observeQuestionnaireStages(stageTracker, coordinators, voters, voterIdsOverride = null) {
   const nowMs = Date.now();
   const leadCoordinatorDebug = await readQuestionnaireCoordinatorDebug(coordinators[0]?.page);
-  const isOpen = leadCoordinatorDebug?.latestState === "open";
   const hasPublishedSummary = leadCoordinatorDebug?.latestResultAcceptedCount !== null
     && leadCoordinatorDebug?.latestResultAcceptedCount !== undefined;
 
   for (const [voterIndex, actor] of voters.entries()) {
-    const voterId = stageTracker.voterIds[voterIndex] ?? `voter${voterIndex + 1}`;
+    const voterId = Array.isArray(voterIdsOverride)
+      ? voterIdsOverride[voterIndex] ?? `voter${voterIndex + 1}`
+      : stageTracker.voterIds[voterIndex] ?? `voter${voterIndex + 1}`;
+    await ensureVoterTab(actor.page, "Vote", actor.label);
     const voterDebug = await readQuestionnaireVoterDebug(actor.page);
     if (voterDebug?.questionnaireSeen) {
       recordStage(stageTracker, "questionnaireSeen", voterId, nowMs);
     }
-    if (isOpen || voterDebug?.questionnaireOpen) {
+    if (voterDebug?.questionnaireOpen) {
       recordStage(stageTracker, "questionnaireOpen", voterId, nowMs);
     }
     if (voterDebug?.responsePublished || Number(voterDebug?.responseSubmittedCount ?? 0) > 0) {
@@ -1269,6 +1398,112 @@ async function observeQuestionnaireStages(stageTracker, coordinators, voters) {
   }
 
   stageTracker.lastObservedAtMs = nowMs;
+}
+
+async function waitForQuestionnaireVisibilityReadiness({
+  stageTracker,
+  coordinators,
+  voters,
+  timeoutMs,
+  pollMs = 1000,
+}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await observeQuestionnaireStages(stageTracker, coordinators, voters);
+    const seenCount = Number(stageTracker.stages.questionnaireSeen.size ?? 0);
+    const openCount = Number(stageTracker.stages.questionnaireOpen.size ?? 0);
+    const expected = stageTracker.totalPairs;
+    if (seenCount >= expected && openCount >= expected) {
+      return {
+        ready: true,
+        timedOut: false,
+        seenCount,
+        openCount,
+        expected,
+        byVoter: buildQuestionnaireVisibilityByVoter(stageTracker),
+      };
+    }
+    await sleep(pollMs);
+  }
+  await observeQuestionnaireStages(stageTracker, coordinators, voters);
+  const seenCount = Number(stageTracker.stages.questionnaireSeen.size ?? 0);
+  const openCount = Number(stageTracker.stages.questionnaireOpen.size ?? 0);
+  const expected = stageTracker.totalPairs;
+  return {
+    ready: false,
+    timedOut: true,
+    seenCount,
+    openCount,
+    expected,
+    byVoter: buildQuestionnaireVisibilityByVoter(stageTracker),
+  };
+}
+
+async function waitForQuestionnaireBatchVisibilityReadiness({
+  stageTracker,
+  coordinators,
+  batchActors,
+  batchVoterIds,
+  timeoutMs,
+  pollMs = 1000,
+}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await observeQuestionnaireStages(stageTracker, coordinators, batchActors, batchVoterIds);
+    const seenCount = batchStageCount(stageTracker.stages.questionnaireSeen, batchVoterIds);
+    const openCount = batchStageCount(stageTracker.stages.questionnaireOpen, batchVoterIds);
+    const expected = batchVoterIds.length;
+    if (seenCount >= expected && openCount >= expected) {
+      return { ready: true, timedOut: false, seenCount, openCount, expected };
+    }
+    await sleep(pollMs);
+  }
+  await observeQuestionnaireStages(stageTracker, coordinators, batchActors, batchVoterIds);
+  const seenCount = batchStageCount(stageTracker.stages.questionnaireSeen, batchVoterIds);
+  const openCount = batchStageCount(stageTracker.stages.questionnaireOpen, batchVoterIds);
+  const expected = batchVoterIds.length;
+  return { ready: false, timedOut: true, seenCount, openCount, expected };
+}
+
+async function waitForQuestionnaireBatchSubmissionReadiness({
+  stageTracker,
+  coordinators,
+  batchActors,
+  batchVoterIds,
+  expectedAcceptedCount,
+  timeoutMs,
+  pollMs = 1500,
+}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await observeQuestionnaireStages(stageTracker, coordinators, batchActors, batchVoterIds);
+    const submittedCount = batchStageCount(stageTracker.stages.responsePublished, batchVoterIds);
+    const expected = batchVoterIds.length;
+    const coordinatorDebug = await readQuestionnaireCoordinatorDebug(coordinators[0]?.page).catch(() => null);
+    const acceptedCount = Number(coordinatorDebug?.latestAcceptedCount ?? 0);
+    if (submittedCount >= expected && acceptedCount >= expectedAcceptedCount) {
+      return {
+        ready: true,
+        timedOut: false,
+        submittedCount,
+        expected,
+        acceptedCount,
+      };
+    }
+    await sleep(pollMs);
+  }
+  await observeQuestionnaireStages(stageTracker, coordinators, batchActors, batchVoterIds);
+  const submittedCount = batchStageCount(stageTracker.stages.responsePublished, batchVoterIds);
+  const expected = batchVoterIds.length;
+  const coordinatorDebug = await readQuestionnaireCoordinatorDebug(coordinators[0]?.page).catch(() => null);
+  const acceptedCount = Number(coordinatorDebug?.latestAcceptedCount ?? 0);
+  return {
+    ready: false,
+    timedOut: true,
+    submittedCount,
+    expected,
+    acceptedCount,
+  };
 }
 
 async function waitForQuestionnaireResultPublication(page, timeoutMs = 15000) {
@@ -1293,6 +1528,58 @@ async function waitForQuestionnaireCoordinatorReady(page, timeoutMs = 30000) {
     await sleep(500);
   }
   return false;
+}
+
+async function waitForQuestionnaireVoterReadyToSubmit(page, timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const submitButtons = page.getByRole("button", { name: /^(Submit encrypted response|Submit response)$/i });
+    const buttonCount = await submitButtons.count().catch(() => 0);
+    let hasEnabledVisible = false;
+    for (let index = 0; index < buttonCount; index += 1) {
+      const candidate = submitButtons.nth(index);
+      const visible = await candidate.isVisible().catch(() => false);
+      const disabled = await candidate.isDisabled().catch(() => true);
+      if (visible && !disabled) {
+        hasEnabledVisible = true;
+        break;
+      }
+    }
+    const voterDebug = await readQuestionnaireVoterDebug(page);
+    if (hasEnabledVisible && voterDebug?.responseReady === true) {
+      return true;
+    }
+    await sleep(500);
+  }
+  return false;
+}
+
+async function ensureQuestionnaireDraftReady(page, roundNumber) {
+  const titleInput = page.locator("#questionnaire-title").first();
+  if (await titleInput.count().catch(() => 0) > 0) {
+    const title = `Harness questionnaire round ${roundNumber}`;
+    await titleInput.fill(title);
+  }
+
+  const descriptionInput = page.locator("#questionnaire-description").first();
+  if (await descriptionInput.count().catch(() => 0) > 0) {
+    const description = `Automated harness run for round ${roundNumber}.`;
+    await descriptionInput.fill(description);
+  }
+
+  const promptInput = page.locator("#question-prompt-0").first();
+  if (await promptInput.count().catch(() => 0) === 0) {
+    await clickByText(page, "button", /^Add yes\/no question$/i);
+  }
+
+  if (await promptInput.count().catch(() => 0) > 0) {
+    const currentPrompt = (await promptInput.inputValue().catch(() => "")).trim();
+    if (!currentPrompt) {
+      await promptInput.fill(`Round ${roundNumber}: Should this proposal pass?`);
+    }
+  }
+
+  await sleep(200);
 }
 
 async function clickEnabledTicketsDuringWindow(coordinators, voters, durationMs, stageTracker) {
@@ -1380,11 +1667,19 @@ async function main() {
   const voterCount = envInt("LIVE_VOTERS", 10);
   const roundCount = envInt("LIVE_ROUNDS", 3);
   const deploymentMode = (process.env.LIVE_DEPLOYMENT_MODE ?? "course_feedback").trim().toLowerCase();
+  const visibilityOnly = /^(1|true|yes|on)$/i.test((process.env.LIVE_VISIBILITY_ONLY ?? "").trim());
   const base = process.env.LIVE_SIMPLE_BASE_URL ?? "http://127.0.0.1:4175/simple.html";
   const nip65Mode = (process.env.LIVE_NIP65 ?? "off").trim().toLowerCase();
   const startupWaitMs = envInt("LIVE_STARTUP_WAIT_MS", 45000);
   const roundWaitMs = envInt("LIVE_ROUND_WAIT_MS", 20000);
   const ticketWaitMs = envInt("LIVE_TICKET_WAIT_MS", 20000);
+  const questionnaireSubmitReadyWaitMs = envInt("LIVE_QUESTIONNAIRE_SUBMIT_READY_WAIT_MS", Math.max(20000, roundWaitMs));
+  const voterStartupStaggerMs = envInt(
+    "LIVE_VOTER_STARTUP_STAGGER_MS",
+    envInt("LIVE_VOTER_START_STAGGER_MS", 150),
+  );
+  const batchSize = envInt("LIVE_BATCH_SIZE", deploymentMode === "course_feedback" ? 5 : Math.max(1, voterCount));
+  const skipPreflight = /^(1|true|yes|on)$/i.test((process.env.LIVE_SKIP_PREFLIGHT ?? "").trim());
   const harnessTimeoutMs = envInt(
     "LIVE_HARNESS_TIMEOUT_MS",
     deriveHarnessTimeoutMs({ startupWaitMs, roundWaitMs, ticketWaitMs, roundCount }),
@@ -1401,6 +1696,20 @@ async function main() {
   const rounds = [];
   let timeoutId = null;
   const runId = process.env.LIVE_RUN_ID?.trim() || `phase25_timeline_${startedAtMs}`;
+  const checkpointFile = process.env.LIVE_CHECKPOINT_PATH?.trim()
+    || path.join(DEBUG_DIR, `${runId}.checkpoint.json`);
+  const resumeFromCheckpoint = /^(1|true|yes|on)$/i.test((process.env.LIVE_RESUME_FROM_CHECKPOINT ?? "").trim());
+  const loadedCheckpoint = resumeFromCheckpoint ? await loadCheckpoint(checkpointFile) : null;
+  const checkpoint = loadedCheckpoint && typeof loadedCheckpoint === "object"
+    ? loadedCheckpoint
+    : {
+      runId,
+      deploymentMode,
+      batchSize,
+      rounds: {},
+      updatedAtMs: Date.now(),
+    };
+  const preflight = await runCourseFeedbackPreflight({ skip: skipPreflight });
   const timeline = createTimelineArtifact({
     runId,
     startedAtMs,
@@ -1433,26 +1742,28 @@ async function main() {
         recordTimelineEvent(timeline, label, "coordinator_page_loaded", { url: page.url() });
       }
 
-      for (let index = 0; index < voterCount; index += 1) {
-        const context = await browser.newContext();
-        const page = await context.newPage();
-        const url = new URL(voterBaseUrl.toString());
-        if (nip65Mode !== "on") {
-          url.searchParams.set("nip65", "off");
+      const voterLabels = Array.from({ length: voterCount }, (_, index) => `voter${index + 1}`);
+      const voterLabelBatches = splitIntoBatches(voterLabels, batchSize);
+      for (const labelBatch of voterLabelBatches) {
+        for (const label of labelBatch) {
+          const context = await browser.newContext();
+          const page = await context.newPage();
+          const url = new URL(voterBaseUrl.toString());
+          if (nip65Mode !== "on") {
+            url.searchParams.set("nip65", "off");
+          }
+          url.searchParams.set("deployment", deploymentMode);
+          await page.goto(url.toString(), { waitUntil: "networkidle" });
+          voters.push({ label, page, context });
+          recordTimelineEvent(timeline, label, "voter_page_loaded", { url: page.url() });
+          if (voterStartupStaggerMs > 0) {
+            await sleep(voterStartupStaggerMs);
+          }
         }
-        url.searchParams.set("deployment", deploymentMode);
-        await page.goto(url.toString(), { waitUntil: "networkidle" });
-        const label = `voter${index + 1}`;
-        voters.push({ label, page, context });
-        recordTimelineEvent(timeline, label, "voter_page_loaded", { url: page.url() });
       }
 
       for (const actor of coordinators) {
-        await clickByText(actor.page, 'button', /New ID/i);
-        await ensureTab(actor.page, "Settings", actor.label);
-      }
-      for (const actor of voters) {
-        await clickByText(actor.page, 'button', /^New$/i);
+        await clickByText(actor.page, "button", /^New(?: ID)?$/i);
         await ensureTab(actor.page, "Settings", actor.label);
       }
       await sleep(1500);
@@ -1474,24 +1785,33 @@ async function main() {
         coordinatorNpubs.push(npub);
       }
 
-      const voterIds = [];
-      for (const actor of voters) {
-        const voterId = await getDisplayedActorId(actor.page, "Voter");
-        if (!voterId) {
-          throw new Error(`identity_read_failed: voter id missing for ${actor.label}`);
-        }
-        voterIds.push(voterId);
-      }
-
       for (let index = 1; index < coordinators.length; index += 1) {
         await ensureTab(coordinators[index].page, "Configure", coordinators[index].label);
         await coordinators[index].page.getByPlaceholder("Leave blank if this coordinator is the lead").fill(coordinatorNpubs[0]);
         await clickByText(coordinators[index].page, "button", /Notify coordinator/i);
       }
 
-      for (const actor of voters) {
-        await ensureTab(actor.page, "Configure", actor.label);
-        await addCoordinatorsToVoter(actor.page, coordinatorNpubs);
+      const voterBatches = splitIntoBatches(voters, batchSize);
+      const voterIds = [];
+      for (const [batchIndex, batch] of voterBatches.entries()) {
+        for (const actor of batch) {
+          await clickByText(actor.page, "button", /^New$/i);
+          await ensureTab(actor.page, "Settings", actor.label);
+          const voterId = await getDisplayedActorId(actor.page, "Voter");
+          if (!voterId) {
+            throw new Error(`identity_read_failed: voter id missing for ${actor.label}`);
+          }
+          voterIds.push(voterId);
+          await ensureTab(actor.page, "Configure", actor.label);
+          await addCoordinatorsToVoter(actor.page, coordinatorNpubs);
+        }
+        checkpoint.updatedAtMs = Date.now();
+        checkpoint.voterSetupCompletedBatches = Math.max(Number(checkpoint.voterSetupCompletedBatches ?? 0), batchIndex + 1);
+        checkpoint.voterSetup = voters.map((actor, index) => ({
+          label: actor.label,
+          voterId: voterIds[index] ?? null,
+        }));
+        await writeCheckpoint(checkpointFile, checkpoint);
       }
 
       await sleep(startupWaitMs);
@@ -1517,8 +1837,9 @@ async function main() {
           const coordinatorQuestionnaireIdInput = lead.locator("#questionnaire-id").first();
           await coordinatorQuestionnaireIdInput.fill(questionnaireId);
           await coordinatorQuestionnaireIdInput.blur();
+          await ensureQuestionnaireDraftReady(lead, roundIndex + 1);
           await sleep(300);
-          await clickByText(lead, "button", /^Publish definition$/i);
+          await clickByText(lead, "button", /^(Publish definition|Publish Questionnaire)$/i);
           await sleep(1000);
           await collectQuestionnaireTimelineEvents({
             coordinators,
@@ -1526,7 +1847,10 @@ async function main() {
             timeline,
             state: timelineState,
           });
-          await clickByText(lead, "button", /^Set open$/i);
+          const coordinatorPostPublishDebug = await readQuestionnaireCoordinatorDebug(lead);
+          if (coordinatorPostPublishDebug?.latestState !== "open") {
+            await clickByTextIfAvailable(lead, "button", /^(Set open|Open Questionnaire)$/i);
+          }
           await sleep(1000);
           await collectQuestionnaireTimelineEvents({
             coordinators,
@@ -1535,16 +1859,76 @@ async function main() {
             state: timelineState,
           });
 
-          for (const actor of voters) {
-            await ensureVoterTab(actor.page, "Vote", actor.label);
-            const voterQuestionnaireIdInput = actor.page.locator("#questionnaire-id-voter").first();
-            await voterQuestionnaireIdInput.fill(questionnaireId);
-            await voterQuestionnaireIdInput.blur();
-            await sleep(150);
-            await clickByText(actor.page, "button", /^Refresh questionnaire$/i);
+          const roundCheckpoint = checkpoint.rounds[String(roundIndex + 1)] ?? {
+            enrollmentCompletedBatchIndex: 0,
+            submissionCompletedBatchIndex: 0,
+            batches: [],
+          };
+          checkpoint.rounds[String(roundIndex + 1)] = roundCheckpoint;
+
+          for (const [batchIndex, batch] of voterBatches.entries()) {
+            if (batchIndex < Number(roundCheckpoint.enrollmentCompletedBatchIndex ?? 0)) {
+              continue;
+            }
+            const batchVoterIds = batch.map((_, index) => {
+              const absoluteIndex = (batchIndex * batchSize) + index;
+              return voterIds[absoluteIndex] ?? `voter${absoluteIndex + 1}`;
+            });
+            await sleep(1200);
+            await observeQuestionnaireStages(stageTracker, coordinators, batch);
+            const batchVisibilityReadiness = await waitForQuestionnaireBatchVisibilityReadiness({
+              stageTracker,
+              coordinators,
+              batchActors: batch,
+              batchVoterIds,
+              timeoutMs: startupWaitMs,
+              pollMs: 1000,
+            });
+            if (!batchVisibilityReadiness.ready) {
+              throw new Error(`questionnaire_visibility_timeout:${JSON.stringify({
+                questionnaireId,
+                round: roundIndex + 1,
+                batchIndex: batchIndex + 1,
+                seenCount: batchVisibilityReadiness.seenCount,
+                openCount: batchVisibilityReadiness.openCount,
+                expected: batchVisibilityReadiness.expected,
+                byVoter: buildQuestionnaireVisibilityByVoter(stageTracker),
+              })}`);
+            }
+            roundCheckpoint.enrollmentCompletedBatchIndex = batchIndex + 1;
+            const batchParticipants = await Promise.all(batch.map(async (actor, index) => {
+              const voterDebug = await readVoterDebug(actor.page).catch(() => null);
+              const questionnaireVoterDebug = await readQuestionnaireVoterDebug(actor.page).catch(() => null);
+              return {
+                label: actor.label,
+                voterId: batchVoterIds[index] ?? null,
+                questionnaireId: questionnaireVoterDebug?.questionnaireId ?? questionnaireId,
+                responderId: batchVoterIds[index] ?? null,
+                tokenRequested: Boolean(questionnaireVoterDebug?.tokenRequested),
+                tokenReceived: Boolean(questionnaireVoterDebug?.tokenReceived),
+                responsePublished: Boolean(questionnaireVoterDebug?.responsePublished),
+                submitted: Number(questionnaireVoterDebug?.responseSubmittedCount ?? 0) > 0,
+                accepted: null,
+                voterNpub: voterDebug?.voterNpub ?? null,
+              };
+            }));
+            roundCheckpoint.batches[batchIndex] = {
+              ...(roundCheckpoint.batches[batchIndex] ?? {}),
+              voterLabels: batch.map((actor) => actor.label),
+              voterIds: batchVoterIds,
+              questionnaireId,
+              participants: batchParticipants,
+              enrollmentReady: true,
+              enrolledAtMs: Date.now(),
+            };
+            checkpoint.updatedAtMs = Date.now();
+            await writeCheckpoint(checkpointFile, checkpoint);
+            recordTimelineEvent(timeline, "coord1", "enrollment_batch_ready", {
+              round: roundIndex + 1,
+              batchIndex: batchIndex + 1,
+              batchSize: batch.length,
+            });
           }
-          await sleep(1500);
-          await observeQuestionnaireStages(stageTracker, coordinators, voters);
           await collectQuestionnaireTimelineEvents({
             coordinators,
             voters,
@@ -1552,27 +1936,159 @@ async function main() {
             state: timelineState,
           });
 
-          for (const actor of voters) {
-            await ensureVoterTab(actor.page, "Vote", actor.label);
-            const yesButton = actor.page.getByRole("button", { name: /^Yes$/i }).first();
-            if (await yesButton.count()) {
-              await yesButton.click({ force: true });
-            }
-            const option = actor.page.getByLabel(/About right/i).first();
-            if (await option.count()) {
-              await option.click({ force: true });
-            }
-            recordTimelineEvent(timeline, actor.label, "response_form_filled", { questionnaireId });
-            const submitResponse = actor.page.getByRole("button", { name: /^Submit encrypted response$/i }).first();
-            if (await submitResponse.count() && !(await submitResponse.isDisabled())) {
-              await submitResponse.click({ force: true });
-              await sleep(200);
-            }
-          }
+          if (!visibilityOnly) {
+            for (const [batchIndex, batch] of voterBatches.entries()) {
+              if (batchIndex < Number(roundCheckpoint.submissionCompletedBatchIndex ?? 0)) {
+                continue;
+              }
+              const batchVoterIds = batch.map((_, index) => {
+                const absoluteIndex = (batchIndex * batchSize) + index;
+                return voterIds[absoluteIndex] ?? `voter${absoluteIndex + 1}`;
+              });
+              for (const actor of batch) {
+                await ensureVoterTab(actor.page, "Vote", actor.label);
+                const voterReadyToSubmit = await waitForQuestionnaireVoterReadyToSubmit(
+                  actor.page,
+                  questionnaireSubmitReadyWaitMs,
+                );
+                if (!voterReadyToSubmit) {
+                  throw new Error(`questionnaire_submit_not_ready:${JSON.stringify({
+                    questionnaireId,
+                    round: roundIndex + 1,
+                    batchIndex: batchIndex + 1,
+                    voter: actor.label,
+                    submitReadyWaitMs: questionnaireSubmitReadyWaitMs,
+                  })}`);
+                }
+                const yesButton = actor.page.getByRole("button", { name: /^Yes$/i }).first();
+                if (await yesButton.count()) {
+                  await yesButton.click({ force: true });
+                }
+                const option = actor.page.getByLabel(/About right/i).first();
+                if (await option.count()) {
+                  await option.click({ force: true });
+                }
+                recordTimelineEvent(timeline, actor.label, "response_form_filled", { questionnaireId });
+                const submitButtons = actor.page.getByRole("button", { name: /^(Submit encrypted response|Submit response)$/i });
+                const submitButtonCount = await submitButtons.count();
+                const submitButtonStates = [];
+                for (let index = 0; index < submitButtonCount; index += 1) {
+                  const candidate = submitButtons.nth(index);
+                  submitButtonStates.push({
+                    index,
+                    text: (await candidate.innerText().catch(() => "")).replace(/\s+/g, " ").trim(),
+                    visible: await candidate.isVisible().catch(() => false),
+                    disabled: await candidate.isDisabled().catch(() => true),
+                  });
+                }
+                recordTimelineEvent(timeline, actor.label, "response_submit_button_probe", {
+                  questionnaireId,
+                  selector: "role=button[name=/^(Submit encrypted response|Submit response)$/i]",
+                  submitButtonCount,
+                  submitButtonStates,
+                });
+                let clickedSubmit = false;
+                const enabledVisibleButton = submitButtonStates.find((entry) => entry.visible && !entry.disabled);
+                if (enabledVisibleButton) {
+                  await submitButtons.nth(enabledVisibleButton.index).click({ force: true });
+                  clickedSubmit = true;
+                } else if (submitButtonCount > 0) {
+                  const domClickResult = await actor.page.evaluate(() => {
+                    const candidates = Array.from(document.querySelectorAll("button"))
+                      .filter((button) => /^(Submit encrypted response|Submit response)$/i.test((button.textContent ?? "").trim()));
+                    const snapshot = candidates.map((button, index) => ({
+                      index,
+                      text: (button.textContent ?? "").trim(),
+                      disabled: button.disabled,
+                    }));
+                    if (candidates.length === 0) {
+                      return { clicked: false, reason: "no_matching_dom_button", snapshot };
+                    }
+                    candidates[0].click();
+                    return { clicked: true, reason: "clicked_first_dom_match", snapshot };
+                  }).catch((error) => ({
+                    clicked: false,
+                    reason: error instanceof Error ? error.message : String(error),
+                    snapshot: [],
+                  }));
+                  recordTimelineEvent(timeline, actor.label, "response_submit_dom_click_fallback", domClickResult);
+                  clickedSubmit = Boolean(domClickResult?.clicked);
+                }
+                recordTimelineEvent(timeline, actor.label, "response_submit_click_attempted", {
+                  questionnaireId,
+                  clickedSubmit,
+                  batchIndex: batchIndex + 1,
+                });
+                if (clickedSubmit) {
+                  await sleep(250);
+                }
+              }
 
-          const responseDeadline = Date.now() + roundWaitMs;
-          while (Date.now() < responseDeadline) {
-            await sleep(2000);
+              const expectedAcceptedCount = Math.min(voters.length, (batchIndex + 1) * batchSize);
+              const submissionReadiness = await waitForQuestionnaireBatchSubmissionReadiness({
+                stageTracker,
+                coordinators,
+                batchActors: batch,
+                batchVoterIds,
+                expectedAcceptedCount,
+                timeoutMs: roundWaitMs,
+                pollMs: 1500,
+              });
+              if (!submissionReadiness.ready) {
+                throw new Error(`questionnaire_submission_timeout:${JSON.stringify({
+                  questionnaireId,
+                  round: roundIndex + 1,
+                  batchIndex: batchIndex + 1,
+                  submittedCount: submissionReadiness.submittedCount,
+                  expectedSubmitted: submissionReadiness.expected,
+                  acceptedCount: submissionReadiness.acceptedCount,
+                  expectedAcceptedCount,
+                })}`);
+              }
+              roundCheckpoint.submissionCompletedBatchIndex = batchIndex + 1;
+              const coordinatorDebug = await readQuestionnaireCoordinatorDebug(coordinators[0]?.page).catch(() => null);
+              const batchParticipants = await Promise.all(batch.map(async (actor, index) => {
+                const questionnaireVoterDebug = await readQuestionnaireVoterDebug(actor.page).catch(() => null);
+                return {
+                  label: actor.label,
+                  voterId: batchVoterIds[index] ?? null,
+                  questionnaireId: questionnaireVoterDebug?.questionnaireId ?? questionnaireId,
+                  responderId: batchVoterIds[index] ?? null,
+                  tokenRequested: Boolean(questionnaireVoterDebug?.tokenRequested),
+                  tokenReceived: Boolean(questionnaireVoterDebug?.tokenReceived),
+                  responsePublished: Boolean(questionnaireVoterDebug?.responsePublished),
+                  submitted: Number(questionnaireVoterDebug?.responseSubmittedCount ?? 0) > 0,
+                  accepted: null,
+                };
+              }));
+              roundCheckpoint.batches[batchIndex] = {
+                ...(roundCheckpoint.batches[batchIndex] ?? {}),
+                questionnaireId,
+                participants: batchParticipants,
+                submissionReady: true,
+                submittedAtMs: Date.now(),
+                expectedAcceptedCount,
+                acceptedObservedCount: Number(coordinatorDebug?.latestAcceptedCount ?? 0),
+              };
+              checkpoint.updatedAtMs = Date.now();
+              await writeCheckpoint(checkpointFile, checkpoint);
+              recordTimelineEvent(timeline, "coord1", "submission_batch_ready", {
+                round: roundIndex + 1,
+                batchIndex: batchIndex + 1,
+                batchSize: batch.length,
+                expectedAcceptedCount,
+              });
+              await collectQuestionnaireTimelineEvents({
+                coordinators,
+                voters,
+                timeline,
+                state: timelineState,
+              });
+            }
+
+            await ensureTab(lead, "Configure", coordinators[0].label);
+            await clickByTextIfAvailable(lead, "button", /^(Publish results|Count Responses)$/i);
+            await waitForQuestionnaireResultPublication(lead, 20000);
             await observeQuestionnaireStages(stageTracker, coordinators, voters);
             await collectQuestionnaireTimelineEvents({
               coordinators,
@@ -1582,22 +2098,12 @@ async function main() {
             });
           }
 
-          await ensureTab(lead, "Configure", coordinators[0].label);
-          await clickByText(lead, "button", /^Publish results$/i);
-          await waitForQuestionnaireResultPublication(lead, 20000);
-          await observeQuestionnaireStages(stageTracker, coordinators, voters);
-          await collectQuestionnaireTimelineEvents({
-            coordinators,
-            voters,
-            timeline,
-            state: timelineState,
-          });
-
           rounds.push({
             round: roundIndex + 1,
             prompt: `Questionnaire ${roundIndex + 1}`,
             sendCounts: [],
             stageMetrics: summariseRoundStages(stageTracker),
+            visibilityByVoter: buildQuestionnaireVisibilityByVoter(stageTracker),
             state: await captureRoundState(coordinators, voters),
           });
           continue;
@@ -1683,6 +2189,19 @@ async function main() {
 
     await Promise.race([runPromise, timeoutPromise]);
   } catch (error) {
+    const errorMessage = safeErrorMessage(error);
+    const visibilityTimeoutMatch = /^questionnaire_visibility_timeout:(.+)$/s.exec(errorMessage);
+    let questionnaireVisibilityTimeout = null;
+    if (visibilityTimeoutMatch) {
+      try {
+        questionnaireVisibilityTimeout = JSON.parse(visibilityTimeoutMatch[1]);
+      } catch {
+        questionnaireVisibilityTimeout = {
+          parseError: true,
+          raw: visibilityTimeoutMatch[1],
+        };
+      }
+    }
     const participants = [...coordinators, ...voters];
     const snapshots = await snapshotAllActors(participants, classifyHarnessFailure(error));
     const diagnostic = {
@@ -1690,10 +2209,11 @@ async function main() {
       startedAtMs: timeline.startedAtMs,
       configTimeline: timeline.config,
       failureClass: classifyHarnessFailure(error),
-      error: safeErrorMessage(error),
+      error: errorMessage,
       config: {
         base,
         deploymentMode,
+        visibilityOnly,
         nip65Mode,
         coordinatorCount,
         voterCount,
@@ -1701,8 +2221,11 @@ async function main() {
         startupWaitMs,
         roundWaitMs,
         ticketWaitMs,
+        questionnaireSubmitReadyWaitMs,
         harnessTimeoutMs,
+        voterStartupStaggerMs,
       },
+      questionnaireVisibilityTimeout,
       completedRoundCount: rounds.filter((round) => {
         const metrics = round?.stageMetrics ?? {};
         if (deploymentMode === "course_feedback") {
@@ -2161,6 +2684,45 @@ async function main() {
         questionnaireId: value?.questionnaireVoterDebug?.questionnaireId ?? null,
         loadedQuestionnaireId: value?.questionnaireVoterDebug?.loadedQuestionnaireId ?? null,
         loadedQuestionCount: value?.questionnaireVoterDebug?.loadedQuestionCount ?? null,
+        questionnaireDefinitionsSeen: value?.questionnaireVoterDebug?.questionnaireDefinitionsSeen ?? null,
+        questionnaireOpenEventsSeen: value?.questionnaireVoterDebug?.questionnaireOpenEventsSeen ?? null,
+        definitionSeenLive: value?.questionnaireVoterDebug?.definitionSeenLive ?? null,
+        definitionSeenBackfill: value?.questionnaireVoterDebug?.definitionSeenBackfill ?? null,
+        openSeenLive: value?.questionnaireVoterDebug?.openSeenLive ?? null,
+        openSeenBackfill: value?.questionnaireVoterDebug?.openSeenBackfill ?? null,
+        definitionSeenLiveCount: value?.questionnaireVoterDebug?.definitionSeenLiveCount ?? null,
+        definitionSeenBackfillCount: value?.questionnaireVoterDebug?.definitionSeenBackfillCount ?? null,
+        openSeenLiveCount: value?.questionnaireVoterDebug?.openSeenLiveCount ?? null,
+        openSeenBackfillCount: value?.questionnaireVoterDebug?.openSeenBackfillCount ?? null,
+        lastQuestionnaireDefinitionId: value?.questionnaireVoterDebug?.lastQuestionnaireDefinitionId ?? null,
+        lastQuestionnaireOpenId: value?.questionnaireVoterDebug?.lastQuestionnaireOpenId ?? null,
+        lastQuestionnaireFilterUsed: value?.questionnaireVoterDebug?.lastQuestionnaireFilterUsed ?? null,
+        lastQuestionnaireRejectReason: value?.questionnaireVoterDebug?.lastQuestionnaireRejectReason ?? null,
+        tokenRequested: value?.questionnaireVoterDebug?.tokenRequested ?? null,
+        tokenReceived: value?.questionnaireVoterDebug?.tokenReceived ?? null,
+        responseReady: value?.questionnaireVoterDebug?.responseReady ?? null,
+        submitHandlerEntered: value?.questionnaireVoterDebug?.submitHandlerEntered ?? null,
+        submitClicked: value?.questionnaireVoterDebug?.submitClicked ?? null,
+        submitButtonPresent: value?.questionnaireVoterDebug?.submitButtonPresent ?? null,
+        submitButtonVisible: value?.questionnaireVoterDebug?.submitButtonVisible ?? null,
+        submitButtonDisabled: value?.questionnaireVoterDebug?.submitButtonDisabled ?? null,
+        submitButtonText: value?.questionnaireVoterDebug?.submitButtonText ?? null,
+        submitButtonReasonBlocked: value?.questionnaireVoterDebug?.submitButtonReasonBlocked ?? null,
+        responsePayloadBuilt: value?.questionnaireVoterDebug?.responsePayloadBuilt ?? null,
+        responsePayloadValidated: value?.questionnaireVoterDebug?.responsePayloadValidated ?? null,
+        responsePublishStarted: value?.questionnaireVoterDebug?.responsePublishStarted ?? null,
+        responsePublishSucceeded: value?.questionnaireVoterDebug?.responsePublishSucceeded ?? null,
+        responseSeenBackLocally: value?.questionnaireVoterDebug?.responseSeenBackLocally ?? null,
+        responseSeenByCoordinator: value?.questionnaireVoterDebug?.responseSeenByCoordinator ?? null,
+        lastResponseRejectReason: value?.questionnaireVoterDebug?.lastResponseRejectReason ?? null,
+        lastResponsePublishError: value?.questionnaireVoterDebug?.lastResponsePublishError ?? null,
+        lastResponseEventId: value?.questionnaireVoterDebug?.lastResponseEventId ?? null,
+        lastResponseEventKind: value?.questionnaireVoterDebug?.lastResponseEventKind ?? null,
+        lastResponseEventCreatedAt: value?.questionnaireVoterDebug?.lastResponseEventCreatedAt ?? null,
+        lastResponseEventTags: value?.questionnaireVoterDebug?.lastResponseEventTags ?? null,
+        lastResponseRelayTargets: value?.questionnaireVoterDebug?.lastResponseRelayTargets ?? null,
+        lastResponseRelaySuccessCount: value?.questionnaireVoterDebug?.lastResponseRelaySuccessCount ?? null,
+        selectorDiagnostics: value?.questionnaireVoterDebug?.selectorDiagnostics ?? null,
         questionnaireDefinitionLiveFilter: value?.questionnaireVoterDebug?.questionnaireDefinitionLiveFilter ?? null,
         questionnaireDefinitionBackfillFilter: value?.questionnaireVoterDebug?.questionnaireDefinitionBackfillFilter ?? null,
         questionnaireStateLiveFilter: value?.questionnaireVoterDebug?.questionnaireStateLiveFilter ?? null,
@@ -2173,22 +2735,122 @@ async function main() {
         questionnaireStateBackfillResultCount: value?.questionnaireVoterDebug?.questionnaireStateBackfillResultCount ?? null,
         questionnaireResultLiveResultCount: value?.questionnaireVoterDebug?.questionnaireResultLiveResultCount ?? null,
         questionnaireResultBackfillResultCount: value?.questionnaireVoterDebug?.questionnaireResultBackfillResultCount ?? null,
+        discoverySubscriptionStartedAt: value?.questionnaireVoterDebug?.discoverySubscriptionStartedAt ?? null,
+        firstDefinitionSeenAt: value?.questionnaireVoterDebug?.firstDefinitionSeenAt ?? null,
+        firstOpenSeenAt: value?.questionnaireVoterDebug?.firstOpenSeenAt ?? null,
+        discoveryBackfillStartedAt: value?.questionnaireVoterDebug?.discoveryBackfillStartedAt ?? null,
+        discoveryBackfillCompletedAt: value?.questionnaireVoterDebug?.discoveryBackfillCompletedAt ?? null,
+        discoveryBackfillAttemptCount: value?.questionnaireVoterDebug?.discoveryBackfillAttemptCount ?? null,
       }]),
     );
+    const questionnaireRejectReasonCounts = Object.values(voterQuestionnaireReadDiagnostics).reduce((acc, entry) => {
+      const reason = typeof entry?.lastQuestionnaireRejectReason === "string"
+        ? entry.lastQuestionnaireRejectReason
+        : null;
+      if (!reason) {
+        return acc;
+      }
+      acc[reason] = (acc[reason] ?? 0) + 1;
+      return acc;
+    }, {});
+    const submitButtonBlockReasonCounts = Object.values(voterQuestionnaireReadDiagnostics).reduce((acc, entry) => {
+      const reason = typeof entry?.submitButtonReasonBlocked === "string"
+        ? entry.submitButtonReasonBlocked
+        : null;
+      if (!reason || reason === "none") {
+        return acc;
+      }
+      acc[reason] = (acc[reason] ?? 0) + 1;
+      return acc;
+    }, {});
+    const responseStageCounts = Object.values(voterQuestionnaireReadDiagnostics).reduce((acc, entry) => {
+      const toBool = (value) => value === true;
+      if (toBool(entry?.definitionSeenLive)) acc.definitionSeenLive += 1;
+      if (toBool(entry?.definitionSeenBackfill)) acc.definitionSeenBackfill += 1;
+      if (toBool(entry?.openSeenLive)) acc.openSeenLive += 1;
+      if (toBool(entry?.openSeenBackfill)) acc.openSeenBackfill += 1;
+      if (toBool(entry?.tokenRequested)) acc.tokenRequested += 1;
+      if (toBool(entry?.tokenReceived)) acc.tokenReceived += 1;
+      if (toBool(entry?.responseReady)) acc.responseReady += 1;
+      if (toBool(entry?.submitHandlerEntered)) acc.submitHandlerEntered += 1;
+      if (toBool(entry?.submitClicked)) acc.submitClicked += 1;
+      if (toBool(entry?.responsePayloadBuilt)) acc.responsePayloadBuilt += 1;
+      if (toBool(entry?.responsePayloadValidated)) acc.responsePayloadValidated += 1;
+      if (toBool(entry?.responsePublishStarted)) acc.responsePublishStarted += 1;
+      if (toBool(entry?.responsePublishSucceeded)) acc.responsePublishSucceeded += 1;
+      if (toBool(entry?.responseSeenBackLocally)) acc.responseSeenBackLocally += 1;
+      if (toBool(entry?.responseSeenByCoordinator)) acc.responseSeenByCoordinator += 1;
+      return acc;
+    }, {
+      definitionSeenLive: 0,
+      definitionSeenBackfill: 0,
+      openSeenLive: 0,
+      openSeenBackfill: 0,
+      tokenRequested: 0,
+      tokenReceived: 0,
+      responseReady: 0,
+      submitHandlerEntered: 0,
+      submitClicked: 0,
+      responsePayloadBuilt: 0,
+      responsePayloadValidated: 0,
+      responsePublishStarted: 0,
+      responsePublishSucceeded: 0,
+      responseSeenBackLocally: 0,
+      responseSeenByCoordinator: 0,
+    });
+    const coordinatorIdentityContinuity = {
+      draftQuestionnaireId: primaryCoordinatorQuestionnaireDebug?.draftQuestionnaireId ?? null,
+      builtDefinitionQuestionnaireId: primaryCoordinatorQuestionnaireDebug?.builtDefinitionQuestionnaireId ?? null,
+      definitionPublishQuestionnaireIdTag: primaryCoordinatorQuestionnaireDebug?.definitionPublishQuestionnaireIdTag ?? null,
+      definitionPublishStartedAt: primaryCoordinatorQuestionnaireDebug?.definitionPublishStartedAt ?? null,
+      definitionPublishSucceededAt: primaryCoordinatorQuestionnaireDebug?.definitionPublishSucceededAt ?? null,
+      statePublishQuestionnaireIdTag: primaryCoordinatorQuestionnaireDebug?.statePublishQuestionnaireIdTag ?? null,
+      statePublishStartedAt: primaryCoordinatorQuestionnaireDebug?.statePublishStartedAt ?? null,
+      statePublishSucceededAt: primaryCoordinatorQuestionnaireDebug?.statePublishSucceededAt ?? null,
+      deploymentMode: primaryCoordinatorQuestionnaireDebug?.deploymentMode ?? null,
+      courseFeedbackAcceptanceEnabled: primaryCoordinatorQuestionnaireDebug?.courseFeedbackAcceptanceEnabled ?? null,
+      legacyRoundGatingBypassed: primaryCoordinatorQuestionnaireDebug?.legacyRoundGatingBypassed ?? null,
+      responseAcceptedViaQuestionnairePlane: primaryCoordinatorQuestionnaireDebug?.responseAcceptedViaQuestionnairePlane ?? null,
+      responseRejectedBecauseLegacyRoundRequired: primaryCoordinatorQuestionnaireDebug?.responseRejectedBecauseLegacyRoundRequired ?? null,
+      responseEventsSeen: primaryCoordinatorQuestionnaireDebug?.responseEventsSeen ?? null,
+      acceptedResponseCount: primaryCoordinatorQuestionnaireDebug?.acceptedResponseCount ?? null,
+      rejectedResponseCount: primaryCoordinatorQuestionnaireDebug?.rejectedResponseCount ?? null,
+      lastResponseSeenEventId: primaryCoordinatorQuestionnaireDebug?.lastResponseSeenEventId ?? null,
+      lastResponseRejectReason: primaryCoordinatorQuestionnaireDebug?.lastResponseRejectReason ?? null,
+      latestDefinitionId: primaryCoordinatorQuestionnaireDebug?.latestDefinitionId ?? null,
+      continuityIds: primaryCoordinatorQuestionnaireDebug?.continuityIds ?? [],
+      continuityOk: primaryCoordinatorQuestionnaireDebug?.questionnaireIdentityContinuityOk ?? null,
+    };
+    const responsePublishAttemptedCount = Number(responseStageCounts.responsePublishStarted ?? 0);
+    const responsePublishSucceededCount = Number(responseStageCounts.responsePublishSucceeded ?? 0);
+    const responseObservedByVoterBackfillCount = Number(responseStageCounts.responseSeenBackLocally ?? 0);
+    const responseObservedByCoordinatorCount = Number(coordinatorIdentityContinuity.responseEventsSeen ?? responseEventCount ?? 0);
+    const acceptedUniqueResponderCount = acceptedResponsesCount;
+    const tokenRequestedCount = Number(responseStageCounts.tokenRequested ?? 0);
+    const tokenReceivedCount = Number(responseStageCounts.tokenReceived ?? 0);
+    const responseReadyCount = Number(responseStageCounts.responseReady ?? 0);
+    const definitionSeenLiveCount = Number(responseStageCounts.definitionSeenLive ?? 0);
+    const definitionSeenBackfillCount = Number(responseStageCounts.definitionSeenBackfill ?? 0);
+    const openSeenLiveCount = Number(responseStageCounts.openSeenLive ?? 0);
+    const openSeenBackfillCount = Number(responseStageCounts.openSeenBackfill ?? 0);
+    const visibilityOnlySuccessCore = expectedAcceptedThreshold > 0
+      && questionnaireSeenCount >= expectedAcceptedThreshold
+      && questionnaireOpenCount >= expectedAcceptedThreshold;
+    const roundSuccessCore = expectedAcceptedThreshold > 0
+      && questionnaireSeenCount >= expectedAcceptedThreshold
+      && questionnaireOpenCount >= expectedAcceptedThreshold
+      && responsePublishAttemptedCount >= expectedAcceptedThreshold
+      && responsePublishSucceededCount >= expectedAcceptedThreshold
+      && responseObservedByVoterBackfillCount >= expectedAcceptedThreshold
+      && responseObservedByCoordinatorCount >= expectedAcceptedThreshold
+      && acceptedUniqueResponderCount >= expectedAcceptedThreshold
+      && eachVoterPublishedExactlyOneResponse
+      && acceptanceAccountingMatches
+      && definitionEventCount >= 1
+      && questionnaireIdsSeenByVoters.length === 1
+      && questionCountsSeenByVoters.length === 1;
     const roundSuccess = deploymentMode === "course_feedback"
-      ? expectedAcceptedThreshold > 0
-        && questionnaireSeenCount >= expectedAcceptedThreshold
-        && questionnaireOpenCount >= expectedAcceptedThreshold
-        && responsesPublishedCount >= expectedAcceptedThreshold
-        && eachVoterPublishedExactlyOneResponse
-        && acceptanceAccountingMatches
-        && localSummaryMatchesPublished
-        && coordinatorSummaryAcceptedCount === acceptedResponsesCount
-        && definitionEventCount === 1
-        && resultEventCount >= 1
-        && questionnaireIdsSeenByVoters.length === 1
-        && questionCountsSeenByVoters.length === 1
-        && resultSummaryPublished
+      ? (visibilityOnly ? visibilityOnlySuccessCore : roundSuccessCore)
       : voterTicketSummary.length > 0 && voterTicketSummary.every((entry) => entry.hasTicket);
     return {
       round: round.round,
@@ -2203,19 +2865,38 @@ async function main() {
       voterObservedTickets,
       questionnaireSeenCount,
       questionnaireOpenCount,
-      eligibilityRequestedCount: 0,
-      blindIssueReceivedCount: 0,
-      responseTokenReadyCount: 0,
+      definitionSeenLiveCount,
+      definitionSeenBackfillCount,
+      openSeenLiveCount,
+      openSeenBackfillCount,
+      eligibilityRequestedCount: tokenRequestedCount,
+      blindIssueReceivedCount: tokenReceivedCount,
+      responseTokenReadyCount: responseReadyCount,
       responsesPublishedCount,
       acceptedResponsesCount,
       rejectedResponsesCount,
+      responsePublishAttemptedCount,
+      responsePublishSucceededCount,
+      responseObservedByVoterBackfillCount,
+      responseObservedByCoordinatorCount,
+      acceptedUniqueResponderCount,
       duplicateNullifierCount: 0,
       resultSummaryPublished,
+      resultSummaryDiagnostic: {
+        resultSummaryPublished,
+        localSummaryMatchesPublished,
+        coordinatorSummaryAcceptedCount,
+        resultEventCount,
+      },
       questionnairePublishDiagnostics: {
         definition: primaryCoordinatorQuestionnaireDebug?.definitionPublishDiagnostic ?? null,
         state: primaryCoordinatorQuestionnaireDebug?.statePublishDiagnostic ?? null,
         result: primaryCoordinatorQuestionnaireDebug?.resultPublishDiagnostic ?? null,
       },
+      questionnaireRejectReasonCounts,
+      submitButtonBlockReasonCounts,
+      responseStageCounts,
+      coordinatorIdentityContinuity,
       voterQuestionnaireReadDiagnostics,
       definitionEventCount,
       resultEventCount,
@@ -2390,6 +3071,13 @@ async function main() {
     const definitionRelay = definitionPublish?.relayTargets?.[0] ?? null;
     const stateRelay = statePublish?.relayTargets?.[0] ?? null;
     const resultRelay = resultPublish?.relayTargets?.[0] ?? null;
+    const voterResponsePublishEntry = Object.values(roundSummary.voterQuestionnaireReadDiagnostics ?? {})
+      .find((entry) => entry?.lastResponseEventId);
+    const responseRelay = Array.isArray(voterResponsePublishEntry?.lastResponseRelayTargets)
+      ? voterResponsePublishEntry.lastResponseRelayTargets[0] ?? null
+      : null;
+    const responseKind = Number(voterResponsePublishEntry?.lastResponseEventKind ?? 0);
+    const responseEventId = String(voterResponsePublishEntry?.lastResponseEventId ?? "");
 
     const probeQuestionnaireId = questionnaireId
       ?? definitionPublish?.tags?.find?.((tag) => Array.isArray(tag) && tag[0] === "questionnaire-id")?.[1]
@@ -2423,6 +3111,15 @@ async function main() {
         eventId: resultPublish?.eventId ?? "",
       })
       : null;
+    const responseRelayProbe = responseRelay && probeQuestionnaireId && responseKind > 0
+      ? await runQuestionnaireRelayProbe({
+        relay: responseRelay,
+        kind: responseKind,
+        questionnaireId: probeQuestionnaireId,
+        tTag: "questionnaire_response_private",
+        eventId: responseEventId,
+      })
+      : null;
 
     roundSummary.phase22QuestionnaireProbe = {
       questionnaireId,
@@ -2430,11 +3127,22 @@ async function main() {
       definitionPublish,
       statePublish,
       resultPublish,
+      responsePublish: voterResponsePublishEntry
+        ? {
+          eventId: voterResponsePublishEntry.lastResponseEventId ?? null,
+          kind: voterResponsePublishEntry.lastResponseEventKind ?? null,
+          createdAt: voterResponsePublishEntry.lastResponseEventCreatedAt ?? null,
+          tags: voterResponsePublishEntry.lastResponseEventTags ?? [],
+          relayTargets: voterResponsePublishEntry.lastResponseRelayTargets ?? [],
+          relaySuccessCount: voterResponsePublishEntry.lastResponseRelaySuccessCount ?? null,
+        }
+        : null,
       voterReadDiagnostics: roundSummary.voterQuestionnaireReadDiagnostics ?? {},
       relayProbes: {
         definition: definitionRelayProbe,
         state: stateRelayProbe,
         result: resultRelayProbe,
+        response: responseRelayProbe,
       },
     };
   }
@@ -2457,6 +3165,7 @@ async function main() {
     config: {
       base,
       deploymentMode,
+      visibilityOnly,
       nip65Mode,
       coordinatorCount,
       voterCount,
@@ -2464,7 +3173,13 @@ async function main() {
       startupWaitMs,
       roundWaitMs,
       ticketWaitMs,
+      questionnaireSubmitReadyWaitMs,
       harnessTimeoutMs,
+      voterStartupStaggerMs,
+      batchSize,
+      checkpointFile,
+      resumeFromCheckpoint,
+      preflight,
     },
     passed,
     completedRounds,

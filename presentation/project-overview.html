@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Why Auditable Anonymous Voting Is Hard — And Why This Stack Can Do It</title>
+  <title>Why Auditable Anonymous Voting Is Hard — And Why This Stack Can Do It (Option A Gated Path)</title>
   <style>
     :root {
       --bg: #091018;
@@ -548,6 +548,10 @@
           <li>The coordinator questionnaire screen now follows staged tabs: Build, Audience, Publish, Responses, and Results, with explicit publish readiness checks</li>
           <li>Accepted followers now receive active questionnaire ids (`open`/`published`) in coordinator roster DMs so voter questionnaire selection can auto-populate</li>
           <li>Voter Vote now stays disabled until announced questionnaire ids are verified as publicly readable (`definition` + `open`/`published` state)</li>
+          <li>Questionnaire reads now use direct live subscriptions with one startup backfill plus one bounded retry, and expose per-voter discovery timing diagnostics for startup failures</li>
+          <li>Course-feedback coordinator mode now bypasses legacy live-round, blind-key, and ticket queue gating when accepting questionnaire responses</li>
+          <li>Course-feedback harness runs now use batch-gated enrolment/submission waves (`LIVE_BATCH_SIZE`, default 5) with checkpointed progress instead of all-voter cold-start fanout</li>
+          <li>Coordinator questionnaire response observation now falls back to bounded kind-only reads plus local questionnaire-id filtering when tag-indexed relay reads are unreliable</li>
           <li>Voter questionnaire submissions now enforce one accepted response per questionnaire for a voter profile using a stable per-questionnaire responder identity</li>
           <li>Voter mailbox reads now key by `request_id` with immutable per-request mailbox bindings, plus read/backfill mailbox consistency diagnostics</li>
           <li>Voter questionnaire participation history is now stored locally and included in voter backup/restore bundles</li>

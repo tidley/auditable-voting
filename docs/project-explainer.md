@@ -173,6 +173,10 @@ The present web client is built with:
 - **private-first questionnaire flow** with coordinator/voter UI panels and **blind-token response foundations** (`questionnaire_response_blind`, transport helpers, harness metrics)
 - **staged questionnaire coordinator builder** (`Build` -> `Audience` -> `Publish` -> `Responses` -> `Results`) with zero default questions and explicit publish readiness checks
 - **voter questionnaire vote gating** that only enables Vote after announced questionnaire ids are verified as publicly readable (`definition` present + state `open`/`published`)
+- **questionnaire discovery over direct live subscriptions** with one startup backfill plus one bounded retry, and explicit per-voter discovery timing diagnostics for startup visibility failures
+- **course-feedback coordinator bypass** so legacy live-round / blind-key / ticket queue gating is disabled for questionnaire acceptance paths, with explicit debug assertions for bypass state
+- **course-feedback batch orchestration** in the live harness (`LIVE_BATCH_SIZE`, default `5`) so enrolment and submission advance in checkpointed waves instead of all-voter cold-start concurrency
+- **questionnaire response observation fallback** that prefers bounded kind-only reads plus local questionnaire-id filtering (and relay probes) when custom tag-indexed reads are unreliable on public relays
 - **auditor coordinator filtering + search** so public round review can be scoped by lead coordinator, coordinator npub, and free-text query (npub/round ID/prompt), with non-overlapping refreshes to reduce relay REQ bursts
 - **ticket scheduler diagnostics and tunable transport knobs** for first-send prioritisation, resend eligibility reasons, bounded concurrency, and retry-age experimentation during live relay reliability testing
 - **observation-plane recovery diagnostics** that separate live vs backfill visibility and classify resend recoveries for published-but-unobserved tickets
@@ -664,3 +668,21 @@ The project is attempting to separate voter eligibility from public ballot ident
 ## 23. One-Sentence Summary
 
 **Auditable Voting is an attempt to combine anonymous credential issuance, public Nostr ballot publication, and independent tally verification in a client-heavy architecture.**
+
+---
+
+## 24. Option A Gate (Current Tranche)
+
+The questionnaire path now has an explicit gated flow mode:
+
+- `?qflow=option_a` (or `?questionnaire_flow=option_a`) enables the new Option A runtime
+- without that gate, the legacy questionnaire UI remains active
+
+The Option A runtime currently provides:
+
+- signer-based login entry points in voter/coordinator questionnaire headers
+- coordinator whitelist and invite actions
+- voter blind request creation
+- coordinator blind issuance processing
+- single accepted submission accounting with duplicate protection
+- local resume keyed by election id and signer `npub`

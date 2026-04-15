@@ -11,6 +11,7 @@ Thumbs.db
 # Local editor / tooling files
 .vscode/
 .codex
+.planning
 
 # Environment
 .env

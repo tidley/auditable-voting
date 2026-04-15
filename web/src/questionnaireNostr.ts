@@ -34,12 +34,12 @@ function buildPublicRelays(relays?: string[]) {
   return rankRelaysByBackoff(normalizeRelaysRust([...(relays ?? []), ...SIMPLE_PUBLIC_RELAYS]));
 }
 
-function selectPublicReadRelays(relays: string[]) {
-  return selectRelaysWithBackoff(relays, QUESTIONNAIRE_PUBLIC_READ_RELAYS_MAX);
+function selectPublicReadRelays(relays: string[], maxRelays = QUESTIONNAIRE_PUBLIC_READ_RELAYS_MAX) {
+  return selectRelaysWithBackoff(relays, maxRelays);
 }
 
-export function getQuestionnaireReadRelays(relays?: string[]) {
-  return selectPublicReadRelays(buildPublicRelays(relays));
+export function getQuestionnaireReadRelays(relays?: string[], maxRelays = QUESTIONNAIRE_PUBLIC_READ_RELAYS_MAX) {
+  return selectPublicReadRelays(buildPublicRelays(relays), maxRelays);
 }
 
 function decodeNsecSecretKey(nsec: string) {
@@ -251,8 +251,9 @@ export async function fetchQuestionnaireEvents(input: {
   kind: number;
   relays?: string[];
   limit?: number;
+  readRelayLimit?: number;
 }) {
-  const relays = getQuestionnaireReadRelays(input.relays);
+  const relays = getQuestionnaireReadRelays(input.relays, input.readRelayLimit);
   const pool = getSharedNostrPool();
   const events = await pool.querySync(relays, {
     kinds: [input.kind],
@@ -273,24 +274,28 @@ export async function fetchQuestionnaireEventsWithFallback(input: {
   kind: number;
   relays?: string[];
   limit?: number;
+  readRelayLimit?: number;
+  preferKindOnly?: boolean;
   parseQuestionnaireIdFromEvent: (event: Pick<NostrEvent, "kind" | "content">) => string | null;
 }) {
-  const relays = getQuestionnaireReadRelays(input.relays);
+  const relays = getQuestionnaireReadRelays(input.relays, input.readRelayLimit);
   const pool = getSharedNostrPool();
-  const filteredEvents = await pool.querySync(relays, {
-    kinds: [input.kind],
-    "#questionnaire-id": [input.questionnaireId],
-    limit: input.limit ?? 200,
-  });
-  if (filteredEvents.length > 0) {
-    return {
-      events: filteredEvents,
-      diagnostics: {
-        mode: "filtered" as const,
-        filteredCount: filteredEvents.length,
-        kindOnlyCount: 0,
-      },
-    };
+  if (!input.preferKindOnly) {
+    const filteredEvents = await pool.querySync(relays, {
+      kinds: [input.kind],
+      "#questionnaire-id": [input.questionnaireId],
+      limit: input.limit ?? 200,
+    });
+    if (filteredEvents.length > 0) {
+      return {
+        events: filteredEvents,
+        diagnostics: {
+          mode: "filtered" as const,
+          filteredCount: filteredEvents.length,
+          kindOnlyCount: 0,
+        },
+      };
+    }
   }
 
   const kindOnlyEvents = await pool.querySync(relays, {
@@ -316,6 +321,8 @@ export function subscribeQuestionnaireEvents(input: {
   kind: number;
   relays?: string[];
   limit?: number;
+  readRelayLimit?: number;
+  useQuestionnaireIdTagFilter?: boolean;
   parseQuestionnaireIdFromEvent: (event: Pick<NostrEvent, "kind" | "content">) => string | null;
   onEvent: (event: NostrEvent) => void;
   onError?: (error: Error) => void;
@@ -331,15 +338,24 @@ export function subscribeQuestionnaireEvents(input: {
     if (closed) {
       return;
     }
-    const relays = getQuestionnaireReadRelays(input.relays);
+    const relays = getQuestionnaireReadRelays(input.relays, input.readRelayLimit);
     if (relays.length === 0) {
       scheduleReconnect();
       return;
     }
-    subscription = pool.subscribeMany(relays, {
+    const useQuestionnaireIdTagFilter = input.useQuestionnaireIdTagFilter !== false;
+    const baseFilter: {
+      kinds: number[];
+      limit: number;
+      "#questionnaire-id"?: string[];
+    } = {
       kinds: [input.kind],
       limit: input.limit ?? 200,
-    }, {
+    };
+    if (useQuestionnaireIdTagFilter) {
+      baseFilter["#questionnaire-id"] = [input.questionnaireId];
+    }
+    subscription = pool.subscribeMany(relays, baseFilter, {
       onevent: (event) => {
         reconnectAttempt = 0;
         const matchedQuestionnaireId = input.parseQuestionnaireIdFromEvent(event);
