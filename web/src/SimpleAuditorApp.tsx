@@ -36,6 +36,7 @@ export default function SimpleAuditorApp() {
   const [selectedVotingId, setSelectedVotingId] = useState("");
   const [selectedLeadCoordinatorNpub, setSelectedLeadCoordinatorNpub] = useState("");
   const [selectedRosterCoordinatorNpub, setSelectedRosterCoordinatorNpub] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [refreshStatus, setRefreshStatus] = useState<string | null>(null);
   const snapshotRef = useRef<ProtocolSnapshot | null>(null);
 
@@ -136,9 +137,21 @@ export default function SimpleAuditorApp() {
       if (selectedRosterCoordinatorNpub && !round.authorizedCoordinatorNpubs.includes(selectedRosterCoordinatorNpub)) {
         return false;
       }
+      const query = searchQuery.trim().toLowerCase();
+      if (query.length > 0) {
+        const matchesQuery = (
+          round.votingId.toLowerCase().includes(query)
+          || round.prompt.toLowerCase().includes(query)
+          || round.coordinatorNpub.toLowerCase().includes(query)
+          || round.authorizedCoordinatorNpubs.some((npub) => npub.toLowerCase().includes(query))
+        );
+        if (!matchesQuery) {
+          return false;
+        }
+      }
       return true;
     }),
-    [discoveredRounds, selectedLeadCoordinatorNpub, selectedRosterCoordinatorNpub],
+    [discoveredRounds, searchQuery, selectedLeadCoordinatorNpub, selectedRosterCoordinatorNpub],
   );
 
   useEffect(() => {
@@ -240,6 +253,16 @@ export default function SimpleAuditorApp() {
                   </option>
                 ))}
               </select>
+              <label className='simple-voter-label' htmlFor='simple-auditor-search'>
+                Search
+              </label>
+              <input
+                id='simple-auditor-search'
+                className='simple-voter-input'
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder='Filter by npub or questionnaire ID...'
+              />
               {filteredDiscoveredRounds.length > 0 ? (
                 <>
                   <label className='simple-voter-label' htmlFor='simple-auditor-round'>
