@@ -2158,6 +2158,9 @@ export default function SimpleUiApp() {
     missingActiveVoteCoordinatorIndices,
   );
   const hideLegacyLiveVotePanel = questionnaireContext.hasDefinition;
+  const questionnaireVoteReady =
+    questionnaireContext.hasDefinition
+    || announcedQuestionnaireIds.length > 0;
 
   useEffect(() => {
     setTicketAckSent(false);
@@ -2312,6 +2315,11 @@ export default function SimpleUiApp() {
   ]);
 
   function selectTab(nextTab: VoterTab) {
+    if (nextTab === "vote" && !questionnaireVoteReady) {
+      setRequestStatus("Waiting for questions to be published.");
+      setActiveTab("configure");
+      return;
+    }
     setActiveTab(nextTab);
   }
 
@@ -2406,6 +2414,7 @@ export default function SimpleUiApp() {
             aria-selected={activeTab === 'vote'}
             className={`simple-voter-tab${activeTab === 'vote' ? ' is-active' : ''}`}
             onClick={() => selectTab('vote')}
+            disabled={!questionnaireVoteReady}
           >
             Vote
           </button>
@@ -2566,7 +2575,8 @@ export default function SimpleUiApp() {
                   onClick={() => selectTab('vote')}
                   disabled={
                     !voterKeypair?.npub ||
-                    configuredCoordinatorTargets.length === 0
+                    configuredCoordinatorTargets.length === 0 ||
+                    !questionnaireVoteReady
                   }
                 >
                   Vote
