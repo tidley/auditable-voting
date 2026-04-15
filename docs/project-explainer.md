@@ -554,6 +554,7 @@ The repository now focuses on the client-side web app only:
 - each coordinator sends its own ticket share directly to the voter
 - non-lead ticket sends are slightly staggered by share index to reduce same-recipient relay bursts
 - automatic follow, blind-request, ticket, and acknowledgement sends are randomly delayed by up to `30s` to better match real participants and reduce relay rate limiting
+- accepted followers now receive active questionnaire ids (`open`/`published`) in coordinator roster DMs, so voter questionnaire selection can auto-populate without manual restore
 - coordinator follower rows expose per-ticket relay publish diagnostics
 - Nostr is the shared state layer
 - blind-share issuance is in the simple flow

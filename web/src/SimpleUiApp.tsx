@@ -265,6 +265,7 @@ export default function SimpleUiApp() {
   const [coordinatorDraft, setCoordinatorDraft] = useState("");
   const [coordinatorScannerActive, setCoordinatorScannerActive] = useState(false);
   const [coordinatorScannerStatus, setCoordinatorScannerStatus] = useState<string | null>(null);
+  const [announcedQuestionnaireIds, setAnnouncedQuestionnaireIds] = useState<string[]>([]);
   const [liveVoteChoice, setLiveVoteChoice] = useState<LiveVoteChoice>(null);
   const [requestStatus, setRequestStatus] = useState<string | null>(null);
   const [identityStatus, setIdentityStatus] = useState<string | null>(null);
@@ -740,8 +741,28 @@ export default function SimpleUiApp() {
         const discoveredCoordinatorNpubs = normalizeCoordinatorNpubsRust(
           announcements.flatMap((announcement) => announcement.coordinatorNpubs),
         );
+        const discoveredQuestionnaireIds = [
+          ...new Set(
+            announcements
+              .filter((announcement) => (
+                announcement.questionnaireState === "open"
+                || announcement.questionnaireState === "published"
+              ))
+              .map((announcement) => announcement.questionnaireId?.trim() ?? "")
+              .filter((value) => value.length > 0),
+          ),
+        ];
 
         if (discoveredCoordinatorNpubs.length === 0) {
+          if (discoveredQuestionnaireIds.length > 0) {
+            setAnnouncedQuestionnaireIds((current) => {
+              const next = [...new Set([...current, ...discoveredQuestionnaireIds])].slice(-8);
+              return next.length === current.length
+                && next.every((value, index) => value === current[index])
+                ? current
+                : next;
+            });
+          }
           return;
         }
 
@@ -755,6 +776,15 @@ export default function SimpleUiApp() {
             ? current
             : next;
         });
+        if (discoveredQuestionnaireIds.length > 0) {
+          setAnnouncedQuestionnaireIds((current) => {
+            const next = [...new Set([...current, ...discoveredQuestionnaireIds])].slice(-8);
+            return next.length === current.length
+              && next.every((value, index) => value === current[index])
+              ? current
+              : next;
+          });
+        }
       },
     });
   }, [shouldActivateStartupRelayTraffic, voterKeypair?.nsec]);
@@ -2575,6 +2605,7 @@ export default function SimpleUiApp() {
               }}
               participationHistory={questionnaireParticipationHistory}
               onParticipationHistoryChange={setQuestionnaireParticipationHistory}
+              announcedQuestionnaireIds={announcedQuestionnaireIds}
             />
             {isCourseFeedbackMode || hideLegacyLiveVotePanel ? null : (
             effectiveLiveVoteSession ? (
