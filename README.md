@@ -41,7 +41,7 @@ The shipped app currently includes:
 - questionnaire responses now use a stable per-questionnaire responder identity per voter profile, with one accepted submission per questionnaire in the voter flow
 - local browser persistence, backup, and optional passphrase protection
 - voter questionnaire participation history is now stored locally and included in voter backups/restores
-- auditor round selection now supports filtering by lead coordinator so audits can focus on one coordinator lineage at a time
+- auditor round selection now supports lead-coordinator filter, coordinator-npub filter, and free-text search (npub/round ID/prompt), with slower non-overlapping refreshes to reduce relay REQ spikes
 - optional relay hint resolution via NIP-65, disabled by default
 - a growing Rust/Wasm core for deterministic protocol logic
 
