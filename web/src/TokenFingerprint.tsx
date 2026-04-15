@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import QRCode from "qrcode";
 import {
   TOKEN_FINGERPRINT_PALETTE,
@@ -32,16 +32,6 @@ export default function TokenFingerprint({
   const [qrExpanded, setQrExpanded] = useState(false);
   const cells = tokenPatternDetail(tokenId, size);
   const qrPayload = qrValue ?? tokenQrPayload(tokenId);
-  const qrDarkColor = useMemo(
-    () => {
-      const filled = cells.find((cell) => cell.filled);
-      if (!filled) {
-        return "#2e2218";
-      }
-      return TOKEN_FINGERPRINT_PALETTE[filled.colorIndex] ?? "#2e2218";
-    },
-    [cells],
-  );
 
   useEffect(() => {
     let cancelled = false;
@@ -56,7 +46,7 @@ export default function TokenFingerprint({
       margin: 1,
       width: compact ? 96 : (xlarge ? 432 : (large ? 288 : 144)),
       color: {
-        dark: qrDarkColor,
+        dark: "#2e2218",
         light: "#fffaf2",
       },
     }).then((value: string) => {
@@ -72,7 +62,7 @@ export default function TokenFingerprint({
     return () => {
       cancelled = true;
     };
-  }, [compact, qrDarkColor, qrPayload, showQr]);
+  }, [compact, qrPayload, showQr]);
 
   useEffect(() => {
     if (!qrExpanded) {
@@ -180,11 +170,31 @@ export default function TokenFingerprint({
             className='token-fingerprint-overlay-card'
             onClick={(event) => event.stopPropagation()}
           >
-            <img
-              className='token-fingerprint-overlay-qr'
-              src={qrSrc}
-              alt={`Expanded QR for token ${tokenIdLabel(tokenId)}`}
-            />
+            <div className='token-fingerprint-overlay-content'>
+              <div
+                className='token-fingerprint-grid token-fingerprint-overlay-grid'
+                role='img'
+                aria-label={label ?? `Token fingerprint ${tokenIdLabel(tokenId)}`}
+                style={{ gridTemplateColumns: `repeat(${size}, minmax(0, 1fr))` }}
+              >
+                {cells.map((cell, index) => (
+                  <span
+                    key={`overlay-${tokenId}-${index}`}
+                    className={`token-fingerprint-cell${cell.filled ? ' is-filled' : ' is-empty'}`}
+                    style={{
+                      backgroundColor: cell.filled
+                        ? TOKEN_FINGERPRINT_PALETTE[cell.colorIndex]
+                        : '#efe6d6',
+                    }}
+                  />
+                ))}
+              </div>
+              <img
+                className='token-fingerprint-overlay-qr'
+                src={qrSrc}
+                alt={`Expanded QR for token ${tokenIdLabel(tokenId)}`}
+              />
+            </div>
           </div>
         </div>
       ) : null}
