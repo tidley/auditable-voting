@@ -37,9 +37,11 @@ The shipped app currently includes:
 - smaller primary relay subsets for live reads and subscriptions, with ordinary DM traffic kept tight while coordinator-control and ticket/ack traffic use a slightly wider primary subset for recovery and first-round reliability
 - randomised automatic follow/request/ticket/ack send pacing, plus slower retry windows, to reduce relay-side rate limiting when many browser actors act at once
 - lead coordinator roster DMs now include active questionnaire ids (`open`/`published`) so accepted followers can auto-discover questionnaires without manual restore
+- voter vote-tab gating now verifies announced questionnaire ids against public definition+state (`open`/`published`) before enabling Vote, reducing manual restore races
 - questionnaire responses now use a stable per-questionnaire responder identity per voter profile, with one accepted submission per questionnaire in the voter flow
 - local browser persistence, backup, and optional passphrase protection
 - voter questionnaire participation history is now stored locally and included in voter backups/restores
+- auditor round selection now supports filtering by lead coordinator so audits can focus on one coordinator lineage at a time
 - optional relay hint resolution via NIP-65, disabled by default
 - a growing Rust/Wasm core for deterministic protocol logic
 
