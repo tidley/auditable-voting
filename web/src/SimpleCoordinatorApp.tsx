@@ -5072,7 +5072,7 @@ export default function SimpleCoordinatorApp() {
             </SimpleCollapsibleSection>
 
             <SimpleCollapsibleSection title='Known voters and invites (Option A)' defaultCollapsed>
-              <QuestionnaireOptionACoordinatorPanel />
+              <QuestionnaireOptionACoordinatorPanel coordinatorNpub={keypair?.npub ?? null} />
             </SimpleCollapsibleSection>
           </section>
         ) : null}
