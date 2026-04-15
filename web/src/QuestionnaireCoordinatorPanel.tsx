@@ -1165,6 +1165,11 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             </button>
           </div>
           <p className='simple-voter-note'>{publishStatusText}</p>
+          {currentState === "results_published" ? (
+            <p className='simple-voter-note'>
+              Published results are available in this coordinator&apos;s <strong>Results</strong> tab and in <strong>Auditor</strong> under the selected coordinator filters.
+            </p>
+          ) : null}
         </div>
 
         <div className='simple-questionnaire-responses-section'>

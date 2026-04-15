@@ -327,6 +327,7 @@ export default function SimpleUiApp() {
   const [selectedVotingId, setSelectedVotingId] = useState("");
   const [activeTab, setActiveTab] = useState<VoterTab>("configure");
   const [showVoteDetails, setShowVoteDetails] = useState(false);
+  const [votePaneUnlocked, setVotePaneUnlocked] = useState(false);
   const [questionnaireContext, setQuestionnaireContext] = useState<{ hasDefinition: boolean; state: string | null }>({
     hasDefinition: false,
     state: null,
@@ -1270,6 +1271,7 @@ export default function SimpleUiApp() {
     setSelectedVotingId("");
     setActiveTab("configure");
     setShowVoteDetails(false);
+    setVotePaneUnlocked(false);
     lastAutoSelectedVotingIdRef.current = "";
     manualRoundSelectionRef.current = false;
     sentTicketReceiptAckIdsRef.current.clear();
@@ -2249,7 +2251,8 @@ export default function SimpleUiApp() {
   );
   const hideLegacyLiveVotePanel = questionnaireContext.hasDefinition;
   const questionnaireVoteReady =
-    questionnaireContext.hasDefinition
+    votePaneUnlocked
+    || questionnaireContext.hasDefinition
     || readyAnnouncedQuestionnaireIds.length > 0;
   const waitingForQuestionnaireData =
     !questionnaireContext.hasDefinition
@@ -2708,6 +2711,9 @@ export default function SimpleUiApp() {
             <QuestionnaireVoterPanel
               onContextChange={(nextContext) => {
                 setQuestionnaireContext(nextContext);
+                if (nextContext.hasDefinition) {
+                  setVotePaneUnlocked(true);
+                }
               }}
               participationHistory={questionnaireParticipationHistory}
               onParticipationHistoryChange={setQuestionnaireParticipationHistory}
