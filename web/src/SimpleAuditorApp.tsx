@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 import TokenFingerprint from "./TokenFingerprint";
 import {
@@ -16,6 +16,7 @@ import {
 } from "./core/publicEventBridge";
 
 const SIMPLE_AUDITOR_ELECTION_ID = "simple-public-election";
+const AUDITOR_REFRESH_INTERVAL_MS = 15000;
 
 function roundToSession(round: DerivedState["public_state"]["rounds"][number]): SimpleLiveVoteSession {
   const createdAtMs = round.opened_at ?? round.defined_at;
@@ -39,72 +40,90 @@ export default function SimpleAuditorApp() {
   const [searchQuery, setSearchQuery] = useState("");
   const [refreshStatus, setRefreshStatus] = useState<string | null>(null);
   const snapshotRef = useRef<ProtocolSnapshot | null>(null);
+  const selectedVotingIdRef = useRef("");
+  const refreshInFlightRef = useRef(false);
+
+  useEffect(() => {
+    selectedVotingIdRef.current = selectedVotingId;
+  }, [selectedVotingId]);
+
+  const refreshDerivedState = useCallback(async () => {
+    if (refreshInFlightRef.current) {
+      return;
+    }
+    refreshInFlightRef.current = true;
+    try {
+      const rounds = await fetchSimpleLiveVotes();
+      const orderedRounds = sortRecordsByCreatedAtDescRust(rounds);
+      const selectedRoundId = selectedVotingIdRef.current.trim() || (orderedRounds[0]?.votingId ?? "");
+      const selectedRoundVotes = selectedRoundId
+        ? typeof fetchSimpleSubmittedVotes === "function"
+          ? await fetchSimpleSubmittedVotes({ votingId: selectedRoundId })
+          : []
+        : [];
+
+      const protocolEvents = [
+        buildElectionDefinitionEvent({
+          electionId: SIMPLE_AUDITOR_ELECTION_ID,
+          authorPubkey: orderedRounds[0]?.coordinatorNpub ?? "auditor",
+          title: "Auditable Voting",
+        }),
+        ...orderedRounds.map((round) => publicEventFromLiveVote({
+          electionId: SIMPLE_AUDITOR_ELECTION_ID,
+          session: round,
+        })),
+        ...selectedRoundVotes.map((vote) => ballotEventFromSubmittedVote({
+          electionId: SIMPLE_AUDITOR_ELECTION_ID,
+          vote,
+        })),
+      ];
+
+      const adapter = snapshotRef.current
+        ? await DerivedStateAdapter.restore(snapshotRef.current)
+        : await DerivedStateAdapter.create(SIMPLE_AUDITOR_ELECTION_ID);
+
+      const nextDerivedState = adapter.replayAll(protocolEvents);
+      const nextSnapshot = adapter.exportSnapshot();
+      setDerivedState(nextDerivedState);
+      snapshotRef.current = nextSnapshot;
+      setRefreshStatus(
+        orderedRounds.length > 0
+          ? "Rounds and ballots refreshed from Nostr."
+          : "No public rounds discovered yet.",
+      );
+    } catch {
+      setRefreshStatus("Failed to refresh public rounds.");
+    } finally {
+      refreshInFlightRef.current = false;
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
-
-    async function refreshDerivedState() {
-      try {
-        const rounds = await fetchSimpleLiveVotes();
-        const orderedRounds = sortRecordsByCreatedAtDescRust(rounds);
-        const ballotsByRound = await Promise.all(
-          orderedRounds.map(async (round) => ({
-            round,
-            votes: await fetchSimpleSubmittedVotes({ votingId: round.votingId }),
-          })),
-        );
-
-        const protocolEvents = [
-          buildElectionDefinitionEvent({
-            electionId: SIMPLE_AUDITOR_ELECTION_ID,
-            authorPubkey: orderedRounds[0]?.coordinatorNpub ?? "auditor",
-            title: "Auditable Voting",
-          }),
-          ...orderedRounds.map((round) => publicEventFromLiveVote({
-            electionId: SIMPLE_AUDITOR_ELECTION_ID,
-            session: round,
-          })),
-          ...ballotsByRound.flatMap(({ votes }) => votes.map((vote) => ballotEventFromSubmittedVote({
-            electionId: SIMPLE_AUDITOR_ELECTION_ID,
-            vote,
-          }))),
-        ];
-
-        const adapter = snapshotRef.current
-          ? await DerivedStateAdapter.restore(snapshotRef.current)
-          : await DerivedStateAdapter.create(SIMPLE_AUDITOR_ELECTION_ID);
-
-        const nextDerivedState = adapter.replayAll(protocolEvents);
-        const nextSnapshot = adapter.exportSnapshot();
-
-        if (cancelled) {
-          return;
-        }
-
-        setDerivedState(nextDerivedState);
-        snapshotRef.current = nextSnapshot;
-        setRefreshStatus(
-          orderedRounds.length > 0
-            ? "Rounds and ballots refreshed from Nostr."
-            : "No public rounds discovered yet.",
-        );
-      } catch {
-        if (!cancelled) {
-          setRefreshStatus("Failed to refresh public rounds.");
-        }
+    const runRefresh = async () => {
+      if (cancelled) {
+        return;
       }
-    }
+      await refreshDerivedState();
+    };
 
-    void refreshDerivedState();
+    void runRefresh();
     const intervalId = window.setInterval(() => {
-      void refreshDerivedState();
-    }, 5000);
+      void runRefresh();
+    }, AUDITOR_REFRESH_INTERVAL_MS);
 
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, []);
+  }, [refreshDerivedState]);
+
+  useEffect(() => {
+    if (!selectedVotingId.trim()) {
+      return;
+    }
+    void refreshDerivedState();
+  }, [refreshDerivedState, selectedVotingId]);
 
   const discoveredRounds = useMemo(
     () => sortRecordsByCreatedAtDescRust(
@@ -142,6 +161,7 @@ export default function SimpleAuditorApp() {
         const matchesQuery = (
           round.votingId.toLowerCase().includes(query)
           || round.prompt.toLowerCase().includes(query)
+          || round.eventId.toLowerCase().includes(query)
           || round.coordinatorNpub.toLowerCase().includes(query)
           || round.authorizedCoordinatorNpubs.some((npub) => npub.toLowerCase().includes(query))
         );
@@ -206,6 +226,7 @@ export default function SimpleAuditorApp() {
   async function refreshNow() {
     snapshotRef.current = null;
     setRefreshStatus("Refreshing public rounds...");
+    await refreshDerivedState();
   }
 
   return (
@@ -261,7 +282,7 @@ export default function SimpleAuditorApp() {
                 className='simple-voter-input'
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder='Filter by npub or questionnaire ID...'
+                placeholder='Filter by npub, round/questionnaire ID, or prompt...'
               />
               {filteredDiscoveredRounds.length > 0 ? (
                 <>
@@ -314,20 +335,20 @@ export default function SimpleAuditorApp() {
         </SimpleCollapsibleSection>
 
         <SimpleCollapsibleSection title='Audit summary'>
-          {selectedRound && selectedSummary ? (
+          {selectedRound ? (
             <>
               <div className='simple-auditor-summary-grid'>
                 <div className='simple-auditor-summary-card'>
                   <p className='simple-auditor-summary-label'>Accepted Yes</p>
-                  <p className='simple-auditor-score'>{selectedSummary.yes_count}</p>
+                  <p className='simple-auditor-score'>{selectedSummary?.yes_count ?? 0}</p>
                 </div>
                 <div className='simple-auditor-summary-card'>
                   <p className='simple-auditor-summary-label'>Accepted No</p>
-                  <p className='simple-auditor-score'>{selectedSummary.no_count}</p>
+                  <p className='simple-auditor-score'>{selectedSummary?.no_count ?? 0}</p>
                 </div>
                 <div className='simple-auditor-summary-card'>
                   <p className='simple-auditor-summary-label'>Rejected ballots</p>
-                  <p className='simple-auditor-score'>{selectedSummary.rejected_ballot_count}</p>
+                  <p className='simple-auditor-score'>{selectedSummary?.rejected_ballot_count ?? 0}</p>
                 </div>
                 <div className='simple-auditor-summary-card'>
                   <p className='simple-auditor-summary-label'>Acceptance rule</p>

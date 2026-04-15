@@ -1186,6 +1186,11 @@ vi.mock("./simpleVotingSession", () => ({
   fetchSimpleLiveVotes: vi.fn(async () => (
     [...liveVotes].sort((left, right) => right.createdAt.localeCompare(left.createdAt))
   )),
+  fetchSimpleSubmittedVotes: vi.fn(async (input: { votingId: string }) => (
+    submittedVotes
+      .filter((vote) => vote.votingId === input.votingId)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+  )),
   publishSimpleSubmittedVote: vi.fn(async (input: {
     ballotNsec: string;
     votingId: string;
@@ -2449,6 +2454,65 @@ describe("Simple round flow", () => {
       expect(auditorUi.getByText(/Yes: 1 \| No: 0/i)).toBeTruthy();
       expect(auditorUi.getByText(/Vote Yes/i)).toBeTruthy();
       expect(auditorUi.getByText(/Authorized coordinators: 1/i)).toBeTruthy();
+    });
+  });
+
+  it("lets an auditor filter rounds by search query for npub and round id", async () => {
+    const { default: SimpleAppShell } = await import("./SimpleAppShell");
+
+    const coordinatorASecret = Uint8Array.from({ length: 32 }, (_, index) => index + 11);
+    const coordinatorBSecret = Uint8Array.from({ length: 32 }, (_, index) => index + 21);
+    const coordinatorANpub = nip19.npubEncode(getPublicKey(coordinatorASecret));
+    const coordinatorBNpub = nip19.npubEncode(getPublicKey(coordinatorBSecret));
+
+    liveVotes = [
+      {
+        votingId: "audit-search-a",
+        prompt: "Round A prompt",
+        coordinatorNpub: coordinatorANpub,
+        createdAt: "2026-04-04T00:00:00.000Z",
+        thresholdT: 1,
+        thresholdN: 1,
+        authorizedCoordinatorNpubs: [coordinatorANpub],
+        eventId: "live-audit-search-a",
+      },
+      {
+        votingId: "audit-search-b",
+        prompt: "Round B prompt",
+        coordinatorNpub: coordinatorBNpub,
+        createdAt: "2026-04-04T00:01:00.000Z",
+        thresholdT: 1,
+        thresholdN: 1,
+        authorizedCoordinatorNpubs: [coordinatorBNpub],
+        eventId: "live-audit-search-b",
+      },
+    ];
+    submittedVotes = [];
+
+    const user = userEvent.setup();
+    const auditor = render(<SimpleAppShell initialRole="auditor" />);
+    const auditorUi = within(auditor.container);
+
+    await waitFor(() => {
+      expect(auditorUi.getByRole("heading", { name: /^Auditor$/i, level: 1 })).toBeTruthy();
+      expect(auditorUi.getAllByText(/Round B prompt/i).length).toBeGreaterThan(0);
+    });
+
+    const searchInput = auditorUi.getByLabelText(/^Search$/i);
+    await user.clear(searchInput);
+    await user.type(searchInput, coordinatorBNpub.slice(0, 12));
+
+    await waitFor(() => {
+      expect(auditorUi.getAllByText(/Round B prompt/i).length).toBeGreaterThan(0);
+      expect(auditorUi.queryByText(/Round A prompt/i)).toBeNull();
+    });
+
+    await user.clear(searchInput);
+    await user.type(searchInput, "audit-search-a");
+
+    await waitFor(() => {
+      expect(auditorUi.getAllByText(/Round A prompt/i).length).toBeGreaterThan(0);
+      expect(auditorUi.queryByText(/Round B prompt/i)).toBeNull();
     });
   });
 });
