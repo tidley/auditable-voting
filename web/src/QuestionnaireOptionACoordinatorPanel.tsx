@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { buildInviteUrl } from "./questionnaireInvite";
 import { createSignerService, SignerServiceError } from "./services/signerService";
 import {
@@ -25,6 +25,7 @@ export default function QuestionnaireOptionACoordinatorPanel(props: Props) {
   const [whitelistInput, setWhitelistInput] = useState("");
   const [title, setTitle] = useState(props.title ?? "Questionnaire");
   const [description, setDescription] = useState(props.description ?? "");
+  const [refreshNonce, setRefreshNonce] = useState(0);
 
   const snapshot = runtime.getSnapshot();
   const flags = runtime.getFlags();
@@ -113,6 +114,24 @@ export default function QuestionnaireOptionACoordinatorPanel(props: Props) {
 
   const whitelistRows = Object.values(snapshot?.whitelist ?? {});
 
+  useEffect(() => {
+    if (!signedInNpub.trim()) {
+      return;
+    }
+    const intervalId = window.setInterval(() => {
+      try {
+        runtime.processPendingBlindRequests();
+        runtime.processPendingSubmissions([]);
+        setRefreshNonce((value) => value + 1);
+      } catch {
+        // Keep background processing best-effort; explicit actions surface errors.
+      }
+    }, 1500);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [runtime, signedInNpub]);
+
   return (
     <div className='simple-voter-card simple-questionnaire-panel'>
       <div className='simple-questionnaire-header'>
@@ -176,6 +195,7 @@ export default function QuestionnaireOptionACoordinatorPanel(props: Props) {
 
       <p className='simple-voter-note'>Accepted unique responders: {runtime.getAcceptedUniqueCount()}</p>
       {status ? <p className='simple-voter-note'>{status}</p> : null}
+      <span style={{ display: "none" }} aria-hidden='true'>{refreshNonce}</span>
     </div>
   );
 }
