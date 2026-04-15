@@ -80,6 +80,7 @@ import {
   type ProtocolStateCache,
 } from "./services/ProtocolStateService";
 import { type MailboxReadQueryDebug } from "./simpleMailbox";
+import { createSignerService, SignerServiceError } from "./services/signerService";
 
 type LiveVoteChoice = "Yes" | "No" | null;
 type VoterTab = "configure" | "vote" | "settings";
@@ -305,6 +306,8 @@ export default function SimpleUiApp() {
   const [liveVoteChoice, setLiveVoteChoice] = useState<LiveVoteChoice>(null);
   const [requestStatus, setRequestStatus] = useState<string | null>(null);
   const [identityStatus, setIdentityStatus] = useState<string | null>(null);
+  const [signerNpub, setSignerNpub] = useState<string>("");
+  const [signerStatus, setSignerStatus] = useState<string | null>(null);
   const [backupStatus, setBackupStatus] = useState<string | null>(null);
   const [storagePassphrase, setStoragePassphrase] = useState("");
   const [storageLocked, setStorageLocked] = useState(false);
@@ -1289,6 +1292,22 @@ export default function SimpleUiApp() {
     setIdentityStatus(null);
     setBackupStatus(null);
     clearVoterSessionState({ clearManualCoordinators: true });
+  }
+
+  async function loginWithSigner() {
+    try {
+      const signer = createSignerService();
+      const rawPubkey = await signer.getPublicKey();
+      const npub = rawPubkey.startsWith("npub1") ? rawPubkey : nip19.npubEncode(rawPubkey);
+      setSignerNpub(npub);
+      setSignerStatus(`Signed in as ${npub}.`);
+    } catch (error) {
+      if (error instanceof SignerServiceError) {
+        setSignerStatus(error.message);
+        return;
+      }
+      setSignerStatus("Signer login failed.");
+    }
   }
 
   function restoreIdentity(nextNsec: string) {
@@ -2485,14 +2504,25 @@ export default function SimpleUiApp() {
       <section className='simple-voter-page'>
         <div className='simple-voter-header-row'>
           <h1 className='simple-voter-title'>Voter ID {voterId}</h1>
-          <button
-            type='button'
-            className='simple-voter-primary'
-            onClick={refreshIdentity}
-          >
-            New
-          </button>
+          <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
+            <button
+              type='button'
+              className='simple-voter-secondary'
+              onClick={() => void loginWithSigner()}
+            >
+              Login
+            </button>
+            <button
+              type='button'
+              className='simple-voter-primary'
+              onClick={refreshIdentity}
+            >
+              New
+            </button>
+          </div>
         </div>
+        {signerNpub ? <p className='simple-voter-note'>Signed in as {signerNpub}</p> : null}
+        {signerStatus ? <p className='simple-voter-note'>{signerStatus}</p> : null}
         <div
           className='simple-voter-tabs'
           role='tablist'

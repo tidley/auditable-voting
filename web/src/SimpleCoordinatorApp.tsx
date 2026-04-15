@@ -89,6 +89,7 @@ import {
   normalizeRelaysRust,
   selectTicketRetryTargetsRust,
 } from "./wasm/auditableVotingCore";
+import { createSignerService, SignerServiceError } from "./services/signerService";
 
 type CoordinatorTab = "configure" | "voting" | "settings";
 
@@ -557,6 +558,8 @@ export default function SimpleCoordinatorApp() {
   const [identityReady, setIdentityReady] = useState(false);
   const [coordinatorId, setCoordinatorId] = useState("pending");
   const [identityStatus, setIdentityStatus] = useState<string | null>(null);
+  const [signerNpub, setSignerNpub] = useState<string>("");
+  const [signerStatus, setSignerStatus] = useState<string | null>(null);
   const [backupStatus, setBackupStatus] = useState<string | null>(null);
   const [storagePassphrase, setStoragePassphrase] = useState("");
   const [storageLocked, setStorageLocked] = useState(false);
@@ -2802,6 +2805,22 @@ export default function SimpleCoordinatorApp() {
     roundBroadcastInFlightRef.current = null;
   }
 
+  async function loginWithSigner() {
+    try {
+      const signer = createSignerService();
+      const rawPubkey = await signer.getPublicKey();
+      const npub = rawPubkey.startsWith("npub1") ? rawPubkey : nip19.npubEncode(rawPubkey);
+      setSignerNpub(npub);
+      setSignerStatus(`Signed in as ${npub}.`);
+    } catch (error) {
+      if (error instanceof SignerServiceError) {
+        setSignerStatus(error.message);
+        return;
+      }
+      setSignerStatus("Signer login failed.");
+    }
+  }
+
   function restoreIdentity(nextNsec: string) {
     const trimmed = nextNsec.trim();
     const derivedNpub = deriveNpubFromNsec(trimmed);
@@ -4690,6 +4709,13 @@ export default function SimpleCoordinatorApp() {
             </button>
             <button
               type='button'
+              className='simple-voter-secondary'
+              onClick={() => void loginWithSigner()}
+            >
+              Login
+            </button>
+            <button
+              type='button'
               className='simple-voter-primary'
               onClick={refreshIdentity}
             >
@@ -4697,6 +4723,8 @@ export default function SimpleCoordinatorApp() {
             </button>
           </div>
         </div>
+        {signerNpub ? <p className='simple-voter-note'>Signed in as {signerNpub}</p> : null}
+        {signerStatus ? <p className='simple-voter-note'>{signerStatus}</p> : null}
         <div
           className='simple-voter-tabs'
           role='tablist'
