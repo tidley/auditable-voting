@@ -286,12 +286,14 @@ type QuestionnaireVoterPanelProps = {
   onContextChange?: (context: { hasDefinition: boolean; state: string | null }) => void;
   participationHistory?: QuestionnaireParticipationHistoryEntry[];
   onParticipationHistoryChange?: (entries: QuestionnaireParticipationHistoryEntry[]) => void;
+  announcedQuestionnaireIds?: string[];
 };
 
 export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelProps) {
   const onContextChange = props.onContextChange;
   const onParticipationHistoryChange = props.onParticipationHistoryChange;
   const incomingParticipationHistory = props.participationHistory;
+  const announcedQuestionnaireIds = props.announcedQuestionnaireIds;
   const [questionnaireId, setQuestionnaireId] = useState("");
   const [selectorEntries, setSelectorEntries] = useState<QuestionnaireSelectorEntry[]>([]);
   const [coordinatorContextNpubs, setCoordinatorContextNpubs] = useState<string[]>([]);
@@ -369,6 +371,20 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
     }
     setParticipationHistory((current) => mergeParticipationHistory(current, incoming));
   }, [incomingParticipationHistory]);
+
+  useEffect(() => {
+    const announcedIds = Array.isArray(announcedQuestionnaireIds)
+      ? announcedQuestionnaireIds
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0)
+      : [];
+    if (announcedIds.length === 0) {
+      return;
+    }
+    setRestoredQuestionnaireIds((current) => (
+      [...new Set([...current, ...announcedIds])].slice(-8)
+    ));
+  }, [announcedQuestionnaireIds]);
 
   useEffect(() => {
     if (typeof window === "undefined") {

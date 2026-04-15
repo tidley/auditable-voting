@@ -546,6 +546,7 @@
           <li>Blind-key stalls are now classified as not-attempted vs publish/observe/apply failures with event and relay diagnostics</li>
           <li>Questionnaire protocol scaffolding now exists for private response bundles, state transitions, and public aggregate result events</li>
           <li>The coordinator questionnaire screen now follows staged tabs: Build, Audience, Publish, Responses, and Results, with explicit publish readiness checks</li>
+          <li>Accepted followers now receive active questionnaire ids (`open`/`published`) in coordinator roster DMs so voter questionnaire selection can auto-populate</li>
           <li>Voter mailbox reads now key by `request_id` with immutable per-request mailbox bindings, plus read/backfill mailbox consistency diagnostics</li>
           <li>Voter questionnaire participation history is now stored locally and included in voter backup/restore bundles</li>
           <li>Optional NIP-65 inbox/outbox hints for relay discovery when enabled</li>

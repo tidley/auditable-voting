@@ -35,6 +35,7 @@ type QuestionnaireCoordinatorPanelProps = {
   knownVoterCount?: number;
   view?: "build" | "responses";
   onStatusChange?: (status: {
+    questionnaireId: string;
     state: QuestionnaireStateValue | null;
     acceptedCount: number;
     rejectedCount: number;
@@ -615,12 +616,13 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
 
   useEffect(() => {
     props.onStatusChange?.({
+      questionnaireId: questionnaireId.trim(),
       state: latestState,
       acceptedCount: latestAcceptedCount,
       rejectedCount: latestRejectedCount,
       payloadMode: "Encrypted",
     });
-  }, [latestAcceptedCount, latestRejectedCount, latestState, props]);
+  }, [latestAcceptedCount, latestRejectedCount, latestState, props, questionnaireId]);
 
   useEffect(() => {
     if (typeof window === "undefined") {

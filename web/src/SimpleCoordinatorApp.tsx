@@ -588,6 +588,13 @@ export default function SimpleCoordinatorApp() {
     useState('');
   const [submittedVotes, setSubmittedVotes] = useState<SimpleSubmittedVote[]>([]);
   const [activeTab, setActiveTab] = useState<CoordinatorTab>("configure");
+  const [questionnaireRosterAnnouncement, setQuestionnaireRosterAnnouncement] = useState<{
+    questionnaireId: string;
+    state: string | null;
+  }>({
+    questionnaireId: "",
+    state: null,
+  });
   const [shareAssignmentsInFlight, setShareAssignmentsInFlight] =
     useState(false);
   const [
@@ -2561,7 +2568,22 @@ export default function SimpleCoordinatorApp() {
       coordinatorNpub,
       ...subCoordinators.map((application) => application.coordinatorNpub),
     ]);
-    const rosterSignature = coordinatorRoster.join("|");
+    const publishableQuestionnaireId =
+      questionnaireRosterAnnouncement.questionnaireId.trim()
+      && (
+        questionnaireRosterAnnouncement.state === "open"
+        || questionnaireRosterAnnouncement.state === "published"
+      )
+        ? questionnaireRosterAnnouncement.questionnaireId.trim()
+        : "";
+    const publishableQuestionnaireState = publishableQuestionnaireId
+      ? questionnaireRosterAnnouncement.state
+      : null;
+    const rosterSignature = [
+      coordinatorRoster.join("|"),
+      publishableQuestionnaireId,
+      publishableQuestionnaireState ?? "",
+    ].join("|");
 
     for (const follower of followers) {
       if (sentRosterStateRef.current[follower.voterNpub] === rosterSignature) {
@@ -2574,11 +2596,13 @@ export default function SimpleCoordinatorApp() {
         recipientNpub: follower.voterNpub,
         leadCoordinatorNpub: coordinatorNpub,
         coordinatorNpubs: coordinatorRoster,
+        questionnaireId: publishableQuestionnaireId || undefined,
+        questionnaireState: publishableQuestionnaireState ?? undefined,
       }).catch(() => {
         delete sentRosterStateRef.current[follower.voterNpub];
       });
     }
-  }, [followers, isLeadCoordinator, keypair?.nsec, keypair?.npub, subCoordinators]);
+  }, [followers, isLeadCoordinator, keypair?.nsec, keypair?.npub, questionnaireRosterAnnouncement, subCoordinators]);
 
   useEffect(() => {
     const coordinatorSecretKey = decodeNsec(keypair?.nsec ?? "");
@@ -4753,6 +4777,12 @@ export default function SimpleCoordinatorApp() {
                 coordinatorNpub={keypair?.npub ?? null}
                 knownVoterCount={followers.length}
                 view='build'
+                onStatusChange={(nextStatus) => {
+                  setQuestionnaireRosterAnnouncement({
+                    questionnaireId: nextStatus.questionnaireId,
+                    state: nextStatus.state,
+                  });
+                }}
               />
             </SimpleCollapsibleSection>
 
@@ -4977,6 +5007,12 @@ export default function SimpleCoordinatorApp() {
               coordinatorNpub={keypair?.npub ?? null}
               knownVoterCount={followers.length}
               view='responses'
+              onStatusChange={(nextStatus) => {
+                setQuestionnaireRosterAnnouncement({
+                  questionnaireId: nextStatus.questionnaireId,
+                  state: nextStatus.state,
+                });
+              }}
             />
           </section>
         ) : null}

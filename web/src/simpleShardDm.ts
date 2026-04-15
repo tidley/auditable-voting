@@ -65,6 +65,8 @@ export type SimpleCoordinatorRosterAnnouncement = {
   dmEventId: string;
   leadCoordinatorNpub: string;
   coordinatorNpubs: string[];
+  questionnaireId?: string;
+  questionnaireState?: string;
   createdAt: string;
 };
 
@@ -746,6 +748,8 @@ function parseSimpleCoordinatorRosterAnnouncement(
       roster_id?: string;
       lead_coordinator_npub?: string;
       coordinator_npubs?: string[];
+      questionnaire_id?: string;
+      questionnaire_state?: string;
       created_at?: string;
     };
 
@@ -768,6 +772,8 @@ function parseSimpleCoordinatorRosterAnnouncement(
       dmEventId: String(wrappedEvent.id ?? payload.roster_id),
       leadCoordinatorNpub: payload.lead_coordinator_npub,
       coordinatorNpubs,
+      questionnaireId: payload.questionnaire_id?.trim() || undefined,
+      questionnaireState: payload.questionnaire_state?.trim() || undefined,
       createdAt:
         payload.created_at ??
         new Date(wrappedEvent.created_at * 1000).toISOString(),
@@ -964,6 +970,8 @@ export async function sendSimpleCoordinatorRoster(input: {
   recipientNpub: string;
   leadCoordinatorNpub: string;
   coordinatorNpubs: string[];
+  questionnaireId?: string;
+  questionnaireState?: string;
   relays?: string[];
 }): Promise<DmPublishResult> {
   const decoded = nip19.decode(input.recipientNpub);
@@ -1000,6 +1008,8 @@ export async function sendSimpleCoordinatorRoster(input: {
       roster_id: crypto.randomUUID(),
       lead_coordinator_npub: input.leadCoordinatorNpub,
       coordinator_npubs: coordinatorNpubs,
+      questionnaire_id: input.questionnaireId?.trim() || undefined,
+      questionnaire_state: input.questionnaireState?.trim() || undefined,
       created_at: new Date().toISOString(),
     }),
     'Coordinator roster',
