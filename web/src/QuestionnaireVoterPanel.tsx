@@ -10,6 +10,8 @@ import { deriveActorDisplayId } from "./actorDisplay";
 
 const RESTORED_QUESTIONNAIRE_IDS_STORAGE_KEY = "voter.restored-questionnaire-ids.v1";
 const PARTICIPATION_HISTORY_STORAGE_KEY = "voter.questionnaire-participation-history.v1";
+const SUBMITTED_QUESTIONNAIRE_IDS_STORAGE_KEY = "voter.submitted-questionnaire-ids.v1";
+const RESPONSE_IDENTITY_STORAGE_KEY = "voter.questionnaire-response-identities.v1";
 const VOTER_QUESTIONNAIRE_LOOKBACK_SECONDS = 7 * 24 * 60 * 60;
 const REFRESH_INTERVAL_MS = 15000;
 const MAX_PARTICIPATION_HISTORY_ENTRIES = 16;
@@ -79,6 +81,43 @@ function readParticipationHistory(storageKey: string) {
       .slice(0, MAX_PARTICIPATION_HISTORY_ENTRIES);
   } catch {
     return [];
+  }
+}
+
+function readStringList(storageKey: string, limit = 16) {
+  if (typeof window === "undefined") {
+    return [] as string[];
+  }
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(storageKey) ?? "[]") as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return [...new Set(parsed.filter((value): value is string => typeof value === "string" && value.trim().length > 0))]
+      .slice(-limit);
+  } catch {
+    return [];
+  }
+}
+
+function readResponseIdentityMap(storageKey: string) {
+  if (typeof window === "undefined") {
+    return {} as Record<string, string>;
+  }
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(storageKey) ?? "{}") as unknown;
+    if (!parsed || typeof parsed !== "object") {
+      return {};
+    }
+    const next: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof key === "string" && typeof value === "string" && key.trim() && value.trim()) {
+        next[key] = value;
+      }
+    }
+    return next;
+  } catch {
+    return {};
   }
 }
 
@@ -185,6 +224,18 @@ function buildRestoredStorageKey(actorId: string, coordinatorContextNpubs: strin
 function buildParticipationHistoryStorageKey(actorId: string) {
   return buildSimpleNamespacedLocalStorageKey(
     `voter:${actorId}:${PARTICIPATION_HISTORY_STORAGE_KEY}`,
+  );
+}
+
+function buildSubmittedQuestionnairesStorageKey(actorId: string) {
+  return buildSimpleNamespacedLocalStorageKey(
+    `voter:${actorId}:${SUBMITTED_QUESTIONNAIRE_IDS_STORAGE_KEY}`,
+  );
+}
+
+function buildResponseIdentityStorageKey(actorId: string) {
+  return buildSimpleNamespacedLocalStorageKey(
+    `voter:${actorId}:${RESPONSE_IDENTITY_STORAGE_KEY}`,
   );
 }
 
@@ -301,6 +352,8 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
   const [restoreQuestionnaireIdInput, setRestoreQuestionnaireIdInput] = useState("");
   const [participationHistory, setParticipationHistory] = useState<QuestionnaireParticipationHistoryEntry[]>([]);
   const [voterNpub, setVoterNpub] = useState("");
+  const [submittedQuestionnaireIds, setSubmittedQuestionnaireIds] = useState<string[]>([]);
+  const [responseIdentityByQuestionnaireId, setResponseIdentityByQuestionnaireId] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<string | null>(null);
   const [definition, setDefinition] = useState<QuestionnaireDefinition | null>(null);
   const [state, setState] = useState<string | null>(null);
@@ -327,6 +380,14 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
   );
   const participationHistoryStorageKey = useMemo(
     () => buildParticipationHistoryStorageKey(actorId),
+    [actorId],
+  );
+  const submittedQuestionnairesStorageKey = useMemo(
+    () => buildSubmittedQuestionnairesStorageKey(actorId),
+    [actorId],
+  );
+  const responseIdentityStorageKey = useMemo(
+    () => buildResponseIdentityStorageKey(actorId),
     [actorId],
   );
 
@@ -361,6 +422,14 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
   useEffect(() => {
     setParticipationHistory(readParticipationHistory(participationHistoryStorageKey));
   }, [participationHistoryStorageKey]);
+
+  useEffect(() => {
+    setSubmittedQuestionnaireIds(readStringList(submittedQuestionnairesStorageKey, 32));
+  }, [submittedQuestionnairesStorageKey]);
+
+  useEffect(() => {
+    setResponseIdentityByQuestionnaireId(readResponseIdentityMap(responseIdentityStorageKey));
+  }, [responseIdentityStorageKey]);
 
   useEffect(() => {
     const incoming = Array.isArray(incomingParticipationHistory)
@@ -403,6 +472,26 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
     );
     onParticipationHistoryChange?.(participationHistory);
   }, [onParticipationHistoryChange, participationHistory, participationHistoryStorageKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(
+      submittedQuestionnairesStorageKey,
+      JSON.stringify(submittedQuestionnaireIds.slice(-32)),
+    );
+  }, [submittedQuestionnaireIds, submittedQuestionnairesStorageKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(
+      responseIdentityStorageKey,
+      JSON.stringify(responseIdentityByQuestionnaireId),
+    );
+  }, [responseIdentityByQuestionnaireId, responseIdentityStorageKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -579,7 +668,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
   }, [refresh]);
 
   const canSubmit = useMemo(() => {
-    return Boolean(definition && state === "open" && (tokenStatus === "ready" || tokenStatus === "submitted"));
+    return Boolean(definition && state === "open" && tokenStatus === "ready");
   }, [definition, state, tokenStatus]);
   const selectedQuestionnaireOptions = selectorEntries.map((entry) => entry.questionnaireId);
   const selectedQuestionnaireEntry = selectorEntries.find((entry) => entry.questionnaireId === questionnaireId) ?? null;
@@ -593,6 +682,28 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
       setQuestionnaireId(selectedQuestionnaireOptions[0]);
     }
   }, [questionnaireId, selectedQuestionnaireOptions]);
+
+  useEffect(() => {
+    const id = questionnaireId.trim();
+    if (!id) {
+      setTokenStatus("ready");
+      return;
+    }
+    setTokenStatus(submittedQuestionnaireIds.includes(id) ? "submitted" : "ready");
+  }, [questionnaireId, submittedQuestionnaireIds]);
+
+  function getStableResponseNsec(questionnaireKey: string) {
+    const existing = responseIdentityByQuestionnaireId[questionnaireKey]?.trim() ?? "";
+    if (existing) {
+      return existing;
+    }
+    const generated = nip19.nsecEncode(generateSecretKey());
+    setResponseIdentityByQuestionnaireId((current) => ({
+      ...current,
+      [questionnaireKey]: generated,
+    }));
+    return generated;
+  }
 
   function setYesNoAnswer(questionId: string, value: boolean) {
     setAnswerState((current) => ({ ...current, [questionId]: value }));
@@ -622,6 +733,11 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
       setStatus("Questionnaire is not open.");
       return;
     }
+    if (submittedQuestionnaireIds.includes(definition.questionnaireId)) {
+      setTokenStatus("submitted");
+      setStatus("Response already submitted for this questionnaire.");
+      return;
+    }
 
     const responseId = `resp_${crypto.randomUUID()}`;
     const payload: QuestionnaireResponsePayload = {
@@ -639,12 +755,12 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
       return;
     }
 
-    const ephemeralNsec = nip19.nsecEncode(generateSecretKey());
+    const responseNsec = getStableResponseNsec(definition.questionnaireId);
     setStatus("Submitting response...");
 
     try {
       const result = await publishEncryptedQuestionnaireResponse({
-        responseNsec: ephemeralNsec,
+        responseNsec,
         coordinatorNpub: definition.coordinatorEncryptionPubkey,
         questionnaireId: definition.questionnaireId,
         responseId,
@@ -658,6 +774,11 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
       if (result.successes > 0) {
         setResponseSubmittedCount((current) => current + 1);
         setTokenStatus("submitted");
+        setSubmittedQuestionnaireIds((current) => (
+          current.includes(definition.questionnaireId)
+            ? current
+            : [...current, definition.questionnaireId].slice(-32)
+        ));
         const submittedAt = Date.now();
         setParticipationHistory((current) => {
           const existing = current.find((entry) => entry.questionnaireId === definition.questionnaireId);
