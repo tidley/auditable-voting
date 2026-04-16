@@ -82,7 +82,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     if (announcedIds.length === 0) {
       return;
     }
-    if (!electionId.trim()) {
+    const currentElectionId = electionId.trim();
+    if (!currentElectionId || !announcedIds.includes(currentElectionId)) {
       setElectionId(announcedIds[0]);
     }
   }, [electionId, inviteContext.electionId, props.announcedQuestionnaireIds]);
@@ -189,6 +190,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         if (invites.length === 0) {
           setStatus("Signed in. No pending questionnaire invites were found.");
         } else {
+          const activeElectionIds = new Set(invites.map((invite) => invite.electionId));
+          if (!inviteContext.electionId?.trim() && !activeElectionIds.has(electionId.trim())) {
+            setElectionId(invites[0].electionId);
+            setActiveInvite(invites[0]);
+          }
           setStatus(`Signed in as ${deriveActorDisplayId(signerNpub)}. ${invites.length} pending invite${invites.length === 1 ? "" : "s"} found.`);
         }
         return;
