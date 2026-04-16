@@ -1300,7 +1300,7 @@ export default function SimpleUiApp() {
       window.localStorage.removeItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY);
     }
     setSignerNpub("");
-    setSignerStatus("Signed out.");
+    setSignerStatus(null);
     identityHydrationEpochRef.current += 1;
     const nextKeypair = createSimpleVoterKeypair();
     void saveSimpleActorState({
@@ -1319,7 +1319,7 @@ export default function SimpleUiApp() {
       window.localStorage.removeItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY);
     }
     setSignerNpub("");
-    setSignerStatus("Signed out.");
+    setSignerStatus(null);
   }
 
   async function loginWithSigner() {

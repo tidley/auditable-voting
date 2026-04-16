@@ -53,7 +53,7 @@ type QuestionnaireCoordinatorPanelProps = {
 };
 
 type QuestionnaireQuestionDraft = QuestionnaireQuestion;
-type QuestionCardTypeLabel = "Text" | "Multiple choice" | "Free text";
+type QuestionCardTypeLabel = "Yes / No" | "Multiple choice" | "Free text";
 
 function questionTypeLabel(type: QuestionnaireQuestionDraft["type"]): QuestionCardTypeLabel {
   if (type === "multiple_choice") {
@@ -62,7 +62,55 @@ function questionTypeLabel(type: QuestionnaireQuestionDraft["type"]): QuestionCa
   if (type === "free_text") {
     return "Free text";
   }
-  return "Text";
+  return "Yes / No";
+}
+
+function createYesNoQuestion(questionId: string): QuestionnaireQuestionDraft {
+  return {
+    questionId,
+    type: "yes_no",
+    prompt: "",
+    required: true,
+  };
+}
+
+function createMultipleChoiceQuestion(questionId: string, prompt = "", required = true): QuestionnaireQuestionDraft {
+  return {
+    questionId,
+    type: "multiple_choice",
+    prompt,
+    required,
+    multiSelect: false,
+    options: [
+      { optionId: "option_1", label: "Option 1" },
+      { optionId: "option_2", label: "Option 2" },
+    ],
+  };
+}
+
+function createFreeTextQuestion(questionId: string, prompt = "", required = false): QuestionnaireQuestionDraft {
+  return {
+    questionId,
+    type: "free_text",
+    prompt,
+    required,
+    maxLength: 500,
+  };
+}
+
+function deriveNextQuestionId(current: QuestionnaireQuestionDraft[]) {
+  let maxIndex = 0;
+  for (const entry of current) {
+    const match = /^q(\d+)$/.exec(entry.questionId.trim());
+    if (!match) {
+      continue;
+    }
+    const parsed = Number.parseInt(match[1], 10);
+    if (Number.isFinite(parsed) && parsed > maxIndex) {
+      maxIndex = parsed;
+    }
+  }
+  return `q${maxIndex + 1}`;
 }
 
 function isQuestionDraftValid(question: QuestionnaireQuestionDraft): boolean {
@@ -180,7 +228,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [closeAfterMinutes, setCloseAfterMinutes] = useState("60");
-  const [questions, setQuestions] = useState<QuestionnaireQuestionDraft[]>([]);
+  const [questions, setQuestions] = useState<QuestionnaireQuestionDraft[]>(() => [createYesNoQuestion("q1")]);
   const [showInviteQr, setShowInviteQr] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [coordinatorNsec, setCoordinatorNsec] = useState("");
@@ -724,49 +772,39 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     window.localStorage.setItem(buildSimpleNamespacedLocalStorageKey(QUESTIONNAIRE_DRAFT_ID_STORAGE_KEY), nextId);
   }, [questionnaireId]);
 
-  function addYesNoQuestion() {
-    const index = questions.length + 1;
-    setQuestions((current) => [
-      ...current,
-      {
-        questionId: `q${index}`,
-        type: "yes_no",
-        prompt: "",
-        required: true,
-      },
-    ]);
+  function updateQuestion(index: number, updater: (question: QuestionnaireQuestionDraft) => QuestionnaireQuestionDraft) {
+    setQuestions((current) => current.map((entry, entryIndex) => (
+      entryIndex === index ? updater(entry) : entry
+    )));
   }
 
-  function addMultipleChoiceQuestion() {
-    const index = questions.length + 1;
-    setQuestions((current) => [
-      ...current,
-      {
-        questionId: `q${index}`,
-        type: "multiple_choice",
-        prompt: "",
-        required: true,
-        multiSelect: false,
-        options: [
-          { optionId: "option_1", label: "Option 1" },
-          { optionId: "option_2", label: "Option 2" },
-        ],
-      },
-    ]);
+  function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]) {
+    updateQuestion(index, (entry) => {
+      if (entry.type === type) {
+        return entry;
+      }
+      const questionId = entry.questionId;
+      const prompt = entry.prompt;
+      const required = entry.required;
+      if (type === "multiple_choice") {
+        return createMultipleChoiceQuestion(questionId, prompt, required);
+      }
+      if (type === "free_text") {
+        return createFreeTextQuestion(questionId, prompt, required);
+      }
+      return createYesNoQuestion(questionId);
+    });
   }
 
-  function addFreeTextQuestion() {
-    const index = questions.length + 1;
-    setQuestions((current) => [
-      ...current,
-      {
-        questionId: `q${index}`,
-        type: "free_text",
-        prompt: "",
-        required: false,
-        maxLength: 500,
-      },
-    ]);
+  function addQuestionBelow(index: number) {
+    setQuestions((current) => {
+      const nextQuestion = createYesNoQuestion(deriveNextQuestionId(current));
+      return [
+        ...current.slice(0, index + 1),
+        nextQuestion,
+        ...current.slice(index + 1),
+      ];
+    });
   }
 
   function duplicateQuestion(index: number) {
@@ -775,9 +813,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       if (!source) {
         return current;
       }
+      const duplicateId = deriveNextQuestionId(current);
       const duplicated = {
         ...source,
-        questionId: `${source.questionId}_copy`,
+        questionId: duplicateId,
       };
       return [...current.slice(0, index + 1), duplicated, ...current.slice(index + 1)];
     });
@@ -798,9 +837,13 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   }
 
   function deleteQuestion(index: number) {
-    setQuestions((current) => current.filter((_, currentIndex) => currentIndex !== index));
+    setQuestions((current) => {
+      if (current.length <= 1) {
+        return current;
+      }
+      return current.filter((_, currentIndex) => currentIndex !== index);
+    });
   }
-
   const builtDefinition = useMemo(() => {
     const closeMinutes = Number.parseInt(closeAfterMinutes, 10);
     if (!coordinatorNpub.trim() || !questionnaireId.trim() || !Number.isFinite(closeMinutes) || closeMinutes <= 0) {
@@ -1439,145 +1482,171 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       </ul>
 
       <h4 className='simple-voter-section-title'>Questions</h4>
-      {questions.length === 0 ? (
-        <div className='simple-vote-empty-state'>
-          <p className='simple-voter-question'>No questions yet. Add your first question to begin building the questionnaire.</p>
-          <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
-            <button type='button' className='simple-voter-secondary' onClick={addYesNoQuestion}>Add yes/no question</button>
-            <button type='button' className='simple-voter-secondary' onClick={addMultipleChoiceQuestion}>Add multiple choice question</button>
-            <button type='button' className='simple-voter-secondary' onClick={addFreeTextQuestion}>Add text question</button>
-          </div>
-        </div>
-      ) : (
-        <>
-          <div className='simple-questionnaire-question-list'>
-            {questions.map((question, index) => (
-              <div key={`${question.questionId}-${index}`} className='simple-questionnaire-question-card'>
-                <div className='simple-questionnaire-question-head'>
-                  <p className='simple-voter-question'>Question {index + 1}</p>
-                  <span className='simple-questionnaire-question-type'>{questionTypeLabel(question.type)}</span>
-                </div>
-                <label className='simple-voter-label' htmlFor={`question-prompt-${index}`}>Prompt</label>
+      <div className='simple-questionnaire-question-list'>
+        {questions.map((question, index) => {
+          const canMoveUp = index > 0;
+          const canMoveDown = index < questions.length - 1;
+          const showAddBelow = index === questions.length - 1;
+
+          return (
+            <div key={`${question.questionId}-${index}`} className='simple-questionnaire-question-card'>
+              <div className='simple-questionnaire-question-head'>
+                <p className='simple-voter-question'>Question {index + 1}</p>
+                <span className='simple-questionnaire-question-type'>{questionTypeLabel(question.type)}</span>
+              </div>
+              <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
+                <button
+                  type='button'
+                  className={`simple-voter-secondary${question.type === "yes_no" ? " is-active" : ""}`}
+                  onClick={() => setQuestionType(index, "yes_no")}
+                >
+                  Yes/No
+                </button>
+                <button
+                  type='button'
+                  className={`simple-voter-secondary${question.type === "multiple_choice" ? " is-active" : ""}`}
+                  onClick={() => setQuestionType(index, "multiple_choice")}
+                >
+                  Multiple choice
+                </button>
+                <button
+                  type='button'
+                  className={`simple-voter-secondary${question.type === "free_text" ? " is-active" : ""}`}
+                  onClick={() => setQuestionType(index, "free_text")}
+                >
+                  Free text
+                </button>
+                <button
+                  type='button'
+                  className='simple-voter-secondary'
+                  onClick={() => (showAddBelow ? addQuestionBelow(index) : deleteQuestion(index))}
+                >
+                  {showAddBelow ? "+" : "-"}
+                </button>
+              </div>
+              <input
+                id={`question-prompt-${index}`}
+                className='simple-voter-input'
+                value={question.prompt}
+                placeholder='Question prompt'
+                onChange={(event) => {
+                  const nextValue = event.target.value;
+                  updateQuestion(index, (entry) => ({ ...entry, prompt: nextValue }));
+                }}
+              />
+              <label className='simple-voter-note'>
                 <input
-                  id={`question-prompt-${index}`}
-                  className='simple-voter-input'
-                  value={question.prompt}
+                  type='checkbox'
+                  checked={question.required}
                   onChange={(event) => {
-                    const nextValue = event.target.value;
-                    setQuestions((current) => current.map((entry, entryIndex) => (
-                      entryIndex === index ? { ...entry, prompt: nextValue } : entry
-                    )));
+                    const checked = event.target.checked;
+                    updateQuestion(index, (entry) => ({ ...entry, required: checked }));
                   }}
                 />
-                <label className='simple-voter-note'>
-                  <input
-                    type='checkbox'
-                    checked={question.required}
-                    onChange={(event) => {
-                      const checked = event.target.checked;
-                      setQuestions((current) => current.map((entry, entryIndex) => (
-                        entryIndex === index ? { ...entry, required: checked } : entry
-                      )));
-                    }}
-                  />
-                  {" "}
-                  Required
-                </label>
-                {question.type === "multiple_choice" ? (
-                  <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
-                    <p className='simple-voter-note'>Options</p>
-                    {question.options.map((option, optionIndex) => (
-                      <input
-                        key={`${question.questionId}-option-${optionIndex}`}
-                        className='simple-voter-input'
-                        value={option.label}
-                        onChange={(event) => {
-                          const nextLabel = event.target.value;
-                          setQuestions((current) => current.map((entry, entryIndex) => {
-                            if (entryIndex !== index || entry.type !== "multiple_choice") {
-                              return entry;
-                            }
-                            return {
-                              ...entry,
-                              options: entry.options.map((entryOption, entryOptionIndex) => (
-                                entryOptionIndex === optionIndex ? { ...entryOption, label: nextLabel } : entryOption
-                              )),
-                            };
-                          }));
-                        }}
-                      />
-                    ))}
-                    <button
-                      type='button'
-                      className='simple-voter-secondary'
-                      onClick={() => {
-                        setQuestions((current) => current.map((entry, entryIndex) => {
-                          if (entryIndex !== index || entry.type !== "multiple_choice") {
+                {" "}
+                Required
+              </label>
+              {question.type === "multiple_choice" ? (
+                <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
+                  <p className='simple-voter-note'>Options</p>
+                  {question.options.map((option, optionIndex) => (
+                    <input
+                      key={`${question.questionId}-option-${optionIndex}`}
+                      className='simple-voter-input'
+                      value={option.label}
+                      onChange={(event) => {
+                        const nextLabel = event.target.value;
+                        updateQuestion(index, (entry) => {
+                          if (entry.type !== "multiple_choice") {
                             return entry;
                           }
-                          const nextIndex = entry.options.length + 1;
                           return {
                             ...entry,
-                            options: [...entry.options, { optionId: `option_${nextIndex}`, label: `Option ${nextIndex}` }],
+                            options: entry.options.map((entryOption, entryOptionIndex) => (
+                              entryOptionIndex === optionIndex ? { ...entryOption, label: nextLabel } : entryOption
+                            )),
                           };
-                        }));
-                      }}
-                    >
-                      Add option
-                    </button>
-                    <label className='simple-voter-note'>
-                      <input
-                        type='checkbox'
-                        checked={question.multiSelect}
-                        onChange={(event) => {
-                          const checked = event.target.checked;
-                          setQuestions((current) => current.map((entry, entryIndex) => (
-                            entryIndex === index && entry.type === "multiple_choice"
-                              ? { ...entry, multiSelect: checked }
-                              : entry
-                          )));
-                        }}
-                      />
-                      {" "}
-                      Allow multiple selections
-                    </label>
-                  </div>
-                ) : null}
-                {question.type === "free_text" ? (
-                  <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
-                    <label className='simple-voter-label' htmlFor={`question-max-${index}`}>Maximum length</label>
-                    <input
-                      id={`question-max-${index}`}
-                      className='simple-voter-input'
-                      value={String(question.maxLength)}
-                      onChange={(event) => {
-                        const parsed = Number.parseInt(event.target.value, 10);
-                        setQuestions((current) => current.map((entry, entryIndex) => (
-                          entryIndex === index && entry.type === "free_text"
-                            ? { ...entry, maxLength: Number.isFinite(parsed) && parsed > 0 ? parsed : entry.maxLength }
-                            : entry
-                        )));
+                        });
                       }}
                     />
-                  </div>
-                ) : null}
-                <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
-                  <button type='button' className='simple-voter-secondary' onClick={() => duplicateQuestion(index)}>Duplicate</button>
-                  <button type='button' className='simple-voter-secondary' onClick={() => moveQuestion(index, -1)}>Move up</button>
-                  <button type='button' className='simple-voter-secondary' onClick={() => moveQuestion(index, 1)}>Move down</button>
-                  <button type='button' className='simple-voter-secondary' onClick={() => deleteQuestion(index)}>Delete</button>
+                  ))}
+                  <button
+                    type='button'
+                    className='simple-voter-secondary'
+                    onClick={() => {
+                      updateQuestion(index, (entry) => {
+                        if (entry.type !== "multiple_choice") {
+                          return entry;
+                        }
+                        const nextIndex = entry.options.length + 1;
+                        return {
+                          ...entry,
+                          options: [...entry.options, { optionId: `option_${nextIndex}`, label: `Option ${nextIndex}` }],
+                        };
+                      });
+                    }}
+                  >
+                    Add option
+                  </button>
+                  <label className='simple-voter-note'>
+                    <input
+                      type='checkbox'
+                      checked={question.multiSelect}
+                      onChange={(event) => {
+                        const checked = event.target.checked;
+                        updateQuestion(index, (entry) => (
+                          entry.type === "multiple_choice"
+                            ? { ...entry, multiSelect: checked }
+                            : entry
+                        ));
+                      }}
+                    />
+                    {" "}
+                    Allow multiple selections
+                  </label>
                 </div>
+              ) : null}
+              {question.type === "free_text" ? (
+                <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
+                  <label className='simple-voter-label' htmlFor={`question-max-${index}`}>Maximum length</label>
+                  <input
+                    id={`question-max-${index}`}
+                    className='simple-voter-input'
+                    value={String(question.maxLength)}
+                    onChange={(event) => {
+                      const parsed = Number.parseInt(event.target.value, 10);
+                      updateQuestion(index, (entry) => (
+                        entry.type === "free_text"
+                          ? { ...entry, maxLength: Number.isFinite(parsed) && parsed > 0 ? parsed : entry.maxLength }
+                          : entry
+                      ));
+                    }}
+                  />
+                </div>
+              ) : null}
+              <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
+                <button type='button' className='simple-voter-secondary' onClick={() => duplicateQuestion(index)}>Duplicate</button>
+                <button
+                  type='button'
+                  className='simple-voter-secondary'
+                  onClick={() => moveQuestion(index, -1)}
+                  disabled={!canMoveUp}
+                >
+                  Move up
+                </button>
+                <button
+                  type='button'
+                  className='simple-voter-secondary'
+                  onClick={() => moveQuestion(index, 1)}
+                  disabled={!canMoveDown}
+                >
+                  Move down
+                </button>
               </div>
-            ))}
-          </div>
-          <div className='simple-voter-action-row simple-voter-action-row-inline'>
-            <button type='button' className='simple-voter-secondary' onClick={addYesNoQuestion}>Add yes/no question</button>
-            <button type='button' className='simple-voter-secondary' onClick={addMultipleChoiceQuestion}>Add multiple choice question</button>
-            <button type='button' className='simple-voter-secondary' onClick={addFreeTextQuestion}>Add text question</button>
-          </div>
-        </>
-      )}
-
+            </div>
+          );
+        })}
+      </div>
       <h4 className='simple-voter-section-title'>Readiness checklist</h4>
       <ul className='simple-vote-status-list'>
         <li className={titleReady ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>{titleReady ? "✓" : "•"}</span> Title added</li>

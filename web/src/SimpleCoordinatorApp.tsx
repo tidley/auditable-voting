@@ -94,7 +94,7 @@ import {
 import { createSignerService, SignerServiceError } from "./services/signerService";
 import { getSharedNostrPool } from "./sharedNostrPool";
 
-type CoordinatorTab = "configure" | "voting" | "settings";
+type CoordinatorTab = "configure" | "participants" | "voting" | "settings";
 
 type SimpleCoordinatorKeypair = {
   npub: string;
@@ -2909,7 +2909,7 @@ export default function SimpleCoordinatorApp() {
       window.localStorage.removeItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY);
     }
     setSignerNpub("");
-    setSignerStatus("Signed out.");
+    setSignerStatus(null);
     identityHydrationEpochRef.current += 1;
     const nextKeypair = createSimpleCoordinatorKeypair();
     void saveSimpleActorState({
@@ -2962,7 +2962,7 @@ export default function SimpleCoordinatorApp() {
       window.localStorage.removeItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY);
     }
     setSignerNpub("");
-    setSignerStatus("Signed out.");
+    setSignerStatus(null);
   }
 
   async function loginWithSigner() {
@@ -5242,6 +5242,15 @@ export default function SimpleCoordinatorApp() {
           <button
             type='button'
             role='tab'
+            aria-selected={activeTab === 'participants'}
+            className={`simple-voter-tab${activeTab === 'participants' ? ' is-active' : ''}`}
+            onClick={() => selectTab('participants')}
+          >
+            Participants
+          </button>
+          <button
+            type='button'
+            role='tab'
             aria-selected={activeTab === 'voting'}
             className={`simple-voter-tab${activeTab === 'voting' ? ' is-active' : ''}`}
             onClick={() => selectTab('voting')}
@@ -5376,6 +5385,31 @@ export default function SimpleCoordinatorApp() {
               </SimpleCollapsibleSection>
             )}
 
+
+            <SimpleCollapsibleSection title='Questionnaire draft'>
+              <QuestionnaireCoordinatorPanel
+                coordinatorNsec={keypair?.nsec ?? null}
+                coordinatorNpub={keypair?.npub ?? null}
+                knownVoterCount={followers.length}
+                view='build'
+                onStatusChange={(nextStatus) => {
+                  setQuestionnaireRosterAnnouncement({
+                    questionnaireId: nextStatus.questionnaireId,
+                    state: nextStatus.state,
+                  });
+                }}
+              />
+            </SimpleCollapsibleSection>
+          </section>
+        ) : null}
+
+
+        {activeTab === 'participants' ? (
+          <section
+            className='simple-voter-tab-panel'
+            role='tabpanel'
+            aria-label='Participants'
+          >
             <SimpleCollapsibleSection title='Voters'>
               {coordinatorFollowerRows.length > 0 ? (
                 <div className='simple-follower-toolbar'>
@@ -5555,10 +5589,9 @@ export default function SimpleCoordinatorApp() {
               )}
             </SimpleCollapsibleSection>
 
-            <SimpleCollapsibleSection title='Questionnaire draft'>
-              {optionAElectionId ? (
+            {optionAElectionId ? (
+              <SimpleCollapsibleSection title='Known voters and invites'>
                 <div className='simple-voter-field-stack'>
-                  <h4 className='simple-voter-section-title'>Known voters and invites</h4>
                   <p className='simple-voter-note'>
                     Optional: add known voter npubs, send invite DMs, and manually authorise unexpected requesters.
                   </p>
@@ -5713,23 +5746,10 @@ export default function SimpleCoordinatorApp() {
                   <p className='simple-voter-note'>Accepted unique responders: {optionACoordinatorRuntime?.getAcceptedUniqueCount() ?? 0}</p>
                   {knownVoterInviteStatus ? <p className='simple-voter-note'>{knownVoterInviteStatus}</p> : null}
                 </div>
-              ) : null}
-              <QuestionnaireCoordinatorPanel
-                coordinatorNsec={keypair?.nsec ?? null}
-                coordinatorNpub={keypair?.npub ?? null}
-                knownVoterCount={followers.length}
-                view='build'
-                onStatusChange={(nextStatus) => {
-                  setQuestionnaireRosterAnnouncement({
-                    questionnaireId: nextStatus.questionnaireId,
-                    state: nextStatus.state,
-                  });
-                }}
-              />
-            </SimpleCollapsibleSection>
+              </SimpleCollapsibleSection>
+            ) : null}
           </section>
         ) : null}
-
         {activeTab === 'voting' ? (
           <section
             className='simple-voter-tab-panel'
