@@ -1,3 +1,5 @@
+import { generateSecretKey, getPublicKey as getPublicKeyFromSecret } from "nostr-tools";
+
 export type SignerErrorCode = "unavailable" | "rejected" | "wrong_account" | "sign_failed";
 
 export class SignerServiceError extends Error {
@@ -30,12 +32,102 @@ export interface SignerService {
   signEvent<T extends Record<string, unknown>>(event: T): Promise<T & { id?: string; sig?: string; pubkey?: string }>;
 }
 
+type NostrConnectSignerLike = {
+  getPublicKey: () => Promise<string>;
+  signEvent: <T extends Record<string, unknown>>(event: T) => Promise<T & { id?: string; sig?: string; pubkey?: string }>;
+  signMessage?: (message: string) => Promise<string>;
+  close?: () => Promise<void>;
+};
+
+const AMBER_CONNECT_RELAYS = [
+  "wss://relay.primal.net",
+  "wss://nos.lol",
+  "wss://relay.damus.io",
+  "wss://offchain.pub",
+];
+
+let cachedAmberSigner: NostrConnectSignerLike | null = null;
+let amberConnectPromise: Promise<NostrConnectSignerLike> | null = null;
+
+function isAndroidBrowser() {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+  return /android/i.test(navigator.userAgent || "");
+}
+
+function openExternalUri(uri: string) {
+  if (!uri || typeof document === "undefined") {
+    return false;
+  }
+  try {
+    const link = document.createElement("a");
+    link.href = uri;
+    link.rel = "noreferrer noopener";
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    return true;
+  } catch {
+    try {
+      if (typeof window !== "undefined") {
+        window.location.href = uri;
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
+}
+
+function createRandomSecret() {
+  if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") {
+    return `${globalThis.crypto.randomUUID()}-${Date.now()}`;
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 function readBrowserSigner(): BrowserNostrSigner | null {
   const candidate = (globalThis as typeof globalThis & { nostr?: BrowserNostrSigner }).nostr;
   if (!candidate || typeof candidate !== "object") {
     return null;
   }
   return candidate;
+}
+
+async function connectAmberSigner(): Promise<NostrConnectSignerLike> {
+  if (cachedAmberSigner) {
+    return cachedAmberSigner;
+  }
+  if (amberConnectPromise) {
+    return amberConnectPromise;
+  }
+  amberConnectPromise = (async () => {
+    const { BunkerSigner, createNostrConnectURI } = await import("nostr-tools/nip46");
+    const localSecretKey = generateSecretKey();
+    const clientPubkey = getPublicKeyFromSecret(localSecretKey);
+    const connectionUri = createNostrConnectURI({
+      clientPubkey,
+      relays: AMBER_CONNECT_RELAYS,
+      secret: createRandomSecret(),
+      name: "auditable-voting",
+      url: typeof window === "undefined" ? "https://tidley.github.io" : window.location.origin,
+    });
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      void navigator.clipboard.writeText(connectionUri).catch(() => {});
+    }
+    openExternalUri(connectionUri);
+    const signer = await BunkerSigner.fromURI(localSecretKey, connectionUri, {}, 180000);
+    cachedAmberSigner = signer as unknown as NostrConnectSignerLike;
+    return cachedAmberSigner;
+  })();
+  try {
+    return await amberConnectPromise;
+  } finally {
+    amberConnectPromise = null;
+  }
 }
 
 async function waitForBrowserSigner(timeoutMs = 2500, intervalMs = 150): Promise<BrowserNostrSigner | null> {
@@ -155,27 +247,46 @@ export function createSignerService(): SignerService {
     return { source, getPublicKey: source.getPublicKey };
   };
 
+  const getSigner = async (): Promise<BrowserNostrSigner | NostrConnectSignerLike | null> => {
+    const signer = await waitForBrowserSigner();
+    if (signer) {
+      return signer;
+    }
+    if (!isAndroidBrowser()) {
+      return null;
+    }
+    try {
+      return await connectAmberSigner();
+    } catch {
+      return null;
+    }
+  };
+
   return {
     async isAvailable() {
       const signer = await waitForBrowserSigner();
       return Boolean(
         signer && (
-          signer.getPublicKey
-          || signer.nip07?.getPublicKey
-          || signer.enable
-          || signer.nip07?.enable
+          (signer as BrowserNostrSigner).getPublicKey
+          || (signer as BrowserNostrSigner).nip07?.getPublicKey
+          || (signer as BrowserNostrSigner).enable
+          || (signer as BrowserNostrSigner).nip07?.enable
         ),
       );
     },
     async getPublicKey() {
-      const signer = await waitForBrowserSigner();
+      const signer = await getSigner();
       if (!signer) {
-        throw new SignerServiceError("unavailable", "No Nostr signer is available in this browser.");
+        throw new SignerServiceError(
+          "unavailable",
+          "No Nostr signer is available in this browser. On Android, install/open Amber and approve the nostrconnect request.",
+        );
       }
       try {
-        await enableSignerIfAvailable(signer);
-        const { source, getPublicKey } = await waitForPublicKeyMethod(signer);
-        const hasSignEventFallback = Boolean(source.signEvent || signer.nip04?.signEvent);
+        await enableSignerIfAvailable(signer as BrowserNostrSigner);
+        const browserLikeSigner = signer as BrowserNostrSigner;
+        const { source, getPublicKey } = await waitForPublicKeyMethod(browserLikeSigner);
+        const hasSignEventFallback = Boolean(source.signEvent || browserLikeSigner.nip04?.signEvent);
         if (!getPublicKey && !hasSignEventFallback) {
           throw new SignerServiceError("unavailable", "No Nostr signer is available in this browser.");
         }
@@ -183,7 +294,7 @@ export function createSignerService(): SignerService {
         if (getPublicKey) {
           pubkey = await getPublicKey.call(source);
         } else {
-          const fallbackPubkey = await derivePubkeyFromSignEvent(signer);
+          const fallbackPubkey = await derivePubkeyFromSignEvent(browserLikeSigner);
           if (fallbackPubkey) {
             pubkey = fallbackPubkey;
           }
@@ -197,14 +308,14 @@ export function createSignerService(): SignerService {
       }
     },
     async signMessage(message: string) {
-      const signer = await waitForBrowserSigner();
+      const signer = await getSigner();
       const source = signer ? resolveSignerSource(signer) : null;
       const signMessage = source?.signMessage;
       if (!signMessage) {
         throw new SignerServiceError("unavailable", "This signer does not support message signing.");
       }
       try {
-        await enableSignerIfAvailable(signer);
+        await enableSignerIfAvailable(signer as BrowserNostrSigner);
         const signature = await signMessage.call(source, message);
         if (!signature || typeof signature !== "string") {
           throw new SignerServiceError("sign_failed", "Signer returned an invalid signature.");
@@ -215,15 +326,16 @@ export function createSignerService(): SignerService {
       }
     },
     async signEvent<T extends Record<string, unknown>>(event: T) {
-      const signer = await waitForBrowserSigner();
+      const signer = await getSigner();
       const source = signer ? resolveSignerSource(signer) : null;
-      const signEvent = source?.signEvent ?? signer?.nip04?.signEvent;
+      const browserLikeSigner = signer as BrowserNostrSigner | null;
+      const signEvent = source?.signEvent ?? browserLikeSigner?.nip04?.signEvent;
       if (!signEvent) {
         throw new SignerServiceError("unavailable", "This signer does not support event signing.");
       }
       try {
-        await enableSignerIfAvailable(signer);
-        const owner = source?.signEvent ? source : signer?.nip04;
+        await enableSignerIfAvailable(signer as BrowserNostrSigner);
+        const owner = source?.signEvent ? source : browserLikeSigner?.nip04;
         const signed = await signEvent.call(owner, event);
         if (!signed || typeof signed !== "object") {
           throw new SignerServiceError("sign_failed", "Signer returned an invalid signed event.");

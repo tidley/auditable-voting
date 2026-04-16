@@ -145,11 +145,22 @@ export default function SimpleQrScanner({
       try {
         if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
           await new Promise<void>((resolve) => {
-            const onMetadata = () => {
+            const timeout = window.setTimeout(() => {
               video.removeEventListener("loadedmetadata", onMetadata);
+              video.removeEventListener("loadeddata", onMetadata);
+              video.removeEventListener("canplay", onMetadata);
+              resolve();
+            }, 2000);
+            const onMetadata = () => {
+              window.clearTimeout(timeout);
+              video.removeEventListener("loadedmetadata", onMetadata);
+              video.removeEventListener("loadeddata", onMetadata);
+              video.removeEventListener("canplay", onMetadata);
               resolve();
             };
             video.addEventListener("loadedmetadata", onMetadata);
+            video.addEventListener("loadeddata", onMetadata);
+            video.addEventListener("canplay", onMetadata);
           });
         }
         await video.play();
