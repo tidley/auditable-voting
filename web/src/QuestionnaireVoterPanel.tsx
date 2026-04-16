@@ -380,12 +380,17 @@ type QuestionnaireVoterPanelProps = {
   participationHistory?: QuestionnaireParticipationHistoryEntry[];
   onParticipationHistoryChange?: (entries: QuestionnaireParticipationHistoryEntry[]) => void;
   announcedQuestionnaireIds?: string[];
+  optionAAnnouncedQuestionnaireIds?: string[];
 };
 
 export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelProps) {
   const globalFlags = globalThis as typeof globalThis & { __AUDITABLE_VOTING_FORCE_LEGACY_QUESTIONNAIRE__?: boolean };
   if (!globalFlags.__AUDITABLE_VOTING_FORCE_LEGACY_QUESTIONNAIRE__) {
-    return <QuestionnaireOptionAVoterPanel />;
+    return (
+      <QuestionnaireOptionAVoterPanel
+        announcedQuestionnaireIds={props.optionAAnnouncedQuestionnaireIds}
+      />
+    );
   }
   const onContextChange = props.onContextChange;
   const onParticipationHistoryChange = props.onParticipationHistoryChange;

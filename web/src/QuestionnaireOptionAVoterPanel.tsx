@@ -43,7 +43,11 @@ function answerToOptionA(
   return { questionId: question.questionId, type: "text", answer: text };
 }
 
-export default function QuestionnaireOptionAVoterPanel() {
+type QuestionnaireOptionAVoterPanelProps = {
+  announcedQuestionnaireIds?: string[];
+};
+
+export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptionAVoterPanelProps) {
   const [runtime, setRuntime] = useState<QuestionnaireOptionAVoterRuntime | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [signedInNpub, setSignedInNpub] = useState<string>("");
@@ -65,6 +69,23 @@ export default function QuestionnaireOptionAVoterPanel() {
 
   const inviteContext = useMemo(() => parseInviteFromUrl(), []);
   const [electionId, setElectionId] = useState(inviteContext.electionId ?? deriveElectionId());
+
+  useEffect(() => {
+    if (inviteContext.electionId?.trim()) {
+      return;
+    }
+    const announcedIds = Array.isArray(props.announcedQuestionnaireIds)
+      ? props.announcedQuestionnaireIds
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0)
+      : [];
+    if (announcedIds.length === 0) {
+      return;
+    }
+    if (!electionId.trim()) {
+      setElectionId(announcedIds[0]);
+    }
+  }, [electionId, inviteContext.electionId, props.announcedQuestionnaireIds]);
 
   useEffect(() => {
     if (!electionId) {
