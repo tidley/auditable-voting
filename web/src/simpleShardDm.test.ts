@@ -14,6 +14,10 @@ const finalizeEvent = vi.fn((event: any) => ({ id: event.id ?? "evt-1", pubkey: 
 const resolveNip65ConversationRelays = vi.fn();
 const resolveNip65InboxRelays = vi.fn();
 const publishOwnNip65RelayHints = vi.fn();
+const recordRelayOutcome = vi.fn();
+const recordRelayCloseReasons = vi.fn();
+const rankRelaysByBackoff = vi.fn((relays: string[]) => relays);
+const selectRelaysWithBackoff = vi.fn((relays: string[], maxRelays: number) => relays.slice(0, Math.min(maxRelays, relays.length)));
 
 vi.mock("nostr-tools", () => ({
   getPublicKey,
@@ -82,6 +86,13 @@ vi.mock("./nip65RelayHints", () => ({
   publishOwnNip65RelayHints,
   resolveNip65ConversationRelays,
   resolveNip65InboxRelays,
+}));
+
+vi.mock("./relayBackoff", () => ({
+  recordRelayOutcome,
+  recordRelayCloseReasons,
+  rankRelaysByBackoff,
+  selectRelaysWithBackoff,
 }));
 
 describe("simpleShardDm", () => {
@@ -233,6 +244,38 @@ describe("simpleShardDm", () => {
     ]);
     resolveNip65InboxRelays.mockResolvedValue(["wss://inbox.example"]);
     publishOwnNip65RelayHints.mockResolvedValue({ successes: 1 });
+    recordRelayOutcome.mockReset();
+    recordRelayCloseReasons.mockReset();
+    rankRelaysByBackoff.mockImplementation((relays: string[]) => relays);
+    selectRelaysWithBackoff.mockImplementation((relays: string[], maxRelays: number) => relays.slice(0, Math.min(maxRelays, relays.length)));
+  });
+
+  it("sends coordinator follow over expanded relay set and records relay outcomes", async () => {
+    const mod = await import("./simpleShardDm");
+    publish.mockImplementation((relays: string[]) => relays.map((relay) => (
+      relay.includes("fail")
+        ? Promise.reject(new Error("relay fail"))
+        : Promise.resolve(undefined)
+    )));
+    resolveNip65ConversationRelays.mockResolvedValue([
+      "wss://r1.example",
+      "wss://r2.example",
+      "wss://r3-fail.example",
+      "wss://r4.example",
+      "wss://r5.example",
+    ]);
+
+    const result = await mod.sendSimpleCoordinatorFollow({
+      voterSecretKey: new Uint8Array([1, 2, 3]),
+      coordinatorNpub: "npub1coord",
+      voterNpub: "npub1voter",
+      votingId: "vote-1",
+    });
+
+    expect(resolveNip65ConversationRelays).toHaveBeenCalled();
+    expect(result.relayResults.length).toBe(4);
+    expect(recordRelayOutcome).toHaveBeenCalledTimes(4);
+    expect(result.successes).toBeGreaterThan(0);
   });
 
   it("sends blinded shard requests over mailbox events", async () => {

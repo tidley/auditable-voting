@@ -7,6 +7,12 @@ import {
   resolveNip65InboxRelays,
 } from "./nip65RelayHints";
 import {
+  recordRelayCloseReasons,
+  recordRelayOutcome,
+  rankRelaysByBackoff,
+  selectRelaysWithBackoff,
+} from "./relayBackoff";
+import {
   createSimpleBlindShareResponse,
   type SimpleBlindIssuanceRequest,
   type SimpleBlindPrivateKey,
@@ -46,6 +52,8 @@ const SIMPLE_DM_WELCOME_BACKFILL_INTERVAL_MS = 4000;
 const SIMPLE_DM_PUBLISH_STAGGER_MS = 250;
 const SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS = 300;
 const SIMPLE_DM_READ_RELAYS_MAX = 2;
+const SIMPLE_DM_FOLLOW_READ_RELAYS_MAX = 4;
+const SIMPLE_DM_FOLLOW_PUBLISH_RELAYS_MAX = 4;
 const SIMPLE_DM_TICKET_READ_RELAYS_MAX = 3;
 const SIMPLE_DM_ACK_READ_RELAYS_MAX = 3;
 const SIMPLE_DM_TICKET_PUBLISH_RELAYS_MAX = 3;
@@ -327,12 +335,12 @@ export function clearSimpleTicketLifecycleTraces() {
 }
 
 function buildDmRelays(relays?: string[]) {
-  return normalizeRelaysRust([...SIMPLE_DM_RELAYS, ...(relays ?? [])]);
+  return rankRelaysByBackoff(normalizeRelaysRust([...SIMPLE_DM_RELAYS, ...(relays ?? [])]));
 }
 
 function selectDmReadRelays(relays: string[], maxRelays = SIMPLE_DM_READ_RELAYS_MAX) {
   const normalized = normalizeRelaysRust(relays);
-  return normalized.slice(0, Math.min(maxRelays, normalized.length));
+  return selectRelaysWithBackoff(normalized, maxRelays);
 }
 
 function buildDmPublishChannel(recipientNpub: string, senderNpub?: string) {
@@ -799,6 +807,7 @@ export async function sendSimpleCoordinatorFollow(input: {
     input.coordinatorNpub,
     input.voterNpub,
     input.relays,
+    SIMPLE_DM_FOLLOW_PUBLISH_RELAYS_MAX,
   );
   await publishOwnNip65RelayHints({
     secretKey: input.voterSecretKey,
@@ -842,8 +851,11 @@ export async function sendSimpleCoordinatorFollow(input: {
           relay: dmRelays[index],
           success: false,
           error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-        }
+      }
   ));
+  for (const result of relayResults) {
+    recordRelayOutcome(result.relay, result.success, result.success ? undefined : result.error);
+  }
 
   return {
     eventId: event.id,
@@ -1264,7 +1276,10 @@ export async function fetchSimpleCoordinatorFollowers(input: {
     input.coordinatorNsec,
     "Coordinator",
   );
-  const dmRelays = selectDmReadRelays(await resolveRecipientInboxRelays(coordinatorNpub, input.relays));
+  const dmRelays = selectDmReadRelays(
+    await resolveRecipientInboxRelays(coordinatorNpub, input.relays),
+    SIMPLE_DM_FOLLOW_READ_RELAYS_MAX,
+  );
   const pool = getSharedNostrPool();
   const wrappedEvents = await pool.querySync(dmRelays, {
     kinds: [1059],
@@ -1661,7 +1676,7 @@ export function subscribeSimpleCoordinatorFollowers(input: {
     if (closed) {
       return;
     }
-    const dmRelays = selectDmReadRelays(resolvedRelays);
+    const dmRelays = selectDmReadRelays(resolvedRelays, SIMPLE_DM_FOLLOW_READ_RELAYS_MAX);
 
     subscription = pool.subscribeMany(dmRelays, {
       kinds: [1059],
@@ -1684,6 +1699,7 @@ export function subscribeSimpleCoordinatorFollowers(input: {
 
         const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
         if (errors.length > 0) {
+          recordRelayCloseReasons(errors);
           input.onError?.(new Error(errors.join("; ")));
         }
       },
