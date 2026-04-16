@@ -94,7 +94,7 @@ export default function QuestionnaireOptionACoordinatorPanel(props: Props) {
 
   async function sendInvite(npub: string) {
     try {
-      const invite = await runtime.sendInvite(npub, {
+      const sent = await runtime.sendInvite(npub, {
         title,
         description,
         voteUrl: buildInviteUrl({
@@ -111,8 +111,12 @@ export default function QuestionnaireOptionACoordinatorPanel(props: Props) {
           },
         }),
       });
-      void navigator.clipboard.writeText(buildInviteUrl({ invite }));
-      setStatus(`Invite sent to ${deriveActorDisplayId(npub)} and voter URL copied.`);
+      void navigator.clipboard.writeText(buildInviteUrl({ invite: sent.invite }));
+      setStatus(
+        sent.dmDelivered
+          ? `Invite DM sent to ${deriveActorDisplayId(npub)} and voter URL copied.`
+          : `Invite saved locally for ${deriveActorDisplayId(npub)}; DM delivery failed (${sent.dmFailureReason ?? "unknown error"}). URL copied.`,
+      );
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Invite failed.");
     }

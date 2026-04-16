@@ -468,17 +468,27 @@ export class QuestionnaireOptionACoordinatorRuntime {
       throw new OptionARuntimeError("invalid_submission", "Could not mark invite as sent.");
     }
     this.state = sent.state;
+    let dmDelivered = false;
+    let dmFailureReason: string | null = null;
     try {
-      await publishOptionAInviteDm({
+      const publishResult = await publishOptionAInviteDm({
         signer: this.signer,
         invite,
       });
-    } catch {
-      // Keep local mailbox cache fallback when DM publish fails.
+      dmDelivered = publishResult.successes > 0;
+      if (!dmDelivered) {
+        dmFailureReason = "No relay accepted the invite DM publish.";
+      }
+    } catch (error) {
+      dmFailureReason = error instanceof Error ? error.message : "Invite DM publish failed.";
     }
     publishInviteToMailbox(invite);
     saveCoordinatorState({ coordinatorNpub: this.coordinatorNpub, state: this.state });
-    return invite;
+    return {
+      invite,
+      dmDelivered,
+      dmFailureReason,
+    };
   }
 
   processPendingBlindRequests() {

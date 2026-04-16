@@ -37,11 +37,12 @@ describe("questionnaireOptionARuntime", () => {
     const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
     await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
     coordinator.addWhitelistNpub(voterNpub);
-    const invite = await coordinator.sendInvite(voterNpub, {
+    const sentInvite = await coordinator.sendInvite(voterNpub, {
       title: "Runtime",
       description: "Test",
       voteUrl: "https://example.org/vote",
     });
+    const invite = sentInvite.invite;
 
     const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionId);
     const loggedIn = await voter.loginWithSigner(invite);
@@ -58,11 +59,12 @@ describe("questionnaireOptionARuntime", () => {
     const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
     await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
     coordinator.addWhitelistNpub(voterNpub);
-    const invite = await coordinator.sendInvite(voterNpub, {
+    const sentInvite = await coordinator.sendInvite(voterNpub, {
       title: "Runtime",
       description: "Test",
       voteUrl: "https://example.org/vote",
     });
+    const invite = sentInvite.invite;
 
     const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionId);
     await voter.loginWithSigner(invite);
@@ -91,11 +93,12 @@ describe("questionnaireOptionARuntime", () => {
     const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
     await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
     coordinator.addWhitelistNpub(voterNpub);
-    const invite = await coordinator.sendInvite(voterNpub, {
+    const sentInvite = await coordinator.sendInvite(voterNpub, {
       title: "Runtime",
       description: "Test",
       voteUrl: "https://example.org/vote",
     });
+    const invite = sentInvite.invite;
 
     const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionId);
     await voter.loginWithSigner(invite);

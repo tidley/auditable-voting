@@ -3089,7 +3089,7 @@ export default function SimpleCoordinatorApp() {
       return;
     }
     try {
-      const invite = await optionACoordinatorRuntime.sendInvite(invitedNpub, {
+      const sent = await optionACoordinatorRuntime.sendInvite(invitedNpub, {
         title: questionPrompt.trim() || "Questionnaire",
         description: "",
         voteUrl: buildInviteUrl({
@@ -3106,8 +3106,12 @@ export default function SimpleCoordinatorApp() {
           },
         }),
       });
-      void navigator.clipboard.writeText(buildInviteUrl({ invite }));
-      setKnownVoterInviteStatus(`Invite sent to ${deriveActorDisplayId(invitedNpub)}. Link copied.`);
+      void navigator.clipboard.writeText(buildInviteUrl({ invite: sent.invite }));
+      setKnownVoterInviteStatus(
+        sent.dmDelivered
+          ? `Invite DM sent to ${deriveActorDisplayId(invitedNpub)}. Link copied.`
+          : `Invite saved locally for ${deriveActorDisplayId(invitedNpub)}; DM delivery failed (${sent.dmFailureReason ?? "unknown error"}). Link copied.`,
+      );
       setKnownVoterInviteRefreshNonce((value) => value + 1);
     } catch (error) {
       setKnownVoterInviteStatus(error instanceof Error ? error.message : "Invite failed.");
@@ -3130,7 +3134,7 @@ export default function SimpleCoordinatorApp() {
     let sentCount = 0;
     for (const invitedNpub of targets) {
       try {
-        const invite = await optionACoordinatorRuntime.sendInvite(invitedNpub, {
+        const sent = await optionACoordinatorRuntime.sendInvite(invitedNpub, {
           title: questionPrompt.trim() || "Questionnaire",
           description: "",
           voteUrl: buildInviteUrl({
@@ -3147,7 +3151,7 @@ export default function SimpleCoordinatorApp() {
             },
           }),
         });
-        copiedLinks.push(buildInviteUrl({ invite }));
+        copiedLinks.push(buildInviteUrl({ invite: sent.invite }));
         sentCount += 1;
       } catch {
         // Continue inviting remaining whitelist entries.
