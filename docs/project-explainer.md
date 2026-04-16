@@ -674,12 +674,12 @@ The project is attempting to separate voter eligibility from public ballot ident
 
 ---
 
-## 24. Option A Gate (Current Tranche)
+## 24. Questionnaire Runtime (Current Tranche)
 
-The questionnaire path now has an explicit gated flow mode:
+The voter questionnaire now uses a single entry path:
 
-- `?qflow=option_a` (or `?questionnaire_flow=option_a`) enables the new Option A runtime
-- without that gate, the legacy questionnaire UI remains active
+- the Option A runtime is the default voter questionnaire path
+- no `qflow` / `questionnaire_flow` URL gate is required for normal use
 
 The Option A runtime currently provides:
 

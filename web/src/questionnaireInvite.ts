@@ -35,7 +35,6 @@ export function buildInviteUrl(input: {
 }) {
   const base = input.baseUrl ?? (typeof window !== "undefined" ? window.location.href : "https://example.invalid/vote.html");
   const url = new URL("vote.html", base);
-  url.searchParams.set("qflow", "option_a");
   url.searchParams.set("election_id", input.invite.electionId);
   url.searchParams.set("invite", encodeURIComponent(JSON.stringify(input.invite)));
   return url.toString();

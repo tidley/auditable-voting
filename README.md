@@ -225,12 +225,11 @@ VITE_BASE_PATH=/auditable-voting/ npm --prefix web run build
 - [Marmot migration plan](./docs/marmot-migration-plan.md)
 - [Portable presentation](./presentation/project-overview.html)
 
-## Option A (Experimental)
+## Questionnaire Flow
 
-An explicit questionnaire flow gate is now available:
+The voter questionnaire now uses a single entry path (Option A runtime) by default:
 
-- add `?qflow=option_a` (or `?questionnaire_flow=option_a`) to enable the reducer-driven Option A path
-- legacy questionnaire behaviour remains the default when the gate is not set
-- Option A currently uses signer login, coordinator whitelist/invite actions, blind request/issuance, single-vote acceptance, and signer-keyed resume through the `questionnaireOptionA` runtime path
-- Option A invites are now sent over NIP-17 gift-wrapped DMs (`kind 1059` with `kind 13` seal / `kind 14` rumor) and discovered from relay history on voter login
+- no `qflow`/`questionnaire_flow` URL gate is required for the normal voter path
+- signer login, coordinator whitelist/invite actions, blind request/issuance, single-vote acceptance, and signer-keyed resume are handled through the `questionnaireOptionA` runtime path
+- invites are sent over NIP-17 gift-wrapped DMs (`kind 1059` with `kind 13` seal / `kind 14` rumor) and discovered from relay history on voter login
 - invite-driven voter login can automatically prepare/send the first blind ballot request when the voter is authenticated and authorised

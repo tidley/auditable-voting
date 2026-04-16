@@ -874,13 +874,13 @@ The project is attempting to separate voter eligibility from public ballot ident
 
 ---
 
-## 24. Option A Gate (Current Tranche)
+## 24. Questionnaire Runtime (Current Tranche)
 
-- Use `?qflow=option_a` (or `?questionnaire_flow=option_a`) to enable the reducer-driven Option A questionnaire flow.
-- In Option A mode, voter/coordinator questionnaire panels expose signer login and the new whitelist/invite/request/issuance/submission path.
-- In Option A mode, coordinator invites are sent as NIP-17 gift-wrapped DMs (`kind 1059` with `kind 13` seal / `kind 14` rumor), and voter login discovers pending invites from relay history.
-- In Option A mode, invite-driven voter login can auto-prepare/send the first blind request once login is verified.
-- Without this gate, legacy questionnaire behaviour remains active.
+- The voter questionnaire now uses a single entry path (Option A runtime) by default.
+- No `qflow` / `questionnaire_flow` gate is required for normal voter usage.
+- Voter/coordinator questionnaire panels expose signer login and the whitelist/invite/request/issuance/submission path.
+- Coordinator invites are sent as NIP-17 gift-wrapped DMs (`kind 1059` with `kind 13` seal / `kind 14` rumor), and voter login discovers pending invites from relay history.
+- Invite-driven voter login can auto-prepare/send the first blind request once login is verified.
 </script>
 
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
