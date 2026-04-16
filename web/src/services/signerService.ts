@@ -8,10 +8,12 @@ export class SignerServiceError extends Error {
 }
 
 export interface BrowserNostrSigner {
+  enable?: () => Promise<unknown>;
   getPublicKey?: () => Promise<string>;
   signEvent?: <T extends Record<string, unknown>>(event: T) => Promise<T & { id?: string; sig?: string; pubkey?: string }>;
   signMessage?: (message: string) => Promise<string>;
   nip07?: {
+    enable?: () => Promise<unknown>;
     getPublicKey?: () => Promise<string>;
     signEvent?: <T extends Record<string, unknown>>(event: T) => Promise<T & { id?: string; sig?: string; pubkey?: string }>;
     signMessage?: (message: string) => Promise<string>;
@@ -36,6 +38,30 @@ function readBrowserSigner(): BrowserNostrSigner | null {
   return candidate;
 }
 
+async function waitForBrowserSigner(timeoutMs = 2500, intervalMs = 150): Promise<BrowserNostrSigner | null> {
+  const startedAt = Date.now();
+  while ((Date.now() - startedAt) <= timeoutMs) {
+    const signer = readBrowserSigner();
+    if (signer) {
+      return signer;
+    }
+    await new Promise((resolve) => globalThis.setTimeout(resolve, intervalMs));
+  }
+  return readBrowserSigner();
+}
+
+async function enableSignerIfAvailable(signer: BrowserNostrSigner) {
+  const enable = signer.enable ?? signer.nip07?.enable;
+  if (!enable) {
+    return;
+  }
+  try {
+    await enable();
+  } catch (error) {
+    throw toSignerError(error, "Signer permission request failed.");
+  }
+}
+
 function toSignerError(error: unknown, fallback: string): SignerServiceError {
   const message = error instanceof Error ? error.message : String(error ?? fallback);
   const normalized = message.toLowerCase();
@@ -48,16 +74,17 @@ function toSignerError(error: unknown, fallback: string): SignerServiceError {
 export function createSignerService(): SignerService {
   return {
     async isAvailable() {
-      const signer = readBrowserSigner();
+      const signer = await waitForBrowserSigner();
       return Boolean(signer?.getPublicKey || signer?.nip07?.getPublicKey);
     },
     async getPublicKey() {
-      const signer = readBrowserSigner();
+      const signer = await waitForBrowserSigner();
       const getPublicKey = signer?.getPublicKey ?? signer?.nip07?.getPublicKey;
       if (!getPublicKey) {
         throw new SignerServiceError("unavailable", "No Nostr signer is available in this browser.");
       }
       try {
+        await enableSignerIfAvailable(signer);
         const pubkey = await getPublicKey();
         if (!pubkey || typeof pubkey !== "string") {
           throw new SignerServiceError("sign_failed", "Signer returned an invalid public key.");
@@ -68,12 +95,13 @@ export function createSignerService(): SignerService {
       }
     },
     async signMessage(message: string) {
-      const signer = readBrowserSigner();
+      const signer = await waitForBrowserSigner();
       const signMessage = signer?.signMessage ?? signer?.nip07?.signMessage;
       if (!signMessage) {
         throw new SignerServiceError("unavailable", "This signer does not support message signing.");
       }
       try {
+        await enableSignerIfAvailable(signer);
         const signature = await signMessage(message);
         if (!signature || typeof signature !== "string") {
           throw new SignerServiceError("sign_failed", "Signer returned an invalid signature.");
@@ -84,12 +112,13 @@ export function createSignerService(): SignerService {
       }
     },
     async signEvent<T extends Record<string, unknown>>(event: T) {
-      const signer = readBrowserSigner();
+      const signer = await waitForBrowserSigner();
       const signEvent = signer?.signEvent ?? signer?.nip07?.signEvent ?? signer?.nip04?.signEvent;
       if (!signEvent) {
         throw new SignerServiceError("unavailable", "This signer does not support event signing.");
       }
       try {
+        await enableSignerIfAvailable(signer);
         const signed = await signEvent(event);
         if (!signed || typeof signed !== "object") {
           throw new SignerServiceError("sign_failed", "Signer returned an invalid signed event.");
