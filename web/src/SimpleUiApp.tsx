@@ -89,6 +89,7 @@ type SimpleVoterKeypair = {
   nsec: string;
   npub: string;
 };
+const GATEWAY_SIGNER_NPUB_STORAGE_KEY = "app:auditable-voting:gateway:signer_npub";
 
 type PendingBlindRequest = {
   coordinatorNpub: string;
@@ -341,6 +342,17 @@ export default function SimpleUiApp() {
   const ticketBackfillQueryDebugRef = useRef<MailboxReadQueryDebug | null>(null);
   const ticketBackfillRequestDebugRef = useRef<Record<string, TicketBackfillRequestDebug>>({});
   const ticketLiveQueryByRequestRef = useRef<Record<string, MailboxReadQueryDebug>>({});
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const persisted = window.localStorage.getItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY)?.trim() ?? "";
+    if (persisted) {
+      setSignerNpub(persisted);
+      setSignerStatus(`Signed in via gateway as ${persisted}.`);
+    }
+  }, []);
   const ticketBackfillQueryByRequestRef = useRef<Record<string, MailboxReadQueryDebug>>({});
   const ticketMailboxMismatchRef = useRef<Record<string, TicketMailboxMismatch>>({});
   const lastAutoSelectedVotingIdRef = useRef("");

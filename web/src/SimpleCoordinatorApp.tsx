@@ -99,6 +99,7 @@ type SimpleCoordinatorKeypair = {
   npub: string;
   nsec: string;
 };
+const GATEWAY_SIGNER_NPUB_STORAGE_KEY = "app:auditable-voting:gateway:signer_npub";
 
 type TicketRelayResult = {
   relay: string;
@@ -657,6 +658,17 @@ export default function SimpleCoordinatorApp() {
     () => readRuntimeIntOverride("SIMPLE_TICKET_SEND_MAX_CONCURRENCY", SIMPLE_TICKET_SEND_MAX_CONCURRENCY),
     [],
   );
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const persisted = window.localStorage.getItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY)?.trim() ?? "";
+    if (persisted) {
+      setSignerNpub(persisted);
+      setSignerStatus(`Signed in via gateway as ${persisted}.`);
+    }
+  }, []);
 
   useEffect(() => {
     if (!optionACoordinatorRuntime || !keypair?.npub || !optionAElectionId) {

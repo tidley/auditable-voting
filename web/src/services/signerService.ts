@@ -11,6 +11,11 @@ export interface BrowserNostrSigner {
   getPublicKey?: () => Promise<string>;
   signEvent?: <T extends Record<string, unknown>>(event: T) => Promise<T & { id?: string; sig?: string; pubkey?: string }>;
   signMessage?: (message: string) => Promise<string>;
+  nip07?: {
+    getPublicKey?: () => Promise<string>;
+    signEvent?: <T extends Record<string, unknown>>(event: T) => Promise<T & { id?: string; sig?: string; pubkey?: string }>;
+    signMessage?: (message: string) => Promise<string>;
+  };
   nip04?: {
     signEvent?: <T extends Record<string, unknown>>(event: T) => Promise<T & { id?: string; sig?: string; pubkey?: string }>;
   };
@@ -44,15 +49,16 @@ export function createSignerService(): SignerService {
   return {
     async isAvailable() {
       const signer = readBrowserSigner();
-      return Boolean(signer?.getPublicKey);
+      return Boolean(signer?.getPublicKey || signer?.nip07?.getPublicKey);
     },
     async getPublicKey() {
       const signer = readBrowserSigner();
-      if (!signer?.getPublicKey) {
+      const getPublicKey = signer?.getPublicKey ?? signer?.nip07?.getPublicKey;
+      if (!getPublicKey) {
         throw new SignerServiceError("unavailable", "No Nostr signer is available in this browser.");
       }
       try {
-        const pubkey = await signer.getPublicKey();
+        const pubkey = await getPublicKey();
         if (!pubkey || typeof pubkey !== "string") {
           throw new SignerServiceError("sign_failed", "Signer returned an invalid public key.");
         }
@@ -63,11 +69,12 @@ export function createSignerService(): SignerService {
     },
     async signMessage(message: string) {
       const signer = readBrowserSigner();
-      if (!signer?.signMessage) {
+      const signMessage = signer?.signMessage ?? signer?.nip07?.signMessage;
+      if (!signMessage) {
         throw new SignerServiceError("unavailable", "This signer does not support message signing.");
       }
       try {
-        const signature = await signer.signMessage(message);
+        const signature = await signMessage(message);
         if (!signature || typeof signature !== "string") {
           throw new SignerServiceError("sign_failed", "Signer returned an invalid signature.");
         }
@@ -78,7 +85,7 @@ export function createSignerService(): SignerService {
     },
     async signEvent<T extends Record<string, unknown>>(event: T) {
       const signer = readBrowserSigner();
-      const signEvent = signer?.signEvent ?? signer?.nip04?.signEvent;
+      const signEvent = signer?.signEvent ?? signer?.nip07?.signEvent ?? signer?.nip04?.signEvent;
       if (!signEvent) {
         throw new SignerServiceError("unavailable", "This signer does not support event signing.");
       }

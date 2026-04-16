@@ -10,6 +10,7 @@ import { deriveNpubFromNsec } from "./nostrIdentity";
 import { saveSimpleActorState } from "./simpleLocalState";
 
 type SimpleRole = "voter" | "coordinator" | "auditor";
+const GATEWAY_SIGNER_NPUB_STORAGE_KEY = "app:auditable-voting:gateway:signer_npub";
 
 type SimpleAppShellProps = {
   initialRole?: SimpleRole;
@@ -77,6 +78,11 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
   async function loginWithSigner() {
     try {
       const signer = createSignerService();
+      const available = await signer.isAvailable();
+      if (!available) {
+        setGatewayStatus("No NIP-07 signer found in this browser.");
+        return;
+      }
       const rawPubkey = await signer.getPublicKey();
       const npub = rawPubkey.startsWith("npub1") ? rawPubkey : nip19.npubEncode(rawPubkey);
       setGatewaySignerNpub(npub);
@@ -104,6 +110,13 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
         updatedAt: new Date().toISOString(),
       });
       setGatewayStatus(`Loaded ${gatewayRole} identity ${npub}.`);
+    }
+    if (typeof window !== "undefined") {
+      if (gatewaySignerNpub.trim()) {
+        window.localStorage.setItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY, gatewaySignerNpub.trim());
+      } else {
+        window.localStorage.removeItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY);
+      }
     }
     setRole(gatewayRole);
     setShowGateway(false);
