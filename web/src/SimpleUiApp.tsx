@@ -1597,6 +1597,49 @@ export default function SimpleUiApp() {
   }
 
   async function checkQuestionnaireInvites() {
+    const signerSessionNpub = signerNpub.trim();
+    const localNsec = voterKeypair?.nsec?.trim() ?? "";
+    const localNpub = voterKeypair?.npub?.trim() ?? "";
+
+    if (!signerSessionNpub && localNsec && localNpub) {
+      try {
+        const invites = await fetchOptionAInviteDmsWithNsec({
+          nsec: localNsec,
+          limit: 40,
+        });
+        for (const invite of invites) {
+          publishInviteToMailbox(invite);
+        }
+        const discoveredCoordinatorNpubs = sanitizeCoordinatorNpubs(invites.map((invite) => invite.coordinatorNpub));
+        const discoveredQuestionnaireIds = [...new Set(
+          invites
+            .map((invite) => invite.electionId?.trim() ?? "")
+            .filter((value) => value.length > 0),
+        )];
+        if (discoveredCoordinatorNpubs.length > 0) {
+          setManualCoordinators((current) => sanitizeCoordinatorNpubs([...current, ...discoveredCoordinatorNpubs]));
+        }
+        if (discoveredQuestionnaireIds.length > 0) {
+          setAnnouncedQuestionnaireIds((current) => {
+            const next = [...new Set([...current, ...discoveredQuestionnaireIds])].slice(-8);
+            return next.length === current.length
+              && next.every((value, index) => value === current[index])
+              ? current
+              : next;
+          });
+        }
+        setRequestStatus(
+          invites.length === 0
+            ? `Checked invites for ${shortenNpub(localNpub)} (local key). No questionnaire invites found.`
+            : `Checked invites for ${shortenNpub(localNpub)} (local key). Found ${invites.length} questionnaire invite${invites.length === 1 ? "" : "s"}.`,
+        );
+        return;
+      } catch {
+        setRequestStatus("Could not check questionnaire invites with local key.");
+        return;
+      }
+    }
+
     try {
       const signer = createSignerService();
       const rawPubkey = await signer.getPublicKey();
@@ -1632,45 +1675,6 @@ export default function SimpleUiApp() {
           : `Checked invites for ${shortenNpub(signerNpub)}. Found ${invites.length} questionnaire invite${invites.length === 1 ? "" : "s"}.`,
       );
     } catch (error) {
-      if (error instanceof SignerServiceError && error.code === "unavailable" && voterKeypair?.nsec?.trim()) {
-        try {
-          const signerNpub = voterKeypair.npub.trim();
-          const invites = await fetchOptionAInviteDmsWithNsec({
-            nsec: voterKeypair.nsec,
-            limit: 40,
-          });
-          for (const invite of invites) {
-            publishInviteToMailbox(invite);
-          }
-          const discoveredCoordinatorNpubs = sanitizeCoordinatorNpubs(invites.map((invite) => invite.coordinatorNpub));
-          const discoveredQuestionnaireIds = [...new Set(
-            invites
-              .map((invite) => invite.electionId?.trim() ?? "")
-              .filter((value) => value.length > 0),
-          )];
-          if (discoveredCoordinatorNpubs.length > 0) {
-            setManualCoordinators((current) => sanitizeCoordinatorNpubs([...current, ...discoveredCoordinatorNpubs]));
-          }
-          if (discoveredQuestionnaireIds.length > 0) {
-            setAnnouncedQuestionnaireIds((current) => {
-              const next = [...new Set([...current, ...discoveredQuestionnaireIds])].slice(-8);
-              return next.length === current.length
-                && next.every((value, index) => value === current[index])
-                ? current
-                : next;
-            });
-          }
-          setRequestStatus(
-            invites.length === 0
-              ? `Checked invites for ${shortenNpub(signerNpub)} (local key). No questionnaire invites found.`
-              : `Checked invites for ${shortenNpub(signerNpub)} (local key). Found ${invites.length} questionnaire invite${invites.length === 1 ? "" : "s"}.`,
-          );
-          return;
-        } catch {
-          setRequestStatus("Could not check questionnaire invites with local key.");
-          return;
-        }
-      }
       if (error instanceof SignerServiceError) {
         setRequestStatus(error.message);
         return;

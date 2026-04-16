@@ -902,6 +902,26 @@ async function clickByTextIfAvailable(page, role, name, timeoutMs = 5000) {
   return true;
 }
 
+async function continueFromRoleLandingIfPresent(page, role) {
+  const continueButton = page.getByRole("button", {
+    name: new RegExp(`^Continue as ${role}$`, "i"),
+  }).first();
+  if (await continueButton.count().catch(() => 0) === 0) {
+    return false;
+  }
+  try {
+    await continueButton.waitFor({ state: "visible", timeout: 3000 });
+  } catch {
+    return false;
+  }
+  if (await continueButton.isDisabled().catch(() => true)) {
+    return false;
+  }
+  await continueButton.click();
+  await sleep(150);
+  return true;
+}
+
 async function ensureVoterTab(page, name, actorLabel = "unknown-voter") {
   if (!(await isPageAlive(page))) {
     throw new Error(`Page is closed before ensureVoterTab(${name}) for ${actorLabel}`);
@@ -1737,6 +1757,7 @@ async function main() {
         }
         url.searchParams.set("deployment", deploymentMode);
         await page.goto(url.toString(), { waitUntil: "networkidle" });
+        await continueFromRoleLandingIfPresent(page, "coordinator");
         const label = `coord${index + 1}`;
         coordinators.push({ label, page, context });
         recordTimelineEvent(timeline, label, "coordinator_page_loaded", { url: page.url() });
@@ -1754,6 +1775,7 @@ async function main() {
           }
           url.searchParams.set("deployment", deploymentMode);
           await page.goto(url.toString(), { waitUntil: "networkidle" });
+          await continueFromRoleLandingIfPresent(page, "voter");
           voters.push({ label, page, context });
           recordTimelineEvent(timeline, label, "voter_page_loaded", { url: page.url() });
           if (voterStartupStaggerMs > 0) {
