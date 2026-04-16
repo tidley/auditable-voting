@@ -309,6 +309,7 @@ export default function SimpleUiApp() {
   const [identityStatus, setIdentityStatus] = useState<string | null>(null);
   const [signerNpub, setSignerNpub] = useState<string>("");
   const [signerStatus, setSignerStatus] = useState<string | null>(null);
+  const activeVoterNpub = signerNpub.trim() || voterKeypair?.npub?.trim() || "";
   const [backupStatus, setBackupStatus] = useState<string | null>(null);
   const [storagePassphrase, setStoragePassphrase] = useState("");
   const [storageLocked, setStorageLocked] = useState(false);
@@ -350,7 +351,7 @@ export default function SimpleUiApp() {
     const persisted = window.localStorage.getItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY)?.trim() ?? "";
     if (persisted) {
       setSignerNpub(persisted);
-      setSignerStatus(`Signed in via gateway as ${persisted}.`);
+      setSignerStatus(null);
     }
   }, []);
   const ticketBackfillQueryByRequestRef = useRef<Record<string, MailboxReadQueryDebug>>({});
@@ -1249,14 +1250,14 @@ export default function SimpleUiApp() {
   }, [configuredCoordinatorTargets, knownBlindKeys, knownRoundVotingIds, questionnaireModeActive, voteTabActive]);
 
   useEffect(() => {
-    const npub = voterKeypair?.npub?.trim() ?? "";
+    const npub = activeVoterNpub;
     if (!npub) {
       setVoterId("pending");
       return;
     }
 
     setVoterId(deriveActorDisplayId(npub));
-  }, [voterKeypair?.npub]);
+  }, [activeVoterNpub]);
 
   useEffect(() => {
     setLiveVoteChoice(null);
@@ -1312,7 +1313,7 @@ export default function SimpleUiApp() {
       const rawPubkey = await signer.getPublicKey();
       const npub = rawPubkey.startsWith("npub1") ? rawPubkey : nip19.npubEncode(rawPubkey);
       setSignerNpub(npub);
-      setSignerStatus(`Signed in as ${npub}.`);
+      setSignerStatus("Signer connected.");
     } catch (error) {
       if (error instanceof SignerServiceError) {
         setSignerStatus(error.message);
@@ -2534,7 +2535,7 @@ export default function SimpleUiApp() {
           </div>
         </div>
         {signerNpub ? <p className='simple-voter-note'>Signed in as {signerNpub}</p> : null}
-        {signerStatus ? <p className='simple-voter-note'>{signerStatus}</p> : null}
+        {signerStatus && signerStatus !== `Signed in as ${signerNpub}.` ? <p className='simple-voter-note'>{signerStatus}</p> : null}
         <div
           className='simple-voter-tabs'
           role='tablist'
@@ -2993,8 +2994,8 @@ export default function SimpleUiApp() {
             aria-label='Settings'
           >
             <SimpleIdentityPanel
-              npub={voterKeypair?.npub ?? ''}
-              nsec={voterKeypair?.nsec ?? ''}
+              npub={activeVoterNpub}
+              nsec={signerNpub ? '' : (voterKeypair?.nsec ?? '')}
               title='Identity'
               onRestoreNsec={restoreIdentity}
               restoreMessage={identityStatus}

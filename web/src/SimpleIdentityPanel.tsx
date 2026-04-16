@@ -17,7 +17,7 @@ export default function SimpleIdentityPanel({
   localStateMessage,
 }: {
   npub: string;
-  nsec: string;
+  nsec?: string;
   title?: string;
   onRestoreNsec?: (nsec: string) => void;
   restoreMessage?: string | null;
@@ -99,7 +99,9 @@ export default function SimpleIdentityPanel({
     }
   }
 
-  if (!npub || !nsec) {
+  const hasLocalSecret = Boolean(nsec && nsec.trim());
+
+  if (!npub) {
     return null;
   }
 
@@ -141,20 +143,24 @@ export default function SimpleIdentityPanel({
           </div>
           <div className='simple-identity-field'>
             <div className='simple-identity-label'>Private key</div>
-            <div className='simple-identity-secret-row'>
-              <code className='simple-identity-code'>
-                {showPrivateKey ? nsec : 'Hidden'}
-              </code>
-              <button
-                type='button'
-                className='simple-voter-secondary'
-                onClick={() => setShowPrivateKey((value) => !value)}
-              >
-                {showPrivateKey ? 'Hide' : 'Click to reveal'}
-              </button>
-            </div>
+            {hasLocalSecret ? (
+              <div className='simple-identity-secret-row'>
+                <code className='simple-identity-code'>
+                  {showPrivateKey ? nsec : 'Hidden'}
+                </code>
+                <button
+                  type='button'
+                  className='simple-voter-secondary'
+                  onClick={() => setShowPrivateKey((value) => !value)}
+                >
+                  {showPrivateKey ? 'Hide' : 'Click to reveal'}
+                </button>
+              </div>
+            ) : (
+              <p className='simple-voter-note'>Managed by external signer.</p>
+            )}
           </div>
-          {onRestoreNsec ? (
+          {onRestoreNsec && hasLocalSecret ? (
             <div className='simple-identity-restore'>
               <div className='simple-identity-label'>Restore from nsec</div>
               <div className='simple-voter-inline-field'>

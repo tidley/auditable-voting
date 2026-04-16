@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
-import { decodeNsec, deriveNpubFromNsec } from "./nostrIdentity";
+import { decodeNsec, deriveNpubFromNsec, isValidNpub } from "./nostrIdentity";
 import { deriveActorDisplayId } from "./actorDisplay";
 import {
   subscribeSimpleCoordinatorFollowers,
@@ -92,6 +92,7 @@ import {
   selectTicketRetryTargetsRust,
 } from "./wasm/auditableVotingCore";
 import { createSignerService, SignerServiceError } from "./services/signerService";
+import { getSharedNostrPool } from "./sharedNostrPool";
 
 type CoordinatorTab = "configure" | "voting" | "settings";
 
@@ -613,6 +614,7 @@ export default function SimpleCoordinatorApp() {
   const [knownVoterDraftNpub, setKnownVoterDraftNpub] = useState("");
   const [knownVoterInviteStatus, setKnownVoterInviteStatus] = useState<string | null>(null);
   const [knownVoterInviteRefreshNonce, setKnownVoterInviteRefreshNonce] = useState(0);
+  const [knownVoterContactsLoading, setKnownVoterContactsLoading] = useState(false);
   const [shareAssignmentsInFlight, setShareAssignmentsInFlight] =
     useState(false);
   const [
@@ -620,6 +622,7 @@ export default function SimpleCoordinatorApp() {
     setLastSuccessfulShareAssignmentSignature,
   ] = useState('');
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const activeCoordinatorNpub = signerNpub.trim() || keypair?.npub?.trim() || "";
   const deploymentMode = useMemo(() => readDeploymentModeFromUrl(), []);
   const isCourseFeedbackMode = deploymentMode === "course_feedback";
   const optionAElectionId = useMemo(() => {
@@ -666,17 +669,17 @@ export default function SimpleCoordinatorApp() {
     const persisted = window.localStorage.getItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY)?.trim() ?? "";
     if (persisted) {
       setSignerNpub(persisted);
-      setSignerStatus(`Signed in via gateway as ${persisted}.`);
+      setSignerStatus(null);
     }
   }, []);
 
   useEffect(() => {
-    if (!optionACoordinatorRuntime || !keypair?.npub || !optionAElectionId) {
+    if (!optionACoordinatorRuntime || !activeCoordinatorNpub || !optionAElectionId) {
       return;
     }
     try {
       optionACoordinatorRuntime.bootstrapCoordinatorNpub({
-        coordinatorNpub: keypair.npub,
+        coordinatorNpub: activeCoordinatorNpub,
         summary: {
           electionId: optionAElectionId,
           title: questionPrompt,
@@ -688,7 +691,7 @@ export default function SimpleCoordinatorApp() {
     } catch {
       // Manual login remains available.
     }
-  }, [keypair?.npub, optionACoordinatorRuntime, optionAElectionId, questionPrompt]);
+  }, [activeCoordinatorNpub, optionACoordinatorRuntime, optionAElectionId, questionPrompt]);
   const ticketObserveRecoveryAgeMs = useMemo(
     () => readRuntimeIntOverride("SIMPLE_TICKET_OBSERVE_RECOVERY_AGE_MS", SIMPLE_TICKET_OBSERVE_RECOVERY_AGE_MS),
     [],
@@ -2459,7 +2462,7 @@ export default function SimpleCoordinatorApp() {
   }, [coordinatorId, isLeadCoordinator, keypair?.nsec, keypair?.npub, leadCoordinatorNpub]);
 
   useEffect(() => {
-    const npub = keypair?.npub ?? "";
+    const npub = activeCoordinatorNpub;
 
     if (!npub) {
       setCoordinatorId("pending");
@@ -2467,7 +2470,7 @@ export default function SimpleCoordinatorApp() {
     }
 
     setCoordinatorId(deriveActorDisplayId(npub));
-  }, [keypair?.npub]);
+  }, [activeCoordinatorNpub]);
 
   useEffect(() => {
     if (isLeadCoordinator) {
@@ -2872,13 +2875,70 @@ export default function SimpleCoordinatorApp() {
       const rawPubkey = await signer.getPublicKey();
       const npub = rawPubkey.startsWith("npub1") ? rawPubkey : nip19.npubEncode(rawPubkey);
       setSignerNpub(npub);
-      setSignerStatus(`Signed in as ${npub}.`);
+      setSignerStatus("Signer connected.");
     } catch (error) {
       if (error instanceof SignerServiceError) {
         setSignerStatus(error.message);
         return;
       }
       setSignerStatus("Signer login failed.");
+    }
+  }
+
+  async function importKnownVotersFromContacts() {
+    if (!optionACoordinatorRuntime) {
+      setKnownVoterInviteStatus("Open or publish a questionnaire first.");
+      return;
+    }
+    const sourceNpub = activeCoordinatorNpub.trim();
+    if (!isValidNpub(sourceNpub)) {
+      setKnownVoterInviteStatus("Login first so contacts can be imported.");
+      return;
+    }
+    const sourceHex = npubsToHexRoster([sourceNpub])[0];
+    if (!sourceHex) {
+      setKnownVoterInviteStatus("Could not resolve coordinator public key.");
+      return;
+    }
+    setKnownVoterContactsLoading(true);
+    try {
+      const relays = normalizeRelaysRust(SIMPLE_PUBLIC_RELAYS).slice(0, 6);
+      const events = await getSharedNostrPool().querySync(relays, {
+        kinds: [3],
+        authors: [sourceHex],
+        limit: 20,
+      });
+      const latest = [...events]
+        .sort((left, right) => right.created_at - left.created_at)
+        .find((event) => event.pubkey === sourceHex);
+      if (!latest) {
+        setKnownVoterInviteStatus("No contacts list found for this coordinator.");
+        return;
+      }
+      const contactNpubs = Array.from(new Set(
+        (Array.isArray(latest.tags) ? latest.tags : [])
+          .filter((tag) => Array.isArray(tag) && tag[0] === "p" && typeof tag[1] === "string" && tag[1].trim().length === 64)
+          .map((tag) => nip19.npubEncode(tag[1].trim())),
+      )).filter((npub) => isValidNpub(npub));
+      if (contactNpubs.length === 0) {
+        setKnownVoterInviteStatus("Contacts list is present, but contains no valid npubs.");
+        return;
+      }
+      let addedCount = 0;
+      for (const npub of contactNpubs) {
+        try {
+          optionACoordinatorRuntime.addWhitelistNpub(npub);
+          addedCount += 1;
+        } catch {
+          // ignore duplicates/invalid entries and continue importing others
+        }
+      }
+      setKnownVoterInviteRefreshNonce((value) => value + 1);
+      setKnownVoterInviteStatus(`Imported ${addedCount} known voter${addedCount === 1 ? "" : "s"} from contacts (kind 3).`);
+    } catch (error) {
+      setKnownVoterInviteStatus(error instanceof Error ? error.message : "Could not import contacts.");
+    } finally {
+      setKnownVoterContactsLoading(false);
     }
   }
 
@@ -4823,20 +4883,20 @@ export default function SimpleCoordinatorApp() {
         <div className='simple-voter-header-row'>
           <h1 className='simple-voter-title'>Coordinator ID {coordinatorId}</h1>
           <div className='simple-coordinator-header-actions'>
-            {keypair?.npub ? (
+            {activeCoordinatorNpub ? (
               <TokenFingerprint
-                tokenId={keypair.npub}
+                tokenId={activeCoordinatorNpub}
                 compact
                 showQr
                 hideMetadata
-                qrValue={keypair.npub}
+                qrValue={activeCoordinatorNpub}
               />
             ) : null}
             <button
               type='button'
               className='simple-voter-secondary'
-              onClick={() => void navigator.clipboard.writeText(keypair?.npub ?? "")}
-              disabled={!keypair?.npub}
+              onClick={() => void navigator.clipboard.writeText(activeCoordinatorNpub)}
+              disabled={!activeCoordinatorNpub}
             >
               Copy npub
             </button>
@@ -4857,7 +4917,7 @@ export default function SimpleCoordinatorApp() {
           </div>
         </div>
         {signerNpub ? <p className='simple-voter-note'>Signed in as {signerNpub}</p> : null}
-        {signerStatus ? <p className='simple-voter-note'>{signerStatus}</p> : null}
+        {signerStatus && signerStatus !== `Signed in as ${signerNpub}.` ? <p className='simple-voter-note'>{signerStatus}</p> : null}
         <div
           className='simple-voter-tabs'
           role='tablist'
@@ -5213,6 +5273,14 @@ export default function SimpleCoordinatorApp() {
                     <button
                       type='button'
                       className='simple-voter-secondary'
+                      onClick={() => void importKnownVotersFromContacts()}
+                      disabled={knownVoterContactsLoading || !activeCoordinatorNpub}
+                    >
+                      {knownVoterContactsLoading ? 'Importing...' : 'Import contacts'}
+                    </button>
+                    <button
+                      type='button'
+                      className='simple-voter-secondary'
                       onClick={processKnownVoterRequests}
                     >
                       Process requests
@@ -5307,8 +5375,8 @@ export default function SimpleCoordinatorApp() {
             aria-label='Settings'
           >
             <SimpleIdentityPanel
-              npub={keypair?.npub ?? ''}
-              nsec={keypair?.nsec ?? ''}
+              npub={activeCoordinatorNpub}
+              nsec={signerNpub ? '' : (keypair?.nsec ?? '')}
               title='Identity'
               onRestoreNsec={restoreIdentity}
               restoreMessage={identityStatus}

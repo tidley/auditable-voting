@@ -1135,6 +1135,8 @@ code {
   font-size: 0.96rem;
   line-height: 1.45;
   color: #7dd3fc;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .simple-delivery-diagnostics {
