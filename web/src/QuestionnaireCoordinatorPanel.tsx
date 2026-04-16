@@ -14,8 +14,6 @@ import SimpleQrPanel from "./SimpleQrPanel";
 import TokenFingerprint from "./TokenFingerprint";
 import { deriveActorDisplayId } from "./actorDisplay";
 import { getSharedNostrPool } from "./sharedNostrPool";
-import { getQuestionnaireFlowMode } from "./questionnaireFlowMode";
-import QuestionnaireOptionACoordinatorPanel from "./QuestionnaireOptionACoordinatorPanel";
 
 const DEFAULT_QUESTIONNAIRE_ID_PREFIX = "q";
 const QUESTIONNAIRE_DRAFT_ID_STORAGE_KEY = "coordinator.questionnaire-draft-id.v1";
@@ -176,10 +174,6 @@ function buildDefinition(input: {
 }
 
 export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordinatorPanelProps) {
-  const flowMode = useMemo(() => getQuestionnaireFlowMode(), []);
-  if (flowMode === "option_a") {
-    return <QuestionnaireOptionACoordinatorPanel />;
-  }
   const deploymentMode = useMemo(() => readDeploymentModeFromUrl(), []);
   const isCourseFeedbackMode = deploymentMode === "course_feedback";
   const [questionnaireId, setQuestionnaireId] = useState(() => readStoredQuestionnaireDraftId());
