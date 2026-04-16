@@ -262,6 +262,13 @@ type CoordinatorStartupDiagnostics = {
   startupJoinFailureBucket: "publish_failure" | "observation_failure" | "state_transition_failure" | null;
 };
 
+type ImportedKnownVoterContact = {
+  npub: string;
+  nip05: string | null;
+  profileName: string | null;
+  petname: string | null;
+};
+
 const SIMPLE_TICKET_SEND_STAGGER_MS = 900;
 const SIMPLE_HUMAN_ACTION_JITTER_MAX_MS = 30000;
 const SIMPLE_COORDINATOR_CONTROL_BACKFILL_INTERVAL_MS = 4000;
@@ -615,6 +622,9 @@ export default function SimpleCoordinatorApp() {
   const [knownVoterInviteStatus, setKnownVoterInviteStatus] = useState<string | null>(null);
   const [knownVoterInviteRefreshNonce, setKnownVoterInviteRefreshNonce] = useState(0);
   const [knownVoterContactsLoading, setKnownVoterContactsLoading] = useState(false);
+  const [importedKnownVoterContacts, setImportedKnownVoterContacts] = useState<ImportedKnownVoterContact[]>([]);
+  const [knownVoterContactSearch, setKnownVoterContactSearch] = useState("");
+  const [selectedImportedKnownVoterNpub, setSelectedImportedKnownVoterNpub] = useState("");
   const [shareAssignmentsInFlight, setShareAssignmentsInFlight] =
     useState(false);
   const [
@@ -649,6 +659,18 @@ export default function SimpleCoordinatorApp() {
     () => optionACoordinatorRuntime?.getPendingAuthorizations() ?? [],
     [optionACoordinatorRuntime, knownVoterInviteRefreshNonce],
   );
+  const filteredImportedKnownVoterContacts = useMemo(() => {
+    const query = knownVoterContactSearch.trim().toLowerCase();
+    if (!query) {
+      return importedKnownVoterContacts;
+    }
+    return importedKnownVoterContacts.filter((contact) => (
+      contact.npub.toLowerCase().includes(query)
+      || (contact.nip05 ?? "").toLowerCase().includes(query)
+      || (contact.profileName ?? "").toLowerCase().includes(query)
+      || (contact.petname ?? "").toLowerCase().includes(query)
+    ));
+  }, [importedKnownVoterContacts, knownVoterContactSearch]);
   const ticketRetryMinAgeMs = useMemo(
     () => readRuntimeIntOverride("SIMPLE_TICKET_RETRY_AGE_MS", SIMPLE_TICKET_RETRY_MIN_AGE_MS),
     [],
@@ -2903,7 +2925,8 @@ export default function SimpleCoordinatorApp() {
     setKnownVoterContactsLoading(true);
     try {
       const relays = normalizeRelaysRust(SIMPLE_PUBLIC_RELAYS).slice(0, 6);
-      const events = await getSharedNostrPool().querySync(relays, {
+      const pool = getSharedNostrPool();
+      const events = await pool.querySync(relays, {
         kinds: [3],
         authors: [sourceHex],
         limit: 20,
@@ -2915,30 +2938,99 @@ export default function SimpleCoordinatorApp() {
         setKnownVoterInviteStatus("No contacts list found for this coordinator.");
         return;
       }
-      const contactNpubs = Array.from(new Set(
-        (Array.isArray(latest.tags) ? latest.tags : [])
-          .filter((tag) => Array.isArray(tag) && tag[0] === "p" && typeof tag[1] === "string" && tag[1].trim().length === 64)
-          .map((tag) => nip19.npubEncode(tag[1].trim())),
-      )).filter((npub) => isValidNpub(npub));
-      if (contactNpubs.length === 0) {
+      const contactEntries = (Array.isArray(latest.tags) ? latest.tags : [])
+        .filter((tag) => Array.isArray(tag) && tag[0] === "p" && typeof tag[1] === "string" && tag[1].trim().length === 64)
+        .map((tag) => ({
+          hex: tag[1].trim(),
+          petname: typeof tag[3] === "string" && tag[3].trim().length > 0 ? tag[3].trim() : null,
+        }));
+      const uniqueContactsByHex = new Map<string, { hex: string; petname: string | null }>();
+      for (const entry of contactEntries) {
+        if (!uniqueContactsByHex.has(entry.hex)) {
+          uniqueContactsByHex.set(entry.hex, entry);
+        }
+      }
+      if (uniqueContactsByHex.size === 0) {
         setKnownVoterInviteStatus("Contacts list is present, but contains no valid npubs.");
         return;
       }
-      let addedCount = 0;
-      for (const npub of contactNpubs) {
-        try {
-          optionACoordinatorRuntime.addWhitelistNpub(npub);
-          addedCount += 1;
-        } catch {
-          // ignore duplicates/invalid entries and continue importing others
+      const uniqueHexContacts = [...uniqueContactsByHex.values()];
+      const metadataEvents = await pool.querySync(relays, {
+        kinds: [0],
+        authors: uniqueHexContacts.map((entry) => entry.hex),
+        limit: Math.max(50, uniqueHexContacts.length * 2),
+      });
+      const metadataByHex = new Map<string, { nip05: string | null; profileName: string | null }>();
+      const sortedMetadataEvents = [...metadataEvents].sort((left, right) => right.created_at - left.created_at);
+      for (const event of sortedMetadataEvents) {
+        if (metadataByHex.has(event.pubkey)) {
+          continue;
         }
+        let nip05: string | null = null;
+        let profileName: string | null = null;
+        try {
+          const profile = JSON.parse(event.content ?? "") as Record<string, unknown>;
+          if (typeof profile.nip05 === "string" && profile.nip05.trim().length > 0) {
+            nip05 = profile.nip05.trim();
+          }
+          const display = typeof profile.display_name === "string" && profile.display_name.trim().length > 0
+            ? profile.display_name.trim()
+            : typeof profile.name === "string" && profile.name.trim().length > 0
+              ? profile.name.trim()
+              : null;
+          profileName = display;
+        } catch {
+          // ignore malformed profile metadata
+        }
+        metadataByHex.set(event.pubkey, { nip05, profileName });
       }
-      setKnownVoterInviteRefreshNonce((value) => value + 1);
-      setKnownVoterInviteStatus(`Imported ${addedCount} known voter${addedCount === 1 ? "" : "s"} from contacts (kind 3).`);
+      const importedContacts = uniqueHexContacts
+        .map((entry) => {
+          const npub = nip19.npubEncode(entry.hex);
+          if (!isValidNpub(npub)) {
+            return null;
+          }
+          const metadata = metadataByHex.get(entry.hex);
+          return {
+            npub,
+            nip05: metadata?.nip05 ?? null,
+            profileName: metadata?.profileName ?? null,
+            petname: entry.petname,
+          } as ImportedKnownVoterContact;
+        })
+        .filter((entry): entry is ImportedKnownVoterContact => Boolean(entry))
+        .sort((left, right) => {
+          const leftLabel = left.profileName ?? left.petname ?? left.nip05 ?? left.npub;
+          const rightLabel = right.profileName ?? right.petname ?? right.nip05 ?? right.npub;
+          return leftLabel.localeCompare(rightLabel);
+        });
+      setImportedKnownVoterContacts(importedContacts);
+      setKnownVoterContactSearch("");
+      setSelectedImportedKnownVoterNpub(importedContacts[0]?.npub ?? "");
+      const withNip05Count = importedContacts.filter((entry) => Boolean(entry.nip05)).length;
+      setKnownVoterInviteStatus(
+        `Imported ${importedContacts.length} contacts. ${withNip05Count} include NIP-05 metadata. Select contacts to whitelist.`,
+      );
     } catch (error) {
       setKnownVoterInviteStatus(error instanceof Error ? error.message : "Could not import contacts.");
     } finally {
       setKnownVoterContactsLoading(false);
+    }
+  }
+
+  function addSelectedImportedContactToWhitelist() {
+    const npub = selectedImportedKnownVoterNpub.trim();
+    if (!npub || !optionACoordinatorRuntime) {
+      return;
+    }
+    try {
+      optionACoordinatorRuntime.addWhitelistNpub(npub);
+      setKnownVoterInviteRefreshNonce((value) => value + 1);
+      const contact = importedKnownVoterContacts.find((entry) => entry.npub === npub);
+      const label = contact?.profileName ?? contact?.petname ?? contact?.nip05 ?? deriveActorDisplayId(npub);
+      setKnownVoterInviteStatus(`Added ${label} to known voters.`);
+    } catch (error) {
+      setKnownVoterInviteStatus(error instanceof Error ? error.message : "Could not add selected contact.");
     }
   }
 
@@ -5345,6 +5437,54 @@ export default function SimpleCoordinatorApp() {
                       Invite all whitelisted
                     </button>
                   </div>
+                  {importedKnownVoterContacts.length > 0 ? (
+                    <div className='simple-voter-field-stack'>
+                      <label className='simple-voter-label' htmlFor='known-voter-contact-search'>
+                        Imported contacts
+                      </label>
+                      <input
+                        id='known-voter-contact-search'
+                        className='simple-voter-input'
+                        value={knownVoterContactSearch}
+                        onChange={(event) => {
+                          setKnownVoterContactSearch(event.target.value);
+                          const nextQuery = event.target.value.trim().toLowerCase();
+                          const nextFiltered = importedKnownVoterContacts.filter((contact) => (
+                            !nextQuery
+                            || contact.npub.toLowerCase().includes(nextQuery)
+                            || (contact.nip05 ?? "").toLowerCase().includes(nextQuery)
+                            || (contact.profileName ?? "").toLowerCase().includes(nextQuery)
+                            || (contact.petname ?? "").toLowerCase().includes(nextQuery)
+                          ));
+                          if (nextFiltered.length > 0 && !nextFiltered.some((entry) => entry.npub === selectedImportedKnownVoterNpub)) {
+                            setSelectedImportedKnownVoterNpub(nextFiltered[0].npub);
+                          }
+                        }}
+                        placeholder='Search by name, NIP-05, or npub'
+                      />
+                      <select
+                        className='simple-voter-input'
+                        value={selectedImportedKnownVoterNpub}
+                        onChange={(event) => setSelectedImportedKnownVoterNpub(event.target.value)}
+                      >
+                        {filteredImportedKnownVoterContacts.map((contact) => (
+                          <option key={contact.npub} value={contact.npub}>
+                            {(contact.profileName ?? contact.petname ?? contact.nip05 ?? deriveActorDisplayId(contact.npub))} · {contact.npub}
+                          </option>
+                        ))}
+                      </select>
+                      <div className='simple-voter-action-row simple-voter-action-row-inline'>
+                        <button
+                          type='button'
+                          className='simple-voter-secondary'
+                          onClick={addSelectedImportedContactToWhitelist}
+                          disabled={!selectedImportedKnownVoterNpub}
+                        >
+                          Add selected to whitelist
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                   {optionAKnownVoters.length > 0 ? (
                     <ul className='simple-vote-status-list'>
                       {optionAKnownVoters.map((entry) => (
