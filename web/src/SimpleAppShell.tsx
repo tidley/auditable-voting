@@ -81,11 +81,6 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
   async function loginWithSigner() {
     try {
       const signer = createSignerService();
-      const available = await signer.isAvailable();
-      if (!available) {
-        setGatewayStatus("No NIP-07 signer found in this browser.");
-        return;
-      }
       const rawPubkey = await signer.getPublicKey();
       const npub = rawPubkey.startsWith("npub1") ? rawPubkey : nip19.npubEncode(rawPubkey);
       setGatewaySignerNpub(npub);

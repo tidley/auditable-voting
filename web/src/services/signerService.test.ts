@@ -48,6 +48,33 @@ describe("signerService", () => {
     expect(pubkey).toBe("e".repeat(64));
   });
 
+  it("supports signers that expose getPublicKey only after enable", async () => {
+    const target = globalThis as typeof globalThis & { nostr?: unknown };
+    const signer: { enable: () => Promise<void>; getPublicKey?: () => Promise<string> } = {
+      async enable() {
+        signer.getPublicKey = async () => "d".repeat(64);
+      },
+    };
+    target.nostr = signer;
+
+    const service = createSignerService();
+    const pubkey = await service.getPublicKey();
+    expect(pubkey).toBe("d".repeat(64));
+  });
+
+  it("falls back to signEvent pubkey when getPublicKey is unavailable", async () => {
+    const target = globalThis as typeof globalThis & { nostr?: unknown };
+    target.nostr = {
+      async signEvent<T extends Record<string, unknown>>(event: T) {
+        return { ...event, pubkey: "c".repeat(64), id: "id", sig: "sig" };
+      },
+    };
+
+    const service = createSignerService();
+    const pubkey = await service.getPublicKey();
+    expect(pubkey).toBe("c".repeat(64));
+  });
+
   it("returns unavailable when no browser signer exists", async () => {
     const signer = createSignerService();
     await expect(signer.getPublicKey()).rejects.toSatisfy((error) => {

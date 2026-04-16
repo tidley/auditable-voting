@@ -43,6 +43,30 @@ export default function SimpleQrScanner({
   const [status, setStatus] = useState<ScannerStatus>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  const decodeWithJsQr = (video: HTMLVideoElement, canvas: HTMLCanvasElement | null): string | null => {
+    if (!canvas) {
+      return null;
+    }
+
+    const width = video.videoWidth;
+    const height = video.videoHeight;
+    if (!width || !height) {
+      return null;
+    }
+
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) {
+      return null;
+    }
+
+    context.drawImage(video, 0, 0, width, height);
+    const imageData = context.getImageData(0, 0, width, height);
+    const result = jsQR(imageData.data, imageData.width, imageData.height);
+    return result?.data?.trim() || null;
+  };
+
   useEffect(() => {
     if (!active) {
       stopScanner();
@@ -113,6 +137,7 @@ export default function SimpleQrScanner({
       }
 
       video.setAttribute("playsinline", "true");
+      video.playsInline = true;
       video.muted = true;
       video.autoplay = true;
       video.srcObject = stream;
@@ -158,32 +183,20 @@ export default function SimpleQrScanner({
         lastScanAtRef.current = now;
 
         const detectPromise = detector
-          ? detector.detect(currentVideo).then((results) => (
-            results.find((result) => typeof result.rawValue === "string" && result.rawValue.trim())?.rawValue?.trim() ?? null
-          ))
-          : Promise.resolve().then(() => {
-            if (!canvas) {
-              return null;
+          ? detector.detect(currentVideo).then((results) => {
+            const rawValue = results.find((result) => (
+              typeof result.rawValue === "string" && result.rawValue.trim()
+            ))?.rawValue?.trim() ?? null;
+            if (rawValue) {
+              return rawValue;
             }
-
-            const width = currentVideo.videoWidth;
-            const height = currentVideo.videoHeight;
-            if (!width || !height) {
-              return null;
-            }
-
-            canvas.width = width;
-            canvas.height = height;
-            const context = canvas.getContext("2d", { willReadFrequently: true });
-            if (!context) {
-              return null;
-            }
-
-            context.drawImage(currentVideo, 0, 0, width, height);
-            const imageData = context.getImageData(0, 0, width, height);
-            const result = jsQR(imageData.data, imageData.width, imageData.height);
-            return result?.data?.trim() || null;
-          });
+            return decodeWithJsQr(currentVideo, canvas);
+          }).catch(() => {
+            // Firefox Android may expose BarcodeDetector but fail to decode at runtime.
+            detectorRef.current = null;
+            return decodeWithJsQr(currentVideo, canvas);
+          })
+          : Promise.resolve().then(() => decodeWithJsQr(currentVideo, canvas));
 
         void detectPromise.then((rawValue) => {
           if (rawValue) {

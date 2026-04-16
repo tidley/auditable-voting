@@ -39,8 +39,18 @@ function readBrowserSigner(): BrowserNostrSigner | null {
 }
 
 async function waitForBrowserSigner(timeoutMs = 2500, intervalMs = 150): Promise<BrowserNostrSigner | null> {
-  const hasPublicKeyMethod = (signer: BrowserNostrSigner | null) =>
-    Boolean(signer?.getPublicKey || signer?.nip07?.getPublicKey);
+  const hasSignerSurface = (signer: BrowserNostrSigner | null) =>
+    Boolean(
+      signer
+      && (
+        signer.getPublicKey
+        || signer.nip07?.getPublicKey
+        || signer.enable
+        || signer.nip07?.enable
+        || signer.signEvent
+        || signer.nip07?.signEvent
+      ),
+    );
 
   const waitForReadyEvent = async () => {
     if (typeof window === "undefined" || typeof window.addEventListener !== "function") {
@@ -74,12 +84,12 @@ async function waitForBrowserSigner(timeoutMs = 2500, intervalMs = 150): Promise
   const startedAt = Date.now();
   while ((Date.now() - startedAt) <= timeoutMs) {
     const signer = readBrowserSigner();
-    if (hasPublicKeyMethod(signer)) {
+    if (hasSignerSurface(signer)) {
       return signer;
     }
     await new Promise((resolve) => globalThis.setTimeout(resolve, intervalMs));
   }
-  return hasPublicKeyMethod(readBrowserSigner()) ? readBrowserSigner() : null;
+  return hasSignerSurface(readBrowserSigner()) ? readBrowserSigner() : null;
 }
 
 async function enableSignerIfAvailable(signer: BrowserNostrSigner) {
@@ -102,6 +112,25 @@ function resolveSignerSource(signer: BrowserNostrSigner): BrowserNostrSigner {
   return signer;
 }
 
+async function derivePubkeyFromSignEvent(signer: BrowserNostrSigner): Promise<string | null> {
+  const source = resolveSignerSource(signer);
+  const signEvent = source.signEvent ?? signer.nip04?.signEvent;
+  if (!signEvent) {
+    return null;
+  }
+  const owner = source.signEvent ? source : signer.nip04;
+  const signed = await signEvent.call(owner, {
+    kind: 22242,
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [],
+    content: "",
+  });
+  if (!signed || typeof signed !== "object" || typeof signed.pubkey !== "string" || !signed.pubkey.trim()) {
+    return null;
+  }
+  return signed.pubkey;
+}
+
 function toSignerError(error: unknown, fallback: string): SignerServiceError {
   const message = error instanceof Error ? error.message : String(error ?? fallback);
   const normalized = message.toLowerCase();
@@ -112,24 +141,53 @@ function toSignerError(error: unknown, fallback: string): SignerServiceError {
 }
 
 export function createSignerService(): SignerService {
+  const waitForPublicKeyMethod = async (signer: BrowserNostrSigner, timeoutMs = 1200, intervalMs = 100) => {
+    const startedAt = Date.now();
+    while ((Date.now() - startedAt) <= timeoutMs) {
+      const source = resolveSignerSource(signer);
+      const getPublicKey = source.getPublicKey;
+      if (getPublicKey) {
+        return { source, getPublicKey };
+      }
+      await new Promise((resolve) => globalThis.setTimeout(resolve, intervalMs));
+    }
+    const source = resolveSignerSource(signer);
+    return { source, getPublicKey: source.getPublicKey };
+  };
+
   return {
     async isAvailable() {
       const signer = await waitForBrowserSigner();
-      return Boolean(signer?.getPublicKey || signer?.nip07?.getPublicKey);
+      return Boolean(
+        signer && (
+          signer.getPublicKey
+          || signer.nip07?.getPublicKey
+          || signer.enable
+          || signer.nip07?.enable
+        ),
+      );
     },
     async getPublicKey() {
       const signer = await waitForBrowserSigner();
       if (!signer) {
         throw new SignerServiceError("unavailable", "No Nostr signer is available in this browser.");
       }
-      const source = resolveSignerSource(signer);
-      const getPublicKey = source.getPublicKey;
-      if (!getPublicKey) {
-        throw new SignerServiceError("unavailable", "No Nostr signer is available in this browser.");
-      }
       try {
         await enableSignerIfAvailable(signer);
-        const pubkey = await getPublicKey.call(source);
+        const { source, getPublicKey } = await waitForPublicKeyMethod(signer);
+        const hasSignEventFallback = Boolean(source.signEvent || signer.nip04?.signEvent);
+        if (!getPublicKey && !hasSignEventFallback) {
+          throw new SignerServiceError("unavailable", "No Nostr signer is available in this browser.");
+        }
+        let pubkey = "";
+        if (getPublicKey) {
+          pubkey = await getPublicKey.call(source);
+        } else {
+          const fallbackPubkey = await derivePubkeyFromSignEvent(signer);
+          if (fallbackPubkey) {
+            pubkey = fallbackPubkey;
+          }
+        }
         if (!pubkey || typeof pubkey !== "string") {
           throw new SignerServiceError("sign_failed", "Signer returned an invalid public key.");
         }
