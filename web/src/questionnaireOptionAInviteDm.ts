@@ -1,4 +1,4 @@
-import { nip19, type NostrEvent } from "nostr-tools";
+import { finalizeEvent, generateSecretKey, getEventHash, getPublicKey, nip19, nip44, type NostrEvent } from "nostr-tools";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import { getSharedNostrPool } from "./sharedNostrPool";
 import { SIMPLE_DM_RELAYS } from "./simpleShardDm";
@@ -11,6 +11,10 @@ const OPTION_A_INVITE_DM_READ_RELAYS_MAX = 3;
 const OPTION_A_INVITE_DM_MAX_WAIT_MS = 1500;
 const OPTION_A_INVITE_DM_STAGGER_MS = 250;
 const OPTION_A_INVITE_DM_MIN_PUBLISH_INTERVAL_MS = 300;
+const TWO_DAYS_SECONDS = 2 * 24 * 60 * 60;
+const KIND_SEAL = 13;
+const KIND_RUMOR_MESSAGE = 14;
+const KIND_GIFT_WRAP = 1059;
 
 type InviteDmEnvelope = {
   type: "optiona_invite_dm";
@@ -72,13 +76,53 @@ function parseInviteDmContent(content: string): ElectionInviteMessage | null {
   }
 }
 
+function randomNow() {
+  const now = Math.round(Date.now() / 1000);
+  return Math.round(now - (Math.random() * TWO_DAYS_SECONDS));
+}
+
+function createRumor(input: {
+  senderHex: string;
+  envelope: InviteDmEnvelope;
+}) {
+  const rumor = {
+    kind: KIND_RUMOR_MESSAGE,
+    created_at: Math.round(Date.now() / 1000),
+    tags: [],
+    content: JSON.stringify(input.envelope),
+    pubkey: input.senderHex,
+  };
+  return {
+    ...rumor,
+    id: getEventHash(rumor),
+  };
+}
+
+function parseGiftWrapPayload(payload: string): NostrEvent | null {
+  try {
+    const parsed = JSON.parse(payload) as NostrEvent;
+    if (
+      !parsed
+      || typeof parsed !== "object"
+      || parsed.kind !== KIND_SEAL
+      || typeof parsed.pubkey !== "string"
+      || typeof parsed.content !== "string"
+    ) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 export async function publishOptionAInviteDm(input: {
   signer: SignerService;
   invite: ElectionInviteMessage;
   relays?: string[];
 }) {
-  if (!input.signer.nip04Encrypt) {
-    throw new Error("Signer does not support NIP-04 encryption.");
+  if (!input.signer.nip44Encrypt) {
+    throw new Error("Signer does not support NIP-44 encryption.");
   }
 
   const senderRaw = await input.signer.getPublicKey();
@@ -90,25 +134,31 @@ export async function publishOptionAInviteDm(input: {
     invite: input.invite,
     sentAt: new Date().toISOString(),
   };
-  const content = await input.signer.nip04Encrypt(recipientHex, JSON.stringify(envelope));
-  const signed = await input.signer.signEvent({
-    kind: 4,
-    created_at: Math.floor(Date.now() / 1000),
-    tags: [
-      ["p", recipientHex],
-      ["t", "optiona_invite"],
-      ["election_id", input.invite.electionId],
-    ],
-    content,
-    pubkey: senderHex,
+
+  const rumor = createRumor({ senderHex, envelope });
+  const sealCiphertext = await input.signer.nip44Encrypt(recipientHex, JSON.stringify(rumor));
+  const signedSeal = await input.signer.signEvent({
+    kind: KIND_SEAL,
+    created_at: randomNow(),
+    tags: [],
+    content: sealCiphertext,
   });
 
-  const event = signed as unknown as NostrEvent;
+  const giftWrapSecret = generateSecretKey();
+  const giftWrapConversationKey = nip44.v2.utils.getConversationKey(giftWrapSecret, recipientHex);
+  const wrappedSeal = nip44.v2.encrypt(JSON.stringify(signedSeal), giftWrapConversationKey);
+  const giftWrapEvent = finalizeEvent({
+    kind: KIND_GIFT_WRAP,
+    created_at: randomNow(),
+    tags: [["p", recipientHex]],
+    content: wrappedSeal,
+  }, giftWrapSecret);
+
   const relays = selectPublishRelays(buildRelays(input.relays));
   const pool = getSharedNostrPool();
   const results = await queueNostrPublish(
     () => publishToRelaysStaggered(
-      (relay) => pool.publish([relay], event, { maxWait: OPTION_A_INVITE_DM_MAX_WAIT_MS })[0],
+      (relay) => pool.publish([relay], giftWrapEvent, { maxWait: OPTION_A_INVITE_DM_MAX_WAIT_MS })[0],
       relays,
       { staggerMs: OPTION_A_INVITE_DM_STAGGER_MS },
     ),
@@ -128,7 +178,7 @@ export async function publishOptionAInviteDm(input: {
         }
   ));
   return {
-    eventId: event.id,
+    eventId: giftWrapEvent.id,
     successes: relayResults.filter((entry) => entry.success).length,
     failures: relayResults.filter((entry) => !entry.success).length,
     relayResults,
@@ -141,7 +191,7 @@ export async function fetchOptionAInviteDms(input: {
   relays?: string[];
   limit?: number;
 }) {
-  if (!input.signer.nip04Decrypt) {
+  if (!input.signer.nip44Decrypt) {
     return [] as ElectionInviteMessage[];
   }
   const recipientRaw = await input.signer.getPublicKey();
@@ -150,7 +200,7 @@ export async function fetchOptionAInviteDms(input: {
   const relays = selectReadRelays(buildRelays(input.relays));
   const pool = getSharedNostrPool();
   const events = await pool.querySync(relays, {
-    kinds: [4],
+    kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     limit: Math.max(1, input.limit ?? 50),
   });
@@ -158,13 +208,22 @@ export async function fetchOptionAInviteDms(input: {
   const unique = new Map<string, ElectionInviteMessage>();
   const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
   for (const event of sorted) {
-    const senderHex = typeof event.pubkey === "string" ? event.pubkey : "";
-    if (!senderHex || typeof event.content !== "string" || !event.content.trim()) {
+    const wrapPubkey = typeof event.pubkey === "string" ? event.pubkey : "";
+    if (!wrapPubkey || typeof event.content !== "string" || !event.content.trim()) {
       continue;
     }
     try {
-      const plaintext = await input.signer.nip04Decrypt(senderHex, event.content);
-      const invite = parseInviteDmContent(plaintext);
+      const sealPayload = await input.signer.nip44Decrypt(wrapPubkey, event.content);
+      const sealEvent = parseGiftWrapPayload(sealPayload);
+      if (!sealEvent) {
+        continue;
+      }
+      const rumorPayload = await input.signer.nip44Decrypt(sealEvent.pubkey, sealEvent.content);
+      const rumor = JSON.parse(rumorPayload) as { content?: string };
+      if (!rumor || typeof rumor.content !== "string") {
+        continue;
+      }
+      const invite = parseInviteDmContent(rumor.content);
       if (!invite) {
         continue;
       }

@@ -192,6 +192,28 @@ export default function QuestionnaireOptionAVoterPanel() {
     }
   }
 
+  async function checkInvites() {
+    try {
+      const signer = createSignerService();
+      const rawPubkey = await signer.getPublicKey();
+      const signerNpub = rawPubkey.startsWith("npub1") ? rawPubkey : nip19.npubEncode(rawPubkey);
+      setSignedInNpub(signerNpub);
+      const invites = await loadPendingInvitesFromRelays(signerNpub);
+      setPendingInvites(invites);
+      setStatus(
+        invites.length === 0
+          ? "Checked relays. No pending questionnaire invites found."
+          : `Checked relays. Found ${invites.length} pending invite${invites.length === 1 ? "" : "s"}.`,
+      );
+    } catch (error) {
+      if (error instanceof OptionARuntimeError || error instanceof SignerServiceError) {
+        setStatus(error.message);
+        return;
+      }
+      setStatus("Could not check invites.");
+    }
+  }
+
   async function openInvite(invite: ElectionInviteMessage, requestAfterLogin = false) {
     try {
       const voterRuntime = new QuestionnaireOptionAVoterRuntime(createSignerService(), invite.electionId);
@@ -287,6 +309,7 @@ export default function QuestionnaireOptionAVoterPanel() {
         </div>
         <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
           <button type='button' className='simple-voter-secondary' onClick={() => void login()}>Login</button>
+          <button type='button' className='simple-voter-secondary' onClick={() => void checkInvites()}>Check invites</button>
           <button type='button' className='simple-voter-secondary' onClick={createNewId}>New ID</button>
         </div>
       </div>

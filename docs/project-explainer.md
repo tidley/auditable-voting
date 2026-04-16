@@ -685,7 +685,7 @@ The Option A runtime currently provides:
 
 - signer-based login entry points in voter/coordinator questionnaire headers
 - coordinator whitelist and invite actions
-- Option A invite delivery over Nostr encrypted DMs (kind `4` + NIP-04), with relay-history invite discovery on voter login
+- Option A invite delivery over NIP-17 gift-wrapped DMs (`kind 1059` with `kind 13` seal / `kind 14` rumor), with relay-history invite discovery on voter login
 - voter blind request creation
 - coordinator blind issuance processing
 - single accepted submission accounting with duplicate protection

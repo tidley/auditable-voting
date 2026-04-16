@@ -23,8 +23,8 @@ function makeSigner(overrides: Partial<SignerService> = {}): SignerService {
     getPublicKey: async () => "f".repeat(64),
     signMessage: async () => "sig",
     signEvent: async <T extends Record<string, unknown>>(event: T) => ({ ...event, id: "event-1", sig: "sig", pubkey: "f".repeat(64) }),
-    nip04Encrypt: async () => "ciphertext",
-    nip04Decrypt: async () => "",
+    nip44Encrypt: async () => "ciphertext",
+    nip44Decrypt: async () => "",
     ...overrides,
   };
 }
@@ -37,7 +37,7 @@ describe("questionnaireOptionAInviteDm", () => {
     publishToRelaysStaggered.mockReset();
   });
 
-  it("publishes option A invite over kind-4 DM", async () => {
+  it("publishes option A invite over NIP-17 gift wrap", async () => {
     publish.mockReturnValue([Promise.resolve(undefined)]);
     publishToRelaysStaggered.mockImplementation(
       async (publishOne: (relay: string) => Promise<unknown>, relays: string[]) => Promise.allSettled(relays.slice(0, 1).map((relay) => publishOne(relay))),
@@ -65,11 +65,15 @@ describe("questionnaireOptionAInviteDm", () => {
     expect(result.successes).toBe(1);
     expect(result.failures).toBe(0);
     expect(publish).toHaveBeenCalled();
+    const event = publish.mock.calls[0]?.[1] as { kind: number; tags: string[][] };
+    expect(event?.kind).toBe(1059);
+    expect(event?.tags?.[0]?.[0]).toBe("p");
   });
 
   it("reads and decrypts invite DMs for the logged-in voter", async () => {
     const recipientHex = "b".repeat(64);
     const senderHex = "c".repeat(64);
+    const wrapPubkey = "d".repeat(64);
     const recipientNpub = nip19.npubEncode(recipientHex);
     const invite = {
       type: "election_invite" as const,
@@ -85,8 +89,8 @@ describe("questionnaireOptionAInviteDm", () => {
 
     querySync.mockResolvedValue([{
       id: "dm-1",
-      kind: 4,
-      pubkey: senderHex,
+      kind: 1059,
+      pubkey: wrapPubkey,
       content: "ciphertext",
       created_at: 123,
       tags: [["p", recipientHex]],
@@ -95,12 +99,30 @@ describe("questionnaireOptionAInviteDm", () => {
 
     const signer = makeSigner({
       getPublicKey: async () => recipientHex,
-      nip04Decrypt: async () => JSON.stringify({
-        type: "optiona_invite_dm",
-        schemaVersion: 1,
-        invite,
-        sentAt: new Date().toISOString(),
-      }),
+      nip44Decrypt: async (pubkey) => {
+        if (pubkey === wrapPubkey) {
+          return JSON.stringify({
+            id: "seal-1",
+            kind: 13,
+            pubkey: senderHex,
+            created_at: 123,
+            tags: [],
+            content: "sealed-rumor",
+            sig: "sig",
+          });
+        }
+        if (pubkey === senderHex) {
+          return JSON.stringify({
+            content: JSON.stringify({
+              type: "optiona_invite_dm",
+              schemaVersion: 1,
+              invite,
+              sentAt: new Date().toISOString(),
+            }),
+          });
+        }
+        return "";
+      },
     });
 
     const invites = await fetchOptionAInviteDms({
