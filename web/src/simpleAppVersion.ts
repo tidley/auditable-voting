@@ -1,1 +1,1 @@
-export const SIMPLE_APP_VERSION = '0.148';
+export const SIMPLE_APP_VERSION = '0.149';

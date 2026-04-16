@@ -309,7 +309,7 @@ export default function QuestionnaireOptionAVoterPanel() {
         </div>
         <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
           <button type='button' className='simple-voter-secondary' onClick={() => void login()}>Login</button>
-          <button type='button' className='simple-voter-secondary' onClick={() => void checkInvites()}>Get DMs</button>
+          <button type='button' className='simple-voter-secondary' onClick={() => void checkInvites()}>Check invites</button>
           <button type='button' className='simple-voter-secondary' onClick={createNewId}>New ID</button>
         </div>
       </div>

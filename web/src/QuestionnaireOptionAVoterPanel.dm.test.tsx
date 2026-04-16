@@ -45,11 +45,11 @@ vi.mock("./questionnaireOptionAInviteDm", () => ({
 import QuestionnaireOptionAVoterPanel from "./QuestionnaireOptionAVoterPanel";
 
 describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
-  it("shows Get DMs action and loads pending invites", async () => {
+  it("shows Check invites action and loads pending invites", async () => {
     const user = userEvent.setup();
     render(<QuestionnaireOptionAVoterPanel />);
 
-    const getDmsButton = screen.getByRole("button", { name: "Get DMs" });
+    const getDmsButton = screen.getByRole("button", { name: "Check invites" });
     expect(getDmsButton).toBeTruthy();
     await user.click(getDmsButton);
 

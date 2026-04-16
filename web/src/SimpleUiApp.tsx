@@ -51,6 +51,8 @@ import {
   QUESTIONNAIRE_DEFINITION_KIND,
   QUESTIONNAIRE_STATE_KIND,
 } from "./questionnaireNostr";
+import { fetchOptionAInviteDms } from "./questionnaireOptionAInviteDm";
+import { publishInviteToMailbox } from "./questionnaireOptionAStorage";
 import {
   selectLatestQuestionnaireDefinition,
   selectLatestQuestionnaireState,
@@ -1578,6 +1580,50 @@ export default function SimpleUiApp() {
     setManualCoordinators((current) => current.filter((_, currentIndex) => currentIndex !== index));
   }
 
+  async function checkQuestionnaireInvites() {
+    try {
+      const signer = createSignerService();
+      const rawPubkey = await signer.getPublicKey();
+      const signerNpub = rawPubkey.startsWith("npub1") ? rawPubkey : nip19.npubEncode(rawPubkey);
+      const invites = await fetchOptionAInviteDms({ signer, limit: 40 });
+      for (const invite of invites) {
+        publishInviteToMailbox(invite);
+      }
+
+      const discoveredCoordinatorNpubs = sanitizeCoordinatorNpubs(invites.map((invite) => invite.coordinatorNpub));
+      const discoveredQuestionnaireIds = [...new Set(
+        invites
+          .map((invite) => invite.electionId?.trim() ?? "")
+          .filter((value) => value.length > 0),
+      )];
+
+      if (discoveredCoordinatorNpubs.length > 0) {
+        setManualCoordinators((current) => sanitizeCoordinatorNpubs([...current, ...discoveredCoordinatorNpubs]));
+      }
+      if (discoveredQuestionnaireIds.length > 0) {
+        setAnnouncedQuestionnaireIds((current) => {
+          const next = [...new Set([...current, ...discoveredQuestionnaireIds])].slice(-8);
+          return next.length === current.length
+            && next.every((value, index) => value === current[index])
+            ? current
+            : next;
+        });
+      }
+
+      setRequestStatus(
+        invites.length === 0
+          ? `Checked invites for ${shortenNpub(signerNpub)}. No questionnaire invites found.`
+          : `Checked invites for ${shortenNpub(signerNpub)}. Found ${invites.length} questionnaire invite${invites.length === 1 ? "" : "s"}.`,
+      );
+    } catch (error) {
+      if (error instanceof SignerServiceError) {
+        setRequestStatus(error.message);
+        return;
+      }
+      setRequestStatus("Could not check questionnaire invites.");
+    }
+  }
+
   async function sendFollowRequests(
     targetCoordinatorNpubs: string[],
     messages?: {
@@ -2612,6 +2658,13 @@ export default function SimpleUiApp() {
                   }}
                 >
                   Scan
+                </button>
+                <button
+                  type='button'
+                  className='simple-voter-secondary'
+                  onClick={() => void checkQuestionnaireInvites()}
+                >
+                  Check invites
                 </button>
               </div>
               <SimpleQrScanner

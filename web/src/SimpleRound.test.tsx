@@ -702,6 +702,7 @@ vi.mock("./simpleShardCertificate", () => ({
   deriveTokenIdFromSimplePublicShardProofs: vi.fn(async (proofs: any[]) => makeTokenId(proofs)),
 }));
 
+
 vi.mock("./simpleShardDm", () => ({
   SIMPLE_DM_RELAYS: [
     "wss://nip17.com",
