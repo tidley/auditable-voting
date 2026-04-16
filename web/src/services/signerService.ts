@@ -21,6 +21,8 @@ export interface BrowserNostrSigner {
     signMessage?: (message: string) => Promise<string>;
   };
   nip04?: {
+    encrypt?: (pubkey: string, plaintext: string) => Promise<string>;
+    decrypt?: (pubkey: string, ciphertext: string) => Promise<string>;
     signEvent?: <T extends Record<string, unknown>>(event: T) => Promise<T & { id?: string; sig?: string; pubkey?: string }>;
   };
 }
@@ -30,12 +32,16 @@ export interface SignerService {
   getPublicKey(): Promise<string>;
   signMessage(message: string): Promise<string>;
   signEvent<T extends Record<string, unknown>>(event: T): Promise<T & { id?: string; sig?: string; pubkey?: string }>;
+  nip04Encrypt?(pubkey: string, plaintext: string): Promise<string>;
+  nip04Decrypt?(pubkey: string, ciphertext: string): Promise<string>;
 }
 
 type NostrConnectSignerLike = {
   getPublicKey: () => Promise<string>;
   signEvent: <T extends Record<string, unknown>>(event: T) => Promise<T & { id?: string; sig?: string; pubkey?: string }>;
   signMessage?: (message: string) => Promise<string>;
+  nip04Encrypt?: (pubkey: string, plaintext: string) => Promise<string>;
+  nip04Decrypt?: (pubkey: string, ciphertext: string) => Promise<string>;
   close?: () => Promise<void>;
 };
 
@@ -340,9 +346,61 @@ export function createSignerService(): SignerService {
         if (!signed || typeof signed !== "object") {
           throw new SignerServiceError("sign_failed", "Signer returned an invalid signed event.");
         }
-        return signed;
+        return signed as T & { id?: string; sig?: string; pubkey?: string };
       } catch (error) {
         throw toSignerError(error, "Failed to sign event.");
+      }
+    },
+    async nip04Encrypt(pubkey: string, plaintext: string) {
+      const signer = await getSigner();
+      if (!signer) {
+        throw new SignerServiceError("unavailable", "No Nostr signer is available in this browser.");
+      }
+      const browserLikeSigner = signer as BrowserNostrSigner;
+      const source = resolveSignerSource(browserLikeSigner);
+      const nip04Encrypt = (
+        (signer as NostrConnectSignerLike).nip04Encrypt
+        ?? browserLikeSigner.nip04?.encrypt
+        ?? (source as BrowserNostrSigner).nip04?.encrypt
+      );
+      if (!nip04Encrypt) {
+        throw new SignerServiceError("unavailable", "This signer does not support NIP-04 encryption.");
+      }
+      try {
+        await enableSignerIfAvailable(browserLikeSigner);
+        const ciphertext = await nip04Encrypt.call(signer, pubkey, plaintext);
+        if (!ciphertext || typeof ciphertext !== "string") {
+          throw new SignerServiceError("sign_failed", "Signer returned an invalid NIP-04 ciphertext.");
+        }
+        return ciphertext;
+      } catch (error) {
+        throw toSignerError(error, "Failed to encrypt NIP-04 payload.");
+      }
+    },
+    async nip04Decrypt(pubkey: string, ciphertext: string) {
+      const signer = await getSigner();
+      if (!signer) {
+        throw new SignerServiceError("unavailable", "No Nostr signer is available in this browser.");
+      }
+      const browserLikeSigner = signer as BrowserNostrSigner;
+      const source = resolveSignerSource(browserLikeSigner);
+      const nip04Decrypt = (
+        (signer as NostrConnectSignerLike).nip04Decrypt
+        ?? browserLikeSigner.nip04?.decrypt
+        ?? (source as BrowserNostrSigner).nip04?.decrypt
+      );
+      if (!nip04Decrypt) {
+        throw new SignerServiceError("unavailable", "This signer does not support NIP-04 decryption.");
+      }
+      try {
+        await enableSignerIfAvailable(browserLikeSigner);
+        const plaintext = await nip04Decrypt.call(signer, pubkey, ciphertext);
+        if (typeof plaintext !== "string") {
+          throw new SignerServiceError("sign_failed", "Signer returned an invalid NIP-04 plaintext.");
+        }
+        return plaintext;
+      } catch (error) {
+        throw toSignerError(error, "Failed to decrypt NIP-04 payload.");
       }
     },
   };

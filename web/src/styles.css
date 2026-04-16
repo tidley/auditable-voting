@@ -2128,6 +2128,49 @@ code {
   border-color: #475569;
 }
 
+.simple-imported-contact-list {
+  display: grid;
+  gap: 10px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 10px;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  background: #0f172a;
+}
+
+.simple-imported-contact-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 10px;
+  border: 1px solid #22324a;
+  border-radius: 8px;
+  background: #111b2f;
+}
+
+.simple-imported-contact-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.simple-imported-contact-primary {
+  color: #f8fafc;
+  font-size: 0.98rem;
+  line-height: 1.3;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.simple-imported-contact-secondary {
+  color: #93c5fd;
+  font-size: 0.84rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .simple-vote-details-toggle {
   padding: 0;
   border: 0;

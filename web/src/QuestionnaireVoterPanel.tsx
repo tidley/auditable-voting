@@ -10,6 +10,9 @@ import { deriveActorDisplayId } from "./actorDisplay";
 import { resolveQuestionnaireResponderNpub } from "./questionnaireResponderIdentity";
 import { getQuestionnaireFlowMode } from "./questionnaireFlowMode";
 import QuestionnaireOptionAVoterPanel from "./QuestionnaireOptionAVoterPanel";
+import { listInvitesFromMailbox } from "./questionnaireOptionAStorage";
+
+const GATEWAY_SIGNER_NPUB_STORAGE_KEY = "app:auditable-voting:gateway:signer_npub";
 
 const RESTORED_QUESTIONNAIRE_IDS_STORAGE_KEY = "voter.restored-questionnaire-ids.v1";
 const PARTICIPATION_HISTORY_STORAGE_KEY = "voter.questionnaire-participation-history.v1";
@@ -385,7 +388,30 @@ type QuestionnaireVoterPanelProps = {
 
 export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelProps) {
   const flowMode = useMemo(() => getQuestionnaireFlowMode(), []);
-  if (flowMode === "option_a") {
+  const shouldUseOptionA = (() => {
+    if (flowMode === "option_a") {
+      return true;
+    }
+    if (typeof window === "undefined") {
+      return false;
+    }
+    const params = new URLSearchParams(window.location.search);
+    const hasOptionAHint = Boolean(
+      params.get("invite")?.trim()
+      || params.get("election_id")?.trim()
+      || params.get("questionnaire_flow")?.trim().toLowerCase() === "option_a"
+      || params.get("qflow")?.trim().toLowerCase() === "option_a",
+    );
+    if (hasOptionAHint) {
+      return true;
+    }
+    const signerNpub = window.localStorage.getItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY)?.trim() ?? "";
+    if (!signerNpub) {
+      return false;
+    }
+    return listInvitesFromMailbox(signerNpub).length > 0;
+  })();
+  if (shouldUseOptionA) {
     return <QuestionnaireOptionAVoterPanel />;
   }
   const onContextChange = props.onContextChange;

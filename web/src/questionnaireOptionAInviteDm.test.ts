@@ -1,0 +1,116 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { nip19 } from "nostr-tools";
+import type { SignerService } from "./services/signerService";
+import { fetchOptionAInviteDms, publishOptionAInviteDm } from "./questionnaireOptionAInviteDm";
+
+const querySync = vi.fn();
+const publish = vi.fn();
+const queueNostrPublish = vi.fn();
+const publishToRelaysStaggered = vi.fn();
+
+vi.mock("./sharedNostrPool", () => ({
+  getSharedNostrPool: () => ({ querySync, publish }),
+}));
+
+vi.mock("./nostrPublishQueue", () => ({
+  queueNostrPublish: (...args: unknown[]) => queueNostrPublish(...args),
+  publishToRelaysStaggered: (...args: unknown[]) => publishToRelaysStaggered(...args),
+}));
+
+function makeSigner(overrides: Partial<SignerService> = {}): SignerService {
+  return {
+    isAvailable: async () => true,
+    getPublicKey: async () => "f".repeat(64),
+    signMessage: async () => "sig",
+    signEvent: async <T extends Record<string, unknown>>(event: T) => ({ ...event, id: "event-1", sig: "sig", pubkey: "f".repeat(64) }),
+    nip04Encrypt: async () => "ciphertext",
+    nip04Decrypt: async () => "",
+    ...overrides,
+  };
+}
+
+describe("questionnaireOptionAInviteDm", () => {
+  beforeEach(() => {
+    querySync.mockReset();
+    publish.mockReset();
+    queueNostrPublish.mockReset();
+    publishToRelaysStaggered.mockReset();
+  });
+
+  it("publishes option A invite over kind-4 DM", async () => {
+    publish.mockReturnValue([Promise.resolve(undefined)]);
+    publishToRelaysStaggered.mockImplementation(
+      async (publishOne: (relay: string) => Promise<unknown>, relays: string[]) => Promise.allSettled(relays.slice(0, 1).map((relay) => publishOne(relay))),
+    );
+    queueNostrPublish.mockImplementation(async (fn: () => Promise<PromiseSettledResult<unknown>[]>) => fn());
+
+    const invitedHex = "a".repeat(64);
+    const invite = {
+      type: "election_invite" as const,
+      schemaVersion: 1 as const,
+      electionId: "e1",
+      title: "Questionnaire",
+      description: "",
+      voteUrl: "https://example.test/vote",
+      invitedNpub: nip19.npubEncode(invitedHex),
+      coordinatorNpub: nip19.npubEncode("f".repeat(64)),
+      expiresAt: null,
+    };
+
+    const result = await publishOptionAInviteDm({
+      signer: makeSigner(),
+      invite,
+    });
+
+    expect(result.successes).toBe(1);
+    expect(result.failures).toBe(0);
+    expect(publish).toHaveBeenCalled();
+  });
+
+  it("reads and decrypts invite DMs for the logged-in voter", async () => {
+    const recipientHex = "b".repeat(64);
+    const senderHex = "c".repeat(64);
+    const recipientNpub = nip19.npubEncode(recipientHex);
+    const invite = {
+      type: "election_invite" as const,
+      schemaVersion: 1 as const,
+      electionId: "e2",
+      title: "Invite title",
+      description: "",
+      voteUrl: "https://example.test/vote",
+      invitedNpub: recipientNpub,
+      coordinatorNpub: nip19.npubEncode(senderHex),
+      expiresAt: null,
+    };
+
+    querySync.mockResolvedValue([{
+      id: "dm-1",
+      kind: 4,
+      pubkey: senderHex,
+      content: "ciphertext",
+      created_at: 123,
+      tags: [["p", recipientHex]],
+      sig: "sig",
+    }]);
+
+    const signer = makeSigner({
+      getPublicKey: async () => recipientHex,
+      nip04Decrypt: async () => JSON.stringify({
+        type: "optiona_invite_dm",
+        schemaVersion: 1,
+        invite,
+        sentAt: new Date().toISOString(),
+      }),
+    });
+
+    const invites = await fetchOptionAInviteDms({
+      signer,
+      electionId: "e2",
+      limit: 20,
+    });
+
+    expect(invites).toHaveLength(1);
+    expect(invites[0]?.electionId).toBe("e2");
+    expect(invites[0]?.invitedNpub).toBe(recipientNpub);
+  });
+});

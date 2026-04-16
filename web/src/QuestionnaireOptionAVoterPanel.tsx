@@ -9,7 +9,8 @@ import {
 } from "./questionnaireOptionARuntime";
 import type { ElectionInviteMessage, QuestionnaireAnswer } from "./questionnaireOptionA";
 import { deriveActorDisplayId } from "./actorDisplay";
-import { listInvitesFromMailbox } from "./questionnaireOptionAStorage";
+import { listInvitesFromMailbox, publishInviteToMailbox } from "./questionnaireOptionAStorage";
+import { fetchOptionAInviteDms } from "./questionnaireOptionAInviteDm";
 
 function deriveElectionId() {
   const params = new URLSearchParams(window.location.search);
@@ -137,6 +138,23 @@ export default function QuestionnaireOptionAVoterPanel() {
     [questions],
   );
 
+  async function loadPendingInvitesFromRelays(signerNpub: string) {
+    try {
+      const signer = createSignerService();
+      const dmInvites = await fetchOptionAInviteDms({ signer, limit: 40 });
+      for (const invite of dmInvites) {
+        publishInviteToMailbox(invite);
+      }
+      const byKey = new Map<string, ElectionInviteMessage>();
+      for (const invite of [...dmInvites, ...listInvitesFromMailbox(signerNpub)]) {
+        byKey.set(`${invite.electionId}:${invite.coordinatorNpub}`, invite);
+      }
+      return [...byKey.values()];
+    } catch {
+      return listInvitesFromMailbox(signerNpub);
+    }
+  }
+
   async function login() {
     try {
       const signer = createSignerService();
@@ -145,7 +163,7 @@ export default function QuestionnaireOptionAVoterPanel() {
       setSignedInNpub(signerNpub);
 
       if (!runtime) {
-        const invites = listInvitesFromMailbox(signerNpub);
+        const invites = await loadPendingInvitesFromRelays(signerNpub);
         setPendingInvites(invites);
         if (invites.length === 0) {
           setStatus("Signed in. No pending questionnaire invites were found.");
@@ -157,7 +175,7 @@ export default function QuestionnaireOptionAVoterPanel() {
 
       const next = await runtime.loginWithSigner(inviteContext.invite);
       setSignedInNpub(next.invitedNpub);
-      const invites = listInvitesFromMailbox(next.invitedNpub);
+      const invites = await loadPendingInvitesFromRelays(next.invitedNpub);
       setPendingInvites(invites);
       const pendingInvite = next.inviteMessage && !next.blindRequestSent && !next.credentialReady
         ? next.inviteMessage
@@ -181,7 +199,7 @@ export default function QuestionnaireOptionAVoterPanel() {
       setElectionId(invite.electionId);
       setRuntime(voterRuntime);
       setSignedInNpub(next.invitedNpub);
-      const refreshedInvites = listInvitesFromMailbox(next.invitedNpub);
+      const refreshedInvites = await loadPendingInvitesFromRelays(next.invitedNpub);
       setPendingInvites(refreshedInvites);
       setActiveInvite(!next.blindRequestSent && !next.credentialReady ? invite : null);
       if (requestAfterLogin && !next.blindRequestSent && !next.credentialReady) {

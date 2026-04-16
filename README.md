@@ -232,4 +232,5 @@ An explicit questionnaire flow gate is now available:
 - add `?qflow=option_a` (or `?questionnaire_flow=option_a`) to enable the reducer-driven Option A path
 - legacy questionnaire behaviour remains the default when the gate is not set
 - Option A currently uses signer login, coordinator whitelist/invite actions, blind request/issuance, single-vote acceptance, and signer-keyed resume through the `questionnaireOptionA` runtime path
+- Option A invites are now sent over actual Nostr encrypted DM transport (kind `4` + NIP-04 ciphertext) and discovered from relay history on voter login
 - invite-driven voter login can automatically prepare/send the first blind ballot request when the voter is authenticated and authorised

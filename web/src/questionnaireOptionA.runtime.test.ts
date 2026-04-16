@@ -37,7 +37,7 @@ describe("questionnaireOptionARuntime", () => {
     const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
     await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
     coordinator.addWhitelistNpub(voterNpub);
-    const invite = coordinator.sendInvite(voterNpub, {
+    const invite = await coordinator.sendInvite(voterNpub, {
       title: "Runtime",
       description: "Test",
       voteUrl: "https://example.org/vote",
@@ -58,7 +58,7 @@ describe("questionnaireOptionARuntime", () => {
     const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
     await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
     coordinator.addWhitelistNpub(voterNpub);
-    const invite = coordinator.sendInvite(voterNpub, {
+    const invite = await coordinator.sendInvite(voterNpub, {
       title: "Runtime",
       description: "Test",
       voteUrl: "https://example.org/vote",
@@ -91,7 +91,7 @@ describe("questionnaireOptionARuntime", () => {
     const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
     await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
     coordinator.addWhitelistNpub(voterNpub);
-    const invite = coordinator.sendInvite(voterNpub, {
+    const invite = await coordinator.sendInvite(voterNpub, {
       title: "Runtime",
       description: "Test",
       voteUrl: "https://example.org/vote",
@@ -135,5 +135,22 @@ describe("questionnaireOptionARuntime", () => {
     coordinator.authorizeRequester(otherNpub);
     voter.refreshIssuanceAndAcceptance();
     expect(voter.getSnapshot()?.credentialReady).toBe(true);
+  });
+
+  it("loads invite from mailbox when voter logs in without URL invite", async () => {
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+    coordinator.addWhitelistNpub(voterNpub);
+    await coordinator.sendInvite(voterNpub, {
+      title: "Runtime",
+      description: "Test",
+      voteUrl: "https://example.org/vote",
+    });
+
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionId);
+    const loggedIn = await voter.loginWithSigner(null);
+    expect(loggedIn.loginVerified).toBe(true);
+    expect(loggedIn.inviteMessage?.invitedNpub).toBe(voterNpub);
+    expect(loggedIn.inviteMessage?.electionId).toBe(electionId);
   });
 });

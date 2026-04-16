@@ -40,6 +40,7 @@ import {
   storeBlindIssuance,
   upsertElectionSummary,
 } from "./questionnaireOptionAStorage";
+import { fetchOptionAInviteDms, publishOptionAInviteDm } from "./questionnaireOptionAInviteDm";
 import type { SignerService } from "./services/signerService";
 
 export type OptionARuntimeErrorCode =
@@ -133,7 +134,17 @@ export class QuestionnaireOptionAVoterRuntime {
 
   async loginWithSigner(inviteFromUrl: ElectionInviteMessage | null) {
     const signerNpub = toNpub(await this.signer.getPublicKey());
-    const invite = inviteFromUrl ?? readInviteFromMailbox({ invitedNpub: signerNpub, electionId: this.electionId });
+    const inviteFromDm = inviteFromUrl
+      ? null
+      : (await fetchOptionAInviteDms({
+        signer: this.signer,
+        electionId: this.electionId,
+        limit: 40,
+      }))[0] ?? null;
+    if (inviteFromDm) {
+      publishInviteToMailbox(inviteFromDm);
+    }
+    const invite = inviteFromUrl ?? inviteFromDm ?? readInviteFromMailbox({ invitedNpub: signerNpub, electionId: this.electionId });
     if (invite && invite.invitedNpub !== signerNpub) {
       throw new OptionARuntimeError("invite_mismatch", "This invite is for a different Nostr account.");
     }
@@ -428,7 +439,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
     return this.processPendingBlindRequests();
   }
 
-  sendInvite(invitedNpub: string, meta: { title: string; description: string; voteUrl: string }) {
+  async sendInvite(invitedNpub: string, meta: { title: string; description: string; voteUrl: string }) {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
     }
@@ -457,6 +468,14 @@ export class QuestionnaireOptionACoordinatorRuntime {
       throw new OptionARuntimeError("invalid_submission", "Could not mark invite as sent.");
     }
     this.state = sent.state;
+    try {
+      await publishOptionAInviteDm({
+        signer: this.signer,
+        invite,
+      });
+    } catch {
+      // Keep local mailbox cache fallback when DM publish fails.
+    }
     publishInviteToMailbox(invite);
     saveCoordinatorState({ coordinatorNpub: this.coordinatorNpub, state: this.state });
     return invite;

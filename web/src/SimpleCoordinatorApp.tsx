@@ -624,7 +624,7 @@ export default function SimpleCoordinatorApp() {
   const [knownVoterContactsLoading, setKnownVoterContactsLoading] = useState(false);
   const [importedKnownVoterContacts, setImportedKnownVoterContacts] = useState<ImportedKnownVoterContact[]>([]);
   const [knownVoterContactSearch, setKnownVoterContactSearch] = useState("");
-  const [selectedImportedKnownVoterNpub, setSelectedImportedKnownVoterNpub] = useState("");
+  const [selectedImportedKnownVoterNpubs, setSelectedImportedKnownVoterNpubs] = useState<string[]>([]);
   const [shareAssignmentsInFlight, setShareAssignmentsInFlight] =
     useState(false);
   const [
@@ -671,6 +671,10 @@ export default function SimpleCoordinatorApp() {
       || (contact.petname ?? "").toLowerCase().includes(query)
     ));
   }, [importedKnownVoterContacts, knownVoterContactSearch]);
+  const selectedImportedKnownVoterSet = useMemo(
+    () => new Set(selectedImportedKnownVoterNpubs),
+    [selectedImportedKnownVoterNpubs],
+  );
   const ticketRetryMinAgeMs = useMemo(
     () => readRuntimeIntOverride("SIMPLE_TICKET_RETRY_AGE_MS", SIMPLE_TICKET_RETRY_MIN_AGE_MS),
     [],
@@ -3006,7 +3010,7 @@ export default function SimpleCoordinatorApp() {
         });
       setImportedKnownVoterContacts(importedContacts);
       setKnownVoterContactSearch("");
-      setSelectedImportedKnownVoterNpub(importedContacts[0]?.npub ?? "");
+      setSelectedImportedKnownVoterNpubs([]);
       const withNip05Count = importedContacts.filter((entry) => Boolean(entry.nip05)).length;
       setKnownVoterInviteStatus(
         `Imported ${importedContacts.length} contacts. ${withNip05Count} include NIP-05 metadata. Select contacts to whitelist.`,
@@ -3018,20 +3022,51 @@ export default function SimpleCoordinatorApp() {
     }
   }
 
-  function addSelectedImportedContactToWhitelist() {
-    const npub = selectedImportedKnownVoterNpub.trim();
-    if (!npub || !optionACoordinatorRuntime) {
+  function addSelectedImportedContactsToWhitelist() {
+    if (!optionACoordinatorRuntime || selectedImportedKnownVoterNpubs.length === 0) {
       return;
     }
-    try {
-      optionACoordinatorRuntime.addWhitelistNpub(npub);
-      setKnownVoterInviteRefreshNonce((value) => value + 1);
-      const contact = importedKnownVoterContacts.find((entry) => entry.npub === npub);
-      const label = contact?.profileName ?? contact?.petname ?? contact?.nip05 ?? deriveActorDisplayId(npub);
-      setKnownVoterInviteStatus(`Added ${label} to known voters.`);
-    } catch (error) {
-      setKnownVoterInviteStatus(error instanceof Error ? error.message : "Could not add selected contact.");
+    let addedCount = 0;
+    for (const npub of selectedImportedKnownVoterNpubs) {
+      try {
+        optionACoordinatorRuntime.addWhitelistNpub(npub);
+        addedCount += 1;
+      } catch {
+        // Continue adding other selections.
+      }
     }
+    setKnownVoterInviteRefreshNonce((value) => value + 1);
+    setKnownVoterInviteStatus(
+      addedCount > 0
+        ? `Added ${addedCount}/${selectedImportedKnownVoterNpubs.length} selected contact${selectedImportedKnownVoterNpubs.length === 1 ? "" : "s"} to known voters.`
+        : "Could not add selected contacts.",
+    );
+  }
+
+  function toggleImportedKnownVoterSelection(npub: string) {
+    setSelectedImportedKnownVoterNpubs((current) => (
+      current.includes(npub)
+        ? current.filter((value) => value !== npub)
+        : [...current, npub]
+    ));
+  }
+
+  function toggleSelectAllVisibleImportedKnownVoters() {
+    const visibleNpubs = filteredImportedKnownVoterContacts.map((entry) => entry.npub);
+    if (visibleNpubs.length === 0) {
+      return;
+    }
+    const allVisibleSelected = visibleNpubs.every((npub) => selectedImportedKnownVoterSet.has(npub));
+    setSelectedImportedKnownVoterNpubs((current) => {
+      if (allVisibleSelected) {
+        return current.filter((npub) => !visibleNpubs.includes(npub));
+      }
+      const next = new Set(current);
+      for (const npub of visibleNpubs) {
+        next.add(npub);
+      }
+      return [...next];
+    });
   }
 
   function addKnownVoterNpub() {
@@ -3049,12 +3084,12 @@ export default function SimpleCoordinatorApp() {
     }
   }
 
-  function sendInviteToKnownVoter(invitedNpub: string) {
+  async function sendInviteToKnownVoter(invitedNpub: string) {
     if (!optionACoordinatorRuntime || !optionAElectionId || !activeCoordinatorNpub) {
       return;
     }
     try {
-      const invite = optionACoordinatorRuntime.sendInvite(invitedNpub, {
+      const invite = await optionACoordinatorRuntime.sendInvite(invitedNpub, {
         title: questionPrompt.trim() || "Questionnaire",
         description: "",
         voteUrl: buildInviteUrl({
@@ -3079,7 +3114,7 @@ export default function SimpleCoordinatorApp() {
     }
   }
 
-  function sendInvitesToAllWhitelistedVoters() {
+  async function sendInvitesToAllWhitelistedVoters() {
     if (!optionACoordinatorRuntime || !optionAElectionId || !activeCoordinatorNpub) {
       return;
     }
@@ -3095,7 +3130,7 @@ export default function SimpleCoordinatorApp() {
     let sentCount = 0;
     for (const invitedNpub of targets) {
       try {
-        const invite = optionACoordinatorRuntime.sendInvite(invitedNpub, {
+        const invite = await optionACoordinatorRuntime.sendInvite(invitedNpub, {
           title: questionPrompt.trim() || "Questionnaire",
           description: "",
           voteUrl: buildInviteUrl({
@@ -5446,39 +5481,52 @@ export default function SimpleCoordinatorApp() {
                         id='known-voter-contact-search'
                         className='simple-voter-input'
                         value={knownVoterContactSearch}
-                        onChange={(event) => {
-                          setKnownVoterContactSearch(event.target.value);
-                          const nextQuery = event.target.value.trim().toLowerCase();
-                          const nextFiltered = importedKnownVoterContacts.filter((contact) => (
-                            !nextQuery
-                            || contact.npub.toLowerCase().includes(nextQuery)
-                            || (contact.nip05 ?? "").toLowerCase().includes(nextQuery)
-                            || (contact.profileName ?? "").toLowerCase().includes(nextQuery)
-                            || (contact.petname ?? "").toLowerCase().includes(nextQuery)
-                          ));
-                          if (nextFiltered.length > 0 && !nextFiltered.some((entry) => entry.npub === selectedImportedKnownVoterNpub)) {
-                            setSelectedImportedKnownVoterNpub(nextFiltered[0].npub);
-                          }
-                        }}
+                        onChange={(event) => setKnownVoterContactSearch(event.target.value)}
                         placeholder='Search by name, NIP-05, or npub'
                       />
-                      <select
-                        className='simple-voter-input'
-                        value={selectedImportedKnownVoterNpub}
-                        onChange={(event) => setSelectedImportedKnownVoterNpub(event.target.value)}
-                      >
-                        {filteredImportedKnownVoterContacts.map((contact) => (
-                          <option key={contact.npub} value={contact.npub}>
-                            {(contact.profileName ?? contact.petname ?? contact.nip05 ?? deriveActorDisplayId(contact.npub))} · {contact.npub}
-                          </option>
-                        ))}
-                      </select>
                       <div className='simple-voter-action-row simple-voter-action-row-inline'>
                         <button
                           type='button'
                           className='simple-voter-secondary'
-                          onClick={addSelectedImportedContactToWhitelist}
-                          disabled={!selectedImportedKnownVoterNpub}
+                          onClick={toggleSelectAllVisibleImportedKnownVoters}
+                          disabled={filteredImportedKnownVoterContacts.length === 0}
+                        >
+                          {filteredImportedKnownVoterContacts.length > 0 && filteredImportedKnownVoterContacts.every((entry) => selectedImportedKnownVoterSet.has(entry.npub))
+                            ? 'Clear visible'
+                            : 'Select all visible'}
+                        </button>
+                        <p className='simple-voter-note'>
+                          {selectedImportedKnownVoterNpubs.length} selected
+                        </p>
+                      </div>
+                      <div className='simple-imported-contact-list' role='list' aria-label='Imported contact candidates'>
+                        {filteredImportedKnownVoterContacts.length > 0 ? filteredImportedKnownVoterContacts.map((contact) => {
+                          const label = contact.profileName ?? contact.petname ?? contact.nip05 ?? deriveActorDisplayId(contact.npub);
+                          return (
+                            <label key={contact.npub} className='simple-imported-contact-row' role='listitem'>
+                              <input
+                                type='checkbox'
+                                checked={selectedImportedKnownVoterSet.has(contact.npub)}
+                                onChange={() => toggleImportedKnownVoterSelection(contact.npub)}
+                              />
+                              <span className='simple-imported-contact-copy'>
+                                <span className='simple-imported-contact-primary'>{label}</span>
+                                <span className='simple-imported-contact-secondary'>
+                                  {contact.nip05 ? `${contact.nip05} · ` : ''}{contact.npub}
+                                </span>
+                              </span>
+                            </label>
+                          );
+                        }) : (
+                          <p className='simple-voter-note'>No contacts match your filter.</p>
+                        )}
+                      </div>
+                      <div className='simple-voter-action-row simple-voter-action-row-inline'>
+                        <button
+                          type='button'
+                          className='simple-voter-secondary'
+                          onClick={addSelectedImportedContactsToWhitelist}
+                          disabled={selectedImportedKnownVoterNpubs.length === 0}
                         >
                           Add selected to whitelist
                         </button>

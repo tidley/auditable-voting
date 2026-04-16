@@ -92,9 +92,9 @@ export default function QuestionnaireOptionACoordinatorPanel(props: Props) {
     }
   }
 
-  function sendInvite(npub: string) {
+  async function sendInvite(npub: string) {
     try {
-      const invite = runtime.sendInvite(npub, {
+      const invite = await runtime.sendInvite(npub, {
         title,
         description,
         voteUrl: buildInviteUrl({
