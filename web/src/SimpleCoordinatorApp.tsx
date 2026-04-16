@@ -5581,6 +5581,13 @@ export default function SimpleCoordinatorApp() {
                     <button
                       type='button'
                       className='simple-voter-secondary'
+                      onClick={processKnownVoterRequests}
+                    >
+                      Check responses
+                    </button>
+                    <button
+                      type='button'
+                      className='simple-voter-secondary'
                       onClick={sendInvitesToAllWhitelistedVoters}
                       disabled={optionAKnownVoters.length === 0}
                     >
@@ -5715,6 +5722,15 @@ export default function SimpleCoordinatorApp() {
             role='tabpanel'
             aria-label='Responses'
           >
+            <div className='simple-voter-action-row simple-voter-action-row-inline'>
+              <button
+                type='button'
+                className='simple-voter-secondary'
+                onClick={processKnownVoterRequests}
+              >
+                Check responses
+              </button>
+            </div>
             <QuestionnaireCoordinatorPanel
               coordinatorNsec={keypair?.nsec ?? null}
               coordinatorNpub={keypair?.npub ?? null}
