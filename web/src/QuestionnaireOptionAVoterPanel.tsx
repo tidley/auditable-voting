@@ -140,7 +140,12 @@ export default function QuestionnaireOptionAVoterPanel() {
     try {
       const next = await runtime.loginWithSigner(inviteContext.invite);
       setSignedInNpub(next.invitedNpub);
-      setStatus(`Signed in as ${deriveActorDisplayId(next.invitedNpub)}.`);
+      if (inviteContext.invite && !next.blindRequest && !next.credentialReady) {
+        runtime.requestBlindBallot();
+        setStatus(`Signed in as ${deriveActorDisplayId(next.invitedNpub)}. Invite detected; ballot request sent to coordinator.`);
+      } else {
+        setStatus(`Signed in as ${deriveActorDisplayId(next.invitedNpub)}.`);
+      }
       setRefreshNonce((value) => value + 1);
     } catch (error) {
       if (error instanceof OptionARuntimeError || error instanceof SignerServiceError) {

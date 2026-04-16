@@ -119,4 +119,21 @@ describe("questionnaireOptionARuntime", () => {
     coordinator.processPendingSubmissions(["q1"]);
     expect(coordinator.getAcceptedUniqueCount()).toBe(1);
   });
+
+  it("allows non-whitelisted voter request then manual coordinator authorization", async () => {
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(otherNpub), electionId);
+    await voter.loginWithSigner(null);
+    voter.updateDraftResponses([{ questionId: "q1", type: "yes_no", answer: "yes" }]);
+    voter.requestBlindBallot();
+
+    coordinator.processPendingBlindRequests();
+    expect(coordinator.getPendingAuthorizations().some((entry) => entry.invitedNpub === otherNpub)).toBe(true);
+
+    coordinator.authorizeRequester(otherNpub);
+    voter.refreshIssuanceAndAcceptance();
+    expect(voter.getSnapshot()?.credentialReady).toBe(true);
+  });
 });

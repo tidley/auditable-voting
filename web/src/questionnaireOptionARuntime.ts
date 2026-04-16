@@ -159,14 +159,6 @@ export class QuestionnaireOptionAVoterRuntime {
       next = loaded.state;
     }
 
-    const coordinator = next.coordinatorNpub
-      ? loadCoordinatorState({ coordinatorNpub: next.coordinatorNpub, electionId: this.electionId })
-      : null;
-    const whitelisted = Boolean(coordinator?.whitelist[signerNpub]);
-    if (coordinator && !whitelisted) {
-      throw new OptionARuntimeError("not_whitelisted", "You are not whitelisted for this election.");
-    }
-
     const loggedIn = reduceVoterEvent(next, {
       type: "LOGIN_VERIFIED",
       electionId: this.electionId,
@@ -332,6 +324,7 @@ export class QuestionnaireOptionAVoterRuntime {
 export class QuestionnaireOptionACoordinatorRuntime {
   private state: CoordinatorElectionState | null = null;
   private coordinatorNpub: string | null = null;
+  private pendingAuthorizationsByNpub: Record<string, BlindBallotRequest[]> = {};
 
   constructor(
     private readonly signer: SignerService,
@@ -356,6 +349,16 @@ export class QuestionnaireOptionACoordinatorRuntime {
 
   getAcceptedUniqueCount() {
     return this.state ? countAcceptedUniqueVoters(this.state) : 0;
+  }
+
+  getPendingAuthorizations() {
+    return Object.entries(this.pendingAuthorizationsByNpub)
+      .map(([invitedNpub, requests]) => ({
+        invitedNpub,
+        latestRequest: [...requests].sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0] ?? null,
+        requestCount: requests.length,
+      }))
+      .filter((entry) => entry.latestRequest !== null);
   }
 
   async loginWithSigner(summary?: Partial<ElectionSummary>) {
@@ -419,6 +422,12 @@ export class QuestionnaireOptionACoordinatorRuntime {
     return this.state;
   }
 
+  authorizeRequester(invitedNpub: string) {
+    this.addWhitelistNpub(invitedNpub);
+    delete this.pendingAuthorizationsByNpub[invitedNpub];
+    return this.processPendingBlindRequests();
+  }
+
   sendInvite(invitedNpub: string, meta: { title: string; description: string; voteUrl: string }) {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
@@ -473,6 +482,13 @@ export class QuestionnaireOptionACoordinatorRuntime {
         request,
       });
       if (!received.ok) {
+        if (received.error === "not_whitelisted") {
+          const existing = this.pendingAuthorizationsByNpub[request.invitedNpub] ?? [];
+          const alreadySeen = existing.some((entry) => entry.requestId === request.requestId);
+          this.pendingAuthorizationsByNpub[request.invitedNpub] = alreadySeen
+            ? existing
+            : [...existing, request];
+        }
         continue;
       }
       next = received.state;
