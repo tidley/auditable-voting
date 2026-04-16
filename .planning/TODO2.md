@@ -1,3 +1,5 @@
+<!-- STATUS4 pointer: This file is historical context. Current planning status is in .planning/STATUS4.md (2026-04-16, v0.134). -->
+
 Here is the concrete finish plan, updated to the current repo state.
 
 ## Current status

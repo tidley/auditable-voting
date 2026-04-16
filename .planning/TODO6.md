@@ -1,3 +1,5 @@
+<!-- STATUS4 pointer: This file is historical context. Current planning status is in .planning/STATUS4.md (2026-04-16, v0.134). -->
+
 TODO6 progress update on `v0.72`
 
 - done:

@@ -8,6 +8,9 @@ This repo now contains only the static web app in `web/`.
 
 The shipped app currently includes:
 
+- landing-page login gateway on `/` with role selection (`voter`, `coordinator`, `auditor`)
+- no forced voter redirect on first load or refresh when no role is selected in the URL
+- signer-first login support for NIP-07 browser signers (including delayed injection on mobile Firefox-compatible signer bridges)
 - voter, coordinator, and auditor screens
 - tabbed role flows, including a staged coordinator questionnaire builder with `Build`, `Audience`, `Publish`, `Responses`, and `Results`
 - a new Rust/Wasm-backed coordinator control seam for round-open agreement and replay
@@ -49,7 +52,7 @@ The shipped app currently includes:
 - optional relay hint resolution via NIP-65, disabled by default
 - a growing Rust/Wasm core for deterministic protocol logic
 
-The client-only architecture is in place, and the browser coordinator control path now runs through the OpenMLS-backed Rust/Wasm engine for the repaired small live cases. The first multi-coordinator round now waits for sub-coordinator MLS welcome acknowledgement only after the non-lead has completed an initial coordinator-control backfill pass, and the live harness now waits for the lead to be visibly ready before firing round 1. The private issuance path has now been redesigned around encrypted mailbox envelopes with stable `request_id`, `ticket_id`, and `ack_id` lineages instead of pairwise DM ticket chatter. In `v0.74`, the app also exposes coordinator runtime readiness phases in the browser and the live harness now emits protocol-layer failure classes (`startup`, `dm_pipeline`, `mixed`) with coordinator readiness summaries and voter round-visibility snapshots, so scale failures can be separated into startup and downstream mailbox-plane cases without relying only on screenshots. Startup control-plane recovery now also records exact publish/filter evidence, runs `kind_only`/broader diagnostic probes when precise startup backfill is empty, and performs one bounded forced startup backfill replay while MLS join is pending. Automatic sends are now spread by a random `0-30s` client-side delay, mailbox ticket publishes from one coordinator are serialised through a sender-scoped queue, and retry windows are longer so many test actors do not hammer the same public relays at once.
+The client-only architecture is in place, and the browser coordinator control path now runs through the OpenMLS-backed Rust/Wasm engine for the repaired small live cases. The first multi-coordinator round now waits for sub-coordinator MLS welcome acknowledgement only after the non-lead has completed an initial coordinator-control backfill pass, and the live harness now waits for the lead to be visibly ready before firing round 1. The private issuance path has now been redesigned around encrypted mailbox envelopes with stable `request_id`, `ticket_id`, and `ack_id` lineages instead of pairwise DM ticket chatter. Coordinator pages expose runtime readiness phases, and the live harness emits protocol-layer failure classes (`startup`, `dm_pipeline`, `mixed`) with coordinator readiness summaries and voter round-visibility snapshots, so scale failures can be separated into startup and downstream mailbox-plane cases without relying only on screenshots. Startup control-plane recovery now also records exact publish/filter evidence, runs `kind_only`/broader diagnostic probes when precise startup backfill is empty, and performs one bounded forced startup backfill replay while MLS join is pending. Automatic sends are now spread by a random `0-30s` client-side delay, mailbox ticket publishes from one coordinator are serialised through a sender-scoped queue, and retry windows are longer so many test actors do not hammer the same public relays at once.
 Empirically, recent local-preview runs are solid at `1 coordinator / 2 voters / 2 rounds`, but a fresh `1 coordinator / 20 voters / 1 round` run exposed relay rate limiting in the private ticket/ack path before the pacing change. Repeated `2 coordinators / 2 voters / 2 rounds` runs improved after the request-id fix, but are still not signed off as boringly reliable. Larger multi-coordinator runs are still not signed off: `5 coordinators / 10 voters / 3 rounds` can still fail either at first-round startup visibility or later under ticket-delivery / acknowledgement pressure. `5 coordinators / 10 voters / 10 rounds` remains non-viable on the current public relay set.
 
 ## What is in this repo
@@ -63,7 +66,7 @@ Older backend, Cashu, deployment, and coordinator-server code has been removed.
 
 ## Main routes
 
-- `/` — voter shell
+- `/` — login + role gateway shell (no role forced until selected)
 - `/vote.html` — voter shell
 - `/dashboard.html` — coordinator shell
 - `/simple.html` — shared role-switching shell
@@ -228,4 +231,5 @@ An explicit questionnaire flow gate is now available:
 
 - add `?qflow=option_a` (or `?questionnaire_flow=option_a`) to enable the reducer-driven Option A path
 - legacy questionnaire behaviour remains the default when the gate is not set
-- Option A currently uses signer login, coordinator whitelist/invite actions, blind request/issuance, and single-vote acceptance through the `questionnaireOptionA` runtime path
+- Option A currently uses signer login, coordinator whitelist/invite actions, blind request/issuance, single-vote acceptance, and signer-keyed resume through the `questionnaireOptionA` runtime path
+- invite-driven voter login can automatically prepare/send the first blind ballot request when the voter is authenticated and authorised

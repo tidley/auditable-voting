@@ -1,3 +1,5 @@
+<!-- STATUS4 pointer: This file is historical context. Current planning status is in .planning/STATUS4.md (2026-04-16, v0.134). -->
+
 Given the current state, the most sensible next steps are **not** new features. They are:
 
 1. **stabilise multi-coordinator runtime**

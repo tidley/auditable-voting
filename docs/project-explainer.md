@@ -550,6 +550,9 @@ Threshold issuance means one coordinator alone should not define the whole syste
 
 The repository now focuses on the client-side web app only:
 
+- `/` now opens a login + role gateway instead of forcing voter mode
+- role selection is explicit (`voter`, `coordinator`, `auditor`) and persisted into URL only after user selection
+- signer login now tolerates delayed NIP-07 injection and `nostr:ready` signalling for Firefox/Android-style signer bridges
 - `simple.html` is the main client-side shell
 - voter and coordinator flows use `Configure`, `Vote`/`Voting`, and `Settings` tabs
 - coordinator round-open agreement now goes through a Rust/Wasm coordinator-control service
@@ -572,7 +575,7 @@ The repository now focuses on the client-side web app only:
 
 The older backend-oriented stack has been removed from this repository.
 The client-only architecture is in place, but live relay reliability and recovery behaviour still need hardening.
-Current live evidence is mixed: `1 coordinator / 2 voters / 2 rounds` has completed cleanly in recent local-preview tests, while a fresh `1 coordinator / 20 voters / 1 round` run exposed relay-side `you are noting too much` rate limiting in the private ticket/ack path before the current pacing change. The live harness now waits for the lead coordinator to be visibly ready before firing round 1, which removed the earlier blind first-round startup miss. A fresh `v0.73` rerun of `2 coordinators / 2 voters / 2 rounds` also completed cleanly after normalising shard-request ids across the request/ticket/ack path, and repeated `2 / 2 / 2` runs improved after that repair. In `v0.74`, coordinator pages also expose explicit runtime-readiness phases, failed live harness runs now carry protocol-layer classification plus coordinator/voter readiness snapshots, and automatic follow/request/ticket/ack sends are spread with random human-style delays plus longer retry windows. But that small multi-coordinator case is still not signed off as repeatedly reliable across reruns, larger public-relay runs such as `5 coordinators / 10 voters / 3 rounds` are not yet signed off, and `5 coordinators / 10 voters / 10 rounds` is still not operationally viable.
+Current live evidence is mixed: `1 coordinator / 2 voters / 2 rounds` has completed cleanly in recent local-preview tests, while larger public-relay runs can still expose rate limiting and delayed convergence in the private ticket/ack path. The live harness now waits for the lead coordinator to be visibly ready before firing round 1, coordinator pages expose explicit runtime-readiness phases, failed live harness runs carry protocol-layer classification plus coordinator/voter readiness snapshots, and automatic follow/request/ticket/ack sends are spread with random human-style delays plus longer retry windows. That improves diagnosis and reduces relay bursts, but repeated multi-coordinator reliability at larger scale is still not signed off.
 
 ### Migration seam status
 
@@ -686,3 +689,4 @@ The Option A runtime currently provides:
 - coordinator blind issuance processing
 - single accepted submission accounting with duplicate protection
 - local resume keyed by election id and signer `npub`
+- invite-driven voter login can auto-prepare/send the first blind request once login is verified

@@ -61,8 +61,11 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
   };
 
   useEffect(() => {
+    if (showGateway) {
+      return;
+    }
     writeRoleToUrl(role);
-  }, [role]);
+  }, [role, showGateway]);
 
   const roleTitle = useMemo(
     () => (

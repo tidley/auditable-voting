@@ -1,3 +1,5 @@
+<!-- STATUS4 pointer: This file is historical context. Current planning status is in .planning/STATUS4.md (2026-04-16, v0.134). -->
+
 The status is much better now because the failure is finally classified.
 
 ## Progress update - 2026-04-07

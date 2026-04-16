@@ -1,3 +1,5 @@
+<!-- STATUS4 pointer: This file is historical context. Current planning status is in .planning/STATUS4.md (2026-04-16, v0.134). -->
+
 This is a good fix.
 
 It removes one real correctness hazard: the same logical blinded request no longer carries two competing ids. That directly improves:
