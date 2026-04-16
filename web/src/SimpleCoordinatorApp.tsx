@@ -58,8 +58,9 @@ import SimpleRelayPanel from "./SimpleRelayPanel";
 import SimpleUnlockGate from "./SimpleUnlockGate";
 import TokenFingerprint from "./TokenFingerprint";
 import QuestionnaireCoordinatorPanel from "./QuestionnaireCoordinatorPanel";
-import QuestionnaireOptionACoordinatorPanel from "./QuestionnaireOptionACoordinatorPanel";
 import { extractNpubFromScan } from "./npubScan";
+import { QuestionnaireOptionACoordinatorRuntime } from "./questionnaireOptionARuntime";
+import { buildInviteUrl } from "./questionnaireInvite";
 import {
   primeNip65RelayHints,
   setNip65EnabledForSession,
@@ -608,6 +609,9 @@ export default function SimpleCoordinatorApp() {
     questionnaireId: "",
     state: null,
   });
+  const [knownVoterDraftNpub, setKnownVoterDraftNpub] = useState("");
+  const [knownVoterInviteStatus, setKnownVoterInviteStatus] = useState<string | null>(null);
+  const [knownVoterInviteRefreshNonce, setKnownVoterInviteRefreshNonce] = useState(0);
   const [shareAssignmentsInFlight, setShareAssignmentsInFlight] =
     useState(false);
   const [
@@ -617,6 +621,30 @@ export default function SimpleCoordinatorApp() {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const deploymentMode = useMemo(() => readDeploymentModeFromUrl(), []);
   const isCourseFeedbackMode = deploymentMode === "course_feedback";
+  const optionAElectionId = useMemo(() => {
+    const announced = questionnaireRosterAnnouncement.questionnaireId.trim();
+    if (announced) {
+      return announced;
+    }
+    if (typeof window === "undefined") {
+      return "";
+    }
+    const params = new URLSearchParams(window.location.search);
+    return (params.get("election_id") ?? params.get("questionnaire") ?? "").trim();
+  }, [questionnaireRosterAnnouncement.questionnaireId]);
+  const optionACoordinatorRuntime = useMemo(() => (
+    optionAElectionId
+      ? new QuestionnaireOptionACoordinatorRuntime(createSignerService(), optionAElectionId)
+      : null
+  ), [optionAElectionId]);
+  const optionAKnownVoters = useMemo(
+    () => Object.values(optionACoordinatorRuntime?.getSnapshot()?.whitelist ?? {}),
+    [optionACoordinatorRuntime, knownVoterInviteRefreshNonce],
+  );
+  const optionAPendingAuthorizations = useMemo(
+    () => optionACoordinatorRuntime?.getPendingAuthorizations() ?? [],
+    [optionACoordinatorRuntime, knownVoterInviteRefreshNonce],
+  );
   const ticketRetryMinAgeMs = useMemo(
     () => readRuntimeIntOverride("SIMPLE_TICKET_RETRY_AGE_MS", SIMPLE_TICKET_RETRY_MIN_AGE_MS),
     [],
@@ -629,6 +657,26 @@ export default function SimpleCoordinatorApp() {
     () => readRuntimeIntOverride("SIMPLE_TICKET_SEND_MAX_CONCURRENCY", SIMPLE_TICKET_SEND_MAX_CONCURRENCY),
     [],
   );
+
+  useEffect(() => {
+    if (!optionACoordinatorRuntime || !keypair?.npub || !optionAElectionId) {
+      return;
+    }
+    try {
+      optionACoordinatorRuntime.bootstrapCoordinatorNpub({
+        coordinatorNpub: keypair.npub,
+        summary: {
+          electionId: optionAElectionId,
+          title: questionPrompt,
+          description: "",
+          state: "open",
+        },
+      });
+      setKnownVoterInviteRefreshNonce((value) => value + 1);
+    } catch {
+      // Manual login remains available.
+    }
+  }, [keypair?.npub, optionACoordinatorRuntime, optionAElectionId, questionPrompt]);
   const ticketObserveRecoveryAgeMs = useMemo(
     () => readRuntimeIntOverride("SIMPLE_TICKET_OBSERVE_RECOVERY_AGE_MS", SIMPLE_TICKET_OBSERVE_RECOVERY_AGE_MS),
     [],
@@ -2819,6 +2867,78 @@ export default function SimpleCoordinatorApp() {
         return;
       }
       setSignerStatus("Signer login failed.");
+    }
+  }
+
+  function addKnownVoterNpub() {
+    const npub = knownVoterDraftNpub.trim();
+    if (!optionACoordinatorRuntime || !npub) {
+      return;
+    }
+    try {
+      optionACoordinatorRuntime.addWhitelistNpub(npub);
+      setKnownVoterDraftNpub("");
+      setKnownVoterInviteStatus(`Added ${deriveActorDisplayId(npub)} to known voters.`);
+      setKnownVoterInviteRefreshNonce((value) => value + 1);
+    } catch (error) {
+      setKnownVoterInviteStatus(error instanceof Error ? error.message : "Could not add known voter.");
+    }
+  }
+
+  function sendInviteToKnownVoter(invitedNpub: string) {
+    if (!optionACoordinatorRuntime || !optionAElectionId || !keypair?.npub) {
+      return;
+    }
+    try {
+      const invite = optionACoordinatorRuntime.sendInvite(invitedNpub, {
+        title: questionPrompt.trim() || "Questionnaire",
+        description: "",
+        voteUrl: buildInviteUrl({
+          invite: {
+            type: "election_invite",
+            schemaVersion: 1,
+            electionId: optionAElectionId,
+            title: questionPrompt.trim() || "Questionnaire",
+            description: "",
+            voteUrl: "",
+            invitedNpub,
+            coordinatorNpub: keypair.npub,
+            expiresAt: null,
+          },
+        }),
+      });
+      void navigator.clipboard.writeText(buildInviteUrl({ invite }));
+      setKnownVoterInviteStatus(`Invite sent to ${deriveActorDisplayId(invitedNpub)}. Link copied.`);
+      setKnownVoterInviteRefreshNonce((value) => value + 1);
+    } catch (error) {
+      setKnownVoterInviteStatus(error instanceof Error ? error.message : "Invite failed.");
+    }
+  }
+
+  function processKnownVoterRequests() {
+    if (!optionACoordinatorRuntime) {
+      return;
+    }
+    try {
+      optionACoordinatorRuntime.processPendingBlindRequests();
+      optionACoordinatorRuntime.processPendingSubmissions([]);
+      setKnownVoterInviteStatus("Processed incoming requests and submissions.");
+      setKnownVoterInviteRefreshNonce((value) => value + 1);
+    } catch (error) {
+      setKnownVoterInviteStatus(error instanceof Error ? error.message : "Processing failed.");
+    }
+  }
+
+  function authorizePendingRequester(invitedNpub: string) {
+    if (!optionACoordinatorRuntime) {
+      return;
+    }
+    try {
+      optionACoordinatorRuntime.authorizeRequester(invitedNpub);
+      setKnownVoterInviteStatus(`Authorised ${deriveActorDisplayId(invitedNpub)} and processed request.`);
+      setKnownVoterInviteRefreshNonce((value) => value + 1);
+    } catch (error) {
+      setKnownVoterInviteStatus(error instanceof Error ? error.message : "Authorisation failed.");
     }
   }
 
@@ -5057,6 +5177,80 @@ export default function SimpleCoordinatorApp() {
             </SimpleCollapsibleSection>
 
             <SimpleCollapsibleSection title='Questionnaire draft'>
+              {optionAElectionId ? (
+                <div className='simple-voter-field-stack'>
+                  <h4 className='simple-voter-section-title'>Known voters and invites</h4>
+                  <p className='simple-voter-note'>
+                    Optional: add known voter npubs, send invite DMs, and manually authorise unexpected requesters.
+                  </p>
+                  <div className='simple-voter-action-row simple-voter-action-row-inline'>
+                    <input
+                      className='simple-voter-input simple-voter-input-inline'
+                      value={knownVoterDraftNpub}
+                      placeholder='npub1...'
+                      onChange={(event) => setKnownVoterDraftNpub(event.target.value)}
+                    />
+                    <button
+                      type='button'
+                      className='simple-voter-secondary'
+                      disabled={!knownVoterDraftNpub.trim()}
+                      onClick={addKnownVoterNpub}
+                    >
+                      Add known voter
+                    </button>
+                    <button
+                      type='button'
+                      className='simple-voter-secondary'
+                      onClick={processKnownVoterRequests}
+                    >
+                      Process requests
+                    </button>
+                  </div>
+                  {optionAKnownVoters.length > 0 ? (
+                    <ul className='simple-vote-status-list'>
+                      {optionAKnownVoters.map((entry) => (
+                        <li key={entry.invitedNpub}>
+                          <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
+                          {deriveActorDisplayId(entry.invitedNpub)} - {entry.claimState}
+                          <button
+                            type='button'
+                            className='simple-voter-secondary'
+                            style={{ marginLeft: 8 }}
+                            onClick={() => sendInviteToKnownVoter(entry.invitedNpub)}
+                          >
+                            Send invite
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className='simple-voter-note'>No known voters added yet.</p>
+                  )}
+                  {optionAPendingAuthorizations.length > 0 ? (
+                    <>
+                      <p className='simple-voter-note'>Pending requester authorisation</p>
+                      <ul className='simple-vote-status-list'>
+                        {optionAPendingAuthorizations.map((entry) => (
+                          <li key={entry.invitedNpub}>
+                            <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
+                            {deriveActorDisplayId(entry.invitedNpub)} requested a ballot ({entry.requestCount})
+                            <button
+                              type='button'
+                              className='simple-voter-secondary'
+                              style={{ marginLeft: 8 }}
+                              onClick={() => authorizePendingRequester(entry.invitedNpub)}
+                            >
+                              Authorise
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  ) : null}
+                  <p className='simple-voter-note'>Accepted unique responders: {optionACoordinatorRuntime?.getAcceptedUniqueCount() ?? 0}</p>
+                  {knownVoterInviteStatus ? <p className='simple-voter-note'>{knownVoterInviteStatus}</p> : null}
+                </div>
+              ) : null}
               <QuestionnaireCoordinatorPanel
                 coordinatorNsec={keypair?.nsec ?? null}
                 coordinatorNpub={keypair?.npub ?? null}
@@ -5069,10 +5263,6 @@ export default function SimpleCoordinatorApp() {
                   });
                 }}
               />
-            </SimpleCollapsibleSection>
-
-            <SimpleCollapsibleSection title='Known voters and invites (Option A)' defaultCollapsed>
-              <QuestionnaireOptionACoordinatorPanel coordinatorNpub={keypair?.npub ?? null} />
             </SimpleCollapsibleSection>
           </section>
         ) : null}
