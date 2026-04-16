@@ -341,6 +341,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
   constructor(
     private readonly signer: SignerService,
     private readonly electionId: string,
+    private readonly fallbackNsec?: string,
   ) {}
 
   getSnapshot() {
@@ -475,6 +476,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       const publishResult = await publishOptionAInviteDm({
         signer: this.signer,
         invite,
+        fallbackNsec: this.fallbackNsec,
       });
       dmDelivered = publishResult.successes > 0;
       if (!dmDelivered) {

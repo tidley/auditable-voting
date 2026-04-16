@@ -76,4 +76,35 @@ describe("QuestionnaireOptionACoordinatorRuntime invite delivery messaging", () 
     expect(sent.dmFailureReason).toMatch(/relay timeout/i);
     expect(sent.invite.invitedNpub).toBe(voterNpub);
   });
+
+  it("passes fallback nsec to DM publish when coordinator uses local key", async () => {
+    publishOptionAInviteDm.mockResolvedValue({
+      eventId: "event-2",
+      successes: 1,
+      failures: 0,
+      relayResults: [{ relay: "wss://example.test", success: true }],
+    });
+    const fallbackNsec = "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqw2xj9";
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(
+      signer(coordinatorNpub),
+      electionId,
+      fallbackNsec,
+    );
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+    coordinator.addWhitelistNpub(voterNpub);
+
+    await coordinator.sendInvite(voterNpub, {
+      title: "Runtime",
+      description: "Test",
+      voteUrl: "https://example.org/vote",
+    });
+
+    expect(publishOptionAInviteDm).toHaveBeenCalledTimes(1);
+    expect(publishOptionAInviteDm).toHaveBeenCalledWith(expect.objectContaining({
+      fallbackNsec,
+      invite: expect.objectContaining({
+        invitedNpub: voterNpub,
+      }),
+    }));
+  });
 });

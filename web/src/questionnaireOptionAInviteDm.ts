@@ -43,6 +43,11 @@ function decodeNsecSecretKey(nsec: string) {
   return decoded.data as Uint8Array;
 }
 
+function randomNow() {
+  const now = Math.round(Date.now() / 1000);
+  return Math.round(now - (Math.random() * TWO_DAYS_SECONDS));
+}
+
 function toNpub(pubkey: string) {
   const value = pubkey.trim();
   if (value.startsWith("npub1")) {
@@ -84,11 +89,6 @@ function parseInviteDmContent(content: string): ElectionInviteMessage | null {
   }
 }
 
-function randomNow() {
-  const now = Math.round(Date.now() / 1000);
-  return Math.round(now - (Math.random() * TWO_DAYS_SECONDS));
-}
-
 function createRumor(input: {
   senderHex: string;
   envelope: InviteDmEnvelope;
@@ -127,14 +127,9 @@ function parseGiftWrapPayload(payload: string): NostrEvent | null {
 export async function publishOptionAInviteDm(input: {
   signer: SignerService;
   invite: ElectionInviteMessage;
+  fallbackNsec?: string;
   relays?: string[];
 }) {
-  if (!input.signer.nip44Encrypt) {
-    throw new Error("Signer does not support NIP-44 encryption.");
-  }
-
-  const senderRaw = await input.signer.getPublicKey();
-  const senderHex = toHexPubkey(senderRaw);
   const recipientHex = toHexPubkey(input.invite.invitedNpub);
   const envelope: InviteDmEnvelope = {
     type: "optiona_invite_dm",
@@ -142,15 +137,56 @@ export async function publishOptionAInviteDm(input: {
     invite: input.invite,
     sentAt: new Date().toISOString(),
   };
+  let senderHex = "";
+  let signedSeal: NostrEvent | null = null;
+  const fallbackSecret = input.fallbackNsec?.trim() ? decodeNsecSecretKey(input.fallbackNsec) : null;
+  const trySignerFirst = !fallbackSecret;
+  const signerAttempts: Array<"signer" | "fallback"> = trySignerFirst ? ["signer", "fallback"] : ["fallback", "signer"];
+  let lastError: unknown = null;
 
-  const rumor = createRumor({ senderHex, envelope });
-  const sealCiphertext = await input.signer.nip44Encrypt(recipientHex, JSON.stringify(rumor));
-  const signedSeal = await input.signer.signEvent({
-    kind: KIND_SEAL,
-    created_at: randomNow(),
-    tags: [],
-    content: sealCiphertext,
-  });
+  for (const attempt of signerAttempts) {
+    try {
+      if (attempt === "fallback") {
+        if (!fallbackSecret) {
+          continue;
+        }
+        senderHex = getPublicKey(fallbackSecret);
+        const rumor = createRumor({ senderHex, envelope });
+        const sealConversationKey = nip44.v2.utils.getConversationKey(fallbackSecret, recipientHex);
+        const sealCiphertext = nip44.v2.encrypt(JSON.stringify(rumor), sealConversationKey);
+        signedSeal = finalizeEvent({
+          kind: KIND_SEAL,
+          created_at: randomNow(),
+          tags: [],
+          content: sealCiphertext,
+        }, fallbackSecret);
+        break;
+      }
+
+      if (!input.signer.nip44Encrypt) {
+        throw new Error("Signer does not support NIP-44 encryption.");
+      }
+      const senderRaw = await input.signer.getPublicKey();
+      senderHex = toHexPubkey(senderRaw);
+      const rumor = createRumor({ senderHex, envelope });
+      const sealCiphertext = await input.signer.nip44Encrypt(recipientHex, JSON.stringify(rumor));
+      const signed = await input.signer.signEvent({
+        kind: KIND_SEAL,
+        created_at: randomNow(),
+        tags: [],
+        content: sealCiphertext,
+      });
+      signedSeal = signed as unknown as NostrEvent;
+      break;
+    } catch (error) {
+      lastError = error;
+      continue;
+    }
+  }
+
+  if (!senderHex || !signedSeal) {
+    throw lastError instanceof Error ? lastError : new Error("Could not sign Option A invite DM.");
+  }
 
   const giftWrapSecret = generateSecretKey();
   const giftWrapConversationKey = nip44.v2.utils.getConversationKey(giftWrapSecret, recipientHex);
