@@ -45,15 +45,15 @@ vi.mock("./questionnaireOptionAInviteDm", () => ({
 import QuestionnaireOptionAVoterPanel from "./QuestionnaireOptionAVoterPanel";
 
 describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
-  it("shows Check invites action and loads pending invites", async () => {
+  it("loads pending invites after signer login", async () => {
     const user = userEvent.setup();
     render(<QuestionnaireOptionAVoterPanel />);
 
-    const getDmsButton = screen.getByRole("button", { name: "Check invites" });
-    expect(getDmsButton).toBeTruthy();
-    await user.click(getDmsButton);
+    expect(screen.queryByRole("button", { name: "Check invites" })).toBeNull();
+    const loginButton = screen.getByRole("button", { name: "Login" });
+    await user.click(loginButton);
 
-    await screen.findByText(/Checked relays\. Found 1 pending invite/i);
+    await screen.findByText(/Signed in as .*1 pending invite/i);
     expect(screen.getByText("Pending invites")).toBeTruthy();
     expect(screen.getByText("Test Invite")).toBeTruthy();
   });

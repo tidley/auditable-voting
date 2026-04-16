@@ -632,16 +632,20 @@ export function processOptionAQueuesForCoordinator(input: {
   coordinatorNpub: string;
   signer: SignerService;
   preferredElectionId?: string;
+  onlyPreferredElectionId?: boolean;
   requiredQuestionIdsByElectionId?: Record<string, string[]>;
 }) {
   const coordinatorNpub = toNpub(input.coordinatorNpub);
   const registry = loadElectionRegistry();
-  const orderedElectionIds = [
-    input.preferredElectionId?.trim() ?? "",
-    ...registry,
-  ]
-    .filter((value) => value.length > 0)
-    .filter((value, index, values) => values.indexOf(value) === index);
+  const preferredElectionId = input.preferredElectionId?.trim() ?? "";
+  const orderedElectionIds = input.onlyPreferredElectionId && preferredElectionId
+    ? [preferredElectionId]
+    : [
+      preferredElectionId,
+      ...registry,
+    ]
+      .filter((value) => value.length > 0)
+      .filter((value, index, values) => values.indexOf(value) === index);
 
   const processedElectionIds: string[] = [];
   for (const electionId of orderedElectionIds) {

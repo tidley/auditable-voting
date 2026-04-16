@@ -1596,48 +1596,61 @@ export default function SimpleUiApp() {
     setManualCoordinators((current) => current.filter((_, currentIndex) => currentIndex !== index));
   }
 
-  async function checkQuestionnaireInvites() {
-    const signerSessionNpub = signerNpub.trim();
+  function applyDiscoveredQuestionnaireInvites(invites: Array<{ coordinatorNpub: string; electionId: string }>) {
+    for (const invite of invites) {
+      publishInviteToMailbox(invite);
+    }
+    const discoveredCoordinatorNpubs = sanitizeCoordinatorNpubs(invites.map((invite) => invite.coordinatorNpub));
+    const discoveredQuestionnaireIds = [...new Set(
+      invites
+        .map((invite) => invite.electionId?.trim() ?? "")
+        .filter((value) => value.length > 0),
+    )];
+    if (discoveredCoordinatorNpubs.length > 0) {
+      setManualCoordinators((current) => sanitizeCoordinatorNpubs([...current, ...discoveredCoordinatorNpubs]));
+    }
+    if (discoveredQuestionnaireIds.length > 0) {
+      setAnnouncedQuestionnaireIds((current) => {
+        const next = [...new Set([...current, ...discoveredQuestionnaireIds])].slice(-8);
+        return next.length === current.length
+          && next.every((value, index) => value === current[index])
+          ? current
+          : next;
+      });
+    }
+  }
+
+  async function checkQuestionnaireInvitesWithLocalKey(options?: { silent?: boolean }) {
     const localNsec = voterKeypair?.nsec?.trim() ?? "";
     const localNpub = voterKeypair?.npub?.trim() ?? "";
-
-    if (!signerSessionNpub && localNsec && localNpub) {
-      try {
-        const invites = await fetchOptionAInviteDmsWithNsec({
-          nsec: localNsec,
-          limit: 40,
-        });
-        for (const invite of invites) {
-          publishInviteToMailbox(invite);
-        }
-        const discoveredCoordinatorNpubs = sanitizeCoordinatorNpubs(invites.map((invite) => invite.coordinatorNpub));
-        const discoveredQuestionnaireIds = [...new Set(
-          invites
-            .map((invite) => invite.electionId?.trim() ?? "")
-            .filter((value) => value.length > 0),
-        )];
-        if (discoveredCoordinatorNpubs.length > 0) {
-          setManualCoordinators((current) => sanitizeCoordinatorNpubs([...current, ...discoveredCoordinatorNpubs]));
-        }
-        if (discoveredQuestionnaireIds.length > 0) {
-          setAnnouncedQuestionnaireIds((current) => {
-            const next = [...new Set([...current, ...discoveredQuestionnaireIds])].slice(-8);
-            return next.length === current.length
-              && next.every((value, index) => value === current[index])
-              ? current
-              : next;
-          });
-        }
+    if (!localNsec || !localNpub) {
+      return;
+    }
+    try {
+      const invites = await fetchOptionAInviteDmsWithNsec({
+        nsec: localNsec,
+        limit: 40,
+      });
+      applyDiscoveredQuestionnaireInvites(invites);
+      if (!options?.silent) {
         setRequestStatus(
           invites.length === 0
             ? `Checked invites for ${shortenNpub(localNpub)} (local key). No questionnaire invites found.`
             : `Checked invites for ${shortenNpub(localNpub)} (local key). Found ${invites.length} questionnaire invite${invites.length === 1 ? "" : "s"}.`,
         );
-        return;
-      } catch {
-        setRequestStatus("Could not check questionnaire invites with local key.");
-        return;
       }
+    } catch {
+      if (!options?.silent) {
+        setRequestStatus("Could not check questionnaire invites with local key.");
+      }
+    }
+  }
+
+  async function checkQuestionnaireInvites() {
+    const signerSessionNpub = signerNpub.trim();
+    if (!signerSessionNpub) {
+      await checkQuestionnaireInvitesWithLocalKey();
+      return;
     }
 
     try {
@@ -1645,29 +1658,7 @@ export default function SimpleUiApp() {
       const rawPubkey = await signer.getPublicKey();
       const signerNpub = rawPubkey.startsWith("npub1") ? rawPubkey : nip19.npubEncode(rawPubkey);
       const invites = await fetchOptionAInviteDms({ signer, limit: 40 });
-      for (const invite of invites) {
-        publishInviteToMailbox(invite);
-      }
-
-      const discoveredCoordinatorNpubs = sanitizeCoordinatorNpubs(invites.map((invite) => invite.coordinatorNpub));
-      const discoveredQuestionnaireIds = [...new Set(
-        invites
-          .map((invite) => invite.electionId?.trim() ?? "")
-          .filter((value) => value.length > 0),
-      )];
-
-      if (discoveredCoordinatorNpubs.length > 0) {
-        setManualCoordinators((current) => sanitizeCoordinatorNpubs([...current, ...discoveredCoordinatorNpubs]));
-      }
-      if (discoveredQuestionnaireIds.length > 0) {
-        setAnnouncedQuestionnaireIds((current) => {
-          const next = [...new Set([...current, ...discoveredQuestionnaireIds])].slice(-8);
-          return next.length === current.length
-            && next.every((value, index) => value === current[index])
-            ? current
-            : next;
-        });
-      }
+      applyDiscoveredQuestionnaireInvites(invites);
 
       setRequestStatus(
         invites.length === 0
@@ -1682,6 +1673,23 @@ export default function SimpleUiApp() {
       setRequestStatus("Could not check questionnaire invites.");
     }
   }
+
+  useEffect(() => {
+    if (signerNpub.trim()) {
+      return;
+    }
+    const localNsec = voterKeypair?.nsec?.trim() ?? "";
+    if (!localNsec) {
+      return;
+    }
+    void checkQuestionnaireInvitesWithLocalKey({ silent: true });
+    const intervalId = window.setInterval(() => {
+      void checkQuestionnaireInvitesWithLocalKey({ silent: true });
+    }, 7000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [signerNpub, voterKeypair?.nsec]);
 
   async function sendFollowRequests(
     targetCoordinatorNpubs: string[],

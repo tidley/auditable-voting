@@ -1403,13 +1403,26 @@ async function observeQuestionnaireStages(stageTracker, coordinators, voters, vo
       : stageTracker.voterIds[voterIndex] ?? `voter${voterIndex + 1}`;
     await ensureVoterTab(actor.page, "Vote", actor.label);
     const voterDebug = await readQuestionnaireVoterDebug(actor.page);
+    const voterBody = voterDebug ? "" : await readBody(actor.page);
+    const hasVisibleQuestionnaireFromUi = !voterDebug
+      && /Question \d+/i.test(voterBody)
+      && !/Waiting for questions to be published/i.test(voterBody);
     if (voterDebug?.questionnaireSeen) {
+      recordStage(stageTracker, "questionnaireSeen", voterId, nowMs);
+    }
+    if (hasVisibleQuestionnaireFromUi) {
       recordStage(stageTracker, "questionnaireSeen", voterId, nowMs);
     }
     if (voterDebug?.questionnaireOpen) {
       recordStage(stageTracker, "questionnaireOpen", voterId, nowMs);
     }
+    if (hasVisibleQuestionnaireFromUi) {
+      recordStage(stageTracker, "questionnaireOpen", voterId, nowMs);
+    }
     if (voterDebug?.responsePublished || Number(voterDebug?.responseSubmittedCount ?? 0) > 0) {
+      recordStage(stageTracker, "responsePublished", voterId, nowMs);
+    }
+    if (!voterDebug && /Response submitted|Submission accepted:\s*Yes/i.test(voterBody)) {
       recordStage(stageTracker, "responsePublished", voterId, nowMs);
     }
     if (hasPublishedSummary) {
@@ -1566,7 +1579,7 @@ async function waitForQuestionnaireVoterReadyToSubmit(page, timeoutMs = 30000) {
       }
     }
     const voterDebug = await readQuestionnaireVoterDebug(page);
-    if (hasEnabledVisible && voterDebug?.responseReady === true) {
+    if (hasEnabledVisible && (voterDebug?.responseReady === true || !voterDebug)) {
       return true;
     }
     await sleep(500);
@@ -1600,6 +1613,31 @@ async function ensureQuestionnaireDraftReady(page, roundNumber) {
   }
 
   await sleep(200);
+}
+
+async function sendQuestionnaireInvitesToVoters(page, voterNpubs) {
+  const uniqueVoterNpubs = [...new Set(
+    voterNpubs
+      .map((value) => String(value ?? "").trim())
+      .filter((value) => value.startsWith("npub1")),
+  )];
+  if (uniqueVoterNpubs.length === 0) {
+    return;
+  }
+
+  await ensureTab(page, "Configure", "lead");
+  const knownVoterInput = page.getByPlaceholder("npub1...").first();
+  if (await knownVoterInput.count().catch(() => 0) === 0) {
+    return;
+  }
+
+  for (const npub of uniqueVoterNpubs) {
+    await knownVoterInput.fill(npub);
+    await clickByTextIfAvailable(page, "button", /^Add known voter$/i, 3000);
+    await sleep(120);
+  }
+  await clickByTextIfAvailable(page, "button", /^Invite all whitelisted$/i, 5000);
+  await sleep(400);
 }
 
 async function clickEnabledTicketsDuringWindow(coordinators, voters, durationMs, stageTracker) {
@@ -1768,6 +1806,9 @@ async function main() {
       for (const labelBatch of voterLabelBatches) {
         for (const label of labelBatch) {
           const context = await browser.newContext();
+          await context.addInitScript(() => {
+            globalThis.__AUDITABLE_VOTING_FORCE_LEGACY_QUESTIONNAIRE__ = true;
+          });
           const page = await context.newPage();
           const url = new URL(voterBaseUrl.toString());
           if (nip65Mode !== "on") {
@@ -1815,15 +1856,18 @@ async function main() {
 
       const voterBatches = splitIntoBatches(voters, batchSize);
       const voterIds = [];
+      const voterNpubs = [];
       for (const [batchIndex, batch] of voterBatches.entries()) {
         for (const actor of batch) {
           await clickByText(actor.page, "button", /^New$/i);
           await ensureTab(actor.page, "Settings", actor.label);
           const voterId = await getDisplayedActorId(actor.page, "Voter");
+          const voterNpub = await getNpub(actor.page);
           if (!voterId) {
             throw new Error(`identity_read_failed: voter id missing for ${actor.label}`);
           }
           voterIds.push(voterId);
+          voterNpubs.push(voterNpub);
           await ensureTab(actor.page, "Configure", actor.label);
           await addCoordinatorsToVoter(actor.page, coordinatorNpubs);
         }
@@ -1880,6 +1924,13 @@ async function main() {
             timeline,
             state: timelineState,
           });
+          await sendQuestionnaireInvitesToVoters(lead, voterNpubs);
+          for (const actor of voters) {
+            const voterUrl = new URL(actor.page.url());
+            voterUrl.searchParams.set("questionnaire", questionnaireId);
+            await actor.page.goto(voterUrl.toString(), { waitUntil: "networkidle" });
+            await continueFromRoleLandingIfPresent(actor.page, "voter");
+          }
 
           const roundCheckpoint = checkpoint.rounds[String(roundIndex + 1)] ?? {
             enrollmentCompletedBatchIndex: 0,

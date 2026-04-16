@@ -3185,6 +3185,10 @@ export default function SimpleCoordinatorApp() {
           ? `Invite DM sent to ${deriveActorDisplayId(invitedNpub)}. Link copied.`
           : `Invite saved locally for ${deriveActorDisplayId(invitedNpub)}; DM delivery failed (${sent.dmFailureReason ?? "unknown error"}). Link copied.`,
       );
+      setAutoSendFollowers((current) => ({
+        ...current,
+        [invitedNpub]: true,
+      }));
       setKnownVoterInviteRefreshNonce((value) => value + 1);
     } catch (error) {
       setKnownVoterInviteStatus(error instanceof Error ? error.message : "Invite failed.");
@@ -3225,6 +3229,10 @@ export default function SimpleCoordinatorApp() {
           }),
         });
         copiedLinks.push(buildInviteUrl({ invite: sent.invite }));
+        setAutoSendFollowers((current) => ({
+          ...current,
+          [invitedNpub]: true,
+        }));
         sentCount += 1;
       } catch {
         // Continue inviting remaining whitelist entries.
@@ -3251,10 +3259,15 @@ export default function SimpleCoordinatorApp() {
         coordinatorNpub: activeCoordinatorNpub,
         signer: optionASigner,
         preferredElectionId: optionAElectionId,
+        onlyPreferredElectionId: Boolean(optionAElectionId.trim()),
       });
       setKnownVoterInviteStatus(
         result.processedElections > 0
-          ? `Processed incoming requests/submissions across ${result.processedElections} questionnaire${result.processedElections === 1 ? "" : "s"}.`
+          ? (
+            optionAElectionId.trim()
+              ? "Processed incoming requests/submissions for the current questionnaire."
+              : `Processed incoming requests/submissions across ${result.processedElections} questionnaire${result.processedElections === 1 ? "" : "s"}.`
+          )
           : "No matching questionnaires found for this coordinator.",
       );
       setKnownVoterInviteRefreshNonce((value) => value + 1);
@@ -3273,6 +3286,7 @@ export default function SimpleCoordinatorApp() {
           coordinatorNpub: activeCoordinatorNpub,
           signer: optionASigner,
           preferredElectionId: optionAElectionId,
+          onlyPreferredElectionId: Boolean(optionAElectionId.trim()),
         });
         if (result.processedElections > 0) {
           setKnownVoterInviteRefreshNonce((value) => value + 1);
