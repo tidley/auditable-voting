@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
+import { nip19 } from "nostr-tools";
 import SimpleAuditorApp from "./SimpleAuditorApp";
 import SimpleCoordinatorApp from "./SimpleCoordinatorApp";
 import SimpleRelayPanel from "./SimpleRelayPanel";
 import SimpleUiApp from "./SimpleUiApp";
 import { SIMPLE_APP_VERSION } from "./simpleAppVersion";
+import { createSignerService, SignerServiceError } from "./services/signerService";
+import { deriveNpubFromNsec } from "./nostrIdentity";
+import { saveSimpleActorState } from "./simpleLocalState";
 
 type SimpleRole = "voter" | "coordinator" | "auditor";
 
@@ -24,6 +28,13 @@ function readRoleFromUrl(): SimpleRole | null {
   return null;
 }
 
+function hasRoleInUrl() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  return Boolean(new URLSearchParams(window.location.search).get("role"));
+}
+
 function writeRoleToUrl(role: SimpleRole) {
   if (typeof window === "undefined") {
     return;
@@ -37,6 +48,11 @@ function writeRoleToUrl(role: SimpleRole) {
 export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShellProps) {
   const [role, setRole] = useState<SimpleRole>(() => readRoleFromUrl() ?? initialRole);
   const [roleSwitchMinimized, setRoleSwitchMinimized] = useState(false);
+  const [showGateway, setShowGateway] = useState(() => !hasRoleInUrl());
+  const [gatewayRole, setGatewayRole] = useState<SimpleRole>(initialRole);
+  const [gatewayNsec, setGatewayNsec] = useState("");
+  const [gatewaySignerNpub, setGatewaySignerNpub] = useState("");
+  const [gatewayStatus, setGatewayStatus] = useState<string | null>(null);
 
   const handleRoleSelect = (nextRole: SimpleRole) => {
     setRole(nextRole);
@@ -57,6 +73,113 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
     ),
     [role],
   );
+
+  async function loginWithSigner() {
+    try {
+      const signer = createSignerService();
+      const rawPubkey = await signer.getPublicKey();
+      const npub = rawPubkey.startsWith("npub1") ? rawPubkey : nip19.npubEncode(rawPubkey);
+      setGatewaySignerNpub(npub);
+      setGatewayStatus(`Signer connected: ${npub}`);
+    } catch (error) {
+      if (error instanceof SignerServiceError) {
+        setGatewayStatus(error.message);
+        return;
+      }
+      setGatewayStatus("Signer login failed.");
+    }
+  }
+
+  async function continueFromGateway() {
+    const trimmedNsec = gatewayNsec.trim();
+    if (trimmedNsec && (gatewayRole === "voter" || gatewayRole === "coordinator")) {
+      const npub = deriveNpubFromNsec(trimmedNsec);
+      if (!npub) {
+        setGatewayStatus("Enter a valid nsec before continuing.");
+        return;
+      }
+      await saveSimpleActorState({
+        role: gatewayRole,
+        keypair: { nsec: trimmedNsec, npub },
+        updatedAt: new Date().toISOString(),
+      });
+      setGatewayStatus(`Loaded ${gatewayRole} identity ${npub}.`);
+    }
+    setRole(gatewayRole);
+    setShowGateway(false);
+  }
+
+  if (showGateway) {
+    return (
+      <div className='simple-app-shell'>
+        <section className='simple-login-gateway' aria-label='Login and role selection'>
+          <div className='simple-login-mark' aria-hidden='true' />
+          <h1 className='simple-login-title'>Auditable Voting</h1>
+          <p className='simple-login-subtitle'>Choose a role directly, or login first via signer or nsec.</p>
+
+          <div className='simple-login-actions'>
+            <button type='button' className='simple-voter-secondary' onClick={() => void loginWithSigner()}>
+              Login via signer
+            </button>
+          </div>
+          {gatewaySignerNpub ? <p className='simple-voter-note'>Signer: {gatewaySignerNpub}</p> : null}
+
+          <label className='simple-voter-label' htmlFor='gateway-nsec'>Login via nsec (optional)</label>
+          <input
+            id='gateway-nsec'
+            className='simple-voter-input'
+            value={gatewayNsec}
+            onChange={(event) => setGatewayNsec(event.target.value)}
+            placeholder='nsec1...'
+            spellCheck={false}
+            autoCapitalize='off'
+            autoCorrect='off'
+          />
+
+          <div className='simple-role-switch simple-role-switch-login' role='tablist' aria-label='Role selection'>
+            <button
+              type='button'
+              role='tab'
+              aria-selected={gatewayRole === "voter"}
+              className={`simple-role-switch-button${gatewayRole === "voter" ? " is-active" : ""}`}
+              onClick={() => setGatewayRole("voter")}
+            >
+              Voter
+            </button>
+            <button
+              type='button'
+              role='tab'
+              aria-selected={gatewayRole === "coordinator"}
+              className={`simple-role-switch-button${gatewayRole === "coordinator" ? " is-active" : ""}`}
+              onClick={() => setGatewayRole("coordinator")}
+            >
+              Coordinator
+            </button>
+            <button
+              type='button'
+              role='tab'
+              aria-selected={gatewayRole === "auditor"}
+              className={`simple-role-switch-button${gatewayRole === "auditor" ? " is-active" : ""}`}
+              onClick={() => setGatewayRole("auditor")}
+            >
+              Auditor
+            </button>
+          </div>
+
+          <div className='simple-login-actions'>
+            <button type='button' className='simple-voter-primary' onClick={() => void continueFromGateway()}>
+              Continue as {gatewayRole}
+            </button>
+          </div>
+          {gatewayStatus ? <p className='simple-voter-note'>{gatewayStatus}</p> : null}
+        </section>
+        <footer className='simple-app-version' aria-label='App version'>
+          <span>{SIMPLE_APP_VERSION}</span>
+          <a href='project-explainer.html'>Description</a>
+        </footer>
+      </div>
+    );
+  }
 
   return (
     <div className='simple-app-shell'>
