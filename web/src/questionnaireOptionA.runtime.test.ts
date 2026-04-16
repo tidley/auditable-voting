@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  processOptionAQueuesForCoordinator,
   QuestionnaireOptionACoordinatorRuntime,
   QuestionnaireOptionAVoterRuntime,
 } from "./questionnaireOptionARuntime";
@@ -155,5 +156,43 @@ describe("questionnaireOptionARuntime", () => {
     expect(loggedIn.loginVerified).toBe(true);
     expect(loggedIn.inviteMessage?.invitedNpub).toBe(voterNpub);
     expect(loggedIn.inviteMessage?.electionId).toBe(electionId);
+  });
+
+  it("processes pending requests across multiple elections for the same coordinator", async () => {
+    const electionIdOne = "election_runtime_multi_1";
+    const electionIdTwo = "election_runtime_multi_2";
+    const coordinator = signer(coordinatorNpub);
+
+    const coordinatorOne = new QuestionnaireOptionACoordinatorRuntime(coordinator, electionIdOne);
+    await coordinatorOne.loginWithSigner({ title: "Runtime 1", description: "Test", state: "open" });
+    coordinatorOne.addWhitelistNpub(voterNpub);
+    await coordinatorOne.sendInvite(voterNpub, {
+      title: "Runtime 1",
+      description: "Test",
+      voteUrl: "https://example.org/vote/1",
+    });
+
+    const coordinatorTwo = new QuestionnaireOptionACoordinatorRuntime(coordinator, electionIdTwo);
+    await coordinatorTwo.loginWithSigner({ title: "Runtime 2", description: "Test", state: "open" });
+    coordinatorTwo.addWhitelistNpub(voterNpub);
+    const sentTwo = await coordinatorTwo.sendInvite(voterNpub, {
+      title: "Runtime 2",
+      description: "Test",
+      voteUrl: "https://example.org/vote/2",
+    });
+
+    const voterTwo = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionIdTwo);
+    await voterTwo.loginWithSigner(sentTwo.invite);
+    voterTwo.requestBlindBallot();
+
+    const processed = processOptionAQueuesForCoordinator({
+      coordinatorNpub,
+      signer: coordinator,
+      preferredElectionId: electionIdOne,
+    });
+    expect(processed.processedElectionIds).toContain(electionIdTwo);
+
+    voterTwo.refreshIssuanceAndAcceptance();
+    expect(voterTwo.getSnapshot()?.credentialReady).toBe(true);
   });
 });

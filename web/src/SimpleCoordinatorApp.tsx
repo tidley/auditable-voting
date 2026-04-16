@@ -59,7 +59,7 @@ import SimpleUnlockGate from "./SimpleUnlockGate";
 import TokenFingerprint from "./TokenFingerprint";
 import QuestionnaireCoordinatorPanel from "./QuestionnaireCoordinatorPanel";
 import { extractNpubFromScan } from "./npubScan";
-import { QuestionnaireOptionACoordinatorRuntime } from "./questionnaireOptionARuntime";
+import { processOptionAQueuesForCoordinator, QuestionnaireOptionACoordinatorRuntime } from "./questionnaireOptionARuntime";
 import { buildInviteUrl } from "./questionnaireInvite";
 import {
   primeNip65RelayHints,
@@ -635,6 +635,7 @@ export default function SimpleCoordinatorApp() {
   const activeCoordinatorNpub = signerNpub.trim() || keypair?.npub?.trim() || "";
   const deploymentMode = useMemo(() => readDeploymentModeFromUrl(), []);
   const isCourseFeedbackMode = deploymentMode === "course_feedback";
+  const optionASigner = useMemo(() => createSignerService(), []);
   const optionAElectionId = useMemo(() => {
     const announced = questionnaireRosterAnnouncement.questionnaireId.trim();
     if (announced) {
@@ -648,9 +649,9 @@ export default function SimpleCoordinatorApp() {
   }, [questionnaireRosterAnnouncement.questionnaireId]);
   const optionACoordinatorRuntime = useMemo(() => (
     optionAElectionId
-      ? new QuestionnaireOptionACoordinatorRuntime(createSignerService(), optionAElectionId)
+      ? new QuestionnaireOptionACoordinatorRuntime(optionASigner, optionAElectionId)
       : null
-  ), [optionAElectionId]);
+  ), [optionAElectionId, optionASigner]);
   const optionAKnownVoters = useMemo(
     () => Object.values(optionACoordinatorRuntime?.getSnapshot()?.whitelist ?? {}),
     [optionACoordinatorRuntime, knownVoterInviteRefreshNonce],
@@ -3170,18 +3171,48 @@ export default function SimpleCoordinatorApp() {
   }
 
   function processKnownVoterRequests() {
-    if (!optionACoordinatorRuntime) {
+    if (!activeCoordinatorNpub.trim()) {
       return;
     }
     try {
-      optionACoordinatorRuntime.processPendingBlindRequests();
-      optionACoordinatorRuntime.processPendingSubmissions([]);
-      setKnownVoterInviteStatus("Processed incoming requests and submissions.");
+      const result = processOptionAQueuesForCoordinator({
+        coordinatorNpub: activeCoordinatorNpub,
+        signer: optionASigner,
+        preferredElectionId: optionAElectionId,
+      });
+      setKnownVoterInviteStatus(
+        result.processedElections > 0
+          ? `Processed incoming requests/submissions across ${result.processedElections} questionnaire${result.processedElections === 1 ? "" : "s"}.`
+          : "No matching questionnaires found for this coordinator.",
+      );
       setKnownVoterInviteRefreshNonce((value) => value + 1);
     } catch (error) {
       setKnownVoterInviteStatus(error instanceof Error ? error.message : "Processing failed.");
     }
   }
+
+  useEffect(() => {
+    if (!activeCoordinatorNpub.trim()) {
+      return;
+    }
+    const intervalId = window.setInterval(() => {
+      try {
+        const result = processOptionAQueuesForCoordinator({
+          coordinatorNpub: activeCoordinatorNpub,
+          signer: optionASigner,
+          preferredElectionId: optionAElectionId,
+        });
+        if (result.processedElections > 0) {
+          setKnownVoterInviteRefreshNonce((value) => value + 1);
+        }
+      } catch {
+        // Keep background processing best-effort; explicit action shows errors.
+      }
+    }, 3000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [activeCoordinatorNpub, optionAElectionId, optionASigner]);
 
   function authorizePendingRequester(invitedNpub: string) {
     if (!optionACoordinatorRuntime) {

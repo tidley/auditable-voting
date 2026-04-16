@@ -26,6 +26,7 @@ import {
   enqueueBlindRequest,
   enqueueSubmission,
   listBlindRequests,
+  loadElectionRegistry,
   listSubmissions,
   loadCoordinatorState,
   loadElectionSummary,
@@ -623,4 +624,41 @@ export class QuestionnaireOptionACoordinatorRuntime {
     saveCoordinatorState({ coordinatorNpub: this.coordinatorNpub, state: this.state });
     return this.state;
   }
+}
+
+export function processOptionAQueuesForCoordinator(input: {
+  coordinatorNpub: string;
+  signer: SignerService;
+  preferredElectionId?: string;
+  requiredQuestionIdsByElectionId?: Record<string, string[]>;
+}) {
+  const coordinatorNpub = toNpub(input.coordinatorNpub);
+  const registry = loadElectionRegistry();
+  const orderedElectionIds = [
+    input.preferredElectionId?.trim() ?? "",
+    ...registry,
+  ]
+    .filter((value) => value.length > 0)
+    .filter((value, index, values) => values.indexOf(value) === index);
+
+  const processedElectionIds: string[] = [];
+  for (const electionId of orderedElectionIds) {
+    const summary = loadElectionSummary(electionId);
+    if (!summary || summary.coordinatorNpub !== coordinatorNpub) {
+      continue;
+    }
+    const runtime = new QuestionnaireOptionACoordinatorRuntime(input.signer, electionId);
+    runtime.bootstrapCoordinatorNpub({
+      coordinatorNpub,
+      summary,
+    });
+    runtime.processPendingBlindRequests();
+    runtime.processPendingSubmissions(input.requiredQuestionIdsByElectionId?.[electionId] ?? []);
+    processedElectionIds.push(electionId);
+  }
+
+  return {
+    processedElectionIds,
+    processedElections: processedElectionIds.length,
+  };
 }
