@@ -1,4 +1,4 @@
-import { finalizeEvent, generateSecretKey, getEventHash, getPublicKey, nip19, nip44, type NostrEvent } from "nostr-tools";
+import { finalizeEvent, generateSecretKey, getEventHash, getPublicKey, nip17, nip19, nip44, type NostrEvent } from "nostr-tools";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import { getSharedNostrPool } from "./sharedNostrPool";
 import { SIMPLE_DM_RELAYS } from "./simpleShardDm";
@@ -33,6 +33,14 @@ function toHexPubkey(pubkey: string) {
     return decoded.data as string;
   }
   return value;
+}
+
+function decodeNsecSecretKey(nsec: string) {
+  const decoded = nip19.decode(nsec.trim());
+  if (decoded.type !== "nsec") {
+    throw new Error("Expected nsec.");
+  }
+  return decoded.data as Uint8Array;
 }
 
 function toNpub(pubkey: string) {
@@ -220,6 +228,52 @@ export async function fetchOptionAInviteDms(input: {
       }
       const rumorPayload = await input.signer.nip44Decrypt(sealEvent.pubkey, sealEvent.content);
       const rumor = JSON.parse(rumorPayload) as { content?: string };
+      if (!rumor || typeof rumor.content !== "string") {
+        continue;
+      }
+      const invite = parseInviteDmContent(rumor.content);
+      if (!invite) {
+        continue;
+      }
+      if (invite.invitedNpub !== recipientNpub) {
+        continue;
+      }
+      if (input.electionId?.trim() && invite.electionId !== input.electionId.trim()) {
+        continue;
+      }
+      const key = `${invite.electionId}:${invite.coordinatorNpub}`;
+      if (!unique.has(key)) {
+        unique.set(key, invite);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return [...unique.values()];
+}
+
+export async function fetchOptionAInviteDmsWithNsec(input: {
+  nsec: string;
+  electionId?: string;
+  relays?: string[];
+  limit?: number;
+}) {
+  const secretKey = decodeNsecSecretKey(input.nsec);
+  const recipientHex = getPublicKey(secretKey);
+  const recipientNpub = toNpub(recipientHex);
+  const relays = selectReadRelays(buildRelays(input.relays));
+  const pool = getSharedNostrPool();
+  const events = await pool.querySync(relays, {
+    kinds: [KIND_GIFT_WRAP],
+    "#p": [recipientHex],
+    limit: Math.max(1, input.limit ?? 50),
+  });
+
+  const unique = new Map<string, ElectionInviteMessage>();
+  const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
+  for (const event of sorted) {
+    try {
+      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string };
       if (!rumor || typeof rumor.content !== "string") {
         continue;
       }

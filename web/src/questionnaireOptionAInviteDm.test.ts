@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { nip19 } from "nostr-tools";
+import { generateSecretKey, getPublicKey, nip17, nip19 } from "nostr-tools";
 import type { SignerService } from "./services/signerService";
-import { fetchOptionAInviteDms, publishOptionAInviteDm } from "./questionnaireOptionAInviteDm";
+import { fetchOptionAInviteDms, fetchOptionAInviteDmsWithNsec, publishOptionAInviteDm } from "./questionnaireOptionAInviteDm";
 
 const querySync = vi.fn();
 const publish = vi.fn();
@@ -133,6 +133,50 @@ describe("questionnaireOptionAInviteDm", () => {
 
     expect(invites).toHaveLength(1);
     expect(invites[0]?.electionId).toBe("e2");
+    expect(invites[0]?.invitedNpub).toBe(recipientNpub);
+  });
+
+  it("reads invite DMs with local nsec when no external signer is used", async () => {
+    const recipientSecret = generateSecretKey();
+    const recipientHex = getPublicKey(recipientSecret);
+    const recipientNpub = nip19.npubEncode(recipientHex);
+    const recipientNsec = nip19.nsecEncode(recipientSecret);
+    const senderSecret = generateSecretKey();
+    const senderHex = getPublicKey(senderSecret);
+    const invite = {
+      type: "election_invite" as const,
+      schemaVersion: 1 as const,
+      electionId: "e3",
+      title: "Invite local",
+      description: "",
+      voteUrl: "https://example.test/vote",
+      invitedNpub: recipientNpub,
+      coordinatorNpub: nip19.npubEncode(senderHex),
+      expiresAt: null,
+    };
+
+    const wrapped = nip17.wrapEvent(
+      senderSecret,
+      { publicKey: recipientHex, relayUrl: "wss://relay.example" },
+      JSON.stringify({
+        type: "optiona_invite_dm",
+        schemaVersion: 1,
+        invite,
+        sentAt: new Date().toISOString(),
+      }),
+      "Option A invite",
+    );
+
+    querySync.mockResolvedValue([wrapped]);
+
+    const invites = await fetchOptionAInviteDmsWithNsec({
+      nsec: recipientNsec,
+      electionId: "e3",
+      limit: 20,
+    });
+
+    expect(invites).toHaveLength(1);
+    expect(invites[0]?.electionId).toBe("e3");
     expect(invites[0]?.invitedNpub).toBe(recipientNpub);
   });
 });

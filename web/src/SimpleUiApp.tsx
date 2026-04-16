@@ -51,7 +51,7 @@ import {
   QUESTIONNAIRE_DEFINITION_KIND,
   QUESTIONNAIRE_STATE_KIND,
 } from "./questionnaireNostr";
-import { fetchOptionAInviteDms } from "./questionnaireOptionAInviteDm";
+import { fetchOptionAInviteDms, fetchOptionAInviteDmsWithNsec } from "./questionnaireOptionAInviteDm";
 import { publishInviteToMailbox } from "./questionnaireOptionAStorage";
 import {
   selectLatestQuestionnaireDefinition,
@@ -1296,6 +1296,11 @@ export default function SimpleUiApp() {
   }
 
   function refreshIdentity() {
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY);
+    }
+    setSignerNpub("");
+    setSignerStatus("Signed out.");
     identityHydrationEpochRef.current += 1;
     const nextKeypair = createSimpleVoterKeypair();
     void saveSimpleActorState({
@@ -1309,11 +1314,22 @@ export default function SimpleUiApp() {
     clearVoterSessionState({ clearManualCoordinators: true });
   }
 
+  function signOutSignerSession() {
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY);
+    }
+    setSignerNpub("");
+    setSignerStatus("Signed out.");
+  }
+
   async function loginWithSigner() {
     try {
       const signer = createSignerService();
       const rawPubkey = await signer.getPublicKey();
       const npub = rawPubkey.startsWith("npub1") ? rawPubkey : nip19.npubEncode(rawPubkey);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY, npub);
+      }
       setSignerNpub(npub);
       setSignerStatus("Signer connected.");
     } catch (error) {
@@ -1616,6 +1632,45 @@ export default function SimpleUiApp() {
           : `Checked invites for ${shortenNpub(signerNpub)}. Found ${invites.length} questionnaire invite${invites.length === 1 ? "" : "s"}.`,
       );
     } catch (error) {
+      if (error instanceof SignerServiceError && error.code === "unavailable" && voterKeypair?.nsec?.trim()) {
+        try {
+          const signerNpub = voterKeypair.npub.trim();
+          const invites = await fetchOptionAInviteDmsWithNsec({
+            nsec: voterKeypair.nsec,
+            limit: 40,
+          });
+          for (const invite of invites) {
+            publishInviteToMailbox(invite);
+          }
+          const discoveredCoordinatorNpubs = sanitizeCoordinatorNpubs(invites.map((invite) => invite.coordinatorNpub));
+          const discoveredQuestionnaireIds = [...new Set(
+            invites
+              .map((invite) => invite.electionId?.trim() ?? "")
+              .filter((value) => value.length > 0),
+          )];
+          if (discoveredCoordinatorNpubs.length > 0) {
+            setManualCoordinators((current) => sanitizeCoordinatorNpubs([...current, ...discoveredCoordinatorNpubs]));
+          }
+          if (discoveredQuestionnaireIds.length > 0) {
+            setAnnouncedQuestionnaireIds((current) => {
+              const next = [...new Set([...current, ...discoveredQuestionnaireIds])].slice(-8);
+              return next.length === current.length
+                && next.every((value, index) => value === current[index])
+                ? current
+                : next;
+            });
+          }
+          setRequestStatus(
+            invites.length === 0
+              ? `Checked invites for ${shortenNpub(signerNpub)} (local key). No questionnaire invites found.`
+              : `Checked invites for ${shortenNpub(signerNpub)} (local key). Found ${invites.length} questionnaire invite${invites.length === 1 ? "" : "s"}.`,
+          );
+          return;
+        } catch {
+          setRequestStatus("Could not check questionnaire invites with local key.");
+          return;
+        }
+      }
       if (error instanceof SignerServiceError) {
         setRequestStatus(error.message);
         return;
@@ -2570,6 +2625,14 @@ export default function SimpleUiApp() {
               onClick={() => void loginWithSigner()}
             >
               Login
+            </button>
+            <button
+              type='button'
+              className='simple-voter-secondary'
+              onClick={signOutSignerSession}
+              disabled={!signerNpub.trim()}
+            >
+              Sign out
             </button>
             <button
               type='button'

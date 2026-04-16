@@ -2849,6 +2849,11 @@ export default function SimpleCoordinatorApp() {
   }, [isCourseFeedbackMode, selectedSubmittedVote?.votingId]);
 
   function refreshIdentity() {
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY);
+    }
+    setSignerNpub("");
+    setSignerStatus("Signed out.");
     identityHydrationEpochRef.current += 1;
     const nextKeypair = createSimpleCoordinatorKeypair();
     void saveSimpleActorState({
@@ -2896,11 +2901,22 @@ export default function SimpleCoordinatorApp() {
     roundBroadcastInFlightRef.current = null;
   }
 
+  function signOutSignerSession() {
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY);
+    }
+    setSignerNpub("");
+    setSignerStatus("Signed out.");
+  }
+
   async function loginWithSigner() {
     try {
       const signer = createSignerService();
       const rawPubkey = await signer.getPublicKey();
       const npub = rawPubkey.startsWith("npub1") ? rawPubkey : nip19.npubEncode(rawPubkey);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY, npub);
+      }
       setSignerNpub(npub);
       setSignerStatus("Signer connected.");
     } catch (error) {
@@ -5119,6 +5135,14 @@ export default function SimpleCoordinatorApp() {
               onClick={() => void loginWithSigner()}
             >
               Login
+            </button>
+            <button
+              type='button'
+              className='simple-voter-secondary'
+              onClick={signOutSignerSession}
+              disabled={!signerNpub.trim()}
+            >
+              Sign out
             </button>
             <button
               type='button'
