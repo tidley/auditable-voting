@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { nip19 } from "nostr-tools";
 import { fetchQuestionnaireDefinitions } from "./questionnaireTransport";
 import { parseInviteFromUrl } from "./questionnaireInvite";
 import { createSignerService, SignerServiceError } from "./services/signerService";
@@ -6,8 +7,9 @@ import {
   QuestionnaireOptionAVoterRuntime,
   OptionARuntimeError,
 } from "./questionnaireOptionARuntime";
-import type { QuestionnaireAnswer } from "./questionnaireOptionA";
+import type { ElectionInviteMessage, QuestionnaireAnswer } from "./questionnaireOptionA";
 import { deriveActorDisplayId } from "./actorDisplay";
+import { listInvitesFromMailbox } from "./questionnaireOptionAStorage";
 
 function deriveElectionId() {
   const params = new URLSearchParams(window.location.search);
@@ -44,6 +46,8 @@ export default function QuestionnaireOptionAVoterPanel() {
   const [runtime, setRuntime] = useState<QuestionnaireOptionAVoterRuntime | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [signedInNpub, setSignedInNpub] = useState<string>("");
+  const [pendingInvites, setPendingInvites] = useState<ElectionInviteMessage[]>([]);
+  const [activeInvite, setActiveInvite] = useState<ElectionInviteMessage | null>(null);
   const [questionnaireTitle, setQuestionnaireTitle] = useState<string>("Questionnaire");
   const [questionnaireDescription, setQuestionnaireDescription] = useState<string>("");
   const [questions, setQuestions] = useState<Array<{
@@ -59,11 +63,11 @@ export default function QuestionnaireOptionAVoterPanel() {
   const [refreshNonce, setRefreshNonce] = useState(0);
 
   const inviteContext = useMemo(() => parseInviteFromUrl(), []);
-  const electionId = inviteContext.electionId ?? deriveElectionId();
+  const [electionId, setElectionId] = useState(inviteContext.electionId ?? deriveElectionId());
 
   useEffect(() => {
     if (!electionId) {
-      setStatus("Missing election id in URL.");
+      setRuntime(null);
       return;
     }
     const signer = createSignerService();
@@ -134,18 +138,32 @@ export default function QuestionnaireOptionAVoterPanel() {
   );
 
   async function login() {
-    if (!runtime) {
-      return;
-    }
     try {
+      const signer = createSignerService();
+      const rawPubkey = await signer.getPublicKey();
+      const signerNpub = rawPubkey.startsWith("npub1") ? rawPubkey : nip19.npubEncode(rawPubkey);
+      setSignedInNpub(signerNpub);
+
+      if (!runtime) {
+        const invites = listInvitesFromMailbox(signerNpub);
+        setPendingInvites(invites);
+        if (invites.length === 0) {
+          setStatus("Signed in. No pending questionnaire invites were found.");
+        } else {
+          setStatus(`Signed in as ${deriveActorDisplayId(signerNpub)}. ${invites.length} pending invite${invites.length === 1 ? "" : "s"} found.`);
+        }
+        return;
+      }
+
       const next = await runtime.loginWithSigner(inviteContext.invite);
       setSignedInNpub(next.invitedNpub);
-      if (inviteContext.invite && !next.blindRequest && !next.credentialReady) {
-        runtime.requestBlindBallot();
-        setStatus(`Signed in as ${deriveActorDisplayId(next.invitedNpub)}. Invite detected; ballot request sent to coordinator.`);
-      } else {
-        setStatus(`Signed in as ${deriveActorDisplayId(next.invitedNpub)}.`);
-      }
+      const invites = listInvitesFromMailbox(next.invitedNpub);
+      setPendingInvites(invites);
+      const pendingInvite = next.inviteMessage && !next.blindRequestSent && !next.credentialReady
+        ? next.inviteMessage
+        : null;
+      setActiveInvite(pendingInvite);
+      setStatus(`Signed in as ${deriveActorDisplayId(next.invitedNpub)}.`);
       setRefreshNonce((value) => value + 1);
     } catch (error) {
       if (error instanceof OptionARuntimeError || error instanceof SignerServiceError) {
@@ -153,6 +171,28 @@ export default function QuestionnaireOptionAVoterPanel() {
         return;
       }
       setStatus("Login failed.");
+    }
+  }
+
+  async function openInvite(invite: ElectionInviteMessage, requestAfterLogin = false) {
+    try {
+      const voterRuntime = new QuestionnaireOptionAVoterRuntime(createSignerService(), invite.electionId);
+      const next = await voterRuntime.loginWithSigner(invite);
+      setElectionId(invite.electionId);
+      setRuntime(voterRuntime);
+      setSignedInNpub(next.invitedNpub);
+      const refreshedInvites = listInvitesFromMailbox(next.invitedNpub);
+      setPendingInvites(refreshedInvites);
+      setActiveInvite(!next.blindRequestSent && !next.credentialReady ? invite : null);
+      if (requestAfterLogin && !next.blindRequestSent && !next.credentialReady) {
+        voterRuntime.requestBlindBallot();
+        setStatus(`Opened ${invite.title || invite.electionId}. Blind ballot request sent.`);
+      } else {
+        setStatus(`Opened ${invite.title || invite.electionId}.`);
+      }
+      setRefreshNonce((value) => value + 1);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not open invite.");
     }
   }
 
@@ -178,6 +218,7 @@ export default function QuestionnaireOptionAVoterPanel() {
     }
     try {
       runtime.requestBlindBallot();
+      setActiveInvite(null);
       setStatus("Blind ballot request sent. Waiting for coordinator issuance.");
       setRefreshNonce((value) => value + 1);
     } catch (error) {
@@ -233,6 +274,45 @@ export default function QuestionnaireOptionAVoterPanel() {
       </div>
       {signedInNpub ? <p className='simple-voter-note'>Signed in as {signedInNpub}</p> : null}
       <p className='simple-voter-note'>Election ID: {electionId || "Missing"}</p>
+      {pendingInvites.length > 0 ? (
+        <section className='simple-settings-card' aria-label='Pending questionnaire invites'>
+          <h4 className='simple-voter-section-title'>Pending invites</h4>
+          <ul className='simple-vote-status-list'>
+            {pendingInvites.map((invite) => (
+              <li key={`${invite.electionId}:${invite.coordinatorNpub}`}>
+                <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
+                {invite.title || invite.electionId}
+                <button
+                  type='button'
+                  className='simple-voter-secondary'
+                  style={{ marginLeft: 8 }}
+                  onClick={() => void openInvite(invite)}
+                >
+                  Open
+                </button>
+                <button
+                  type='button'
+                  className='simple-voter-secondary'
+                  style={{ marginLeft: 8 }}
+                  onClick={() => void openInvite(invite, true)}
+                >
+                  Open + request ballot
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      {activeInvite && flags.canRequestBallot ? (
+        <section className='simple-settings-card' aria-label='Invite action'>
+          <p className='simple-voter-note'>
+            Invite ready for {activeInvite.title || activeInvite.electionId}. Request your blind ballot to continue.
+          </p>
+          <button type='button' className='simple-voter-secondary' onClick={requestBallot}>
+            Request blind ballot now
+          </button>
+        </section>
+      ) : null}
 
       <ul className='simple-vote-status-list'>
         <li><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Login verified: {snapshot?.loginVerified ? "Yes" : "No"}</li>

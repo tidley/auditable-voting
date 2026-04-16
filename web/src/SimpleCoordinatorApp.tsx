@@ -2958,7 +2958,7 @@ export default function SimpleCoordinatorApp() {
   }
 
   function sendInviteToKnownVoter(invitedNpub: string) {
-    if (!optionACoordinatorRuntime || !optionAElectionId || !keypair?.npub) {
+    if (!optionACoordinatorRuntime || !optionAElectionId || !activeCoordinatorNpub) {
       return;
     }
     try {
@@ -2974,7 +2974,7 @@ export default function SimpleCoordinatorApp() {
             description: "",
             voteUrl: "",
             invitedNpub,
-            coordinatorNpub: keypair.npub,
+            coordinatorNpub: activeCoordinatorNpub,
             expiresAt: null,
           },
         }),
@@ -2985,6 +2985,57 @@ export default function SimpleCoordinatorApp() {
     } catch (error) {
       setKnownVoterInviteStatus(error instanceof Error ? error.message : "Invite failed.");
     }
+  }
+
+  function sendInvitesToAllWhitelistedVoters() {
+    if (!optionACoordinatorRuntime || !optionAElectionId || !activeCoordinatorNpub) {
+      return;
+    }
+    const targets = optionAKnownVoters
+      .map((entry) => entry.invitedNpub)
+      .filter((npub, index, values) => values.indexOf(npub) === index);
+    if (targets.length === 0) {
+      setKnownVoterInviteStatus("No whitelisted voters to invite.");
+      return;
+    }
+
+    const copiedLinks: string[] = [];
+    let sentCount = 0;
+    for (const invitedNpub of targets) {
+      try {
+        const invite = optionACoordinatorRuntime.sendInvite(invitedNpub, {
+          title: questionPrompt.trim() || "Questionnaire",
+          description: "",
+          voteUrl: buildInviteUrl({
+            invite: {
+              type: "election_invite",
+              schemaVersion: 1,
+              electionId: optionAElectionId,
+              title: questionPrompt.trim() || "Questionnaire",
+              description: "",
+              voteUrl: "",
+              invitedNpub,
+              coordinatorNpub: activeCoordinatorNpub,
+              expiresAt: null,
+            },
+          }),
+        });
+        copiedLinks.push(buildInviteUrl({ invite }));
+        sentCount += 1;
+      } catch {
+        // Continue inviting remaining whitelist entries.
+      }
+    }
+
+    if (copiedLinks.length > 0) {
+      void navigator.clipboard.writeText(copiedLinks.join("\n"));
+    }
+    setKnownVoterInviteRefreshNonce((value) => value + 1);
+    setKnownVoterInviteStatus(
+      sentCount > 0
+        ? `Bulk invited ${sentCount}/${targets.length} whitelisted voters. Invite links copied (newline-separated).`
+        : "Bulk invite could not send any invitations.",
+    );
   }
 
   function processKnownVoterRequests() {
@@ -5284,6 +5335,14 @@ export default function SimpleCoordinatorApp() {
                       onClick={processKnownVoterRequests}
                     >
                       Process requests
+                    </button>
+                    <button
+                      type='button'
+                      className='simple-voter-secondary'
+                      onClick={sendInvitesToAllWhitelistedVoters}
+                      disabled={optionAKnownVoters.length === 0}
+                    >
+                      Invite all whitelisted
                     </button>
                   </div>
                   {optionAKnownVoters.length > 0 ? (

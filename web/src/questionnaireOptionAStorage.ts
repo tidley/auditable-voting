@@ -227,6 +227,15 @@ export function readInviteFromMailbox(input: { invitedNpub: string; electionId: 
   return mailbox[input.invitedNpub]?.[input.electionId] ?? null;
 }
 
+export function listInvitesFromMailbox(invitedNpub: string) {
+  const mailbox = readJson<Record<string, Record<string, ElectionInviteMessage>>>(INVITE_MAILBOX_KEY, {});
+  return Object.values(mailbox[invitedNpub] ?? {}).sort((left, right) => {
+    const leftElection = left.electionId ?? "";
+    const rightElection = right.electionId ?? "";
+    return leftElection.localeCompare(rightElection);
+  });
+}
+
 export function enqueueBlindRequest(request: BlindBallotRequest) {
   const queue = readJson<BlindBallotRequest[]>(REQUEST_QUEUE_KEY, []);
   queue.push(request);
