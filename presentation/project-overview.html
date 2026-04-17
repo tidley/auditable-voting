@@ -571,6 +571,7 @@
           <li>Each coordinator now sends its own ticket share directly to the voter</li>
           <li>Non-lead ticket sends are slightly staggered by share index to reduce same-recipient relay bursts</li>
           <li>Automatic follow, blind-request, ticket, and acknowledgement sends now use random 0-30s human-style pacing with slower retries</li>
+          <li>Questionnaire invites can be opened by a local ephemeral voter identity; retries preserve the same ballot-request id until issuance arrives</li>
           <li>Mailbox ticket publishes now keep one deterministic anchor relay, rotate secondary relays by recipient, and temporarily cool down relays that rate-limit</li>
           <li>Coordinator follower rows now expose per-ticket relay publish diagnostics for debugging delivery gaps</li>
           <li>The default path currently prefers a tight curated relay set over broad hint expansion</li>

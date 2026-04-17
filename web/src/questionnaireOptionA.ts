@@ -380,6 +380,12 @@ export function reduceVoterEvent(
     if (next.blindIssuance) {
       return reduceVoterError(state, "issuance_conflict");
     }
+    if (next.blindRequest) {
+      const sameRequest = JSON.stringify(next.blindRequest) === JSON.stringify(event.request);
+      return sameRequest
+        ? { state, ok: true }
+        : reduceVoterError(state, "issuance_conflict");
+    }
     next.blindRequest = event.request;
     next.lastUpdatedAt = new Date().toISOString();
     return { state: next, ok: true };
@@ -615,10 +621,20 @@ export function reduceCoordinatorEvent(
   }
 
   if (event.type === "BALLOT_ACCEPTED") {
-    if (next.acceptedNullifiers[submission.nullifier]) {
+    const existingAcceptance = next.acceptanceResults[submission.submissionId];
+    if (existingAcceptance?.accepted === true) {
+      return { state, ok: true };
+    }
+    const acceptedSubmissionId = next.acceptedNullifiers[submission.nullifier];
+    if (acceptedSubmissionId && acceptedSubmissionId !== submission.submissionId) {
       return reduceCoordinatorError(state, "duplicate_nullifier");
     }
-    if (findAcceptedSubmissionByNpub(next.receivedSubmissions, next.acceptanceResults, submission.invitedNpub)) {
+    const acceptedForVoter = findAcceptedSubmissionByNpub(
+      next.receivedSubmissions,
+      next.acceptanceResults,
+      submission.invitedNpub,
+    );
+    if (acceptedForVoter && acceptedForVoter.submissionId !== submission.submissionId) {
       return reduceCoordinatorError(state, "already_voted");
     }
     next.acceptedNullifiers[submission.nullifier] = submission.submissionId;
@@ -667,6 +683,13 @@ export function restoreCoordinatorElectionState(input: {
     const submission = merged.receivedSubmissions[submissionId];
     if (submission) {
       merged.acceptedNullifiers[submission.nullifier] = submissionId;
+    }
+  }
+
+  for (const request of Object.values(merged.pendingBlindRequests)) {
+    const entry = merged.whitelist[request.invitedNpub];
+    if (entry) {
+      entry.claimState = maxClaimState(entry.claimState, "blind_request_received");
     }
   }
 

@@ -342,6 +342,20 @@ describe("questionnaireOptionA", () => {
     });
     expect(accept1.ok).toBe(true);
 
+    const acceptReplay = reduceCoordinatorEvent(accept1.state, {
+      type: "BALLOT_ACCEPTED",
+      result: {
+        type: "ballot_acceptance_result",
+        schemaVersion: 1,
+        electionId,
+        submissionId: "submission-1",
+        accepted: true,
+        decidedAt: nowIso,
+      },
+    });
+    expect(acceptReplay.ok).toBe(true);
+    expect(countAcceptedUniqueVoters(acceptReplay.state)).toBe(1);
+
     const submission2 = makeSubmission({ submissionId: "submission-2", nullifier: "nullifier-1" });
     const recv2 = reduceCoordinatorEvent(accept1.state, {
       type: "BALLOT_SUBMISSION_RECEIVED",
@@ -417,6 +431,17 @@ describe("questionnaireOptionA", () => {
     });
     expect(restoredCoordinator.whitelist[voterNpub]?.claimState).toBe("vote_accepted");
     expect(countAcceptedUniqueVoters(restoredCoordinator)).toBe(1);
+
+    const restoredWithCanonicalRequest = restoreCoordinatorElectionState({
+      persisted: restoredCoordinator,
+      canonicalRequests: {
+        "request-2": {
+          ...makeBlindRequest("request-2"),
+          invitedNpub: "npub1voter2",
+        },
+      },
+    });
+    expect(restoredWithCanonicalRequest.whitelist["npub1voter2"]?.claimState).toBe("blind_request_received");
 
     const duplicateReplay = restoreCoordinatorElectionState({
       persisted: restoredCoordinator,

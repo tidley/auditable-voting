@@ -1054,6 +1054,8 @@ The project is attempting to separate voter eligibility from public ballot ident
 - Voter/coordinator questionnaire panels expose signer login and the whitelist/invite/request/issuance/submission path.
 - Coordinator invites are sent as NIP-17 gift-wrapped DMs (`kind 1059` with `kind 13` seal / `kind 14` rumor), and voter login discovers pending invites from relay history.
 - Invite-driven voter login can auto-prepare/send the first blind request once login is verified.
+- Invite/login npubs and local voter/responder npubs may differ; opening an invite can bind it to the current local voter identity, then the coordinator either auto-issues for whitelisted voters or manually authorises unexpected requesters.
+- Invites are durable and can remain idle indefinitely; ballot request retries preserve the same request id and re-queue until the coordinator issues a credential.
 </script>
 
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>

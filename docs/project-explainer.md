@@ -734,3 +734,5 @@ The Option A runtime currently provides:
 - single accepted submission accounting with duplicate protection
 - local resume keyed by election id and signer `npub`
 - invite-driven voter login can auto-prepare/send the first blind request once login is verified
+- invite/login npubs and local voter/responder npubs may differ; the invite can be opened against the current local voter identity, then the coordinator either auto-issues for whitelisted voters or manually authorises unexpected requesters
+- invites are durable and can remain idle indefinitely; ballot request retries preserve the same request id and re-queue until the coordinator issues a credential

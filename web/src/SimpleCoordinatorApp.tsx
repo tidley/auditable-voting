@@ -281,10 +281,6 @@ const SIMPLE_TICKET_SEND_MAX_CONCURRENCY = 3;
 const SIMPLE_TICKET_OBSERVE_RECOVERY_AGE_MS = 5000;
 const SIMPLE_COORDINATOR_STARTUP_FORCED_RECOVERY_DELAY_MS = 6000;
 const SIMPLE_COORDINATOR_STARTUP_BACKFILL_LIMIT = 200;
-const SIMPLE_OPTIONA_INVITE_AUTO_RESEND_BASE_MS = 30000;
-const SIMPLE_OPTIONA_INVITE_AUTO_RESEND_MAX_MS = 240000;
-const SIMPLE_OPTIONA_INVITE_AUTO_RESEND_MAX_ATTEMPTS = 4;
-const SIMPLE_OPTIONA_INVITE_AUTO_RESEND_SWEEP_MS = 6000;
 
 function readDeploymentModeFromUrl() {
   if (typeof window === "undefined") {
@@ -786,7 +782,6 @@ export default function SimpleCoordinatorApp() {
   );
   const blindKeyRepublishAtRef = useRef<Record<string, number>>({});
   const autoSendInFlightRef = useRef<Set<string>>(new Set());
-  const optionAInviteAutoResendRef = useRef<Record<string, { attempts: number; lastAttemptAt: number; inFlight: boolean }>>({});
   const autoShareAssignmentAttemptRef = useRef('');
   const coordinatorControlServiceRef = useRef<CoordinatorControlService | null>(null);
   const protocolStateServiceRef = useRef<ProtocolStateService | null>(null);
@@ -3163,7 +3158,7 @@ export default function SimpleCoordinatorApp() {
     }
   }
 
-  async function sendInviteToKnownVoter(invitedNpub: string, options?: { autoResend?: boolean }) {
+  async function sendInviteToKnownVoter(invitedNpub: string) {
     if (!optionACoordinatorRuntime || !optionAElectionId || !activeCoordinatorNpub) {
       return;
     }
@@ -3185,21 +3180,11 @@ export default function SimpleCoordinatorApp() {
           },
         }),
       });
-      if (!options?.autoResend) {
-        void navigator.clipboard.writeText(buildInviteUrl({ invite: sent.invite }));
-      }
+      void navigator.clipboard.writeText(buildInviteUrl({ invite: sent.invite }));
       setKnownVoterInviteStatus(
-        options?.autoResend
-          ? (
-              sent.dmDelivered
-                ? `Auto-resent invite DM to ${deriveActorDisplayId(invitedNpub)}.`
-                : `Auto-resend stored locally for ${deriveActorDisplayId(invitedNpub)}; DM delivery failed (${sent.dmFailureReason ?? "unknown error"}).`
-            )
-          : (
-              sent.dmDelivered
-                ? `Invite DM sent to ${deriveActorDisplayId(invitedNpub)}. Link copied.`
-                : `Invite saved locally for ${deriveActorDisplayId(invitedNpub)}; DM delivery failed (${sent.dmFailureReason ?? "unknown error"}). Link copied.`
-            ),
+        sent.dmDelivered
+          ? `Invite DM sent to ${deriveActorDisplayId(invitedNpub)}. Link copied.`
+          : `Invite saved locally for ${deriveActorDisplayId(invitedNpub)}; DM delivery failed (${sent.dmFailureReason ?? "unknown error"}). Link copied.`,
       );
       setAutoSendFollowers((current) => ({
         ...current,
@@ -3315,71 +3300,6 @@ export default function SimpleCoordinatorApp() {
       window.clearInterval(intervalId);
     };
   }, [activeCoordinatorNpub, optionAElectionId, optionASigner]);
-
-  useEffect(() => {
-    if (!optionACoordinatorRuntime || !optionAElectionId || !activeCoordinatorNpub || optionAKnownVoters.length === 0) {
-      optionAInviteAutoResendRef.current = {};
-      return;
-    }
-
-    const intervalId = window.setInterval(() => {
-      const nowMs = Date.now();
-      for (const entry of optionAKnownVoters) {
-        if (entry.claimState !== "invited") {
-          delete optionAInviteAutoResendRef.current[entry.invitedNpub];
-          continue;
-        }
-        const inviteSentAtMs = Date.parse(entry.inviteSentAt ?? "");
-        if (!Number.isFinite(inviteSentAtMs)) {
-          continue;
-        }
-        const tracked = optionAInviteAutoResendRef.current[entry.invitedNpub] ?? {
-          attempts: 0,
-          lastAttemptAt: 0,
-          inFlight: false,
-        };
-        if (tracked.inFlight || tracked.attempts >= SIMPLE_OPTIONA_INVITE_AUTO_RESEND_MAX_ATTEMPTS) {
-          optionAInviteAutoResendRef.current[entry.invitedNpub] = tracked;
-          continue;
-        }
-        const retryWindowMs = Math.min(
-          SIMPLE_OPTIONA_INVITE_AUTO_RESEND_MAX_MS,
-          SIMPLE_OPTIONA_INVITE_AUTO_RESEND_BASE_MS * (2 ** tracked.attempts),
-        );
-        const inviteAgeMs = nowMs - inviteSentAtMs;
-        const elapsedSinceLastAttemptMs = tracked.lastAttemptAt > 0
-          ? nowMs - tracked.lastAttemptAt
-          : Number.POSITIVE_INFINITY;
-        if (inviteAgeMs < SIMPLE_OPTIONA_INVITE_AUTO_RESEND_BASE_MS || elapsedSinceLastAttemptMs < retryWindowMs) {
-          optionAInviteAutoResendRef.current[entry.invitedNpub] = tracked;
-          continue;
-        }
-
-        tracked.inFlight = true;
-        optionAInviteAutoResendRef.current[entry.invitedNpub] = tracked;
-
-        void sendInviteToKnownVoter(entry.invitedNpub, { autoResend: true })
-          .finally(() => {
-            const existing = optionAInviteAutoResendRef.current[entry.invitedNpub] ?? tracked;
-            optionAInviteAutoResendRef.current[entry.invitedNpub] = {
-              attempts: existing.attempts + 1,
-              lastAttemptAt: Date.now(),
-              inFlight: false,
-            };
-          });
-      }
-    }, SIMPLE_OPTIONA_INVITE_AUTO_RESEND_SWEEP_MS);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [
-    activeCoordinatorNpub,
-    optionACoordinatorRuntime,
-    optionAElectionId,
-    optionAKnownVoters,
-    questionPrompt,
-  ]);
 
   function authorizePendingRequester(invitedNpub: string) {
     if (!optionACoordinatorRuntime) {

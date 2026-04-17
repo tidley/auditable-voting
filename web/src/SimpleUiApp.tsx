@@ -2939,7 +2939,7 @@ export default function SimpleUiApp() {
               optionAAnnouncedQuestionnaireIds={announcedQuestionnaireIds}
               localVoterNpub={voterKeypair?.npub ?? ""}
             />
-            {isCourseFeedbackMode || hideLegacyLiveVotePanel ? null : (
+            {isCourseFeedbackMode || hideLegacyLiveVotePanel || questionnaireModeActive ? null : (
             effectiveLiveVoteSession ? (
               <>
                 {knownRounds.length > 1 ? (

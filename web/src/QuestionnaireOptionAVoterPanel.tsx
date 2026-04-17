@@ -71,6 +71,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [refreshNonce, setRefreshNonce] = useState(0);
   const autoRequestSentForRef = useRef<Record<string, true>>({});
+  const requestRetryAtRef = useRef<Record<string, number>>({});
 
   const inviteContext = useMemo(() => parseInviteFromUrl(), []);
   const [electionId, setElectionId] = useState(inviteContext.electionId ?? deriveElectionId());
@@ -358,13 +359,14 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       try {
         next = await voterRuntime.loginWithSigner(invite);
       } catch (error) {
-        if (!(error instanceof SignerServiceError)) {
+        if (!(error instanceof SignerServiceError) && !(error instanceof OptionARuntimeError && error.code === "invite_mismatch")) {
           throw error;
         }
         next = voterRuntime.bootstrapWithLocalIdentity({
           invitedNpub: props.localVoterNpub?.trim() || invite.invitedNpub,
           coordinatorNpub: invite.coordinatorNpub,
           invite,
+          allowInviteRecipientMismatch: true,
         });
       }
 
@@ -375,7 +377,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         voterNpub: next.invitedNpub,
         allowRelayFetch: false,
       });
-      setPendingInvites(refreshedInvites);
+      setPendingInvites(refreshedInvites.filter((entry) => entry.invitedNpub === next.invitedNpub));
       setActiveInvite(!next.blindRequestSent && !next.credentialReady ? invite : null);
       if (requestAfterLogin && !next.blindRequestSent && !next.credentialReady) {
         voterRuntime.requestBlindBallot();
@@ -475,6 +477,38 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
   }, [activeInvite, pendingInvites, runtime, snapshot]);
 
+  useEffect(() => {
+    if (!runtime || !snapshot?.loginVerified || !snapshot.blindRequestSent || snapshot.credentialReady || snapshot.submission) {
+      return;
+    }
+    const key = snapshot.electionId + ":" + snapshot.invitedNpub;
+    const retry = () => {
+      const now = Date.now();
+      const lastAttemptAt = requestRetryAtRef.current[key] ?? 0;
+      if (now - lastAttemptAt < 15000) {
+        return;
+      }
+      requestRetryAtRef.current[key] = now;
+      try {
+        runtime.requestBlindBallot();
+        runtime.refreshIssuanceAndAcceptance();
+        setRefreshNonce((value) => value + 1);
+      } catch {
+        // Retry is best-effort; explicit controls surface errors.
+      }
+    };
+    retry();
+    const intervalId = window.setInterval(retry, 15000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [runtime, snapshot?.electionId, snapshot?.invitedNpub, snapshot?.loginVerified, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission]);
+
+  const visiblePendingInvites = pendingInvites.filter((invite) => (
+    !signedInNpub || invite.invitedNpub === signedInNpub || Boolean(props.localVoterNpub?.trim())
+  ));
+  const waitingForCredential = Boolean(snapshot?.blindRequestSent && !snapshot?.credentialReady && !snapshot?.submission);
+
   const canSubmitNow = flags.canSubmitVote && requiredQuestionIds.every((questionId) => {
     const value = answers[questionId];
     if (Array.isArray(value)) {
@@ -497,11 +531,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       </div>
       {signedInNpub ? <p className='simple-voter-note'>Signed in as {signedInNpub}</p> : null}
       <p className='simple-voter-note'>Election ID: {electionId || "Missing"}</p>
-      {pendingInvites.length > 0 ? (
+      {visiblePendingInvites.length > 0 ? (
         <section className='simple-settings-card' aria-label='Pending questionnaire invites'>
           <h4 className='simple-voter-section-title'>Pending invites</h4>
           <ul className='simple-vote-status-list'>
-            {pendingInvites.map((invite) => (
+            {visiblePendingInvites.map((invite) => (
               <li key={`${invite.electionId}:${invite.coordinatorNpub}`}>
                 <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
                 {invite.title || invite.electionId}
@@ -543,6 +577,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         <li><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Credential ready: {snapshot?.credentialReady ? "Yes" : "No"}</li>
         <li><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Submission accepted: {snapshot?.submissionAccepted === true ? "Yes" : snapshot?.submissionAccepted === false ? "Rejected" : "Pending"}</li>
       </ul>
+
+      {waitingForCredential ? (
+        <p className='simple-voter-note'>Ballot request is queued for the coordinator. This questionnaire flow does not need a live round; keep this page open or ask the coordinator to use Process requests.</p>
+      ) : null}
 
       <h4 className='simple-voter-section-title'>{questionnaireTitle}</h4>
       {questionnaireDescription ? <p className='simple-voter-note'>{questionnaireDescription}</p> : null}

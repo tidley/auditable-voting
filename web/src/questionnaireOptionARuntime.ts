@@ -89,6 +89,15 @@ function emptyCoordinatorState(summary: ElectionSummary): CoordinatorElectionSta
   };
 }
 
+function findIssuedBlindResponse(
+  state: CoordinatorElectionState,
+  request: BlindBallotRequest,
+): BlindBallotIssuance | null {
+  return state.issuedBlindResponses[request.requestId]
+    ?? Object.values(state.issuedBlindResponses).find((issuance) => issuance.invitedNpub === request.invitedNpub)
+    ?? null;
+}
+
 function inferRejectReason(error?: string): BallotRejectReason {
   if (error === "duplicate_nullifier") {
     return "duplicate_nullifier";
@@ -196,16 +205,20 @@ export class QuestionnaireOptionAVoterRuntime {
     invitedNpub: string;
     coordinatorNpub?: string;
     invite?: ElectionInviteMessage | null;
+    allowInviteRecipientMismatch?: boolean;
   }) {
     const invitedNpub = toNpub((input.invitedNpub ?? "").trim());
     if (!invitedNpub) {
       throw new OptionARuntimeError("invite_missing", "Could not resolve invited voter identity.");
     }
-    const invite = input.invite
+    const rawInvite = input.invite
       ?? readInviteFromMailbox({ invitedNpub, electionId: this.electionId });
-    if (invite && invite.invitedNpub !== invitedNpub) {
+    if (rawInvite && rawInvite.invitedNpub !== invitedNpub && !input.allowInviteRecipientMismatch) {
       throw new OptionARuntimeError("invite_mismatch", "This invite is for a different voter identity.");
     }
+    const invite = rawInvite && rawInvite.invitedNpub !== invitedNpub
+      ? { ...rawInvite, invitedNpub }
+      : rawInvite;
 
     const summary = loadElectionSummary(this.electionId);
     const existingState = loadVoterState({
@@ -275,30 +288,45 @@ export class QuestionnaireOptionAVoterRuntime {
     if (!this.state) {
       throw new OptionARuntimeError("not_logged_in", "Login is required.");
     }
-    const request: BlindBallotRequest = {
-      type: "blind_ballot_request",
-      schemaVersion: 1,
-      electionId: this.state.electionId,
-      requestId: makeId("request"),
-      invitedNpub: this.state.invitedNpub,
-      blindedMessage: makeId("blinded"),
-      clientNonce: makeId("nonce"),
-      createdAt: nowIso(),
-    };
-    const created = reduceVoterEvent(this.state, { type: "BLIND_REQUEST_CREATED", request });
-    if (!created.ok) {
-      throw new OptionARuntimeError("issuance_failed", "Could not create blind request.");
+    if (this.state.blindIssuance) {
+      saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
+      return this.state;
     }
-    const sent = reduceVoterEvent(created.state, {
-      type: "BLIND_REQUEST_SENT",
-      electionId: this.state.electionId,
-      requestId: request.requestId,
-      sentAt: nowIso(),
-    });
-    if (!sent.ok) {
-      throw new OptionARuntimeError("issuance_failed", "Could not send blind request.");
+
+    let next = this.state;
+    let request = next.blindRequest;
+    if (!request) {
+      request = {
+        type: "blind_ballot_request",
+        schemaVersion: 1,
+        electionId: next.electionId,
+        requestId: makeId("request"),
+        invitedNpub: next.invitedNpub,
+        blindedMessage: makeId("blinded"),
+        clientNonce: makeId("nonce"),
+        createdAt: nowIso(),
+      };
+      const created = reduceVoterEvent(next, { type: "BLIND_REQUEST_CREATED", request });
+      if (!created.ok) {
+        throw new OptionARuntimeError("issuance_failed", "Could not create blind request.");
+      }
+      next = created.state;
     }
-    this.state = sent.state;
+
+    if (!next.blindRequestSent) {
+      const sent = reduceVoterEvent(next, {
+        type: "BLIND_REQUEST_SENT",
+        electionId: next.electionId,
+        requestId: request.requestId,
+        sentAt: nowIso(),
+      });
+      if (!sent.ok) {
+        throw new OptionARuntimeError("issuance_failed", "Could not send blind request.");
+      }
+      next = sent.state;
+    }
+
+    this.state = next;
     enqueueBlindRequest(request);
     saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
     return this.state;
@@ -578,6 +606,10 @@ export class QuestionnaireOptionACoordinatorRuntime {
         request,
       });
       if (!received.ok) {
+        const existingIssuance = findIssuedBlindResponse(next, request);
+        if (received.error === "already_issued" && existingIssuance) {
+          storeBlindIssuance(existingIssuance);
+        }
         if (received.error === "not_whitelisted") {
           const existing = this.pendingAuthorizationsByNpub[request.invitedNpub] ?? [];
           const alreadySeen = existing.some((entry) => entry.requestId === request.requestId);
@@ -588,6 +620,11 @@ export class QuestionnaireOptionACoordinatorRuntime {
         continue;
       }
       next = received.state;
+      const existingIssuance = findIssuedBlindResponse(next, request);
+      if (existingIssuance) {
+        storeBlindIssuance(existingIssuance);
+        continue;
+      }
       const issuance: BlindBallotIssuance = {
         type: "blind_ballot_response",
         schemaVersion: 1,

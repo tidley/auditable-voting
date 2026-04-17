@@ -5,6 +5,7 @@ import {
   QuestionnaireOptionACoordinatorRuntime,
   QuestionnaireOptionAVoterRuntime,
 } from "./questionnaireOptionARuntime";
+import { listBlindRequests, readBlindIssuance } from "./questionnaireOptionAStorage";
 import type { SignerService } from "./services/signerService";
 
 function signer(npub: string): SignerService {
@@ -90,6 +91,35 @@ describe("questionnaireOptionARuntime", () => {
     expect(resumed.getSnapshot()?.submissionAccepted).toBe(true);
   });
 
+  it("reuses an in-flight blind request across retries and republishes existing issuance", async () => {
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+    coordinator.addWhitelistNpub(voterNpub);
+    const sentInvite = await coordinator.sendInvite(voterNpub, {
+      title: "Runtime",
+      description: "Test",
+      voteUrl: "https://example.org/vote",
+    });
+
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionId);
+    await voter.loginWithSigner(sentInvite.invite);
+
+    const first = voter.requestBlindBallot();
+    const requestId = first.blindRequest?.requestId;
+    expect(requestId).toBeTruthy();
+
+    const retried = voter.requestBlindBallot();
+    expect(retried.blindRequest?.requestId).toBe(requestId);
+    expect(listBlindRequests(electionId).map((entry) => entry.requestId)).toEqual([requestId]);
+
+    coordinator.processPendingBlindRequests();
+    const issued = readBlindIssuance(requestId ?? "");
+    expect(issued?.requestId).toBe(requestId);
+
+    coordinator.processPendingBlindRequests();
+    expect(readBlindIssuance(requestId ?? "")).toEqual(issued);
+  });
+
   it("prevents duplicate issuance and duplicate accepted submissions from inflating unique count", async () => {
     const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
     await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
@@ -109,8 +139,10 @@ describe("questionnaireOptionARuntime", () => {
     coordinator.processPendingBlindRequests();
     voter.refreshIssuanceAndAcceptance();
 
-    // Re-request after issuance should not mint a second accepted credential.
-    expect(() => voter.requestBlindBallot()).toThrow();
+    // Re-request after issuance is idempotent and should not mint a second credential.
+    const issuedRequestId = voter.getSnapshot()?.blindRequest?.requestId;
+    const retryAfterIssuance = voter.requestBlindBallot();
+    expect(retryAfterIssuance.blindRequest?.requestId).toBe(issuedRequestId);
 
     voter.submitVote(["q1"]);
     coordinator.processPendingSubmissions(["q1"]);
@@ -137,6 +169,38 @@ describe("questionnaireOptionARuntime", () => {
     expect(coordinator.getPendingAuthorizations().some((entry) => entry.invitedNpub === otherNpub)).toBe(true);
 
     coordinator.authorizeRequester(otherNpub);
+    voter.refreshIssuanceAndAcceptance();
+    expect(voter.getSnapshot()?.credentialReady).toBe(true);
+  });
+
+  it("binds an invite to a local ephemeral voter identity when explicitly allowed", async () => {
+    const inviteRecipientNpub = "npub1inviteerecipient0000000000000000000000000000000";
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+    coordinator.addWhitelistNpub(voterNpub);
+
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(inviteRecipientNpub), electionId);
+    const state = voter.bootstrapWithLocalIdentity({
+      invitedNpub: voterNpub,
+      coordinatorNpub,
+      invite: {
+        type: "election_invite",
+        schemaVersion: 1,
+        electionId,
+        title: "Runtime",
+        description: "Test",
+        voteUrl: "https://example.org/vote",
+        invitedNpub: inviteRecipientNpub,
+        coordinatorNpub,
+        expiresAt: null,
+      },
+      allowInviteRecipientMismatch: true,
+    });
+
+    expect(state.loginVerified).toBe(true);
+    expect(state.invitedNpub).toBe(voterNpub);
+    voter.requestBlindBallot();
+    coordinator.processPendingBlindRequests();
     voter.refreshIssuanceAndAcceptance();
     expect(voter.getSnapshot()?.credentialReady).toBe(true);
   });

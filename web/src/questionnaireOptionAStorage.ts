@@ -250,8 +250,9 @@ export function listInvitesForElectionFromMailbox(electionId: string) {
 
 export function enqueueBlindRequest(request: BlindBallotRequest) {
   const queue = readJson<BlindBallotRequest[]>(REQUEST_QUEUE_KEY, []);
-  queue.push(request);
-  writeJson(REQUEST_QUEUE_KEY, queue);
+  const next = queue.filter((entry) => entry.requestId !== request.requestId);
+  next.push(request);
+  writeJson(REQUEST_QUEUE_KEY, next);
 }
 
 export function listBlindRequests(electionId: string) {
@@ -272,8 +273,9 @@ export function readBlindIssuance(requestId: string) {
 
 export function enqueueSubmission(submission: BallotSubmission) {
   const queue = readJson<BallotSubmission[]>(SUBMISSION_QUEUE_KEY, []);
-  queue.push(submission);
-  writeJson(SUBMISSION_QUEUE_KEY, queue);
+  const next = queue.filter((entry) => entry.submissionId !== submission.submissionId);
+  next.push(submission);
+  writeJson(SUBMISSION_QUEUE_KEY, next);
 }
 
 export function listSubmissions(electionId: string) {
