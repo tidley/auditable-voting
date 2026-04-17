@@ -23,6 +23,7 @@ vi.mock("./services/signerService", () => ({
 
 vi.mock("./questionnaireOptionAStorage", () => ({
   listInvitesFromMailbox: () => [],
+  listInvitesForElectionFromMailbox: () => [],
   publishInviteToMailbox: () => undefined,
 }));
 

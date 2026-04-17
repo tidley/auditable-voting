@@ -9,7 +9,11 @@ import {
 } from "./questionnaireOptionARuntime";
 import type { ElectionInviteMessage, QuestionnaireAnswer } from "./questionnaireOptionA";
 import { deriveActorDisplayId } from "./actorDisplay";
-import { listInvitesFromMailbox, publishInviteToMailbox } from "./questionnaireOptionAStorage";
+import {
+  listInvitesForElectionFromMailbox,
+  listInvitesFromMailbox,
+  publishInviteToMailbox,
+} from "./questionnaireOptionAStorage";
 import { fetchOptionAInviteDms } from "./questionnaireOptionAInviteDm";
 
 function deriveElectionId() {
@@ -45,6 +49,7 @@ function answerToOptionA(
 
 type QuestionnaireOptionAVoterPanelProps = {
   announcedQuestionnaireIds?: string[];
+  localVoterNpub?: string;
 };
 
 export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptionAVoterPanelProps) {
@@ -97,6 +102,37 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     const signer = createSignerService();
     setRuntime(new QuestionnaireOptionAVoterRuntime(signer, electionId));
   }, [electionId]);
+
+  useEffect(() => {
+    if (!runtime || signedInNpub.trim()) {
+      return;
+    }
+    const localVoterNpub = props.localVoterNpub?.trim() ?? "";
+    if (!localVoterNpub) {
+      return;
+    }
+    try {
+      const fallbackInvite = listInvitesFromMailbox(localVoterNpub).find((invite) => invite.electionId === electionId)
+        ?? listInvitesForElectionFromMailbox(electionId)[0]
+        ?? null;
+      const next = runtime.bootstrapWithLocalIdentity({
+        invitedNpub: localVoterNpub,
+        coordinatorNpub: fallbackInvite?.coordinatorNpub ?? undefined,
+        invite: fallbackInvite,
+      });
+      setSignedInNpub(next.invitedNpub);
+      void loadPendingInvites({ voterNpub: next.invitedNpub, allowRelayFetch: false }).then((invites) => {
+        setPendingInvites(invites);
+        const preferredInvite = invites.find((invite) => invite.electionId === electionId) ?? invites[0] ?? null;
+        setActiveInvite(next.inviteMessage && !next.blindRequestSent && !next.credentialReady
+          ? next.inviteMessage
+          : preferredInvite);
+      });
+      setRefreshNonce((value) => value + 1);
+    } catch {
+      // Keep explicit login available.
+    }
+  }, [runtime, signedInNpub, props.localVoterNpub, electionId]);
 
   useEffect(() => {
     if (!runtime || !signedInNpub.trim()) {
@@ -161,24 +197,78 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     [questions],
   );
 
-  async function loadPendingInvitesFromRelays(signerNpub: string) {
+  async function loadPendingInvites(input: { voterNpub: string; allowRelayFetch: boolean }) {
+    const voterNpub = input.voterNpub.trim();
+    if (!voterNpub) {
+      return [];
+    }
+
+    const fromMailbox = [
+      ...listInvitesFromMailbox(voterNpub),
+      ...listInvitesForElectionFromMailbox(electionId),
+    ];
+
+    const mergeByKey = (invites: ElectionInviteMessage[]) => {
+      const byKey = new Map<string, ElectionInviteMessage>();
+      for (const invite of invites) {
+        byKey.set(invite.electionId + ":" + invite.coordinatorNpub, invite);
+      }
+      return [...byKey.values()];
+    };
+
+    if (!input.allowRelayFetch) {
+      return mergeByKey(fromMailbox);
+    }
+
     try {
       const signer = createSignerService();
       const dmInvites = await fetchOptionAInviteDms({ signer, limit: 40 });
       for (const invite of dmInvites) {
         publishInviteToMailbox(invite);
       }
-      const byKey = new Map<string, ElectionInviteMessage>();
-      for (const invite of [...dmInvites, ...listInvitesFromMailbox(signerNpub)]) {
-        byKey.set(`${invite.electionId}:${invite.coordinatorNpub}`, invite);
-      }
-      return [...byKey.values()];
+      return mergeByKey([...dmInvites, ...fromMailbox]);
     } catch {
-      return listInvitesFromMailbox(signerNpub);
+      return mergeByKey(fromMailbox);
     }
   }
 
+  function resolveLocalInvite(voterNpub: string) {
+    const localInvites = [
+      ...listInvitesFromMailbox(voterNpub),
+      ...listInvitesForElectionFromMailbox(electionId),
+    ];
+    return localInvites.find((invite) => invite.electionId === electionId)
+      ?? localInvites[0]
+      ?? null;
+  }
+
+  async function loginWithLocalIdentity(voterNpub: string) {
+    if (!runtime) {
+      return false;
+    }
+    const fallbackInvite = resolveLocalInvite(voterNpub);
+    const next = runtime.bootstrapWithLocalIdentity({
+      invitedNpub: voterNpub,
+      coordinatorNpub: fallbackInvite?.coordinatorNpub ?? undefined,
+      invite: fallbackInvite,
+    });
+    setSignedInNpub(next.invitedNpub);
+    const invites = await loadPendingInvites({ voterNpub: next.invitedNpub, allowRelayFetch: false });
+    setPendingInvites(invites);
+    const preferredInvite = invites.find((invite) => invite.electionId === electionId) ?? invites[0] ?? null;
+    if (!inviteContext.electionId?.trim() && preferredInvite && electionId.trim() !== preferredInvite.electionId) {
+      setElectionId(preferredInvite.electionId);
+    }
+    setActiveInvite(next.inviteMessage && !next.blindRequestSent && !next.credentialReady
+      ? next.inviteMessage
+      : preferredInvite);
+    setStatus("Using local voter identity " + deriveActorDisplayId(next.invitedNpub) + ".");
+    setRefreshNonce((value) => value + 1);
+    return true;
+  }
+
   async function login() {
+    const localVoterNpub = props.localVoterNpub?.trim() ?? "";
     try {
       const signer = createSignerService();
       const rawPubkey = await signer.getPublicKey();
@@ -186,7 +276,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       setSignedInNpub(signerNpub);
 
       if (!runtime) {
-        const invites = await loadPendingInvitesFromRelays(signerNpub);
+        const invites = await loadPendingInvites({ voterNpub: signerNpub, allowRelayFetch: true });
         setPendingInvites(invites);
         if (invites.length === 0) {
           setStatus("Signed in. No pending questionnaire invites were found.");
@@ -196,14 +286,14 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
             setElectionId(preferredInvite.electionId);
           }
           setActiveInvite(preferredInvite);
-          setStatus(`Signed in as ${deriveActorDisplayId(signerNpub)}. ${invites.length} pending invite${invites.length === 1 ? "" : "s"} found.`);
+          setStatus("Signed in as " + deriveActorDisplayId(signerNpub) + ". " + invites.length + " pending invite" + (invites.length === 1 ? "" : "s") + " found.");
         }
         return;
       }
 
       const next = await runtime.loginWithSigner(inviteContext.invite);
       setSignedInNpub(next.invitedNpub);
-      const invites = await loadPendingInvitesFromRelays(next.invitedNpub);
+      const invites = await loadPendingInvites({ voterNpub: next.invitedNpub, allowRelayFetch: true });
       setPendingInvites(invites);
       const preferredInvite = invites[0] ?? null;
       if (!inviteContext.electionId?.trim() && preferredInvite && electionId.trim() !== preferredInvite.electionId) {
@@ -213,32 +303,59 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         ? next.inviteMessage
         : preferredInvite;
       setActiveInvite(pendingInvite);
-      setStatus(`Signed in as ${deriveActorDisplayId(next.invitedNpub)}.`);
+      setStatus("Signed in as " + deriveActorDisplayId(next.invitedNpub) + ".");
       setRefreshNonce((value) => value + 1);
     } catch (error) {
+      if (error instanceof SignerServiceError && localVoterNpub && runtime) {
+        try {
+          const usedLocal = await loginWithLocalIdentity(localVoterNpub);
+          if (usedLocal) {
+            return;
+          }
+        } catch (fallbackError) {
+          setStatus(fallbackError instanceof Error ? fallbackError.message : "Local identity login failed.");
+          return;
+        }
+      }
       if (error instanceof OptionARuntimeError || error instanceof SignerServiceError) {
         setStatus(error.message);
         return;
       }
-      setStatus("Login failed.");
+      setStatus(error instanceof Error ? error.message : "Login failed.");
     }
   }
 
   async function openInvite(invite: ElectionInviteMessage, requestAfterLogin = false) {
     try {
       const voterRuntime = new QuestionnaireOptionAVoterRuntime(createSignerService(), invite.electionId);
-      const next = await voterRuntime.loginWithSigner(invite);
+      let next;
+      try {
+        next = await voterRuntime.loginWithSigner(invite);
+      } catch (error) {
+        if (!(error instanceof SignerServiceError)) {
+          throw error;
+        }
+        next = voterRuntime.bootstrapWithLocalIdentity({
+          invitedNpub: props.localVoterNpub?.trim() || invite.invitedNpub,
+          coordinatorNpub: invite.coordinatorNpub,
+          invite,
+        });
+      }
+
       setElectionId(invite.electionId);
       setRuntime(voterRuntime);
       setSignedInNpub(next.invitedNpub);
-      const refreshedInvites = await loadPendingInvitesFromRelays(next.invitedNpub);
+      const refreshedInvites = await loadPendingInvites({
+        voterNpub: next.invitedNpub,
+        allowRelayFetch: false,
+      });
       setPendingInvites(refreshedInvites);
       setActiveInvite(!next.blindRequestSent && !next.credentialReady ? invite : null);
       if (requestAfterLogin && !next.blindRequestSent && !next.credentialReady) {
         voterRuntime.requestBlindBallot();
-        setStatus(`Opened ${invite.title || invite.electionId}. Blind ballot request sent.`);
+        setStatus("Opened " + (invite.title || invite.electionId) + ". Blind ballot request sent.");
       } else {
-        setStatus(`Opened ${invite.title || invite.electionId}.`);
+        setStatus("Opened " + (invite.title || invite.electionId) + ".");
       }
       setRefreshNonce((value) => value + 1);
     } catch (error) {

@@ -465,6 +465,53 @@ describe("questionnaireOptionA", () => {
     expect(restoredVoter.submissionAccepted).toBe(true);
   });
 
+  it("allows blind request intake before publish and blocks when closed", () => {
+    const request = makeBlindRequest("request-prepublish");
+
+    const coordinatorDraft = makeCoordinatorState();
+    coordinatorDraft.election.state = "draft";
+    const whitelistedDraft = reduceCoordinatorEvent(coordinatorDraft, { type: "WHITELIST_ADDED", entry: makeWhitelistEntry() }).state;
+    const claimedDraft = reduceCoordinatorEvent(whitelistedDraft, {
+      type: "LOGIN_VERIFIED",
+      electionId,
+      invitedNpub: voterNpub,
+    }).state;
+    const draftReceived = reduceCoordinatorEvent(claimedDraft, {
+      type: "BLIND_REQUEST_RECEIVED",
+      request,
+    });
+    expect(draftReceived.ok).toBe(true);
+
+    const coordinatorPublished = makeCoordinatorState();
+    coordinatorPublished.election.state = "published";
+    const whitelistedPublished = reduceCoordinatorEvent(coordinatorPublished, { type: "WHITELIST_ADDED", entry: makeWhitelistEntry() }).state;
+    const claimedPublished = reduceCoordinatorEvent(whitelistedPublished, {
+      type: "LOGIN_VERIFIED",
+      electionId,
+      invitedNpub: voterNpub,
+    }).state;
+    const publishedReceived = reduceCoordinatorEvent(claimedPublished, {
+      type: "BLIND_REQUEST_RECEIVED",
+      request: makeBlindRequest("request-published"),
+    });
+    expect(publishedReceived.ok).toBe(true);
+
+    const coordinatorClosed = makeCoordinatorState();
+    coordinatorClosed.election.state = "closed";
+    const whitelistedClosed = reduceCoordinatorEvent(coordinatorClosed, { type: "WHITELIST_ADDED", entry: makeWhitelistEntry() }).state;
+    const claimedClosed = reduceCoordinatorEvent(whitelistedClosed, {
+      type: "LOGIN_VERIFIED",
+      electionId,
+      invitedNpub: voterNpub,
+    }).state;
+    const closedReceived = reduceCoordinatorEvent(claimedClosed, {
+      type: "BLIND_REQUEST_RECEIVED",
+      request: makeBlindRequest("request-closed"),
+    });
+    expect(closedReceived.ok).toBe(false);
+    expect(closedReceived.error).toBe("election_not_open");
+  });
+
   it("derives UI flags, storage keys and blind request validation from strict rules", () => {
     const voterState = createEmptyVoterElectionLocalState({
       electionId,

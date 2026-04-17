@@ -520,7 +520,7 @@ export function reduceCoordinatorEvent(
     if (event.request.electionId !== next.election.electionId) {
       return reduceCoordinatorError(state, "election_id_mismatch");
     }
-    if (next.election.state !== "open") {
+    if (next.election.state === "closed" || next.election.state === "counted") {
       return reduceCoordinatorError(state, "election_not_open");
     }
     const entry = next.whitelist[event.request.invitedNpub];
@@ -747,8 +747,14 @@ export function deriveVoterUiFlags(state: VoterElectionLocalState): VoterUiFlags
 
 export function deriveCoordinatorUiFlags(state: CoordinatorElectionState): CoordinatorUiFlags {
   return {
-    canSendInvites: state.election.state === "published" || state.election.state === "open",
-    canIssueBlindResponses: state.election.state === "open",
+    canSendInvites:
+      state.election.state === "draft"
+      || state.election.state === "published"
+      || state.election.state === "open",
+    canIssueBlindResponses:
+      state.election.state === "draft"
+      || state.election.state === "published"
+      || state.election.state === "open",
     canAcceptVotes: state.election.state === "open",
     canPublishResults: state.election.state === "closed" || state.election.state === "counted",
   };

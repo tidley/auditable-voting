@@ -2890,6 +2890,7 @@ export default function SimpleUiApp() {
               onParticipationHistoryChange={setQuestionnaireParticipationHistory}
               announcedQuestionnaireIds={readyAnnouncedQuestionnaireIds}
               optionAAnnouncedQuestionnaireIds={announcedQuestionnaireIds}
+              localVoterNpub={voterKeypair?.npub ?? ""}
             />
             {isCourseFeedbackMode || hideLegacyLiveVotePanel ? null : (
             effectiveLiveVoteSession ? (

@@ -232,6 +232,22 @@ export function listInvitesFromMailbox(invitedNpub: string) {
   return Object.values(mailbox[invitedNpub] ?? {});
 }
 
+export function listInvitesForElectionFromMailbox(electionId: string) {
+  const mailbox = readJson<Record<string, Record<string, ElectionInviteMessage>>>(INVITE_MAILBOX_KEY, {});
+  const id = electionId.trim();
+  if (!id) {
+    return [];
+  }
+  const invites: ElectionInviteMessage[] = [];
+  for (const byElection of Object.values(mailbox)) {
+    const invite = byElection?.[id] ?? null;
+    if (invite) {
+      invites.push(invite);
+    }
+  }
+  return invites;
+}
+
 export function enqueueBlindRequest(request: BlindBallotRequest) {
   const queue = readJson<BlindBallotRequest[]>(REQUEST_QUEUE_KEY, []);
   queue.push(request);

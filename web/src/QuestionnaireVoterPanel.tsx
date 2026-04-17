@@ -381,6 +381,7 @@ type QuestionnaireVoterPanelProps = {
   onParticipationHistoryChange?: (entries: QuestionnaireParticipationHistoryEntry[]) => void;
   announcedQuestionnaireIds?: string[];
   optionAAnnouncedQuestionnaireIds?: string[];
+  localVoterNpub?: string;
 };
 
 export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelProps) {
@@ -401,6 +402,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
     return (
       <QuestionnaireOptionAVoterPanel
         announcedQuestionnaireIds={props.optionAAnnouncedQuestionnaireIds}
+        localVoterNpub={props.localVoterNpub}
       />
     );
   }

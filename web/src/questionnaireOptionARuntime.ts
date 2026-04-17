@@ -192,6 +192,63 @@ export class QuestionnaireOptionAVoterRuntime {
     return restored;
   }
 
+  bootstrapWithLocalIdentity(input: {
+    invitedNpub: string;
+    coordinatorNpub?: string;
+    invite?: ElectionInviteMessage | null;
+  }) {
+    const invitedNpub = toNpub((input.invitedNpub ?? "").trim());
+    if (!invitedNpub) {
+      throw new OptionARuntimeError("invite_missing", "Could not resolve invited voter identity.");
+    }
+    const invite = input.invite
+      ?? readInviteFromMailbox({ invitedNpub, electionId: this.electionId });
+    if (invite && invite.invitedNpub !== invitedNpub) {
+      throw new OptionARuntimeError("invite_mismatch", "This invite is for a different voter identity.");
+    }
+
+    const summary = loadElectionSummary(this.electionId);
+    const voterState = loadVoterState({
+      voterNpub: invitedNpub,
+      electionId: this.electionId,
+      coordinatorNpub: input.coordinatorNpub ?? invite?.coordinatorNpub ?? summary?.coordinatorNpub,
+    }) ?? createEmptyVoterElectionLocalState({
+      electionId: this.electionId,
+      invitedNpub,
+      coordinatorNpub: input.coordinatorNpub ?? invite?.coordinatorNpub ?? summary?.coordinatorNpub ?? "",
+      now: nowIso(),
+    });
+
+    let next = voterState;
+    if (invite) {
+      const loaded = reduceVoterEvent(next, { type: "INVITE_LOADED", invite });
+      if (!loaded.ok) {
+        throw new OptionARuntimeError("invite_mismatch", "Invite could not be loaded.");
+      }
+      next = loaded.state;
+    }
+
+    const loggedIn = reduceVoterEvent(next, {
+      type: "LOGIN_VERIFIED",
+      electionId: this.electionId,
+      npub: invitedNpub,
+      verifiedAt: nowIso(),
+    });
+    if (!loggedIn.ok) {
+      throw new OptionARuntimeError("invite_mismatch", "Login verification failed.");
+    }
+
+    const restored = restoreVoterElectionLocalState({
+      persisted: loggedIn.state,
+      canonicalIssuance: loggedIn.state.blindRequest ? readBlindIssuance(loggedIn.state.blindRequest.requestId) : null,
+      canonicalAcceptance: loggedIn.state.submission ? readAcceptance(loggedIn.state.submission.submissionId) : null,
+    });
+
+    this.state = restored;
+    saveVoterState({ voterNpub: invitedNpub, state: restored });
+    return restored;
+  }
+
   updateDraftResponses(responses: QuestionnaireAnswer[]) {
     if (!this.state) {
       throw new OptionARuntimeError("not_logged_in", "Login is required.");
