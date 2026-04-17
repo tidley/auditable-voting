@@ -208,11 +208,18 @@ export class QuestionnaireOptionAVoterRuntime {
     }
 
     const summary = loadElectionSummary(this.electionId);
-    const voterState = loadVoterState({
+    const existingState = loadVoterState({
       voterNpub: invitedNpub,
       electionId: this.electionId,
       coordinatorNpub: input.coordinatorNpub ?? invite?.coordinatorNpub ?? summary?.coordinatorNpub,
-    }) ?? createEmptyVoterElectionLocalState({
+    });
+    if (!existingState && !invite) {
+      throw new OptionARuntimeError(
+        "invite_missing",
+        "No invite found for this voter and questionnaire.",
+      );
+    }
+    const voterState = existingState ?? createEmptyVoterElectionLocalState({
       electionId: this.electionId,
       invitedNpub,
       coordinatorNpub: input.coordinatorNpub ?? invite?.coordinatorNpub ?? summary?.coordinatorNpub ?? "",

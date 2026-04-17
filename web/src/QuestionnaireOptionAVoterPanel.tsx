@@ -10,7 +10,6 @@ import {
 import type { ElectionInviteMessage, QuestionnaireAnswer } from "./questionnaireOptionA";
 import { deriveActorDisplayId } from "./actorDisplay";
 import {
-  listInvitesForElectionFromMailbox,
   listInvitesFromMailbox,
   publishInviteToMailbox,
 } from "./questionnaireOptionAStorage";
@@ -76,25 +75,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const [electionId, setElectionId] = useState(inviteContext.electionId ?? deriveElectionId());
 
   useEffect(() => {
-    if (inviteContext.electionId?.trim()) {
-      return;
-    }
-    const announcedIds = Array.isArray(props.announcedQuestionnaireIds)
-      ? props.announcedQuestionnaireIds
-        .map((value) => value.trim())
-        .filter((value) => value.length > 0)
-      : [];
-    if (announcedIds.length === 0) {
-      return;
-    }
-    const latestAnnouncedElectionId = announcedIds[announcedIds.length - 1] ?? "";
-    const currentElectionId = electionId.trim();
-    if (latestAnnouncedElectionId && currentElectionId !== latestAnnouncedElectionId) {
-      setElectionId(latestAnnouncedElectionId);
-    }
-  }, [electionId, inviteContext.electionId, props.announcedQuestionnaireIds]);
-
-  useEffect(() => {
     if (!electionId) {
       setRuntime(null);
       return;
@@ -113,7 +93,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
     try {
       const fallbackInvite = listInvitesFromMailbox(localVoterNpub).find((invite) => invite.electionId === electionId)
-        ?? listInvitesForElectionFromMailbox(electionId)[0]
         ?? null;
       const next = runtime.bootstrapWithLocalIdentity({
         invitedNpub: localVoterNpub,
@@ -203,10 +182,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       return [];
     }
 
-    const fromMailbox = [
-      ...listInvitesFromMailbox(voterNpub),
-      ...listInvitesForElectionFromMailbox(electionId),
-    ];
+    const fromMailbox = [...listInvitesFromMailbox(voterNpub)];
 
     const mergeByKey = (invites: ElectionInviteMessage[]) => {
       const byKey = new Map<string, ElectionInviteMessage>();
@@ -233,10 +209,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   }
 
   function resolveLocalInvite(voterNpub: string) {
-    const localInvites = [
-      ...listInvitesFromMailbox(voterNpub),
-      ...listInvitesForElectionFromMailbox(electionId),
-    ];
+    const localInvites = [...listInvitesFromMailbox(voterNpub)];
     return localInvites.find((invite) => invite.electionId === electionId)
       ?? localInvites[0]
       ?? null;
