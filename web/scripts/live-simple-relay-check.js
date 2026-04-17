@@ -28,6 +28,12 @@ function deriveHarnessTimeoutMs({
   return startupWaitMs + (roundCount * (roundWaitMs + ticketWaitMs + 20000)) + 120000;
 }
 
+function isQuestionnaireFlowDeployment(deploymentMode = "course_feedback") {
+  return deploymentMode === "course_feedback"
+    || deploymentMode === "legacy"
+    || deploymentMode === "option_a";
+}
+
 function classifyHarnessFailure(error) {
   const message = error instanceof Error ? error.message : String(error);
   if (/Harness timeout after/i.test(message)) {
@@ -47,14 +53,14 @@ function classifyProtocolFailure(rounds, deploymentMode = "course_feedback") {
   if (!latestRound?.stageMetrics) {
     return {
       protocolFailureClass: "startup",
-      firstMissingStage: deploymentMode === "course_feedback"
+      firstMissingStage: isQuestionnaireFlowDeployment(deploymentMode)
         ? "questionnaireSeen"
         : "roundSeen",
     };
   }
 
   const stageMetrics = latestRound.stageMetrics;
-  if (deploymentMode === "course_feedback") {
+  if (isQuestionnaireFlowDeployment(deploymentMode)) {
     const firstMissingStage = [
       "questionnaireSeen",
       "questionnaireOpen",
@@ -965,7 +971,7 @@ function tabNameCandidates(name) {
   const aliases = new Map([
     ["Configure", ["Build"]],
     ["Build", ["Configure"]],
-    ["Voting", ["Responses"]],
+    ["Voting", ["Build", "Responses"]],
     ["Responses", ["Voting"]],
   ]);
   return [name, ...(aliases.get(name) ?? [])];
@@ -1736,7 +1742,7 @@ async function main() {
     "LIVE_VOTER_STARTUP_STAGGER_MS",
     envInt("LIVE_VOTER_START_STAGGER_MS", 150),
   );
-  const batchSize = envInt("LIVE_BATCH_SIZE", deploymentMode === "course_feedback" ? 5 : Math.max(1, voterCount));
+  const batchSize = envInt("LIVE_BATCH_SIZE", isQuestionnaireFlowDeployment(deploymentMode) ? 5 : Math.max(1, voterCount));
   const skipPreflight = /^(1|true|yes|on)$/i.test((process.env.LIVE_SKIP_PREFLIGHT ?? "").trim());
   const harnessTimeoutMs = envInt(
     "LIVE_HARNESS_TIMEOUT_MS",
@@ -1830,7 +1836,7 @@ async function main() {
         await ensureTab(actor.page, "Settings", actor.label);
       }
       await sleep(1500);
-      if (deploymentMode === "course_feedback") {
+      if (isQuestionnaireFlowDeployment(deploymentMode)) {
         await collectQuestionnaireTimelineEvents({
           coordinators,
           voters,
@@ -1888,7 +1894,7 @@ async function main() {
 
       for (let roundIndex = 0; roundIndex < roundCount; roundIndex += 1) {
         const lead = coordinators[0].page;
-        if (deploymentMode === "course_feedback") {
+        if (isQuestionnaireFlowDeployment(deploymentMode)) {
           const questionnaireId = `course_feedback_${Date.now()}_${roundIndex + 1}`;
           const stageTracker = createQuestionnaireStageTracker({
             round: roundIndex + 1,
@@ -2301,7 +2307,7 @@ async function main() {
       questionnaireVisibilityTimeout,
       completedRoundCount: rounds.filter((round) => {
         const metrics = round?.stageMetrics ?? {};
-        if (deploymentMode === "course_feedback") {
+        if (isQuestionnaireFlowDeployment(deploymentMode)) {
           return Number(metrics.questionnaireSeen?.count ?? 0) > 0
             && Number(metrics.questionnaireOpen?.count ?? 0) > 0;
         }
@@ -2332,7 +2338,7 @@ async function main() {
         voter: snapshot.label,
         visibility: snapshot.voterDebug ?? null,
       }));
-    timeline.finalSnapshot = deploymentMode === "course_feedback"
+    timeline.finalSnapshot = isQuestionnaireFlowDeployment(deploymentMode)
       ? buildQuestionnaireFinalSnapshotFromActorSnapshots(snapshots)
       : null;
     timeline.summary = {
@@ -2922,7 +2928,7 @@ async function main() {
       && definitionEventCount >= 1
       && questionnaireIdsSeenByVoters.length === 1
       && questionCountsSeenByVoters.length === 1;
-    const roundSuccess = deploymentMode === "course_feedback"
+    const roundSuccess = isQuestionnaireFlowDeployment(deploymentMode)
       ? (visibilityOnly ? visibilityOnlySuccessCore : roundSuccessCore)
       : voterTicketSummary.length > 0 && voterTicketSummary.every((entry) => entry.hasTicket);
     return {
@@ -3129,7 +3135,7 @@ async function main() {
       };
     }
 
-    if (roundSummary.deploymentMode !== "course_feedback") {
+    if (!isQuestionnaireFlowDeployment(roundSummary.deploymentMode)) {
       roundSummary.phase22QuestionnaireProbe = null;
       continue;
     }
@@ -3223,7 +3229,7 @@ async function main() {
   const completedRounds = summary.filter((roundSummary) => Boolean(roundSummary.roundSuccess)).length;
   const passed = summary.length > 0 && completedRounds === summary.length;
   const latestRoundState = rounds.at(-1)?.state ?? null;
-  timeline.finalSnapshot = deploymentMode === "course_feedback" && latestRoundState
+  timeline.finalSnapshot = isQuestionnaireFlowDeployment(deploymentMode) && latestRoundState
     ? buildQuestionnaireFinalSnapshotFromRound(latestRoundState)
     : null;
   timeline.summary = {
