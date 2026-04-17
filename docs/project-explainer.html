@@ -239,6 +239,49 @@ The main goals are:
 
 ---
 
+
+## Quick Start: Run an Auditable Vote (Step by Step)
+
+This is the practical order of operations for the current app.
+
+### 1. Coordinator prepares first
+
+1. Open the app as **Coordinator** and create or log in to a coordinator identity.
+2. In **Build**, set questionnaire ID, title, description, and questions.
+3. In **Participants**, add or import voter npubs and mark expected participants as verified/known.
+4. Send invites (`Send invite` / `Invite all whitelisted`) or share the invite link.
+5. As voters appear, run `Process requests` / `Check responses` to process blind request and response queues.
+   - Verified voters can now pre-request and coordinators can pre-issue before publish.
+6. Publish the questionnaire when ready (`Publish Questionnaire`, state becomes `Open`).
+
+### 2. Voter joins second
+
+1. Open the invite link, or open the app as **Voter** and log in.
+2. If needed, use `Check invites`, then `Open` (or `Open + request ballot`) for the pending invite.
+3. Ensure questionnaire content is visible, then click `Request ballot`.
+4. Wait for `Credential ready: Yes`.
+5. Complete responses and click `Submit response`.
+
+### 3. Coordinator finalises third
+
+1. In **Responses**, monitor accepted/rejected counts and unique responders.
+2. Close the questionnaire when collection is complete.
+3. Publish summary/results and share questionnaire ID + coordinator npub for independent checks.
+
+### 4. Auditor verifies last
+
+1. Open **Auditor** view.
+2. Filter by coordinator npub and/or questionnaire ID.
+3. Confirm accepted unique responder totals and published response/result state match expectations.
+
+### Operational notes
+
+- If a voter sees no invite, confirm they are using the same voter identity that was invited.
+- A voter should not see unrelated questionnaires unless they have invite/state context for that identity.
+- Relay connection failures for one endpoint (for example `relay.snort.social`) are common on public infrastructure; retries and other relays should still allow progress.
+
+---
+
 ## 2. What Problem It Solves
 
 Traditional online voting systems often force a tradeoff:
