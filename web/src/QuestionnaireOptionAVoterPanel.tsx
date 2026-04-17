@@ -75,6 +75,21 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
 
   const inviteContext = useMemo(() => parseInviteFromUrl(), []);
   const [electionId, setElectionId] = useState(inviteContext.electionId ?? deriveElectionId());
+  const latestAnnouncedQuestionnaireId = useMemo(() => {
+    const ids = (props.announcedQuestionnaireIds ?? [])
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
+    return ids.at(-1) ?? "";
+  }, [props.announcedQuestionnaireIds]);
+
+  const snapshot = runtime?.getSnapshot() ?? null;
+  const flags = runtime?.getFlags() ?? {
+    canLogin: true,
+    canRequestBallot: false,
+    canSubmitVote: false,
+    alreadySubmitted: false,
+    resumeAvailable: false,
+  };
 
   useEffect(() => {
     if (!electionId) {
@@ -97,32 +112,16 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     if (signedIn && signedIn !== localVoterNpub) {
       return;
     }
-    const snapshot = runtime.getSnapshot();
-    if (snapshot?.invitedNpub === localVoterNpub) {
+    const currentSnapshot = runtime.getSnapshot();
+    if (currentSnapshot?.invitedNpub === localVoterNpub) {
       return;
     }
     try {
-      const fallbackInvite = listInvitesFromMailbox(localVoterNpub).find((invite) => invite.electionId === electionId)
-        ?? listInvitesFromMailbox(localVoterNpub)[0]
-        ?? null;
-      const next = runtime.bootstrapWithLocalIdentity({
-        invitedNpub: localVoterNpub,
-        coordinatorNpub: fallbackInvite?.coordinatorNpub ?? undefined,
-        invite: fallbackInvite,
-      });
-      setSignedInNpub(next.invitedNpub);
-      void loadPendingInvites({ voterNpub: next.invitedNpub, allowRelayFetch: false }).then((invites) => {
-        setPendingInvites(invites);
-        const preferredInvite = invites.find((invite) => invite.electionId === electionId) ?? invites[0] ?? null;
-        setActiveInvite(next.inviteMessage && !next.blindRequestSent && !next.credentialReady
-          ? next.inviteMessage
-          : preferredInvite);
-      });
-      setRefreshNonce((value) => value + 1);
+      ensureLocalSession({ allowInviteMissing: true });
     } catch {
       // Keep explicit login available.
     }
-  }, [runtime, signedInNpub, props.localVoterNpub, electionId]);
+  }, [runtime, signedInNpub, props.localVoterNpub, electionId, latestAnnouncedQuestionnaireId]);
 
   useEffect(() => {
     if (!runtime || !signedInNpub.trim()) {
@@ -142,6 +141,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   }, [runtime, signedInNpub]);
 
   useEffect(() => {
+    setQuestionnaireTitle("Questionnaire");
+    setQuestionnaireDescription("");
+    setQuestions([]);
+    setAnswers({});
     if (!electionId) {
       return;
     }
@@ -174,49 +177,90 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   }, [electionId]);
 
   useEffect(() => {
-    if (electionId.trim()) {
+    const currentId = electionId.trim();
+    if (latestAnnouncedQuestionnaireId && (!currentId || (!hasInFlightState() && currentId !== latestAnnouncedQuestionnaireId))) {
+      setElectionId(latestAnnouncedQuestionnaireId);
       return;
     }
-    const announced = (props.announcedQuestionnaireIds ?? [])
-      .map((value) => value.trim())
-      .find((value) => value.length > 0);
-    if (announced) {
-      setElectionId(announced);
+    if (currentId) {
       return;
     }
     const localNpub = props.localVoterNpub?.trim() ?? "";
     if (!localNpub) {
       return;
     }
-    const localInvite = listInvitesFromMailbox(localNpub)[0] ?? null;
+    const localInvite = findBestLocalInvite(localNpub, currentId);
     if (localInvite?.electionId?.trim()) {
       setElectionId(localInvite.electionId.trim());
     }
-  }, [electionId, props.announcedQuestionnaireIds, props.localVoterNpub]);
+  }, [electionId, latestAnnouncedQuestionnaireId, props.localVoterNpub, snapshot?.blindRequest?.requestId, snapshot?.credentialReady, snapshot?.submission?.submissionId]);
 
   useEffect(() => {
-    if (electionId.trim() || pendingInvites.length === 0) {
+    if (pendingInvites.length === 0 || hasInFlightState()) {
       return;
     }
-    const nextElectionId = pendingInvites[0]?.electionId?.trim() ?? "";
-    if (nextElectionId) {
+    const preferredInvite = (latestAnnouncedQuestionnaireId
+      ? pendingInvites.find((invite) => invite.electionId === latestAnnouncedQuestionnaireId)
+      : null)
+      ?? pendingInvites.at(-1)
+      ?? null;
+    const nextElectionId = preferredInvite?.electionId?.trim() ?? "";
+    if (nextElectionId && electionId.trim() !== nextElectionId) {
       setElectionId(nextElectionId);
     }
-  }, [electionId, pendingInvites]);
-
-  const snapshot = runtime?.getSnapshot() ?? null;
-  const flags = runtime?.getFlags() ?? {
-    canLogin: true,
-    canRequestBallot: false,
-    canSubmitVote: false,
-    alreadySubmitted: false,
-    resumeAvailable: false,
-  };
+  }, [electionId, pendingInvites, latestAnnouncedQuestionnaireId, snapshot?.blindRequest?.requestId, snapshot?.credentialReady, snapshot?.submission?.submissionId]);
 
   const requiredQuestionIds = useMemo(
     () => questions.filter((question) => question.required).map((question) => question.questionId),
     [questions],
   );
+
+  function hasInFlightState(state = snapshot) {
+    return Boolean(state?.blindRequest || state?.blindIssuance || state?.submission);
+  }
+
+  function findBestLocalInvite(voterNpub: string, preferredElectionId = electionId) {
+    const localInvites = [...listInvitesFromMailbox(voterNpub)];
+    const preferredId = preferredElectionId.trim();
+    return (preferredId ? localInvites.find((invite) => invite.electionId === preferredId) : null)
+      ?? (latestAnnouncedQuestionnaireId ? localInvites.find((invite) => invite.electionId === latestAnnouncedQuestionnaireId) : null)
+      ?? localInvites.at(-1)
+      ?? null;
+  }
+
+  function ensureLocalSession(options?: { allowInviteMissing?: boolean }) {
+    if (!runtime) {
+      return null;
+    }
+    const localVoterNpub = props.localVoterNpub?.trim() ?? "";
+    if (!localVoterNpub) {
+      return runtime.getSnapshot();
+    }
+    const currentSnapshot = runtime.getSnapshot();
+    if (currentSnapshot?.invitedNpub === localVoterNpub) {
+      return currentSnapshot;
+    }
+    const fallbackInvite = findBestLocalInvite(localVoterNpub);
+    const next = runtime.bootstrapWithLocalIdentity({
+      invitedNpub: localVoterNpub,
+      coordinatorNpub: fallbackInvite?.coordinatorNpub ?? undefined,
+      invite: fallbackInvite,
+      allowInviteMissing: options?.allowInviteMissing ?? Boolean(latestAnnouncedQuestionnaireId || electionId.trim()),
+    });
+    setSignedInNpub(next.invitedNpub);
+    void loadPendingInvites({ voterNpub: next.invitedNpub, allowRelayFetch: false }).then((invites) => {
+      setPendingInvites(invites);
+      const preferredInvite = invites.find((invite) => invite.electionId === next.electionId)
+        ?? (latestAnnouncedQuestionnaireId ? invites.find((invite) => invite.electionId === latestAnnouncedQuestionnaireId) : null)
+        ?? invites.at(-1)
+        ?? null;
+      setActiveInvite(next.inviteMessage && !next.blindRequestSent && !next.credentialReady
+        ? next.inviteMessage
+        : preferredInvite);
+    });
+    setRefreshNonce((value) => value + 1);
+    return next;
+  }
 
   async function loadPendingInvites(input: { voterNpub: string; allowRelayFetch: boolean }) {
     const voterNpub = input.voterNpub.trim();
@@ -250,22 +294,16 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
   }
 
-  function resolveLocalInvite(voterNpub: string) {
-    const localInvites = [...listInvitesFromMailbox(voterNpub)];
-    return localInvites.find((invite) => invite.electionId === electionId)
-      ?? localInvites[0]
-      ?? null;
-  }
-
   async function loginWithLocalIdentity(voterNpub: string) {
     if (!runtime) {
       return false;
     }
-    const fallbackInvite = resolveLocalInvite(voterNpub);
+    const fallbackInvite = findBestLocalInvite(voterNpub);
     const next = runtime.bootstrapWithLocalIdentity({
       invitedNpub: voterNpub,
       coordinatorNpub: fallbackInvite?.coordinatorNpub ?? undefined,
       invite: fallbackInvite,
+      allowInviteMissing: true,
     });
     setSignedInNpub(next.invitedNpub);
     const invites = await loadPendingInvites({ voterNpub: next.invitedNpub, allowRelayFetch: false });
@@ -412,6 +450,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       return;
     }
     try {
+      ensureLocalSession({ allowInviteMissing: true });
       runtime.requestBlindBallot();
       setActiveInvite(null);
       setStatus("Blind ballot request sent. Waiting for coordinator issuance.");
@@ -426,6 +465,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       return;
     }
     try {
+      ensureLocalSession({ allowInviteMissing: true });
       runtime.refreshIssuanceAndAcceptance();
       setRefreshNonce((value) => value + 1);
     } catch (error) {
@@ -457,6 +497,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     const hasInviteContext = Boolean(
       snapshot.inviteMessage
       || activeInvite
+      || latestAnnouncedQuestionnaireId === snapshot.electionId
       || pendingInvites.some((invite) => invite.electionId === snapshot.electionId),
     );
     if (!hasInviteContext) {
@@ -475,7 +516,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     } catch {
       // Keep manual request available if automatic send cannot proceed yet.
     }
-  }, [activeInvite, pendingInvites, runtime, snapshot]);
+  }, [activeInvite, latestAnnouncedQuestionnaireId, pendingInvites, runtime, snapshot]);
 
   useEffect(() => {
     if (!runtime || !snapshot?.loginVerified || !snapshot.blindRequestSent || snapshot.credentialReady || snapshot.submission) {

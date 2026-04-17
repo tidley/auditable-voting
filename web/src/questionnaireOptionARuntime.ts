@@ -206,6 +206,7 @@ export class QuestionnaireOptionAVoterRuntime {
     coordinatorNpub?: string;
     invite?: ElectionInviteMessage | null;
     allowInviteRecipientMismatch?: boolean;
+    allowInviteMissing?: boolean;
   }) {
     const invitedNpub = toNpub((input.invitedNpub ?? "").trim());
     if (!invitedNpub) {
@@ -226,7 +227,7 @@ export class QuestionnaireOptionAVoterRuntime {
       electionId: this.electionId,
       coordinatorNpub: input.coordinatorNpub ?? invite?.coordinatorNpub ?? summary?.coordinatorNpub,
     });
-    if (!existingState && !invite) {
+    if (!existingState && !invite && !input.allowInviteMissing) {
       throw new OptionARuntimeError(
         "invite_missing",
         "No invite found for this voter and questionnaire.",

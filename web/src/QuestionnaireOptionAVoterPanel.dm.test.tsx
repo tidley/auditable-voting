@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("./questionnaireInvite", () => ({
@@ -22,10 +22,16 @@ vi.mock("./services/signerService", () => ({
 }));
 
 vi.mock("./questionnaireOptionAStorage", () => ({
+  enqueueBlindRequest: () => undefined,
   listInvitesFromMailbox: () => [],
   listInvitesForElectionFromMailbox: () => [],
   loadElectionSummary: () => null,
+  loadVoterState: () => null,
   publishInviteToMailbox: () => undefined,
+  readAcceptance: () => null,
+  readBlindIssuance: () => null,
+  readInviteFromMailbox: () => null,
+  saveVoterState: () => undefined,
 }));
 
 vi.mock("./questionnaireOptionAInviteDm", () => ({
@@ -46,6 +52,10 @@ vi.mock("./questionnaireOptionAInviteDm", () => ({
 
 import QuestionnaireOptionAVoterPanel from "./QuestionnaireOptionAVoterPanel";
 
+afterEach(() => {
+  cleanup();
+});
+
 describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
   it("loads pending invites after signer login", async () => {
     const user = userEvent.setup();
@@ -65,5 +75,35 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     await waitFor(() => {
       expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Election ID: q_auto_123")).length).toBeGreaterThan(0);
     });
+  });
+
+  it("replaces a stale announced questionnaire id when there is no in-flight request", async () => {
+    const { rerender } = render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_old"]} />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Election ID: q_old")).length).toBeGreaterThan(0);
+    });
+
+    rerender(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_old", "q_new"]} />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Election ID: q_new")).length).toBeGreaterThan(0);
+    });
+  });
+
+  it("refresh status bootstraps a local ephemeral voter without requiring signer login", async () => {
+    const user = userEvent.setup();
+    render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_local"]} localVoterNpub={"npub1" + "c".repeat(58)} />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Election ID: q_local")).length).toBeGreaterThan(0);
+    });
+
+    await user.click(screen.getAllByRole("button", { name: "Refresh status" }).at(-1)!);
+
+    await waitFor(() => {
+      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Login verified: Yes")).length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByText("Login is required.")).toBeNull();
   });
 });
