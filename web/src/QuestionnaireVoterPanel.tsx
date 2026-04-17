@@ -382,6 +382,7 @@ type QuestionnaireVoterPanelProps = {
   announcedQuestionnaireIds?: string[];
   optionAAnnouncedQuestionnaireIds?: string[];
   localVoterNpub?: string;
+  localVoterNsec?: string;
 };
 
 export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelProps) {
@@ -403,6 +404,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
       <QuestionnaireOptionAVoterPanel
         announcedQuestionnaireIds={props.optionAAnnouncedQuestionnaireIds}
         localVoterNpub={props.localVoterNpub}
+        localVoterNsec={props.localVoterNsec}
       />
     );
   }

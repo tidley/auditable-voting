@@ -49,6 +49,7 @@ function answerToOptionA(
 type QuestionnaireOptionAVoterPanelProps = {
   announcedQuestionnaireIds?: string[];
   localVoterNpub?: string;
+  localVoterNsec?: string;
 };
 
 export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptionAVoterPanelProps) {
@@ -97,7 +98,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       return;
     }
     const signer = createSignerService();
-    setRuntime(new QuestionnaireOptionAVoterRuntime(signer, electionId));
+    setRuntime(new QuestionnaireOptionAVoterRuntime(signer, electionId, props.localVoterNsec));
   }, [electionId]);
 
   useEffect(() => {
@@ -241,10 +242,12 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       return currentSnapshot;
     }
     const fallbackInvite = findBestLocalInvite(localVoterNpub);
+    const bootstrapNpub = fallbackInvite?.invitedNpub?.trim() || localVoterNpub;
     const next = runtime.bootstrapWithLocalIdentity({
-      invitedNpub: localVoterNpub,
+      invitedNpub: bootstrapNpub,
       coordinatorNpub: fallbackInvite?.coordinatorNpub ?? undefined,
       invite: fallbackInvite,
+      allowInviteRecipientMismatch: Boolean(fallbackInvite && bootstrapNpub !== (fallbackInvite.invitedNpub ?? "").trim()),
       allowInviteMissing: options?.allowInviteMissing ?? Boolean(latestAnnouncedQuestionnaireId || electionId.trim()),
     });
     setSignedInNpub(next.invitedNpub);
@@ -299,10 +302,12 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       return false;
     }
     const fallbackInvite = findBestLocalInvite(voterNpub);
+    const bootstrapNpub = fallbackInvite?.invitedNpub?.trim() || voterNpub;
     const next = runtime.bootstrapWithLocalIdentity({
-      invitedNpub: voterNpub,
+      invitedNpub: bootstrapNpub,
       coordinatorNpub: fallbackInvite?.coordinatorNpub ?? undefined,
       invite: fallbackInvite,
+      allowInviteRecipientMismatch: Boolean(fallbackInvite && bootstrapNpub !== (fallbackInvite.invitedNpub ?? "").trim()),
       allowInviteMissing: true,
     });
     setSignedInNpub(next.invitedNpub);
@@ -343,7 +348,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           return;
         }
 
-        const voterRuntime = new QuestionnaireOptionAVoterRuntime(createSignerService(), preferredInvite.electionId);
+        const voterRuntime = new QuestionnaireOptionAVoterRuntime(createSignerService(), preferredInvite.electionId, props.localVoterNsec);
         const next = await voterRuntime.loginWithSigner(preferredInvite);
         setElectionId(preferredInvite.electionId);
         setRuntime(voterRuntime);
@@ -392,7 +397,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
 
   async function openInvite(invite: ElectionInviteMessage, requestAfterLogin = false) {
     try {
-      const voterRuntime = new QuestionnaireOptionAVoterRuntime(createSignerService(), invite.electionId);
+      const voterRuntime = new QuestionnaireOptionAVoterRuntime(createSignerService(), invite.electionId, props.localVoterNsec);
       let next;
       try {
         next = await voterRuntime.loginWithSigner(invite);
@@ -401,10 +406,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           throw error;
         }
         next = voterRuntime.bootstrapWithLocalIdentity({
-          invitedNpub: props.localVoterNpub?.trim() || invite.invitedNpub,
+          invitedNpub: invite.invitedNpub?.trim() || props.localVoterNpub?.trim() || "",
           coordinatorNpub: invite.coordinatorNpub,
           invite,
           allowInviteRecipientMismatch: true,
+          allowInviteMissing: true,
         });
       }
 

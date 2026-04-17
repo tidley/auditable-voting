@@ -27,7 +27,7 @@ The shipped app currently includes:
 - round announcements over Nostr
 - coordinator control carrier events over Nostr, replayed through a Rust state machine
 - NIP-17 DM traffic for follow, roster, MLS welcome, and share-assignment flows
-- encrypted mailbox-object traffic for blind requests, ticket delivery, and ticket acknowledgements
+- NIP-17 DM traffic for Option A blind ballot requests/issuances, plus mailbox-object traffic for ticket delivery and ticket acknowledgements
 - course-feedback deployment mode (`1 coordinator / 25 voters / 1 round`) now treats ticket acknowledgements as best-effort diagnostics, with valid ballot acceptance as the authoritative completion signal
 - per-round blind-signature key announcements
 - blind-signature share issuance and public ballot verification
@@ -142,8 +142,8 @@ At a high level:
 3. Once coordinator round-open agreement is reached, and the supervisory MLS group is acknowledged ready for the round after initial non-lead control-plane sync, the lead publishes the public live round.
 4. Public round events and public ballot events can also be replayed through the Rust/Wasm core, which now drives the shared voter, coordinator, and auditor public-state views.
 5. Coordinators publish per-round blind-signing keys, and the lead auto-sends share indexes to sub-coordinators.
-6. A voter adds coordinators in `Configure`, the client follows them over DMs, and then sends blinded issuance requests through encrypted mailbox envelopes.
-7. Each coordinator returns its own blind-signature share directly to the voter through mailbox ticket envelopes; retries keep the same logical `ticket_id`, and acknowledgements are also mailbox objects so backfill and replay can reconcile the same lineage.
+6. A voter adds coordinators in `Configure`, the client follows them over DMs, and then sends blinded issuance requests through Option A NIP-17 DMs (with local mailbox fallback in same-browser recovery paths).
+7. Each coordinator returns its own blind-signature share directly to the voter over Option A NIP-17 DMs; retries keep stable request lineage, and legacy ticket acknowledgements remain mailbox objects so backfill and replay can reconcile the same lineage.
 8. In course-feedback mode, acknowledgement visibility is diagnostic only; a valid accepted ballot also confirms ticket delivery completion.
 9. The voter unblinds enough shares locally and submits a ballot from an ephemeral key, carrying stable `request_id` and `ticket_id` lineage in the ballot payload.
 10. Coordinators and auditors validate ballots and recompute the tally from public data.

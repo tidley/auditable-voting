@@ -59,7 +59,10 @@ import SimpleUnlockGate from "./SimpleUnlockGate";
 import TokenFingerprint from "./TokenFingerprint";
 import QuestionnaireCoordinatorPanel from "./QuestionnaireCoordinatorPanel";
 import { extractNpubFromScan } from "./npubScan";
-import { processOptionAQueuesForCoordinator, QuestionnaireOptionACoordinatorRuntime } from "./questionnaireOptionARuntime";
+import {
+  processOptionAQueuesForCoordinatorLive,
+  QuestionnaireOptionACoordinatorRuntime,
+} from "./questionnaireOptionARuntime";
 import { buildInviteUrl } from "./questionnaireInvite";
 import {
   primeNip65RelayHints,
@@ -3251,14 +3254,16 @@ export default function SimpleCoordinatorApp() {
     );
   }
 
-  function processKnownVoterRequests() {
+
+  async function processKnownVoterRequests() {
     if (!activeCoordinatorNpub.trim()) {
       return;
     }
     try {
-      const result = processOptionAQueuesForCoordinator({
+      const result = await processOptionAQueuesForCoordinatorLive({
         coordinatorNpub: activeCoordinatorNpub,
         signer: optionASigner,
+        fallbackNsec: keypair?.nsec,
         preferredElectionId: optionAElectionId,
         onlyPreferredElectionId: Boolean(optionAElectionId.trim()),
       });
@@ -3282,25 +3287,24 @@ export default function SimpleCoordinatorApp() {
       return;
     }
     const intervalId = window.setInterval(() => {
-      try {
-        const result = processOptionAQueuesForCoordinator({
-          coordinatorNpub: activeCoordinatorNpub,
-          signer: optionASigner,
-          preferredElectionId: optionAElectionId,
-          onlyPreferredElectionId: Boolean(optionAElectionId.trim()),
-        });
+      void processOptionAQueuesForCoordinatorLive({
+        coordinatorNpub: activeCoordinatorNpub,
+        signer: optionASigner,
+        fallbackNsec: keypair?.nsec,
+        preferredElectionId: optionAElectionId,
+        onlyPreferredElectionId: Boolean(optionAElectionId.trim()),
+      }).then((result) => {
         if (result.processedElections > 0) {
           setKnownVoterInviteRefreshNonce((value) => value + 1);
         }
-      } catch {
+      }).catch(() => {
         // Keep background processing best-effort; explicit action shows errors.
-      }
+      });
     }, 3000);
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [activeCoordinatorNpub, optionAElectionId, optionASigner]);
-
+  }, [activeCoordinatorNpub, keypair?.nsec, optionAElectionId, optionASigner]);
   function authorizePendingRequester(invitedNpub: string) {
     if (!optionACoordinatorRuntime) {
       return;

@@ -1600,7 +1600,7 @@ export default function SimpleUiApp() {
     setManualCoordinators((current) => current.filter((_, currentIndex) => currentIndex !== index));
   }
 
-  function applyDiscoveredQuestionnaireInvites(invites: Array<{ coordinatorNpub: string; electionId: string }>) {
+  function applyDiscoveredQuestionnaireInvites(invites: Array<{ coordinatorNpub: string; electionId: string; invitedNpub: string; type: string; schemaVersion: number; title: string; description: string; voteUrl: string; expiresAt?: string | null }>) {
     for (const invite of invites) {
       publishInviteToMailbox(invite);
     }
@@ -2938,6 +2938,7 @@ export default function SimpleUiApp() {
               announcedQuestionnaireIds={readyAnnouncedQuestionnaireIds}
               optionAAnnouncedQuestionnaireIds={announcedQuestionnaireIds}
               localVoterNpub={voterKeypair?.npub ?? ""}
+              localVoterNsec={voterKeypair?.nsec ?? ""}
             />
             {isCourseFeedbackMode || hideLegacyLiveVotePanel || questionnaireModeActive ? null : (
             effectiveLiveVoteSession ? (

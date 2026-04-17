@@ -41,6 +41,14 @@ import {
   storeBlindIssuance,
   upsertElectionSummary,
 } from "./questionnaireOptionAStorage";
+import {
+  fetchOptionABlindIssuanceDms,
+  fetchOptionABlindIssuanceDmsWithNsec,
+  fetchOptionABlindRequestDms,
+  fetchOptionABlindRequestDmsWithNsec,
+  publishOptionABlindIssuanceDm,
+  publishOptionABlindRequestDm,
+} from "./questionnaireOptionABlindDm";
 import { fetchOptionAInviteDms, publishOptionAInviteDm } from "./questionnaireOptionAInviteDm";
 import type { SignerService } from "./services/signerService";
 
@@ -123,6 +131,7 @@ export class QuestionnaireOptionAVoterRuntime {
   constructor(
     private readonly signer: SignerService,
     private readonly electionId: string,
+    private readonly fallbackNsec?: string,
   ) {}
 
   getSnapshot() {
@@ -330,13 +339,49 @@ export class QuestionnaireOptionAVoterRuntime {
     this.state = next;
     enqueueBlindRequest(request);
     saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
+    void this.publishBlindRequestDm();
     return this.state;
+  }
+
+  async publishBlindRequestDm() {
+    if (!this.state?.blindRequest || !this.state.coordinatorNpub) {
+      return null;
+    }
+    try {
+      const result = await publishOptionABlindRequestDm({
+        signer: this.signer,
+        recipientNpub: this.state.coordinatorNpub,
+        request: this.state.blindRequest,
+        fallbackNsec: this.fallbackNsec,
+      });
+      return result;
+    } catch {
+      return null;
+    }
   }
 
   refreshIssuanceAndAcceptance() {
     if (!this.state) {
       throw new OptionARuntimeError("not_logged_in", "Login is required.");
     }
+
+    const electionId = this.state.electionId;
+    void (this.fallbackNsec?.trim()
+      ? fetchOptionABlindIssuanceDmsWithNsec({
+        nsec: this.fallbackNsec,
+        electionId,
+        limit: 100,
+      })
+      : fetchOptionABlindIssuanceDms({
+        signer: this.signer,
+        electionId,
+        limit: 100,
+      })).then((issuanceMessages) => {
+      for (const issuance of issuanceMessages) {
+        storeBlindIssuance(issuance);
+      }
+    }).catch(() => null);
+
     let next = this.state;
     if (next.blindRequest) {
       const issuance = readBlindIssuance(next.blindRequest.requestId);
@@ -587,6 +632,57 @@ export class QuestionnaireOptionACoordinatorRuntime {
     };
   }
 
+  async syncBlindRequestsFromDm() {
+    if (!this.state || !this.coordinatorNpub) {
+      throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
+    }
+
+    try {
+      const requests = this.fallbackNsec?.trim()
+        ? await fetchOptionABlindRequestDmsWithNsec({
+          nsec: this.fallbackNsec,
+          electionId: this.electionId,
+          limit: 150,
+        })
+        : await fetchOptionABlindRequestDms({
+          signer: this.signer,
+          electionId: this.electionId,
+          limit: 150,
+        });
+      for (const request of requests) {
+        enqueueBlindRequest(request);
+      }
+      return requests.length;
+    } catch {
+      return 0;
+    }
+  }
+
+  async publishPendingBlindIssuancesToDm() {
+    if (!this.state || !this.coordinatorNpub) {
+      throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
+    }
+
+    const issued = Object.values(this.state.issuedBlindResponses);
+    let delivered = 0;
+    for (const issuance of issued) {
+      try {
+        const result = await publishOptionABlindIssuanceDm({
+          signer: this.signer,
+          recipientNpub: issuance.invitedNpub,
+          issuance,
+          fallbackNsec: this.fallbackNsec,
+        });
+        if (result.successes > 0) {
+          delivered += 1;
+        }
+      } catch {
+        // Keep best-effort to avoid blocking queue processing.
+      }
+    }
+    return delivered;
+  }
+
   processPendingBlindRequests() {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
@@ -761,6 +857,51 @@ export function processOptionAQueuesForCoordinator(input: {
       summary,
     });
     runtime.processPendingBlindRequests();
+    runtime.processPendingSubmissions(input.requiredQuestionIdsByElectionId?.[electionId] ?? []);
+    processedElectionIds.push(electionId);
+  }
+
+  return {
+    processedElectionIds,
+    processedElections: processedElectionIds.length,
+  };
+}
+
+export async function processOptionAQueuesForCoordinatorLive(input: {
+  coordinatorNpub: string;
+  signer: SignerService;
+  fallbackNsec?: string;
+  preferredElectionId?: string;
+  onlyPreferredElectionId?: boolean;
+  requiredQuestionIdsByElectionId?: Record<string, string[]>;
+}) {
+  const coordinatorNpub = toNpub(input.coordinatorNpub);
+  const registry = loadElectionRegistry();
+  const preferredElectionId = input.preferredElectionId?.trim() ?? "";
+  const orderedElectionIds = input.onlyPreferredElectionId && preferredElectionId
+    ? [preferredElectionId]
+    : [
+      preferredElectionId,
+      ...registry,
+    ]
+      .filter((value) => value.length > 0)
+      .filter((value, index, values) => values.indexOf(value) === index);
+
+  const processedElectionIds: string[] = [];
+  for (const electionId of orderedElectionIds) {
+    const summary = loadElectionSummary(electionId);
+    if (!summary || summary.coordinatorNpub !== coordinatorNpub) {
+      continue;
+    }
+    const runtime = new QuestionnaireOptionACoordinatorRuntime(
+      input.signer,
+      electionId,
+      input.fallbackNsec,
+    );
+    runtime.bootstrapCoordinatorNpub({ coordinatorNpub, summary });
+    await runtime.syncBlindRequestsFromDm();
+    runtime.processPendingBlindRequests();
+    await runtime.publishPendingBlindIssuancesToDm();
     runtime.processPendingSubmissions(input.requiredQuestionIdsByElectionId?.[electionId] ?? []);
     processedElectionIds.push(electionId);
   }
