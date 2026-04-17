@@ -229,11 +229,7 @@ export function readInviteFromMailbox(input: { invitedNpub: string; electionId: 
 
 export function listInvitesFromMailbox(invitedNpub: string) {
   const mailbox = readJson<Record<string, Record<string, ElectionInviteMessage>>>(INVITE_MAILBOX_KEY, {});
-  return Object.values(mailbox[invitedNpub] ?? {}).sort((left, right) => {
-    const leftElection = left.electionId ?? "";
-    const rightElection = right.electionId ?? "";
-    return leftElection.localeCompare(rightElection);
-  });
+  return Object.values(mailbox[invitedNpub] ?? {});
 }
 
 export function enqueueBlindRequest(request: BlindBallotRequest) {

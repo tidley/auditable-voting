@@ -82,9 +82,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     if (announcedIds.length === 0) {
       return;
     }
+    const latestAnnouncedElectionId = announcedIds[announcedIds.length - 1] ?? "";
     const currentElectionId = electionId.trim();
-    if (!currentElectionId || !announcedIds.includes(currentElectionId)) {
-      setElectionId(announcedIds[0]);
+    if (latestAnnouncedElectionId && currentElectionId !== latestAnnouncedElectionId) {
+      setElectionId(latestAnnouncedElectionId);
     }
   }, [electionId, inviteContext.electionId, props.announcedQuestionnaireIds]);
 
@@ -190,11 +191,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         if (invites.length === 0) {
           setStatus("Signed in. No pending questionnaire invites were found.");
         } else {
-          const activeElectionIds = new Set(invites.map((invite) => invite.electionId));
-          if (!inviteContext.electionId?.trim() && !activeElectionIds.has(electionId.trim())) {
-            setElectionId(invites[0].electionId);
-            setActiveInvite(invites[0]);
+          const preferredInvite = invites[0] ?? null;
+          if (!inviteContext.electionId?.trim() && preferredInvite && electionId.trim() !== preferredInvite.electionId) {
+            setElectionId(preferredInvite.electionId);
           }
+          setActiveInvite(preferredInvite);
           setStatus(`Signed in as ${deriveActorDisplayId(signerNpub)}. ${invites.length} pending invite${invites.length === 1 ? "" : "s"} found.`);
         }
         return;
@@ -204,9 +205,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       setSignedInNpub(next.invitedNpub);
       const invites = await loadPendingInvitesFromRelays(next.invitedNpub);
       setPendingInvites(invites);
+      const preferredInvite = invites[0] ?? null;
+      if (!inviteContext.electionId?.trim() && preferredInvite && electionId.trim() !== preferredInvite.electionId) {
+        setElectionId(preferredInvite.electionId);
+      }
       const pendingInvite = next.inviteMessage && !next.blindRequestSent && !next.credentialReady
         ? next.inviteMessage
-        : null;
+        : preferredInvite;
       setActiveInvite(pendingInvite);
       setStatus(`Signed in as ${deriveActorDisplayId(next.invitedNpub)}.`);
       setRefreshNonce((value) => value + 1);
