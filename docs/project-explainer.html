@@ -4,65 +4,143 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Auditable Voting Explainer</title>
-    <style>
+        <style>
       :root {
-        color-scheme: light;
-        --bg: #f6f8fb;
-        --paper: #ffffff;
-        --ink: #142033;
-        --muted: #526079;
-        --line: #d8dfeb;
-        --accent: #1d4ed8;
-        --accent-soft: #e8f0ff;
-        --code: #f3f5f9;
+        color-scheme: dark;
+        --bg: #061129;
+        --paper: #0a1a38;
+        --paper-2: #0f2349;
+        --ink: #e7efff;
+        --muted: #9ab0d6;
+        --line: #203a69;
+        --accent: #4ea1ff;
+        --accent-soft: rgba(78, 161, 255, 0.14);
+        --code: #08162f;
       }
 
       * {
         box-sizing: border-box;
       }
 
+      html {
+        scroll-behavior: smooth;
+      }
+
       body {
         margin: 0;
-        background: var(--bg);
+        background: radial-gradient(circle at 15% 0%, #102a57 0%, #08152f 42%, #061129 100%);
         color: var(--ink);
         font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
         line-height: 1.6;
       }
 
       .page {
-        width: min(980px, calc(100% - 32px));
-        margin: 24px auto 48px;
-        padding: 32px 40px 56px;
+        width: min(1180px, calc(100% - 28px));
+        margin: 20px auto 44px;
+        padding: 24px;
         background: var(--paper);
         border: 1px solid var(--line);
-        box-shadow: 0 16px 48px rgba(20, 32, 51, 0.08);
+        border-radius: 16px;
+        box-shadow: 0 18px 48px rgba(3, 8, 18, 0.52);
       }
 
       .topbar {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 16px;
-        margin-bottom: 24px;
-        padding-bottom: 16px;
+        gap: 12px;
+        margin-bottom: 18px;
+        padding-bottom: 14px;
         border-bottom: 1px solid var(--line);
       }
 
-      .topbar p {
+      .topbar-title {
         margin: 0;
-        color: var(--muted);
-        font-size: 0.95rem;
+        font-size: 1rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        color: var(--ink);
       }
 
-      .print-button {
-        border: 1px solid var(--accent);
-        background: var(--accent);
-        color: #fff;
-        padding: 10px 14px;
-        border-radius: 10px;
-        font: inherit;
-        font-weight: 700;
-        cursor: pointer;
+      .topbar-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .topbar-link {
+        border: 1px solid var(--line);
+        background: var(--paper-2);
+        color: var(--ink);
+        text-decoration: none;
+        padding: 6px 10px;
+        border-radius: 8px;
+        font-size: 0.86rem;
+      }
+
+      .topbar-link:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: 270px minmax(0, 1fr);
+        gap: 20px;
+      }
+
+      .toc {
+        position: sticky;
+        top: 16px;
+        align-self: start;
+        background: var(--paper-2);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px;
+        max-height: calc(100vh - 48px);
+        overflow: auto;
+      }
+
+      .toc h2 {
+        margin: 0 0 10px;
+        font-size: 0.98rem;
+        color: var(--ink);
+      }
+
+      .toc ul {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .toc li {
+        margin: 0;
+      }
+
+      .toc a {
+        display: block;
+        color: var(--muted);
+        text-decoration: none;
+        border-radius: 8px;
+        padding: 5px 8px;
+        font-size: 0.88rem;
+      }
+
+      .toc a:hover {
+        background: var(--accent-soft);
+        color: var(--ink);
+      }
+
+      .toc-level-h3 a {
+        padding-left: 18px;
+      }
+
+      .toc-level-h4 a {
+        padding-left: 28px;
+      }
+
+      #content {
+        min-width: 0;
       }
 
       #content h1,
@@ -74,20 +152,36 @@
       }
 
       #content h1 {
-        font-size: 2.2rem;
+        font-size: 2rem;
         margin-top: 0;
       }
 
       #content h2 {
-        margin-top: 2.4rem;
-        font-size: 1.5rem;
-        padding-top: 0.3rem;
+        margin-top: 2.2rem;
+        font-size: 1.45rem;
+        padding-top: 0.4rem;
         border-top: 1px solid var(--line);
       }
 
       #content h3 {
-        margin-top: 1.4rem;
-        font-size: 1.15rem;
+        margin-top: 1.35rem;
+        font-size: 1.1rem;
+      }
+
+      #content h2 .heading-anchor,
+      #content h3 .heading-anchor,
+      #content h4 .heading-anchor {
+        margin-left: 0.5rem;
+        font-size: 0.85em;
+        color: var(--muted);
+        text-decoration: none;
+        opacity: 0;
+      }
+
+      #content h2:hover .heading-anchor,
+      #content h3:hover .heading-anchor,
+      #content h4:hover .heading-anchor {
+        opacity: 1;
       }
 
       #content p,
@@ -110,9 +204,14 @@
         color: var(--accent);
       }
 
+      #content a:hover {
+        color: #8bc0ff;
+      }
+
       #content code {
         font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
         background: var(--code);
+        border: 1px solid var(--line);
         padding: 0.12rem 0.34rem;
         border-radius: 0.32rem;
         font-size: 0.92em;
@@ -129,6 +228,7 @@
       #content pre code {
         padding: 0;
         background: transparent;
+        border: 0;
       }
 
       .mermaid-wrap {
@@ -136,7 +236,7 @@
         padding: 16px;
         border: 1px solid var(--line);
         border-radius: 14px;
-        background: #fbfcff;
+        background: #08162f;
         overflow-x: auto;
       }
 
@@ -162,12 +262,36 @@
       }
 
       th {
-        background: var(--code);
+        background: #0b1d3f;
+      }
+
+      @media (max-width: 980px) {
+        .page {
+          width: calc(100% - 16px);
+          margin: 10px auto 18px;
+          padding: 14px;
+          border-radius: 12px;
+        }
+
+        .layout {
+          grid-template-columns: 1fr;
+          gap: 14px;
+        }
+
+        .toc {
+          position: static;
+          max-height: 260px;
+        }
+
+        #content h1 {
+          font-size: 1.6rem;
+        }
       }
 
       @media print {
         body {
           background: #fff;
+          color: #000;
         }
 
         .page {
@@ -175,30 +299,36 @@
           margin: 0;
           padding: 0;
           border: 0;
+          border-radius: 0;
           box-shadow: none;
+          background: #fff;
         }
 
-        .topbar {
+        .topbar,
+        .toc {
           display: none;
-        }
-
-        #content h2,
-        #content h3 {
-          break-after: avoid;
-        }
-
-        #content pre,
-        .mermaid-wrap,
-        blockquote,
-        table {
-          break-inside: avoid;
         }
       }
     </style>
   </head>
   <body>
-    <main class="page">
+        <main class="page">
+      <header class="topbar">
+        <p class="topbar-title">Auditable Voting Explainer</p>
+        <nav class="topbar-links" aria-label="Quick links">
+          <a class="topbar-link" href="./">Home</a>
+          <a class="topbar-link" href="./simple.html?role=voter">Voter</a>
+          <a class="topbar-link" href="./simple-coordinator.html?role=coordinator">Coordinator</a>
+          <a class="topbar-link" href="./dashboard.html?role=auditor">Auditor</a>
+        </nav>
+      </header>
+      <section class="layout">
+        <nav class="toc" aria-label="On this page">
+          <h2>On this page</h2>
+          <ul id="toc-list"></ul>
+        </nav>
         <article id="content" aria-label="Project explainer"></article>
+      </section>
     </main>
 
     <script id="source" type="text/plain"># Auditable Voting Explainer
@@ -904,6 +1034,54 @@ The project is attempting to separate voter eligibility from public ballot ident
 
       content.innerHTML = marked.parse(source);
 
+      const tocList = document.getElementById("toc-list");
+      const usedHeadingIds = new Set();
+      const slugify = (value) => value
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9\s-]/g, "")
+        .replace(/\s+/g, "-")
+        .replace(/-+/g, "-");
+
+      for (const heading of content.querySelectorAll("h2, h3, h4")) {
+        const text = heading.textContent?.trim() ?? "";
+        if (!text) {
+          continue;
+        }
+        const baseId = slugify(text) || "section";
+        let nextId = baseId;
+        let dedupe = 2;
+        while (usedHeadingIds.has(nextId) || document.getElementById(nextId)) {
+          nextId = `${baseId}-${dedupe}`;
+          dedupe += 1;
+        }
+        usedHeadingIds.add(nextId);
+        heading.id = nextId;
+
+        const anchor = document.createElement("a");
+        anchor.className = "heading-anchor";
+        anchor.href = `#${nextId}`;
+        anchor.textContent = "#";
+        anchor.setAttribute("aria-label", `Link to ${text}`);
+        heading.appendChild(anchor);
+
+        const item = document.createElement("li");
+        item.className = `toc-level-${heading.tagName.toLowerCase()}`;
+        const link = document.createElement("a");
+        link.href = `#${nextId}`;
+        link.textContent = text;
+        item.appendChild(link);
+        tocList?.appendChild(item);
+      }
+
+      if (!tocList?.children.length) {
+        const item = document.createElement("li");
+        item.textContent = "No section headings found.";
+        item.style.color = "var(--muted)";
+        item.style.padding = "6px 8px";
+        tocList?.appendChild(item);
+      }
+
       for (const block of content.querySelectorAll("pre code.language-mermaid")) {
         const wrapper = document.createElement("div");
         wrapper.className = "mermaid-wrap";
@@ -919,7 +1097,7 @@ The project is attempting to separate voter eligibility from public ballot ident
 
       mermaid.initialize({
         startOnLoad: false,
-        theme: "default",
+        theme: "dark",
         securityLevel: "loose",
       });
 

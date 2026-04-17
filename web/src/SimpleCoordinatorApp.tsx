@@ -699,6 +699,7 @@ export default function SimpleCoordinatorApp() {
     const params = new URLSearchParams(window.location.search);
     return (params.get("election_id") ?? params.get("questionnaire") ?? "").trim();
   }, [questionnaireRosterAnnouncement.questionnaireId]);
+  const questionnaireFlowActive = isCourseFeedbackMode || optionAElectionId.length > 0;
   const optionACoordinatorRuntime = useMemo(() => (
     optionAElectionId
       ? new QuestionnaireOptionACoordinatorRuntime(
@@ -5508,18 +5509,26 @@ export default function SimpleCoordinatorApp() {
                                   row.pendingRequest.tone,
                                 )}
                               >
-                                {isCourseFeedbackMode
-                                  ? 'Course-feedback mode bypasses legacy blinded ticket requests.'
+                                {questionnaireFlowActive
+                                  ? (
+                                      row.pendingRequest.tone === 'ok'
+                                        ? "Ballot request received."
+                                        : "Waiting for this voter's ballot request."
+                                    )
                                   : row.pendingRequest.text}
                               </li>
                               <li
                                 className={deliveryToneClass(row.ticket.tone)}
                               >
-                                {isCourseFeedbackMode
-                                  ? 'Course-feedback mode accepts questionnaire responses without live-round ticket issuance.'
+                                {questionnaireFlowActive
+                                  ? (
+                                      row.ticket.tone === 'ok'
+                                        ? 'Ballot credential issued.'
+                                        : 'Waiting to issue ballot credential.'
+                                    )
                                   : row.ticket.text}
                               </li>
-                              {row.receipt && !isCourseFeedbackMode ? (
+                              {row.receipt && !questionnaireFlowActive ? (
                                 <li
                                   className={deliveryToneClass(
                                     row.receipt.tone,

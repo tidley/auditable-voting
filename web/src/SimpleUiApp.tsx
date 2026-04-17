@@ -1564,7 +1564,9 @@ export default function SimpleUiApp() {
     }
     void sendFollowRequests([nextCoordinator], {
       pending: "Sending follow request...",
-      success: "Coordinator notified. Waiting for round tickets.",
+      success: questionnaireModeActive
+        ? "Coordinator notified. Waiting for questionnaire updates."
+        : "Coordinator notified. Waiting for round tickets.",
       failure: "Coordinator follow request failed.",
     });
   }
@@ -1584,7 +1586,9 @@ export default function SimpleUiApp() {
     } else {
       void sendFollowRequests([scannedNpub], {
         pending: "Sending follow request...",
-        success: "Coordinator notified. Waiting for round tickets.",
+        success: questionnaireModeActive
+          ? "Coordinator notified. Waiting for questionnaire updates."
+          : "Coordinator notified. Waiting for round tickets.",
         failure: "Coordinator follow request failed.",
       });
     }
@@ -1741,7 +1745,14 @@ export default function SimpleUiApp() {
 
       setRequestStatus(
         followSuccesses > 0
-          ? (messages?.success ?? "Coordinators notified. Waiting for round tickets.")
+          ? (
+              messages?.success
+              ?? (
+                questionnaireModeActive
+                  ? "Coordinators notified. Waiting for questionnaire updates."
+                  : "Coordinators notified. Waiting for round tickets."
+              )
+            )
           : (messages?.failure ?? "Coordinator notification failed."),
       );
     } catch {
@@ -1755,7 +1766,9 @@ export default function SimpleUiApp() {
     );
     await sendFollowRequests(retryTargets, {
       pending: "Retrying unresponsive coordinators...",
-      success: "Retry sent. Waiting for round tickets.",
+      success: questionnaireModeActive
+        ? "Retry sent. Waiting for questionnaire updates."
+        : "Retry sent. Waiting for round tickets.",
       failure: "Coordinator retry failed.",
     });
   }
@@ -2078,8 +2091,16 @@ export default function SimpleUiApp() {
       if (results.some((result) => result.success)) {
         setRequestStatus(
           configuredCoordinatorTargets.length === results.length
-            ? 'Coordinators notified. Waiting for round tickets.'
-            : 'Additional coordinators received. Waiting for round tickets.',
+            ? (
+                questionnaireModeActive
+                  ? 'Coordinators notified. Waiting for questionnaire updates.'
+                  : 'Coordinators notified. Waiting for round tickets.'
+              )
+            : (
+                questionnaireModeActive
+                  ? 'Additional coordinators received. Waiting for questionnaire updates.'
+                  : 'Additional coordinators received. Waiting for round tickets.'
+              ),
         );
       }
     }).catch(() => undefined);
@@ -2087,6 +2108,7 @@ export default function SimpleUiApp() {
     configuredCoordinatorTargets,
     coordinatorDiagnosticsByNpub,
     followDeliveries,
+    questionnaireModeActive,
     voterKeypair?.npub,
     voterKeypair?.nsec,
   ]);
@@ -2791,8 +2813,10 @@ export default function SimpleUiApp() {
                                   diagnostic?.round.tone ?? 'waiting',
                                 )}
                               >
-                                {diagnostic?.round.text ??
-                                  'Waiting for live round.'}
+                                {questionnaireModeActive
+                                  ? 'Questionnaire stream connected.'
+                                  : (diagnostic?.round.text ??
+                                    'Waiting for live round.')}
                               </li>
                               <li
                                 className={toneClass(
@@ -2807,16 +2831,28 @@ export default function SimpleUiApp() {
                                   diagnostic?.request.tone ?? 'waiting',
                                 )}
                               >
-                                {diagnostic?.request.text ??
-                                  'Waiting to send blinded ticket request.'}
+                                {questionnaireModeActive
+                                  ? (
+                                      diagnostic?.request.tone === 'ok'
+                                        ? 'Ballot request sent.'
+                                        : 'Waiting to send ballot request.'
+                                    )
+                                  : (diagnostic?.request.text ??
+                                    'Waiting to send blinded ticket request.')}
                               </li>
                               <li
                                 className={toneClass(
                                   diagnostic?.ticket.tone ?? 'waiting',
                                 )}
                               >
-                                {diagnostic?.ticket.text ??
-                                  'Waiting for ticket.'}
+                                {questionnaireModeActive
+                                  ? (
+                                      diagnostic?.ticket.tone === 'ok'
+                                        ? 'Ballot credential received.'
+                                        : 'Waiting for ballot credential.'
+                                    )
+                                  : (diagnostic?.ticket.text ??
+                                    'Waiting for ticket.')}
                               </li>
                             </ul>
                           );
