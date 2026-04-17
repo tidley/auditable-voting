@@ -385,7 +385,19 @@ type QuestionnaireVoterPanelProps = {
 
 export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelProps) {
   const globalFlags = globalThis as typeof globalThis & { __AUDITABLE_VOTING_FORCE_LEGACY_QUESTIONNAIRE__?: boolean };
-  if (!globalFlags.__AUDITABLE_VOTING_FORCE_LEGACY_QUESTIONNAIRE__) {
+  const optionAMode = !globalFlags.__AUDITABLE_VOTING_FORCE_LEGACY_QUESTIONNAIRE__;
+
+  useEffect(() => {
+    if (!optionAMode) {
+      return;
+    }
+    props.onContextChange?.({ hasDefinition: true, state: "open" });
+    return () => {
+      props.onContextChange?.({ hasDefinition: false, state: null });
+    };
+  }, [optionAMode, props.onContextChange]);
+
+  if (optionAMode) {
     return (
       <QuestionnaireOptionAVoterPanel
         announcedQuestionnaireIds={props.optionAAnnouncedQuestionnaireIds}

@@ -65,8 +65,18 @@ export default function SimpleQrScanner({
   const detectorRef = useRef<BarcodeDetectorLike | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const lastScanAtRef = useRef<number>(0);
+  const onDetectedRef = useRef(onDetected);
+  const onCloseRef = useRef(onClose);
   const [status, setStatus] = useState<ScannerStatus>("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    onDetectedRef.current = onDetected;
+  }, [onDetected]);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   const decodeWithJsQr = (video: HTMLVideoElement, canvas: HTMLCanvasElement | null): string | null => {
     if (!canvas) {
@@ -124,9 +134,15 @@ export default function SimpleQrScanner({
     const cameraConstraintAttempts: MediaStreamConstraints[] = [
       {
         video: {
-          facingMode: { ideal: "environment" },
+          facingMode: { exact: "environment" },
           width: { ideal: 1280 },
           height: { ideal: 720 },
+        },
+        audio: false,
+      },
+      {
+        video: {
+          facingMode: { ideal: "environment" },
         },
         audio: false,
       },
@@ -168,6 +184,7 @@ export default function SimpleQrScanner({
       }
 
       video.setAttribute("playsinline", "true");
+      video.setAttribute("muted", "true");
       video.playsInline = true;
       video.muted = true;
       video.autoplay = true;
@@ -234,7 +251,6 @@ export default function SimpleQrScanner({
             }
             return decodeWithJsQr(currentVideo, canvas);
           }).catch(() => {
-            // Firefox Android may expose BarcodeDetector but fail to decode at runtime.
             detectorRef.current = null;
             return decodeWithJsQr(currentVideo, canvas);
           })
@@ -242,9 +258,9 @@ export default function SimpleQrScanner({
 
         void detectPromise.then((rawValue) => {
           if (rawValue) {
-            void Promise.resolve(onDetected(rawValue)).then((accepted) => {
+            void Promise.resolve(onDetectedRef.current(rawValue)).then((accepted) => {
               if (accepted) {
-                onClose();
+                onCloseRef.current();
                 return;
               }
 
@@ -274,7 +290,7 @@ export default function SimpleQrScanner({
       stopScanner();
       setStatus("idle");
     };
-  }, [active, onClose, onDetected]);
+  }, [active]);
 
   function stopScanner() {
     if (animationFrameRef.current !== null) {
