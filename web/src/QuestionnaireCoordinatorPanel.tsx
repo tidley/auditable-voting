@@ -42,7 +42,7 @@ type QuestionnaireCoordinatorPanelProps = {
   coordinatorNsec?: string | null;
   coordinatorNpub?: string | null;
   knownVoterCount?: number;
-  view?: "build" | "responses";
+  view?: "build" | "responses" | "participants";
   onStatusChange?: (status: {
     questionnaireId: string;
     state: QuestionnaireStateValue | null;
@@ -1306,6 +1306,46 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   }
 
   const view = props.view ?? "build";
+
+  if (view === "participants") {
+    return (
+      <div className='simple-voter-card simple-questionnaire-panel'>
+        <h3 className='simple-voter-question'>Publish questionnaire</h3>
+        <p className='simple-voter-note'>Questionnaire ID: {questionnaireId.trim() || "Not set"}</p>
+        <p className='simple-voter-note'>State: {buildStateLabel}</p>
+        <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
+          {!publishedDefinition ? (
+            <button type='button' className='simple-voter-primary' disabled={!canPublishDraft} onClick={() => void publishDefinition()}>
+              Publish Questionnaire
+            </button>
+          ) : currentState === "open" ? (
+            <button type='button' className='simple-voter-primary' disabled={!canCloseQuestionnaire} onClick={() => void publishState("closed")}>
+              Close Questionnaire
+            </button>
+          ) : currentState === "closed" ? (
+            <button type='button' className='simple-voter-primary' disabled={!canPublishResults} onClick={() => void publishResults()}>
+              Count Responses
+            </button>
+          ) : currentState === "results_published" ? (
+            <button type='button' className='simple-voter-primary' disabled>
+              Counted
+            </button>
+          ) : (
+            <button type='button' className='simple-voter-primary' disabled={!canOpenQuestionnaire} onClick={() => void publishState("open")}>
+              Open Questionnaire
+            </button>
+          )}
+          <button type='button' className='simple-voter-secondary' onClick={() => void refresh()}>
+            Refresh
+          </button>
+        </div>
+        {publishValidation && !publishValidation.valid ? (
+          <p className='simple-voter-note'>Validation: {publishValidation.errors[0] ?? "unknown_error"}.</p>
+        ) : null}
+        {status ? <p className='simple-voter-note'>{status}</p> : null}
+      </div>
+    );
+  }
 
   if (view === "responses") {
     return (

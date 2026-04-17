@@ -23,6 +23,31 @@ function getBarcodeDetectorConstructor(): BarcodeDetectorConstructorLike | null 
   return candidate ?? null;
 }
 
+function describeCameraError(error: unknown): string {
+  if (typeof window !== "undefined" && !window.isSecureContext) {
+    return "Camera access requires HTTPS (or localhost). Open this page over https:// and try again.";
+  }
+  const name = typeof error === "object" && error && "name" in error
+    ? String((error as { name?: unknown }).name ?? "")
+    : "";
+  if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+    return "Camera permission was denied. Allow camera access for this site in browser/app settings and retry.";
+  }
+  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+    return "No camera device was found.";
+  }
+  if (name === "NotReadableError" || name === "TrackStartError" || name === "AbortError") {
+    return "Camera is unavailable (possibly in use by another app). Close other camera apps and retry.";
+  }
+  if (name === "OverconstrainedError" || name === "ConstraintNotSatisfiedError") {
+    return "Camera constraints were not supported on this device.";
+  }
+  if (name === "SecurityError") {
+    return "Browser security settings blocked camera access.";
+  }
+  return "Camera could not be opened. Check browser permissions and device camera availability.";
+}
+
 export default function SimpleQrScanner({
   active,
   onDetected,
@@ -78,9 +103,15 @@ export default function SimpleQrScanner({
     let cancelled = false;
     const barcodeDetectorCtor = getBarcodeDetectorConstructor();
 
+    if (typeof window !== "undefined" && !window.isSecureContext) {
+      setStatus("error");
+      setErrorMessage("Camera access requires HTTPS (or localhost). Open this page over https:// and try again.");
+      return;
+    }
+
     if (!navigator.mediaDevices?.getUserMedia) {
       setStatus("error");
-      setErrorMessage("Camera access is not available in this browser. Use HTTPS or localhost, or paste the npub manually.");
+      setErrorMessage("Camera APIs are not available in this browser. Use manual paste on this device.");
       return;
     }
 
@@ -164,9 +195,9 @@ export default function SimpleQrScanner({
           });
         }
         await video.play();
-      } catch {
+      } catch (error) {
         setStatus("error");
-        setErrorMessage("Camera started, but the preview could not be opened.");
+        setErrorMessage(describeCameraError(error));
         return;
       }
 
@@ -231,10 +262,10 @@ export default function SimpleQrScanner({
       };
 
       animationFrameRef.current = window.requestAnimationFrame(scan);
-    }).catch(() => {
+    }).catch((error) => {
       if (!cancelled) {
         setStatus("error");
-        setErrorMessage("Camera permission was denied or the camera could not be opened.");
+        setErrorMessage(describeCameraError(error));
       }
     });
 

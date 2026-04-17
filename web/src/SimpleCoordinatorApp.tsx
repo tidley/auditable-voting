@@ -5747,6 +5747,18 @@ export default function SimpleCoordinatorApp() {
                 </div>
               </SimpleCollapsibleSection>
             ) : null}
+            <QuestionnaireCoordinatorPanel
+              coordinatorNsec={keypair?.nsec ?? null}
+              coordinatorNpub={keypair?.npub ?? null}
+              knownVoterCount={followers.length}
+              view='participants'
+              onStatusChange={(nextStatus) => {
+                setQuestionnaireRosterAnnouncement({
+                  questionnaireId: nextStatus.questionnaireId,
+                  state: nextStatus.state,
+                });
+              }}
+            />
           </section>
         ) : null}
         {activeTab === 'voting' ? (
