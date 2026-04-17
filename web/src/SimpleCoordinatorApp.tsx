@@ -5350,7 +5350,6 @@ export default function SimpleCoordinatorApp() {
               {assignmentStatus && (
                 <p className='simple-voter-note'>{assignmentStatus}</p>
               )}
-            </SimpleCollapsibleSection>
             {isLeadCoordinator && (
               <SimpleCollapsibleSection title='Sub-coordinators'>
                 {subCoordinators.length > 0 ? (
@@ -5384,7 +5383,7 @@ export default function SimpleCoordinatorApp() {
                 )}
               </SimpleCollapsibleSection>
             )}
-
+            </SimpleCollapsibleSection>
 
             <SimpleCollapsibleSection title='Questionnaire draft'>
               <QuestionnaireCoordinatorPanel

@@ -65,12 +65,12 @@ function questionTypeLabel(type: QuestionnaireQuestionDraft["type"]): QuestionCa
   return "Yes / No";
 }
 
-function createYesNoQuestion(questionId: string): QuestionnaireQuestionDraft {
+function createYesNoQuestion(questionId: string, prompt = "", required = true): QuestionnaireQuestionDraft {
   return {
     questionId,
     type: "yes_no",
-    prompt: "",
-    required: true,
+    prompt,
+    required,
   };
 }
 
@@ -146,6 +146,75 @@ function readStoredQuestionnaireDraftId() {
   }
   const stored = window.localStorage.getItem(buildSimpleNamespacedLocalStorageKey(QUESTIONNAIRE_DRAFT_ID_STORAGE_KEY))?.trim() ?? "";
   return stored || generateQuestionnaireId();
+}
+
+const QUESTIONNAIRE_DRAFT_DATA_STORAGE_KEY = "coordinator.questionnaire-draft-data.v1";
+
+type StoredQuestionnaireDraft = {
+  questionnaireId: string;
+  title: string;
+  description: string;
+  closeAfterMinutes: string;
+  questions: QuestionnaireQuestionDraft[];
+};
+
+function normaliseStoredQuestions(input: unknown): QuestionnaireQuestionDraft[] {
+  if (!Array.isArray(input) || input.length === 0) {
+    return [createYesNoQuestion("q1")];
+  }
+  const entries = input.filter((entry): entry is QuestionnaireQuestionDraft => (
+    Boolean(entry)
+    && typeof entry === "object"
+    && typeof (entry as { questionId?: unknown }).questionId === "string"
+    && typeof (entry as { type?: unknown }).type === "string"
+    && typeof (entry as { prompt?: unknown }).prompt === "string"
+  ));
+  return entries.length > 0 ? entries : [createYesNoQuestion("q1")];
+}
+
+function readStoredQuestionnaireDraft(): StoredQuestionnaireDraft {
+  const fallbackId = readStoredQuestionnaireDraftId();
+  if (typeof window === "undefined") {
+    return {
+      questionnaireId: fallbackId,
+      title: "",
+      description: "",
+      closeAfterMinutes: "60",
+      questions: [createYesNoQuestion("q1")],
+    };
+  }
+  try {
+    const raw = window.localStorage.getItem(buildSimpleNamespacedLocalStorageKey(QUESTIONNAIRE_DRAFT_DATA_STORAGE_KEY));
+    if (!raw) {
+      return {
+        questionnaireId: fallbackId,
+        title: "",
+        description: "",
+        closeAfterMinutes: "60",
+        questions: [createYesNoQuestion("q1")],
+      };
+    }
+    const parsed = JSON.parse(raw) as Partial<StoredQuestionnaireDraft>;
+    return {
+      questionnaireId: typeof parsed.questionnaireId === "string" && parsed.questionnaireId.trim()
+        ? parsed.questionnaireId.trim()
+        : fallbackId,
+      title: typeof parsed.title === "string" ? parsed.title : "",
+      description: typeof parsed.description === "string" ? parsed.description : "",
+      closeAfterMinutes: typeof parsed.closeAfterMinutes === "string" && parsed.closeAfterMinutes.trim()
+        ? parsed.closeAfterMinutes
+        : "60",
+      questions: normaliseStoredQuestions(parsed.questions),
+    };
+  } catch {
+    return {
+      questionnaireId: fallbackId,
+      title: "",
+      description: "",
+      closeAfterMinutes: "60",
+      questions: [createYesNoQuestion("q1")],
+    };
+  }
 }
 
 function formatUnixTimestamp(timestampSeconds?: number | null) {
@@ -224,11 +293,12 @@ function buildDefinition(input: {
 export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordinatorPanelProps) {
   const deploymentMode = useMemo(() => readDeploymentModeFromUrl(), []);
   const isCourseFeedbackMode = deploymentMode === "course_feedback";
-  const [questionnaireId, setQuestionnaireId] = useState(() => readStoredQuestionnaireDraftId());
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [closeAfterMinutes, setCloseAfterMinutes] = useState("60");
-  const [questions, setQuestions] = useState<QuestionnaireQuestionDraft[]>(() => [createYesNoQuestion("q1")]);
+  const storedDraft = useMemo(() => readStoredQuestionnaireDraft(), []);
+  const [questionnaireId, setQuestionnaireId] = useState(storedDraft.questionnaireId);
+  const [title, setTitle] = useState(storedDraft.title);
+  const [description, setDescription] = useState(storedDraft.description);
+  const [closeAfterMinutes, setCloseAfterMinutes] = useState(storedDraft.closeAfterMinutes);
+  const [questions, setQuestions] = useState<QuestionnaireQuestionDraft[]>(storedDraft.questions);
   const [showInviteQr, setShowInviteQr] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [coordinatorNsec, setCoordinatorNsec] = useState("");
@@ -770,7 +840,18 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       return;
     }
     window.localStorage.setItem(buildSimpleNamespacedLocalStorageKey(QUESTIONNAIRE_DRAFT_ID_STORAGE_KEY), nextId);
-  }, [questionnaireId]);
+    const snapshot: StoredQuestionnaireDraft = {
+      questionnaireId: nextId,
+      title,
+      description,
+      closeAfterMinutes,
+      questions,
+    };
+    window.localStorage.setItem(
+      buildSimpleNamespacedLocalStorageKey(QUESTIONNAIRE_DRAFT_DATA_STORAGE_KEY),
+      JSON.stringify(snapshot),
+    );
+  }, [closeAfterMinutes, description, questionnaireId, questions, title]);
 
   function updateQuestion(index: number, updater: (question: QuestionnaireQuestionDraft) => QuestionnaireQuestionDraft) {
     setQuestions((current) => current.map((entry, entryIndex) => (
@@ -792,7 +873,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       if (type === "free_text") {
         return createFreeTextQuestion(questionId, prompt, required);
       }
-      return createYesNoQuestion(questionId);
+      return createYesNoQuestion(questionId, prompt, required);
     });
   }
 
