@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("./questionnaireInvite", () => ({
@@ -14,7 +14,7 @@ vi.mock("./questionnaireTransport", () => ({
 vi.mock("./services/signerService", () => ({
   createSignerService: () => ({
     isAvailable: async () => true,
-    getPublicKey: async () => "f".repeat(64),
+    getPublicKey: async () => "npub1" + "a".repeat(58),
     signMessage: async () => "sig",
     signEvent: async <T extends Record<string, unknown>>(event: T) => event,
   }),
@@ -24,6 +24,7 @@ vi.mock("./services/signerService", () => ({
 vi.mock("./questionnaireOptionAStorage", () => ({
   listInvitesFromMailbox: () => [],
   listInvitesForElectionFromMailbox: () => [],
+  loadElectionSummary: () => null,
   publishInviteToMailbox: () => undefined,
 }));
 
@@ -54,8 +55,15 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     const loginButton = screen.getByRole("button", { name: "Login" });
     await user.click(loginButton);
 
-    await screen.findByText(/Signed in as .*1 pending invite/i);
-    expect(screen.getByText("Pending invites")).toBeTruthy();
+    await screen.findByText(/Pending invites/i);
     expect(screen.getByText("Test Invite")).toBeTruthy();
+  });
+
+  it("adopts announced questionnaire id when election id is missing", async () => {
+    render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_auto_123"]} />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Election ID: q_auto_123")).length).toBeGreaterThan(0);
+    });
   });
 });

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { nip19 } from "nostr-tools";
 import { fetchQuestionnaireDefinitions } from "./questionnaireTransport";
 import { parseInviteFromUrl } from "./questionnaireInvite";
@@ -70,6 +70,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   }>>([]);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const autoRequestSentForRef = useRef<Record<string, true>>({});
 
   const inviteContext = useMemo(() => parseInviteFromUrl(), []);
   const [electionId, setElectionId] = useState(inviteContext.electionId ?? deriveElectionId());
@@ -84,15 +85,24 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   }, [electionId]);
 
   useEffect(() => {
-    if (!runtime || signedInNpub.trim()) {
+    if (!runtime) {
       return;
     }
     const localVoterNpub = props.localVoterNpub?.trim() ?? "";
     if (!localVoterNpub) {
       return;
     }
+    const signedIn = signedInNpub.trim();
+    if (signedIn && signedIn !== localVoterNpub) {
+      return;
+    }
+    const snapshot = runtime.getSnapshot();
+    if (snapshot?.invitedNpub === localVoterNpub) {
+      return;
+    }
     try {
       const fallbackInvite = listInvitesFromMailbox(localVoterNpub).find((invite) => invite.electionId === electionId)
+        ?? listInvitesFromMailbox(localVoterNpub)[0]
         ?? null;
       const next = runtime.bootstrapWithLocalIdentity({
         invitedNpub: localVoterNpub,
@@ -161,6 +171,37 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       cancelled = true;
     };
   }, [electionId]);
+
+  useEffect(() => {
+    if (electionId.trim()) {
+      return;
+    }
+    const announced = (props.announcedQuestionnaireIds ?? [])
+      .map((value) => value.trim())
+      .find((value) => value.length > 0);
+    if (announced) {
+      setElectionId(announced);
+      return;
+    }
+    const localNpub = props.localVoterNpub?.trim() ?? "";
+    if (!localNpub) {
+      return;
+    }
+    const localInvite = listInvitesFromMailbox(localNpub)[0] ?? null;
+    if (localInvite?.electionId?.trim()) {
+      setElectionId(localInvite.electionId.trim());
+    }
+  }, [electionId, props.announcedQuestionnaireIds, props.localVoterNpub]);
+
+  useEffect(() => {
+    if (electionId.trim() || pendingInvites.length === 0) {
+      return;
+    }
+    const nextElectionId = pendingInvites[0]?.electionId?.trim() ?? "";
+    if (nextElectionId) {
+      setElectionId(nextElectionId);
+    }
+  }, [electionId, pendingInvites]);
 
   const snapshot = runtime?.getSnapshot() ?? null;
   const flags = runtime?.getFlags() ?? {
@@ -246,21 +287,33 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       const signer = createSignerService();
       const rawPubkey = await signer.getPublicKey();
       const signerNpub = rawPubkey.startsWith("npub1") ? rawPubkey : nip19.npubEncode(rawPubkey);
-      setSignedInNpub(signerNpub);
 
       if (!runtime) {
         const invites = await loadPendingInvites({ voterNpub: signerNpub, allowRelayFetch: true });
         setPendingInvites(invites);
         if (invites.length === 0) {
+          setSignedInNpub(signerNpub);
           setStatus("Signed in. No pending questionnaire invites were found.");
-        } else {
-          const preferredInvite = invites[0] ?? null;
-          if (!inviteContext.electionId?.trim() && preferredInvite && electionId.trim() !== preferredInvite.electionId) {
-            setElectionId(preferredInvite.electionId);
-          }
-          setActiveInvite(preferredInvite);
-          setStatus("Signed in as " + deriveActorDisplayId(signerNpub) + ". " + invites.length + " pending invite" + (invites.length === 1 ? "" : "s") + " found.");
+          return;
         }
+
+        const preferredInvite = invites[0] ?? null;
+        if (!preferredInvite) {
+          setSignedInNpub(signerNpub);
+          setStatus("Signed in. No pending questionnaire invites were found.");
+          return;
+        }
+
+        const voterRuntime = new QuestionnaireOptionAVoterRuntime(createSignerService(), preferredInvite.electionId);
+        const next = await voterRuntime.loginWithSigner(preferredInvite);
+        setElectionId(preferredInvite.electionId);
+        setRuntime(voterRuntime);
+        setSignedInNpub(next.invitedNpub);
+        setActiveInvite(next.inviteMessage && !next.blindRequestSent && !next.credentialReady
+          ? next.inviteMessage
+          : preferredInvite);
+        setStatus("Signed in as " + deriveActorDisplayId(next.invitedNpub) + ". " + invites.length + " pending invite" + (invites.length === 1 ? "" : "s") + " found.");
+        setRefreshNonce((value) => value + 1);
         return;
       }
 
@@ -391,6 +444,36 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       setStatus(error instanceof Error ? error.message : "Submit failed.");
     }
   }
+
+  useEffect(() => {
+    if (!runtime || !snapshot || !snapshot.loginVerified) {
+      return;
+    }
+    if (snapshot.blindRequestSent || snapshot.credentialReady || snapshot.submission) {
+      return;
+    }
+    const hasInviteContext = Boolean(
+      snapshot.inviteMessage
+      || activeInvite
+      || pendingInvites.some((invite) => invite.electionId === snapshot.electionId),
+    );
+    if (!hasInviteContext) {
+      return;
+    }
+    const key = snapshot.electionId + ":" + snapshot.invitedNpub;
+    if (autoRequestSentForRef.current[key]) {
+      return;
+    }
+    try {
+      runtime.requestBlindBallot();
+      autoRequestSentForRef.current[key] = true;
+      setActiveInvite(null);
+      setStatus("Blind ballot request sent. Waiting for coordinator issuance.");
+      setRefreshNonce((value) => value + 1);
+    } catch {
+      // Keep manual request available if automatic send cannot proceed yet.
+    }
+  }, [activeInvite, pendingInvites, runtime, snapshot]);
 
   const canSubmitNow = flags.canSubmitVote && requiredQuestionIds.every((questionId) => {
     const value = answers[questionId];

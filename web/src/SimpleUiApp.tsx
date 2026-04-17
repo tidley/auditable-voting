@@ -1686,14 +1686,25 @@ export default function SimpleUiApp() {
     if (!localNsec) {
       return;
     }
+    const aggressiveInvitePoll = configuredCoordinatorTargets.length > 0
+      && !questionnaireContext.hasDefinition
+      && announcedQuestionnaireIds.length === 0;
+    const pollIntervalMs = aggressiveInvitePoll ? 2500 : 7000;
+
     void checkQuestionnaireInvitesWithLocalKey({ silent: true });
     const intervalId = window.setInterval(() => {
       void checkQuestionnaireInvitesWithLocalKey({ silent: true });
-    }, 7000);
+    }, pollIntervalMs);
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [signerNpub, voterKeypair?.nsec]);
+  }, [
+    announcedQuestionnaireIds.length,
+    configuredCoordinatorTargets.length,
+    questionnaireContext.hasDefinition,
+    signerNpub,
+    voterKeypair?.nsec,
+  ]);
 
   async function sendFollowRequests(
     targetCoordinatorNpubs: string[],
