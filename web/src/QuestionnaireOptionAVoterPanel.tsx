@@ -285,6 +285,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       return mergeByKey(fromMailbox);
     }
 
+    const localVoterNpub = props.localVoterNpub?.trim() ?? "";
+    if (localVoterNpub && voterNpub === localVoterNpub) {
+      return mergeByKey(fromMailbox);
+    }
+
     try {
       const signer = createSignerService();
       const dmInvites = await fetchOptionAInviteDms({ signer, limit: 40 });
@@ -327,6 +332,20 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
 
   async function login() {
     const localVoterNpub = props.localVoterNpub?.trim() ?? "";
+    const signedInTrimmed = signedInNpub.trim();
+
+    if (localVoterNpub && (!signedInTrimmed || signedInTrimmed === localVoterNpub)) {
+      try {
+        const usedLocal = await loginWithLocalIdentity(localVoterNpub);
+        if (usedLocal) {
+          return;
+        }
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : "Local identity login failed.");
+        return;
+      }
+    }
+
     try {
       const signer = createSignerService();
       const rawPubkey = await signer.getPublicKey();
@@ -376,17 +395,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       setStatus("Signed in as " + deriveActorDisplayId(next.invitedNpub) + ".");
       setRefreshNonce((value) => value + 1);
     } catch (error) {
-      if (error instanceof SignerServiceError && localVoterNpub && runtime) {
-        try {
-          const usedLocal = await loginWithLocalIdentity(localVoterNpub);
-          if (usedLocal) {
-            return;
-          }
-        } catch (fallbackError) {
-          setStatus(fallbackError instanceof Error ? fallbackError.message : "Local identity login failed.");
-          return;
-        }
-      }
       if (error instanceof OptionARuntimeError || error instanceof SignerServiceError) {
         setStatus(error.message);
         return;
@@ -398,20 +406,34 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   async function openInvite(invite: ElectionInviteMessage, requestAfterLogin = false) {
     try {
       const voterRuntime = new QuestionnaireOptionAVoterRuntime(createSignerService(), invite.electionId, props.localVoterNsec);
+      const localVoterNpub = props.localVoterNpub?.trim() ?? "";
+      const signedInTrimmed = signedInNpub.trim();
+      const preferLocalIdentity = Boolean(localVoterNpub && (!signedInTrimmed || signedInTrimmed === localVoterNpub));
+
       let next;
-      try {
-        next = await voterRuntime.loginWithSigner(invite);
-      } catch (error) {
-        if (!(error instanceof SignerServiceError) && !(error instanceof OptionARuntimeError && error.code === "invite_mismatch")) {
-          throw error;
-        }
+      if (preferLocalIdentity) {
         next = voterRuntime.bootstrapWithLocalIdentity({
-          invitedNpub: invite.invitedNpub?.trim() || props.localVoterNpub?.trim() || "",
+          invitedNpub: invite.invitedNpub?.trim() || localVoterNpub,
           coordinatorNpub: invite.coordinatorNpub,
           invite,
           allowInviteRecipientMismatch: true,
           allowInviteMissing: true,
         });
+      } else {
+        try {
+          next = await voterRuntime.loginWithSigner(invite);
+        } catch (error) {
+          if (!(error instanceof SignerServiceError) && !(error instanceof OptionARuntimeError && error.code === "invite_mismatch")) {
+            throw error;
+          }
+          next = voterRuntime.bootstrapWithLocalIdentity({
+            invitedNpub: invite.invitedNpub?.trim() || props.localVoterNpub?.trim() || "",
+            coordinatorNpub: invite.coordinatorNpub,
+            invite,
+            allowInviteRecipientMismatch: true,
+            allowInviteMissing: true,
+          });
+        }
       }
 
       setElectionId(invite.electionId);

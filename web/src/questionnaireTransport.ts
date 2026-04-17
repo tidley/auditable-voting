@@ -50,19 +50,16 @@ export async function fetchQuestionnaireDefinitions(input: {
   relays?: string[];
   limit?: number;
 }) {
-  const relays = selectPublicReadRelays(buildPublicRelays(input.relays));
-  const pool = getSharedNostrPool();
-  const events = await pool.querySync(relays, {
-    kinds: [QUESTIONNAIRE_DEFINITION_KIND],
-    limit: input.limit ?? 200,
-  });
+  const events = (await fetchQuestionnaireEventsWithFallback({
+    questionnaireId: input.questionnaireId,
+    kind: QUESTIONNAIRE_DEFINITION_KIND,
+    relays: input.relays,
+    limit: input.limit,
+    parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireDefinitionEvent(event)?.questionnaireId ?? null,
+  })).events;
 
   return events
     .map((event) => ({ event, definition: parseQuestionnaireDefinitionEvent(event) }))
-    .filter((entry) => (
-      !input.questionnaireId
-      || entry.definition?.questionnaireId === input.questionnaireId
-    ))
     .filter((entry): entry is { event: NostrEvent; definition: QuestionnaireDefinition } => Boolean(entry.definition));
 }
 

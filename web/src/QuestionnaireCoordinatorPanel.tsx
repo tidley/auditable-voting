@@ -958,7 +958,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const hasQuestion = questions.length > 0;
   const hasKnownVoter = (props.knownVoterCount ?? 0) > 0;
   const questionsValid = questions.length > 0 && questions.every((question) => isQuestionDraftValid(question));
-  const publishPreconditionsReady = titleReady && hasQuestion && hasKnownVoter && questionsValid;
+  const publishPreconditionsReady = titleReady && hasQuestion && questionsValid;
   const publishValidation = useMemo(
     () => (builtDefinition ? validateQuestionnaireDefinition(builtDefinition) : null),
     [builtDefinition],
