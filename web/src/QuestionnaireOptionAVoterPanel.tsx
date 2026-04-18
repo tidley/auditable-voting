@@ -16,6 +16,7 @@ import {
 import { fetchOptionAInviteDms } from "./questionnaireOptionAInviteDm";
 import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import type { QuestionnaireDefinition } from "./questionnaireProtocol";
+import TokenFingerprint from "./TokenFingerprint";
 
 function deriveElectionId() {
   const params = new URLSearchParams(window.location.search);
@@ -770,6 +771,19 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         <button type='button' className='simple-voter-secondary' onClick={refreshStatus}>Refresh status</button>
         <button type='button' className='simple-voter-primary' disabled={!canSubmitNow} onClick={submit}>Submit response</button>
       </div>
+      {snapshot?.submission ? (
+        <section className='simple-settings-card' aria-label='Submitted responder marker'>
+          <h4 className='simple-voter-section-title'>Submitted responder marker</h4>
+          <p className='simple-voter-note'>This is the marker the coordinator sees for this submitted response.</p>
+          <TokenFingerprint
+            tokenId={snapshot.invitedNpub}
+            label='Submitted responder marker'
+            large
+            showQr
+            hideMetadata
+          />
+        </section>
+      ) : null}
       {flags.alreadySubmitted ? <p className='simple-voter-note'>You have already submitted one accepted vote for this election.</p> : null}
       {displayStatus ? <p className='simple-voter-note'>{displayStatus}</p> : null}
       <span style={{ display: "none" }} aria-hidden='true'>{refreshNonce}</span>

@@ -299,4 +299,63 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     await screen.findByText("Waiting for questions to be published.");
     expect((screen.getByRole("button", { name: "Submit response" }) as HTMLButtonElement).disabled).toBe(true);
   });
+
+  it("shows the submitted responder marker with QR after submission", async () => {
+    const localVoterNpub = "npub1" + "f".repeat(58);
+    optionAStorageMocks.loadVoterState.mockReturnValue({
+      electionId: "q_submitted_marker",
+      invitedNpub: localVoterNpub,
+      coordinatorNpub: "npub1" + "b".repeat(58),
+      loginVerified: true,
+      loginVerifiedAt: "2026-04-18T00:00:00.000Z",
+      inviteMessage: null,
+      blindRequest: {
+        type: "blind_ballot_request",
+        schemaVersion: 1,
+        electionId: "q_submitted_marker",
+        requestId: "request_submitted_marker",
+        invitedNpub: localVoterNpub,
+        blindedMessage: "blinded",
+        clientNonce: "nonce",
+        createdAt: "2026-04-18T00:00:00.000Z",
+      },
+      blindRequestSent: true,
+      blindRequestSentAt: "2026-04-18T00:00:00.000Z",
+      blindIssuance: {
+        type: "blind_ballot_response",
+        schemaVersion: 1,
+        electionId: "q_submitted_marker",
+        requestId: "request_submitted_marker",
+        issuanceId: "issuance_submitted_marker",
+        invitedNpub: localVoterNpub,
+        blindSignature: "sig_submitted_marker",
+        issuedAt: "2026-04-18T00:00:00.000Z",
+      },
+      credentialReady: true,
+      draftResponses: [],
+      submission: {
+        type: "ballot_submission",
+        schemaVersion: 1,
+        electionId: "q_submitted_marker",
+        submissionId: "submission_submitted_marker",
+        invitedNpub: localVoterNpub,
+        credential: "sig_submitted_marker",
+        nullifier: "nullifier_submitted_marker",
+        payload: {
+          electionId: "q_submitted_marker",
+          responses: [],
+        },
+        submittedAt: "2026-04-18T00:01:00.000Z",
+      },
+      submissionAccepted: null,
+      submissionAcceptedAt: null,
+      lastUpdatedAt: "2026-04-18T00:01:00.000Z",
+    });
+
+    render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_submitted_marker"]} localVoterNpub={localVoterNpub} />);
+
+    await screen.findByRole("region", { name: "Submitted responder marker" });
+    expect(screen.getByText("This is the marker the coordinator sees for this submitted response.")).toBeTruthy();
+    expect(screen.getAllByLabelText(/Expand QR for token/i).length).toBeGreaterThan(0);
+  });
 });
