@@ -14,6 +14,8 @@ import {
   publishInviteToMailbox,
 } from "./questionnaireOptionAStorage";
 import { fetchOptionAInviteDms } from "./questionnaireOptionAInviteDm";
+import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
+import type { QuestionnaireDefinition } from "./questionnaireProtocol";
 
 function deriveElectionId() {
   const params = new URLSearchParams(window.location.search);
@@ -44,6 +46,18 @@ function answerToOptionA(
     return null;
   }
   return { questionId: question.questionId, type: "text", answer: text };
+}
+
+function mapDefinitionQuestions(definition: QuestionnaireDefinition) {
+  return definition.questions.map((question) => ({
+    questionId: question.questionId,
+    required: question.required,
+    prompt: question.prompt,
+    type: question.type,
+    options: question.type === "multiple_choice" ? question.options : undefined,
+    multiSelect: question.type === "multiple_choice" ? question.multiSelect : undefined,
+    maxLength: question.type === "free_text" ? question.maxLength : undefined,
+  }));
 }
 
 type QuestionnaireOptionAVoterPanelProps = {
@@ -156,6 +170,18 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     if (!electionId) {
       return;
     }
+    const localDefinition =
+      activeInvite?.definition
+      ?? snapshot?.inviteMessage?.definition
+      ?? pendingInvites.find((invite) => invite.electionId === electionId)?.definition
+      ?? inviteContext.invite?.definition
+      ?? readCachedQuestionnaireDefinition(electionId);
+    if (localDefinition) {
+      storeCachedQuestionnaireDefinition(localDefinition);
+      setQuestionnaireTitle(localDefinition.title || "Questionnaire");
+      setQuestionnaireDescription(localDefinition.description || "");
+      setQuestions(mapDefinitionQuestions(localDefinition));
+    }
     let cancelled = false;
     void fetchQuestionnaireDefinitions({ questionnaireId: electionId, limit: 20 })
       .then((entries) => {
@@ -166,23 +192,16 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         if (!latest) {
           return;
         }
+        storeCachedQuestionnaireDefinition(latest);
         setQuestionnaireTitle(latest.title || "Questionnaire");
         setQuestionnaireDescription(latest.description || "");
-        setQuestions(latest.questions.map((question) => ({
-          questionId: question.questionId,
-          required: question.required,
-          prompt: question.prompt,
-          type: question.type,
-          options: question.type === "multiple_choice" ? question.options : undefined,
-          multiSelect: question.type === "multiple_choice" ? question.multiSelect : undefined,
-          maxLength: question.type === "free_text" ? question.maxLength : undefined,
-        })));
+        setQuestions(mapDefinitionQuestions(latest));
       })
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [electionId]);
+  }, [activeInvite, electionId, inviteContext.invite, pendingInvites, snapshot?.inviteMessage]);
 
   useEffect(() => {
     const currentId = electionId.trim();

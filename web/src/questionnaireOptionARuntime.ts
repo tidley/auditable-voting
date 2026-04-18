@@ -55,6 +55,7 @@ import {
   publishOptionABlindIssuanceDm,
   publishOptionABlindRequestDm,
 } from "./questionnaireOptionABlindDm";
+import { readCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import { fetchOptionAInviteDms, publishOptionAInviteDm } from "./questionnaireOptionAInviteDm";
 import type { SignerService } from "./services/signerService";
 
@@ -633,6 +634,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       voteUrl: meta.voteUrl,
       invitedNpub,
       coordinatorNpub: this.coordinatorNpub,
+      definition: readCachedQuestionnaireDefinition(this.electionId),
       expiresAt: null,
     };
     const sent = reduceCoordinatorEvent(this.state, {

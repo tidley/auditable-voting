@@ -14,6 +14,7 @@ import SimpleQrPanel from "./SimpleQrPanel";
 import TokenFingerprint from "./TokenFingerprint";
 import { deriveActorDisplayId } from "./actorDisplay";
 import { getSharedNostrPool } from "./sharedNostrPool";
+import { storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 
 const DEFAULT_QUESTIONNAIRE_ID_PREFIX = "q";
 const QUESTIONNAIRE_DRAFT_ID_STORAGE_KEY = "coordinator.questionnaire-draft-id.v1";
@@ -1163,6 +1164,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         relaySuccessCount: result.successes,
       });
       if (result.successes > 0) {
+        storeCachedQuestionnaireDefinition(builtDefinition);
         setDefinitionPublishSucceededAt(new Date().toISOString());
         setStatus(`Questionnaire draft published (${result.successes}/${result.relayResults.length} relays).`);
         await publishState("open");

@@ -232,6 +232,7 @@ The voter questionnaire now uses a single entry path (Option A runtime) by defau
 - no `qflow`/`questionnaire_flow` URL gate is required for the normal voter path
 - signer login, coordinator whitelist/invite actions, blind request/issuance, single-vote acceptance, and signer-keyed resume are handled through the `questionnaireOptionA` runtime path
 - invites are sent over NIP-17 gift-wrapped DMs (`kind 1059` with `kind 13` seal / `kind 14` rumor) and discovered from relay history on voter login
+- published questionnaire definitions are cached locally and attached to Option A invites when available, so voters can render questions even if public relay backfill misses the definition event
 - invite-driven voter login can automatically prepare/send the first blind ballot request when the voter is authenticated and authorised
 - invite/login npubs and local voter/responder npubs may differ; opening an invite can bind it to the current local voter identity, and the coordinator must either have that voter whitelisted or authorise the request
 - invites are durable and do not fail just because the voter opens them hours or days later; ballot requests are idempotent and re-queue the same request until issuance arrives

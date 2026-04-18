@@ -1,3 +1,5 @@
+import type { QuestionnaireDefinition } from "./questionnaireProtocol";
+
 export type ElectionId = string;
 export type Npub = string;
 export type Hex = string;
@@ -58,6 +60,7 @@ export interface ElectionInviteMessage {
   voteUrl: string;
   invitedNpub: Npub;
   coordinatorNpub: Npub;
+  definition?: QuestionnaireDefinition | null;
   expiresAt?: IsoTime | null;
 }
 

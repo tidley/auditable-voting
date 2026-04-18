@@ -51,9 +51,11 @@ vi.mock("./questionnaireOptionAInviteDm", () => ({
 }));
 
 import QuestionnaireOptionAVoterPanel from "./QuestionnaireOptionAVoterPanel";
+import { storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 
 afterEach(() => {
   cleanup();
+  window.localStorage.clear();
 });
 
 describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
@@ -105,5 +107,35 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
       expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Login verified: Yes")).length).toBeGreaterThan(0);
     });
     expect(screen.queryByText("Login is required.")).toBeNull();
+  });
+
+  it("renders questions from cached questionnaire definition when relay fetch is empty", async () => {
+    storeCachedQuestionnaireDefinition({
+      schemaVersion: 1,
+      eventType: "questionnaire_definition",
+      responseMode: "blind_token",
+      questionnaireId: "q_cached_definition",
+      title: "Cached questionnaire",
+      description: "Cached description",
+      createdAt: 1,
+      openAt: 1,
+      closeAt: 999,
+      coordinatorPubkey: "npub1" + "b".repeat(58),
+      coordinatorEncryptionPubkey: "npub1" + "b".repeat(58),
+      responseVisibility: "private",
+      eligibilityMode: "open",
+      allowMultipleResponsesPerPubkey: false,
+      questions: [{
+        questionId: "q1",
+        type: "yes_no",
+        prompt: "Cached question prompt",
+        required: true,
+      }],
+    });
+
+    render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_cached_definition"]} />);
+
+    await screen.findByText("Cached question prompt");
+    expect(screen.queryByText("Waiting for questions to be published.")).toBeNull();
   });
 });
