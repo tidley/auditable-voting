@@ -1057,6 +1057,7 @@ The project is attempting to separate voter eligibility from public ballot ident
 - Invite-driven voter login can auto-prepare/send the first blind request once login is verified.
 - Invite/login npubs and local voter/responder npubs may differ; opening an invite can bind it to the current local voter identity, then the coordinator either auto-issues for whitelisted voters or manually authorises unexpected requesters.
 - Invites are durable and can remain idle indefinitely; ballot request retries preserve the same request id and re-queue until the coordinator issues a credential.
+- Accepted Option A DM submissions feed the same coordinator response summaries as public questionnaire response events.
 </script>
 
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>

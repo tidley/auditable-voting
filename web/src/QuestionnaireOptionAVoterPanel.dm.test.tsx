@@ -4,9 +4,9 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const optionAStorageMocks = vi.hoisted(() => ({
-  loadVoterState: vi.fn(() => null),
-  readBlindIssuance: vi.fn(() => null),
-  readAcceptance: vi.fn(() => null),
+  loadVoterState: vi.fn((): unknown => null),
+  readBlindIssuance: vi.fn((): unknown => null),
+  readAcceptance: vi.fn((): unknown => null),
 }));
 
 vi.mock("./questionnaireInvite", () => ({
@@ -149,6 +149,42 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     await screen.findByText("Cached question prompt");
     expect(screen.queryByText("Waiting for questions to be published.")).toBeNull();
+  });
+
+  it("marks the selected yes/no answer visually", async () => {
+    const user = userEvent.setup();
+    storeCachedQuestionnaireDefinition({
+      schemaVersion: 1,
+      eventType: "questionnaire_definition",
+      responseMode: "blind_token",
+      questionnaireId: "q_yes_no_selected",
+      title: "Cached questionnaire",
+      description: "Cached description",
+      createdAt: 1,
+      openAt: 1,
+      closeAt: 999,
+      coordinatorPubkey: "npub1" + "b".repeat(58),
+      coordinatorEncryptionPubkey: "npub1" + "b".repeat(58),
+      responseVisibility: "private",
+      eligibilityMode: "open",
+      allowMultipleResponsesPerPubkey: false,
+      questions: [{
+        questionId: "q1",
+        type: "yes_no",
+        prompt: "Choose yes or no",
+        required: true,
+      }],
+    });
+
+    render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_yes_no_selected"]} />);
+
+    const yesButton = await screen.findByRole("button", { name: "Yes" });
+    const noButton = screen.getByRole("button", { name: "No" });
+    await user.click(yesButton);
+
+    expect(yesButton.className).toContain("is-active");
+    expect(noButton.className).toContain("is-dimmed");
+    expect(yesButton.getAttribute("aria-pressed")).toBe("true");
   });
 
   it("renders questions from the blind issuance definition when public definition fetch is empty", async () => {

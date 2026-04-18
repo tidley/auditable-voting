@@ -96,6 +96,9 @@ import {
 } from "./wasm/auditableVotingCore";
 import { createSignerService, SignerServiceError } from "./services/signerService";
 import { getSharedNostrPool } from "./sharedNostrPool";
+import type { BallotSubmission, QuestionnaireAnswer } from "./questionnaireOptionA";
+import type { QuestionnaireResponsePayload } from "./questionnaireProtocol";
+import type { QuestionnaireAcceptedResponse } from "./questionnaireRuntime";
 
 type CoordinatorTab = "configure" | "participants" | "voting" | "settings";
 
@@ -103,6 +106,61 @@ type SimpleCoordinatorKeypair = {
   npub: string;
   nsec: string;
 };
+
+function optionAAnswerToQuestionnaireAnswer(answer: QuestionnaireAnswer): QuestionnaireResponsePayload["answers"][number] {
+  if (answer.type === "yes_no") {
+    return {
+      questionId: answer.questionId,
+      answerType: "yes_no",
+      value: answer.answer === "yes",
+    };
+  }
+  if (answer.type === "multiple_choice") {
+    return {
+      questionId: answer.questionId,
+      answerType: "multiple_choice",
+      selectedOptionIds: answer.answer,
+    };
+  }
+  return {
+    questionId: answer.questionId,
+    answerType: "free_text",
+    text: answer.answer,
+  };
+}
+
+function optionASubmissionToAcceptedResponse(submission: BallotSubmission): QuestionnaireAcceptedResponse {
+  const parsedSubmittedAt = Date.parse(submission.submittedAt);
+  const submittedAt = Number.isFinite(parsedSubmittedAt)
+    ? Math.floor(parsedSubmittedAt / 1000)
+    : Math.floor(Date.now() / 1000);
+  const payload: QuestionnaireResponsePayload = {
+    schemaVersion: 1,
+    kind: "questionnaire_response_payload",
+    questionnaireId: submission.electionId,
+    responseId: submission.submissionId,
+    submittedAt,
+    answers: submission.payload.responses.map(optionAAnswerToQuestionnaireAnswer),
+  };
+  return {
+    eventId: `optiona:${submission.submissionId}`,
+    authorPubkey: submission.invitedNpub,
+    envelope: {
+      schemaVersion: 1,
+      eventType: "questionnaire_response_private",
+      questionnaireId: submission.electionId,
+      responseId: submission.submissionId,
+      createdAt: submittedAt,
+      authorPubkey: submission.invitedNpub,
+      ciphertextScheme: "nip44v2",
+      ciphertextRecipient: "option_a_dm",
+      ciphertext: "option_a_dm_submission",
+      payloadHash: submission.submissionId,
+    },
+    payload,
+  };
+}
+
 const GATEWAY_SIGNER_NPUB_STORAGE_KEY = "app:auditable-voting:gateway:signer_npub";
 
 type TicketRelayResult = {
@@ -720,7 +778,19 @@ export default function SimpleCoordinatorApp() {
     () => optionACoordinatorRuntime?.getPendingAuthorizations() ?? [],
     [optionACoordinatorRuntime, knownVoterInviteRefreshNonce],
   );
-  const optionAAcceptedCount = optionACoordinatorRuntime?.getAcceptedUniqueCount() ?? 0;
+  const optionAAcceptedResponses = useMemo(() => {
+    const snapshot = optionACoordinatorRuntime?.getSnapshot();
+    if (!snapshot) {
+      return [];
+    }
+    return Object.values(snapshot.acceptanceResults)
+      .filter((result) => result.accepted)
+      .map((result) => snapshot.receivedSubmissions[result.submissionId])
+      .filter((submission): submission is BallotSubmission => Boolean(submission))
+      .map(optionASubmissionToAcceptedResponse)
+      .sort((left, right) => left.payload.submittedAt - right.payload.submittedAt);
+  }, [optionACoordinatorRuntime, knownVoterInviteRefreshNonce]);
+  const optionAAcceptedCount = Math.max(optionACoordinatorRuntime?.getAcceptedUniqueCount() ?? 0, optionAAcceptedResponses.length);
   const optionAKnownVoterCount = Math.max(followers.length, optionAKnownVoters.length);
   const filteredImportedKnownVoterContacts = useMemo(() => {
     const query = knownVoterContactSearch.trim().toLowerCase();
@@ -5410,6 +5480,7 @@ export default function SimpleCoordinatorApp() {
                 coordinatorNpub={keypair?.npub ?? null}
                 knownVoterCount={optionAKnownVoterCount}
                 optionAAcceptedCount={optionAAcceptedCount}
+                optionAAcceptedResponses={optionAAcceptedResponses}
                 view='build'
                 onStatusChange={(nextStatus) => {
                   setQuestionnaireRosterAnnouncement({
@@ -5776,6 +5847,7 @@ export default function SimpleCoordinatorApp() {
               coordinatorNpub={keypair?.npub ?? null}
               knownVoterCount={optionAKnownVoterCount}
               optionAAcceptedCount={optionAAcceptedCount}
+              optionAAcceptedResponses={optionAAcceptedResponses}
               view='participants'
               onStatusChange={(nextStatus) => {
                 setQuestionnaireRosterAnnouncement({
@@ -5806,6 +5878,7 @@ export default function SimpleCoordinatorApp() {
               coordinatorNpub={keypair?.npub ?? null}
               knownVoterCount={optionAKnownVoterCount}
               optionAAcceptedCount={optionAAcceptedCount}
+              optionAAcceptedResponses={optionAAcceptedResponses}
               view='responses'
               onStatusChange={(nextStatus) => {
                 setQuestionnaireRosterAnnouncement({

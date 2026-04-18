@@ -701,8 +701,22 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               <p className='simple-questionnaire-voter-helper'>{question.required ? "Required" : "Optional"}</p>
               {question.type === "yes_no" ? (
                 <div className='simple-vote-button-grid simple-questionnaire-yes-no-grid'>
-                  <button type='button' className='simple-voter-choice simple-voter-choice-yes' onClick={() => setAnswers((current) => ({ ...current, [question.questionId]: "yes" }))}>Yes</button>
-                  <button type='button' className='simple-voter-choice simple-voter-choice-no' onClick={() => setAnswers((current) => ({ ...current, [question.questionId]: "no" }))}>No</button>
+                  <button
+                    type='button'
+                    className={`simple-voter-choice simple-voter-choice-yes${answers[question.questionId] === "yes" ? " is-active" : answers[question.questionId] === "no" ? " is-dimmed" : ""}`}
+                    aria-pressed={answers[question.questionId] === "yes"}
+                    onClick={() => setAnswers((current) => ({ ...current, [question.questionId]: "yes" }))}
+                  >
+                    Yes
+                  </button>
+                  <button
+                    type='button'
+                    className={`simple-voter-choice simple-voter-choice-no${answers[question.questionId] === "no" ? " is-active" : answers[question.questionId] === "yes" ? " is-dimmed" : ""}`}
+                    aria-pressed={answers[question.questionId] === "no"}
+                    onClick={() => setAnswers((current) => ({ ...current, [question.questionId]: "no" }))}
+                  >
+                    No
+                  </button>
                 </div>
               ) : null}
               {question.type === "multiple_choice" ? (

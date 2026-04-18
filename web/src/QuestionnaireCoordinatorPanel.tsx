@@ -44,6 +44,7 @@ type QuestionnaireCoordinatorPanelProps = {
   coordinatorNpub?: string | null;
   knownVoterCount?: number;
   optionAAcceptedCount?: number;
+  optionAAcceptedResponses?: QuestionnaireAcceptedResponse[];
   view?: "build" | "responses" | "participants";
   onStatusChange?: (status: {
     questionnaireId: string;
@@ -986,7 +987,17 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   );
   const publishedDefinition = Boolean(latestDefinition);
   const currentState: QuestionnaireStateValue = latestState ?? "draft";
-  const displayAcceptedCount = Math.max(latestAcceptedCount, props.optionAAcceptedCount ?? 0);
+  const acceptedResponsesForDisplay = useMemo(() => {
+    const byKey = new Map<string, QuestionnaireAcceptedResponse>();
+    for (const response of latestAcceptedResponses) {
+      byKey.set(response.payload.responseId || response.eventId, response);
+    }
+    for (const response of props.optionAAcceptedResponses ?? []) {
+      byKey.set(response.payload.responseId || response.eventId, response);
+    }
+    return [...byKey.values()].sort((left, right) => left.payload.submittedAt - right.payload.submittedAt);
+  }, [latestAcceptedResponses, props.optionAAcceptedResponses]);
+  const displayAcceptedCount = Math.max(acceptedResponsesForDisplay.length, props.optionAAcceptedCount ?? 0);
   const knownVoterCount = props.knownVoterCount ?? 0;
   const responseCompletionPercent = knownVoterCount > 0
     ? Math.round((displayAcceptedCount / knownVoterCount) * 100)
@@ -1013,12 +1024,12 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     if (!latestDefinition) {
       return [];
     }
-    const acceptedTotal = latestAcceptedResponses.length;
+    const acceptedTotal = acceptedResponsesForDisplay.length;
     return latestDefinition.questions.map((question, index) => {
       if (question.type === "yes_no") {
         let yesCount = 0;
         let noCount = 0;
-        for (const response of latestAcceptedResponses) {
+        for (const response of acceptedResponsesForDisplay) {
           const answer = response.payload.answers.find((entry) => entry.questionId === question.questionId);
           if (answer?.answerType === "yes_no") {
             if (answer.value) {
@@ -1041,7 +1052,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       }
       if (question.type === "multiple_choice") {
         const optionCounts = new Map(question.options.map((option) => [option.optionId, 0]));
-        for (const response of latestAcceptedResponses) {
+        for (const response of acceptedResponsesForDisplay) {
           const answer = response.payload.answers.find((entry) => entry.questionId === question.questionId);
           if (answer?.answerType === "multiple_choice") {
             for (const optionId of answer.selectedOptionIds) {
@@ -1064,7 +1075,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         };
       }
 
-      const responses = latestAcceptedResponses
+      const responses = acceptedResponsesForDisplay
         .map((entry) => {
           const answer = entry.payload.answers.find((answerEntry) => answerEntry.questionId === question.questionId);
           if (answer?.answerType !== "free_text") {
@@ -1091,16 +1102,16 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         responses,
       };
     });
-  }, [latestAcceptedResponses, latestDefinition]);
+  }, [acceptedResponsesForDisplay, latestDefinition]);
   const responders = useMemo(() => (
-    latestAcceptedResponses
+    acceptedResponsesForDisplay
       .map((response) => ({
         markerToken: response.authorPubkey,
         responderId: deriveActorDisplayId(response.authorPubkey),
         submittedAt: response.payload.submittedAt,
       }))
       .sort((left, right) => left.responderId.localeCompare(right.responderId))
-  ), [latestAcceptedResponses]);
+  ), [acceptedResponsesForDisplay]);
   const publishButtonDisabled = !canPublishResults || displayAcceptedCount <= 0;
   const publishStatusText = useMemo(() => {
     if (status === "Computing and publishing questionnaire results...") {
@@ -1110,6 +1121,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       return "Publish failed";
     }
     if (latestState === "results_published") {
+      if (latestResultAcceptedCount !== null && latestResultAcceptedCount !== displayAcceptedCount) {
+        return "Summary needs update";
+      }
       return "Already published";
     }
     if (displayAcceptedCount > 0 && latestState === "open") {
@@ -1122,7 +1136,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       return "Ready to publish";
     }
     return "Nothing to publish yet";
-  }, [canPublishResults, displayAcceptedCount, latestState, status]);
+  }, [canPublishResults, displayAcceptedCount, latestResultAcceptedCount, latestState, status]);
 
   async function publishDefinition() {
     if (!coordinatorNsec.trim() || !builtDefinition) {
@@ -1269,10 +1283,18 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         responseEvents,
         coordinatorNsec,
       });
+      const acceptedByKey = new Map<string, QuestionnaireAcceptedResponse>();
+      for (const response of processed.accepted) {
+        acceptedByKey.set(response.payload.responseId || response.eventId, response);
+      }
+      for (const response of props.optionAAcceptedResponses ?? []) {
+        acceptedByKey.set(response.payload.responseId || response.eventId, response);
+      }
+      const acceptedResponses = [...acceptedByKey.values()];
       const summary = buildQuestionnaireResultSummary({
         definition: latestDefinition,
         coordinatorPubkey: coordinatorNpub,
-        acceptedResponses: processed.accepted,
+        acceptedResponses,
         rejectedResponses: processed.rejected,
       });
 
