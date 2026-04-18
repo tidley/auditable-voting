@@ -55,7 +55,7 @@ import {
   publishOptionABlindIssuanceDm,
   publishOptionABlindRequestDm,
 } from "./questionnaireOptionABlindDm";
-import { readCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
+import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import { fetchOptionAInviteDms, publishOptionAInviteDm } from "./questionnaireOptionAInviteDm";
 import type { SignerService } from "./services/signerService";
 
@@ -386,6 +386,9 @@ export class QuestionnaireOptionAVoterRuntime {
       })).then((issuanceMessages) => {
       for (const issuance of issuanceMessages) {
         storeBlindIssuance(issuance);
+        if (issuance.definition) {
+          storeCachedQuestionnaireDefinition(issuance.definition);
+        }
       }
     }).catch(() => null);
     void (this.fallbackNsec?.trim()
@@ -408,6 +411,9 @@ export class QuestionnaireOptionAVoterRuntime {
     if (next.blindRequest) {
       const issuance = readBlindIssuance(next.blindRequest.requestId);
       if (issuance) {
+        if (issuance.definition) {
+          storeCachedQuestionnaireDefinition(issuance.definition);
+        }
         const received = reduceVoterEvent(next, {
           type: "BLIND_ISSUANCE_RECEIVED",
           issuance,
@@ -703,7 +709,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
     }
 
-    const issued = Object.values(this.state.issuedBlindResponses);
+    const issued = Object.values(this.state.issuedBlindResponses).map((issuance) => this.enrichIssuanceWithDefinition(issuance));
     let delivered = 0;
     for (const issuance of issued) {
       try {
@@ -721,6 +727,14 @@ export class QuestionnaireOptionACoordinatorRuntime {
       }
     }
     return delivered;
+  }
+
+  private enrichIssuanceWithDefinition(issuance: BlindBallotIssuance): BlindBallotIssuance {
+    if (issuance.definition) {
+      return issuance;
+    }
+    const definition = readCachedQuestionnaireDefinition(this.electionId);
+    return definition ? { ...issuance, definition } : issuance;
   }
 
   async syncSubmissionsFromDm() {
@@ -799,7 +813,15 @@ export class QuestionnaireOptionACoordinatorRuntime {
       if (!received.ok) {
         const existingIssuance = findIssuedBlindResponse(next, request);
         if (received.error === "already_issued" && existingIssuance) {
-          storeBlindIssuance(existingIssuance);
+          const enriched = this.enrichIssuanceWithDefinition(existingIssuance);
+          next = {
+            ...next,
+            issuedBlindResponses: {
+              ...next.issuedBlindResponses,
+              [enriched.requestId]: enriched,
+            },
+          };
+          storeBlindIssuance(enriched);
         }
         if (received.error === "not_whitelisted") {
           const existing = this.pendingAuthorizationsByNpub[request.invitedNpub] ?? [];
@@ -813,7 +835,15 @@ export class QuestionnaireOptionACoordinatorRuntime {
       next = received.state;
       const existingIssuance = findIssuedBlindResponse(next, request);
       if (existingIssuance) {
-        storeBlindIssuance(existingIssuance);
+        const enriched = this.enrichIssuanceWithDefinition(existingIssuance);
+        next = {
+          ...next,
+          issuedBlindResponses: {
+            ...next.issuedBlindResponses,
+            [enriched.requestId]: enriched,
+          },
+        };
+        storeBlindIssuance(enriched);
         continue;
       }
       const issuance: BlindBallotIssuance = {
@@ -824,6 +854,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
         issuanceId: makeId("issuance"),
         invitedNpub: request.invitedNpub,
         blindSignature: `sig_${request.blindedMessage.slice(0, 16)}_${request.clientNonce.slice(0, 8)}`,
+        definition: readCachedQuestionnaireDefinition(this.electionId),
         issuedAt: nowIso(),
       };
       const issued = reduceCoordinatorEvent(next, {

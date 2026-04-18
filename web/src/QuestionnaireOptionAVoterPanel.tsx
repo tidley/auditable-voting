@@ -172,6 +172,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
     const localDefinition =
       activeInvite?.definition
+      ?? snapshot?.blindIssuance?.definition
       ?? snapshot?.inviteMessage?.definition
       ?? pendingInvites.find((invite) => invite.electionId === electionId)?.definition
       ?? inviteContext.invite?.definition
@@ -201,7 +202,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     return () => {
       cancelled = true;
     };
-  }, [activeInvite, electionId, inviteContext.invite, pendingInvites, snapshot?.inviteMessage]);
+  }, [activeInvite, electionId, inviteContext.invite, pendingInvites, snapshot?.blindIssuance, snapshot?.inviteMessage]);
 
   useEffect(() => {
     const currentId = electionId.trim();
@@ -606,13 +607,16 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     ));
   const waitingForCredential = Boolean(snapshot?.blindRequestSent && !snapshot?.credentialReady && !snapshot?.submission);
 
-  const canSubmitNow = flags.canSubmitVote && requiredQuestionIds.every((questionId) => {
+  const canSubmitNow = flags.canSubmitVote && questions.length > 0 && requiredQuestionIds.every((questionId) => {
     const value = answers[questionId];
     if (Array.isArray(value)) {
       return value.length > 0;
     }
     return value !== undefined && value !== null && String(value).trim().length > 0;
   });
+  const displayStatus = snapshot?.credentialReady && status === "Blind ballot request sent. Waiting for coordinator issuance."
+    ? "Ballot credential ready."
+    : status;
 
   return (
     <div className='simple-voter-card'>
@@ -753,7 +757,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         <button type='button' className='simple-voter-primary' disabled={!canSubmitNow} onClick={submit}>Submit response</button>
       </div>
       {flags.alreadySubmitted ? <p className='simple-voter-note'>You have already submitted one accepted vote for this election.</p> : null}
-      {status ? <p className='simple-voter-note'>{status}</p> : null}
+      {displayStatus ? <p className='simple-voter-note'>{displayStatus}</p> : null}
       <span style={{ display: "none" }} aria-hidden='true'>{refreshNonce}</span>
     </div>
   );

@@ -965,6 +965,11 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     () => (builtDefinition ? validateQuestionnaireDefinition(builtDefinition) : null),
     [builtDefinition],
   );
+  useEffect(() => {
+    if (builtDefinition && publishValidation?.valid) {
+      storeCachedQuestionnaireDefinition(builtDefinition);
+    }
+  }, [builtDefinition, publishValidation?.valid]);
   const canPublishDraft = Boolean(
     builtDefinition
     && coordinatorNsec.trim()

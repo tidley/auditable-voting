@@ -103,6 +103,7 @@ export interface BlindBallotIssuance {
   issuanceId: IssuanceId;
   invitedNpub: Npub;
   blindSignature: string;
+  definition?: QuestionnaireDefinition | null;
   issuedAt: IsoTime;
 }
 
