@@ -128,6 +128,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     if (!runtime || !signedInNpub.trim()) {
       return;
     }
+    const needsStatusRefresh = Boolean(
+      (snapshot?.blindRequestSent && !snapshot.credentialReady)
+      || (snapshot?.submission && snapshot.submissionAccepted == null),
+    );
+    if (!needsStatusRefresh) {
+      return;
+    }
     const intervalId = window.setInterval(() => {
       try {
         runtime.refreshIssuanceAndAcceptance();
@@ -135,11 +142,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       } catch {
         // Keep polling best-effort; explicit actions surface errors.
       }
-    }, 1500);
+    }, 10000);
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [runtime, signedInNpub]);
+  }, [runtime, signedInNpub, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission, snapshot?.submissionAccepted]);
 
   useEffect(() => {
     setQuestionnaireTitle("Questionnaire");
@@ -573,9 +580,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     };
   }, [runtime, snapshot?.electionId, snapshot?.invitedNpub, snapshot?.loginVerified, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission]);
 
-  const visiblePendingInvites = pendingInvites.filter((invite) => (
-    !signedInNpub || invite.invitedNpub === signedInNpub || Boolean(props.localVoterNpub?.trim())
-  ));
+  const visiblePendingInvites = snapshot?.loginVerified && snapshot.electionId === electionId.trim()
+    ? []
+    : pendingInvites.filter((invite) => (
+      !signedInNpub || invite.invitedNpub === signedInNpub || Boolean(props.localVoterNpub?.trim())
+    ));
   const waitingForCredential = Boolean(snapshot?.blindRequestSent && !snapshot?.credentialReady && !snapshot?.submission);
 
   const canSubmitNow = flags.canSubmitVote && requiredQuestionIds.every((questionId) => {

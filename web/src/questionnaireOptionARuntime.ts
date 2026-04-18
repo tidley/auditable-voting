@@ -42,10 +42,16 @@ import {
   upsertElectionSummary,
 } from "./questionnaireOptionAStorage";
 import {
+  fetchOptionABallotAcceptanceDms,
+  fetchOptionABallotAcceptanceDmsWithNsec,
+  fetchOptionABallotSubmissionDms,
+  fetchOptionABallotSubmissionDmsWithNsec,
   fetchOptionABlindIssuanceDms,
   fetchOptionABlindIssuanceDmsWithNsec,
   fetchOptionABlindRequestDms,
   fetchOptionABlindRequestDmsWithNsec,
+  publishOptionABallotAcceptanceDm,
+  publishOptionABallotSubmissionDm,
   publishOptionABlindIssuanceDm,
   publishOptionABlindRequestDm,
 } from "./questionnaireOptionABlindDm";
@@ -381,6 +387,21 @@ export class QuestionnaireOptionAVoterRuntime {
         storeBlindIssuance(issuance);
       }
     }).catch(() => null);
+    void (this.fallbackNsec?.trim()
+      ? fetchOptionABallotAcceptanceDmsWithNsec({
+        nsec: this.fallbackNsec,
+        electionId,
+        limit: 100,
+      })
+      : fetchOptionABallotAcceptanceDms({
+        signer: this.signer,
+        electionId,
+        limit: 100,
+      })).then((acceptanceMessages) => {
+      for (const acceptance of acceptanceMessages) {
+        storeAcceptance(acceptance);
+      }
+    }).catch(() => null);
 
     let next = this.state;
     if (next.blindRequest) {
@@ -467,7 +488,24 @@ export class QuestionnaireOptionAVoterRuntime {
     this.state = created.state;
     enqueueSubmission(submission);
     saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
+    void this.publishBallotSubmissionDm(submission);
     return this.state;
+  }
+
+  async publishBallotSubmissionDm(submission = this.state?.submission ?? null) {
+    if (!this.state || !submission || !this.state.coordinatorNpub) {
+      return null;
+    }
+    try {
+      return await publishOptionABallotSubmissionDm({
+        signer: this.signer,
+        recipientNpub: this.state.coordinatorNpub,
+        submission,
+        fallbackNsec: this.fallbackNsec,
+      });
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -678,6 +716,60 @@ export class QuestionnaireOptionACoordinatorRuntime {
         }
       } catch {
         // Keep best-effort to avoid blocking queue processing.
+      }
+    }
+    return delivered;
+  }
+
+  async syncSubmissionsFromDm() {
+    if (!this.state || !this.coordinatorNpub) {
+      throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
+    }
+
+    try {
+      const submissions = this.fallbackNsec?.trim()
+        ? await fetchOptionABallotSubmissionDmsWithNsec({
+          nsec: this.fallbackNsec,
+          electionId: this.electionId,
+          limit: 150,
+        })
+        : await fetchOptionABallotSubmissionDms({
+          signer: this.signer,
+          electionId: this.electionId,
+          limit: 150,
+        });
+      for (const submission of submissions) {
+        enqueueSubmission(submission);
+      }
+      return submissions.length;
+    } catch {
+      return 0;
+    }
+  }
+
+  async publishPendingAcceptanceResultsToDm() {
+    if (!this.state || !this.coordinatorNpub) {
+      throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
+    }
+
+    let delivered = 0;
+    for (const acceptance of Object.values(this.state.acceptanceResults)) {
+      const submission = this.state.receivedSubmissions[acceptance.submissionId];
+      if (!submission) {
+        continue;
+      }
+      try {
+        const result = await publishOptionABallotAcceptanceDm({
+          signer: this.signer,
+          recipientNpub: submission.invitedNpub,
+          acceptance,
+          fallbackNsec: this.fallbackNsec,
+        });
+        if (result.successes > 0) {
+          delivered += 1;
+        }
+      } catch {
+        // Keep best-effort to avoid blocking response processing.
       }
     }
     return delivered;
@@ -902,7 +994,9 @@ export async function processOptionAQueuesForCoordinatorLive(input: {
     await runtime.syncBlindRequestsFromDm();
     runtime.processPendingBlindRequests();
     await runtime.publishPendingBlindIssuancesToDm();
+    await runtime.syncSubmissionsFromDm();
     runtime.processPendingSubmissions(input.requiredQuestionIdsByElectionId?.[electionId] ?? []);
+    await runtime.publishPendingAcceptanceResultsToDm();
     processedElectionIds.push(electionId);
   }
 

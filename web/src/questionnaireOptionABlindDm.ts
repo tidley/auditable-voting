@@ -1,6 +1,11 @@
 import { finalizeEvent, generateSecretKey, getEventHash, getPublicKey, nip17, nip19, nip44, type NostrEvent } from "nostr-tools";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
-import type { BlindBallotIssuance, BlindBallotRequest } from "./questionnaireOptionA";
+import type {
+  BallotAcceptanceResult,
+  BallotSubmission,
+  BlindBallotIssuance,
+  BlindBallotRequest,
+} from "./questionnaireOptionA";
 import type { SignerService } from "./services/signerService";
 import { getSharedNostrPool } from "./sharedNostrPool";
 import { SIMPLE_DM_RELAYS } from "./simpleShardDm";
@@ -27,6 +32,20 @@ type BlindIssuanceDmEnvelope = {
   type: "optiona_blind_issuance_dm";
   schemaVersion: 1;
   issuance: BlindBallotIssuance;
+  sentAt: string;
+};
+
+type BallotSubmissionDmEnvelope = {
+  type: "optiona_ballot_submission_dm";
+  schemaVersion: 1;
+  submission: BallotSubmission;
+  sentAt: string;
+};
+
+type BallotAcceptanceDmEnvelope = {
+  type: "optiona_ballot_acceptance_dm";
+  schemaVersion: 1;
+  acceptance: BallotAcceptanceResult;
   sentAt: string;
 };
 
@@ -117,9 +136,51 @@ function parseBlindIssuanceDmContent(content: string): BlindBallotIssuance | nul
   }
 }
 
+function parseBallotSubmissionDmContent(content: string): BallotSubmission | null {
+  try {
+    const parsed = JSON.parse(content) as Partial<BallotSubmissionDmEnvelope> | BallotSubmission;
+    const submission = (parsed as BallotSubmissionDmEnvelope).type === "optiona_ballot_submission_dm"
+      ? (parsed as BallotSubmissionDmEnvelope).submission
+      : parsed as BallotSubmission;
+    if (
+      submission?.type !== "ballot_submission"
+      || submission.schemaVersion !== 1
+      || typeof submission.electionId !== "string"
+      || typeof submission.submissionId !== "string"
+      || typeof submission.invitedNpub !== "string"
+    ) {
+      return null;
+    }
+    return submission;
+  } catch {
+    return null;
+  }
+}
+
+function parseBallotAcceptanceDmContent(content: string): BallotAcceptanceResult | null {
+  try {
+    const parsed = JSON.parse(content) as Partial<BallotAcceptanceDmEnvelope> | BallotAcceptanceResult;
+    const acceptance = (parsed as BallotAcceptanceDmEnvelope).type === "optiona_ballot_acceptance_dm"
+      ? (parsed as BallotAcceptanceDmEnvelope).acceptance
+      : parsed as BallotAcceptanceResult;
+    if (
+      acceptance?.type !== "ballot_acceptance_result"
+      || acceptance.schemaVersion !== 1
+      || typeof acceptance.electionId !== "string"
+      || typeof acceptance.submissionId !== "string"
+      || typeof acceptance.accepted !== "boolean"
+    ) {
+      return null;
+    }
+    return acceptance;
+  } catch {
+    return null;
+  }
+}
+
 function createRumor(input: {
   senderHex: string;
-  envelope: BlindRequestDmEnvelope | BlindIssuanceDmEnvelope;
+  envelope: BlindRequestDmEnvelope | BlindIssuanceDmEnvelope | BallotSubmissionDmEnvelope | BallotAcceptanceDmEnvelope;
 }) {
   const rumor = {
     kind: KIND_RUMOR_MESSAGE,
@@ -155,7 +216,7 @@ function parseGiftWrapPayload(payload: string): NostrEvent | null {
 async function publishEnvelope(input: {
   signer: SignerService;
   recipientNpub: string;
-  envelope: BlindRequestDmEnvelope | BlindIssuanceDmEnvelope;
+  envelope: BlindRequestDmEnvelope | BlindIssuanceDmEnvelope | BallotSubmissionDmEnvelope | BallotAcceptanceDmEnvelope;
   fallbackNsec?: string;
   relays?: string[];
   channel: string;
@@ -292,6 +353,50 @@ export async function publishOptionABlindIssuanceDm(input: {
       type: "optiona_blind_issuance_dm",
       schemaVersion: 1,
       issuance: input.issuance,
+      sentAt: new Date().toISOString(),
+    },
+  });
+}
+
+export async function publishOptionABallotSubmissionDm(input: {
+  signer: SignerService;
+  recipientNpub: string;
+  submission: BallotSubmission;
+  fallbackNsec?: string;
+  relays?: string[];
+}) {
+  return publishEnvelope({
+    signer: input.signer,
+    recipientNpub: input.recipientNpub,
+    fallbackNsec: input.fallbackNsec,
+    relays: input.relays,
+    channel: `optiona-ballot-submission:${input.submission.electionId}:${input.submission.submissionId}`,
+    envelope: {
+      type: "optiona_ballot_submission_dm",
+      schemaVersion: 1,
+      submission: input.submission,
+      sentAt: new Date().toISOString(),
+    },
+  });
+}
+
+export async function publishOptionABallotAcceptanceDm(input: {
+  signer: SignerService;
+  recipientNpub: string;
+  acceptance: BallotAcceptanceResult;
+  fallbackNsec?: string;
+  relays?: string[];
+}) {
+  return publishEnvelope({
+    signer: input.signer,
+    recipientNpub: input.recipientNpub,
+    fallbackNsec: input.fallbackNsec,
+    relays: input.relays,
+    channel: `optiona-ballot-acceptance:${input.acceptance.electionId}:${input.acceptance.submissionId}`,
+    envelope: {
+      type: "optiona_ballot_acceptance_dm",
+      schemaVersion: 1,
+      acceptance: input.acceptance,
       sentAt: new Date().toISOString(),
     },
   });
@@ -484,6 +589,200 @@ export async function fetchOptionABlindIssuanceDmsWithNsec(input: {
       const key = `${issuance.electionId}:${issuance.requestId}:${issuance.issuanceId}`;
       if (!unique.has(key)) {
         unique.set(key, issuance);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return [...unique.values()];
+}
+
+export async function fetchOptionABallotSubmissionDms(input: {
+  signer: SignerService;
+  electionId?: string;
+  relays?: string[];
+  limit?: number;
+}) {
+  if (!input.signer.nip44Decrypt) {
+    return [] as BallotSubmission[];
+  }
+  const recipientRaw = await input.signer.getPublicKey();
+  const recipientHex = toHexPubkey(recipientRaw);
+  const relays = selectReadRelays(buildRelays(input.relays));
+  const pool = getSharedNostrPool();
+  const events = await pool.querySync(relays, {
+    kinds: [KIND_GIFT_WRAP],
+    "#p": [recipientHex],
+    limit: Math.max(1, input.limit ?? 100),
+  });
+
+  const unique = new Map<string, BallotSubmission>();
+  const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
+  for (const event of sorted) {
+    const wrapPubkey = typeof event.pubkey === "string" ? event.pubkey : "";
+    if (!wrapPubkey || typeof event.content !== "string" || !event.content.trim()) {
+      continue;
+    }
+    try {
+      const sealPayload = await input.signer.nip44Decrypt(wrapPubkey, event.content);
+      const sealEvent = parseGiftWrapPayload(sealPayload);
+      if (!sealEvent) {
+        continue;
+      }
+      const rumorPayload = await input.signer.nip44Decrypt(sealEvent.pubkey, sealEvent.content);
+      const rumor = JSON.parse(rumorPayload) as { content?: string };
+      if (!rumor || typeof rumor.content !== "string") {
+        continue;
+      }
+      const submission = parseBallotSubmissionDmContent(rumor.content);
+      if (!submission) {
+        continue;
+      }
+      if (input.electionId?.trim() && submission.electionId !== input.electionId.trim()) {
+        continue;
+      }
+      const key = `${submission.electionId}:${submission.submissionId}:${submission.invitedNpub}`;
+      if (!unique.has(key)) {
+        unique.set(key, submission);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return [...unique.values()];
+}
+
+export async function fetchOptionABallotSubmissionDmsWithNsec(input: {
+  nsec: string;
+  electionId?: string;
+  relays?: string[];
+  limit?: number;
+}) {
+  const secretKey = decodeNsecSecretKey(input.nsec);
+  const recipientHex = getPublicKey(secretKey);
+  const relays = selectReadRelays(buildRelays(input.relays));
+  const pool = getSharedNostrPool();
+  const events = await pool.querySync(relays, {
+    kinds: [KIND_GIFT_WRAP],
+    "#p": [recipientHex],
+    limit: Math.max(1, input.limit ?? 100),
+  });
+
+  const unique = new Map<string, BallotSubmission>();
+  const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
+  for (const event of sorted) {
+    try {
+      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string };
+      if (!rumor || typeof rumor.content !== "string") {
+        continue;
+      }
+      const submission = parseBallotSubmissionDmContent(rumor.content);
+      if (!submission) {
+        continue;
+      }
+      if (input.electionId?.trim() && submission.electionId !== input.electionId.trim()) {
+        continue;
+      }
+      const key = `${submission.electionId}:${submission.submissionId}:${submission.invitedNpub}`;
+      if (!unique.has(key)) {
+        unique.set(key, submission);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return [...unique.values()];
+}
+
+export async function fetchOptionABallotAcceptanceDms(input: {
+  signer: SignerService;
+  electionId?: string;
+  relays?: string[];
+  limit?: number;
+}) {
+  if (!input.signer.nip44Decrypt) {
+    return [] as BallotAcceptanceResult[];
+  }
+  const recipientRaw = await input.signer.getPublicKey();
+  const recipientHex = toHexPubkey(recipientRaw);
+  const relays = selectReadRelays(buildRelays(input.relays));
+  const pool = getSharedNostrPool();
+  const events = await pool.querySync(relays, {
+    kinds: [KIND_GIFT_WRAP],
+    "#p": [recipientHex],
+    limit: Math.max(1, input.limit ?? 100),
+  });
+
+  const unique = new Map<string, BallotAcceptanceResult>();
+  const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
+  for (const event of sorted) {
+    const wrapPubkey = typeof event.pubkey === "string" ? event.pubkey : "";
+    if (!wrapPubkey || typeof event.content !== "string" || !event.content.trim()) {
+      continue;
+    }
+    try {
+      const sealPayload = await input.signer.nip44Decrypt(wrapPubkey, event.content);
+      const sealEvent = parseGiftWrapPayload(sealPayload);
+      if (!sealEvent) {
+        continue;
+      }
+      const rumorPayload = await input.signer.nip44Decrypt(sealEvent.pubkey, sealEvent.content);
+      const rumor = JSON.parse(rumorPayload) as { content?: string };
+      if (!rumor || typeof rumor.content !== "string") {
+        continue;
+      }
+      const acceptance = parseBallotAcceptanceDmContent(rumor.content);
+      if (!acceptance) {
+        continue;
+      }
+      if (input.electionId?.trim() && acceptance.electionId !== input.electionId.trim()) {
+        continue;
+      }
+      const key = `${acceptance.electionId}:${acceptance.submissionId}`;
+      if (!unique.has(key)) {
+        unique.set(key, acceptance);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return [...unique.values()];
+}
+
+export async function fetchOptionABallotAcceptanceDmsWithNsec(input: {
+  nsec: string;
+  electionId?: string;
+  relays?: string[];
+  limit?: number;
+}) {
+  const secretKey = decodeNsecSecretKey(input.nsec);
+  const recipientHex = getPublicKey(secretKey);
+  const relays = selectReadRelays(buildRelays(input.relays));
+  const pool = getSharedNostrPool();
+  const events = await pool.querySync(relays, {
+    kinds: [KIND_GIFT_WRAP],
+    "#p": [recipientHex],
+    limit: Math.max(1, input.limit ?? 100),
+  });
+
+  const unique = new Map<string, BallotAcceptanceResult>();
+  const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
+  for (const event of sorted) {
+    try {
+      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string };
+      if (!rumor || typeof rumor.content !== "string") {
+        continue;
+      }
+      const acceptance = parseBallotAcceptanceDmContent(rumor.content);
+      if (!acceptance) {
+        continue;
+      }
+      if (input.electionId?.trim() && acceptance.electionId !== input.electionId.trim()) {
+        continue;
+      }
+      const key = `${acceptance.electionId}:${acceptance.submissionId}`;
+      if (!unique.has(key)) {
+        unique.set(key, acceptance);
       }
     } catch {
       continue;

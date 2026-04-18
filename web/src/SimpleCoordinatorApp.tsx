@@ -3300,7 +3300,7 @@ export default function SimpleCoordinatorApp() {
       }).catch(() => {
         // Keep background processing best-effort; explicit action shows errors.
       });
-    }, 3000);
+    }, 15000);
     return () => {
       window.clearInterval(intervalId);
     };

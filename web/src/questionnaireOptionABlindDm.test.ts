@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { generateSecretKey, getPublicKey, nip17, nip19 } from "nostr-tools";
 import type { SignerService } from "./services/signerService";
 import {
+  fetchOptionABallotAcceptanceDmsWithNsec,
+  fetchOptionABallotSubmissionDmsWithNsec,
   fetchOptionABlindIssuanceDmsWithNsec,
   fetchOptionABlindRequestDmsWithNsec,
   publishOptionABlindRequestDm,
@@ -144,5 +146,77 @@ describe("questionnaireOptionABlindDm", () => {
     expect(fetchedRequests[0]?.requestId).toBe("request_2");
     expect(fetchedIssuances).toHaveLength(1);
     expect(fetchedIssuances[0]?.issuanceId).toBe("issuance_2");
+  });
+
+  it("reads ballot submission and acceptance DMs via local nsec", async () => {
+    const recipientSecret = generateSecretKey();
+    const recipientHex = getPublicKey(recipientSecret);
+    const recipientNpub = nip19.npubEncode(recipientHex);
+    const recipientNsec = nip19.nsecEncode(recipientSecret);
+    const senderSecret = generateSecretKey();
+
+    const submission = {
+      type: "ballot_submission" as const,
+      schemaVersion: 1 as const,
+      electionId: "q_3",
+      submissionId: "submission_3",
+      invitedNpub: recipientNpub,
+      credential: "sig_3",
+      nullifier: "nullifier_3",
+      payload: {
+        electionId: "q_3",
+        responses: [{ questionId: "q1", type: "yes_no" as const, answer: "yes" as const }],
+      },
+      submittedAt: new Date().toISOString(),
+    };
+    const acceptance = {
+      type: "ballot_acceptance_result" as const,
+      schemaVersion: 1 as const,
+      electionId: "q_3",
+      submissionId: "submission_3",
+      accepted: true,
+      decidedAt: new Date().toISOString(),
+    };
+
+    const wrappedSubmission = nip17.wrapEvent(
+      senderSecret,
+      { publicKey: recipientHex, relayUrl: "wss://relay.example" },
+      JSON.stringify({
+        type: "optiona_ballot_submission_dm",
+        schemaVersion: 1,
+        submission,
+        sentAt: new Date().toISOString(),
+      }),
+      "Option A ballot submission",
+    );
+    const wrappedAcceptance = nip17.wrapEvent(
+      senderSecret,
+      { publicKey: recipientHex, relayUrl: "wss://relay.example" },
+      JSON.stringify({
+        type: "optiona_ballot_acceptance_dm",
+        schemaVersion: 1,
+        acceptance,
+        sentAt: new Date().toISOString(),
+      }),
+      "Option A ballot acceptance",
+    );
+
+    querySync.mockResolvedValue([wrappedSubmission, wrappedAcceptance]);
+
+    const fetchedSubmissions = await fetchOptionABallotSubmissionDmsWithNsec({
+      nsec: recipientNsec,
+      electionId: "q_3",
+      limit: 20,
+    });
+    const fetchedAcceptances = await fetchOptionABallotAcceptanceDmsWithNsec({
+      nsec: recipientNsec,
+      electionId: "q_3",
+      limit: 20,
+    });
+
+    expect(fetchedSubmissions).toHaveLength(1);
+    expect(fetchedSubmissions[0]?.submissionId).toBe("submission_3");
+    expect(fetchedAcceptances).toHaveLength(1);
+    expect(fetchedAcceptances[0]?.submissionId).toBe("submission_3");
   });
 });
