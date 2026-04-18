@@ -720,6 +720,8 @@ export default function SimpleCoordinatorApp() {
     () => optionACoordinatorRuntime?.getPendingAuthorizations() ?? [],
     [optionACoordinatorRuntime, knownVoterInviteRefreshNonce],
   );
+  const optionAAcceptedCount = optionACoordinatorRuntime?.getAcceptedUniqueCount() ?? 0;
+  const optionAKnownVoterCount = Math.max(followers.length, optionAKnownVoters.length);
   const filteredImportedKnownVoterContacts = useMemo(() => {
     const query = knownVoterContactSearch.trim().toLowerCase();
     if (!query) {
@@ -3267,6 +3269,11 @@ export default function SimpleCoordinatorApp() {
         preferredElectionId: optionAElectionId,
         onlyPreferredElectionId: Boolean(optionAElectionId.trim()),
       });
+      if (optionACoordinatorRuntime && optionAElectionId.trim()) {
+        optionACoordinatorRuntime.bootstrapCoordinatorNpub({
+          coordinatorNpub: activeCoordinatorNpub,
+        });
+      }
       setKnownVoterInviteStatus(
         result.processedElections > 0
           ? (
@@ -3295,6 +3302,11 @@ export default function SimpleCoordinatorApp() {
         onlyPreferredElectionId: Boolean(optionAElectionId.trim()),
       }).then((result) => {
         if (result.processedElections > 0) {
+          if (optionACoordinatorRuntime && optionAElectionId.trim()) {
+            optionACoordinatorRuntime.bootstrapCoordinatorNpub({
+              coordinatorNpub: activeCoordinatorNpub,
+            });
+          }
           setKnownVoterInviteRefreshNonce((value) => value + 1);
         }
       }).catch(() => {
@@ -3304,7 +3316,7 @@ export default function SimpleCoordinatorApp() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [activeCoordinatorNpub, keypair?.nsec, optionAElectionId, optionASigner]);
+  }, [activeCoordinatorNpub, keypair?.nsec, optionACoordinatorRuntime, optionAElectionId, optionASigner]);
   function authorizePendingRequester(invitedNpub: string) {
     if (!optionACoordinatorRuntime) {
       return;
@@ -5394,7 +5406,8 @@ export default function SimpleCoordinatorApp() {
               <QuestionnaireCoordinatorPanel
                 coordinatorNsec={keypair?.nsec ?? null}
                 coordinatorNpub={keypair?.npub ?? null}
-                knownVoterCount={followers.length}
+                knownVoterCount={optionAKnownVoterCount}
+                optionAAcceptedCount={optionAAcceptedCount}
                 view='build'
                 onStatusChange={(nextStatus) => {
                   setQuestionnaireRosterAnnouncement({
@@ -5508,30 +5521,26 @@ export default function SimpleCoordinatorApp() {
                               >
                                 {row.follow.text}
                               </li>
-                              <li
-                                className={deliveryToneClass(
-                                  row.pendingRequest.tone,
-                                )}
-                              >
-                                {questionnaireFlowActive
-                                  ? (
-                                      row.pendingRequest.tone === 'ok'
-                                        ? "Ballot request received."
-                                        : "Waiting for this voter's ballot request."
-                                    )
-                                  : row.pendingRequest.text}
-                              </li>
-                              <li
-                                className={deliveryToneClass(row.ticket.tone)}
-                              >
-                                {questionnaireFlowActive
-                                  ? (
-                                      row.ticket.tone === 'ok'
-                                        ? 'Ballot credential issued.'
-                                        : 'Waiting to issue ballot credential.'
-                                    )
-                                  : row.ticket.text}
-                              </li>
+                              {questionnaireFlowActive ? (
+                                <li className='simple-delivery-ok'>
+                                  Option A ballots and responses are synced below.
+                                </li>
+                              ) : (
+                                <>
+                                  <li
+                                    className={deliveryToneClass(
+                                      row.pendingRequest.tone,
+                                    )}
+                                  >
+                                    {row.pendingRequest.text}
+                                  </li>
+                                  <li
+                                    className={deliveryToneClass(row.ticket.tone)}
+                                  >
+                                    {row.ticket.text}
+                                  </li>
+                                </>
+                              )}
                               {row.receipt && !questionnaireFlowActive ? (
                                 <li
                                   className={deliveryToneClass(
@@ -5763,7 +5772,8 @@ export default function SimpleCoordinatorApp() {
             <QuestionnaireCoordinatorPanel
               coordinatorNsec={keypair?.nsec ?? null}
               coordinatorNpub={keypair?.npub ?? null}
-              knownVoterCount={followers.length}
+              knownVoterCount={optionAKnownVoterCount}
+              optionAAcceptedCount={optionAAcceptedCount}
               view='participants'
               onStatusChange={(nextStatus) => {
                 setQuestionnaireRosterAnnouncement({
@@ -5792,7 +5802,8 @@ export default function SimpleCoordinatorApp() {
             <QuestionnaireCoordinatorPanel
               coordinatorNsec={keypair?.nsec ?? null}
               coordinatorNpub={keypair?.npub ?? null}
-              knownVoterCount={followers.length}
+              knownVoterCount={optionAKnownVoterCount}
+              optionAAcceptedCount={optionAAcceptedCount}
               view='responses'
               onStatusChange={(nextStatus) => {
                 setQuestionnaireRosterAnnouncement({

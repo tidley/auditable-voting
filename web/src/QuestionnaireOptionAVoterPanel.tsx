@@ -663,7 +663,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       <h4 className='simple-voter-section-title'>{questionnaireTitle}</h4>
       {questionnaireDescription ? <p className='simple-voter-note'>{questionnaireDescription}</p> : null}
 
-      {questions.length === 0 ? <p className='simple-voter-note'>Waiting for questions to be published.</p> : (
+      {questions.length === 0 ? (
+        <p className='simple-voter-note'>
+          {snapshot?.submissionAccepted === true
+            ? "Response accepted. Questionnaire details are not loaded in this browser."
+            : "Waiting for questions to be published."}
+        </p>
+      ) : (
         <div className='simple-questionnaire-voter-list'>
           {questions.map((question, index) => (
             <article key={question.questionId} className='simple-questionnaire-voter-card'>

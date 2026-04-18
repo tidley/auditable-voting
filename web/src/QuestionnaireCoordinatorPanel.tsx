@@ -42,6 +42,7 @@ type QuestionnaireCoordinatorPanelProps = {
   coordinatorNsec?: string | null;
   coordinatorNpub?: string | null;
   knownVoterCount?: number;
+  optionAAcceptedCount?: number;
   view?: "build" | "responses" | "participants";
   onStatusChange?: (status: {
     questionnaireId: string;
@@ -979,12 +980,13 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   );
   const publishedDefinition = Boolean(latestDefinition);
   const currentState: QuestionnaireStateValue = latestState ?? "draft";
+  const displayAcceptedCount = Math.max(latestAcceptedCount, props.optionAAcceptedCount ?? 0);
   const knownVoterCount = props.knownVoterCount ?? 0;
   const responseCompletionPercent = knownVoterCount > 0
-    ? Math.round((latestAcceptedCount / knownVoterCount) * 100)
+    ? Math.round((displayAcceptedCount / knownVoterCount) * 100)
     : 0;
   const responseCompletionRatio = knownVoterCount > 0
-    ? Math.min(100, Math.max(0, (latestAcceptedCount / knownVoterCount) * 100))
+    ? Math.min(100, Math.max(0, (displayAcceptedCount / knownVoterCount) * 100))
     : 0;
   const buildStateLabel = !publishedDefinition
     ? "Draft"
@@ -1093,7 +1095,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       }))
       .sort((left, right) => left.responderId.localeCompare(right.responderId))
   ), [latestAcceptedResponses]);
-  const publishButtonDisabled = !canPublishResults || latestAcceptedCount <= 0;
+  const publishButtonDisabled = !canPublishResults || displayAcceptedCount <= 0;
   const publishStatusText = useMemo(() => {
     if (status === "Computing and publishing questionnaire results...") {
       return "Publishing...";
@@ -1104,17 +1106,17 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     if (latestState === "results_published") {
       return "Already published";
     }
-    if (latestAcceptedCount > 0 && latestState === "open") {
+    if (displayAcceptedCount > 0 && latestState === "open") {
       return "Close questionnaire to publish";
     }
-    if (latestAcceptedCount <= 0) {
+    if (displayAcceptedCount <= 0) {
       return "Nothing to publish yet";
     }
     if (canPublishResults) {
       return "Ready to publish";
     }
     return "Nothing to publish yet";
-  }, [canPublishResults, latestAcceptedCount, latestState, status]);
+  }, [canPublishResults, displayAcceptedCount, latestState, status]);
 
   async function publishDefinition() {
     if (!coordinatorNsec.trim() || !builtDefinition) {
@@ -1394,7 +1396,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           <h4 className='simple-voter-section-title'>Responses</h4>
           <div className='simple-questionnaire-summary-card' aria-live='polite'>
             <p className='simple-questionnaire-summary-label'>Responses</p>
-            <p className='simple-questionnaire-summary-value'>{latestAcceptedCount} / {knownVoterCount}</p>
+            <p className='simple-questionnaire-summary-value'>{displayAcceptedCount} / {knownVoterCount}</p>
             <p className='simple-questionnaire-summary-label'>Completion</p>
             <p className='simple-questionnaire-summary-value'>{responseCompletionPercent}%</p>
             <div className='simple-questionnaire-progress' aria-hidden='true'>
@@ -1598,7 +1600,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         <li><span className='simple-vote-status-icon' aria-hidden='true'>•</span> State: {buildStateLabel}</li>
         <li><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Opened: {formatUnixTimestamp(latestDefinition?.openAt ?? null)}</li>
         <li><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Closing / Closed: {formatUnixTimestamp(latestDefinition?.closeAt ?? null)}</li>
-        <li><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Responses: {latestAcceptedCount} / {knownVoterCount} ({responseCompletionPercent}%)</li>
+        <li><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Responses: {displayAcceptedCount} / {knownVoterCount} ({responseCompletionPercent}%)</li>
         <li><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Coordinators: 1 of 1</li>
       </ul>
 
