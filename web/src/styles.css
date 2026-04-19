@@ -3037,22 +3037,25 @@ code {
 
 @media (max-width: 640px) {
   .page-shell {
-    width: min(100% - 20px, 1180px);
+    width: 100%;
     padding: 14px 0 28px;
   }
 
+  .simple-app-shell,
   .simple-voter-shell {
-    width: min(100% - 20px, 960px);
+    width: 100%;
     padding: 16px 0 28px;
   }
 
   .simple-app-version {
-    width: min(100% - 20px, 960px);
+    width: 100%;
+    box-sizing: border-box;
     gap: 10px;
+    padding: 0 10px;
   }
 
   .simple-voter-page {
-    padding: 20px;
+    padding: 20px 0;
   }
 
   .simple-qr-panel,

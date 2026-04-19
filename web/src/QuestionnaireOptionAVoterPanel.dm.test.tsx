@@ -151,6 +151,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     });
     expect(screen.queryByText(/No invite DM was readable/i)).toBeNull();
     expect(screen.getByText("Linked questionnaire")).toBeTruthy();
+    expect(fetchOptionAInviteDmsMock).not.toHaveBeenCalled();
   });
 
   it("auto logs in with the signer when a linked questionnaire is opened from the gateway", async () => {
@@ -189,6 +190,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
       expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Signed in as")).length).toBeGreaterThan(0);
     });
     expect(screen.queryByText(/No invite DM was readable/i)).toBeNull();
+    expect(fetchOptionAInviteDmsMock).not.toHaveBeenCalled();
   });
 
   it("adopts announced questionnaire id when election id is missing", async () => {

@@ -17,6 +17,8 @@ const OPTION_A_BLIND_DM_MAX_WAIT_MS = 1500;
 const OPTION_A_BLIND_DM_STAGGER_MS = 250;
 const OPTION_A_BLIND_DM_MIN_PUBLISH_INTERVAL_MS = 300;
 const TWO_DAYS_SECONDS = 2 * 24 * 60 * 60;
+const ONE_DAY_SECONDS = 24 * 60 * 60;
+const OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT = 6;
 const KIND_SEAL = 13;
 const KIND_RUMOR_MESSAGE = 14;
 const KIND_GIFT_WRAP = 1059;
@@ -538,6 +540,8 @@ export async function fetchOptionABlindIssuanceDms(input: {
   electionId?: string;
   relays?: string[];
   limit?: number;
+  since?: number;
+  maxDecryptAttempts?: number;
 }) {
   if (!input.signer.nip44Decrypt) {
     return [] as BlindBallotIssuance[];
@@ -546,14 +550,18 @@ export async function fetchOptionABlindIssuanceDms(input: {
   const recipientHex = toHexPubkey(recipientRaw);
   const relays = selectReadRelays(buildRelays(input.relays));
   const pool = getSharedNostrPool();
+  const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
   const events = await pool.querySync(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
-    limit: Math.max(1, input.limit ?? 100),
+    since: input.since ?? Math.round(Date.now() / 1000) - ONE_DAY_SECONDS,
+    limit: Math.max(1, Math.min(input.limit ?? maxDecryptAttempts, maxDecryptAttempts)),
   });
 
   const unique = new Map<string, BlindBallotIssuance>();
-  const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
+  const sorted = [...events]
+    .sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0))
+    .slice(0, maxDecryptAttempts);
   for (const event of sorted) {
     const wrapPubkey = typeof event.pubkey === "string" ? event.pubkey : "";
     if (!wrapPubkey || typeof event.content !== "string" || !event.content.trim()) {
@@ -740,6 +748,8 @@ export async function fetchOptionABallotAcceptanceDms(input: {
   electionId?: string;
   relays?: string[];
   limit?: number;
+  since?: number;
+  maxDecryptAttempts?: number;
 }) {
   if (!input.signer.nip44Decrypt) {
     return [] as BallotAcceptanceResult[];
@@ -748,14 +758,18 @@ export async function fetchOptionABallotAcceptanceDms(input: {
   const recipientHex = toHexPubkey(recipientRaw);
   const relays = selectReadRelays(buildRelays(input.relays));
   const pool = getSharedNostrPool();
+  const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
   const events = await pool.querySync(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
-    limit: Math.max(1, input.limit ?? 100),
+    since: input.since ?? Math.round(Date.now() / 1000) - ONE_DAY_SECONDS,
+    limit: Math.max(1, Math.min(input.limit ?? maxDecryptAttempts, maxDecryptAttempts)),
   });
 
   const unique = new Map<string, BallotAcceptanceResult>();
-  const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
+  const sorted = [...events]
+    .sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0))
+    .slice(0, maxDecryptAttempts);
   for (const event of sorted) {
     const wrapPubkey = typeof event.pubkey === "string" ? event.pubkey : "";
     if (!wrapPubkey || typeof event.content !== "string" || !event.content.trim()) {

@@ -491,7 +491,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       const publicQuestionnaireInvite = await buildPublicQuestionnaireInvite(signerNpub);
 
       if (!runtime) {
-        const invites = await loadPendingInvites({ voterNpub: signerNpub, allowRelayFetch: true });
+        const invites = publicQuestionnaireInvite
+          ? []
+          : await loadPendingInvites({ voterNpub: signerNpub, allowRelayFetch: true });
         setPendingInvites(invites);
         const preferredInvite = publicQuestionnaireInvite ?? invites[0] ?? null;
         if (!preferredInvite) {
@@ -523,7 +525,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
 
       const next = await runtime.loginWithSigner(inviteContext.invite ?? publicQuestionnaireInvite);
       setSignedInNpub(next.invitedNpub);
-      const invites = await loadPendingInvites({ voterNpub: next.invitedNpub, allowRelayFetch: true });
+      const invites = publicQuestionnaireInvite
+        ? []
+        : await loadPendingInvites({ voterNpub: next.invitedNpub, allowRelayFetch: true });
       setPendingInvites(invites);
       const preferredInvite = publicQuestionnaireInvite ?? invites[0] ?? null;
       if (!inviteContext.electionId?.trim() && preferredInvite && electionId.trim() !== preferredInvite.electionId) {

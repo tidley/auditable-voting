@@ -1687,6 +1687,7 @@ export default function SimpleUiApp() {
       if (!options?.silent) {
         setRequestStatus(`Opened linked questionnaire ${linkedQuestionnaireId}.`);
       }
+      return;
     }
 
     const signerSessionNpub = signerNpub.trim();

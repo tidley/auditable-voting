@@ -429,6 +429,15 @@ export class QuestionnaireOptionAVoterRuntime {
     }
 
     const electionId = this.state.electionId;
+    const toSince = (value?: string | null) => {
+      if (!value) {
+        return undefined;
+      }
+      const parsed = Date.parse(value);
+      return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed / 1000) - 300) : undefined;
+    };
+    const requestSince = toSince(this.state.blindRequestSentAt);
+    const acceptanceSince = toSince(this.state.submission?.submittedAt) ?? requestSince;
     void (this.fallbackNsec?.trim()
       ? fetchOptionABlindIssuanceDmsWithNsec({
         nsec: this.fallbackNsec,
@@ -438,7 +447,8 @@ export class QuestionnaireOptionAVoterRuntime {
       : fetchOptionABlindIssuanceDms({
         signer: this.signer,
         electionId,
-        limit: 100,
+        limit: 6,
+        since: requestSince,
       })).then((issuanceMessages) => {
       for (const issuance of issuanceMessages) {
         storeBlindIssuance(issuance);
@@ -457,7 +467,8 @@ export class QuestionnaireOptionAVoterRuntime {
       : fetchOptionABallotAcceptanceDms({
         signer: this.signer,
         electionId,
-        limit: 100,
+        limit: 6,
+        since: acceptanceSince,
       })).then((acceptanceMessages) => {
       for (const acceptance of acceptanceMessages) {
         storeAcceptance(acceptance);

@@ -14,6 +14,8 @@ const OPTION_A_INVITE_DM_STAGGER_MS = 250;
 const OPTION_A_INVITE_DM_MIN_PUBLISH_INTERVAL_MS = 300;
 const TWO_DAYS_SECONDS = 2 * 24 * 60 * 60;
 const ONE_DAY_SECONDS = 24 * 60 * 60;
+const OPTION_A_INVITE_DM_SIGNER_LOOKBACK_SECONDS = ONE_DAY_SECONDS;
+const OPTION_A_INVITE_DM_SIGNER_DECRYPT_LIMIT = 6;
 const KIND_SEAL = 13;
 const KIND_RUMOR_MESSAGE = 14;
 const KIND_GIFT_WRAP = 1059;
@@ -321,6 +323,8 @@ export async function fetchOptionAInviteDms(input: {
   electionId?: string;
   relays?: string[];
   limit?: number;
+  lookbackSeconds?: number;
+  maxDecryptAttempts?: number;
 }) {
   if (!input.signer.nip44Decrypt) {
     return [] as ElectionInviteMessage[];
@@ -330,14 +334,19 @@ export async function fetchOptionAInviteDms(input: {
   const recipientHex = toHexPubkey(recipientRaw);
   const relays = selectReadRelays(buildRelays(input.relays));
   const pool = getSharedNostrPool();
+  const lookbackSeconds = Math.max(60, input.lookbackSeconds ?? OPTION_A_INVITE_DM_SIGNER_LOOKBACK_SECONDS);
+  const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? OPTION_A_INVITE_DM_SIGNER_DECRYPT_LIMIT);
   const events = await pool.querySync(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
-    limit: Math.max(1, input.limit ?? 50),
+    since: Math.round(Date.now() / 1000) - lookbackSeconds,
+    limit: Math.max(1, Math.min(input.limit ?? maxDecryptAttempts, maxDecryptAttempts)),
   });
 
   const unique = new Map<string, ElectionInviteMessage>();
-  const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
+  const sorted = [...events]
+    .sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0))
+    .slice(0, maxDecryptAttempts);
   let signerPermissionError: string | null = null;
   for (const event of sorted) {
     const wrapPubkey = typeof event.pubkey === "string" ? event.pubkey : "";
