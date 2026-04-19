@@ -36,6 +36,14 @@ function hasRoleInUrl() {
   return Boolean(new URLSearchParams(window.location.search).get("role"));
 }
 
+function shouldForceGatewayFromUrl() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  const params = new URLSearchParams(window.location.search);
+  return params.get("login") === "1";
+}
+
 function writeRoleToUrl(role: SimpleRole) {
   if (typeof window === "undefined") {
     return;
@@ -43,13 +51,14 @@ function writeRoleToUrl(role: SimpleRole) {
 
   const url = new URL(window.location.href);
   url.searchParams.set("role", role);
+  url.searchParams.delete("login");
   window.history.replaceState({}, "", url.toString());
 }
 
 export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShellProps) {
   const [role, setRole] = useState<SimpleRole>(() => readRoleFromUrl() ?? initialRole);
   const [roleSwitchMinimized, setRoleSwitchMinimized] = useState(false);
-  const [showGateway, setShowGateway] = useState(() => !hasRoleInUrl());
+  const [showGateway, setShowGateway] = useState(() => !hasRoleInUrl() || shouldForceGatewayFromUrl());
   const [gatewayRole, setGatewayRole] = useState<SimpleRole>(initialRole);
   const [gatewayNsec, setGatewayNsec] = useState("");
   const [gatewaySignerNpub, setGatewaySignerNpub] = useState("");

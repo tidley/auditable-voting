@@ -57,6 +57,7 @@ export function buildInviteUrl(input: {
 }) {
   const base = input.baseUrl ?? (typeof window !== "undefined" ? window.location.href : "https://example.invalid/simple.html");
   const url = new URL("./", base);
+  url.searchParams.set("login", "1");
   url.searchParams.set("role", "voter");
   url.searchParams.set("q", input.invite.electionId);
   return url.toString();

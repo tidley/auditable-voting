@@ -1650,10 +1650,10 @@ export default function SimpleUiApp() {
     }
   }
 
-  async function checkQuestionnaireInvites() {
+  async function checkQuestionnaireInvites(options?: { silent?: boolean }) {
     const signerSessionNpub = signerNpub.trim();
     if (!signerSessionNpub) {
-      await checkQuestionnaireInvitesWithLocalKey();
+      await checkQuestionnaireInvitesWithLocalKey({ silent: options?.silent });
       return;
     }
 
@@ -1664,12 +1664,17 @@ export default function SimpleUiApp() {
       const invites = await fetchOptionAInviteDms({ signer, limit: 40 });
       applyDiscoveredQuestionnaireInvites(invites);
 
-      setRequestStatus(
-        invites.length === 0
-          ? `Checked invites for ${shortenNpub(signerNpub)}. No questionnaire invites found.`
-          : `Checked invites for ${shortenNpub(signerNpub)}. Found ${invites.length} questionnaire invite${invites.length === 1 ? "" : "s"}.`,
-      );
+      if (!options?.silent) {
+        setRequestStatus(
+          invites.length === 0
+            ? `Checked invites for ${shortenNpub(signerNpub)}. No questionnaire invites found.`
+            : `Checked invites for ${shortenNpub(signerNpub)}. Found ${invites.length} questionnaire invite${invites.length === 1 ? "" : "s"}.`,
+        );
+      }
     } catch (error) {
+      if (options?.silent) {
+        return;
+      }
       if (error instanceof SignerServiceError) {
         setRequestStatus(error.message);
         return;
@@ -1679,11 +1684,9 @@ export default function SimpleUiApp() {
   }
 
   useEffect(() => {
-    if (signerNpub.trim()) {
-      return;
-    }
+    const signerSessionNpub = signerNpub.trim();
     const localNsec = voterKeypair?.nsec?.trim() ?? "";
-    if (!localNsec) {
+    if (!signerSessionNpub && !localNsec) {
       return;
     }
     const aggressiveInvitePoll = configuredCoordinatorTargets.length > 0
@@ -1691,9 +1694,9 @@ export default function SimpleUiApp() {
       && announcedQuestionnaireIds.length === 0;
     const pollIntervalMs = aggressiveInvitePoll ? 2500 : 7000;
 
-    void checkQuestionnaireInvitesWithLocalKey({ silent: true });
+    void checkQuestionnaireInvites({ silent: true });
     const intervalId = window.setInterval(() => {
-      void checkQuestionnaireInvitesWithLocalKey({ silent: true });
+      void checkQuestionnaireInvites({ silent: true });
     }, pollIntervalMs);
     return () => {
       window.clearInterval(intervalId);
