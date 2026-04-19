@@ -222,6 +222,8 @@ Invite links can point to a public questionnaire id. Signer login opens the Vote
 
 On Android, signer sessions prefer Amber through NIP-46 when available so `get_public_key`, `sign_event`, and `nip44` operations stay on one signer identity.
 
+Blind request, issuance, submission, and acceptance DMs now also resolve recipient NIP-17 relay-list hints (`kind:10050`) before static fallbacks, and the default fallback lists no longer include `wss://relay.snort.social`.
+
 Drafted response fields stay intact when the credential or refreshed definition arrives for the same questionnaire.
 
 ### Auditor

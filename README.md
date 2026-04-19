@@ -49,6 +49,8 @@ The shipped app currently includes:
 - Option A questionnaire submissions now spend an unblinded RSABSSA credential from a fresh ephemeral response npub, with one accepted credential spend per questionnaire
 - invite links with a public questionnaire id now avoid encrypted invite-mailbox scans after signer login, and signer-backed DM reads are recent and bounded to reduce Amber bunker prompts
 - Android signer sessions now prefer Amber via NIP-46 when available, so signer-backed questionnaire DM flows use one consistent signer identity for `get_public_key`, `sign_event`, and `nip44_*`
+- Option A blind request, issuance, submission, and acceptance DMs now also target recipient NIP-17 relay-list hints (`kind:10050`) instead of only static fallback relays
+- default relay lists now exclude `wss://relay.snort.social` to reduce repeated failed websocket noise in browsers where that relay is unreachable
 - local browser persistence, backup, and optional passphrase protection
 - voter questionnaire participation history is now stored locally and included in voter backups/restores
 - auditor round selection now supports lead-coordinator filter, coordinator-npub filter, and free-text search (npub/round ID/prompt), with slower non-overlapping refreshes to reduce relay REQ spikes

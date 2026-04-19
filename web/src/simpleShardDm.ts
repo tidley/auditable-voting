@@ -43,7 +43,6 @@ export const SIMPLE_DM_RELAYS = [
   'wss://offchain.pub',
   'wss://nostr.mom',
   'wss://relay.nostr.band',
-  'wss://relay.snort.social',
   'wss://nostr.bg',
   'wss://auth.nostr1.com',
   'wss://inbox.nostr.wine',

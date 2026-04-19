@@ -22,6 +22,7 @@ const OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT = 6;
 const KIND_SEAL = 13;
 const KIND_RUMOR_MESSAGE = 14;
 const KIND_GIFT_WRAP = 1059;
+const KIND_NIP17_RELAY_LIST = 10050;
 
 type BlindRequestDmEnvelope = {
   type: "optiona_blind_request_dm";
@@ -94,6 +95,53 @@ function selectReadRelays(relays: string[]) {
 
 function selectPublishRelays(relays: string[]) {
   return relays.slice(0, Math.min(OPTION_A_BLIND_DM_RELAYS_MAX, relays.length));
+}
+
+function parseNip17RelayListEvent(event: { kind?: number; tags?: string[][] }) {
+  if (event.kind !== KIND_NIP17_RELAY_LIST || !Array.isArray(event.tags)) {
+    return [] as string[];
+  }
+  return event.tags
+    .filter((tag) => tag[0] === "relay" || tag[0] === "r")
+    .map((tag) => tag[1]?.trim() ?? "")
+    .filter((relay) => relay.startsWith("ws://") || relay.startsWith("wss://"));
+}
+
+async function fetchRecipientNip17Relays(input: {
+  recipientHex: string;
+  discoveryRelays: string[];
+}) {
+  try {
+    const pool = getSharedNostrPool();
+    const events = await pool.querySync(input.discoveryRelays, {
+      kinds: [KIND_NIP17_RELAY_LIST],
+      authors: [input.recipientHex],
+      limit: 5,
+    });
+    return normalizeRelaysRust(
+      [...events]
+        .sort((left, right) => Number(right.created_at ?? 0) - Number(left.created_at ?? 0))
+        .flatMap((event) => parseNip17RelayListEvent(event)),
+    );
+  } catch {
+    return [] as string[];
+  }
+}
+
+async function resolveRecipientPublishRelays(recipientHex: string, fallbackRelays: string[]) {
+  const recipientRelays = await fetchRecipientNip17Relays({
+    recipientHex,
+    discoveryRelays: selectPublishRelays(fallbackRelays),
+  });
+  return selectPublishRelays(normalizeRelaysRust([...recipientRelays, ...fallbackRelays]));
+}
+
+async function resolveRecipientReadRelays(recipientHex: string, fallbackRelays: string[]) {
+  const recipientRelays = await fetchRecipientNip17Relays({
+    recipientHex,
+    discoveryRelays: selectReadRelays(fallbackRelays),
+  });
+  return selectReadRelays(normalizeRelaysRust([...recipientRelays, ...fallbackRelays]));
 }
 
 function parseBlindRequestDmContent(content: string): BlindBallotRequest | null {
@@ -245,7 +293,7 @@ async function publishEnvelope(input: {
   channel: string;
 }) {
   const recipientHex = toHexPubkey(input.recipientNpub);
-  const relays = selectPublishRelays(buildRelays(input.relays));
+  const relays = await resolveRecipientPublishRelays(recipientHex, buildRelays(input.relays));
   let senderHex = "";
   let signedSeal: NostrEvent | null = null;
   const fallbackSecret = input.fallbackNsec?.trim() ? decodeNsecSecretKey(input.fallbackNsec) : null;
@@ -449,7 +497,7 @@ export async function fetchOptionABlindRequestDms(input: {
   const recipientRaw = await input.signer.getPublicKey();
   const recipientNpub = toNpub(recipientRaw);
   const recipientHex = toHexPubkey(recipientRaw);
-  const relays = selectReadRelays(buildRelays(input.relays));
+  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
   const pool = getSharedNostrPool();
   const events = await pool.querySync(relays, {
     kinds: [KIND_GIFT_WRAP],
@@ -501,7 +549,7 @@ export async function fetchOptionABlindRequestDmsWithNsec(input: {
 }) {
   const secretKey = decodeNsecSecretKey(input.nsec);
   const recipientHex = getPublicKey(secretKey);
-  const relays = selectReadRelays(buildRelays(input.relays));
+  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
   const pool = getSharedNostrPool();
   const events = await pool.querySync(relays, {
     kinds: [KIND_GIFT_WRAP],
@@ -548,7 +596,7 @@ export async function fetchOptionABlindIssuanceDms(input: {
   }
   const recipientRaw = await input.signer.getPublicKey();
   const recipientHex = toHexPubkey(recipientRaw);
-  const relays = selectReadRelays(buildRelays(input.relays));
+  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
   const pool = getSharedNostrPool();
   const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
   const events = await pool.querySync(relays, {
@@ -604,7 +652,7 @@ export async function fetchOptionABlindIssuanceDmsWithNsec(input: {
 }) {
   const secretKey = decodeNsecSecretKey(input.nsec);
   const recipientHex = getPublicKey(secretKey);
-  const relays = selectReadRelays(buildRelays(input.relays));
+  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
   const pool = getSharedNostrPool();
   const events = await pool.querySync(relays, {
     kinds: [KIND_GIFT_WRAP],
@@ -649,7 +697,7 @@ export async function fetchOptionABallotSubmissionDms(input: {
   }
   const recipientRaw = await input.signer.getPublicKey();
   const recipientHex = toHexPubkey(recipientRaw);
-  const relays = selectReadRelays(buildRelays(input.relays));
+  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
   const pool = getSharedNostrPool();
   const events = await pool.querySync(relays, {
     kinds: [KIND_GIFT_WRAP],
@@ -705,7 +753,7 @@ export async function fetchOptionABallotSubmissionDmsWithNsec(input: {
 }) {
   const secretKey = decodeNsecSecretKey(input.nsec);
   const recipientHex = getPublicKey(secretKey);
-  const relays = selectReadRelays(buildRelays(input.relays));
+  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
   const pool = getSharedNostrPool();
   const events = await pool.querySync(relays, {
     kinds: [KIND_GIFT_WRAP],
@@ -756,7 +804,7 @@ export async function fetchOptionABallotAcceptanceDms(input: {
   }
   const recipientRaw = await input.signer.getPublicKey();
   const recipientHex = toHexPubkey(recipientRaw);
-  const relays = selectReadRelays(buildRelays(input.relays));
+  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
   const pool = getSharedNostrPool();
   const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
   const events = await pool.querySync(relays, {
@@ -812,7 +860,7 @@ export async function fetchOptionABallotAcceptanceDmsWithNsec(input: {
 }) {
   const secretKey = decodeNsecSecretKey(input.nsec);
   const recipientHex = getPublicKey(secretKey);
-  const relays = selectReadRelays(buildRelays(input.relays));
+  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
   const pool = getSharedNostrPool();
   const events = await pool.querySync(relays, {
     kinds: [KIND_GIFT_WRAP],

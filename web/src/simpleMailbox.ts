@@ -25,7 +25,6 @@ export const SIMPLE_MAILBOX_RELAYS = [
   "wss://offchain.pub",
   "wss://nostr.mom",
   "wss://relay.0xchat.com",
-  "wss://relay.snort.social",
   "wss://relay.damus.io",
   "wss://nostr-pub.wellorder.net",
   "wss://purplepag.es",
