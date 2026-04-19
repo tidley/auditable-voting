@@ -5,9 +5,31 @@ export function parseInviteFromUrl(search = typeof window !== "undefined" ? wind
   invite: ElectionInviteMessage | null;
 } {
   const params = new URLSearchParams(search);
-  const electionId = (params.get("election_id") ?? params.get("questionnaire") ?? "").trim() || null;
+  const electionId = (params.get("q") ?? params.get("election_id") ?? params.get("questionnaire") ?? "").trim() || null;
+  const coordinatorNpub = (params.get("coordinator") ?? "").trim();
+  const invitedNpub = (params.get("invited") ?? "").trim();
   const encodedInvite = (params.get("invite") ?? "").trim();
   if (!encodedInvite) {
+    if (electionId && coordinatorNpub && invitedNpub) {
+      const voteUrl = typeof window !== "undefined"
+        ? new URL(`simple.html${search.startsWith("?") ? search : `?${search}`}`, window.location.href).toString()
+        : "";
+      return {
+        electionId,
+        invite: {
+          type: "election_invite",
+          schemaVersion: 1,
+          electionId,
+          title: "Questionnaire",
+          description: "",
+          voteUrl,
+          invitedNpub,
+          coordinatorNpub,
+          definition: null,
+          expiresAt: null,
+        },
+      };
+    }
     return { electionId, invite: null };
   }
 
@@ -33,9 +55,11 @@ export function buildInviteUrl(input: {
   baseUrl?: string;
   invite: ElectionInviteMessage;
 }) {
-  const base = input.baseUrl ?? (typeof window !== "undefined" ? window.location.href : "https://example.invalid/vote.html");
-  const url = new URL("vote.html", base);
-  url.searchParams.set("election_id", input.invite.electionId);
-  url.searchParams.set("invite", encodeURIComponent(JSON.stringify(input.invite)));
+  const base = input.baseUrl ?? (typeof window !== "undefined" ? window.location.href : "https://example.invalid/simple.html");
+  const url = new URL("./", base);
+  url.searchParams.set("role", "voter");
+  url.searchParams.set("q", input.invite.electionId);
+  url.searchParams.set("coordinator", input.invite.coordinatorNpub);
+  url.searchParams.set("invited", input.invite.invitedNpub);
   return url.toString();
 }

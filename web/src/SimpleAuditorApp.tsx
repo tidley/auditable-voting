@@ -9,6 +9,7 @@ import {
   fetchQuestionnaireState,
 } from "./questionnaireTransport";
 import { formatQuestionnaireStateLabel } from "./questionnaireRuntime";
+import type { QuestionnaireResultSummary } from "./questionnaireProtocol";
 
 const AUDITOR_REFRESH_INTERVAL_MS = 15000;
 const AUDITOR_QUESTIONNAIRE_DETAIL_LIMIT = 20;
@@ -39,6 +40,7 @@ export default function SimpleAuditorApp() {
   const [selectedResponseDetails, setSelectedResponseDetails] = useState<AuditorQuestionnaireResponseDetail[]>([]);
   const [selectedLatestPublishAt, setSelectedLatestPublishAt] = useState<number | null>(null);
   const [selectedLiveState, setSelectedLiveState] = useState<string | null>(null);
+  const [selectedResultSummary, setSelectedResultSummary] = useState<QuestionnaireResultSummary | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [questionnaireRefreshStatus, setQuestionnaireRefreshStatus] = useState<string | null>(null);
   const [responseRefreshStatus, setResponseRefreshStatus] = useState<string | null>(null);
@@ -132,6 +134,7 @@ export default function SimpleAuditorApp() {
       setSelectedResponseDetails([]);
       setSelectedLatestPublishAt(null);
       setSelectedLiveState(null);
+      setSelectedResultSummary(null);
       setResponseRefreshStatus("Choose a questionnaire round.");
       return;
     }
@@ -165,11 +168,13 @@ export default function SimpleAuditorApp() {
       setSelectedResponseDetails(details);
       setSelectedLatestPublishAt(latestPublishAt);
       setSelectedLiveState(latestState?.state.state ?? null);
+      setSelectedResultSummary(latestResult?.summary ?? null);
       setResponseRefreshStatus("Questionnaire responses refreshed from Nostr.");
     } catch {
       setSelectedResponseDetails([]);
       setSelectedLatestPublishAt(null);
       setSelectedLiveState(null);
+      setSelectedResultSummary(null);
       setResponseRefreshStatus("Failed to refresh questionnaire responses.");
     }
   }, []);
@@ -202,6 +207,7 @@ export default function SimpleAuditorApp() {
       setSelectedResponseDetails([]);
       setSelectedLatestPublishAt(null);
       setSelectedLiveState(null);
+      setSelectedResultSummary(null);
       return;
     }
     void refreshSelectedQuestionnaireResponses();
@@ -394,33 +400,47 @@ export default function SimpleAuditorApp() {
           {questionnaireRefreshStatus ? <p className='simple-voter-note'>{questionnaireRefreshStatus}</p> : null}
         </SimpleCollapsibleSection>
 
-        <SimpleCollapsibleSection title='Discovered questionnaires'>
-          {questionnaires.length > 0 ? (
-            filteredQuestionnaires.length > 0 ? (
-              <ul className='simple-voter-list'>
-                {filteredQuestionnaires.map((questionnaire) => (
-                  <li key={questionnaire.eventId} className='simple-voter-list-item'>
-                    <div className='simple-submitted-vote-copy'>
-                      <p className='simple-voter-question'>{questionnaire.title}</p>
-                      <p className='simple-voter-note'>Questionnaire ID: {questionnaire.questionnaireId}</p>
-                      <p className='simple-voter-note'>Coordinator: {questionnaire.coordinatorNpub || "Unknown"}</p>
-                      <p className='simple-voter-note'>
-                        State: {formatQuestionnaireStateLabel(questionnaire.state)} | Published responses: {questionnaire.publishedAcceptedResponseCount ?? "Not published"}
-                      </p>
-                      <p className='simple-voter-note'>
-                        Created: {formatQuestionnaireTime(questionnaire.createdAt)} | Opens: {formatQuestionnaireTime(questionnaire.openAt)} | Closes: {formatQuestionnaireTime(questionnaire.closeAt)}
-                      </p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+        <SimpleCollapsibleSection title='Questionnaire results'>
+          {selectedQuestionnaire ? (
+            selectedResultSummary ? (
+              <>
+                <p className='simple-voter-question'>{selectedQuestionnaire.title}</p>
+                <p className='simple-voter-note'>
+                  Published at: {formatQuestionnaireTime(Number(selectedResultSummary.createdAt ?? selectedQuestionnaire.resultPublishedAt ?? 0))}
+                </p>
+                <p className='simple-voter-note'>
+                  Published totals: valid {selectedResultSummary.acceptedResponseCount}, invalid {selectedResultSummary.rejectedResponseCount}
+                </p>
+                <ul className='simple-voter-list'>
+                  {selectedResultSummary.questionSummaries.map((summary) => (
+                    <li
+                      key={`${summary.questionId}:${summary.answerType}`}
+                      className='simple-voter-list-item'
+                    >
+                      <div className='simple-submitted-vote-copy'>
+                        <p className='simple-voter-question'>Question {summary.questionId}</p>
+                        {summary.answerType === "yes_no" ? (
+                          <p className='simple-voter-note'>Yes: {summary.yesCount} | No: {summary.noCount}</p>
+                        ) : summary.answerType === "multiple_choice" ? (
+                          <ul className='simple-delivery-diagnostics simple-delivery-diagnostics-compact'>
+                            {Object.entries(summary.optionCounts).map(([optionId, count]) => (
+                              <li key={optionId} className='simple-delivery-ok'>{optionId}: {count}</li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className='simple-voter-note'>Free-text responses: {summary.freeTextCount}</p>
+                        )}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </>
             ) : (
-              <p className='simple-voter-note'>No questionnaires found for the current search.</p>
+              <p className='simple-voter-empty'>No published result summary yet for this questionnaire.</p>
             )
           ) : (
-            <p className='simple-voter-empty'>No public questionnaires discovered yet.</p>
+            <p className='simple-voter-empty'>Choose a questionnaire round to inspect results.</p>
           )}
-          {questionnaireRefreshStatus ? <p className='simple-voter-note'>{questionnaireRefreshStatus}</p> : null}
         </SimpleCollapsibleSection>
 
         <SimpleCollapsibleSection title='Audit summary'>

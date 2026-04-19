@@ -20,7 +20,7 @@ import TokenFingerprint from "./TokenFingerprint";
 
 function deriveElectionId() {
   const params = new URLSearchParams(window.location.search);
-  return (params.get("election_id") ?? params.get("questionnaire") ?? "").trim();
+  return (params.get("q") ?? params.get("election_id") ?? params.get("questionnaire") ?? "").trim();
 }
 
 function answerToOptionA(
