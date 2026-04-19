@@ -16,6 +16,7 @@ import TokenFingerprint from "./TokenFingerprint";
 import { deriveActorDisplayId } from "./actorDisplay";
 import { getSharedNostrPool } from "./sharedNostrPool";
 import { storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
+import { tryWriteClipboard } from "./clipboard";
 
 const DEFAULT_QUESTIONNAIRE_ID_PREFIX = "q";
 const QUESTIONNAIRE_DRAFT_ID_STORAGE_KEY = "coordinator.questionnaire-draft-id.v1";
@@ -1593,7 +1594,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         <button type='button' className='simple-voter-secondary' onClick={() => setQuestionnaireId(generateQuestionnaireId())}>
           Generate ID
         </button>
-        <button type='button' className='simple-voter-secondary' onClick={() => void navigator.clipboard.writeText(questionnaireId)}>
+        <button type='button' className='simple-voter-secondary' onClick={() => void tryWriteClipboard(questionnaireId)}>
           Copy ID
         </button>
         <button type='button' className='simple-voter-secondary' onClick={() => setShowInviteQr((current) => !current)}>
@@ -1827,7 +1828,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           if (!inviteLink) {
             return;
           }
-          void navigator.clipboard.writeText(inviteLink);
+          void tryWriteClipboard(inviteLink);
         }}
         >
           Copy invite link

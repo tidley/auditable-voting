@@ -99,6 +99,7 @@ import { getSharedNostrPool } from "./sharedNostrPool";
 import type { BallotSubmission, QuestionnaireAnswer } from "./questionnaireOptionA";
 import type { QuestionnaireResponsePayload } from "./questionnaireProtocol";
 import type { QuestionnaireAcceptedResponse } from "./questionnaireRuntime";
+import { tryWriteClipboard } from "./clipboard";
 
 type CoordinatorTab = "configure" | "participants" | "voting" | "settings";
 
@@ -3269,11 +3270,11 @@ export default function SimpleCoordinatorApp() {
           },
         }),
       });
-      void navigator.clipboard.writeText(buildInviteUrl({ invite: sent.invite }));
+      const copied = await tryWriteClipboard(buildInviteUrl({ invite: sent.invite }));
       setKnownVoterInviteStatus(
         sent.dmDelivered
-          ? `Invite DM sent to ${deriveActorDisplayId(invitedNpub)}. Link copied.`
-          : `Invite saved locally for ${deriveActorDisplayId(invitedNpub)}; DM delivery failed (${sent.dmFailureReason ?? "unknown error"}). Link copied.`,
+          ? `Invite DM sent to ${deriveActorDisplayId(invitedNpub)}. ${copied ? "Link copied." : "Link generated; browser blocked clipboard copy."}`
+          : `Invite saved locally for ${deriveActorDisplayId(invitedNpub)}; DM delivery failed (${sent.dmFailureReason ?? "unknown error"}). ${copied ? "Link copied." : "Browser blocked clipboard copy."}`,
       );
       setAutoSendFollowers((current) => ({
         ...current,
@@ -3330,13 +3331,13 @@ export default function SimpleCoordinatorApp() {
       }
     }
 
-    if (copiedLinks.length > 0) {
-      void navigator.clipboard.writeText(copiedLinks.join("\n"));
-    }
+    const copied = copiedLinks.length > 0
+      ? await tryWriteClipboard(copiedLinks.join("\n"))
+      : false;
     setKnownVoterInviteRefreshNonce((value) => value + 1);
     setKnownVoterInviteStatus(
       sentCount > 0
-        ? `Bulk invited ${sentCount}/${targets.length} whitelisted voters. Invite links copied (newline-separated).`
+        ? `Bulk invited ${sentCount}/${targets.length} whitelisted voters. ${copied ? "Invite links copied (newline-separated)." : "Browser blocked clipboard copy."}`
         : "Bulk invite could not send any invitations.",
     );
   }
@@ -5309,7 +5310,7 @@ export default function SimpleCoordinatorApp() {
             <button
               type='button'
               className='simple-voter-secondary'
-              onClick={() => void navigator.clipboard.writeText(activeCoordinatorNpub)}
+              onClick={() => void tryWriteClipboard(activeCoordinatorNpub)}
               disabled={!activeCoordinatorNpub}
             >
               Copy npub

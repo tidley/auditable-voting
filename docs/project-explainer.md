@@ -77,7 +77,7 @@ This is the practical order of operations for the current app.
 
 - If a voter sees no invite, confirm they are using the same voter identity that was invited.
 - A voter should not see unrelated questionnaires unless they have invite/state context for that identity.
-- Relay connection failures for one endpoint (for example `relay.snort.social`) are common on public infrastructure; retries and other relays should still allow progress.
+- Relay connection failures for one endpoint are common on public infrastructure; retries and other relays should still allow progress.
 
 ---
 
@@ -539,7 +539,7 @@ The current client also distinguishes between:
 - **read/subscription fanout**, which is intentionally kept to a smaller primary subset
 
 That split reduces relay-side `too many concurrent REQs` failures while keeping the write path reasonably redundant.
-Automatic voter and coordinator actions are also paced with a random `0-30s` delay, slower retry windows, and a sender-scoped ticket publish queue so many browser actors do not all publish into the same public relays at once. The default relay lists now include the Bits By Tom general relay, the Tom Dwyer NIP-17 relay, and extra public relays including `offchain.pub`, `nostr.mom`, `relay.snort.social`, and `nostr-pub.wellorder.net`; mailbox publishes keep one deterministic anchor relay, rotate secondary relays by recipient, and apply temporary cooldowns when relays return rate-limit/pow/spam/policy failures.
+Automatic voter and coordinator actions are also paced with a random `0-30s` delay, slower retry windows, and a sender-scoped ticket publish queue so many browser actors do not all publish into the same public relays at once. The default relay lists now include the Bits By Tom general relay, the Tom Dwyer NIP-17 relay, and extra public relays including `offchain.pub`, `nostr.mom`, and `nostr-pub.wellorder.net`; mailbox publishes keep one deterministic anchor relay, rotate secondary relays by recipient, and apply temporary cooldowns when relays return rate-limit/pow/spam/policy failures.
 
 ---
 
