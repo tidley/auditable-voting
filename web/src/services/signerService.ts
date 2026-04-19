@@ -124,6 +124,12 @@ async function connectAmberSigner(): Promise<NostrConnectSignerLike> {
       secret: createRandomSecret(),
       name: "auditable-voting",
       url: typeof window === "undefined" ? "https://tidley.github.io" : window.location.origin,
+      perms: [
+        "get_public_key",
+        "sign_event",
+        "nip44_encrypt",
+        "nip44_decrypt",
+      ],
     });
     if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
       void navigator.clipboard.writeText(connectionUri).catch(() => {});

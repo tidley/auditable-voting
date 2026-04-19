@@ -338,6 +338,7 @@ export async function fetchOptionAInviteDms(input: {
 
   const unique = new Map<string, ElectionInviteMessage>();
   const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
+  let signerPermissionError: string | null = null;
   for (const event of sorted) {
     const wrapPubkey = typeof event.pubkey === "string" ? event.pubkey : "";
     if (!wrapPubkey || typeof event.content !== "string" || !event.content.trim()) {
@@ -368,9 +369,24 @@ export async function fetchOptionAInviteDms(input: {
       if (!unique.has(key)) {
         unique.set(key, invite);
       }
-    } catch {
+    } catch (error) {
+      if (!signerPermissionError && error instanceof Error) {
+        const message = error.message.toLowerCase();
+        if (
+          message.includes("permission")
+          || message.includes("rejected")
+          || message.includes("denied")
+          || message.includes("nip-44")
+          || message.includes("nip44")
+        ) {
+          signerPermissionError = error.message;
+        }
+      }
       continue;
     }
+  }
+  if (unique.size === 0 && signerPermissionError) {
+    throw new Error(`Could not read invite DMs: ${signerPermissionError}`);
   }
   return [...unique.values()];
 }

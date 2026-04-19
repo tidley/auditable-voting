@@ -394,7 +394,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         setPendingInvites(invites);
         if (invites.length === 0) {
           setSignedInNpub(signerNpub);
-          setStatus("Signed in. No pending questionnaire invites were found.");
+          setStatus(
+            inviteContext.electionId?.trim()
+              ? "Signed in. No invite DM was readable for this questionnaire. Check signer DM permissions (NIP-44 decrypt)."
+              : "Signed in. No pending questionnaire invites were found.",
+          );
           return;
         }
 
@@ -430,7 +434,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         ? next.inviteMessage
         : preferredInvite;
       setActiveInvite(pendingInvite);
-      setStatus("Signed in as " + deriveActorDisplayId(next.invitedNpub) + ".");
+      setStatus(
+        pendingInvite
+          ? "Signed in as " + deriveActorDisplayId(next.invitedNpub) + "."
+          : inviteContext.electionId?.trim()
+            ? "Signed in. No invite DM was readable for this questionnaire. Check signer DM permissions (NIP-44 decrypt)."
+            : "Signed in as " + deriveActorDisplayId(next.invitedNpub) + ".",
+      );
       setRefreshNonce((value) => value + 1);
     } catch (error) {
       if (error instanceof OptionARuntimeError || error instanceof SignerServiceError) {
