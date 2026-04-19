@@ -9,6 +9,7 @@ import {
   type QuestionnaireQuestion,
   type QuestionnaireStateValue,
 } from "./questionnaireProtocol";
+import type { QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
 import { QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN } from "./questionnaireProtocolConstants";
 import SimpleQrPanel from "./SimpleQrPanel";
 import TokenFingerprint from "./TokenFingerprint";
@@ -45,6 +46,7 @@ type QuestionnaireCoordinatorPanelProps = {
   knownVoterCount?: number;
   optionAAcceptedCount?: number;
   optionAAcceptedResponses?: QuestionnaireAcceptedResponse[];
+  blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
   view?: "build" | "responses" | "participants";
   onStatusChange?: (status: {
     questionnaireId: string;
@@ -272,6 +274,7 @@ function buildDefinition(input: {
   description: string;
   closeAfterMinutes: number;
   questions: QuestionnaireQuestionDraft[];
+  blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
 }): QuestionnaireDefinition {
   const createdAt = nowUnix();
   return {
@@ -289,6 +292,7 @@ function buildDefinition(input: {
     responseVisibility: "private",
     eligibilityMode: "open",
     allowMultipleResponsesPerPubkey: false,
+    blindSigningPublicKey: input.blindSigningPublicKey ?? null,
     questions: input.questions,
   };
 }
@@ -940,8 +944,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       description: description.trim(),
       closeAfterMinutes: closeMinutes,
       questions,
+      blindSigningPublicKey: props.blindSigningPublicKey ?? null,
     });
-  }, [closeAfterMinutes, coordinatorNpub, description, questionnaireId, questions, title]);
+  }, [closeAfterMinutes, coordinatorNpub, description, props.blindSigningPublicKey, questionnaireId, questions, title]);
 
   const inviteLink = useMemo(() => {
     const id = questionnaireId.trim();
@@ -1146,6 +1151,11 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
 
     if (!publishPreconditionsReady) {
       setStatus("Publish draft is blocked until all readiness checks are complete.");
+      return;
+    }
+
+    if (!builtDefinition.blindSigningPublicKey) {
+      setStatus("Blind-signing key is still initialising. Try publishing again in a moment.");
       return;
     }
 

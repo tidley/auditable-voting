@@ -234,7 +234,7 @@ The voter questionnaire now uses a single entry path (Option A runtime) by defau
 - no `qflow`/`questionnaire_flow` URL gate is required for the normal voter path
 - signer login, coordinator whitelist/invite actions, blind request/issuance, single-vote acceptance, and signer-keyed resume are handled through the `questionnaireOptionA` runtime path
 - invites are sent over NIP-17 gift-wrapped DMs (`kind 1059` with `kind 13` seal / `kind 14` rumor) and discovered from relay history on voter login
-- published questionnaire definitions are cached locally and attached to Option A invites and credential issuances when available, so voters can render questions even if public relay backfill misses the definition event
+- published questionnaire definitions carry the blind-signing public key, are cached locally, and are attached to Option A invites and credential issuances when available, so voters can render and request ballots even if a signer cannot read historical invite DMs
 - arriving credential-attached definitions refresh the questionnaire text without clearing drafted voter responses
 - blind ballot requests use RSABSSA blind signing; the coordinator signs only a blinded token message and the voter unblinds the credential locally
 - ballot submissions are sent from a fresh ephemeral response npub, so the accepted response is not keyed by the invited voter npub

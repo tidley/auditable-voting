@@ -38,6 +38,7 @@ vi.mock("./questionnaireOptionAStorage", () => ({
   readBlindIssuance: optionAStorageMocks.readBlindIssuance,
   readInviteFromMailbox: () => null,
   saveVoterState: () => undefined,
+  upsertElectionSummary: vi.fn(),
 }));
 
 vi.mock("./questionnaireOptionAInviteDm", () => ({
@@ -58,10 +59,32 @@ vi.mock("./questionnaireOptionAInviteDm", () => ({
 
 import QuestionnaireOptionAVoterPanel from "./QuestionnaireOptionAVoterPanel";
 import { storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
+import { fetchQuestionnaireDefinitions } from "./questionnaireTransport";
+import { fetchOptionAInviteDms } from "./questionnaireOptionAInviteDm";
+
+const fetchQuestionnaireDefinitionsMock = vi.mocked(fetchQuestionnaireDefinitions);
+const fetchOptionAInviteDmsMock = vi.mocked(fetchOptionAInviteDms);
 
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
+  window.history.pushState(null, "", "/");
+  fetchQuestionnaireDefinitionsMock.mockReset();
+  fetchQuestionnaireDefinitionsMock.mockResolvedValue([]);
+  fetchOptionAInviteDmsMock.mockReset();
+  fetchOptionAInviteDmsMock.mockResolvedValue([
+    {
+      type: "election_invite",
+      schemaVersion: 1,
+      electionId: "election_test_1",
+      title: "Test Invite",
+      description: "",
+      voteUrl: "https://example.test/vote",
+      invitedNpub: "npub1" + "a".repeat(58),
+      coordinatorNpub: "npub1" + "b".repeat(58),
+      expiresAt: null,
+    },
+  ]);
   optionAStorageMocks.loadVoterState.mockReset();
   optionAStorageMocks.loadVoterState.mockReturnValue(null);
   optionAStorageMocks.readBlindIssuance.mockReset();
@@ -81,6 +104,51 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     await screen.findByText(/Pending invites/i);
     expect(screen.getByText("Test Invite")).toBeTruthy();
+  });
+
+  it("opens a linked public questionnaire after signer login when invite DMs are unreadable", async () => {
+    const user = userEvent.setup();
+    window.history.pushState(null, "", "/?role=voter&q=q_public_link");
+    fetchOptionAInviteDmsMock.mockResolvedValue([]);
+    fetchQuestionnaireDefinitionsMock.mockResolvedValue([{
+      event: { created_at: 20 },
+      definition: {
+        schemaVersion: 1,
+        eventType: "questionnaire_definition",
+        responseMode: "blind_token",
+        questionnaireId: "q_public_link",
+        title: "Linked questionnaire",
+        description: "Public definition",
+        createdAt: 1,
+        openAt: 1,
+        closeAt: 9999999999,
+        coordinatorPubkey: "npub1" + "b".repeat(58),
+        coordinatorEncryptionPubkey: "npub1" + "b".repeat(58),
+        responseVisibility: "private",
+        eligibilityMode: "open",
+        allowMultipleResponsesPerPubkey: false,
+        blindSigningPublicKey: {
+          scheme: "rsabssa-sha384-pss-deterministic-v1",
+          keyId: "blind_key",
+          jwk: { kty: "RSA", e: "AQAB", n: "test" },
+        },
+        questions: [{
+          questionId: "q1",
+          type: "yes_no",
+          prompt: "Public prompt",
+          required: true,
+        }],
+      },
+    } as Awaited<ReturnType<typeof fetchQuestionnaireDefinitions>>[number]]);
+
+    render(<QuestionnaireOptionAVoterPanel />);
+    await screen.findByText("Public prompt");
+
+    await user.click(screen.getByRole("button", { name: "Login" }));
+
+    await screen.findByText(/Opened questionnaire from link/i);
+    expect(screen.queryByText(/No invite DM was readable/i)).toBeNull();
+    expect(screen.getByText("Linked questionnaire")).toBeTruthy();
   });
 
   it("adopts announced questionnaire id when election id is missing", async () => {

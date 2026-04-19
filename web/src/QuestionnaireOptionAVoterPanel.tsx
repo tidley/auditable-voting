@@ -10,8 +10,10 @@ import {
 import type { ElectionInviteMessage, QuestionnaireAnswer } from "./questionnaireOptionA";
 import { deriveActorDisplayId } from "./actorDisplay";
 import {
+  loadElectionSummary,
   listInvitesFromMailbox,
   publishInviteToMailbox,
+  upsertElectionSummary,
 } from "./questionnaireOptionAStorage";
 import { fetchOptionAInviteDms } from "./questionnaireOptionAInviteDm";
 import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
@@ -59,6 +61,52 @@ function mapDefinitionQuestions(definition: QuestionnaireDefinition) {
     multiSelect: question.type === "multiple_choice" ? question.multiSelect : undefined,
     maxLength: question.type === "free_text" ? question.maxLength : undefined,
   }));
+}
+
+function latestDefinitionFromEntries(entries: Awaited<ReturnType<typeof fetchQuestionnaireDefinitions>>) {
+  return [...entries].sort((a, b) => (b.event.created_at ?? 0) - (a.event.created_at ?? 0))[0]?.definition ?? null;
+}
+
+function cacheDefinitionForVoting(definition: QuestionnaireDefinition) {
+  storeCachedQuestionnaireDefinition(definition);
+  const electionId = definition.questionnaireId.trim();
+  const coordinatorNpub = definition.coordinatorPubkey.trim();
+  if (!electionId || !coordinatorNpub) {
+    return;
+  }
+  const existing = loadElectionSummary(electionId);
+  const closed = Number.isFinite(definition.closeAt) && definition.closeAt <= Math.floor(Date.now() / 1000);
+  upsertElectionSummary({
+    electionId,
+    title: definition.title || existing?.title || "Questionnaire",
+    description: definition.description ?? existing?.description ?? "",
+    state: existing?.state ?? (closed ? "closed" : "open"),
+    openedAt: Number.isFinite(definition.openAt) ? new Date(definition.openAt * 1000).toISOString() : existing?.openedAt ?? null,
+    closedAt: Number.isFinite(definition.closeAt) ? new Date(definition.closeAt * 1000).toISOString() : existing?.closedAt ?? null,
+    coordinatorNpub,
+    blindSigningPublicKey: definition.blindSigningPublicKey ?? existing?.blindSigningPublicKey ?? null,
+  });
+}
+
+function buildInviteFromPublicDefinition(definition: QuestionnaireDefinition, invitedNpub: string): ElectionInviteMessage | null {
+  const electionId = definition.questionnaireId.trim();
+  const coordinatorNpub = definition.coordinatorPubkey.trim();
+  if (!electionId || !coordinatorNpub || !invitedNpub.trim()) {
+    return null;
+  }
+  return {
+    type: "election_invite",
+    schemaVersion: 1,
+    electionId,
+    title: definition.title || "Questionnaire",
+    description: definition.description ?? "",
+    voteUrl: typeof window === "undefined" ? "" : window.location.href,
+    invitedNpub: invitedNpub.trim(),
+    coordinatorNpub,
+    blindSigningPublicKey: definition.blindSigningPublicKey ?? null,
+    definition,
+    expiresAt: null,
+  };
 }
 
 type QuestionnaireOptionAVoterPanelProps = {
@@ -188,7 +236,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       ?? inviteContext.invite?.definition
       ?? readCachedQuestionnaireDefinition(electionId);
     if (localDefinition) {
-      storeCachedQuestionnaireDefinition(localDefinition);
+      cacheDefinitionForVoting(localDefinition);
       setQuestionnaireTitle(localDefinition.title || "Questionnaire");
       setQuestionnaireDescription(localDefinition.description || "");
       setQuestions(mapDefinitionQuestions(localDefinition));
@@ -199,11 +247,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         if (cancelled) {
           return;
         }
-        const latest = [...entries].sort((a, b) => (b.event.created_at ?? 0) - (a.event.created_at ?? 0))[0]?.definition;
+        const latest = latestDefinitionFromEntries(entries);
         if (!latest) {
           return;
         }
-        storeCachedQuestionnaireDefinition(latest);
+        cacheDefinitionForVoting(latest);
         setQuestionnaireTitle(latest.title || "Questionnaire");
         setQuestionnaireDescription(latest.description || "");
         setQuestions(mapDefinitionQuestions(latest));
@@ -340,6 +388,32 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
   }
 
+  async function buildPublicQuestionnaireInvite(voterNpub: string) {
+    const targetElectionId = electionId.trim() || inviteContext.electionId?.trim() || latestAnnouncedQuestionnaireId.trim();
+    if (!targetElectionId) {
+      return null;
+    }
+
+    let definition = readCachedQuestionnaireDefinition(targetElectionId);
+    try {
+      const latest = latestDefinitionFromEntries(await fetchQuestionnaireDefinitions({
+        questionnaireId: targetElectionId,
+        limit: 20,
+      }));
+      if (latest) {
+        definition = latest;
+      }
+    } catch {
+      // The cached public definition is enough when a fresh relay read fails.
+    }
+
+    if (!definition) {
+      return null;
+    }
+    cacheDefinitionForVoting(definition);
+    return buildInviteFromPublicDefinition(definition, voterNpub);
+  }
+
   async function loginWithLocalIdentity(voterNpub: string) {
     if (!runtime) {
       return false;
@@ -389,24 +463,19 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       const signer = createSignerService();
       const rawPubkey = await signer.getPublicKey();
       const signerNpub = rawPubkey.startsWith("npub1") ? rawPubkey : nip19.npubEncode(rawPubkey);
+      const publicQuestionnaireInvite = await buildPublicQuestionnaireInvite(signerNpub);
 
       if (!runtime) {
         const invites = await loadPendingInvites({ voterNpub: signerNpub, allowRelayFetch: true });
         setPendingInvites(invites);
-        if (invites.length === 0) {
+        const preferredInvite = publicQuestionnaireInvite ?? invites[0] ?? null;
+        if (!preferredInvite) {
           setSignedInNpub(signerNpub);
           setStatus(
             inviteContext.electionId?.trim()
               ? "Signed in. No invite DM was readable for this questionnaire. Check signer DM permissions (NIP-44 decrypt)."
               : "Signed in. No pending questionnaire invites were found.",
           );
-          return;
-        }
-
-        const preferredInvite = invites[0] ?? null;
-        if (!preferredInvite) {
-          setSignedInNpub(signerNpub);
-          setStatus("Signed in. No pending questionnaire invites were found.");
           return;
         }
 
@@ -418,16 +487,20 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         setActiveInvite(next.inviteMessage && !next.blindRequestSent && !next.credentialReady
           ? next.inviteMessage
           : preferredInvite);
-        setStatus("Signed in as " + deriveActorDisplayId(next.invitedNpub) + ". " + invites.length + " pending invite" + (invites.length === 1 ? "" : "s") + " found.");
+        setStatus(
+          publicQuestionnaireInvite && invites.length === 0
+            ? "Signed in as " + deriveActorDisplayId(next.invitedNpub) + ". Opened questionnaire from link."
+            : "Signed in as " + deriveActorDisplayId(next.invitedNpub) + ". " + invites.length + " pending invite" + (invites.length === 1 ? "" : "s") + " found.",
+        );
         setRefreshNonce((value) => value + 1);
         return;
       }
 
-      const next = await runtime.loginWithSigner(inviteContext.invite);
+      const next = await runtime.loginWithSigner(inviteContext.invite ?? publicQuestionnaireInvite);
       setSignedInNpub(next.invitedNpub);
       const invites = await loadPendingInvites({ voterNpub: next.invitedNpub, allowRelayFetch: true });
       setPendingInvites(invites);
-      const preferredInvite = invites[0] ?? null;
+      const preferredInvite = publicQuestionnaireInvite ?? invites[0] ?? null;
       if (!inviteContext.electionId?.trim() && preferredInvite && electionId.trim() !== preferredInvite.electionId) {
         setElectionId(preferredInvite.electionId);
       }
@@ -436,7 +509,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         : preferredInvite;
       setActiveInvite(pendingInvite);
       setStatus(
-        pendingInvite
+        publicQuestionnaireInvite && invites.length === 0
+          ? "Signed in as " + deriveActorDisplayId(next.invitedNpub) + ". Opened questionnaire from link."
+          : pendingInvite
           ? "Signed in as " + deriveActorDisplayId(next.invitedNpub) + "."
           : inviteContext.electionId?.trim()
             ? "Signed in. No invite DM was readable for this questionnaire. Check signer DM permissions (NIP-44 decrypt)."
@@ -574,6 +649,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     const hasInviteContext = Boolean(
       snapshot.inviteMessage
       || activeInvite
+      || inviteContext.electionId === snapshot.electionId
       || latestAnnouncedQuestionnaireId === snapshot.electionId
       || pendingInvites.some((invite) => invite.electionId === snapshot.electionId),
     );

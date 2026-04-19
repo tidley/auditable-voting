@@ -198,7 +198,7 @@ export class QuestionnaireOptionAVoterRuntime {
     }
 
     const summary = loadElectionSummary(this.electionId);
-    const voterState = loadVoterState({
+    const loadedVoterState = loadVoterState({
       voterNpub: signerNpub,
       electionId: this.electionId,
       coordinatorNpub: invite?.coordinatorNpub ?? summary?.coordinatorNpub,
@@ -208,6 +208,9 @@ export class QuestionnaireOptionAVoterRuntime {
       coordinatorNpub: invite?.coordinatorNpub ?? summary?.coordinatorNpub ?? "",
       now: nowIso(),
     });
+    const voterState = invite && loadedVoterState.coordinatorNpub !== invite.coordinatorNpub
+      ? { ...loadedVoterState, coordinatorNpub: invite.coordinatorNpub, lastUpdatedAt: nowIso() }
+      : loadedVoterState;
 
     let next = voterState;
     if (invite) {
@@ -657,6 +660,11 @@ export class QuestionnaireOptionACoordinatorRuntime {
   }) {
     this.coordinatorNpub = toNpub(input.coordinatorNpub);
     return this.ensureCoordinatorState(input.summary);
+  }
+
+  async ensureBlindSigningPublicKey() {
+    const privateKey = await this.ensureBlindSigningKey();
+    return toQuestionnaireBlindPublicKey(privateKey);
   }
 
   private ensureCoordinatorState(summary?: Partial<ElectionSummary>) {

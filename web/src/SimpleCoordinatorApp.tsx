@@ -778,6 +778,7 @@ export default function SimpleCoordinatorApp() {
     () => optionACoordinatorRuntime?.getPendingAuthorizations() ?? [],
     [optionACoordinatorRuntime, knownVoterInviteRefreshNonce],
   );
+  const optionABlindSigningPublicKey = optionACoordinatorRuntime?.getSnapshot()?.election.blindSigningPublicKey ?? null;
   const optionAAcceptedResponses = useMemo(() => {
     const snapshot = optionACoordinatorRuntime?.getSnapshot();
     if (!snapshot) {
@@ -836,6 +837,7 @@ export default function SimpleCoordinatorApp() {
     if (!optionACoordinatorRuntime || !activeCoordinatorNpub || !optionAElectionId) {
       return;
     }
+    let cancelled = false;
     try {
       optionACoordinatorRuntime.bootstrapCoordinatorNpub({
         coordinatorNpub: activeCoordinatorNpub,
@@ -847,9 +849,19 @@ export default function SimpleCoordinatorApp() {
         },
       });
       setKnownVoterInviteRefreshNonce((value) => value + 1);
+      void optionACoordinatorRuntime.ensureBlindSigningPublicKey().then(() => {
+        if (!cancelled) {
+          setKnownVoterInviteRefreshNonce((value) => value + 1);
+        }
+      }).catch(() => {
+        // The invite/send paths will surface key setup failures.
+      });
     } catch {
       // Manual login remains available.
     }
+    return () => {
+      cancelled = true;
+    };
   }, [activeCoordinatorNpub, optionACoordinatorRuntime, optionAElectionId, questionPrompt]);
   const ticketObserveRecoveryAgeMs = useMemo(
     () => readRuntimeIntOverride("SIMPLE_TICKET_OBSERVE_RECOVERY_AGE_MS", SIMPLE_TICKET_OBSERVE_RECOVERY_AGE_MS),
@@ -5481,6 +5493,7 @@ export default function SimpleCoordinatorApp() {
                 knownVoterCount={optionAKnownVoterCount}
                 optionAAcceptedCount={optionAAcceptedCount}
                 optionAAcceptedResponses={optionAAcceptedResponses}
+                blindSigningPublicKey={optionABlindSigningPublicKey}
                 view='build'
                 onStatusChange={(nextStatus) => {
                   setQuestionnaireRosterAnnouncement({
@@ -5848,6 +5861,7 @@ export default function SimpleCoordinatorApp() {
               knownVoterCount={optionAKnownVoterCount}
               optionAAcceptedCount={optionAAcceptedCount}
               optionAAcceptedResponses={optionAAcceptedResponses}
+              blindSigningPublicKey={optionABlindSigningPublicKey}
               view='participants'
               onStatusChange={(nextStatus) => {
                 setQuestionnaireRosterAnnouncement({
@@ -5879,6 +5893,7 @@ export default function SimpleCoordinatorApp() {
               knownVoterCount={optionAKnownVoterCount}
               optionAAcceptedCount={optionAAcceptedCount}
               optionAAcceptedResponses={optionAAcceptedResponses}
+              blindSigningPublicKey={optionABlindSigningPublicKey}
               view='responses'
               onStatusChange={(nextStatus) => {
                 setQuestionnaireRosterAnnouncement({

@@ -3,6 +3,7 @@ import {
   QUESTIONNAIRE_RESPONSE_MODE_LEGACY_PRIVATE_ENVELOPE,
   type QuestionnaireResponseMode,
 } from "./questionnaireProtocolConstants";
+import type { QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
 
 export type QuestionnaireQuestionBase = {
   questionId: string;
@@ -50,6 +51,7 @@ export type QuestionnaireDefinition = {
   responseVisibility: "public" | "private";
   eligibilityMode: "open" | "allowlist";
   allowMultipleResponsesPerPubkey: boolean;
+  blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
   questions: QuestionnaireQuestion[];
 };
 
