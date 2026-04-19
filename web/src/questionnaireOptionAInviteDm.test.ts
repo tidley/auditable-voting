@@ -212,6 +212,77 @@ describe("questionnaireOptionAInviteDm", () => {
     expect(invites[0]?.invitedNpub).toBe(recipientNpub);
   });
 
+  it("recovers invite payload from DM tags when message content is a short link", async () => {
+    const recipientHex = "b".repeat(64);
+    const senderHex = "c".repeat(64);
+    const wrapPubkey = "d".repeat(64);
+    const recipientNpub = nip19.npubEncode(recipientHex);
+    const invite = {
+      type: "election_invite" as const,
+      schemaVersion: 1 as const,
+      electionId: "e4",
+      title: "Invite title",
+      description: "",
+      voteUrl: "https://tidley.github.io/auditable-voting/?role=voter&q=e4",
+      invitedNpub: recipientNpub,
+      coordinatorNpub: nip19.npubEncode(senderHex),
+      expiresAt: null,
+    };
+
+    querySync.mockResolvedValue([{
+      id: "dm-2",
+      kind: 1059,
+      pubkey: wrapPubkey,
+      content: "ciphertext",
+      created_at: 123,
+      tags: [["p", recipientHex]],
+      sig: "sig",
+    }]);
+
+    const signer = makeSigner({
+      getPublicKey: async () => recipientHex,
+      nip44Decrypt: async (pubkey) => {
+        if (pubkey === wrapPubkey) {
+          return JSON.stringify({
+            id: "seal-2",
+            kind: 13,
+            pubkey: senderHex,
+            created_at: 123,
+            tags: [],
+            content: "sealed-rumor",
+            sig: "sig",
+          });
+        }
+        if (pubkey === senderHex) {
+          return JSON.stringify({
+            content: "https://tidley.github.io/auditable-voting/?role=voter&q=e4",
+            tags: [
+              ["p", recipientHex],
+              ["optiona_invite_payload", encodeURIComponent(JSON.stringify({
+                type: "optiona_invite_dm",
+                schemaVersion: 1,
+                invite,
+                sentAt: new Date().toISOString(),
+              }))],
+            ],
+          });
+        }
+        return "";
+      },
+    });
+
+    const invites = await fetchOptionAInviteDms({
+      signer,
+      electionId: "e4",
+      limit: 20,
+    });
+
+    expect(invites).toHaveLength(1);
+    expect(invites[0]?.electionId).toBe("e4");
+    expect(invites[0]?.invitedNpub).toBe(recipientNpub);
+    expect(invites[0]?.coordinatorNpub).toBe(invite.coordinatorNpub);
+  });
+
   it("reads invite DMs with local nsec when no external signer is used", async () => {
     const recipientSecret = generateSecretKey();
     const recipientHex = getPublicKey(recipientSecret);

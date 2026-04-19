@@ -18,6 +18,7 @@ const KIND_SEAL = 13;
 const KIND_RUMOR_MESSAGE = 14;
 const KIND_GIFT_WRAP = 1059;
 const KIND_NIP17_RELAY_LIST = 10050;
+const INVITE_PAYLOAD_TAG = "optiona_invite_payload";
 
 type InviteDmEnvelope = {
   type: "optiona_invite_dm";
@@ -102,7 +103,7 @@ async function fetchRecipientNip17Relays(input: {
   }
 }
 
-function parseInviteDmContent(content: string): ElectionInviteMessage | null {
+function parseInviteDmContent(content: string, tags?: string[][]): ElectionInviteMessage | null {
   const trimmed = content.trim();
   const urlMatch = trimmed.match(/https?:\/\/\S+/i);
   if (urlMatch) {
@@ -114,6 +115,30 @@ function parseInviteDmContent(content: string): ElectionInviteMessage | null {
       }
     } catch {
       // Fall through to JSON parsing for legacy payloads.
+    }
+  }
+
+  const tagPayload = Array.isArray(tags)
+    ? tags.find((tag) => tag[0] === INVITE_PAYLOAD_TAG)?.[1]
+    : null;
+  if (typeof tagPayload === "string" && tagPayload.trim().length > 0) {
+    try {
+      const decoded = decodeURIComponent(tagPayload);
+      const parsed = JSON.parse(decoded) as Partial<InviteDmEnvelope> | ElectionInviteMessage;
+      const invite = (parsed as InviteDmEnvelope).type === "optiona_invite_dm"
+        ? (parsed as InviteDmEnvelope).invite
+        : parsed as ElectionInviteMessage;
+      if (
+        invite?.type === "election_invite"
+        && invite.schemaVersion === 1
+        && typeof invite.electionId === "string"
+        && typeof invite.invitedNpub === "string"
+        && typeof invite.coordinatorNpub === "string"
+      ) {
+        return invite;
+      }
+    } catch {
+      // Fall through to legacy JSON parsing.
     }
   }
 
@@ -144,6 +169,7 @@ function createRumor(input: {
   envelope: InviteDmEnvelope;
 }) {
   const messageContent = input.envelope.invite.voteUrl.trim() || JSON.stringify(input.envelope);
+  const encodedEnvelope = encodeURIComponent(JSON.stringify(input.envelope));
   const rumor = {
     kind: KIND_RUMOR_MESSAGE,
     created_at: Math.round(Date.now() / 1000),
@@ -151,6 +177,7 @@ function createRumor(input: {
       input.relayUrl ? ["p", input.recipientHex, input.relayUrl] : ["p", input.recipientHex],
       ["alt", "Direct message"],
       ["subject", "Auditable Voting invite"],
+      [INVITE_PAYLOAD_TAG, encodedEnvelope],
     ],
     content: messageContent,
     pubkey: input.senderHex,
@@ -323,11 +350,11 @@ export async function fetchOptionAInviteDms(input: {
         continue;
       }
       const rumorPayload = await input.signer.nip44Decrypt(sealEvent.pubkey, sealEvent.content);
-      const rumor = JSON.parse(rumorPayload) as { content?: string };
+      const rumor = JSON.parse(rumorPayload) as { content?: string; tags?: string[][] };
       if (!rumor || typeof rumor.content !== "string") {
         continue;
       }
-      const invite = parseInviteDmContent(rumor.content);
+      const invite = parseInviteDmContent(rumor.content, rumor.tags);
       if (!invite) {
         continue;
       }
@@ -369,11 +396,11 @@ export async function fetchOptionAInviteDmsWithNsec(input: {
   const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
   for (const event of sorted) {
     try {
-      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string };
+      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string; tags?: string[][] };
       if (!rumor || typeof rumor.content !== "string") {
         continue;
       }
-      const invite = parseInviteDmContent(rumor.content);
+      const invite = parseInviteDmContent(rumor.content, rumor.tags);
       if (!invite) {
         continue;
       }

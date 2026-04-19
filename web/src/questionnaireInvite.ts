@@ -59,7 +59,5 @@ export function buildInviteUrl(input: {
   const url = new URL("./", base);
   url.searchParams.set("role", "voter");
   url.searchParams.set("q", input.invite.electionId);
-  url.searchParams.set("coordinator", input.invite.coordinatorNpub);
-  url.searchParams.set("invited", input.invite.invitedNpub);
   return url.toString();
 }
