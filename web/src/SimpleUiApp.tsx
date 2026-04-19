@@ -269,6 +269,14 @@ function readDeploymentModeFromUrl() {
     .toLowerCase();
 }
 
+function readLinkedQuestionnaireIdFromUrl() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  const params = new URLSearchParams(window.location.search);
+  return (params.get("q") ?? params.get("election_id") ?? params.get("questionnaire") ?? "").trim();
+}
+
 async function verifyAnnouncedQuestionnaireIsReady(questionnaireId: string) {
   const [definitionFetch, stateFetch] = await Promise.all([
     fetchQuestionnaireEventsWithFallback({
@@ -304,8 +312,13 @@ export default function SimpleUiApp() {
   const [coordinatorDraft, setCoordinatorDraft] = useState("");
   const [coordinatorScannerActive, setCoordinatorScannerActive] = useState(false);
   const [coordinatorScannerStatus, setCoordinatorScannerStatus] = useState<string | null>(null);
-  const [announcedQuestionnaireIds, setAnnouncedQuestionnaireIds] = useState<string[]>([]);
-  const [readyAnnouncedQuestionnaireIds, setReadyAnnouncedQuestionnaireIds] = useState<string[]>([]);
+  const linkedQuestionnaireId = useMemo(() => readLinkedQuestionnaireIdFromUrl(), []);
+  const [announcedQuestionnaireIds, setAnnouncedQuestionnaireIds] = useState<string[]>(() => (
+    linkedQuestionnaireId ? [linkedQuestionnaireId] : []
+  ));
+  const [readyAnnouncedQuestionnaireIds, setReadyAnnouncedQuestionnaireIds] = useState<string[]>(() => (
+    linkedQuestionnaireId ? [linkedQuestionnaireId] : []
+  ));
   const [liveVoteChoice, setLiveVoteChoice] = useState<LiveVoteChoice>(null);
   const [requestStatus, setRequestStatus] = useState<string | null>(null);
   const [identityStatus, setIdentityStatus] = useState<string | null>(null);
@@ -332,7 +345,7 @@ export default function SimpleUiApp() {
   const [ballotSubmitted, setBallotSubmitted] = useState(false);
   const [ballotAccepted, setBallotAccepted] = useState(false);
   const [selectedVotingId, setSelectedVotingId] = useState("");
-  const [activeTab, setActiveTab] = useState<VoterTab>("configure");
+  const [activeTab, setActiveTab] = useState<VoterTab>(() => (linkedQuestionnaireId ? "vote" : "configure"));
   const [showVoteDetails, setShowVoteDetails] = useState(false);
   const [votePaneUnlocked, setVotePaneUnlocked] = useState(false);
   const [questionnaireContext, setQuestionnaireContext] = useState<{ hasDefinition: boolean; state: string | null }>({
@@ -1628,6 +1641,9 @@ export default function SimpleUiApp() {
     const localNsec = voterKeypair?.nsec?.trim() ?? "";
     const localNpub = voterKeypair?.npub?.trim() ?? "";
     if (!localNsec || !localNpub) {
+      if (!options?.silent) {
+        setRequestStatus("Login with a signer or nsec before checking encrypted invite DMs.");
+      }
       return;
     }
     try {
@@ -1651,6 +1667,28 @@ export default function SimpleUiApp() {
   }
 
   async function checkQuestionnaireInvites(options?: { silent?: boolean }) {
+    if (linkedQuestionnaireId) {
+      setAnnouncedQuestionnaireIds((current) => {
+        const next = [...new Set([...current, linkedQuestionnaireId])].slice(-8);
+        return next.length === current.length
+          && next.every((value, index) => value === current[index])
+          ? current
+          : next;
+      });
+      setReadyAnnouncedQuestionnaireIds((current) => {
+        const next = [...new Set([...current, linkedQuestionnaireId])].slice(-8);
+        return next.length === current.length
+          && next.every((value, index) => value === current[index])
+          ? current
+          : next;
+      });
+      setVotePaneUnlocked(true);
+      setActiveTab("vote");
+      if (!options?.silent) {
+        setRequestStatus(`Opened linked questionnaire ${linkedQuestionnaireId}.`);
+      }
+    }
+
     const signerSessionNpub = signerNpub.trim();
     if (!signerSessionNpub) {
       await checkQuestionnaireInvitesWithLocalKey({ silent: options?.silent });
@@ -1705,6 +1743,7 @@ export default function SimpleUiApp() {
     announcedQuestionnaireIds.length,
     configuredCoordinatorTargets.length,
     questionnaireContext.hasDefinition,
+    linkedQuestionnaireId,
     signerNpub,
     voterKeypair?.nsec,
   ]);

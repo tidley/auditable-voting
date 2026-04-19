@@ -44,6 +44,14 @@ function shouldForceGatewayFromUrl() {
   return params.get("login") === "1";
 }
 
+function readLinkedQuestionnaireIdFromUrl() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  const params = new URLSearchParams(window.location.search);
+  return (params.get("q") ?? params.get("election_id") ?? params.get("questionnaire") ?? "").trim();
+}
+
 function writeRoleToUrl(role: SimpleRole) {
   if (typeof window === "undefined") {
     return;
@@ -94,6 +102,14 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
       const npub = rawPubkey.startsWith("npub1") ? rawPubkey : nip19.npubEncode(rawPubkey);
       setGatewaySignerNpub(npub);
       setGatewayStatus(`Signer connected: ${npub}`);
+      if (gatewayRole === "voter" && readLinkedQuestionnaireIdFromUrl()) {
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY, npub);
+        }
+        setRole("voter");
+        setRoleSwitchMinimized(true);
+        setShowGateway(false);
+      }
     } catch (error) {
       if (error instanceof SignerServiceError) {
         setGatewayStatus(error.message);
