@@ -154,13 +154,15 @@ describe("questionnaireOptionABlindDm", () => {
     const recipientNpub = nip19.npubEncode(recipientHex);
     const recipientNsec = nip19.nsecEncode(recipientSecret);
     const senderSecret = generateSecretKey();
+    const senderNpub = nip19.npubEncode(getPublicKey(senderSecret));
 
     const submission = {
       type: "ballot_submission" as const,
       schemaVersion: 1 as const,
       electionId: "q_3",
       submissionId: "submission_3",
-      invitedNpub: recipientNpub,
+      invitedNpub: senderNpub,
+      responseNpub: senderNpub,
       credential: "sig_3",
       nullifier: "nullifier_3",
       payload: {

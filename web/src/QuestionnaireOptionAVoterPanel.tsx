@@ -91,6 +91,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
 
   const inviteContext = useMemo(() => parseInviteFromUrl(), []);
   const [electionId, setElectionId] = useState(inviteContext.electionId ?? deriveElectionId());
+  const previousElectionIdRef = useRef(electionId);
   const latestAnnouncedQuestionnaireId = useMemo(() => {
     const ids = (props.announcedQuestionnaireIds ?? [])
       .map((value) => value.trim())
@@ -106,6 +107,14 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     alreadySubmitted: false,
     resumeAvailable: false,
   };
+
+  useEffect(() => {
+    if (previousElectionIdRef.current === electionId) {
+      return;
+    }
+    previousElectionIdRef.current = electionId;
+    setAnswers({});
+  }, [electionId]);
 
   useEffect(() => {
     if (!electionId) {
@@ -167,7 +176,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     setQuestionnaireTitle("Questionnaire");
     setQuestionnaireDescription("");
     setQuestions([]);
-    setAnswers({});
     if (!electionId) {
       return;
     }
@@ -474,7 +482,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       setPendingInvites(refreshedInvites.filter((entry) => entry.invitedNpub === next.invitedNpub));
       setActiveInvite(!next.blindRequestSent && !next.credentialReady ? invite : null);
       if (requestAfterLogin && !next.blindRequestSent && !next.credentialReady) {
-        voterRuntime.requestBlindBallot();
+        await voterRuntime.requestBlindBallot();
         setStatus("Opened " + (invite.title || invite.electionId) + ". Blind ballot request sent.");
       } else {
         setStatus("Opened " + (invite.title || invite.electionId) + ".");
@@ -501,13 +509,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     setRefreshNonce((value) => value + 1);
   }
 
-  function requestBallot() {
+  async function requestBallot() {
     if (!runtime) {
       return;
     }
     try {
       ensureLocalSession({ allowInviteMissing: true });
-      runtime.requestBlindBallot();
+      await runtime.requestBlindBallot();
       setActiveInvite(null);
       setStatus("Blind ballot request sent. Waiting for coordinator issuance.");
       setRefreshNonce((value) => value + 1);
@@ -529,13 +537,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
   }
 
-  function submit() {
+  async function submit() {
     if (!runtime) {
       return;
     }
     try {
       pushAnswers();
-      runtime.submitVote(requiredQuestionIds);
+      await runtime.submitVote(requiredQuestionIds);
       setStatus("Response submitted. Awaiting coordinator acceptance.");
       setRefreshNonce((value) => value + 1);
     } catch (error) {
@@ -564,11 +572,12 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       return;
     }
     try {
-      runtime.requestBlindBallot();
-      autoRequestSentForRef.current[key] = true;
-      setActiveInvite(null);
-      setStatus("Blind ballot request sent. Waiting for coordinator issuance.");
-      setRefreshNonce((value) => value + 1);
+      void runtime.requestBlindBallot().then(() => {
+        autoRequestSentForRef.current[key] = true;
+        setActiveInvite(null);
+        setStatus("Blind ballot request sent. Waiting for coordinator issuance.");
+        setRefreshNonce((value) => value + 1);
+      }).catch(() => undefined);
     } catch {
       // Keep manual request available if automatic send cannot proceed yet.
     }
@@ -587,9 +596,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       }
       requestRetryAtRef.current[key] = now;
       try {
-        runtime.requestBlindBallot();
-        runtime.refreshIssuanceAndAcceptance();
-        setRefreshNonce((value) => value + 1);
+        void runtime.requestBlindBallot().then(() => {
+          runtime.refreshIssuanceAndAcceptance();
+          setRefreshNonce((value) => value + 1);
+        }).catch(() => undefined);
       } catch {
         // Retry is best-effort; explicit controls surface errors.
       }
@@ -776,7 +786,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           <h4 className='simple-voter-section-title'>Submitted responder marker</h4>
           <p className='simple-voter-note'>This is the marker the coordinator sees for this submitted response.</p>
           <TokenFingerprint
-            tokenId={snapshot.invitedNpub}
+            tokenId={snapshot.responseNpub ?? snapshot.submission.responseNpub ?? snapshot.submission.invitedNpub}
             label='Submitted responder marker'
             large
             showQr

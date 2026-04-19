@@ -1,4 +1,5 @@
 import type { QuestionnaireDefinition } from "./questionnaireProtocol";
+import type { QuestionnaireBlindPrivateKey, QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
 
 export type ElectionId = string;
 export type Npub = string;
@@ -38,6 +39,7 @@ export interface ElectionSummary {
   openedAt?: IsoTime | null;
   closedAt?: IsoTime | null;
   coordinatorNpub: Npub;
+  blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
 }
 
 export interface WhitelistEntry {
@@ -60,6 +62,7 @@ export interface ElectionInviteMessage {
   voteUrl: string;
   invitedNpub: Npub;
   coordinatorNpub: Npub;
+  blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
   definition?: QuestionnaireDefinition | null;
   expiresAt?: IsoTime | null;
 }
@@ -91,6 +94,8 @@ export interface BlindBallotRequest {
   requestId: RequestId;
   invitedNpub: Npub;
   blindedMessage: string;
+  tokenCommitment: string;
+  blindSigningKeyId: string;
   clientNonce: string;
   createdAt: IsoTime;
 }
@@ -102,6 +107,8 @@ export interface BlindBallotIssuance {
   requestId: RequestId;
   issuanceId: IssuanceId;
   invitedNpub: Npub;
+  tokenCommitment: string;
+  blindSigningKeyId: string;
   blindSignature: string;
   definition?: QuestionnaireDefinition | null;
   issuedAt: IsoTime;
@@ -123,6 +130,9 @@ export interface BallotSubmission {
   electionId: ElectionId;
   submissionId: SubmissionId;
   invitedNpub: Npub;
+  responseNpub?: Npub;
+  tokenCommitment: string;
+  blindSigningKeyId: string;
   credential: string;
   nullifier: Nullifier;
   payload: QuestionnaireBallotPayload;
@@ -151,6 +161,14 @@ export interface VoterElectionLocalState {
   blindRequestSentAt?: IsoTime | null;
   blindIssuance?: BlindBallotIssuance | null;
   credentialReady: boolean;
+  blindTokenSecret?: {
+    tokenSecret: string;
+    tokenCommitment: string;
+    blindingFactor: string;
+    blindSigningPublicKey: QuestionnaireBlindPublicKey;
+  } | null;
+  responseNsec?: string | null;
+  responseNpub?: string | null;
   draftResponses: QuestionnaireAnswer[];
   submission?: BallotSubmission | null;
   submissionAccepted?: boolean | null;
@@ -166,6 +184,7 @@ export interface CoordinatorElectionState {
   receivedSubmissions: Record<SubmissionId, BallotSubmission>;
   acceptedNullifiers: Record<Nullifier, SubmissionId>;
   acceptanceResults: Record<SubmissionId, BallotAcceptanceResult>;
+  blindSigningPrivateKey?: QuestionnaireBlindPrivateKey | null;
   lastUpdatedAt: IsoTime;
 }
 
@@ -209,6 +228,7 @@ type CoordinatorReduceError =
   | "already_voted"
   | "not_whitelisted"
   | "issuance_missing"
+  | "invalid_credential"
   | "schema_invalid";
 
 type VoterReduceError =
@@ -241,12 +261,14 @@ function cloneCoordinatorState(state: CoordinatorElectionState): CoordinatorElec
     receivedSubmissions: { ...state.receivedSubmissions },
     acceptedNullifiers: { ...state.acceptedNullifiers },
     acceptanceResults: { ...state.acceptanceResults },
+    blindSigningPrivateKey: state.blindSigningPrivateKey ?? null,
   };
 }
 
 function cloneVoterState(state: VoterElectionLocalState): VoterElectionLocalState {
   return {
     ...state,
+    blindTokenSecret: state.blindTokenSecret ? { ...state.blindTokenSecret } : null,
     draftResponses: [...state.draftResponses],
   };
 }
@@ -261,6 +283,18 @@ function findIssuanceByNpub(
 ): BlindBallotIssuance | null {
   for (const issuance of Object.values(issuedBlindResponses)) {
     if (issuance.invitedNpub === invitedNpub) {
+      return issuance;
+    }
+  }
+  return null;
+}
+
+function findIssuanceByTokenCommitment(
+  issuedBlindResponses: Record<RequestId, BlindBallotIssuance>,
+  tokenCommitment: string,
+): BlindBallotIssuance | null {
+  for (const issuance of Object.values(issuedBlindResponses)) {
+    if (issuance.tokenCommitment === tokenCommitment) {
       return issuance;
     }
   }
@@ -338,6 +372,9 @@ export function createEmptyVoterElectionLocalState(input: {
     blindRequestSentAt: null,
     blindIssuance: null,
     credentialReady: false,
+    blindTokenSecret: null,
+    responseNsec: null,
+    responseNpub: null,
     draftResponses: [],
     submission: null,
     submissionAccepted: null,
@@ -451,6 +488,7 @@ export function reduceVoterEvent(
       return reduceVoterError(state, "schema_invalid");
     }
     next.submission = event.submission;
+    next.responseNpub = event.submission.responseNpub ?? event.submission.invitedNpub;
     next.lastUpdatedAt = event.submission.submittedAt;
     return { state: next, ok: true };
   }
@@ -569,6 +607,12 @@ export function reduceCoordinatorEvent(
     if (!request) {
       return reduceCoordinatorError(state, "request_missing");
     }
+    if (
+      request.tokenCommitment !== event.issuance.tokenCommitment
+      || request.blindSigningKeyId !== event.issuance.blindSigningKeyId
+    ) {
+      return reduceCoordinatorError(state, "issuance_conflict");
+    }
     const existing = next.issuedBlindResponses[event.issuance.requestId];
     if (existing) {
       const same = existing.issuanceId === event.issuance.issuanceId
@@ -595,18 +639,17 @@ export function reduceCoordinatorEvent(
     if (next.election.state !== "open") {
       return reduceCoordinatorError(state, "election_not_open");
     }
-    const entry = next.whitelist[event.submission.invitedNpub];
-    if (!entry) {
-      return reduceCoordinatorError(state, "not_whitelisted");
-    }
-    if (!findIssuanceByNpub(next.issuedBlindResponses, event.submission.invitedNpub)) {
+    const issuance = findIssuanceByTokenCommitment(next.issuedBlindResponses, event.submission.tokenCommitment);
+    if (!issuance) {
       return reduceCoordinatorError(state, "issuance_missing");
+    }
+    if (issuance.blindSigningKeyId !== event.submission.blindSigningKeyId) {
+      return reduceCoordinatorError(state, "invalid_credential");
     }
     if (!validateResponsesSchema(event.submission.payload.responses)) {
       return reduceCoordinatorError(state, "schema_invalid");
     }
     next.receivedSubmissions[event.submission.submissionId] = event.submission;
-    entry.claimState = maxClaimState(entry.claimState, "vote_received");
     next.lastUpdatedAt = event.submission.submittedAt;
     return { state: next, ok: true };
   }
@@ -619,10 +662,8 @@ export function reduceCoordinatorEvent(
   if (!submission) {
     return reduceCoordinatorError(state, "submission_missing");
   }
-  const entry = next.whitelist[submission.invitedNpub];
-  if (!entry) {
-    return reduceCoordinatorError(state, "not_whitelisted");
-  }
+  const issuedForSubmission = findIssuanceByTokenCommitment(next.issuedBlindResponses, submission.tokenCommitment);
+  const entry = issuedForSubmission ? next.whitelist[issuedForSubmission.invitedNpub] : null;
 
   if (event.type === "BALLOT_ACCEPTED") {
     const existingAcceptance = next.acceptanceResults[submission.submissionId];
@@ -633,24 +674,29 @@ export function reduceCoordinatorEvent(
     if (acceptedSubmissionId && acceptedSubmissionId !== submission.submissionId) {
       return reduceCoordinatorError(state, "duplicate_nullifier");
     }
-    const acceptedForVoter = findAcceptedSubmissionByNpub(
-      next.receivedSubmissions,
-      next.acceptanceResults,
-      submission.invitedNpub,
-    );
-    if (acceptedForVoter && acceptedForVoter.submissionId !== submission.submissionId) {
+    const acceptedForToken = Object.entries(next.acceptanceResults).find(([submissionId, acceptedResult]) => {
+      if (!acceptedResult.accepted || submissionId === submission.submissionId) {
+        return false;
+      }
+      return next.receivedSubmissions[submissionId]?.tokenCommitment === submission.tokenCommitment;
+    });
+    if (acceptedForToken) {
       return reduceCoordinatorError(state, "already_voted");
     }
     next.acceptedNullifiers[submission.nullifier] = submission.submissionId;
     next.acceptanceResults[submission.submissionId] = result;
-    entry.submissionId = submission.submissionId;
-    entry.claimState = "vote_accepted";
+    if (entry) {
+      entry.submissionId = submission.submissionId;
+      entry.claimState = "vote_accepted";
+    }
     next.lastUpdatedAt = result.decidedAt;
     return { state: next, ok: true };
   }
 
   next.acceptanceResults[submission.submissionId] = result;
-  entry.claimState = "vote_rejected";
+  if (entry) {
+    entry.claimState = "vote_rejected";
+  }
   next.lastUpdatedAt = result.decidedAt;
   return { state: next, ok: true };
 }
@@ -897,6 +943,9 @@ export function validateBallotSubmission(input: {
   if (!input.submission.credential.trim() || !input.submission.nullifier.trim()) {
     return false;
   }
+  if (!input.submission.tokenCommitment.trim() || !input.submission.blindSigningKeyId.trim()) {
+    return false;
+  }
   if (!validateResponsesSchema(input.submission.payload.responses)) {
     return false;
   }
@@ -905,7 +954,7 @@ export function validateBallotSubmission(input: {
 }
 
 export function countAcceptedUniqueVoters(state: CoordinatorElectionState) {
-  return Object.values(state.whitelist)
-    .filter((entry) => entry.claimState === "vote_accepted")
+  return Object.values(state.acceptanceResults)
+    .filter((entry) => entry.accepted)
     .length;
 }

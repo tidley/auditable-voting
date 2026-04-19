@@ -270,7 +270,7 @@ export type QuestionnaireFetchDiagnostics = {
 };
 
 export async function fetchQuestionnaireEventsWithFallback(input: {
-  questionnaireId: string;
+  questionnaireId?: string;
   kind: number;
   relays?: string[];
   limit?: number;
@@ -280,10 +280,11 @@ export async function fetchQuestionnaireEventsWithFallback(input: {
 }) {
   const relays = getQuestionnaireReadRelays(input.relays, input.readRelayLimit);
   const pool = getSharedNostrPool();
-  if (!input.preferKindOnly) {
+  const questionnaireId = input.questionnaireId?.trim() ?? "";
+  if (questionnaireId && !input.preferKindOnly) {
     const filteredEvents = await pool.querySync(relays, {
       kinds: [input.kind],
-      "#questionnaire-id": [input.questionnaireId],
+      "#questionnaire-id": [questionnaireId],
       limit: input.limit ?? 200,
     });
     if (filteredEvents.length > 0) {
@@ -303,8 +304,11 @@ export async function fetchQuestionnaireEventsWithFallback(input: {
     limit: input.limit ?? 200,
   });
   const locallyMatched = kindOnlyEvents.filter((event) => {
-    const questionnaireId = input.parseQuestionnaireIdFromEvent(event);
-    return questionnaireId === input.questionnaireId;
+    if (!questionnaireId) {
+      return true;
+    }
+    const matchedQuestionnaireId = input.parseQuestionnaireIdFromEvent(event);
+    return matchedQuestionnaireId === questionnaireId;
   });
   return {
     events: locallyMatched,

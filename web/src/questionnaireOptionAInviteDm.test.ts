@@ -70,6 +70,46 @@ describe("questionnaireOptionAInviteDm", () => {
     expect(event?.tags?.[0]?.[0]).toBe("p");
   });
 
+  it("publishes fallback-key invites as addressed NIP-17 private messages", async () => {
+    publish.mockReturnValue([Promise.resolve(undefined)]);
+    publishToRelaysStaggered.mockImplementation(
+      async (publishOne: (relay: string) => Promise<unknown>, relays: string[]) => Promise.allSettled(relays.slice(0, 1).map((relay) => publishOne(relay))),
+    );
+    queueNostrPublish.mockImplementation(async (fn: () => Promise<PromiseSettledResult<unknown>[]>) => fn());
+
+    const coordinatorSecret = generateSecretKey();
+    const recipientSecret = generateSecretKey();
+    const recipientHex = getPublicKey(recipientSecret);
+    const invite = {
+      type: "election_invite" as const,
+      schemaVersion: 1 as const,
+      electionId: "e1",
+      title: "Questionnaire",
+      description: "",
+      voteUrl: "https://example.test/vote",
+      invitedNpub: nip19.npubEncode(recipientHex),
+      coordinatorNpub: nip19.npubEncode(getPublicKey(coordinatorSecret)),
+      expiresAt: null,
+    };
+
+    await publishOptionAInviteDm({
+      signer: makeSigner(),
+      invite,
+      fallbackNsec: nip19.nsecEncode(coordinatorSecret),
+      relays: ["wss://relay.example"],
+    });
+
+    const event = publish.mock.calls[0]?.[1];
+    const rumor = nip17.unwrapEvent(event, recipientSecret) as { kind: number; tags: string[][]; content: string };
+    expect(rumor.kind).toBe(14);
+    expect(rumor.tags).toContainEqual(["p", recipientHex, "wss://relay.example"]);
+    expect(rumor.tags).toContainEqual(["subject", "Auditable Voting invite"]);
+    expect(JSON.parse(rumor.content)).toMatchObject({
+      type: "optiona_invite_dm",
+      invite: { electionId: "e1" },
+    });
+  });
+
   it("reads and decrypts invite DMs for the logged-in voter", async () => {
     const recipientHex = "b".repeat(64);
     const senderHex = "c".repeat(64);

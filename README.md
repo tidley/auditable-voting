@@ -22,7 +22,7 @@ The shipped app currently includes:
 - startup control-carrier diagnostics for exact publish payloads, live/backfill filter shapes, relay write/read overlap, and `kind_only` vs filtered probe counts
 - single-coordinator runtime bypass now uses deterministic coordinator-control readiness, skipping MLS join/startup observation loops in `1 coordinator` mode
 - blind-key stall diagnostics now classify `not_attempted` vs publish/observe/apply failure shapes with relay-target and event-id evidence
-- private-first questionnaire flow is wired in Coordinator/Voter UIs, and blind-token response foundations are added (`questionnaire_response_blind`, transport helpers, and relay-harness metrics)
+- private-first questionnaire flow is wired in Coordinator/Voter UIs, with RSABSSA blind-token issuance, ephemeral response npubs, transport helpers, and relay-harness metrics
 - regular custom Nostr event kinds for coordinator control, live rounds, and ballots, avoiding replaceable-kind transcript loss
 - round announcements over Nostr
 - coordinator control carrier events over Nostr, replayed through a Rust state machine
@@ -42,13 +42,15 @@ The shipped app currently includes:
 - lead coordinator roster DMs now include active questionnaire ids (`open`/`published`) so accepted followers can auto-discover questionnaires without manual restore
 - voter vote-tab gating now verifies announced questionnaire ids against public definition+state (`open`/`published`) before enabling Vote, reducing manual restore races
 - questionnaire reads now prefer direct live subscriptions with a single startup backfill (+ one bounded retry) and emit per-voter discovery timing diagnostics (`subscription`, `first_definition_seen`, `first_open_seen`, backfill window)
+- voter questionnaire response fields are kept intact when a blind ballot credential or refreshed definition arrives for the same questionnaire
 - in `course_feedback` deployment, coordinator runtime now bypasses legacy live-round/ticket queue gating so questionnaire response acceptance is not blocked by `no_active_round` or blinded-ticket prerequisites
 - course-feedback operational runs are now batch-gated by default (`LIVE_BATCH_SIZE=5`) so enrolment and submission progress in controlled waves with checkpointed harness state instead of full 25-voter cold-start fanout
 - coordinator questionnaire response reads now prefer kind-only bounded backfill with local questionnaire-id filtering (plus relay probes) to tolerate relays with unreliable custom tag indexing
-- questionnaire responses now use a stable per-questionnaire responder identity per voter profile, with one accepted submission per questionnaire in the voter flow
+- Option A questionnaire submissions now spend an unblinded RSABSSA credential from a fresh ephemeral response npub, with one accepted credential spend per questionnaire
 - local browser persistence, backup, and optional passphrase protection
 - voter questionnaire participation history is now stored locally and included in voter backups/restores
 - auditor round selection now supports lead-coordinator filter, coordinator-npub filter, and free-text search (npub/round ID/prompt), with slower non-overlapping refreshes to reduce relay REQ spikes
+- auditor questionnaire discovery now reads recent public questionnaire definitions by kind-only backfill when no questionnaire ID is selected, then shows state and published response totals when available
 - optional relay hint resolution via NIP-65, disabled by default
 - a growing Rust/Wasm core for deterministic protocol logic
 
@@ -142,8 +144,8 @@ At a high level:
 3. Once coordinator round-open agreement is reached, and the supervisory MLS group is acknowledged ready for the round after initial non-lead control-plane sync, the lead publishes the public live round.
 4. Public round events and public ballot events can also be replayed through the Rust/Wasm core, which now drives the shared voter, coordinator, and auditor public-state views.
 5. Coordinators publish per-round blind-signing keys, and the lead auto-sends share indexes to sub-coordinators.
-6. A voter adds coordinators in `Configure`, the client follows them over DMs, and then sends blinded issuance requests through Option A NIP-17 DMs (with local mailbox fallback in same-browser recovery paths).
-7. Each coordinator returns its own blind-signature share directly to the voter over Option A NIP-17 DMs; the voter submits the ballot over the same DM path, and the coordinator returns an acceptance result after processing it.
+6. A voter adds coordinators in `Configure`, the client follows them over DMs, and then sends blinded issuance requests through NIP-17 DMs (with local mailbox fallback in same-browser recovery paths).
+7. In the questionnaire Option A path, the coordinator signs the blinded token message with RSABSSA, the voter unblinds it locally, submits from a fresh ephemeral response npub, and receives an acceptance result over DMs.
 8. In course-feedback mode, acknowledgement visibility is diagnostic only; a valid accepted ballot also confirms ticket delivery completion.
 9. The voter unblinds enough shares locally and submits a ballot from an ephemeral key, carrying stable `request_id` and `ticket_id` lineage in the ballot payload.
 10. Coordinators and auditors validate ballots and recompute the tally from public data.
@@ -233,6 +235,9 @@ The voter questionnaire now uses a single entry path (Option A runtime) by defau
 - signer login, coordinator whitelist/invite actions, blind request/issuance, single-vote acceptance, and signer-keyed resume are handled through the `questionnaireOptionA` runtime path
 - invites are sent over NIP-17 gift-wrapped DMs (`kind 1059` with `kind 13` seal / `kind 14` rumor) and discovered from relay history on voter login
 - published questionnaire definitions are cached locally and attached to Option A invites and credential issuances when available, so voters can render questions even if public relay backfill misses the definition event
+- arriving credential-attached definitions refresh the questionnaire text without clearing drafted voter responses
+- blind ballot requests use RSABSSA blind signing; the coordinator signs only a blinded token message and the voter unblinds the credential locally
+- ballot submissions are sent from a fresh ephemeral response npub, so the accepted response is not keyed by the invited voter npub
 - accepted Option A DM submissions are folded into the coordinator response screen and published summaries, not just the completion counter
 - after submitting, the voter Vote page shows the submitted responder marker with the same coloured pattern and expandable QR used elsewhere
 - invite-driven voter login can automatically prepare/send the first blind ballot request when the voter is authenticated and authorised

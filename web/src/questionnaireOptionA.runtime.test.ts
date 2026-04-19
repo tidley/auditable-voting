@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   processOptionAQueuesForCoordinator,
   QuestionnaireOptionACoordinatorRuntime,
@@ -7,6 +7,50 @@ import {
 } from "./questionnaireOptionARuntime";
 import { listBlindRequests, readBlindIssuance } from "./questionnaireOptionAStorage";
 import type { SignerService } from "./services/signerService";
+
+vi.mock("./questionnaireOptionAInviteDm", () => ({
+  fetchOptionAInviteDms: vi.fn().mockResolvedValue([]),
+  publishOptionAInviteDm: vi.fn().mockResolvedValue({
+    eventId: "mock-option-a-invite-dm",
+    successes: 1,
+    failures: 0,
+    relayResults: [],
+  }),
+}));
+
+vi.mock("./questionnaireOptionABlindDm", () => ({
+  fetchOptionABallotAcceptanceDms: vi.fn().mockResolvedValue([]),
+  fetchOptionABallotAcceptanceDmsWithNsec: vi.fn().mockResolvedValue([]),
+  fetchOptionABallotSubmissionDms: vi.fn().mockResolvedValue([]),
+  fetchOptionABlindIssuanceDms: vi.fn().mockResolvedValue([]),
+  fetchOptionABlindIssuanceDmsWithNsec: vi.fn().mockResolvedValue([]),
+  fetchOptionABlindRequestDms: vi.fn().mockResolvedValue([]),
+  fetchOptionABlindRequestDmsWithNsec: vi.fn().mockResolvedValue([]),
+  publishOptionABallotAcceptanceDm: vi.fn().mockResolvedValue({
+    eventId: "mock-option-a-acceptance-dm",
+    successes: 1,
+    failures: 0,
+    relayResults: [],
+  }),
+  publishOptionABallotSubmissionDm: vi.fn().mockResolvedValue({
+    eventId: "mock-option-a-submission-dm",
+    successes: 1,
+    failures: 0,
+    relayResults: [],
+  }),
+  publishOptionABlindIssuanceDm: vi.fn().mockResolvedValue({
+    eventId: "mock-option-a-issuance-dm",
+    successes: 1,
+    failures: 0,
+    relayResults: [],
+  }),
+  publishOptionABlindRequestDm: vi.fn().mockResolvedValue({
+    eventId: "mock-option-a-request-dm",
+    successes: 1,
+    failures: 0,
+    relayResults: [],
+  }),
+}));
 
 function signer(npub: string): SignerService {
   return {
@@ -71,14 +115,18 @@ describe("questionnaireOptionARuntime", () => {
     const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionId);
     await voter.loginWithSigner(invite);
     voter.updateDraftResponses([{ questionId: "q1", type: "yes_no", answer: "yes" }]);
-    voter.requestBlindBallot();
+    await voter.requestBlindBallot();
 
-    coordinator.processPendingBlindRequests();
+    await coordinator.processPendingBlindRequests();
     voter.refreshIssuanceAndAcceptance();
     expect(voter.getSnapshot()?.credentialReady).toBe(true);
 
-    voter.submitVote(["q1"]);
-    coordinator.processPendingSubmissions(["q1"]);
+    await voter.submitVote(["q1"]);
+    const submitted = voter.getSnapshot()?.submission;
+    expect(submitted?.responseNpub).toBeTruthy();
+    expect(submitted?.responseNpub).not.toBe(voterNpub);
+    expect(submitted?.invitedNpub).toBe(submitted?.responseNpub);
+    await coordinator.processPendingSubmissions(["q1"]);
     voter.refreshIssuanceAndAcceptance();
 
     expect(voter.getSnapshot()?.submissionAccepted).toBe(true);
@@ -104,19 +152,19 @@ describe("questionnaireOptionARuntime", () => {
     const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionId);
     await voter.loginWithSigner(sentInvite.invite);
 
-    const first = voter.requestBlindBallot();
+    const first = await voter.requestBlindBallot();
     const requestId = first.blindRequest?.requestId;
     expect(requestId).toBeTruthy();
 
-    const retried = voter.requestBlindBallot();
+    const retried = await voter.requestBlindBallot();
     expect(retried.blindRequest?.requestId).toBe(requestId);
     expect(listBlindRequests(electionId).map((entry) => entry.requestId)).toEqual([requestId]);
 
-    coordinator.processPendingBlindRequests();
+    await coordinator.processPendingBlindRequests();
     const issued = readBlindIssuance(requestId ?? "");
     expect(issued?.requestId).toBe(requestId);
 
-    coordinator.processPendingBlindRequests();
+    await coordinator.processPendingBlindRequests();
     expect(readBlindIssuance(requestId ?? "")).toEqual(issued);
   });
 
@@ -135,24 +183,24 @@ describe("questionnaireOptionARuntime", () => {
     await voter.loginWithSigner(invite);
     voter.updateDraftResponses([{ questionId: "q1", type: "yes_no", answer: "yes" }]);
 
-    voter.requestBlindBallot();
-    coordinator.processPendingBlindRequests();
+    await voter.requestBlindBallot();
+    await coordinator.processPendingBlindRequests();
     voter.refreshIssuanceAndAcceptance();
 
     // Re-request after issuance is idempotent and should not mint a second credential.
     const issuedRequestId = voter.getSnapshot()?.blindRequest?.requestId;
-    const retryAfterIssuance = voter.requestBlindBallot();
+    const retryAfterIssuance = await voter.requestBlindBallot();
     expect(retryAfterIssuance.blindRequest?.requestId).toBe(issuedRequestId);
 
-    voter.submitVote(["q1"]);
-    coordinator.processPendingSubmissions(["q1"]);
+    await voter.submitVote(["q1"]);
+    await coordinator.processPendingSubmissions(["q1"]);
     voter.refreshIssuanceAndAcceptance();
     expect(voter.getSnapshot()?.submissionAccepted).toBe(true);
     expect(coordinator.getAcceptedUniqueCount()).toBe(1);
 
     // Re-submission should not increase accepted unique count.
-    expect(() => voter.submitVote(["q1"])).toThrow();
-    coordinator.processPendingSubmissions(["q1"]);
+    await expect(voter.submitVote(["q1"])).rejects.toThrow();
+    await coordinator.processPendingSubmissions(["q1"]);
     expect(coordinator.getAcceptedUniqueCount()).toBe(1);
   });
 
@@ -163,12 +211,12 @@ describe("questionnaireOptionARuntime", () => {
     const voter = new QuestionnaireOptionAVoterRuntime(signer(otherNpub), electionId);
     await voter.loginWithSigner(null);
     voter.updateDraftResponses([{ questionId: "q1", type: "yes_no", answer: "yes" }]);
-    voter.requestBlindBallot();
+    await voter.requestBlindBallot();
 
-    coordinator.processPendingBlindRequests();
+    await coordinator.processPendingBlindRequests();
     expect(coordinator.getPendingAuthorizations().some((entry) => entry.invitedNpub === otherNpub)).toBe(true);
 
-    coordinator.authorizeRequester(otherNpub);
+    await coordinator.authorizeRequester(otherNpub);
     voter.refreshIssuanceAndAcceptance();
     expect(voter.getSnapshot()?.credentialReady).toBe(true);
   });
@@ -199,8 +247,8 @@ describe("questionnaireOptionARuntime", () => {
 
     expect(state.loginVerified).toBe(true);
     expect(state.invitedNpub).toBe(voterNpub);
-    voter.requestBlindBallot();
-    coordinator.processPendingBlindRequests();
+    await voter.requestBlindBallot();
+    await coordinator.processPendingBlindRequests();
     voter.refreshIssuanceAndAcceptance();
     expect(voter.getSnapshot()?.credentialReady).toBe(true);
   });
@@ -247,9 +295,9 @@ describe("questionnaireOptionARuntime", () => {
 
     const voterTwo = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionIdTwo);
     await voterTwo.loginWithSigner(sentTwo.invite);
-    voterTwo.requestBlindBallot();
+    await voterTwo.requestBlindBallot();
 
-    const processed = processOptionAQueuesForCoordinator({
+    const processed = await processOptionAQueuesForCoordinator({
       coordinatorNpub,
       signer: coordinator,
       preferredElectionId: electionIdOne,

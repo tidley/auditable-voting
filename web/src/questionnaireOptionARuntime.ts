@@ -1,4 +1,4 @@
-import { nip19 } from "nostr-tools";
+import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 import {
   countAcceptedUniqueVoters,
   createEmptyVoterElectionLocalState,
@@ -22,6 +22,7 @@ import {
   type VoterElectionLocalState,
   type WhitelistEntry,
 } from "./questionnaireOptionA";
+import type { QuestionnaireBlindPrivateKey } from "./questionnaireBlindSignature";
 import {
   enqueueBlindRequest,
   enqueueSubmission,
@@ -58,6 +59,18 @@ import {
 import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import { fetchOptionAInviteDms, publishOptionAInviteDm } from "./questionnaireOptionAInviteDm";
 import type { SignerService } from "./services/signerService";
+import {
+  blindQuestionnaireToken,
+  finalizeQuestionnaireBlindSignature,
+  generateQuestionnaireBlindKeyPair,
+  signBlindedQuestionnaireToken,
+  toQuestionnaireBlindPublicKey,
+  verifyQuestionnaireBlindSignature,
+} from "./questionnaireBlindSignature";
+import {
+  buildQuestionnaireBlindTokenSignedMessage,
+  deriveQuestionnaireTokenNullifier,
+} from "./questionnaireBlindToken";
 
 export type OptionARuntimeErrorCode =
   | "not_logged_in"
@@ -89,6 +102,15 @@ function toNpub(pubkey: string): string {
 
 function makeId(prefix: string) {
   return `${prefix}_${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`;
+}
+
+function makeTokenSecret() {
+  return crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
+}
+
+async function sha256Hex(value: string) {
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function emptyCoordinatorState(summary: ElectionSummary): CoordinatorElectionState {
@@ -301,7 +323,7 @@ export class QuestionnaireOptionAVoterRuntime {
     }
   }
 
-  requestBlindBallot() {
+  async requestBlindBallot() {
     if (!this.state) {
       throw new OptionARuntimeError("not_logged_in", "Login is required.");
     }
@@ -313,13 +335,31 @@ export class QuestionnaireOptionAVoterRuntime {
     let next = this.state;
     let request = next.blindRequest;
     if (!request) {
+      const blindSigningPublicKey = next.inviteMessage?.blindSigningPublicKey
+        ?? loadElectionSummary(next.electionId)?.blindSigningPublicKey
+        ?? null;
+      if (!blindSigningPublicKey) {
+        throw new OptionARuntimeError("issuance_failed", "Coordinator blind-signing key is not available yet.");
+      }
+      const tokenSecret = makeTokenSecret();
+      const tokenCommitment = await sha256Hex(tokenSecret);
+      const message = buildQuestionnaireBlindTokenSignedMessage({
+        questionnaireId: next.electionId,
+        tokenSecretCommitment: tokenCommitment,
+      });
+      const blinded = await blindQuestionnaireToken({
+        publicKey: blindSigningPublicKey,
+        message,
+      });
       request = {
         type: "blind_ballot_request",
         schemaVersion: 1,
         electionId: next.electionId,
         requestId: makeId("request"),
         invitedNpub: next.invitedNpub,
-        blindedMessage: makeId("blinded"),
+        blindedMessage: blinded.blindedMessage,
+        tokenCommitment,
+        blindSigningKeyId: blindSigningPublicKey.keyId,
         clientNonce: makeId("nonce"),
         createdAt: nowIso(),
       };
@@ -328,6 +368,15 @@ export class QuestionnaireOptionAVoterRuntime {
         throw new OptionARuntimeError("issuance_failed", "Could not create blind request.");
       }
       next = created.state;
+      next = {
+        ...next,
+        blindTokenSecret: {
+          tokenSecret,
+          tokenCommitment,
+          blindingFactor: blinded.blindingFactor,
+          blindSigningPublicKey,
+        },
+      };
     }
 
     if (!next.blindRequestSent) {
@@ -391,9 +440,10 @@ export class QuestionnaireOptionAVoterRuntime {
         }
       }
     }).catch(() => null);
-    void (this.fallbackNsec?.trim()
+    const acceptanceReadNsec = this.state.responseNsec?.trim() || this.fallbackNsec?.trim() || "";
+    void (acceptanceReadNsec
       ? fetchOptionABallotAcceptanceDmsWithNsec({
-        nsec: this.fallbackNsec,
+        nsec: acceptanceReadNsec,
         electionId,
         limit: 100,
       })
@@ -451,13 +501,40 @@ export class QuestionnaireOptionAVoterRuntime {
     return this.state;
   }
 
-  submitVote(requiredQuestionIds: string[]) {
+  async submitVote(requiredQuestionIds: string[]) {
     if (!this.state) {
       throw new OptionARuntimeError("not_logged_in", "Login is required.");
     }
-    const credential = this.state.blindIssuance?.blindSignature;
-    if (!credential) {
+    const issuance = this.state.blindIssuance;
+    const tokenSecret = this.state.blindTokenSecret;
+    if (!issuance || !tokenSecret) {
       throw new OptionARuntimeError("issuance_failed", "No issued credential is available.");
+    }
+    if (issuance.tokenCommitment !== tokenSecret.tokenCommitment) {
+      throw new OptionARuntimeError("issuance_failed", "Issued credential does not match this browser's token secret.");
+    }
+
+    const responseSecretKey = generateSecretKey();
+    const responseNsec = nip19.nsecEncode(responseSecretKey);
+    const responseNpub = nip19.npubEncode(getPublicKey(responseSecretKey));
+    const message = buildQuestionnaireBlindTokenSignedMessage({
+      questionnaireId: this.state.electionId,
+      tokenSecretCommitment: tokenSecret.tokenCommitment,
+    });
+
+    const credential = await finalizeQuestionnaireBlindSignature({
+      publicKey: tokenSecret.blindSigningPublicKey,
+      message,
+      blindSignature: issuance.blindSignature,
+      blindingFactor: tokenSecret.blindingFactor,
+    });
+    const localCredentialValid = await verifyQuestionnaireBlindSignature({
+      publicKey: tokenSecret.blindSigningPublicKey,
+      message,
+      signature: credential,
+    });
+    if (!localCredentialValid) {
+      throw new OptionARuntimeError("issuance_failed", "Issued blind signature could not be verified.");
     }
 
     const submission: BallotSubmission = {
@@ -465,14 +542,20 @@ export class QuestionnaireOptionAVoterRuntime {
       schemaVersion: 1,
       electionId: this.state.electionId,
       submissionId: makeId("submission"),
-      invitedNpub: this.state.invitedNpub,
-      credential,
-      nullifier: `nullifier_${credential.slice(0, 16)}_${this.state.electionId}`,
+      invitedNpub: responseNpub,
+      responseNpub,
+      tokenCommitment: tokenSecret.tokenCommitment,
+      blindSigningKeyId: issuance.blindSigningKeyId,
+      nullifier: deriveQuestionnaireTokenNullifier({
+        questionnaireId: this.state.electionId,
+        tokenSecret: tokenSecret.tokenSecret,
+      }),
       payload: {
         electionId: this.state.electionId,
         responses: this.state.draftResponses,
       },
       submittedAt: nowIso(),
+      credential,
     };
 
     const valid = validateBallotSubmission({
@@ -492,7 +575,11 @@ export class QuestionnaireOptionAVoterRuntime {
     if (!created.ok) {
       throw new OptionARuntimeError("invalid_submission", "Could not create submission.");
     }
-    this.state = created.state;
+    this.state = {
+      ...created.state,
+      responseNsec,
+      responseNpub,
+    };
     enqueueSubmission(submission);
     saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
     void this.publishBallotSubmissionDm(submission);
@@ -508,7 +595,7 @@ export class QuestionnaireOptionAVoterRuntime {
         signer: this.signer,
         recipientNpub: this.state.coordinatorNpub,
         submission,
-        fallbackNsec: this.fallbackNsec,
+        fallbackNsec: this.state.responseNsec ?? this.fallbackNsec,
       });
     } catch {
       return null;
@@ -559,7 +646,9 @@ export class QuestionnaireOptionACoordinatorRuntime {
 
   async loginWithSigner(summary?: Partial<ElectionSummary>) {
     this.coordinatorNpub = toNpub(await this.signer.getPublicKey());
-    return this.ensureCoordinatorState(summary);
+    const state = this.ensureCoordinatorState(summary);
+    await this.ensureBlindSigningKey();
+    return this.state ?? state;
   }
 
   bootstrapCoordinatorNpub(input: {
@@ -588,12 +677,46 @@ export class QuestionnaireOptionACoordinatorRuntime {
       openedAt: summary?.openedAt ?? nowIso(),
       closedAt: summary?.closedAt ?? null,
       coordinatorNpub: this.coordinatorNpub,
+      blindSigningPublicKey: summary?.blindSigningPublicKey ?? null,
     };
     upsertElectionSummary(nextSummary);
     const created = emptyCoordinatorState(nextSummary);
     this.state = created;
     saveCoordinatorState({ coordinatorNpub: this.coordinatorNpub, state: created });
     return created;
+  }
+
+  private async ensureBlindSigningKey(): Promise<QuestionnaireBlindPrivateKey> {
+    if (!this.state || !this.coordinatorNpub) {
+      throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
+    }
+    if (this.state.blindSigningPrivateKey) {
+      const existingPrivateKey = this.state.blindSigningPrivateKey;
+      if (!this.state.election.blindSigningPublicKey) {
+        this.state = {
+          ...this.state,
+          election: {
+            ...this.state.election,
+            blindSigningPublicKey: toQuestionnaireBlindPublicKey(existingPrivateKey),
+          },
+        };
+        upsertElectionSummary(this.state.election);
+        saveCoordinatorState({ coordinatorNpub: this.coordinatorNpub, state: this.state });
+      }
+      return existingPrivateKey;
+    }
+    const privateKey = await generateQuestionnaireBlindKeyPair();
+    this.state = {
+      ...this.state,
+      blindSigningPrivateKey: privateKey,
+      election: {
+        ...this.state.election,
+        blindSigningPublicKey: toQuestionnaireBlindPublicKey(privateKey),
+      },
+    };
+    upsertElectionSummary(this.state.election);
+    saveCoordinatorState({ coordinatorNpub: this.coordinatorNpub, state: this.state });
+    return privateKey;
   }
 
   addWhitelistNpub(invitedNpub: string) {
@@ -618,7 +741,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
     return this.state;
   }
 
-  authorizeRequester(invitedNpub: string) {
+  async authorizeRequester(invitedNpub: string) {
     this.addWhitelistNpub(invitedNpub);
     delete this.pendingAuthorizationsByNpub[invitedNpub];
     return this.processPendingBlindRequests();
@@ -631,6 +754,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
     if (!this.state.whitelist[invitedNpub]) {
       throw new OptionARuntimeError("not_whitelisted", "Invite target is not whitelisted.");
     }
+    const blindSigningPrivateKey = await this.ensureBlindSigningKey();
     const invite: ElectionInviteMessage = {
       type: "election_invite",
       schemaVersion: 1,
@@ -640,6 +764,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       voteUrl: meta.voteUrl,
       invitedNpub,
       coordinatorNpub: this.coordinatorNpub,
+      blindSigningPublicKey: toQuestionnaireBlindPublicKey(blindSigningPrivateKey),
       definition: readCachedQuestionnaireDefinition(this.electionId),
       expiresAt: null,
     };
@@ -777,7 +902,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       try {
         const result = await publishOptionABallotAcceptanceDm({
           signer: this.signer,
-          recipientNpub: submission.invitedNpub,
+          recipientNpub: submission.responseNpub ?? submission.invitedNpub,
           acceptance,
           fallbackNsec: this.fallbackNsec,
         });
@@ -791,10 +916,11 @@ export class QuestionnaireOptionACoordinatorRuntime {
     return delivered;
   }
 
-  processPendingBlindRequests() {
+  async processPendingBlindRequests() {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
     }
+    const blindSigningPrivateKey = await this.ensureBlindSigningKey();
     const queue = listBlindRequests(this.electionId);
     let next = this.state;
     for (const request of queue) {
@@ -853,7 +979,12 @@ export class QuestionnaireOptionACoordinatorRuntime {
         requestId: request.requestId,
         issuanceId: makeId("issuance"),
         invitedNpub: request.invitedNpub,
-        blindSignature: `sig_${request.blindedMessage.slice(0, 16)}_${request.clientNonce.slice(0, 8)}`,
+        tokenCommitment: request.tokenCommitment,
+        blindSigningKeyId: blindSigningPrivateKey.keyId,
+        blindSignature: await signBlindedQuestionnaireToken({
+          privateKey: blindSigningPrivateKey,
+          blindedMessage: request.blindedMessage,
+        }),
         definition: readCachedQuestionnaireDefinition(this.electionId),
         issuedAt: nowIso(),
       };
@@ -872,7 +1003,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
     return this.state;
   }
 
-  processPendingSubmissions(requiredQuestionIds: string[]) {
+  async processPendingSubmissions(requiredQuestionIds: string[]) {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
     }
@@ -918,6 +1049,34 @@ export class QuestionnaireOptionACoordinatorRuntime {
         storeAcceptance(rejected);
         continue;
       }
+      const issuance = Object.values(next.issuedBlindResponses)
+        .find((entry) => entry.tokenCommitment === submission.tokenCommitment) ?? null;
+      const publicKey = next.election.blindSigningPublicKey ?? (
+        next.blindSigningPrivateKey ? toQuestionnaireBlindPublicKey(next.blindSigningPrivateKey) : null
+      );
+      const credentialValid = issuance && publicKey && issuance.blindSigningKeyId === submission.blindSigningKeyId
+        ? await verifyQuestionnaireBlindSignature({
+          publicKey,
+          message: buildQuestionnaireBlindTokenSignedMessage({
+            questionnaireId: this.electionId,
+            tokenSecretCommitment: submission.tokenCommitment,
+          }),
+          signature: submission.credential,
+        })
+        : false;
+      if (!credentialValid) {
+        const rejected: BallotAcceptanceResult = {
+          type: "ballot_acceptance_result",
+          schemaVersion: 1,
+          electionId: this.electionId,
+          submissionId: submission.submissionId,
+          accepted: false,
+          reason: "invalid_credential",
+          decidedAt: nowIso(),
+        };
+        storeAcceptance(rejected);
+        continue;
+      }
 
       const accepted: BallotAcceptanceResult = {
         type: "ballot_acceptance_result",
@@ -951,7 +1110,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
   }
 }
 
-export function processOptionAQueuesForCoordinator(input: {
+export async function processOptionAQueuesForCoordinator(input: {
   coordinatorNpub: string;
   signer: SignerService;
   preferredElectionId?: string;
@@ -981,8 +1140,8 @@ export function processOptionAQueuesForCoordinator(input: {
       coordinatorNpub,
       summary,
     });
-    runtime.processPendingBlindRequests();
-    runtime.processPendingSubmissions(input.requiredQuestionIdsByElectionId?.[electionId] ?? []);
+    await runtime.processPendingBlindRequests();
+    await runtime.processPendingSubmissions(input.requiredQuestionIdsByElectionId?.[electionId] ?? []);
     processedElectionIds.push(electionId);
   }
 
@@ -1025,10 +1184,10 @@ export async function processOptionAQueuesForCoordinatorLive(input: {
     );
     runtime.bootstrapCoordinatorNpub({ coordinatorNpub, summary });
     await runtime.syncBlindRequestsFromDm();
-    runtime.processPendingBlindRequests();
+    await runtime.processPendingBlindRequests();
     await runtime.publishPendingBlindIssuancesToDm();
     await runtime.syncSubmissionsFromDm();
-    runtime.processPendingSubmissions(input.requiredQuestionIdsByElectionId?.[electionId] ?? []);
+    await runtime.processPendingSubmissions(input.requiredQuestionIdsByElectionId?.[electionId] ?? []);
     await runtime.publishPendingAcceptanceResultsToDm();
     processedElectionIds.push(electionId);
   }

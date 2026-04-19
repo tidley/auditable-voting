@@ -187,8 +187,89 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     expect(yesButton.getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("renders questions from the blind issuance definition when public definition fetch is empty", async () => {
+  it("keeps drafted answers when the blind ballot credential arrives", async () => {
+    const user = userEvent.setup();
     const localVoterNpub = "npub1" + "d".repeat(58);
+    const definition = {
+      schemaVersion: 1 as const,
+      eventType: "questionnaire_definition" as const,
+      responseMode: "blind_token" as const,
+      questionnaireId: "q_preserve_answers",
+      title: "Cached questionnaire",
+      description: "Cached description",
+      createdAt: 1,
+      openAt: 1,
+      closeAt: 999,
+      coordinatorPubkey: "npub1" + "b".repeat(58),
+      coordinatorEncryptionPubkey: "npub1" + "b".repeat(58),
+      responseVisibility: "private" as const,
+      eligibilityMode: "open" as const,
+      allowMultipleResponsesPerPubkey: false,
+      questions: [{
+        questionId: "q1",
+        type: "yes_no" as const,
+        prompt: "Keep this answer",
+        required: true,
+      }],
+    };
+    const blindRequest = {
+      type: "blind_ballot_request" as const,
+      schemaVersion: 1 as const,
+      electionId: "q_preserve_answers",
+      requestId: "request_preserve_answers",
+      invitedNpub: localVoterNpub,
+      blindedMessage: "blinded",
+      clientNonce: "nonce",
+      createdAt: "2026-04-18T00:00:00.000Z",
+    };
+    optionAStorageMocks.loadVoterState.mockReturnValue({
+      electionId: "q_preserve_answers",
+      invitedNpub: localVoterNpub,
+      coordinatorNpub: "npub1" + "b".repeat(58),
+      loginVerified: true,
+      loginVerifiedAt: "2026-04-18T00:00:00.000Z",
+      inviteMessage: null,
+      blindRequest,
+      blindRequestSent: true,
+      blindRequestSentAt: "2026-04-18T00:00:00.000Z",
+      blindIssuance: null,
+      credentialReady: false,
+      draftResponses: [],
+      submission: null,
+      submissionAccepted: null,
+      submissionAcceptedAt: null,
+      lastUpdatedAt: "2026-04-18T00:00:00.000Z",
+    });
+    storeCachedQuestionnaireDefinition(definition);
+
+    render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_preserve_answers"]} localVoterNpub={localVoterNpub} />);
+
+    const yesButton = await screen.findByRole("button", { name: "Yes" });
+    await user.click(yesButton);
+    expect(yesButton.getAttribute("aria-pressed")).toBe("true");
+
+    optionAStorageMocks.readBlindIssuance.mockReturnValue({
+      type: "blind_ballot_response",
+      schemaVersion: 1,
+      electionId: "q_preserve_answers",
+      requestId: "request_preserve_answers",
+      issuanceId: "issuance_preserve_answers",
+      invitedNpub: localVoterNpub,
+      blindSignature: "sig_preserve_answers",
+      definition,
+      issuedAt: "2026-04-18T00:01:00.000Z",
+    });
+    await user.click(screen.getByRole("button", { name: "Refresh status" }));
+
+    await waitFor(() => {
+      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Credential ready: Yes")).length).toBeGreaterThan(0);
+    });
+    expect(screen.getByRole("button", { name: "Yes" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "No" }).className).toContain("is-dimmed");
+  });
+
+  it("renders questions from the blind issuance definition when public definition fetch is empty", async () => {
+    const localVoterNpub = "npub1" + "e".repeat(58);
     const definition = {
       schemaVersion: 1 as const,
       eventType: "questionnaire_definition" as const,
@@ -256,7 +337,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
   });
 
   it("keeps submit disabled while a credential exists but no questions are rendered", async () => {
-    const localVoterNpub = "npub1" + "e".repeat(58);
+    const localVoterNpub = "npub1" + "f".repeat(58);
     optionAStorageMocks.loadVoterState.mockReturnValue({
       electionId: "q_missing_definition",
       invitedNpub: localVoterNpub,
@@ -301,7 +382,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
   });
 
   it("shows the submitted responder marker with QR after submission", async () => {
-    const localVoterNpub = "npub1" + "f".repeat(58);
+    const localVoterNpub = "npub1" + "g".repeat(58);
     optionAStorageMocks.loadVoterState.mockReturnValue({
       electionId: "q_submitted_marker",
       invitedNpub: localVoterNpub,

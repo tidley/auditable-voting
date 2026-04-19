@@ -70,7 +70,7 @@ This is the practical order of operations for the current app.
 ### 4. Auditor verifies last
 
 1. Open **Auditor** view.
-2. Filter by coordinator npub and/or questionnaire ID.
+2. Review recent public questionnaires or filter by coordinator npub and/or questionnaire ID.
 3. Confirm accepted unique responder totals and published response/result state match expectations.
 
 ### Operational notes
@@ -213,14 +213,16 @@ The present web client is built with:
 - **startup control-carrier diagnostics** for exact publish payloads, live/backfill filter shapes, relay write/read overlap, and `kind_only` versus filtered startup probes
 - **single-coordinator deterministic startup bypass** so `1 coordinator` runs do not block on MLS join/group observation paths
 - **blind-key publication diagnostics** that classify not-attempted vs publish/observe/apply stalls and expose event/relay evidence
-- **private-first questionnaire flow** with coordinator/voter UI panels and **blind-token response foundations** (`questionnaire_response_blind`, transport helpers, harness metrics)
+- **private-first questionnaire flow** with coordinator/voter UI panels, RSABSSA blind-token issuance, ephemeral response npubs, transport helpers, and relay-harness metrics
 - **staged questionnaire coordinator builder** (`Build` -> `Audience` -> `Publish` -> `Responses` -> `Results`) with zero default questions and explicit publish readiness checks
 - **voter questionnaire vote gating** that only enables Vote after announced questionnaire ids are verified as publicly readable (`definition` present + state `open`/`published`)
 - **questionnaire discovery over direct live subscriptions** with one startup backfill plus one bounded retry, and explicit per-voter discovery timing diagnostics for startup visibility failures
+- **voter draft preservation** so response fields are not cleared when a blind ballot credential or refreshed definition arrives for the same questionnaire
 - **course-feedback coordinator bypass** so legacy live-round / blind-key / ticket queue gating is disabled for questionnaire acceptance paths, with explicit debug assertions for bypass state
 - **course-feedback batch orchestration** in the live harness (`LIVE_BATCH_SIZE`, default `5`) so enrolment and submission advance in checkpointed waves instead of all-voter cold-start concurrency
 - **questionnaire response observation fallback** that prefers bounded kind-only reads plus local questionnaire-id filtering (and relay probes) when custom tag-indexed reads are unreliable on public relays
 - **auditor coordinator filtering + search** so public round review can be scoped by lead coordinator, coordinator npub, and free-text query (npub/round ID/prompt), with non-overlapping refreshes to reduce relay REQ bursts
+- **auditor questionnaire discovery** so recent public questionnaire definitions are read by kind-only backfill when no questionnaire ID is selected, with state and published response totals shown when available
 - **ticket scheduler diagnostics and tunable transport knobs** for first-send prioritisation, resend eligibility reasons, bounded concurrency, and retry-age experimentation during live relay reliability testing
 - **observation-plane recovery diagnostics** that separate live vs backfill visibility and classify resend recoveries for published-but-unobserved tickets
 - **request-id keyed mailbox reader bindings** with immutable per-request mailbox ids for live/backfill ticket observation, plus explicit read/backfill mailbox-consistency diagnostics
@@ -607,7 +609,7 @@ The repository now focuses on the client-side web app only:
 - non-lead ticket sends are slightly staggered by share index to reduce same-recipient relay bursts
 - automatic follow, blind-request, ticket, and acknowledgement sends are randomly delayed by up to `30s` to better match real participants and reduce relay rate limiting
 - accepted followers now receive active questionnaire ids (`open`/`published`) in coordinator roster DMs, so voter questionnaire selection can auto-populate without manual restore
-- voter questionnaire submissions now enforce one accepted response per questionnaire for a voter profile, reusing a stable per-questionnaire responder identity
+- voter questionnaire submissions now spend a blind-signed credential from a fresh ephemeral response npub, with one accepted spend per questionnaire credential
 - coordinator follower rows expose per-ticket relay publish diagnostics
 - Nostr is the shared state layer
 - blind-share issuance is in the simple flow
@@ -730,8 +732,11 @@ The Option A runtime currently provides:
 - coordinator whitelist and invite actions
 - Option A invite delivery over NIP-17 gift-wrapped DMs (`kind 1059` with `kind 13` seal / `kind 14` rumor), with relay-history invite discovery on voter login
 - published questionnaire definition caching and invite-attached definitions, so voters can render questions even when relay backfill misses the public definition event
-- voter blind request creation
-- coordinator blind issuance processing
+- credential-attached definition refreshes that do not clear drafted response fields
+- RSABSSA blind request creation from a voter-held token secret
+- coordinator blind issuance processing over a blinded token message
+- local unblinding and verification before ballot submission
+- fresh ephemeral response npubs for ballot submission, instead of using the invited voter npub as the response identity
 - single accepted submission accounting with duplicate protection
 - local resume keyed by election id and signer `npub`
 - invite-driven voter login can auto-prepare/send the first blind request once login is verified

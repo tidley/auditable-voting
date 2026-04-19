@@ -6,7 +6,7 @@ import { normalizeRelaysRust } from "./wasm/auditableVotingCore";
 import type { ElectionInviteMessage } from "./questionnaireOptionA";
 import type { SignerService } from "./services/signerService";
 
-const OPTION_A_INVITE_DM_RELAYS_MAX = 3;
+const OPTION_A_INVITE_DM_RELAYS_MAX = 9;
 const OPTION_A_INVITE_DM_READ_RELAYS_MAX = 3;
 const OPTION_A_INVITE_DM_MAX_WAIT_MS = 1500;
 const OPTION_A_INVITE_DM_STAGGER_MS = 250;
@@ -91,12 +91,17 @@ function parseInviteDmContent(content: string): ElectionInviteMessage | null {
 
 function createRumor(input: {
   senderHex: string;
+  recipientHex: string;
+  relayUrl?: string;
   envelope: InviteDmEnvelope;
 }) {
   const rumor = {
     kind: KIND_RUMOR_MESSAGE,
     created_at: Math.round(Date.now() / 1000),
-    tags: [],
+    tags: [
+      input.relayUrl ? ["p", input.recipientHex, input.relayUrl] : ["p", input.recipientHex],
+      ["subject", "Auditable Voting invite"],
+    ],
     content: JSON.stringify(input.envelope),
     pubkey: input.senderHex,
   };
@@ -131,6 +136,7 @@ export async function publishOptionAInviteDm(input: {
   relays?: string[];
 }) {
   const recipientHex = toHexPubkey(input.invite.invitedNpub);
+  const relays = selectPublishRelays(buildRelays(input.relays));
   const envelope: InviteDmEnvelope = {
     type: "optiona_invite_dm",
     schemaVersion: 1,
@@ -151,7 +157,7 @@ export async function publishOptionAInviteDm(input: {
           continue;
         }
         senderHex = getPublicKey(fallbackSecret);
-        const rumor = createRumor({ senderHex, envelope });
+        const rumor = createRumor({ senderHex, recipientHex, relayUrl: relays[0], envelope });
         const sealConversationKey = nip44.v2.utils.getConversationKey(fallbackSecret, recipientHex);
         const sealCiphertext = nip44.v2.encrypt(JSON.stringify(rumor), sealConversationKey);
         signedSeal = finalizeEvent({
@@ -168,7 +174,7 @@ export async function publishOptionAInviteDm(input: {
       }
       const senderRaw = await input.signer.getPublicKey();
       senderHex = toHexPubkey(senderRaw);
-      const rumor = createRumor({ senderHex, envelope });
+      const rumor = createRumor({ senderHex, recipientHex, relayUrl: relays[0], envelope });
       const sealCiphertext = await input.signer.nip44Encrypt(recipientHex, JSON.stringify(rumor));
       const signed = await input.signer.signEvent({
         kind: KIND_SEAL,
@@ -198,7 +204,6 @@ export async function publishOptionAInviteDm(input: {
     content: wrappedSeal,
   }, giftWrapSecret);
 
-  const relays = selectPublishRelays(buildRelays(input.relays));
   const pool = getSharedNostrPool();
   const results = await queueNostrPublish(
     () => publishToRelaysStaggered(

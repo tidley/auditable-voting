@@ -77,6 +77,8 @@ function makeBlindRequest(requestId = "request-1"): BlindBallotRequest {
     requestId,
     invitedNpub: voterNpub,
     blindedMessage: "blinded-msg",
+    tokenCommitment: "token-commitment-1",
+    blindSigningKeyId: "blind-key-1",
     clientNonce: "nonce-1",
     createdAt: nowIso,
   };
@@ -90,6 +92,8 @@ function makeIssuance(requestId = "request-1", issuanceId = "issuance-1"): Blind
     requestId,
     issuanceId,
     invitedNpub: voterNpub,
+    tokenCommitment: "token-commitment-1",
+    blindSigningKeyId: "blind-key-1",
     blindSignature: "blind-signature",
     issuedAt: nowIso,
   };
@@ -102,6 +106,8 @@ function makeSubmission(input: { submissionId?: string; nullifier?: string; invi
     electionId,
     submissionId: input.submissionId ?? "submission-1",
     invitedNpub: input.invitedNpub ?? voterNpub,
+    tokenCommitment: "token-commitment-1",
+    blindSigningKeyId: "blind-key-1",
     credential: "credential-1",
     nullifier: input.nullifier ?? "nullifier-1",
     payload: {

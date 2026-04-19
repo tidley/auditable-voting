@@ -122,18 +122,18 @@ export default function QuestionnaireOptionACoordinatorPanel(props: Props) {
     }
   }
 
-  function processRequests() {
+  async function processRequests() {
     try {
-      runtime.processPendingBlindRequests();
+      await runtime.processPendingBlindRequests();
       setStatus("Processed pending blind ballot requests.");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Request processing failed.");
     }
   }
 
-  function processSubmissions() {
+  async function processSubmissions() {
     try {
-      runtime.processPendingSubmissions([]);
+      await runtime.processPendingSubmissions([]);
       setStatus("Processed pending submissions.");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Submission processing failed.");
@@ -148,9 +148,10 @@ export default function QuestionnaireOptionACoordinatorPanel(props: Props) {
     }
     const intervalId = window.setInterval(() => {
       try {
-        runtime.processPendingBlindRequests();
-        runtime.processPendingSubmissions([]);
-        setRefreshNonce((value) => value + 1);
+        void runtime.processPendingBlindRequests()
+          .then(() => runtime.processPendingSubmissions([]))
+          .then(() => setRefreshNonce((value) => value + 1))
+          .catch(() => undefined);
       } catch {
         // Keep background processing best-effort; explicit actions surface errors.
       }

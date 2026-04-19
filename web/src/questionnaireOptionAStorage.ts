@@ -80,6 +80,7 @@ export function saveCoordinatorState(input: {
   writeJson(keys.requests, input.state.pendingBlindRequests);
   writeJson(keys.issuances, input.state.issuedBlindResponses);
   writeJson(keys.submissions, input.state.receivedSubmissions);
+  writeJson(`${keys.election}:blindSigningPrivateKey`, input.state.blindSigningPrivateKey ?? null);
   writeJson(keys.acceptance, {
     acceptedNullifiers: input.state.acceptedNullifiers,
     acceptanceResults: input.state.acceptanceResults,
@@ -103,6 +104,10 @@ export function loadCoordinatorState(input: {
   const pendingBlindRequests = readJson<Record<string, BlindBallotRequest>>(keys.requests, {});
   const issuedBlindResponses = readJson<Record<string, BlindBallotIssuance>>(keys.issuances, {});
   const receivedSubmissions = readJson<Record<string, BallotSubmission>>(keys.submissions, {});
+  const blindSigningPrivateKey = readJson<CoordinatorElectionState["blindSigningPrivateKey"]>(
+    `${keys.election}:blindSigningPrivateKey`,
+    null,
+  );
   const acceptance = readJson<{
     acceptedNullifiers: Record<string, string>;
     acceptanceResults: Record<string, BallotAcceptanceResult>;
@@ -120,6 +125,7 @@ export function loadCoordinatorState(input: {
     receivedSubmissions,
     acceptedNullifiers: acceptance.acceptedNullifiers,
     acceptanceResults: acceptance.acceptanceResults,
+    blindSigningPrivateKey,
     lastUpdatedAt: acceptance.lastUpdatedAt ?? new Date().toISOString(),
   };
 }
@@ -141,10 +147,15 @@ export function saveVoterState(input: {
     blindRequest: input.state.blindRequest,
     blindRequestSent: input.state.blindRequestSent,
     blindRequestSentAt: input.state.blindRequestSentAt,
+    blindTokenSecret: input.state.blindTokenSecret,
   });
   writeJson(keys.issuance, input.state.blindIssuance);
   writeJson(keys.draftResponses, input.state.draftResponses);
-  writeJson(keys.submission, input.state.submission);
+  writeJson(keys.submission, {
+    submission: input.state.submission,
+    responseNsec: input.state.responseNsec ?? null,
+    responseNpub: input.state.responseNpub ?? null,
+  });
   writeJson(keys.acceptance, {
     submissionAccepted: input.state.submissionAccepted,
     submissionAcceptedAt: input.state.submissionAcceptedAt,
@@ -171,14 +182,23 @@ export function loadVoterState(input: {
     blindRequest: BlindBallotRequest | null;
     blindRequestSent: boolean;
     blindRequestSentAt?: string | null;
+    blindTokenSecret?: VoterElectionLocalState["blindTokenSecret"];
   }>(keys.blindRequest, {
     blindRequest: null,
     blindRequestSent: false,
     blindRequestSentAt: null,
+    blindTokenSecret: null,
   });
   const blindIssuance = readJson<BlindBallotIssuance | null>(keys.issuance, null);
   const draftResponses = readJson<VoterElectionLocalState["draftResponses"]>(keys.draftResponses, []);
-  const submission = readJson<BallotSubmission | null>(keys.submission, null);
+  const submissionPart = readJson<{
+    submission?: BallotSubmission | null;
+    responseNsec?: string | null;
+    responseNpub?: string | null;
+  } | BallotSubmission | null>(keys.submission, null);
+  const submission = submissionPart && "type" in submissionPart
+    ? submissionPart
+    : (submissionPart?.submission ?? null);
   const acceptance = readJson<{
     submissionAccepted?: boolean | null;
     submissionAcceptedAt?: string | null;
@@ -206,6 +226,9 @@ export function loadVoterState(input: {
     blindRequestSentAt: requestPart.blindRequestSentAt ?? null,
     blindIssuance,
     credentialReady: Boolean(blindIssuance),
+    blindTokenSecret: requestPart.blindTokenSecret ?? null,
+    responseNsec: submissionPart && !("type" in submissionPart) ? submissionPart.responseNsec ?? null : null,
+    responseNpub: submissionPart && !("type" in submissionPart) ? submissionPart.responseNpub ?? null : submission?.responseNpub ?? null,
     draftResponses,
     submission,
     submissionAccepted: acceptance.submissionAccepted ?? null,

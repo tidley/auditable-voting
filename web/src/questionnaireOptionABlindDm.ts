@@ -178,14 +178,35 @@ function parseBallotAcceptanceDmContent(content: string): BallotAcceptanceResult
   }
 }
 
+function optionABlindDmSubject(
+  envelope: BlindRequestDmEnvelope | BlindIssuanceDmEnvelope | BallotSubmissionDmEnvelope | BallotAcceptanceDmEnvelope,
+) {
+  switch (envelope.type) {
+    case "optiona_blind_request_dm":
+      return "Auditable Voting blind request";
+    case "optiona_blind_issuance_dm":
+      return "Auditable Voting blind issuance";
+    case "optiona_ballot_submission_dm":
+      return "Auditable Voting ballot submission";
+    case "optiona_ballot_acceptance_dm":
+      return "Auditable Voting ballot acceptance";
+  }
+}
+
 function createRumor(input: {
   senderHex: string;
+  recipientHex: string;
+  relayUrl?: string;
+  subject: string;
   envelope: BlindRequestDmEnvelope | BlindIssuanceDmEnvelope | BallotSubmissionDmEnvelope | BallotAcceptanceDmEnvelope;
 }) {
   const rumor = {
     kind: KIND_RUMOR_MESSAGE,
     created_at: Math.round(Date.now() / 1000),
-    tags: [],
+    tags: [
+      input.relayUrl ? ["p", input.recipientHex, input.relayUrl] : ["p", input.recipientHex],
+      ["subject", input.subject],
+    ],
     content: JSON.stringify(input.envelope),
     pubkey: input.senderHex,
   };
@@ -222,6 +243,7 @@ async function publishEnvelope(input: {
   channel: string;
 }) {
   const recipientHex = toHexPubkey(input.recipientNpub);
+  const relays = selectPublishRelays(buildRelays(input.relays));
   let senderHex = "";
   let signedSeal: NostrEvent | null = null;
   const fallbackSecret = input.fallbackNsec?.trim() ? decodeNsecSecretKey(input.fallbackNsec) : null;
@@ -236,7 +258,13 @@ async function publishEnvelope(input: {
           continue;
         }
         senderHex = getPublicKey(fallbackSecret);
-        const rumor = createRumor({ senderHex, envelope: input.envelope });
+        const rumor = createRumor({
+          senderHex,
+          recipientHex,
+          relayUrl: relays[0],
+          subject: optionABlindDmSubject(input.envelope),
+          envelope: input.envelope,
+        });
         const sealConversationKey = nip44.v2.utils.getConversationKey(fallbackSecret, recipientHex);
         const sealCiphertext = nip44.v2.encrypt(JSON.stringify(rumor), sealConversationKey);
         signedSeal = finalizeEvent({
@@ -253,7 +281,13 @@ async function publishEnvelope(input: {
       }
       const senderRaw = await input.signer.getPublicKey();
       senderHex = toHexPubkey(senderRaw);
-      const rumor = createRumor({ senderHex, envelope: input.envelope });
+      const rumor = createRumor({
+        senderHex,
+        recipientHex,
+        relayUrl: relays[0],
+        subject: optionABlindDmSubject(input.envelope),
+        envelope: input.envelope,
+      });
       const sealCiphertext = await input.signer.nip44Encrypt(recipientHex, JSON.stringify(rumor));
       const signed = await input.signer.signEvent({
         kind: KIND_SEAL,
@@ -283,7 +317,6 @@ async function publishEnvelope(input: {
     content: wrappedSeal,
   }, giftWrapSecret);
 
-  const relays = selectPublishRelays(buildRelays(input.relays));
   const pool = getSharedNostrPool();
   const results = await queueNostrPublish(
     () => publishToRelaysStaggered(
@@ -638,6 +671,10 @@ export async function fetchOptionABallotSubmissionDms(input: {
       if (!submission) {
         continue;
       }
+      const claimedResponseNpub = submission.responseNpub ?? submission.invitedNpub;
+      if (claimedResponseNpub && toNpub(sealEvent.pubkey) !== claimedResponseNpub) {
+        continue;
+      }
       if (input.electionId?.trim() && submission.electionId !== input.electionId.trim()) {
         continue;
       }
@@ -672,12 +709,16 @@ export async function fetchOptionABallotSubmissionDmsWithNsec(input: {
   const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
   for (const event of sorted) {
     try {
-      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string };
+      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string; pubkey?: string };
       if (!rumor || typeof rumor.content !== "string") {
         continue;
       }
       const submission = parseBallotSubmissionDmContent(rumor.content);
       if (!submission) {
+        continue;
+      }
+      const claimedResponseNpub = submission.responseNpub ?? submission.invitedNpub;
+      if (claimedResponseNpub && typeof rumor.pubkey === "string" && toNpub(rumor.pubkey) !== claimedResponseNpub) {
         continue;
       }
       if (input.electionId?.trim() && submission.electionId !== input.electionId.trim()) {
