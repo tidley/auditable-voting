@@ -577,6 +577,7 @@
           <li>Option A blind request, issuance, submission, and acceptance DMs now resolve recipient `kind:10050` NIP-17 relay hints before static fallback relays, with noisy fallback relays removed and invite-link clipboard writes made best-effort</li>
           <li>Voter ballot progress now separates signer account from voting identity, and coordinator automatic Option A queue checks are single-flight to reduce overlapping relay work</li>
           <li>Voter ballot resend now keeps the same blind-request id while prompting the coordinator to republish the existing credential DM, and background loops stop rebroadcasting already delivered credentials</li>
+          <li>Option A credential delivery now mixes recipient relay hints with fallback relays, widens publish fanout, and retries issued credentials until the voter submits</li>
           <li>Published questionnaire definitions include the blind-signing public key, are cached locally, and are attached to invites and credential issuances, so linked voters can request ballots even when historical invite DMs are unavailable</li>
           <li>Accepted Option A DM submissions now feed the same coordinator response summary as public questionnaire response events</li>
           <li>Auditors now discover recent public questionnaires through kind-only backfill when no questionnaire ID is selected, then show state and published response totals where available</li>

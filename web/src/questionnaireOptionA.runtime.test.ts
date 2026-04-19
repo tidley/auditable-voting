@@ -173,11 +173,14 @@ describe("questionnaireOptionARuntime", () => {
     expect(readBlindIssuance(requestId ?? "")).toEqual(issued);
     expect(vi.mocked(publishOptionABlindIssuanceDm)).toHaveBeenCalledTimes(1);
 
+    await coordinator.publishPendingBlindIssuancesToDm({ minRetryMs: 0 });
+    expect(vi.mocked(publishOptionABlindIssuanceDm)).toHaveBeenCalledTimes(2);
+
     await voter.requestBlindBallot();
     await coordinator.processPendingBlindRequests();
     await coordinator.publishPendingBlindIssuancesToDm();
     expect(readBlindIssuance(requestId ?? "")).toEqual(issued);
-    expect(vi.mocked(publishOptionABlindIssuanceDm)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(publishOptionABlindIssuanceDm)).toHaveBeenCalledTimes(3);
   });
 
   it("prevents duplicate issuance and duplicate accepted submissions from inflating unique count", async () => {

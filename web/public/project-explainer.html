@@ -226,7 +226,7 @@ Blind request, issuance, submission, and acceptance DMs now also resolve recipie
 
 Invite-link clipboard writes are best-effort, so browser focus restrictions do not throw unhandled errors after async relay work.
 
-The voter page labels the questionnaire voting identity separately from the signer account and shows request, credential, and response state. Resending a blind-ballot request keeps the same request id; the coordinator republishes the existing credential DM rather than issuing a second credential. Coordinator automatic request checks run one at a time, use recent DM reads, and avoid rebroadcasting already delivered credentials on every background pass.
+The voter page labels the questionnaire voting identity separately from the signer account and shows request, credential, and response state. Resending a blind-ballot request keeps the same request id; the coordinator republishes the existing credential DM rather than issuing a second credential. Credential delivery now mixes recipient relay hints with fallback relays, publishes to more relays, and retries issued credentials until submission proves receipt.
 
 Drafted response fields stay intact when the credential or refreshed definition arrives for the same questionnaire.
 

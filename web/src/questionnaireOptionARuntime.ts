@@ -77,7 +77,7 @@ import {
 const OPTION_A_COORDINATOR_DM_LOOKBACK_SECONDS = 24 * 60 * 60;
 const OPTION_A_COORDINATOR_SIGNER_DM_LIMIT = 30;
 const OPTION_A_COORDINATOR_NSEC_DM_LIMIT = 80;
-const OPTION_A_ISSUANCE_DM_RETRY_MS = 5 * 60 * 1000;
+const OPTION_A_ISSUANCE_DM_RETRY_MS = 2 * 60 * 1000;
 
 export type OptionARuntimeErrorCode =
   | "not_logged_in"
@@ -457,7 +457,8 @@ export class QuestionnaireOptionAVoterRuntime {
       : fetchOptionABlindIssuanceDms({
         signer: this.signer,
         electionId,
-        limit: 6,
+        limit: 12,
+        maxDecryptAttempts: 12,
         since: requestSince,
       })).then((issuanceMessages) => {
       for (const issuance of issuanceMessages) {
@@ -477,7 +478,8 @@ export class QuestionnaireOptionAVoterRuntime {
       : fetchOptionABallotAcceptanceDms({
         signer: this.signer,
         electionId,
-        limit: 6,
+        limit: 12,
+        maxDecryptAttempts: 12,
         since: acceptanceSince,
       })).then((acceptanceMessages) => {
       for (const acceptance of acceptanceMessages) {
@@ -694,6 +696,13 @@ export class QuestionnaireOptionACoordinatorRuntime {
       return;
     }
     this.issuanceDmRepublishRequests.set(issuance.requestId, requestSentAt);
+  }
+
+  private hasVoterReachedSubmission(issuance: BlindBallotIssuance) {
+    const claimState = this.state?.whitelist[issuance.invitedNpub]?.claimState;
+    return claimState === "vote_received"
+      || claimState === "vote_accepted"
+      || claimState === "vote_rejected";
   }
 
   async loginWithSigner(summary?: Partial<ElectionSummary>) {
@@ -913,7 +922,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
         if (!delivery?.lastAttemptAt) {
           return true;
         }
-        if (delivery.lastSuccessAt) {
+        if (delivery.lastSuccessAt && this.hasVoterReachedSubmission(issuance)) {
           return false;
         }
         const lastAttemptMs = Date.parse(delivery.lastAttemptAt);

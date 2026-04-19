@@ -76,6 +76,52 @@ describe("questionnaireOptionABlindDm", () => {
     expect(event.tags[0]?.[0]).toBe("p");
   });
 
+  it("mixes recipient NIP-17 relay hints with fallback relays for delivery", async () => {
+    querySync.mockResolvedValue([{
+      kind: 10050,
+      created_at: 10,
+      tags: [
+        ["relay", "wss://recipient.one"],
+        ["relay", "wss://recipient.two"],
+        ["relay", "wss://recipient.three"],
+        ["relay", "wss://recipient.four"],
+      ],
+    }]);
+    publish.mockReturnValue([Promise.resolve(undefined)]);
+    publishToRelaysStaggered.mockImplementation(
+      async (publishOne: (relay: string) => Promise<unknown>, relays: string[]) => Promise.allSettled(relays.map((relay) => publishOne(relay))),
+    );
+    queueNostrPublish.mockImplementation(async (fn: () => Promise<PromiseSettledResult<unknown>[]>) => fn());
+
+    const recipientHex = getPublicKey(generateSecretKey());
+    await publishOptionABlindRequestDm({
+      signer: makeSigner(),
+      recipientNpub: nip19.npubEncode(recipientHex),
+      request: {
+        type: "blind_ballot_request",
+        schemaVersion: 1,
+        electionId: "q_1",
+        requestId: "request_1",
+        invitedNpub: nip19.npubEncode(getPublicKey(generateSecretKey())),
+        blindedMessage: "blind_1",
+        tokenCommitment: "token_1",
+        blindSigningKeyId: "key_1",
+        clientNonce: "nonce_1",
+        createdAt: new Date().toISOString(),
+      },
+    });
+
+    const relays = publishToRelaysStaggered.mock.calls[0]?.[1] as string[];
+    expect(relays).toEqual([
+      "wss://recipient.one",
+      "wss://recipient.two",
+      "wss://nip17.com",
+      "wss://nip17.tomdwyer.uk",
+      "wss://recipient.three",
+      "wss://recipient.four",
+    ]);
+  });
+
   it("reads blind request and issuance DMs via local nsec", async () => {
     const recipientSecret = generateSecretKey();
     const recipientHex = getPublicKey(recipientSecret);

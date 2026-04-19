@@ -11,8 +11,9 @@ import { getSharedNostrPool } from "./sharedNostrPool";
 import { SIMPLE_DM_RELAYS } from "./simpleShardDm";
 import { normalizeRelaysRust } from "./wasm/auditableVotingCore";
 
-const OPTION_A_BLIND_DM_RELAYS_MAX = 3;
-const OPTION_A_BLIND_DM_READ_RELAYS_MAX = 3;
+const OPTION_A_BLIND_DM_RELAYS_MAX = 6;
+const OPTION_A_BLIND_DM_READ_RELAYS_MAX = 5;
+const OPTION_A_BLIND_DM_HINT_RELAYS_MAX = 6;
 const OPTION_A_BLIND_DM_MAX_WAIT_MS = 1500;
 const OPTION_A_BLIND_DM_STAGGER_MS = 250;
 const OPTION_A_BLIND_DM_MIN_PUBLISH_INTERVAL_MS = 300;
@@ -97,6 +98,26 @@ function selectPublishRelays(relays: string[]) {
   return relays.slice(0, Math.min(OPTION_A_BLIND_DM_RELAYS_MAX, relays.length));
 }
 
+function selectHintRelays(relays: string[]) {
+  return relays.slice(0, Math.min(OPTION_A_BLIND_DM_HINT_RELAYS_MAX, relays.length));
+}
+
+function mixRecipientAndFallbackRelays(recipientRelays: string[], fallbackRelays: string[]) {
+  const mixed: string[] = [];
+  const add = (relay?: string) => {
+    const value = relay?.trim();
+    if (value && !mixed.includes(value)) {
+      mixed.push(value);
+    }
+  };
+
+  recipientRelays.slice(0, 2).forEach(add);
+  fallbackRelays.slice(0, 2).forEach(add);
+  recipientRelays.slice(2).forEach(add);
+  fallbackRelays.slice(2).forEach(add);
+  return normalizeRelaysRust(mixed);
+}
+
 function parseNip17RelayListEvent(event: { kind?: number; tags?: string[][] }) {
   if (event.kind !== KIND_NIP17_RELAY_LIST || !Array.isArray(event.tags)) {
     return [] as string[];
@@ -131,17 +152,17 @@ async function fetchRecipientNip17Relays(input: {
 async function resolveRecipientPublishRelays(recipientHex: string, fallbackRelays: string[]) {
   const recipientRelays = await fetchRecipientNip17Relays({
     recipientHex,
-    discoveryRelays: selectPublishRelays(fallbackRelays),
+    discoveryRelays: selectHintRelays(fallbackRelays),
   });
-  return selectPublishRelays(normalizeRelaysRust([...recipientRelays, ...fallbackRelays]));
+  return selectPublishRelays(mixRecipientAndFallbackRelays(recipientRelays, fallbackRelays));
 }
 
 async function resolveRecipientReadRelays(recipientHex: string, fallbackRelays: string[]) {
   const recipientRelays = await fetchRecipientNip17Relays({
     recipientHex,
-    discoveryRelays: selectReadRelays(fallbackRelays),
+    discoveryRelays: selectHintRelays(fallbackRelays),
   });
-  return selectReadRelays(normalizeRelaysRust([...recipientRelays, ...fallbackRelays]));
+  return selectReadRelays(mixRecipientAndFallbackRelays(recipientRelays, fallbackRelays));
 }
 
 function parseBlindRequestDmContent(content: string): BlindBallotRequest | null {

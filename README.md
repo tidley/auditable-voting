@@ -56,6 +56,7 @@ The shipped app currently includes:
 - coordinator automatic Option A queue processing is now single-flight and slower, reducing overlapping relay publishes and websocket churn
 - voter blind-ballot resend keeps the same request id and freshens its send timestamp; coordinators republish the existing credential DM instead of issuing a second credential
 - Option A request/submission DM reads now use recent since-bounded windows, and successful credential DMs are not rebroadcast by every background queue pass
+- Option A credential delivery is biased back toward reliability: DM writes mix recipient relay hints with fallback relays, publish to more relays, and retry issued credentials until the voter submits
 - local browser persistence, backup, and optional passphrase protection
 - voter questionnaire participation history is now stored locally and included in voter backups/restores
 - auditor round selection now supports lead-coordinator filter, coordinator-npub filter, and free-text search (npub/round ID/prompt), with slower non-overlapping refreshes to reduce relay REQ spikes
