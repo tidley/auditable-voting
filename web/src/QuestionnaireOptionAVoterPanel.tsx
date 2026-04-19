@@ -73,6 +73,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const [signedInNpub, setSignedInNpub] = useState<string>("");
   const [pendingInvites, setPendingInvites] = useState<ElectionInviteMessage[]>([]);
   const [activeInvite, setActiveInvite] = useState<ElectionInviteMessage | null>(null);
+  const [selectedInviteKey, setSelectedInviteKey] = useState<string>("");
   const [questionnaireTitle, setQuestionnaireTitle] = useState<string>("Questionnaire");
   const [questionnaireDescription, setQuestionnaireDescription] = useState<string>("");
   const [questions, setQuestions] = useState<Array<{
@@ -628,6 +629,41 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     : pendingInvites.filter((invite) => (
       !signedInNpub || invite.invitedNpub === signedInNpub || Boolean(props.localVoterNpub?.trim())
     ));
+  const inviteDropdownOptions = useMemo(() => {
+    const map = new Map<string, ElectionInviteMessage>();
+    const signedIn = signedInNpub.trim();
+    for (const invite of pendingInvites) {
+      if (signedIn && invite.invitedNpub !== signedIn) {
+        continue;
+      }
+      const key = `${invite.electionId}:${invite.coordinatorNpub}`;
+      map.set(key, invite);
+    }
+    const currentInvite = snapshot?.inviteMessage ?? activeInvite ?? null;
+    if (currentInvite) {
+      const key = `${currentInvite.electionId}:${currentInvite.coordinatorNpub}`;
+      map.set(key, currentInvite);
+    }
+    return [...map.values()];
+  }, [activeInvite, pendingInvites, signedInNpub, snapshot?.inviteMessage]);
+
+  useEffect(() => {
+    if (!snapshot?.electionId?.trim()) {
+      return;
+    }
+    const matched = inviteDropdownOptions.find((invite) => invite.electionId === snapshot.electionId);
+    if (matched) {
+      const key = `${matched.electionId}:${matched.coordinatorNpub}`;
+      if (selectedInviteKey !== key) {
+        setSelectedInviteKey(key);
+      }
+      return;
+    }
+    if (!selectedInviteKey && inviteDropdownOptions.length > 0) {
+      const first = inviteDropdownOptions[0];
+      setSelectedInviteKey(`${first.electionId}:${first.coordinatorNpub}`);
+    }
+  }, [inviteDropdownOptions, selectedInviteKey, snapshot?.electionId]);
   const waitingForCredential = Boolean(snapshot?.blindRequestSent && !snapshot?.credentialReady && !snapshot?.submission);
 
   const canSubmitNow = flags.canSubmitVote && questions.length > 0 && requiredQuestionIds.every((questionId) => {
@@ -655,6 +691,40 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       </div>
       {signedInNpub ? <p className='simple-voter-note'>Signed in as {signedInNpub}</p> : null}
       <p className='simple-voter-note'>Election ID: {electionId || "Missing"}</p>
+      {inviteDropdownOptions.length > 0 ? (
+        <>
+          <label className='simple-voter-label' htmlFor='questionnaire-invite-select'>Invited questionnaires</label>
+          <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
+            <select
+              id='questionnaire-invite-select'
+              className='simple-voter-input'
+              value={selectedInviteKey}
+              onChange={(event) => setSelectedInviteKey(event.target.value)}
+            >
+              {inviteDropdownOptions.map((invite) => {
+                const key = `${invite.electionId}:${invite.coordinatorNpub}`;
+                return (
+                  <option key={key} value={key}>
+                    {(invite.title || invite.electionId) + " · " + invite.electionId}
+                  </option>
+                );
+              })}
+            </select>
+            <button
+              type='button'
+              className='simple-voter-secondary'
+              onClick={() => {
+                const selected = inviteDropdownOptions.find((invite) => `${invite.electionId}:${invite.coordinatorNpub}` === selectedInviteKey);
+                if (selected) {
+                  void openInvite(selected);
+                }
+              }}
+            >
+              Open selected
+            </button>
+          </div>
+        </>
+      ) : null}
       {visiblePendingInvites.length > 0 ? (
         <section className='simple-settings-card' aria-label='Pending questionnaire invites'>
           <h4 className='simple-voter-section-title'>Pending invites</h4>
