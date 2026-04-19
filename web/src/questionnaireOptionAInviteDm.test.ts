@@ -143,10 +143,7 @@ describe("questionnaireOptionAInviteDm", () => {
     expect(rumor.kind).toBe(14);
     expect(rumor.tags).toContainEqual(["p", recipientHex, "wss://relay.example"]);
     expect(rumor.tags).toContainEqual(["subject", "Auditable Voting invite"]);
-    expect(JSON.parse(rumor.content)).toMatchObject({
-      type: "optiona_invite_dm",
-      invite: { electionId: "e1" },
-    });
+    expect(rumor.content).toBe(invite.voteUrl);
   });
 
   it("reads and decrypts invite DMs for the logged-in voter", async () => {

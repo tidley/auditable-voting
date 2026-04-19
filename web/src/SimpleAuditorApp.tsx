@@ -2,27 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 import TokenFingerprint from "./TokenFingerprint";
 import {
-  fetchSimpleLiveVotes,
-  fetchSimpleSubmittedVotes,
-  type SimpleLiveVoteSession,
-} from "./simpleVotingSession";
-import { formatRoundOptionLabel } from "./roundLabel";
-import { sortRecordsByCreatedAtDescRust } from "./wasm/auditableVotingCore";
-import { DerivedStateAdapter, type DerivedState, type ProtocolSnapshot } from "./core/derivedStateAdapter";
-import { ballotEventFromSubmittedVote } from "./core/ballotEventBridge";
-import {
-  buildElectionDefinitionEvent,
-  publicEventFromLiveVote,
-} from "./core/publicEventBridge";
-import {
+  evaluateQuestionnaireBlindAdmissions,
+  fetchQuestionnaireBlindResponses,
   fetchQuestionnaireDefinitions,
   fetchQuestionnaireResultSummary,
   fetchQuestionnaireState,
 } from "./questionnaireTransport";
+import { formatQuestionnaireStateLabel } from "./questionnaireRuntime";
 
-const SIMPLE_AUDITOR_ELECTION_ID = "simple-public-election";
 const AUDITOR_REFRESH_INTERVAL_MS = 15000;
 const AUDITOR_QUESTIONNAIRE_DETAIL_LIMIT = 20;
+const AUDITOR_QUESTIONNAIRE_RESPONSE_LIMIT = 400;
 
 type AuditorQuestionnaireEntry = {
   questionnaireId: string;
@@ -33,93 +23,37 @@ type AuditorQuestionnaireEntry = {
   openAt: number | null;
   closeAt: number | null;
   state: string | null;
-  acceptedResponseCount: number | null;
+  publishedAcceptedResponseCount: number | null;
+  publishedRejectedResponseCount: number | null;
+  resultPublishedAt: number | null;
   eventId: string;
 };
 
-function roundToSession(round: DerivedState["public_state"]["rounds"][number]): SimpleLiveVoteSession {
-  const createdAtMs = round.opened_at ?? round.defined_at;
-  return {
-    votingId: round.round_id,
-    prompt: round.prompt,
-    coordinatorNpub: round.coordinator_roster[0] ?? "",
-    createdAt: new Date(createdAtMs).toISOString(),
-    thresholdT: round.threshold_t,
-    thresholdN: round.threshold_n,
-    authorizedCoordinatorNpubs: round.coordinator_roster,
-    eventId: `derived:${round.round_id}`,
-  };
-}
+type AuditorQuestionnaireResponseDetail = ReturnType<typeof evaluateQuestionnaireBlindAdmissions>["decisions"][number] & {
+  includedInLatestPublish: boolean;
+};
 
 export default function SimpleAuditorApp() {
-  const [derivedState, setDerivedState] = useState<DerivedState | null>(null);
   const [questionnaires, setQuestionnaires] = useState<AuditorQuestionnaireEntry[]>([]);
-  const [selectedVotingId, setSelectedVotingId] = useState("");
-  const [selectedLeadCoordinatorNpub, setSelectedLeadCoordinatorNpub] = useState("");
-  const [selectedRosterCoordinatorNpub, setSelectedRosterCoordinatorNpub] = useState("");
+  const [selectedQuestionnaireId, setSelectedQuestionnaireId] = useState("");
+  const [selectedResponseDetails, setSelectedResponseDetails] = useState<AuditorQuestionnaireResponseDetail[]>([]);
+  const [selectedLatestPublishAt, setSelectedLatestPublishAt] = useState<number | null>(null);
+  const [selectedLiveState, setSelectedLiveState] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [refreshStatus, setRefreshStatus] = useState<string | null>(null);
   const [questionnaireRefreshStatus, setQuestionnaireRefreshStatus] = useState<string | null>(null);
-  const snapshotRef = useRef<ProtocolSnapshot | null>(null);
-  const selectedVotingIdRef = useRef("");
+  const [responseRefreshStatus, setResponseRefreshStatus] = useState<string | null>(null);
+  const selectedQuestionnaireIdRef = useRef("");
   const refreshInFlightRef = useRef(false);
 
   useEffect(() => {
-    selectedVotingIdRef.current = selectedVotingId;
-  }, [selectedVotingId]);
+    selectedQuestionnaireIdRef.current = selectedQuestionnaireId;
+  }, [selectedQuestionnaireId]);
 
-  const refreshDerivedState = useCallback(async () => {
+  const refreshQuestionnaires = useCallback(async () => {
     if (refreshInFlightRef.current) {
       return;
     }
     refreshInFlightRef.current = true;
-    try {
-      const rounds = await fetchSimpleLiveVotes();
-      const orderedRounds = sortRecordsByCreatedAtDescRust(rounds);
-      const selectedRoundId = selectedVotingIdRef.current.trim() || (orderedRounds[0]?.votingId ?? "");
-      const selectedRoundVotes = selectedRoundId
-        ? typeof fetchSimpleSubmittedVotes === "function"
-          ? await fetchSimpleSubmittedVotes({ votingId: selectedRoundId })
-          : []
-        : [];
-
-      const protocolEvents = [
-        buildElectionDefinitionEvent({
-          electionId: SIMPLE_AUDITOR_ELECTION_ID,
-          authorPubkey: orderedRounds[0]?.coordinatorNpub ?? "auditor",
-          title: "Auditable Voting",
-        }),
-        ...orderedRounds.map((round) => publicEventFromLiveVote({
-          electionId: SIMPLE_AUDITOR_ELECTION_ID,
-          session: round,
-        })),
-        ...selectedRoundVotes.map((vote) => ballotEventFromSubmittedVote({
-          electionId: SIMPLE_AUDITOR_ELECTION_ID,
-          vote,
-        })),
-      ];
-
-      const adapter = snapshotRef.current
-        ? await DerivedStateAdapter.restore(snapshotRef.current)
-        : await DerivedStateAdapter.create(SIMPLE_AUDITOR_ELECTION_ID);
-
-      const nextDerivedState = adapter.replayAll(protocolEvents);
-      const nextSnapshot = adapter.exportSnapshot();
-      setDerivedState(nextDerivedState);
-      snapshotRef.current = nextSnapshot;
-      setRefreshStatus(
-        orderedRounds.length > 0
-          ? "Rounds and ballots refreshed from Nostr."
-          : "No public rounds discovered yet.",
-      );
-    } catch {
-      setRefreshStatus("Failed to refresh public rounds.");
-    } finally {
-      refreshInFlightRef.current = false;
-    }
-  }, []);
-
-  const refreshQuestionnaires = useCallback(async () => {
     try {
       const definitions = await fetchQuestionnaireDefinitions({ limit: 400 });
       const latestDefinitionById = new Map<string, Awaited<ReturnType<typeof fetchQuestionnaireDefinitions>>[number]>();
@@ -166,12 +100,18 @@ export default function SimpleAuditorApp() {
           openAt: Number.isFinite(entry.definition.openAt) ? entry.definition.openAt : null,
           closeAt: Number.isFinite(entry.definition.closeAt) ? entry.definition.closeAt : null,
           state: latestState,
-          acceptedResponseCount: latestResult?.acceptedResponseCount ?? null,
+          publishedAcceptedResponseCount: latestResult?.acceptedResponseCount ?? null,
+          publishedRejectedResponseCount: latestResult?.rejectedResponseCount ?? null,
+          resultPublishedAt: Number(latestResult?.createdAt ?? 0) || null,
           eventId: entry.event.id,
         };
       }));
 
       setQuestionnaires(entries);
+      const selectedId = selectedQuestionnaireIdRef.current.trim();
+      if (!selectedId || !entries.some((entry) => entry.questionnaireId === selectedId)) {
+        setSelectedQuestionnaireId(entries[0]?.questionnaireId ?? "");
+      }
       setQuestionnaireRefreshStatus(
         entries.length > 0
           ? "Questionnaires refreshed from Nostr."
@@ -179,7 +119,58 @@ export default function SimpleAuditorApp() {
       );
     } catch {
       setQuestionnaires([]);
+      setSelectedQuestionnaireId("");
       setQuestionnaireRefreshStatus("Failed to refresh public questionnaires.");
+    } finally {
+      refreshInFlightRef.current = false;
+    }
+  }, []);
+
+  const refreshSelectedQuestionnaireResponses = useCallback(async () => {
+    const selectedId = selectedQuestionnaireIdRef.current.trim();
+    if (!selectedId) {
+      setSelectedResponseDetails([]);
+      setSelectedLatestPublishAt(null);
+      setSelectedLiveState(null);
+      setResponseRefreshStatus("Choose a questionnaire round.");
+      return;
+    }
+    try {
+      const [responseEntries, resultEntries, stateEntries] = await Promise.all([
+        fetchQuestionnaireBlindResponses({
+          questionnaireId: selectedId,
+          limit: AUDITOR_QUESTIONNAIRE_RESPONSE_LIMIT,
+        }),
+        fetchQuestionnaireResultSummary({
+          questionnaireId: selectedId,
+          limit: 50,
+        }).catch(() => []),
+        fetchQuestionnaireState({
+          questionnaireId: selectedId,
+          limit: 50,
+        }).catch(() => []),
+      ]);
+      const admissions = evaluateQuestionnaireBlindAdmissions({ entries: responseEntries });
+      const latestResult = [...resultEntries]
+        .sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0))[0];
+      const latestState = [...stateEntries]
+        .sort((left, right) => Number(right.event.created_at ?? right.state.createdAt ?? 0) - Number(left.event.created_at ?? left.state.createdAt ?? 0))[0];
+      const latestPublishAt = latestResult?.event.created_at ?? null;
+      const details = admissions.decisions
+        .map((decision) => ({
+          ...decision,
+          includedInLatestPublish: latestPublishAt !== null ? Number(decision.event.created_at ?? 0) <= latestPublishAt : false,
+        }))
+        .sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0));
+      setSelectedResponseDetails(details);
+      setSelectedLatestPublishAt(latestPublishAt);
+      setSelectedLiveState(latestState?.state.state ?? null);
+      setResponseRefreshStatus("Questionnaire responses refreshed from Nostr.");
+    } catch {
+      setSelectedResponseDetails([]);
+      setSelectedLatestPublishAt(null);
+      setSelectedLiveState(null);
+      setResponseRefreshStatus("Failed to refresh questionnaire responses.");
     }
   }, []);
 
@@ -189,7 +180,10 @@ export default function SimpleAuditorApp() {
       if (cancelled) {
         return;
       }
-      await Promise.all([refreshDerivedState(), refreshQuestionnaires()]);
+      await refreshQuestionnaires();
+      if (!cancelled) {
+        await refreshSelectedQuestionnaireResponses();
+      }
     };
 
     void runRefresh();
@@ -201,54 +195,42 @@ export default function SimpleAuditorApp() {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [refreshDerivedState, refreshQuestionnaires]);
+  }, [refreshQuestionnaires, refreshSelectedQuestionnaireResponses]);
 
   useEffect(() => {
-    if (!selectedVotingId.trim()) {
+    if (!selectedQuestionnaireId.trim()) {
+      setSelectedResponseDetails([]);
+      setSelectedLatestPublishAt(null);
+      setSelectedLiveState(null);
       return;
     }
-    void refreshDerivedState();
-  }, [refreshDerivedState, selectedVotingId]);
+    void refreshSelectedQuestionnaireResponses();
+  }, [refreshSelectedQuestionnaireResponses, selectedQuestionnaireId]);
 
-  const discoveredRounds = useMemo(
-    () => sortRecordsByCreatedAtDescRust(
-      (derivedState?.public_state.rounds ?? []).map(roundToSession),
-    ),
-    [derivedState],
-  );
-
-  const leadCoordinatorOptions = useMemo(
+  const coordinatorOptions = useMemo(
     () => [...new Set(
-      discoveredRounds
-        .map((round) => round.coordinatorNpub.trim())
+      questionnaires
+        .map((questionnaire) => questionnaire.coordinatorNpub.trim())
         .filter((value) => value.length > 0),
     )],
-    [discoveredRounds],
+    [questionnaires],
   );
 
-  const rosterCoordinatorOptions = useMemo(
-    () => [...new Set(
-      discoveredRounds.flatMap((round) => round.authorizedCoordinatorNpubs.map((value) => value.trim())),
-    )].filter((value) => value.length > 0),
-    [discoveredRounds],
-  );
+  const [selectedCoordinatorNpub, setSelectedCoordinatorNpub] = useState("");
 
-  const filteredDiscoveredRounds = useMemo(
-    () => discoveredRounds.filter((round) => {
-      if (selectedLeadCoordinatorNpub && round.coordinatorNpub !== selectedLeadCoordinatorNpub) {
-        return false;
-      }
-      if (selectedRosterCoordinatorNpub && !round.authorizedCoordinatorNpubs.includes(selectedRosterCoordinatorNpub)) {
+  const filteredQuestionnaires = useMemo(
+    () => questionnaires.filter((questionnaire) => {
+      if (selectedCoordinatorNpub && questionnaire.coordinatorNpub !== selectedCoordinatorNpub) {
         return false;
       }
       const query = searchQuery.trim().toLowerCase();
       if (query.length > 0) {
         const matchesQuery = (
-          round.votingId.toLowerCase().includes(query)
-          || round.prompt.toLowerCase().includes(query)
-          || round.eventId.toLowerCase().includes(query)
-          || round.coordinatorNpub.toLowerCase().includes(query)
-          || round.authorizedCoordinatorNpubs.some((npub) => npub.toLowerCase().includes(query))
+          questionnaire.questionnaireId.toLowerCase().includes(query)
+          || questionnaire.title.toLowerCase().includes(query)
+          || questionnaire.description.toLowerCase().includes(query)
+          || questionnaire.coordinatorNpub.toLowerCase().includes(query)
+          || questionnaire.eventId.toLowerCase().includes(query)
         );
         if (!matchesQuery) {
           return false;
@@ -256,80 +238,55 @@ export default function SimpleAuditorApp() {
       }
       return true;
     }),
-    [discoveredRounds, searchQuery, selectedLeadCoordinatorNpub, selectedRosterCoordinatorNpub],
-  );
-
-  const filteredQuestionnaires = useMemo(
-    () => questionnaires.filter((questionnaire) => {
-      const query = searchQuery.trim().toLowerCase();
-      if (query.length === 0) {
-        return true;
-      }
-      return (
-        questionnaire.questionnaireId.toLowerCase().includes(query)
-        || questionnaire.title.toLowerCase().includes(query)
-        || questionnaire.description.toLowerCase().includes(query)
-        || questionnaire.coordinatorNpub.toLowerCase().includes(query)
-        || questionnaire.eventId.toLowerCase().includes(query)
-      );
-    }),
-    [questionnaires, searchQuery],
+    [questionnaires, searchQuery, selectedCoordinatorNpub],
   );
 
   useEffect(() => {
-    if (selectedLeadCoordinatorNpub && !leadCoordinatorOptions.includes(selectedLeadCoordinatorNpub)) {
-      setSelectedLeadCoordinatorNpub("");
+    if (selectedCoordinatorNpub && !coordinatorOptions.includes(selectedCoordinatorNpub)) {
+      setSelectedCoordinatorNpub("");
     }
-    if (selectedRosterCoordinatorNpub && !rosterCoordinatorOptions.includes(selectedRosterCoordinatorNpub)) {
-      setSelectedRosterCoordinatorNpub("");
-    }
-  }, [
-    leadCoordinatorOptions,
-    rosterCoordinatorOptions,
-    selectedLeadCoordinatorNpub,
-    selectedRosterCoordinatorNpub,
-  ]);
-
-  useEffect(() => {
-    if (filteredDiscoveredRounds.length === 0) {
-      if (selectedVotingId) {
-        setSelectedVotingId("");
+    if (filteredQuestionnaires.length === 0) {
+      if (selectedQuestionnaireId) {
+        setSelectedQuestionnaireId("");
       }
       return;
     }
-    if (!selectedVotingId || !filteredDiscoveredRounds.some((round) => round.votingId === selectedVotingId)) {
-      setSelectedVotingId(filteredDiscoveredRounds[0].votingId);
+    if (!selectedQuestionnaireId || !filteredQuestionnaires.some((entry) => entry.questionnaireId === selectedQuestionnaireId)) {
+      setSelectedQuestionnaireId(filteredQuestionnaires[0].questionnaireId);
     }
-  }, [filteredDiscoveredRounds, selectedVotingId]);
+  }, [coordinatorOptions, filteredQuestionnaires, selectedCoordinatorNpub, selectedQuestionnaireId]);
 
-  const selectedRoundId = selectedVotingId || filteredDiscoveredRounds[0]?.votingId || "";
-
-  const selectedRound = useMemo(
-    () => derivedState?.public_state.rounds.find((round) => round.round_id === selectedRoundId)
+  const selectedQuestionnaire = useMemo(
+    () => filteredQuestionnaires.find((entry) => entry.questionnaireId === selectedQuestionnaireId)
       ?? null,
-    [derivedState, selectedRoundId],
+    [filteredQuestionnaires, selectedQuestionnaireId],
   );
 
-  const selectedSummary = useMemo(
-    () => derivedState?.ballot_state.round_summaries.find((summary) => summary.round_id === selectedRound?.round_id) ?? null,
-    [derivedState, selectedRound?.round_id],
+  const liveAcceptedCount = useMemo(
+    () => selectedResponseDetails.filter((entry) => entry.accepted).length,
+    [selectedResponseDetails],
   );
 
-  const acceptedBallots = useMemo(
-    () => derivedState?.ballot_state.accepted_ballots.filter((ballot) => ballot.round_id === selectedRound?.round_id) ?? [],
-    [derivedState, selectedRound?.round_id],
+  const liveRejectedCount = useMemo(
+    () => selectedResponseDetails.filter((entry) => !entry.accepted).length,
+    [selectedResponseDetails],
   );
 
-  const rejectedBallots = useMemo(
-    () => derivedState?.ballot_state.rejected_ballots.filter((ballot) => ballot.round_id === selectedRound?.round_id) ?? [],
-    [derivedState, selectedRound?.round_id],
+  const unpublishedAcceptedCount = useMemo(
+    () => selectedResponseDetails.filter((entry) => entry.accepted && !entry.includedInLatestPublish).length,
+    [selectedResponseDetails],
+  );
+
+  const unpublishedRejectedCount = useMemo(
+    () => selectedResponseDetails.filter((entry) => !entry.accepted && !entry.includedInLatestPublish).length,
+    [selectedResponseDetails],
   );
 
   async function refreshNow() {
-    snapshotRef.current = null;
-    setRefreshStatus("Refreshing public rounds...");
     setQuestionnaireRefreshStatus("Refreshing public questionnaires...");
-    await Promise.all([refreshDerivedState(), refreshQuestionnaires()]);
+    setResponseRefreshStatus("Refreshing questionnaire responses...");
+    await refreshQuestionnaires();
+    await refreshSelectedQuestionnaireResponses();
   }
 
   function formatQuestionnaireTime(unix: number | null) {
@@ -339,46 +296,41 @@ export default function SimpleAuditorApp() {
     return new Date(unix * 1000).toLocaleString();
   }
 
+  function formatRoundOptionLabel(entry: AuditorQuestionnaireEntry) {
+    return `${entry.title} · ${entry.questionnaireId}`;
+  }
+
+  function formatPublishState(includedInLatestPublish: boolean) {
+    if (selectedLatestPublishAt === null) {
+      return "Unpublished";
+    }
+    return includedInLatestPublish ? "Published" : "Unpublished";
+  }
+
   return (
     <main className='simple-voter-shell'>
       <section className='simple-voter-page'>
         <div className='simple-voter-header-row'>
           <h1 className='simple-voter-title'>Auditor</h1>
           <button type='button' className='simple-voter-primary' onClick={() => void refreshNow()}>
-            Refresh rounds
+            Refresh
           </button>
         </div>
 
-        <SimpleCollapsibleSection title='Discovered rounds'>
-          {discoveredRounds.length > 0 ? (
+        <SimpleCollapsibleSection title='Questionnaire rounds'>
+          {questionnaires.length > 0 ? (
             <>
-              <label className='simple-voter-label' htmlFor='simple-auditor-lead-coordinator'>
-                Lead coordinator
-              </label>
-              <select
-                id='simple-auditor-lead-coordinator'
-                className='simple-voter-input'
-                value={selectedLeadCoordinatorNpub}
-                onChange={(event) => setSelectedLeadCoordinatorNpub(event.target.value)}
-              >
-                <option value=''>All lead coordinators</option>
-                {leadCoordinatorOptions.map((coordinatorNpub) => (
-                  <option key={coordinatorNpub} value={coordinatorNpub}>
-                    {coordinatorNpub}
-                  </option>
-                ))}
-              </select>
               <label className='simple-voter-label' htmlFor='simple-auditor-coordinator-npub'>
                 Coordinator npub
               </label>
               <select
                 id='simple-auditor-coordinator-npub'
                 className='simple-voter-input'
-                value={selectedRosterCoordinatorNpub}
-                onChange={(event) => setSelectedRosterCoordinatorNpub(event.target.value)}
+                value={selectedCoordinatorNpub}
+                onChange={(event) => setSelectedCoordinatorNpub(event.target.value)}
               >
                 <option value=''>Any coordinator npub</option>
-                {rosterCoordinatorOptions.map((coordinatorNpub) => (
+                {coordinatorOptions.map((coordinatorNpub) => (
                   <option key={coordinatorNpub} value={coordinatorNpub}>
                     {coordinatorNpub}
                   </option>
@@ -394,7 +346,7 @@ export default function SimpleAuditorApp() {
                 onChange={(event) => setSearchQuery(event.target.value)}
                 placeholder='Filter by npub, round/questionnaire ID, or prompt...'
               />
-              {filteredDiscoveredRounds.length > 0 ? (
+              {filteredQuestionnaires.length > 0 ? (
                 <>
                   <label className='simple-voter-label' htmlFor='simple-auditor-round'>
                     Round
@@ -402,46 +354,44 @@ export default function SimpleAuditorApp() {
                   <select
                     id='simple-auditor-round'
                     className='simple-voter-input'
-                    value={selectedRound?.round_id ?? ''}
-                    onChange={(event) => setSelectedVotingId(event.target.value)}
+                    value={selectedQuestionnaire?.questionnaireId ?? ''}
+                    onChange={(event) => setSelectedQuestionnaireId(event.target.value)}
                   >
-                    {filteredDiscoveredRounds.map((round) => (
-                      <option key={round.eventId} value={round.votingId}>
-                        {formatRoundOptionLabel(round)}
+                    {filteredQuestionnaires.map((entry) => (
+                      <option key={entry.eventId} value={entry.questionnaireId}>
+                        {formatRoundOptionLabel(entry)}
                       </option>
                     ))}
                   </select>
                 </>
               ) : (
-                <p className='simple-voter-note'>No rounds found for the selected coordinator filters.</p>
+                <p className='simple-voter-note'>No questionnaire rounds found for the selected filters.</p>
               )}
-              {selectedRound ? (
+              {selectedQuestionnaire ? (
                 <div className='simple-auditor-summary-grid'>
                   <div className='simple-auditor-summary-card'>
                     <p className='simple-auditor-summary-label'>Question</p>
-                    <p className='simple-voter-question'>{selectedRound.prompt}</p>
+                    <p className='simple-voter-question'>{selectedQuestionnaire.title}</p>
                   </div>
                   <div className='simple-auditor-summary-card'>
-                    <p className='simple-auditor-summary-label'>Voting ID</p>
-                    <p className='simple-voter-question'>{selectedRound.round_id}</p>
+                    <p className='simple-auditor-summary-label'>Questionnaire ID</p>
+                    <p className='simple-voter-question'>{selectedQuestionnaire.questionnaireId}</p>
                   </div>
                   <div className='simple-auditor-summary-card'>
-                    <p className='simple-auditor-summary-label'>Threshold</p>
-                    <p className='simple-voter-question'>
-                      {selectedRound.threshold_t} of {selectedRound.threshold_n}
-                    </p>
+                    <p className='simple-auditor-summary-label'>Publish state</p>
+                    <p className='simple-voter-question'>{selectedLatestPublishAt ? `Published at ${formatQuestionnaireTime(selectedLatestPublishAt)}` : "Not published yet"}</p>
                   </div>
                   <div className='simple-auditor-summary-card'>
                     <p className='simple-auditor-summary-label'>Round phase</p>
-                    <p className='simple-voter-question'>{selectedRound.phase}</p>
+                    <p className='simple-voter-question'>{formatQuestionnaireStateLabel(selectedLiveState ?? selectedQuestionnaire.state)}</p>
                   </div>
                 </div>
               ) : null}
             </>
           ) : (
-            <p className='simple-voter-empty'>No public rounds discovered yet.</p>
+            <p className='simple-voter-empty'>No public questionnaire rounds discovered yet.</p>
           )}
-          {refreshStatus ? <p className='simple-voter-note'>{refreshStatus}</p> : null}
+          {questionnaireRefreshStatus ? <p className='simple-voter-note'>{questionnaireRefreshStatus}</p> : null}
         </SimpleCollapsibleSection>
 
         <SimpleCollapsibleSection title='Discovered questionnaires'>
@@ -455,7 +405,7 @@ export default function SimpleAuditorApp() {
                       <p className='simple-voter-note'>Questionnaire ID: {questionnaire.questionnaireId}</p>
                       <p className='simple-voter-note'>Coordinator: {questionnaire.coordinatorNpub || "Unknown"}</p>
                       <p className='simple-voter-note'>
-                        State: {questionnaire.state ?? "Unknown"} | Responses: {questionnaire.acceptedResponseCount ?? "Not published"}
+                        State: {formatQuestionnaireStateLabel(questionnaire.state)} | Published responses: {questionnaire.publishedAcceptedResponseCount ?? "Not published"}
                       </p>
                       <p className='simple-voter-note'>
                         Created: {formatQuestionnaireTime(questionnaire.createdAt)} | Opens: {formatQuestionnaireTime(questionnaire.openAt)} | Closes: {formatQuestionnaireTime(questionnaire.closeAt)}
@@ -474,90 +424,68 @@ export default function SimpleAuditorApp() {
         </SimpleCollapsibleSection>
 
         <SimpleCollapsibleSection title='Audit summary'>
-          {selectedRound ? (
+          {selectedQuestionnaire ? (
             <>
               <div className='simple-auditor-summary-grid'>
                 <div className='simple-auditor-summary-card'>
-                  <p className='simple-auditor-summary-label'>Accepted Yes</p>
-                  <p className='simple-auditor-score'>{selectedSummary?.yes_count ?? 0}</p>
+                  <p className='simple-auditor-summary-label'>Live valid responses</p>
+                  <p className='simple-auditor-score'>{liveAcceptedCount}</p>
                 </div>
                 <div className='simple-auditor-summary-card'>
-                  <p className='simple-auditor-summary-label'>Accepted No</p>
-                  <p className='simple-auditor-score'>{selectedSummary?.no_count ?? 0}</p>
+                  <p className='simple-auditor-summary-label'>Live invalid responses</p>
+                  <p className='simple-auditor-score'>{liveRejectedCount}</p>
                 </div>
                 <div className='simple-auditor-summary-card'>
-                  <p className='simple-auditor-summary-label'>Rejected ballots</p>
-                  <p className='simple-auditor-score'>{selectedSummary?.rejected_ballot_count ?? 0}</p>
+                  <p className='simple-auditor-summary-label'>Unpublished valid</p>
+                  <p className='simple-auditor-score'>{unpublishedAcceptedCount}</p>
                 </div>
                 <div className='simple-auditor-summary-card'>
-                  <p className='simple-auditor-summary-label'>Acceptance rule</p>
-                  <p className='simple-voter-question'>{derivedState?.ballot_state.acceptance_rule.replace(/_/g, ' ')}</p>
+                  <p className='simple-auditor-summary-label'>Unpublished invalid</p>
+                  <p className='simple-auditor-score'>{unpublishedRejectedCount}</p>
                 </div>
               </div>
-              <p className='simple-voter-question'>
-                Authorized coordinators: {selectedRound.coordinator_roster.length}
+              <p className='simple-voter-note'>
+                Published summary: {selectedQuestionnaire.publishedAcceptedResponseCount ?? 0} valid, {selectedQuestionnaire.publishedRejectedResponseCount ?? 0} invalid.
               </p>
-              <ul className='simple-delivery-diagnostics simple-delivery-diagnostics-compact'>
-                {selectedRound.coordinator_roster.map((npub) => (
-                  <li key={npub} className='simple-delivery-ok'>{npub}</li>
-                ))}
-              </ul>
-              {derivedState?.public_state.issues.length ? (
-                <ul className='simple-delivery-diagnostics simple-delivery-diagnostics-compact'>
-                  {derivedState.public_state.issues.map((issue) => (
-                    <li key={`${issue.code}:${issue.event_id ?? issue.detail}`} className='simple-delivery-error'>
-                      {issue.code}: {issue.detail}
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
+              {responseRefreshStatus ? <p className='simple-voter-note'>{responseRefreshStatus}</p> : null}
             </>
           ) : (
-            <p className='simple-voter-empty'>Choose a public round to audit.</p>
+            <p className='simple-voter-empty'>Choose a questionnaire round to audit.</p>
           )}
         </SimpleCollapsibleSection>
 
         <SimpleCollapsibleSection title='Submitted votes'>
-          {selectedRound ? (
-            acceptedBallots.length > 0 || rejectedBallots.length > 0 ? (
+          {selectedQuestionnaire ? (
+            selectedResponseDetails.length > 0 ? (
               <>
-                <p className='simple-voter-question'>{selectedRound.prompt}</p>
-                <p className='simple-submitted-score'>
-                  Yes: {selectedSummary?.yes_count ?? 0} | No: {selectedSummary?.no_count ?? 0}
-                </p>
+                <p className='simple-voter-question'>{selectedQuestionnaire.title}</p>
+                <p className='simple-submitted-score'>Total responses: {selectedResponseDetails.length}</p>
                 <ul className='simple-voter-list'>
-                  {acceptedBallots.map((ballot) => (
-                    <li key={ballot.event_id} className='simple-voter-list-item'>
+                  {selectedResponseDetails.map((entry) => (
+                    <li key={entry.event.id} className='simple-voter-list-item'>
                       <div className='simple-submitted-vote-row'>
                         <div className='simple-submitted-vote-copy'>
                           <p className='simple-voter-question'>
-                            Vote {ballot.choice} <span className='simple-status-valid'>[Valid]</span>
+                            Response {entry.response.responseId} {entry.accepted
+                              ? <span className='simple-status-valid'>[Valid]</span>
+                              : <span className='simple-status-invalid'>[Invalid: duplicate nullifier]</span>}
                           </p>
-                          <p className='simple-voter-note'>Ballot {ballot.event_id}</p>
-                        </div>
-                        <TokenFingerprint tokenId={ballot.token_id} compact large hideMetadata />
-                      </div>
-                    </li>
-                  ))}
-                  {rejectedBallots.map((ballot) => (
-                    <li key={ballot.event_id} className='simple-voter-list-item'>
-                      <div className='simple-submitted-vote-row'>
-                        <div className='simple-submitted-vote-copy'>
-                          <p className='simple-voter-question'>
-                            Vote {ballot.choice} <span className='simple-status-invalid'>[Invalid: {ballot.reason.detail}]</span>
+                          <p className='simple-voter-note'>Event {entry.event.id}</p>
+                          <p className='simple-voter-note'>
+                            Publish state: {formatPublishState(entry.includedInLatestPublish)} | Submitted: {formatQuestionnaireTime(Number(entry.event.created_at ?? 0))}
                           </p>
-                          <p className='simple-voter-note'>Ballot {ballot.event_id}</p>
                         </div>
+                        <TokenFingerprint tokenId={entry.response.tokenNullifier} compact large hideMetadata />
                       </div>
                     </li>
                   ))}
                 </ul>
               </>
             ) : (
-              <p className='simple-voter-empty'>No submitted votes found for this round yet.</p>
+              <p className='simple-voter-empty'>No submitted responses found for this round yet.</p>
             )
           ) : (
-            <p className='simple-voter-empty'>Choose a public round to inspect ballots.</p>
+            <p className='simple-voter-empty'>Choose a questionnaire round to inspect responses.</p>
           )}
         </SimpleCollapsibleSection>
       </section>

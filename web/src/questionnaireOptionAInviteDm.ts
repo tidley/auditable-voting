@@ -5,6 +5,7 @@ import { SIMPLE_DM_RELAYS } from "./simpleShardDm";
 import { normalizeRelaysRust } from "./wasm/auditableVotingCore";
 import type { ElectionInviteMessage } from "./questionnaireOptionA";
 import type { SignerService } from "./services/signerService";
+import { parseInviteFromUrl } from "./questionnaireInvite";
 
 const OPTION_A_INVITE_DM_RELAYS_MAX = 12;
 const OPTION_A_INVITE_DM_READ_RELAYS_MAX = 3;
@@ -102,8 +103,22 @@ async function fetchRecipientNip17Relays(input: {
 }
 
 function parseInviteDmContent(content: string): ElectionInviteMessage | null {
+  const trimmed = content.trim();
+  const urlMatch = trimmed.match(/https?:\/\/\S+/i);
+  if (urlMatch) {
+    try {
+      const url = new URL(urlMatch[0]);
+      const { invite } = parseInviteFromUrl(url.search);
+      if (invite) {
+        return invite;
+      }
+    } catch {
+      // Fall through to JSON parsing for legacy payloads.
+    }
+  }
+
   try {
-    const parsed = JSON.parse(content) as Partial<InviteDmEnvelope> | ElectionInviteMessage;
+    const parsed = JSON.parse(trimmed) as Partial<InviteDmEnvelope> | ElectionInviteMessage;
     const invite = (parsed as InviteDmEnvelope).type === "optiona_invite_dm"
       ? (parsed as InviteDmEnvelope).invite
       : parsed as ElectionInviteMessage;
@@ -128,6 +143,7 @@ function createRumor(input: {
   relayUrl?: string;
   envelope: InviteDmEnvelope;
 }) {
+  const messageContent = input.envelope.invite.voteUrl.trim() || JSON.stringify(input.envelope);
   const rumor = {
     kind: KIND_RUMOR_MESSAGE,
     created_at: Math.round(Date.now() / 1000),
@@ -136,7 +152,7 @@ function createRumor(input: {
       ["alt", "Direct message"],
       ["subject", "Auditable Voting invite"],
     ],
-    content: JSON.stringify(input.envelope),
+    content: messageContent,
     pubkey: input.senderHex,
   };
   return {
