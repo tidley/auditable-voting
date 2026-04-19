@@ -8,7 +8,7 @@ import {
   fetchQuestionnaireState,
 } from "./questionnaireTransport";
 import { formatQuestionnaireStateLabel } from "./questionnaireRuntime";
-import type { QuestionnaireResultSummary } from "./questionnaireProtocol";
+import type { QuestionnaireQuestion, QuestionnaireResultSummary } from "./questionnaireProtocol";
 
 const AUDITOR_REFRESH_INTERVAL_MS = 15000;
 const AUDITOR_QUESTIONNAIRE_DETAIL_LIMIT = 20;
@@ -26,6 +26,7 @@ type AuditorQuestionnaireEntry = {
   publishedAcceptedResponseCount: number | null;
   publishedRejectedResponseCount: number | null;
   resultPublishedAt: number | null;
+  questions: QuestionnaireQuestion[];
   eventId: string;
 };
 
@@ -40,6 +41,9 @@ export default function SimpleAuditorApp() {
   const [selectedLatestPublishAt, setSelectedLatestPublishAt] = useState<number | null>(null);
   const [selectedLiveState, setSelectedLiveState] = useState<string | null>(null);
   const [selectedResultSummary, setSelectedResultSummary] = useState<QuestionnaireResultSummary | null>(null);
+  const [voterSearchQuery, setVoterSearchQuery] = useState("");
+  const [fullResultsOpen, setFullResultsOpen] = useState(false);
+  const [freeTextViewerQuestionId, setFreeTextViewerQuestionId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [questionnaireRefreshStatus, setQuestionnaireRefreshStatus] = useState<string | null>(null);
   const [responseRefreshStatus, setResponseRefreshStatus] = useState<string | null>(null);
@@ -104,6 +108,7 @@ export default function SimpleAuditorApp() {
           publishedAcceptedResponseCount: latestResult?.acceptedResponseCount ?? null,
           publishedRejectedResponseCount: latestResult?.rejectedResponseCount ?? null,
           resultPublishedAt: Number(latestResult?.createdAt ?? 0) || null,
+          questions: entry.definition.questions ?? [],
           eventId: entry.event.id,
         };
       }));
@@ -267,6 +272,11 @@ export default function SimpleAuditorApp() {
     [filteredQuestionnaires, selectedQuestionnaireId],
   );
 
+  const selectedQuestionById = useMemo(
+    () => new Map((selectedQuestionnaire?.questions ?? []).map((question) => [question.questionId, question])),
+    [selectedQuestionnaire?.questions],
+  );
+
   const liveAcceptedCount = useMemo(
     () => selectedResponseDetails.filter((entry) => entry.accepted).length,
     [selectedResponseDetails],
@@ -292,6 +302,17 @@ export default function SimpleAuditorApp() {
   const publishedValidityPercent = publishedTotalCount > 0
     ? ((publishedValidCount / publishedTotalCount) * 100).toFixed(1)
     : "0.0";
+  const filteredResponseDetails = useMemo(() => {
+    const query = voterSearchQuery.trim().toLowerCase();
+    if (!query) {
+      return selectedResponseDetails;
+    }
+    return selectedResponseDetails.filter((entry) => (
+      entry.response.authorPubkey.toLowerCase().includes(query)
+      || entry.response.responseId.toLowerCase().includes(query)
+      || entry.response.tokenNullifier.toLowerCase().includes(query)
+    ));
+  }, [selectedResponseDetails, voterSearchQuery]);
 
   async function refreshNow() {
     setQuestionnaireRefreshStatus("Refreshing public questionnaires...");
@@ -321,7 +342,7 @@ export default function SimpleAuditorApp() {
   return (
     <main className='simple-voter-shell'>
       <section className='simple-voter-page'>
-        <section className='simple-voter-section simple-auditor-panel'>
+        <section className='simple-voter-section simple-auditor-panel' data-refresh-status={questionnaireRefreshStatus ?? ""}>
           <div className='simple-voter-header-row'>
             <h2 className='simple-voter-section-title'>Questionnaire Rounds</h2>
             <button type='button' className='simple-voter-secondary' onClick={() => void refreshNow()}>
@@ -381,7 +402,6 @@ export default function SimpleAuditorApp() {
           ) : (
             <p className='simple-voter-empty'>No public questionnaire rounds discovered yet.</p>
           )}
-          {questionnaireRefreshStatus ? <p className='simple-voter-note'>{questionnaireRefreshStatus}</p> : null}
         </section>
 
         <section className='simple-voter-section simple-auditor-panel'>
@@ -405,8 +425,8 @@ export default function SimpleAuditorApp() {
                   <p className='simple-voter-question'>{selectedQuestionnaire.questionnaireId}</p>
                 </div>
                 <div className='simple-auditor-summary-card'>
-                  <p className='simple-auditor-summary-label'>Published at</p>
-                  <p className='simple-voter-question'>{formatQuestionnaireTime(Number(selectedResultSummary?.createdAt ?? selectedQuestionnaire.resultPublishedAt ?? 0))}</p>
+                  <p className='simple-auditor-summary-label'>Round phase</p>
+                  <p className='simple-voter-question'>{formatQuestionnaireStateLabel(selectedLiveState ?? selectedQuestionnaire.state)}</p>
                 </div>
               </div>
               {selectedResultSummary ? (
@@ -414,7 +434,7 @@ export default function SimpleAuditorApp() {
                   <div className='simple-auditor-question-grid'>
                     {selectedResultSummary.questionSummaries.map((summary) => (
                       <article key={`${summary.questionId}:${summary.answerType}`} className='simple-auditor-question-card'>
-                        <h3 className='simple-voter-question'>Question {summary.questionId}</h3>
+                        <h3 className='simple-voter-question'>{selectedQuestionById.get(summary.questionId)?.prompt || `Question ${summary.questionId}`}</h3>
                         {summary.answerType === "yes_no" ? (
                           <div className='simple-auditor-bars'>
                             <p className='simple-voter-note'>Yes: {summary.yesCount}</p>
@@ -429,19 +449,35 @@ export default function SimpleAuditorApp() {
                         ) : summary.answerType === "multiple_choice" ? (
                           <ul className='simple-delivery-diagnostics simple-delivery-diagnostics-compact'>
                             {Object.entries(summary.optionCounts).map(([optionId, count]) => (
-                              <li key={optionId} className='simple-delivery-ok'>{optionId}: {count}</li>
+                              <li key={optionId} className='simple-delivery-ok'>
+                                {(selectedQuestionById.get(summary.questionId)?.type === "multiple_choice"
+                                  ? selectedQuestionById.get(summary.questionId)?.options.find((option) => option.optionId === optionId)?.label
+                                  : optionId) ?? optionId}: {count}
+                              </li>
                             ))}
                           </ul>
                         ) : (
                           <>
                             <p className='simple-voter-note'>Free-text responses: {summary.freeTextCount}</p>
-                            <button type='button' className='simple-voter-secondary'>View</button>
+                            <button
+                              type='button'
+                              className='simple-voter-secondary'
+                              onClick={() => setFreeTextViewerQuestionId(summary.questionId)}
+                            >
+                              View
+                            </button>
                           </>
                         )}
                       </article>
                     ))}
                   </div>
-                  <button type='button' className='simple-voter-secondary simple-auditor-full-results'>View Full Results</button>
+                  <button
+                    type='button'
+                    className='simple-voter-secondary simple-auditor-full-results'
+                    onClick={() => setFullResultsOpen(true)}
+                  >
+                    View Full Results
+                  </button>
                 </>
               ) : (
                 <p className='simple-voter-empty'>No published result summary yet for this questionnaire.</p>
@@ -449,38 +485,6 @@ export default function SimpleAuditorApp() {
             </>
           ) : (
             <p className='simple-voter-empty'>Choose a questionnaire round to inspect results.</p>
-          )}
-        </section>
-
-        <section className='simple-voter-section'>
-          <h2 className='simple-voter-section-title'>Audit Summary</h2>
-          {selectedQuestionnaire ? (
-            <>
-              <div className='simple-auditor-summary-grid'>
-                <div className='simple-auditor-summary-card'>
-                  <p className='simple-auditor-summary-label'>Live valid responses</p>
-                  <p className='simple-auditor-score'>{liveAcceptedCount}</p>
-                </div>
-                <div className='simple-auditor-summary-card'>
-                  <p className='simple-auditor-summary-label'>Live invalid responses</p>
-                  <p className='simple-auditor-score'>{liveRejectedCount}</p>
-                </div>
-                <div className='simple-auditor-summary-card'>
-                  <p className='simple-auditor-summary-label'>Unpublished valid</p>
-                  <p className='simple-auditor-score'>{unpublishedAcceptedCount}</p>
-                </div>
-                <div className='simple-auditor-summary-card'>
-                  <p className='simple-auditor-summary-label'>Unpublished invalid</p>
-                  <p className='simple-auditor-score'>{unpublishedRejectedCount}</p>
-                </div>
-              </div>
-              <p className='simple-voter-note'>
-                Published summary: {selectedQuestionnaire.publishedAcceptedResponseCount ?? 0} valid, {selectedQuestionnaire.publishedRejectedResponseCount ?? 0} invalid.
-              </p>
-              {responseRefreshStatus ? <p className='simple-voter-note'>{responseRefreshStatus}</p> : null}
-            </>
-          ) : (
-            <p className='simple-voter-empty'>Choose a questionnaire round to audit.</p>
           )}
         </section>
 
@@ -519,6 +523,98 @@ export default function SimpleAuditorApp() {
             <p className='simple-voter-empty'>Choose a questionnaire round to inspect responses.</p>
           )}
         </section>
+
+        {fullResultsOpen && selectedQuestionnaire ? (
+          <section className='token-fingerprint-overlay' role='dialog' aria-modal='true' aria-label='Full questionnaire results'>
+            <button type='button' className='token-fingerprint-overlay-close' onClick={() => setFullResultsOpen(false)}>Close</button>
+            <div className='token-fingerprint-overlay-card simple-auditor-full-results-card'>
+              <h3 className='simple-voter-question'>Full Results · {selectedQuestionnaire.title}</h3>
+              <label className='simple-voter-label' htmlFor='simple-auditor-voter-search'>Filter by voter ID</label>
+              <input
+                id='simple-auditor-voter-search'
+                className='simple-voter-input'
+                value={voterSearchQuery}
+                onChange={(event) => setVoterSearchQuery(event.target.value)}
+                placeholder='Search by voter npub, response ID, or token...'
+              />
+              {filteredResponseDetails.length > 0 ? (
+                <ul className='simple-voter-list'>
+                  {filteredResponseDetails.map((entry) => (
+                    <li key={entry.event.id} className='simple-voter-list-item'>
+                      <div className='simple-submitted-vote-row'>
+                        <div className='simple-submitted-vote-copy'>
+                          <p className='simple-voter-question'>{entry.response.authorPubkey}</p>
+                          <p className='simple-voter-note'>Response: {entry.response.responseId} · {entry.accepted ? "Valid" : "Invalid"}</p>
+                          {Array.isArray(entry.response.answers) && entry.response.answers.length > 0 ? (
+                            <ul className='simple-delivery-diagnostics simple-delivery-diagnostics-compact'>
+                              {entry.response.answers.map((answer) => {
+                                const question = selectedQuestionById.get(answer.questionId);
+                                const prompt = question?.prompt || answer.questionId;
+                                if (answer.answerType === "yes_no") {
+                                  return <li key={`${entry.event.id}:${answer.questionId}`} className='simple-delivery-ok'>{prompt}: {answer.value ? "Yes" : "No"}</li>;
+                                }
+                                if (answer.answerType === "multiple_choice") {
+                                  const selectedLabels = answer.selectedOptionIds.map((optionId) => (
+                                    question?.type === "multiple_choice"
+                                      ? question.options.find((option) => option.optionId === optionId)?.label ?? optionId
+                                      : optionId
+                                  ));
+                                  return <li key={`${entry.event.id}:${answer.questionId}`} className='simple-delivery-ok'>{prompt}: {selectedLabels.join(", ") || "No option selected"}</li>;
+                                }
+                                return <li key={`${entry.event.id}:${answer.questionId}`} className='simple-delivery-ok'>{prompt}: {answer.text || "(empty)"}</li>;
+                              })}
+                            </ul>
+                          ) : (
+                            <p className='simple-voter-note'>Answer payload is encrypted or unavailable in public events.</p>
+                          )}
+                        </div>
+                        <TokenFingerprint tokenId={entry.response.tokenNullifier} compact large hideMetadata />
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className='simple-voter-empty'>No voter responses match the current filter.</p>
+              )}
+            </div>
+          </section>
+        ) : null}
+
+        {freeTextViewerQuestionId && selectedQuestionnaire ? (
+          <section className='token-fingerprint-overlay' role='dialog' aria-modal='true' aria-label='Free-text responses'>
+            <button type='button' className='token-fingerprint-overlay-close' onClick={() => setFreeTextViewerQuestionId(null)}>Close</button>
+            <div className='token-fingerprint-overlay-card simple-auditor-full-results-card'>
+              <h3 className='simple-voter-question'>
+                {selectedQuestionById.get(freeTextViewerQuestionId)?.prompt || freeTextViewerQuestionId}
+              </h3>
+              <ul className='simple-voter-list'>
+                {selectedResponseDetails
+                  .filter((entry) => Array.isArray(entry.response.answers))
+                  .map((entry) => {
+                    const freeText = entry.response.answers?.find((answer) => (
+                      answer.questionId === freeTextViewerQuestionId && answer.answerType === "free_text"
+                    ));
+                    if (!freeText || freeText.answerType !== "free_text") {
+                      return null;
+                    }
+                    return (
+                      <li key={`${entry.event.id}:free-text`} className='simple-voter-list-item'>
+                        <p className='simple-voter-note'>{entry.response.authorPubkey}</p>
+                        <p className='simple-voter-question'>{freeText.text || "(empty)"}</p>
+                      </li>
+                    );
+                  })
+                  .filter(Boolean)}
+              </ul>
+              {!selectedResponseDetails.some((entry) => (
+                Array.isArray(entry.response.answers)
+                && entry.response.answers.some((answer) => answer.questionId === freeTextViewerQuestionId && answer.answerType === "free_text")
+              )) ? (
+                <p className='simple-voter-empty'>No free-text payloads are publicly available for this question.</p>
+              ) : null}
+            </div>
+          </section>
+        ) : null}
       </section>
     </main>
   );

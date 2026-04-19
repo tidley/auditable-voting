@@ -322,7 +322,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
 
     const localVoterNpub = props.localVoterNpub?.trim() ?? "";
-    if (localVoterNpub && voterNpub === localVoterNpub) {
+    const hasLocalSecretKey = Boolean(props.localVoterNsec?.trim());
+    if (hasLocalSecretKey && localVoterNpub && voterNpub === localVoterNpub) {
       return mergeByKey(fromMailbox);
     }
 
@@ -368,9 +369,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
 
   async function login() {
     const localVoterNpub = props.localVoterNpub?.trim() ?? "";
+    const hasLocalSecretKey = Boolean(props.localVoterNsec?.trim());
     const signedInTrimmed = signedInNpub.trim();
 
-    if (localVoterNpub && (!signedInTrimmed || signedInTrimmed === localVoterNpub)) {
+    if (hasLocalSecretKey && localVoterNpub && (!signedInTrimmed || signedInTrimmed === localVoterNpub)) {
       try {
         const usedLocal = await loginWithLocalIdentity(localVoterNpub);
         if (usedLocal) {
