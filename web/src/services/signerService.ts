@@ -25,6 +25,10 @@ export interface BrowserNostrSigner {
     decrypt?: (pubkey: string, ciphertext: string) => Promise<string>;
     signEvent?: <T extends Record<string, unknown>>(event: T) => Promise<T & { id?: string; sig?: string; pubkey?: string }>;
   };
+  nip44?: {
+    encrypt?: (pubkey: string, plaintext: string) => Promise<string>;
+    decrypt?: (pubkey: string, ciphertext: string) => Promise<string>;
+  };
 }
 
 export interface SignerService {
@@ -265,16 +269,13 @@ export function createSignerService(): SignerService {
 
   const getSigner = async (): Promise<BrowserNostrSigner | NostrConnectSignerLike | null> => {
     const signer = await waitForBrowserSigner();
-    if (signer) {
-      return signer;
-    }
     if (!isAndroidBrowser()) {
-      return null;
+      return signer;
     }
     try {
       return await connectAmberSigner();
     } catch {
-      return null;
+      return signer;
     }
   };
 

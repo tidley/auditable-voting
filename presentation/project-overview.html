@@ -573,6 +573,7 @@
           <li>Non-lead ticket sends are slightly staggered by share index to reduce same-recipient relay bursts</li>
           <li>Automatic follow, blind-request, ticket, and acknowledgement sends now use random 0-30s human-style pacing with slower retries</li>
           <li>Questionnaire invite links open the Vote tab after signer login, complete voter login from the public questionnaire id without scanning old encrypted invite DMs, and preserve the same ballot-request id until issuance arrives</li>
+          <li>Android signer flows now prefer Amber through NIP-46 when available so `get_public_key`, `sign_event`, and `nip44` operations stay on one signer identity</li>
           <li>Published questionnaire definitions include the blind-signing public key, are cached locally, and are attached to invites and credential issuances, so linked voters can request ballots even when historical invite DMs are unavailable</li>
           <li>Accepted Option A DM submissions now feed the same coordinator response summary as public questionnaire response events</li>
           <li>Auditors now discover recent public questionnaires through kind-only backfill when no questionnaire ID is selected, then show state and published response totals where available</li>

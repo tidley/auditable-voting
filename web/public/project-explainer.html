@@ -220,6 +220,8 @@ The current repository contains only the browser app. It has voter, coordinator,
 
 Invite links can point to a public questionnaire id. Signer login opens the Vote tab directly, completes voter login, and loads the public questionnaire definition, including the blind-signing public key, without scanning old encrypted invite DMs. Manual invite checks and credential-result polling use recent bounded signer DM reads.
 
+On Android, signer sessions prefer Amber through NIP-46 when available so `get_public_key`, `sign_event`, and `nip44` operations stay on one signer identity.
+
 Drafted response fields stay intact when the credential or refreshed definition arrives for the same questionnaire.
 
 ### Auditor
