@@ -1236,6 +1236,57 @@ code {
   color: #f8fafc;
 }
 
+.simple-auditor-panel .simple-voter-header-row {
+  margin-bottom: 14px;
+}
+
+.simple-auditor-results-status {
+  display: grid;
+  grid-template-columns: auto minmax(120px, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.simple-auditor-results-progress {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: #1e293b;
+  overflow: hidden;
+}
+
+.simple-auditor-results-progress span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #60a5fa, #7dd3fc);
+}
+
+.simple-auditor-question-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.simple-auditor-question-card {
+  padding: 14px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #111827;
+  display: grid;
+  gap: 8px;
+}
+
+.simple-auditor-bars {
+  display: grid;
+  gap: 6px;
+}
+
+.simple-auditor-full-results {
+  width: 100%;
+}
+
 .simple-voter-input-inline {
   margin-bottom: 0;
 }

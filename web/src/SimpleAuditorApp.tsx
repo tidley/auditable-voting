@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 import TokenFingerprint from "./TokenFingerprint";
 import {
   evaluateQuestionnaireBlindAdmissions,
@@ -287,6 +286,12 @@ export default function SimpleAuditorApp() {
     () => selectedResponseDetails.filter((entry) => !entry.accepted && !entry.includedInLatestPublish).length,
     [selectedResponseDetails],
   );
+  const publishedValidCount = selectedResultSummary?.acceptedResponseCount ?? selectedQuestionnaire?.publishedAcceptedResponseCount ?? 0;
+  const publishedInvalidCount = selectedResultSummary?.rejectedResponseCount ?? selectedQuestionnaire?.publishedRejectedResponseCount ?? 0;
+  const publishedTotalCount = Math.max(0, publishedValidCount + publishedInvalidCount);
+  const publishedValidityPercent = publishedTotalCount > 0
+    ? ((publishedValidCount / publishedTotalCount) * 100).toFixed(1)
+    : "0.0";
 
   async function refreshNow() {
     setQuestionnaireRefreshStatus("Refreshing public questionnaires...");
@@ -316,14 +321,13 @@ export default function SimpleAuditorApp() {
   return (
     <main className='simple-voter-shell'>
       <section className='simple-voter-page'>
-        <div className='simple-voter-header-row'>
-          <h1 className='simple-voter-title'>Auditor</h1>
-          <button type='button' className='simple-voter-primary' onClick={() => void refreshNow()}>
-            Refresh
-          </button>
-        </div>
-
-        <SimpleCollapsibleSection title='Questionnaire rounds'>
+        <section className='simple-voter-section simple-auditor-panel'>
+          <div className='simple-voter-header-row'>
+            <h2 className='simple-voter-section-title'>Questionnaire Rounds</h2>
+            <button type='button' className='simple-voter-secondary' onClick={() => void refreshNow()}>
+              Refresh
+            </button>
+          </div>
           {questionnaires.length > 0 ? (
             <>
               <label className='simple-voter-label' htmlFor='simple-auditor-coordinator-npub'>
@@ -373,54 +377,55 @@ export default function SimpleAuditorApp() {
               ) : (
                 <p className='simple-voter-note'>No questionnaire rounds found for the selected filters.</p>
               )}
-              {selectedQuestionnaire ? (
-                <div className='simple-auditor-summary-grid'>
-                  <div className='simple-auditor-summary-card'>
-                    <p className='simple-auditor-summary-label'>Question</p>
-                    <p className='simple-voter-question'>{selectedQuestionnaire.title}</p>
-                  </div>
-                  <div className='simple-auditor-summary-card'>
-                    <p className='simple-auditor-summary-label'>Questionnaire ID</p>
-                    <p className='simple-voter-question'>{selectedQuestionnaire.questionnaireId}</p>
-                  </div>
-                  <div className='simple-auditor-summary-card'>
-                    <p className='simple-auditor-summary-label'>Publish state</p>
-                    <p className='simple-voter-question'>{selectedLatestPublishAt ? `Published at ${formatQuestionnaireTime(selectedLatestPublishAt)}` : "Not published yet"}</p>
-                  </div>
-                  <div className='simple-auditor-summary-card'>
-                    <p className='simple-auditor-summary-label'>Round phase</p>
-                    <p className='simple-voter-question'>{formatQuestionnaireStateLabel(selectedLiveState ?? selectedQuestionnaire.state)}</p>
-                  </div>
-                </div>
-              ) : null}
             </>
           ) : (
             <p className='simple-voter-empty'>No public questionnaire rounds discovered yet.</p>
           )}
           {questionnaireRefreshStatus ? <p className='simple-voter-note'>{questionnaireRefreshStatus}</p> : null}
-        </SimpleCollapsibleSection>
+        </section>
 
-        <SimpleCollapsibleSection title='Questionnaire results'>
+        <section className='simple-voter-section simple-auditor-panel'>
+          <h2 className='simple-voter-section-title'>Questionnaire Results</h2>
           {selectedQuestionnaire ? (
-            selectedResultSummary ? (
-              <>
-                <p className='simple-voter-question'>{selectedQuestionnaire.title}</p>
-                <p className='simple-voter-note'>
-                  Published at: {formatQuestionnaireTime(Number(selectedResultSummary.createdAt ?? selectedQuestionnaire.resultPublishedAt ?? 0))}
-                </p>
-                <p className='simple-voter-note'>
-                  Published totals: valid {selectedResultSummary.acceptedResponseCount}, invalid {selectedResultSummary.rejectedResponseCount}
-                </p>
-                <ul className='simple-voter-list'>
-                  {selectedResultSummary.questionSummaries.map((summary) => (
-                    <li
-                      key={`${summary.questionId}:${summary.answerType}`}
-                      className='simple-voter-list-item'
-                    >
-                      <div className='simple-submitted-vote-copy'>
-                        <p className='simple-voter-question'>Question {summary.questionId}</p>
+            <>
+              <div className='simple-auditor-results-status'>
+                <span className='simple-voter-question'>{publishedTotalCount} Response{publishedTotalCount === 1 ? "" : "s"} - {publishedValidityPercent}%</span>
+                <div className='simple-auditor-results-progress' aria-hidden='true'>
+                  <span style={{ width: `${publishedValidityPercent}%` }} />
+                </div>
+                <span className='simple-voter-note'>Published at: {formatQuestionnaireTime(Number(selectedResultSummary?.createdAt ?? selectedQuestionnaire.resultPublishedAt ?? 0))}</span>
+              </div>
+              <div className='simple-auditor-summary-grid'>
+                <div className='simple-auditor-summary-card'>
+                  <p className='simple-auditor-summary-label'>Question</p>
+                  <p className='simple-voter-question'>{selectedQuestionnaire.title}</p>
+                </div>
+                <div className='simple-auditor-summary-card'>
+                  <p className='simple-auditor-summary-label'>Questionnaire ID</p>
+                  <p className='simple-voter-question'>{selectedQuestionnaire.questionnaireId}</p>
+                </div>
+                <div className='simple-auditor-summary-card'>
+                  <p className='simple-auditor-summary-label'>Published at</p>
+                  <p className='simple-voter-question'>{formatQuestionnaireTime(Number(selectedResultSummary?.createdAt ?? selectedQuestionnaire.resultPublishedAt ?? 0))}</p>
+                </div>
+              </div>
+              {selectedResultSummary ? (
+                <>
+                  <div className='simple-auditor-question-grid'>
+                    {selectedResultSummary.questionSummaries.map((summary) => (
+                      <article key={`${summary.questionId}:${summary.answerType}`} className='simple-auditor-question-card'>
+                        <h3 className='simple-voter-question'>Question {summary.questionId}</h3>
                         {summary.answerType === "yes_no" ? (
-                          <p className='simple-voter-note'>Yes: {summary.yesCount} | No: {summary.noCount}</p>
+                          <div className='simple-auditor-bars'>
+                            <p className='simple-voter-note'>Yes: {summary.yesCount}</p>
+                            <div className='simple-auditor-results-progress' aria-hidden='true'>
+                              <span style={{ width: `${(summary.yesCount + summary.noCount) > 0 ? (summary.yesCount / (summary.yesCount + summary.noCount)) * 100 : 0}%` }} />
+                            </div>
+                            <p className='simple-voter-note'>No: {summary.noCount}</p>
+                            <div className='simple-auditor-results-progress' aria-hidden='true'>
+                              <span style={{ width: `${(summary.yesCount + summary.noCount) > 0 ? (summary.noCount / (summary.yesCount + summary.noCount)) * 100 : 0}%` }} />
+                            </div>
+                          </div>
                         ) : summary.answerType === "multiple_choice" ? (
                           <ul className='simple-delivery-diagnostics simple-delivery-diagnostics-compact'>
                             {Object.entries(summary.optionCounts).map(([optionId, count]) => (
@@ -428,22 +433,27 @@ export default function SimpleAuditorApp() {
                             ))}
                           </ul>
                         ) : (
-                          <p className='simple-voter-note'>Free-text responses: {summary.freeTextCount}</p>
+                          <>
+                            <p className='simple-voter-note'>Free-text responses: {summary.freeTextCount}</p>
+                            <button type='button' className='simple-voter-secondary'>View</button>
+                          </>
                         )}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            ) : (
-              <p className='simple-voter-empty'>No published result summary yet for this questionnaire.</p>
-            )
+                      </article>
+                    ))}
+                  </div>
+                  <button type='button' className='simple-voter-secondary simple-auditor-full-results'>View Full Results</button>
+                </>
+              ) : (
+                <p className='simple-voter-empty'>No published result summary yet for this questionnaire.</p>
+              )}
+            </>
           ) : (
             <p className='simple-voter-empty'>Choose a questionnaire round to inspect results.</p>
           )}
-        </SimpleCollapsibleSection>
+        </section>
 
-        <SimpleCollapsibleSection title='Audit summary'>
+        <section className='simple-voter-section'>
+          <h2 className='simple-voter-section-title'>Audit Summary</h2>
           {selectedQuestionnaire ? (
             <>
               <div className='simple-auditor-summary-grid'>
@@ -472,9 +482,10 @@ export default function SimpleAuditorApp() {
           ) : (
             <p className='simple-voter-empty'>Choose a questionnaire round to audit.</p>
           )}
-        </SimpleCollapsibleSection>
+        </section>
 
-        <SimpleCollapsibleSection title='Submitted votes'>
+        <section className='simple-voter-section'>
+          <h2 className='simple-voter-section-title'>Submitted Votes</h2>
           {selectedQuestionnaire ? (
             selectedResponseDetails.length > 0 ? (
               <>
@@ -507,7 +518,7 @@ export default function SimpleAuditorApp() {
           ) : (
             <p className='simple-voter-empty'>Choose a questionnaire round to inspect responses.</p>
           )}
-        </SimpleCollapsibleSection>
+        </section>
       </section>
     </main>
   );
