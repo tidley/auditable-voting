@@ -146,9 +146,49 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     await user.click(screen.getByRole("button", { name: "Login" }));
 
-    await screen.findByText(/Opened questionnaire from link/i);
+    await waitFor(() => {
+      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Signed in as")).length).toBeGreaterThan(0);
+    });
     expect(screen.queryByText(/No invite DM was readable/i)).toBeNull();
     expect(screen.getByText("Linked questionnaire")).toBeTruthy();
+  });
+
+  it("auto logs in with the signer when a linked questionnaire is opened from the gateway", async () => {
+    window.history.pushState(null, "", "/?role=voter&q=q_gateway_link");
+    fetchOptionAInviteDmsMock.mockResolvedValue([]);
+    fetchQuestionnaireDefinitionsMock.mockResolvedValue([{
+      event: { created_at: 20 },
+      definition: {
+        schemaVersion: 1,
+        eventType: "questionnaire_definition",
+        responseMode: "blind_token",
+        questionnaireId: "q_gateway_link",
+        title: "Gateway questionnaire",
+        description: "",
+        createdAt: 1,
+        openAt: 1,
+        closeAt: 9999999999,
+        coordinatorPubkey: "npub1" + "b".repeat(58),
+        coordinatorEncryptionPubkey: "npub1" + "b".repeat(58),
+        responseVisibility: "private",
+        eligibilityMode: "open",
+        allowMultipleResponsesPerPubkey: false,
+        questions: [{
+          questionId: "q1",
+          type: "yes_no",
+          prompt: "Gateway prompt",
+          required: true,
+        }],
+      },
+    } as Awaited<ReturnType<typeof fetchQuestionnaireDefinitions>>[number]]);
+
+    render(<QuestionnaireOptionAVoterPanel localVoterNpub={"npub1" + "a".repeat(58)} autoSignerLogin />);
+
+    await screen.findByText("Gateway prompt");
+    await waitFor(() => {
+      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Signed in as")).length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByText(/No invite DM was readable/i)).toBeNull();
   });
 
   it("adopts announced questionnaire id when election id is missing", async () => {

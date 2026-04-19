@@ -113,6 +113,7 @@ type QuestionnaireOptionAVoterPanelProps = {
   announcedQuestionnaireIds?: string[];
   localVoterNpub?: string;
   localVoterNsec?: string;
+  autoSignerLogin?: boolean;
 };
 
 export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptionAVoterPanelProps) {
@@ -137,6 +138,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const [refreshNonce, setRefreshNonce] = useState(0);
   const autoRequestSentForRef = useRef<Record<string, true>>({});
   const requestRetryAtRef = useRef<Record<string, number>>({});
+  const autoSignerLoginForRef = useRef<Record<string, true>>({});
 
   const inviteContext = useMemo(() => parseInviteFromUrl(), []);
   const [electionId, setElectionId] = useState(inviteContext.electionId ?? deriveElectionId());
@@ -179,6 +181,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       return;
     }
     const localVoterNpub = props.localVoterNpub?.trim() ?? "";
+    const hasLocalSecretKey = Boolean(props.localVoterNsec?.trim());
+    if (props.autoSignerLogin && !hasLocalSecretKey) {
+      return;
+    }
     if (!localVoterNpub) {
       return;
     }
@@ -195,7 +201,25 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     } catch {
       // Keep explicit login available.
     }
-  }, [runtime, signedInNpub, props.localVoterNpub, electionId, latestAnnouncedQuestionnaireId]);
+  }, [runtime, signedInNpub, props.autoSignerLogin, props.localVoterNpub, props.localVoterNsec, electionId, latestAnnouncedQuestionnaireId]);
+
+  useEffect(() => {
+    if (!runtime || snapshot?.loginVerified) {
+      return;
+    }
+    const signerNpub = props.localVoterNpub?.trim() ?? "";
+    const hasLocalSecretKey = Boolean(props.localVoterNsec?.trim());
+    const targetElectionId = electionId.trim();
+    if (!props.autoSignerLogin || !signerNpub || hasLocalSecretKey || !targetElectionId) {
+      return;
+    }
+    const key = `${targetElectionId}:${signerNpub}`;
+    if (autoSignerLoginForRef.current[key]) {
+      return;
+    }
+    autoSignerLoginForRef.current[key] = true;
+    void login();
+  }, [runtime, snapshot?.loginVerified, props.autoSignerLogin, props.localVoterNpub, props.localVoterNsec, electionId]);
 
   useEffect(() => {
     if (!runtime || !signedInNpub.trim()) {
@@ -319,7 +343,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       return null;
     }
     const localVoterNpub = props.localVoterNpub?.trim() ?? "";
-    if (!localVoterNpub) {
+    const hasLocalSecretKey = Boolean(props.localVoterNsec?.trim());
+    if (!localVoterNpub || (props.autoSignerLogin && !hasLocalSecretKey)) {
       return runtime.getSnapshot();
     }
     const currentSnapshot = runtime.getSnapshot();
@@ -532,7 +557,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       const voterRuntime = new QuestionnaireOptionAVoterRuntime(createSignerService(), invite.electionId, props.localVoterNsec);
       const localVoterNpub = props.localVoterNpub?.trim() ?? "";
       const signedInTrimmed = signedInNpub.trim();
-      const preferLocalIdentity = Boolean(localVoterNpub && (!signedInTrimmed || signedInTrimmed === localVoterNpub));
+      const preferLocalIdentity = Boolean(!props.autoSignerLogin && localVoterNpub && (!signedInTrimmed || signedInTrimmed === localVoterNpub));
 
       let next;
       if (preferLocalIdentity) {
@@ -666,7 +691,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         setActiveInvite(null);
         setStatus("Blind ballot request sent. Waiting for coordinator issuance.");
         setRefreshNonce((value) => value + 1);
-      }).catch(() => undefined);
+      }).catch((error) => {
+        setStatus(error instanceof Error ? error.message : "Request failed.");
+      });
     } catch {
       // Keep manual request available if automatic send cannot proceed yet.
     }

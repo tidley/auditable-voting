@@ -2981,6 +2981,7 @@ export default function SimpleUiApp() {
               optionAAnnouncedQuestionnaireIds={announcedQuestionnaireIds}
               localVoterNpub={activeVoterNpub}
               localVoterNsec={signerNpub ? "" : (voterKeypair?.nsec ?? "")}
+              autoSignerLogin={Boolean(signerNpub.trim())}
             />
             {isCourseFeedbackMode || hideLegacyLiveVotePanel || questionnaireModeActive ? null : (
             effectiveLiveVoteSession ? (

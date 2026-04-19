@@ -274,12 +274,16 @@ export class QuestionnaireOptionAVoterRuntime {
         "No invite found for this voter and questionnaire.",
       );
     }
-    const voterState = existingState ?? createEmptyVoterElectionLocalState({
+    const loadedVoterState = existingState ?? createEmptyVoterElectionLocalState({
       electionId: this.electionId,
       invitedNpub,
       coordinatorNpub: input.coordinatorNpub ?? invite?.coordinatorNpub ?? summary?.coordinatorNpub ?? "",
       now: nowIso(),
     });
+    const resolvedCoordinatorNpub = input.coordinatorNpub ?? invite?.coordinatorNpub ?? summary?.coordinatorNpub ?? "";
+    const voterState = resolvedCoordinatorNpub && loadedVoterState.coordinatorNpub !== resolvedCoordinatorNpub
+      ? { ...loadedVoterState, coordinatorNpub: resolvedCoordinatorNpub, lastUpdatedAt: nowIso() }
+      : loadedVoterState;
 
     let next = voterState;
     if (invite) {
