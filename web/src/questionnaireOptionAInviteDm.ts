@@ -6,15 +6,17 @@ import { normalizeRelaysRust } from "./wasm/auditableVotingCore";
 import type { ElectionInviteMessage } from "./questionnaireOptionA";
 import type { SignerService } from "./services/signerService";
 
-const OPTION_A_INVITE_DM_RELAYS_MAX = 9;
+const OPTION_A_INVITE_DM_RELAYS_MAX = 12;
 const OPTION_A_INVITE_DM_READ_RELAYS_MAX = 3;
 const OPTION_A_INVITE_DM_MAX_WAIT_MS = 1500;
 const OPTION_A_INVITE_DM_STAGGER_MS = 250;
 const OPTION_A_INVITE_DM_MIN_PUBLISH_INTERVAL_MS = 300;
 const TWO_DAYS_SECONDS = 2 * 24 * 60 * 60;
+const ONE_DAY_SECONDS = 24 * 60 * 60;
 const KIND_SEAL = 13;
 const KIND_RUMOR_MESSAGE = 14;
 const KIND_GIFT_WRAP = 1059;
+const KIND_NIP17_RELAY_LIST = 10050;
 
 type InviteDmEnvelope = {
   type: "optiona_invite_dm";
@@ -68,6 +70,37 @@ function selectPublishRelays(relays: string[]) {
   return relays.slice(0, Math.min(OPTION_A_INVITE_DM_RELAYS_MAX, relays.length));
 }
 
+function parseNip17RelayListEvent(event: { kind?: number; tags?: string[][] }) {
+  if (event.kind !== KIND_NIP17_RELAY_LIST || !Array.isArray(event.tags)) {
+    return [] as string[];
+  }
+  return event.tags
+    .filter((tag) => tag[0] === "relay" || tag[0] === "r")
+    .map((tag) => tag[1]?.trim() ?? "")
+    .filter((relay) => relay.startsWith("ws://") || relay.startsWith("wss://"));
+}
+
+async function fetchRecipientNip17Relays(input: {
+  recipientHex: string;
+  discoveryRelays: string[];
+}) {
+  try {
+    const pool = getSharedNostrPool();
+    const events = await pool.querySync(input.discoveryRelays, {
+      kinds: [KIND_NIP17_RELAY_LIST],
+      authors: [input.recipientHex],
+      limit: 5,
+    });
+    return normalizeRelaysRust(
+      [...events]
+        .sort((left, right) => Number(right.created_at ?? 0) - Number(left.created_at ?? 0))
+        .flatMap((event) => parseNip17RelayListEvent(event)),
+    );
+  } catch {
+    return [] as string[];
+  }
+}
+
 function parseInviteDmContent(content: string): ElectionInviteMessage | null {
   try {
     const parsed = JSON.parse(content) as Partial<InviteDmEnvelope> | ElectionInviteMessage;
@@ -100,6 +133,7 @@ function createRumor(input: {
     created_at: Math.round(Date.now() / 1000),
     tags: [
       input.relayUrl ? ["p", input.recipientHex, input.relayUrl] : ["p", input.recipientHex],
+      ["alt", "Direct message"],
       ["subject", "Auditable Voting invite"],
     ],
     content: JSON.stringify(input.envelope),
@@ -136,7 +170,12 @@ export async function publishOptionAInviteDm(input: {
   relays?: string[];
 }) {
   const recipientHex = toHexPubkey(input.invite.invitedNpub);
-  const relays = selectPublishRelays(buildRelays(input.relays));
+  const fallbackRelays = buildRelays(input.relays);
+  const recipientRelays = await fetchRecipientNip17Relays({
+    recipientHex,
+    discoveryRelays: selectPublishRelays(fallbackRelays),
+  });
+  const relays = selectPublishRelays(normalizeRelaysRust([...recipientRelays, ...fallbackRelays]));
   const envelope: InviteDmEnvelope = {
     type: "optiona_invite_dm",
     schemaVersion: 1,
@@ -200,7 +239,7 @@ export async function publishOptionAInviteDm(input: {
   const giftWrapEvent = finalizeEvent({
     kind: KIND_GIFT_WRAP,
     created_at: randomNow(),
-    tags: [["p", recipientHex]],
+    tags: [["p", recipientHex], ["expiration", String(Math.round(Date.now() / 1000) + ONE_DAY_SECONDS)]],
     content: wrappedSeal,
   }, giftWrapSecret);
 

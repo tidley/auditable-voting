@@ -34,13 +34,19 @@ import {
 } from "./simpleMailbox";
 
 export const SIMPLE_DM_RELAYS = [
+  'wss://nip17.com',
   'wss://nip17.tomdwyer.uk',
+  'wss://relay.damus.io',
   'wss://strfry.bitsbytom.com',
   'wss://relay.primal.net',
   'wss://nos.lol',
   'wss://offchain.pub',
   'wss://nostr.mom',
+  'wss://relay.nostr.band',
   'wss://relay.snort.social',
+  'wss://nostr.bg',
+  'wss://auth.nostr1.com',
+  'wss://inbox.nostr.wine',
   'wss://nostr-pub.wellorder.net',
   'wss://relay.0xchat.com',
 ];

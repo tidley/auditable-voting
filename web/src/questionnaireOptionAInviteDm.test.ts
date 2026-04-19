@@ -70,6 +70,45 @@ describe("questionnaireOptionAInviteDm", () => {
     expect(event?.tags?.[0]?.[0]).toBe("p");
   });
 
+  it("prefers recipient NIP-17 relay list relays for invite publishes", async () => {
+    publish.mockReturnValue([Promise.resolve(undefined)]);
+    querySync.mockResolvedValue([{
+      kind: 10050,
+      pubkey: "a".repeat(64),
+      created_at: 123,
+      tags: [["relay", "wss://amethyst-inbox.example"], ["relay", "wss://nip17.com"]],
+      content: "",
+      id: "relay-list",
+      sig: "sig",
+    }]);
+    let publishedRelays: string[] = [];
+    publishToRelaysStaggered.mockImplementation(
+      async (publishOne: (relay: string) => Promise<unknown>, relays: string[]) => {
+        publishedRelays = relays;
+        return Promise.allSettled(relays.slice(0, 1).map((relay) => publishOne(relay)));
+      },
+    );
+    queueNostrPublish.mockImplementation(async (fn: () => Promise<PromiseSettledResult<unknown>[]>) => fn());
+
+    await publishOptionAInviteDm({
+      signer: makeSigner(),
+      invite: {
+        type: "election_invite",
+        schemaVersion: 1,
+        electionId: "e1",
+        title: "Questionnaire",
+        description: "",
+        voteUrl: "https://example.test/vote",
+        invitedNpub: nip19.npubEncode("a".repeat(64)),
+        coordinatorNpub: nip19.npubEncode("f".repeat(64)),
+        expiresAt: null,
+      },
+    });
+
+    expect(publishedRelays[0]).toBe("wss://amethyst-inbox.example");
+    expect(publishedRelays).toContain("wss://nip17.com");
+  });
+
   it("publishes fallback-key invites as addressed NIP-17 private messages", async () => {
     publish.mockReturnValue([Promise.resolve(undefined)]);
     publishToRelaysStaggered.mockImplementation(
