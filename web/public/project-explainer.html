@@ -224,6 +224,8 @@ On Android, signer sessions prefer Amber through NIP-46 when available so `get_p
 
 Blind request, issuance, submission, and acceptance DMs now also resolve recipient NIP-17 relay-list hints (`kind:10050`) before static fallbacks, and the default fallback lists no longer include `wss://relay.snort.social`.
 
+The voter page labels the questionnaire voting identity separately from the signer account and shows request, credential, and response state. Coordinator automatic request checks run one at a time to avoid overlapping relay work.
+
 Drafted response fields stay intact when the credential or refreshed definition arrives for the same questionnaire.
 
 ### Auditor

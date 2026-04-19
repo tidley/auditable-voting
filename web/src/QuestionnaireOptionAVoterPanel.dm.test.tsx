@@ -147,7 +147,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     await user.click(screen.getByRole("button", { name: "Login" }));
 
     await waitFor(() => {
-      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Signed in as")).length).toBeGreaterThan(0);
+      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Voting identity:")).length).toBeGreaterThan(0);
     });
     expect(screen.queryByText(/No invite DM was readable/i)).toBeNull();
     expect(screen.getByText("Linked questionnaire")).toBeTruthy();
@@ -187,7 +187,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     await screen.findByText("Gateway prompt");
     await waitFor(() => {
-      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Signed in as")).length).toBeGreaterThan(0);
+      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Voting identity:")).length).toBeGreaterThan(0);
     });
     expect(screen.queryByText(/No invite DM was readable/i)).toBeNull();
     expect(fetchOptionAInviteDmsMock).not.toHaveBeenCalled();
@@ -197,7 +197,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_auto_123"]} />);
 
     await waitFor(() => {
-      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Election ID: q_auto_123")).length).toBeGreaterThan(0);
+      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Questionnaire ID: q_auto_123")).length).toBeGreaterThan(0);
     });
   });
 
@@ -205,13 +205,13 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     const { rerender } = render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_old"]} />);
 
     await waitFor(() => {
-      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Election ID: q_old")).length).toBeGreaterThan(0);
+      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Questionnaire ID: q_old")).length).toBeGreaterThan(0);
     });
 
     rerender(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_old", "q_new"]} />);
 
     await waitFor(() => {
-      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Election ID: q_new")).length).toBeGreaterThan(0);
+      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Questionnaire ID: q_new")).length).toBeGreaterThan(0);
     });
   });
 
@@ -220,13 +220,13 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_local"]} localVoterNpub={"npub1" + "c".repeat(58)} />);
 
     await waitFor(() => {
-      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Election ID: q_local")).length).toBeGreaterThan(0);
+      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Questionnaire ID: q_local")).length).toBeGreaterThan(0);
     });
 
     await user.click(screen.getAllByRole("button", { name: "Refresh status" }).at(-1)!);
 
     await waitFor(() => {
-      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Login verified: Yes")).length).toBeGreaterThan(0);
+      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Identity confirmed: Yes")).length).toBeGreaterThan(0);
     });
     expect(screen.queryByText("Login is required.")).toBeNull();
   });
@@ -372,7 +372,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     await user.click(screen.getByRole("button", { name: "Refresh status" }));
 
     await waitFor(() => {
-      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Credential ready: Yes")).length).toBeGreaterThan(0);
+      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Ballot credential: Received")).length).toBeGreaterThan(0);
     });
     expect(screen.getByRole("button", { name: "Yes" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: "No" }).className).toContain("is-dimmed");

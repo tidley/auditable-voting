@@ -51,6 +51,8 @@ The shipped app currently includes:
 - Android signer sessions now prefer Amber via NIP-46 when available, so signer-backed questionnaire DM flows use one consistent signer identity for `get_public_key`, `sign_event`, and `nip44_*`
 - Option A blind request, issuance, submission, and acceptance DMs now also target recipient NIP-17 relay-list hints (`kind:10050`) instead of only static fallback relays
 - default relay lists now exclude `wss://relay.snort.social` to reduce repeated failed websocket noise in browsers where that relay is unreachable
+- the voter questionnaire page now separates the signer account from the ballot voting identity and shows ballot progress as request, credential, and response states
+- coordinator automatic Option A queue processing is now single-flight and slower, reducing overlapping relay publishes and websocket churn
 - local browser persistence, backup, and optional passphrase protection
 - voter questionnaire participation history is now stored locally and included in voter backups/restores
 - auditor round selection now supports lead-coordinator filter, coordinator-npub filter, and free-text search (npub/round ID/prompt), with slower non-overlapping refreshes to reduce relay REQ spikes

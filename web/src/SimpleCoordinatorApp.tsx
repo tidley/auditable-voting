@@ -964,6 +964,7 @@ export default function SimpleCoordinatorApp() {
   const latestCoordinatorElectionIdRef = useRef("");
   const saveStateDebounceTimerRef = useRef<number | null>(null);
   const lastSavedStateSignatureRef = useRef<string>("");
+  const optionAQueueProcessingInFlightRef = useRef(false);
 
   useEffect(() => {
     latestCoordinatorHexRosterRef.current = coordinatorHexRoster;
@@ -3345,6 +3346,11 @@ export default function SimpleCoordinatorApp() {
     if (!activeCoordinatorNpub.trim()) {
       return;
     }
+    if (optionAQueueProcessingInFlightRef.current) {
+      setKnownVoterInviteStatus("Already checking questionnaire requests.");
+      return;
+    }
+    optionAQueueProcessingInFlightRef.current = true;
     try {
       const result = await processOptionAQueuesForCoordinatorLive({
         coordinatorNpub: activeCoordinatorNpub,
@@ -3370,14 +3376,20 @@ export default function SimpleCoordinatorApp() {
       setKnownVoterInviteRefreshNonce((value) => value + 1);
     } catch (error) {
       setKnownVoterInviteStatus(error instanceof Error ? error.message : "Processing failed.");
+    } finally {
+      optionAQueueProcessingInFlightRef.current = false;
     }
   }
 
   useEffect(() => {
-    if (!activeCoordinatorNpub.trim()) {
+    if (!activeCoordinatorNpub.trim() || !optionAElectionId.trim()) {
       return;
     }
     const intervalId = window.setInterval(() => {
+      if (optionAQueueProcessingInFlightRef.current) {
+        return;
+      }
+      optionAQueueProcessingInFlightRef.current = true;
       void processOptionAQueuesForCoordinatorLive({
         coordinatorNpub: activeCoordinatorNpub,
         signer: optionASigner,
@@ -3395,8 +3407,10 @@ export default function SimpleCoordinatorApp() {
         }
       }).catch(() => {
         // Keep background processing best-effort; explicit action shows errors.
+      }).finally(() => {
+        optionAQueueProcessingInFlightRef.current = false;
       });
-    }, 15000);
+    }, 30000);
     return () => {
       window.clearInterval(intervalId);
     };
