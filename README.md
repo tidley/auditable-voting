@@ -54,6 +54,8 @@ The shipped app currently includes:
 - invite-link clipboard writes are now best-effort, so browser focus restrictions no longer throw unhandled errors after async relay work
 - the voter questionnaire page now separates the signer account from the ballot voting identity and shows ballot progress as request, credential, and response states
 - coordinator automatic Option A queue processing is now single-flight and slower, reducing overlapping relay publishes and websocket churn
+- voter blind-ballot resend keeps the same request id and freshens its send timestamp; coordinators republish the existing credential DM instead of issuing a second credential
+- Option A request/submission DM reads now use recent since-bounded windows, and successful credential DMs are not rebroadcast by every background queue pass
 - local browser persistence, backup, and optional passphrase protection
 - voter questionnaire participation history is now stored locally and included in voter backups/restores
 - auditor round selection now supports lead-coordinator filter, coordinator-npub filter, and free-text search (npub/round ID/prompt), with slower non-overlapping refreshes to reduce relay REQ spikes

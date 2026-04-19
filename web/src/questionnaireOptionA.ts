@@ -98,6 +98,7 @@ export interface BlindBallotRequest {
   blindSigningKeyId: string;
   clientNonce: string;
   createdAt: IsoTime;
+  lastSentAt?: IsoTime | null;
 }
 
 export interface BlindBallotIssuance {
@@ -289,6 +290,19 @@ function findIssuanceByNpub(
   return null;
 }
 
+function sameBlindBallotRequest(left: BlindBallotRequest, right: BlindBallotRequest) {
+  return left.type === right.type
+    && left.schemaVersion === right.schemaVersion
+    && left.electionId === right.electionId
+    && left.requestId === right.requestId
+    && left.invitedNpub === right.invitedNpub
+    && left.blindedMessage === right.blindedMessage
+    && left.tokenCommitment === right.tokenCommitment
+    && left.blindSigningKeyId === right.blindSigningKeyId
+    && left.clientNonce === right.clientNonce
+    && left.createdAt === right.createdAt;
+}
+
 function findIssuanceByTokenCommitment(
   issuedBlindResponses: Record<RequestId, BlindBallotIssuance>,
   tokenCommitment: string,
@@ -422,9 +436,15 @@ export function reduceVoterEvent(
       return reduceVoterError(state, "issuance_conflict");
     }
     if (next.blindRequest) {
-      const sameRequest = JSON.stringify(next.blindRequest) === JSON.stringify(event.request);
+      const sameRequest = sameBlindBallotRequest(next.blindRequest, event.request);
+      if (sameRequest && next.blindRequest.lastSentAt !== event.request.lastSentAt) {
+        next.blindRequest = {
+          ...next.blindRequest,
+          lastSentAt: event.request.lastSentAt ?? next.blindRequest.lastSentAt ?? null,
+        };
+      }
       return sameRequest
-        ? { state, ok: true }
+        ? { state: next, ok: true }
         : reduceVoterError(state, "issuance_conflict");
     }
     next.blindRequest = event.request;
@@ -439,6 +459,10 @@ export function reduceVoterEvent(
     if (!next.blindRequest || next.blindRequest.requestId !== event.requestId) {
       return reduceVoterError(state, "blind_request_missing");
     }
+    next.blindRequest = {
+      ...next.blindRequest,
+      lastSentAt: event.sentAt,
+    };
     next.blindRequestSent = true;
     next.blindRequestSentAt = event.sentAt;
     next.lastUpdatedAt = event.sentAt;
@@ -580,10 +604,16 @@ export function reduceCoordinatorEvent(
     }
     const existingRequest = next.pendingBlindRequests[event.request.requestId];
     if (existingRequest) {
-      const same = JSON.stringify(existingRequest) === JSON.stringify(event.request);
-      return same
-        ? { state, ok: true }
-        : reduceCoordinatorError(state, "issuance_conflict");
+      const same = sameBlindBallotRequest(existingRequest, event.request);
+      if (!same) {
+        return reduceCoordinatorError(state, "issuance_conflict");
+      }
+      next.pendingBlindRequests[event.request.requestId] = {
+        ...existingRequest,
+        lastSentAt: event.request.lastSentAt ?? existingRequest.lastSentAt ?? null,
+      };
+      next.lastUpdatedAt = event.request.lastSentAt ?? event.request.createdAt;
+      return { state: next, ok: true };
     }
     const existingIssuance = findIssuanceByNpub(next.issuedBlindResponses, event.request.invitedNpub);
     if (existingIssuance) {

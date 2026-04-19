@@ -490,6 +490,8 @@ export async function fetchOptionABlindRequestDms(input: {
   electionId?: string;
   relays?: string[];
   limit?: number;
+  since?: number;
+  maxDecryptAttempts?: number;
 }) {
   if (!input.signer.nip44Decrypt) {
     return [] as BlindBallotRequest[];
@@ -499,14 +501,18 @@ export async function fetchOptionABlindRequestDms(input: {
   const recipientHex = toHexPubkey(recipientRaw);
   const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
   const pool = getSharedNostrPool();
+  const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? input.limit ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
   const events = await pool.querySync(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
-    limit: Math.max(1, input.limit ?? 100),
+    since: input.since ?? Math.round(Date.now() / 1000) - ONE_DAY_SECONDS,
+    limit: Math.max(1, Math.min(input.limit ?? maxDecryptAttempts, maxDecryptAttempts)),
   });
 
   const unique = new Map<string, BlindBallotRequest>();
-  const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
+  const sorted = [...events]
+    .sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0))
+    .slice(0, maxDecryptAttempts);
   for (const event of sorted) {
     const wrapPubkey = typeof event.pubkey === "string" ? event.pubkey : "";
     if (!wrapPubkey || typeof event.content !== "string" || !event.content.trim()) {
@@ -546,6 +552,7 @@ export async function fetchOptionABlindRequestDmsWithNsec(input: {
   electionId?: string;
   relays?: string[];
   limit?: number;
+  since?: number;
 }) {
   const secretKey = decodeNsecSecretKey(input.nsec);
   const recipientHex = getPublicKey(secretKey);
@@ -554,6 +561,7 @@ export async function fetchOptionABlindRequestDmsWithNsec(input: {
   const events = await pool.querySync(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
+    since: input.since,
     limit: Math.max(1, input.limit ?? 100),
   });
 
@@ -691,6 +699,8 @@ export async function fetchOptionABallotSubmissionDms(input: {
   electionId?: string;
   relays?: string[];
   limit?: number;
+  since?: number;
+  maxDecryptAttempts?: number;
 }) {
   if (!input.signer.nip44Decrypt) {
     return [] as BallotSubmission[];
@@ -699,14 +709,18 @@ export async function fetchOptionABallotSubmissionDms(input: {
   const recipientHex = toHexPubkey(recipientRaw);
   const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
   const pool = getSharedNostrPool();
+  const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? input.limit ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
   const events = await pool.querySync(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
-    limit: Math.max(1, input.limit ?? 100),
+    since: input.since ?? Math.round(Date.now() / 1000) - ONE_DAY_SECONDS,
+    limit: Math.max(1, Math.min(input.limit ?? maxDecryptAttempts, maxDecryptAttempts)),
   });
 
   const unique = new Map<string, BallotSubmission>();
-  const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
+  const sorted = [...events]
+    .sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0))
+    .slice(0, maxDecryptAttempts);
   for (const event of sorted) {
     const wrapPubkey = typeof event.pubkey === "string" ? event.pubkey : "";
     if (!wrapPubkey || typeof event.content !== "string" || !event.content.trim()) {
@@ -750,6 +764,7 @@ export async function fetchOptionABallotSubmissionDmsWithNsec(input: {
   electionId?: string;
   relays?: string[];
   limit?: number;
+  since?: number;
 }) {
   const secretKey = decodeNsecSecretKey(input.nsec);
   const recipientHex = getPublicKey(secretKey);
@@ -758,6 +773,7 @@ export async function fetchOptionABallotSubmissionDmsWithNsec(input: {
   const events = await pool.querySync(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
+    since: input.since,
     limit: Math.max(1, input.limit ?? 100),
   });
 

@@ -3359,6 +3359,7 @@ export default function SimpleCoordinatorApp() {
         fallbackNsec: keypair?.nsec,
         preferredElectionId: optionAElectionId,
         onlyPreferredElectionId: Boolean(optionAElectionId.trim()),
+        forceRepublishIssuances: true,
       });
       if (optionACoordinatorRuntime && optionAElectionId.trim()) {
         optionACoordinatorRuntime.bootstrapCoordinatorNpub({

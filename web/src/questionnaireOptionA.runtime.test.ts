@@ -6,6 +6,7 @@ import {
   QuestionnaireOptionAVoterRuntime,
 } from "./questionnaireOptionARuntime";
 import { listBlindRequests, readBlindIssuance } from "./questionnaireOptionAStorage";
+import { publishOptionABlindIssuanceDm } from "./questionnaireOptionABlindDm";
 import type { SignerService } from "./services/signerService";
 
 vi.mock("./questionnaireOptionAInviteDm", () => ({
@@ -76,6 +77,7 @@ describe("questionnaireOptionARuntime", () => {
   const otherNpub = "npub1otherruntime00000000000000000000000000000000000000";
 
   beforeEach(() => {
+    vi.clearAllMocks();
     window.localStorage.clear();
   });
 
@@ -161,11 +163,21 @@ describe("questionnaireOptionARuntime", () => {
     expect(listBlindRequests(electionId).map((entry) => entry.requestId)).toEqual([requestId]);
 
     await coordinator.processPendingBlindRequests();
+    await coordinator.publishPendingBlindIssuancesToDm();
     const issued = readBlindIssuance(requestId ?? "");
     expect(issued?.requestId).toBe(requestId);
+    expect(vi.mocked(publishOptionABlindIssuanceDm)).toHaveBeenCalledTimes(1);
 
     await coordinator.processPendingBlindRequests();
+    await coordinator.publishPendingBlindIssuancesToDm();
     expect(readBlindIssuance(requestId ?? "")).toEqual(issued);
+    expect(vi.mocked(publishOptionABlindIssuanceDm)).toHaveBeenCalledTimes(1);
+
+    await voter.requestBlindBallot();
+    await coordinator.processPendingBlindRequests();
+    await coordinator.publishPendingBlindIssuancesToDm();
+    expect(readBlindIssuance(requestId ?? "")).toEqual(issued);
+    expect(vi.mocked(publishOptionABlindIssuanceDm)).toHaveBeenCalledTimes(2);
   });
 
   it("prevents duplicate issuance and duplicate accepted submissions from inflating unique count", async () => {

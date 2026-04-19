@@ -239,7 +239,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       } catch {
         // Keep polling best-effort; explicit actions surface errors.
       }
-    }, 10000);
+    }, 30000);
     return () => {
       window.clearInterval(intervalId);
     };
@@ -637,9 +637,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
     try {
       ensureLocalSession({ allowInviteMissing: true });
+      const wasAlreadyWaiting = Boolean(runtime.getSnapshot()?.blindRequestSent && !runtime.getSnapshot()?.credentialReady);
       await runtime.requestBlindBallot();
       setActiveInvite(null);
-      setStatus("Blind ballot request sent. Waiting for coordinator issuance.");
+      setStatus(wasAlreadyWaiting
+        ? "Blind ballot request resent. Waiting for coordinator issuance."
+        : "Blind ballot request sent. Waiting for coordinator issuance."
+      );
       setRefreshNonce((value) => value + 1);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Request failed.");
@@ -716,7 +720,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     const retry = () => {
       const now = Date.now();
       const lastAttemptAt = requestRetryAtRef.current[key] ?? 0;
-      if (now - lastAttemptAt < 15000) {
+      if (now - lastAttemptAt < 60000) {
         return;
       }
       requestRetryAtRef.current[key] = now;
@@ -730,7 +734,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       }
     };
     retry();
-    const intervalId = window.setInterval(retry, 15000);
+    const intervalId = window.setInterval(retry, 60000);
     return () => {
       window.clearInterval(intervalId);
     };
@@ -777,6 +781,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
   }, [inviteDropdownOptions, selectedInviteKey, snapshot?.electionId]);
   const waitingForCredential = Boolean(snapshot?.blindRequestSent && !snapshot?.credentialReady && !snapshot?.submission);
+  const canRequestOrResendBallot = flags.canRequestBallot || waitingForCredential;
 
   const canSubmitNow = flags.canSubmitVote && questions.length > 0 && requiredQuestionIds.every((questionId) => {
     const value = answers[questionId];
@@ -997,7 +1002,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       )}
 
       <div className='simple-voter-action-row simple-voter-action-row-inline'>
-        <button type='button' className='simple-voter-secondary' disabled={!flags.canRequestBallot} onClick={requestBallot}>Request ballot</button>
+        <button type='button' className='simple-voter-secondary' disabled={!canRequestOrResendBallot} onClick={requestBallot}>
+          {waitingForCredential ? "Resend request" : "Request ballot"}
+        </button>
         <button type='button' className='simple-voter-secondary' onClick={refreshStatus}>Refresh status</button>
         <button type='button' className='simple-voter-primary' disabled={!canSubmitNow} onClick={submit}>Submit response</button>
       </div>

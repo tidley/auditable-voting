@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { buildInviteUrl } from "./questionnaireInvite";
 import { createSignerService, SignerServiceError } from "./services/signerService";
 import {
@@ -28,6 +28,7 @@ export default function QuestionnaireOptionACoordinatorPanel(props: Props) {
   const [title, setTitle] = useState(props.title ?? "Questionnaire");
   const [description, setDescription] = useState(props.description ?? "");
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const queueProcessingInFlightRef = useRef(false);
 
   const snapshot = runtime.getSnapshot();
   const flags = runtime.getFlags();
@@ -126,7 +127,11 @@ export default function QuestionnaireOptionACoordinatorPanel(props: Props) {
   async function processRequests() {
     try {
       await runtime.processPendingBlindRequests();
-      setStatus("Processed pending blind ballot requests.");
+      const delivered = await runtime.publishPendingBlindIssuancesToDm({ forceAll: true });
+      setStatus(delivered > 0
+        ? `Processed pending blind ballot requests and sent ${delivered} credential DM${delivered === 1 ? "" : "s"}.`
+        : "Processed pending blind ballot requests; no credential DM was accepted by relays."
+      );
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Request processing failed.");
     }
@@ -148,15 +153,23 @@ export default function QuestionnaireOptionACoordinatorPanel(props: Props) {
       return;
     }
     const intervalId = window.setInterval(() => {
+      if (queueProcessingInFlightRef.current) {
+        return;
+      }
+      queueProcessingInFlightRef.current = true;
       try {
         void runtime.processPendingBlindRequests()
           .then(() => runtime.processPendingSubmissions([]))
           .then(() => setRefreshNonce((value) => value + 1))
-          .catch(() => undefined);
+          .catch(() => undefined)
+          .finally(() => {
+            queueProcessingInFlightRef.current = false;
+          });
       } catch {
+        queueProcessingInFlightRef.current = false;
         // Keep background processing best-effort; explicit actions surface errors.
       }
-    }, 1500);
+    }, 30000);
     return () => {
       window.clearInterval(intervalId);
     };

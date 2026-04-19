@@ -5,8 +5,8 @@ let sharedNostrPool: SimplePool | null = null;
 export function getSharedNostrPool() {
   if (!sharedNostrPool) {
     sharedNostrPool = new SimplePool({
-      enablePing: true,
-      enableReconnect: true,
+      enablePing: false,
+      enableReconnect: false,
     });
   }
 

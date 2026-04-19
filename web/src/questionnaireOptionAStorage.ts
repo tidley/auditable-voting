@@ -45,7 +45,20 @@ const INVITE_MAILBOX_KEY = "optiona:invite:mailbox";
 const REQUEST_QUEUE_KEY = "optiona:queue:requests";
 const SUBMISSION_QUEUE_KEY = "optiona:queue:submissions";
 const ISSUANCE_MAILBOX_KEY = "optiona:mailbox:issuances";
+const ISSUANCE_DELIVERY_KEY = "optiona:mailbox:issuanceDelivery";
 const ACCEPTANCE_MAILBOX_KEY = "optiona:mailbox:acceptance";
+
+export type BlindIssuanceDeliveryRecord = {
+  requestId: string;
+  electionId: string;
+  invitedNpub: string;
+  attempts: number;
+  successes: number;
+  lastAttemptAt?: string | null;
+  lastSuccessAt?: string | null;
+  lastEventId?: string | null;
+  requestLastSentAt?: string | null;
+};
 
 export function loadElectionRegistry() {
   return readJson<string[]>(REGISTRY_KEY, []);
@@ -292,6 +305,34 @@ export function storeBlindIssuance(issuance: BlindBallotIssuance) {
 export function readBlindIssuance(requestId: string) {
   const mailbox = readJson<Record<string, BlindBallotIssuance>>(ISSUANCE_MAILBOX_KEY, {});
   return mailbox[requestId] ?? null;
+}
+
+export function readBlindIssuanceDeliveryRecord(requestId: string) {
+  const records = readJson<Record<string, BlindIssuanceDeliveryRecord>>(ISSUANCE_DELIVERY_KEY, {});
+  return records[requestId] ?? null;
+}
+
+export function recordBlindIssuanceDeliveryAttempt(input: {
+  issuance: BlindBallotIssuance;
+  attemptedAt: string;
+  delivered: boolean;
+  eventId?: string | null;
+  requestLastSentAt?: string | null;
+}) {
+  const records = readJson<Record<string, BlindIssuanceDeliveryRecord>>(ISSUANCE_DELIVERY_KEY, {});
+  const existing = records[input.issuance.requestId];
+  records[input.issuance.requestId] = {
+    requestId: input.issuance.requestId,
+    electionId: input.issuance.electionId,
+    invitedNpub: input.issuance.invitedNpub,
+    attempts: (existing?.attempts ?? 0) + 1,
+    successes: (existing?.successes ?? 0) + (input.delivered ? 1 : 0),
+    lastAttemptAt: input.attemptedAt,
+    lastSuccessAt: input.delivered ? input.attemptedAt : existing?.lastSuccessAt ?? null,
+    lastEventId: input.eventId ?? existing?.lastEventId ?? null,
+    requestLastSentAt: input.requestLastSentAt ?? existing?.requestLastSentAt ?? null,
+  };
+  writeJson(ISSUANCE_DELIVERY_KEY, records);
 }
 
 export function enqueueSubmission(submission: BallotSubmission) {

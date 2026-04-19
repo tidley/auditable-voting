@@ -34,7 +34,9 @@ import {
   loadVoterState,
   publishInviteToMailbox,
   readAcceptance,
+  readBlindIssuanceDeliveryRecord,
   readBlindIssuance,
+  recordBlindIssuanceDeliveryAttempt,
   readInviteFromMailbox,
   saveCoordinatorState,
   saveVoterState,
@@ -71,6 +73,11 @@ import {
   buildQuestionnaireBlindTokenSignedMessage,
   deriveQuestionnaireTokenNullifier,
 } from "./questionnaireBlindToken";
+
+const OPTION_A_COORDINATOR_DM_LOOKBACK_SECONDS = 24 * 60 * 60;
+const OPTION_A_COORDINATOR_SIGNER_DM_LIMIT = 30;
+const OPTION_A_COORDINATOR_NSEC_DM_LIMIT = 80;
+const OPTION_A_ISSUANCE_DM_RETRY_MS = 5 * 60 * 1000;
 
 export type OptionARuntimeErrorCode =
   | "not_logged_in"
@@ -386,18 +393,21 @@ export class QuestionnaireOptionAVoterRuntime {
       };
     }
 
-    if (!next.blindRequestSent) {
-      const sent = reduceVoterEvent(next, {
-        type: "BLIND_REQUEST_SENT",
-        electionId: next.electionId,
-        requestId: request.requestId,
-        sentAt: nowIso(),
-      });
-      if (!sent.ok) {
-        throw new OptionARuntimeError("issuance_failed", "Could not send blind request.");
-      }
-      next = sent.state;
+    const sentAt = nowIso();
+    request = {
+      ...request,
+      lastSentAt: sentAt,
+    };
+    const sent = reduceVoterEvent(next, {
+      type: "BLIND_REQUEST_SENT",
+      electionId: next.electionId,
+      requestId: request.requestId,
+      sentAt,
+    });
+    if (!sent.ok) {
+      throw new OptionARuntimeError("issuance_failed", "Could not send blind request.");
     }
+    next = sent.state;
 
     this.state = next;
     enqueueBlindRequest(request);
@@ -625,6 +635,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
   private state: CoordinatorElectionState | null = null;
   private coordinatorNpub: string | null = null;
   private pendingAuthorizationsByNpub: Record<string, BlindBallotRequest[]> = {};
+  private issuanceDmRepublishRequests = new Map<string, string>();
 
   constructor(
     private readonly signer: SignerService,
@@ -660,6 +671,29 @@ export class QuestionnaireOptionACoordinatorRuntime {
         requestCount: requests.length,
       }))
       .filter((entry) => entry.latestRequest !== null);
+  }
+
+  private getDmReadSince() {
+    const openedAt = this.state?.election.openedAt;
+    const parsed = openedAt ? Date.parse(openedAt) : NaN;
+    if (Number.isFinite(parsed)) {
+      return Math.max(0, Math.floor(parsed / 1000) - 600);
+    }
+    return Math.max(0, Math.round(Date.now() / 1000) - OPTION_A_COORDINATOR_DM_LOOKBACK_SECONDS);
+  }
+
+  private maybeQueueIssuanceRepublish(issuance: BlindBallotIssuance, request: BlindBallotRequest) {
+    const requestSentAt = request.lastSentAt ?? request.createdAt;
+    const requestSentMs = Date.parse(requestSentAt);
+    const issuedMs = Date.parse(issuance.issuedAt);
+    if (!Number.isFinite(requestSentMs) || !Number.isFinite(issuedMs) || requestSentMs <= issuedMs) {
+      return;
+    }
+    const delivery = readBlindIssuanceDeliveryRecord(issuance.requestId);
+    if (delivery?.requestLastSentAt === requestSentAt) {
+      return;
+    }
+    this.issuanceDmRepublishRequests.set(issuance.requestId, requestSentAt);
   }
 
   async loginWithSigner(summary?: Partial<ElectionSummary>) {
@@ -832,16 +866,19 @@ export class QuestionnaireOptionACoordinatorRuntime {
     }
 
     try {
+      const since = this.getDmReadSince();
       const requests = this.fallbackNsec?.trim()
         ? await fetchOptionABlindRequestDmsWithNsec({
           nsec: this.fallbackNsec,
           electionId: this.electionId,
-          limit: 150,
+          limit: OPTION_A_COORDINATOR_NSEC_DM_LIMIT,
+          since,
         })
         : await fetchOptionABlindRequestDms({
           signer: this.signer,
           electionId: this.electionId,
-          limit: 150,
+          limit: OPTION_A_COORDINATOR_SIGNER_DM_LIMIT,
+          since,
         });
       for (const request of requests) {
         enqueueBlindRequest(request);
@@ -852,14 +889,41 @@ export class QuestionnaireOptionACoordinatorRuntime {
     }
   }
 
-  async publishPendingBlindIssuancesToDm() {
+  async publishPendingBlindIssuancesToDm(options?: {
+    forceAll?: boolean;
+    requestIds?: string[];
+    minRetryMs?: number;
+  }) {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
     }
 
-    const issued = Object.values(this.state.issuedBlindResponses).map((issuance) => this.enrichIssuanceWithDefinition(issuance));
+    const forcedRequestIds = new Set([
+      ...this.issuanceDmRepublishRequests.keys(),
+      ...(options?.requestIds ?? []),
+    ]);
+    const minRetryMs = options?.minRetryMs ?? OPTION_A_ISSUANCE_DM_RETRY_MS;
+    const issued = Object.values(this.state.issuedBlindResponses)
+      .map((issuance) => this.enrichIssuanceWithDefinition(issuance))
+      .filter((issuance) => {
+        if (options?.forceAll || forcedRequestIds.has(issuance.requestId)) {
+          return true;
+        }
+        const delivery = readBlindIssuanceDeliveryRecord(issuance.requestId);
+        if (!delivery?.lastAttemptAt) {
+          return true;
+        }
+        if (delivery.lastSuccessAt) {
+          return false;
+        }
+        const lastAttemptMs = Date.parse(delivery.lastAttemptAt);
+        return !Number.isFinite(lastAttemptMs) || Date.now() - lastAttemptMs >= minRetryMs;
+      });
     let delivered = 0;
     for (const issuance of issued) {
+      const attemptedAt = nowIso();
+      let eventId: string | null = null;
+      let success = false;
       try {
         const result = await publishOptionABlindIssuanceDm({
           signer: this.signer,
@@ -867,11 +931,22 @@ export class QuestionnaireOptionACoordinatorRuntime {
           issuance,
           fallbackNsec: this.fallbackNsec,
         });
-        if (result.successes > 0) {
+        eventId = result.eventId;
+        success = result.successes > 0;
+        if (success) {
           delivered += 1;
         }
       } catch {
         // Keep best-effort to avoid blocking queue processing.
+      } finally {
+        recordBlindIssuanceDeliveryAttempt({
+          issuance,
+          attemptedAt,
+          delivered: success,
+          eventId,
+          requestLastSentAt: this.issuanceDmRepublishRequests.get(issuance.requestId) ?? null,
+        });
+        this.issuanceDmRepublishRequests.delete(issuance.requestId);
       }
     }
     return delivered;
@@ -891,16 +966,19 @@ export class QuestionnaireOptionACoordinatorRuntime {
     }
 
     try {
+      const since = this.getDmReadSince();
       const submissions = this.fallbackNsec?.trim()
         ? await fetchOptionABallotSubmissionDmsWithNsec({
           nsec: this.fallbackNsec,
           electionId: this.electionId,
-          limit: 150,
+          limit: OPTION_A_COORDINATOR_NSEC_DM_LIMIT,
+          since,
         })
         : await fetchOptionABallotSubmissionDms({
           signer: this.signer,
           electionId: this.electionId,
-          limit: 150,
+          limit: OPTION_A_COORDINATOR_SIGNER_DM_LIMIT,
+          since,
         });
       for (const submission of submissions) {
         enqueueSubmission(submission);
@@ -963,6 +1041,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
         const existingIssuance = findIssuedBlindResponse(next, request);
         if (received.error === "already_issued" && existingIssuance) {
           const enriched = this.enrichIssuanceWithDefinition(existingIssuance);
+          this.maybeQueueIssuanceRepublish(enriched, request);
           next = {
             ...next,
             issuedBlindResponses: {
@@ -985,6 +1064,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       const existingIssuance = findIssuedBlindResponse(next, request);
       if (existingIssuance) {
         const enriched = this.enrichIssuanceWithDefinition(existingIssuance);
+        this.maybeQueueIssuanceRepublish(enriched, request);
         next = {
           ...next,
           issuedBlindResponses: {
@@ -1181,6 +1261,7 @@ export async function processOptionAQueuesForCoordinatorLive(input: {
   preferredElectionId?: string;
   onlyPreferredElectionId?: boolean;
   requiredQuestionIdsByElectionId?: Record<string, string[]>;
+  forceRepublishIssuances?: boolean;
 }) {
   const coordinatorNpub = toNpub(input.coordinatorNpub);
   const registry = loadElectionRegistry();
@@ -1208,7 +1289,9 @@ export async function processOptionAQueuesForCoordinatorLive(input: {
     runtime.bootstrapCoordinatorNpub({ coordinatorNpub, summary });
     await runtime.syncBlindRequestsFromDm();
     await runtime.processPendingBlindRequests();
-    await runtime.publishPendingBlindIssuancesToDm();
+    await runtime.publishPendingBlindIssuancesToDm({
+      forceAll: input.forceRepublishIssuances,
+    });
     await runtime.syncSubmissionsFromDm();
     await runtime.processPendingSubmissions(input.requiredQuestionIdsByElectionId?.[electionId] ?? []);
     await runtime.publishPendingAcceptanceResultsToDm();
