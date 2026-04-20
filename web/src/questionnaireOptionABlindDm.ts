@@ -10,16 +10,17 @@ import type { SignerService } from "./services/signerService";
 import { getSharedNostrPool } from "./sharedNostrPool";
 import { SIMPLE_DM_RELAYS } from "./simpleShardDm";
 import { normalizeRelaysRust } from "./wasm/auditableVotingCore";
+import { mapRelayPublishResult } from "./nostrPublishResult";
 
-const OPTION_A_BLIND_DM_RELAYS_MAX = 6;
-const OPTION_A_BLIND_DM_READ_RELAYS_MAX = 5;
-const OPTION_A_BLIND_DM_HINT_RELAYS_MAX = 6;
+const OPTION_A_BLIND_DM_RELAYS_MAX = 8;
+const OPTION_A_BLIND_DM_READ_RELAYS_MAX = 6;
+const OPTION_A_BLIND_DM_HINT_RELAYS_MAX = 8;
 const OPTION_A_BLIND_DM_MAX_WAIT_MS = 1500;
 const OPTION_A_BLIND_DM_STAGGER_MS = 250;
 const OPTION_A_BLIND_DM_MIN_PUBLISH_INTERVAL_MS = 300;
 const TWO_DAYS_SECONDS = 2 * 24 * 60 * 60;
-const ONE_DAY_SECONDS = 24 * 60 * 60;
-const OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT = 6;
+const OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS = 3 * 24 * 60 * 60;
+const OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT = 40;
 const KIND_SEAL = 13;
 const KIND_RUMOR_MESSAGE = 14;
 const KIND_GIFT_WRAP = 1059;
@@ -401,15 +402,7 @@ async function publishEnvelope(input: {
     },
   );
 
-  const relayResults = results.map((result, index) => (
-    result.status === "fulfilled"
-      ? { relay: relays[index], success: true as const }
-      : {
-          relay: relays[index],
-          success: false as const,
-          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-        }
-  ));
+  const relayResults = results.map((result, index) => mapRelayPublishResult(result, relays[index]));
   return {
     eventId: giftWrapEvent.id,
     successes: relayResults.filter((entry) => entry.success).length,
@@ -526,7 +519,7 @@ export async function fetchOptionABlindRequestDms(input: {
   const events = await pool.querySync(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
-    since: input.since ?? Math.round(Date.now() / 1000) - ONE_DAY_SECONDS,
+    since: input.since ?? Math.round(Date.now() / 1000) - OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS,
     limit: Math.max(1, Math.min(input.limit ?? maxDecryptAttempts, maxDecryptAttempts)),
   });
 
@@ -631,7 +624,7 @@ export async function fetchOptionABlindIssuanceDms(input: {
   const events = await pool.querySync(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
-    since: input.since ?? Math.round(Date.now() / 1000) - ONE_DAY_SECONDS,
+    since: input.since ?? Math.round(Date.now() / 1000) - OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS,
     limit: Math.max(1, Math.min(input.limit ?? maxDecryptAttempts, maxDecryptAttempts)),
   });
 
@@ -734,7 +727,7 @@ export async function fetchOptionABallotSubmissionDms(input: {
   const events = await pool.querySync(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
-    since: input.since ?? Math.round(Date.now() / 1000) - ONE_DAY_SECONDS,
+    since: input.since ?? Math.round(Date.now() / 1000) - OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS,
     limit: Math.max(1, Math.min(input.limit ?? maxDecryptAttempts, maxDecryptAttempts)),
   });
 
@@ -847,7 +840,7 @@ export async function fetchOptionABallotAcceptanceDms(input: {
   const events = await pool.querySync(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
-    since: input.since ?? Math.round(Date.now() / 1000) - ONE_DAY_SECONDS,
+    since: input.since ?? Math.round(Date.now() / 1000) - OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS,
     limit: Math.max(1, Math.min(input.limit ?? maxDecryptAttempts, maxDecryptAttempts)),
   });
 

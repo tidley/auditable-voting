@@ -112,7 +112,7 @@ describe("questionnaireOptionABlindDm", () => {
     });
 
     const relays = publishToRelaysStaggered.mock.calls[0]?.[1] as string[];
-    expect(relays).toEqual([
+    expect(relays.slice(0, 6)).toEqual([
       "wss://recipient.one",
       "wss://recipient.two",
       "wss://nip17.com",

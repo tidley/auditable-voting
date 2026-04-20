@@ -220,13 +220,13 @@ The current repository contains only the browser app. It has voter, coordinator,
 
 Invite links can point to a public questionnaire id. Signer login opens the Vote tab directly, completes voter login, and loads the public questionnaire definition, including the blind-signing public key, without scanning old encrypted invite DMs. Manual invite checks and credential-result polling use recent bounded signer DM reads.
 
-On Android, signer sessions prefer Amber through NIP-46 when available so `get_public_key`, `sign_event`, and `nip44` operations stay on one signer identity.
+On Android, signer sessions prefer Amber through NIP-46 when available so `get_public_key`, `sign_event`, `nip04`, and `nip44` operations stay on one signer identity, and the app now requests the full permission set up front during connect.
 
-Blind request, issuance, submission, and acceptance DMs now also resolve recipient NIP-17 relay-list hints (`kind:10050`) before static fallbacks, and the default fallback lists no longer include `wss://relay.snort.social` or `wss://nostr.bg`.
+Blind request, issuance, submission, and acceptance DMs now also resolve recipient NIP-17 relay-list hints (`kind:10050`) before static fallbacks, keep broader fallback relay redundancy (including `wss://relay.snort.social` and `wss://nostr.bg`), and only count a DM publish as delivered when at least one relay actually accepts it.
 
 Invite-link clipboard writes are best-effort, so browser focus restrictions do not throw unhandled errors after async relay work.
 
-The voter page labels the questionnaire voting identity separately from the signer account and shows request, credential, and response state. Resending a blind-ballot request keeps the same request id; the coordinator republishes the existing credential DM rather than issuing a second credential. Credential delivery now mixes recipient relay hints with fallback relays, publishes to more relays, and retries issued credentials until submission proves receipt.
+The voter page labels the questionnaire voting identity separately from the signer account and shows request, credential, and response state. Resending a blind-ballot request keeps the same request id; the coordinator republishes the existing credential DM rather than issuing a second credential. Blind-request and ballot-submission sends only move to "sent" after confirmed relay acceptance. Credential delivery now mixes recipient relay hints with fallback relays, publishes to more relays, retries issued credentials until submission proves receipt, and uses wider bounded signer DM scans for recovery.
 
 Drafted response fields stay intact when the credential or refreshed definition arrives for the same questionnaire.
 

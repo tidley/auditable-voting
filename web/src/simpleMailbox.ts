@@ -9,6 +9,7 @@ import {
 } from "./nip65RelayHints";
 import { getSharedNostrPool } from "./sharedNostrPool";
 import { sha256HexRust, normalizeRelaysRust, sortRecordsByCreatedAtDescRust } from "./wasm/auditableVotingCore";
+import { mapRelayPublishResult } from "./nostrPublishResult";
 import type {
   SimpleBlindIssuanceRequest,
   SimpleBlindPrivateKey,
@@ -24,6 +25,8 @@ export const SIMPLE_MAILBOX_RELAYS = [
   "wss://nos.lol",
   "wss://offchain.pub",
   "wss://nostr.mom",
+  "wss://relay.snort.social",
+  "wss://nostr.bg",
   "wss://relay.0xchat.com",
   "wss://relay.damus.io",
   "wss://nostr-pub.wellorder.net",
@@ -433,15 +436,7 @@ async function publishMailboxEvent(input: {
     },
   );
 
-  const relayResults = results.map((result, index) => (
-    result.status === "fulfilled"
-      ? { relay: publishRelays[index], success: true }
-      : {
-          relay: publishRelays[index],
-          success: false,
-          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-        }
-  ));
+  const relayResults = results.map((result, index) => mapRelayPublishResult(result, publishRelays[index]));
   for (const result of relayResults) {
     recordMailboxRelayOutcome(result.relay, result.success, result.error);
   }

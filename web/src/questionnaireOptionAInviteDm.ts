@@ -6,6 +6,7 @@ import { normalizeRelaysRust } from "./wasm/auditableVotingCore";
 import type { ElectionInviteMessage } from "./questionnaireOptionA";
 import type { SignerService } from "./services/signerService";
 import { parseInviteFromUrl } from "./questionnaireInvite";
+import { mapRelayPublishResult } from "./nostrPublishResult";
 
 const OPTION_A_INVITE_DM_RELAYS_MAX = 12;
 const OPTION_A_INVITE_DM_READ_RELAYS_MAX = 3;
@@ -14,8 +15,8 @@ const OPTION_A_INVITE_DM_STAGGER_MS = 250;
 const OPTION_A_INVITE_DM_MIN_PUBLISH_INTERVAL_MS = 300;
 const TWO_DAYS_SECONDS = 2 * 24 * 60 * 60;
 const ONE_DAY_SECONDS = 24 * 60 * 60;
-const OPTION_A_INVITE_DM_SIGNER_LOOKBACK_SECONDS = ONE_DAY_SECONDS;
-const OPTION_A_INVITE_DM_SIGNER_DECRYPT_LIMIT = 6;
+const OPTION_A_INVITE_DM_SIGNER_LOOKBACK_SECONDS = 3 * ONE_DAY_SECONDS;
+const OPTION_A_INVITE_DM_SIGNER_DECRYPT_LIMIT = 40;
 const KIND_SEAL = 13;
 const KIND_RUMOR_MESSAGE = 14;
 const KIND_GIFT_WRAP = 1059;
@@ -301,15 +302,7 @@ export async function publishOptionAInviteDm(input: {
     },
   );
 
-  const relayResults = results.map((result, index) => (
-    result.status === "fulfilled"
-      ? { relay: relays[index], success: true as const }
-      : {
-          relay: relays[index],
-          success: false as const,
-          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-        }
-  ));
+  const relayResults = results.map((result, index) => mapRelayPublishResult(result, relays[index]));
   return {
     eventId: giftWrapEvent.id,
     successes: relayResults.filter((entry) => entry.success).length,

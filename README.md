@@ -50,7 +50,8 @@ The shipped app currently includes:
 - invite links with a public questionnaire id now avoid encrypted invite-mailbox scans after signer login, and signer-backed DM reads are recent and bounded to reduce Amber bunker prompts
 - Android signer sessions now prefer Amber via NIP-46 when available, so signer-backed questionnaire DM flows use one consistent signer identity for `get_public_key`, `sign_event`, and `nip44_*`
 - Option A blind request, issuance, submission, and acceptance DMs now also target recipient NIP-17 relay-list hints (`kind:10050`) instead of only static fallback relays
-- default relay lists now exclude `wss://relay.snort.social` and `wss://nostr.bg` to reduce repeated failed websocket noise in browsers where those relays are unreachable
+- Option A and shard DM fallback relay lists now keep broader redundancy (including `wss://relay.snort.social` and `wss://nostr.bg`) while delivery marks success only when at least one relay actually accepts the publish
+- voter blind-request and ballot-submission sends now require confirmed DM delivery (no more silent fire-and-forget success states), and signer DM recovery scans use wider bounded windows
 - invite-link clipboard writes are now best-effort, so browser focus restrictions no longer throw unhandled errors after async relay work
 - the voter questionnaire page now separates the signer account from the ballot voting identity and shows ballot progress as request, credential, and response states
 - coordinator automatic Option A queue processing is now single-flight and slower, reducing overlapping relay publishes and websocket churn
@@ -244,6 +245,7 @@ The voter questionnaire now uses a single entry path (Option A runtime) by defau
 - no `qflow`/`questionnaire_flow` URL gate is required for the normal voter path
 - signer login, coordinator whitelist/invite actions, blind request/issuance, single-vote acceptance, and signer-keyed resume are handled through the `questionnaireOptionA` runtime path
 - invites are sent over NIP-17 gift-wrapped DMs (`kind 1059` with `kind 13` seal / `kind 14` rumor) and discovered from relay history on voter login
+- Android Amber Nostr Connect now requests full signing/encryption permissions up front (`sign_event`, NIP-04, NIP-44) instead of requesting extra capabilities later in the flow
 - published questionnaire definitions carry the blind-signing public key, are cached locally, and are attached to Option A invites and credential issuances when available, so voters can render and request ballots even if a signer cannot read historical invite DMs
 - arriving credential-attached definitions refresh the questionnaire text without clearing drafted voter responses
 - blind ballot requests use RSABSSA blind signing; the coordinator signs only a blinded token message and the voter unblinds the credential locally

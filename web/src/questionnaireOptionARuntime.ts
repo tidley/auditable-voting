@@ -75,8 +75,8 @@ import {
 } from "./questionnaireBlindToken";
 
 const OPTION_A_COORDINATOR_DM_LOOKBACK_SECONDS = 24 * 60 * 60;
-const OPTION_A_COORDINATOR_SIGNER_DM_LIMIT = 30;
-const OPTION_A_COORDINATOR_NSEC_DM_LIMIT = 80;
+const OPTION_A_COORDINATOR_SIGNER_DM_LIMIT = 60;
+const OPTION_A_COORDINATOR_NSEC_DM_LIMIT = 120;
 const OPTION_A_ISSUANCE_DM_RETRY_MS = 2 * 60 * 1000;
 
 export type OptionARuntimeErrorCode =
@@ -87,6 +87,7 @@ export type OptionARuntimeErrorCode =
   | "not_whitelisted"
   | "coordinator_missing"
   | "issuance_failed"
+  | "dm_delivery_failed"
   | "invalid_submission";
 
 export class OptionARuntimeError extends Error {
@@ -393,14 +394,20 @@ export class QuestionnaireOptionAVoterRuntime {
       };
     }
 
+    this.state = next;
+    saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
     const sentAt = nowIso();
     request = {
       ...request,
       lastSentAt: sentAt,
     };
-    const sent = reduceVoterEvent(next, {
+    const published = await this.publishBlindRequestDm(request);
+    if (!published || published.successes <= 0) {
+      throw new OptionARuntimeError("dm_delivery_failed", "No relay accepted the blind ballot request DM.");
+    }
+    const sent = reduceVoterEvent(this.state, {
       type: "BLIND_REQUEST_SENT",
-      electionId: next.electionId,
+      electionId: this.state.electionId,
       requestId: request.requestId,
       sentAt,
     });
@@ -408,23 +415,21 @@ export class QuestionnaireOptionAVoterRuntime {
       throw new OptionARuntimeError("issuance_failed", "Could not send blind request.");
     }
     next = sent.state;
-
     this.state = next;
     enqueueBlindRequest(request);
     saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
-    void this.publishBlindRequestDm();
     return this.state;
   }
 
-  async publishBlindRequestDm() {
-    if (!this.state?.blindRequest || !this.state.coordinatorNpub) {
+  async publishBlindRequestDm(request = this.state?.blindRequest ?? null) {
+    if (!this.state || !request || !this.state.coordinatorNpub) {
       return null;
     }
     try {
       const result = await publishOptionABlindRequestDm({
         signer: this.signer,
         recipientNpub: this.state.coordinatorNpub,
-        request: this.state.blindRequest,
+        request,
         fallbackNsec: this.fallbackNsec,
       });
       return result;
@@ -457,8 +462,8 @@ export class QuestionnaireOptionAVoterRuntime {
       : fetchOptionABlindIssuanceDms({
         signer: this.signer,
         electionId,
-        limit: 12,
-        maxDecryptAttempts: 12,
+        limit: 30,
+        maxDecryptAttempts: 30,
         since: requestSince,
       })).then((issuanceMessages) => {
       for (const issuance of issuanceMessages) {
@@ -478,8 +483,8 @@ export class QuestionnaireOptionAVoterRuntime {
       : fetchOptionABallotAcceptanceDms({
         signer: this.signer,
         electionId,
-        limit: 12,
-        maxDecryptAttempts: 12,
+        limit: 30,
+        maxDecryptAttempts: 30,
         since: acceptanceSince,
       })).then((acceptanceMessages) => {
       for (const acceptance of acceptanceMessages) {
@@ -612,11 +617,17 @@ export class QuestionnaireOptionAVoterRuntime {
     };
     enqueueSubmission(submission);
     saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
-    void this.publishBallotSubmissionDm(submission);
+    const published = await this.publishBallotSubmissionDm(submission, { fallbackNsec: responseNsec });
+    if (!published || published.successes <= 0) {
+      throw new OptionARuntimeError("dm_delivery_failed", "No relay accepted the ballot submission DM.");
+    }
     return this.state;
   }
 
-  async publishBallotSubmissionDm(submission = this.state?.submission ?? null) {
+  async publishBallotSubmissionDm(
+    submission = this.state?.submission ?? null,
+    options?: { fallbackNsec?: string },
+  ) {
     if (!this.state || !submission || !this.state.coordinatorNpub) {
       return null;
     }
@@ -625,7 +636,7 @@ export class QuestionnaireOptionAVoterRuntime {
         signer: this.signer,
         recipientNpub: this.state.coordinatorNpub,
         submission,
-        fallbackNsec: this.state.responseNsec ?? this.fallbackNsec,
+        fallbackNsec: options?.fallbackNsec ?? this.state.responseNsec ?? this.fallbackNsec,
       });
     } catch {
       return null;

@@ -221,10 +221,12 @@ The present web client is built with:
 - **linked invite login** that opens the public questionnaire without scanning old encrypted invite DMs, with recent bounded signer DM reads for manual invite checks and credential-result polling
 - **Android signer routing** that prefers Amber through NIP-46 when available, keeping signer-backed questionnaire DM operations on one signer identity
 - **blind DM relay targeting** so Option A blind request/issuance/submission/acceptance DMs resolve recipient `kind:10050` relay-list hints before static fallbacks
+- **strict DM delivery confirmation** so blind-request and ballot-submission flows only mark "sent" after at least one relay confirms acceptance, avoiding silent transport failure states
 - **clearer voter ballot progress** that labels the per-questionnaire voting identity separately from the signer account and shows request, credential, and response state
 - **single-flight coordinator queue processing** so automatic Option A request/submission checks do not overlap relay work
 - **idempotent ballot resend** so a voter can resend the same blind request, the coordinator republishes the existing credential DM, and background loops avoid rebroadcasting already delivered credentials
 - **more redundant Option A DM delivery** that mixes recipient NIP-17 relay hints with fallback relays, widens credential publish fanout, and retries issued credentials until submission proves receipt
+- **wider bounded signer DM scans** for invite/issuance/acceptance recovery so Amber/signer users are less likely to miss valid envelopes in busy relay histories
 - **course-feedback coordinator bypass** so legacy live-round / blind-key / ticket queue gating is disabled for questionnaire acceptance paths, with explicit debug assertions for bypass state
 - **course-feedback batch orchestration** in the live harness (`LIVE_BATCH_SIZE`, default `5`) so enrolment and submission advance in checkpointed waves instead of all-voter cold-start concurrency
 - **questionnaire response observation fallback** that prefers bounded kind-only reads plus local questionnaire-id filtering (and relay probes) when custom tag-indexed reads are unreliable on public relays
@@ -747,6 +749,7 @@ The Option A runtime currently provides:
 - single accepted submission accounting with duplicate protection
 - local resume keyed by election id and signer `npub`
 - invite-link signer login opens the voter Vote tab directly, completes the signer-backed voter login, and can auto-prepare/send the first blind request once login is verified
+- Android Amber NIP-46 sessions now request `sign_event`, `nip04_encrypt/decrypt`, and `nip44_encrypt/decrypt` up front during connect so later flow steps do not trigger capability escalation prompts
 - invite/login npubs and local voter/responder npubs may differ; the invite can be opened against the current local voter identity, then the coordinator either auto-issues for whitelisted voters or manually authorises unexpected requesters
 - invites are durable and can remain idle indefinitely; ballot request retries preserve the same request id and re-queue until the coordinator issues a credential, and the credential issuance can also carry the questionnaire definition as a recovery path
 - accepted Option A DM submissions feed the same coordinator response summaries as public questionnaire response events

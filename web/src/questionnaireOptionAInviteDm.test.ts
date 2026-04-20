@@ -213,7 +213,7 @@ describe("questionnaireOptionAInviteDm", () => {
     expect(querySync.mock.calls[0]?.[1]).toMatchObject({
       kinds: [1059],
       "#p": [recipientHex],
-      limit: 6,
+      limit: 20,
     });
     expect(typeof querySync.mock.calls[0]?.[1]?.since).toBe("number");
   });

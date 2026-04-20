@@ -21,6 +21,7 @@ import {
 } from "./simpleShardCertificate";
 import { getSharedNostrPool } from "./sharedNostrPool";
 import { normalizeRelaysRust, sortRecordsByCreatedAtDescRust } from "./wasm/auditableVotingCore";
+import { mapRelayPublishResult } from "./nostrPublishResult";
 import {
   fetchMailboxShardRequests,
   fetchMailboxShardResponses,
@@ -43,6 +44,8 @@ export const SIMPLE_DM_RELAYS = [
   'wss://offchain.pub',
   'wss://nostr.mom',
   'wss://relay.nostr.band',
+  'wss://relay.snort.social',
+  'wss://nostr.bg',
   'wss://auth.nostr1.com',
   'wss://inbox.nostr.wine',
   'wss://nostr-pub.wellorder.net',
@@ -848,15 +851,7 @@ export async function sendSimpleCoordinatorFollow(input: {
       minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
     },
   );
-  const relayResults = results.map((result, index) => (
-    result.status === "fulfilled"
-      ? { relay: dmRelays[index], success: true }
-      : {
-          relay: dmRelays[index],
-          success: false,
-          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-      }
-  ));
+  const relayResults = results.map((result, index) => mapRelayPublishResult(result, dmRelays[index]));
   for (const result of relayResults) {
     recordRelayOutcome(result.relay, result.success, result.success ? undefined : result.error);
   }
@@ -1121,15 +1116,7 @@ export async function sendSimpleSubCoordinatorJoin(input: {
       minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
     },
   );
-  const relayResults = results.map((result, index) => (
-    result.status === "fulfilled"
-      ? { relay: dmRelays[index], success: true }
-      : {
-          relay: dmRelays[index],
-          success: false,
-          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-        }
-  ));
+  const relayResults = results.map((result, index) => mapRelayPublishResult(result, dmRelays[index]));
 
   return {
     eventId: event.id,
@@ -1193,15 +1180,7 @@ export async function sendSimpleCoordinatorMlsWelcome(input: {
       minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
     },
   );
-  const relayResults = results.map((result, index) => (
-    result.status === "fulfilled"
-      ? { relay: dmRelays[index], success: true }
-      : {
-          relay: dmRelays[index],
-          success: false,
-          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-        }
-  ));
+  const relayResults = results.map((result, index) => mapRelayPublishResult(result, dmRelays[index]));
 
   return {
     eventId: event.id,
@@ -2036,15 +2015,7 @@ export async function sendSimpleShardResponse(input: {
       minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
     },
   );
-  const relayResults = results.map((result, index) => (
-    result.status === "fulfilled"
-      ? { relay: dmRelays[index], success: true }
-      : {
-          relay: dmRelays[index],
-          success: false,
-          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-        }
-  ));
+  const relayResults = results.map((result, index) => mapRelayPublishResult(result, dmRelays[index]));
   const successes = relayResults.filter((result) => result.success).length;
   const failures = relayResults.filter((result) => !result.success).length;
   recordSimpleTicketLifecycleTrace({
@@ -2203,15 +2174,7 @@ export async function sendSimpleShareAssignment(input: {
       minIntervalMs: SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS,
     },
   );
-  const relayResults = results.map((result, index) => (
-    result.status === "fulfilled"
-      ? { relay: dmRelays[index], success: true }
-      : {
-          relay: dmRelays[index],
-          success: false,
-          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-        }
-  ));
+  const relayResults = results.map((result, index) => mapRelayPublishResult(result, dmRelays[index]));
 
   return {
     eventId: event.id,

@@ -239,7 +239,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       } catch {
         // Keep polling best-effort; explicit actions surface errors.
       }
-    }, 30000);
+    }, 15000);
     return () => {
       window.clearInterval(intervalId);
     };
@@ -720,7 +720,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     const retry = () => {
       const now = Date.now();
       const lastAttemptAt = requestRetryAtRef.current[key] ?? 0;
-      if (now - lastAttemptAt < 60000) {
+      if (now - lastAttemptAt < 20000) {
         return;
       }
       requestRetryAtRef.current[key] = now;
@@ -734,7 +734,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       }
     };
     retry();
-    const intervalId = window.setInterval(retry, 60000);
+    const intervalId = window.setInterval(retry, 20000);
     return () => {
       window.clearInterval(intervalId);
     };
