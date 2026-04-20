@@ -130,7 +130,7 @@ async function connectAmberSigner(): Promise<NostrConnectSignerLike> {
       url: typeof window === "undefined" ? "https://tidley.github.io" : window.location.origin,
       perms: [
         "get_public_key",
-        "sign_event",
+        "sign_event:13",
         "nip04_encrypt",
         "nip04_decrypt",
         "nip44_encrypt",
@@ -234,7 +234,7 @@ async function derivePubkeyFromSignEvent(signer: BrowserNostrSigner): Promise<st
   }
   const owner = source.signEvent ? source : signer.nip04;
   const signed = await signEvent.call(owner, {
-    kind: 22242,
+    kind: 13,
     created_at: Math.floor(Date.now() / 1000),
     tags: [],
     content: "",
