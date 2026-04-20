@@ -114,6 +114,7 @@ type QuestionnaireOptionAVoterPanelProps = {
   localVoterNpub?: string;
   localVoterNsec?: string;
   autoSignerLogin?: boolean;
+  requestBlindBallotNonce?: number;
 };
 
 export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptionAVoterPanelProps) {
@@ -744,6 +745,32 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       window.clearInterval(intervalId);
     };
   }, [runtime, snapshot?.electionId, snapshot?.invitedNpub, snapshot?.loginVerified, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission]);
+
+  useEffect(() => {
+    if (!runtime || !props.requestBlindBallotNonce || props.requestBlindBallotNonce <= 0) {
+      return;
+    }
+    try {
+      const current = ensureLocalSession({ allowInviteMissing: true }) ?? runtime.getSnapshot();
+      if (!current?.loginVerified) {
+        setStatus("Open the Vote tab and login, then the blind-signature request will send automatically.");
+        return;
+      }
+      if (current.submission || current.credentialReady || current.blindRequestSent) {
+        setRefreshNonce((value) => value + 1);
+        return;
+      }
+      void runtime.requestBlindBallot().then(() => {
+        setActiveInvite(null);
+        setStatus("Blind ballot request sent. Waiting for coordinator issuance.");
+        setRefreshNonce((value) => value + 1);
+      }).catch((error) => {
+        setStatus(error instanceof Error ? error.message : "Could not send blind ballot request.");
+      });
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not start blind ballot request.");
+    }
+  }, [props.requestBlindBallotNonce, runtime]);
 
   const visiblePendingInvites = snapshot?.loginVerified && snapshot.electionId === electionId.trim()
     ? []

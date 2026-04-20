@@ -346,6 +346,7 @@ export default function SimpleUiApp() {
   const [ballotAccepted, setBallotAccepted] = useState(false);
   const [selectedVotingId, setSelectedVotingId] = useState("");
   const [activeTab, setActiveTab] = useState<VoterTab>(() => (linkedQuestionnaireId ? "vote" : "configure"));
+  const [optionARequestBlindBallotNonce, setOptionARequestBlindBallotNonce] = useState(0);
   const [showVoteDetails, setShowVoteDetails] = useState(false);
   const [votePaneUnlocked, setVotePaneUnlocked] = useState(false);
   const [questionnaireContext, setQuestionnaireContext] = useState<{ hasDefinition: boolean; state: string | null }>({
@@ -1575,6 +1576,10 @@ export default function SimpleUiApp() {
       setRequestStatus("Coordinator already added.");
       return;
     }
+    if (questionnaireModeActive) {
+      setRequestStatus("Coordinator added. Click Vote to request a blind signature.");
+      return;
+    }
     void sendFollowRequests([nextCoordinator], {
       pending: "Sending follow request...",
       success: questionnaireModeActive
@@ -1597,6 +1602,11 @@ export default function SimpleUiApp() {
     if (alreadyAdded) {
       setRequestStatus("Coordinator already added.");
     } else {
+      if (questionnaireModeActive) {
+        setRequestStatus("Coordinator added. Click Vote to request a blind signature.");
+        setCoordinatorScannerStatus(`Scanned ${shortenNpub(scannedNpub)}.`);
+        return true;
+      }
       void sendFollowRequests([scannedNpub], {
         pending: "Sending follow request...",
         success: questionnaireModeActive
@@ -1815,6 +1825,11 @@ export default function SimpleUiApp() {
   }
 
   async function retryUnresponsiveCoordinators() {
+    if (questionnaireModeActive) {
+      selectTab("vote");
+      setRequestStatus("Opening Vote and requesting a blind signature.");
+      return;
+    }
     const retryTargets = configuredCoordinatorTargets.filter(
       (coordinatorNpub) => coordinatorDiagnosticsByNpub.get(coordinatorNpub)?.follow.tone !== "ok",
     );
@@ -1831,7 +1846,7 @@ export default function SimpleUiApp() {
     const voterSecretKey = decodeNsec(voterKeypair?.nsec ?? "");
     const voterNpub = voterKeypair?.npub ?? "";
 
-    if (!voterSecretKey || !voterNpub || configuredCoordinatorTargets.length === 0) {
+    if (questionnaireModeActive || !voterSecretKey || !voterNpub || configuredCoordinatorTargets.length === 0) {
       return;
     }
 
@@ -1880,7 +1895,7 @@ export default function SimpleUiApp() {
     }, SIMPLE_FOLLOW_RETRY_INTERVAL_MS);
 
     return () => window.clearInterval(intervalId);
-  }, [configuredCoordinatorTargets, dmAcknowledgements, followDeliveries, voterKeypair?.npub, voterKeypair?.nsec]);
+  }, [configuredCoordinatorTargets, dmAcknowledgements, followDeliveries, questionnaireModeActive, voterKeypair?.npub, voterKeypair?.nsec]);
 
   const uniqueShardResponses = Array.from(
     new Map(
@@ -2640,6 +2655,10 @@ export default function SimpleUiApp() {
       setActiveTab("configure");
       return;
     }
+    if (nextTab === "vote" && questionnaireModeActive) {
+      setVotePaneUnlocked(true);
+      setOptionARequestBlindBallotNonce((value) => value + 1);
+    }
     setActiveTab(nextTab);
   }
 
@@ -2927,7 +2946,22 @@ export default function SimpleUiApp() {
                 <p className='simple-voter-empty'>No coordinators added yet.</p>
               )}
             </div>
-            {coordinatorsHaveBeenNotified ? (
+            {questionnaireModeActive ? (
+              <div className='simple-voter-action-row simple-voter-action-row-tight'>
+                <button
+                  type='button'
+                  className='simple-voter-primary simple-voter-primary-wide'
+                  onClick={() => selectTab('vote')}
+                  disabled={
+                    !voterKeypair?.npub ||
+                    configuredCoordinatorTargets.length === 0 ||
+                    !questionnaireVoteReady
+                  }
+                >
+                  Vote
+                </button>
+              </div>
+            ) : coordinatorsHaveBeenNotified ? (
               <div className='simple-voter-action-row simple-voter-action-row-tight'>
                 <button
                   type='button'
@@ -2983,6 +3017,7 @@ export default function SimpleUiApp() {
               localVoterNpub={activeVoterNpub}
               localVoterNsec={signerNpub ? "" : (voterKeypair?.nsec ?? "")}
               autoSignerLogin={Boolean(signerNpub.trim())}
+              optionARequestBlindBallotNonce={optionARequestBlindBallotNonce}
             />
             {isCourseFeedbackMode || hideLegacyLiveVotePanel || questionnaireModeActive ? null : (
             effectiveLiveVoteSession ? (
