@@ -2886,7 +2886,7 @@ export default function SimpleUiApp() {
                           className='simple-coordinator-card-meta'
                           title={value}
                         >
-                          {shortenNpub(value)}
+                          {value}
                         </p>
                       </div>
                       <button
