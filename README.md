@@ -55,6 +55,7 @@ The shipped app currently includes:
 - voter blind-request and ballot-submission sends now require confirmed DM delivery (no more silent fire-and-forget success states), and signer DM recovery scans use wider bounded windows
 - invite-link clipboard writes are now best-effort, so browser focus restrictions no longer throw unhandled errors after async relay work
 - the voter questionnaire page now separates the signer account from the ballot voting identity and shows ballot progress as request, credential, and response states
+- the voter tab bar now hides `Vote` until questionnaire context is ready, and silent invite polling no longer forces tab switches away from Configure/Settings
 - coordinator automatic Option A queue processing is now single-flight and slower, reducing overlapping relay publishes and websocket churn
 - voter blind-ballot resend keeps the same request id and freshens its send timestamp; coordinators republish the existing credential DM instead of issuing a second credential
 - Option A request/submission DM reads now use recent since-bounded windows, and successful credential DMs are not rebroadcast by every background queue pass

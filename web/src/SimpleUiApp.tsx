@@ -1717,7 +1717,9 @@ export default function SimpleUiApp() {
           : next;
       });
       setVotePaneUnlocked(true);
-      setActiveTab("vote");
+      if (!options?.silent) {
+        setActiveTab("vote");
+      }
       if (!options?.silent) {
         setRequestStatus(`Opened linked questionnaire ${linkedQuestionnaireId}.`);
       }
@@ -2792,16 +2794,17 @@ export default function SimpleUiApp() {
           >
             Configure
           </button>
-          <button
-            type='button'
-            role='tab'
-            aria-selected={activeTab === 'vote'}
-            className={`simple-voter-tab${activeTab === 'vote' ? ' is-active' : ''}`}
-            onClick={() => selectTab('vote')}
-            disabled={!questionnaireVoteReady}
-          >
-            Vote
-          </button>
+          {questionnaireVoteReady ? (
+            <button
+              type='button'
+              role='tab'
+              aria-selected={activeTab === 'vote'}
+              className={`simple-voter-tab${activeTab === 'vote' ? ' is-active' : ''}`}
+              onClick={() => selectTab('vote')}
+            >
+              Vote
+            </button>
+          ) : null}
           <button
             type='button'
             role='tab'
@@ -2902,7 +2905,7 @@ export default function SimpleUiApp() {
                 </ul>
               ) : null}
             </div>
-            {questionnaireModeActive ? (
+            {questionnaireVoteReady && questionnaireModeActive ? (
               <div className='simple-voter-action-row simple-voter-action-row-tight'>
                 <button
                   type='button'
@@ -2910,14 +2913,13 @@ export default function SimpleUiApp() {
                   onClick={() => selectTab('vote')}
                   disabled={
                     !voterKeypair?.npub ||
-                    configuredCoordinatorTargets.length === 0 ||
-                    !questionnaireVoteReady
+                    configuredCoordinatorTargets.length === 0
                   }
                 >
                   Vote
                 </button>
               </div>
-            ) : coordinatorsHaveBeenNotified ? (
+            ) : questionnaireVoteReady && coordinatorsHaveBeenNotified ? (
               <div className='simple-voter-action-row simple-voter-action-row-tight'>
                 <button
                   type='button'
@@ -2925,8 +2927,7 @@ export default function SimpleUiApp() {
                   onClick={() => selectTab('vote')}
                   disabled={
                     !voterKeypair?.npub ||
-                    configuredCoordinatorTargets.length === 0 ||
-                    !questionnaireVoteReady
+                    configuredCoordinatorTargets.length === 0
                   }
                 >
                   Vote

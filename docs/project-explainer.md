@@ -224,6 +224,7 @@ The present web client is built with:
 - **blind DM relay targeting** so blind request/issuance/submission/acceptance DMs resolve recipient `kind:10050` relay-list hints before static fallbacks
 - **strict DM delivery confirmation** so blind-request and ballot-submission flows only mark "sent" after at least one relay confirms acceptance, avoiding silent transport failure states
 - **clearer voter ballot progress** that labels the per-questionnaire voting identity separately from the signer account and shows request, credential, and response state
+- **safer voter tab switching** so `Vote` is hidden until questionnaire context is ready and background invite refresh does not force the UI away from Configure/Settings
 - **single-flight coordinator queue processing** so automatic request/submission checks do not overlap relay work
 - **idempotent ballot resend** so a voter can resend the same blind request, the coordinator republishes the existing credential DM, and background loops avoid rebroadcasting already delivered credentials
 - **more redundant DM delivery** that mixes recipient NIP-17 relay hints with fallback relays, widens credential publish fanout, and retries issued credentials until submission proves receipt
