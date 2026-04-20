@@ -3400,7 +3400,13 @@ export default function SimpleCoordinatorApp() {
         return;
       }
       optionAQueueProcessingInFlightRef.current = true;
-      void optionACoordinatorRuntime.processPendingBlindRequests()
+      const localNsecMode = Boolean(keypair?.nsec?.trim() && !signerNpub.trim());
+      const syncStep = localNsecMode
+        ? optionACoordinatorRuntime.syncBlindRequestsFromDm()
+          .then(() => optionACoordinatorRuntime.syncSubmissionsFromDm())
+        : Promise.resolve(0);
+      void syncStep
+      .then(() => optionACoordinatorRuntime.processPendingBlindRequests())
       .then(() => optionACoordinatorRuntime.publishPendingBlindIssuancesToDm())
       .then(() => optionACoordinatorRuntime.processPendingSubmissions([]))
       .then(() => optionACoordinatorRuntime.publishPendingAcceptanceResultsToDm())
@@ -3415,7 +3421,7 @@ export default function SimpleCoordinatorApp() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [activeCoordinatorNpub, optionACoordinatorRuntime, optionAElectionId]);
+  }, [activeCoordinatorNpub, optionACoordinatorRuntime, optionAElectionId, keypair?.nsec, signerNpub]);
   function authorizePendingRequester(invitedNpub: string) {
     if (!optionACoordinatorRuntime) {
       return;
