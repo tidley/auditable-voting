@@ -5793,7 +5793,7 @@ export default function SimpleCoordinatorApp() {
             </SimpleCollapsibleSection>
 
             {optionAElectionId ? (
-              <SimpleCollapsibleSection title='Known voters and invites'>
+              <SimpleCollapsibleSection title='Invite voters'>
                 <div className='simple-voter-field-stack'>
                   <div className='simple-voter-action-row simple-voter-action-row-inline'>
                     <input
