@@ -6,7 +6,7 @@ import {
   QuestionnaireOptionAVoterRuntime,
 } from "./questionnaireOptionARuntime";
 import { listBlindRequests, readBlindIssuance } from "./questionnaireOptionAStorage";
-import { publishOptionABlindIssuanceDm } from "./questionnaireOptionABlindDm";
+import { publishOptionABlindIssuanceDm, publishOptionABlindRequestDm } from "./questionnaireOptionABlindDm";
 import type { SignerService } from "./services/signerService";
 
 vi.mock("./questionnaireOptionAInviteDm", () => ({
@@ -154,9 +154,14 @@ describe("questionnaireOptionARuntime", () => {
     const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionId);
     await voter.loginWithSigner(sentInvite.invite);
 
-    const first = await voter.requestBlindBallot();
+    const [first, second] = await Promise.all([
+      voter.requestBlindBallot(),
+      voter.requestBlindBallot(),
+    ]);
     const requestId = first.blindRequest?.requestId;
     expect(requestId).toBeTruthy();
+    expect(second.blindRequest?.requestId).toBe(requestId);
+    expect(vi.mocked(publishOptionABlindRequestDm)).toHaveBeenCalledTimes(1);
 
     const retried = await voter.requestBlindBallot();
     expect(retried.blindRequest?.requestId).toBe(requestId);

@@ -216,6 +216,7 @@ function inferRejectReason(error?: string): BallotRejectReason {
 
 export class QuestionnaireOptionAVoterRuntime {
   private state: VoterElectionLocalState | null = null;
+  private requestBlindBallotInflight: Promise<VoterElectionLocalState> | null = null;
   private submitVoteInflight: Promise<VoterElectionLocalState> | null = null;
 
   constructor(
@@ -392,6 +393,19 @@ export class QuestionnaireOptionAVoterRuntime {
   }
 
   async requestBlindBallot() {
+    if (this.requestBlindBallotInflight) {
+      optionAFlowLog("voter", "blind_request_inflight_reused", { electionId: this.electionId });
+      return this.requestBlindBallotInflight;
+    }
+    this.requestBlindBallotInflight = this.requestBlindBallotInternal();
+    try {
+      return await this.requestBlindBallotInflight;
+    } finally {
+      this.requestBlindBallotInflight = null;
+    }
+  }
+
+  private async requestBlindBallotInternal() {
     if (!this.state) {
       throw new OptionARuntimeError("not_logged_in", "Login is required.");
     }
