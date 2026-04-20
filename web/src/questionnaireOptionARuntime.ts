@@ -78,6 +78,7 @@ const OPTION_A_COORDINATOR_DM_LOOKBACK_SECONDS = 24 * 60 * 60;
 const OPTION_A_COORDINATOR_SIGNER_DM_LIMIT = 60;
 const OPTION_A_COORDINATOR_NSEC_DM_LIMIT = 120;
 const OPTION_A_ISSUANCE_DM_RETRY_MS = 2 * 60 * 1000;
+const OPTION_A_BLIND_REQUEST_RETRY_MS = 60 * 1000;
 
 export type OptionARuntimeErrorCode =
   | "not_logged_in"
@@ -218,6 +219,7 @@ export class QuestionnaireOptionAVoterRuntime {
   private state: VoterElectionLocalState | null = null;
   private requestBlindBallotInflight: Promise<VoterElectionLocalState> | null = null;
   private submitVoteInflight: Promise<VoterElectionLocalState> | null = null;
+  private refreshFetchInFlight = false;
 
   constructor(
     private readonly signer: SignerService,
@@ -392,12 +394,12 @@ export class QuestionnaireOptionAVoterRuntime {
     }
   }
 
-  async requestBlindBallot() {
+  async requestBlindBallot(options?: { forceResend?: boolean; minRetryMs?: number }) {
     if (this.requestBlindBallotInflight) {
       optionAFlowLog("voter", "blind_request_inflight_reused", { electionId: this.electionId });
       return this.requestBlindBallotInflight;
     }
-    this.requestBlindBallotInflight = this.requestBlindBallotInternal();
+    this.requestBlindBallotInflight = this.requestBlindBallotInternal(options);
     try {
       return await this.requestBlindBallotInflight;
     } finally {
@@ -405,7 +407,7 @@ export class QuestionnaireOptionAVoterRuntime {
     }
   }
 
-  private async requestBlindBallotInternal() {
+  private async requestBlindBallotInternal(options?: { forceResend?: boolean; minRetryMs?: number }) {
     if (!this.state) {
       throw new OptionARuntimeError("not_logged_in", "Login is required.");
     }
@@ -471,6 +473,22 @@ export class QuestionnaireOptionAVoterRuntime {
     }
 
     this.state = next;
+    const minRetryMs = Math.max(0, options?.minRetryMs ?? OPTION_A_BLIND_REQUEST_RETRY_MS);
+    const lastSentMs = this.state.blindRequestSentAt ? Date.parse(this.state.blindRequestSentAt) : Number.NaN;
+    if (
+      !options?.forceResend
+      && request
+      && Number.isFinite(lastSentMs)
+      && Date.now() - lastSentMs < minRetryMs
+    ) {
+      optionAFlowLog("voter", "blind_request_resend_skipped_cooldown", {
+        electionId: this.state.electionId,
+        requestId: request.requestId,
+        minRetryMs,
+      });
+      saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
+      return this.state;
+    }
     saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
     const sentAt = nowIso();
     request = {
@@ -544,44 +562,53 @@ export class QuestionnaireOptionAVoterRuntime {
     };
     const requestSince = toSince(this.state.blindRequestSentAt);
     const acceptanceSince = toSince(this.state.submission?.submittedAt) ?? requestSince;
-    void (this.fallbackNsec?.trim()
-      ? fetchOptionABlindIssuanceDmsWithNsec({
-        nsec: this.fallbackNsec,
-        electionId,
-        limit: 100,
-      })
-      : fetchOptionABlindIssuanceDms({
-        signer: this.signer,
-        electionId,
-        limit: 30,
-        maxDecryptAttempts: 30,
-        since: requestSince,
-      })).then((issuanceMessages) => {
-      for (const issuance of issuanceMessages) {
-        storeBlindIssuance(issuance);
-        if (issuance.definition) {
-          storeCachedQuestionnaireDefinition(issuance.definition);
-        }
-      }
-    }).catch(() => null);
-    const acceptanceReadNsec = this.state.responseNsec?.trim() || this.fallbackNsec?.trim() || "";
-    void (acceptanceReadNsec
-      ? fetchOptionABallotAcceptanceDmsWithNsec({
-        nsec: acceptanceReadNsec,
-        electionId,
-        limit: 100,
-      })
-      : fetchOptionABallotAcceptanceDms({
-        signer: this.signer,
-        electionId,
-        limit: 30,
-        maxDecryptAttempts: 30,
-        since: acceptanceSince,
-      })).then((acceptanceMessages) => {
-      for (const acceptance of acceptanceMessages) {
-        storeAcceptance(acceptance);
-      }
-    }).catch(() => null);
+    if (!this.refreshFetchInFlight) {
+      this.refreshFetchInFlight = true;
+      const blindIssuanceFetch = this.fallbackNsec?.trim()
+        ? fetchOptionABlindIssuanceDmsWithNsec({
+          nsec: this.fallbackNsec,
+          electionId,
+          limit: 100,
+        })
+        : fetchOptionABlindIssuanceDms({
+          signer: this.signer,
+          electionId,
+          limit: 30,
+          maxDecryptAttempts: 30,
+          since: requestSince,
+        });
+      const acceptanceReadNsec = this.state.responseNsec?.trim() || this.fallbackNsec?.trim() || "";
+      const acceptanceFetch = acceptanceReadNsec
+        ? fetchOptionABallotAcceptanceDmsWithNsec({
+          nsec: acceptanceReadNsec,
+          electionId,
+          limit: 100,
+        })
+        : fetchOptionABallotAcceptanceDms({
+          signer: this.signer,
+          electionId,
+          limit: 30,
+          maxDecryptAttempts: 30,
+          since: acceptanceSince,
+        });
+      void Promise.all([
+        blindIssuanceFetch.then((issuanceMessages) => {
+          for (const issuance of issuanceMessages) {
+            storeBlindIssuance(issuance);
+            if (issuance.definition) {
+              storeCachedQuestionnaireDefinition(issuance.definition);
+            }
+          }
+        }).catch(() => null),
+        acceptanceFetch.then((acceptanceMessages) => {
+          for (const acceptance of acceptanceMessages) {
+            storeAcceptance(acceptance);
+          }
+        }).catch(() => null),
+      ]).finally(() => {
+        this.refreshFetchInFlight = false;
+      });
+    }
 
     let next = this.state;
     if (next.blindRequest) {
@@ -1478,6 +1505,11 @@ export async function processOptionAQueuesForCoordinatorLive(input: {
   requiredQuestionIdsByElectionId?: Record<string, string[]>;
   forceRepublishIssuances?: boolean;
 }) {
+  const singleFlightKey = `${toNpub(input.coordinatorNpub)}:${input.preferredElectionId?.trim() ?? ""}:${input.onlyPreferredElectionId ? "preferred" : "all"}`;
+  if (liveCoordinatorQueueInFlight.has(singleFlightKey)) {
+    return liveCoordinatorQueueInFlight.get(singleFlightKey)!;
+  }
+  const runner = (async () => {
   const coordinatorNpub = toNpub(input.coordinatorNpub);
   const registry = loadElectionRegistry();
   const preferredElectionId = input.preferredElectionId?.trim() ?? "";
@@ -1517,4 +1549,16 @@ export async function processOptionAQueuesForCoordinatorLive(input: {
     processedElectionIds,
     processedElections: processedElectionIds.length,
   };
+  })();
+  liveCoordinatorQueueInFlight.set(singleFlightKey, runner);
+  try {
+    return await runner;
+  } finally {
+    liveCoordinatorQueueInFlight.delete(singleFlightKey);
+  }
 }
+
+const liveCoordinatorQueueInFlight = new Map<string, Promise<{
+  processedElectionIds: string[];
+  processedElections: number;
+}>>();

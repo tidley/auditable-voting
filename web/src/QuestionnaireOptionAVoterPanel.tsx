@@ -638,7 +638,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     try {
       ensureLocalSession({ allowInviteMissing: true });
       const wasAlreadyWaiting = Boolean(runtime.getSnapshot()?.blindRequestSent && !runtime.getSnapshot()?.credentialReady);
-      await runtime.requestBlindBallot();
+      await runtime.requestBlindBallot({ forceResend: true });
       setActiveInvite(null);
       setStatus(wasAlreadyWaiting
         ? "Blind ballot request resent. Waiting for coordinator issuance."
@@ -720,7 +720,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     const retry = () => {
       const now = Date.now();
       const lastAttemptAt = requestRetryAtRef.current[key] ?? 0;
-      if (now - lastAttemptAt < 20000) {
+      if (now - lastAttemptAt < 60000) {
         return;
       }
       requestRetryAtRef.current[key] = now;
@@ -733,8 +733,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         // Retry is best-effort; explicit controls surface errors.
       }
     };
-    retry();
-    const intervalId = window.setInterval(retry, 20000);
+    const intervalId = window.setInterval(retry, 60000);
     return () => {
       window.clearInterval(intervalId);
     };

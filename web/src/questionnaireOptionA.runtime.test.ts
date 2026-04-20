@@ -117,7 +117,7 @@ describe("questionnaireOptionARuntime", () => {
     const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionId);
     await voter.loginWithSigner(invite);
     voter.updateDraftResponses([{ questionId: "q1", type: "yes_no", answer: "yes" }]);
-    await voter.requestBlindBallot();
+    await voter.requestBlindBallot({ forceResend: true });
 
     await coordinator.processPendingBlindRequests();
     voter.refreshIssuanceAndAcceptance();
@@ -181,7 +181,7 @@ describe("questionnaireOptionARuntime", () => {
     await coordinator.publishPendingBlindIssuancesToDm({ minRetryMs: 0 });
     expect(vi.mocked(publishOptionABlindIssuanceDm)).toHaveBeenCalledTimes(2);
 
-    await voter.requestBlindBallot();
+    await voter.requestBlindBallot({ forceResend: true });
     await coordinator.processPendingBlindRequests();
     await coordinator.publishPendingBlindIssuancesToDm();
     expect(readBlindIssuance(requestId ?? "")).toEqual(issued);

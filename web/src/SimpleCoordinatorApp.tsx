@@ -3412,7 +3412,7 @@ export default function SimpleCoordinatorApp() {
       }).finally(() => {
         optionAQueueProcessingInFlightRef.current = false;
       });
-    }, 30000);
+    }, 60000);
     return () => {
       window.clearInterval(intervalId);
     };
