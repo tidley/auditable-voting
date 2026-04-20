@@ -131,6 +131,8 @@ async function connectAmberSigner(): Promise<NostrConnectSignerLike> {
       perms: [
         "get_public_key",
         "sign_event",
+        "nip04_encrypt",
+        "nip04_decrypt",
         "nip44_encrypt",
         "nip44_decrypt",
       ],
