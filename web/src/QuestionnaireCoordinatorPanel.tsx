@@ -1755,15 +1755,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         onChange={(event) => setCloseAfterMinutes(event.target.value)}
       />
 
-      <h4 className='simple-voter-section-title'>Questionnaire state</h4>
-      <ul className='simple-vote-status-list'>
-        <li><span className='simple-vote-status-icon' aria-hidden='true'>•</span> State: {buildStateLabel}</li>
-        <li><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Opened: {formatUnixTimestamp(latestDefinition?.openAt ?? null)}</li>
-        <li><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Closing / Closed: {formatUnixTimestamp(latestDefinition?.closeAt ?? null)}</li>
-        <li><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Responses: {displayAcceptedCount} / {knownVoterCount} ({responseCompletionPercent}%)</li>
-        <li><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Coordinators: 1 of 1</li>
-      </ul>
-
       <h4 className='simple-voter-section-title'>Questions</h4>
       <div className='simple-questionnaire-question-list'>
         {questions.map((question, index) => {
