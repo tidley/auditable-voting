@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { NostrEvent } from "nostr-tools";
 import TokenFingerprint from "./TokenFingerprint";
 import {
   evaluateQuestionnaireBlindAdmissions,
@@ -9,6 +10,8 @@ import {
 } from "./questionnaireTransport";
 import { formatQuestionnaireStateLabel } from "./questionnaireRuntime";
 import type { QuestionnaireQuestion, QuestionnaireResultSummary } from "./questionnaireProtocol";
+import { loadCoordinatorState } from "./questionnaireOptionAStorage";
+import type { BallotSubmission, QuestionnaireAnswer } from "./questionnaireOptionA";
 
 const AUDITOR_REFRESH_INTERVAL_MS = 15000;
 const AUDITOR_QUESTIONNAIRE_DETAIL_LIMIT = 20;
@@ -163,12 +166,41 @@ export default function SimpleAuditorApp() {
       const latestState = [...stateEntries]
         .sort((left, right) => Number(right.event.created_at ?? right.state.createdAt ?? 0) - Number(left.event.created_at ?? left.state.createdAt ?? 0))[0];
       const latestPublishAt = latestResult?.event.created_at ?? null;
-      const details = admissions.decisions
+      let details = admissions.decisions
         .map((decision) => ({
           ...decision,
           includedInLatestPublish: latestPublishAt !== null ? Number(decision.event.created_at ?? 0) <= latestPublishAt : false,
         }))
         .sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0));
+      if (details.length === 0) {
+        const selectedEntry = questionnaires.find((entry) => entry.questionnaireId === selectedId) ?? null;
+        const coordinatorNpub = selectedEntry?.coordinatorNpub?.trim() ?? "";
+        if (coordinatorNpub) {
+          const coordinatorState = loadCoordinatorState({
+            coordinatorNpub,
+            electionId: selectedId,
+          });
+          if (coordinatorState) {
+            const fallbackDetails = Object.values(coordinatorState.acceptanceResults)
+              .map((acceptance) => {
+                const submission = coordinatorState.receivedSubmissions[acceptance.submissionId];
+                if (!submission) {
+                  return null;
+                }
+                return optionASubmissionToAuditorDetail({
+                  submission,
+                  accepted: acceptance.accepted,
+                  latestPublishAt,
+                });
+              })
+              .filter((entry): entry is AuditorQuestionnaireResponseDetail => Boolean(entry))
+              .sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0));
+            if (fallbackDetails.length > 0) {
+              details = fallbackDetails;
+            }
+          }
+        }
+      }
       setSelectedResponseDetails(details);
       setSelectedLatestPublishAt(latestPublishAt);
       setSelectedLiveState(latestState?.state.state ?? null);
@@ -181,7 +213,7 @@ export default function SimpleAuditorApp() {
       setSelectedResultSummary(null);
       setResponseRefreshStatus("Failed to refresh questionnaire responses.");
     }
-  }, []);
+  }, [questionnaires]);
 
   useEffect(() => {
     let cancelled = false;
@@ -622,4 +654,63 @@ export default function SimpleAuditorApp() {
       </section>
     </main>
   );
+}
+
+function optionAAnswerToQuestionnaireAnswer(answer: QuestionnaireAnswer) {
+  if (answer.type === "yes_no") {
+    return {
+      questionId: answer.questionId,
+      answerType: "yes_no" as const,
+      value: answer.answer === "yes",
+    };
+  }
+  if (answer.type === "multiple_choice") {
+    return {
+      questionId: answer.questionId,
+      answerType: "multiple_choice" as const,
+      selectedOptionIds: answer.answer,
+    };
+  }
+  return {
+    questionId: answer.questionId,
+    answerType: "free_text" as const,
+    text: answer.answer,
+  };
+}
+
+function optionASubmissionToAuditorDetail(input: {
+  submission: BallotSubmission;
+  accepted: boolean;
+  latestPublishAt: number | null;
+}): AuditorQuestionnaireResponseDetail {
+  const submittedAtMs = Date.parse(input.submission.submittedAt);
+  const submittedAt = Number.isFinite(submittedAtMs)
+    ? Math.floor(submittedAtMs / 1000)
+    : Math.floor(Date.now() / 1000);
+  const responseNpub = input.submission.responseNpub?.trim() || input.submission.invitedNpub;
+  const event = {
+    id: `optiona:${input.submission.submissionId}`,
+    created_at: submittedAt,
+  } as NostrEvent;
+  return {
+    event,
+    response: {
+      schemaVersion: 1,
+      eventType: "questionnaire_response_blind",
+      questionnaireId: input.submission.electionId,
+      responseId: input.submission.submissionId,
+      submittedAt,
+      authorPubkey: responseNpub,
+      tokenNullifier: input.submission.nullifier,
+      tokenProof: {
+        tokenCommitment: input.submission.tokenCommitment,
+        questionnaireId: input.submission.electionId,
+        signature: input.submission.credential,
+      },
+      answers: input.submission.payload.responses.map(optionAAnswerToQuestionnaireAnswer),
+    },
+    accepted: input.accepted,
+    rejectionReason: input.accepted ? null : "duplicate_nullifier",
+    includedInLatestPublish: input.latestPublishAt !== null ? submittedAt <= input.latestPublishAt : false,
+  };
 }
