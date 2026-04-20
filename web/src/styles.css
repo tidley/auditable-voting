@@ -268,6 +268,8 @@ code {
   display: flex;
   align-items: center;
   gap: 12px;
+  transform: scale(1.5);
+  transform-origin: top left;
 }
 
 .token-fingerprint-grid {

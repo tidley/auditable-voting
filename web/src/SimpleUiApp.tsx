@@ -2794,6 +2794,7 @@ export default function SimpleUiApp() {
             aria-label='Configure'
           >
             <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
+              <h4 className='simple-voter-section-title'>Request invite from coordinator</h4>
               <div className='simple-voter-add-row simple-voter-add-row-with-scan'>
                 <input
                   id='simple-coordinator-draft'
@@ -2827,7 +2828,7 @@ export default function SimpleUiApp() {
                     setCoordinatorScannerActive(true);
                   }}
                 >
-                  Scan
+                  Scan QR of npub
                 </button>
                 <button
                   type='button'

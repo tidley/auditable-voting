@@ -150,7 +150,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
       expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Coordinator:")).length).toBeGreaterThan(0);
     });
     expect(screen.queryByText(/No invite DM was readable/i)).toBeNull();
-    expect(screen.getByText("Linked questionnaire")).toBeTruthy();
+    expect(screen.getByText("Public definition")).toBeTruthy();
     expect(fetchOptionAInviteDmsMock).not.toHaveBeenCalled();
   });
 

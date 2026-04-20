@@ -109,6 +109,28 @@ function buildInviteFromPublicDefinition(definition: QuestionnaireDefinition, in
   };
 }
 
+const LEGACY_INVITE_TITLE = "Should the proposal pass?";
+
+function resolveInviteDisplayTitle(invite: ElectionInviteMessage) {
+  const fromDefinition = invite.definition?.title?.trim() ?? "";
+  if (fromDefinition) {
+    return fromDefinition;
+  }
+  const fromCache = readCachedQuestionnaireDefinition(invite.electionId)?.title?.trim() ?? "";
+  if (fromCache) {
+    return fromCache;
+  }
+  const fromSummary = loadElectionSummary(invite.electionId)?.title?.trim() ?? "";
+  if (fromSummary) {
+    return fromSummary;
+  }
+  const fromInvite = invite.title?.trim() ?? "";
+  if (fromInvite && fromInvite !== LEGACY_INVITE_TITLE) {
+    return fromInvite;
+  }
+  return invite.electionId;
+}
+
 type QuestionnaireOptionAVoterPanelProps = {
   announcedQuestionnaireIds?: string[];
   localVoterNpub?: string;
@@ -844,21 +866,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         </div>
       </div>
 
-      <section className='simple-settings-card' aria-label='Ballot progress'>
-        <h4 className='simple-voter-section-title'>Ballot progress</h4>
-        <p className='simple-voter-note'>Coordinator: {coordinatorLabel}</p>
-        <p className='simple-voter-note'>Questionnaire ID: {electionId || "Missing"}</p>
-        <ul className='simple-vote-status-list'>
-          <li className={snapshot?.loginVerified ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Identity confirmed: {snapshot?.loginVerified ? "Yes" : "No"}</li>
-          <li className={snapshot?.blindRequestSent ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Ballot request: {requestStateText}</li>
-          <li className={snapshot?.credentialReady ? "is-complete" : waitingForCredential ? "is-pending" : ""}><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Ballot credential: {credentialStateText}</li>
-          <li className={snapshot?.submissionAccepted === true ? "is-complete" : snapshot?.submission ? "is-pending" : ""}><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Response: {submissionStateText}</li>
-        </ul>
-        {waitingForCredential ? (
-          <p className='simple-voter-note'>Waiting for the coordinator to issue your ballot credential. This page checks automatically; the coordinator can press Process requests.</p>
-        ) : null}
-      </section>
-
       {inviteDropdownOptions.length > 0 ? (
         <>
           <label className='simple-voter-label' htmlFor='questionnaire-invite-select'>Invited questionnaires</label>
@@ -867,29 +874,24 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               id='questionnaire-invite-select'
               className='simple-voter-input'
               value={selectedInviteKey}
-              onChange={(event) => setSelectedInviteKey(event.target.value)}
-            >
-              {inviteDropdownOptions.map((invite) => {
-                const key = `${invite.electionId}:${invite.coordinatorNpub}`;
-                return (
-                  <option key={key} value={key}>
-                    {(invite.title || invite.electionId) + " · " + invite.electionId}
-                  </option>
-                );
-              })}
-            </select>
-            <button
-              type='button'
-              className='simple-voter-secondary'
-              onClick={() => {
-                const selected = inviteDropdownOptions.find((invite) => `${invite.electionId}:${invite.coordinatorNpub}` === selectedInviteKey);
+              onChange={(event) => {
+                const key = event.target.value;
+                setSelectedInviteKey(key);
+                const selected = inviteDropdownOptions.find((invite) => `${invite.electionId}:${invite.coordinatorNpub}` === key);
                 if (selected) {
                   void openInvite(selected);
                 }
               }}
             >
-              Open selected
-            </button>
+              {inviteDropdownOptions.map((invite) => {
+                const key = `${invite.electionId}:${invite.coordinatorNpub}`;
+                return (
+                  <option key={key} value={key}>
+                    {resolveInviteDisplayTitle(invite) + " · " + invite.electionId}
+                  </option>
+                );
+              })}
+            </select>
           </div>
         </>
       ) : null}
@@ -925,7 +927,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       {activeInvite && flags.canRequestBallot ? (
         <section className='simple-settings-card' aria-label='Invite action'>
           <p className='simple-voter-note'>
-            Invite ready for {activeInvite.title || activeInvite.electionId}. Request your blind ballot to continue.
+            Invite ready for {resolveInviteDisplayTitle(activeInvite)}. Request your blind ballot to continue.
           </p>
           <button type='button' className='simple-voter-secondary' onClick={requestBallot}>
             Request blind ballot now
@@ -933,8 +935,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         </section>
       ) : null}
 
-      <h4 className='simple-voter-section-title'>{questionnaireTitle}</h4>
-      {questionnaireDescription ? <p className='simple-voter-note'>{questionnaireDescription}</p> : null}
+      <h4 className='simple-voter-section-title'>{questionnaireDescription || questionnaireTitle}</h4>
 
       {questions.length === 0 ? (
         <p className='simple-voter-note'>
@@ -1034,6 +1035,20 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           />
         </section>
       ) : null}
+      <section className='simple-settings-card' aria-label='Ballot progress'>
+        <h4 className='simple-voter-section-title'>Ballot progress</h4>
+        <p className='simple-voter-note'>Coordinator: {coordinatorLabel}</p>
+        <p className='simple-voter-note'>Questionnaire ID: {electionId || "Missing"}</p>
+        <ul className='simple-vote-status-list'>
+          <li className={snapshot?.loginVerified ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Identity confirmed: {snapshot?.loginVerified ? "Yes" : "No"}</li>
+          <li className={snapshot?.blindRequestSent ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Ballot request: {requestStateText}</li>
+          <li className={snapshot?.credentialReady ? "is-complete" : waitingForCredential ? "is-pending" : ""}><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Ballot credential: {credentialStateText}</li>
+          <li className={snapshot?.submissionAccepted === true ? "is-complete" : snapshot?.submission ? "is-pending" : ""}><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Response: {submissionStateText}</li>
+        </ul>
+        {waitingForCredential ? (
+          <p className='simple-voter-note'>Waiting for the coordinator to issue your ballot credential. This page checks automatically; the coordinator can press Process requests.</p>
+        ) : null}
+      </section>
       {flags.alreadySubmitted ? <p className='simple-voter-note'>You have already submitted one accepted vote for this election.</p> : null}
       {displayStatus ? <p className='simple-voter-note'>{displayStatus}</p> : null}
       <span style={{ display: "none" }} aria-hidden='true'>{refreshNonce}</span>
