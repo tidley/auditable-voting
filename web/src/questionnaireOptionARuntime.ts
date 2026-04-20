@@ -266,6 +266,12 @@ export class QuestionnaireOptionAVoterRuntime {
     if (!this.state?.loginVerified) {
       return;
     }
+    if (this.fallbackNsec?.trim()) {
+      optionAFlowLog("voter", "dm_subscriptions_skipped_using_local_nsec", {
+        electionId: this.electionId,
+      });
+      return;
+    }
     this.stopBlindIssuanceSubscription = subscribeOptionABlindIssuanceDms({
       signer: this.signer,
       electionId: this.electionId,
@@ -947,6 +953,12 @@ export class QuestionnaireOptionACoordinatorRuntime {
   private startCoordinatorDmSubscriptions() {
     this.stopCoordinatorDmSubscriptions();
     if (!this.coordinatorNpub) {
+      return;
+    }
+    if (this.fallbackNsec?.trim()) {
+      optionAFlowLog("coordinator", "dm_subscriptions_skipped_using_local_nsec", {
+        electionId: this.electionId,
+      });
       return;
     }
     this.stopBlindRequestSubscription = subscribeOptionABlindRequestDms({

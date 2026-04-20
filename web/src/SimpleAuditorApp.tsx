@@ -214,6 +214,7 @@ export default function SimpleAuditorApp() {
       setSelectedResultSummary(null);
       return;
     }
+    setVoterSearchQuery("");
     void refreshSelectedQuestionnaireResponses();
   }, [refreshSelectedQuestionnaireResponses, selectedQuestionnaireId]);
 
@@ -474,7 +475,10 @@ export default function SimpleAuditorApp() {
                   <button
                     type='button'
                     className='simple-voter-secondary simple-auditor-full-results'
-                    onClick={() => setFullResultsOpen(true)}
+                    onClick={() => {
+                      setVoterSearchQuery("");
+                      setFullResultsOpen(true);
+                    }}
                   >
                     View Full Results
                   </button>
