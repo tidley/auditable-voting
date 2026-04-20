@@ -76,6 +76,12 @@ export type AmberConnectBundle = {
 
 let cachedAmberSigner: NostrConnectSignerLike | null = null;
 let amberConnectPromise: Promise<NostrConnectSignerLike> | null = null;
+let amberLastExternalLaunchAtMs = 0;
+const AMBER_EXTERNAL_LAUNCH_COOLDOWN_MS = 30_000;
+let cachedSignerPublicKey: string | null = null;
+let cachedSignerPublicKeyAtMs = 0;
+let signerPublicKeyInflight: Promise<string> | null = null;
+const SIGNER_PUBLIC_KEY_CACHE_TTL_MS = 60_000;
 
 function isAndroidBrowser() {
   if (typeof navigator === "undefined") {
@@ -171,7 +177,11 @@ async function connectAmberSigner(): Promise<NostrConnectSignerLike> {
     if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
       void navigator.clipboard.writeText(nostrConnectUri).catch(() => {});
     }
-    openExternalUri(nostrConnectUri);
+    const now = Date.now();
+    if (now - amberLastExternalLaunchAtMs >= AMBER_EXTERNAL_LAUNCH_COOLDOWN_MS) {
+      openExternalUri(nostrConnectUri);
+      amberLastExternalLaunchAtMs = now;
+    }
     const signer = await BunkerSigner.fromURI(localSecretKey, nostrConnectUri, {}, 180000);
     cachedAmberSigner = signer as unknown as NostrConnectSignerLike;
     return cachedAmberSigner;
@@ -305,6 +315,9 @@ export function createSignerService(): SignerService {
     if (!isAndroidBrowser()) {
       return signer;
     }
+    if (signer) {
+      return signer;
+    }
     try {
       return await connectAmberSigner();
     } catch {
@@ -325,36 +338,52 @@ export function createSignerService(): SignerService {
       );
     },
     async getPublicKey() {
-      const signer = await getSigner();
-      if (!signer) {
-        throw new SignerServiceError(
-          "unavailable",
-          "No Nostr signer is available in this browser. On Android, install/open Amber and approve the nostrconnect request.",
-        );
+      const now = Date.now();
+      if (cachedSignerPublicKey && now - cachedSignerPublicKeyAtMs <= SIGNER_PUBLIC_KEY_CACHE_TTL_MS) {
+        return cachedSignerPublicKey;
       }
-      try {
-        await enableSignerIfAvailable(signer as BrowserNostrSigner);
-        const browserLikeSigner = signer as BrowserNostrSigner;
-        const { source, getPublicKey } = await waitForPublicKeyMethod(browserLikeSigner);
-        const hasSignEventFallback = Boolean(source.signEvent || browserLikeSigner.nip04?.signEvent);
-        if (!getPublicKey && !hasSignEventFallback) {
-          throw new SignerServiceError("unavailable", "No Nostr signer is available in this browser.");
+      if (signerPublicKeyInflight) {
+        return signerPublicKeyInflight;
+      }
+      signerPublicKeyInflight = (async () => {
+        const signer = await getSigner();
+        if (!signer) {
+          throw new SignerServiceError(
+            "unavailable",
+            "No Nostr signer is available in this browser. On Android, install/open Amber and approve the nostrconnect request.",
+          );
         }
-        let pubkey = "";
-        if (getPublicKey) {
-          pubkey = await getPublicKey.call(source);
-        } else {
-          const fallbackPubkey = await derivePubkeyFromSignEvent(browserLikeSigner);
-          if (fallbackPubkey) {
-            pubkey = fallbackPubkey;
+        try {
+          await enableSignerIfAvailable(signer as BrowserNostrSigner);
+          const browserLikeSigner = signer as BrowserNostrSigner;
+          const { source, getPublicKey } = await waitForPublicKeyMethod(browserLikeSigner);
+          const hasSignEventFallback = Boolean(source.signEvent || browserLikeSigner.nip04?.signEvent);
+          if (!getPublicKey && !hasSignEventFallback) {
+            throw new SignerServiceError("unavailable", "No Nostr signer is available in this browser.");
           }
+          let pubkey = "";
+          if (getPublicKey) {
+            pubkey = await getPublicKey.call(source);
+          } else {
+            const fallbackPubkey = await derivePubkeyFromSignEvent(browserLikeSigner);
+            if (fallbackPubkey) {
+              pubkey = fallbackPubkey;
+            }
+          }
+          if (!pubkey || typeof pubkey !== "string") {
+            throw new SignerServiceError("sign_failed", "Signer returned an invalid public key.");
+          }
+          cachedSignerPublicKey = pubkey;
+          cachedSignerPublicKeyAtMs = Date.now();
+          return pubkey;
+        } catch (error) {
+          throw toSignerError(error, "Failed to get signer public key.");
         }
-        if (!pubkey || typeof pubkey !== "string") {
-          throw new SignerServiceError("sign_failed", "Signer returned an invalid public key.");
-        }
-        return pubkey;
-      } catch (error) {
-        throw toSignerError(error, "Failed to get signer public key.");
+      })();
+      try {
+        return await signerPublicKeyInflight;
+      } finally {
+        signerPublicKeyInflight = null;
       }
     },
     async signMessage(message: string) {

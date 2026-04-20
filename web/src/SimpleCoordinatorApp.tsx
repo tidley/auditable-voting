@@ -864,6 +864,7 @@ export default function SimpleCoordinatorApp() {
     () => optionACoordinatorRuntime?.getPendingAuthorizations() ?? [],
     [optionACoordinatorRuntime, knownVoterInviteRefreshNonce],
   );
+  const optionAHasInviteQueue = optionAPendingAuthorizations.length > 0;
   const optionABlindSigningPublicKey = optionACoordinatorRuntime?.getSnapshot()?.election.blindSigningPublicKey ?? null;
   const optionAAcceptedResponses = useMemo(() => {
     const snapshot = optionACoordinatorRuntime?.getSnapshot();
@@ -877,6 +878,10 @@ export default function SimpleCoordinatorApp() {
       .map(optionASubmissionToAcceptedResponse)
       .sort((left, right) => left.payload.submittedAt - right.payload.submittedAt);
   }, [optionACoordinatorRuntime, knownVoterInviteRefreshNonce]);
+
+  useEffect(() => {
+    setKnownVoterInviteStatus(null);
+  }, [optionAElectionId]);
   const optionAAcceptedCount = Math.max(optionACoordinatorRuntime?.getAcceptedUniqueCount() ?? 0, optionAAcceptedResponses.length);
   const optionAKnownVoterCount = Math.max(followers.length, optionAKnownVoters.length);
   const filteredImportedKnownVoterContacts = useMemo(() => {
@@ -3453,7 +3458,7 @@ export default function SimpleCoordinatorApp() {
     setKnownVoterInviteRefreshNonce((value) => value + 1);
     setKnownVoterInviteStatus(
       sentCount > 0
-        ? `Bulk invited ${sentCount}/${targets.length} whitelisted voters. ${copied ? "Invite links copied (newline-separated)." : "Browser blocked clipboard copy."}`
+        ? `Bulk invited ${sentCount}/${targets.length} whitelisted voters for ${optionAElectionId || "this questionnaire"}. ${copied ? "Invite links copied (newline-separated)." : "Browser blocked clipboard copy."}`
         : "Bulk invite could not send any invitations.",
     );
   }
@@ -5961,8 +5966,8 @@ export default function SimpleCoordinatorApp() {
                         </button>
                       </div>
                     </>
-                  ) : (
-                    <p className='simple-voter-note'>No known voters added yet.</p>
+                  ) : optionAHasInviteQueue ? null : (
+                    <p className='simple-voter-note'>No known voters added yet for this questionnaire.</p>
                   )}
                   {optionAPendingAuthorizations.length > 0 ? (
                     <>

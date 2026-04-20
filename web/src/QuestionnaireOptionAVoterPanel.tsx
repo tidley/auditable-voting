@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { nip19 } from "nostr-tools";
+import { finalizeEvent, getPublicKey, nip19, nip44 } from "nostr-tools";
 import { fetchQuestionnaireDefinitions } from "./questionnaireTransport";
 import { parseInviteFromUrl } from "./questionnaireInvite";
-import { createSignerService, SignerServiceError } from "./services/signerService";
+import { createSignerService, SignerServiceError, type SignerService } from "./services/signerService";
 import {
   QuestionnaireOptionAVoterRuntime,
   OptionARuntimeError,
@@ -19,6 +19,62 @@ import { fetchOptionAInviteDms } from "./questionnaireOptionAInviteDm";
 import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import type { QuestionnaireDefinition } from "./questionnaireProtocol";
 import TokenFingerprint from "./TokenFingerprint";
+import { decodeNsec } from "./nostrIdentity";
+
+function toHexPubkey(value: string) {
+  const trimmed = value.trim();
+  if (trimmed.startsWith("npub1")) {
+    const decoded = nip19.decode(trimmed);
+    if (decoded.type !== "npub") {
+      throw new Error("Expected npub.");
+    }
+    return decoded.data as string;
+  }
+  return trimmed;
+}
+
+function createLocalNsecSignerService(nsec: string): SignerService {
+  const secretKey = decodeNsec(nsec);
+  if (!secretKey) {
+    return createSignerService();
+  }
+  const npub = nip19.npubEncode(getPublicKey(secretKey));
+  return {
+    async isAvailable() {
+      return true;
+    },
+    async getPublicKey() {
+      return npub;
+    },
+    async signMessage(message: string) {
+      return `local:${message}`;
+    },
+    async signEvent<T extends Record<string, unknown>>(event: T) {
+      const signed = finalizeEvent({
+        ...(event as Record<string, unknown>),
+      } as never, secretKey);
+      return signed as T & { id?: string; sig?: string; pubkey?: string };
+    },
+    async nip44Encrypt(pubkey: string, plaintext: string) {
+      const targetHex = toHexPubkey(pubkey);
+      const conversationKey = nip44.v2.utils.getConversationKey(secretKey, targetHex);
+      return nip44.v2.encrypt(plaintext, conversationKey);
+    },
+    async nip44Decrypt(pubkey: string, ciphertext: string) {
+      const senderHex = toHexPubkey(pubkey);
+      const conversationKey = nip44.v2.utils.getConversationKey(secretKey, senderHex);
+      return nip44.v2.decrypt(ciphertext, conversationKey);
+    },
+  };
+}
+
+function createVoterSignerService(localVoterNsec?: string): SignerService {
+  const trimmed = localVoterNsec?.trim() ?? "";
+  if (trimmed) {
+    return createLocalNsecSignerService(trimmed);
+  }
+  return createSignerService();
+}
 
 function deriveElectionId() {
   const params = new URLSearchParams(window.location.search);
@@ -195,9 +251,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       setRuntime(null);
       return;
     }
-    const signer = createSignerService();
+    const signer = createVoterSignerService(props.localVoterNsec);
     setRuntime(new QuestionnaireOptionAVoterRuntime(signer, electionId, props.localVoterNsec));
-  }, [electionId]);
+  }, [electionId, props.localVoterNsec]);
 
   useEffect(() => {
     return () => {
@@ -435,7 +491,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
 
     try {
-      const signer = createSignerService();
+      const signer = createVoterSignerService(props.localVoterNsec);
       const dmInvites = await fetchOptionAInviteDms({ signer, limit: 40 });
       for (const invite of dmInvites) {
         publishInviteToMailbox(invite);
@@ -518,7 +574,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
 
     try {
-      const signer = createSignerService();
+      const signer = createVoterSignerService(props.localVoterNsec);
       const rawPubkey = await signer.getPublicKey();
       const signerNpub = rawPubkey.startsWith("npub1") ? rawPubkey : nip19.npubEncode(rawPubkey);
       const publicQuestionnaireInvite = await buildPublicQuestionnaireInvite(signerNpub);
@@ -539,7 +595,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           return;
         }
 
-        const voterRuntime = new QuestionnaireOptionAVoterRuntime(createSignerService(), preferredInvite.electionId, props.localVoterNsec);
+        const voterRuntime = new QuestionnaireOptionAVoterRuntime(createVoterSignerService(props.localVoterNsec), preferredInvite.electionId, props.localVoterNsec);
         const next = await voterRuntime.loginWithSigner(preferredInvite);
         setElectionId(preferredInvite.electionId);
         setRuntime(voterRuntime);
@@ -591,7 +647,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
 
   async function openInvite(invite: ElectionInviteMessage, requestAfterLogin = false) {
     try {
-      const voterRuntime = new QuestionnaireOptionAVoterRuntime(createSignerService(), invite.electionId, props.localVoterNsec);
+      const voterRuntime = new QuestionnaireOptionAVoterRuntime(createVoterSignerService(props.localVoterNsec), invite.electionId, props.localVoterNsec);
       const localVoterNpub = props.localVoterNpub?.trim() ?? "";
       const signedInTrimmed = signedInNpub.trim();
       const preferLocalIdentity = Boolean(!props.autoSignerLogin && localVoterNpub && (!signedInTrimmed || signedInTrimmed === localVoterNpub));
@@ -880,7 +936,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         : "Not submitted";
 
   return (
-    <div className='simple-voter-card'>
+    <div className='simple-voter-card simple-optiona-voter-page'>
       <div className='simple-questionnaire-header'>
         <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
           {!snapshot?.loginVerified ? (
@@ -1039,7 +1095,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         </div>
       )}
 
-      <div className='simple-voter-action-row simple-voter-action-row-inline'>
+      <div className='simple-voter-action-row simple-voter-action-row-inline simple-optiona-voter-controls'>
         <button type='button' className='simple-voter-secondary' disabled={!canRequestOrResendBallot} onClick={requestBallot}>
           {waitingForCredential ? "Resend request" : "Request ballot"}
         </button>

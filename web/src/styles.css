@@ -1636,6 +1636,21 @@ code {
   gap: 20px;
 }
 
+.simple-optiona-voter-page {
+  display: grid;
+  gap: 22px;
+}
+
+.simple-optiona-voter-page .simple-settings-card {
+  margin-top: 2px;
+}
+
+.simple-optiona-voter-controls {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid #334155;
+}
+
 .simple-questionnaire-voter-card {
   display: grid;
   gap: 12px;
