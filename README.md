@@ -50,7 +50,7 @@ The shipped app currently includes:
 - invite links with a public questionnaire id now avoid encrypted invite-mailbox scans after signer login, and signer-backed DM reads are recent and bounded to reduce Amber bunker prompts
 - Android signer sessions now prefer Amber via NIP-46 when available, so signer-backed questionnaire DM flows use one consistent signer identity for `get_public_key`, `sign_event`, and `nip44_*`
 - Option A blind request, issuance, submission, and acceptance DMs now also target recipient NIP-17 relay-list hints (`kind:10050`) instead of only static fallback relays
-- Option A and shard DM fallback relay lists now keep broader redundancy (including `wss://relay.snort.social` and `wss://nostr.bg`) while delivery marks success only when at least one relay actually accepts the publish
+- Option A and shard DM fallback relay lists now stay NIP-17-first with curated fallback redundancy while delivery marks success only when at least one relay actually accepts the publish
 - voter blind-request and ballot-submission sends now require confirmed DM delivery (no more silent fire-and-forget success states), and signer DM recovery scans use wider bounded windows
 - invite-link clipboard writes are now best-effort, so browser focus restrictions no longer throw unhandled errors after async relay work
 - the voter questionnaire page now separates the signer account from the ballot voting identity and shows ballot progress as request, credential, and response states
