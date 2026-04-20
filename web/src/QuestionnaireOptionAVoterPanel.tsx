@@ -825,7 +825,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const displayStatus = snapshot?.credentialReady && status === "Blind ballot request sent. Waiting for coordinator issuance."
     ? "Ballot credential ready."
     : status;
-  const votingIdentityLabel = signedInNpub.trim() ? deriveActorDisplayId(signedInNpub) : "Not signed in";
   const coordinatorNpub = snapshot?.coordinatorNpub?.trim()
     || activeInvite?.coordinatorNpub?.trim()
     || inviteDropdownOptions.find((invite) => invite.electionId === electionId.trim())?.coordinatorNpub?.trim()
@@ -863,7 +862,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
 
       <section className='simple-settings-card' aria-label='Ballot progress'>
         <h4 className='simple-voter-section-title'>Ballot progress</h4>
-        <p className='simple-voter-note'>Voting identity: {votingIdentityLabel}</p>
         <p className='simple-voter-note'>Coordinator: {coordinatorLabel}</p>
         <p className='simple-voter-note'>Questionnaire ID: {electionId || "Missing"}</p>
         <ul className='simple-vote-status-list'>

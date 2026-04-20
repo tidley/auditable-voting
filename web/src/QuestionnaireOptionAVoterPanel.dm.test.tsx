@@ -147,7 +147,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     await user.click(screen.getByRole("button", { name: "Login" }));
 
     await waitFor(() => {
-      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Voting identity:")).length).toBeGreaterThan(0);
+      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Coordinator:")).length).toBeGreaterThan(0);
     });
     expect(screen.queryByText(/No invite DM was readable/i)).toBeNull();
     expect(screen.getByText("Linked questionnaire")).toBeTruthy();
@@ -187,7 +187,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     await screen.findByText("Gateway prompt");
     await waitFor(() => {
-      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Voting identity:")).length).toBeGreaterThan(0);
+      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Coordinator:")).length).toBeGreaterThan(0);
     });
     expect(screen.queryByText(/No invite DM was readable/i)).toBeNull();
     expect(fetchOptionAInviteDmsMock).not.toHaveBeenCalled();
