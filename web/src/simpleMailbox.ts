@@ -3,6 +3,7 @@ import { nip44 } from "nostr-tools";
 import { deriveActorDisplayId } from "./actorDisplay";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import {
+  isNip65EnabledForSession,
   publishOwnNip65RelayHints,
   resolveNip65ConversationRelays,
   resolveNip65InboxRelays,
@@ -220,6 +221,36 @@ function buildMailboxRelays(relays?: string[]) {
   return normalizeRelaysRust([...SIMPLE_MAILBOX_RELAYS, ...(relays ?? [])]);
 }
 
+async function resolveMailboxInboxRelays(npub: string, relays?: string[]) {
+  const fallbackRelays = buildMailboxRelays(relays);
+  if (!isNip65EnabledForSession()) {
+    return fallbackRelays;
+  }
+  return resolveNip65InboxRelays({
+    npub,
+    fallbackRelays,
+  });
+}
+
+async function resolveMailboxConversationRelays(recipientNpub: string, senderNpub: string, relays?: string[]) {
+  const fallbackRelays = buildMailboxRelays(relays);
+  if (!isNip65EnabledForSession()) {
+    return fallbackRelays;
+  }
+  return resolveNip65ConversationRelays({
+    recipientNpub,
+    senderNpub,
+    fallbackRelays,
+  });
+}
+
+async function publishMailboxRelayHintsIfEnabled(input: Parameters<typeof publishOwnNip65RelayHints>[0]) {
+  if (!isNip65EnabledForSession()) {
+    return null;
+  }
+  return publishOwnNip65RelayHints(input).catch(() => null);
+}
+
 function rotateBySeed(values: string[], seed: string) {
   if (values.length <= 1) {
     return values;
@@ -402,19 +433,15 @@ async function publishMailboxEvent(input: {
     throw new Error("Recipient value must be an npub.");
   }
   const senderNpub = nip19.npubEncode(getPublicKey(input.secretKey));
-  const relays = await resolveNip65ConversationRelays({
-    recipientNpub: input.recipientNpub,
-    senderNpub,
-    fallbackRelays: buildMailboxRelays(input.relays),
-  });
+  const relays = await resolveMailboxConversationRelays(input.recipientNpub, senderNpub, input.relays);
   const publishRelays = selectRecipientRelays(relays, input.recipientNpub, input.maxRelayCount);
-  await publishOwnNip65RelayHints({
+  await publishMailboxRelayHintsIfEnabled({
     secretKey: input.secretKey,
     inboxRelays: relays,
     outboxRelays: relays,
     publishRelays,
     channel: `nip65:${senderNpub}`,
-  }).catch(() => null);
+  });
 
   const event = finalizeEvent({
     kind: input.kind,
@@ -847,10 +874,7 @@ async function fetchMailboxEvents(input: {
   onQueryDebug?: (debug: MailboxReadQueryDebug) => void;
 }) {
   const inboxRelaySets = await Promise.all(
-    input.recipientNpubs.map((recipientNpub) => resolveNip65InboxRelays({
-      npub: recipientNpub,
-      fallbackRelays: buildMailboxRelays(input.relays),
-    })),
+    input.recipientNpubs.map((recipientNpub) => resolveMailboxInboxRelays(recipientNpub, input.relays)),
   );
   const relays = selectRecipientRelayUnion(
     input.recipientNpubs.map((recipientNpub, index) => ({
@@ -1014,10 +1038,7 @@ export function subscribeMailboxShardRequests(input: {
     }
   });
 
-  void resolveNip65InboxRelays({
-    npub: keys.npub,
-    fallbackRelays: buildMailboxRelays(input.relays),
-  }).then((relaySet) => {
+  void resolveMailboxInboxRelays(keys.npub, input.relays).then((relaySet) => {
     if (closed) {
       return;
     }
@@ -1095,10 +1116,9 @@ export function subscribeMailboxShardResponses(input: {
     }
   });
 
-  void Promise.all(keyEntries.map((entry) => resolveNip65InboxRelays({
-    npub: entry.npub,
-    fallbackRelays: buildMailboxRelays(input.relays),
-  }))).then((relaySets) => {
+  void Promise.all(
+    keyEntries.map((entry) => resolveMailboxInboxRelays(entry.npub, input.relays)),
+  ).then((relaySets) => {
     if (closed) {
       return;
     }

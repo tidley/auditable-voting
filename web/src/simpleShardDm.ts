@@ -2,6 +2,7 @@ import { getPublicKey, nip17, nip19 } from "nostr-tools";
 import { deriveActorDisplayId } from "./actorDisplay";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import {
+  isNip65EnabledForSession,
   publishOwnNip65RelayHints,
   resolveNip65ConversationRelays,
   resolveNip65InboxRelays,
@@ -357,6 +358,9 @@ function buildDmPublishChannel(recipientNpub: string, senderNpub?: string) {
 }
 
 async function resolveRecipientInboxRelays(recipientNpub: string, relays?: string[]) {
+  if (!isNip65EnabledForSession()) {
+    return buildDmRelays(relays);
+  }
   return resolveNip65InboxRelays({
     npub: recipientNpub,
     fallbackRelays: buildDmRelays(relays),
@@ -369,12 +373,22 @@ async function resolveConversationDmRelays(
   relays?: string[],
   maxRelays = SIMPLE_DM_READ_RELAYS_MAX,
 ) {
+  if (!isNip65EnabledForSession()) {
+    return selectDmReadRelays(buildDmRelays(relays), maxRelays);
+  }
   const resolved = await resolveNip65ConversationRelays({
     senderNpub,
     recipientNpub,
     fallbackRelays: buildDmRelays(relays),
   });
   return selectDmReadRelays(resolved, maxRelays);
+}
+
+async function publishOwnRelayHintsIfEnabled(input: Parameters<typeof publishOwnNip65RelayHints>[0]) {
+  if (!isNip65EnabledForSession()) {
+    return null;
+  }
+  return publishOwnNip65RelayHints(input).catch(() => null);
 }
 
 function getNpubFromNsec(nsec: string, actorLabel: string) {
@@ -816,13 +830,13 @@ export async function sendSimpleCoordinatorFollow(input: {
     input.relays,
     SIMPLE_DM_FOLLOW_PUBLISH_RELAYS_MAX,
   );
-  await publishOwnNip65RelayHints({
+  await publishOwnRelayHintsIfEnabled({
     secretKey: input.voterSecretKey,
     inboxRelays: dmRelays,
     outboxRelays: dmRelays,
     publishRelays: dmRelays,
     channel: `nip65:${input.voterNpub}`,
-  }).catch(() => null);
+  });
   const event = nip17.wrapEvent(
     input.voterSecretKey,
     {
@@ -914,13 +928,13 @@ export async function sendSimpleDmAcknowledgement(input: {
     input.relays,
     SIMPLE_DM_ACK_PUBLISH_RELAYS_MAX,
   );
-  await publishOwnNip65RelayHints({
+  await publishOwnRelayHintsIfEnabled({
     secretKey: input.senderSecretKey,
     inboxRelays: dmRelays,
     outboxRelays: dmRelays,
     publishRelays: dmRelays,
     channel: `nip65:${input.actorNpub}`,
-  }).catch(() => null);
+  });
   const event = nip17.wrapEvent(
     input.senderSecretKey,
     {
@@ -1000,13 +1014,13 @@ export async function sendSimpleCoordinatorRoster(input: {
     input.leadCoordinatorNpub,
     input.relays,
   );
-  await publishOwnNip65RelayHints({
+  await publishOwnRelayHintsIfEnabled({
     secretKey: input.leadCoordinatorSecretKey,
     inboxRelays: dmRelays,
     outboxRelays: dmRelays,
     publishRelays: dmRelays,
     channel: `nip65:${input.leadCoordinatorNpub}`,
-  }).catch(() => null);
+  });
 
   const event = nip17.wrapEvent(
     input.leadCoordinatorSecretKey,
@@ -1080,13 +1094,13 @@ export async function sendSimpleSubCoordinatorJoin(input: {
     input.coordinatorNpub,
     input.relays,
   );
-  await publishOwnNip65RelayHints({
+  await publishOwnRelayHintsIfEnabled({
     secretKey: input.coordinatorSecretKey,
     inboxRelays: dmRelays,
     outboxRelays: dmRelays,
     publishRelays: dmRelays,
     channel: `nip65:${input.coordinatorNpub}`,
-  }).catch(() => null);
+  });
   const event = nip17.wrapEvent(
     input.coordinatorSecretKey,
     {
@@ -1144,13 +1158,13 @@ export async function sendSimpleCoordinatorMlsWelcome(input: {
     input.leadCoordinatorNpub,
     input.relays,
   );
-  await publishOwnNip65RelayHints({
+  await publishOwnRelayHintsIfEnabled({
     secretKey: input.leadCoordinatorSecretKey,
     inboxRelays: dmRelays,
     outboxRelays: dmRelays,
     publishRelays: dmRelays,
     channel: `nip65:${input.leadCoordinatorNpub}`,
-  }).catch(() => null);
+  });
   const event = nip17.wrapEvent(
     input.leadCoordinatorSecretKey,
     {
@@ -1948,13 +1962,13 @@ export async function sendSimpleShardResponse(input: {
     input.relays,
     SIMPLE_DM_TICKET_PUBLISH_RELAYS_MAX,
   );
-  await publishOwnNip65RelayHints({
+  await publishOwnRelayHintsIfEnabled({
     secretKey: input.coordinatorSecretKey,
     inboxRelays: dmRelays,
     outboxRelays: dmRelays,
     publishRelays: dmRelays,
     channel: `nip65:${input.coordinatorNpub}`,
-  }).catch(() => null);
+  });
   const blindShareResponse = await createSimpleBlindShareResponse({
     privateKey: input.blindPrivateKey,
     keyAnnouncementEvent: input.keyAnnouncementEvent,
@@ -2137,13 +2151,13 @@ export async function sendSimpleShareAssignment(input: {
     input.leadCoordinatorNpub,
     input.relays,
   );
-  await publishOwnNip65RelayHints({
+  await publishOwnRelayHintsIfEnabled({
     secretKey: input.leadCoordinatorSecretKey,
     inboxRelays: dmRelays,
     outboxRelays: dmRelays,
     publishRelays: dmRelays,
     channel: `nip65:${input.leadCoordinatorNpub}`,
-  }).catch(() => null);
+  });
   const event = nip17.wrapEvent(
     input.leadCoordinatorSecretKey,
     {

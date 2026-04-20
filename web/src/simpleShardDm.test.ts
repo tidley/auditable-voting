@@ -14,6 +14,7 @@ const finalizeEvent = vi.fn((event: any) => ({ id: event.id ?? "evt-1", pubkey: 
 const resolveNip65ConversationRelays = vi.fn();
 const resolveNip65InboxRelays = vi.fn();
 const publishOwnNip65RelayHints = vi.fn();
+const isNip65EnabledForSession = vi.fn(() => true);
 const recordRelayOutcome = vi.fn();
 const recordRelayCloseReasons = vi.fn();
 const rankRelaysByBackoff = vi.fn((relays: string[]) => relays);
@@ -83,6 +84,7 @@ vi.mock("./nostrPublishQueue", () => ({
 }));
 
 vi.mock("./nip65RelayHints", () => ({
+  isNip65EnabledForSession,
   publishOwnNip65RelayHints,
   resolveNip65ConversationRelays,
   resolveNip65InboxRelays,

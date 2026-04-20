@@ -191,10 +191,9 @@ export default function SimpleRelayPanel() {
       renderWhenExpanded
     >
       <p className='simple-voter-note'>
-        Traffic is routed via selected relays and user-specific relay hints (
-        <a href='https://nostr-nips.com/nip-65'>NIP-65</a>). Messages are
-        delivered to the recipient's inbox relays, while public data is fetched
-        from authors' outbox relays.
+        Traffic is routed via the selected relay sets below. Optional relay hints (
+        <a href='https://nostr-nips.com/nip-65'>NIP-65</a>) are used only when
+        enabled in Settings.
       </p>
       <RelayProbeList title='Public relays' relays={publicRelays} />
       <RelayProbeList title='DM relays' relays={dmRelays} />
