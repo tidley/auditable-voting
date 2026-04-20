@@ -782,6 +782,15 @@ export default function SimpleCoordinatorApp() {
     () => Object.values(optionACoordinatorRuntime?.getSnapshot()?.whitelist ?? {}),
     [optionACoordinatorRuntime, knownVoterInviteRefreshNonce],
   );
+  const invitedKnownVoterSet = useMemo(
+    () => new Set(
+      optionAKnownVoters
+        .filter((entry) => entry.claimState === "invited")
+        .map((entry) => entry.invitedNpub.trim())
+        .filter((value) => value.length > 0),
+    ),
+    [optionAKnownVoters],
+  );
   const optionAPendingAuthorizations = useMemo(
     () => optionACoordinatorRuntime?.getPendingAuthorizations() ?? [],
     [optionACoordinatorRuntime, knownVoterInviteRefreshNonce],
@@ -4792,15 +4801,15 @@ export default function SimpleCoordinatorApp() {
   );
   const normalizedFollowerSearch = followerSearch.trim().toLowerCase();
   const filteredCoordinatorFollowerRows = useMemo(() => (
-    normalizedFollowerSearch
-      ? enhancedCoordinatorFollowerRows.filter((row) => {
-        return (
-          row.voterId.toLowerCase().includes(normalizedFollowerSearch)
-        );
-      })
-      : enhancedCoordinatorFollowerRows
+    enhancedCoordinatorFollowerRows
+      .filter((row) => !invitedKnownVoterSet.has(row.voterNpub))
+      .filter((row) => (
+        !normalizedFollowerSearch
+        || row.voterId.toLowerCase().includes(normalizedFollowerSearch)
+      ))
   ), [
     enhancedCoordinatorFollowerRows,
+    invitedKnownVoterSet,
     normalizedFollowerSearch,
     visibleFollowersById,
   ]);
@@ -5559,7 +5568,7 @@ export default function SimpleCoordinatorApp() {
             role='tabpanel'
             aria-label='Participants'
           >
-            <SimpleCollapsibleSection title='Voters'>
+            <SimpleCollapsibleSection title='Vote requests' defaultCollapsed>
               {coordinatorFollowerRows.length > 0 ? (
                 <div className='simple-follower-toolbar'>
                   <input

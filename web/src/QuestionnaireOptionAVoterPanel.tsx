@@ -1038,6 +1038,15 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       <section className='simple-settings-card' aria-label='Ballot progress'>
         <h4 className='simple-voter-section-title'>Ballot progress</h4>
         <p className='simple-voter-note'>Coordinator: {coordinatorLabel}</p>
+        {coordinatorNpub ? (
+          <TokenFingerprint
+            tokenId={coordinatorNpub}
+            label='Coordinator marker'
+            showQr
+            compact
+            hideMetadata
+          />
+        ) : null}
         <p className='simple-voter-note'>Questionnaire ID: {electionId || "Missing"}</p>
         <ul className='simple-vote-status-list'>
           <li className={snapshot?.loginVerified ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Identity confirmed: {snapshot?.loginVerified ? "Yes" : "No"}</li>

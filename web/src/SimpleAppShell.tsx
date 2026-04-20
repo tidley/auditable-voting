@@ -65,7 +65,7 @@ function writeRoleToUrl(role: SimpleRole) {
 
 export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShellProps) {
   const [role, setRole] = useState<SimpleRole>(() => readRoleFromUrl() ?? initialRole);
-  const [roleSwitchMinimized, setRoleSwitchMinimized] = useState(false);
+  const [roleSwitchMinimized, setRoleSwitchMinimized] = useState(true);
   const [showGateway, setShowGateway] = useState(() => !hasRoleInUrl() || shouldForceGatewayFromUrl());
   const [gatewayRole, setGatewayRole] = useState<SimpleRole>(initialRole);
   const [gatewayNsec, setGatewayNsec] = useState("");

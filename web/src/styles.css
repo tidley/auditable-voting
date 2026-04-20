@@ -268,8 +268,6 @@ code {
   display: flex;
   align-items: center;
   gap: 12px;
-  transform: scale(1.5);
-  transform-origin: top left;
 }
 
 .token-fingerprint-grid {
@@ -541,14 +539,14 @@ code {
   display: grid;
   gap: 16px;
   margin-bottom: 20px;
-  justify-items: center;
+  justify-items: start;
 }
 
 .simple-role-switch-topbar {
-  width: min(560px, 100%);
+  width: 100%;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 12px;
 }
 
@@ -992,6 +990,11 @@ code {
 .simple-voter-action-row-tight {
   margin-top: 14px;
   margin-bottom: 0;
+}
+
+.simple-voter-header-actions {
+  margin-left: auto;
+  justify-content: flex-end;
 }
 
 .simple-voter-primary {

@@ -2725,7 +2725,7 @@ export default function SimpleUiApp() {
       <section className='simple-voter-page'>
         <div className='simple-voter-header-row'>
           <h1 className='simple-voter-title'>Voter ID {voterId}</h1>
-          <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
+          <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight simple-voter-header-actions'>
             <button
               type='button'
               className='simple-voter-secondary'
