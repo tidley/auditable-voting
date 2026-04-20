@@ -504,15 +504,15 @@ function createSignerGiftWrapSubscription<T>(input: {
       const recipientNpub = toNpub(recipientRaw);
       const recipientHex = toHexPubkey(recipientRaw);
       const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
+      if (closed) {
+        return;
+      }
       optionABlindDmLog(`${input.stage}_subscribe_started`, {
         recipientNpub,
         relayCount: relays.length,
       });
-      if (closed) {
-        return;
-      }
       const pool = getSharedNostrPool();
-      subscription = pool.subscribeMany(relays, {
+      const nextSubscription = pool.subscribeMany(relays, {
         kinds: [KIND_GIFT_WRAP],
         "#p": [recipientHex],
         since: input.since ?? Math.round(Date.now() / 1000) - OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS,
@@ -530,6 +530,11 @@ function createSignerGiftWrapSubscription<T>(input: {
           }
         },
       });
+      if (closed) {
+        void nextSubscription.close("closed by caller");
+        return;
+      }
+      subscription = nextSubscription;
     } catch (error) {
       if (!closed && error instanceof Error) {
         input.onError?.(error);

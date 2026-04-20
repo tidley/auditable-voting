@@ -917,12 +917,17 @@ export default function SimpleCoordinatorApp() {
     if (typeof window === "undefined") {
       return;
     }
+    // Local nsec identities should not be overridden by a stale signer npub.
+    if (keypair?.nsec?.trim()) {
+      setSignerNpub("");
+      return;
+    }
     const persisted = window.localStorage.getItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY)?.trim() ?? "";
     if (persisted) {
       setSignerNpub(persisted);
       setSignerStatus(null);
     }
-  }, []);
+  }, [keypair?.nsec]);
 
   useEffect(() => {
     if (!optionACoordinatorRuntime || !activeCoordinatorNpub || !optionAElectionId) {
