@@ -15,6 +15,7 @@ type SimpleRole = "voter" | "coordinator" | "auditor";
 type GatewayAuthMode = "signer" | "nsec";
 type GatewaySignerChoice = "nip07" | "amber";
 const GATEWAY_SIGNER_NPUB_STORAGE_KEY = "app:auditable-voting:gateway:signer_npub";
+const AMBER_FULLY_TRUST_HINT = "If Amber asks, change this application to 'Fully trust'.";
 
 type SimpleAppShellProps = {
   initialRole?: SimpleRole;
@@ -146,6 +147,7 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
 
   async function runSignerLogin() {
     if (gatewaySignerChoice === "amber") {
+      setGatewayStatus(AMBER_FULLY_TRUST_HINT);
       const loggedIn = await loginWithSigner();
       if (!loggedIn) {
         await prepareAmberConnectLinks();
@@ -265,6 +267,9 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
                 {gatewaySignerChoice === "amber" ? "Log in with Amber" : "Log in with NOS2X-FOX"}
               </button>
             </div>
+          ) : null}
+          {gatewayAuthMode === "signer" && gatewaySignerChoice === "amber" ? (
+            <p className='simple-voter-note'>{AMBER_FULLY_TRUST_HINT}</p>
           ) : null}
 
           {gatewayAuthMode === "nsec" ? (

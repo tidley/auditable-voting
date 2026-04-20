@@ -84,7 +84,9 @@ const OPTION_A_COORDINATOR_SIGNER_DM_LIMIT = 60;
 const OPTION_A_COORDINATOR_NSEC_DM_LIMIT = 120;
 const OPTION_A_ISSUANCE_DM_RETRY_MS = 2 * 60 * 1000;
 const OPTION_A_BLIND_REQUEST_RETRY_MS = 10 * 1000;
+const OPTION_A_SUBMISSION_REPUBLISH_RETRY_MS = 60 * 1000;
 const OPTION_A_SELF_COPY_RECOVERY_LOOKBACK_SECONDS = Math.round(36 * 60 * 60);
+const OPTION_A_VOTER_DM_LOOKBACK_SECONDS = Math.round(36 * 60 * 60);
 
 export type OptionARuntimeErrorCode =
   | "not_logged_in"
@@ -226,6 +228,7 @@ export class QuestionnaireOptionAVoterRuntime {
   private requestBlindBallotInflight: Promise<VoterElectionLocalState> | null = null;
   private submitVoteInflight: Promise<VoterElectionLocalState> | null = null;
   private refreshFetchInFlight = false;
+  private submissionRepublishAttemptAtBySubmissionId = new Map<string, number>();
   private stopBlindIssuanceSubscription: (() => void) | null = null;
   private stopAcceptanceSubscription: (() => void) | null = null;
 
@@ -277,11 +280,18 @@ export class QuestionnaireOptionAVoterRuntime {
       return;
     }
     const toSince = (value?: string | null) => {
+      const lookbackFloor = Math.max(0, Math.floor(Date.now() / 1000) - OPTION_A_VOTER_DM_LOOKBACK_SECONDS);
       if (!value) {
-        return undefined;
+        return lookbackFloor;
       }
       const parsed = Date.parse(value);
-      return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed / 1000) - 300) : undefined;
+      if (!Number.isFinite(parsed)) {
+        return lookbackFloor;
+      }
+      return Math.min(
+        Math.max(0, Math.floor(parsed / 1000) - 300),
+        lookbackFloor,
+      );
     };
     const issuanceSince = toSince(this.state.blindRequestSentAt);
     const acceptanceSince = toSince(this.state.submission?.submittedAt) ?? issuanceSince;
@@ -691,11 +701,18 @@ export class QuestionnaireOptionAVoterRuntime {
 
     const electionId = this.state.electionId;
     const toSince = (value?: string | null) => {
+      const lookbackFloor = Math.max(0, Math.floor(Date.now() / 1000) - OPTION_A_VOTER_DM_LOOKBACK_SECONDS);
       if (!value) {
-        return undefined;
+        return lookbackFloor;
       }
       const parsed = Date.parse(value);
-      return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed / 1000) - 300) : undefined;
+      if (!Number.isFinite(parsed)) {
+        return lookbackFloor;
+      }
+      return Math.min(
+        Math.max(0, Math.floor(parsed / 1000) - 300),
+        lookbackFloor,
+      );
     };
     const requestSince = toSince(this.state.blindRequestSentAt);
     const acceptanceSince = toSince(this.state.submission?.submittedAt) ?? requestSince;
@@ -822,9 +839,31 @@ export class QuestionnaireOptionAVoterRuntime {
     }
 
     if (this.state.submission && this.state.responseNsec && this.state.responseNpub) {
+      if (this.state.submissionAccepted === true || this.state.submissionAccepted === false) {
+        optionAFlowLog("voter", "submit_vote_republish_skipped_decided", {
+          electionId: this.state.electionId,
+          submissionId: this.state.submission.submissionId,
+          submissionAccepted: this.state.submissionAccepted,
+        });
+        this.refreshIssuanceAndAcceptance();
+        return this.state;
+      }
+      const submissionId = this.state.submission.submissionId;
+      const nowMs = Date.now();
+      const lastAttemptMs = this.submissionRepublishAttemptAtBySubmissionId.get(submissionId) ?? 0;
+      if (nowMs - lastAttemptMs < OPTION_A_SUBMISSION_REPUBLISH_RETRY_MS) {
+        optionAFlowLog("voter", "submit_vote_republish_skipped_cooldown", {
+          electionId: this.state.electionId,
+          submissionId,
+          minRetryMs: OPTION_A_SUBMISSION_REPUBLISH_RETRY_MS,
+        });
+        this.refreshIssuanceAndAcceptance();
+        return this.state;
+      }
+      this.submissionRepublishAttemptAtBySubmissionId.set(submissionId, nowMs);
       optionAFlowLog("voter", "submit_vote_republish_existing_submission", {
         electionId: this.state.electionId,
-        submissionId: this.state.submission.submissionId,
+        submissionId,
         responseNpub: this.state.responseNpub,
       });
       const republished = await this.publishBallotSubmissionDm(this.state.submission, { fallbackNsec: this.state.responseNsec });
@@ -1128,11 +1167,18 @@ export class QuestionnaireOptionACoordinatorRuntime {
     this.issuanceDmRepublishRequests.set(issuance.requestId, requestSentAt);
   }
 
-  private hasVoterReachedSubmission(issuance: BlindBallotIssuance) {
-    const claimState = this.state?.whitelist[issuance.invitedNpub]?.claimState;
-    return claimState === "vote_received"
-      || claimState === "vote_accepted"
-      || claimState === "vote_rejected";
+  private hasProofIssuanceConsumed(issuance: BlindBallotIssuance) {
+    if (!this.state) {
+      return false;
+    }
+    return Object.values(this.state.receivedSubmissions).some((submission) => {
+      if (submission.electionId !== issuance.electionId) {
+        return false;
+      }
+      return submission.tokenCommitment === issuance.tokenCommitment
+        || submission.invitedNpub === issuance.invitedNpub
+        || submission.responseNpub === issuance.invitedNpub;
+    });
   }
 
   async loginWithSigner(summary?: Partial<ElectionSummary>) {
@@ -1387,11 +1433,17 @@ export class QuestionnaireOptionACoordinatorRuntime {
         if (options?.forceAll || forcedRequestIds.has(issuance.requestId)) {
           return true;
         }
+        // A valid submission for this issuance is proof the voter already received their credential.
+        if (this.hasProofIssuanceConsumed(issuance)) {
+          return false;
+        }
         const delivery = readBlindIssuanceDeliveryRecord(issuance.requestId);
         if (!delivery?.lastAttemptAt) {
           return true;
         }
-        if (delivery.lastSuccessAt && this.hasVoterReachedSubmission(issuance)) {
+        // Do not keep republishing after a successful DM delivery unless explicitly forced.
+        // Voters recover issuance from relay history, and repeated pushes can trigger relay/signer rate limits.
+        if (delivery.lastSuccessAt) {
           return false;
         }
         const lastAttemptMs = Date.parse(delivery.lastAttemptAt);

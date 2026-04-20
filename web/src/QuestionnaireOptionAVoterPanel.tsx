@@ -167,6 +167,8 @@ function buildInviteFromPublicDefinition(definition: QuestionnaireDefinition, in
 
 const LEGACY_INVITE_TITLE = "Should the proposal pass?";
 const AUTO_BALLOT_REQUEST_MIN_INTERVAL_MS = 15_000;
+const AUTO_BALLOT_RETRY_POLL_MS = 10_000;
+const AUTO_BALLOT_RETRY_RESEND_MS = 60_000;
 
 function resolveInviteDisplayTitle(invite: ElectionInviteMessage) {
   const fromDefinition = invite.definition?.title?.trim() ?? "";
@@ -841,17 +843,20 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     if (!hasLocalSecretKey) {
       return;
     }
-    const retryMs = 10_000;
+    const pollMs = AUTO_BALLOT_RETRY_POLL_MS;
+    const resendMs = AUTO_BALLOT_RETRY_RESEND_MS;
     const key = snapshot.electionId + ":" + snapshot.invitedNpub;
     const retry = () => {
+      runtime.refreshIssuanceAndAcceptance();
+      setRefreshNonce((value) => value + 1);
       const now = Date.now();
       const lastAttemptAt = requestRetryAtRef.current[key] ?? 0;
-      if (now - lastAttemptAt < retryMs) {
+      if (now - lastAttemptAt < resendMs) {
         return;
       }
       requestRetryAtRef.current[key] = now;
       try {
-        void runtime.requestBlindBallot({ minRetryMs: retryMs }).then(() => {
+        void runtime.requestBlindBallot({ minRetryMs: resendMs }).then(() => {
           runtime.refreshIssuanceAndAcceptance();
           setRefreshNonce((value) => value + 1);
         }).catch(() => undefined);
@@ -859,7 +864,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         // Retry is best-effort; explicit controls surface errors.
       }
     };
-    const intervalId = window.setInterval(retry, retryMs);
+    const intervalId = window.setInterval(retry, pollMs);
     return () => {
       window.clearInterval(intervalId);
     };

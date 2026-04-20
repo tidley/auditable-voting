@@ -169,7 +169,7 @@ describe("questionnaireOptionARuntime", () => {
     expect(recovered.getSnapshot()?.draftResponses).toEqual(submitted?.payload.responses);
   });
 
-  it("reuses an in-flight blind request across retries and republishes existing issuance", async () => {
+  it("reuses an in-flight blind request across retries and only republishes issuance when explicitly retriggered", async () => {
     const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
     await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
     coordinator.addWhitelistNpub(voterNpub);
@@ -207,13 +207,13 @@ describe("questionnaireOptionARuntime", () => {
     expect(vi.mocked(publishOptionABlindIssuanceDm)).toHaveBeenCalledTimes(1);
 
     await coordinator.publishPendingBlindIssuancesToDm({ minRetryMs: 0 });
-    expect(vi.mocked(publishOptionABlindIssuanceDm)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(publishOptionABlindIssuanceDm)).toHaveBeenCalledTimes(1);
 
     await voter.requestBlindBallot({ forceResend: true });
     await coordinator.processPendingBlindRequests();
     await coordinator.publishPendingBlindIssuancesToDm();
     expect(readBlindIssuance(requestId ?? "")).toEqual(issued);
-    expect(vi.mocked(publishOptionABlindIssuanceDm)).toHaveBeenCalledTimes(3);
+    expect(vi.mocked(publishOptionABlindIssuanceDm)).toHaveBeenCalledTimes(2);
   });
 
   it("prevents duplicate issuance and duplicate accepted submissions from inflating unique count", async () => {
@@ -241,6 +241,7 @@ describe("questionnaireOptionARuntime", () => {
     expect(retryAfterIssuance.blindRequest?.requestId).toBe(issuedRequestId);
 
     await voter.submitVote(["q1"]);
+    const submissionPublishCallsAfterFirstSubmit = vi.mocked(publishOptionABallotSubmissionDm).mock.calls.length;
     await coordinator.processPendingSubmissions(["q1"]);
     voter.refreshIssuanceAndAcceptance();
     expect(voter.getSnapshot()?.submissionAccepted).toBe(true);
@@ -251,6 +252,7 @@ describe("questionnaireOptionARuntime", () => {
     const retrySubmissionState = await voter.submitVote(["q1"]);
     expect(retrySubmissionState.submission?.responseNpub).toBe(firstSubmission?.responseNpub);
     expect(retrySubmissionState.submission?.responseId).toBe(firstSubmission?.responseId);
+    expect(vi.mocked(publishOptionABallotSubmissionDm).mock.calls.length).toBe(submissionPublishCallsAfterFirstSubmit);
     await coordinator.processPendingSubmissions(["q1"]);
     expect(coordinator.getAcceptedUniqueCount()).toBe(1);
   });
