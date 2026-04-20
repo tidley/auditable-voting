@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { NostrEvent } from "nostr-tools";
+import { nip19, type NostrEvent } from "nostr-tools";
 import TokenFingerprint from "./TokenFingerprint";
 import {
   evaluateQuestionnaireBlindAdmissions,
@@ -169,35 +169,37 @@ export default function SimpleAuditorApp() {
       let details = admissions.decisions
         .map((decision) => ({
           ...decision,
+          response: {
+            ...decision.response,
+            authorPubkey: normalizeToNpub(decision.response.authorPubkey),
+          },
           includedInLatestPublish: latestPublishAt !== null ? Number(decision.event.created_at ?? 0) <= latestPublishAt : false,
         }))
         .sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0));
-      if (details.length === 0) {
-        const selectedEntry = questionnaires.find((entry) => entry.questionnaireId === selectedId) ?? null;
-        const coordinatorNpub = selectedEntry?.coordinatorNpub?.trim() ?? "";
-        if (coordinatorNpub) {
-          const coordinatorState = loadCoordinatorState({
-            coordinatorNpub,
-            electionId: selectedId,
-          });
-          if (coordinatorState) {
-            const fallbackDetails = Object.values(coordinatorState.acceptanceResults)
-              .map((acceptance) => {
-                const submission = coordinatorState.receivedSubmissions[acceptance.submissionId];
-                if (!submission) {
-                  return null;
-                }
-                return optionASubmissionToAuditorDetail({
-                  submission,
-                  accepted: acceptance.accepted,
-                  latestPublishAt,
-                });
-              })
-              .filter((entry): entry is AuditorQuestionnaireResponseDetail => Boolean(entry))
-              .sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0));
-            if (fallbackDetails.length > 0) {
-              details = fallbackDetails;
-            }
+      const selectedEntry = questionnaires.find((entry) => entry.questionnaireId === selectedId) ?? null;
+      const coordinatorNpub = selectedEntry?.coordinatorNpub?.trim() ?? "";
+      if (coordinatorNpub) {
+        const coordinatorState = loadCoordinatorState({
+          coordinatorNpub,
+          electionId: selectedId,
+        });
+        if (coordinatorState) {
+          const fallbackDetails = Object.values(coordinatorState.acceptanceResults)
+            .map((acceptance) => {
+              const submission = coordinatorState.receivedSubmissions[acceptance.submissionId];
+              if (!submission) {
+                return null;
+              }
+              return optionASubmissionToAuditorDetail({
+                submission,
+                accepted: acceptance.accepted,
+                latestPublishAt,
+              });
+            })
+            .filter((entry): entry is AuditorQuestionnaireResponseDetail => Boolean(entry))
+            .sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0));
+          if (fallbackDetails.length > 0) {
+            details = fallbackDetails;
           }
         }
       }
@@ -678,6 +680,21 @@ function optionAAnswerToQuestionnaireAnswer(answer: QuestionnaireAnswer) {
   };
 }
 
+function normalizeToNpub(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "";
+  }
+  if (trimmed.startsWith("npub1")) {
+    return trimmed;
+  }
+  try {
+    return nip19.npubEncode(trimmed);
+  } catch {
+    return trimmed;
+  }
+}
+
 function optionASubmissionToAuditorDetail(input: {
   submission: BallotSubmission;
   accepted: boolean;
@@ -687,7 +704,7 @@ function optionASubmissionToAuditorDetail(input: {
   const submittedAt = Number.isFinite(submittedAtMs)
     ? Math.floor(submittedAtMs / 1000)
     : Math.floor(Date.now() / 1000);
-  const responseNpub = input.submission.responseNpub?.trim() || input.submission.invitedNpub;
+  const responseNpub = normalizeToNpub(input.submission.responseNpub?.trim() || input.submission.invitedNpub);
   const event = {
     id: `optiona:${input.submission.submissionId}`,
     created_at: submittedAt,
