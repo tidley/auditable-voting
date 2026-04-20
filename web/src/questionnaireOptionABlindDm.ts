@@ -18,8 +18,9 @@ const OPTION_A_BLIND_DM_HINT_RELAYS_MAX = 8;
 const OPTION_A_BLIND_DM_MAX_WAIT_MS = 1500;
 const OPTION_A_BLIND_DM_STAGGER_MS = 250;
 const OPTION_A_BLIND_DM_MIN_PUBLISH_INTERVAL_MS = 300;
-const TWO_DAYS_SECONDS = 2 * 24 * 60 * 60;
-const OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS = 3 * 24 * 60 * 60;
+const ONE_DAY_SECONDS = 24 * 60 * 60;
+const ONE_AND_HALF_DAY_SECONDS = 36 * 60 * 60;
+const OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS = ONE_AND_HALF_DAY_SECONDS;
 const OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT = 40;
 const KIND_SEAL = 13;
 const KIND_RUMOR_MESSAGE = 14;
@@ -76,7 +77,7 @@ function decodeNsecSecretKey(nsec: string) {
 
 function randomNow() {
   const now = Math.round(Date.now() / 1000);
-  return Math.round(now - (Math.random() * TWO_DAYS_SECONDS));
+  return Math.round(now - (Math.random() * ONE_DAY_SECONDS));
 }
 
 function toNpub(pubkey: string) {
