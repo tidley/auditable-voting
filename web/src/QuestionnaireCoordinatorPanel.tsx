@@ -1903,8 +1903,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         <li className={checklistDescriptionAdded ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>{checklistDescriptionAdded ? "✓" : "•"}</span> Description added</li>
         <li className={hasQuestion ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>{hasQuestion ? "✓" : "•"}</span> At least one question added</li>
         <li className={questionsValid ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>{questionsValid ? "✓" : "•"}</span> All question prompts and options complete</li>
-        <li className={hasKnownVoter ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>{hasKnownVoter ? "✓" : "•"}</span> Respondents known</li>
-        <li className={checklistNotPublished ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>{checklistNotPublished ? "✓" : "•"}</span> Questionnaire not yet published</li>
+        <li className={checklistNotPublished ? "is-pending" : "is-complete"}><span className='simple-vote-status-icon' aria-hidden='true'>{checklistNotPublished ? "•" : "✓"}</span> Questionnaire not yet published</li>
       </ul>
 
       <div className='simple-voter-action-row simple-voter-action-row-inline'>
