@@ -596,7 +596,7 @@ export default function SimpleAuditorApp() {
                             Publish state: {formatPublishState(entry.includedInLatestPublish)} | Submitted: {formatQuestionnaireTime(Number(entry.event.created_at ?? 0))}
                           </p>
                         </div>
-                        <TokenFingerprint tokenId={entry.response.tokenNullifier} compact large hideMetadata />
+                        <TokenFingerprint tokenId={entry.response.authorPubkey} compact large hideMetadata />
                       </div>
                     </li>
                   ))}
@@ -654,7 +654,7 @@ export default function SimpleAuditorApp() {
                             <p className='simple-voter-note'>Answer payload is encrypted or unavailable in public events.</p>
                           )}
                         </div>
-                        <TokenFingerprint tokenId={entry.response.tokenNullifier} compact large hideMetadata />
+                        <TokenFingerprint tokenId={entry.response.authorPubkey} compact large hideMetadata />
                       </div>
                     </li>
                   ))}

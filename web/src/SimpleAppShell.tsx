@@ -230,6 +230,43 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
           >
             {roleTitle}
           </button>
+          {role === "voter" ? (
+            <div className='simple-role-switch-actions'>
+              <button
+                type='button'
+                className='simple-voter-secondary'
+                onClick={() => {
+                  if (typeof window !== "undefined") {
+                    window.dispatchEvent(new Event("auditable-voting:voter-login"));
+                  }
+                }}
+              >
+                Login
+              </button>
+              <button
+                type='button'
+                className='simple-voter-secondary'
+                onClick={() => {
+                  if (typeof window !== "undefined") {
+                    window.dispatchEvent(new Event("auditable-voting:voter-signout"));
+                  }
+                }}
+              >
+                Sign out
+              </button>
+              <button
+                type='button'
+                className='simple-voter-primary'
+                onClick={() => {
+                  if (typeof window !== "undefined") {
+                    window.dispatchEvent(new Event("auditable-voting:voter-new"));
+                  }
+                }}
+              >
+                New
+              </button>
+            </div>
+          ) : null}
         </div>
         {!roleSwitchMinimized ? (
           <div

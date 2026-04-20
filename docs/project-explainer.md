@@ -57,9 +57,9 @@ This is the practical order of operations for the current app.
 
 1. Open the invite link, or open the app as **Voter** and log in.
 2. If needed, use `Check invites`, then `Open` (or `Open + request ballot`) for the pending invite.
-3. Ensure questionnaire content is visible, then click `Request ballot`.
+3. The app auto-requests the blind ballot when invite context and login are present; otherwise click `Request ballot`.
 4. Wait for `Credential ready: Yes`.
-5. Complete responses and click `Submit response`.
+5. Complete responses and click `Submit response` (it shows `Waiting for coordinator...` while prerequisites are incomplete).
 
 ### 3. Coordinator finalises third
 
@@ -202,7 +202,7 @@ The present web client is built with:
 - **a dedicated coordinator-control carrier over Nostr** for round proposals, commits, tally coordination, and recovery checkpoints
 - **regular custom Nostr event kinds** for coordinator control, live rounds, and ballots, so relays preserve the full transcript instead of replacing events in the `30000`-range
 - **NIP-17 gift-wrapped DMs** for follow, roster, MLS welcome, and share-assignment traffic
-- **NIP-17 gift-wrapped DMs** for Option A blind ballot requests, blind issuance delivery, ballot submissions, and acceptance results (with local mailbox fallback for same-browser recovery), plus encrypted mailbox objects for legacy ticket delivery, acknowledgement traffic, and history-based recovery, with stable `request_id`, `ticket_id`, and `ack_id` lineages
+- **NIP-17 gift-wrapped DMs** for blind ballot requests, blind issuance delivery, ballot submissions, and acceptance results (with local mailbox fallback for same-browser recovery), plus encrypted mailbox objects for legacy ticket delivery, acknowledgement traffic, and history-based recovery, with stable `request_id`, `ticket_id`, and `ack_id` lineages
 - **optional NIP-65 relay hints**, disabled by default, for relay discovery experiments
 - **`@cloudflare/blindrsa-ts`** for the RSABSSA blind-signature primitive used in the current issuance path
 - **Rust compiled to WebAssembly** for deterministic protocol logic, including validation helpers and the new coordinator control engine
@@ -220,12 +220,12 @@ The present web client is built with:
 - **voter draft preservation** so response fields are not cleared when a blind ballot credential or refreshed definition arrives for the same questionnaire
 - **linked invite login** that opens the public questionnaire without scanning old encrypted invite DMs, with recent bounded signer DM reads for manual invite checks and credential-result polling
 - **Android signer routing** that prefers Amber through NIP-46 when available, keeping signer-backed questionnaire DM operations on one signer identity
-- **blind DM relay targeting** so Option A blind request/issuance/submission/acceptance DMs resolve recipient `kind:10050` relay-list hints before static fallbacks
+- **blind DM relay targeting** so blind request/issuance/submission/acceptance DMs resolve recipient `kind:10050` relay-list hints before static fallbacks
 - **strict DM delivery confirmation** so blind-request and ballot-submission flows only mark "sent" after at least one relay confirms acceptance, avoiding silent transport failure states
 - **clearer voter ballot progress** that labels the per-questionnaire voting identity separately from the signer account and shows request, credential, and response state
-- **single-flight coordinator queue processing** so automatic Option A request/submission checks do not overlap relay work
+- **single-flight coordinator queue processing** so automatic request/submission checks do not overlap relay work
 - **idempotent ballot resend** so a voter can resend the same blind request, the coordinator republishes the existing credential DM, and background loops avoid rebroadcasting already delivered credentials
-- **more redundant Option A DM delivery** that mixes recipient NIP-17 relay hints with fallback relays, widens credential publish fanout, and retries issued credentials until submission proves receipt
+- **more redundant DM delivery** that mixes recipient NIP-17 relay hints with fallback relays, widens credential publish fanout, and retries issued credentials until submission proves receipt
 - **wider bounded signer DM scans** for invite/issuance/acceptance recovery so Amber/signer users are less likely to miss valid envelopes in busy relay histories
 - **course-feedback coordinator bypass** so legacy live-round / blind-key / ticket queue gating is disabled for questionnaire acceptance paths, with explicit debug assertions for bypass state
 - **course-feedback batch orchestration** in the live harness (`LIVE_BATCH_SIZE`, default `5`) so enrolment and submission advance in checkpointed waves instead of all-voter cold-start concurrency
@@ -732,14 +732,14 @@ The project is attempting to separate voter eligibility from public ballot ident
 
 The voter questionnaire now uses a single entry path:
 
-- the Option A runtime is the default voter questionnaire path
+- the questionnaire runtime is the default voter questionnaire path
 - no `qflow` / `questionnaire_flow` URL gate is required for normal use
 
-The Option A runtime currently provides:
+The questionnaire runtime currently provides:
 
 - signer-based login entry points in voter/coordinator questionnaire headers
 - coordinator whitelist and invite actions
-- Option A invite delivery over NIP-17 gift-wrapped DMs (`kind 1059` with `kind 13` seal / `kind 14` rumor), with bounded recent relay-history invite discovery on manual voter checks
+- invite delivery over NIP-17 gift-wrapped DMs (`kind 1059` with `kind 13` seal / `kind 14` rumor), with bounded recent relay-history invite discovery on manual voter checks
 - published questionnaire definitions that include the blind-signing public key, plus caching and invite-attached definitions, so voters can render linked questionnaires and request ballots even when the signer cannot read historical invite DMs
 - credential-attached definition refreshes that do not clear drafted response fields
 - RSABSSA blind request creation from a voter-held token secret
@@ -752,5 +752,5 @@ The Option A runtime currently provides:
 - Android Amber NIP-46 sessions now request `sign_event`, `nip04_encrypt/decrypt`, and `nip44_encrypt/decrypt` up front during connect so later flow steps do not trigger capability escalation prompts
 - invite/login npubs and local voter/responder npubs may differ; the invite can be opened against the current local voter identity, then the coordinator either auto-issues for whitelisted voters or manually authorises unexpected requesters
 - invites are durable and can remain idle indefinitely; ballot request retries preserve the same request id and re-queue until the coordinator issues a credential, and the credential issuance can also carry the questionnaire definition as a recovery path
-- accepted Option A DM submissions feed the same coordinator response summaries as public questionnaire response events
+- accepted DM submissions feed the same coordinator response summaries as public questionnaire response events
 - after a response is submitted, the voter Vote page shows the responder marker with its coloured pattern and expandable QR

@@ -689,7 +689,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     try {
       pushAnswers();
       await runtime.submitVote(requiredQuestionIds);
-      setStatus("Response submitted. Awaiting coordinator acceptance.");
+      setStatus(null);
       setRefreshNonce((value) => value + 1);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Submit failed.");
@@ -1021,7 +1021,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           {waitingForCredential ? "Resend request" : "Request ballot"}
         </button>
         <button type='button' className='simple-voter-secondary' onClick={refreshStatus}>Refresh status</button>
-        <button type='button' className='simple-voter-primary' disabled={!canSubmitNow} onClick={submit}>Submit response</button>
+        <button type='button' className='simple-voter-primary' disabled={!canSubmitNow} onClick={submit}>
+          {canSubmitNow ? "Submit response" : "Waiting for coordinator..."}
+        </button>
       </div>
       {snapshot?.submission ? (
         <section className='simple-settings-card' aria-label='Submitted responder marker'>
@@ -1058,7 +1060,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           <p className='simple-voter-note'>Waiting for the coordinator to issue your ballot credential. This page checks automatically; the coordinator can press Process requests.</p>
         ) : null}
       </section>
-      {flags.alreadySubmitted ? <p className='simple-voter-note'>You have already submitted one accepted vote for this election.</p> : null}
       {displayStatus ? <p className='simple-voter-note'>{displayStatus}</p> : null}
       <span style={{ display: "none" }} aria-hidden='true'>{refreshNonce}</span>
     </div>

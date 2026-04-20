@@ -1355,6 +1355,29 @@ export default function SimpleUiApp() {
     }
   }
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const handleLogin = () => {
+      void loginWithSigner();
+    };
+    const handleSignOut = () => {
+      signOutSignerSession();
+    };
+    const handleNewIdentity = () => {
+      refreshIdentity();
+    };
+    window.addEventListener("auditable-voting:voter-login", handleLogin);
+    window.addEventListener("auditable-voting:voter-signout", handleSignOut);
+    window.addEventListener("auditable-voting:voter-new", handleNewIdentity);
+    return () => {
+      window.removeEventListener("auditable-voting:voter-login", handleLogin);
+      window.removeEventListener("auditable-voting:voter-signout", handleSignOut);
+      window.removeEventListener("auditable-voting:voter-new", handleNewIdentity);
+    };
+  }, [loginWithSigner, refreshIdentity, signOutSignerSession]);
+
   function restoreIdentity(nextNsec: string) {
     const trimmed = nextNsec.trim();
     const derivedNpub = deriveNpubFromNsec(trimmed);
@@ -2725,30 +2748,6 @@ export default function SimpleUiApp() {
       <section className='simple-voter-page'>
         <div className='simple-voter-header-row'>
           <h1 className='simple-voter-title'>Voter ID {voterId}</h1>
-          <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight simple-voter-header-actions'>
-            <button
-              type='button'
-              className='simple-voter-secondary'
-              onClick={() => void loginWithSigner()}
-            >
-              Login
-            </button>
-            <button
-              type='button'
-              className='simple-voter-secondary'
-              onClick={signOutSignerSession}
-              disabled={!signerNpub.trim()}
-            >
-              Sign out
-            </button>
-            <button
-              type='button'
-              className='simple-voter-primary'
-              onClick={refreshIdentity}
-            >
-              New
-            </button>
-          </div>
         </div>
         {signerNpub ? <p className='simple-voter-note'>Signed in as {signerNpub}</p> : null}
         {signerStatus && signerStatus !== `Signed in as ${signerNpub}.` ? <p className='simple-voter-note'>{signerStatus}</p> : null}

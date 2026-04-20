@@ -1133,7 +1133,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       }))
       .sort((left, right) => left.responderId.localeCompare(right.responderId))
   ), [acceptedResponsesForDisplay]);
-  const publishButtonDisabled = !canPublishResults || displayAcceptedCount <= 0;
+  const closeAndPublishButtonDisabled = (currentState === "open"
+    ? !canCloseQuestionnaire
+    : !canPublishResults) || displayAcceptedCount <= 0;
+  const hasIncompleteResponses = knownVoterCount > 0 && displayAcceptedCount < knownVoterCount;
   const canExportResults = currentState === "results_published" && Boolean(latestDefinition);
   const publishStatusText = useMemo(() => {
     if (status === "Computing and publishing questionnaire results...") {
@@ -1149,7 +1152,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       return "Already published";
     }
     if (displayAcceptedCount > 0 && latestState === "open") {
-      return "Close questionnaire to publish";
+      return "Ready to close and publish";
     }
     if (displayAcceptedCount <= 0) {
       return "Nothing to publish yet";
@@ -1267,7 +1270,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     const id = questionnaireId.trim();
     if (!coordinatorNsec.trim() || !coordinatorNpub.trim() || !id) {
       setStatus("Coordinator key or questionnaire id is missing.");
-      return;
+      return false;
     }
 
     setStatus(`Publishing questionnaire state (${state})...`);
@@ -1313,9 +1316,11 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           : `Questionnaire state '${state}' publish failed.`,
       );
       await refresh();
+      return result.successes > 0;
     } catch {
       setStatePublishDiagnostic((current) => ({ ...current, attempted: true, succeeded: false }));
       setStatus(`Questionnaire state '${state}' publish failed.`);
+      return false;
     }
   }
 
@@ -1402,6 +1407,29 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     }
   }
 
+  async function closeAndPublishResults() {
+    if (!latestDefinition) {
+      setStatus("Load the questionnaire definition before publishing results.");
+      return;
+    }
+    if (hasIncompleteResponses && typeof window !== "undefined") {
+      const confirmed = window.confirm(
+        `Only ${displayAcceptedCount} of ${knownVoterCount} responses have been received. Close and publish results anyway?`,
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+    if (currentState === "open") {
+      const closed = await publishState("closed");
+      if (!closed) {
+        setStatus("Could not close questionnaire, so results were not published.");
+        return;
+      }
+    }
+    await publishResults();
+  }
+
   const view = props.view ?? "build";
 
   if (view === "participants") {
@@ -1415,13 +1443,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             <button type='button' className='simple-voter-primary' disabled={!canPublishDraft} onClick={() => void publishDefinition()}>
               Publish Questionnaire
             </button>
-          ) : currentState === "open" ? (
-            <button type='button' className='simple-voter-primary' disabled={!canCloseQuestionnaire} onClick={() => void publishState("closed")}>
-              Close Questionnaire
-            </button>
-          ) : currentState === "closed" ? (
-            <button type='button' className='simple-voter-primary' disabled={!canPublishResults} onClick={() => void publishResults()}>
-              Count Responses
+          ) : currentState === "open" || currentState === "closed" ? (
+            <button type='button' className='simple-voter-primary' disabled={closeAndPublishButtonDisabled} onClick={() => void closeAndPublishResults()}>
+              {currentState === "open" ? "Close + Publish Results" : "Publish Results"}
             </button>
           ) : currentState === "results_published" ? (
             <button type='button' className='simple-voter-primary' disabled>
@@ -1507,23 +1531,13 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
 
         <div className='simple-questionnaire-responses-section'>
           <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
-            {currentState === "open" ? (
-              <button
-                type='button'
-                className='simple-voter-secondary'
-                disabled={!canCloseQuestionnaire}
-                onClick={() => void publishState("closed")}
-              >
-                Close questionnaire
-              </button>
-            ) : null}
             <button
               type='button'
               className='simple-voter-primary'
-              disabled={publishButtonDisabled}
-              onClick={() => void publishResults()}
+              disabled={closeAndPublishButtonDisabled}
+              onClick={() => void closeAndPublishResults()}
             >
-              Publish summary
+              {currentState === "open" ? "Close + publish results" : "Publish results"}
             </button>
             {canExportResults ? (
               <button
@@ -1906,13 +1920,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           <button type='button' className='simple-voter-primary' disabled={!canPublishDraft} onClick={() => void publishDefinition()}>
             Publish Questionnaire
           </button>
-        ) : currentState === "open" ? (
-          <button type='button' className='simple-voter-primary' disabled={!canCloseQuestionnaire} onClick={() => void publishState("closed")}>
-            Close Questionnaire
-          </button>
-        ) : currentState === "closed" ? (
-          <button type='button' className='simple-voter-primary' disabled={!canPublishResults} onClick={() => void publishResults()}>
-            Count Responses
+        ) : currentState === "open" || currentState === "closed" ? (
+          <button type='button' className='simple-voter-primary' disabled={closeAndPublishButtonDisabled} onClick={() => void closeAndPublishResults()}>
+            {currentState === "open" ? "Close + Publish Results" : "Publish Results"}
           </button>
         ) : currentState === "results_published" ? (
           <button type='button' className='simple-voter-primary' disabled>
