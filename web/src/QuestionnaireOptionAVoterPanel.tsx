@@ -254,6 +254,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     if (!runtime || !signedInNpub.trim()) {
       return;
     }
+    const hasLocalSecretKey = Boolean(props.localVoterNsec?.trim());
+    if (!hasLocalSecretKey) {
+      return;
+    }
     const needsStatusRefresh = Boolean(
       (snapshot?.blindRequestSent && !snapshot.credentialReady)
       || (snapshot?.submission && snapshot.submissionAccepted == null),
@@ -268,11 +272,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       } catch {
         // Keep polling best-effort; explicit actions surface errors.
       }
-    }, 15000);
+    }, 60000);
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [runtime, signedInNpub, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission, snapshot?.submissionAccepted]);
+  }, [runtime, signedInNpub, props.localVoterNsec, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission, snapshot?.submissionAccepted]);
 
   useEffect(() => {
     setQuestionnaireTitle("Questionnaire");
@@ -749,16 +753,21 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     if (!runtime || !snapshot?.loginVerified || !snapshot.blindRequestSent || snapshot.credentialReady || snapshot.submission) {
       return;
     }
+    const hasLocalSecretKey = Boolean(props.localVoterNsec?.trim());
+    if (!hasLocalSecretKey) {
+      return;
+    }
+    const retryMs = 10_000;
     const key = snapshot.electionId + ":" + snapshot.invitedNpub;
     const retry = () => {
       const now = Date.now();
       const lastAttemptAt = requestRetryAtRef.current[key] ?? 0;
-      if (now - lastAttemptAt < 60000) {
+      if (now - lastAttemptAt < retryMs) {
         return;
       }
       requestRetryAtRef.current[key] = now;
       try {
-        void runtime.requestBlindBallot().then(() => {
+        void runtime.requestBlindBallot({ minRetryMs: retryMs }).then(() => {
           runtime.refreshIssuanceAndAcceptance();
           setRefreshNonce((value) => value + 1);
         }).catch(() => undefined);
@@ -766,11 +775,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         // Retry is best-effort; explicit controls surface errors.
       }
     };
-    const intervalId = window.setInterval(retry, 60000);
+    const intervalId = window.setInterval(retry, retryMs);
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [runtime, snapshot?.electionId, snapshot?.invitedNpub, snapshot?.loginVerified, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission]);
+  }, [runtime, props.localVoterNsec, snapshot?.electionId, snapshot?.invitedNpub, snapshot?.loginVerified, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission]);
 
   useEffect(() => {
     if (!runtime || !props.requestBlindBallotNonce || props.requestBlindBallotNonce <= 0) {

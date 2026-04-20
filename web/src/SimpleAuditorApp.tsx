@@ -111,7 +111,7 @@ export default function SimpleAuditorApp() {
           questionnaireId: id,
           title: entry.definition.title || "Untitled questionnaire",
           description: entry.definition.description || "",
-          coordinatorNpub: entry.definition.coordinatorPubkey,
+          coordinatorNpub: normalizeToNpub(entry.definition.coordinatorPubkey),
           createdAt: Number(entry.event.created_at ?? entry.definition.createdAt ?? 0),
           openAt: Number.isFinite(entry.definition.openAt) ? entry.definition.openAt : null,
           closeAt: Number.isFinite(entry.definition.closeAt) ? entry.definition.closeAt : null,
@@ -799,11 +799,11 @@ function resolveOptionACoordinatorState(input: {
   }
 
   const candidateCoordinatorNpubs = [
-    input.preferredCoordinatorNpub?.trim() ?? "",
-    loadElectionSummary(electionId)?.coordinatorNpub?.trim() ?? "",
+    normalizeToNpub(input.preferredCoordinatorNpub?.trim() ?? ""),
+    normalizeToNpub(loadElectionSummary(electionId)?.coordinatorNpub?.trim() ?? ""),
     ...loadElectionRegistry()
       .filter((id) => id === electionId)
-      .map((id) => loadElectionSummary(id)?.coordinatorNpub?.trim() ?? ""),
+      .map((id) => normalizeToNpub(loadElectionSummary(id)?.coordinatorNpub?.trim() ?? "")),
   ].filter((value, index, values) => value.length > 0 && values.indexOf(value) === index);
 
   for (const coordinatorNpub of candidateCoordinatorNpubs) {

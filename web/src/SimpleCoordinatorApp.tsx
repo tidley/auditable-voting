@@ -337,7 +337,7 @@ const SIMPLE_COORDINATOR_CONTROL_BACKFILL_INTERVAL_MS = 4000;
 const SIMPLE_COORDINATOR_ROUND_OPEN_POST_WELCOME_GRACE_MS = 1200;
 const SIMPLE_COORDINATOR_ROUND_OPEN_RETRY_DELAY_MS = 5000;
 const SIMPLE_COORDINATOR_ROUND_OPEN_RETRY_MAX_ATTEMPTS = 3;
-const OPTION_A_LOCAL_NSEC_BACKGROUND_PROCESS_INTERVAL_MS = 10_000;
+const OPTION_A_LOCAL_NSEC_BACKGROUND_PROCESS_INTERVAL_MS = 30_000;
 const OPTION_A_DEFAULT_BACKGROUND_PROCESS_INTERVAL_MS = 60_000;
 const SIMPLE_TICKET_RETRY_MIN_AGE_MS = 10000;
 const SIMPLE_TICKET_RETRY_MAX_ATTEMPTS = 3;
@@ -3474,8 +3474,8 @@ export default function SimpleCoordinatorApp() {
         signer: optionASigner,
         fallbackNsec: keypair?.nsec,
         preferredElectionId: optionAElectionId,
-        onlyPreferredElectionId: false,
-        forceRepublishIssuances: true,
+        onlyPreferredElectionId: true,
+        forceRepublishIssuances: false,
       });
       if (optionACoordinatorRuntime && optionAElectionId.trim()) {
         optionACoordinatorRuntime.bootstrapCoordinatorNpub({
@@ -3523,8 +3523,8 @@ export default function SimpleCoordinatorApp() {
           signer: optionASigner,
           fallbackNsec: keypair?.nsec,
           preferredElectionId: optionAElectionId,
-          onlyPreferredElectionId: false,
-          forceRepublishIssuances: true,
+          onlyPreferredElectionId: true,
+          forceRepublishIssuances: false,
         }).then(() => {
           if (optionACoordinatorRuntime && optionAElectionId.trim()) {
             optionACoordinatorRuntime.bootstrapCoordinatorNpub({

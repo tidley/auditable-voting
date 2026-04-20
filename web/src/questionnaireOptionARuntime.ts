@@ -83,7 +83,7 @@ const OPTION_A_COORDINATOR_DM_LOOKBACK_SECONDS = 24 * 60 * 60;
 const OPTION_A_COORDINATOR_SIGNER_DM_LIMIT = 60;
 const OPTION_A_COORDINATOR_NSEC_DM_LIMIT = 120;
 const OPTION_A_ISSUANCE_DM_RETRY_MS = 2 * 60 * 1000;
-const OPTION_A_BLIND_REQUEST_RETRY_MS = 60 * 1000;
+const OPTION_A_BLIND_REQUEST_RETRY_MS = 10 * 1000;
 
 export type OptionARuntimeErrorCode =
   | "not_logged_in"
@@ -265,12 +265,6 @@ export class QuestionnaireOptionAVoterRuntime {
   private startVoterDmSubscriptions() {
     this.stopVoterDmSubscriptions();
     if (!this.state?.loginVerified) {
-      return;
-    }
-    if (this.fallbackNsec?.trim()) {
-      optionAFlowLog("voter", "dm_subscriptions_skipped_using_local_nsec", {
-        electionId: this.electionId,
-      });
       return;
     }
     this.stopBlindIssuanceSubscription = subscribeOptionABlindIssuanceDms({
@@ -891,6 +885,10 @@ export class QuestionnaireOptionACoordinatorRuntime {
   private stopSubmissionSubscription: (() => void) | null = null;
   private liveBlindRequestProcessInFlight: Promise<void> | null = null;
   private liveSubmissionProcessInFlight: Promise<void> | null = null;
+  private acceptanceDmDeliveryStatusBySubmissionId = new Map<string, {
+    lastAttemptAt: string;
+    lastSuccessAt?: string;
+  }>();
 
   constructor(
     private readonly signer: SignerService,
@@ -968,12 +966,6 @@ export class QuestionnaireOptionACoordinatorRuntime {
   private startCoordinatorDmSubscriptions() {
     this.stopCoordinatorDmSubscriptions();
     if (!this.coordinatorNpub) {
-      return;
-    }
-    if (this.fallbackNsec?.trim()) {
-      optionAFlowLog("coordinator", "dm_subscriptions_skipped_using_local_nsec", {
-        electionId: this.electionId,
-      });
       return;
     }
     this.stopBlindRequestSubscription = subscribeOptionABlindRequestDms({
@@ -1359,7 +1351,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
     }
   }
 
-  async publishPendingAcceptanceResultsToDm() {
+  async publishPendingAcceptanceResultsToDm(options?: { forceAll?: boolean }) {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
     }
@@ -1370,6 +1362,12 @@ export class QuestionnaireOptionACoordinatorRuntime {
       if (!submission) {
         continue;
       }
+      const deliveryState = this.acceptanceDmDeliveryStatusBySubmissionId.get(acceptance.submissionId);
+      if (!options?.forceAll && deliveryState?.lastSuccessAt) {
+        continue;
+      }
+      const attemptedAt = nowIso();
+      let deliveredNow = false;
       try {
         const result = await publishOptionABallotAcceptanceDm({
           signer: this.signer,
@@ -1378,6 +1376,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
           fallbackNsec: this.fallbackNsec,
         });
         if (result.successes > 0) {
+          deliveredNow = true;
           delivered += 1;
         }
         optionAFlowLog("coordinator", "acceptance_dm_publish_result", {
@@ -1388,6 +1387,11 @@ export class QuestionnaireOptionACoordinatorRuntime {
         });
       } catch {
         // Keep best-effort to avoid blocking response processing.
+      } finally {
+        this.acceptanceDmDeliveryStatusBySubmissionId.set(acceptance.submissionId, {
+          lastAttemptAt: attemptedAt,
+          lastSuccessAt: deliveredNow ? attemptedAt : deliveryState?.lastSuccessAt,
+        });
       }
     }
     return delivered;
