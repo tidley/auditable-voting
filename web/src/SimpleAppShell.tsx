@@ -119,18 +119,23 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
         setRoleSwitchMinimized(true);
         setShowGateway(false);
       }
+      return true;
     } catch (error) {
       if (error instanceof SignerServiceError) {
         setGatewayStatus(error.message);
-        return;
+        return false;
       }
       setGatewayStatus("Signer login failed.");
+      return false;
     }
   }
 
   async function runSignerLogin() {
     if (gatewaySignerChoice === "amber") {
-      await prepareAmberConnectLinks();
+      const loggedIn = await loginWithSigner();
+      if (!loggedIn) {
+        await prepareAmberConnectLinks();
+      }
       return;
     }
     await loginWithSigner();
@@ -190,7 +195,6 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
     return (
       <div className='simple-app-shell'>
         <section className='simple-login-gateway' aria-label='Login and role selection'>
-          <div className='simple-login-mark' aria-hidden='true' />
           <h1 className='simple-login-title'>Auditable Voting</h1>
           <p className='simple-login-subtitle'>Choose a role directly, or login first via signer or nsec.</p>
 
@@ -265,49 +269,53 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
             </>
           ) : null}
 
-          <div className='simple-login-actions'>
-            <button
-              type='button'
-              className='simple-voter-secondary'
-              onClick={() => void copyGatewayValue(gatewayNostrConnectUri, "Nostr Connect URL")}
-              disabled={!gatewayNostrConnectUri.trim()}
-            >
-              Copy Nostr Connect URL
-            </button>
-            <button
-              type='button'
-              className='simple-voter-secondary'
-              onClick={() => void copyGatewayValue(gatewayNsecBunkerUri, "nsecbunker URL")}
-              disabled={!gatewayNsecBunkerUri.trim()}
-            >
-              Copy nsecbunker URL
-            </button>
-          </div>
-          <div className='simple-login-actions'>
-            <button
-              type='button'
-              className='simple-voter-secondary'
-              onClick={() => void prepareAmberConnectLinks()}
-            >
-              Show Nostr Connect QR
-            </button>
-          </div>
-          {gatewaySignerNpub ? <p className='simple-voter-note'>Signer: {gatewaySignerNpub}</p> : null}
-          {gatewayShowConnectQr && gatewayNostrConnectUri.trim() ? (
-            <SimpleQrPanel
-              value={gatewayNostrConnectUri}
-              title='Nostr Connect URL'
-              description='Scan in Amber or copy this URL directly.'
-              copyLabel='Copy Nostr Connect URL'
-              downloadFilename='nostr-connect-qr.png'
-            />
-          ) : null}
-          {gatewayNsecBunkerUri.trim() ? (
-            <p className='simple-voter-note'>
-              Amber-compatible nsecbunker URL:
-              {" "}
-              <code>{gatewayNsecBunkerUri}</code>
-            </p>
+          {gatewayAuthMode === "signer" ? (
+            <>
+              <div className='simple-login-actions'>
+                <button
+                  type='button'
+                  className='simple-voter-secondary'
+                  onClick={() => void copyGatewayValue(gatewayNostrConnectUri, "Nostr Connect URL")}
+                  disabled={!gatewayNostrConnectUri.trim()}
+                >
+                  Copy Nostr Connect URL
+                </button>
+                <button
+                  type='button'
+                  className='simple-voter-secondary'
+                  onClick={() => void copyGatewayValue(gatewayNsecBunkerUri, "nsecbunker URL")}
+                  disabled={!gatewayNsecBunkerUri.trim()}
+                >
+                  Copy nsecbunker URL
+                </button>
+              </div>
+              <div className='simple-login-actions'>
+                <button
+                  type='button'
+                  className='simple-voter-secondary'
+                  onClick={() => void prepareAmberConnectLinks()}
+                >
+                  Show Nostr Connect QR
+                </button>
+              </div>
+              {gatewaySignerNpub ? <p className='simple-voter-note'>Signer: {gatewaySignerNpub}</p> : null}
+              {gatewayShowConnectQr && gatewayNostrConnectUri.trim() ? (
+                <SimpleQrPanel
+                  value={gatewayNostrConnectUri}
+                  title='Nostr Connect URL'
+                  description='Scan in Amber or copy this URL directly.'
+                  copyLabel='Copy Nostr Connect URL'
+                  downloadFilename='nostr-connect-qr.png'
+                />
+              ) : null}
+              {gatewayNsecBunkerUri.trim() ? (
+                <p className='simple-voter-note'>
+                  Amber-compatible nsecbunker URL:
+                  {" "}
+                  <code>{gatewayNsecBunkerUri}</code>
+                </p>
+              ) : null}
+            </>
           ) : null}
 
           <div className='simple-role-switch simple-role-switch-login' role='tablist' aria-label='Role selection'>
