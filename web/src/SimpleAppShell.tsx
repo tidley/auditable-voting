@@ -212,7 +212,7 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
           <h1 className='simple-login-title'>Auditable Voting</h1>
           <p className='simple-login-subtitle'>Choose a role directly, or login first via signer or nsec.</p>
 
-          <div className='simple-role-switch simple-role-switch-login' role='tablist' aria-label='Authentication method'>
+          <div className='simple-role-switch simple-role-switch-login simple-role-switch-login-auth' role='tablist' aria-label='Authentication method'>
             <button
               type='button'
               role='tab'

@@ -537,6 +537,13 @@ code {
   width: 100%;
 }
 
+.simple-role-switch-login-auth {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: min(380px, 100%);
+  margin-left: auto;
+  margin-right: auto;
+}
+
 .simple-role-switch-wrap {
   display: grid;
   gap: 16px;

@@ -979,7 +979,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
 
       {inviteDropdownOptions.length > 0 ? (
         <>
-          <label className='simple-voter-label' htmlFor='questionnaire-invite-select'>Invited questionnaires</label>
           <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
             <select
               id='questionnaire-invite-select'
