@@ -1043,7 +1043,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       {snapshot?.submission ? (
         <section className='simple-settings-card' aria-label='Submitted responder marker'>
           <h4 className='simple-voter-section-title'>Submitted responder marker</h4>
-          <p className='simple-voter-note'>This is the marker the coordinator sees for this submitted response.</p>
           <TokenFingerprint
             tokenId={snapshot.responseNpub ?? snapshot.submission.responseNpub ?? snapshot.submission.invitedNpub}
             label='Submitted responder marker'

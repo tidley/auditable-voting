@@ -546,7 +546,6 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_submitted_marker"]} localVoterNpub={localVoterNpub} />);
 
     await screen.findByRole("region", { name: "Submitted responder marker" });
-    expect(screen.getByText("This is the marker the coordinator sees for this submitted response.")).toBeTruthy();
     expect(screen.getAllByLabelText(/Expand QR for token/i).length).toBeGreaterThan(0);
   });
 });
