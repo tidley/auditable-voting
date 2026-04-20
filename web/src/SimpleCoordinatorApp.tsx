@@ -5368,7 +5368,7 @@ export default function SimpleCoordinatorApp() {
             className={`simple-voter-tab${activeTab === 'participants' ? ' is-active' : ''}`}
             onClick={() => selectTab('participants')}
           >
-            Participants
+            Invite
           </button>
           <button
             type='button'
@@ -5377,7 +5377,7 @@ export default function SimpleCoordinatorApp() {
             className={`simple-voter-tab${activeTab === 'voting' ? ' is-active' : ''}`}
             onClick={() => selectTab('voting')}
           >
-            Responses
+            Results
           </button>
           <button
             type='button'

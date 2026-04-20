@@ -732,7 +732,7 @@ code {
 
 .simple-voter-tabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 22px;
   padding-bottom: 10px;
@@ -4450,7 +4450,7 @@ body.demo-page .demo-workspace {
   }
 
   .simple-voter-tabs {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 8px;
   }
 
