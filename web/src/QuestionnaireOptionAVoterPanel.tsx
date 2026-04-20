@@ -177,6 +177,12 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   }, [electionId]);
 
   useEffect(() => {
+    return () => {
+      runtime?.dispose();
+    };
+  }, [runtime]);
+
+  useEffect(() => {
     if (!runtime) {
       return;
     }

@@ -51,6 +51,10 @@ vi.mock("./questionnaireOptionABlindDm", () => ({
     failures: 0,
     relayResults: [],
   }),
+  subscribeOptionABlindRequestDms: vi.fn(() => () => undefined),
+  subscribeOptionABlindIssuanceDms: vi.fn(() => () => undefined),
+  subscribeOptionABallotSubmissionDms: vi.fn(() => () => undefined),
+  subscribeOptionABallotAcceptanceDms: vi.fn(() => () => undefined),
 }));
 
 function signer(npub: string): SignerService {

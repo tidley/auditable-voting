@@ -57,6 +57,10 @@ import {
   publishOptionABallotSubmissionDm,
   publishOptionABlindIssuanceDm,
   publishOptionABlindRequestDm,
+  subscribeOptionABallotAcceptanceDms,
+  subscribeOptionABallotSubmissionDms,
+  subscribeOptionABlindIssuanceDms,
+  subscribeOptionABlindRequestDms,
 } from "./questionnaireOptionABlindDm";
 import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import { fetchOptionAInviteDms, publishOptionAInviteDm } from "./questionnaireOptionAInviteDm";
@@ -220,6 +224,8 @@ export class QuestionnaireOptionAVoterRuntime {
   private requestBlindBallotInflight: Promise<VoterElectionLocalState> | null = null;
   private submitVoteInflight: Promise<VoterElectionLocalState> | null = null;
   private refreshFetchInFlight = false;
+  private stopBlindIssuanceSubscription: (() => void) | null = null;
+  private stopAcceptanceSubscription: (() => void) | null = null;
 
   constructor(
     private readonly signer: SignerService,
@@ -242,6 +248,41 @@ export class QuestionnaireOptionAVoterRuntime {
       };
     }
     return deriveVoterUiFlags(this.state);
+  }
+
+  dispose() {
+    this.stopVoterDmSubscriptions();
+  }
+
+  private stopVoterDmSubscriptions() {
+    this.stopBlindIssuanceSubscription?.();
+    this.stopBlindIssuanceSubscription = null;
+    this.stopAcceptanceSubscription?.();
+    this.stopAcceptanceSubscription = null;
+  }
+
+  private startVoterDmSubscriptions() {
+    this.stopVoterDmSubscriptions();
+    if (!this.state?.loginVerified) {
+      return;
+    }
+    this.stopBlindIssuanceSubscription = subscribeOptionABlindIssuanceDms({
+      signer: this.signer,
+      electionId: this.electionId,
+      onIssuance: (issuance) => {
+        storeBlindIssuance(issuance);
+        if (issuance.definition) {
+          storeCachedQuestionnaireDefinition(issuance.definition);
+        }
+      },
+    });
+    this.stopAcceptanceSubscription = subscribeOptionABallotAcceptanceDms({
+      signer: this.signer,
+      electionId: this.electionId,
+      onAcceptance: (acceptance) => {
+        storeAcceptance(acceptance);
+      },
+    });
   }
 
   async loginWithSigner(inviteFromUrl: ElectionInviteMessage | null) {
@@ -303,6 +344,7 @@ export class QuestionnaireOptionAVoterRuntime {
 
     this.state = restored;
     saveVoterState({ voterNpub: signerNpub, state: restored });
+    this.startVoterDmSubscriptions();
     return restored;
   }
 
@@ -376,6 +418,7 @@ export class QuestionnaireOptionAVoterRuntime {
 
     this.state = restored;
     saveVoterState({ voterNpub: invitedNpub, state: restored });
+    this.startVoterDmSubscriptions();
     return restored;
   }
 
@@ -823,6 +866,10 @@ export class QuestionnaireOptionACoordinatorRuntime {
   private coordinatorNpub: string | null = null;
   private pendingAuthorizationsByNpub: Record<string, BlindBallotRequest[]> = {};
   private issuanceDmRepublishRequests = new Map<string, string>();
+  private stopBlindRequestSubscription: (() => void) | null = null;
+  private stopSubmissionSubscription: (() => void) | null = null;
+  private liveBlindRequestProcessInFlight: Promise<void> | null = null;
+  private liveSubmissionProcessInFlight: Promise<void> | null = null;
 
   constructor(
     private readonly signer: SignerService,
@@ -860,6 +907,66 @@ export class QuestionnaireOptionACoordinatorRuntime {
       .filter((entry) => entry.latestRequest !== null);
   }
 
+  dispose() {
+    this.stopCoordinatorDmSubscriptions();
+  }
+
+  private stopCoordinatorDmSubscriptions() {
+    this.stopBlindRequestSubscription?.();
+    this.stopBlindRequestSubscription = null;
+    this.stopSubmissionSubscription?.();
+    this.stopSubmissionSubscription = null;
+  }
+
+  private triggerBlindRequestProcessingFromLive() {
+    if (this.liveBlindRequestProcessInFlight) {
+      return this.liveBlindRequestProcessInFlight;
+    }
+    this.liveBlindRequestProcessInFlight = (async () => {
+      await this.processPendingBlindRequests();
+      await this.publishPendingBlindIssuancesToDm();
+    })().finally(() => {
+      this.liveBlindRequestProcessInFlight = null;
+    });
+    return this.liveBlindRequestProcessInFlight;
+  }
+
+  private triggerSubmissionProcessingFromLive() {
+    if (this.liveSubmissionProcessInFlight) {
+      return this.liveSubmissionProcessInFlight;
+    }
+    this.liveSubmissionProcessInFlight = (async () => {
+      await this.processPendingSubmissions([]);
+      await this.publishPendingAcceptanceResultsToDm();
+    })().finally(() => {
+      this.liveSubmissionProcessInFlight = null;
+    });
+    return this.liveSubmissionProcessInFlight;
+  }
+
+  private startCoordinatorDmSubscriptions() {
+    this.stopCoordinatorDmSubscriptions();
+    if (!this.coordinatorNpub) {
+      return;
+    }
+    this.stopBlindRequestSubscription = subscribeOptionABlindRequestDms({
+      signer: this.signer,
+      electionId: this.electionId,
+      onRequest: (request) => {
+        enqueueBlindRequest(request);
+        void this.triggerBlindRequestProcessingFromLive().catch(() => undefined);
+      },
+    });
+    this.stopSubmissionSubscription = subscribeOptionABallotSubmissionDms({
+      signer: this.signer,
+      electionId: this.electionId,
+      onSubmission: (submission) => {
+        enqueueSubmission(submission);
+        void this.triggerSubmissionProcessingFromLive().catch(() => undefined);
+      },
+    });
+  }
+
   private getDmReadSince() {
     const openedAt = this.state?.election.openedAt;
     const parsed = openedAt ? Date.parse(openedAt) : NaN;
@@ -894,6 +1001,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
     this.coordinatorNpub = toNpub(await this.signer.getPublicKey());
     const state = this.ensureCoordinatorState(summary);
     await this.ensureBlindSigningKey();
+    this.startCoordinatorDmSubscriptions();
     return this.state ?? state;
   }
 
@@ -902,7 +1010,9 @@ export class QuestionnaireOptionACoordinatorRuntime {
     summary?: Partial<ElectionSummary>;
   }) {
     this.coordinatorNpub = toNpub(input.coordinatorNpub);
-    return this.ensureCoordinatorState(input.summary);
+    const state = this.ensureCoordinatorState(input.summary);
+    this.startCoordinatorDmSubscriptions();
+    return state;
   }
 
   async ensureBlindSigningPublicKey() {

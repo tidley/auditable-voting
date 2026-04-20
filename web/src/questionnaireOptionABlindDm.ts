@@ -312,6 +312,139 @@ function parseGiftWrapPayload(payload: string): NostrEvent | null {
   }
 }
 
+async function decodeGiftWrapWithSigner(input: {
+  signer: SignerService;
+  event: NostrEvent;
+}) {
+  if (!input.signer.nip44Decrypt) {
+    return null;
+  }
+  const wrapPubkey = typeof input.event.pubkey === "string" ? input.event.pubkey : "";
+  if (!wrapPubkey || typeof input.event.content !== "string" || !input.event.content.trim()) {
+    return null;
+  }
+  const sealPayload = await input.signer.nip44Decrypt(wrapPubkey, input.event.content);
+  const sealEvent = parseGiftWrapPayload(sealPayload);
+  if (!sealEvent) {
+    return null;
+  }
+  const rumorPayload = await input.signer.nip44Decrypt(sealEvent.pubkey, sealEvent.content);
+  const rumor = JSON.parse(rumorPayload) as { content?: string };
+  if (!rumor || typeof rumor.content !== "string") {
+    return null;
+  }
+  return {
+    rumorContent: rumor.content,
+    sealPubkey: sealEvent.pubkey,
+  };
+}
+
+function createSignerGiftWrapSubscription<T>(input: {
+  signer: SignerService;
+  electionId?: string;
+  relays?: string[];
+  since?: number;
+  stage: string;
+  parse: (content: string) => T | null;
+  keyOf: (value: T) => string;
+  onValue: (value: T) => void;
+  onError?: (error: Error) => void;
+  validate?: (value: T, decoded: { rumorContent: string; sealPubkey: string }) => boolean;
+}) {
+  if (!input.signer.nip44Decrypt) {
+    return () => undefined;
+  }
+  let closed = false;
+  let subscription: { close: (reason?: string) => Promise<void> | void } | null = null;
+  const seenKeys = new Set<string>();
+
+  const close = () => {
+    closed = true;
+    if (subscription) {
+      void subscription.close("closed by caller");
+      subscription = null;
+    }
+  };
+
+  const handleEvent = async (event: NostrEvent) => {
+    if (closed) {
+      return;
+    }
+    try {
+      const decoded = await decodeGiftWrapWithSigner({
+        signer: input.signer,
+        event,
+      });
+      if (!decoded) {
+        return;
+      }
+      const value = input.parse(decoded.rumorContent);
+      if (!value) {
+        return;
+      }
+      const electionId = input.electionId?.trim();
+      if (electionId && typeof (value as { electionId?: string }).electionId === "string" && (value as { electionId: string }).electionId !== electionId) {
+        return;
+      }
+      if (input.validate && !input.validate(value, decoded)) {
+        return;
+      }
+      const key = input.keyOf(value);
+      if (!key || seenKeys.has(key)) {
+        return;
+      }
+      seenKeys.add(key);
+      optionABlindDmLog(`${input.stage}_event`, { key });
+      input.onValue(value);
+    } catch (error) {
+      if (error instanceof Error) {
+        input.onError?.(error);
+      }
+    }
+  };
+
+  void (async () => {
+    try {
+      const recipientRaw = await input.signer.getPublicKey();
+      const recipientNpub = toNpub(recipientRaw);
+      const recipientHex = toHexPubkey(recipientRaw);
+      const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
+      optionABlindDmLog(`${input.stage}_subscribe_started`, {
+        recipientNpub,
+        relayCount: relays.length,
+      });
+      if (closed) {
+        return;
+      }
+      const pool = getSharedNostrPool();
+      subscription = pool.subscribeMany(relays, {
+        kinds: [KIND_GIFT_WRAP],
+        "#p": [recipientHex],
+        since: input.since ?? Math.round(Date.now() / 1000) - OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS,
+      }, {
+        onevent: (event) => {
+          void handleEvent(event as NostrEvent);
+        },
+        onclose: (reasons) => {
+          if (closed) {
+            return;
+          }
+          const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
+          if (errors.length > 0) {
+            input.onError?.(new Error(errors.join("; ")));
+          }
+        },
+      });
+    } catch (error) {
+      if (!closed && error instanceof Error) {
+        input.onError?.(error);
+      }
+    }
+  })();
+
+  return close;
+}
+
 async function publishEnvelope(input: {
   signer: SignerService;
   recipientNpub: string;
@@ -549,22 +682,15 @@ export async function fetchOptionABlindRequestDms(input: {
     .sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0))
     .slice(0, maxDecryptAttempts);
   for (const event of sorted) {
-    const wrapPubkey = typeof event.pubkey === "string" ? event.pubkey : "";
-    if (!wrapPubkey || typeof event.content !== "string" || !event.content.trim()) {
-      continue;
-    }
     try {
-      const sealPayload = await input.signer.nip44Decrypt(wrapPubkey, event.content);
-      const sealEvent = parseGiftWrapPayload(sealPayload);
-      if (!sealEvent) {
+      const decoded = await decodeGiftWrapWithSigner({
+        signer: input.signer,
+        event,
+      });
+      if (!decoded) {
         continue;
       }
-      const rumorPayload = await input.signer.nip44Decrypt(sealEvent.pubkey, sealEvent.content);
-      const rumor = JSON.parse(rumorPayload) as { content?: string };
-      if (!rumor || typeof rumor.content !== "string") {
-        continue;
-      }
-      const request = parseBlindRequestDmContent(rumor.content);
+      const request = parseBlindRequestDmContent(decoded.rumorContent);
       if (!request) {
         continue;
       }
@@ -659,22 +785,15 @@ export async function fetchOptionABlindIssuanceDms(input: {
     .sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0))
     .slice(0, maxDecryptAttempts);
   for (const event of sorted) {
-    const wrapPubkey = typeof event.pubkey === "string" ? event.pubkey : "";
-    if (!wrapPubkey || typeof event.content !== "string" || !event.content.trim()) {
-      continue;
-    }
     try {
-      const sealPayload = await input.signer.nip44Decrypt(wrapPubkey, event.content);
-      const sealEvent = parseGiftWrapPayload(sealPayload);
-      if (!sealEvent) {
+      const decoded = await decodeGiftWrapWithSigner({
+        signer: input.signer,
+        event,
+      });
+      if (!decoded) {
         continue;
       }
-      const rumorPayload = await input.signer.nip44Decrypt(sealEvent.pubkey, sealEvent.content);
-      const rumor = JSON.parse(rumorPayload) as { content?: string };
-      if (!rumor || typeof rumor.content !== "string") {
-        continue;
-      }
-      const issuance = parseBlindIssuanceDmContent(rumor.content);
+      const issuance = parseBlindIssuanceDmContent(decoded.rumorContent);
       if (!issuance) {
         continue;
       }
@@ -767,27 +886,20 @@ export async function fetchOptionABallotSubmissionDms(input: {
     .sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0))
     .slice(0, maxDecryptAttempts);
   for (const event of sorted) {
-    const wrapPubkey = typeof event.pubkey === "string" ? event.pubkey : "";
-    if (!wrapPubkey || typeof event.content !== "string" || !event.content.trim()) {
-      continue;
-    }
     try {
-      const sealPayload = await input.signer.nip44Decrypt(wrapPubkey, event.content);
-      const sealEvent = parseGiftWrapPayload(sealPayload);
-      if (!sealEvent) {
+      const decoded = await decodeGiftWrapWithSigner({
+        signer: input.signer,
+        event,
+      });
+      if (!decoded) {
         continue;
       }
-      const rumorPayload = await input.signer.nip44Decrypt(sealEvent.pubkey, sealEvent.content);
-      const rumor = JSON.parse(rumorPayload) as { content?: string };
-      if (!rumor || typeof rumor.content !== "string") {
-        continue;
-      }
-      const submission = parseBallotSubmissionDmContent(rumor.content);
+      const submission = parseBallotSubmissionDmContent(decoded.rumorContent);
       if (!submission) {
         continue;
       }
       const claimedResponseNpub = submission.responseNpub ?? submission.invitedNpub;
-      if (claimedResponseNpub && toNpub(sealEvent.pubkey) !== claimedResponseNpub) {
+      if (claimedResponseNpub && toNpub(decoded.sealPubkey) !== claimedResponseNpub) {
         continue;
       }
       if (input.electionId?.trim() && submission.electionId !== input.electionId.trim()) {
@@ -890,22 +1002,15 @@ export async function fetchOptionABallotAcceptanceDms(input: {
     .sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0))
     .slice(0, maxDecryptAttempts);
   for (const event of sorted) {
-    const wrapPubkey = typeof event.pubkey === "string" ? event.pubkey : "";
-    if (!wrapPubkey || typeof event.content !== "string" || !event.content.trim()) {
-      continue;
-    }
     try {
-      const sealPayload = await input.signer.nip44Decrypt(wrapPubkey, event.content);
-      const sealEvent = parseGiftWrapPayload(sealPayload);
-      if (!sealEvent) {
+      const decoded = await decodeGiftWrapWithSigner({
+        signer: input.signer,
+        event,
+      });
+      if (!decoded) {
         continue;
       }
-      const rumorPayload = await input.signer.nip44Decrypt(sealEvent.pubkey, sealEvent.content);
-      const rumor = JSON.parse(rumorPayload) as { content?: string };
-      if (!rumor || typeof rumor.content !== "string") {
-        continue;
-      }
-      const acceptance = parseBallotAcceptanceDmContent(rumor.content);
+      const acceptance = parseBallotAcceptanceDmContent(decoded.rumorContent);
       if (!acceptance) {
         continue;
       }
@@ -968,4 +1073,92 @@ export async function fetchOptionABallotAcceptanceDmsWithNsec(input: {
     }
   }
   return [...unique.values()];
+}
+
+export function subscribeOptionABlindRequestDms(input: {
+  signer: SignerService;
+  electionId?: string;
+  relays?: string[];
+  since?: number;
+  onRequest: (request: BlindBallotRequest) => void;
+  onError?: (error: Error) => void;
+}) {
+  return createSignerGiftWrapSubscription<BlindBallotRequest>({
+    signer: input.signer,
+    electionId: input.electionId,
+    relays: input.relays,
+    since: input.since,
+    stage: "subscribe_blind_requests",
+    parse: parseBlindRequestDmContent,
+    keyOf: (value) => `${value.electionId}:${value.requestId}:${value.invitedNpub}`,
+    onValue: input.onRequest,
+    onError: input.onError,
+  });
+}
+
+export function subscribeOptionABlindIssuanceDms(input: {
+  signer: SignerService;
+  electionId?: string;
+  relays?: string[];
+  since?: number;
+  onIssuance: (issuance: BlindBallotIssuance) => void;
+  onError?: (error: Error) => void;
+}) {
+  return createSignerGiftWrapSubscription<BlindBallotIssuance>({
+    signer: input.signer,
+    electionId: input.electionId,
+    relays: input.relays,
+    since: input.since,
+    stage: "subscribe_issuances",
+    parse: parseBlindIssuanceDmContent,
+    keyOf: (value) => `${value.electionId}:${value.requestId}:${value.issuanceId}`,
+    onValue: input.onIssuance,
+    onError: input.onError,
+  });
+}
+
+export function subscribeOptionABallotSubmissionDms(input: {
+  signer: SignerService;
+  electionId?: string;
+  relays?: string[];
+  since?: number;
+  onSubmission: (submission: BallotSubmission) => void;
+  onError?: (error: Error) => void;
+}) {
+  return createSignerGiftWrapSubscription<BallotSubmission>({
+    signer: input.signer,
+    electionId: input.electionId,
+    relays: input.relays,
+    since: input.since,
+    stage: "subscribe_submissions",
+    parse: parseBallotSubmissionDmContent,
+    keyOf: (value) => `${value.electionId}:${value.submissionId}:${value.invitedNpub}`,
+    onValue: input.onSubmission,
+    onError: input.onError,
+    validate: (value, decoded) => {
+      const claimedResponseNpub = value.responseNpub ?? value.invitedNpub;
+      return !claimedResponseNpub || toNpub(decoded.sealPubkey) === claimedResponseNpub;
+    },
+  });
+}
+
+export function subscribeOptionABallotAcceptanceDms(input: {
+  signer: SignerService;
+  electionId?: string;
+  relays?: string[];
+  since?: number;
+  onAcceptance: (acceptance: BallotAcceptanceResult) => void;
+  onError?: (error: Error) => void;
+}) {
+  return createSignerGiftWrapSubscription<BallotAcceptanceResult>({
+    signer: input.signer,
+    electionId: input.electionId,
+    relays: input.relays,
+    since: input.since,
+    stage: "subscribe_acceptances",
+    parse: parseBallotAcceptanceDmContent,
+    keyOf: (value) => `${value.electionId}:${value.submissionId}`,
+    onValue: input.onAcceptance,
+    onError: input.onError,
+  });
 }

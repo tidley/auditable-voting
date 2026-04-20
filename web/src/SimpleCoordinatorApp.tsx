@@ -771,6 +771,11 @@ export default function SimpleCoordinatorApp() {
       )
       : null
   ), [keypair?.nsec, optionAElectionId, optionASigner, signerNpub]);
+  useEffect(() => {
+    return () => {
+      optionACoordinatorRuntime?.dispose();
+    };
+  }, [optionACoordinatorRuntime]);
   const optionAKnownVoters = useMemo(
     () => Object.values(optionACoordinatorRuntime?.getSnapshot()?.whitelist ?? {}),
     [optionACoordinatorRuntime, knownVoterInviteRefreshNonce],
@@ -3387,26 +3392,20 @@ export default function SimpleCoordinatorApp() {
     if (!activeCoordinatorNpub.trim() || !optionAElectionId.trim()) {
       return;
     }
+    if (!optionACoordinatorRuntime) {
+      return;
+    }
     const intervalId = window.setInterval(() => {
       if (optionAQueueProcessingInFlightRef.current) {
         return;
       }
       optionAQueueProcessingInFlightRef.current = true;
-      void processOptionAQueuesForCoordinatorLive({
-        coordinatorNpub: activeCoordinatorNpub,
-        signer: optionASigner,
-        fallbackNsec: keypair?.nsec,
-        preferredElectionId: optionAElectionId,
-        onlyPreferredElectionId: Boolean(optionAElectionId.trim()),
-      }).then((result) => {
-        if (result.processedElections > 0) {
-          if (optionACoordinatorRuntime && optionAElectionId.trim()) {
-            optionACoordinatorRuntime.bootstrapCoordinatorNpub({
-              coordinatorNpub: activeCoordinatorNpub,
-            });
-          }
-          setKnownVoterInviteRefreshNonce((value) => value + 1);
-        }
+      void optionACoordinatorRuntime.processPendingBlindRequests()
+      .then(() => optionACoordinatorRuntime.publishPendingBlindIssuancesToDm())
+      .then(() => optionACoordinatorRuntime.processPendingSubmissions([]))
+      .then(() => optionACoordinatorRuntime.publishPendingAcceptanceResultsToDm())
+      .then(() => {
+        setKnownVoterInviteRefreshNonce((value) => value + 1);
       }).catch(() => {
         // Keep background processing best-effort; explicit action shows errors.
       }).finally(() => {
@@ -3416,7 +3415,7 @@ export default function SimpleCoordinatorApp() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [activeCoordinatorNpub, keypair?.nsec, optionACoordinatorRuntime, optionAElectionId, optionASigner]);
+  }, [activeCoordinatorNpub, optionACoordinatorRuntime, optionAElectionId]);
   function authorizePendingRequester(invitedNpub: string) {
     if (!optionACoordinatorRuntime) {
       return;
