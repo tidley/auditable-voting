@@ -574,7 +574,7 @@
           <li>Automatic follow, blind-request, ticket, and acknowledgement sends now use random 0-30s human-style pacing with slower retries</li>
           <li>Questionnaire invite links open the Vote tab after signer login, complete voter login from the public questionnaire id without scanning old encrypted invite DMs, and preserve the same ballot-request id until issuance arrives</li>
           <li>Android signer flows now prefer Amber through NIP-46 when available so `get_public_key`, `sign_event`, `nip04`, and `nip44` operations stay on one signer identity, with capability permissions requested up front</li>
-          <li>The login gateway can now generate/copy `nostrconnect://` links, show a QR code for handoff, and copy an Amber-compatible `bunker://` (`nsecbunker`) variant</li>
+          <li>The login gateway now orders controls as `Signer`/`nsec`, then signer choice (`NIP-07`/`Amber`), then one login action button; it can also generate/copy `nostrconnect://` links, show a QR code for handoff, and copy an Amber-compatible `bunker://` (`nsecbunker`) variant</li>
           <li>Option A blind request, issuance, submission, and acceptance DMs now resolve recipient `kind:10050` NIP-17 relay hints before static fallback relays, keep curated fallback relay redundancy, and treat delivery as successful only when at least one relay accepts the publish</li>
           <li>Voter ballot progress now separates signer account from voting identity, and coordinator automatic Option A queue checks are single-flight to reduce overlapping relay work</li>
           <li>The voter tab bar now hides `Vote` until questionnaire context is ready, and silent invite polling no longer forces users off Configure/Settings</li>

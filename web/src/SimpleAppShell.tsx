@@ -12,6 +12,8 @@ import { tryWriteClipboard } from "./clipboard";
 import SimpleQrPanel from "./SimpleQrPanel";
 
 type SimpleRole = "voter" | "coordinator" | "auditor";
+type GatewayAuthMode = "signer" | "nsec";
+type GatewaySignerChoice = "nip07" | "amber";
 const GATEWAY_SIGNER_NPUB_STORAGE_KEY = "app:auditable-voting:gateway:signer_npub";
 
 type SimpleAppShellProps = {
@@ -73,6 +75,8 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
   const [gatewayNsec, setGatewayNsec] = useState("");
   const [gatewaySignerNpub, setGatewaySignerNpub] = useState("");
   const [gatewayStatus, setGatewayStatus] = useState<string | null>(null);
+  const [gatewayAuthMode, setGatewayAuthMode] = useState<GatewayAuthMode>("signer");
+  const [gatewaySignerChoice, setGatewaySignerChoice] = useState<GatewaySignerChoice>("nip07");
   const [gatewayNostrConnectUri, setGatewayNostrConnectUri] = useState("");
   const [gatewayNsecBunkerUri, setGatewayNsecBunkerUri] = useState("");
   const [gatewayShowConnectQr, setGatewayShowConnectQr] = useState(false);
@@ -122,6 +126,14 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
       }
       setGatewayStatus("Signer login failed.");
     }
+  }
+
+  async function runSignerLogin() {
+    if (gatewaySignerChoice === "amber") {
+      await prepareAmberConnectLinks();
+      return;
+    }
+    await loginWithSigner();
   }
 
   async function continueFromGateway() {
@@ -182,13 +194,78 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
           <h1 className='simple-login-title'>Auditable Voting</h1>
           <p className='simple-login-subtitle'>Choose a role directly, or login first via signer or nsec.</p>
 
+          <div className='simple-role-switch simple-role-switch-login' role='tablist' aria-label='Authentication method'>
+            <button
+              type='button'
+              role='tab'
+              aria-selected={gatewayAuthMode === "signer"}
+              className={`simple-role-switch-button${gatewayAuthMode === "signer" ? " is-active" : ""}`}
+              onClick={() => setGatewayAuthMode("signer")}
+            >
+              Signer
+            </button>
+            <button
+              type='button'
+              role='tab'
+              aria-selected={gatewayAuthMode === "nsec"}
+              className={`simple-role-switch-button${gatewayAuthMode === "nsec" ? " is-active" : ""}`}
+              onClick={() => setGatewayAuthMode("nsec")}
+            >
+              nsec
+            </button>
+          </div>
+
+          {gatewayAuthMode === "signer" ? (
+            <section className='simple-voter-section'>
+              <label className='simple-voter-label'>Select signer</label>
+              <div className='simple-role-switch simple-role-switch-login' role='tablist' aria-label='Signer selection'>
+                <button
+                  type='button'
+                  role='tab'
+                  aria-selected={gatewaySignerChoice === "nip07"}
+                  className={`simple-role-switch-button${gatewaySignerChoice === "nip07" ? " is-active" : ""}`}
+                  onClick={() => setGatewaySignerChoice("nip07")}
+                >
+                  NIP-07
+                </button>
+                <button
+                  type='button'
+                  role='tab'
+                  aria-selected={gatewaySignerChoice === "amber"}
+                  className={`simple-role-switch-button${gatewaySignerChoice === "amber" ? " is-active" : ""}`}
+                  onClick={() => setGatewaySignerChoice("amber")}
+                >
+                  Amber
+                </button>
+              </div>
+            </section>
+          ) : null}
+
+          {gatewayAuthMode === "signer" ? (
+            <div className='simple-login-actions'>
+              <button type='button' className='simple-voter-secondary' onClick={() => void runSignerLogin()}>
+                {gatewaySignerChoice === "amber" ? "Log in with Amber" : "Log in with NIP-07"}
+              </button>
+            </div>
+          ) : null}
+
+          {gatewayAuthMode === "nsec" ? (
+            <>
+              <label className='simple-voter-label' htmlFor='gateway-nsec'>Login via nsec</label>
+              <input
+                id='gateway-nsec'
+                className='simple-voter-input'
+                value={gatewayNsec}
+                onChange={(event) => setGatewayNsec(event.target.value)}
+                placeholder='nsec1...'
+                spellCheck={false}
+                autoCapitalize='off'
+                autoCorrect='off'
+              />
+            </>
+          ) : null}
+
           <div className='simple-login-actions'>
-            <button type='button' className='simple-voter-secondary' onClick={() => void loginWithSigner()}>
-              Login via signer
-            </button>
-            <button type='button' className='simple-voter-secondary' onClick={() => void prepareAmberConnectLinks()}>
-              Show Nostr Connect QR
-            </button>
             <button
               type='button'
               className='simple-voter-secondary'
@@ -204,6 +281,15 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
               disabled={!gatewayNsecBunkerUri.trim()}
             >
               Copy nsecbunker URL
+            </button>
+          </div>
+          <div className='simple-login-actions'>
+            <button
+              type='button'
+              className='simple-voter-secondary'
+              onClick={() => void prepareAmberConnectLinks()}
+            >
+              Show Nostr Connect QR
             </button>
           </div>
           {gatewaySignerNpub ? <p className='simple-voter-note'>Signer: {gatewaySignerNpub}</p> : null}
@@ -223,18 +309,6 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
               <code>{gatewayNsecBunkerUri}</code>
             </p>
           ) : null}
-
-          <label className='simple-voter-label' htmlFor='gateway-nsec'>Login via nsec (optional)</label>
-          <input
-            id='gateway-nsec'
-            className='simple-voter-input'
-            value={gatewayNsec}
-            onChange={(event) => setGatewayNsec(event.target.value)}
-            placeholder='nsec1...'
-            spellCheck={false}
-            autoCapitalize='off'
-            autoCorrect='off'
-          />
 
           <div className='simple-role-switch simple-role-switch-login' role='tablist' aria-label='Role selection'>
             <button
