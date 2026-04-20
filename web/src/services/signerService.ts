@@ -62,6 +62,7 @@ const AMBER_CONNECT_RELAYS = [
 
 const AMBER_CONNECT_PERMISSIONS = [
   "get_public_key",
+  "sign_event:13",
   "sign_event:1059",
   "nip04_encrypt",
   "nip04_decrypt",

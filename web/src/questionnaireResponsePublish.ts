@@ -55,12 +55,12 @@ function decodeNpubHex(npub: string) {
 }
 
 async function publishEvent(input: {
-  responseNsec: string;
+  nsec: string;
   eventPayload: QuestionnaireBlindResponseEvent;
   tags: string[][];
   relays?: string[];
 }) {
-  const secretKey = decodeNsecSecretKey(input.responseNsec);
+  const secretKey = decodeNsecSecretKey(input.nsec);
   const event = finalizeEvent({
     kind: QUESTIONNAIRE_RESPONSE_BLIND_KIND,
     created_at: Math.floor(Date.now() / 1000),
@@ -126,7 +126,7 @@ export async function publishQuestionnaireBlindResponsePublic(input: {
   };
 
   return publishEvent({
-    responseNsec: input.responseNsec,
+    nsec: input.responseNsec,
     eventPayload,
     tags: [
       ["t", "questionnaire_response_blind"],
@@ -181,7 +181,7 @@ export async function publishQuestionnaireBlindResponseEncrypted(input: {
   };
 
   return publishEvent({
-    responseNsec: input.responseNsec,
+    nsec: input.responseNsec,
     eventPayload,
     tags: [
       ["t", "questionnaire_response_blind"],
@@ -192,6 +192,54 @@ export async function publishQuestionnaireBlindResponseEncrypted(input: {
       ["e", input.questionnaireDefinitionEventId],
       ["payload-mode", "encrypted"],
     ],
+    relays: input.relays,
+  });
+}
+
+export async function publishQuestionnaireBlindResponsePublicByCoordinator(input: {
+  coordinatorNsec: string;
+  questionnaireId: string;
+  responseId: string;
+  submittedAt?: number;
+  authorPubkey: string;
+  tokenNullifier: string;
+  tokenCommitment: string;
+  answers: QuestionnaireResponseAnswer[];
+  questionnaireDefinitionEventId?: string | null;
+  relays?: string[];
+}) {
+  const eventPayload: QuestionnaireBlindResponseEvent = {
+    schemaVersion: 1,
+    eventType: "questionnaire_response_blind",
+    questionnaireId: input.questionnaireId,
+    responseId: input.responseId,
+    submittedAt: input.submittedAt ?? Math.floor(Date.now() / 1000),
+    authorPubkey: input.authorPubkey,
+    tokenNullifier: input.tokenNullifier,
+    tokenProof: {
+      tokenCommitment: input.tokenCommitment,
+      questionnaireId: input.questionnaireId,
+      signature: `coordinator_publication:${input.responseId}`,
+    },
+    answers: input.answers,
+  };
+
+  const tags: string[][] = [
+    ["t", "questionnaire_response_blind"],
+    ["questionnaire", input.questionnaireId],
+    ["schema", "1"],
+    ["etype", "questionnaire_response_blind"],
+    ["nullifier", input.tokenNullifier],
+    ["source", "coordinator_publication"],
+  ];
+  if (input.questionnaireDefinitionEventId?.trim()) {
+    tags.push(["e", input.questionnaireDefinitionEventId.trim()]);
+  }
+
+  return publishEvent({
+    nsec: input.coordinatorNsec,
+    eventPayload,
+    tags,
     relays: input.relays,
   });
 }

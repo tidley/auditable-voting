@@ -263,13 +263,31 @@ export class QuestionnaireOptionAVoterRuntime {
   }
 
   private startVoterDmSubscriptions() {
-    this.stopVoterDmSubscriptions();
     if (!this.state?.loginVerified) {
+      this.stopVoterDmSubscriptions();
       return;
     }
+    const shouldSubscribe = Boolean(this.state.blindRequestSent || this.state.submission);
+    if (!shouldSubscribe) {
+      this.stopVoterDmSubscriptions();
+      return;
+    }
+    if (this.stopBlindIssuanceSubscription || this.stopAcceptanceSubscription) {
+      return;
+    }
+    const toSince = (value?: string | null) => {
+      if (!value) {
+        return undefined;
+      }
+      const parsed = Date.parse(value);
+      return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed / 1000) - 300) : undefined;
+    };
+    const issuanceSince = toSince(this.state.blindRequestSentAt);
+    const acceptanceSince = toSince(this.state.submission?.submittedAt) ?? issuanceSince;
     this.stopBlindIssuanceSubscription = subscribeOptionABlindIssuanceDms({
       signer: this.signer,
       electionId: this.electionId,
+      since: issuanceSince,
       onIssuance: (issuance) => {
         storeBlindIssuance(issuance);
         if (issuance.definition) {
@@ -280,6 +298,7 @@ export class QuestionnaireOptionAVoterRuntime {
     this.stopAcceptanceSubscription = subscribeOptionABallotAcceptanceDms({
       signer: this.signer,
       electionId: this.electionId,
+      since: acceptanceSince,
       onAcceptance: (acceptance) => {
         storeAcceptance(acceptance);
       },
@@ -574,6 +593,7 @@ export class QuestionnaireOptionAVoterRuntime {
     }
     next = sent.state;
     this.state = next;
+    this.startVoterDmSubscriptions();
     enqueueBlindRequest(request);
     saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
     optionAFlowLog("voter", "blind_request_sent", {
@@ -831,6 +851,7 @@ export class QuestionnaireOptionAVoterRuntime {
       responseNsec,
       responseNpub,
     };
+    this.startVoterDmSubscriptions();
     enqueueSubmission(submission);
     saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
     const published = await this.publishBallotSubmissionDm(submission, { fallbackNsec: responseNsec });

@@ -17,6 +17,8 @@ import { deriveActorDisplayId } from "./actorDisplay";
 import { getSharedNostrPool } from "./sharedNostrPool";
 import { storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import { tryWriteClipboard } from "./clipboard";
+import { fetchQuestionnaireBlindResponses } from "./questionnaireTransport";
+import { publishQuestionnaireBlindResponsePublicByCoordinator } from "./questionnaireResponsePublish";
 
 const DEFAULT_QUESTIONNAIRE_ID_PREFIX = "q";
 const QUESTIONNAIRE_DRAFT_ID_STORAGE_KEY = "coordinator.questionnaire-draft-id.v1";
@@ -1360,6 +1362,41 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         acceptedByKey.set(response.payload.responseId || response.eventId, response);
       }
       const acceptedResponses = [...acceptedByKey.values()];
+      const existingPublicResponses = await fetchQuestionnaireBlindResponses({
+        questionnaireId: latestDefinition.questionnaireId,
+        limit: 500,
+      }).catch(() => []);
+      const existingResponseIds = new Set(
+        existingPublicResponses
+          .map((entry) => entry.response.responseId.trim())
+          .filter((value) => value.length > 0),
+      );
+      const responsesToPublish = acceptedResponses.filter((response) => {
+        const responseId = (response.payload.responseId || response.eventId).trim();
+        return responseId.length > 0 && !existingResponseIds.has(responseId);
+      });
+
+      let responsePublishSuccessCount = 0;
+      for (const response of responsesToPublish) {
+        const responseId = (response.payload.responseId || response.eventId).trim();
+        const tokenCommitment = response.envelope.payloadHash.trim() || response.eventId;
+        const tokenNullifier = `legacy_${tokenCommitment}`;
+        const publishedResponse = await publishQuestionnaireBlindResponsePublicByCoordinator({
+          coordinatorNsec,
+          questionnaireId: latestDefinition.questionnaireId,
+          responseId,
+          submittedAt: response.payload.submittedAt,
+          authorPubkey: response.authorPubkey,
+          tokenNullifier,
+          tokenCommitment,
+          answers: response.payload.answers,
+          questionnaireDefinitionEventId: null,
+        });
+        if (publishedResponse.successes > 0) {
+          responsePublishSuccessCount += 1;
+        }
+      }
+
       const summary = buildQuestionnaireResultSummary({
         definition: latestDefinition,
         coordinatorPubkey: coordinatorNpub,
@@ -1393,7 +1430,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           relayTargets: publishSummary.relayResults.map((entry) => entry.relay),
           relaySuccessCount: publishSummary.successes,
         });
-        setStatus(`Results published. Accepted=${summary.acceptedResponseCount}, Rejected=${summary.rejectedResponseCount}.`);
+        setStatus(
+          `Results published. Accepted=${summary.acceptedResponseCount}, Rejected=${summary.rejectedResponseCount}, Public responses=${responsePublishSuccessCount}/${responsesToPublish.length}.`,
+        );
       } else {
         setResultPublishDiagnostic((current) => ({ ...current, attempted: true, succeeded: false }));
         setStatus("Result publish partially failed.");
