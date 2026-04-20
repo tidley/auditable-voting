@@ -22,6 +22,13 @@ const KIND_RUMOR_MESSAGE = 14;
 const KIND_GIFT_WRAP = 1059;
 const KIND_NIP17_RELAY_LIST = 10050;
 const INVITE_PAYLOAD_TAG = "optiona_invite_payload";
+const OPTION_A_INVITE_DM_QUERY_MAX_CONCURRENCY = 2;
+const OPTION_A_INVITE_DM_RELAY_BACKOFF_MS = 60 * 1000;
+
+const optionAInviteDmRelayCooldownUntil = new Map<string, number>();
+const optionAInviteDmInFlightQueries = new Map<string, Promise<NostrEvent[]>>();
+let optionAInviteDmActiveQueryCount = 0;
+const optionAInviteDmQueryWaiters: Array<() => void> = [];
 
 type InviteDmEnvelope = {
   type: "optiona_invite_dm";
@@ -33,6 +40,79 @@ type InviteDmEnvelope = {
 function optionAInviteDmLog(stage: string, details?: Record<string, unknown>) {
   const payload = details ? ` ${JSON.stringify(details)}` : "";
   console.log(`[OptionA][InviteDM] ${stage}${payload}`);
+}
+
+function shouldBackoffInviteRelay(message: string) {
+  const lower = message.toLowerCase();
+  return lower.includes("too many concurrent req")
+    || lower.includes("rate")
+    || lower.includes("throttle")
+    || lower.includes("429");
+}
+
+function applyInviteRelayBackoff(relays: string[], reason: string) {
+  if (!shouldBackoffInviteRelay(reason)) {
+    return;
+  }
+  const until = Date.now() + OPTION_A_INVITE_DM_RELAY_BACKOFF_MS;
+  for (const relay of relays) {
+    optionAInviteDmRelayCooldownUntil.set(relay, until);
+  }
+  optionAInviteDmLog("relay_backoff_applied", {
+    relayCount: relays.length,
+    reason,
+    backoffMs: OPTION_A_INVITE_DM_RELAY_BACKOFF_MS,
+  });
+}
+
+function filterInviteReadRelays(relays: string[]) {
+  const now = Date.now();
+  const available = relays.filter((relay) => (optionAInviteDmRelayCooldownUntil.get(relay) ?? 0) <= now);
+  if (available.length > 0) {
+    return available;
+  }
+  return relays.slice(0, Math.max(1, Math.min(2, relays.length)));
+}
+
+async function withInviteQuerySlot<T>(task: () => Promise<T>): Promise<T> {
+  if (optionAInviteDmActiveQueryCount >= OPTION_A_INVITE_DM_QUERY_MAX_CONCURRENCY) {
+    await new Promise<void>((resolve) => {
+      optionAInviteDmQueryWaiters.push(resolve);
+    });
+  }
+  optionAInviteDmActiveQueryCount += 1;
+  try {
+    return await task();
+  } finally {
+    optionAInviteDmActiveQueryCount = Math.max(0, optionAInviteDmActiveQueryCount - 1);
+    const next = optionAInviteDmQueryWaiters.shift();
+    next?.();
+  }
+}
+
+async function queryInviteDmSync(relays: string[], filter: Record<string, unknown>) {
+  const queryRelays = filterInviteReadRelays(normalizeRelaysRust(relays));
+  const key = JSON.stringify({ relays: queryRelays, filter });
+  const existing = optionAInviteDmInFlightQueries.get(key);
+  if (existing) {
+    return existing;
+  }
+  const run = withInviteQuerySlot(async () => {
+    const pool = getSharedNostrPool();
+    try {
+      return await pool.querySync(queryRelays, filter);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      applyInviteRelayBackoff(queryRelays, message);
+      throw error;
+    }
+  });
+  optionAInviteDmInFlightQueries.set(key, run);
+  try {
+    return await run;
+  } finally {
+    optionAInviteDmInFlightQueries.delete(key);
+  }
 }
 
 function toHexPubkey(pubkey: string) {
@@ -95,8 +175,7 @@ async function fetchRecipientNip17Relays(input: {
   discoveryRelays: string[];
 }) {
   try {
-    const pool = getSharedNostrPool();
-    const events = await pool.querySync(input.discoveryRelays, {
+    const events = await queryInviteDmSync(input.discoveryRelays, {
       kinds: [KIND_NIP17_RELAY_LIST],
       authors: [input.recipientHex],
       limit: 5,
@@ -347,10 +426,9 @@ export async function fetchOptionAInviteDms(input: {
     electionId: input.electionId ?? "",
     relayCount: relays.length,
   });
-  const pool = getSharedNostrPool();
   const lookbackSeconds = Math.max(60, input.lookbackSeconds ?? OPTION_A_INVITE_DM_SIGNER_LOOKBACK_SECONDS);
   const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? OPTION_A_INVITE_DM_SIGNER_DECRYPT_LIMIT);
-  const events = await pool.querySync(relays, {
+  const events = await queryInviteDmSync(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     since: Math.round(Date.now() / 1000) - lookbackSeconds,
@@ -430,8 +508,7 @@ export async function fetchOptionAInviteDmsWithNsec(input: {
   const recipientHex = getPublicKey(secretKey);
   const recipientNpub = toNpub(recipientHex);
   const relays = selectReadRelays(buildRelays(input.relays));
-  const pool = getSharedNostrPool();
-  const events = await pool.querySync(relays, {
+  const events = await queryInviteDmSync(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     limit: Math.max(1, input.limit ?? 50),

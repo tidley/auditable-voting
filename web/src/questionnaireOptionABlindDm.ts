@@ -26,6 +26,13 @@ const KIND_SEAL = 13;
 const KIND_RUMOR_MESSAGE = 14;
 const KIND_GIFT_WRAP = 1059;
 const KIND_NIP17_RELAY_LIST = 10050;
+const OPTION_A_BLIND_DM_QUERY_MAX_CONCURRENCY = 2;
+const OPTION_A_BLIND_DM_RELAY_BACKOFF_MS = 60 * 1000;
+
+const optionABlindDmRelayCooldownUntil = new Map<string, number>();
+const optionABlindDmInFlightQueries = new Map<string, Promise<NostrEvent[]>>();
+let optionABlindDmActiveQueryCount = 0;
+const optionABlindDmQueryWaiters: Array<() => void> = [];
 
 type BlindRequestDmEnvelope = {
   type: "optiona_blind_request_dm";
@@ -59,6 +66,95 @@ function optionABlindDmLog(stage: string, details?: Record<string, unknown>) {
   const payload = details ? ` ${JSON.stringify(details)}` : "";
   console.log(`[OptionA][DM] ${stage}${payload}`);
 }
+
+function incrementReason(target: Record<string, number>, key: string) {
+  target[key] = (target[key] ?? 0) + 1;
+}
+
+function shouldBackoffBlindDmRelay(message: string) {
+  const lower = message.toLowerCase();
+  return lower.includes("too many concurrent req")
+    || lower.includes("rate")
+    || lower.includes("throttle")
+    || lower.includes("429");
+}
+
+function applyBlindDmRelayBackoff(relays: string[], reason: string) {
+  if (!shouldBackoffBlindDmRelay(reason)) {
+    return;
+  }
+  const until = Date.now() + OPTION_A_BLIND_DM_RELAY_BACKOFF_MS;
+  for (const relay of relays) {
+    optionABlindDmRelayCooldownUntil.set(relay, until);
+  }
+  optionABlindDmLog("relay_backoff_applied", {
+    relayCount: relays.length,
+    reason,
+    backoffMs: OPTION_A_BLIND_DM_RELAY_BACKOFF_MS,
+  });
+}
+
+function filterBlindDmReadRelays(relays: string[]) {
+  const now = Date.now();
+  const available = relays.filter((relay) => {
+    const until = optionABlindDmRelayCooldownUntil.get(relay) ?? 0;
+    return until <= now;
+  });
+  if (available.length > 0) {
+    return available;
+  }
+  return relays.slice(0, Math.max(1, Math.min(2, relays.length)));
+}
+
+async function withBlindDmQuerySlot<T>(task: () => Promise<T>): Promise<T> {
+  if (optionABlindDmActiveQueryCount >= OPTION_A_BLIND_DM_QUERY_MAX_CONCURRENCY) {
+    await new Promise<void>((resolve) => {
+      optionABlindDmQueryWaiters.push(resolve);
+    });
+  }
+  optionABlindDmActiveQueryCount += 1;
+  try {
+    return await task();
+  } finally {
+    optionABlindDmActiveQueryCount = Math.max(0, optionABlindDmActiveQueryCount - 1);
+    const next = optionABlindDmQueryWaiters.shift();
+    next?.();
+  }
+}
+
+async function queryBlindDmSync(relays: string[], filter: Record<string, unknown>) {
+  const queryRelays = filterBlindDmReadRelays(normalizeRelaysRust(relays));
+  const key = JSON.stringify({ relays: queryRelays, filter });
+  const existing = optionABlindDmInFlightQueries.get(key);
+  if (existing) {
+    return existing;
+  }
+  const run = withBlindDmQuerySlot(async () => {
+    const pool = getSharedNostrPool();
+    try {
+      return await pool.querySync(queryRelays, filter);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      applyBlindDmRelayBackoff(queryRelays, message);
+      throw error;
+    }
+  });
+  optionABlindDmInFlightQueries.set(key, run);
+  try {
+    return await run;
+  } finally {
+    optionABlindDmInFlightQueries.delete(key);
+  }
+}
+
+export type OptionABlindRequestFetchDiagnostics = {
+  relayCount: number;
+  scannedCount: number;
+  parsedCount: number;
+  dedupedCount: number;
+  rejectReasons: Record<string, number>;
+  since?: number;
+};
 
 function toHexPubkey(pubkey: string) {
   const value = pubkey.trim();
@@ -140,8 +236,7 @@ async function fetchRecipientNip17Relays(input: {
   discoveryRelays: string[];
 }) {
   try {
-    const pool = getSharedNostrPool();
-    const events = await pool.querySync(input.discoveryRelays, {
+    const events = await queryBlindDmSync(input.discoveryRelays, {
       kinds: [KIND_NIP17_RELAY_LIST],
       authors: [input.recipientHex],
       limit: 5,
@@ -656,6 +751,7 @@ export async function fetchOptionABlindRequestDms(input: {
   limit?: number;
   since?: number;
   maxDecryptAttempts?: number;
+  diagnosticsSink?: (diagnostics: OptionABlindRequestFetchDiagnostics) => void;
 }) {
   if (!input.signer.nip44Decrypt) {
     return [] as BlindBallotRequest[];
@@ -668,15 +764,16 @@ export async function fetchOptionABlindRequestDms(input: {
     recipientNpub,
     relayCount: relays.length,
   });
-  const pool = getSharedNostrPool();
   const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? input.limit ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
-  const events = await pool.querySync(relays, {
+  const since = input.since ?? Math.round(Date.now() / 1000) - OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS;
+  const events = await queryBlindDmSync(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
-    since: input.since ?? Math.round(Date.now() / 1000) - OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS,
+    since,
     limit: Math.max(1, Math.min(input.limit ?? maxDecryptAttempts, maxDecryptAttempts)),
   });
 
+  const rejectReasons: Record<string, number> = {};
   const unique = new Map<string, BlindBallotRequest>();
   const sorted = [...events]
     .sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0))
@@ -688,24 +785,38 @@ export async function fetchOptionABlindRequestDms(input: {
         event,
       });
       if (!decoded) {
+        incrementReason(rejectReasons, "decode_failed");
         continue;
       }
       const request = parseBlindRequestDmContent(decoded.rumorContent);
       if (!request) {
+        incrementReason(rejectReasons, "parse_failed");
         continue;
       }
       if (input.electionId?.trim() && request.electionId !== input.electionId.trim()) {
+        incrementReason(rejectReasons, "election_mismatch");
         continue;
       }
       const key = `${request.electionId}:${request.requestId}:${request.invitedNpub}`;
       if (!unique.has(key)) {
         unique.set(key, request);
+      } else {
+        incrementReason(rejectReasons, "duplicate");
       }
     } catch {
+      incrementReason(rejectReasons, "decrypt_failed");
       continue;
     }
   }
   const values = [...unique.values()];
+  input.diagnosticsSink?.({
+    relayCount: relays.length,
+    scannedCount: sorted.length,
+    parsedCount: values.length,
+    dedupedCount: Math.max(0, sorted.length - values.length),
+    rejectReasons,
+    since,
+  });
   optionABlindDmLog("fetch_blind_requests_finished", {
     recipientNpub,
     resultCount: values.length,
@@ -719,42 +830,58 @@ export async function fetchOptionABlindRequestDmsWithNsec(input: {
   relays?: string[];
   limit?: number;
   since?: number;
+  diagnosticsSink?: (diagnostics: OptionABlindRequestFetchDiagnostics) => void;
 }) {
   const secretKey = decodeNsecSecretKey(input.nsec);
   const recipientHex = getPublicKey(secretKey);
   const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
-  const pool = getSharedNostrPool();
-  const events = await pool.querySync(relays, {
+  const events = await queryBlindDmSync(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     since: input.since,
     limit: Math.max(1, input.limit ?? 100),
   });
 
+  const rejectReasons: Record<string, number> = {};
   const unique = new Map<string, BlindBallotRequest>();
   const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
   for (const event of sorted) {
     try {
       const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string };
       if (!rumor || typeof rumor.content !== "string") {
+        incrementReason(rejectReasons, "decode_failed");
         continue;
       }
       const request = parseBlindRequestDmContent(rumor.content);
       if (!request) {
+        incrementReason(rejectReasons, "parse_failed");
         continue;
       }
       if (input.electionId?.trim() && request.electionId !== input.electionId.trim()) {
+        incrementReason(rejectReasons, "election_mismatch");
         continue;
       }
       const key = `${request.electionId}:${request.requestId}:${request.invitedNpub}`;
       if (!unique.has(key)) {
         unique.set(key, request);
+      } else {
+        incrementReason(rejectReasons, "duplicate");
       }
     } catch {
+      incrementReason(rejectReasons, "decrypt_failed");
       continue;
     }
   }
-  return [...unique.values()];
+  const values = [...unique.values()];
+  input.diagnosticsSink?.({
+    relayCount: relays.length,
+    scannedCount: sorted.length,
+    parsedCount: values.length,
+    dedupedCount: Math.max(0, sorted.length - values.length),
+    rejectReasons,
+    since: input.since,
+  });
+  return values;
 }
 
 export async function fetchOptionABlindIssuanceDms(input: {
@@ -771,9 +898,8 @@ export async function fetchOptionABlindIssuanceDms(input: {
   const recipientRaw = await input.signer.getPublicKey();
   const recipientHex = toHexPubkey(recipientRaw);
   const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
-  const pool = getSharedNostrPool();
   const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
-  const events = await pool.querySync(relays, {
+  const events = await queryBlindDmSync(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     since: input.since ?? Math.round(Date.now() / 1000) - OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS,
@@ -820,8 +946,7 @@ export async function fetchOptionABlindIssuanceDmsWithNsec(input: {
   const secretKey = decodeNsecSecretKey(input.nsec);
   const recipientHex = getPublicKey(secretKey);
   const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
-  const pool = getSharedNostrPool();
-  const events = await pool.querySync(relays, {
+  const events = await queryBlindDmSync(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     limit: Math.max(1, input.limit ?? 100),
@@ -872,9 +997,8 @@ export async function fetchOptionABallotSubmissionDms(input: {
     recipientNpub,
     relayCount: relays.length,
   });
-  const pool = getSharedNostrPool();
   const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? input.limit ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
-  const events = await pool.querySync(relays, {
+  const events = await queryBlindDmSync(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     since: input.since ?? Math.round(Date.now() / 1000) - OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS,
@@ -931,8 +1055,7 @@ export async function fetchOptionABallotSubmissionDmsWithNsec(input: {
   const secretKey = decodeNsecSecretKey(input.nsec);
   const recipientHex = getPublicKey(secretKey);
   const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
-  const pool = getSharedNostrPool();
-  const events = await pool.querySync(relays, {
+  const events = await queryBlindDmSync(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     since: input.since,
@@ -988,9 +1111,8 @@ export async function fetchOptionABallotAcceptanceDms(input: {
     recipientNpub,
     relayCount: relays.length,
   });
-  const pool = getSharedNostrPool();
   const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
-  const events = await pool.querySync(relays, {
+  const events = await queryBlindDmSync(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     since: input.since ?? Math.round(Date.now() / 1000) - OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS,
@@ -1042,8 +1164,7 @@ export async function fetchOptionABallotAcceptanceDmsWithNsec(input: {
   const secretKey = decodeNsecSecretKey(input.nsec);
   const recipientHex = getPublicKey(secretKey);
   const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
-  const pool = getSharedNostrPool();
-  const events = await pool.querySync(relays, {
+  const events = await queryBlindDmSync(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     limit: Math.max(1, input.limit ?? 100),

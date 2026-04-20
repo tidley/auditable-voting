@@ -61,6 +61,7 @@ import {
   subscribeOptionABallotSubmissionDms,
   subscribeOptionABlindIssuanceDms,
   subscribeOptionABlindRequestDms,
+  type OptionABlindRequestFetchDiagnostics,
 } from "./questionnaireOptionABlindDm";
 import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import { fetchOptionAInviteDms, publishOptionAInviteDm } from "./questionnaireOptionAInviteDm";
@@ -527,6 +528,8 @@ export class QuestionnaireOptionAVoterRuntime {
     if (
       !options?.forceResend
       && request
+      && this.state.blindRequestSent
+      && !this.state.blindIssuance
       && Number.isFinite(lastSentMs)
       && Date.now() - lastSentMs < minRetryMs
     ) {
@@ -537,6 +540,18 @@ export class QuestionnaireOptionAVoterRuntime {
       });
       saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
       return this.state;
+    }
+    if (
+      request
+      && this.state.blindRequestSent
+      && !this.state.blindIssuance
+      && !options?.forceResend
+    ) {
+      optionAFlowLog("voter", "blind_request_pending_issuance_retry_due", {
+        electionId: this.state.electionId,
+        requestId: request.requestId,
+        minRetryMs,
+      });
     }
     saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
     const sentAt = nowIso();
@@ -1195,21 +1210,34 @@ export class QuestionnaireOptionACoordinatorRuntime {
 
     try {
       const since = this.getDmReadSince();
+      let diagnostics: OptionABlindRequestFetchDiagnostics | null = null;
       const requests = this.fallbackNsec?.trim()
         ? await fetchOptionABlindRequestDmsWithNsec({
           nsec: this.fallbackNsec,
           electionId: this.electionId,
           limit: OPTION_A_COORDINATOR_NSEC_DM_LIMIT,
           since,
+          diagnosticsSink: (next) => {
+            diagnostics = next;
+          },
         })
         : await fetchOptionABlindRequestDms({
           signer: this.signer,
           electionId: this.electionId,
           limit: OPTION_A_COORDINATOR_SIGNER_DM_LIMIT,
           since,
+          diagnosticsSink: (next) => {
+            diagnostics = next;
+          },
         });
       for (const request of requests) {
         enqueueBlindRequest(request);
+      }
+      if (diagnostics) {
+        optionAFlowLog("coordinator", "blind_requests_sync_diagnostics", {
+          electionId: this.electionId,
+          ...diagnostics,
+        });
       }
       optionAFlowLog("coordinator", "blind_requests_synced", {
         electionId: this.electionId,
