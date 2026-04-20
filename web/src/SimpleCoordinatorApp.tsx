@@ -337,6 +337,8 @@ const SIMPLE_COORDINATOR_CONTROL_BACKFILL_INTERVAL_MS = 4000;
 const SIMPLE_COORDINATOR_ROUND_OPEN_POST_WELCOME_GRACE_MS = 1200;
 const SIMPLE_COORDINATOR_ROUND_OPEN_RETRY_DELAY_MS = 5000;
 const SIMPLE_COORDINATOR_ROUND_OPEN_RETRY_MAX_ATTEMPTS = 3;
+const OPTION_A_LOCAL_NSEC_BACKGROUND_PROCESS_INTERVAL_MS = 10_000;
+const OPTION_A_DEFAULT_BACKGROUND_PROCESS_INTERVAL_MS = 60_000;
 const SIMPLE_TICKET_RETRY_MIN_AGE_MS = 10000;
 const SIMPLE_TICKET_RETRY_MAX_ATTEMPTS = 3;
 const SIMPLE_TICKET_SEND_MAX_CONCURRENCY = 3;
@@ -3363,7 +3365,7 @@ export default function SimpleCoordinatorApp() {
         signer: optionASigner,
         fallbackNsec: keypair?.nsec,
         preferredElectionId: optionAElectionId,
-        onlyPreferredElectionId: Boolean(optionAElectionId.trim()),
+        onlyPreferredElectionId: false,
         forceRepublishIssuances: true,
       });
       if (optionACoordinatorRuntime && optionAElectionId.trim()) {
@@ -3389,27 +3391,50 @@ export default function SimpleCoordinatorApp() {
   }
 
   useEffect(() => {
-    if (!activeCoordinatorNpub.trim() || !optionAElectionId.trim()) {
+    if (!activeCoordinatorNpub.trim()) {
       return;
     }
-    if (!optionACoordinatorRuntime) {
+    const localNsecMode = Boolean(keypair?.nsec?.trim() && !signerNpub.trim());
+    if (!localNsecMode && (!optionAElectionId.trim() || !optionACoordinatorRuntime)) {
       return;
     }
+
+    const intervalMs = localNsecMode
+      ? OPTION_A_LOCAL_NSEC_BACKGROUND_PROCESS_INTERVAL_MS
+      : OPTION_A_DEFAULT_BACKGROUND_PROCESS_INTERVAL_MS;
+
     const intervalId = window.setInterval(() => {
       if (optionAQueueProcessingInFlightRef.current) {
         return;
       }
       optionAQueueProcessingInFlightRef.current = true;
-      const localNsecMode = Boolean(keypair?.nsec?.trim() && !signerNpub.trim());
       const syncStep = localNsecMode
-        ? optionACoordinatorRuntime.syncBlindRequestsFromDm()
-          .then(() => optionACoordinatorRuntime.syncSubmissionsFromDm())
-        : Promise.resolve(0);
+        ? processOptionAQueuesForCoordinatorLive({
+          coordinatorNpub: activeCoordinatorNpub,
+          signer: optionASigner,
+          fallbackNsec: keypair?.nsec,
+          preferredElectionId: optionAElectionId,
+          onlyPreferredElectionId: false,
+          forceRepublishIssuances: true,
+        }).then(() => {
+          if (optionACoordinatorRuntime && optionAElectionId.trim()) {
+            optionACoordinatorRuntime.bootstrapCoordinatorNpub({
+              coordinatorNpub: activeCoordinatorNpub,
+            });
+          }
+          return 0;
+        })
+        : optionACoordinatorRuntime!.syncBlindRequestsFromDm()
+          .then(() => optionACoordinatorRuntime!.syncSubmissionsFromDm());
       void syncStep
-      .then(() => optionACoordinatorRuntime.processPendingBlindRequests())
-      .then(() => optionACoordinatorRuntime.publishPendingBlindIssuancesToDm())
-      .then(() => optionACoordinatorRuntime.processPendingSubmissions([]))
-      .then(() => optionACoordinatorRuntime.publishPendingAcceptanceResultsToDm())
+      .then(() => (
+        localNsecMode
+          ? Promise.resolve(0)
+          : optionACoordinatorRuntime!.processPendingBlindRequests()
+            .then(() => optionACoordinatorRuntime!.publishPendingBlindIssuancesToDm())
+            .then(() => optionACoordinatorRuntime!.processPendingSubmissions([]))
+            .then(() => optionACoordinatorRuntime!.publishPendingAcceptanceResultsToDm())
+      ))
       .then(() => {
         setKnownVoterInviteRefreshNonce((value) => value + 1);
       }).catch(() => {
@@ -3417,7 +3442,7 @@ export default function SimpleCoordinatorApp() {
       }).finally(() => {
         optionAQueueProcessingInFlightRef.current = false;
       });
-    }, 60000);
+    }, intervalMs);
     return () => {
       window.clearInterval(intervalId);
     };
