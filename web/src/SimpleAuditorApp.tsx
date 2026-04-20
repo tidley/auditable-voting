@@ -10,7 +10,7 @@ import {
 } from "./questionnaireTransport";
 import { formatQuestionnaireStateLabel } from "./questionnaireRuntime";
 import type { QuestionnaireQuestion, QuestionnaireResultSummary } from "./questionnaireProtocol";
-import { loadCoordinatorState } from "./questionnaireOptionAStorage";
+import { loadCoordinatorState, loadElectionRegistry, loadElectionSummary } from "./questionnaireOptionAStorage";
 import type { BallotSubmission, QuestionnaireAnswer } from "./questionnaireOptionA";
 
 const AUDITOR_REFRESH_INTERVAL_MS = 15000;
@@ -177,30 +177,28 @@ export default function SimpleAuditorApp() {
         }))
         .sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0));
       const selectedEntry = questionnaires.find((entry) => entry.questionnaireId === selectedId) ?? null;
-      const coordinatorNpub = selectedEntry?.coordinatorNpub?.trim() ?? "";
-      if (coordinatorNpub) {
-        const coordinatorState = loadCoordinatorState({
-          coordinatorNpub,
-          electionId: selectedId,
-        });
-        if (coordinatorState) {
-          const fallbackDetails = Object.values(coordinatorState.acceptanceResults)
-            .map((acceptance) => {
-              const submission = coordinatorState.receivedSubmissions[acceptance.submissionId];
-              if (!submission) {
-                return null;
-              }
-              return optionASubmissionToAuditorDetail({
-                submission,
-                accepted: acceptance.accepted,
-                latestPublishAt,
-              });
-            })
-            .filter((entry): entry is AuditorQuestionnaireResponseDetail => Boolean(entry))
-            .sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0));
-          if (fallbackDetails.length > 0) {
-            details = fallbackDetails;
-          }
+      const coordinatorState = resolveOptionACoordinatorState({
+        electionId: selectedId,
+        preferredCoordinatorNpub: selectedEntry?.coordinatorNpub ?? null,
+      });
+      const isOptionARound = selectedId.startsWith("q_");
+      if (coordinatorState) {
+        const fallbackDetails = Object.values(coordinatorState.acceptanceResults)
+          .map((acceptance) => {
+            const submission = coordinatorState.receivedSubmissions[acceptance.submissionId];
+            if (!submission) {
+              return null;
+            }
+            return optionASubmissionToAuditorDetail({
+              submission,
+              accepted: acceptance.accepted,
+              latestPublishAt,
+            });
+          })
+          .filter((entry): entry is AuditorQuestionnaireResponseDetail => Boolean(entry))
+          .sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0));
+        if (fallbackDetails.length > 0 || isOptionARound) {
+          details = fallbackDetails;
         }
       }
       setSelectedResponseDetails(details);
@@ -730,4 +728,34 @@ function optionASubmissionToAuditorDetail(input: {
     rejectionReason: input.accepted ? null : "duplicate_nullifier",
     includedInLatestPublish: input.latestPublishAt !== null ? submittedAt <= input.latestPublishAt : false,
   };
+}
+
+function resolveOptionACoordinatorState(input: {
+  electionId: string;
+  preferredCoordinatorNpub?: string | null;
+}) {
+  const electionId = input.electionId.trim();
+  if (!electionId) {
+    return null;
+  }
+
+  const candidateCoordinatorNpubs = [
+    input.preferredCoordinatorNpub?.trim() ?? "",
+    loadElectionSummary(electionId)?.coordinatorNpub?.trim() ?? "",
+    ...loadElectionRegistry()
+      .filter((id) => id === electionId)
+      .map((id) => loadElectionSummary(id)?.coordinatorNpub?.trim() ?? ""),
+  ].filter((value, index, values) => value.length > 0 && values.indexOf(value) === index);
+
+  for (const coordinatorNpub of candidateCoordinatorNpubs) {
+    const state = loadCoordinatorState({
+      coordinatorNpub,
+      electionId,
+    });
+    if (state) {
+      return state;
+    }
+  }
+
+  return null;
 }
