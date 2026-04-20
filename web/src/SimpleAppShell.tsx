@@ -230,14 +230,14 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
           >
             {roleTitle}
           </button>
-          {role === "voter" ? (
+          {role === "voter" || role === "coordinator" ? (
             <div className='simple-role-switch-actions'>
               <button
                 type='button'
                 className='simple-voter-secondary'
                 onClick={() => {
                   if (typeof window !== "undefined") {
-                    window.dispatchEvent(new Event("auditable-voting:voter-login"));
+                    window.dispatchEvent(new Event(`auditable-voting:${role}-login`));
                   }
                 }}
               >
@@ -248,7 +248,7 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
                 className='simple-voter-secondary'
                 onClick={() => {
                   if (typeof window !== "undefined") {
-                    window.dispatchEvent(new Event("auditable-voting:voter-signout"));
+                    window.dispatchEvent(new Event(`auditable-voting:${role}-signout`));
                   }
                 }}
               >
@@ -259,11 +259,11 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
                 className='simple-voter-primary'
                 onClick={() => {
                   if (typeof window !== "undefined") {
-                    window.dispatchEvent(new Event("auditable-voting:voter-new"));
+                    window.dispatchEvent(new Event(`auditable-voting:${role}-new`));
                   }
                 }}
               >
-                New
+                New ID
               </button>
             </div>
           ) : null}

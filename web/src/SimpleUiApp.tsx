@@ -2747,7 +2747,26 @@ export default function SimpleUiApp() {
     <main className='simple-voter-shell'>
       <section className='simple-voter-page'>
         <div className='simple-voter-header-row'>
-          <h1 className='simple-voter-title'>Voter ID {voterId}</h1>
+          <h1 className='simple-voter-title'>ID {voterId}</h1>
+          <div className='simple-coordinator-header-actions'>
+            {activeVoterNpub ? (
+              <TokenFingerprint
+                tokenId={activeVoterNpub}
+                compact
+                showQr
+                hideMetadata
+                qrValue={activeVoterNpub}
+              />
+            ) : null}
+            <button
+              type='button'
+              className='simple-voter-secondary'
+              onClick={() => void tryWriteClipboard(activeVoterNpub)}
+              disabled={!activeVoterNpub}
+            >
+              Copy npub
+            </button>
+          </div>
         </div>
         {signerNpub ? <p className='simple-voter-note'>Signed in as {signerNpub}</p> : null}
         {signerStatus && signerStatus !== `Signed in as ${signerNpub}.` ? <p className='simple-voter-note'>{signerStatus}</p> : null}

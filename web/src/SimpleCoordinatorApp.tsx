@@ -3090,6 +3090,29 @@ export default function SimpleCoordinatorApp() {
     }
   }
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const handleLogin = () => {
+      void loginWithSigner();
+    };
+    const handleSignOut = () => {
+      signOutSignerSession();
+    };
+    const handleNewIdentity = () => {
+      refreshIdentity();
+    };
+    window.addEventListener("auditable-voting:coordinator-login", handleLogin);
+    window.addEventListener("auditable-voting:coordinator-signout", handleSignOut);
+    window.addEventListener("auditable-voting:coordinator-new", handleNewIdentity);
+    return () => {
+      window.removeEventListener("auditable-voting:coordinator-login", handleLogin);
+      window.removeEventListener("auditable-voting:coordinator-signout", handleSignOut);
+      window.removeEventListener("auditable-voting:coordinator-new", handleNewIdentity);
+    };
+  }, [loginWithSigner, refreshIdentity, signOutSignerSession]);
+
   async function importKnownVotersFromContacts() {
     if (!optionACoordinatorRuntime) {
       setKnownVoterInviteStatus("Open or publish a questionnaire first.");
@@ -5336,7 +5359,7 @@ export default function SimpleCoordinatorApp() {
     <main className='simple-voter-shell'>
       <section className='simple-voter-page'>
         <div className='simple-voter-header-row'>
-          <h1 className='simple-voter-title'>Coordinator ID {coordinatorId}</h1>
+          <h1 className='simple-voter-title'>ID {coordinatorId}</h1>
           <div className='simple-coordinator-header-actions'>
             {activeCoordinatorNpub ? (
               <TokenFingerprint
@@ -5354,28 +5377,6 @@ export default function SimpleCoordinatorApp() {
               disabled={!activeCoordinatorNpub}
             >
               Copy npub
-            </button>
-            <button
-              type='button'
-              className='simple-voter-secondary'
-              onClick={() => void loginWithSigner()}
-            >
-              Login
-            </button>
-            <button
-              type='button'
-              className='simple-voter-secondary'
-              onClick={signOutSignerSession}
-              disabled={!signerNpub.trim()}
-            >
-              Sign out
-            </button>
-            <button
-              type='button'
-              className='simple-voter-primary'
-              onClick={refreshIdentity}
-            >
-              New ID
             </button>
           </div>
         </div>
