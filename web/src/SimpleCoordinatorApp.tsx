@@ -522,6 +522,37 @@ function toHexPubkey(value: string) {
   return trimmed;
 }
 
+function normalizeInviteNpubInput(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const decodedValue = trimmed.toLowerCase().startsWith("nostr:")
+    ? trimmed.slice("nostr:".length).trim()
+    : trimmed;
+  if (isValidNpub(decodedValue)) {
+    return decodedValue;
+  }
+  try {
+    const decoded = nip19.decode(decodedValue);
+    if (decoded.type === "npub") {
+      const npub = nip19.npubEncode(decoded.data as string);
+      return isValidNpub(npub) ? npub : null;
+    }
+    if (decoded.type === "nprofile") {
+      const data = decoded.data as { pubkey?: string } | undefined;
+      if (!data?.pubkey) {
+        return null;
+      }
+      const npub = nip19.npubEncode(data.pubkey);
+      return isValidNpub(npub) ? npub : null;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 function createLocalNsecSignerService(nsec: string) {
   const secretKey = decodeNsec(nsec);
   if (!secretKey) {
@@ -3272,8 +3303,16 @@ export default function SimpleCoordinatorApp() {
   }
 
   function addKnownVoterNpub() {
-    const npub = knownVoterDraftNpub.trim();
-    if (!optionACoordinatorRuntime || !npub) {
+    if (!optionACoordinatorRuntime) {
+      return;
+    }
+    const rawValue = knownVoterDraftNpub.trim();
+    if (!rawValue) {
+      return;
+    }
+    const npub = normalizeInviteNpubInput(rawValue);
+    if (!npub) {
+      setKnownVoterInviteStatus("Enter a valid npub or nostr:nprofile.");
       return;
     }
     try {
@@ -5760,7 +5799,7 @@ export default function SimpleCoordinatorApp() {
                     <input
                       className='simple-voter-input simple-voter-input-inline'
                       value={knownVoterDraftNpub}
-                      placeholder='npub1...'
+                      placeholder='npub1... or nostr:nprofile1...'
                       onChange={(event) => setKnownVoterDraftNpub(event.target.value)}
                     />
                     <button
