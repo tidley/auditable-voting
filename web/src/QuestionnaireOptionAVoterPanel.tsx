@@ -696,6 +696,20 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
   }
 
+  function viewResults() {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const targetQuestionnaireId = snapshot?.electionId?.trim() || electionId.trim();
+    if (!targetQuestionnaireId) {
+      return;
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.set("role", "auditor");
+    url.searchParams.set("questionnaire", targetQuestionnaireId);
+    window.location.href = url.toString();
+  }
+
   useEffect(() => {
     if (!runtime || !snapshot || !snapshot.loginVerified) {
       return;
@@ -1021,8 +1035,19 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           {waitingForCredential ? "Resend request" : "Request ballot"}
         </button>
         <button type='button' className='simple-voter-secondary' onClick={refreshStatus}>Refresh status</button>
-        <button type='button' className='simple-voter-primary' disabled={!canSubmitNow} onClick={submit}>
-          {canSubmitNow ? "Submit response" : "Waiting for coordinator..."}
+        <button
+          type='button'
+          className='simple-voter-primary'
+          disabled={!(canSubmitNow || Boolean(snapshot?.submission))}
+          onClick={() => {
+            if (snapshot?.submission) {
+              viewResults();
+              return;
+            }
+            void submit();
+          }}
+        >
+          {snapshot?.submission ? "View results" : canSubmitNow ? "Submit response" : "Waiting for coordinator..."}
         </button>
       </div>
       {snapshot?.submission ? (

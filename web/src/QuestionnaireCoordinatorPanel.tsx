@@ -49,6 +49,7 @@ type QuestionnaireCoordinatorPanelProps = {
   optionAAcceptedResponses?: QuestionnaireAcceptedResponse[];
   blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
   view?: "build" | "responses" | "participants";
+  onInviteParticipants?: () => void;
   onStatusChange?: (status: {
     questionnaireId: string;
     state: QuestionnaireStateValue | null;
@@ -696,7 +697,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           definitionById.set(event.id, event);
           applyFromMaps();
         },
-        onError: () => setStatus("Questionnaire live stream disconnected."),
+        onError: () => undefined,
       }),
       subscribeQuestionnaireEvents({
         questionnaireId: id,
@@ -708,7 +709,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           stateById.set(event.id, event);
           applyFromMaps();
         },
-        onError: () => setStatus("Questionnaire live stream disconnected."),
+        onError: () => undefined,
       }),
       subscribeQuestionnaireEvents({
         questionnaireId: id,
@@ -720,7 +721,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           responseById.set(event.id, event);
           applyFromMaps();
         },
-        onError: () => setStatus("Questionnaire live stream disconnected."),
+        onError: () => undefined,
       }),
       subscribeQuestionnaireEvents({
         questionnaireId: id,
@@ -737,7 +738,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           resultById.set(event.id, event);
           applyFromMaps();
         },
-        onError: () => setStatus("Questionnaire live stream disconnected."),
+        onError: () => undefined,
       }),
     ];
 
@@ -1933,6 +1934,16 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             Open Questionnaire
           </button>
         )}
+        {publishedDefinition ? (
+          <button
+            type='button'
+            className='simple-voter-secondary'
+            onClick={props.onInviteParticipants}
+            disabled={!props.onInviteParticipants}
+          >
+            Invite participants
+          </button>
+        ) : null}
       </div>
       {!coordinatorNsec.trim() ? (
         <p className='simple-voter-note'>Coordinator key is not loaded yet.</p>

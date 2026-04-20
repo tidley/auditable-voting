@@ -9,6 +9,7 @@ import SimpleRelayPanel from "./SimpleRelayPanel";
 import SimpleUnlockGate from "./SimpleUnlockGate";
 import TokenFingerprint from "./TokenFingerprint";
 import { extractNpubFromScan } from "./npubScan";
+import { tryWriteClipboard } from "./clipboard";
 import {
   primeNip65RelayHints,
   setNip65EnabledForSession,
@@ -2517,6 +2518,13 @@ export default function SimpleUiApp() {
     !questionnaireContext.hasDefinition
     && announcedQuestionnaireIds.length > 0
     && readyAnnouncedQuestionnaireIds.length === 0;
+  const hiddenRequestStatuses = new Set([
+    "Coordinator notified. Waiting for round tickets.",
+    "Coordinators notified. Waiting for round tickets.",
+  ]);
+  const visibleRequestStatus = requestStatus && !hiddenRequestStatuses.has(requestStatus)
+    ? requestStatus
+    : null;
 
   useEffect(() => {
     setTicketAckSent(false);
@@ -2768,7 +2776,7 @@ export default function SimpleUiApp() {
             </button>
           </div>
         </div>
-        {signerNpub ? <p className='simple-voter-note'>Signed in as {signerNpub}</p> : null}
+        {signerNpub ? <p className='simple-voter-note simple-signed-in-note'>Signed in as {signerNpub}</p> : null}
         {signerStatus && signerStatus !== `Signed in as ${signerNpub}.` ? <p className='simple-voter-note'>{signerStatus}</p> : null}
         <div
           className='simple-voter-tabs'
@@ -2892,9 +2900,7 @@ export default function SimpleUiApp() {
                     </li>
                   ))}
                 </ul>
-              ) : (
-                <p className='simple-voter-empty'>No coordinators added yet.</p>
-              )}
+              ) : null}
             </div>
             {questionnaireModeActive ? (
               <div className='simple-voter-action-row simple-voter-action-row-tight'>
@@ -2941,8 +2947,8 @@ export default function SimpleUiApp() {
                 </button>
               </div>
             ) : null}
-            {requestStatus ? (
-              <p className='simple-voter-note'>{requestStatus}</p>
+            {visibleRequestStatus ? (
+              <p className='simple-voter-note'>{visibleRequestStatus}</p>
             ) : null}
           </section>
         ) : null}

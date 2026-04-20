@@ -37,9 +37,17 @@ type AuditorQuestionnaireResponseDetail = ReturnType<typeof evaluateQuestionnair
   includedInLatestPublish: boolean;
 };
 
+function readInitialQuestionnaireIdFromUrl() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  const params = new URLSearchParams(window.location.search);
+  return (params.get("questionnaire") ?? params.get("q") ?? params.get("election_id") ?? "").trim();
+}
+
 export default function SimpleAuditorApp() {
   const [questionnaires, setQuestionnaires] = useState<AuditorQuestionnaireEntry[]>([]);
-  const [selectedQuestionnaireId, setSelectedQuestionnaireId] = useState("");
+  const [selectedQuestionnaireId, setSelectedQuestionnaireId] = useState(() => readInitialQuestionnaireIdFromUrl());
   const [selectedResponseDetails, setSelectedResponseDetails] = useState<AuditorQuestionnaireResponseDetail[]>([]);
   const [selectedLatestPublishAt, setSelectedLatestPublishAt] = useState<number | null>(null);
   const [selectedLiveState, setSelectedLiveState] = useState<string | null>(null);
@@ -627,8 +635,11 @@ export default function SimpleAuditorApp() {
                 <ul className='simple-voter-list'>
                   {filteredResponseDetails.map((entry) => (
                     <li key={entry.event.id} className='simple-voter-list-item'>
-                      <div className='simple-submitted-vote-row'>
-                        <div className='simple-submitted-vote-copy'>
+                      <div className='simple-auditor-result-row'>
+                        <div className='simple-auditor-result-marker'>
+                          <TokenFingerprint tokenId={entry.response.authorPubkey} compact large hideMetadata />
+                        </div>
+                        <div className='simple-auditor-result-body'>
                           <p className='simple-voter-question'>{entry.response.authorPubkey}</p>
                           <p className='simple-voter-note'>Response: {entry.response.responseId} · {entry.accepted ? "Valid" : "Invalid"}</p>
                           {Array.isArray(entry.response.answers) && entry.response.answers.length > 0 ? (
@@ -654,7 +665,6 @@ export default function SimpleAuditorApp() {
                             <p className='simple-voter-note'>Answer payload is encrypted or unavailable in public events.</p>
                           )}
                         </div>
-                        <TokenFingerprint tokenId={entry.response.authorPubkey} compact large hideMetadata />
                       </div>
                     </li>
                   ))}

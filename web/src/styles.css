@@ -1783,6 +1783,23 @@ code {
   margin: 0;
 }
 
+.simple-auditor-result-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+}
+
+.simple-auditor-result-marker .token-fingerprint {
+  align-items: flex-start;
+}
+
+.simple-auditor-result-body {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
 .simple-submitted-vote-list .simple-vote-entry {
   display: grid;
   gap: 10px;
@@ -3078,8 +3095,13 @@ code {
   }
 
   .simple-voter-header-row {
-    align-items: stretch;
-    flex-direction: column;
+    align-items: center;
+    flex-direction: row;
+    justify-content: space-between;
+  }
+
+  .simple-signed-in-note {
+    display: none;
   }
 
   .simple-questionnaire-header {

@@ -5380,7 +5380,7 @@ export default function SimpleCoordinatorApp() {
             </button>
           </div>
         </div>
-        {signerNpub ? <p className='simple-voter-note'>Signed in as {signerNpub}</p> : null}
+        {signerNpub ? <p className='simple-voter-note simple-signed-in-note'>Signed in as {signerNpub}</p> : null}
         {signerStatus && signerStatus !== `Signed in as ${signerNpub}.` ? <p className='simple-voter-note'>{signerStatus}</p> : null}
         <div
           className='simple-voter-tabs'
@@ -5551,6 +5551,7 @@ export default function SimpleCoordinatorApp() {
                 optionAAcceptedResponses={optionAAcceptedResponses}
                 blindSigningPublicKey={optionABlindSigningPublicKey}
                 view='build'
+                onInviteParticipants={() => selectTab('participants')}
                 onStatusChange={(nextStatus) => {
                   setQuestionnaireRosterAnnouncement({
                     questionnaireId: nextStatus.questionnaireId,
