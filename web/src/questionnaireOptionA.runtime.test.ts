@@ -6,7 +6,12 @@ import {
   QuestionnaireOptionAVoterRuntime,
 } from "./questionnaireOptionARuntime";
 import { listBlindRequests, readBlindIssuance } from "./questionnaireOptionAStorage";
-import { publishOptionABlindIssuanceDm, publishOptionABlindRequestDm } from "./questionnaireOptionABlindDm";
+import {
+  fetchOptionABallotSubmissionDmsWithNsec,
+  publishOptionABallotSubmissionDm,
+  publishOptionABlindIssuanceDm,
+  publishOptionABlindRequestDm,
+} from "./questionnaireOptionABlindDm";
 import type { SignerService } from "./services/signerService";
 
 vi.mock("./questionnaireOptionAInviteDm", () => ({
@@ -23,6 +28,7 @@ vi.mock("./questionnaireOptionABlindDm", () => ({
   fetchOptionABallotAcceptanceDms: vi.fn().mockResolvedValue([]),
   fetchOptionABallotAcceptanceDmsWithNsec: vi.fn().mockResolvedValue([]),
   fetchOptionABallotSubmissionDms: vi.fn().mockResolvedValue([]),
+  fetchOptionABallotSubmissionDmsWithNsec: vi.fn().mockResolvedValue([]),
   fetchOptionABlindIssuanceDms: vi.fn().mockResolvedValue([]),
   fetchOptionABlindIssuanceDmsWithNsec: vi.fn().mockResolvedValue([]),
   fetchOptionABlindRequestDms: vi.fn().mockResolvedValue([]),
@@ -132,6 +138,12 @@ describe("questionnaireOptionARuntime", () => {
     expect(submitted?.responseNpub).toBeTruthy();
     expect(submitted?.responseNpub).not.toBe(voterNpub);
     expect(submitted?.invitedNpub).toBe(submitted?.responseNpub);
+    expect(vi.mocked(publishOptionABallotSubmissionDm)).toHaveBeenCalledWith(expect.objectContaining({
+      recipientNpub: coordinatorNpub,
+    }));
+    expect(vi.mocked(publishOptionABallotSubmissionDm)).toHaveBeenCalledWith(expect.objectContaining({
+      recipientNpub: voterNpub,
+    }));
     await coordinator.processPendingSubmissions(["q1"]);
     voter.refreshIssuanceAndAcceptance();
 
@@ -143,6 +155,18 @@ describe("questionnaireOptionARuntime", () => {
     resumed.refreshIssuanceAndAcceptance();
     expect(resumed.getSnapshot()?.credentialReady).toBe(true);
     expect(resumed.getSnapshot()?.submissionAccepted).toBe(true);
+
+    window.localStorage.clear();
+    vi.mocked(fetchOptionABallotSubmissionDmsWithNsec).mockResolvedValueOnce(submitted ? [submitted] : []);
+    const recovered = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionId, "nsec1selfcopy");
+    recovered.bootstrapWithLocalIdentity({
+      invitedNpub: voterNpub,
+      coordinatorNpub,
+      allowInviteMissing: true,
+    });
+    await recovered.recoverSubmittedBallotFromSelfDm();
+    expect(recovered.getSnapshot()?.submission?.submissionId).toBe(submitted?.submissionId);
+    expect(recovered.getSnapshot()?.draftResponses).toEqual(submitted?.payload.responses);
   });
 
   it("reuses an in-flight blind request across retries and republishes existing issuance", async () => {

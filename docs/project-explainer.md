@@ -220,11 +220,12 @@ The present web client is built with:
 - **voter draft preservation** so response fields are not cleared when a blind ballot credential or refreshed definition arrives for the same questionnaire
 - **linked invite login** that opens the public questionnaire without scanning old encrypted invite DMs, with recent bounded signer DM reads for manual invite checks and credential-result polling
 - **Android signer routing** that prefers Amber through NIP-46 when available, keeping signer-backed questionnaire DM operations on one signer identity
-- **gateway Nostr Connect helpers** that present login controls in order (`Signer`/`nsec`, then `NIP-07`/`Amber`, then a single login action), can generate/copy a `nostrconnect://` URL, show it as a QR code, and expose an Amber-compatible `bunker://` (`nsecbunker`) copy path
+- **gateway Nostr Connect helpers** that present login controls in order (`Signer`/`nsec`, then `NOS2X-FOX`/`Amber`, then a single login action), can generate/copy a `nostrconnect://` URL, show it as a QR code, and expose an Amber-compatible `bunker://` (`nsecbunker`) copy path
 - **blind DM relay targeting** so blind request/issuance/submission/acceptance DMs resolve recipient `kind:10050` relay-list hints before static fallbacks
 - **strict DM delivery confirmation** so blind-request and ballot-submission flows only mark "sent" after at least one relay confirms acceptance, avoiding silent transport failure states
 - **clearer voter ballot progress** that labels the per-questionnaire voting identity separately from the signer account and shows request, credential, and response state
-- **safer voter tab switching** so `Vote` is hidden until questionnaire context is ready and background invite refresh does not force the UI away from Configure/Settings
+- **safer voter tab switching** so `Vote` remains available for browsing current and older invited questionnaires and background invite refresh does not force the UI away from Configure/Settings
+- **self-copy submission recovery** that sends a best-effort encrypted copy of each ephemeral-key submission to the voter's login identity, so returning voters can recover submitted response markers and answers from their own NIP-17 mailbox
 - **single-flight coordinator queue processing** so automatic request/submission checks do not overlap relay work
 - **idempotent ballot resend** so a voter can resend the same blind request, the coordinator republishes the existing credential DM, and background loops avoid rebroadcasting already delivered credentials
 - **more redundant DM delivery** that mixes recipient NIP-17 relay hints with fallback relays, widens credential publish fanout, and retries issued credentials until submission proves receipt
@@ -233,6 +234,7 @@ The present web client is built with:
 - **course-feedback batch orchestration** in the live harness (`LIVE_BATCH_SIZE`, default `5`) so enrolment and submission advance in checkpointed waves instead of all-voter cold-start concurrency
 - **questionnaire response observation fallback** that prefers bounded kind-only reads plus local questionnaire-id filtering (and relay probes) when custom tag-indexed reads are unreliable on public relays
 - **auditor coordinator filtering + search** so public round review can be scoped by lead coordinator, coordinator npub, and free-text query (npub/round ID/prompt), with non-overlapping refreshes to reduce relay REQ bursts
+- **auditor historic search** so the normal view stays bounded to recent questionnaire data, but auditors can explicitly scan a wider historical window when an older published questionnaire or public result payload is missing
 - **auditor questionnaire discovery** so recent public questionnaire definitions are read by kind-only backfill when no questionnaire ID is selected, with state and published response totals shown when available
 - **ticket scheduler diagnostics and tunable transport knobs** for first-send prioritisation, resend eligibility reasons, bounded concurrency, and retry-age experimentation during live relay reliability testing
 - **observation-plane recovery diagnostics** that separate live vs backfill visibility and classify resend recoveries for published-but-unobserved tickets

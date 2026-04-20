@@ -5755,7 +5755,7 @@ export default function SimpleCoordinatorApp() {
                               </li>
                               {questionnaireFlowActive ? (
                                 <li className='simple-delivery-ok'>
-                                  Option A ballots and responses are synced below.
+                                  Blind ballot requests and responses are synced below.
                                 </li>
                               ) : (
                                 <>

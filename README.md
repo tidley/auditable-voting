@@ -10,9 +10,9 @@ The shipped app currently includes:
 
 - landing-page login gateway on `/` with role selection (`voter`, `coordinator`, `auditor`)
 - no forced voter redirect on first load or refresh when no role is selected in the URL
-- signer-first login support for NIP-07 browser signers (including delayed injection on mobile Firefox-compatible signer bridges)
+- signer-first login support for NOS2X-FOX/NIP-07-compatible browser signers, including delayed injection on mobile Firefox-compatible signer bridges
 - voter, coordinator, and auditor screens
-- tabbed role flows, including a staged coordinator questionnaire builder with `Build`, `Audience`, `Publish`, `Responses`, and `Results`
+- tabbed role flows, including a staged coordinator questionnaire builder with `Build`, `Invite`, `Results`, and `Settings`
 - a new Rust/Wasm-backed coordinator control seam for round-open agreement and replay
 - a real OpenMLS-backed coordinator group engine implemented inside the Rust core and compiled into the coordinator Wasm artefact
 - a new Rust/Wasm public and ballot replay seam now used by the voter, coordinator, and auditor public-state views
@@ -27,7 +27,7 @@ The shipped app currently includes:
 - round announcements over Nostr
 - coordinator control carrier events over Nostr, replayed through a Rust state machine
 - NIP-17 DM traffic for follow, roster, MLS welcome, and share-assignment flows
-- NIP-17 DM traffic for Option A blind ballot requests, issuances, submissions, and acceptance results, plus mailbox-object traffic for legacy ticket delivery and ticket acknowledgements
+- NIP-17 DM traffic for blind ballot requests, issuances, submissions, acceptance results, and voter self-copy submission recovery, plus mailbox-object traffic for legacy ticket delivery and ticket acknowledgements
 - course-feedback deployment mode (`1 coordinator / 25 voters / 1 round`) now treats ticket acknowledgements as best-effort diagnostics, with valid ballot acceptance as the authoritative completion signal
 - per-round blind-signature key announcements
 - blind-signature share issuance and public ballot verification
@@ -46,24 +46,26 @@ The shipped app currently includes:
 - in `course_feedback` deployment, coordinator runtime now bypasses legacy live-round/ticket queue gating so questionnaire response acceptance is not blocked by `no_active_round` or blinded-ticket prerequisites
 - course-feedback operational runs are now batch-gated by default (`LIVE_BATCH_SIZE=5`) so enrolment and submission progress in controlled waves with checkpointed harness state instead of full 25-voter cold-start fanout
 - coordinator questionnaire response reads now prefer kind-only bounded backfill with local questionnaire-id filtering (plus relay probes) to tolerate relays with unreliable custom tag indexing
-- Option A questionnaire submissions now spend an unblinded RSABSSA credential from a fresh ephemeral response npub, with one accepted credential spend per questionnaire
+- questionnaire submissions now spend an unblinded RSABSSA credential from a fresh ephemeral response npub, with one accepted credential spend per questionnaire
 - invite links with a public questionnaire id now avoid encrypted invite-mailbox scans after signer login, and signer-backed DM reads are recent and bounded to reduce Amber bunker prompts
 - Android signer sessions now prefer Amber via NIP-46 when available, so signer-backed questionnaire DM flows use one consistent signer identity for `get_public_key`, `sign_event`, and `nip44_*`
-- the login gateway now shows login controls in order: `Signer`/`nsec`, then signer choice (`NIP-07`/`Amber`), then one action button; it can also generate/copy `nostrconnect://` URLs, show QR for login handoff, and copy an Amber-compatible `bunker://` (`nsecbunker`) variant
-- Option A blind request, issuance, submission, and acceptance DMs now also target recipient NIP-17 relay-list hints (`kind:10050`) instead of only static fallback relays
-- Option A and shard DM fallback relay lists now stay NIP-17-first with curated fallback redundancy while delivery marks success only when at least one relay actually accepts the publish
+- the login gateway now shows login controls in order: `Signer`/`nsec`, then signer choice (`NOS2X-FOX`/`Amber`), then one action button; it can also generate/copy `nostrconnect://` URLs, show QR for login handoff, and copy an Amber-compatible `bunker://` (`nsecbunker`) variant
+- blind request, issuance, submission, and acceptance DMs now also target recipient NIP-17 relay-list hints (`kind:10050`) instead of only static fallback relays
+- blind-flow and shard DM fallback relay lists now stay NIP-17-first with curated fallback redundancy while delivery marks success only when at least one relay actually accepts the publish
 - voter blind-request and ballot-submission sends now require confirmed DM delivery (no more silent fire-and-forget success states), and signer DM recovery scans use wider bounded windows
 - invite-link clipboard writes are now best-effort, so browser focus restrictions no longer throw unhandled errors after async relay work
 - the voter questionnaire page now separates the signer account from the ballot voting identity and shows ballot progress as request, credential, and response states
-- the voter tab bar now hides `Vote` until questionnaire context is ready, and silent invite polling no longer forces tab switches away from Configure/Settings
-- coordinator automatic Option A queue processing is now single-flight and slower, reducing overlapping relay publishes and websocket churn
+- the voter `Vote` tab remains available for browsing current and older invited questionnaires, and silent invite polling no longer forces tab switches away from Configure/Settings
+- coordinator automatic queue processing is now single-flight and slower, reducing overlapping relay publishes and websocket churn
 - voter blind-ballot resend keeps the same request id and freshens its send timestamp; coordinators republish the existing credential DM instead of issuing a second credential
-- Option A request/submission DM reads now use recent since-bounded windows, and successful credential DMs are not rebroadcast by every background queue pass
-- Option A credential delivery is biased back toward reliability: DM writes mix recipient relay hints with fallback relays, publish to more relays, and retry issued credentials until the voter submits
+- blind request/submission DM reads now use recent since-bounded windows, and successful credential DMs are not rebroadcast by every background queue pass
+- credential delivery is biased back toward reliability: DM writes mix recipient relay hints with fallback relays, publish to more relays, and retry issued credentials until the voter submits
+- ballot submission sends include a best-effort encrypted self-copy to the voter's login identity so submitted response markers and answers can be recovered after logging back in
 - local browser persistence, backup, and optional passphrase protection
 - voter questionnaire participation history is now stored locally and included in voter backups/restores
 - auditor round selection now supports lead-coordinator filter, coordinator-npub filter, and free-text search (npub/round ID/prompt), with slower non-overlapping refreshes to reduce relay REQ spikes
 - auditor questionnaire discovery now reads recent public questionnaire definitions by kind-only backfill when no questionnaire ID is selected, then shows state and published response totals when available
+- auditor questionnaire discovery has an explicit `Search historic data` action next to the questionnaire selector for wider historical scans when older published questionnaires or public result payloads are not in the default recent list
 - optional relay hint resolution via NIP-65, disabled by default
 - a growing Rust/Wasm core for deterministic protocol logic
 
@@ -158,7 +160,7 @@ At a high level:
 4. Public round events and public ballot events can also be replayed through the Rust/Wasm core, which now drives the shared voter, coordinator, and auditor public-state views.
 5. Coordinators publish per-round blind-signing keys, and the lead auto-sends share indexes to sub-coordinators.
 6. A voter adds coordinators in `Configure`, the client follows them over DMs, and then sends blinded issuance requests through NIP-17 DMs (with local mailbox fallback in same-browser recovery paths).
-7. In the questionnaire Option A path, the coordinator signs the blinded token message with RSABSSA, the voter unblinds it locally, submits from a fresh ephemeral response npub, and receives an acceptance result over DMs.
+7. In the questionnaire blind-token path, the coordinator signs the blinded token message with RSABSSA, the voter unblinds it locally, submits from a fresh ephemeral response npub, and receives an acceptance result over DMs.
 8. In course-feedback mode, acknowledgement visibility is diagnostic only; a valid accepted ballot also confirms ticket delivery completion.
 9. The voter unblinds enough shares locally and submits a ballot from an ephemeral key, carrying stable `request_id` and `ticket_id` lineage in the ballot payload.
 10. Coordinators and auditors validate ballots and recompute the tally from public data.
@@ -242,17 +244,17 @@ VITE_BASE_PATH=/auditable-voting/ npm --prefix web run build
 
 ## Questionnaire Flow
 
-The voter questionnaire now uses a single entry path (Option A runtime) by default:
+The voter questionnaire now uses a single blind-token entry path by default:
 
 - no `qflow`/`questionnaire_flow` URL gate is required for the normal voter path
 - signer login, coordinator whitelist/invite actions, blind request/issuance, single-vote acceptance, and signer-keyed resume are handled through the `questionnaireOptionA` runtime path
 - invites are sent over NIP-17 gift-wrapped DMs (`kind 1059` with `kind 13` seal / `kind 14` rumor) and discovered from relay history on voter login
 - Android Amber Nostr Connect now requests full signing/encryption permissions up front (`sign_event`, NIP-04, NIP-44) instead of requesting extra capabilities later in the flow
-- published questionnaire definitions carry the blind-signing public key, are cached locally, and are attached to Option A invites and credential issuances when available, so voters can render and request ballots even if a signer cannot read historical invite DMs
+- published questionnaire definitions carry the blind-signing public key, are cached locally, and are attached to invites and credential issuances when available, so voters can render and request ballots even if a signer cannot read historical invite DMs
 - arriving credential-attached definitions refresh the questionnaire text without clearing drafted voter responses
 - blind ballot requests use RSABSSA blind signing; the coordinator signs only a blinded token message and the voter unblinds the credential locally
 - ballot submissions are sent from a fresh ephemeral response npub, so the accepted response is not keyed by the invited voter npub
-- accepted Option A DM submissions are folded into the coordinator response screen and published summaries, not just the completion counter
+- accepted DM submissions are folded into the coordinator response screen and published summaries, not just the completion counter
 - after submitting, the voter Vote page shows the submitted responder marker with the same coloured pattern and expandable QR used elsewhere
 - invite-link signer login opens the voter Vote tab directly, completes the signer-backed voter login, and can automatically prepare/send the first blind ballot request when the voter is authenticated and authorised
 - invite/login npubs and local voter/responder npubs may differ; opening an invite can bind it to the current local voter identity, and the coordinator must either have that voter whitelisted or authorise the request

@@ -488,7 +488,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_missing_definition"]} localVoterNpub={localVoterNpub} />);
 
     await screen.findByText("Waiting for questions to be published.");
-    expect((screen.getByRole("button", { name: "Submit response" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Waiting for coordinator..." }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("shows the submitted responder marker with QR after submission", async () => {

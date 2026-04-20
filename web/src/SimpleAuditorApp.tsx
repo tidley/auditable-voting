@@ -15,6 +15,8 @@ import type { BallotSubmission, QuestionnaireAnswer } from "./questionnaireOptio
 
 const AUDITOR_REFRESH_INTERVAL_MS = 15000;
 const AUDITOR_QUESTIONNAIRE_DETAIL_LIMIT = 20;
+const AUDITOR_QUESTIONNAIRE_HISTORIC_LIMIT = 2000;
+const AUDITOR_QUESTIONNAIRE_HISTORIC_BATCH_SIZE = 8;
 const AUDITOR_QUESTIONNAIRE_RESPONSE_LIMIT = 400;
 
 type AuditorQuestionnaireEntry = {
@@ -58,6 +60,7 @@ export default function SimpleAuditorApp() {
   const [searchQuery, setSearchQuery] = useState("");
   const [questionnaireRefreshStatus, setQuestionnaireRefreshStatus] = useState<string | null>(null);
   const [responseRefreshStatus, setResponseRefreshStatus] = useState<string | null>(null);
+  const [historicSearchInFlight, setHistoricSearchInFlight] = useState(false);
   const selectedQuestionnaireIdRef = useRef("");
   const refreshInFlightRef = useRef(false);
 
@@ -65,13 +68,11 @@ export default function SimpleAuditorApp() {
     selectedQuestionnaireIdRef.current = selectedQuestionnaireId;
   }, [selectedQuestionnaireId]);
 
-  const refreshQuestionnaires = useCallback(async () => {
-    if (refreshInFlightRef.current) {
-      return;
-    }
-    refreshInFlightRef.current = true;
-    try {
-      const definitions = await fetchQuestionnaireDefinitions({ limit: 400 });
+  const loadQuestionnairesFromNostr = useCallback(async (input?: { historic?: boolean }) => {
+    const historic = Boolean(input?.historic);
+    const definitions = await fetchQuestionnaireDefinitions({
+      limit: historic ? AUDITOR_QUESTIONNAIRE_HISTORIC_LIMIT : 400,
+    });
       const latestDefinitionById = new Map<string, Awaited<ReturnType<typeof fetchQuestionnaireDefinitions>>[number]>();
       for (const entry of definitions) {
         const id = entry.definition.questionnaireId.trim();
@@ -92,10 +93,15 @@ export default function SimpleAuditorApp() {
         .sort((left, right) => (
           Number(right.event.created_at ?? right.definition.createdAt ?? 0)
           - Number(left.event.created_at ?? left.definition.createdAt ?? 0)
-        ))
-        .slice(0, AUDITOR_QUESTIONNAIRE_DETAIL_LIMIT);
+        ));
 
-      const entries = await Promise.all(latestDefinitions.map(async (entry): Promise<AuditorQuestionnaireEntry> => {
+      const candidates = historic
+        ? latestDefinitions
+        : latestDefinitions.slice(0, AUDITOR_QUESTIONNAIRE_DETAIL_LIMIT);
+      const entries: AuditorQuestionnaireEntry[] = [];
+      for (let index = 0; index < candidates.length; index += AUDITOR_QUESTIONNAIRE_HISTORIC_BATCH_SIZE) {
+        const batch = candidates.slice(index, index + AUDITOR_QUESTIONNAIRE_HISTORIC_BATCH_SIZE);
+        const batchEntries = await Promise.all(batch.map(async (entry): Promise<AuditorQuestionnaireEntry> => {
         const id = entry.definition.questionnaireId;
         const [stateEntries, resultEntries] = await Promise.all([
           fetchQuestionnaireState({ questionnaireId: id, limit: 50 }).catch(() => []),
@@ -122,7 +128,19 @@ export default function SimpleAuditorApp() {
           questions: entry.definition.questions ?? [],
           eventId: entry.event.id,
         };
-      }));
+        }));
+        entries.push(...batchEntries);
+      }
+      return entries;
+  }, []);
+
+  const refreshQuestionnaires = useCallback(async () => {
+    if (refreshInFlightRef.current) {
+      return;
+    }
+    refreshInFlightRef.current = true;
+    try {
+      const entries = await loadQuestionnairesFromNostr();
 
       setQuestionnaires(entries);
       const selectedId = selectedQuestionnaireIdRef.current.trim();
@@ -141,7 +159,7 @@ export default function SimpleAuditorApp() {
     } finally {
       refreshInFlightRef.current = false;
     }
-  }, []);
+  }, [loadQuestionnairesFromNostr]);
 
   const refreshSelectedQuestionnaireResponses = useCallback(async () => {
     const selectedId = selectedQuestionnaireIdRef.current.trim();
@@ -366,6 +384,42 @@ export default function SimpleAuditorApp() {
     await refreshSelectedQuestionnaireResponses();
   }
 
+  async function searchHistoricData() {
+    if (historicSearchInFlight) {
+      return;
+    }
+    setHistoricSearchInFlight(true);
+    setQuestionnaireRefreshStatus("Searching historic questionnaire data...");
+    try {
+      const entries = await loadQuestionnairesFromNostr({ historic: true });
+      setQuestionnaires(entries);
+      const selectedId = selectedQuestionnaireIdRef.current.trim();
+      if (!selectedId || !entries.some((entry) => entry.questionnaireId === selectedId)) {
+        const query = searchQuery.trim().toLowerCase();
+        const match = query
+          ? entries.find((entry) => (
+            entry.questionnaireId.toLowerCase().includes(query)
+            || entry.title.toLowerCase().includes(query)
+            || entry.description.toLowerCase().includes(query)
+            || entry.coordinatorNpub.toLowerCase().includes(query)
+            || entry.eventId.toLowerCase().includes(query)
+          ))
+          : null;
+        setSelectedQuestionnaireId((match ?? entries[0])?.questionnaireId ?? "");
+      }
+      setQuestionnaireRefreshStatus(
+        entries.length > 0
+          ? `Historic search loaded ${entries.length} questionnaire${entries.length === 1 ? "" : "s"}.`
+          : "No historic public questionnaires discovered.",
+      );
+      await refreshSelectedQuestionnaireResponses();
+    } catch {
+      setQuestionnaireRefreshStatus("Historic questionnaire search failed.");
+    } finally {
+      setHistoricSearchInFlight(false);
+    }
+  }
+
   function formatQuestionnaireTime(unix: number | null) {
     if (!unix) {
       return "Not set";
@@ -463,25 +517,55 @@ export default function SimpleAuditorApp() {
                   <label className='simple-voter-label' htmlFor='simple-auditor-round'>
                     Round
                   </label>
-                  <select
-                    id='simple-auditor-round'
-                    className='simple-voter-input'
-                    value={selectedQuestionnaire?.questionnaireId ?? ''}
-                    onChange={(event) => setSelectedQuestionnaireId(event.target.value)}
-                  >
-                    {filteredQuestionnaires.map((entry) => (
-                      <option key={entry.eventId} value={entry.questionnaireId}>
-                        {formatRoundOptionLabel(entry)}
-                      </option>
-                    ))}
-                  </select>
+                  <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
+                    <select
+                      id='simple-auditor-round'
+                      className='simple-voter-input'
+                      value={selectedQuestionnaire?.questionnaireId ?? ''}
+                      onChange={(event) => setSelectedQuestionnaireId(event.target.value)}
+                    >
+                      {filteredQuestionnaires.map((entry) => (
+                        <option key={entry.eventId} value={entry.questionnaireId}>
+                          {formatRoundOptionLabel(entry)}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type='button'
+                      className='simple-voter-secondary'
+                      onClick={() => void searchHistoricData()}
+                      disabled={historicSearchInFlight}
+                    >
+                      {historicSearchInFlight ? "Searching..." : "Search historic data"}
+                    </button>
+                  </div>
                 </>
               ) : (
-                <p className='simple-voter-note'>No questionnaire rounds found for the selected filters.</p>
+                <>
+                  <p className='simple-voter-note'>No questionnaire rounds found for the selected filters.</p>
+                  <button
+                    type='button'
+                    className='simple-voter-secondary'
+                    onClick={() => void searchHistoricData()}
+                    disabled={historicSearchInFlight}
+                  >
+                    {historicSearchInFlight ? "Searching..." : "Search historic data"}
+                  </button>
+                </>
               )}
             </>
           ) : (
-            <p className='simple-voter-empty'>No public questionnaire rounds discovered yet.</p>
+            <>
+              <p className='simple-voter-empty'>No public questionnaire rounds discovered yet.</p>
+              <button
+                type='button'
+                className='simple-voter-secondary'
+                onClick={() => void searchHistoricData()}
+                disabled={historicSearchInFlight}
+              >
+                {historicSearchInFlight ? "Searching..." : "Search historic data"}
+              </button>
+            </>
           )}
         </section>
 

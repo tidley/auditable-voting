@@ -537,13 +537,14 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
     const fallbackInvite = findBestLocalInvite(voterNpub);
     const bootstrapNpub = fallbackInvite?.invitedNpub?.trim() || voterNpub;
-    const next = runtime.bootstrapWithLocalIdentity({
+    const bootstrapped = runtime.bootstrapWithLocalIdentity({
       invitedNpub: bootstrapNpub,
       coordinatorNpub: fallbackInvite?.coordinatorNpub ?? undefined,
       invite: fallbackInvite,
       allowInviteRecipientMismatch: Boolean(fallbackInvite && bootstrapNpub !== (fallbackInvite.invitedNpub ?? "").trim()),
       allowInviteMissing: true,
     });
+    const next = await runtime.recoverSubmittedBallotFromSelfDm().catch(() => bootstrapped);
     setSignedInNpub(next.invitedNpub);
     const invites = await loadPendingInvites({ voterNpub: next.invitedNpub, allowRelayFetch: false });
     setPendingInvites(invites);
@@ -652,10 +653,12 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     try {
       const voterRuntime = new QuestionnaireOptionAVoterRuntime(createVoterSignerService(props.localVoterNsec), invite.electionId, props.localVoterNsec);
       const localVoterNpub = props.localVoterNpub?.trim() ?? "";
+      const hasLocalSecretKey = Boolean(props.localVoterNsec?.trim());
       const signedInTrimmed = signedInNpub.trim();
       const preferLocalIdentity = Boolean(!props.autoSignerLogin && localVoterNpub && (!signedInTrimmed || signedInTrimmed === localVoterNpub));
 
       let next;
+      let needsSubmissionSelfCopyRecovery = false;
       if (preferLocalIdentity) {
         next = voterRuntime.bootstrapWithLocalIdentity({
           invitedNpub: invite.invitedNpub?.trim() || localVoterNpub,
@@ -664,6 +667,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           allowInviteRecipientMismatch: true,
           allowInviteMissing: true,
         });
+        needsSubmissionSelfCopyRecovery = hasLocalSecretKey;
       } else {
         try {
           next = await voterRuntime.loginWithSigner(invite);
@@ -678,7 +682,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
             allowInviteRecipientMismatch: true,
             allowInviteMissing: true,
           });
+          needsSubmissionSelfCopyRecovery = hasLocalSecretKey;
         }
+      }
+      if (needsSubmissionSelfCopyRecovery) {
+        next = await voterRuntime.recoverSubmittedBallotFromSelfDm().catch(() => next);
       }
 
       setElectionId(invite.electionId);
@@ -688,7 +696,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         voterNpub: next.invitedNpub,
         allowRelayFetch: false,
       });
-      setPendingInvites(refreshedInvites.filter((entry) => entry.invitedNpub === next.invitedNpub));
+      const allowLocalRecipientMismatch = Boolean(props.localVoterNpub?.trim());
+      setPendingInvites(refreshedInvites.filter((entry) => allowLocalRecipientMismatch || entry.invitedNpub === next.invitedNpub));
       setActiveInvite(!next.blindRequestSent && !next.credentialReady ? invite : null);
       if (requestAfterLogin && !next.blindRequestSent && !next.credentialReady) {
         await voterRuntime.requestBlindBallot();
@@ -895,16 +904,17 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
   }, [props.requestBlindBallotNonce, runtime]);
 
+  const canShowInviteForCurrentIdentity = (invite: ElectionInviteMessage) => {
+    const signedIn = signedInNpub.trim();
+    return !signedIn || invite.invitedNpub === signedIn || Boolean(props.localVoterNpub?.trim());
+  };
   const visiblePendingInvites = snapshot?.loginVerified && snapshot.electionId === electionId.trim()
     ? []
-    : pendingInvites.filter((invite) => (
-      !signedInNpub || invite.invitedNpub === signedInNpub || Boolean(props.localVoterNpub?.trim())
-    ));
+    : pendingInvites.filter(canShowInviteForCurrentIdentity);
   const inviteDropdownOptions = useMemo(() => {
     const map = new Map<string, ElectionInviteMessage>();
-    const signedIn = signedInNpub.trim();
     for (const invite of pendingInvites) {
-      if (signedIn && invite.invitedNpub !== signedIn) {
+      if (!canShowInviteForCurrentIdentity(invite)) {
         continue;
       }
       const key = `${invite.electionId}:${invite.coordinatorNpub}`;
@@ -916,7 +926,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       map.set(key, currentInvite);
     }
     return [...map.values()];
-  }, [activeInvite, pendingInvites, signedInNpub, snapshot?.inviteMessage]);
+  }, [activeInvite, pendingInvites, signedInNpub, props.localVoterNpub, snapshot?.inviteMessage]);
 
   useEffect(() => {
     if (!snapshot?.electionId?.trim()) {

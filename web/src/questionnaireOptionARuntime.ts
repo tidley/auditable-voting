@@ -84,6 +84,7 @@ const OPTION_A_COORDINATOR_SIGNER_DM_LIMIT = 60;
 const OPTION_A_COORDINATOR_NSEC_DM_LIMIT = 120;
 const OPTION_A_ISSUANCE_DM_RETRY_MS = 2 * 60 * 1000;
 const OPTION_A_BLIND_REQUEST_RETRY_MS = 10 * 1000;
+const OPTION_A_SELF_COPY_RECOVERY_LOOKBACK_SECONDS = Math.round(36 * 60 * 60);
 
 export type OptionARuntimeErrorCode =
   | "not_logged_in"
@@ -365,7 +366,7 @@ export class QuestionnaireOptionAVoterRuntime {
     this.state = restored;
     saveVoterState({ voterNpub: signerNpub, state: restored });
     this.startVoterDmSubscriptions();
-    return restored;
+    return await this.recoverSubmittedBallotFromSelfDm().catch(() => restored);
   }
 
   bootstrapWithLocalIdentity(input: {
@@ -440,6 +441,64 @@ export class QuestionnaireOptionAVoterRuntime {
     saveVoterState({ voterNpub: invitedNpub, state: restored });
     this.startVoterDmSubscriptions();
     return restored;
+  }
+
+  private applyRecoveredSubmission(submission: BallotSubmission) {
+    if (!this.state || submission.electionId !== this.state.electionId) {
+      return false;
+    }
+    if (this.state.submission && this.state.submission.submissionId !== submission.submissionId) {
+      return false;
+    }
+    const responseNpub = submission.responseNpub ?? submission.invitedNpub;
+    this.state = {
+      ...this.state,
+      credentialReady: true,
+      responseNpub,
+      draftResponses: submission.payload.responses,
+      submission,
+      lastUpdatedAt: submission.submittedAt,
+    };
+    enqueueSubmission(submission);
+    saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
+    optionAFlowLog("voter", "submission_self_copy_recovered", {
+      electionId: this.state.electionId,
+      submissionId: submission.submissionId,
+      responseNpub,
+    });
+    return true;
+  }
+
+  async recoverSubmittedBallotFromSelfDm() {
+    if (!this.state) {
+      throw new OptionARuntimeError("not_logged_in", "Login is required.");
+    }
+    if (this.state.submission) {
+      return this.state;
+    }
+    const voterNsec = this.fallbackNsec?.trim() ?? "";
+    const since = Math.floor(Date.now() / 1000) - OPTION_A_SELF_COPY_RECOVERY_LOOKBACK_SECONDS;
+    const submissions = voterNsec
+      ? await fetchOptionABallotSubmissionDmsWithNsec({
+        nsec: voterNsec,
+        electionId: this.state.electionId,
+        limit: 80,
+        since,
+      })
+      : await fetchOptionABallotSubmissionDms({
+        signer: this.signer,
+        electionId: this.state.electionId,
+        limit: 30,
+        maxDecryptAttempts: 30,
+        since,
+      });
+    const recovered = submissions
+      .filter((submission) => submission.electionId === this.state?.electionId)
+      .sort((left, right) => Date.parse(right.submittedAt) - Date.parse(left.submittedAt))[0] ?? null;
+    if (recovered) {
+      this.applyRecoveredSubmission(recovered);
+    }
+    return this.state;
   }
 
   updateDraftResponses(responses: QuestionnaireAnswer[]) {
@@ -772,6 +831,7 @@ export class QuestionnaireOptionAVoterRuntime {
       if (!republished || republished.successes <= 0) {
         throw new OptionARuntimeError("dm_delivery_failed", "No relay accepted the ballot submission DM.");
       }
+      await this.publishBallotSubmissionSelfCopyDm(this.state.submission, { fallbackNsec: this.state.responseNsec });
       return this.state;
     }
 
@@ -864,6 +924,7 @@ export class QuestionnaireOptionAVoterRuntime {
     if (!published || published.successes <= 0) {
       throw new OptionARuntimeError("dm_delivery_failed", "No relay accepted the ballot submission DM.");
     }
+    await this.publishBallotSubmissionSelfCopyDm(submission, { fallbackNsec: responseNsec });
     optionAFlowLog("voter", "submit_vote_completed", {
       electionId: this.state.electionId,
       submissionId: submission.submissionId,
@@ -892,6 +953,42 @@ export class QuestionnaireOptionAVoterRuntime {
         fallbackNsec: options?.fallbackNsec ?? this.state.responseNsec ?? this.fallbackNsec,
       });
     } catch {
+      return null;
+    }
+  }
+
+  private async publishBallotSubmissionSelfCopyDm(
+    submission = this.state?.submission ?? null,
+    options?: { fallbackNsec?: string },
+  ) {
+    if (!this.state || !submission || !this.state.invitedNpub) {
+      return null;
+    }
+    optionAFlowLog("voter", "submission_self_copy_publish_attempt", {
+      electionId: this.state.electionId,
+      submissionId: submission.submissionId,
+      recipientNpub: this.state.invitedNpub,
+    });
+    try {
+      const result = await publishOptionABallotSubmissionDm({
+        signer: this.signer,
+        recipientNpub: this.state.invitedNpub,
+        submission,
+        fallbackNsec: options?.fallbackNsec ?? this.state.responseNsec ?? this.fallbackNsec,
+      });
+      optionAFlowLog("voter", "submission_self_copy_publish_result", {
+        electionId: this.state.electionId,
+        submissionId: submission.submissionId,
+        successes: result.successes,
+        failures: result.failures,
+      });
+      return result;
+    } catch (error) {
+      optionAFlowLog("voter", "submission_self_copy_publish_failed", {
+        electionId: this.state.electionId,
+        submissionId: submission.submissionId,
+        error: error instanceof Error ? error.message : "unknown",
+      });
       return null;
     }
   }
@@ -1081,7 +1178,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
 
     const nextSummary: ElectionSummary = {
       electionId: this.electionId,
-      title: summary?.title ?? "Option A election",
+      title: summary?.title ?? "Questionnaire",
       description: summary?.description ?? "",
       state: summary?.state ?? "open",
       openedAt: summary?.openedAt ?? nowIso(),

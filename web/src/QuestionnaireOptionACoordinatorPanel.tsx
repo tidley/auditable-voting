@@ -180,7 +180,7 @@ export default function QuestionnaireOptionACoordinatorPanel(props: Props) {
       <div className='simple-questionnaire-header'>
         <div>
           <h3 className='simple-voter-question'>Coordinator</h3>
-          <p className='simple-voter-note'>Option A flow</p>
+          <p className='simple-voter-note'>Blind-token questionnaire flow</p>
         </div>
         <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
           <button type='button' className='simple-voter-secondary' onClick={() => void login()}>Login</button>

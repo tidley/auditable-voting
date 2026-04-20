@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Why Auditable Anonymous Voting Is Hard — And Why This Stack Can Do It (Option A Gated Path)</title>
+  <title>Why Auditable Anonymous Voting Is Hard — And Why This Stack Can Do It</title>
   <style>
     :root {
       --bg: #091018;
@@ -574,14 +574,15 @@
           <li>Automatic follow, blind-request, ticket, and acknowledgement sends now use random 0-30s human-style pacing with slower retries</li>
           <li>Questionnaire invite links open the Vote tab after signer login, complete voter login from the public questionnaire id without scanning old encrypted invite DMs, and preserve the same ballot-request id until issuance arrives</li>
           <li>Android signer flows now prefer Amber through NIP-46 when available so `get_public_key`, `sign_event`, `nip04`, and `nip44` operations stay on one signer identity, with capability permissions requested up front</li>
-          <li>The login gateway now orders controls as `Signer`/`nsec`, then signer choice (`NIP-07`/`Amber`), then one login action button; it can also generate/copy `nostrconnect://` links, show a QR code for handoff, and copy an Amber-compatible `bunker://` (`nsecbunker`) variant</li>
-          <li>Option A blind request, issuance, submission, and acceptance DMs now resolve recipient `kind:10050` NIP-17 relay hints before static fallback relays, keep curated fallback relay redundancy, and treat delivery as successful only when at least one relay accepts the publish</li>
-          <li>Voter ballot progress now separates signer account from voting identity, and coordinator automatic Option A queue checks are single-flight to reduce overlapping relay work</li>
-          <li>The voter tab bar now hides `Vote` until questionnaire context is ready, and silent invite polling no longer forces users off Configure/Settings</li>
+          <li>The login gateway now orders controls as `Signer`/`nsec`, then signer choice (`NOS2X-FOX`/`Amber`), then one login action button; it can also generate/copy `nostrconnect://` links, show a QR code for handoff, and copy an Amber-compatible `bunker://` (`nsecbunker`) variant</li>
+          <li>Blind request, issuance, submission, and acceptance DMs now resolve recipient `kind:10050` NIP-17 relay hints before static fallback relays, keep curated fallback relay redundancy, and treat delivery as successful only when at least one relay accepts the publish</li>
+          <li>Voter ballot progress now separates signer account from voting identity, and coordinator automatic queue checks are single-flight to reduce overlapping relay work</li>
+          <li>The Vote tab remains available for browsing current and older invited questionnaires, and silent invite polling no longer forces users off Configure/Settings</li>
           <li>Voter ballot resend now keeps the same blind-request id while prompting the coordinator to republish the existing credential DM, and blind-request/submission sends are only marked sent after confirmed relay acceptance</li>
-          <li>Option A credential delivery now mixes recipient relay hints with fallback relays, widens publish fanout, and retries issued credentials until the voter submits</li>
+          <li>Credential delivery now mixes recipient relay hints with fallback relays, widens publish fanout, and retries issued credentials until the voter submits</li>
           <li>Published questionnaire definitions include the blind-signing public key, are cached locally, and are attached to invites and credential issuances, so linked voters can request ballots even when historical invite DMs are unavailable</li>
-          <li>Accepted Option A DM submissions now feed the same coordinator response summary as public questionnaire response events</li>
+          <li>Accepted DM submissions now feed the same coordinator response summary as public questionnaire response events, and voters receive an encrypted self-copy for later recovery</li>
+          <li>Auditors can run an explicit historic questionnaire search when older published rounds or public response payloads are outside the default recent scan window</li>
           <li>Auditors now discover recent public questionnaires through kind-only backfill when no questionnaire ID is selected, then show state and published response totals where available</li>
           <li>Submitted voters see their responder marker pattern and expandable QR directly on the Vote page</li>
           <li>Mailbox ticket publishes now keep one deterministic anchor relay, rotate secondary relays by recipient, and temporarily cool down relays that rate-limit</li>
@@ -649,7 +650,7 @@
           </tr>
           <tr>
             <td><strong>Private issuance</strong></td>
-            <td>NIP-17 gift-wrapped DMs (Option A) with local fallback</td>
+            <td>NIP-17 gift-wrapped DMs with local fallback</td>
             <td>Blind requests, blind responses, ballot submissions, and acceptance results move privately over relay DMs across browser/device contexts, with mailbox fallback retained for same-browser recovery.</td>
           </tr>
           <tr>
@@ -754,7 +755,7 @@
         </div>
         <div class="flow-box">
           <h4>4. Publish ballots</h4>
-          <p>Public rounds use an ephemeral-key vote. Questionnaire Option A submits privately from a fresh ephemeral response npub with the unblinded credential.</p>
+          <p>Public rounds use an ephemeral-key vote. Questionnaires submit privately from a fresh ephemeral response npub with the unblinded credential.</p>
         </div>
         <div class="flow-box">
           <h4>5. Recompute tally</h4>
