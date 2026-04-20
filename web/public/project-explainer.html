@@ -222,6 +222,8 @@ Invite links can point to a public questionnaire id. Signer login opens the Vote
 
 On Android, signer sessions prefer Amber through NIP-46 when available so `get_public_key`, `sign_event`, `nip04`, and `nip44` operations stay on one signer identity, and the app now requests the full permission set up front during connect.
 
+The login gateway can also generate Nostr Connect links directly, show a QR code for the `nostrconnect://` URL, and copy both `nostrconnect://` and Amber-compatible `bunker://` (`nsecbunker`) variants.
+
 Blind request, issuance, submission, and acceptance DMs now also resolve recipient NIP-17 relay-list hints (`kind:10050`) before static fallbacks, keep curated fallback relay redundancy, and only count a DM publish as delivered when at least one relay actually accepts it.
 
 Invite-link clipboard writes are best-effort, so browser focus restrictions do not throw unhandled errors after async relay work.

@@ -60,6 +60,20 @@ const AMBER_CONNECT_RELAYS = [
   "wss://offchain.pub",
 ];
 
+const AMBER_CONNECT_PERMISSIONS = [
+  "get_public_key",
+  "sign_event:13",
+  "nip04_encrypt",
+  "nip04_decrypt",
+  "nip44_encrypt",
+  "nip44_decrypt",
+];
+
+export type AmberConnectBundle = {
+  nostrConnectUri: string;
+  nsecBunkerUri: string;
+};
+
 let cachedAmberSigner: NostrConnectSignerLike | null = null;
 let amberConnectPromise: Promise<NostrConnectSignerLike> | null = null;
 
@@ -111,6 +125,39 @@ function readBrowserSigner(): BrowserNostrSigner | null {
   return candidate;
 }
 
+function toNsecBunkerUri(nostrConnectUri: string) {
+  return nostrConnectUri.startsWith("nostrconnect://")
+    ? `bunker://${nostrConnectUri.slice("nostrconnect://".length)}`
+    : nostrConnectUri;
+}
+
+async function buildAmberConnectBundle(): Promise<AmberConnectBundle & { localSecretKey: Uint8Array }> {
+  const { createNostrConnectURI } = await import("nostr-tools/nip46");
+  const localSecretKey = generateSecretKey();
+  const clientPubkey = getPublicKeyFromSecret(localSecretKey);
+  const nostrConnectUri = createNostrConnectURI({
+    clientPubkey,
+    relays: AMBER_CONNECT_RELAYS,
+    secret: createRandomSecret(),
+    name: "auditable-voting",
+    url: typeof window === "undefined" ? "https://tidley.github.io" : window.location.origin,
+    perms: AMBER_CONNECT_PERMISSIONS,
+  });
+  return {
+    localSecretKey,
+    nostrConnectUri,
+    nsecBunkerUri: toNsecBunkerUri(nostrConnectUri),
+  };
+}
+
+export async function createAmberConnectBundle(): Promise<AmberConnectBundle> {
+  const bundle = await buildAmberConnectBundle();
+  return {
+    nostrConnectUri: bundle.nostrConnectUri,
+    nsecBunkerUri: bundle.nsecBunkerUri,
+  };
+}
+
 async function connectAmberSigner(): Promise<NostrConnectSignerLike> {
   if (cachedAmberSigner) {
     return cachedAmberSigner;
@@ -119,29 +166,13 @@ async function connectAmberSigner(): Promise<NostrConnectSignerLike> {
     return amberConnectPromise;
   }
   amberConnectPromise = (async () => {
-    const { BunkerSigner, createNostrConnectURI } = await import("nostr-tools/nip46");
-    const localSecretKey = generateSecretKey();
-    const clientPubkey = getPublicKeyFromSecret(localSecretKey);
-    const connectionUri = createNostrConnectURI({
-      clientPubkey,
-      relays: AMBER_CONNECT_RELAYS,
-      secret: createRandomSecret(),
-      name: "auditable-voting",
-      url: typeof window === "undefined" ? "https://tidley.github.io" : window.location.origin,
-      perms: [
-        "get_public_key",
-        "sign_event:13",
-        "nip04_encrypt",
-        "nip04_decrypt",
-        "nip44_encrypt",
-        "nip44_decrypt",
-      ],
-    });
+    const { BunkerSigner } = await import("nostr-tools/nip46");
+    const { localSecretKey, nostrConnectUri } = await buildAmberConnectBundle();
     if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-      void navigator.clipboard.writeText(connectionUri).catch(() => {});
+      void navigator.clipboard.writeText(nostrConnectUri).catch(() => {});
     }
-    openExternalUri(connectionUri);
-    const signer = await BunkerSigner.fromURI(localSecretKey, connectionUri, {}, 180000);
+    openExternalUri(nostrConnectUri);
+    const signer = await BunkerSigner.fromURI(localSecretKey, nostrConnectUri, {}, 180000);
     cachedAmberSigner = signer as unknown as NostrConnectSignerLike;
     return cachedAmberSigner;
   })();

@@ -5,9 +5,11 @@ import SimpleCoordinatorApp from "./SimpleCoordinatorApp";
 import SimpleRelayPanel from "./SimpleRelayPanel";
 import SimpleUiApp from "./SimpleUiApp";
 import { SIMPLE_APP_VERSION } from "./simpleAppVersion";
-import { createSignerService, SignerServiceError } from "./services/signerService";
+import { createAmberConnectBundle, createSignerService, SignerServiceError } from "./services/signerService";
 import { deriveNpubFromNsec } from "./nostrIdentity";
 import { saveSimpleActorState } from "./simpleLocalState";
+import { tryWriteClipboard } from "./clipboard";
+import SimpleQrPanel from "./SimpleQrPanel";
 
 type SimpleRole = "voter" | "coordinator" | "auditor";
 const GATEWAY_SIGNER_NPUB_STORAGE_KEY = "app:auditable-voting:gateway:signer_npub";
@@ -71,6 +73,9 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
   const [gatewayNsec, setGatewayNsec] = useState("");
   const [gatewaySignerNpub, setGatewaySignerNpub] = useState("");
   const [gatewayStatus, setGatewayStatus] = useState<string | null>(null);
+  const [gatewayNostrConnectUri, setGatewayNostrConnectUri] = useState("");
+  const [gatewayNsecBunkerUri, setGatewayNsecBunkerUri] = useState("");
+  const [gatewayShowConnectQr, setGatewayShowConnectQr] = useState(false);
 
   const handleRoleSelect = (nextRole: SimpleRole) => {
     setRole(nextRole);
@@ -145,6 +150,30 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
     setShowGateway(false);
   }
 
+  async function prepareAmberConnectLinks() {
+    try {
+      const bundle = await createAmberConnectBundle();
+      setGatewayNostrConnectUri(bundle.nostrConnectUri);
+      setGatewayNsecBunkerUri(bundle.nsecBunkerUri);
+      setGatewayShowConnectQr(true);
+      setGatewayStatus("Nostr Connect links ready. Scan the QR or copy a URL.");
+    } catch (error) {
+      if (error instanceof Error && error.message.trim()) {
+        setGatewayStatus(error.message);
+        return;
+      }
+      setGatewayStatus("Could not prepare Nostr Connect links.");
+    }
+  }
+
+  async function copyGatewayValue(value: string, label: string) {
+    if (!value.trim()) {
+      return;
+    }
+    const copied = await tryWriteClipboard(value);
+    setGatewayStatus(copied ? `${label} copied.` : `Could not copy ${label.toLowerCase()}.`);
+  }
+
   if (showGateway) {
     return (
       <div className='simple-app-shell'>
@@ -157,8 +186,43 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
             <button type='button' className='simple-voter-secondary' onClick={() => void loginWithSigner()}>
               Login via signer
             </button>
+            <button type='button' className='simple-voter-secondary' onClick={() => void prepareAmberConnectLinks()}>
+              Show Nostr Connect QR
+            </button>
+            <button
+              type='button'
+              className='simple-voter-secondary'
+              onClick={() => void copyGatewayValue(gatewayNostrConnectUri, "Nostr Connect URL")}
+              disabled={!gatewayNostrConnectUri.trim()}
+            >
+              Copy Nostr Connect URL
+            </button>
+            <button
+              type='button'
+              className='simple-voter-secondary'
+              onClick={() => void copyGatewayValue(gatewayNsecBunkerUri, "nsecbunker URL")}
+              disabled={!gatewayNsecBunkerUri.trim()}
+            >
+              Copy nsecbunker URL
+            </button>
           </div>
           {gatewaySignerNpub ? <p className='simple-voter-note'>Signer: {gatewaySignerNpub}</p> : null}
+          {gatewayShowConnectQr && gatewayNostrConnectUri.trim() ? (
+            <SimpleQrPanel
+              value={gatewayNostrConnectUri}
+              title='Nostr Connect URL'
+              description='Scan in Amber or copy this URL directly.'
+              copyLabel='Copy Nostr Connect URL'
+              downloadFilename='nostr-connect-qr.png'
+            />
+          ) : null}
+          {gatewayNsecBunkerUri.trim() ? (
+            <p className='simple-voter-note'>
+              Amber-compatible nsecbunker URL:
+              {" "}
+              <code>{gatewayNsecBunkerUri}</code>
+            </p>
+          ) : null}
 
           <label className='simple-voter-label' htmlFor='gateway-nsec'>Login via nsec (optional)</label>
           <input

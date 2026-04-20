@@ -522,33 +522,71 @@ function toHexPubkey(value: string) {
   return trimmed;
 }
 
+function extractNostrBech32Candidates(value: string): string[] {
+  const matches = value.match(/(?:npub1|nprofile1)[023456789acdefghjklmnpqrstuvwxyz]+/gi) ?? [];
+  const deduped = new Set<string>();
+  for (const match of matches) {
+    const normalized = match.trim().toLowerCase();
+    if (normalized) {
+      deduped.add(normalized);
+    }
+  }
+  return [...deduped];
+}
+
 function normalizeInviteNpubInput(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) {
     return null;
   }
-  const decodedValue = trimmed.toLowerCase().startsWith("nostr:")
+
+  const withoutScheme = trimmed.toLowerCase().startsWith("nostr:")
     ? trimmed.slice("nostr:".length).trim()
     : trimmed;
-  if (isValidNpub(decodedValue)) {
-    return decodedValue;
-  }
+
+  const candidates = new Set<string>([
+    withoutScheme.toLowerCase(),
+    ...extractNostrBech32Candidates(withoutScheme),
+  ]);
+
   try {
-    const decoded = nip19.decode(decodedValue);
-    if (decoded.type === "npub") {
-      const npub = nip19.npubEncode(decoded.data as string);
-      return isValidNpub(npub) ? npub : null;
-    }
-    if (decoded.type === "nprofile") {
-      const data = decoded.data as { pubkey?: string } | undefined;
-      if (!data?.pubkey) {
-        return null;
-      }
-      const npub = nip19.npubEncode(data.pubkey);
-      return isValidNpub(npub) ? npub : null;
+    const decodedUri = decodeURIComponent(withoutScheme);
+    candidates.add(decodedUri.toLowerCase());
+    for (const match of extractNostrBech32Candidates(decodedUri)) {
+      candidates.add(match);
     }
   } catch {
-    return null;
+    // Ignore URI decode errors and keep raw candidates.
+  }
+
+  for (const candidate of candidates) {
+    if (!candidate) {
+      continue;
+    }
+    if (isValidNpub(candidate)) {
+      return candidate;
+    }
+    try {
+      const decoded = nip19.decode(candidate);
+      if (decoded.type === "npub") {
+        const npub = nip19.npubEncode(decoded.data as string);
+        if (isValidNpub(npub)) {
+          return npub;
+        }
+      }
+      if (decoded.type === "nprofile") {
+        const data = decoded.data as { pubkey?: string } | undefined;
+        if (!data?.pubkey) {
+          continue;
+        }
+        const npub = nip19.npubEncode(data.pubkey);
+        if (isValidNpub(npub)) {
+          return npub;
+        }
+      }
+    } catch {
+      continue;
+    }
   }
   return null;
 }
