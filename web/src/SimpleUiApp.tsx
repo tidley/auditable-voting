@@ -2690,13 +2690,6 @@ export default function SimpleUiApp() {
   ]);
 
   function selectTab(nextTab: VoterTab) {
-    if (nextTab === "vote" && !questionnaireVoteReady) {
-      setRequestStatus(waitingForQuestionnaireData
-        ? "Waiting for questionnaire data from coordinator."
-        : "Waiting for questions to be published.");
-      setActiveTab("configure");
-      return;
-    }
     if (nextTab === "vote" && questionnaireModeActive) {
       setVotePaneUnlocked(true);
       setOptionARequestBlindBallotNonce((value) => value + 1);
@@ -2803,17 +2796,15 @@ export default function SimpleUiApp() {
           >
             Configure
           </button>
-          {questionnaireVoteReady ? (
-            <button
-              type='button'
-              role='tab'
-              aria-selected={activeTab === 'vote'}
-              className={`simple-voter-tab${activeTab === 'vote' ? ' is-active' : ''}`}
-              onClick={() => selectTab('vote')}
-            >
-              Vote
-            </button>
-          ) : null}
+          <button
+            type='button'
+            role='tab'
+            aria-selected={activeTab === 'vote'}
+            className={`simple-voter-tab${activeTab === 'vote' ? ' is-active' : ''}`}
+            onClick={() => selectTab('vote')}
+          >
+            Vote
+          </button>
           <button
             type='button'
             role='tab'

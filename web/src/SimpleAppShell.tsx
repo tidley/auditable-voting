@@ -103,6 +103,20 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
     ),
     [role],
   );
+  const gatewayRoleTitle = useMemo(
+    () => (
+      gatewayRole === "voter"
+        ? "Voter"
+        : gatewayRole === "coordinator"
+          ? "Coordinator"
+          : "Auditor"
+    ),
+    [gatewayRole],
+  );
+  const gatewayContinueLabel = useMemo(() => {
+    const hasSignerIdentity = gatewayAuthMode === "signer" && gatewaySignerNpub.trim().length > 0;
+    return `${hasSignerIdentity ? "Login" : "Continue"} as ${gatewayRoleTitle}`;
+  }, [gatewayAuthMode, gatewayRoleTitle, gatewaySignerNpub]);
 
   async function loginWithSigner() {
     try {
@@ -318,6 +332,7 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
             </>
           ) : null}
 
+          <label className='simple-voter-label'>Select role</label>
           <div className='simple-role-switch simple-role-switch-login' role='tablist' aria-label='Role selection'>
             <button
               type='button'
@@ -350,7 +365,7 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
 
           <div className='simple-login-actions'>
             <button type='button' className='simple-voter-primary' onClick={() => void continueFromGateway()}>
-              Continue as {gatewayRole}
+              {gatewayContinueLabel}
             </button>
           </div>
           {gatewayStatus ? <p className='simple-voter-note'>{gatewayStatus}</p> : null}
