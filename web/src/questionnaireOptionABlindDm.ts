@@ -55,6 +55,11 @@ type BallotAcceptanceDmEnvelope = {
   sentAt: string;
 };
 
+function optionABlindDmLog(stage: string, details?: Record<string, unknown>) {
+  const payload = details ? ` ${JSON.stringify(details)}` : "";
+  console.log(`[OptionA][DM] ${stage}${payload}`);
+}
+
 function toHexPubkey(pubkey: string) {
   const value = pubkey.trim();
   if (value.startsWith("npub1")) {
@@ -317,6 +322,11 @@ async function publishEnvelope(input: {
 }) {
   const recipientHex = toHexPubkey(input.recipientNpub);
   const relays = await resolveRecipientPublishRelays(recipientHex, buildRelays(input.relays));
+  optionABlindDmLog("publish_started", {
+    channel: input.channel,
+    recipientNpub: input.recipientNpub,
+    relayCount: relays.length,
+  });
   let senderHex = "";
   let signedSeal: NostrEvent | null = null;
   const fallbackSecret = input.fallbackNsec?.trim() ? decodeNsecSecretKey(input.fallbackNsec) : null;
@@ -404,6 +414,12 @@ async function publishEnvelope(input: {
   );
 
   const relayResults = results.map((result, index) => mapRelayPublishResult(result, relays[index]));
+  optionABlindDmLog("publish_finished", {
+    channel: input.channel,
+    recipientNpub: input.recipientNpub,
+    successes: relayResults.filter((entry) => entry.success).length,
+    failures: relayResults.filter((entry) => !entry.success).length,
+  });
   return {
     eventId: giftWrapEvent.id,
     successes: relayResults.filter((entry) => entry.success).length,
@@ -515,6 +531,10 @@ export async function fetchOptionABlindRequestDms(input: {
   const recipientNpub = toNpub(recipientRaw);
   const recipientHex = toHexPubkey(recipientRaw);
   const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
+  optionABlindDmLog("fetch_blind_requests_started", {
+    recipientNpub,
+    relayCount: relays.length,
+  });
   const pool = getSharedNostrPool();
   const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? input.limit ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
   const events = await pool.querySync(relays, {
@@ -559,7 +579,12 @@ export async function fetchOptionABlindRequestDms(input: {
       continue;
     }
   }
-  return [...unique.values()];
+  const values = [...unique.values()];
+  optionABlindDmLog("fetch_blind_requests_finished", {
+    recipientNpub,
+    resultCount: values.length,
+  });
+  return values;
 }
 
 export async function fetchOptionABlindRequestDmsWithNsec(input: {
@@ -721,8 +746,13 @@ export async function fetchOptionABallotSubmissionDms(input: {
     return [] as BallotSubmission[];
   }
   const recipientRaw = await input.signer.getPublicKey();
+  const recipientNpub = toNpub(recipientRaw);
   const recipientHex = toHexPubkey(recipientRaw);
   const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
+  optionABlindDmLog("fetch_submissions_started", {
+    recipientNpub,
+    relayCount: relays.length,
+  });
   const pool = getSharedNostrPool();
   const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? input.limit ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
   const events = await pool.querySync(relays, {
@@ -771,7 +801,12 @@ export async function fetchOptionABallotSubmissionDms(input: {
       continue;
     }
   }
-  return [...unique.values()];
+  const values = [...unique.values()];
+  optionABlindDmLog("fetch_submissions_finished", {
+    recipientNpub,
+    resultCount: values.length,
+  });
+  return values;
 }
 
 export async function fetchOptionABallotSubmissionDmsWithNsec(input: {
@@ -834,8 +869,13 @@ export async function fetchOptionABallotAcceptanceDms(input: {
     return [] as BallotAcceptanceResult[];
   }
   const recipientRaw = await input.signer.getPublicKey();
+  const recipientNpub = toNpub(recipientRaw);
   const recipientHex = toHexPubkey(recipientRaw);
   const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
+  optionABlindDmLog("fetch_acceptances_started", {
+    recipientNpub,
+    relayCount: relays.length,
+  });
   const pool = getSharedNostrPool();
   const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
   const events = await pool.querySync(relays, {
@@ -880,7 +920,12 @@ export async function fetchOptionABallotAcceptanceDms(input: {
       continue;
     }
   }
-  return [...unique.values()];
+  const values = [...unique.values()];
+  optionABlindDmLog("fetch_acceptances_finished", {
+    recipientNpub,
+    resultCount: values.length,
+  });
+  return values;
 }
 
 export async function fetchOptionABallotAcceptanceDmsWithNsec(input: {

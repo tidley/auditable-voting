@@ -30,6 +30,11 @@ type InviteDmEnvelope = {
   sentAt: string;
 };
 
+function optionAInviteDmLog(stage: string, details?: Record<string, unknown>) {
+  const payload = details ? ` ${JSON.stringify(details)}` : "";
+  console.log(`[OptionA][InviteDM] ${stage}${payload}`);
+}
+
 function toHexPubkey(pubkey: string) {
   const value = pubkey.trim();
   if (value.startsWith("npub1")) {
@@ -222,6 +227,11 @@ export async function publishOptionAInviteDm(input: {
     discoveryRelays: selectPublishRelays(fallbackRelays),
   });
   const relays = selectPublishRelays(normalizeRelaysRust([...recipientRelays, ...fallbackRelays]));
+  optionAInviteDmLog("publish_started", {
+    electionId: input.invite.electionId,
+    invitedNpub: input.invite.invitedNpub,
+    relayCount: relays.length,
+  });
   const envelope: InviteDmEnvelope = {
     type: "optiona_invite_dm",
     schemaVersion: 1,
@@ -303,6 +313,12 @@ export async function publishOptionAInviteDm(input: {
   );
 
   const relayResults = results.map((result, index) => mapRelayPublishResult(result, relays[index]));
+  optionAInviteDmLog("publish_finished", {
+    electionId: input.invite.electionId,
+    invitedNpub: input.invite.invitedNpub,
+    successes: relayResults.filter((entry) => entry.success).length,
+    failures: relayResults.filter((entry) => !entry.success).length,
+  });
   return {
     eventId: giftWrapEvent.id,
     successes: relayResults.filter((entry) => entry.success).length,
@@ -326,6 +342,11 @@ export async function fetchOptionAInviteDms(input: {
   const recipientNpub = toNpub(recipientRaw);
   const recipientHex = toHexPubkey(recipientRaw);
   const relays = selectReadRelays(buildRelays(input.relays));
+  optionAInviteDmLog("fetch_started", {
+    recipientNpub,
+    electionId: input.electionId ?? "",
+    relayCount: relays.length,
+  });
   const pool = getSharedNostrPool();
   const lookbackSeconds = Math.max(60, input.lookbackSeconds ?? OPTION_A_INVITE_DM_SIGNER_LOOKBACK_SECONDS);
   const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? OPTION_A_INVITE_DM_SIGNER_DECRYPT_LIMIT);
@@ -390,7 +411,13 @@ export async function fetchOptionAInviteDms(input: {
   if (unique.size === 0 && signerPermissionError) {
     throw new Error(`Could not read invite DMs: ${signerPermissionError}`);
   }
-  return [...unique.values()];
+  const values = [...unique.values()];
+  optionAInviteDmLog("fetch_finished", {
+    recipientNpub,
+    electionId: input.electionId ?? "",
+    resultCount: values.length,
+  });
+  return values;
 }
 
 export async function fetchOptionAInviteDmsWithNsec(input: {

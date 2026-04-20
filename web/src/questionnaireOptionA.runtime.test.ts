@@ -213,8 +213,11 @@ describe("questionnaireOptionARuntime", () => {
     expect(voter.getSnapshot()?.submissionAccepted).toBe(true);
     expect(coordinator.getAcceptedUniqueCount()).toBe(1);
 
-    // Re-submission should not increase accepted unique count.
-    await expect(voter.submitVote(["q1"])).rejects.toThrow();
+    // Re-submission is idempotent and should not increase accepted unique count.
+    const firstSubmission = voter.getSnapshot()?.submission;
+    const retrySubmissionState = await voter.submitVote(["q1"]);
+    expect(retrySubmissionState.submission?.responseNpub).toBe(firstSubmission?.responseNpub);
+    expect(retrySubmissionState.submission?.responseId).toBe(firstSubmission?.responseId);
     await coordinator.processPendingSubmissions(["q1"]);
     expect(coordinator.getAcceptedUniqueCount()).toBe(1);
   });
