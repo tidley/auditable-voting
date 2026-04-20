@@ -189,7 +189,6 @@ export default function SimpleAuditorApp() {
         electionId: selectedId,
         preferredCoordinatorNpub: selectedEntry?.coordinatorNpub ?? null,
       });
-      const isOptionARound = selectedId.startsWith("q_");
       if (coordinatorState) {
         const fallbackDetails = Object.values(coordinatorState.acceptanceResults)
           .map((acceptance) => {
@@ -205,7 +204,7 @@ export default function SimpleAuditorApp() {
           })
           .filter((entry): entry is AuditorQuestionnaireResponseDetail => Boolean(entry))
           .sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0));
-        if (fallbackDetails.length > 0 || isOptionARound) {
+        if (fallbackDetails.length > 0) {
           details = fallbackDetails;
         }
       }
