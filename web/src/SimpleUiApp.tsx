@@ -1399,6 +1399,11 @@ export default function SimpleUiApp() {
       keypair: nextKeypair,
       updatedAt: new Date().toISOString(),
     }, storagePassphrase ? { passphrase: storagePassphrase } : undefined);
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY);
+    }
+    setSignerNpub("");
+    setSignerStatus(null);
     setVoterKeypair(nextKeypair);
     setIdentityStatus("Identity restored from nsec.");
     setBackupStatus(null);
@@ -1727,8 +1732,12 @@ export default function SimpleUiApp() {
     }
 
     const signerSessionNpub = signerNpub.trim();
-    if (!signerSessionNpub) {
+    const localNsec = voterKeypair?.nsec?.trim() ?? "";
+    if (localNsec) {
       await checkQuestionnaireInvitesWithLocalKey({ silent: options?.silent });
+      return;
+    }
+    if (!signerSessionNpub) {
       return;
     }
 
