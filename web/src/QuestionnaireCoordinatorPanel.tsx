@@ -943,9 +943,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
 
   function deleteQuestion(index: number) {
     setQuestions((current) => {
-      if (current.length <= 1) {
-        return current;
-      }
       return current.filter((_, currentIndex) => currentIndex !== index);
     });
   }
@@ -1733,7 +1730,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         {questions.map((question, index) => {
           const canMoveUp = index > 0;
           const canMoveDown = index < questions.length - 1;
-          const showAddBelow = index === questions.length - 1;
 
           return (
             <div key={`${question.questionId}-${index}`} className='simple-questionnaire-question-card'>
@@ -1766,9 +1762,16 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                 <button
                   type='button'
                   className='simple-voter-secondary'
-                  onClick={() => (showAddBelow ? addQuestionBelow(index) : deleteQuestion(index))}
+                  onClick={() => addQuestionBelow(index)}
                 >
-                  {showAddBelow ? "+" : "-"}
+                  +
+                </button>
+                <button
+                  type='button'
+                  className='simple-voter-secondary'
+                  onClick={() => deleteQuestion(index)}
+                >
+                  -
                 </button>
               </div>
               <input

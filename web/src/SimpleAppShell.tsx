@@ -230,7 +230,7 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
                   className={`simple-role-switch-button${gatewaySignerChoice === "nip07" ? " is-active" : ""}`}
                   onClick={() => setGatewaySignerChoice("nip07")}
                 >
-                  NIP-07
+                  NOS2X-FOX
                 </button>
                 <button
                   type='button'
@@ -248,7 +248,7 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
           {gatewayAuthMode === "signer" ? (
             <div className='simple-login-actions'>
               <button type='button' className='simple-voter-secondary' onClick={() => void runSignerLogin()}>
-                {gatewaySignerChoice === "amber" ? "Log in with Amber" : "Log in with NIP-07"}
+                {gatewaySignerChoice === "amber" ? "Log in with Amber" : "Log in with NOS2X-FOX"}
               </button>
             </div>
           ) : null}
