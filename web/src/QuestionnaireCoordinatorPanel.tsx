@@ -246,6 +246,21 @@ function formatQuestionnaireMetadataState(state: QuestionnaireStateValue | null,
   return "Published";
 }
 
+function downloadJsonFile(filename: string, payload: unknown) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+  const url = window.URL.createObjectURL(blob);
+  const anchor = window.document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  window.document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.URL.revokeObjectURL(url);
+}
+
 function percentageLabel(count: number, total: number) {
   if (total <= 0) {
     return "0%";
@@ -1119,6 +1134,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       .sort((left, right) => left.responderId.localeCompare(right.responderId))
   ), [acceptedResponsesForDisplay]);
   const publishButtonDisabled = !canPublishResults || displayAcceptedCount <= 0;
+  const canExportResults = currentState === "results_published" && Boolean(latestDefinition);
   const publishStatusText = useMemo(() => {
     if (status === "Computing and publishing questionnaire results...") {
       return "Publishing...";
@@ -1143,6 +1159,45 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     }
     return "Nothing to publish yet";
   }, [canPublishResults, displayAcceptedCount, latestResultAcceptedCount, latestState, status]);
+
+  function exportResults() {
+    const id = questionnaireId.trim();
+    if (!id || !latestDefinition || currentState !== "results_published") {
+      setStatus("Results export is available once results are published.");
+      return;
+    }
+    const exportedAt = nowUnix();
+    const payload = {
+      schemaVersion: 1,
+      exportType: "questionnaire_results_export",
+      exportedAt,
+      questionnaire: {
+        questionnaireId: id,
+        title: latestDefinition.title,
+        description: latestDefinition.description,
+        state: currentState,
+        coordinatorNpub,
+      },
+      counts: {
+        accepted: displayAcceptedCount,
+        rejected: latestRejectedCount,
+        publishedAccepted: latestResultAcceptedCount,
+      },
+      summary: {
+        questionResultCards,
+        responders,
+      },
+      acceptedResponses: acceptedResponsesForDisplay.map((response) => ({
+        eventId: response.eventId,
+        authorPubkey: response.authorPubkey,
+        submittedAt: response.payload.submittedAt,
+        responseId: response.payload.responseId,
+        answers: response.payload.answers,
+      })),
+    };
+    downloadJsonFile(`questionnaire-results-${id}.json`, payload);
+    setStatus(`Exported results for ${id}.`);
+  }
 
   async function publishDefinition() {
     if (!coordinatorNsec.trim() || !builtDefinition) {
@@ -1380,6 +1435,11 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           <button type='button' className='simple-voter-secondary' onClick={() => void refresh()}>
             Refresh
           </button>
+          {canExportResults ? (
+            <button type='button' className='simple-voter-secondary' onClick={exportResults}>
+              Export results
+            </button>
+          ) : null}
         </div>
         {publishValidation && !publishValidation.valid ? (
           <p className='simple-voter-note'>Validation: {publishValidation.errors[0] ?? "unknown_error"}.</p>
@@ -1465,6 +1525,15 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             >
               Publish summary
             </button>
+            {canExportResults ? (
+              <button
+                type='button'
+                className='simple-voter-secondary'
+                onClick={exportResults}
+              >
+                Export results
+              </button>
+            ) : null}
             <button type='button' className='simple-voter-secondary' onClick={() => void refresh()}>
               Refresh
             </button>

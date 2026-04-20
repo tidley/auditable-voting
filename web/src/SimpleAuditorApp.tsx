@@ -335,6 +335,11 @@ export default function SimpleAuditorApp() {
   const publishedValidityPercent = publishedTotalCount > 0
     ? ((publishedValidCount / publishedTotalCount) * 100).toFixed(1)
     : "0.0";
+  const canExportResults = Boolean(
+    selectedQuestionnaire
+    && (selectedLiveState ?? selectedQuestionnaire.state) === "results_published"
+    && selectedResultSummary,
+  );
   const filteredResponseDetails = useMemo(() => {
     const query = voterSearchQuery.trim().toLowerCase();
     if (!query) {
@@ -370,6 +375,42 @@ export default function SimpleAuditorApp() {
       return "Unpublished";
     }
     return includedInLatestPublish ? "Published" : "Unpublished";
+  }
+
+  function exportResults() {
+    if (!selectedQuestionnaire || !selectedResultSummary || (selectedLiveState ?? selectedQuestionnaire.state) !== "results_published") {
+      return;
+    }
+    const payload = {
+      schemaVersion: 1,
+      exportType: "questionnaire_results_validator_export",
+      exportedAt: Math.floor(Date.now() / 1000),
+      questionnaire: {
+        questionnaireId: selectedQuestionnaire.questionnaireId,
+        title: selectedQuestionnaire.title,
+        description: selectedQuestionnaire.description,
+        coordinatorNpub: selectedQuestionnaire.coordinatorNpub,
+        state: selectedLiveState ?? selectedQuestionnaire.state,
+      },
+      summary: selectedResultSummary,
+      responses: selectedResponseDetails.map((entry) => ({
+        eventId: entry.event.id,
+        createdAt: entry.event.created_at,
+        accepted: entry.accepted,
+        rejectionReason: entry.rejectionReason,
+        includedInLatestPublish: entry.includedInLatestPublish,
+        response: entry.response,
+      })),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = window.document.createElement("a");
+    anchor.href = url;
+    anchor.download = `questionnaire-results-${selectedQuestionnaire.questionnaireId}.json`;
+    window.document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.URL.revokeObjectURL(url);
   }
 
   return (
@@ -514,6 +555,15 @@ export default function SimpleAuditorApp() {
                   >
                     View Full Results
                   </button>
+                  {canExportResults ? (
+                    <button
+                      type='button'
+                      className='simple-voter-secondary simple-auditor-full-results'
+                      onClick={exportResults}
+                    >
+                      Export results
+                    </button>
+                  ) : null}
                 </>
               ) : (
                 <p className='simple-voter-empty'>No published result summary yet for this questionnaire.</p>
