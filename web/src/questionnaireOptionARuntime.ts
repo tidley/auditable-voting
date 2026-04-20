@@ -1028,10 +1028,18 @@ export class QuestionnaireOptionACoordinatorRuntime {
   bootstrapCoordinatorNpub(input: {
     coordinatorNpub: string;
     summary?: Partial<ElectionSummary>;
+    startDmSubscriptions?: boolean;
   }) {
-    this.coordinatorNpub = toNpub(input.coordinatorNpub);
+    const nextCoordinatorNpub = toNpub(input.coordinatorNpub);
+    const coordinatorChanged = this.coordinatorNpub !== nextCoordinatorNpub;
+    this.coordinatorNpub = nextCoordinatorNpub;
     const state = this.ensureCoordinatorState(input.summary);
-    this.startCoordinatorDmSubscriptions();
+    if (input.startDmSubscriptions ?? true) {
+      const subscriptionsMissing = !this.stopBlindRequestSubscription || !this.stopSubmissionSubscription;
+      if (coordinatorChanged || subscriptionsMissing) {
+        this.startCoordinatorDmSubscriptions();
+      }
+    }
     return state;
   }
 
@@ -1639,6 +1647,7 @@ export async function processOptionAQueuesForCoordinator(input: {
     runtime.bootstrapCoordinatorNpub({
       coordinatorNpub,
       summary,
+      startDmSubscriptions: false,
     });
     await runtime.processPendingBlindRequests();
     await runtime.processPendingSubmissions(input.requiredQuestionIdsByElectionId?.[electionId] ?? []);
@@ -1688,7 +1697,11 @@ export async function processOptionAQueuesForCoordinatorLive(input: {
       electionId,
       input.fallbackNsec,
     );
-    runtime.bootstrapCoordinatorNpub({ coordinatorNpub, summary });
+    runtime.bootstrapCoordinatorNpub({
+      coordinatorNpub,
+      summary,
+      startDmSubscriptions: false,
+    });
     await runtime.syncBlindRequestsFromDm();
     await runtime.processPendingBlindRequests();
     await runtime.publishPendingBlindIssuancesToDm({

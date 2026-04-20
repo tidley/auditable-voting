@@ -166,6 +166,7 @@ function buildInviteFromPublicDefinition(definition: QuestionnaireDefinition, in
 }
 
 const LEGACY_INVITE_TITLE = "Should the proposal pass?";
+const AUTO_BALLOT_REQUEST_MIN_INTERVAL_MS = 15_000;
 
 function resolveInviteDisplayTitle(invite: ElectionInviteMessage) {
   const fromDefinition = invite.definition?.title?.trim() ?? "";
@@ -216,6 +217,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [refreshNonce, setRefreshNonce] = useState(0);
   const autoRequestSentForRef = useRef<Record<string, true>>({});
+  const autoRequestInFlightForRef = useRef<Record<string, true>>({});
+  const autoRequestLastAttemptAtRef = useRef<Record<string, number>>({});
   const requestRetryAtRef = useRef<Record<string, number>>({});
   const autoSignerLoginForRef = useRef<Record<string, true>>({});
 
@@ -718,6 +721,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       ensureLocalSession({ allowInviteMissing: true });
       const wasAlreadyWaiting = Boolean(runtime.getSnapshot()?.blindRequestSent && !runtime.getSnapshot()?.credentialReady);
       await runtime.requestBlindBallot({ forceResend: true });
+      if (snapshot?.electionId && snapshot?.invitedNpub) {
+        const requestKey = `${snapshot.electionId}:${snapshot.invitedNpub}`;
+        autoRequestSentForRef.current[requestKey] = true;
+      }
       setActiveInvite(null);
       setStatus(wasAlreadyWaiting
         ? "Blind ballot request resent. Waiting for coordinator issuance."
@@ -791,7 +798,16 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     if (autoRequestSentForRef.current[key]) {
       return;
     }
+    if (autoRequestInFlightForRef.current[key]) {
+      return;
+    }
+    const lastAttemptAt = autoRequestLastAttemptAtRef.current[key] ?? 0;
+    if (Date.now() - lastAttemptAt < AUTO_BALLOT_REQUEST_MIN_INTERVAL_MS) {
+      return;
+    }
     try {
+      autoRequestInFlightForRef.current[key] = true;
+      autoRequestLastAttemptAtRef.current[key] = Date.now();
       void runtime.requestBlindBallot().then(() => {
         autoRequestSentForRef.current[key] = true;
         setActiveInvite(null);
@@ -799,8 +815,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         setRefreshNonce((value) => value + 1);
       }).catch((error) => {
         setStatus(error instanceof Error ? error.message : "Request failed.");
+      }).finally(() => {
+        delete autoRequestInFlightForRef.current[key];
       });
     } catch {
+      delete autoRequestInFlightForRef.current[key];
       // Keep manual request available if automatic send cannot proceed yet.
     }
   }, [activeInvite, latestAnnouncedQuestionnaireId, pendingInvites, runtime, snapshot]);
@@ -851,12 +870,25 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         setRefreshNonce((value) => value + 1);
         return;
       }
+      const requestKey = `${current.electionId}:${current.invitedNpub}`;
+      if (autoRequestInFlightForRef.current[requestKey]) {
+        return;
+      }
+      const lastAttemptAt = autoRequestLastAttemptAtRef.current[requestKey] ?? 0;
+      if (Date.now() - lastAttemptAt < AUTO_BALLOT_REQUEST_MIN_INTERVAL_MS) {
+        return;
+      }
+      autoRequestInFlightForRef.current[requestKey] = true;
+      autoRequestLastAttemptAtRef.current[requestKey] = Date.now();
       void runtime.requestBlindBallot().then(() => {
+        autoRequestSentForRef.current[requestKey] = true;
         setActiveInvite(null);
         setStatus("Blind ballot request sent. Waiting for coordinator issuance.");
         setRefreshNonce((value) => value + 1);
       }).catch((error) => {
         setStatus(error instanceof Error ? error.message : "Could not send blind ballot request.");
+      }).finally(() => {
+        delete autoRequestInFlightForRef.current[requestKey];
       });
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not start blind ballot request.");
@@ -1003,17 +1035,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           </ul>
         </section>
       ) : null}
-      {activeInvite && flags.canRequestBallot ? (
-        <section className='simple-settings-card' aria-label='Invite action'>
-          <p className='simple-voter-note'>
-            Invite ready for {resolveInviteDisplayTitle(activeInvite)}. Request your blind ballot to continue.
-          </p>
-          <button type='button' className='simple-voter-secondary' onClick={requestBallot}>
-            Request blind ballot now
-          </button>
-        </section>
-      ) : null}
-
       <h4 className='simple-voter-section-title'>{questionnaireDescription || questionnaireTitle}</h4>
 
       {questions.length === 0 ? (

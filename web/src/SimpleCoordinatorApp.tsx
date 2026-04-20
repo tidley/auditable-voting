@@ -3485,6 +3485,7 @@ export default function SimpleCoordinatorApp() {
       if (optionACoordinatorRuntime && optionAElectionId.trim()) {
         optionACoordinatorRuntime.bootstrapCoordinatorNpub({
           coordinatorNpub: activeCoordinatorNpub,
+          startDmSubscriptions: false,
         });
       }
       setKnownVoterInviteStatus(
@@ -3534,6 +3535,7 @@ export default function SimpleCoordinatorApp() {
           if (optionACoordinatorRuntime && optionAElectionId.trim()) {
             optionACoordinatorRuntime.bootstrapCoordinatorNpub({
               coordinatorNpub: activeCoordinatorNpub,
+              startDmSubscriptions: false,
             });
           }
           return 0;

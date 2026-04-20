@@ -2082,13 +2082,13 @@ code {
 
 .simple-voter-choice {
   min-width: 0;
-  min-height: 72px;
-  padding: 12px 14px;
+  min-height: 36px;
+  padding: 6px 7px;
   border: 1px solid #64748b;
   background: #0f172a;
   color: #f8fafc;
   font: inherit;
-  font-size: 1.55rem;
+  font-size: 0.775rem;
   font-weight: 700;
   cursor: pointer;
   transition: box-shadow 240ms ease, transform 240ms ease, border-color 240ms ease;
@@ -3170,7 +3170,6 @@ code {
     flex-direction: column;
   }
 
-  .token-fingerprint-symbols,
   .simple-voter-head,
   .simple-submit-row,
   .simple-fingerprint-card {
@@ -4497,7 +4496,7 @@ body.demo-page .demo-workspace {
   }
 
   .simple-voter-title {
-    font-size: clamp(1.72rem, 7vw, 2rem);
+    font-size: clamp(1.4rem, 5.8vw, 1.74rem);
   }
 
   .simple-voter-tabs {
@@ -4544,8 +4543,8 @@ body.demo-page .demo-workspace {
   }
 
   .simple-voter-choice {
-    min-height: 64px;
-    font-size: 1.35rem;
+    min-height: 32px;
+    font-size: 0.675rem;
   }
 
   .simple-vote-entry {
