@@ -5754,9 +5754,6 @@ export default function SimpleCoordinatorApp() {
             {optionAElectionId ? (
               <SimpleCollapsibleSection title='Known voters and invites'>
                 <div className='simple-voter-field-stack'>
-                  <p className='simple-voter-note'>
-                    Optional: add known voter npubs, send invite DMs, and manually authorise unexpected requesters.
-                  </p>
                   <div className='simple-voter-action-row simple-voter-action-row-inline'>
                     <input
                       className='simple-voter-input simple-voter-input-inline'
@@ -5770,7 +5767,7 @@ export default function SimpleCoordinatorApp() {
                       disabled={!knownVoterDraftNpub.trim()}
                       onClick={addKnownVoterNpub}
                     >
-                      Add known voter
+                      Add
                     </button>
                     <button
                       type='button'
@@ -5786,21 +5783,6 @@ export default function SimpleCoordinatorApp() {
                       onClick={processKnownVoterRequests}
                     >
                       Process requests
-                    </button>
-                    <button
-                      type='button'
-                      className='simple-voter-secondary'
-                      onClick={processKnownVoterRequests}
-                    >
-                      Check responses
-                    </button>
-                    <button
-                      type='button'
-                      className='simple-voter-secondary'
-                      onClick={sendInvitesToAllWhitelistedVoters}
-                      disabled={optionAKnownVoters.length === 0}
-                    >
-                      Invite all whitelisted
                     </button>
                   </div>
                   {importedKnownVoterContacts.length > 0 ? (
@@ -5865,22 +5847,41 @@ export default function SimpleCoordinatorApp() {
                     </div>
                   ) : null}
                   {optionAKnownVoters.length > 0 ? (
-                    <ul className='simple-vote-status-list'>
-                      {optionAKnownVoters.map((entry) => (
-                        <li key={entry.invitedNpub}>
-                          <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-                          {deriveActorDisplayId(entry.invitedNpub)} - {entry.claimState}
-                          <button
-                            type='button'
-                            className='simple-voter-secondary'
-                            style={{ marginLeft: 8 }}
-                            onClick={() => sendInviteToKnownVoter(entry.invitedNpub)}
-                          >
-                            {entry.claimState === "invited" ? "Resend invite" : "Send invite"}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
+                    <>
+                      <ul className='simple-vote-status-list'>
+                        {optionAKnownVoters.map((entry) => (
+                          <li key={entry.invitedNpub}>
+                            <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
+                            {deriveActorDisplayId(entry.invitedNpub)} - {entry.claimState}
+                            <button
+                              type='button'
+                              className='simple-voter-secondary'
+                              style={{ marginLeft: 8 }}
+                              onClick={() => sendInviteToKnownVoter(entry.invitedNpub)}
+                            >
+                              {entry.claimState === "invited" ? "Resend invite" : "Send invite"}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                      <div className='simple-voter-action-row simple-voter-action-row-inline'>
+                        <button
+                          type='button'
+                          className='simple-voter-secondary'
+                          onClick={sendInvitesToAllWhitelistedVoters}
+                          disabled={optionAKnownVoters.length === 0}
+                        >
+                          Invite all whitelisted
+                        </button>
+                        <button
+                          type='button'
+                          className='simple-voter-secondary'
+                          onClick={processKnownVoterRequests}
+                        >
+                          Check responses
+                        </button>
+                      </div>
+                    </>
                   ) : (
                     <p className='simple-voter-note'>No known voters added yet.</p>
                   )}
