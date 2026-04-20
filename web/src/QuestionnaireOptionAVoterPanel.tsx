@@ -617,16 +617,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
   }
 
-  function createNewId() {
-    setRuntime(electionId.trim()
-      ? new QuestionnaireOptionAVoterRuntime(createSignerService(), electionId, props.localVoterNsec)
-      : null);
-    setSignedInNpub("");
-    setActiveInvite(null);
-    setSelectedInviteKey("");
-    setStatus("Use Login to sign in with a signer account.");
-  }
-
   function pushAnswers() {
     if (!runtime) {
       return;
@@ -830,7 +820,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     || inviteDropdownOptions.find((invite) => invite.electionId === electionId.trim())?.coordinatorNpub?.trim()
     || "";
   const coordinatorLabel = coordinatorNpub ? deriveActorDisplayId(coordinatorNpub) : "Unknown";
-  const canSwitchIdentity = !snapshot?.blindRequestSent && !snapshot?.credentialReady && !snapshot?.submission;
   const requestStateText = snapshot?.blindRequestSent ? "Sent" : "Not sent";
   const credentialStateText = snapshot?.credentialReady
     ? "Received"
@@ -848,15 +837,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   return (
     <div className='simple-voter-card'>
       <div className='simple-questionnaire-header'>
-        <div>
-          <h3 className='simple-voter-question'>Blind ballot</h3>
-          <p className='simple-voter-note'>Private credential for this questionnaire</p>
-        </div>
         <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
           {!snapshot?.loginVerified ? (
             <button type='button' className='simple-voter-secondary' onClick={() => void login()}>Login</button>
           ) : null}
-          <button type='button' className='simple-voter-secondary' disabled={!canSwitchIdentity} onClick={createNewId}>Switch ID</button>
         </div>
       </div>
 
