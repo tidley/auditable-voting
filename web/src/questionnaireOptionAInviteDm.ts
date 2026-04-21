@@ -9,7 +9,7 @@ import { parseInviteFromUrl } from "./questionnaireInvite";
 import { mapRelayPublishResult } from "./nostrPublishResult";
 
 const OPTION_A_INVITE_DM_RELAYS_MAX = 12;
-const OPTION_A_INVITE_DM_READ_RELAYS_MAX = 3;
+const OPTION_A_INVITE_DM_READ_RELAYS_MAX = 8;
 const OPTION_A_INVITE_DM_MAX_WAIT_MS = 1500;
 const OPTION_A_INVITE_DM_STAGGER_MS = 250;
 const OPTION_A_INVITE_DM_MIN_PUBLISH_INTERVAL_MS = 300;
@@ -160,6 +160,25 @@ function selectPublishRelays(relays: string[]) {
   return relays.slice(0, Math.min(OPTION_A_INVITE_DM_RELAYS_MAX, relays.length));
 }
 
+function selectHintRelays(relays: string[]) {
+  return relays.slice(0, Math.min(OPTION_A_INVITE_DM_RELAYS_MAX, relays.length));
+}
+
+function mixRecipientAndFallbackRelays(recipientRelays: string[], fallbackRelays: string[]) {
+  const mixed: string[] = [];
+  const add = (relay?: string) => {
+    const value = relay?.trim();
+    if (value && !mixed.includes(value)) {
+      mixed.push(value);
+    }
+  };
+  recipientRelays.slice(0, 3).forEach(add);
+  fallbackRelays.slice(0, 3).forEach(add);
+  recipientRelays.slice(3).forEach(add);
+  fallbackRelays.slice(3).forEach(add);
+  return normalizeRelaysRust(mixed);
+}
+
 function parseNip17RelayListEvent(event: { kind?: number; tags?: string[][] }) {
   if (event.kind !== KIND_NIP17_RELAY_LIST || !Array.isArray(event.tags)) {
     return [] as string[];
@@ -188,6 +207,14 @@ async function fetchRecipientNip17Relays(input: {
   } catch {
     return [] as string[];
   }
+}
+
+async function resolveRecipientReadRelays(recipientHex: string, fallbackRelays: string[]) {
+  const recipientRelays = await fetchRecipientNip17Relays({
+    recipientHex,
+    discoveryRelays: selectHintRelays(fallbackRelays),
+  });
+  return selectReadRelays(mixRecipientAndFallbackRelays(recipientRelays, fallbackRelays));
 }
 
 function parseInviteDmContent(content: string, tags?: string[][]): ElectionInviteMessage | null {
@@ -420,7 +447,7 @@ export async function fetchOptionAInviteDms(input: {
   const recipientRaw = await input.signer.getPublicKey();
   const recipientNpub = toNpub(recipientRaw);
   const recipientHex = toHexPubkey(recipientRaw);
-  const relays = selectReadRelays(buildRelays(input.relays));
+  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
   optionAInviteDmLog("fetch_started", {
     recipientNpub,
     electionId: input.electionId ?? "",
@@ -507,7 +534,7 @@ export async function fetchOptionAInviteDmsWithNsec(input: {
   const secretKey = decodeNsecSecretKey(input.nsec);
   const recipientHex = getPublicKey(secretKey);
   const recipientNpub = toNpub(recipientHex);
-  const relays = selectReadRelays(buildRelays(input.relays));
+  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
   const events = await queryInviteDmSync(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],

@@ -210,12 +210,15 @@ describe("questionnaireOptionAInviteDm", () => {
     expect(invites).toHaveLength(1);
     expect(invites[0]?.electionId).toBe("e2");
     expect(invites[0]?.invitedNpub).toBe(recipientNpub);
-    expect(querySync.mock.calls[0]?.[1]).toMatchObject({
+    const giftWrapQuery = querySync.mock.calls
+      .map((call) => call?.[1])
+      .find((filter) => Array.isArray(filter?.kinds) && filter.kinds.includes(1059));
+    expect(giftWrapQuery).toMatchObject({
       kinds: [1059],
       "#p": [recipientHex],
       limit: 20,
     });
-    expect(typeof querySync.mock.calls[0]?.[1]?.since).toBe("number");
+    expect(typeof giftWrapQuery?.since).toBe("number");
   });
 
   it("recovers invite payload from DM tags when message content is a short link", async () => {
