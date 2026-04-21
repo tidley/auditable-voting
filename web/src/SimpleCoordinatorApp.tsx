@@ -863,9 +863,6 @@ export default function SimpleCoordinatorApp() {
   }, [optionACoordinatorRuntime]);
   const optionAKnownVoters = useMemo(() => {
     const runtimeWhitelist = Object.values(optionACoordinatorRuntime?.getSnapshot()?.whitelist ?? {});
-    if (runtimeWhitelist.length > 0) {
-      return runtimeWhitelist;
-    }
     if (!activeCoordinatorNpub.trim() || !optionAElectionId.trim()) {
       return runtimeWhitelist;
     }
@@ -873,7 +870,23 @@ export default function SimpleCoordinatorApp() {
       coordinatorNpub: activeCoordinatorNpub,
       electionId: optionAElectionId,
     });
-    return Object.values(persisted?.whitelist ?? {});
+    const persistedWhitelist = Object.values(persisted?.whitelist ?? {});
+    const mergedByNpub = new Map<string, (typeof runtimeWhitelist)[number]>();
+    for (const entry of persistedWhitelist) {
+      const npub = entry.invitedNpub.trim();
+      if (!npub) {
+        continue;
+      }
+      mergedByNpub.set(npub, entry);
+    }
+    for (const entry of runtimeWhitelist) {
+      const npub = entry.invitedNpub.trim();
+      if (!npub) {
+        continue;
+      }
+      mergedByNpub.set(npub, entry);
+    }
+    return [...mergedByNpub.values()];
   }, [activeCoordinatorNpub, optionACoordinatorRuntime, optionAElectionId, knownVoterInviteRefreshNonce]);
   const invitedKnownVoterSet = useMemo(
     () => new Set(
