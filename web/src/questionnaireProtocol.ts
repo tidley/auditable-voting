@@ -128,6 +128,7 @@ export type QuestionnairePublishedResponseRef = {
   authorPubkey: string;
   submittedAt: number;
   accepted: boolean;
+  answers?: QuestionnaireResponseAnswer[];
 };
 
 export type QuestionnaireResultSummary = {

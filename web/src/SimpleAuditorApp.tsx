@@ -728,7 +728,7 @@ export default function SimpleAuditorApp() {
                 placeholder='Search by voter npub, response ID, or token...'
               />
               {filteredResponseDetails.length > 0 ? (
-                <ul className='simple-voter-list'>
+                <ul className='simple-voter-list simple-auditor-result-list'>
                   {filteredResponseDetails.map((entry) => (
                     <li key={entry.event.id} className='simple-voter-list-item'>
                       <div className='simple-auditor-result-row'>
@@ -872,6 +872,12 @@ function mergeAuditorResponseDetails(
       byKey.set(key, detail);
       continue;
     }
+    const existingAnswerCount = Array.isArray(existing.response.answers) ? existing.response.answers.length : 0;
+    const nextAnswerCount = Array.isArray(detail.response.answers) ? detail.response.answers.length : 0;
+    if (nextAnswerCount > existingAnswerCount) {
+      byKey.set(key, detail);
+      continue;
+    }
     if (existing.includedInLatestPublish !== detail.includedInLatestPublish) {
       byKey.set(key, existing.includedInLatestPublish ? existing : detail);
       continue;
@@ -951,7 +957,7 @@ function optionASummaryRefToAuditorDetail(input: {
         questionnaireId: input.questionnaireId,
         signature: "summary_reference",
       },
-      answers: [],
+      answers: input.ref.answers ?? [],
     },
     accepted: input.ref.accepted,
     rejectionReason: input.ref.accepted ? null : "duplicate_nullifier",

@@ -1814,6 +1814,21 @@ code {
   gap: 12px;
 }
 
+.simple-auditor-result-list {
+  padding-left: 0;
+  list-style: none;
+}
+
+.simple-auditor-result-list .simple-voter-list-item {
+  margin-bottom: 0;
+}
+
+.simple-auditor-result-list .simple-voter-list-item + .simple-voter-list-item {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(125, 211, 252, 0.18);
+}
+
 .simple-auditor-result-marker .token-fingerprint {
   align-items: flex-start;
 }

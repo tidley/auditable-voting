@@ -1418,6 +1418,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             authorPubkey: response.authorPubkey,
             submittedAt: response.payload.submittedAt,
             accepted: true,
+            answers: response.payload.answers,
           };
         })
         .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));

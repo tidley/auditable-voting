@@ -73,6 +73,7 @@ This is the practical order of operations for the current app.
 1. Open **Auditor** view.
 2. Review recent public questionnaires or filter by coordinator npub and/or questionnaire ID.
 3. Confirm accepted unique responder totals and published response/result state match expectations.
+4. If relays fragmented the separate public response events, the published result summary now still carries slim per-response refs and answer payloads so Auditor can reconstruct the detailed responder rows.
 
 ### Operational notes
 

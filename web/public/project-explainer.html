@@ -365,7 +365,7 @@ flowchart LR
   E --> V --> D --> T --> R
 ```
 
-Auditors can inspect recent public questionnaires, public round data, and published result summaries. When the coordinator closes and publishes a questionnaire, it also attempts to publish accepted response payload events, including free-text answers, so auditors can inspect full results where those public payload events were accepted by relays. Private and free-text answer payloads remain unavailable to public auditors if only the aggregate summary was published or if the per-response payload events were not discoverable.
+Auditors can inspect recent public questionnaires, public round data, and published result summaries. When the coordinator closes and publishes a questionnaire, it also attempts to publish accepted response payload events, including free-text answers, so auditors can inspect full results where those public payload events were accepted by relays. The published result summary now also carries canonical per-response refs with slim answer payloads, so the auditor can still render the detailed responder rows when relays fragment the separate public response events.
 
 The auditor view keeps normal refreshes bounded to recent questionnaires to avoid relay pressure. Use `Search historic data` next to the questionnaire selector to explicitly scan a wider historical window when an older published questionnaire or result payload is missing from the default list.
 

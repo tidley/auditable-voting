@@ -65,6 +65,7 @@ The shipped app currently includes:
 - voter questionnaire participation history is now stored locally and included in voter backups/restores
 - auditor round selection now supports lead-coordinator filter, coordinator-npub filter, and free-text search (npub/round ID/prompt), with slower non-overlapping refreshes to reduce relay REQ spikes
 - auditor questionnaire discovery now reads recent public questionnaire definitions by kind-only backfill when no questionnaire ID is selected, then shows state and published response totals when available
+- published questionnaire result summaries now carry canonical per-response refs plus slim answer payloads, so Auditor can still show full responder rows when relays fragment the separate public response events
 - auditor questionnaire discovery has an explicit `Search historic data` action next to the questionnaire selector for wider historical scans when older published questionnaires or public result payloads are not in the default recent list
 - optional relay hint resolution via NIP-65, disabled by default
 - a growing Rust/Wasm core for deterministic protocol logic
