@@ -1689,8 +1689,23 @@ export class QuestionnaireOptionACoordinatorRuntime {
   async authorizeRequester(invitedNpub: string) {
     optionAFlowLog("coordinator", "authorize_requester", { electionId: this.electionId, invitedNpub });
     this.addWhitelistNpub(invitedNpub);
+    const pendingForVoter = [...(this.pendingAuthorizationsByNpub[invitedNpub] ?? [])];
+    for (const request of pendingForVoter) {
+      enqueueBlindRequest(request);
+    }
     delete this.pendingAuthorizationsByNpub[invitedNpub];
-    return this.processPendingBlindRequests();
+    await this.processPendingBlindRequests();
+    const delivered = await this.publishPendingBlindIssuancesToDm({
+      requestIds: pendingForVoter.map((request) => request.requestId),
+      minRetryMs: 0,
+    });
+    optionAFlowLog("coordinator", "authorize_requester_processed", {
+      electionId: this.electionId,
+      invitedNpub,
+      pendingRequestCount: pendingForVoter.length,
+      deliveredIssuances: delivered,
+    });
+    return this.state;
   }
 
   async sendInvite(invitedNpub: string, meta: { title: string; description: string; voteUrl: string }) {

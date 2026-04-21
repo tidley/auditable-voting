@@ -3605,12 +3605,12 @@ export default function SimpleCoordinatorApp() {
       document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, [activeCoordinatorNpub, optionACoordinatorRuntime, optionAElectionId, keypair?.nsec, signerNpub]);
-  function authorizePendingRequester(invitedNpub: string) {
+  async function authorizePendingRequester(invitedNpub: string) {
     if (!optionACoordinatorRuntime) {
       return;
     }
     try {
-      optionACoordinatorRuntime.authorizeRequester(invitedNpub);
+      await optionACoordinatorRuntime.authorizeRequester(invitedNpub);
       setKnownVoterInviteStatus(`Authorised ${deriveActorDisplayId(invitedNpub)} and processed request.`);
       setKnownVoterInviteRefreshNonce((value) => value + 1);
     } catch (error) {
