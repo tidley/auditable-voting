@@ -9,7 +9,8 @@ import { parseInviteFromUrl } from "./questionnaireInvite";
 import { mapRelayPublishResult } from "./nostrPublishResult";
 
 const OPTION_A_INVITE_DM_RELAYS_MAX = 12;
-const OPTION_A_INVITE_DM_READ_RELAYS_MAX = 8;
+const OPTION_A_INVITE_DM_READ_RELAYS_MAX = 3;
+const OPTION_A_INVITE_DM_READ_RELAYS_FALLBACK_MAX = 8;
 const OPTION_A_INVITE_DM_MAX_WAIT_MS = 1500;
 const OPTION_A_INVITE_DM_STAGGER_MS = 250;
 const OPTION_A_INVITE_DM_MIN_PUBLISH_INTERVAL_MS = 300;
@@ -152,8 +153,8 @@ function buildRelays(relays?: string[]) {
   return normalizeRelaysRust([...(relays ?? []), ...SIMPLE_DM_RELAYS]);
 }
 
-function selectReadRelays(relays: string[]) {
-  return relays.slice(0, Math.min(OPTION_A_INVITE_DM_READ_RELAYS_MAX, relays.length));
+function selectReadRelays(relays: string[], maxRelays = OPTION_A_INVITE_DM_READ_RELAYS_MAX) {
+  return relays.slice(0, Math.min(maxRelays, relays.length));
 }
 
 function selectPublishRelays(relays: string[]) {
@@ -447,20 +448,31 @@ export async function fetchOptionAInviteDms(input: {
   const recipientRaw = await input.signer.getPublicKey();
   const recipientNpub = toNpub(recipientRaw);
   const recipientHex = toHexPubkey(recipientRaw);
-  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
+  const resolvedReadRelays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
+  const primaryRelays = selectReadRelays(resolvedReadRelays, OPTION_A_INVITE_DM_READ_RELAYS_MAX);
   optionAInviteDmLog("fetch_started", {
     recipientNpub,
     electionId: input.electionId ?? "",
-    relayCount: relays.length,
+    relayCount: primaryRelays.length,
   });
   const lookbackSeconds = Math.max(60, input.lookbackSeconds ?? OPTION_A_INVITE_DM_SIGNER_LOOKBACK_SECONDS);
   const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? OPTION_A_INVITE_DM_SIGNER_DECRYPT_LIMIT);
-  const events = await queryInviteDmSync(relays, {
+  const filter = {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     since: Math.round(Date.now() / 1000) - lookbackSeconds,
     limit: Math.max(1, Math.min(input.limit ?? maxDecryptAttempts, maxDecryptAttempts)),
-  });
+  } as const;
+  const primaryEvents = await queryInviteDmSync(primaryRelays, filter);
+  const shouldFallbackRead = primaryEvents.length === 0
+    && resolvedReadRelays.length > primaryRelays.length;
+  const fallbackRelays = shouldFallbackRead
+    ? selectReadRelays(resolvedReadRelays, OPTION_A_INVITE_DM_READ_RELAYS_FALLBACK_MAX)
+    : [];
+  const fallbackEvents = shouldFallbackRead
+    ? await queryInviteDmSync(fallbackRelays, filter).catch(() => [] as NostrEvent[])
+    : [];
+  const events = [...primaryEvents, ...fallbackEvents];
 
   const unique = new Map<string, ElectionInviteMessage>();
   const sorted = [...events]
@@ -534,12 +546,23 @@ export async function fetchOptionAInviteDmsWithNsec(input: {
   const secretKey = decodeNsecSecretKey(input.nsec);
   const recipientHex = getPublicKey(secretKey);
   const recipientNpub = toNpub(recipientHex);
-  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
-  const events = await queryInviteDmSync(relays, {
+  const resolvedReadRelays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
+  const primaryRelays = selectReadRelays(resolvedReadRelays, OPTION_A_INVITE_DM_READ_RELAYS_MAX);
+  const filter = {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     limit: Math.max(1, input.limit ?? 50),
-  });
+  } as const;
+  const primaryEvents = await queryInviteDmSync(primaryRelays, filter);
+  const shouldFallbackRead = primaryEvents.length === 0
+    && resolvedReadRelays.length > primaryRelays.length;
+  const fallbackRelays = shouldFallbackRead
+    ? selectReadRelays(resolvedReadRelays, OPTION_A_INVITE_DM_READ_RELAYS_FALLBACK_MAX)
+    : [];
+  const fallbackEvents = shouldFallbackRead
+    ? await queryInviteDmSync(fallbackRelays, filter).catch(() => [] as NostrEvent[])
+    : [];
+  const events = [...primaryEvents, ...fallbackEvents];
 
   const unique = new Map<string, ElectionInviteMessage>();
   const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
