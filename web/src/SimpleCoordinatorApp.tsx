@@ -888,14 +888,24 @@ export default function SimpleCoordinatorApp() {
     () => optionACoordinatorRuntime?.getPendingAuthorizations() ?? [],
     [optionACoordinatorRuntime, knownVoterInviteRefreshNonce],
   );
-  const optionAKnownVoterSet = useMemo(
-    () => new Set(
-      optionAKnownVoters
-        .map((entry) => entry.invitedNpub.trim())
-        .filter((value) => value.length > 0),
-    ),
-    [optionAKnownVoters],
-  );
+  const isKnownOptionAVoter = useCallback((invitedNpub: string) => {
+    const normalized = invitedNpub.trim();
+    if (!normalized) {
+      return false;
+    }
+    const runtimeWhitelist = optionACoordinatorRuntime?.getSnapshot()?.whitelist ?? {};
+    if (runtimeWhitelist[normalized]) {
+      return true;
+    }
+    if (!activeCoordinatorNpub.trim() || !optionAElectionId.trim()) {
+      return false;
+    }
+    const persisted = loadCoordinatorState({
+      coordinatorNpub: activeCoordinatorNpub,
+      electionId: optionAElectionId,
+    });
+    return Boolean(persisted?.whitelist?.[normalized]);
+  }, [activeCoordinatorNpub, optionACoordinatorRuntime, optionAElectionId]);
   const optionAHasInviteQueue = optionAPendingAuthorizations.length > 0;
   const optionABlindSigningPublicKey = optionACoordinatorRuntime?.getSnapshot()?.election.blindSigningPublicKey ?? null;
   const optionAAcceptedResponses = useMemo(() => {
@@ -3646,7 +3656,7 @@ export default function SimpleCoordinatorApp() {
     }
     for (const pending of optionAPendingAuthorizations) {
       const invitedNpub = pending.invitedNpub.trim();
-      if (!invitedNpub || !optionAKnownVoterSet.has(invitedNpub)) {
+      if (!invitedNpub || !isKnownOptionAVoter(invitedNpub)) {
         continue;
       }
       const key = `${optionAElectionId}:${invitedNpub}`;
@@ -3658,7 +3668,7 @@ export default function SimpleCoordinatorApp() {
         optionAAutoAuthorizeInFlightRef.current.delete(key);
       });
     }
-  }, [optionACoordinatorRuntime, optionAElectionId, optionAKnownVoterSet, optionAPendingAuthorizations]);
+  }, [isKnownOptionAVoter, optionACoordinatorRuntime, optionAElectionId, optionAPendingAuthorizations]);
 
   function restoreIdentity(nextNsec: string) {
     const trimmed = nextNsec.trim();
