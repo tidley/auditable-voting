@@ -222,7 +222,7 @@ export default function SimpleAuditorApp() {
           })
           .filter((entry): entry is AuditorQuestionnaireResponseDetail => Boolean(entry))
           .sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0));
-        if (fallbackDetails.length > 0) {
+        if (details.length === 0 && fallbackDetails.length > 0) {
           details = fallbackDetails;
         }
       }

@@ -3350,7 +3350,7 @@ export default function SimpleCoordinatorApp() {
     });
   }
 
-  function addKnownVoterNpub() {
+  async function inviteKnownVoterNpub() {
     if (!optionACoordinatorRuntime) {
       return;
     }
@@ -3366,8 +3366,9 @@ export default function SimpleCoordinatorApp() {
     try {
       optionACoordinatorRuntime.addWhitelistNpub(npub);
       setKnownVoterDraftNpub("");
-      setKnownVoterInviteStatus(`Added ${deriveActorDisplayId(npub)} to known voters.`);
+      setKnownVoterInviteStatus(`Inviting ${deriveActorDisplayId(npub)}...`);
       setKnownVoterInviteRefreshNonce((value) => value + 1);
+      await sendInviteToKnownVoter(npub);
     } catch (error) {
       setKnownVoterInviteStatus(error instanceof Error ? error.message : "Could not add known voter.");
     }
@@ -5856,9 +5857,9 @@ export default function SimpleCoordinatorApp() {
                       type='button'
                       className='simple-voter-secondary'
                       disabled={!knownVoterDraftNpub.trim()}
-                      onClick={addKnownVoterNpub}
+                      onClick={() => void inviteKnownVoterNpub()}
                     >
-                      Add
+                      Invite
                     </button>
                     <button
                       type='button'

@@ -169,6 +169,7 @@ const LEGACY_INVITE_TITLE = "Should the proposal pass?";
 const AUTO_BALLOT_REQUEST_MIN_INTERVAL_MS = 15_000;
 const AUTO_BALLOT_RETRY_POLL_MS = 10_000;
 const AUTO_BALLOT_RETRY_RESEND_MS = 60_000;
+const AUTO_BALLOT_SIGNER_REFRESH_POLL_MS = 30_000;
 
 function resolveInviteDisplayTitle(invite: ElectionInviteMessage) {
   const fromDefinition = invite.definition?.title?.trim() ?? "";
@@ -890,6 +891,23 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       window.clearInterval(intervalId);
     };
   }, [runtime, props.localVoterNsec, snapshot?.electionId, snapshot?.invitedNpub, snapshot?.loginVerified, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission]);
+
+  useEffect(() => {
+    if (!runtime || !snapshot?.loginVerified || !snapshot.blindRequestSent || snapshot.credentialReady || snapshot.submission) {
+      return;
+    }
+    const hasLocalSecretKey = Boolean(props.localVoterNsec?.trim());
+    if (hasLocalSecretKey) {
+      return;
+    }
+    const intervalId = window.setInterval(() => {
+      runtime.refreshIssuanceAndAcceptance();
+      setRefreshNonce((value) => value + 1);
+    }, AUTO_BALLOT_SIGNER_REFRESH_POLL_MS);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [runtime, props.localVoterNsec, snapshot?.loginVerified, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission]);
 
   useEffect(() => {
     if (!runtime || !props.requestBlindBallotNonce || props.requestBlindBallotNonce <= 0) {

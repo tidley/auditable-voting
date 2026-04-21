@@ -163,6 +163,7 @@ const SIMPLE_FOLLOW_RETRY_MIN_AGE_MS = 30000;
 const SIMPLE_FOLLOW_RETRY_INTERVAL_MS = 10000;
 const SIMPLE_REQUEST_RETRY_MIN_AGE_MS = 30000;
 const SIMPLE_REQUEST_RETRY_INTERVAL_MS = 10000;
+const SIMPLE_CONFIGURE_RETRY_REVEAL_MS = 30000;
 const QUESTIONNAIRE_ANNOUNCEMENT_VERIFY_INTERVAL_MS = 7000;
 
 function wait(ms: number) {
@@ -349,6 +350,7 @@ export default function SimpleUiApp() {
   const [activeTab, setActiveTab] = useState<VoterTab>(() => (linkedQuestionnaireId ? "vote" : "configure"));
   const [optionARequestBlindBallotNonce, setOptionARequestBlindBallotNonce] = useState(0);
   const [showVoteDetails, setShowVoteDetails] = useState(false);
+  const [retryUnresponsiveVisibleAt, setRetryUnresponsiveVisibleAt] = useState<number | null>(null);
   const [votePaneUnlocked, setVotePaneUnlocked] = useState(false);
   const [questionnaireContext, setQuestionnaireContext] = useState<{ hasDefinition: boolean; state: string | null }>({
     hasDefinition: false,
@@ -2525,6 +2527,36 @@ export default function SimpleUiApp() {
     votePaneUnlocked
     || questionnaireContext.hasDefinition
     || readyAnnouncedQuestionnaireIds.length > 0;
+  const shouldDelayRetryButton =
+    hasUnresponsiveCoordinators
+    && coordinatorsHaveBeenNotified
+    && !questionnaireVoteReady;
+  const showRetryUnresponsiveButton =
+    shouldDelayRetryButton
+    && retryUnresponsiveVisibleAt !== null
+    && Date.now() >= retryUnresponsiveVisibleAt;
+
+  useEffect(() => {
+    if (!shouldDelayRetryButton) {
+      setRetryUnresponsiveVisibleAt(null);
+      return;
+    }
+    setRetryUnresponsiveVisibleAt((current) => current ?? (Date.now() + SIMPLE_CONFIGURE_RETRY_REVEAL_MS));
+  }, [shouldDelayRetryButton]);
+
+  useEffect(() => {
+    if (!shouldDelayRetryButton || retryUnresponsiveVisibleAt === null) {
+      return;
+    }
+    const delayMs = retryUnresponsiveVisibleAt - Date.now();
+    if (delayMs <= 0) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      setRetryUnresponsiveVisibleAt(Date.now());
+    }, delayMs + 20);
+    return () => window.clearTimeout(timeoutId);
+  }, [retryUnresponsiveVisibleAt, shouldDelayRetryButton]);
   const waitingForQuestionnaireData =
     !questionnaireContext.hasDefinition
     && announcedQuestionnaireIds.length > 0
@@ -2933,7 +2965,7 @@ export default function SimpleUiApp() {
                   Vote
                 </button>
               </div>
-            ) : hasUnresponsiveCoordinators ? (
+            ) : showRetryUnresponsiveButton ? (
               <div className='simple-voter-action-row simple-voter-action-row-tight'>
                 <button
                   type='button'

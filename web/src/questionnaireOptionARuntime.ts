@@ -271,14 +271,12 @@ export class QuestionnaireOptionAVoterRuntime {
       this.stopVoterDmSubscriptions();
       return;
     }
-    const shouldSubscribe = Boolean(this.state.blindRequestSent || this.state.submission);
-    if (!shouldSubscribe) {
-      this.stopVoterDmSubscriptions();
-      return;
-    }
-    if (this.stopBlindIssuanceSubscription || this.stopAcceptanceSubscription) {
-      return;
-    }
+    const shouldSubscribeBlindIssuance = Boolean(
+      this.state.blindRequestSent && !this.state.credentialReady,
+    );
+    const shouldSubscribeAcceptance = Boolean(
+      this.state.submission && this.state.submissionAccepted === null,
+    );
     const toSince = (value?: string | null) => {
       const lookbackFloor = Math.max(0, Math.floor(Date.now() / 1000) - OPTION_A_VOTER_DM_LOOKBACK_SECONDS);
       if (!value) {
@@ -295,25 +293,39 @@ export class QuestionnaireOptionAVoterRuntime {
     };
     const issuanceSince = toSince(this.state.blindRequestSentAt);
     const acceptanceSince = toSince(this.state.submission?.submittedAt) ?? issuanceSince;
-    this.stopBlindIssuanceSubscription = subscribeOptionABlindIssuanceDms({
-      signer: this.signer,
-      electionId: this.electionId,
-      since: issuanceSince,
-      onIssuance: (issuance) => {
-        storeBlindIssuance(issuance);
-        if (issuance.definition) {
-          storeCachedQuestionnaireDefinition(issuance.definition);
-        }
-      },
-    });
-    this.stopAcceptanceSubscription = subscribeOptionABallotAcceptanceDms({
-      signer: this.signer,
-      electionId: this.electionId,
-      since: acceptanceSince,
-      onAcceptance: (acceptance) => {
-        storeAcceptance(acceptance);
-      },
-    });
+
+    if (!shouldSubscribeBlindIssuance && this.stopBlindIssuanceSubscription) {
+      this.stopBlindIssuanceSubscription();
+      this.stopBlindIssuanceSubscription = null;
+    }
+    if (shouldSubscribeBlindIssuance && !this.stopBlindIssuanceSubscription) {
+      this.stopBlindIssuanceSubscription = subscribeOptionABlindIssuanceDms({
+        signer: this.signer,
+        electionId: this.electionId,
+        since: issuanceSince,
+        onIssuance: (issuance) => {
+          storeBlindIssuance(issuance);
+          if (issuance.definition) {
+            storeCachedQuestionnaireDefinition(issuance.definition);
+          }
+        },
+      });
+    }
+
+    if (!shouldSubscribeAcceptance && this.stopAcceptanceSubscription) {
+      this.stopAcceptanceSubscription();
+      this.stopAcceptanceSubscription = null;
+    }
+    if (shouldSubscribeAcceptance && !this.stopAcceptanceSubscription) {
+      this.stopAcceptanceSubscription = subscribeOptionABallotAcceptanceDms({
+        signer: this.signer,
+        electionId: this.electionId,
+        since: acceptanceSince,
+        onAcceptance: (acceptance) => {
+          storeAcceptance(acceptance);
+        },
+      });
+    }
   }
 
   async loginWithSigner(inviteFromUrl: ElectionInviteMessage | null) {
@@ -720,54 +732,66 @@ export class QuestionnaireOptionAVoterRuntime {
         lookbackFloor,
       );
     };
+    const needsIssuanceFetch = Boolean(this.state.blindRequestSent && !this.state.credentialReady);
+    const needsAcceptanceFetch = Boolean(this.state.submission && this.state.submissionAccepted === null);
     const requestSince = toSince(this.state.blindRequestSentAt);
     const acceptanceSince = toSince(this.state.submission?.submittedAt) ?? requestSince;
     if (!this.refreshFetchInFlight) {
-      this.refreshFetchInFlight = true;
-      const blindIssuanceFetch = this.fallbackNsec?.trim()
-        ? fetchOptionABlindIssuanceDmsWithNsec({
-          nsec: this.fallbackNsec,
-          electionId,
-          limit: 100,
-        })
-        : fetchOptionABlindIssuanceDms({
-          signer: this.signer,
-          electionId,
-          limit: 30,
-          maxDecryptAttempts: 30,
-          since: requestSince,
-        });
-      const acceptanceReadNsec = this.state.responseNsec?.trim() || this.fallbackNsec?.trim() || "";
-      const acceptanceFetch = acceptanceReadNsec
-        ? fetchOptionABallotAcceptanceDmsWithNsec({
-          nsec: acceptanceReadNsec,
-          electionId,
-          limit: 100,
-        })
-        : fetchOptionABallotAcceptanceDms({
-          signer: this.signer,
-          electionId,
-          limit: 30,
-          maxDecryptAttempts: 30,
-          since: acceptanceSince,
-        });
-      void Promise.all([
-        blindIssuanceFetch.then((issuanceMessages) => {
-          for (const issuance of issuanceMessages) {
-            storeBlindIssuance(issuance);
-            if (issuance.definition) {
-              storeCachedQuestionnaireDefinition(issuance.definition);
+      const fetchTasks: Array<Promise<void>> = [];
+      if (needsIssuanceFetch) {
+        const blindIssuanceFetch = this.fallbackNsec?.trim()
+          ? fetchOptionABlindIssuanceDmsWithNsec({
+            nsec: this.fallbackNsec,
+            electionId,
+            limit: 100,
+          })
+          : fetchOptionABlindIssuanceDms({
+            signer: this.signer,
+            electionId,
+            limit: 30,
+            maxDecryptAttempts: 30,
+            since: requestSince,
+          });
+        fetchTasks.push(
+          blindIssuanceFetch.then((issuanceMessages) => {
+            for (const issuance of issuanceMessages) {
+              storeBlindIssuance(issuance);
+              if (issuance.definition) {
+                storeCachedQuestionnaireDefinition(issuance.definition);
+              }
             }
-          }
-        }).catch(() => null),
-        acceptanceFetch.then((acceptanceMessages) => {
-          for (const acceptance of acceptanceMessages) {
-            storeAcceptance(acceptance);
-          }
-        }).catch(() => null),
-      ]).finally(() => {
-        this.refreshFetchInFlight = false;
-      });
+          }).catch(() => null).then(() => undefined),
+        );
+      }
+      if (needsAcceptanceFetch) {
+        const acceptanceReadNsec = this.state.responseNsec?.trim() || this.fallbackNsec?.trim() || "";
+        const acceptanceFetch = acceptanceReadNsec
+          ? fetchOptionABallotAcceptanceDmsWithNsec({
+            nsec: acceptanceReadNsec,
+            electionId,
+            limit: 100,
+          })
+          : fetchOptionABallotAcceptanceDms({
+            signer: this.signer,
+            electionId,
+            limit: 30,
+            maxDecryptAttempts: 30,
+            since: acceptanceSince,
+          });
+        fetchTasks.push(
+          acceptanceFetch.then((acceptanceMessages) => {
+            for (const acceptance of acceptanceMessages) {
+              storeAcceptance(acceptance);
+            }
+          }).catch(() => null).then(() => undefined),
+        );
+      }
+      if (fetchTasks.length > 0) {
+        this.refreshFetchInFlight = true;
+        void Promise.all(fetchTasks).finally(() => {
+          this.refreshFetchInFlight = false;
+        });
+      }
     }
 
     let next = this.state;
@@ -1691,6 +1715,10 @@ export class QuestionnaireOptionACoordinatorRuntime {
     let next = this.state;
 
     for (const submission of queue) {
+      const existingDecision = next.acceptanceResults[submission.submissionId];
+      if (existingDecision) {
+        continue;
+      }
       const received = reduceCoordinatorEvent(next, {
         type: "BALLOT_SUBMISSION_RECEIVED",
         submission,

@@ -15,7 +15,7 @@ type SimpleRole = "voter" | "coordinator" | "auditor";
 type GatewayAuthMode = "signer" | "nsec";
 type GatewaySignerChoice = "nip07" | "amber";
 const GATEWAY_SIGNER_NPUB_STORAGE_KEY = "app:auditable-voting:gateway:signer_npub";
-const AMBER_FULLY_TRUST_HINT = "If Amber asks, change this application to 'Fully trust'.";
+const AMBER_FULLY_TRUST_HINT = "Change from `Approve basic actions` to `I fully trust this application` when Amber opens. This allows the application to fully coordinate.";
 
 type SimpleAppShellProps = {
   initialRole?: SimpleRole;
