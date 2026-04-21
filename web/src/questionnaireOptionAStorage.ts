@@ -46,9 +46,12 @@ const REQUEST_QUEUE_KEY = "optiona:queue:requests";
 const SUBMISSION_QUEUE_KEY = "optiona:queue:submissions";
 const ISSUANCE_MAILBOX_KEY = "optiona:mailbox:issuances";
 const ISSUANCE_DELIVERY_KEY = "optiona:mailbox:issuanceDelivery";
+const REQUEST_ACK_DELIVERY_KEY = "optiona:mailbox:requestAckDelivery";
 const REQUEST_ACK_KEY = "optiona:mailbox:requestAck";
 const ISSUANCE_ACK_KEY = "optiona:mailbox:issuanceAck";
+const SUBMISSION_ACK_DELIVERY_KEY = "optiona:mailbox:submissionAckDelivery";
 const SUBMISSION_ACK_KEY = "optiona:mailbox:submissionAck";
+const ACCEPTANCE_DELIVERY_KEY = "optiona:mailbox:acceptanceDelivery";
 const ACCEPTANCE_MAILBOX_KEY = "optiona:mailbox:acceptance";
 const PRIVATE_RELAY_PREFS_KEY = "optiona:dm:relayPrefs";
 
@@ -62,6 +65,36 @@ export type BlindIssuanceDeliveryRecord = {
   lastSuccessAt?: string | null;
   lastEventId?: string | null;
   requestLastSentAt?: string | null;
+};
+
+export type BlindRequestAckDeliveryRecord = {
+  requestId: string;
+  electionId: string;
+  invitedNpub: string;
+  attempts: number;
+  successes: number;
+  lastAttemptAt?: string | null;
+  lastSuccessAt?: string | null;
+};
+
+export type BallotSubmissionAckDeliveryRecord = {
+  submissionId: string;
+  electionId: string;
+  responseNpub: string;
+  attempts: number;
+  successes: number;
+  lastAttemptAt?: string | null;
+  lastSuccessAt?: string | null;
+};
+
+export type BallotAcceptanceDeliveryRecord = {
+  submissionId: string;
+  electionId: string;
+  responseNpub: string;
+  attempts: number;
+  successes: number;
+  lastAttemptAt?: string | null;
+  lastSuccessAt?: string | null;
 };
 
 export type BlindIssuanceAckRecord = {
@@ -370,6 +403,32 @@ export function recordBlindIssuanceDeliveryAttempt(input: {
   writeJson(ISSUANCE_DELIVERY_KEY, records);
 }
 
+export function readBlindRequestAckDeliveryRecord(requestId: string) {
+  const records = readJson<Record<string, BlindRequestAckDeliveryRecord>>(REQUEST_ACK_DELIVERY_KEY, {});
+  return records[requestId] ?? null;
+}
+
+export function recordBlindRequestAckDeliveryAttempt(input: {
+  requestId: string;
+  electionId: string;
+  invitedNpub: string;
+  attemptedAt: string;
+  delivered: boolean;
+}) {
+  const records = readJson<Record<string, BlindRequestAckDeliveryRecord>>(REQUEST_ACK_DELIVERY_KEY, {});
+  const existing = records[input.requestId];
+  records[input.requestId] = {
+    requestId: input.requestId,
+    electionId: input.electionId,
+    invitedNpub: input.invitedNpub,
+    attempts: (existing?.attempts ?? 0) + 1,
+    successes: (existing?.successes ?? 0) + (input.delivered ? 1 : 0),
+    lastAttemptAt: input.attemptedAt,
+    lastSuccessAt: input.delivered ? input.attemptedAt : existing?.lastSuccessAt ?? null,
+  };
+  writeJson(REQUEST_ACK_DELIVERY_KEY, records);
+}
+
 export function storeBlindIssuanceAckRecord(input: {
   requestId: string;
   electionId: string;
@@ -456,6 +515,32 @@ export function readBallotSubmissionAckRecord(submissionId: string) {
   return records[submissionId] ?? null;
 }
 
+export function readBallotSubmissionAckDeliveryRecord(submissionId: string) {
+  const records = readJson<Record<string, BallotSubmissionAckDeliveryRecord>>(SUBMISSION_ACK_DELIVERY_KEY, {});
+  return records[submissionId] ?? null;
+}
+
+export function recordBallotSubmissionAckDeliveryAttempt(input: {
+  submissionId: string;
+  electionId: string;
+  responseNpub: string;
+  attemptedAt: string;
+  delivered: boolean;
+}) {
+  const records = readJson<Record<string, BallotSubmissionAckDeliveryRecord>>(SUBMISSION_ACK_DELIVERY_KEY, {});
+  const existing = records[input.submissionId];
+  records[input.submissionId] = {
+    submissionId: input.submissionId,
+    electionId: input.electionId,
+    responseNpub: input.responseNpub,
+    attempts: (existing?.attempts ?? 0) + 1,
+    successes: (existing?.successes ?? 0) + (input.delivered ? 1 : 0),
+    lastAttemptAt: input.attemptedAt,
+    lastSuccessAt: input.delivered ? input.attemptedAt : existing?.lastSuccessAt ?? null,
+  };
+  writeJson(SUBMISSION_ACK_DELIVERY_KEY, records);
+}
+
 export function storeAcceptance(result: BallotAcceptanceResult) {
   const mailbox = readJson<Record<string, BallotAcceptanceResult>>(ACCEPTANCE_MAILBOX_KEY, {});
   mailbox[result.submissionId] = result;
@@ -465,6 +550,32 @@ export function storeAcceptance(result: BallotAcceptanceResult) {
 export function readAcceptance(submissionId: string) {
   const mailbox = readJson<Record<string, BallotAcceptanceResult>>(ACCEPTANCE_MAILBOX_KEY, {});
   return mailbox[submissionId] ?? null;
+}
+
+export function readBallotAcceptanceDeliveryRecord(submissionId: string) {
+  const records = readJson<Record<string, BallotAcceptanceDeliveryRecord>>(ACCEPTANCE_DELIVERY_KEY, {});
+  return records[submissionId] ?? null;
+}
+
+export function recordBallotAcceptanceDeliveryAttempt(input: {
+  submissionId: string;
+  electionId: string;
+  responseNpub: string;
+  attemptedAt: string;
+  delivered: boolean;
+}) {
+  const records = readJson<Record<string, BallotAcceptanceDeliveryRecord>>(ACCEPTANCE_DELIVERY_KEY, {});
+  const existing = records[input.submissionId];
+  records[input.submissionId] = {
+    submissionId: input.submissionId,
+    electionId: input.electionId,
+    responseNpub: input.responseNpub,
+    attempts: (existing?.attempts ?? 0) + 1,
+    successes: (existing?.successes ?? 0) + (input.delivered ? 1 : 0),
+    lastAttemptAt: input.attemptedAt,
+    lastSuccessAt: input.delivered ? input.attemptedAt : existing?.lastSuccessAt ?? null,
+  };
+  writeJson(ACCEPTANCE_DELIVERY_KEY, records);
 }
 
 export function readElectionPrivateRelayPrefs(electionId: string) {

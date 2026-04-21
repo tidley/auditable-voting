@@ -39,9 +39,15 @@ import {
   readBlindRequestAckRecord,
   readElectionPrivateRelayPrefs,
   readAcceptance,
+  readBallotAcceptanceDeliveryRecord,
+  readBallotSubmissionAckDeliveryRecord,
   readBlindIssuanceAckRecord,
   readBlindIssuanceDeliveryRecord,
+  readBlindRequestAckDeliveryRecord,
   readBlindIssuance,
+  recordBallotAcceptanceDeliveryAttempt,
+  recordBallotSubmissionAckDeliveryAttempt,
+  recordBlindRequestAckDeliveryAttempt,
   recordBlindIssuanceDeliveryAttempt,
   readInviteFromMailbox,
   recordElectionPrivateRelaySuccesses,
@@ -1334,10 +1340,6 @@ export class QuestionnaireOptionACoordinatorRuntime {
   private stopBlindIssuanceAckSubscription: (() => void) | null = null;
   private liveBlindRequestProcessInFlight: Promise<void> | null = null;
   private liveSubmissionProcessInFlight: Promise<void> | null = null;
-  private acceptanceDmDeliveryStatusBySubmissionId = new Map<string, {
-    lastAttemptAt: string;
-    lastSuccessAt?: string;
-  }>();
 
   constructor(
     private readonly signer: SignerService,
@@ -1467,6 +1469,10 @@ export class QuestionnaireOptionACoordinatorRuntime {
   }
 
   private async publishBlindRequestAckDm(request: BlindBallotRequest) {
+    const delivery = readBlindRequestAckDeliveryRecord(request.requestId);
+    if (delivery?.lastSuccessAt) {
+      return;
+    }
     const ack: BlindRequestAck = {
       type: "blind_ballot_request_ack",
       schemaVersion: 1,
@@ -1475,6 +1481,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       invitedNpub: request.invitedNpub,
       ackedAt: nowIso(),
     };
+    const attemptedAt = nowIso();
     try {
       const result = await publishOptionABlindRequestAckDm({
         signer: this.signer,
@@ -1489,6 +1496,13 @@ export class QuestionnaireOptionACoordinatorRuntime {
         successes: result.successes,
         failures: result.failures,
       });
+      recordBlindRequestAckDeliveryAttempt({
+        requestId: ack.requestId,
+        electionId: ack.electionId,
+        invitedNpub: ack.invitedNpub,
+        attemptedAt,
+        delivered: result.successes > 0,
+      });
       if (result.successes > 0) {
         this.rememberPrivateRelaySuccesses(result);
       }
@@ -1498,11 +1512,22 @@ export class QuestionnaireOptionACoordinatorRuntime {
         requestId: ack.requestId,
         error: error instanceof Error ? error.message : "unknown",
       });
+      recordBlindRequestAckDeliveryAttempt({
+        requestId: ack.requestId,
+        electionId: ack.electionId,
+        invitedNpub: ack.invitedNpub,
+        attemptedAt,
+        delivered: false,
+      });
     }
   }
 
   private async publishBallotSubmissionAckDm(submission: BallotSubmission) {
     const responseNpub = submission.responseNpub ?? submission.invitedNpub;
+    const delivery = readBallotSubmissionAckDeliveryRecord(submission.submissionId);
+    if (delivery?.lastSuccessAt) {
+      return;
+    }
     const ack: BallotSubmissionAck = {
       type: "ballot_submission_ack",
       schemaVersion: 1,
@@ -1511,6 +1536,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       responseNpub,
       ackedAt: nowIso(),
     };
+    const attemptedAt = nowIso();
     try {
       const result = await publishOptionABallotSubmissionAckDm({
         signer: this.signer,
@@ -1526,6 +1552,13 @@ export class QuestionnaireOptionACoordinatorRuntime {
         successes: result.successes,
         failures: result.failures,
       });
+      recordBallotSubmissionAckDeliveryAttempt({
+        submissionId: ack.submissionId,
+        electionId: ack.electionId,
+        responseNpub,
+        attemptedAt,
+        delivered: result.successes > 0,
+      });
       if (result.successes > 0) {
         this.rememberPrivateRelaySuccesses(result);
       }
@@ -1535,6 +1568,13 @@ export class QuestionnaireOptionACoordinatorRuntime {
         submissionId: ack.submissionId,
         responseNpub,
         error: error instanceof Error ? error.message : "unknown",
+      });
+      recordBallotSubmissionAckDeliveryAttempt({
+        submissionId: ack.submissionId,
+        electionId: ack.electionId,
+        responseNpub,
+        attemptedAt,
+        delivered: false,
       });
     }
   }
@@ -2003,7 +2043,8 @@ export class QuestionnaireOptionACoordinatorRuntime {
       if (!submission) {
         continue;
       }
-      const deliveryState = this.acceptanceDmDeliveryStatusBySubmissionId.get(acceptance.submissionId);
+      const responseNpub = submission.responseNpub ?? submission.invitedNpub;
+      const deliveryState = readBallotAcceptanceDeliveryRecord(acceptance.submissionId);
       if (!options?.forceAll && deliveryState?.lastSuccessAt) {
         continue;
       }
@@ -2012,7 +2053,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       try {
         const result = await publishOptionABallotAcceptanceDm({
           signer: this.signer,
-          recipientNpub: submission.responseNpub ?? submission.invitedNpub,
+          recipientNpub: responseNpub,
           acceptance,
           fallbackNsec: this.fallbackNsec,
           relays: this.getPreferredDmRelays(),
@@ -2031,9 +2072,12 @@ export class QuestionnaireOptionACoordinatorRuntime {
       } catch {
         // Keep best-effort to avoid blocking response processing.
       } finally {
-        this.acceptanceDmDeliveryStatusBySubmissionId.set(acceptance.submissionId, {
-          lastAttemptAt: attemptedAt,
-          lastSuccessAt: deliveredNow ? attemptedAt : deliveryState?.lastSuccessAt,
+        recordBallotAcceptanceDeliveryAttempt({
+          submissionId: acceptance.submissionId,
+          electionId: this.electionId,
+          responseNpub,
+          attemptedAt,
+          delivered: deliveredNow,
         });
       }
     }

@@ -101,12 +101,16 @@ export async function fetchQuestionnaireBlindResponses(input: {
   relays?: string[];
   limit?: number;
 }) {
-  const relays = selectPublicReadRelays(buildPublicRelays(input.relays));
-  const pool = getSharedNostrPool();
-  const events = await pool.querySync(relays, {
-    kinds: [QUESTIONNAIRE_RESPONSE_BLIND_KIND],
+  const events = (await fetchQuestionnaireEventsWithFallback({
+    questionnaireId: input.questionnaireId,
+    kind: QUESTIONNAIRE_RESPONSE_BLIND_KIND,
+    relays: input.relays,
     limit: input.limit ?? 200,
-  });
+    parseQuestionnaireIdFromEvent: (event) => {
+      const parsed = parseQuestionnaireBlindResponseEvent(event.content);
+      return parsed?.questionnaireId ?? null;
+    },
+  })).events;
 
   return events
     .map((event) => ({ event, response: parseQuestionnaireBlindResponseEvent(event.content) }))
