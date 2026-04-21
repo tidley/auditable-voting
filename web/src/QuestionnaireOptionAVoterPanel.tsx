@@ -1260,6 +1260,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       : snapshot?.submission
         ? "Waiting for coordinator"
         : "Not submitted";
+  const submittedMarkerNpub = snapshot?.responseNpub ?? snapshot?.submission?.responseNpub ?? snapshot?.submission?.invitedNpub ?? "";
 
   return (
     <div className='simple-voter-card simple-optiona-voter-page'>
@@ -1439,12 +1440,16 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         <section className='simple-settings-card' aria-label='Submitted responder marker'>
           <h4 className='simple-voter-section-title'>Submitted responder marker</h4>
           <TokenFingerprint
-            tokenId={snapshot.responseNpub ?? snapshot.submission.responseNpub ?? snapshot.submission.invitedNpub}
+            tokenId={submittedMarkerNpub}
             label='Submitted responder marker'
             large
             showQr
             hideMetadata
           />
+          <p className='simple-voter-note'>Submission ID: {snapshot.submission.submissionId}</p>
+          {submittedMarkerNpub ? (
+            <p className='simple-voter-note'>Responder npub: {submittedMarkerNpub}</p>
+          ) : null}
         </section>
       ) : null}
       <section className='simple-settings-card' aria-label='Ballot progress'>

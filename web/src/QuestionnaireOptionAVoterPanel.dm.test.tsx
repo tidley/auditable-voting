@@ -549,6 +549,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
         electionId: "q_submitted_marker",
         submissionId: "submission_submitted_marker",
         invitedNpub: localVoterNpub,
+        responseNpub: "npub1" + "r".repeat(58),
         credential: "sig_submitted_marker",
         nullifier: "nullifier_submitted_marker",
         payload: {
@@ -566,5 +567,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     await screen.findByRole("region", { name: "Submitted responder marker" });
     expect(screen.getAllByLabelText(/Expand QR for token/i).length).toBeGreaterThan(0);
+    expect(screen.getByText("Submission ID: submission_submitted_marker")).toBeTruthy();
+    expect(screen.getByText("Responder npub: " + ("npub1" + "r".repeat(58)))).toBeTruthy();
   });
 });

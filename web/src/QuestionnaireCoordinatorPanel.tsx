@@ -330,6 +330,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [coordinatorNsec, setCoordinatorNsec] = useState("");
   const [coordinatorNpub, setCoordinatorNpub] = useState("");
   const [status, setStatus] = useState<string | null>(null);
+  const [isCloseAndPublishInFlight, setIsCloseAndPublishInFlight] = useState(false);
   const [latestDefinition, setLatestDefinition] = useState<QuestionnaireDefinition | null>(null);
   const [latestState, setLatestState] = useState<QuestionnaireStateValue | null>(null);
   const [latestAcceptedCount, setLatestAcceptedCount] = useState(0);
@@ -1135,10 +1136,13 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   ), [acceptedResponsesForDisplay]);
   const closeAndPublishButtonDisabled = (currentState === "open"
     ? !canCloseQuestionnaire
-    : !canPublishResults) || displayAcceptedCount <= 0;
+    : !canPublishResults) || displayAcceptedCount <= 0 || isCloseAndPublishInFlight;
   const hasIncompleteResponses = knownVoterCount > 0 && displayAcceptedCount < knownVoterCount;
   const canExportResults = currentState === "results_published" && Boolean(latestDefinition);
   const publishStatusText = useMemo(() => {
+    if (isCloseAndPublishInFlight) {
+      return currentState === "open" ? "Closing and publishing..." : "Publishing...";
+    }
     if (status === "Computing and publishing questionnaire results...") {
       return "Publishing...";
     }
@@ -1161,7 +1165,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       return "Ready to publish";
     }
     return "Nothing to publish yet";
-  }, [canPublishResults, displayAcceptedCount, latestResultAcceptedCount, latestState, status]);
+  }, [canPublishResults, currentState, displayAcceptedCount, isCloseAndPublishInFlight, latestResultAcceptedCount, latestState, status]);
 
   function exportResults() {
     const id = questionnaireId.trim();
@@ -1464,26 +1468,34 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   }
 
   async function closeAndPublishResults() {
+    if (isCloseAndPublishInFlight) {
+      return;
+    }
     if (!latestDefinition) {
       setStatus("Load the questionnaire definition before publishing results.");
       return;
     }
-    if (hasIncompleteResponses && typeof window !== "undefined") {
-      const confirmed = window.confirm(
-        `Only ${displayAcceptedCount} of ${knownVoterCount} responses have been received. Close and publish results anyway?`,
-      );
-      if (!confirmed) {
-        return;
+    setIsCloseAndPublishInFlight(true);
+    try {
+      if (hasIncompleteResponses && typeof window !== "undefined") {
+        const confirmed = window.confirm(
+          `Only ${displayAcceptedCount} of ${knownVoterCount} responses have been received. Close and publish results anyway?`,
+        );
+        if (!confirmed) {
+          return;
+        }
       }
-    }
-    if (currentState === "open") {
-      const closed = await publishState("closed");
-      if (!closed) {
-        setStatus("Could not close questionnaire, so results were not published.");
-        return;
+      if (currentState === "open") {
+        const closed = await publishState("closed");
+        if (!closed) {
+          setStatus("Could not close questionnaire, so results were not published.");
+          return;
+        }
       }
+      await publishResults();
+    } finally {
+      setIsCloseAndPublishInFlight(false);
     }
-    await publishResults();
   }
 
   const view = props.view ?? "build";
