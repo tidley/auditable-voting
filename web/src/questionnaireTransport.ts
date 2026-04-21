@@ -105,6 +105,7 @@ export async function fetchQuestionnaireBlindResponses(input: {
     questionnaireId: input.questionnaireId,
     kind: QUESTIONNAIRE_RESPONSE_BLIND_KIND,
     relays: input.relays,
+    readRelayLimit: 8,
     limit: input.limit ?? 200,
     parseQuestionnaireIdFromEvent: (event) => {
       const parsed = parseQuestionnaireBlindResponseEvent(event.content);

@@ -925,24 +925,6 @@ export default function SimpleCoordinatorApp() {
     () => optionACoordinatorRuntime?.getPendingAuthorizations() ?? [],
     [optionACoordinatorRuntime, knownVoterInviteRefreshNonce],
   );
-  const isKnownOptionAVoter = useCallback((invitedNpub: string) => {
-    const normalized = invitedNpub.trim();
-    if (!normalized) {
-      return false;
-    }
-    const runtimeWhitelist = optionACoordinatorRuntime?.getSnapshot()?.whitelist ?? {};
-    if (runtimeWhitelist[normalized]) {
-      return true;
-    }
-    if (!activeCoordinatorNpub.trim() || !optionAElectionId.trim()) {
-      return false;
-    }
-    const persisted = loadCoordinatorState({
-      coordinatorNpub: activeCoordinatorNpub,
-      electionId: optionAElectionId,
-    });
-    return Boolean(persisted?.whitelist?.[normalized]);
-  }, [activeCoordinatorNpub, optionACoordinatorRuntime, optionAElectionId]);
   const optionAHasInviteQueue = optionAPendingAuthorizations.length > 0;
   const optionABlindSigningPublicKey = optionACoordinatorRuntime?.getSnapshot()?.election.blindSigningPublicKey ?? null;
   const optionAAcceptedResponses = useMemo(() => {
@@ -3462,6 +3444,7 @@ export default function SimpleCoordinatorApp() {
       return;
     }
     try {
+      optionACoordinatorRuntime.addWhitelistNpub(invitedNpub);
       const sent = await optionACoordinatorRuntime.sendInvite(invitedNpub, {
         title: questionPrompt.trim() || "Questionnaire",
         description: "",
@@ -3513,6 +3496,7 @@ export default function SimpleCoordinatorApp() {
     let sentCount = 0;
     for (const invitedNpub of targets) {
       try {
+        optionACoordinatorRuntime.addWhitelistNpub(invitedNpub);
         const sent = await optionACoordinatorRuntime.sendInvite(invitedNpub, {
           title: questionPrompt.trim() || "Questionnaire",
           description: "",
@@ -3694,9 +3678,19 @@ export default function SimpleCoordinatorApp() {
     if (!optionACoordinatorRuntime || !optionAElectionId.trim() || optionAPendingAuthorizations.length === 0) {
       return;
     }
+    const knownVoterSet = new Set(
+      visibleOptionAKnownVoters
+        .map((entry) => entry.invitedNpub.trim())
+        .filter((value) => value.length > 0),
+    );
+    const runtimeWhitelist = optionACoordinatorRuntime.getSnapshot()?.whitelist ?? {};
     for (const pending of optionAPendingAuthorizations) {
       const invitedNpub = pending.invitedNpub.trim();
-      if (!invitedNpub || !isKnownOptionAVoter(invitedNpub)) {
+      if (!invitedNpub) {
+        continue;
+      }
+      const isKnown = knownVoterSet.has(invitedNpub) || Boolean(runtimeWhitelist[invitedNpub]);
+      if (!isKnown) {
         continue;
       }
       const key = `${optionAElectionId}:${invitedNpub}`;
@@ -3708,7 +3702,7 @@ export default function SimpleCoordinatorApp() {
         optionAAutoAuthorizeInFlightRef.current.delete(key);
       });
     }
-  }, [isKnownOptionAVoter, optionACoordinatorRuntime, optionAElectionId, optionAPendingAuthorizations]);
+  }, [optionACoordinatorRuntime, optionAElectionId, optionAPendingAuthorizations, visibleOptionAKnownVoters]);
 
   function restoreIdentity(nextNsec: string) {
     const trimmed = nextNsec.trim();

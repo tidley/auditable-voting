@@ -1403,6 +1403,20 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         acceptedResponses,
         rejectedResponses: processed.rejected,
       });
+      summary.publishedResponseRefs = acceptedResponses
+        .map((response) => {
+          const responseId = (response.payload.responseId || response.eventId).trim();
+          if (!responseId) {
+            return null;
+          }
+          return {
+            responseId,
+            authorPubkey: response.authorPubkey,
+            submittedAt: response.payload.submittedAt,
+            accepted: true,
+          };
+        })
+        .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
 
       const publishSummary = await publishQuestionnaireResultSummary({
         coordinatorNsec,

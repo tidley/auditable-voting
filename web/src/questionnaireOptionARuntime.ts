@@ -1727,9 +1727,13 @@ export class QuestionnaireOptionACoordinatorRuntime {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
     }
+    const normalizedInvitedNpub = toNpub(invitedNpub);
+    if (!normalizedInvitedNpub) {
+      throw new OptionARuntimeError("invalid_submission", "Invite target npub is invalid.");
+    }
     const entry: WhitelistEntry = {
       electionId: this.electionId,
-      invitedNpub,
+      invitedNpub: normalizedInvitedNpub,
       addedAt: nowIso(),
       claimState: "whitelisted",
     };
@@ -1746,13 +1750,14 @@ export class QuestionnaireOptionACoordinatorRuntime {
   }
 
   async authorizeRequester(invitedNpub: string) {
-    optionAFlowLog("coordinator", "authorize_requester", { electionId: this.electionId, invitedNpub });
-    this.addWhitelistNpub(invitedNpub);
-    const pendingForVoter = [...(this.pendingAuthorizationsByNpub[invitedNpub] ?? [])];
+    const normalizedInvitedNpub = toNpub(invitedNpub);
+    optionAFlowLog("coordinator", "authorize_requester", { electionId: this.electionId, invitedNpub: normalizedInvitedNpub || invitedNpub });
+    this.addWhitelistNpub(normalizedInvitedNpub || invitedNpub);
+    const pendingForVoter = [...(this.pendingAuthorizationsByNpub[normalizedInvitedNpub || invitedNpub] ?? [])];
     for (const request of pendingForVoter) {
       enqueueBlindRequest(request);
     }
-    delete this.pendingAuthorizationsByNpub[invitedNpub];
+    delete this.pendingAuthorizationsByNpub[normalizedInvitedNpub || invitedNpub];
     await this.processPendingBlindRequests();
     const delivered = await this.publishPendingBlindIssuancesToDm({
       requestIds: pendingForVoter.map((request) => request.requestId),
@@ -1760,7 +1765,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
     });
     optionAFlowLog("coordinator", "authorize_requester_processed", {
       electionId: this.electionId,
-      invitedNpub,
+      invitedNpub: normalizedInvitedNpub || invitedNpub,
       pendingRequestCount: pendingForVoter.length,
       deliveredIssuances: delivered,
     });
@@ -1771,11 +1776,15 @@ export class QuestionnaireOptionACoordinatorRuntime {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
     }
+    const normalizedInvitedNpub = toNpub(invitedNpub);
+    if (!normalizedInvitedNpub) {
+      throw new OptionARuntimeError("invalid_submission", "Invite target npub is invalid.");
+    }
     optionAFlowLog("coordinator", "invite_send_started", {
       electionId: this.electionId,
-      invitedNpub,
+      invitedNpub: normalizedInvitedNpub,
     });
-    if (!this.state.whitelist[invitedNpub]) {
+    if (!this.state.whitelist[normalizedInvitedNpub]) {
       throw new OptionARuntimeError("not_whitelisted", "Invite target is not whitelisted.");
     }
     const blindSigningPrivateKey = await this.ensureBlindSigningKey();
@@ -1786,7 +1795,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       title: meta.title,
       description: meta.description,
       voteUrl: meta.voteUrl,
-      invitedNpub,
+      invitedNpub: normalizedInvitedNpub,
       coordinatorNpub: this.coordinatorNpub,
       blindSigningPublicKey: toQuestionnaireBlindPublicKey(blindSigningPrivateKey),
       definition: readCachedQuestionnaireDefinition(this.electionId),
@@ -1795,7 +1804,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
     const sent = reduceCoordinatorEvent(this.state, {
       type: "INVITE_SENT",
       electionId: this.electionId,
-      invitedNpub,
+      invitedNpub: normalizedInvitedNpub,
       inviteEventId: makeId("invite"),
       sentAt: nowIso(),
     });
@@ -1814,7 +1823,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       dmDelivered = publishResult.successes > 0;
       optionAFlowLog("coordinator", "invite_dm_publish_result", {
         electionId: this.electionId,
-        invitedNpub,
+        invitedNpub: normalizedInvitedNpub,
         successes: publishResult.successes,
         failures: publishResult.failures,
       });

@@ -123,6 +123,13 @@ export type QuestionnaireResultQuestionSummary =
       freeTextCount: number;
     };
 
+export type QuestionnairePublishedResponseRef = {
+  responseId: string;
+  authorPubkey: string;
+  submittedAt: number;
+  accepted: boolean;
+};
+
 export type QuestionnaireResultSummary = {
   schemaVersion: 1;
   eventType: "questionnaire_result_summary";
@@ -133,6 +140,7 @@ export type QuestionnaireResultSummary = {
   rejectedResponseCount: number;
   acceptedNullifierCount?: number;
   questionSummaries: QuestionnaireResultQuestionSummary[];
+  publishedResponseRefs?: QuestionnairePublishedResponseRef[];
   resultHash?: string;
 };
 

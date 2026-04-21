@@ -9,7 +9,11 @@ import {
   fetchQuestionnaireState,
 } from "./questionnaireTransport";
 import { formatQuestionnaireStateLabel } from "./questionnaireRuntime";
-import type { QuestionnaireQuestion, QuestionnaireResultSummary } from "./questionnaireProtocol";
+import type {
+  QuestionnairePublishedResponseRef,
+  QuestionnaireQuestion,
+  QuestionnaireResultSummary,
+} from "./questionnaireProtocol";
 import { loadCoordinatorState, loadElectionRegistry, loadElectionSummary } from "./questionnaireOptionAStorage";
 import type { BallotSubmission, QuestionnaireAnswer } from "./questionnaireOptionA";
 
@@ -225,6 +229,15 @@ export default function SimpleAuditorApp() {
         if (fallbackDetails.length > 0) {
           details = mergeAuditorResponseDetails(details, fallbackDetails);
         }
+      }
+      if ((latestResult?.summary.publishedResponseRefs?.length ?? 0) > 0) {
+        const summaryRefDetails = (latestResult?.summary.publishedResponseRefs ?? [])
+          .map((ref) => optionASummaryRefToAuditorDetail({
+            questionnaireId: selectedId,
+            ref,
+            latestPublishAt,
+          }));
+        details = mergeAuditorResponseDetails(details, summaryRefDetails);
       }
       setSelectedResponseDetails(details);
       setSelectedLatestPublishAt(latestPublishAt);
@@ -906,6 +919,43 @@ function optionASubmissionToAuditorDetail(input: {
     accepted: input.accepted,
     rejectionReason: input.accepted ? null : "duplicate_nullifier",
     includedInLatestPublish: input.latestPublishAt !== null ? submittedAt <= input.latestPublishAt : false,
+  };
+}
+
+function optionASummaryRefToAuditorDetail(input: {
+  questionnaireId: string;
+  ref: QuestionnairePublishedResponseRef;
+  latestPublishAt: number | null;
+}): AuditorQuestionnaireResponseDetail {
+  const responseId = input.ref.responseId.trim();
+  const submittedAt = Number.isFinite(input.ref.submittedAt)
+    ? Number(input.ref.submittedAt)
+    : Math.floor(Date.now() / 1000);
+  const event = {
+    id: `summary:${input.questionnaireId}:${responseId}`,
+    created_at: submittedAt,
+  } as NostrEvent;
+  const normalizedAuthor = normalizeToNpub(input.ref.authorPubkey);
+  return {
+    event,
+    response: {
+      schemaVersion: 1,
+      eventType: "questionnaire_response_blind",
+      questionnaireId: input.questionnaireId,
+      responseId,
+      submittedAt,
+      authorPubkey: normalizedAuthor,
+      tokenNullifier: `summary_missing_${responseId}`,
+      tokenProof: {
+        tokenCommitment: `summary_missing_${responseId}`,
+        questionnaireId: input.questionnaireId,
+        signature: "summary_reference",
+      },
+      answers: [],
+    },
+    accepted: input.ref.accepted,
+    rejectionReason: input.ref.accepted ? null : "duplicate_nullifier",
+    includedInLatestPublish: input.latestPublishAt !== null ? submittedAt <= input.latestPublishAt : true,
   };
 }
 
