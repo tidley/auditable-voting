@@ -116,6 +116,16 @@ function createFreeTextQuestion(questionId: string, prompt = "", required = fals
   };
 }
 
+function clearQuestionDraft(question: QuestionnaireQuestionDraft): QuestionnaireQuestionDraft {
+  if (question.type === "multiple_choice") {
+    return createMultipleChoiceQuestion(question.questionId, "", true);
+  }
+  if (question.type === "free_text") {
+    return createFreeTextQuestion(question.questionId, "", true);
+  }
+  return createYesNoQuestion(question.questionId, "", true);
+}
+
 function deriveNextQuestionId(current: QuestionnaireQuestionDraft[]) {
   let maxIndex = 0;
   for (const entry of current) {
@@ -983,6 +993,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
 
   function deleteQuestion(index: number) {
     setQuestions((current) => {
+      if (current.length <= 1) {
+        const existing = current[index] ?? current[0] ?? createYesNoQuestion("q1");
+        return [clearQuestionDraft(existing)];
+      }
       return current.filter((_, currentIndex) => currentIndex !== index);
     });
   }
