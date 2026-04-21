@@ -799,6 +799,19 @@ export default function SimpleCoordinatorApp() {
     questionnaireId: "",
     state: null,
   });
+  const updateQuestionnaireRosterAnnouncement = useCallback((nextStatus: {
+    questionnaireId: string;
+    state: string | null;
+  }) => {
+    setQuestionnaireRosterAnnouncement((current) => {
+      const nextQuestionnaireId = nextStatus.questionnaireId.trim();
+      return {
+        // Keep the last known questionnaire id when panel status callbacks emit transient blanks.
+        questionnaireId: nextQuestionnaireId || current.questionnaireId,
+        state: nextStatus.state ?? current.state,
+      };
+    });
+  }, []);
   const [knownVoterDraftNpub, setKnownVoterDraftNpub] = useState("");
   const [knownVoterInviteStatus, setKnownVoterInviteStatus] = useState<string | null>(null);
   const [knownVoterInviteRefreshNonce, setKnownVoterInviteRefreshNonce] = useState(0);
@@ -5678,12 +5691,7 @@ export default function SimpleCoordinatorApp() {
                 blindSigningPublicKey={optionABlindSigningPublicKey}
                 view='build'
                 onInviteParticipants={() => selectTab('participants')}
-                onStatusChange={(nextStatus) => {
-                  setQuestionnaireRosterAnnouncement({
-                    questionnaireId: nextStatus.questionnaireId,
-                    state: nextStatus.state,
-                  });
-                }}
+                onStatusChange={updateQuestionnaireRosterAnnouncement}
               />
             </SimpleCollapsibleSection>
           </section>
@@ -6047,12 +6055,7 @@ export default function SimpleCoordinatorApp() {
               optionAAcceptedResponses={optionAAcceptedResponses}
               blindSigningPublicKey={optionABlindSigningPublicKey}
               view='participants'
-              onStatusChange={(nextStatus) => {
-                setQuestionnaireRosterAnnouncement({
-                  questionnaireId: nextStatus.questionnaireId,
-                  state: nextStatus.state,
-                });
-              }}
+              onStatusChange={updateQuestionnaireRosterAnnouncement}
             />
           </section>
         ) : null}
@@ -6079,12 +6082,7 @@ export default function SimpleCoordinatorApp() {
               optionAAcceptedResponses={optionAAcceptedResponses}
               blindSigningPublicKey={optionABlindSigningPublicKey}
               view='responses'
-              onStatusChange={(nextStatus) => {
-                setQuestionnaireRosterAnnouncement({
-                  questionnaireId: nextStatus.questionnaireId,
-                  state: nextStatus.state,
-                });
-              }}
+              onStatusChange={updateQuestionnaireRosterAnnouncement}
             />
           </section>
         ) : null}
