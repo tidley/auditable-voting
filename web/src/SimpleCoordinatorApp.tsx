@@ -101,6 +101,11 @@ import type { QuestionnaireResponsePayload } from "./questionnaireProtocol";
 import type { QuestionnaireAcceptedResponse } from "./questionnaireRuntime";
 import { loadCoordinatorState } from "./questionnaireOptionAStorage";
 import { tryWriteClipboard } from "./clipboard";
+import {
+  QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1,
+  QUESTIONNAIRE_PROTOCOL_VERSION_V2,
+  QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN,
+} from "./questionnaireProtocolConstants";
 
 type CoordinatorTab = "configure" | "participants" | "voting" | "settings";
 
@@ -1004,6 +1009,9 @@ export default function SimpleCoordinatorApp() {
           title: questionPrompt,
           description: "",
           state: "open",
+          protocolVersion: QUESTIONNAIRE_PROTOCOL_VERSION_V2,
+          flowMode: QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1,
+          responseMode: QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN,
         },
       });
       setKnownVoterInviteRefreshNonce((value) => value + 1);

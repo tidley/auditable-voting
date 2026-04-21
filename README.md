@@ -47,6 +47,7 @@ The shipped app currently includes:
 - course-feedback operational runs are now batch-gated by default (`LIVE_BATCH_SIZE=5`) so enrolment and submission progress in controlled waves with checkpointed harness state instead of full 25-voter cold-start fanout
 - coordinator questionnaire response reads now prefer kind-only bounded backfill with local questionnaire-id filtering (plus relay probes) to tolerate relays with unreliable custom tag indexing
 - questionnaire submissions now spend an unblinded RSABSSA credential from a fresh ephemeral response npub, with one accepted credential spend per questionnaire
+- new questionnaires now default to protocol v2 `public_submission_v1`, so coordinator verification and result publication are driven from public submissions + public submission-decision events (not private submission DMs)
 - invite links with a public questionnaire id now avoid encrypted invite-mailbox scans after signer login, and signer-backed DM reads are recent and bounded to reduce Amber bunker prompts
 - coordinator questionnaire close timers are now opt-in (default off) so rounds stay open until explicitly closed unless a timer is enabled
 - generated voter invite links now default to the current page host so deployments work without hard-coded domains
@@ -72,6 +73,8 @@ The shipped app currently includes:
 - auditor round selection now supports lead-coordinator filter, coordinator-npub filter, and free-text search (npub/round ID/prompt), with slower non-overlapping refreshes to reduce relay REQ spikes
 - auditor questionnaire discovery now reads recent public questionnaire definitions by kind-only backfill when no questionnaire ID is selected, then shows state and published response totals when available
 - published questionnaire result summaries now carry canonical per-response refs plus slim answer payloads, so Auditor can still show full responder rows when relays fragment the separate public response events
+- auditor per-response detail rows are now derived from public submissions + public coordinator decisions (with published response refs as parity backfill), avoiding coordinator-local fallback divergence
+- mobile signer ballot wait loops now poll and resend less aggressively to reduce Amber rate-limit churn while retaining recovery scans
 - auditor questionnaire discovery has an explicit `Search historic data` action next to the questionnaire selector for wider historical scans when older published questionnaires or public result payloads are not in the default recent list
 - optional relay hint resolution via NIP-65, disabled by default
 - a growing Rust/Wasm core for deterministic protocol logic

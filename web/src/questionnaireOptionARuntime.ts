@@ -118,15 +118,16 @@ import {
 } from "./questionnaireTransport";
 import type { QuestionnaireResponseAnswer } from "./questionnaireProtocol";
 import type { QuestionnaireSubmissionDecisionReason } from "./questionnaireProtocol";
+import { QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1, type QuestionnaireFlowMode } from "./questionnaireProtocolConstants";
 
 const OPTION_A_COORDINATOR_DM_LOOKBACK_SECONDS = 24 * 60 * 60;
 const OPTION_A_COORDINATOR_SIGNER_DM_LIMIT = 60;
 const OPTION_A_COORDINATOR_NSEC_DM_LIMIT = 120;
-const OPTION_A_ISSUANCE_DM_RETRY_MS = 2 * 60 * 1000;
-const OPTION_A_BLIND_REQUEST_RETRY_MS = 10 * 1000;
+const OPTION_A_ISSUANCE_DM_RETRY_MS = 5 * 60 * 1000;
+const OPTION_A_BLIND_REQUEST_RETRY_MS = 45 * 1000;
 const OPTION_A_BLIND_REQUEST_ACK_RETRY_MS = 10 * 60 * 1000;
 const OPTION_A_BLIND_REQUEST_ACK_RESEND_AFTER_MS = 20 * 60 * 1000;
-const OPTION_A_SUBMISSION_REPUBLISH_RETRY_MS = 60 * 1000;
+const OPTION_A_SUBMISSION_REPUBLISH_RETRY_MS = 3 * 60 * 1000;
 const OPTION_A_SUBMISSION_ACK_RETRY_MS = 2 * 60 * 1000;
 const OPTION_A_SELF_COPY_RECOVERY_LOOKBACK_SECONDS = Math.round(36 * 60 * 60);
 const OPTION_A_VOTER_DM_LOOKBACK_SECONDS = Math.round(36 * 60 * 60);
@@ -347,6 +348,14 @@ function fromQuestionnaireResponseAnswers(answers: QuestionnaireResponseAnswer[]
       answer: answer.text,
     };
   });
+}
+
+function shouldUsePublicSubmissionFlow(input: {
+  summaryFlowMode?: QuestionnaireFlowMode | null;
+  cachedDefinitionFlowMode?: QuestionnaireFlowMode | null;
+}) {
+  return input.cachedDefinitionFlowMode === QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1
+    || input.summaryFlowMode === QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1;
 }
 
 export class QuestionnaireOptionAVoterRuntime {
@@ -1544,6 +1553,10 @@ export class QuestionnaireOptionACoordinatorRuntime {
     if (!this.coordinatorNpub) {
       return;
     }
+    const publicSubmissionFlow = shouldUsePublicSubmissionFlow({
+      summaryFlowMode: this.state?.election.flowMode ?? null,
+      cachedDefinitionFlowMode: readCachedQuestionnaireDefinition(this.electionId)?.flowMode ?? null,
+    });
     const relays = this.getPreferredDmRelays();
     this.stopBlindRequestSubscription = subscribeOptionABlindRequestDms({
       signer: this.signer,
@@ -1554,15 +1567,17 @@ export class QuestionnaireOptionACoordinatorRuntime {
         void this.triggerBlindRequestProcessingFromLive().catch(() => undefined);
       },
     });
-    this.stopSubmissionSubscription = subscribeOptionABallotSubmissionDms({
-      signer: this.signer,
-      electionId: this.electionId,
-      relays,
-      onSubmission: (submission) => {
-        enqueueSubmission(submission);
-        void this.triggerSubmissionProcessingFromLive().catch(() => undefined);
-      },
-    });
+    if (!publicSubmissionFlow) {
+      this.stopSubmissionSubscription = subscribeOptionABallotSubmissionDms({
+        signer: this.signer,
+        electionId: this.electionId,
+        relays,
+        onSubmission: (submission) => {
+          enqueueSubmission(submission);
+          void this.triggerSubmissionProcessingFromLive().catch(() => undefined);
+        },
+      });
+    }
     this.stopBlindIssuanceAckSubscription = subscribeOptionABlindIssuanceAckDms({
       signer: this.signer,
       electionId: this.electionId,
@@ -1795,7 +1810,13 @@ export class QuestionnaireOptionACoordinatorRuntime {
     this.coordinatorNpub = nextCoordinatorNpub;
     const state = this.ensureCoordinatorState(input.summary);
     if (input.startDmSubscriptions ?? true) {
-      const subscriptionsMissing = !this.stopBlindRequestSubscription || !this.stopSubmissionSubscription;
+      const publicSubmissionFlow = shouldUsePublicSubmissionFlow({
+        summaryFlowMode: state.election.flowMode ?? null,
+        cachedDefinitionFlowMode: readCachedQuestionnaireDefinition(this.electionId)?.flowMode ?? null,
+      });
+      const subscriptionsMissing = publicSubmissionFlow
+        ? !this.stopBlindRequestSubscription
+        : !this.stopBlindRequestSubscription || !this.stopSubmissionSubscription;
       if (coordinatorChanged || subscriptionsMissing) {
         this.startCoordinatorDmSubscriptions();
       }
@@ -1814,7 +1835,19 @@ export class QuestionnaireOptionACoordinatorRuntime {
     }
     const existing = loadCoordinatorState({ coordinatorNpub: this.coordinatorNpub, electionId: this.electionId });
     if (existing) {
-      this.state = restoreCoordinatorElectionState({ persisted: existing });
+      this.state = restoreCoordinatorElectionState({
+        persisted: {
+          ...existing,
+          election: {
+            ...existing.election,
+            protocolVersion: summary?.protocolVersion ?? existing.election.protocolVersion,
+            flowMode: summary?.flowMode ?? existing.election.flowMode,
+            responseMode: summary?.responseMode ?? existing.election.responseMode,
+            blindSigningPublicKey: summary?.blindSigningPublicKey ?? existing.election.blindSigningPublicKey,
+          },
+        },
+      });
+      upsertElectionSummary(this.state.election);
       return this.state;
     }
 
@@ -1827,6 +1860,9 @@ export class QuestionnaireOptionACoordinatorRuntime {
       closedAt: summary?.closedAt ?? null,
       coordinatorNpub: this.coordinatorNpub,
       blindSigningPublicKey: summary?.blindSigningPublicKey ?? null,
+      protocolVersion: summary?.protocolVersion,
+      flowMode: summary?.flowMode,
+      responseMode: summary?.responseMode,
     };
     upsertElectionSummary(nextSummary);
     const created = emptyCoordinatorState(nextSummary);
@@ -2194,6 +2230,16 @@ export class QuestionnaireOptionACoordinatorRuntime {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
     }
+    const publicSubmissionFlow = shouldUsePublicSubmissionFlow({
+      summaryFlowMode: this.state.election.flowMode ?? null,
+      cachedDefinitionFlowMode: readCachedQuestionnaireDefinition(this.electionId)?.flowMode ?? null,
+    });
+    if (publicSubmissionFlow) {
+      optionAFlowLog("coordinator", "submissions_sync_skipped_public_submission_flow", {
+        electionId: this.electionId,
+      });
+      return 0;
+    }
 
     try {
       const since = this.getDmReadSince();
@@ -2421,7 +2467,11 @@ export class QuestionnaireOptionACoordinatorRuntime {
       throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
     }
     let next = this.state;
-    const queue = listSubmissions(this.electionId);
+    const publicSubmissionFlow = shouldUsePublicSubmissionFlow({
+      summaryFlowMode: this.state.election.flowMode ?? null,
+      cachedDefinitionFlowMode: readCachedQuestionnaireDefinition(this.electionId)?.flowMode ?? null,
+    });
+    const queue = publicSubmissionFlow ? [] : listSubmissions(this.electionId);
     const queuedSubmissionIds = new Set(queue.map((entry) => entry.submissionId));
     const publicResponses = await fetchQuestionnaireBlindResponses({
       questionnaireId: this.electionId,

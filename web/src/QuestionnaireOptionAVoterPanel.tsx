@@ -144,6 +144,9 @@ function cacheDefinitionForVoting(definition: QuestionnaireDefinition) {
     closedAt: Number.isFinite(definition.closeAt) ? new Date(definition.closeAt * 1000).toISOString() : existing?.closedAt ?? null,
     coordinatorNpub,
     blindSigningPublicKey: definition.blindSigningPublicKey ?? existing?.blindSigningPublicKey ?? null,
+    protocolVersion: definition.protocolVersion ?? existing?.protocolVersion,
+    flowMode: definition.flowMode ?? existing?.flowMode,
+    responseMode: definition.responseMode ?? existing?.responseMode,
   });
 }
 
@@ -170,11 +173,11 @@ function buildInviteFromPublicDefinition(definition: QuestionnaireDefinition, in
 
 const LEGACY_INVITE_TITLE = "Should the proposal pass?";
 const AUTO_BALLOT_REQUEST_MIN_INTERVAL_MS = 15_000;
-const AUTO_BALLOT_RETRY_POLL_MS = 10_000;
-const AUTO_BALLOT_RETRY_RESEND_MS = 5 * 60_000;
+const AUTO_BALLOT_RETRY_POLL_MS = 20_000;
+const AUTO_BALLOT_RETRY_RESEND_MS = 8 * 60_000;
 const AUTO_BALLOT_SIGNER_REFRESH_SCHEDULE_MS = [15_000, 45_000, 120_000] as const;
 const AUTO_BALLOT_SIGNER_KEEPALIVE_REFRESH_MS = 75_000;
-const AUTO_BALLOT_MOBILE_RECOVERY_PULL_MS = 20_000;
+const AUTO_BALLOT_MOBILE_RECOVERY_PULL_MS = 45_000;
 const AUTO_BALLOT_SIGNER_SUBSCRIPTION_REARM_MIN_INTERVAL_MS = 15_000;
 const AUTO_BALLOT_SIGNER_BACKGROUND_FETCH_MIN_INTERVAL_MS = 90_000;
 const AUTO_BALLOT_SIGNER_LIFECYCLE_FETCH_MIN_INTERVAL_MS = 45_000;

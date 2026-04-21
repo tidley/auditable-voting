@@ -5,6 +5,11 @@ import {
   QuestionnaireOptionACoordinatorRuntime,
   OptionARuntimeError,
 } from "./questionnaireOptionARuntime";
+import {
+  QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1,
+  QUESTIONNAIRE_PROTOCOL_VERSION_V2,
+  QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN,
+} from "./questionnaireProtocolConstants";
 import { deriveActorDisplayId } from "./actorDisplay";
 import { tryWriteClipboard } from "./clipboard";
 
@@ -46,6 +51,9 @@ export default function QuestionnaireOptionACoordinatorPanel(props: Props) {
           title,
           description,
           state: "open",
+          protocolVersion: QUESTIONNAIRE_PROTOCOL_VERSION_V2,
+          flowMode: QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1,
+          responseMode: QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN,
         },
       });
       setSignedInNpub(next.election.coordinatorNpub);
@@ -63,6 +71,9 @@ export default function QuestionnaireOptionACoordinatorPanel(props: Props) {
         title,
         description,
         state: "open",
+        protocolVersion: QUESTIONNAIRE_PROTOCOL_VERSION_V2,
+        flowMode: QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1,
+        responseMode: QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN,
       });
       setSignedInNpub(next.election.coordinatorNpub);
       setStatus(`Signed in as ${deriveActorDisplayId(next.election.coordinatorNpub)}.`);

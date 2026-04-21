@@ -7,6 +7,8 @@ import {
   validateQuestionnaireDefinition,
   type QuestionnaireDefinition,
   type QuestionnaireQuestion,
+  type QuestionnaireResponseAnswer,
+  type QuestionnaireResultSummary,
   type QuestionnaireStateValue,
 } from "./questionnaireProtocol";
 import type { QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
@@ -22,6 +24,7 @@ import { getSharedNostrPool } from "./sharedNostrPool";
 import { storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import { tryWriteClipboard } from "./clipboard";
 import { fetchQuestionnaireBlindResponses } from "./questionnaireTransport";
+import { evaluateQuestionnaireBlindAdmissions, fetchQuestionnaireSubmissionDecisions } from "./questionnaireTransport";
 import { publishQuestionnaireBlindResponsePublicByCoordinator } from "./questionnaireResponsePublish";
 
 const DEFAULT_QUESTIONNAIRE_ID_PREFIX = "q";
@@ -282,7 +285,7 @@ function percentageLabel(count: number, total: number) {
   return `${Math.round((count / total) * 100)}%`;
 }
 
-function parseQuestionnaireIdFromResponseEvent(event: Pick<NostrEvent, "content" | "tags">): string | null {
+function parseQuestionnaireIdFromResponseEvent(event: Pick<NostrEvent, "content" | "tags" | "kind">): string | null {
   const tagMatch = Array.isArray(event.tags)
     ? event.tags.find((tag) => Array.isArray(tag) && tag[0] === "questionnaire-id" && typeof tag[1] === "string")
     : null;
@@ -295,6 +298,22 @@ function parseQuestionnaireIdFromResponseEvent(event: Pick<NostrEvent, "content"
   } catch {
     return null;
   }
+}
+
+function toRejectedReasonFromDecision(reason: string) {
+  if (reason === "questionnaire_closed") {
+    return "questionnaire_closed" as const;
+  }
+  if (reason === "invalid_token_proof") {
+    return "invalid_payload_shape" as const;
+  }
+  if (reason === "invalid_payload_shape") {
+    return "invalid_payload_shape" as const;
+  }
+  if (reason === "duplicate_nullifier") {
+    return "duplicate_response" as const;
+  }
+  return "invalid_payload_shape" as const;
 }
 
 function buildDefinition(input: {
@@ -1373,86 +1392,159 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       relaySuccessCount: 0,
     }));
     try {
-      const responseEvents = (await fetchQuestionnaireEventsWithFallback({
-        questionnaireId: latestDefinition.questionnaireId,
-        kind: QUESTIONNAIRE_RESPONSE_PRIVATE_KIND,
-        parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireIdFromResponseEvent(event),
-        preferKindOnly: true,
-        readRelayLimit: 8,
-      })).events;
-      const processed = processQuestionnaireResponses({
-        definition: latestDefinition,
-        responseEvents,
-        coordinatorNsec,
-      });
-      const acceptedByKey = new Map<string, QuestionnaireAcceptedResponse>();
-      // Prefer the coordinator's merged local accepted state, then fill any gaps from relay-fetched envelopes.
-      for (const response of acceptedResponsesForDisplay) {
-        acceptedByKey.set(response.payload.responseId || response.eventId, response);
-      }
-      for (const response of processed.accepted) {
-        const key = response.payload.responseId || response.eventId;
-        if (!acceptedByKey.has(key)) {
-          acceptedByKey.set(key, response);
-        }
-      }
-      const acceptedResponses = [...acceptedByKey.values()];
-      const existingPublicResponses = await fetchQuestionnaireBlindResponses({
-        questionnaireId: latestDefinition.questionnaireId,
-        limit: 500,
-      }).catch(() => []);
-      const existingResponseIds = new Set(
-        existingPublicResponses
-          .map((entry) => entry.response.responseId.trim())
-          .filter((value) => value.length > 0),
-      );
-      const responsesToPublish = acceptedResponses.filter((response) => {
-        const responseId = (response.payload.responseId || response.eventId).trim();
-        return responseId.length > 0 && !existingResponseIds.has(responseId);
-      });
-
+      const usePublicSubmissionFlow = latestDefinition.flowMode === QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1;
+      let summary: QuestionnaireResultSummary;
       let responsePublishSuccessCount = 0;
-      for (const response of responsesToPublish) {
-        const responseId = (response.payload.responseId || response.eventId).trim();
-        const tokenCommitment = response.envelope.payloadHash.trim() || response.eventId;
-        const tokenNullifier = `legacy_${tokenCommitment}`;
-        const publishedResponse = await publishQuestionnaireBlindResponsePublicByCoordinator({
-          coordinatorNsec,
-          questionnaireId: latestDefinition.questionnaireId,
-          responseId,
-          submittedAt: response.payload.submittedAt,
-          authorPubkey: response.authorPubkey,
-          tokenNullifier,
-          tokenCommitment,
-          answers: response.payload.answers,
-          questionnaireDefinitionEventId: null,
-        });
-        if (publishedResponse.successes > 0) {
-          responsePublishSuccessCount += 1;
-        }
-      }
+      let responsePublishAttemptCount = 0;
 
-      const summary = buildQuestionnaireResultSummary({
-        definition: latestDefinition,
-        coordinatorPubkey: coordinatorNpub,
-        acceptedResponses,
-        rejectedResponses: processed.rejected,
-      });
-      summary.publishedResponseRefs = acceptedResponses
-        .map((response) => {
-          const responseId = (response.payload.responseId || response.eventId).trim();
-          if (!responseId) {
-            return null;
+      if (usePublicSubmissionFlow) {
+        const [publicResponses, decisionEntries] = await Promise.all([
+          fetchQuestionnaireBlindResponses({
+            questionnaireId: latestDefinition.questionnaireId,
+            limit: 500,
+          }).catch(() => []),
+          fetchQuestionnaireSubmissionDecisions({
+            questionnaireId: latestDefinition.questionnaireId,
+            limit: 500,
+          }).catch(() => []),
+        ]);
+        const admissions = evaluateQuestionnaireBlindAdmissions({
+          entries: publicResponses,
+          decisionEntries,
+        });
+        const acceptedResponses = admissions.accepted.map((entry) => ({
+          eventId: entry.event.id,
+          authorPubkey: entry.response.authorPubkey,
+          envelope: {
+            schemaVersion: 1 as const,
+            eventType: "questionnaire_response_private" as const,
+            questionnaireId: entry.response.questionnaireId,
+            responseId: entry.response.responseId,
+            createdAt: entry.response.submittedAt ?? entry.event.created_at ?? nowUnix(),
+            authorPubkey: entry.response.authorPubkey,
+            ciphertextScheme: "nip44v2" as const,
+            ciphertextRecipient: coordinatorNpub,
+            ciphertext: "",
+            payloadHash: entry.response.payloadHash ?? entry.response.tokenProof.tokenCommitment,
+          },
+          payload: {
+            schemaVersion: 1 as const,
+            kind: "questionnaire_response_payload" as const,
+            questionnaireId: entry.response.questionnaireId,
+            responseId: entry.response.responseId,
+            submittedAt: entry.response.submittedAt ?? entry.event.created_at ?? nowUnix(),
+            answers: entry.response.answers ?? ([] as QuestionnaireResponseAnswer[]),
+          },
+        }));
+        const rejectedResponses = admissions.rejected.map((entry) => ({
+          eventId: entry.event.id,
+          authorPubkey: entry.response.authorPubkey,
+          responseId: entry.response.responseId,
+          reason: toRejectedReasonFromDecision(entry.rejectionReason ?? "invalid_payload_shape"),
+          detail: entry.rejectionReason ?? undefined,
+        }));
+        summary = buildQuestionnaireResultSummary({
+          definition: latestDefinition,
+          coordinatorPubkey: coordinatorNpub,
+          acceptedResponses,
+          rejectedResponses,
+        });
+        summary.acceptedNullifierCount = new Set(
+          admissions.accepted
+            .map((entry) => entry.response.tokenNullifier.trim())
+            .filter((value) => value.length > 0),
+        ).size;
+        summary.publishedResponseRefs = admissions.decisions
+          .map((entry) => ({
+            responseId: entry.response.responseId,
+            authorPubkey: entry.response.authorPubkey,
+            submittedAt: entry.response.submittedAt ?? entry.event.created_at ?? nowUnix(),
+            accepted: entry.accepted,
+            answers: entry.response.answers,
+          }))
+          .filter((entry) => entry.responseId.trim().length > 0);
+      } else {
+        const responseEvents = (await fetchQuestionnaireEventsWithFallback({
+          questionnaireId: latestDefinition.questionnaireId,
+          kind: QUESTIONNAIRE_RESPONSE_PRIVATE_KIND,
+          parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireIdFromResponseEvent(event),
+          preferKindOnly: true,
+          readRelayLimit: 8,
+        })).events;
+        const processed = processQuestionnaireResponses({
+          definition: latestDefinition,
+          responseEvents,
+          coordinatorNsec,
+        });
+        const acceptedByKey = new Map<string, QuestionnaireAcceptedResponse>();
+        // Prefer the coordinator's merged local accepted state, then fill any gaps from relay-fetched envelopes.
+        for (const response of acceptedResponsesForDisplay) {
+          acceptedByKey.set(response.payload.responseId || response.eventId, response);
+        }
+        for (const response of processed.accepted) {
+          const key = response.payload.responseId || response.eventId;
+          if (!acceptedByKey.has(key)) {
+            acceptedByKey.set(key, response);
           }
-          return {
+        }
+        const acceptedResponses = [...acceptedByKey.values()];
+        const existingPublicResponses = await fetchQuestionnaireBlindResponses({
+          questionnaireId: latestDefinition.questionnaireId,
+          limit: 500,
+        }).catch(() => []);
+        const existingResponseIds = new Set(
+          existingPublicResponses
+            .map((entry) => entry.response.responseId.trim())
+            .filter((value) => value.length > 0),
+        );
+        const responsesToPublish = acceptedResponses.filter((response) => {
+          const responseId = (response.payload.responseId || response.eventId).trim();
+          return responseId.length > 0 && !existingResponseIds.has(responseId);
+        });
+        responsePublishAttemptCount = responsesToPublish.length;
+
+        for (const response of responsesToPublish) {
+          const responseId = (response.payload.responseId || response.eventId).trim();
+          const tokenCommitment = response.envelope.payloadHash.trim() || response.eventId;
+          const tokenNullifier = `legacy_${tokenCommitment}`;
+          const publishedResponse = await publishQuestionnaireBlindResponsePublicByCoordinator({
+            coordinatorNsec,
+            questionnaireId: latestDefinition.questionnaireId,
             responseId,
-            authorPubkey: response.authorPubkey,
             submittedAt: response.payload.submittedAt,
-            accepted: true,
+            authorPubkey: response.authorPubkey,
+            tokenNullifier,
+            tokenCommitment,
             answers: response.payload.answers,
-          };
-        })
-        .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+            questionnaireDefinitionEventId: null,
+          });
+          if (publishedResponse.successes > 0) {
+            responsePublishSuccessCount += 1;
+          }
+        }
+
+        summary = buildQuestionnaireResultSummary({
+          definition: latestDefinition,
+          coordinatorPubkey: coordinatorNpub,
+          acceptedResponses,
+          rejectedResponses: processed.rejected,
+        });
+        summary.publishedResponseRefs = acceptedResponses
+          .map((response) => {
+            const responseId = (response.payload.responseId || response.eventId).trim();
+            if (!responseId) {
+              return null;
+            }
+            return {
+              responseId,
+              authorPubkey: response.authorPubkey,
+              submittedAt: response.payload.submittedAt,
+              accepted: true,
+              answers: response.payload.answers,
+            };
+          })
+          .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+      }
 
       const publishSummary = await publishQuestionnaireResultSummary({
         coordinatorNsec,
@@ -1481,7 +1573,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           relaySuccessCount: publishSummary.successes,
         });
         setStatus(
-          `Results published. Accepted=${summary.acceptedResponseCount}, Rejected=${summary.rejectedResponseCount}, Public responses=${responsePublishSuccessCount}/${responsesToPublish.length}.`,
+          usePublicSubmissionFlow
+            ? `Results published. Accepted=${summary.acceptedResponseCount}, Rejected=${summary.rejectedResponseCount}, Public responses=${summary.publishedResponseRefs?.length ?? 0}.`
+            : `Results published. Accepted=${summary.acceptedResponseCount}, Rejected=${summary.rejectedResponseCount}, Public responses=${responsePublishSuccessCount}/${responsePublishAttemptCount}.`,
         );
       } else {
         setResultPublishDiagnostic((current) => ({ ...current, attempted: true, succeeded: false }));

@@ -1,5 +1,6 @@
 import type { QuestionnaireDefinition } from "./questionnaireProtocol";
 import type { QuestionnaireBlindPrivateKey, QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
+import type { QuestionnaireFlowMode, QuestionnaireResponseMode } from "./questionnaireProtocolConstants";
 
 export type ElectionId = string;
 export type Npub = string;
@@ -40,6 +41,9 @@ export interface ElectionSummary {
   closedAt?: IsoTime | null;
   coordinatorNpub: Npub;
   blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
+  protocolVersion?: 1 | 2;
+  flowMode?: QuestionnaireFlowMode;
+  responseMode?: QuestionnaireResponseMode;
 }
 
 export interface WhitelistEntry {

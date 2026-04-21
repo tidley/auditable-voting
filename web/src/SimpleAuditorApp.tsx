@@ -15,8 +15,6 @@ import type {
   QuestionnaireQuestion,
   QuestionnaireResultSummary,
 } from "./questionnaireProtocol";
-import { loadCoordinatorState, loadElectionRegistry, loadElectionSummary } from "./questionnaireOptionAStorage";
-import type { BallotSubmission, QuestionnaireAnswer } from "./questionnaireOptionA";
 
 const AUDITOR_REFRESH_INTERVAL_MS = 15000;
 const AUDITOR_QUESTIONNAIRE_DETAIL_LIMIT = 20;
@@ -214,30 +212,6 @@ export default function SimpleAuditorApp() {
           includedInLatestPublish: latestPublishAt !== null ? Number(decision.event.created_at ?? 0) <= latestPublishAt : false,
         }))
         .sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0));
-      const selectedEntry = questionnaires.find((entry) => entry.questionnaireId === selectedId) ?? null;
-      const coordinatorState = resolveOptionACoordinatorState({
-        electionId: selectedId,
-        preferredCoordinatorNpub: selectedEntry?.coordinatorNpub ?? null,
-      });
-      if (coordinatorState) {
-        const fallbackDetails = Object.values(coordinatorState.acceptanceResults)
-          .map((acceptance) => {
-            const submission = coordinatorState.receivedSubmissions[acceptance.submissionId];
-            if (!submission) {
-              return null;
-            }
-            return optionASubmissionToAuditorDetail({
-              submission,
-              accepted: acceptance.accepted,
-              latestPublishAt,
-            });
-          })
-          .filter((entry): entry is AuditorQuestionnaireResponseDetail => Boolean(entry))
-          .sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0));
-        if (fallbackDetails.length > 0) {
-          details = mergeAuditorResponseDetails(details, fallbackDetails);
-        }
-      }
       if ((latestResult?.summary.publishedResponseRefs?.length ?? 0) > 0) {
         const summaryRefDetails = (latestResult?.summary.publishedResponseRefs ?? [])
           .map((ref) => optionASummaryRefToAuditorDetail({
@@ -636,9 +610,13 @@ export default function SimpleAuditorApp() {
                           <ul className='simple-delivery-diagnostics simple-delivery-diagnostics-compact'>
                             {Object.entries(summary.optionCounts).map(([optionId, count]) => (
                               <li key={optionId} className='simple-delivery-ok'>
-                                {(selectedQuestionById.get(summary.questionId)?.type === "multiple_choice"
-                                  ? selectedQuestionById.get(summary.questionId)?.options.find((option) => option.optionId === optionId)?.label
-                                  : optionId) ?? optionId}: {count}
+                                {(() => {
+                                  const question = selectedQuestionById.get(summary.questionId);
+                                  if (question?.type !== "multiple_choice") {
+                                    return optionId;
+                                  }
+                                  return question.options.find((option) => option.optionId === optionId)?.label ?? optionId;
+                                })()}: {count}
                               </li>
                             ))}
                           </ul>
@@ -820,28 +798,6 @@ export default function SimpleAuditorApp() {
   );
 }
 
-function optionAAnswerToQuestionnaireAnswer(answer: QuestionnaireAnswer) {
-  if (answer.type === "yes_no") {
-    return {
-      questionId: answer.questionId,
-      answerType: "yes_no" as const,
-      value: answer.answer === "yes",
-    };
-  }
-  if (answer.type === "multiple_choice") {
-    return {
-      questionId: answer.questionId,
-      answerType: "multiple_choice" as const,
-      selectedOptionIds: answer.answer,
-    };
-  }
-  return {
-    questionId: answer.questionId,
-    answerType: "free_text" as const,
-    text: answer.answer,
-  };
-}
-
 function normalizeToNpub(value: string) {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -899,43 +855,6 @@ function mergeAuditorResponseDetails(
   return [...byKey.values()].sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0));
 }
 
-function optionASubmissionToAuditorDetail(input: {
-  submission: BallotSubmission;
-  accepted: boolean;
-  latestPublishAt: number | null;
-}): AuditorQuestionnaireResponseDetail {
-  const submittedAtMs = Date.parse(input.submission.submittedAt);
-  const submittedAt = Number.isFinite(submittedAtMs)
-    ? Math.floor(submittedAtMs / 1000)
-    : Math.floor(Date.now() / 1000);
-  const responseNpub = normalizeToNpub(input.submission.responseNpub?.trim() || input.submission.invitedNpub);
-  const event = {
-    id: `optiona:${input.submission.submissionId}`,
-    created_at: submittedAt,
-  } as NostrEvent;
-  return {
-    event,
-    response: {
-      schemaVersion: 1,
-      eventType: "questionnaire_response_blind",
-      questionnaireId: input.submission.electionId,
-      responseId: input.submission.submissionId,
-      submittedAt,
-      authorPubkey: responseNpub,
-      tokenNullifier: input.submission.nullifier,
-      tokenProof: {
-        tokenCommitment: input.submission.tokenCommitment,
-        questionnaireId: input.submission.electionId,
-        signature: input.submission.credential,
-      },
-      answers: input.submission.payload.responses.map(optionAAnswerToQuestionnaireAnswer),
-    },
-    accepted: input.accepted,
-    rejectionReason: input.accepted ? null : "duplicate_nullifier",
-    includedInLatestPublish: input.latestPublishAt !== null ? submittedAt <= input.latestPublishAt : false,
-  };
-}
-
 function optionASummaryRefToAuditorDetail(input: {
   questionnaireId: string;
   ref: QuestionnairePublishedResponseRef;
@@ -971,34 +890,4 @@ function optionASummaryRefToAuditorDetail(input: {
     rejectionReason: input.ref.accepted ? null : "duplicate_nullifier",
     includedInLatestPublish: input.latestPublishAt !== null ? submittedAt <= input.latestPublishAt : true,
   };
-}
-
-function resolveOptionACoordinatorState(input: {
-  electionId: string;
-  preferredCoordinatorNpub?: string | null;
-}) {
-  const electionId = input.electionId.trim();
-  if (!electionId) {
-    return null;
-  }
-
-  const candidateCoordinatorNpubs = [
-    normalizeToNpub(input.preferredCoordinatorNpub?.trim() ?? ""),
-    normalizeToNpub(loadElectionSummary(electionId)?.coordinatorNpub?.trim() ?? ""),
-    ...loadElectionRegistry()
-      .filter((id) => id === electionId)
-      .map((id) => normalizeToNpub(loadElectionSummary(id)?.coordinatorNpub?.trim() ?? "")),
-  ].filter((value, index, values) => value.length > 0 && values.indexOf(value) === index);
-
-  for (const coordinatorNpub of candidateCoordinatorNpubs) {
-    const state = loadCoordinatorState({
-      coordinatorNpub,
-      electionId,
-    });
-    if (state) {
-      return state;
-    }
-  }
-
-  return null;
 }
