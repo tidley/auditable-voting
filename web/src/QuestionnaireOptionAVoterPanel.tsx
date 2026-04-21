@@ -11,6 +11,8 @@ import type { ElectionInviteMessage, QuestionnaireAnswer } from "./questionnaire
 import { deriveActorDisplayId } from "./actorDisplay";
 import {
   loadElectionSummary,
+  readBallotSubmissionAckRecord,
+  readBlindRequestAckRecord,
   readBlindIssuanceAckRecord,
   listInvitesFromMailbox,
   publishInviteToMailbox,
@@ -225,6 +227,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const autoRequestLastAttemptAtRef = useRef<Record<string, number>>({});
   const requestRetryAtRef = useRef<Record<string, number>>({});
   const autoSignerLoginForRef = useRef<Record<string, true>>({});
+  const lifecycleRefreshAtRef = useRef(0);
 
   const inviteContext = useMemo(() => parseInviteFromUrl(), []);
   const [electionId, setElectionId] = useState(inviteContext.electionId ?? deriveElectionId());
@@ -340,6 +343,53 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       window.clearInterval(intervalId);
     };
   }, [runtime, signedInNpub, props.localVoterNsec, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission, snapshot?.submissionAccepted]);
+
+  useEffect(() => {
+    if (!runtime || !snapshot?.loginVerified) {
+      return;
+    }
+    const needsStatusRefresh = Boolean(
+      (snapshot.blindRequestSent && !snapshot.credentialReady)
+      || (snapshot.submission && snapshot.submissionAccepted == null),
+    );
+    if (!needsStatusRefresh) {
+      return;
+    }
+    const triggerRefresh = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+      const now = Date.now();
+      if (now - lifecycleRefreshAtRef.current < 1_500) {
+        return;
+      }
+      lifecycleRefreshAtRef.current = now;
+      try {
+        ensureLocalSession({ allowInviteMissing: true, allowRelayInviteFetch: true });
+      } catch {
+        // Best-effort; refresh below still uses the active runtime snapshot.
+      }
+      try {
+        runtime.refreshIssuanceAndAcceptance();
+        setRefreshNonce((value) => value + 1);
+      } catch {
+        // Keep lifecycle refresh best-effort; explicit actions surface errors.
+      }
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        triggerRefresh();
+      }
+    };
+    window.addEventListener("focus", triggerRefresh);
+    window.addEventListener("online", triggerRefresh);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      window.removeEventListener("focus", triggerRefresh);
+      window.removeEventListener("online", triggerRefresh);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [runtime, snapshot?.loginVerified, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission, snapshot?.submissionAccepted]);
 
   useEffect(() => {
     setQuestionnaireTitle("Questionnaire");
@@ -1003,13 +1053,20 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     return value !== undefined && value !== null && String(value).trim().length > 0;
   });
   const canSubmitNow = flags.canSubmitVote && requiredQuestionsAnswered;
+  const requestAck = snapshot?.blindRequest ? readBlindRequestAckRecord(snapshot.blindRequest.requestId) : null;
+  const submissionAck = snapshot?.submission ? readBallotSubmissionAckRecord(snapshot.submission.submissionId) : null;
   const issuanceAckSent = Boolean(
     snapshot?.blindIssuance
     && readBlindIssuanceAckRecord(snapshot.blindIssuance.requestId)?.issuanceId === snapshot.blindIssuance.issuanceId,
   );
+  const pendingStatus = waitingForCredential && requestAck
+    ? "Ballot request acknowledged. Waiting for coordinator issuance."
+    : snapshot?.submission && snapshot.submissionAccepted == null && submissionAck
+      ? "Submission received. Waiting for coordinator decision."
+      : null;
   const displayStatus = snapshot?.credentialReady
     ? (issuanceAckSent ? "Credential received (ack sent)." : "Ballot credential ready.")
-    : status;
+    : pendingStatus ?? status;
   const coordinatorNpub = snapshot?.coordinatorNpub?.trim()
     || activeInvite?.coordinatorNpub?.trim()
     || inviteDropdownOptions.find((invite) => invite.electionId === electionId.trim())?.coordinatorNpub?.trim()

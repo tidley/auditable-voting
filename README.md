@@ -259,3 +259,5 @@ The voter questionnaire now uses a single blind-token entry path by default:
 - invite-link signer login opens the voter Vote tab directly, completes the signer-backed voter login, and can automatically prepare/send the first blind ballot request when the voter is authenticated and authorised
 - invite/login npubs and local voter/responder npubs may differ; opening an invite can bind it to the current local voter identity, and the coordinator must either have that voter whitelisted or authorise the request
 - invites are durable and do not fail just because the voter opens them hours or days later; ballot requests are idempotent and re-queue the same request until issuance arrives
+- private questionnaire DMs now use explicit request, issuance, and submission acknowledgements, so later phases suppress unnecessary resends once receipt is confirmed
+- voter/coordinator private inbox listeners now share one recipient-scoped websocket subscription per election inbox, keep a sticky successful-relay subset, and trigger bounded recovery on focus/visibility/online instead of relying on constant polling

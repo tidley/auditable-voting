@@ -5,6 +5,10 @@ import userEvent from "@testing-library/user-event";
 
 const optionAStorageMocks = vi.hoisted(() => ({
   loadVoterState: vi.fn((): unknown => null),
+  readElectionPrivateRelayPrefs: vi.fn((): unknown => []),
+  recordElectionPrivateRelaySuccesses: vi.fn((): void => undefined),
+  readBallotSubmissionAckRecord: vi.fn((): unknown => null),
+  readBlindRequestAckRecord: vi.fn((): unknown => null),
   readBlindIssuance: vi.fn((): unknown => null),
   readBlindIssuanceAckRecord: vi.fn((): unknown => null),
   readAcceptance: vi.fn((): unknown => null),
@@ -35,10 +39,14 @@ vi.mock("./questionnaireOptionAStorage", () => ({
   loadElectionSummary: () => null,
   loadVoterState: optionAStorageMocks.loadVoterState,
   publishInviteToMailbox: () => undefined,
+  readElectionPrivateRelayPrefs: optionAStorageMocks.readElectionPrivateRelayPrefs,
+  readBallotSubmissionAckRecord: optionAStorageMocks.readBallotSubmissionAckRecord,
   readAcceptance: optionAStorageMocks.readAcceptance,
+  readBlindRequestAckRecord: optionAStorageMocks.readBlindRequestAckRecord,
   readBlindIssuance: optionAStorageMocks.readBlindIssuance,
   readBlindIssuanceAckRecord: optionAStorageMocks.readBlindIssuanceAckRecord,
   readInviteFromMailbox: () => null,
+  recordElectionPrivateRelaySuccesses: optionAStorageMocks.recordElectionPrivateRelaySuccesses,
   saveVoterState: () => undefined,
   upsertElectionSummary: vi.fn(),
 }));
@@ -89,6 +97,13 @@ afterEach(() => {
   ]);
   optionAStorageMocks.loadVoterState.mockReset();
   optionAStorageMocks.loadVoterState.mockReturnValue(null);
+  optionAStorageMocks.readElectionPrivateRelayPrefs.mockReset();
+  optionAStorageMocks.readElectionPrivateRelayPrefs.mockReturnValue([]);
+  optionAStorageMocks.recordElectionPrivateRelaySuccesses.mockReset();
+  optionAStorageMocks.readBallotSubmissionAckRecord.mockReset();
+  optionAStorageMocks.readBallotSubmissionAckRecord.mockReturnValue(null);
+  optionAStorageMocks.readBlindRequestAckRecord.mockReset();
+  optionAStorageMocks.readBlindRequestAckRecord.mockReturnValue(null);
   optionAStorageMocks.readBlindIssuance.mockReset();
   optionAStorageMocks.readBlindIssuance.mockReturnValue(null);
   optionAStorageMocks.readBlindIssuanceAckRecord.mockReset();

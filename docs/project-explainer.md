@@ -47,7 +47,7 @@ This is the practical order of operations for the current app.
 
 1. Open the app as **Coordinator** and create or log in to a coordinator identity.
 2. In **Build**, set questionnaire ID, title, description, and questions.
-3. In **Participants**, add or import voter npubs and mark expected participants as verified/known.
+3. In **Invite**, add or import voter npubs and invite expected participants.
 4. Send invites (`Send invite` / `Invite all whitelisted`) or share the invite link.
 5. As voters appear, run `Process requests` / `Check responses` to process blind request and response queues.
    - Verified voters can now pre-request and coordinators can pre-issue before publish.
@@ -60,6 +60,7 @@ This is the practical order of operations for the current app.
 3. The app auto-requests the blind ballot when invite context and login are present; otherwise click `Request ballot`.
 4. Wait for `Credential ready: Yes`.
 5. Complete responses and click `Submit response` (it shows `Waiting for coordinator...` while prerequisites are incomplete).
+6. Private request, issuance, and submission steps now send explicit acknowledgements, so later retries back off once the next phase has definitely received the message.
 
 ### 3. Coordinator finalises third
 
@@ -78,6 +79,7 @@ This is the practical order of operations for the current app.
 - If a voter sees no invite, confirm they are using the same voter identity that was invited.
 - A voter should not see unrelated questionnaires unless they have invite/state context for that identity.
 - Relay connection failures for one endpoint are common on public infrastructure; retries and other relays should still allow progress.
+- Private questionnaire recovery now uses shared websocket inbox subscriptions, sticky successful relay subsets, and bounded refreshes on focus/visibility/online instead of relying only on repeated timer-driven resend loops.
 
 ---
 
@@ -230,6 +232,8 @@ The present web client is built with:
 - **idempotent ballot resend** so a voter can resend the same blind request, the coordinator republishes the existing credential DM, and background loops avoid rebroadcasting already delivered credentials
 - **more redundant DM delivery** that mixes recipient NIP-17 relay hints with fallback relays, widens credential publish fanout, and retries issued credentials until submission proves receipt
 - **wider bounded signer DM scans** for invite/issuance/acceptance recovery so Amber/signer users are less likely to miss valid envelopes in busy relay histories
+- **explicit questionnaire phase acknowledgements** for blind request receipt, credential receipt, and submission receipt, so resend logic can stop once delivery is confirmed instead of inferring success only from later state
+- **shared recipient inbox subscriptions + sticky relay preferences** so private questionnaire reads reuse one websocket inbox per recipient, remember recently successful relays per questionnaire, and trigger bounded lifecycle recovery on foreground/network return
 - **course-feedback coordinator bypass** so legacy live-round / blind-key / ticket queue gating is disabled for questionnaire acceptance paths, with explicit debug assertions for bypass state
 - **course-feedback batch orchestration** in the live harness (`LIVE_BATCH_SIZE`, default `5`) so enrolment and submission advance in checkpointed waves instead of all-voter cold-start concurrency
 - **questionnaire response observation fallback** that prefers bounded kind-only reads plus local questionnaire-id filtering (and relay probes) when custom tag-indexed reads are unreliable on public relays

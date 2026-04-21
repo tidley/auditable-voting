@@ -217,6 +217,7 @@ The current repository contains only the browser app. It has voter, coordinator,
 4. Wait for `Credential ready: Yes`.
 5. Fill in the response fields.
 6. Submit the response (the button shows `Waiting for coordinator...` until submission is available).
+7. Private request, issuance, and submission steps now send explicit acknowledgements, so retries can back off once the next phase has definitely received the message.
 
 Invite links can point to a public questionnaire id. Signer login opens the Vote tab directly, completes voter login, and loads the public questionnaire definition, including the blind-signing public key, without scanning old encrypted invite DMs. Manual invite checks and credential-result polling use recent bounded signer DM reads.
 
@@ -226,9 +227,13 @@ The login gateway now orders controls as `Signer`/`nsec`, then signer choice (`N
 
 Blind request, issuance, submission, and acceptance DMs now also resolve recipient NIP-17 relay-list hints (`kind:10050`) before static fallbacks, keep curated fallback relay redundancy, and only count a DM publish as delivered when at least one relay actually accepts it.
 
+Private questionnaire recovery now uses shared websocket inbox subscriptions, sticky successful relay subsets per questionnaire, and bounded refreshes on focus/visibility/online instead of relying only on repeated timer-driven resend loops.
+
 Invite-link clipboard writes are best-effort, so browser focus restrictions do not throw unhandled errors after async relay work.
 
 The voter page labels the questionnaire voting identity separately from the signer account and shows request, credential, and response state. The `Vote` tab remains available so voters can browse current and older invited questionnaires; unavailable actions show waiting states until questionnaire context is ready. Silent invite polling does not force tab switches away from Configure/Settings. Resending a blind-ballot request keeps the same request id; the coordinator republishes the existing credential DM rather than issuing a second credential. Blind-request and ballot-submission sends only move to "sent" after confirmed relay acceptance. Credential delivery now mixes recipient relay hints with fallback relays, publishes to more relays, retries issued credentials until submission proves receipt, and uses wider bounded signer DM scans for recovery. On first login/open, the Vote flow auto-sends the blind-ballot request when invite context exists, and `Submit response` remains `Waiting for coordinator...` until the credential and response prerequisites are satisfied.
+
+The private questionnaire phases now also send explicit blind-request, credential-receipt, and submission-receipt acknowledgements. That lets the coordinator and voter stop unnecessary resends once delivery is confirmed instead of inferring success only from later state.
 
 When a response is submitted with the ephemeral response key, the app also sends a best-effort encrypted self-copy of the submission back to the voter's login identity. This lets a voter log in later, select the questionnaire from the Vote tab, and recover the submitted response marker and answers from their own NIP-17 mailbox even if browser-local state was lost.
 

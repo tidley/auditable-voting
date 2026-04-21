@@ -25,8 +25,12 @@ vi.mock("./questionnaireOptionAInviteDm", () => ({
 }));
 
 vi.mock("./questionnaireOptionABlindDm", () => ({
+  fetchOptionABallotSubmissionAckDms: vi.fn().mockResolvedValue([]),
+  fetchOptionABallotSubmissionAckDmsWithNsec: vi.fn().mockResolvedValue([]),
   fetchOptionABlindIssuanceAckDms: vi.fn().mockResolvedValue([]),
   fetchOptionABlindIssuanceAckDmsWithNsec: vi.fn().mockResolvedValue([]),
+  fetchOptionABlindRequestAckDms: vi.fn().mockResolvedValue([]),
+  fetchOptionABlindRequestAckDmsWithNsec: vi.fn().mockResolvedValue([]),
   fetchOptionABallotAcceptanceDms: vi.fn().mockResolvedValue([]),
   fetchOptionABallotAcceptanceDmsWithNsec: vi.fn().mockResolvedValue([]),
   fetchOptionABallotSubmissionDms: vi.fn().mockResolvedValue([]),
@@ -37,6 +41,12 @@ vi.mock("./questionnaireOptionABlindDm", () => ({
   fetchOptionABlindRequestDmsWithNsec: vi.fn().mockResolvedValue([]),
   publishOptionABallotAcceptanceDm: vi.fn().mockResolvedValue({
     eventId: "mock-option-a-acceptance-dm",
+    successes: 1,
+    failures: 0,
+    relayResults: [],
+  }),
+  publishOptionABallotSubmissionAckDm: vi.fn().mockResolvedValue({
+    eventId: "mock-option-a-submission-ack-dm",
     successes: 1,
     failures: 0,
     relayResults: [],
@@ -59,6 +69,12 @@ vi.mock("./questionnaireOptionABlindDm", () => ({
     failures: 0,
     relayResults: [],
   }),
+  publishOptionABlindRequestAckDm: vi.fn().mockResolvedValue({
+    eventId: "mock-option-a-request-ack-dm",
+    successes: 1,
+    failures: 0,
+    relayResults: [],
+  }),
   publishOptionABlindRequestDm: vi.fn().mockResolvedValue({
     eventId: "mock-option-a-request-dm",
     successes: 1,
@@ -68,8 +84,10 @@ vi.mock("./questionnaireOptionABlindDm", () => ({
   subscribeOptionABlindRequestDms: vi.fn(() => () => undefined),
   subscribeOptionABlindIssuanceDms: vi.fn(() => () => undefined),
   subscribeOptionABallotSubmissionDms: vi.fn(() => () => undefined),
+  subscribeOptionABallotSubmissionAckDms: vi.fn(() => () => undefined),
   subscribeOptionABallotAcceptanceDms: vi.fn(() => () => undefined),
   subscribeOptionABlindIssuanceAckDms: vi.fn(() => () => undefined),
+  subscribeOptionABlindRequestAckDms: vi.fn(() => () => undefined),
 }));
 
 function signer(npub: string): SignerService {

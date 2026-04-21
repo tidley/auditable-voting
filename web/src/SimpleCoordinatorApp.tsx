@@ -1061,6 +1061,7 @@ export default function SimpleCoordinatorApp() {
   const saveStateDebounceTimerRef = useRef<number | null>(null);
   const lastSavedStateSignatureRef = useRef<string>("");
   const optionAQueueProcessingInFlightRef = useRef(false);
+  const optionAQueueLifecycleRefreshAtRef = useRef(0);
 
   useEffect(() => {
     latestCoordinatorHexRosterRef.current = coordinatorHexRoster;
@@ -3469,6 +3470,47 @@ export default function SimpleCoordinatorApp() {
     );
   }
 
+  async function runOptionABackgroundProcessing() {
+    if (!activeCoordinatorNpub.trim() || optionAQueueProcessingInFlightRef.current) {
+      return false;
+    }
+    const localNsecMode = Boolean(keypair?.nsec?.trim() && !signerNpub.trim());
+    if (!localNsecMode && (!optionAElectionId.trim() || !optionACoordinatorRuntime)) {
+      return false;
+    }
+    optionAQueueProcessingInFlightRef.current = true;
+    try {
+      const syncStep = localNsecMode
+        ? processOptionAQueuesForCoordinatorLive({
+          coordinatorNpub: activeCoordinatorNpub,
+          signer: optionASigner,
+          fallbackNsec: keypair?.nsec,
+          preferredElectionId: optionAElectionId,
+          onlyPreferredElectionId: true,
+          forceRepublishIssuances: false,
+        }).then((result) => {
+          if (optionACoordinatorRuntime && optionAElectionId.trim()) {
+            optionACoordinatorRuntime.bootstrapCoordinatorNpub({
+              coordinatorNpub: activeCoordinatorNpub,
+              startDmSubscriptions: false,
+            });
+          }
+          return result.processedElections;
+        })
+        : optionACoordinatorRuntime!.syncBlindRequestsFromDm()
+          .then(() => optionACoordinatorRuntime!.syncSubmissionsFromDm())
+          .then(() => optionACoordinatorRuntime!.processPendingBlindRequests())
+          .then(() => optionACoordinatorRuntime!.publishPendingBlindIssuancesToDm())
+          .then(() => optionACoordinatorRuntime!.processPendingSubmissions([]))
+          .then(() => optionACoordinatorRuntime!.publishPendingAcceptanceResultsToDm())
+          .then(() => 1);
+      await syncStep;
+      setKnownVoterInviteRefreshNonce((value) => value + 1);
+      return true;
+    } finally {
+      optionAQueueProcessingInFlightRef.current = false;
+    }
+  }
 
   async function processKnownVoterRequests() {
     if (!activeCoordinatorNpub.trim()) {
@@ -3478,36 +3520,19 @@ export default function SimpleCoordinatorApp() {
       setKnownVoterInviteStatus("Already checking questionnaire requests.");
       return;
     }
-    optionAQueueProcessingInFlightRef.current = true;
     try {
-      const result = await processOptionAQueuesForCoordinatorLive({
-        coordinatorNpub: activeCoordinatorNpub,
-        signer: optionASigner,
-        fallbackNsec: keypair?.nsec,
-        preferredElectionId: optionAElectionId,
-        onlyPreferredElectionId: true,
-        forceRepublishIssuances: false,
-      });
-      if (optionACoordinatorRuntime && optionAElectionId.trim()) {
-        optionACoordinatorRuntime.bootstrapCoordinatorNpub({
-          coordinatorNpub: activeCoordinatorNpub,
-          startDmSubscriptions: false,
-        });
-      }
+      const ran = await runOptionABackgroundProcessing();
       setKnownVoterInviteStatus(
-        result.processedElections > 0
+        ran
           ? (
             optionAElectionId.trim()
               ? "Processed incoming requests/submissions for the current questionnaire."
-              : `Processed incoming requests/submissions across ${result.processedElections} questionnaire${result.processedElections === 1 ? "" : "s"}.`
+              : "Processed incoming requests/submissions."
           )
           : "No matching questionnaires found for this coordinator.",
       );
-      setKnownVoterInviteRefreshNonce((value) => value + 1);
     } catch (error) {
       setKnownVoterInviteStatus(error instanceof Error ? error.message : "Processing failed.");
-    } finally {
-      optionAQueueProcessingInFlightRef.current = false;
     }
   }
 
@@ -3525,48 +3550,48 @@ export default function SimpleCoordinatorApp() {
       : OPTION_A_DEFAULT_BACKGROUND_PROCESS_INTERVAL_MS;
 
     const intervalId = window.setInterval(() => {
-      if (optionAQueueProcessingInFlightRef.current) {
-        return;
-      }
-      optionAQueueProcessingInFlightRef.current = true;
-      const syncStep = localNsecMode
-        ? processOptionAQueuesForCoordinatorLive({
-          coordinatorNpub: activeCoordinatorNpub,
-          signer: optionASigner,
-          fallbackNsec: keypair?.nsec,
-          preferredElectionId: optionAElectionId,
-          onlyPreferredElectionId: true,
-          forceRepublishIssuances: false,
-        }).then(() => {
-          if (optionACoordinatorRuntime && optionAElectionId.trim()) {
-            optionACoordinatorRuntime.bootstrapCoordinatorNpub({
-              coordinatorNpub: activeCoordinatorNpub,
-              startDmSubscriptions: false,
-            });
-          }
-          return 0;
-        })
-        : optionACoordinatorRuntime!.syncBlindRequestsFromDm()
-          .then(() => optionACoordinatorRuntime!.syncSubmissionsFromDm());
-      void syncStep
-      .then(() => (
-        localNsecMode
-          ? Promise.resolve(0)
-          : optionACoordinatorRuntime!.processPendingBlindRequests()
-            .then(() => optionACoordinatorRuntime!.publishPendingBlindIssuancesToDm())
-            .then(() => optionACoordinatorRuntime!.processPendingSubmissions([]))
-            .then(() => optionACoordinatorRuntime!.publishPendingAcceptanceResultsToDm())
-      ))
-      .then(() => {
-        setKnownVoterInviteRefreshNonce((value) => value + 1);
-      }).catch(() => {
+      void runOptionABackgroundProcessing().catch(() => {
         // Keep background processing best-effort; explicit action shows errors.
-      }).finally(() => {
-        optionAQueueProcessingInFlightRef.current = false;
       });
     }, intervalMs);
     return () => {
       window.clearInterval(intervalId);
+    };
+  }, [activeCoordinatorNpub, optionACoordinatorRuntime, optionAElectionId, keypair?.nsec, signerNpub]);
+
+  useEffect(() => {
+    if (!activeCoordinatorNpub.trim()) {
+      return;
+    }
+    const localNsecMode = Boolean(keypair?.nsec?.trim() && !signerNpub.trim());
+    if (!localNsecMode && (!optionAElectionId.trim() || !optionACoordinatorRuntime)) {
+      return;
+    }
+    const triggerRefresh = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+      const now = Date.now();
+      if (now - optionAQueueLifecycleRefreshAtRef.current < 1_500) {
+        return;
+      }
+      optionAQueueLifecycleRefreshAtRef.current = now;
+      void runOptionABackgroundProcessing().catch(() => {
+        // Keep lifecycle refresh best-effort; explicit action shows errors.
+      });
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        triggerRefresh();
+      }
+    };
+    window.addEventListener("focus", triggerRefresh);
+    window.addEventListener("online", triggerRefresh);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      window.removeEventListener("focus", triggerRefresh);
+      window.removeEventListener("online", triggerRefresh);
+      document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, [activeCoordinatorNpub, optionACoordinatorRuntime, optionAElectionId, keypair?.nsec, signerNpub]);
   function authorizePendingRequester(invitedNpub: string) {

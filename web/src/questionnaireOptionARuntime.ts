@@ -24,6 +24,8 @@ import {
 } from "./questionnaireOptionA";
 import type { QuestionnaireBlindPrivateKey } from "./questionnaireBlindSignature";
 import {
+  dequeueBlindRequest,
+  dequeueSubmission,
   enqueueBlindRequest,
   enqueueSubmission,
   listBlindRequests,
@@ -33,22 +35,32 @@ import {
   loadElectionSummary,
   loadVoterState,
   publishInviteToMailbox,
+  readBallotSubmissionAckRecord,
+  readBlindRequestAckRecord,
+  readElectionPrivateRelayPrefs,
   readAcceptance,
   readBlindIssuanceAckRecord,
   readBlindIssuanceDeliveryRecord,
   readBlindIssuance,
   recordBlindIssuanceDeliveryAttempt,
   readInviteFromMailbox,
+  recordElectionPrivateRelaySuccesses,
   saveCoordinatorState,
   saveVoterState,
+  storeBallotSubmissionAckRecord,
   storeAcceptance,
+  storeBlindRequestAckRecord,
   storeBlindIssuanceAckRecord,
   storeBlindIssuance,
   upsertElectionSummary,
 } from "./questionnaireOptionAStorage";
 import {
+  fetchOptionABallotSubmissionAckDms,
+  fetchOptionABallotSubmissionAckDmsWithNsec,
   fetchOptionABlindIssuanceAckDms,
   fetchOptionABlindIssuanceAckDmsWithNsec,
+  fetchOptionABlindRequestAckDms,
+  fetchOptionABlindRequestAckDmsWithNsec,
   fetchOptionABallotAcceptanceDms,
   fetchOptionABallotAcceptanceDmsWithNsec,
   fetchOptionABallotSubmissionDms,
@@ -57,16 +69,22 @@ import {
   fetchOptionABlindIssuanceDmsWithNsec,
   fetchOptionABlindRequestDms,
   fetchOptionABlindRequestDmsWithNsec,
+  publishOptionABallotSubmissionAckDm,
   publishOptionABallotAcceptanceDm,
   publishOptionABallotSubmissionDm,
   publishOptionABlindIssuanceAckDm,
   publishOptionABlindIssuanceDm,
+  publishOptionABlindRequestAckDm,
   publishOptionABlindRequestDm,
   subscribeOptionABallotAcceptanceDms,
+  subscribeOptionABallotSubmissionAckDms,
   subscribeOptionABallotSubmissionDms,
   subscribeOptionABlindIssuanceAckDms,
   subscribeOptionABlindIssuanceDms,
+  subscribeOptionABlindRequestAckDms,
   subscribeOptionABlindRequestDms,
+  type BallotSubmissionAck,
+  type BlindRequestAck,
   type BlindIssuanceAck,
   type OptionABlindRequestFetchDiagnostics,
 } from "./questionnaireOptionABlindDm";
@@ -91,7 +109,9 @@ const OPTION_A_COORDINATOR_SIGNER_DM_LIMIT = 60;
 const OPTION_A_COORDINATOR_NSEC_DM_LIMIT = 120;
 const OPTION_A_ISSUANCE_DM_RETRY_MS = 2 * 60 * 1000;
 const OPTION_A_BLIND_REQUEST_RETRY_MS = 10 * 1000;
+const OPTION_A_BLIND_REQUEST_ACK_RETRY_MS = 2 * 60 * 1000;
 const OPTION_A_SUBMISSION_REPUBLISH_RETRY_MS = 60 * 1000;
+const OPTION_A_SUBMISSION_ACK_RETRY_MS = 2 * 60 * 1000;
 const OPTION_A_SELF_COPY_RECOVERY_LOOKBACK_SECONDS = Math.round(36 * 60 * 60);
 const OPTION_A_VOTER_DM_LOOKBACK_SECONDS = Math.round(36 * 60 * 60);
 
@@ -160,6 +180,20 @@ function stableStringify(value: unknown): string {
 function optionAFlowLog(role: "voter" | "coordinator", stage: string, details?: Record<string, unknown>) {
   const payload = details ? ` ${JSON.stringify(details)}` : "";
   console.log(`[OptionA][${role}] ${stage}${payload}`);
+}
+
+function extractSuccessfulRelays(result: { relayResults?: Array<{ relay: string; success: boolean }> } | null | undefined) {
+  return (result?.relayResults ?? [])
+    .filter((entry) => entry.success)
+    .map((entry) => entry.relay);
+}
+
+function hasRecentAck(ackedAt: string | null | undefined, retryWindowMs: number) {
+  if (!ackedAt) {
+    return false;
+  }
+  const ackedAtMs = Date.parse(ackedAt);
+  return Number.isFinite(ackedAtMs) && Date.now() - ackedAtMs < retryWindowMs;
 }
 
 async function deriveDeterministicResponseSecretKey(input: {
@@ -237,7 +271,9 @@ export class QuestionnaireOptionAVoterRuntime {
   private refreshFetchInFlight = false;
   private submissionRepublishAttemptAtBySubmissionId = new Map<string, number>();
   private blindIssuanceAckInflightByRequestId = new Map<string, Promise<void>>();
+  private stopBlindRequestAckSubscription: (() => void) | null = null;
   private stopBlindIssuanceSubscription: (() => void) | null = null;
+  private stopSubmissionAckSubscription: (() => void) | null = null;
   private stopAcceptanceSubscription: (() => void) | null = null;
 
   constructor(
@@ -268,10 +304,25 @@ export class QuestionnaireOptionAVoterRuntime {
   }
 
   private stopVoterDmSubscriptions() {
+    this.stopBlindRequestAckSubscription?.();
+    this.stopBlindRequestAckSubscription = null;
     this.stopBlindIssuanceSubscription?.();
     this.stopBlindIssuanceSubscription = null;
+    this.stopSubmissionAckSubscription?.();
+    this.stopSubmissionAckSubscription = null;
     this.stopAcceptanceSubscription?.();
     this.stopAcceptanceSubscription = null;
+  }
+
+  private getPreferredDmRelays() {
+    return readElectionPrivateRelayPrefs(this.electionId);
+  }
+
+  private rememberPrivateRelaySuccesses(result: { relayResults?: Array<{ relay: string; success: boolean }> } | null | undefined) {
+    const relays = extractSuccessfulRelays(result);
+    if (relays.length > 0) {
+      recordElectionPrivateRelaySuccesses(this.electionId, relays);
+    }
   }
 
   private startVoterDmSubscriptions() {
@@ -285,6 +336,7 @@ export class QuestionnaireOptionAVoterRuntime {
     const shouldSubscribeAcceptance = Boolean(
       this.state.submission && this.state.submissionAccepted === null,
     );
+    const relays = this.getPreferredDmRelays();
     const toSince = (value?: string | null) => {
       const nowSec = Math.floor(Date.now() / 1000);
       const lookbackFloor = Math.max(0, nowSec - OPTION_A_VOTER_DM_LOOKBACK_SECONDS);
@@ -303,6 +355,27 @@ export class QuestionnaireOptionAVoterRuntime {
     const issuanceSince = toSince(this.state.blindRequestSentAt);
     const acceptanceSince = toSince(this.state.submission?.submittedAt) ?? issuanceSince;
 
+    if (!shouldSubscribeBlindIssuance && this.stopBlindRequestAckSubscription) {
+      this.stopBlindRequestAckSubscription();
+      this.stopBlindRequestAckSubscription = null;
+    }
+    if (shouldSubscribeBlindIssuance && !this.stopBlindRequestAckSubscription) {
+      this.stopBlindRequestAckSubscription = subscribeOptionABlindRequestAckDms({
+        signer: this.signer,
+        electionId: this.electionId,
+        relays,
+        since: issuanceSince,
+        onAck: (ack) => {
+          storeBlindRequestAckRecord({
+            requestId: ack.requestId,
+            electionId: ack.electionId,
+            invitedNpub: ack.invitedNpub,
+            ackedAt: ack.ackedAt,
+          });
+        },
+      });
+    }
+
     if (!shouldSubscribeBlindIssuance && this.stopBlindIssuanceSubscription) {
       this.stopBlindIssuanceSubscription();
       this.stopBlindIssuanceSubscription = null;
@@ -311,6 +384,7 @@ export class QuestionnaireOptionAVoterRuntime {
       this.stopBlindIssuanceSubscription = subscribeOptionABlindIssuanceDms({
         signer: this.signer,
         electionId: this.electionId,
+        relays,
         since: issuanceSince,
         onIssuance: (issuance) => {
           storeBlindIssuance(issuance);
@@ -318,6 +392,27 @@ export class QuestionnaireOptionAVoterRuntime {
             storeCachedQuestionnaireDefinition(issuance.definition);
           }
           void this.ensureBlindIssuanceAck(issuance).catch(() => undefined);
+        },
+      });
+    }
+
+    if (!shouldSubscribeAcceptance && this.stopSubmissionAckSubscription) {
+      this.stopSubmissionAckSubscription();
+      this.stopSubmissionAckSubscription = null;
+    }
+    if (shouldSubscribeAcceptance && !this.stopSubmissionAckSubscription) {
+      this.stopSubmissionAckSubscription = subscribeOptionABallotSubmissionAckDms({
+        signer: this.signer,
+        electionId: this.electionId,
+        relays,
+        since: acceptanceSince,
+        onAck: (ack) => {
+          storeBallotSubmissionAckRecord({
+            submissionId: ack.submissionId,
+            electionId: ack.electionId,
+            responseNpub: ack.responseNpub,
+            ackedAt: ack.ackedAt,
+          });
         },
       });
     }
@@ -330,6 +425,7 @@ export class QuestionnaireOptionAVoterRuntime {
       this.stopAcceptanceSubscription = subscribeOptionABallotAcceptanceDms({
         signer: this.signer,
         electionId: this.electionId,
+        relays,
         since: acceptanceSince,
         onAcceptance: (acceptance) => {
           storeAcceptance(acceptance);
@@ -371,6 +467,7 @@ export class QuestionnaireOptionAVoterRuntime {
           recipientNpub: this.state?.coordinatorNpub ?? issuance.invitedNpub,
           ack,
           fallbackNsec: this.fallbackNsec,
+          relays: this.getPreferredDmRelays(),
         });
         optionAFlowLog("voter", "blind_issuance_ack_publish_result", {
           electionId: ack.electionId,
@@ -380,6 +477,7 @@ export class QuestionnaireOptionAVoterRuntime {
           failures: result.failures,
         });
         if (result.successes > 0) {
+          this.rememberPrivateRelaySuccesses(result);
           storeBlindIssuanceAckRecord(ack);
         }
       } catch (error) {
@@ -713,6 +811,23 @@ export class QuestionnaireOptionAVoterRuntime {
       saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
       return this.state;
     }
+    const requestAck = request ? readBlindRequestAckRecord(request.requestId) : null;
+    if (
+      !options?.forceResend
+      && request
+      && this.state.blindRequestSent
+      && !this.state.blindIssuance
+      && hasRecentAck(requestAck?.ackedAt, OPTION_A_BLIND_REQUEST_ACK_RETRY_MS)
+    ) {
+      optionAFlowLog("voter", "blind_request_resend_skipped_acknowledged", {
+        electionId: this.state.electionId,
+        requestId: request.requestId,
+        ackedAt: requestAck?.ackedAt ?? null,
+        minRetryMs: OPTION_A_BLIND_REQUEST_ACK_RETRY_MS,
+      });
+      saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
+      return this.state;
+    }
     if (
       request
       && this.state.blindRequestSent
@@ -783,7 +898,9 @@ export class QuestionnaireOptionAVoterRuntime {
         recipientNpub: this.state.coordinatorNpub,
         request,
         fallbackNsec: this.fallbackNsec,
+        relays: this.getPreferredDmRelays(),
       });
+      this.rememberPrivateRelaySuccesses(result);
       return result;
     } catch {
       return null;
@@ -818,6 +935,20 @@ export class QuestionnaireOptionAVoterRuntime {
     if (!this.refreshFetchInFlight) {
       const fetchTasks: Array<Promise<void>> = [];
       if (needsIssuanceFetch) {
+        const requestAckFetch = this.fallbackNsec?.trim()
+          ? fetchOptionABlindRequestAckDmsWithNsec({
+            nsec: this.fallbackNsec,
+            electionId,
+            limit: 100,
+          })
+          : fetchOptionABlindRequestAckDms({
+            signer: this.signer,
+            electionId,
+            relays: this.getPreferredDmRelays(),
+            limit: 30,
+            maxDecryptAttempts: 30,
+            since: requestSince,
+          });
         const blindIssuanceFetch = this.fallbackNsec?.trim()
           ? fetchOptionABlindIssuanceDmsWithNsec({
             nsec: this.fallbackNsec,
@@ -827,10 +958,23 @@ export class QuestionnaireOptionAVoterRuntime {
           : fetchOptionABlindIssuanceDms({
             signer: this.signer,
             electionId,
+            relays: this.getPreferredDmRelays(),
             limit: 30,
             maxDecryptAttempts: 30,
             since: requestSince,
           });
+        fetchTasks.push(
+          requestAckFetch.then((ackMessages) => {
+            for (const ack of ackMessages) {
+              storeBlindRequestAckRecord({
+                requestId: ack.requestId,
+                electionId: ack.electionId,
+                invitedNpub: ack.invitedNpub,
+                ackedAt: ack.ackedAt,
+              });
+            }
+          }).catch(() => null).then(() => undefined),
+        );
         fetchTasks.push(
           blindIssuanceFetch.then((issuanceMessages) => {
             for (const issuance of issuanceMessages) {
@@ -844,6 +988,20 @@ export class QuestionnaireOptionAVoterRuntime {
       }
       if (needsAcceptanceFetch) {
         const acceptanceReadNsec = this.state.responseNsec?.trim() || this.fallbackNsec?.trim() || "";
+        const submissionAckFetch = acceptanceReadNsec
+          ? fetchOptionABallotSubmissionAckDmsWithNsec({
+            nsec: acceptanceReadNsec,
+            electionId,
+            limit: 100,
+          })
+          : fetchOptionABallotSubmissionAckDms({
+            signer: this.signer,
+            electionId,
+            relays: this.getPreferredDmRelays(),
+            limit: 30,
+            maxDecryptAttempts: 30,
+            since: acceptanceSince,
+          });
         const acceptanceFetch = acceptanceReadNsec
           ? fetchOptionABallotAcceptanceDmsWithNsec({
             nsec: acceptanceReadNsec,
@@ -853,10 +1011,23 @@ export class QuestionnaireOptionAVoterRuntime {
           : fetchOptionABallotAcceptanceDms({
             signer: this.signer,
             electionId,
+            relays: this.getPreferredDmRelays(),
             limit: 30,
             maxDecryptAttempts: 30,
             since: acceptanceSince,
           });
+        fetchTasks.push(
+          submissionAckFetch.then((ackMessages) => {
+            for (const ack of ackMessages) {
+              storeBallotSubmissionAckRecord({
+                submissionId: ack.submissionId,
+                electionId: ack.electionId,
+                responseNpub: ack.responseNpub,
+                ackedAt: ack.ackedAt,
+              });
+            }
+          }).catch(() => null).then(() => undefined),
+        );
         fetchTasks.push(
           acceptanceFetch.then((acceptanceMessages) => {
             for (const acceptance of acceptanceMessages) {
@@ -959,6 +1130,17 @@ export class QuestionnaireOptionAVoterRuntime {
         return this.state;
       }
       const submissionId = this.state.submission.submissionId;
+      const submissionAck = readBallotSubmissionAckRecord(submissionId);
+      if (hasRecentAck(submissionAck?.ackedAt, OPTION_A_SUBMISSION_ACK_RETRY_MS)) {
+        optionAFlowLog("voter", "submit_vote_republish_skipped_acknowledged", {
+          electionId: this.state.electionId,
+          submissionId,
+          ackedAt: submissionAck?.ackedAt ?? null,
+          minRetryMs: OPTION_A_SUBMISSION_ACK_RETRY_MS,
+        });
+        this.refreshIssuanceAndAcceptance();
+        return this.state;
+      }
       const nowMs = Date.now();
       const lastAttemptMs = this.submissionRepublishAttemptAtBySubmissionId.get(submissionId) ?? 0;
       if (nowMs - lastAttemptMs < OPTION_A_SUBMISSION_REPUBLISH_RETRY_MS) {
@@ -1095,12 +1277,15 @@ export class QuestionnaireOptionAVoterRuntime {
       coordinatorNpub: this.state.coordinatorNpub,
     });
     try {
-      return await publishOptionABallotSubmissionDm({
+      const result = await publishOptionABallotSubmissionDm({
         signer: this.signer,
         recipientNpub: this.state.coordinatorNpub,
         submission,
         fallbackNsec: options?.fallbackNsec ?? this.state.responseNsec ?? this.fallbackNsec,
+        relays: this.getPreferredDmRelays(),
       });
+      this.rememberPrivateRelaySuccesses(result);
+      return result;
     } catch {
       return null;
     }
@@ -1124,7 +1309,9 @@ export class QuestionnaireOptionAVoterRuntime {
         recipientNpub: this.state.invitedNpub,
         submission,
         fallbackNsec: options?.fallbackNsec ?? this.state.responseNsec ?? this.fallbackNsec,
+        relays: this.getPreferredDmRelays(),
       });
+      this.rememberPrivateRelaySuccesses(result);
       optionAFlowLog("voter", "submission_self_copy_publish_result", {
         electionId: this.state.electionId,
         submissionId: submission.submissionId,
@@ -1238,9 +1425,11 @@ export class QuestionnaireOptionACoordinatorRuntime {
     if (!this.coordinatorNpub) {
       return;
     }
+    const relays = this.getPreferredDmRelays();
     this.stopBlindRequestSubscription = subscribeOptionABlindRequestDms({
       signer: this.signer,
       electionId: this.electionId,
+      relays,
       onRequest: (request) => {
         enqueueBlindRequest(request);
         void this.triggerBlindRequestProcessingFromLive().catch(() => undefined);
@@ -1249,6 +1438,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
     this.stopSubmissionSubscription = subscribeOptionABallotSubmissionDms({
       signer: this.signer,
       electionId: this.electionId,
+      relays,
       onSubmission: (submission) => {
         enqueueSubmission(submission);
         void this.triggerSubmissionProcessingFromLive().catch(() => undefined);
@@ -1257,6 +1447,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
     this.stopBlindIssuanceAckSubscription = subscribeOptionABlindIssuanceAckDms({
       signer: this.signer,
       electionId: this.electionId,
+      relays,
       onAck: (ack) => {
         this.recordBlindIssuanceAck(ack);
       },
@@ -1275,6 +1466,90 @@ export class QuestionnaireOptionACoordinatorRuntime {
       );
     }
     return floorSince;
+  }
+
+  private getPreferredDmRelays() {
+    return readElectionPrivateRelayPrefs(this.electionId);
+  }
+
+  private rememberPrivateRelaySuccesses(result: { relayResults?: Array<{ relay: string; success: boolean }> } | null | undefined) {
+    const relays = extractSuccessfulRelays(result);
+    if (relays.length > 0) {
+      recordElectionPrivateRelaySuccesses(this.electionId, relays);
+    }
+  }
+
+  private async publishBlindRequestAckDm(request: BlindBallotRequest) {
+    const ack: BlindRequestAck = {
+      type: "blind_ballot_request_ack",
+      schemaVersion: 1,
+      electionId: request.electionId,
+      requestId: request.requestId,
+      invitedNpub: request.invitedNpub,
+      ackedAt: nowIso(),
+    };
+    try {
+      const result = await publishOptionABlindRequestAckDm({
+        signer: this.signer,
+        recipientNpub: request.invitedNpub,
+        ack,
+        fallbackNsec: this.fallbackNsec,
+        relays: this.getPreferredDmRelays(),
+      });
+      optionAFlowLog("coordinator", "blind_request_ack_publish_result", {
+        electionId: ack.electionId,
+        requestId: ack.requestId,
+        successes: result.successes,
+        failures: result.failures,
+      });
+      if (result.successes > 0) {
+        this.rememberPrivateRelaySuccesses(result);
+      }
+    } catch (error) {
+      optionAFlowLog("coordinator", "blind_request_ack_publish_failed", {
+        electionId: ack.electionId,
+        requestId: ack.requestId,
+        error: error instanceof Error ? error.message : "unknown",
+      });
+    }
+  }
+
+  private async publishBallotSubmissionAckDm(submission: BallotSubmission) {
+    const responseNpub = submission.responseNpub ?? submission.invitedNpub;
+    const ack: BallotSubmissionAck = {
+      type: "ballot_submission_ack",
+      schemaVersion: 1,
+      electionId: submission.electionId,
+      submissionId: submission.submissionId,
+      responseNpub,
+      ackedAt: nowIso(),
+    };
+    try {
+      const result = await publishOptionABallotSubmissionAckDm({
+        signer: this.signer,
+        recipientNpub: responseNpub,
+        ack,
+        fallbackNsec: this.fallbackNsec,
+        relays: this.getPreferredDmRelays(),
+      });
+      optionAFlowLog("coordinator", "submission_ack_publish_result", {
+        electionId: ack.electionId,
+        submissionId: ack.submissionId,
+        responseNpub,
+        successes: result.successes,
+        failures: result.failures,
+      });
+      if (result.successes > 0) {
+        this.rememberPrivateRelaySuccesses(result);
+      }
+    } catch (error) {
+      optionAFlowLog("coordinator", "submission_ack_publish_failed", {
+        electionId: ack.electionId,
+        submissionId: ack.submissionId,
+        responseNpub,
+        error: error instanceof Error ? error.message : "unknown",
+      });
+    }
   }
 
   private maybeQueueIssuanceRepublish(issuance: BlindBallotIssuance, request: BlindBallotRequest) {
@@ -1537,6 +1812,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
         : await fetchOptionABlindRequestDms({
           signer: this.signer,
           electionId: this.electionId,
+          relays: this.getPreferredDmRelays(),
           limit: OPTION_A_COORDINATOR_SIGNER_DM_LIMIT,
           since,
           diagnosticsSink: (next) => {
@@ -1612,11 +1888,13 @@ export class QuestionnaireOptionACoordinatorRuntime {
           recipientNpub: issuance.invitedNpub,
           issuance,
           fallbackNsec: this.fallbackNsec,
+          relays: this.getPreferredDmRelays(),
         });
         eventId = result.eventId;
         success = result.successes > 0;
         if (success) {
           delivered += 1;
+          this.rememberPrivateRelaySuccesses(result);
         }
         optionAFlowLog("coordinator", "blind_issuance_dm_publish_result", {
           electionId: this.electionId,
@@ -1663,6 +1941,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
         : await fetchOptionABlindIssuanceAckDms({
           signer: this.signer,
           electionId: this.electionId,
+          relays: this.getPreferredDmRelays(),
           limit: OPTION_A_COORDINATOR_SIGNER_DM_LIMIT,
           since,
           maxDecryptAttempts: OPTION_A_COORDINATOR_SIGNER_DM_LIMIT,
@@ -1697,6 +1976,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
         : await fetchOptionABallotSubmissionDms({
           signer: this.signer,
           electionId: this.electionId,
+          relays: this.getPreferredDmRelays(),
           limit: OPTION_A_COORDINATOR_SIGNER_DM_LIMIT,
           since,
         });
@@ -1736,10 +2016,12 @@ export class QuestionnaireOptionACoordinatorRuntime {
           recipientNpub: submission.responseNpub ?? submission.invitedNpub,
           acceptance,
           fallbackNsec: this.fallbackNsec,
+          relays: this.getPreferredDmRelays(),
         });
         if (result.successes > 0) {
           deliveredNow = true;
           delivered += 1;
+          this.rememberPrivateRelaySuccesses(result);
         }
         optionAFlowLog("coordinator", "acceptance_dm_publish_result", {
           electionId: this.electionId,
@@ -1787,6 +2069,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
         const existingIssuance = findIssuedBlindResponse(next, request);
         if (received.error === "already_issued" && existingIssuance) {
           const enriched = this.enrichIssuanceWithDefinition(existingIssuance);
+          await this.publishBlindRequestAckDm(request);
           this.maybeQueueIssuanceRepublish(enriched, request);
           next = {
             ...next,
@@ -1796,6 +2079,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
             },
           };
           storeBlindIssuance(enriched);
+          dequeueBlindRequest(request.requestId);
         }
         if (received.error === "not_whitelisted") {
           const existing = this.pendingAuthorizationsByNpub[request.invitedNpub] ?? [];
@@ -1807,6 +2091,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
         continue;
       }
       next = received.state;
+      await this.publishBlindRequestAckDm(request);
       const existingIssuance = findIssuedBlindResponse(next, request);
       if (existingIssuance) {
         const enriched = this.enrichIssuanceWithDefinition(existingIssuance);
@@ -1819,6 +2104,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
           },
         };
         storeBlindIssuance(enriched);
+        dequeueBlindRequest(request.requestId);
         continue;
       }
       const issuance: BlindBallotIssuance = {
@@ -1851,6 +2137,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       });
       next = issued.state;
       storeBlindIssuance(issuance);
+      dequeueBlindRequest(request.requestId);
     }
     this.state = next;
     saveCoordinatorState({ coordinatorNpub: this.coordinatorNpub, state: this.state });
@@ -1871,6 +2158,8 @@ export class QuestionnaireOptionACoordinatorRuntime {
     for (const submission of queue) {
       const existingDecision = next.acceptanceResults[submission.submissionId];
       if (existingDecision) {
+        await this.publishBallotSubmissionAckDm(submission);
+        dequeueSubmission(submission.submissionId);
         continue;
       }
       const received = reduceCoordinatorEvent(next, {
@@ -1888,10 +2177,12 @@ export class QuestionnaireOptionACoordinatorRuntime {
           decidedAt: nowIso(),
         };
         storeAcceptance(rejected);
+        dequeueSubmission(submission.submissionId);
         continue;
       }
 
       next = received.state;
+      await this.publishBallotSubmissionAckDm(submission);
       const valid = validateBallotSubmission({
         submission,
         electionId: this.electionId,
@@ -1909,6 +2200,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
           decidedAt: nowIso(),
         };
         storeAcceptance(rejected);
+        dequeueSubmission(submission.submissionId);
         continue;
       }
       const issuance = Object.values(next.issuedBlindResponses)
@@ -1937,6 +2229,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
           decidedAt: nowIso(),
         };
         storeAcceptance(rejected);
+        dequeueSubmission(submission.submissionId);
         continue;
       }
 
@@ -1968,6 +2261,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
         };
         storeAcceptance(rejected);
       }
+      dequeueSubmission(submission.submissionId);
     }
 
     this.state = next;

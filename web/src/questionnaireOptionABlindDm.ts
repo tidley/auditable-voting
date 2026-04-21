@@ -58,6 +58,24 @@ export type BlindIssuanceAck = {
   ackedAt: string;
 };
 
+export type BlindRequestAck = {
+  type: "blind_ballot_request_ack";
+  schemaVersion: 1;
+  electionId: string;
+  requestId: string;
+  invitedNpub: string;
+  ackedAt: string;
+};
+
+export type BallotSubmissionAck = {
+  type: "ballot_submission_ack";
+  schemaVersion: 1;
+  electionId: string;
+  submissionId: string;
+  responseNpub: string;
+  ackedAt: string;
+};
+
 type BlindIssuanceAckDmEnvelope = {
   type: "optiona_blind_issuance_ack_dm";
   schemaVersion: 1;
@@ -65,10 +83,24 @@ type BlindIssuanceAckDmEnvelope = {
   sentAt: string;
 };
 
+type BlindRequestAckDmEnvelope = {
+  type: "optiona_blind_request_ack_dm";
+  schemaVersion: 1;
+  ack: BlindRequestAck;
+  sentAt: string;
+};
+
 type BallotSubmissionDmEnvelope = {
   type: "optiona_ballot_submission_dm";
   schemaVersion: 1;
   submission: BallotSubmission;
+  sentAt: string;
+};
+
+type BallotSubmissionAckDmEnvelope = {
+  type: "optiona_ballot_submission_ack_dm";
+  schemaVersion: 1;
+  ack: BallotSubmissionAck;
   sentAt: string;
 };
 
@@ -238,6 +270,163 @@ function mixRecipientAndFallbackRelays(recipientRelays: string[], fallbackRelays
   return normalizeRelaysRust(mixed);
 }
 
+type SharedGiftWrapListener = {
+  id: string;
+  onEvent: (event: NostrEvent) => void;
+  onError?: (error: Error) => void;
+};
+
+type SharedGiftWrapInbox = {
+  recipientNpub: string;
+  recipientHex: string;
+  relays: string[];
+  listeners: Map<string, SharedGiftWrapListener>;
+  subscription: { close: (reason?: string) => Promise<void> | void } | null;
+  startPromise: Promise<void> | null;
+  restartTimer: ReturnType<typeof globalThis.setTimeout> | null;
+};
+
+const sharedGiftWrapInboxes = new Map<string, SharedGiftWrapInbox>();
+const SHARED_GIFT_WRAP_RESTART_MS = 2000;
+
+function relayListsEqual(left: string[], right: string[]) {
+  return left.length === right.length && left.every((relay, index) => relay === right[index]);
+}
+
+function scheduleSharedGiftWrapInboxRestart(recipientHex: string) {
+  const inbox = sharedGiftWrapInboxes.get(recipientHex);
+  if (!inbox || inbox.listeners.size === 0 || inbox.restartTimer || inbox.startPromise || inbox.subscription) {
+    return;
+  }
+  inbox.restartTimer = globalThis.setTimeout(() => {
+    const current = sharedGiftWrapInboxes.get(recipientHex);
+    if (!current) {
+      return;
+    }
+    current.restartTimer = null;
+    void ensureSharedGiftWrapInboxStarted(current).catch((error) => {
+      if (error instanceof Error) {
+        for (const listener of current.listeners.values()) {
+          listener.onError?.(error);
+        }
+      }
+    });
+  }, SHARED_GIFT_WRAP_RESTART_MS);
+}
+
+async function ensureSharedGiftWrapInboxStarted(inbox: SharedGiftWrapInbox) {
+  if (inbox.subscription || inbox.startPromise) {
+    return inbox.startPromise ?? Promise.resolve();
+  }
+  inbox.startPromise = (async () => {
+    const pool = getSharedNostrPool();
+    optionABlindDmLog("shared_recipient_inbox_subscribe_started", {
+      recipientNpub: inbox.recipientNpub,
+      relayCount: inbox.relays.length,
+    });
+    const nextSubscription = pool.subscribeMany(inbox.relays, {
+      kinds: [KIND_GIFT_WRAP],
+      "#p": [inbox.recipientHex],
+      since: Math.round(Date.now() / 1000) - OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS,
+    }, {
+      onevent: (event) => {
+        const current = sharedGiftWrapInboxes.get(inbox.recipientHex);
+        if (!current) {
+          return;
+        }
+        for (const listener of current.listeners.values()) {
+          listener.onEvent(event as NostrEvent);
+        }
+      },
+      onclose: (reasons) => {
+        const current = sharedGiftWrapInboxes.get(inbox.recipientHex);
+        if (!current) {
+          return;
+        }
+        current.subscription = null;
+        const errors = reasons.filter((reason) => !reason.startsWith("closed by caller") && !reason.startsWith("shared inbox restarting"));
+        if (errors.length > 0) {
+          const error = new Error(errors.join("; "));
+          for (const listener of current.listeners.values()) {
+            listener.onError?.(error);
+          }
+          scheduleSharedGiftWrapInboxRestart(inbox.recipientHex);
+        }
+      },
+    });
+    const current = sharedGiftWrapInboxes.get(inbox.recipientHex);
+    if (!current) {
+      void nextSubscription.close("closed by caller");
+      return;
+    }
+    current.subscription = nextSubscription;
+  })().finally(() => {
+    const current = sharedGiftWrapInboxes.get(inbox.recipientHex);
+    if (current) {
+      current.startPromise = null;
+    }
+  });
+  return inbox.startPromise;
+}
+
+async function attachSharedGiftWrapInbox(input: {
+  recipientNpub: string;
+  recipientHex: string;
+  relays: string[];
+  listener: SharedGiftWrapListener;
+}) {
+  const key = input.recipientHex;
+  let inbox = sharedGiftWrapInboxes.get(key);
+  if (!inbox) {
+    inbox = {
+      recipientNpub: input.recipientNpub,
+      recipientHex: input.recipientHex,
+      relays: normalizeRelaysRust(input.relays),
+      listeners: new Map(),
+      subscription: null,
+      startPromise: null,
+      restartTimer: null,
+    };
+    sharedGiftWrapInboxes.set(key, inbox);
+  } else {
+    inbox.recipientNpub = input.recipientNpub;
+    const mergedRelays = normalizeRelaysRust([...input.relays, ...inbox.relays]);
+    if (!relayListsEqual(mergedRelays, inbox.relays)) {
+      inbox.relays = mergedRelays;
+      if (inbox.subscription) {
+        const previous = inbox.subscription;
+        inbox.subscription = null;
+        void previous.close("shared inbox restarting");
+      }
+    }
+  }
+  inbox.listeners.set(input.listener.id, input.listener);
+  if (inbox.restartTimer) {
+    globalThis.clearTimeout(inbox.restartTimer);
+    inbox.restartTimer = null;
+  }
+  await ensureSharedGiftWrapInboxStarted(inbox);
+  return () => {
+    const current = sharedGiftWrapInboxes.get(key);
+    if (!current) {
+      return;
+    }
+    current.listeners.delete(input.listener.id);
+    if (current.listeners.size > 0) {
+      return;
+    }
+    if (current.restartTimer) {
+      globalThis.clearTimeout(current.restartTimer);
+      current.restartTimer = null;
+    }
+    sharedGiftWrapInboxes.delete(key);
+    if (current.subscription) {
+      void current.subscription.close("closed by caller");
+      current.subscription = null;
+    }
+  };
+}
+
 function parseNip17RelayListEvent(event: { kind?: number; tags?: string[][] }) {
   if (event.kind !== KIND_NIP17_RELAY_LIST || !Array.isArray(event.tags)) {
     return [] as string[];
@@ -326,6 +515,28 @@ function parseBlindIssuanceDmContent(content: string): BlindBallotIssuance | nul
   }
 }
 
+function parseBlindRequestAckDmContent(content: string): BlindRequestAck | null {
+  try {
+    const parsed = JSON.parse(content) as Partial<BlindRequestAckDmEnvelope> | BlindRequestAck;
+    const ack = (parsed as BlindRequestAckDmEnvelope).type === "optiona_blind_request_ack_dm"
+      ? (parsed as BlindRequestAckDmEnvelope).ack
+      : parsed as BlindRequestAck;
+    if (
+      ack?.type !== "blind_ballot_request_ack"
+      || ack.schemaVersion !== 1
+      || typeof ack.electionId !== "string"
+      || typeof ack.requestId !== "string"
+      || typeof ack.invitedNpub !== "string"
+      || typeof ack.ackedAt !== "string"
+    ) {
+      return null;
+    }
+    return ack;
+  } catch {
+    return null;
+  }
+}
+
 function parseBallotSubmissionDmContent(content: string): BallotSubmission | null {
   try {
     const parsed = JSON.parse(content) as Partial<BallotSubmissionDmEnvelope> | BallotSubmission;
@@ -342,6 +553,28 @@ function parseBallotSubmissionDmContent(content: string): BallotSubmission | nul
       return null;
     }
     return submission;
+  } catch {
+    return null;
+  }
+}
+
+function parseBallotSubmissionAckDmContent(content: string): BallotSubmissionAck | null {
+  try {
+    const parsed = JSON.parse(content) as Partial<BallotSubmissionAckDmEnvelope> | BallotSubmissionAck;
+    const ack = (parsed as BallotSubmissionAckDmEnvelope).type === "optiona_ballot_submission_ack_dm"
+      ? (parsed as BallotSubmissionAckDmEnvelope).ack
+      : parsed as BallotSubmissionAck;
+    if (
+      ack?.type !== "ballot_submission_ack"
+      || ack.schemaVersion !== 1
+      || typeof ack.electionId !== "string"
+      || typeof ack.submissionId !== "string"
+      || typeof ack.responseNpub !== "string"
+      || typeof ack.ackedAt !== "string"
+    ) {
+      return null;
+    }
+    return ack;
   } catch {
     return null;
   }
@@ -392,17 +625,21 @@ function parseBlindIssuanceAckDmContent(content: string): BlindIssuanceAck | nul
 }
 
 function optionABlindDmSubject(
-  envelope: BlindRequestDmEnvelope | BlindIssuanceDmEnvelope | BlindIssuanceAckDmEnvelope | BallotSubmissionDmEnvelope | BallotAcceptanceDmEnvelope,
+  envelope: BlindRequestDmEnvelope | BlindIssuanceDmEnvelope | BlindRequestAckDmEnvelope | BlindIssuanceAckDmEnvelope | BallotSubmissionDmEnvelope | BallotSubmissionAckDmEnvelope | BallotAcceptanceDmEnvelope,
 ) {
   switch (envelope.type) {
     case "optiona_blind_request_dm":
       return "Auditable Voting blind request";
     case "optiona_blind_issuance_dm":
       return "Auditable Voting blind issuance";
+    case "optiona_blind_request_ack_dm":
+      return "Auditable Voting blind request ack";
     case "optiona_blind_issuance_ack_dm":
       return "Auditable Voting blind issuance ack";
     case "optiona_ballot_submission_dm":
       return "Auditable Voting ballot submission";
+    case "optiona_ballot_submission_ack_dm":
+      return "Auditable Voting ballot submission ack";
     case "optiona_ballot_acceptance_dm":
       return "Auditable Voting ballot acceptance";
   }
@@ -413,7 +650,7 @@ function createRumor(input: {
   recipientHex: string;
   relayUrl?: string;
   subject: string;
-  envelope: BlindRequestDmEnvelope | BlindIssuanceDmEnvelope | BlindIssuanceAckDmEnvelope | BallotSubmissionDmEnvelope | BallotAcceptanceDmEnvelope;
+  envelope: BlindRequestDmEnvelope | BlindIssuanceDmEnvelope | BlindRequestAckDmEnvelope | BlindIssuanceAckDmEnvelope | BallotSubmissionDmEnvelope | BallotSubmissionAckDmEnvelope | BallotAcceptanceDmEnvelope;
 }) {
   const rumor = {
     kind: KIND_RUMOR_MESSAGE,
@@ -492,14 +729,14 @@ function createSignerGiftWrapSubscription<T>(input: {
     return () => undefined;
   }
   let closed = false;
-  let subscription: { close: (reason?: string) => Promise<void> | void } | null = null;
+  let detachSharedInbox: (() => void) | null = null;
   const seenKeys = new Set<string>();
 
   const close = () => {
     closed = true;
-    if (subscription) {
-      void subscription.close("closed by caller");
-      subscription = null;
+    if (detachSharedInbox) {
+      detachSharedInbox();
+      detachSharedInbox = null;
     }
   };
 
@@ -549,34 +786,26 @@ function createSignerGiftWrapSubscription<T>(input: {
       if (closed) {
         return;
       }
-      optionABlindDmLog(`${input.stage}_subscribe_started`, {
+      optionABlindDmLog(`${input.stage}_listener_attached`, {
         recipientNpub,
         relayCount: relays.length,
       });
-      const pool = getSharedNostrPool();
-      const nextSubscription = pool.subscribeMany(relays, {
-        kinds: [KIND_GIFT_WRAP],
-        "#p": [recipientHex],
-        since: input.since ?? Math.round(Date.now() / 1000) - OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS,
-      }, {
-        onevent: (event) => {
-          void handleEvent(event as NostrEvent);
-        },
-        onclose: (reasons) => {
-          if (closed) {
-            return;
-          }
-          const errors = reasons.filter((reason) => !reason.startsWith("closed by caller"));
-          if (errors.length > 0) {
-            input.onError?.(new Error(errors.join("; ")));
-          }
+      detachSharedInbox = await attachSharedGiftWrapInbox({
+        recipientNpub,
+        recipientHex,
+        relays,
+        listener: {
+          id: `${input.stage}:${recipientHex}:${crypto.randomUUID()}`,
+          onEvent: (event) => {
+            void handleEvent(event);
+          },
+          onError: input.onError,
         },
       });
       if (closed) {
-        void nextSubscription.close("closed by caller");
-        return;
+        detachSharedInbox();
+        detachSharedInbox = null;
       }
-      subscription = nextSubscription;
     } catch (error) {
       if (!closed && error instanceof Error) {
         input.onError?.(error);
@@ -590,7 +819,7 @@ function createSignerGiftWrapSubscription<T>(input: {
 async function publishEnvelope(input: {
   signer: SignerService;
   recipientNpub: string;
-  envelope: BlindRequestDmEnvelope | BlindIssuanceDmEnvelope | BallotSubmissionDmEnvelope | BallotAcceptanceDmEnvelope;
+  envelope: BlindRequestDmEnvelope | BlindIssuanceDmEnvelope | BlindRequestAckDmEnvelope | BlindIssuanceAckDmEnvelope | BallotSubmissionDmEnvelope | BallotSubmissionAckDmEnvelope | BallotAcceptanceDmEnvelope;
   fallbackNsec?: string;
   relays?: string[];
   channel: string;
@@ -747,6 +976,28 @@ export async function publishOptionABlindIssuanceDm(input: {
   });
 }
 
+export async function publishOptionABlindRequestAckDm(input: {
+  signer: SignerService;
+  recipientNpub: string;
+  ack: BlindRequestAck;
+  fallbackNsec?: string;
+  relays?: string[];
+}) {
+  return publishEnvelope({
+    signer: input.signer,
+    recipientNpub: input.recipientNpub,
+    fallbackNsec: input.fallbackNsec,
+    relays: input.relays,
+    channel: `optiona-blind-request-ack:${input.ack.electionId}:${input.ack.requestId}`,
+    envelope: {
+      type: "optiona_blind_request_ack_dm",
+      schemaVersion: 1,
+      ack: input.ack,
+      sentAt: new Date().toISOString(),
+    },
+  });
+}
+
 export async function publishOptionABallotSubmissionDm(input: {
   signer: SignerService;
   recipientNpub: string;
@@ -764,6 +1015,28 @@ export async function publishOptionABallotSubmissionDm(input: {
       type: "optiona_ballot_submission_dm",
       schemaVersion: 1,
       submission: input.submission,
+      sentAt: new Date().toISOString(),
+    },
+  });
+}
+
+export async function publishOptionABallotSubmissionAckDm(input: {
+  signer: SignerService;
+  recipientNpub: string;
+  ack: BallotSubmissionAck;
+  fallbackNsec?: string;
+  relays?: string[];
+}) {
+  return publishEnvelope({
+    signer: input.signer,
+    recipientNpub: input.recipientNpub,
+    fallbackNsec: input.fallbackNsec,
+    relays: input.relays,
+    channel: `optiona-ballot-submission-ack:${input.ack.electionId}:${input.ack.submissionId}`,
+    envelope: {
+      type: "optiona_ballot_submission_ack_dm",
+      schemaVersion: 1,
+      ack: input.ack,
       sentAt: new Date().toISOString(),
     },
   });
@@ -1359,6 +1632,190 @@ export async function fetchOptionABlindIssuanceAckDmsWithNsec(input: {
   return [...unique.values()];
 }
 
+export async function fetchOptionABlindRequestAckDms(input: {
+  signer: SignerService;
+  electionId?: string;
+  relays?: string[];
+  limit?: number;
+  since?: number;
+  maxDecryptAttempts?: number;
+}) {
+  if (!input.signer.nip44Decrypt) {
+    return [] as BlindRequestAck[];
+  }
+  const recipientRaw = await input.signer.getPublicKey();
+  const recipientHex = toHexPubkey(recipientRaw);
+  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
+  const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
+  const events = await queryBlindDmSync(relays, {
+    kinds: [KIND_GIFT_WRAP],
+    "#p": [recipientHex],
+    since: input.since ?? Math.round(Date.now() / 1000) - OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS,
+    limit: Math.max(1, Math.min(input.limit ?? maxDecryptAttempts, maxDecryptAttempts)),
+  });
+  const unique = new Map<string, BlindRequestAck>();
+  const sorted = [...events]
+    .sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0))
+    .slice(0, maxDecryptAttempts);
+  for (const event of sorted) {
+    try {
+      const decoded = await decodeGiftWrapWithSigner({
+        signer: input.signer,
+        event,
+      });
+      if (!decoded) {
+        continue;
+      }
+      const ack = parseBlindRequestAckDmContent(decoded.rumorContent);
+      if (!ack) {
+        continue;
+      }
+      if (input.electionId?.trim() && ack.electionId !== input.electionId.trim()) {
+        continue;
+      }
+      const key = `${ack.electionId}:${ack.requestId}`;
+      if (!unique.has(key)) {
+        unique.set(key, ack);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return [...unique.values()];
+}
+
+export async function fetchOptionABlindRequestAckDmsWithNsec(input: {
+  nsec: string;
+  electionId?: string;
+  relays?: string[];
+  limit?: number;
+}) {
+  const secretKey = decodeNsecSecretKey(input.nsec);
+  const recipientHex = getPublicKey(secretKey);
+  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
+  const events = await queryBlindDmSync(relays, {
+    kinds: [KIND_GIFT_WRAP],
+    "#p": [recipientHex],
+    limit: Math.max(1, input.limit ?? 100),
+  });
+  const unique = new Map<string, BlindRequestAck>();
+  const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
+  for (const event of sorted) {
+    try {
+      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string };
+      if (!rumor || typeof rumor.content !== "string") {
+        continue;
+      }
+      const ack = parseBlindRequestAckDmContent(rumor.content);
+      if (!ack) {
+        continue;
+      }
+      if (input.electionId?.trim() && ack.electionId !== input.electionId.trim()) {
+        continue;
+      }
+      const key = `${ack.electionId}:${ack.requestId}`;
+      if (!unique.has(key)) {
+        unique.set(key, ack);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return [...unique.values()];
+}
+
+export async function fetchOptionABallotSubmissionAckDms(input: {
+  signer: SignerService;
+  electionId?: string;
+  relays?: string[];
+  limit?: number;
+  since?: number;
+  maxDecryptAttempts?: number;
+}) {
+  if (!input.signer.nip44Decrypt) {
+    return [] as BallotSubmissionAck[];
+  }
+  const recipientRaw = await input.signer.getPublicKey();
+  const recipientHex = toHexPubkey(recipientRaw);
+  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
+  const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
+  const events = await queryBlindDmSync(relays, {
+    kinds: [KIND_GIFT_WRAP],
+    "#p": [recipientHex],
+    since: input.since ?? Math.round(Date.now() / 1000) - OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS,
+    limit: Math.max(1, Math.min(input.limit ?? maxDecryptAttempts, maxDecryptAttempts)),
+  });
+  const unique = new Map<string, BallotSubmissionAck>();
+  const sorted = [...events]
+    .sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0))
+    .slice(0, maxDecryptAttempts);
+  for (const event of sorted) {
+    try {
+      const decoded = await decodeGiftWrapWithSigner({
+        signer: input.signer,
+        event,
+      });
+      if (!decoded) {
+        continue;
+      }
+      const ack = parseBallotSubmissionAckDmContent(decoded.rumorContent);
+      if (!ack) {
+        continue;
+      }
+      if (input.electionId?.trim() && ack.electionId !== input.electionId.trim()) {
+        continue;
+      }
+      const key = `${ack.electionId}:${ack.submissionId}`;
+      if (!unique.has(key)) {
+        unique.set(key, ack);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return [...unique.values()];
+}
+
+export async function fetchOptionABallotSubmissionAckDmsWithNsec(input: {
+  nsec: string;
+  electionId?: string;
+  relays?: string[];
+  limit?: number;
+}) {
+  const secretKey = decodeNsecSecretKey(input.nsec);
+  const recipientHex = getPublicKey(secretKey);
+  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
+  const events = await queryBlindDmSync(relays, {
+    kinds: [KIND_GIFT_WRAP],
+    "#p": [recipientHex],
+    limit: Math.max(1, input.limit ?? 100),
+  });
+  const unique = new Map<string, BallotSubmissionAck>();
+  const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
+  for (const event of sorted) {
+    try {
+      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string };
+      if (!rumor || typeof rumor.content !== "string") {
+        continue;
+      }
+      const ack = parseBallotSubmissionAckDmContent(rumor.content);
+      if (!ack) {
+        continue;
+      }
+      if (input.electionId?.trim() && ack.electionId !== input.electionId.trim()) {
+        continue;
+      }
+      const key = `${ack.electionId}:${ack.submissionId}`;
+      if (!unique.has(key)) {
+        unique.set(key, ack);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return [...unique.values()];
+}
+
 export function subscribeOptionABlindRequestDms(input: {
   signer: SignerService;
   electionId?: string;
@@ -1397,6 +1854,27 @@ export function subscribeOptionABlindIssuanceDms(input: {
     parse: parseBlindIssuanceDmContent,
     keyOf: (value) => `${value.electionId}:${value.requestId}:${value.issuanceId}`,
     onValue: input.onIssuance,
+    onError: input.onError,
+  });
+}
+
+export function subscribeOptionABlindRequestAckDms(input: {
+  signer: SignerService;
+  electionId?: string;
+  relays?: string[];
+  since?: number;
+  onAck: (ack: BlindRequestAck) => void;
+  onError?: (error: Error) => void;
+}) {
+  return createSignerGiftWrapSubscription<BlindRequestAck>({
+    signer: input.signer,
+    electionId: input.electionId,
+    relays: input.relays,
+    since: input.since,
+    stage: "subscribe_request_acks",
+    parse: parseBlindRequestAckDmContent,
+    keyOf: (value) => `${value.electionId}:${value.requestId}`,
+    onValue: input.onAck,
     onError: input.onError,
   });
 }
@@ -1443,6 +1921,27 @@ export function subscribeOptionABallotAcceptanceDms(input: {
     parse: parseBallotAcceptanceDmContent,
     keyOf: (value) => `${value.electionId}:${value.submissionId}`,
     onValue: input.onAcceptance,
+    onError: input.onError,
+  });
+}
+
+export function subscribeOptionABallotSubmissionAckDms(input: {
+  signer: SignerService;
+  electionId?: string;
+  relays?: string[];
+  since?: number;
+  onAck: (ack: BallotSubmissionAck) => void;
+  onError?: (error: Error) => void;
+}) {
+  return createSignerGiftWrapSubscription<BallotSubmissionAck>({
+    signer: input.signer,
+    electionId: input.electionId,
+    relays: input.relays,
+    since: input.since,
+    stage: "subscribe_submission_acks",
+    parse: parseBallotSubmissionAckDmContent,
+    keyOf: (value) => `${value.electionId}:${value.submissionId}`,
+    onValue: input.onAck,
     onError: input.onError,
   });
 }
