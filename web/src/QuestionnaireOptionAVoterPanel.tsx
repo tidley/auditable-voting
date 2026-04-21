@@ -175,6 +175,9 @@ const AUTO_BALLOT_RETRY_RESEND_MS = 5 * 60_000;
 const AUTO_BALLOT_SIGNER_REFRESH_SCHEDULE_MS = [15_000, 45_000, 120_000] as const;
 const AUTO_BALLOT_SIGNER_KEEPALIVE_REFRESH_MS = 75_000;
 const AUTO_BALLOT_MOBILE_RECOVERY_PULL_MS = 20_000;
+const AUTO_BALLOT_SIGNER_SUBSCRIPTION_REARM_MIN_INTERVAL_MS = 15_000;
+const AUTO_BALLOT_SIGNER_BACKGROUND_FETCH_MIN_INTERVAL_MS = 90_000;
+const AUTO_BALLOT_SIGNER_LIFECYCLE_FETCH_MIN_INTERVAL_MS = 45_000;
 
 function isLikelyMobileClient() {
   if (typeof window === "undefined" || typeof navigator === "undefined") {
@@ -246,6 +249,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const autoSignerLoginForRef = useRef<Record<string, true>>({});
   const lifecycleRefreshAtRef = useRef(0);
   const inviteRefreshAtRef = useRef(0);
+  const signerWaitRestartAtRef = useRef(0);
+  const signerWaitFetchAtRef = useRef(0);
 
   const inviteContext = useMemo(() => parseInviteFromUrl(), []);
   const [electionId, setElectionId] = useState(inviteContext.electionId ?? deriveElectionId());
@@ -265,6 +270,39 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     alreadySubmitted: false,
     resumeAvailable: false,
   };
+
+  function markSignerWaitRecoveryBaseline() {
+    if (props.localVoterNsec?.trim()) {
+      return;
+    }
+    const now = Date.now();
+    signerWaitRestartAtRef.current = now;
+    signerWaitFetchAtRef.current = now;
+  }
+
+  function recoverSignerBackedBallotWait(mode: "manual" | "lifecycle" | "background" | "restart_only") {
+    if (!runtime) {
+      return;
+    }
+    const now = Date.now();
+    if (now - signerWaitRestartAtRef.current >= AUTO_BALLOT_SIGNER_SUBSCRIPTION_REARM_MIN_INTERVAL_MS) {
+      runtime.restartVoterDmSubscriptions();
+      signerWaitRestartAtRef.current = now;
+    }
+    let shouldFetch = false;
+    if (mode === "manual") {
+      shouldFetch = true;
+    } else if (mode === "lifecycle") {
+      shouldFetch = now - signerWaitFetchAtRef.current >= AUTO_BALLOT_SIGNER_LIFECYCLE_FETCH_MIN_INTERVAL_MS;
+    } else if (mode === "background") {
+      shouldFetch = now - signerWaitFetchAtRef.current >= AUTO_BALLOT_SIGNER_BACKGROUND_FETCH_MIN_INTERVAL_MS;
+    }
+    if (!shouldFetch) {
+      return;
+    }
+    runtime.refreshIssuanceAndAcceptance();
+    signerWaitFetchAtRef.current = now;
+  }
 
   useEffect(() => {
     if (previousElectionIdRef.current === electionId) {
@@ -388,7 +426,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         // Best-effort; refresh below still uses the active runtime snapshot.
       }
       try {
-        runtime.refreshIssuanceAndAcceptance();
+        if (!props.localVoterNsec?.trim() && snapshot.blindRequestSent && !snapshot.credentialReady && !snapshot.submission) {
+          recoverSignerBackedBallotWait("lifecycle");
+        } else {
+          runtime.refreshIssuanceAndAcceptance();
+        }
         setRefreshNonce((value) => value + 1);
       } catch {
         // Keep lifecycle refresh best-effort; explicit actions surface errors.
@@ -407,7 +449,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       window.removeEventListener("online", triggerRefresh);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [runtime, snapshot?.loginVerified, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission, snapshot?.submissionAccepted]);
+  }, [runtime, props.localVoterNsec, snapshot?.loginVerified, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission, snapshot?.submissionAccepted]);
 
   useEffect(() => {
     setQuestionnaireTitle("Questionnaire");
@@ -846,6 +888,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       setActiveInvite(!next.blindRequestSent && !next.credentialReady ? invite : null);
       if (requestAfterLogin && !next.blindRequestSent && !next.credentialReady) {
         await voterRuntime.requestBlindBallot();
+        markSignerWaitRecoveryBaseline();
         setStatus("Opened " + (invite.title || invite.electionId) + ". Blind ballot request sent.");
       } else {
         setStatus("Opened " + (invite.title || invite.electionId) + ".");
@@ -875,6 +918,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       ensureLocalSession({ allowInviteMissing: true, allowRelayInviteFetch: true });
       const wasAlreadyWaiting = Boolean(runtime.getSnapshot()?.blindRequestSent && !runtime.getSnapshot()?.credentialReady);
       await runtime.requestBlindBallot({ forceResend: true });
+      markSignerWaitRecoveryBaseline();
       if (snapshot?.electionId && snapshot?.invitedNpub) {
         const requestKey = `${snapshot.electionId}:${snapshot.invitedNpub}`;
         autoRequestSentForRef.current[requestKey] = true;
@@ -896,7 +940,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
     try {
       ensureLocalSession({ allowInviteMissing: true, allowRelayInviteFetch: true });
-      runtime.refreshIssuanceAndAcceptance({ restartSubscriptions: true });
+      if (!props.localVoterNsec?.trim() && snapshot?.blindRequestSent && !snapshot.credentialReady && !snapshot.submission) {
+        recoverSignerBackedBallotWait("manual");
+      } else {
+        runtime.refreshIssuanceAndAcceptance({ restartSubscriptions: true });
+      }
       setRefreshNonce((value) => value + 1);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Refresh failed.");
@@ -964,6 +1012,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       autoRequestLastAttemptAtRef.current[key] = Date.now();
       void runtime.requestBlindBallot().then(() => {
         autoRequestSentForRef.current[key] = true;
+        markSignerWaitRecoveryBaseline();
         setActiveInvite(null);
         setStatus("Blind ballot request sent. Waiting for coordinator issuance.");
         setRefreshNonce((value) => value + 1);
@@ -1000,6 +1049,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       requestRetryAtRef.current[key] = now;
       try {
         void runtime.requestBlindBallot({ minRetryMs: resendMs }).then(() => {
+          markSignerWaitRecoveryBaseline();
           runtime.refreshIssuanceAndAcceptance({ restartSubscriptions: true });
           setRefreshNonce((value) => value + 1);
         }).catch(() => undefined);
@@ -1021,8 +1071,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     if (hasLocalSecretKey) {
       return;
     }
-    const timeoutIds = AUTO_BALLOT_SIGNER_REFRESH_SCHEDULE_MS.map((delayMs) => window.setTimeout(() => {
-      runtime.refreshIssuanceAndAcceptance({ restartSubscriptions: true });
+    const timeoutIds = AUTO_BALLOT_SIGNER_REFRESH_SCHEDULE_MS.map((delayMs, index) => window.setTimeout(() => {
+      recoverSignerBackedBallotWait(index === AUTO_BALLOT_SIGNER_REFRESH_SCHEDULE_MS.length - 1 ? "background" : "restart_only");
       setRefreshNonce((value) => value + 1);
     }, delayMs));
     return () => {
@@ -1044,7 +1094,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       if (typeof document !== "undefined" && document.visibilityState === "hidden") {
         return;
       }
-      runtime.refreshIssuanceAndAcceptance({ restartSubscriptions: true });
+      recoverSignerBackedBallotWait("restart_only");
       setRefreshNonce((value) => value + 1);
     };
     const intervalId = window.setInterval(tick, AUTO_BALLOT_SIGNER_KEEPALIVE_REFRESH_MS);
@@ -1065,7 +1115,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       if (typeof document !== "undefined" && document.visibilityState === "hidden") {
         return;
       }
-      runtime.refreshIssuanceAndAcceptance({ restartSubscriptions: true });
+      recoverSignerBackedBallotWait("background");
       setRefreshNonce((value) => value + 1);
     };
     const onVisible = () => {
@@ -1112,6 +1162,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       autoRequestLastAttemptAtRef.current[requestKey] = Date.now();
       void runtime.requestBlindBallot().then(() => {
         autoRequestSentForRef.current[requestKey] = true;
+        markSignerWaitRecoveryBaseline();
         setActiveInvite(null);
         setStatus("Blind ballot request sent. Waiting for coordinator issuance.");
         setRefreshNonce((value) => value + 1);

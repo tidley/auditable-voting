@@ -82,7 +82,7 @@ This is the practical order of operations for the current app.
 - A voter should not see unrelated questionnaires unless they have invite/state context for that identity.
 - Relay connection failures for one endpoint are common on public infrastructure; retries and other relays should still allow progress.
 - Private questionnaire recovery now uses shared websocket inbox subscriptions, duplicate-event suppression before signer decrypt, sticky successful relay subsets, and bounded refreshes on focus/visibility/online instead of relying only on repeated timer-driven resend loops.
-- While waiting for a ballot on signer-backed mobile browsers, the client now also periodically re-arms DM subscriptions and runs a slow keepalive refresh so delivery is less dependent on manually pressing `Refresh status`.
+- While waiting for a ballot on signer-backed mobile browsers, the client now mostly re-arms DM subscriptions and only falls back to low-rate mailbox refresh reads, reducing Amber bunker/rate-limit churn while still recovering when push delivery is missed.
 
 ---
 
