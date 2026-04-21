@@ -815,6 +815,7 @@ export default function SimpleCoordinatorApp() {
   const [knownVoterDraftNpub, setKnownVoterDraftNpub] = useState("");
   const [knownVoterInviteStatus, setKnownVoterInviteStatus] = useState<string | null>(null);
   const [knownVoterInviteRefreshNonce, setKnownVoterInviteRefreshNonce] = useState(0);
+  const [optimisticKnownVoterNpubs, setOptimisticKnownVoterNpubs] = useState<string[]>([]);
   const [knownVoterContactsLoading, setKnownVoterContactsLoading] = useState(false);
   const [importedKnownVoterContacts, setImportedKnownVoterContacts] = useState<ImportedKnownVoterContact[]>([]);
   const [knownVoterContactSearch, setKnownVoterContactSearch] = useState("");
@@ -888,14 +889,37 @@ export default function SimpleCoordinatorApp() {
     }
     return [...mergedByNpub.values()];
   }, [activeCoordinatorNpub, optionACoordinatorRuntime, optionAElectionId, knownVoterInviteRefreshNonce]);
+  const visibleOptionAKnownVoters = useMemo(() => {
+    const byNpub = new Map<string, (typeof optionAKnownVoters)[number]>();
+    for (const entry of optionAKnownVoters) {
+      const npub = entry.invitedNpub.trim();
+      if (!npub) {
+        continue;
+      }
+      byNpub.set(npub, entry);
+    }
+    for (const npub of optimisticKnownVoterNpubs) {
+      const normalized = npub.trim();
+      if (!normalized || byNpub.has(normalized)) {
+        continue;
+      }
+      byNpub.set(normalized, {
+        electionId: optionAElectionId || "",
+        invitedNpub: normalized,
+        addedAt: new Date().toISOString(),
+        claimState: "invited",
+      });
+    }
+    return [...byNpub.values()];
+  }, [optimisticKnownVoterNpubs, optionAElectionId, optionAKnownVoters]);
   const invitedKnownVoterSet = useMemo(
     () => new Set(
-      optionAKnownVoters
+      visibleOptionAKnownVoters
         .filter((entry) => entry.claimState === "invited")
         .map((entry) => entry.invitedNpub.trim())
         .filter((value) => value.length > 0),
     ),
-    [optionAKnownVoters],
+    [visibleOptionAKnownVoters],
   );
   const optionAPendingAuthorizations = useMemo(
     () => optionACoordinatorRuntime?.getPendingAuthorizations() ?? [],
@@ -936,9 +960,10 @@ export default function SimpleCoordinatorApp() {
 
   useEffect(() => {
     setKnownVoterInviteStatus(null);
+    setOptimisticKnownVoterNpubs([]);
   }, [optionAElectionId]);
   const optionAAcceptedCount = Math.max(optionACoordinatorRuntime?.getAcceptedUniqueCount() ?? 0, optionAAcceptedResponses.length);
-  const optionAKnownVoterCount = Math.max(followers.length, optionAKnownVoters.length);
+  const optionAKnownVoterCount = Math.max(followers.length, visibleOptionAKnownVoters.length);
   const filteredImportedKnownVoterContacts = useMemo(() => {
     const query = knownVoterContactSearch.trim().toLowerCase();
     if (!query) {
@@ -3422,6 +3447,7 @@ export default function SimpleCoordinatorApp() {
     }
     try {
       optionACoordinatorRuntime.addWhitelistNpub(npub);
+      setOptimisticKnownVoterNpubs((current) => (current.includes(npub) ? current : [...current, npub]));
       setKnownVoterDraftNpub("");
       setKnownVoterInviteStatus(`Inviting ${deriveActorDisplayId(npub)}...`);
       setKnownVoterInviteRefreshNonce((value) => value + 1);
@@ -3455,6 +3481,7 @@ export default function SimpleCoordinatorApp() {
         }),
       });
       const copied = await tryWriteClipboard(buildInviteUrl({ invite: sent.invite }));
+      setOptimisticKnownVoterNpubs((current) => (current.includes(invitedNpub) ? current : [...current, invitedNpub]));
       setKnownVoterInviteStatus(
         sent.dmDelivered
           ? `Invite DM sent to ${deriveActorDisplayId(invitedNpub)}. ${copied ? "Link copied." : "Link generated; browser blocked clipboard copy."}`
@@ -3474,7 +3501,7 @@ export default function SimpleCoordinatorApp() {
     if (!optionACoordinatorRuntime || !optionAElectionId || !activeCoordinatorNpub) {
       return;
     }
-    const targets = optionAKnownVoters
+    const targets = visibleOptionAKnownVoters
       .map((entry) => entry.invitedNpub)
       .filter((npub, index, values) => values.indexOf(npub) === index);
     if (targets.length === 0) {
@@ -6034,10 +6061,10 @@ export default function SimpleCoordinatorApp() {
                       </div>
                     </div>
                   ) : null}
-                  {optionAKnownVoters.length > 0 ? (
+                  {visibleOptionAKnownVoters.length > 0 ? (
                     <>
                       <ul className='simple-vote-status-list'>
-                        {optionAKnownVoters.map((entry) => (
+                        {visibleOptionAKnownVoters.map((entry) => (
                           <li key={entry.invitedNpub}>
                             <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
                             {deriveActorDisplayId(entry.invitedNpub)} - {entry.claimState}
@@ -6057,7 +6084,7 @@ export default function SimpleCoordinatorApp() {
                           type='button'
                           className='simple-voter-secondary'
                           onClick={sendInvitesToAllWhitelistedVoters}
-                          disabled={optionAKnownVoters.length === 0}
+                          disabled={visibleOptionAKnownVoters.length === 0}
                         >
                           Invite all whitelisted
                         </button>
