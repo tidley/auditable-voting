@@ -23,6 +23,8 @@ import { publishQuestionnaireBlindResponsePublicByCoordinator } from "./question
 const DEFAULT_QUESTIONNAIRE_ID_PREFIX = "q";
 const QUESTIONNAIRE_DRAFT_ID_STORAGE_KEY = "coordinator.questionnaire-draft-id.v1";
 const IDENTITY_REFRESH_INTERVAL_MS = 10000;
+const QUESTIONNAIRE_TIMER_FALLBACK_MINUTES = "60";
+const QUESTIONNAIRE_TIMER_DISABLED_CLOSE_MINUTES = 5_256_000; // 10 years
 
 function readDeploymentModeFromUrl() {
   if (typeof window === "undefined") {
@@ -163,6 +165,7 @@ type StoredQuestionnaireDraft = {
   questionnaireId: string;
   title: string;
   description: string;
+  closeTimerEnabled: boolean;
   closeAfterMinutes: string;
   questions: QuestionnaireQuestionDraft[];
 };
@@ -188,7 +191,8 @@ function readStoredQuestionnaireDraft(): StoredQuestionnaireDraft {
       questionnaireId: fallbackId,
       title: "",
       description: "",
-      closeAfterMinutes: "60",
+      closeTimerEnabled: false,
+      closeAfterMinutes: QUESTIONNAIRE_TIMER_FALLBACK_MINUTES,
       questions: [createYesNoQuestion("q1")],
     };
   }
@@ -199,7 +203,8 @@ function readStoredQuestionnaireDraft(): StoredQuestionnaireDraft {
         questionnaireId: fallbackId,
         title: "",
         description: "",
-        closeAfterMinutes: "60",
+        closeTimerEnabled: false,
+        closeAfterMinutes: QUESTIONNAIRE_TIMER_FALLBACK_MINUTES,
         questions: [createYesNoQuestion("q1")],
       };
     }
@@ -210,9 +215,10 @@ function readStoredQuestionnaireDraft(): StoredQuestionnaireDraft {
         : fallbackId,
       title: typeof parsed.title === "string" ? parsed.title : "",
       description: typeof parsed.description === "string" ? parsed.description : "",
+      closeTimerEnabled: parsed.closeTimerEnabled === true,
       closeAfterMinutes: typeof parsed.closeAfterMinutes === "string" && parsed.closeAfterMinutes.trim()
         ? parsed.closeAfterMinutes
-        : "60",
+        : QUESTIONNAIRE_TIMER_FALLBACK_MINUTES,
       questions: normaliseStoredQuestions(parsed.questions),
     };
   } catch {
@@ -220,7 +226,8 @@ function readStoredQuestionnaireDraft(): StoredQuestionnaireDraft {
       questionnaireId: fallbackId,
       title: "",
       description: "",
-      closeAfterMinutes: "60",
+      closeTimerEnabled: false,
+      closeAfterMinutes: QUESTIONNAIRE_TIMER_FALLBACK_MINUTES,
       questions: [createYesNoQuestion("q1")],
     };
   }
@@ -291,11 +298,14 @@ function buildDefinition(input: {
   coordinatorPubkey: string;
   title: string;
   description: string;
-  closeAfterMinutes: number;
+  closeAfterMinutes?: number;
   questions: QuestionnaireQuestionDraft[];
   blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
 }): QuestionnaireDefinition {
   const createdAt = nowUnix();
+  const closeAfterMinutes = Number.isFinite(input.closeAfterMinutes)
+    ? Math.max(1, Math.floor(input.closeAfterMinutes as number))
+    : QUESTIONNAIRE_TIMER_DISABLED_CLOSE_MINUTES;
   return {
     schemaVersion: 1,
     eventType: "questionnaire_definition",
@@ -305,7 +315,7 @@ function buildDefinition(input: {
     description: input.description,
     createdAt,
     openAt: createdAt,
-    closeAt: createdAt + (input.closeAfterMinutes * 60),
+    closeAt: createdAt + (closeAfterMinutes * 60),
     coordinatorPubkey: input.coordinatorPubkey,
     coordinatorEncryptionPubkey: input.coordinatorPubkey,
     responseVisibility: "private",
@@ -323,6 +333,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [questionnaireId, setQuestionnaireId] = useState(storedDraft.questionnaireId);
   const [title, setTitle] = useState(storedDraft.title);
   const [description, setDescription] = useState(storedDraft.description);
+  const [closeTimerEnabled, setCloseTimerEnabled] = useState(storedDraft.closeTimerEnabled);
   const [closeAfterMinutes, setCloseAfterMinutes] = useState(storedDraft.closeAfterMinutes);
   const [questions, setQuestions] = useState<QuestionnaireQuestionDraft[]>(storedDraft.questions);
   const [showInviteQr, setShowInviteQr] = useState(false);
@@ -871,6 +882,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       questionnaireId: nextId,
       title,
       description,
+      closeTimerEnabled,
       closeAfterMinutes,
       questions,
     };
@@ -878,7 +890,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       buildSimpleNamespacedLocalStorageKey(QUESTIONNAIRE_DRAFT_DATA_STORAGE_KEY),
       JSON.stringify(snapshot),
     );
-  }, [closeAfterMinutes, description, questionnaireId, questions, title]);
+  }, [closeAfterMinutes, closeTimerEnabled, description, questionnaireId, questions, title]);
 
   function updateQuestion(index: number, updater: (question: QuestionnaireQuestionDraft) => QuestionnaireQuestionDraft) {
     setQuestions((current) => current.map((entry, entryIndex) => (
@@ -950,9 +962,15 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     });
   }
   const builtDefinition = useMemo(() => {
-    const closeMinutes = Number.parseInt(closeAfterMinutes, 10);
-    if (!coordinatorNpub.trim() || !questionnaireId.trim() || !Number.isFinite(closeMinutes) || closeMinutes <= 0) {
+    if (!coordinatorNpub.trim() || !questionnaireId.trim()) {
       return null;
+    }
+    let closeMinutes: number | undefined;
+    if (closeTimerEnabled) {
+      closeMinutes = Number.parseInt(closeAfterMinutes, 10);
+      if (!Number.isFinite(closeMinutes) || closeMinutes <= 0) {
+        return null;
+      }
     }
     return buildDefinition({
       questionnaireId: questionnaireId.trim(),
@@ -963,11 +981,14 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       questions,
       blindSigningPublicKey: props.blindSigningPublicKey ?? null,
     });
-  }, [closeAfterMinutes, coordinatorNpub, description, props.blindSigningPublicKey, questionnaireId, questions, title]);
+  }, [closeAfterMinutes, closeTimerEnabled, coordinatorNpub, description, props.blindSigningPublicKey, questionnaireId, questions, title]);
 
   const inviteLink = useMemo(() => {
     const id = questionnaireId.trim();
     if (!id) {
+      return "";
+    }
+    if (typeof window === "undefined") {
       return "";
     }
     try {
@@ -1778,11 +1799,21 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         placeholder='Describe what this questionnaire is for'
         onChange={(event) => setDescription(event.target.value)}
       />
+      <label className='simple-voter-label' htmlFor='questionnaire-close-timer-enabled'>
+        <input
+          id='questionnaire-close-timer-enabled'
+          type='checkbox'
+          checked={closeTimerEnabled}
+          onChange={(event) => setCloseTimerEnabled(event.target.checked)}
+        />{" "}
+        Enable close timer
+      </label>
       <label className='simple-voter-label' htmlFor='questionnaire-close-minutes'>Close after (minutes)</label>
       <input
         id='questionnaire-close-minutes'
         className='simple-voter-input'
         value={closeAfterMinutes}
+        disabled={!closeTimerEnabled}
         onChange={(event) => setCloseAfterMinutes(event.target.value)}
       />
 

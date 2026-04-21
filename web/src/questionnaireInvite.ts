@@ -1,5 +1,7 @@
 import type { ElectionInviteMessage } from "./questionnaireOptionA";
 
+const DEFAULT_INVITE_BASE_URL = "https://example.invalid/";
+
 export function parseInviteFromUrl(search = typeof window !== "undefined" ? window.location.search : ""): {
   electionId: string | null;
   invite: ElectionInviteMessage | null;
@@ -55,7 +57,7 @@ export function buildInviteUrl(input: {
   baseUrl?: string;
   invite: ElectionInviteMessage;
 }) {
-  const base = input.baseUrl ?? (typeof window !== "undefined" ? window.location.href : "https://example.invalid/simple.html");
+  const base = input.baseUrl ?? (typeof window !== "undefined" ? window.location.href : DEFAULT_INVITE_BASE_URL);
   const url = new URL("./", base);
   url.searchParams.set("login", "1");
   url.searchParams.set("role", "voter");

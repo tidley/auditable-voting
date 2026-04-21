@@ -48,6 +48,8 @@ The shipped app currently includes:
 - coordinator questionnaire response reads now prefer kind-only bounded backfill with local questionnaire-id filtering (plus relay probes) to tolerate relays with unreliable custom tag indexing
 - questionnaire submissions now spend an unblinded RSABSSA credential from a fresh ephemeral response npub, with one accepted credential spend per questionnaire
 - invite links with a public questionnaire id now avoid encrypted invite-mailbox scans after signer login, and signer-backed DM reads are recent and bounded to reduce Amber bunker prompts
+- coordinator questionnaire close timers are now opt-in (default off) so rounds stay open until explicitly closed unless a timer is enabled
+- generated voter invite links now default to the current page host so deployments work without hard-coded domains
 - Android signer sessions now prefer Amber via NIP-46 when available, so signer-backed questionnaire DM flows use one consistent signer identity for `get_public_key`, `sign_event`, and `nip44_*`
 - the login gateway now shows login controls in order: `Signer`/`nsec`, then signer choice (`NOS2X-FOX`/`Amber`), then one action button; it can also generate/copy `nostrconnect://` URLs, show QR for login handoff, and copy an Amber-compatible `bunker://` (`nsecbunker`) variant
 - blind request, issuance, submission, and acceptance DMs now also target recipient NIP-17 relay-list hints (`kind:10050`) instead of only static fallback relays

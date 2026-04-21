@@ -572,7 +572,7 @@
           <li>Each coordinator now sends its own ticket share directly to the voter</li>
           <li>Non-lead ticket sends are slightly staggered by share index to reduce same-recipient relay bursts</li>
           <li>Automatic follow, blind-request, ticket, and acknowledgement sends now use random 0-30s human-style pacing with slower retries</li>
-          <li>Questionnaire invite links open the Vote tab after signer login, complete voter login from the public questionnaire id without scanning old encrypted invite DMs, and preserve the same ballot-request id until issuance arrives</li>
+          <li>Questionnaire invite links now default to the current page host, open the Vote tab after signer login, complete voter login from the public questionnaire id without scanning old encrypted invite DMs, and preserve the same ballot-request id until issuance arrives</li>
           <li>Android signer flows now prefer Amber through NIP-46 when available so `get_public_key`, `sign_event`, `nip04`, and `nip44` operations stay on one signer identity, with capability permissions requested up front</li>
           <li>The login gateway now orders controls as `Signer`/`nsec`, then signer choice (`NOS2X-FOX`/`Amber`), then one login action button; it can also generate/copy `nostrconnect://` links, show a QR code for handoff, and copy an Amber-compatible `bunker://` (`nsecbunker`) variant</li>
           <li>Blind request, issuance, submission, and acceptance DMs now resolve recipient `kind:10050` NIP-17 relay hints before static fallback relays, keep curated fallback relay redundancy, and treat delivery as successful only when at least one relay accepts the publish</li>

@@ -204,7 +204,7 @@ The current repository contains only the browser app. It has voter, coordinator,
 
 1. Build the questionnaire.
 2. Add eligible voter npubs.
-3. Send invites or share invite links.
+3. Send invites or share invite links (generated links use the current host by default).
 4. Process blind ballot requests.
 5. Process submitted responses.
 6. Close the questionnaire and publish results.
@@ -219,7 +219,7 @@ The current repository contains only the browser app. It has voter, coordinator,
 6. Submit the response (the button shows `Waiting for coordinator...` until submission is available).
 7. Private request, issuance, and submission steps now send explicit acknowledgements, so retries can back off once the next phase has definitely received the message.
 
-Invite links can point to a public questionnaire id. Signer login opens the Vote tab directly, completes voter login, and loads the public questionnaire definition, including the blind-signing public key, without scanning old encrypted invite DMs. Manual invite checks and credential-result polling use recent bounded signer DM reads.
+Invite links can point to a public questionnaire id and default to the current host. Signer login opens the Vote tab directly, completes voter login, and loads the public questionnaire definition, including the blind-signing public key, without scanning old encrypted invite DMs. Manual invite checks and credential-result polling use recent bounded signer DM reads.
 
 On Android, signer sessions prefer Amber through NIP-46 when available so `get_public_key`, `sign_event`, `nip04`, and `nip44` operations stay on one signer identity, and the app now requests the full permission set up front during connect.
 

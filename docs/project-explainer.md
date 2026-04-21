@@ -46,9 +46,9 @@ This is the practical order of operations for the current app.
 ### 1. Coordinator prepares first
 
 1. Open the app as **Coordinator** and create or log in to a coordinator identity.
-2. In **Build**, set questionnaire ID, title, description, and questions.
+2. In **Build**, set questionnaire ID, title, description, questions, and (optionally) enable the close timer (default is off).
 3. In **Invite**, add or import voter npubs and invite expected participants.
-4. Send invites (`Send invite` / `Invite all whitelisted`) or share the invite link.
+4. Send invites (`Send invite` / `Invite all whitelisted`) or share the invite link (generated links use the current host by default).
 5. As voters appear, run `Process requests` / `Check responses` to process blind request and response queues.
    - Verified voters can now pre-request and coordinators can pre-issue before publish.
 6. Publish the questionnaire when ready (`Publish Questionnaire`, state becomes `Open`).
