@@ -1349,6 +1349,16 @@ export class QuestionnaireOptionACoordinatorRuntime {
   private stopBlindIssuanceAckSubscription: (() => void) | null = null;
   private liveBlindRequestProcessInFlight: Promise<void> | null = null;
   private liveSubmissionProcessInFlight: Promise<void> | null = null;
+  private processBlindRequestsInFlight: Promise<CoordinatorElectionState> | null = null;
+  private processSubmissionsInFlight: Promise<CoordinatorElectionState> | null = null;
+  private publishBlindIssuancesInFlight: Promise<number> | null = null;
+  private publishAcceptanceResultsInFlight: Promise<number> | null = null;
+  private pendingBlindIssuancePublishOptions: {
+    forceAll?: boolean;
+    requestIds?: string[];
+    minRetryMs?: number;
+  } | null = null;
+  private pendingAcceptancePublishForceAll = false;
 
   constructor(
     private readonly signer: SignerService,
@@ -1478,6 +1488,14 @@ export class QuestionnaireOptionACoordinatorRuntime {
   }
 
   private async publishBlindRequestAckDm(request: BlindBallotRequest) {
+    if (this.shouldSkipBlindRequestAck(request)) {
+      optionAFlowLog("coordinator", "blind_request_ack_publish_skipped_downstream_proof", {
+        electionId: request.electionId,
+        requestId: request.requestId,
+        invitedNpub: request.invitedNpub,
+      });
+      return;
+    }
     const delivery = readBlindRequestAckDeliveryRecord(request.requestId);
     if (delivery?.lastSuccessAt) {
       return;
@@ -1639,6 +1657,20 @@ export class QuestionnaireOptionACoordinatorRuntime {
         || submission.invitedNpub === issuance.invitedNpub
         || submission.responseNpub === issuance.invitedNpub;
     });
+  }
+
+  private shouldSkipBlindRequestAck(request: BlindBallotRequest) {
+    const issuance = this.state?.issuedBlindResponses[request.requestId] ?? readBlindIssuance(request.requestId);
+    if (!issuance) {
+      return false;
+    }
+    if (this.isBlindIssuanceAcked(issuance)) {
+      return true;
+    }
+    if (this.hasProofIssuanceConsumed(issuance)) {
+      return true;
+    }
+    return false;
   }
 
   async loginWithSigner(summary?: Partial<ElectionSummary>) {
@@ -1880,6 +1912,10 @@ export class QuestionnaireOptionACoordinatorRuntime {
           },
         });
       for (const request of requests) {
+        if (this.shouldSkipBlindRequestAck(request)) {
+          dequeueBlindRequest(request.requestId);
+          continue;
+        }
         enqueueBlindRequest(request);
       }
       if (diagnostics) {
@@ -1899,6 +1935,40 @@ export class QuestionnaireOptionACoordinatorRuntime {
   }
 
   async publishPendingBlindIssuancesToDm(options?: {
+    forceAll?: boolean;
+    requestIds?: string[];
+    minRetryMs?: number;
+  }) {
+    if (this.publishBlindIssuancesInFlight) {
+      const pending = this.pendingBlindIssuancePublishOptions ?? {};
+      const requestIds = new Set([...(pending.requestIds ?? []), ...(options?.requestIds ?? [])]);
+      this.pendingBlindIssuancePublishOptions = {
+        forceAll: Boolean(pending.forceAll || options?.forceAll),
+        requestIds: [...requestIds],
+        minRetryMs: Math.min(
+          pending.minRetryMs ?? Number.POSITIVE_INFINITY,
+          options?.minRetryMs ?? Number.POSITIVE_INFINITY,
+        ),
+      };
+      if (!Number.isFinite(this.pendingBlindIssuancePublishOptions.minRetryMs ?? Number.NaN)) {
+        delete this.pendingBlindIssuancePublishOptions.minRetryMs;
+      }
+      return this.publishBlindIssuancesInFlight;
+    }
+    this.publishBlindIssuancesInFlight = this.publishPendingBlindIssuancesToDmInternal(options).finally(() => {
+      this.publishBlindIssuancesInFlight = null;
+    });
+    const delivered = await this.publishBlindIssuancesInFlight;
+    const pendingOptions = this.pendingBlindIssuancePublishOptions;
+    this.pendingBlindIssuancePublishOptions = null;
+    if (pendingOptions) {
+      const nextDelivered = await this.publishPendingBlindIssuancesToDm(pendingOptions);
+      return delivered + nextDelivered;
+    }
+    return delivered;
+  }
+
+  private async publishPendingBlindIssuancesToDmInternal(options?: {
     forceAll?: boolean;
     requestIds?: string[];
     minRetryMs?: number;
@@ -2051,6 +2121,23 @@ export class QuestionnaireOptionACoordinatorRuntime {
   }
 
   async publishPendingAcceptanceResultsToDm(options?: { forceAll?: boolean }) {
+    if (this.publishAcceptanceResultsInFlight) {
+      this.pendingAcceptancePublishForceAll = this.pendingAcceptancePublishForceAll || Boolean(options?.forceAll);
+      return this.publishAcceptanceResultsInFlight;
+    }
+    this.publishAcceptanceResultsInFlight = this.publishPendingAcceptanceResultsToDmInternal(options).finally(() => {
+      this.publishAcceptanceResultsInFlight = null;
+    });
+    const delivered = await this.publishAcceptanceResultsInFlight;
+    if (this.pendingAcceptancePublishForceAll) {
+      this.pendingAcceptancePublishForceAll = false;
+      const nextDelivered = await this.publishPendingAcceptanceResultsToDm({ forceAll: true });
+      return delivered + nextDelivered;
+    }
+    return delivered;
+  }
+
+  private async publishPendingAcceptanceResultsToDmInternal(options?: { forceAll?: boolean }) {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
     }
@@ -2103,6 +2190,16 @@ export class QuestionnaireOptionACoordinatorRuntime {
   }
 
   async processPendingBlindRequests() {
+    if (this.processBlindRequestsInFlight) {
+      return this.processBlindRequestsInFlight;
+    }
+    this.processBlindRequestsInFlight = this.processPendingBlindRequestsInternal().finally(() => {
+      this.processBlindRequestsInFlight = null;
+    });
+    return this.processBlindRequestsInFlight;
+  }
+
+  private async processPendingBlindRequestsInternal() {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
     }
@@ -2206,6 +2303,16 @@ export class QuestionnaireOptionACoordinatorRuntime {
   }
 
   async processPendingSubmissions(requiredQuestionIds: string[]) {
+    if (this.processSubmissionsInFlight) {
+      return this.processSubmissionsInFlight;
+    }
+    this.processSubmissionsInFlight = this.processPendingSubmissionsInternal(requiredQuestionIds).finally(() => {
+      this.processSubmissionsInFlight = null;
+    });
+    return this.processSubmissionsInFlight;
+  }
+
+  private async processPendingSubmissionsInternal(requiredQuestionIds: string[]) {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
     }

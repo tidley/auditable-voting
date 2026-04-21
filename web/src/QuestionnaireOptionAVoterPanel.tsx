@@ -174,6 +174,21 @@ const AUTO_BALLOT_RETRY_POLL_MS = 10_000;
 const AUTO_BALLOT_RETRY_RESEND_MS = 5 * 60_000;
 const AUTO_BALLOT_SIGNER_REFRESH_SCHEDULE_MS = [15_000, 45_000, 120_000] as const;
 const AUTO_BALLOT_SIGNER_KEEPALIVE_REFRESH_MS = 75_000;
+const AUTO_BALLOT_MOBILE_RECOVERY_PULL_MS = 20_000;
+
+function isLikelyMobileClient() {
+  if (typeof window === "undefined" || typeof navigator === "undefined") {
+    return false;
+  }
+  const coarsePointer = typeof window.matchMedia === "function"
+    ? window.matchMedia("(pointer: coarse)").matches
+    : false;
+  if (coarsePointer) {
+    return true;
+  }
+  const userAgent = navigator.userAgent || "";
+  return /android|iphone|ipad|ipod|mobile/i.test(userAgent);
+}
 const AUTO_INVITE_REFRESH_INTERVAL_MS = 45_000;
 
 function resolveInviteDisplayTitle(invite: ElectionInviteMessage) {
@@ -1035,6 +1050,39 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     const intervalId = window.setInterval(tick, AUTO_BALLOT_SIGNER_KEEPALIVE_REFRESH_MS);
     return () => {
       window.clearInterval(intervalId);
+    };
+  }, [runtime, props.localVoterNsec, snapshot?.loginVerified, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission]);
+
+  useEffect(() => {
+    if (!runtime || !snapshot?.loginVerified || !snapshot.blindRequestSent || snapshot.credentialReady || snapshot.submission) {
+      return;
+    }
+    const hasLocalSecretKey = Boolean(props.localVoterNsec?.trim());
+    if (hasLocalSecretKey || !isLikelyMobileClient()) {
+      return;
+    }
+    const refresh = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+      runtime.refreshIssuanceAndAcceptance({ restartSubscriptions: true });
+      setRefreshNonce((value) => value + 1);
+    };
+    const onVisible = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        return;
+      }
+      refresh();
+    };
+    const intervalId = window.setInterval(refresh, AUTO_BALLOT_MOBILE_RECOVERY_PULL_MS);
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    window.addEventListener("online", onVisible);
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+      window.removeEventListener("online", onVisible);
     };
   }, [runtime, props.localVoterNsec, snapshot?.loginVerified, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission]);
 
