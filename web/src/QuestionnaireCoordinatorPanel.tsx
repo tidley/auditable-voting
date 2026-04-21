@@ -1355,11 +1355,15 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         coordinatorNsec,
       });
       const acceptedByKey = new Map<string, QuestionnaireAcceptedResponse>();
-      for (const response of processed.accepted) {
+      // Prefer the coordinator's merged local accepted state, then fill any gaps from relay-fetched envelopes.
+      for (const response of acceptedResponsesForDisplay) {
         acceptedByKey.set(response.payload.responseId || response.eventId, response);
       }
-      for (const response of props.optionAAcceptedResponses ?? []) {
-        acceptedByKey.set(response.payload.responseId || response.eventId, response);
+      for (const response of processed.accepted) {
+        const key = response.payload.responseId || response.eventId;
+        if (!acceptedByKey.has(key)) {
+          acceptedByKey.set(key, response);
+        }
       }
       const acceptedResponses = [...acceptedByKey.values()];
       const existingPublicResponses = await fetchQuestionnaireBlindResponses({
