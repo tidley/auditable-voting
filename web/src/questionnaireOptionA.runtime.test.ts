@@ -196,7 +196,7 @@ describe("questionnaireOptionARuntime", () => {
     expect(recovered.getSnapshot()?.draftResponses).toEqual(submitted?.payload.responses);
   });
 
-  it("reuses an in-flight blind request across retries and only republishes issuance when explicitly retriggered", async () => {
+  it("reuses an in-flight blind request across retries and republishes issuance on bounded retry cadence", async () => {
     const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
     await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
     coordinator.addWhitelistNpub(voterNpub);
@@ -234,13 +234,13 @@ describe("questionnaireOptionARuntime", () => {
     expect(vi.mocked(publishOptionABlindIssuanceDm)).toHaveBeenCalledTimes(1);
 
     await coordinator.publishPendingBlindIssuancesToDm({ minRetryMs: 0 });
-    expect(vi.mocked(publishOptionABlindIssuanceDm)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(publishOptionABlindIssuanceDm)).toHaveBeenCalledTimes(2);
 
     await voter.requestBlindBallot({ forceResend: true });
     await coordinator.processPendingBlindRequests();
     await coordinator.publishPendingBlindIssuancesToDm();
     expect(readBlindIssuance(requestId ?? "")).toEqual(issued);
-    expect(vi.mocked(publishOptionABlindIssuanceDm)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(publishOptionABlindIssuanceDm)).toHaveBeenCalledTimes(3);
   });
 
   it("prevents duplicate issuance and duplicate accepted submissions from inflating unique count", async () => {

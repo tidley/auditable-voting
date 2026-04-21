@@ -99,6 +99,7 @@ import { getSharedNostrPool } from "./sharedNostrPool";
 import type { BallotSubmission, QuestionnaireAnswer } from "./questionnaireOptionA";
 import type { QuestionnaireResponsePayload } from "./questionnaireProtocol";
 import type { QuestionnaireAcceptedResponse } from "./questionnaireRuntime";
+import { loadCoordinatorState } from "./questionnaireOptionAStorage";
 import { tryWriteClipboard } from "./clipboard";
 
 type CoordinatorTab = "configure" | "participants" | "voting" | "settings";
@@ -847,10 +848,20 @@ export default function SimpleCoordinatorApp() {
       optionACoordinatorRuntime?.dispose();
     };
   }, [optionACoordinatorRuntime]);
-  const optionAKnownVoters = useMemo(
-    () => Object.values(optionACoordinatorRuntime?.getSnapshot()?.whitelist ?? {}),
-    [optionACoordinatorRuntime, knownVoterInviteRefreshNonce],
-  );
+  const optionAKnownVoters = useMemo(() => {
+    const runtimeWhitelist = Object.values(optionACoordinatorRuntime?.getSnapshot()?.whitelist ?? {});
+    if (runtimeWhitelist.length > 0) {
+      return runtimeWhitelist;
+    }
+    if (!activeCoordinatorNpub.trim() || !optionAElectionId.trim()) {
+      return runtimeWhitelist;
+    }
+    const persisted = loadCoordinatorState({
+      coordinatorNpub: activeCoordinatorNpub,
+      electionId: optionAElectionId,
+    });
+    return Object.values(persisted?.whitelist ?? {});
+  }, [activeCoordinatorNpub, optionACoordinatorRuntime, optionAElectionId, knownVoterInviteRefreshNonce]);
   const invitedKnownVoterSet = useMemo(
     () => new Set(
       optionAKnownVoters

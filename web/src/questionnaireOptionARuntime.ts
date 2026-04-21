@@ -114,6 +114,7 @@ const OPTION_A_SUBMISSION_REPUBLISH_RETRY_MS = 60 * 1000;
 const OPTION_A_SUBMISSION_ACK_RETRY_MS = 2 * 60 * 1000;
 const OPTION_A_SELF_COPY_RECOVERY_LOOKBACK_SECONDS = Math.round(36 * 60 * 60);
 const OPTION_A_VOTER_DM_LOOKBACK_SECONDS = Math.round(36 * 60 * 60);
+const OPTION_A_VOTER_REFRESH_DM_LIMIT = 120;
 
 export type OptionARuntimeErrorCode =
   | "not_logged_in"
@@ -337,23 +338,11 @@ export class QuestionnaireOptionAVoterRuntime {
       this.state.submission && this.state.submissionAccepted === null,
     );
     const relays = this.getPreferredDmRelays();
-    const toSince = (value?: string | null) => {
-      const nowSec = Math.floor(Date.now() / 1000);
-      const lookbackFloor = Math.max(0, nowSec - OPTION_A_VOTER_DM_LOOKBACK_SECONDS);
-      if (!value) {
-        return lookbackFloor;
-      }
-      const parsed = Date.parse(value);
-      if (!Number.isFinite(parsed)) {
-        return lookbackFloor;
-      }
-      return Math.max(
-        lookbackFloor,
-        Math.min(nowSec, Math.max(0, Math.floor(parsed / 1000) - 300)),
-      );
-    };
-    const issuanceSince = toSince(this.state.blindRequestSentAt);
-    const acceptanceSince = toSince(this.state.submission?.submittedAt) ?? issuanceSince;
+    // Gift-wrap events use intentionally randomized created_at values, so narrow "since"
+    // windows can hide newly sent DMs. Always subscribe over a fixed lookback window.
+    const lookbackSince = Math.max(0, Math.floor(Date.now() / 1000) - OPTION_A_VOTER_DM_LOOKBACK_SECONDS);
+    const issuanceSince = lookbackSince;
+    const acceptanceSince = lookbackSince;
 
     if (!shouldSubscribeBlindIssuance && this.stopBlindRequestAckSubscription) {
       this.stopBlindRequestAckSubscription();
@@ -913,25 +902,11 @@ export class QuestionnaireOptionAVoterRuntime {
     }
 
     const electionId = this.state.electionId;
-    const toSince = (value?: string | null) => {
-      const nowSec = Math.floor(Date.now() / 1000);
-      const lookbackFloor = Math.max(0, nowSec - OPTION_A_VOTER_DM_LOOKBACK_SECONDS);
-      if (!value) {
-        return lookbackFloor;
-      }
-      const parsed = Date.parse(value);
-      if (!Number.isFinite(parsed)) {
-        return lookbackFloor;
-      }
-      return Math.max(
-        lookbackFloor,
-        Math.min(nowSec, Math.max(0, Math.floor(parsed / 1000) - 300)),
-      );
-    };
+    const lookbackSince = Math.max(0, Math.floor(Date.now() / 1000) - OPTION_A_VOTER_DM_LOOKBACK_SECONDS);
     const needsIssuanceFetch = Boolean(this.state.blindRequestSent && !this.state.credentialReady);
     const needsAcceptanceFetch = Boolean(this.state.submission && this.state.submissionAccepted === null);
-    const requestSince = toSince(this.state.blindRequestSentAt);
-    const acceptanceSince = toSince(this.state.submission?.submittedAt) ?? requestSince;
+    const requestSince = lookbackSince;
+    const acceptanceSince = lookbackSince;
     if (!this.refreshFetchInFlight) {
       const fetchTasks: Array<Promise<void>> = [];
       if (needsIssuanceFetch) {
@@ -945,8 +920,8 @@ export class QuestionnaireOptionAVoterRuntime {
             signer: this.signer,
             electionId,
             relays: this.getPreferredDmRelays(),
-            limit: 30,
-            maxDecryptAttempts: 30,
+            limit: OPTION_A_VOTER_REFRESH_DM_LIMIT,
+            maxDecryptAttempts: OPTION_A_VOTER_REFRESH_DM_LIMIT,
             since: requestSince,
           });
         const blindIssuanceFetch = this.fallbackNsec?.trim()
@@ -959,8 +934,8 @@ export class QuestionnaireOptionAVoterRuntime {
             signer: this.signer,
             electionId,
             relays: this.getPreferredDmRelays(),
-            limit: 30,
-            maxDecryptAttempts: 30,
+            limit: OPTION_A_VOTER_REFRESH_DM_LIMIT,
+            maxDecryptAttempts: OPTION_A_VOTER_REFRESH_DM_LIMIT,
             since: requestSince,
           });
         fetchTasks.push(
@@ -998,8 +973,8 @@ export class QuestionnaireOptionAVoterRuntime {
             signer: this.signer,
             electionId,
             relays: this.getPreferredDmRelays(),
-            limit: 30,
-            maxDecryptAttempts: 30,
+            limit: OPTION_A_VOTER_REFRESH_DM_LIMIT,
+            maxDecryptAttempts: OPTION_A_VOTER_REFRESH_DM_LIMIT,
             since: acceptanceSince,
           });
         const acceptanceFetch = acceptanceReadNsec
@@ -1012,8 +987,8 @@ export class QuestionnaireOptionAVoterRuntime {
             signer: this.signer,
             electionId,
             relays: this.getPreferredDmRelays(),
-            limit: 30,
-            maxDecryptAttempts: 30,
+            limit: OPTION_A_VOTER_REFRESH_DM_LIMIT,
+            maxDecryptAttempts: OPTION_A_VOTER_REFRESH_DM_LIMIT,
             since: acceptanceSince,
           });
         fetchTasks.push(
@@ -1456,16 +1431,9 @@ export class QuestionnaireOptionACoordinatorRuntime {
 
   private getDmReadSince() {
     const nowSec = Math.round(Date.now() / 1000);
-    const floorSince = Math.max(0, nowSec - OPTION_A_COORDINATOR_DM_LOOKBACK_SECONDS);
-    const openedAt = this.state?.election.openedAt;
-    const parsed = openedAt ? Date.parse(openedAt) : NaN;
-    if (Number.isFinite(parsed)) {
-      return Math.max(
-        floorSince,
-        Math.min(nowSec, Math.max(0, Math.floor(parsed / 1000) - 600)),
-      );
-    }
-    return floorSince;
+    // Gift-wrap events use randomized created_at values, so anchoring to recently opened rounds
+    // can exclude valid fresh events. Use only a fixed lookback floor.
+    return Math.max(0, nowSec - OPTION_A_COORDINATOR_DM_LOOKBACK_SECONDS);
   }
 
   private getPreferredDmRelays() {
@@ -1869,11 +1837,8 @@ export class QuestionnaireOptionACoordinatorRuntime {
         if (!delivery?.lastAttemptAt) {
           return true;
         }
-        // Do not keep republishing after a successful DM delivery unless explicitly forced.
-        // Voters recover issuance from relay history, and repeated pushes can trigger relay/signer rate limits.
-        if (delivery.lastSuccessAt) {
-          return false;
-        }
+        // Keep bounded retries until we receive an explicit issuance ACK (or see a valid submission).
+        // A single relay-accepted publish is not a guaranteed recipient delivery on public relays.
         const lastAttemptMs = Date.parse(delivery.lastAttemptAt);
         return !Number.isFinite(lastAttemptMs) || Date.now() - lastAttemptMs >= minRetryMs;
       });
