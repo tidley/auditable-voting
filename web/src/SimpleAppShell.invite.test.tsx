@@ -40,7 +40,7 @@ describe("SimpleAppShell invite-link login", () => {
     const { default: SimpleAppShell } = await import("./SimpleAppShell");
 
     render(<SimpleAppShell />);
-    await user.click(screen.getByRole("button", { name: "Login via signer" }));
+    await user.click(screen.getByRole("button", { name: "Log in with NOS2X-FOX" }));
 
     expect(await screen.findByTestId("simple-voter-app")).toBeTruthy();
   });

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
-import { createSignerService, SignerServiceError } from "./signerService";
+import { createSignerService, resetSignerServiceCachesForTests, SignerServiceError } from "./signerService";
 
 function clearSigner() {
   const target = globalThis as typeof globalThis & { nostr?: unknown };
@@ -10,6 +10,7 @@ function clearSigner() {
 describe("signerService", () => {
   afterEach(() => {
     clearSigner();
+    resetSignerServiceCachesForTests();
   });
 
   it("calls signer methods with owner binding", async () => {

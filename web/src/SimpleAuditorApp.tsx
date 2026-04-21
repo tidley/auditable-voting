@@ -5,6 +5,7 @@ import {
   evaluateQuestionnaireBlindAdmissions,
   fetchQuestionnaireBlindResponses,
   fetchQuestionnaireDefinitions,
+  fetchQuestionnaireSubmissionDecisions,
   fetchQuestionnaireResultSummary,
   fetchQuestionnaireState,
 } from "./questionnaireTransport";
@@ -176,11 +177,15 @@ export default function SimpleAuditorApp() {
       return;
     }
     try {
-      const [responseEntries, resultEntries, stateEntries] = await Promise.all([
+      const [responseEntries, decisionEntries, resultEntries, stateEntries] = await Promise.all([
         fetchQuestionnaireBlindResponses({
           questionnaireId: selectedId,
           limit: AUDITOR_QUESTIONNAIRE_RESPONSE_LIMIT,
         }),
+        fetchQuestionnaireSubmissionDecisions({
+          questionnaireId: selectedId,
+          limit: AUDITOR_QUESTIONNAIRE_RESPONSE_LIMIT,
+        }).catch(() => []),
         fetchQuestionnaireResultSummary({
           questionnaireId: selectedId,
           limit: 50,
@@ -190,7 +195,10 @@ export default function SimpleAuditorApp() {
           limit: 50,
         }).catch(() => []),
       ]);
-      const admissions = evaluateQuestionnaireBlindAdmissions({ entries: responseEntries });
+      const admissions = evaluateQuestionnaireBlindAdmissions({
+        entries: responseEntries,
+        decisionEntries,
+      });
       const latestResult = [...resultEntries]
         .sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0))[0];
       const latestState = [...stateEntries]

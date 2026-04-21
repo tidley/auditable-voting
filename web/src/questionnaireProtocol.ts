@@ -1,6 +1,10 @@
 import {
+  QUESTIONNAIRE_FLOW_MODE_LEGACY_PRIVATE_DM,
+  QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1,
+  QUESTIONNAIRE_PROTOCOL_VERSION_V1,
   QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN,
   QUESTIONNAIRE_RESPONSE_MODE_LEGACY_PRIVATE_ENVELOPE,
+  type QuestionnaireFlowMode,
   type QuestionnaireResponseMode,
 } from "./questionnaireProtocolConstants";
 import type { QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
@@ -39,6 +43,8 @@ export type QuestionnaireQuestion =
 export type QuestionnaireDefinition = {
   schemaVersion: 1;
   eventType: "questionnaire_definition";
+  protocolVersion?: 1 | 2;
+  flowMode?: QuestionnaireFlowMode;
   responseMode: QuestionnaireResponseMode;
   questionnaireId: string;
   title: string;
@@ -145,6 +151,25 @@ export type QuestionnaireResultSummary = {
   resultHash?: string;
 };
 
+export type QuestionnaireSubmissionDecisionReason =
+  | "accepted"
+  | "duplicate_nullifier"
+  | "invalid_token_proof"
+  | "invalid_payload_shape"
+  | "questionnaire_closed";
+
+export type QuestionnaireSubmissionDecision = {
+  schemaVersion: 1;
+  eventType: "questionnaire_submission_decision";
+  questionnaireId: string;
+  submissionId: string;
+  tokenNullifier: string;
+  accepted: boolean;
+  reason: QuestionnaireSubmissionDecisionReason;
+  decidedAt: number;
+  coordinatorPubkey: string;
+};
+
 export type ValidationResult = {
   valid: boolean;
   errors: string[];
@@ -156,6 +181,13 @@ function isNonEmpty(value: string | null | undefined) {
 
 export function validateQuestionnaireDefinition(input: QuestionnaireDefinition): ValidationResult {
   const errors: string[] = [];
+  if (
+    input.flowMode !== undefined
+    && input.flowMode !== QUESTIONNAIRE_FLOW_MODE_LEGACY_PRIVATE_DM
+    && input.flowMode !== QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1
+  ) {
+    errors.push("flow_mode_invalid");
+  }
   if (
     input.responseMode !== QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN
     && input.responseMode !== QUESTIONNAIRE_RESPONSE_MODE_LEGACY_PRIVATE_ENVELOPE
@@ -217,11 +249,21 @@ export function validateQuestionnaireDefinition(input: QuestionnaireDefinition):
 }
 
 export function normalizeQuestionnaireDefinition(
-  input: Omit<QuestionnaireDefinition, "responseMode"> & { responseMode?: QuestionnaireResponseMode | null },
+  input: Omit<QuestionnaireDefinition, "responseMode" | "flowMode"> & {
+    responseMode?: QuestionnaireResponseMode | null;
+    flowMode?: QuestionnaireFlowMode | null;
+  },
 ): QuestionnaireDefinition {
+  const responseMode = input.responseMode ?? QUESTIONNAIRE_RESPONSE_MODE_LEGACY_PRIVATE_ENVELOPE;
+  const flowMode = input.flowMode
+    ?? (responseMode === QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN
+      ? QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1
+      : QUESTIONNAIRE_FLOW_MODE_LEGACY_PRIVATE_DM);
   return {
     ...input,
-    responseMode: input.responseMode ?? QUESTIONNAIRE_RESPONSE_MODE_LEGACY_PRIVATE_ENVELOPE,
+    responseMode,
+    flowMode,
+    protocolVersion: input.protocolVersion ?? QUESTIONNAIRE_PROTOCOL_VERSION_V1,
   };
 }
 

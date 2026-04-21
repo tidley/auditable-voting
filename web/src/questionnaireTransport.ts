@@ -17,9 +17,12 @@ import type {
   QuestionnaireStateEvent,
 } from "./questionnaireProtocol";
 import {
+  parseQuestionnaireSubmissionDecisionEvent,
   parseQuestionnaireBlindResponseEvent,
   QUESTIONNAIRE_RESPONSE_BLIND_KIND,
+  QUESTIONNAIRE_SUBMISSION_DECISION_KIND,
   type QuestionnaireBlindResponseEvent,
+  type QuestionnaireSubmissionDecisionEvent,
 } from "./questionnaireResponsePublish";
 import { parseQuestionnaireResultSummaryEvent } from "./questionnaireRuntime";
 
@@ -34,7 +37,14 @@ export type QuestionnaireBlindAdmissionDecision = {
   event: NostrEvent;
   response: QuestionnaireBlindResponseEvent;
   accepted: boolean;
-  rejectionReason: "duplicate_nullifier" | null;
+  rejectionReason: "duplicate_nullifier" | "invalid_token_proof" | "invalid_payload_shape" | "questionnaire_closed" | null;
+  decidedAt?: number | null;
+  decisionEventId?: string | null;
+};
+
+type QuestionnaireSubmissionDecisionEntry = {
+  event: NostrEvent;
+  decision: QuestionnaireSubmissionDecisionEvent;
 };
 
 function buildPublicRelays(relays?: string[]) {
@@ -165,18 +175,44 @@ function canonicalBlindResponseOrder(
 
 export function evaluateQuestionnaireBlindAdmissions(input: {
   entries: QuestionnaireBlindResponseEntry[];
+  decisionEntries?: QuestionnaireSubmissionDecisionEntry[];
 }) {
   const ordered = [...input.entries].sort(canonicalBlindResponseOrder);
+  const latestDecisionBySubmissionId = new Map<string, QuestionnaireSubmissionDecisionEntry>();
+  for (const entry of input.decisionEntries ?? []) {
+    const existing = latestDecisionBySubmissionId.get(entry.decision.submissionId);
+    const existingCreatedAt = Number(existing?.event.created_at ?? existing?.decision.decidedAt ?? 0);
+    const createdAt = Number(entry.event.created_at ?? entry.decision.decidedAt ?? 0);
+    if (!existing || createdAt >= existingCreatedAt) {
+      latestDecisionBySubmissionId.set(entry.decision.submissionId, entry);
+    }
+  }
   const acceptedNullifiers = new Set<string>();
   const decisions: QuestionnaireBlindAdmissionDecision[] = [];
 
   for (const entry of ordered) {
+    const explicitDecision = latestDecisionBySubmissionId.get(entry.response.responseId);
+    if (explicitDecision) {
+      decisions.push({
+        ...entry,
+        accepted: explicitDecision.decision.accepted,
+        rejectionReason: explicitDecision.decision.accepted ? null : explicitDecision.decision.reason,
+        decidedAt: explicitDecision.decision.decidedAt,
+        decisionEventId: explicitDecision.event.id,
+      });
+      if (explicitDecision.decision.accepted) {
+        acceptedNullifiers.add(entry.response.tokenNullifier.trim());
+      }
+      continue;
+    }
     const nullifier = entry.response.tokenNullifier.trim();
     if (acceptedNullifiers.has(nullifier)) {
       decisions.push({
         ...entry,
         accepted: false,
         rejectionReason: "duplicate_nullifier",
+        decidedAt: null,
+        decisionEventId: null,
       });
       continue;
     }
@@ -186,6 +222,8 @@ export function evaluateQuestionnaireBlindAdmissions(input: {
       ...entry,
       accepted: true,
       rejectionReason: null,
+      decidedAt: null,
+      decisionEventId: null,
     });
   }
 
@@ -197,6 +235,28 @@ export function evaluateQuestionnaireBlindAdmissions(input: {
       [...acceptedNullifiers.values()].map((nullifier) => [nullifier, 1]),
     ),
   };
+}
+
+export async function fetchQuestionnaireSubmissionDecisions(input: {
+  questionnaireId: string;
+  relays?: string[];
+  limit?: number;
+}) {
+  const events = (await fetchQuestionnaireEventsWithFallback({
+    questionnaireId: input.questionnaireId,
+    kind: QUESTIONNAIRE_SUBMISSION_DECISION_KIND,
+    relays: input.relays,
+    readRelayLimit: 8,
+    limit: input.limit ?? 400,
+    parseQuestionnaireIdFromEvent: (event) => {
+      const parsed = parseQuestionnaireSubmissionDecisionEvent(event.content);
+      return parsed?.questionnaireId ?? null;
+    },
+  })).events;
+  return events
+    .map((event) => ({ event, decision: parseQuestionnaireSubmissionDecisionEvent(event.content) }))
+    .filter((entry) => entry.decision?.questionnaireId === input.questionnaireId)
+    .filter((entry): entry is { event: NostrEvent; decision: QuestionnaireSubmissionDecisionEvent } => Boolean(entry.decision));
 }
 
 export async function fetchQuestionnaireState(input: {

@@ -33,3 +33,5 @@ All passed locally.
 - `.planning/STATUS3.md` and older `TODO*.md` files remain as historical context.
 - This file (`STATUS4.md`) is now the canonical current-status handoff.
 - Public documentation was refreshed in the same pass: `README.md`, `docs/project-explainer.md`, `web/public/project-explainer.html`, and `presentation/project-overview.html`.
+- Next major planned tranche is documented in:
+  - `.planning/2026-04-21-public-submission-migration-plan.md`

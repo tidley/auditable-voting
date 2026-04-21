@@ -267,20 +267,20 @@ printf 'NSEC=%s\nNPUB=%s\n' "$nsec" "$npub" > .secrets/nsite.env
 chmod 600 .secrets/nsite.env
 ```
 
-Build and publish with explicit relays and Blossom servers:
+Build and publish using `.nsite/config.json` defaults:
 
 ```bash
 npm --prefix web run build
 set -a && source .secrets/nsite.env && set +a
 npx --yes nsite-cli upload web/dist \
   -k "$NSEC" \
-  --servers "https://nostr.download,https://media-server.slidestr.net,https://blossom.primal.net" \
-  --relays "wss://nos.lol,wss://relay.primal.net,wss://relay.damus.io,wss://offchain.pub,wss://nostr.mom" \
   --publish-server-list \
   --publish-relay-list \
   --publish-profile \
   -v
 ```
+
+This repo now keeps default nsite relay/server settings in `.nsite/config.json` (matching the `passwd` project), so the upload command uses that config instead of inlined relay/server flags.
 
 Current deploy identity:
 

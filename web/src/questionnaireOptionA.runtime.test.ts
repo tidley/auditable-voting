@@ -12,7 +12,27 @@ import {
   publishOptionABlindIssuanceDm,
   publishOptionABlindRequestDm,
 } from "./questionnaireOptionABlindDm";
+import { publishQuestionnaireBlindResponsePublic } from "./questionnaireResponsePublish";
 import type { SignerService } from "./services/signerService";
+
+const publicBlindResponseStore = vi.hoisted(() => ({
+  entries: [] as Array<{
+    event: { id: string; created_at: number };
+    response: {
+      questionnaireId: string;
+      responseId: string;
+      submittedAt: number;
+      authorPubkey: string;
+      tokenNullifier: string;
+      tokenProof: {
+        tokenCommitment: string;
+        questionnaireId: string;
+        signature: string;
+      };
+      answers: Array<Record<string, unknown>>;
+    };
+  }>,
+}));
 
 vi.mock("./questionnaireOptionAInviteDm", () => ({
   fetchOptionAInviteDms: vi.fn().mockResolvedValue([]),
@@ -90,6 +110,55 @@ vi.mock("./questionnaireOptionABlindDm", () => ({
   subscribeOptionABlindRequestAckDms: vi.fn(() => () => undefined),
 }));
 
+vi.mock("./questionnaireResponsePublish", () => ({
+  publishQuestionnaireBlindResponsePublic: vi.fn(async (input: {
+    questionnaireId: string;
+    responseId: string;
+    submittedAt?: number;
+    tokenNullifier: string;
+    tokenProof: {
+      tokenCommitment: string;
+      questionnaireId: string;
+      signature: string;
+    };
+    answers: Array<Record<string, unknown>>;
+  }) => {
+    const createdAt = input.submittedAt ?? Math.floor(Date.now() / 1000);
+    publicBlindResponseStore.entries.push({
+      event: {
+        id: `public-${input.responseId}`,
+        created_at: createdAt,
+      },
+      response: {
+        questionnaireId: input.questionnaireId,
+        responseId: input.responseId,
+        submittedAt: createdAt,
+        authorPubkey: "npub1testpublicsubmissionauthorxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        tokenNullifier: input.tokenNullifier,
+        tokenProof: input.tokenProof,
+        answers: input.answers,
+      },
+    });
+    return {
+      eventId: `public-${input.responseId}`,
+      successes: 1,
+      failures: 0,
+      relayResults: [],
+    };
+  }),
+  publishQuestionnaireSubmissionDecisionPublic: vi.fn(async (input: { submissionId: string }) => ({
+    eventId: `decision-${input.submissionId}`,
+    successes: 1,
+    failures: 0,
+    relayResults: [],
+  })),
+}));
+
+vi.mock("./questionnaireTransport", () => ({
+  fetchQuestionnaireBlindResponses: vi.fn(async (input: { questionnaireId: string }) =>
+    publicBlindResponseStore.entries.filter((entry) => entry.response.questionnaireId === input.questionnaireId)),
+}));
+
 function signer(npub: string): SignerService {
   return {
     async isAvailable() {
@@ -116,6 +185,7 @@ describe("questionnaireOptionARuntime", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
+    publicBlindResponseStore.entries.splice(0, publicBlindResponseStore.entries.length);
   });
 
   it("restores login state and invite mismatch is rejected", async () => {
@@ -165,8 +235,9 @@ describe("questionnaireOptionARuntime", () => {
     expect(submitted?.responseNpub).toBeTruthy();
     expect(submitted?.responseNpub).not.toBe(voterNpub);
     expect(submitted?.invitedNpub).toBe(submitted?.responseNpub);
-    expect(vi.mocked(publishOptionABallotSubmissionDm)).toHaveBeenCalledWith(expect.objectContaining({
-      recipientNpub: coordinatorNpub,
+    expect(vi.mocked(publishQuestionnaireBlindResponsePublic)).toHaveBeenCalledWith(expect.objectContaining({
+      questionnaireId: electionId,
+      responseId: submitted?.submissionId,
     }));
     expect(vi.mocked(publishOptionABallotSubmissionDm)).toHaveBeenCalledWith(expect.objectContaining({
       recipientNpub: voterNpub,
@@ -268,7 +339,7 @@ describe("questionnaireOptionARuntime", () => {
     expect(retryAfterIssuance.blindRequest?.requestId).toBe(issuedRequestId);
 
     await voter.submitVote(["q1"]);
-    const submissionPublishCallsAfterFirstSubmit = vi.mocked(publishOptionABallotSubmissionDm).mock.calls.length;
+    const submissionPublishCallsAfterFirstSubmit = vi.mocked(publishQuestionnaireBlindResponsePublic).mock.calls.length;
     await coordinator.processPendingSubmissions(["q1"]);
     voter.refreshIssuanceAndAcceptance();
     expect(voter.getSnapshot()?.submissionAccepted).toBe(true);
@@ -279,7 +350,7 @@ describe("questionnaireOptionARuntime", () => {
     const retrySubmissionState = await voter.submitVote(["q1"]);
     expect(retrySubmissionState.submission?.responseNpub).toBe(firstSubmission?.responseNpub);
     expect(retrySubmissionState.submission?.responseId).toBe(firstSubmission?.responseId);
-    expect(vi.mocked(publishOptionABallotSubmissionDm).mock.calls.length).toBe(submissionPublishCallsAfterFirstSubmit);
+    expect(vi.mocked(publishQuestionnaireBlindResponsePublic).mock.calls.length).toBe(submissionPublishCallsAfterFirstSubmit);
     await coordinator.processPendingSubmissions(["q1"]);
     expect(coordinator.getAcceptedUniqueCount()).toBe(1);
   });

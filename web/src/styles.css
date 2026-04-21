@@ -797,6 +797,35 @@ code {
   gap: 14px;
 }
 
+.simple-questionnaire-close-timer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+}
+
+.simple-questionnaire-close-timer-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 0.96rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.simple-questionnaire-close-timer-toggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.simple-questionnaire-close-timer-minutes {
+  flex: 1;
+  min-width: 180px;
+  display: grid;
+  gap: 8px;
+}
+
 .simple-questionnaire-tabs {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -1227,6 +1256,13 @@ code {
   font-size: 1rem;
   line-height: 1.5;
   box-sizing: border-box;
+}
+
+.simple-voter-input:disabled {
+  border-color: #334155;
+  background: #111827;
+  color: #94a3b8;
+  cursor: not-allowed;
 }
 
 .simple-auditor-summary-grid {
@@ -3146,6 +3182,15 @@ code {
   .simple-questionnaire-header {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .simple-questionnaire-close-timer-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .simple-questionnaire-close-timer-toggle {
+    white-space: normal;
   }
 
   .simple-questionnaire-tabs {

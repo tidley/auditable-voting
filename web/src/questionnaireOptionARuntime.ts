@@ -109,6 +109,15 @@ import {
   buildQuestionnaireBlindTokenSignedMessage,
   deriveQuestionnaireTokenNullifier,
 } from "./questionnaireBlindToken";
+import {
+  publishQuestionnaireBlindResponsePublic,
+  publishQuestionnaireSubmissionDecisionPublic,
+} from "./questionnaireResponsePublish";
+import {
+  fetchQuestionnaireBlindResponses,
+} from "./questionnaireTransport";
+import type { QuestionnaireResponseAnswer } from "./questionnaireProtocol";
+import type { QuestionnaireSubmissionDecisionReason } from "./questionnaireProtocol";
 
 const OPTION_A_COORDINATOR_DM_LOOKBACK_SECONDS = 24 * 60 * 60;
 const OPTION_A_COORDINATOR_SIGNER_DM_LIMIT = 60;
@@ -271,6 +280,73 @@ function inferRejectReason(error?: string): BallotRejectReason {
     return "not_whitelisted";
   }
   return "schema_invalid";
+}
+
+function toSubmissionDecisionReason(input: {
+  accepted: boolean;
+  rejectReason?: BallotRejectReason;
+}): QuestionnaireSubmissionDecisionReason {
+  if (input.accepted) {
+    return "accepted";
+  }
+  if (input.rejectReason === "duplicate_nullifier" || input.rejectReason === "already_voted") {
+    return "duplicate_nullifier";
+  }
+  if (input.rejectReason === "invalid_credential" || input.rejectReason === "issuance_missing") {
+    return "invalid_token_proof";
+  }
+  if (input.rejectReason === "election_closed") {
+    return "questionnaire_closed";
+  }
+  return "invalid_payload_shape";
+}
+
+function toQuestionnaireResponseAnswers(responses: QuestionnaireAnswer[]): QuestionnaireResponseAnswer[] {
+  return responses.map((answer) => {
+    if (answer.type === "yes_no") {
+      return {
+        questionId: answer.questionId,
+        answerType: "yes_no",
+        value: answer.answer === "yes",
+      };
+    }
+    if (answer.type === "multiple_choice") {
+      return {
+        questionId: answer.questionId,
+        answerType: "multiple_choice",
+        selectedOptionIds: [...answer.answer],
+      };
+    }
+    return {
+      questionId: answer.questionId,
+      answerType: "free_text",
+      text: answer.answer,
+    };
+  });
+}
+
+function fromQuestionnaireResponseAnswers(answers: QuestionnaireResponseAnswer[]): QuestionnaireAnswer[] {
+  return answers.map((answer) => {
+    if (answer.answerType === "yes_no") {
+      return {
+        questionId: answer.questionId,
+        type: "yes_no",
+        answer: answer.value ? "yes" : "no",
+      };
+    }
+    if (answer.answerType === "multiple_choice") {
+      return {
+        questionId: answer.questionId,
+        type: "multiple_choice",
+        answer: [...answer.selectedOptionIds],
+      };
+    }
+    return {
+      questionId: answer.questionId,
+      type: "text",
+      answer: answer.text,
+    };
+  });
 }
 
 export class QuestionnaireOptionAVoterRuntime {
@@ -1163,14 +1239,28 @@ export class QuestionnaireOptionAVoterRuntime {
         return this.state;
       }
       this.submissionRepublishAttemptAtBySubmissionId.set(submissionId, nowMs);
-      optionAFlowLog("voter", "submit_vote_republish_existing_submission", {
+      optionAFlowLog("voter", "submit_vote_republish_existing_public_submission", {
         electionId: this.state.electionId,
         submissionId,
         responseNpub: this.state.responseNpub,
       });
-      const republished = await this.publishBallotSubmissionDm(this.state.submission, { fallbackNsec: this.state.responseNsec });
+      const republished = await publishQuestionnaireBlindResponsePublic({
+        responseNsec: this.state.responseNsec,
+        questionnaireId: this.state.electionId,
+        responseId: this.state.submission.submissionId,
+        submittedAt: Number.isFinite(Date.parse(this.state.submission.submittedAt))
+          ? Math.floor(Date.parse(this.state.submission.submittedAt) / 1000)
+          : Math.floor(Date.now() / 1000),
+        tokenNullifier: this.state.submission.nullifier,
+        tokenProof: {
+          tokenCommitment: this.state.submission.tokenCommitment,
+          questionnaireId: this.state.electionId,
+          signature: this.state.submission.credential,
+        },
+        answers: toQuestionnaireResponseAnswers(this.state.submission.payload.responses),
+      });
       if (!republished || republished.successes <= 0) {
-        throw new OptionARuntimeError("dm_delivery_failed", "No relay accepted the ballot submission DM.");
+        throw new OptionARuntimeError("dm_delivery_failed", "No relay accepted the public ballot submission.");
       }
       await this.publishBallotSubmissionSelfCopyDm(this.state.submission, { fallbackNsec: this.state.responseNsec });
       return this.state;
@@ -1253,17 +1343,30 @@ export class QuestionnaireOptionAVoterRuntime {
       responseNpub,
     };
     this.startVoterDmSubscriptions();
-    enqueueSubmission(submission);
     saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
-    const published = await this.publishBallotSubmissionDm(submission, { fallbackNsec: responseNsec });
-    optionAFlowLog("voter", "submit_vote_dm_publish_result", {
+    const published = await publishQuestionnaireBlindResponsePublic({
+      responseNsec,
+      questionnaireId: this.state.electionId,
+      responseId: submission.submissionId,
+      submittedAt: Number.isFinite(Date.parse(submission.submittedAt))
+        ? Math.floor(Date.parse(submission.submittedAt) / 1000)
+        : Math.floor(Date.now() / 1000),
+      tokenNullifier: submission.nullifier,
+      tokenProof: {
+        tokenCommitment: submission.tokenCommitment,
+        questionnaireId: this.state.electionId,
+        signature: submission.credential,
+      },
+      answers: toQuestionnaireResponseAnswers(submission.payload.responses),
+    });
+    optionAFlowLog("voter", "submit_vote_public_publish_result", {
       electionId: this.state.electionId,
       submissionId: submission.submissionId,
       successes: published?.successes ?? 0,
       failures: published?.failures ?? 0,
     });
     if (!published || published.successes <= 0) {
-      throw new OptionARuntimeError("dm_delivery_failed", "No relay accepted the ballot submission DM.");
+      throw new OptionARuntimeError("dm_delivery_failed", "No relay accepted the public ballot submission.");
     }
     await this.publishBallotSubmissionSelfCopyDm(submission, { fallbackNsec: responseNsec });
     optionAFlowLog("voter", "submit_vote_completed", {
@@ -2317,13 +2420,55 @@ export class QuestionnaireOptionACoordinatorRuntime {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
     }
+    let next = this.state;
     const queue = listSubmissions(this.electionId);
+    const queuedSubmissionIds = new Set(queue.map((entry) => entry.submissionId));
+    const publicResponses = await fetchQuestionnaireBlindResponses({
+      questionnaireId: this.electionId,
+      limit: 400,
+    }).catch(() => []);
+    for (const entry of publicResponses) {
+      const existingSubmission = next.receivedSubmissions[entry.response.responseId];
+      if (existingSubmission) {
+        continue;
+      }
+      if (next.acceptanceResults[entry.response.responseId]) {
+        continue;
+      }
+      if (queuedSubmissionIds.has(entry.response.responseId)) {
+        continue;
+      }
+      if (!Array.isArray(entry.response.answers) || entry.response.answers.length === 0) {
+        continue;
+      }
+      const issuedByCommitment = Object.values(next.issuedBlindResponses)
+        .find((issuance) => issuance.tokenCommitment === entry.response.tokenProof.tokenCommitment);
+      const blindSigningKeyId = issuedByCommitment?.blindSigningKeyId ?? "";
+      const syntheticSubmission: BallotSubmission = {
+        type: "ballot_submission",
+        schemaVersion: 1,
+        electionId: this.electionId,
+        submissionId: entry.response.responseId,
+        invitedNpub: entry.response.authorPubkey,
+        responseNpub: entry.response.authorPubkey,
+        tokenCommitment: entry.response.tokenProof.tokenCommitment,
+        blindSigningKeyId,
+        credential: entry.response.tokenProof.signature,
+        nullifier: entry.response.tokenNullifier,
+        payload: {
+          electionId: this.electionId,
+          responses: fromQuestionnaireResponseAnswers(entry.response.answers),
+        },
+        submittedAt: new Date((entry.response.submittedAt ?? entry.event.created_at) * 1000).toISOString(),
+      };
+      enqueueSubmission(syntheticSubmission);
+      queue.push(syntheticSubmission);
+      queuedSubmissionIds.add(syntheticSubmission.submissionId);
+    }
     optionAFlowLog("coordinator", "process_submissions_started", {
       electionId: this.electionId,
       queued: queue.length,
     });
-    let next = this.state;
-
     for (const submission of queue) {
       const existingDecision = next.acceptanceResults[submission.submissionId];
       if (existingDecision) {
@@ -2346,6 +2491,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
           decidedAt: nowIso(),
         };
         storeAcceptance(rejected);
+        await this.publishSubmissionDecisionPublic(submission, rejected);
         dequeueSubmission(submission.submissionId);
         continue;
       }
@@ -2369,6 +2515,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
           decidedAt: nowIso(),
         };
         storeAcceptance(rejected);
+        await this.publishSubmissionDecisionPublic(submission, rejected);
         dequeueSubmission(submission.submissionId);
         continue;
       }
@@ -2398,6 +2545,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
           decidedAt: nowIso(),
         };
         storeAcceptance(rejected);
+        await this.publishSubmissionDecisionPublic(submission, rejected);
         dequeueSubmission(submission.submissionId);
         continue;
       }
@@ -2418,6 +2566,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       if (reducedAccepted.ok) {
         next = reducedAccepted.state;
         storeAcceptance(accepted);
+        await this.publishSubmissionDecisionPublic(submission, accepted);
         optionAFlowLog("coordinator", "submission_accepted", {
           electionId: this.electionId,
           submissionId: submission.submissionId,
@@ -2429,6 +2578,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
           reason: inferRejectReason(reducedAccepted.error),
         };
         storeAcceptance(rejected);
+        await this.publishSubmissionDecisionPublic(submission, rejected);
       }
       dequeueSubmission(submission.submissionId);
     }
@@ -2436,6 +2586,57 @@ export class QuestionnaireOptionACoordinatorRuntime {
     this.state = next;
     saveCoordinatorState({ coordinatorNpub: this.coordinatorNpub, state: this.state });
     return this.state;
+  }
+
+  private async publishSubmissionDecisionPublic(
+    submission: BallotSubmission,
+    result: BallotAcceptanceResult,
+  ) {
+    if (!this.coordinatorNpub) {
+      return null;
+    }
+    const coordinatorNsec = this.fallbackNsec ?? this.state?.coordinatorNsec ?? null;
+    if (!coordinatorNsec) {
+      optionAFlowLog("coordinator", "submission_decision_publish_skipped_no_nsec", {
+        electionId: this.electionId,
+        submissionId: submission.submissionId,
+        accepted: result.accepted,
+      });
+      return null;
+    }
+    try {
+      const published = await publishQuestionnaireSubmissionDecisionPublic({
+        coordinatorNsec,
+        questionnaireId: this.electionId,
+        submissionId: submission.submissionId,
+        tokenNullifier: submission.nullifier,
+        accepted: result.accepted,
+        reason: toSubmissionDecisionReason({
+          accepted: result.accepted,
+          rejectReason: result.reason,
+        }),
+        coordinatorNpub: this.coordinatorNpub,
+        decidedAt: Number.isFinite(Date.parse(result.decidedAt))
+          ? Math.floor(Date.parse(result.decidedAt) / 1000)
+          : Math.floor(Date.now() / 1000),
+      });
+      optionAFlowLog("coordinator", "submission_decision_public_publish_result", {
+        electionId: this.electionId,
+        submissionId: submission.submissionId,
+        accepted: result.accepted,
+        successes: published?.successes ?? 0,
+        failures: published?.failures ?? 0,
+      });
+      return published;
+    } catch (error) {
+      optionAFlowLog("coordinator", "submission_decision_public_publish_failed", {
+        electionId: this.electionId,
+        submissionId: submission.submissionId,
+        accepted: result.accepted,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
   }
 }
 

@@ -11,6 +11,10 @@ import {
 } from "./questionnaireProtocol";
 import type { QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
 import { QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN } from "./questionnaireProtocolConstants";
+import {
+  QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1,
+  QUESTIONNAIRE_PROTOCOL_VERSION_V2,
+} from "./questionnaireProtocolConstants";
 import SimpleQrPanel from "./SimpleQrPanel";
 import TokenFingerprint from "./TokenFingerprint";
 import { deriveActorDisplayId } from "./actorDisplay";
@@ -309,6 +313,8 @@ function buildDefinition(input: {
   return {
     schemaVersion: 1,
     eventType: "questionnaire_definition",
+    protocolVersion: QUESTIONNAIRE_PROTOCOL_VERSION_V2,
+    flowMode: QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1,
     responseMode: QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN,
     questionnaireId: input.questionnaireId,
     title: input.title,
@@ -1799,23 +1805,29 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         placeholder='Describe what this questionnaire is for'
         onChange={(event) => setDescription(event.target.value)}
       />
-      <label className='simple-voter-label' htmlFor='questionnaire-close-timer-enabled'>
-        <input
-          id='questionnaire-close-timer-enabled'
-          type='checkbox'
-          checked={closeTimerEnabled}
-          onChange={(event) => setCloseTimerEnabled(event.target.checked)}
-        />{" "}
-        Enable close timer
-      </label>
-      <label className='simple-voter-label' htmlFor='questionnaire-close-minutes'>Close after (minutes)</label>
-      <input
-        id='questionnaire-close-minutes'
-        className='simple-voter-input'
-        value={closeAfterMinutes}
-        disabled={!closeTimerEnabled}
-        onChange={(event) => setCloseAfterMinutes(event.target.value)}
-      />
+      <div className='simple-questionnaire-close-timer-row'>
+        <label className='simple-questionnaire-close-timer-toggle' htmlFor='questionnaire-close-timer-enabled'>
+          <input
+            id='questionnaire-close-timer-enabled'
+            type='checkbox'
+            checked={closeTimerEnabled}
+            onChange={(event) => setCloseTimerEnabled(event.target.checked)}
+          />
+          <span>Enable close timer</span>
+        </label>
+        <div className='simple-questionnaire-close-timer-minutes'>
+          <label className='simple-voter-label simple-voter-label-tight' htmlFor='questionnaire-close-minutes'>
+            Close after (minutes)
+          </label>
+          <input
+            id='questionnaire-close-minutes'
+            className='simple-voter-input simple-voter-input-inline'
+            value={closeAfterMinutes}
+            disabled={!closeTimerEnabled}
+            onChange={(event) => setCloseAfterMinutes(event.target.value)}
+          />
+        </div>
+      </div>
 
       <h4 className='simple-voter-section-title'>Questions</h4>
       <div className='simple-questionnaire-question-list'>

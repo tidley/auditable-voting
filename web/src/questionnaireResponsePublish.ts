@@ -9,10 +9,18 @@ import {
   SIMPLE_PUBLIC_RELAYS,
 } from "./simpleVotingSession";
 import { normalizeRelaysRust, sha256HexRust } from "./wasm/auditableVotingCore";
-import type { QuestionnaireResponseAnswer } from "./questionnaireProtocol";
-import { IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND } from "./questionnaireProtocolConstants";
+import type {
+  QuestionnaireResponseAnswer,
+  QuestionnaireSubmissionDecision,
+  QuestionnaireSubmissionDecisionReason,
+} from "./questionnaireProtocol";
+import {
+  IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND,
+  IMPLEMENTATION_KIND_QUESTIONNAIRE_SUBMISSION_DECISION,
+} from "./questionnaireProtocolConstants";
 
 export const QUESTIONNAIRE_RESPONSE_BLIND_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND;
+export const QUESTIONNAIRE_SUBMISSION_DECISION_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_SUBMISSION_DECISION;
 
 export type BlindTokenProof = {
   tokenCommitment: string;
@@ -33,6 +41,8 @@ export type QuestionnaireBlindResponseEvent = {
   encryptedPayload?: string;
   payloadHash?: string;
 };
+
+export type QuestionnaireSubmissionDecisionEvent = QuestionnaireSubmissionDecision;
 
 function buildPublicRelays(relays?: string[]) {
   return rankRelaysByBackoff(normalizeRelaysRust([...(relays ?? []), ...SIMPLE_PUBLIC_RELAYS]));
@@ -104,7 +114,7 @@ async function publishEvent(input: {
 export async function publishQuestionnaireBlindResponsePublic(input: {
   responseNsec: string;
   questionnaireId: string;
-  questionnaireDefinitionEventId: string;
+  questionnaireDefinitionEventId?: string | null;
   responseId: string;
   submittedAt?: number;
   tokenNullifier: string;
@@ -134,7 +144,9 @@ export async function publishQuestionnaireBlindResponsePublic(input: {
       ["schema", "1"],
       ["etype", "questionnaire_response_blind"],
       ["nullifier", input.tokenNullifier],
-      ["e", input.questionnaireDefinitionEventId],
+      ...(input.questionnaireDefinitionEventId?.trim()
+        ? [["e", input.questionnaireDefinitionEventId.trim()] as string[]]
+        : []),
     ],
     relays: input.relays,
   });
@@ -264,6 +276,97 @@ export function parseQuestionnaireBlindResponseEvent(content: string): Questionn
       return null;
     }
     if (!parsed.answers && !parsed.encryptedPayload) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export async function publishQuestionnaireSubmissionDecisionPublic(input: {
+  coordinatorNsec: string;
+  questionnaireId: string;
+  submissionId: string;
+  tokenNullifier: string;
+  accepted: boolean;
+  reason: QuestionnaireSubmissionDecisionReason;
+  coordinatorNpub: string;
+  decidedAt?: number;
+  relays?: string[];
+}) {
+  const eventPayload: QuestionnaireSubmissionDecisionEvent = {
+    schemaVersion: 1,
+    eventType: "questionnaire_submission_decision",
+    questionnaireId: input.questionnaireId,
+    submissionId: input.submissionId,
+    tokenNullifier: input.tokenNullifier,
+    accepted: input.accepted,
+    reason: input.reason,
+    decidedAt: input.decidedAt ?? Math.floor(Date.now() / 1000),
+    coordinatorPubkey: input.coordinatorNpub,
+  };
+  const secretKey = decodeNsecSecretKey(input.coordinatorNsec);
+  const event = finalizeEvent({
+    kind: QUESTIONNAIRE_SUBMISSION_DECISION_KIND,
+    created_at: eventPayload.decidedAt,
+    tags: [
+      ["t", "questionnaire_submission_decision"],
+      ["questionnaire", input.questionnaireId],
+      ["schema", "1"],
+      ["etype", "questionnaire_submission_decision"],
+      ["submission-id", input.submissionId],
+      ["nullifier", input.tokenNullifier],
+      ["accepted", input.accepted ? "1" : "0"],
+      ["reason", input.reason],
+    ],
+    content: JSON.stringify(eventPayload),
+  }, secretKey);
+  const relays = buildPublicRelays(input.relays);
+  const pool = getSharedNostrPool();
+  const results = await queueNostrPublish(
+    () => publishToRelaysStaggered(
+      (relay) => pool.publish([relay], event, { maxWait: SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS })[0],
+      relays,
+      { staggerMs: SIMPLE_PUBLIC_PUBLISH_STAGGER_MS },
+    ),
+    { channel: "questionnaire-submission-decision", minIntervalMs: SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS },
+  );
+  const relayResults = results.map((result, index) => (
+    result.status === "fulfilled"
+      ? { relay: relays[index], success: true as const }
+      : {
+          relay: relays[index],
+          success: false as const,
+          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        }
+  ));
+  for (const result of relayResults) {
+    recordRelayOutcome(result.relay, result.success, result.success ? undefined : result.error);
+  }
+  return {
+    eventId: event.id,
+    event,
+    relayResults,
+    successes: relayResults.filter((entry) => entry.success).length,
+    failures: relayResults.filter((entry) => !entry.success).length,
+  };
+}
+
+export function parseQuestionnaireSubmissionDecisionEvent(content: string): QuestionnaireSubmissionDecisionEvent | null {
+  try {
+    const parsed = JSON.parse(content) as QuestionnaireSubmissionDecisionEvent;
+    if (
+      parsed?.schemaVersion !== 1
+      || parsed?.eventType !== "questionnaire_submission_decision"
+      || typeof parsed?.questionnaireId !== "string"
+      || typeof parsed?.submissionId !== "string"
+      || typeof parsed?.tokenNullifier !== "string"
+      || typeof parsed?.accepted !== "boolean"
+      || typeof parsed?.reason !== "string"
+      || typeof parsed?.decidedAt !== "number"
+      || typeof parsed?.coordinatorPubkey !== "string"
+    ) {
       return null;
     }
     return parsed;

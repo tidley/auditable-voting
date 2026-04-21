@@ -531,3 +531,12 @@ export function createSignerService(): SignerService {
     },
   };
 }
+
+export function resetSignerServiceCachesForTests() {
+  cachedAmberSigner = null;
+  amberConnectPromise = null;
+  amberLastExternalLaunchAtMs = 0;
+  cachedSignerPublicKey = null;
+  cachedSignerPublicKeyAtMs = 0;
+  signerPublicKeyInflight = null;
+}
