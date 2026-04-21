@@ -888,6 +888,14 @@ export default function SimpleCoordinatorApp() {
     () => optionACoordinatorRuntime?.getPendingAuthorizations() ?? [],
     [optionACoordinatorRuntime, knownVoterInviteRefreshNonce],
   );
+  const optionAKnownVoterSet = useMemo(
+    () => new Set(
+      optionAKnownVoters
+        .map((entry) => entry.invitedNpub.trim())
+        .filter((value) => value.length > 0),
+    ),
+    [optionAKnownVoters],
+  );
   const optionAHasInviteQueue = optionAPendingAuthorizations.length > 0;
   const optionABlindSigningPublicKey = optionACoordinatorRuntime?.getSnapshot()?.election.blindSigningPublicKey ?? null;
   const optionAAcceptedResponses = useMemo(() => {
@@ -989,6 +997,7 @@ export default function SimpleCoordinatorApp() {
   );
   const blindKeyRepublishAtRef = useRef<Record<string, number>>({});
   const autoSendInFlightRef = useRef<Set<string>>(new Set());
+  const optionAAutoAuthorizeInFlightRef = useRef<Set<string>>(new Set());
   const autoShareAssignmentAttemptRef = useRef('');
   const coordinatorControlServiceRef = useRef<CoordinatorControlService | null>(null);
   const protocolStateServiceRef = useRef<ProtocolStateService | null>(null);
@@ -3630,6 +3639,26 @@ export default function SimpleCoordinatorApp() {
       setKnownVoterInviteStatus(error instanceof Error ? error.message : "Authorisation failed.");
     }
   }
+
+  useEffect(() => {
+    if (!optionACoordinatorRuntime || !optionAElectionId.trim() || optionAPendingAuthorizations.length === 0) {
+      return;
+    }
+    for (const pending of optionAPendingAuthorizations) {
+      const invitedNpub = pending.invitedNpub.trim();
+      if (!invitedNpub || !optionAKnownVoterSet.has(invitedNpub)) {
+        continue;
+      }
+      const key = `${optionAElectionId}:${invitedNpub}`;
+      if (optionAAutoAuthorizeInFlightRef.current.has(key)) {
+        continue;
+      }
+      optionAAutoAuthorizeInFlightRef.current.add(key);
+      void authorizePendingRequester(invitedNpub).finally(() => {
+        optionAAutoAuthorizeInFlightRef.current.delete(key);
+      });
+    }
+  }, [optionACoordinatorRuntime, optionAElectionId, optionAKnownVoterSet, optionAPendingAuthorizations]);
 
   function restoreIdentity(nextNsec: string) {
     const trimmed = nextNsec.trim();
