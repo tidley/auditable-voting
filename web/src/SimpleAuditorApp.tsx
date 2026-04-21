@@ -222,8 +222,8 @@ export default function SimpleAuditorApp() {
           })
           .filter((entry): entry is AuditorQuestionnaireResponseDetail => Boolean(entry))
           .sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0));
-        if (details.length === 0 && fallbackDetails.length > 0) {
-          details = fallbackDetails;
+        if (fallbackDetails.length > 0) {
+          details = mergeAuditorResponseDetails(details, fallbackDetails);
         }
       }
       setSelectedResponseDetails(details);
@@ -834,6 +834,42 @@ function normalizeToNpub(value: string) {
   } catch {
     return trimmed;
   }
+}
+
+function mergeAuditorResponseDetails(
+  primary: AuditorQuestionnaireResponseDetail[],
+  fallback: AuditorQuestionnaireResponseDetail[],
+) {
+  const byKey = new Map<string, AuditorQuestionnaireResponseDetail>();
+  const merged = [...primary, ...fallback];
+  for (const detail of merged) {
+    const responseId = detail.response.responseId.trim();
+    const nullifier = detail.response.tokenNullifier.trim();
+    const eventId = detail.event.id.trim();
+    const key = responseId || nullifier || eventId;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, detail);
+      continue;
+    }
+    // Prefer real Nostr events over synthetic fallback ids and keep the latest timestamp.
+    const existingSynthetic = existing.event.id.startsWith("optiona:");
+    const nextSynthetic = detail.event.id.startsWith("optiona:");
+    if (existingSynthetic && !nextSynthetic) {
+      byKey.set(key, detail);
+      continue;
+    }
+    if (existing.includedInLatestPublish !== detail.includedInLatestPublish) {
+      byKey.set(key, existing.includedInLatestPublish ? existing : detail);
+      continue;
+    }
+    const existingCreated = Number(existing.event.created_at ?? 0);
+    const nextCreated = Number(detail.event.created_at ?? 0);
+    if (nextCreated > existingCreated) {
+      byKey.set(key, detail);
+    }
+  }
+  return [...byKey.values()].sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0));
 }
 
 function optionASubmissionToAuditorDetail(input: {

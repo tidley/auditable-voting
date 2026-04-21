@@ -278,7 +278,8 @@ export class QuestionnaireOptionAVoterRuntime {
       this.state.submission && this.state.submissionAccepted === null,
     );
     const toSince = (value?: string | null) => {
-      const lookbackFloor = Math.max(0, Math.floor(Date.now() / 1000) - OPTION_A_VOTER_DM_LOOKBACK_SECONDS);
+      const nowSec = Math.floor(Date.now() / 1000);
+      const lookbackFloor = Math.max(0, nowSec - OPTION_A_VOTER_DM_LOOKBACK_SECONDS);
       if (!value) {
         return lookbackFloor;
       }
@@ -286,9 +287,9 @@ export class QuestionnaireOptionAVoterRuntime {
       if (!Number.isFinite(parsed)) {
         return lookbackFloor;
       }
-      return Math.min(
-        Math.max(0, Math.floor(parsed / 1000) - 300),
+      return Math.max(
         lookbackFloor,
+        Math.min(nowSec, Math.max(0, Math.floor(parsed / 1000) - 300)),
       );
     };
     const issuanceSince = toSince(this.state.blindRequestSentAt);
@@ -719,7 +720,8 @@ export class QuestionnaireOptionAVoterRuntime {
 
     const electionId = this.state.electionId;
     const toSince = (value?: string | null) => {
-      const lookbackFloor = Math.max(0, Math.floor(Date.now() / 1000) - OPTION_A_VOTER_DM_LOOKBACK_SECONDS);
+      const nowSec = Math.floor(Date.now() / 1000);
+      const lookbackFloor = Math.max(0, nowSec - OPTION_A_VOTER_DM_LOOKBACK_SECONDS);
       if (!value) {
         return lookbackFloor;
       }
@@ -727,9 +729,9 @@ export class QuestionnaireOptionAVoterRuntime {
       if (!Number.isFinite(parsed)) {
         return lookbackFloor;
       }
-      return Math.min(
-        Math.max(0, Math.floor(parsed / 1000) - 300),
+      return Math.max(
         lookbackFloor,
+        Math.min(nowSec, Math.max(0, Math.floor(parsed / 1000) - 300)),
       );
     };
     const needsIssuanceFetch = Boolean(this.state.blindRequestSent && !this.state.credentialReady);
@@ -1174,11 +1176,15 @@ export class QuestionnaireOptionACoordinatorRuntime {
   }
 
   private getDmReadSince() {
-    const floorSince = Math.max(0, Math.round(Date.now() / 1000) - OPTION_A_COORDINATOR_DM_LOOKBACK_SECONDS);
+    const nowSec = Math.round(Date.now() / 1000);
+    const floorSince = Math.max(0, nowSec - OPTION_A_COORDINATOR_DM_LOOKBACK_SECONDS);
     const openedAt = this.state?.election.openedAt;
     const parsed = openedAt ? Date.parse(openedAt) : NaN;
     if (Number.isFinite(parsed)) {
-      return Math.min(Math.max(0, Math.floor(parsed / 1000) - 600), floorSince);
+      return Math.max(
+        floorSince,
+        Math.min(nowSec, Math.max(0, Math.floor(parsed / 1000) - 600)),
+      );
     }
     return floorSince;
   }
