@@ -182,6 +182,7 @@ const AUTO_BALLOT_MOBILE_RECOVERY_PULL_MS = 45_000;
 const AUTO_BALLOT_SIGNER_SUBSCRIPTION_REARM_MIN_INTERVAL_MS = 15_000;
 const AUTO_BALLOT_SIGNER_BACKGROUND_FETCH_MIN_INTERVAL_MS = 90_000;
 const AUTO_BALLOT_SIGNER_LIFECYCLE_FETCH_MIN_INTERVAL_MS = 45_000;
+const AUTO_BALLOT_SIGNER_INITIAL_PULL_DELAY_MS = 8_000;
 
 function isLikelyMobileClient() {
   if (typeof window === "undefined" || typeof navigator === "undefined") {
@@ -256,6 +257,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const inviteRefreshAtRef = useRef(0);
   const signerWaitRestartAtRef = useRef(0);
   const signerWaitFetchAtRef = useRef(0);
+  const signerInitialPullTimeoutIdsRef = useRef<number[]>([]);
 
   const inviteContext = useMemo(() => parseInviteFromUrl(), []);
   const [electionId, setElectionId] = useState(inviteContext.electionId ?? deriveElectionId());
@@ -282,7 +284,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
     const now = Date.now();
     signerWaitRestartAtRef.current = now;
-    signerWaitFetchAtRef.current = now;
+    // Allow a near-immediate first pull while still rate-limiting subsequent background recovery.
+    signerWaitFetchAtRef.current = now - AUTO_BALLOT_SIGNER_LIFECYCLE_FETCH_MIN_INTERVAL_MS;
   }
 
   function recoverSignerBackedBallotWait(mode: "manual" | "lifecycle" | "background" | "restart_only") {
@@ -309,6 +312,17 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     signerWaitFetchAtRef.current = now;
   }
 
+  function scheduleSignerInitialPull() {
+    if (props.localVoterNsec?.trim()) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      recoverSignerBackedBallotWait("manual");
+      setRefreshNonce((value) => value + 1);
+    }, AUTO_BALLOT_SIGNER_INITIAL_PULL_DELAY_MS);
+    signerInitialPullTimeoutIdsRef.current.push(timeoutId);
+  }
+
   useEffect(() => {
     if (previousElectionIdRef.current === electionId) {
       return;
@@ -332,6 +346,15 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       runtime?.dispose();
     };
   }, [runtime]);
+
+  useEffect(() => {
+    return () => {
+      for (const timeoutId of signerInitialPullTimeoutIdsRef.current) {
+        window.clearTimeout(timeoutId);
+      }
+      signerInitialPullTimeoutIdsRef.current = [];
+    };
+  }, []);
 
   useEffect(() => {
     if (!runtime) {
@@ -895,6 +918,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       if (requestAfterLogin && !next.blindRequestSent && !next.credentialReady) {
         await voterRuntime.requestBlindBallot();
         markSignerWaitRecoveryBaseline();
+        scheduleSignerInitialPull();
         setStatus("Opened " + (invite.title || invite.electionId) + ". Blind ballot request sent.");
       } else {
         setStatus("Opened " + (invite.title || invite.electionId) + ".");
@@ -929,6 +953,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       const wasAlreadyWaiting = Boolean(runtime.getSnapshot()?.blindRequestSent && !runtime.getSnapshot()?.credentialReady);
       await runtime.requestBlindBallot({ forceResend: true });
       markSignerWaitRecoveryBaseline();
+      scheduleSignerInitialPull();
       if (snapshot?.electionId && snapshot?.invitedNpub) {
         const requestKey = `${snapshot.electionId}:${snapshot.invitedNpub}`;
         autoRequestSentForRef.current[requestKey] = true;
@@ -1023,6 +1048,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       void runtime.requestBlindBallot().then(() => {
         autoRequestSentForRef.current[key] = true;
         markSignerWaitRecoveryBaseline();
+        scheduleSignerInitialPull();
         setActiveInvite(null);
         setStatus("Blind ballot request sent. Waiting for coordinator issuance.");
         setRefreshNonce((value) => value + 1);
@@ -1060,6 +1086,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       try {
         void runtime.requestBlindBallot({ minRetryMs: resendMs }).then(() => {
           markSignerWaitRecoveryBaseline();
+          scheduleSignerInitialPull();
           runtime.refreshIssuanceAndAcceptance({ restartSubscriptions: true });
           setRefreshNonce((value) => value + 1);
         }).catch(() => undefined);
@@ -1082,7 +1109,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       return;
     }
     const timeoutIds = AUTO_BALLOT_SIGNER_REFRESH_SCHEDULE_MS.map((delayMs, index) => window.setTimeout(() => {
-      recoverSignerBackedBallotWait(index === AUTO_BALLOT_SIGNER_REFRESH_SCHEDULE_MS.length - 1 ? "background" : "restart_only");
+      const mode: "manual" | "lifecycle" | "background" | "restart_only" =
+        index === 0
+          ? "manual"
+          : index === AUTO_BALLOT_SIGNER_REFRESH_SCHEDULE_MS.length - 1
+            ? "background"
+            : "restart_only";
+      recoverSignerBackedBallotWait(mode);
       setRefreshNonce((value) => value + 1);
     }, delayMs));
     return () => {
@@ -1104,7 +1137,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       if (typeof document !== "undefined" && document.visibilityState === "hidden") {
         return;
       }
-      recoverSignerBackedBallotWait("restart_only");
+      recoverSignerBackedBallotWait("lifecycle");
       setRefreshNonce((value) => value + 1);
     };
     const intervalId = window.setInterval(tick, AUTO_BALLOT_SIGNER_KEEPALIVE_REFRESH_MS);
@@ -1173,6 +1206,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       void runtime.requestBlindBallot().then(() => {
         autoRequestSentForRef.current[requestKey] = true;
         markSignerWaitRecoveryBaseline();
+        scheduleSignerInitialPull();
         setActiveInvite(null);
         setStatus("Blind ballot request sent. Waiting for coordinator issuance.");
         setRefreshNonce((value) => value + 1);
