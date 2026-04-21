@@ -4,6 +4,7 @@ import type { SignerService } from "./services/signerService";
 import {
   fetchOptionABallotAcceptanceDmsWithNsec,
   fetchOptionABallotSubmissionDmsWithNsec,
+  fetchOptionABlindIssuanceDms,
   fetchOptionABlindIssuanceDmsWithNsec,
   fetchOptionABlindRequestDmsWithNsec,
   publishOptionABlindRequestDm,
@@ -237,6 +238,66 @@ describe("questionnaireOptionABlindDm", () => {
     expect(fetchedIssuances).toHaveLength(1);
     expect(fetchedIssuances[0]?.issuanceId).toBe("issuance_fallback");
     expect(querySync).toHaveBeenCalledTimes(2);
+  });
+
+  it("reuses cached signer decrypts for repeated issuance scans of the same event", async () => {
+    const recipientHex = getPublicKey(generateSecretKey());
+    const recipientNpub = nip19.npubEncode(recipientHex);
+    const giftWrapEvent = {
+      id: "gift-wrap-cache-test",
+      kind: 1059,
+      created_at: Math.round(Date.now() / 1000),
+      pubkey: "a".repeat(64),
+      content: "wrapped_payload",
+      tags: [["p", recipientHex]],
+      sig: "b".repeat(128),
+    };
+    const decrypt = vi.fn()
+      .mockResolvedValueOnce(JSON.stringify({
+        kind: 13,
+        pubkey: "c".repeat(64),
+        content: "sealed_payload",
+      }))
+      .mockResolvedValueOnce(JSON.stringify({
+        content: JSON.stringify({
+          type: "optiona_blind_issuance_dm",
+          schemaVersion: 1,
+          issuance: {
+            type: "blind_ballot_response",
+            schemaVersion: 1,
+            electionId: "q_cache",
+            requestId: "request_cache",
+            issuanceId: "issuance_cache",
+            invitedNpub: recipientNpub,
+            blindSignature: "sig_cache",
+            issuedAt: new Date().toISOString(),
+          },
+          sentAt: new Date().toISOString(),
+        }),
+      }));
+    querySync.mockResolvedValue([giftWrapEvent]);
+
+    const signer = makeSigner({
+      getPublicKey: async () => recipientHex,
+      nip44Decrypt: decrypt,
+    });
+
+    const first = await fetchOptionABlindIssuanceDms({
+      signer,
+      electionId: "q_cache",
+      limit: 10,
+    });
+    const second = await fetchOptionABlindIssuanceDms({
+      signer,
+      electionId: "q_cache",
+      limit: 10,
+    });
+
+    expect(first).toHaveLength(1);
+    expect(second).toHaveLength(1);
+    expect(first[0]?.issuanceId).toBe("issuance_cache");
+    expect(second[0]?.issuanceId).toBe("issuance_cache");
+    expect(decrypt).toHaveBeenCalledTimes(2);
   });
 
   it("reads ballot submission and acceptance DMs via local nsec", async () => {

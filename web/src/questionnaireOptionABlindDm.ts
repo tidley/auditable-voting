@@ -29,12 +29,14 @@ const KIND_GIFT_WRAP = 1059;
 const KIND_NIP17_RELAY_LIST = 10050;
 const OPTION_A_BLIND_DM_QUERY_MAX_CONCURRENCY = 2;
 const OPTION_A_BLIND_DM_RELAY_BACKOFF_MS = 60 * 1000;
+const OPTION_A_BLIND_DM_SIGNER_DECODE_CACHE_LIMIT = 512;
 
 const optionABlindDmRelayCooldownUntil = new Map<string, number>();
 const optionABlindDmInFlightQueries = new Map<string, Promise<NostrEvent[]>>();
 let optionABlindDmActiveQueryCount = 0;
 const optionABlindDmQueryWaiters: Array<() => void> = [];
 const SHARED_GIFT_WRAP_SEEN_EVENT_LIMIT = 512;
+const optionABlindDmSignerDecodeCache = new Map<string, Promise<{ rumorContent: string; sealPubkey: string } | null>>();
 
 type BlindRequestDmEnvelope = {
   type: "optiona_blind_request_dm";
@@ -728,6 +730,32 @@ function parseGiftWrapPayload(payload: string): NostrEvent | null {
   }
 }
 
+function getSignerGiftWrapCacheKey(event: NostrEvent) {
+  if (typeof event.id === "string" && event.id.trim()) {
+    return event.id;
+  }
+  return [
+    typeof event.pubkey === "string" ? event.pubkey : "",
+    typeof event.created_at === "number" ? String(event.created_at) : "",
+    typeof event.content === "string" ? event.content : "",
+  ].join(":");
+}
+
+function setSignerGiftWrapDecodeCache(
+  key: string,
+  value: Promise<{ rumorContent: string; sealPubkey: string } | null>,
+) {
+  optionABlindDmSignerDecodeCache.delete(key);
+  optionABlindDmSignerDecodeCache.set(key, value);
+  while (optionABlindDmSignerDecodeCache.size > OPTION_A_BLIND_DM_SIGNER_DECODE_CACHE_LIMIT) {
+    const oldestKey = optionABlindDmSignerDecodeCache.keys().next().value;
+    if (typeof oldestKey !== "string") {
+      break;
+    }
+    optionABlindDmSignerDecodeCache.delete(oldestKey);
+  }
+}
+
 async function decodeGiftWrapWithSigner(input: {
   signer: SignerService;
   event: NostrEvent;
@@ -739,20 +767,39 @@ async function decodeGiftWrapWithSigner(input: {
   if (!wrapPubkey || typeof input.event.content !== "string" || !input.event.content.trim()) {
     return null;
   }
-  const sealPayload = await input.signer.nip44Decrypt(wrapPubkey, input.event.content);
-  const sealEvent = parseGiftWrapPayload(sealPayload);
-  if (!sealEvent) {
-    return null;
+  const cacheKey = getSignerGiftWrapCacheKey(input.event);
+  const cached = optionABlindDmSignerDecodeCache.get(cacheKey);
+  if (cached) {
+    setSignerGiftWrapDecodeCache(cacheKey, cached);
+    return cached;
   }
-  const rumorPayload = await input.signer.nip44Decrypt(sealEvent.pubkey, sealEvent.content);
-  const rumor = JSON.parse(rumorPayload) as { content?: string };
-  if (!rumor || typeof rumor.content !== "string") {
-    return null;
+  const decodePromise = (async () => {
+    const sealPayload = await input.signer.nip44Decrypt!(wrapPubkey, input.event.content);
+    const sealEvent = parseGiftWrapPayload(sealPayload);
+    if (!sealEvent) {
+      return null;
+    }
+    const rumorPayload = await input.signer.nip44Decrypt!(sealEvent.pubkey, sealEvent.content);
+    const rumor = JSON.parse(rumorPayload) as { content?: string };
+    if (!rumor || typeof rumor.content !== "string") {
+      return null;
+    }
+    return {
+      rumorContent: rumor.content,
+      sealPubkey: sealEvent.pubkey,
+    };
+  })();
+  setSignerGiftWrapDecodeCache(cacheKey, decodePromise);
+  try {
+    const decoded = await decodePromise;
+    if (!decoded) {
+      optionABlindDmSignerDecodeCache.delete(cacheKey);
+    }
+    return decoded;
+  } catch (error) {
+    optionABlindDmSignerDecodeCache.delete(cacheKey);
+    throw error;
   }
-  return {
-    rumorContent: rumor.content,
-    sealPubkey: sealEvent.pubkey,
-  };
 }
 
 function createSignerGiftWrapSubscription<T>(input: {
