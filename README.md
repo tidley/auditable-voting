@@ -239,6 +239,53 @@ To test the same base path locally:
 VITE_BASE_PATH=/auditable-voting/ npm --prefix web run build
 ```
 
+## NSite redeploy (same credentials)
+
+This repo can also be published to `nsite` using a dedicated deploy key kept locally on this machine.
+
+- credential file: `.secrets/nsite.env`
+- required permissions:
+
+```bash
+chmod 700 .secrets
+chmod 600 .secrets/nsite.env
+```
+
+- expected variables in `.secrets/nsite.env`:
+  - `NSEC=<deploy private key>`
+  - `NPUB=<deploy public key>`
+
+If the file is missing, generate a new deploy identity:
+
+```bash
+mkdir -p .secrets && chmod 700 .secrets
+nsec=$(nak key generate)
+npub=$(printf '%s' "$nsec" | nak key public | xargs -I{} nak encode npub {})
+printf 'NSEC=%s\nNPUB=%s\n' "$nsec" "$npub" > .secrets/nsite.env
+chmod 600 .secrets/nsite.env
+```
+
+Build and publish with explicit relays and Blossom servers:
+
+```bash
+npm --prefix web run build
+set -a && source .secrets/nsite.env && set +a
+npx --yes nsite-cli upload web/dist \
+  -k "$NSEC" \
+  --servers "https://nostr.download,https://media-server.slidestr.net,https://blossom.primal.net" \
+  --relays "wss://nos.lol,wss://relay.primal.net,wss://relay.damus.io,wss://offchain.pub,wss://nostr.mom" \
+  --publish-server-list \
+  --publish-relay-list \
+  --publish-profile \
+  -v
+```
+
+Current deploy identity:
+
+- `npub1hkze8k84da0qm4lu75x32z33qepyzdqc735jnj5a602x8q4cstksnkvl3a`
+- gateway URL pattern: `https://<npub>.nsite.lol`
+- example: `https://npub1hkze8k84da0qm4lu75x32z33qepyzdqc735jnj5a602x8q4cstksnkvl3a.nsite.lol`
+
 ## Related material
 
 - [Project explainer](./docs/project-explainer.md)
