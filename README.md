@@ -54,11 +54,14 @@ The shipped app currently includes:
 - blind-flow and shard DM fallback relay lists now stay NIP-17-first with curated fallback redundancy while delivery marks success only when at least one relay actually accepts the publish
 - voter blind-request and ballot-submission sends now require confirmed DM delivery (no more silent fire-and-forget success states), and signer DM recovery scans use wider bounded windows
 - invite-link clipboard writes are now best-effort, so browser focus restrictions no longer throw unhandled errors after async relay work
+- voter invite discovery now does a low-rate automatic refresh for signed-in users with no active invite state, so newly sent invites can appear without a manual `Check invites`
 - the voter questionnaire page now separates the signer account from the ballot voting identity and shows ballot progress as request, credential, and response states
 - the voter `Vote` tab remains available for browsing current and older invited questionnaires, and silent invite polling no longer forces tab switches away from Configure/Settings
 - coordinator automatic queue processing is now single-flight and slower, reducing overlapping relay publishes and websocket churn
 - voter blind-ballot resend keeps the same request id and freshens its send timestamp; coordinators republish the existing credential DM instead of issuing a second credential
 - blind request/submission DM reads now use recent since-bounded windows, and successful credential DMs are not rebroadcast by every background queue pass
+- shared gift-wrap inbox subscriptions now deduplicate repeated relay copies before signer decrypt, and signer-side refresh reads are kept tighter to reduce bunker/rate-limit churn while waiting for ballot delivery
+- signer-backed voter waits now periodically re-arm DM subscriptions and run a slow keepalive refresh, so `Refresh status` should be needed less often after mobile websocket sleep
 - credential delivery is biased back toward reliability: DM writes mix recipient relay hints with fallback relays, publish to more relays, and retry issued credentials until the voter submits
 - ballot submission sends include a best-effort encrypted self-copy to the voter's login identity so submitted response markers and answers can be recovered after logging back in
 - local browser persistence, backup, and optional passphrase protection

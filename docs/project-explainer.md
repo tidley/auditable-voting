@@ -78,9 +78,11 @@ This is the practical order of operations for the current app.
 ### Operational notes
 
 - If a voter sees no invite, confirm they are using the same voter identity that was invited.
+- Signed-in voters with no active invite now do a low-rate automatic invite refresh, so new invites should appear without manually pressing `Check invites`.
 - A voter should not see unrelated questionnaires unless they have invite/state context for that identity.
 - Relay connection failures for one endpoint are common on public infrastructure; retries and other relays should still allow progress.
-- Private questionnaire recovery now uses shared websocket inbox subscriptions, sticky successful relay subsets, and bounded refreshes on focus/visibility/online instead of relying only on repeated timer-driven resend loops.
+- Private questionnaire recovery now uses shared websocket inbox subscriptions, duplicate-event suppression before signer decrypt, sticky successful relay subsets, and bounded refreshes on focus/visibility/online instead of relying only on repeated timer-driven resend loops.
+- While waiting for a ballot on signer-backed mobile browsers, the client now also periodically re-arms DM subscriptions and runs a slow keepalive refresh so delivery is less dependent on manually pressing `Refresh status`.
 
 ---
 

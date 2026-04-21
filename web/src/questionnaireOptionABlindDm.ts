@@ -33,6 +33,7 @@ const optionABlindDmRelayCooldownUntil = new Map<string, number>();
 const optionABlindDmInFlightQueries = new Map<string, Promise<NostrEvent[]>>();
 let optionABlindDmActiveQueryCount = 0;
 const optionABlindDmQueryWaiters: Array<() => void> = [];
+const SHARED_GIFT_WRAP_SEEN_EVENT_LIMIT = 512;
 
 type BlindRequestDmEnvelope = {
   type: "optiona_blind_request_dm";
@@ -281,6 +282,8 @@ type SharedGiftWrapInbox = {
   recipientHex: string;
   relays: string[];
   listeners: Map<string, SharedGiftWrapListener>;
+  seenEventIds: Set<string>;
+  seenEventOrder: string[];
   subscription: { close: (reason?: string) => Promise<void> | void } | null;
   startPromise: Promise<void> | null;
   restartTimer: ReturnType<typeof globalThis.setTimeout> | null;
@@ -334,6 +337,20 @@ async function ensureSharedGiftWrapInboxStarted(inbox: SharedGiftWrapInbox) {
         if (!current) {
           return;
         }
+        const eventId = typeof event.id === "string" ? event.id.trim() : "";
+        if (eventId) {
+          if (current.seenEventIds.has(eventId)) {
+            return;
+          }
+          current.seenEventIds.add(eventId);
+          current.seenEventOrder.push(eventId);
+          while (current.seenEventOrder.length > SHARED_GIFT_WRAP_SEEN_EVENT_LIMIT) {
+            const expired = current.seenEventOrder.shift();
+            if (expired) {
+              current.seenEventIds.delete(expired);
+            }
+          }
+        }
         for (const listener of current.listeners.values()) {
           listener.onEvent(event as NostrEvent);
         }
@@ -383,6 +400,8 @@ async function attachSharedGiftWrapInbox(input: {
       recipientHex: input.recipientHex,
       relays: normalizeRelaysRust(input.relays),
       listeners: new Map(),
+      seenEventIds: new Set(),
+      seenEventOrder: [],
       subscription: null,
       startPromise: null,
       restartTimer: null,

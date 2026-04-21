@@ -172,7 +172,9 @@ const LEGACY_INVITE_TITLE = "Should the proposal pass?";
 const AUTO_BALLOT_REQUEST_MIN_INTERVAL_MS = 15_000;
 const AUTO_BALLOT_RETRY_POLL_MS = 10_000;
 const AUTO_BALLOT_RETRY_RESEND_MS = 5 * 60_000;
-const AUTO_BALLOT_SIGNER_REFRESH_SCHEDULE_MS = [8_000, 20_000, 45_000] as const;
+const AUTO_BALLOT_SIGNER_REFRESH_SCHEDULE_MS = [15_000, 45_000, 120_000] as const;
+const AUTO_BALLOT_SIGNER_KEEPALIVE_REFRESH_MS = 75_000;
+const AUTO_INVITE_REFRESH_INTERVAL_MS = 45_000;
 
 function resolveInviteDisplayTitle(invite: ElectionInviteMessage) {
   const fromDefinition = invite.definition?.title?.trim() ?? "";
@@ -228,6 +230,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const requestRetryAtRef = useRef<Record<string, number>>({});
   const autoSignerLoginForRef = useRef<Record<string, true>>({});
   const lifecycleRefreshAtRef = useRef(0);
+  const inviteRefreshAtRef = useRef(0);
 
   const inviteContext = useMemo(() => parseInviteFromUrl(), []);
   const [electionId, setElectionId] = useState(inviteContext.electionId ?? deriveElectionId());
@@ -333,7 +336,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
     const intervalId = window.setInterval(() => {
       try {
-        runtime.refreshIssuanceAndAcceptance();
+        runtime.refreshIssuanceAndAcceptance({ restartSubscriptions: true });
         setRefreshNonce((value) => value + 1);
       } catch {
         // Keep polling best-effort; explicit actions surface errors.
@@ -465,6 +468,58 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       setElectionId(nextElectionId);
     }
   }, [electionId, pendingInvites, latestAnnouncedQuestionnaireId, snapshot?.blindRequest?.requestId, snapshot?.credentialReady, snapshot?.submission?.submissionId]);
+
+  useEffect(() => {
+    const voterNpub = signedInNpub.trim();
+    if (!voterNpub || hasInFlightState() || inviteContext.invite) {
+      return;
+    }
+    if (pendingInvites.length > 0 || activeInvite) {
+      return;
+    }
+
+    const triggerRefresh = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+      const now = Date.now();
+      if (now - inviteRefreshAtRef.current < 10_000) {
+        return;
+      }
+      inviteRefreshAtRef.current = now;
+      void loadPendingInvites({ voterNpub, allowRelayFetch: true }).then((invites) => {
+        setPendingInvites(invites);
+        const preferredInvite = (latestAnnouncedQuestionnaireId
+          ? invites.find((invite) => invite.electionId === latestAnnouncedQuestionnaireId)
+          : null)
+          ?? invites.at(-1)
+          ?? null;
+        if (preferredInvite && !hasInFlightState()) {
+          setActiveInvite(preferredInvite);
+          if (electionId.trim() !== preferredInvite.electionId) {
+            setElectionId(preferredInvite.electionId);
+          }
+        }
+      }).catch(() => undefined);
+    };
+
+    triggerRefresh();
+    const intervalId = window.setInterval(triggerRefresh, AUTO_INVITE_REFRESH_INTERVAL_MS);
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        triggerRefresh();
+      }
+    };
+    window.addEventListener("focus", triggerRefresh);
+    window.addEventListener("online", triggerRefresh);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", triggerRefresh);
+      window.removeEventListener("online", triggerRefresh);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [activeInvite, electionId, inviteContext.invite, latestAnnouncedQuestionnaireId, pendingInvites.length, signedInNpub, snapshot?.blindRequest?.requestId, snapshot?.blindIssuance?.issuanceId, snapshot?.submission?.submissionId]);
 
   const requiredQuestionIds = useMemo(
     () => questions.filter((question) => question.required).map((question) => question.questionId),
@@ -826,7 +881,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
     try {
       ensureLocalSession({ allowInviteMissing: true, allowRelayInviteFetch: true });
-      runtime.refreshIssuanceAndAcceptance();
+      runtime.refreshIssuanceAndAcceptance({ restartSubscriptions: true });
       setRefreshNonce((value) => value + 1);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Refresh failed.");
@@ -930,7 +985,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       requestRetryAtRef.current[key] = now;
       try {
         void runtime.requestBlindBallot({ minRetryMs: resendMs }).then(() => {
-          runtime.refreshIssuanceAndAcceptance();
+          runtime.refreshIssuanceAndAcceptance({ restartSubscriptions: true });
           setRefreshNonce((value) => value + 1);
         }).catch(() => undefined);
       } catch {
@@ -952,13 +1007,34 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       return;
     }
     const timeoutIds = AUTO_BALLOT_SIGNER_REFRESH_SCHEDULE_MS.map((delayMs) => window.setTimeout(() => {
-      runtime.refreshIssuanceAndAcceptance();
+      runtime.refreshIssuanceAndAcceptance({ restartSubscriptions: true });
       setRefreshNonce((value) => value + 1);
     }, delayMs));
     return () => {
       for (const timeoutId of timeoutIds) {
         window.clearTimeout(timeoutId);
       }
+    };
+  }, [runtime, props.localVoterNsec, snapshot?.loginVerified, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission]);
+
+  useEffect(() => {
+    if (!runtime || !snapshot?.loginVerified || !snapshot.blindRequestSent || snapshot.credentialReady || snapshot.submission) {
+      return;
+    }
+    const hasLocalSecretKey = Boolean(props.localVoterNsec?.trim());
+    if (hasLocalSecretKey) {
+      return;
+    }
+    const tick = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+      runtime.refreshIssuanceAndAcceptance({ restartSubscriptions: true });
+      setRefreshNonce((value) => value + 1);
+    };
+    const intervalId = window.setInterval(tick, AUTO_BALLOT_SIGNER_KEEPALIVE_REFRESH_MS);
+    return () => {
+      window.clearInterval(intervalId);
     };
   }, [runtime, props.localVoterNsec, snapshot?.loginVerified, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission]);
 

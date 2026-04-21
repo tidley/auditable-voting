@@ -121,7 +121,7 @@ const OPTION_A_SUBMISSION_REPUBLISH_RETRY_MS = 60 * 1000;
 const OPTION_A_SUBMISSION_ACK_RETRY_MS = 2 * 60 * 1000;
 const OPTION_A_SELF_COPY_RECOVERY_LOOKBACK_SECONDS = Math.round(36 * 60 * 60);
 const OPTION_A_VOTER_DM_LOOKBACK_SECONDS = Math.round(36 * 60 * 60);
-const OPTION_A_VOTER_REFRESH_DM_LIMIT = 120;
+const OPTION_A_VOTER_REFRESH_DM_LIMIT = 24;
 
 export type OptionARuntimeErrorCode =
   | "not_logged_in"
@@ -331,6 +331,11 @@ export class QuestionnaireOptionAVoterRuntime {
     if (relays.length > 0) {
       recordElectionPrivateRelaySuccesses(this.electionId, relays);
     }
+  }
+
+  restartVoterDmSubscriptions() {
+    this.stopVoterDmSubscriptions();
+    this.startVoterDmSubscriptions();
   }
 
   private startVoterDmSubscriptions() {
@@ -921,9 +926,13 @@ export class QuestionnaireOptionAVoterRuntime {
     }
   }
 
-  refreshIssuanceAndAcceptance() {
+  refreshIssuanceAndAcceptance(options?: { restartSubscriptions?: boolean }) {
     if (!this.state) {
       throw new OptionARuntimeError("not_logged_in", "Login is required.");
+    }
+
+    if (options?.restartSubscriptions) {
+      this.restartVoterDmSubscriptions();
     }
 
     const electionId = this.state.electionId;

@@ -369,6 +369,8 @@ Auditors can inspect recent public questionnaires, public round data, and publis
 
 The auditor view keeps normal refreshes bounded to recent questionnaires to avoid relay pressure. Use `Search historic data` next to the questionnaire selector to explicitly scan a wider historical window when an older published questionnaire or result payload is missing from the default list.
 
+Signed-in voters with no active invite now also do a low-rate automatic invite refresh, and the shared gift-wrap inbox suppresses duplicate relay copies before signer decrypt, reducing bunker and relay churn while waiting for private questionnaire delivery. While waiting for a ballot on signer-backed mobile browsers, the client also periodically re-arms DM subscriptions and runs a slow keepalive refresh so delivery is less dependent on manually pressing `Refresh status`.
+
 ## Current Limits
 
 - Public relays can delay, drop, or rate-limit traffic.
