@@ -974,13 +974,14 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const waitingForCredential = Boolean(snapshot?.blindRequestSent && !snapshot?.credentialReady && !snapshot?.submission);
   const canRequestOrResendBallot = flags.canRequestBallot || waitingForCredential;
 
-  const canSubmitNow = flags.canSubmitVote && questions.length > 0 && requiredQuestionIds.every((questionId) => {
+  const requiredQuestionsAnswered = questions.length > 0 && requiredQuestionIds.every((questionId) => {
     const value = answers[questionId];
     if (Array.isArray(value)) {
       return value.length > 0;
     }
     return value !== undefined && value !== null && String(value).trim().length > 0;
   });
+  const canSubmitNow = flags.canSubmitVote && requiredQuestionsAnswered;
   const displayStatus = snapshot?.credentialReady && status === "Blind ballot request sent. Waiting for coordinator issuance."
     ? "Ballot credential ready."
     : status;
@@ -1168,7 +1169,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
             void submit();
           }}
         >
-          {snapshot?.submission ? "View results" : canSubmitNow ? "Submit response" : "Waiting for coordinator..."}
+          {snapshot?.submission
+            ? "View results"
+            : !requiredQuestionsAnswered
+              ? "Please answer all questions marked 'Required'"
+              : canSubmitNow
+                ? "Submit response"
+                : "Waiting for coordinator..."}
         </button>
       </div>
       {snapshot?.submission ? (
