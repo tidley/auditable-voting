@@ -172,9 +172,13 @@ async function runCourseFeedbackPreflight({ skip = false } = {}) {
   if (skip) {
     return { skipped: true, passed: true };
   }
+  const runningFromWebDir = path.basename(process.cwd()) === "web";
+  const args = runningFromWebDir
+    ? ["run", "test:course-feedback-preflight"]
+    : ["--prefix", "web", "run", "test:course-feedback-preflight"];
   await runCommandOrThrow({
     cmd: "npm",
-    args: ["--prefix", "web", "run", "test:course-feedback-preflight"],
+    args,
     cwd: process.cwd(),
   });
   return { skipped: false, passed: true };
@@ -1100,7 +1104,8 @@ async function readQuestionnaireVoterDebug(page) {
 
 async function getDisplayedActorId(page, prefix) {
   const body = await readBody(page);
-  const match = body.match(new RegExp(`${prefix} ID ([a-z0-9]+)`, "i"));
+  const match = body.match(new RegExp(`${prefix} ID ([a-z0-9]+)`, "i"))
+    ?? body.match(/\bID ([a-z0-9]{5,})\b/i);
   if (!match) {
     throw new Error(`Could not find ${prefix} ID on page`);
   }
@@ -1865,7 +1870,7 @@ async function main() {
       const voterNpubs = [];
       for (const [batchIndex, batch] of voterBatches.entries()) {
         for (const actor of batch) {
-          await clickByText(actor.page, "button", /^New$/i);
+          await clickByText(actor.page, "button", /^New(?: ID)?$/i);
           await ensureTab(actor.page, "Settings", actor.label);
           const voterId = await getDisplayedActorId(actor.page, "Voter");
           const voterNpub = await getNpub(actor.page);

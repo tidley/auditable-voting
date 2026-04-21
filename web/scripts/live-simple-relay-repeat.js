@@ -5,6 +5,10 @@ function readIntEnv(name, fallback) {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function runHarness(env) {
   return new Promise((resolve, reject) => {
     const child = spawn("node", ["scripts/live-simple-relay-check.js"], {
@@ -34,8 +38,16 @@ function runHarness(env) {
       }
 
       const trimmed = stdout.trim();
+      const jsonStartIndex = (() => {
+        const fromNewline = trimmed.lastIndexOf("\n{");
+        if (fromNewline >= 0) {
+          return fromNewline + 1;
+        }
+        return trimmed.indexOf("{");
+      })();
+      const jsonCandidate = jsonStartIndex >= 0 ? trimmed.slice(jsonStartIndex) : trimmed;
       try {
-        resolve(JSON.parse(trimmed));
+        resolve(JSON.parse(jsonCandidate));
       } catch (error) {
         reject(new Error(`failed to parse harness JSON\n${trimmed}\n${stderr}\n${String(error)}`));
       }
@@ -157,12 +169,16 @@ function summariseRun(run) {
 
 async function main() {
   const repeatCount = readIntEnv("LIVE_REPEAT_COUNT", 10);
+  const repeatDelayMs = readIntEnv("LIVE_REPEAT_DELAY_MS", 0);
   const results = [];
 
   for (let index = 0; index < repeatCount; index += 1) {
     const run = await runHarness({});
     const summary = summariseRun(run);
     results.push(summary);
+    if (repeatDelayMs > 0 && index < repeatCount - 1) {
+      await sleep(repeatDelayMs);
+    }
   }
 
   const roundsByNumber = new Map();
