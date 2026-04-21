@@ -15,7 +15,7 @@ import {
   publishInviteToMailbox,
   upsertElectionSummary,
 } from "./questionnaireOptionAStorage";
-import { fetchOptionAInviteDms } from "./questionnaireOptionAInviteDm";
+import { fetchOptionAInviteDms, fetchOptionAInviteDmsWithNsec } from "./questionnaireOptionAInviteDm";
 import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import type { QuestionnaireDefinition } from "./questionnaireProtocol";
 import TokenFingerprint from "./TokenFingerprint";
@@ -432,7 +432,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       ?? null;
   }
 
-  function ensureLocalSession(options?: { allowInviteMissing?: boolean }) {
+  function ensureLocalSession(options?: { allowInviteMissing?: boolean; allowRelayInviteFetch?: boolean }) {
     if (!runtime) {
       return null;
     }
@@ -443,7 +443,14 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
     const currentSnapshot = runtime.getSnapshot();
     if (currentSnapshot?.invitedNpub === localVoterNpub) {
-      return currentSnapshot;
+      const knownCoordinator = currentSnapshot.coordinatorNpub?.trim() ?? "";
+      if (knownCoordinator) {
+        return currentSnapshot;
+      }
+      const localInvite = findBestLocalInvite(localVoterNpub);
+      if (!localInvite?.coordinatorNpub?.trim()) {
+        return currentSnapshot;
+      }
     }
     const fallbackInvite = findBestLocalInvite(localVoterNpub);
     const bootstrapNpub = fallbackInvite?.invitedNpub?.trim() || localVoterNpub;
@@ -455,7 +462,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       allowInviteMissing: options?.allowInviteMissing ?? Boolean(latestAnnouncedQuestionnaireId || electionId.trim()),
     });
     setSignedInNpub(next.invitedNpub);
-    void loadPendingInvites({ voterNpub: next.invitedNpub, allowRelayFetch: false }).then((invites) => {
+    void loadPendingInvites({
+      voterNpub: next.invitedNpub,
+      allowRelayFetch: Boolean(options?.allowRelayInviteFetch),
+    }).then((invites) => {
       setPendingInvites(invites);
       const preferredInvite = invites.find((invite) => invite.electionId === next.electionId)
         ?? (latestAnnouncedQuestionnaireId ? invites.find((invite) => invite.electionId === latestAnnouncedQuestionnaireId) : null)
@@ -492,7 +502,18 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     const localVoterNpub = props.localVoterNpub?.trim() ?? "";
     const hasLocalSecretKey = Boolean(props.localVoterNsec?.trim());
     if (hasLocalSecretKey && localVoterNpub && voterNpub === localVoterNpub) {
-      return mergeByKey(fromMailbox);
+      try {
+        const dmInvites = await fetchOptionAInviteDmsWithNsec({
+          nsec: props.localVoterNsec ?? "",
+          limit: 40,
+        });
+        for (const invite of dmInvites) {
+          publishInviteToMailbox(invite);
+        }
+        return mergeByKey([...dmInvites, ...fromMailbox]);
+      } catch {
+        return mergeByKey(fromMailbox);
+      }
     }
 
     try {
@@ -548,7 +569,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     });
     const next = await runtime.recoverSubmittedBallotFromSelfDm().catch(() => bootstrapped);
     setSignedInNpub(next.invitedNpub);
-    const invites = await loadPendingInvites({ voterNpub: next.invitedNpub, allowRelayFetch: false });
+    const invites = await loadPendingInvites({ voterNpub: next.invitedNpub, allowRelayFetch: true });
     setPendingInvites(invites);
     const preferredInvite = invites.find((invite) => invite.electionId === electionId) ?? invites[0] ?? null;
     if (!inviteContext.electionId?.trim() && preferredInvite && electionId.trim() !== preferredInvite.electionId) {
@@ -729,7 +750,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       return;
     }
     try {
-      ensureLocalSession({ allowInviteMissing: true });
+      ensureLocalSession({ allowInviteMissing: true, allowRelayInviteFetch: true });
       const wasAlreadyWaiting = Boolean(runtime.getSnapshot()?.blindRequestSent && !runtime.getSnapshot()?.credentialReady);
       await runtime.requestBlindBallot({ forceResend: true });
       if (snapshot?.electionId && snapshot?.invitedNpub) {
@@ -752,7 +773,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       return;
     }
     try {
-      ensureLocalSession({ allowInviteMissing: true });
+      ensureLocalSession({ allowInviteMissing: true, allowRelayInviteFetch: true });
       runtime.refreshIssuanceAndAcceptance();
       setRefreshNonce((value) => value + 1);
     } catch (error) {
@@ -875,7 +896,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       return;
     }
     try {
-      const current = ensureLocalSession({ allowInviteMissing: true }) ?? runtime.getSnapshot();
+      const current = ensureLocalSession({ allowInviteMissing: true, allowRelayInviteFetch: true }) ?? runtime.getSnapshot();
       if (!current?.loginVerified) {
         setStatus("Open the Vote tab and login, then the blind-signature request will send automatically.");
         return;

@@ -636,6 +636,12 @@ export class QuestionnaireOptionAVoterRuntime {
       });
     }
     saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
+    if (!this.state.coordinatorNpub?.trim()) {
+      throw new OptionARuntimeError(
+        "invite_missing",
+        "Coordinator details are missing. Refresh status or reopen the invite.",
+      );
+    }
     const sentAt = nowIso();
     request = {
       ...request,
