@@ -109,7 +109,8 @@ const OPTION_A_COORDINATOR_SIGNER_DM_LIMIT = 60;
 const OPTION_A_COORDINATOR_NSEC_DM_LIMIT = 120;
 const OPTION_A_ISSUANCE_DM_RETRY_MS = 2 * 60 * 1000;
 const OPTION_A_BLIND_REQUEST_RETRY_MS = 10 * 1000;
-const OPTION_A_BLIND_REQUEST_ACK_RETRY_MS = 2 * 60 * 1000;
+const OPTION_A_BLIND_REQUEST_ACK_RETRY_MS = 10 * 60 * 1000;
+const OPTION_A_BLIND_REQUEST_ACK_RESEND_AFTER_MS = 20 * 60 * 1000;
 const OPTION_A_SUBMISSION_REPUBLISH_RETRY_MS = 60 * 1000;
 const OPTION_A_SUBMISSION_ACK_RETRY_MS = 2 * 60 * 1000;
 const OPTION_A_SELF_COPY_RECOVERY_LOOKBACK_SECONDS = Math.round(36 * 60 * 60);
@@ -813,6 +814,24 @@ export class QuestionnaireOptionAVoterRuntime {
         requestId: request.requestId,
         ackedAt: requestAck?.ackedAt ?? null,
         minRetryMs: OPTION_A_BLIND_REQUEST_ACK_RETRY_MS,
+      });
+      saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
+      return this.state;
+    }
+    if (
+      !options?.forceResend
+      && request
+      && this.state.blindRequestSent
+      && !this.state.blindIssuance
+      && requestAck
+      && Number.isFinite(lastSentMs)
+      && Date.now() - lastSentMs < OPTION_A_BLIND_REQUEST_ACK_RESEND_AFTER_MS
+    ) {
+      optionAFlowLog("voter", "blind_request_resend_skipped_ack_backoff", {
+        electionId: this.state.electionId,
+        requestId: request.requestId,
+        ackedAt: requestAck.ackedAt,
+        minRetryMs: OPTION_A_BLIND_REQUEST_ACK_RESEND_AFTER_MS,
       });
       saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
       return this.state;
