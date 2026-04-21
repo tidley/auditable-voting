@@ -34,6 +34,7 @@ import {
   loadVoterState,
   publishInviteToMailbox,
   readAcceptance,
+  readBlindIssuanceAckRecord,
   readBlindIssuanceDeliveryRecord,
   readBlindIssuance,
   recordBlindIssuanceDeliveryAttempt,
@@ -41,10 +42,13 @@ import {
   saveCoordinatorState,
   saveVoterState,
   storeAcceptance,
+  storeBlindIssuanceAckRecord,
   storeBlindIssuance,
   upsertElectionSummary,
 } from "./questionnaireOptionAStorage";
 import {
+  fetchOptionABlindIssuanceAckDms,
+  fetchOptionABlindIssuanceAckDmsWithNsec,
   fetchOptionABallotAcceptanceDms,
   fetchOptionABallotAcceptanceDmsWithNsec,
   fetchOptionABallotSubmissionDms,
@@ -55,12 +59,15 @@ import {
   fetchOptionABlindRequestDmsWithNsec,
   publishOptionABallotAcceptanceDm,
   publishOptionABallotSubmissionDm,
+  publishOptionABlindIssuanceAckDm,
   publishOptionABlindIssuanceDm,
   publishOptionABlindRequestDm,
   subscribeOptionABallotAcceptanceDms,
   subscribeOptionABallotSubmissionDms,
+  subscribeOptionABlindIssuanceAckDms,
   subscribeOptionABlindIssuanceDms,
   subscribeOptionABlindRequestDms,
+  type BlindIssuanceAck,
   type OptionABlindRequestFetchDiagnostics,
 } from "./questionnaireOptionABlindDm";
 import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
@@ -229,6 +236,7 @@ export class QuestionnaireOptionAVoterRuntime {
   private submitVoteInflight: Promise<VoterElectionLocalState> | null = null;
   private refreshFetchInFlight = false;
   private submissionRepublishAttemptAtBySubmissionId = new Map<string, number>();
+  private blindIssuanceAckInflightByRequestId = new Map<string, Promise<void>>();
   private stopBlindIssuanceSubscription: (() => void) | null = null;
   private stopAcceptanceSubscription: (() => void) | null = null;
 
@@ -309,6 +317,7 @@ export class QuestionnaireOptionAVoterRuntime {
           if (issuance.definition) {
             storeCachedQuestionnaireDefinition(issuance.definition);
           }
+          void this.ensureBlindIssuanceAck(issuance).catch(() => undefined);
         },
       });
     }
@@ -326,6 +335,67 @@ export class QuestionnaireOptionAVoterRuntime {
           storeAcceptance(acceptance);
         },
       });
+    }
+  }
+
+  private isBlindIssuanceAcked(issuance: BlindBallotIssuance) {
+    const ack = readBlindIssuanceAckRecord(issuance.requestId);
+    return Boolean(ack && ack.issuanceId === issuance.issuanceId);
+  }
+
+  private async ensureBlindIssuanceAck(issuance: BlindBallotIssuance) {
+    if (!this.state?.coordinatorNpub?.trim()) {
+      return;
+    }
+    if (this.isBlindIssuanceAcked(issuance)) {
+      return;
+    }
+    const inflight = this.blindIssuanceAckInflightByRequestId.get(issuance.requestId);
+    if (inflight) {
+      await inflight;
+      return;
+    }
+    const ackTask = (async () => {
+      const ack: BlindIssuanceAck = {
+        type: "blind_ballot_issuance_ack",
+        schemaVersion: 1,
+        electionId: issuance.electionId,
+        requestId: issuance.requestId,
+        issuanceId: issuance.issuanceId,
+        invitedNpub: this.state?.invitedNpub ?? issuance.invitedNpub,
+        ackedAt: nowIso(),
+      };
+      try {
+        const result = await publishOptionABlindIssuanceAckDm({
+          signer: this.signer,
+          recipientNpub: this.state?.coordinatorNpub ?? issuance.invitedNpub,
+          ack,
+          fallbackNsec: this.fallbackNsec,
+        });
+        optionAFlowLog("voter", "blind_issuance_ack_publish_result", {
+          electionId: ack.electionId,
+          requestId: ack.requestId,
+          issuanceId: ack.issuanceId,
+          successes: result.successes,
+          failures: result.failures,
+        });
+        if (result.successes > 0) {
+          storeBlindIssuanceAckRecord(ack);
+        }
+      } catch (error) {
+        optionAFlowLog("voter", "blind_issuance_ack_publish_failed", {
+          electionId: ack.electionId,
+          requestId: ack.requestId,
+          issuanceId: ack.issuanceId,
+          error: error instanceof Error ? error.message : "unknown",
+        });
+      }
+    })();
+    this.blindIssuanceAckInflightByRequestId.set(issuance.requestId, ackTask);
+    try {
+      await ackTask;
+    } finally {
+      this.blindIssuanceAckInflightByRequestId.delete(issuance.requestId);
     }
   }
 
@@ -389,6 +459,9 @@ export class QuestionnaireOptionAVoterRuntime {
     this.state = restored;
     saveVoterState({ voterNpub: signerNpub, state: restored });
     this.startVoterDmSubscriptions();
+    if (restored.blindIssuance) {
+      void this.ensureBlindIssuanceAck(restored.blindIssuance).catch(() => undefined);
+    }
     return await this.recoverSubmittedBallotFromSelfDm().catch(() => restored);
   }
 
@@ -463,6 +536,9 @@ export class QuestionnaireOptionAVoterRuntime {
     this.state = restored;
     saveVoterState({ voterNpub: invitedNpub, state: restored });
     this.startVoterDmSubscriptions();
+    if (restored.blindIssuance) {
+      void this.ensureBlindIssuanceAck(restored.blindIssuance).catch(() => undefined);
+    }
     return restored;
   }
 
@@ -562,6 +638,7 @@ export class QuestionnaireOptionAVoterRuntime {
       alreadyHasIssuance: Boolean(this.state.blindIssuance),
     });
     if (this.state.blindIssuance) {
+      void this.ensureBlindIssuanceAck(this.state.blindIssuance).catch(() => undefined);
       saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
       return this.state;
     }
@@ -809,6 +886,7 @@ export class QuestionnaireOptionAVoterRuntime {
         });
         if (received.ok) {
           next = received.state;
+          void this.ensureBlindIssuanceAck(issuance).catch(() => undefined);
         }
       }
     }
@@ -1072,6 +1150,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
   private issuanceDmRepublishRequests = new Map<string, string>();
   private stopBlindRequestSubscription: (() => void) | null = null;
   private stopSubmissionSubscription: (() => void) | null = null;
+  private stopBlindIssuanceAckSubscription: (() => void) | null = null;
   private liveBlindRequestProcessInFlight: Promise<void> | null = null;
   private liveSubmissionProcessInFlight: Promise<void> | null = null;
   private acceptanceDmDeliveryStatusBySubmissionId = new Map<string, {
@@ -1124,6 +1203,8 @@ export class QuestionnaireOptionACoordinatorRuntime {
     this.stopBlindRequestSubscription = null;
     this.stopSubmissionSubscription?.();
     this.stopSubmissionSubscription = null;
+    this.stopBlindIssuanceAckSubscription?.();
+    this.stopBlindIssuanceAckSubscription = null;
   }
 
   private triggerBlindRequestProcessingFromLive() {
@@ -1173,6 +1254,13 @@ export class QuestionnaireOptionACoordinatorRuntime {
         void this.triggerSubmissionProcessingFromLive().catch(() => undefined);
       },
     });
+    this.stopBlindIssuanceAckSubscription = subscribeOptionABlindIssuanceAckDms({
+      signer: this.signer,
+      electionId: this.electionId,
+      onAck: (ack) => {
+        this.recordBlindIssuanceAck(ack);
+      },
+    });
   }
 
   private getDmReadSince() {
@@ -1200,7 +1288,32 @@ export class QuestionnaireOptionACoordinatorRuntime {
     if (delivery?.requestLastSentAt === requestSentAt) {
       return;
     }
+    if (this.isBlindIssuanceAcked(issuance)) {
+      return;
+    }
     this.issuanceDmRepublishRequests.set(issuance.requestId, requestSentAt);
+  }
+
+  private isBlindIssuanceAcked(issuance: BlindBallotIssuance) {
+    const ack = readBlindIssuanceAckRecord(issuance.requestId);
+    return Boolean(ack && ack.issuanceId === issuance.issuanceId);
+  }
+
+  private recordBlindIssuanceAck(ack: BlindIssuanceAck) {
+    storeBlindIssuanceAckRecord({
+      requestId: ack.requestId,
+      electionId: ack.electionId,
+      invitedNpub: ack.invitedNpub,
+      issuanceId: ack.issuanceId,
+      ackedAt: ack.ackedAt,
+    });
+    this.issuanceDmRepublishRequests.delete(ack.requestId);
+    optionAFlowLog("coordinator", "blind_issuance_ack_received", {
+      electionId: ack.electionId,
+      requestId: ack.requestId,
+      issuanceId: ack.issuanceId,
+      invitedNpub: ack.invitedNpub,
+    });
   }
 
   private hasProofIssuanceConsumed(issuance: BlindBallotIssuance) {
@@ -1473,6 +1586,9 @@ export class QuestionnaireOptionACoordinatorRuntime {
         if (this.hasProofIssuanceConsumed(issuance)) {
           return false;
         }
+        if (this.isBlindIssuanceAcked(issuance)) {
+          return false;
+        }
         const delivery = readBlindIssuanceDeliveryRecord(issuance.requestId);
         if (!delivery?.lastAttemptAt) {
           return true;
@@ -1530,6 +1646,38 @@ export class QuestionnaireOptionACoordinatorRuntime {
     }
     const definition = readCachedQuestionnaireDefinition(this.electionId);
     return definition ? { ...issuance, definition } : issuance;
+  }
+
+  async syncBlindIssuanceAcksFromDm() {
+    if (!this.state || !this.coordinatorNpub) {
+      throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
+    }
+    try {
+      const since = this.getDmReadSince();
+      const acks = this.fallbackNsec?.trim()
+        ? await fetchOptionABlindIssuanceAckDmsWithNsec({
+          nsec: this.fallbackNsec,
+          electionId: this.electionId,
+          limit: OPTION_A_COORDINATOR_NSEC_DM_LIMIT,
+        })
+        : await fetchOptionABlindIssuanceAckDms({
+          signer: this.signer,
+          electionId: this.electionId,
+          limit: OPTION_A_COORDINATOR_SIGNER_DM_LIMIT,
+          since,
+          maxDecryptAttempts: OPTION_A_COORDINATOR_SIGNER_DM_LIMIT,
+        });
+      for (const ack of acks) {
+        this.recordBlindIssuanceAck(ack);
+      }
+      optionAFlowLog("coordinator", "blind_issuance_acks_synced", {
+        electionId: this.electionId,
+        count: acks.length,
+      });
+      return acks.length;
+    } catch {
+      return 0;
+    }
   }
 
   async syncSubmissionsFromDm() {
@@ -1914,6 +2062,7 @@ export async function processOptionAQueuesForCoordinatorLive(input: {
     });
     await runtime.syncBlindRequestsFromDm();
     await runtime.processPendingBlindRequests();
+    await runtime.syncBlindIssuanceAcksFromDm();
     await runtime.publishPendingBlindIssuancesToDm({
       forceAll: input.forceRepublishIssuances,
     });

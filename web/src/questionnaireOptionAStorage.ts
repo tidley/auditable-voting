@@ -46,6 +46,7 @@ const REQUEST_QUEUE_KEY = "optiona:queue:requests";
 const SUBMISSION_QUEUE_KEY = "optiona:queue:submissions";
 const ISSUANCE_MAILBOX_KEY = "optiona:mailbox:issuances";
 const ISSUANCE_DELIVERY_KEY = "optiona:mailbox:issuanceDelivery";
+const ISSUANCE_ACK_KEY = "optiona:mailbox:issuanceAck";
 const ACCEPTANCE_MAILBOX_KEY = "optiona:mailbox:acceptance";
 
 export type BlindIssuanceDeliveryRecord = {
@@ -58,6 +59,15 @@ export type BlindIssuanceDeliveryRecord = {
   lastSuccessAt?: string | null;
   lastEventId?: string | null;
   requestLastSentAt?: string | null;
+};
+
+export type BlindIssuanceAckRecord = {
+  requestId: string;
+  electionId: string;
+  invitedNpub: string;
+  issuanceId: string;
+  ackedAt: string;
+  storedAt: string;
 };
 
 export function loadElectionRegistry() {
@@ -333,6 +343,30 @@ export function recordBlindIssuanceDeliveryAttempt(input: {
     requestLastSentAt: input.requestLastSentAt ?? existing?.requestLastSentAt ?? null,
   };
   writeJson(ISSUANCE_DELIVERY_KEY, records);
+}
+
+export function storeBlindIssuanceAckRecord(input: {
+  requestId: string;
+  electionId: string;
+  invitedNpub: string;
+  issuanceId: string;
+  ackedAt: string;
+}) {
+  const records = readJson<Record<string, BlindIssuanceAckRecord>>(ISSUANCE_ACK_KEY, {});
+  records[input.requestId] = {
+    requestId: input.requestId,
+    electionId: input.electionId,
+    invitedNpub: input.invitedNpub,
+    issuanceId: input.issuanceId,
+    ackedAt: input.ackedAt,
+    storedAt: new Date().toISOString(),
+  };
+  writeJson(ISSUANCE_ACK_KEY, records);
+}
+
+export function readBlindIssuanceAckRecord(requestId: string) {
+  const records = readJson<Record<string, BlindIssuanceAckRecord>>(ISSUANCE_ACK_KEY, {});
+  return records[requestId] ?? null;
 }
 
 export function enqueueSubmission(submission: BallotSubmission) {

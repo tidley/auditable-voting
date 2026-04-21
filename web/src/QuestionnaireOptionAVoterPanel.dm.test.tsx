@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event";
 const optionAStorageMocks = vi.hoisted(() => ({
   loadVoterState: vi.fn((): unknown => null),
   readBlindIssuance: vi.fn((): unknown => null),
+  readBlindIssuanceAckRecord: vi.fn((): unknown => null),
   readAcceptance: vi.fn((): unknown => null),
 }));
 
@@ -36,6 +37,7 @@ vi.mock("./questionnaireOptionAStorage", () => ({
   publishInviteToMailbox: () => undefined,
   readAcceptance: optionAStorageMocks.readAcceptance,
   readBlindIssuance: optionAStorageMocks.readBlindIssuance,
+  readBlindIssuanceAckRecord: optionAStorageMocks.readBlindIssuanceAckRecord,
   readInviteFromMailbox: () => null,
   saveVoterState: () => undefined,
   upsertElectionSummary: vi.fn(),
@@ -89,6 +91,8 @@ afterEach(() => {
   optionAStorageMocks.loadVoterState.mockReturnValue(null);
   optionAStorageMocks.readBlindIssuance.mockReset();
   optionAStorageMocks.readBlindIssuance.mockReturnValue(null);
+  optionAStorageMocks.readBlindIssuanceAckRecord.mockReset();
+  optionAStorageMocks.readBlindIssuanceAckRecord.mockReturnValue(null);
   optionAStorageMocks.readAcceptance.mockReset();
   optionAStorageMocks.readAcceptance.mockReturnValue(null);
 });

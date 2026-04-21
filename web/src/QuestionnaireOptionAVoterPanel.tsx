@@ -11,6 +11,7 @@ import type { ElectionInviteMessage, QuestionnaireAnswer } from "./questionnaire
 import { deriveActorDisplayId } from "./actorDisplay";
 import {
   loadElectionSummary,
+  readBlindIssuanceAckRecord,
   listInvitesFromMailbox,
   publishInviteToMailbox,
   upsertElectionSummary,
@@ -169,7 +170,7 @@ const LEGACY_INVITE_TITLE = "Should the proposal pass?";
 const AUTO_BALLOT_REQUEST_MIN_INTERVAL_MS = 15_000;
 const AUTO_BALLOT_RETRY_POLL_MS = 10_000;
 const AUTO_BALLOT_RETRY_RESEND_MS = 60_000;
-const AUTO_BALLOT_SIGNER_REFRESH_POLL_MS = 30_000;
+const AUTO_BALLOT_SIGNER_REFRESH_SCHEDULE_MS = [8_000, 20_000, 45_000] as const;
 
 function resolveInviteDisplayTitle(invite: ElectionInviteMessage) {
   const fromDefinition = invite.definition?.title?.trim() ?? "";
@@ -900,12 +901,14 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     if (hasLocalSecretKey) {
       return;
     }
-    const intervalId = window.setInterval(() => {
+    const timeoutIds = AUTO_BALLOT_SIGNER_REFRESH_SCHEDULE_MS.map((delayMs) => window.setTimeout(() => {
       runtime.refreshIssuanceAndAcceptance();
       setRefreshNonce((value) => value + 1);
-    }, AUTO_BALLOT_SIGNER_REFRESH_POLL_MS);
+    }, delayMs));
     return () => {
-      window.clearInterval(intervalId);
+      for (const timeoutId of timeoutIds) {
+        window.clearTimeout(timeoutId);
+      }
     };
   }, [runtime, props.localVoterNsec, snapshot?.loginVerified, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission]);
 
@@ -1000,8 +1003,12 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     return value !== undefined && value !== null && String(value).trim().length > 0;
   });
   const canSubmitNow = flags.canSubmitVote && requiredQuestionsAnswered;
-  const displayStatus = snapshot?.credentialReady && status === "Blind ballot request sent. Waiting for coordinator issuance."
-    ? "Ballot credential ready."
+  const issuanceAckSent = Boolean(
+    snapshot?.blindIssuance
+    && readBlindIssuanceAckRecord(snapshot.blindIssuance.requestId)?.issuanceId === snapshot.blindIssuance.issuanceId,
+  );
+  const displayStatus = snapshot?.credentialReady
+    ? (issuanceAckSent ? "Credential received (ack sent)." : "Ballot credential ready.")
     : status;
   const coordinatorNpub = snapshot?.coordinatorNpub?.trim()
     || activeInvite?.coordinatorNpub?.trim()

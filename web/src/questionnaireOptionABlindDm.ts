@@ -48,6 +48,23 @@ type BlindIssuanceDmEnvelope = {
   sentAt: string;
 };
 
+export type BlindIssuanceAck = {
+  type: "blind_ballot_issuance_ack";
+  schemaVersion: 1;
+  electionId: string;
+  requestId: string;
+  issuanceId: string;
+  invitedNpub: string;
+  ackedAt: string;
+};
+
+type BlindIssuanceAckDmEnvelope = {
+  type: "optiona_blind_issuance_ack_dm";
+  schemaVersion: 1;
+  ack: BlindIssuanceAck;
+  sentAt: string;
+};
+
 type BallotSubmissionDmEnvelope = {
   type: "optiona_ballot_submission_dm";
   schemaVersion: 1;
@@ -351,14 +368,39 @@ function parseBallotAcceptanceDmContent(content: string): BallotAcceptanceResult
   }
 }
 
+function parseBlindIssuanceAckDmContent(content: string): BlindIssuanceAck | null {
+  try {
+    const parsed = JSON.parse(content) as Partial<BlindIssuanceAckDmEnvelope> | BlindIssuanceAck;
+    const ack = (parsed as BlindIssuanceAckDmEnvelope).type === "optiona_blind_issuance_ack_dm"
+      ? (parsed as BlindIssuanceAckDmEnvelope).ack
+      : parsed as BlindIssuanceAck;
+    if (
+      ack?.type !== "blind_ballot_issuance_ack"
+      || ack.schemaVersion !== 1
+      || typeof ack.electionId !== "string"
+      || typeof ack.requestId !== "string"
+      || typeof ack.issuanceId !== "string"
+      || typeof ack.invitedNpub !== "string"
+      || typeof ack.ackedAt !== "string"
+    ) {
+      return null;
+    }
+    return ack;
+  } catch {
+    return null;
+  }
+}
+
 function optionABlindDmSubject(
-  envelope: BlindRequestDmEnvelope | BlindIssuanceDmEnvelope | BallotSubmissionDmEnvelope | BallotAcceptanceDmEnvelope,
+  envelope: BlindRequestDmEnvelope | BlindIssuanceDmEnvelope | BlindIssuanceAckDmEnvelope | BallotSubmissionDmEnvelope | BallotAcceptanceDmEnvelope,
 ) {
   switch (envelope.type) {
     case "optiona_blind_request_dm":
       return "Auditable Voting blind request";
     case "optiona_blind_issuance_dm":
       return "Auditable Voting blind issuance";
+    case "optiona_blind_issuance_ack_dm":
+      return "Auditable Voting blind issuance ack";
     case "optiona_ballot_submission_dm":
       return "Auditable Voting ballot submission";
     case "optiona_ballot_acceptance_dm":
@@ -371,7 +413,7 @@ function createRumor(input: {
   recipientHex: string;
   relayUrl?: string;
   subject: string;
-  envelope: BlindRequestDmEnvelope | BlindIssuanceDmEnvelope | BallotSubmissionDmEnvelope | BallotAcceptanceDmEnvelope;
+  envelope: BlindRequestDmEnvelope | BlindIssuanceDmEnvelope | BlindIssuanceAckDmEnvelope | BallotSubmissionDmEnvelope | BallotAcceptanceDmEnvelope;
 }) {
   const rumor = {
     kind: KIND_RUMOR_MESSAGE,
@@ -744,6 +786,28 @@ export async function publishOptionABallotAcceptanceDm(input: {
       type: "optiona_ballot_acceptance_dm",
       schemaVersion: 1,
       acceptance: input.acceptance,
+      sentAt: new Date().toISOString(),
+    },
+  });
+}
+
+export async function publishOptionABlindIssuanceAckDm(input: {
+  signer: SignerService;
+  recipientNpub: string;
+  ack: BlindIssuanceAck;
+  fallbackNsec?: string;
+  relays?: string[];
+}) {
+  return publishEnvelope({
+    signer: input.signer,
+    recipientNpub: input.recipientNpub,
+    fallbackNsec: input.fallbackNsec,
+    relays: input.relays,
+    channel: `optiona-blind-issuance-ack:${input.ack.electionId}:${input.ack.requestId}`,
+    envelope: {
+      type: "optiona_blind_issuance_ack_dm",
+      schemaVersion: 1,
+      ack: input.ack,
       sentAt: new Date().toISOString(),
     },
   });
@@ -1201,6 +1265,100 @@ export async function fetchOptionABallotAcceptanceDmsWithNsec(input: {
   return [...unique.values()];
 }
 
+export async function fetchOptionABlindIssuanceAckDms(input: {
+  signer: SignerService;
+  electionId?: string;
+  relays?: string[];
+  limit?: number;
+  since?: number;
+  maxDecryptAttempts?: number;
+}) {
+  if (!input.signer.nip44Decrypt) {
+    return [] as BlindIssuanceAck[];
+  }
+  const recipientRaw = await input.signer.getPublicKey();
+  const recipientHex = toHexPubkey(recipientRaw);
+  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
+  const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
+  const events = await queryBlindDmSync(relays, {
+    kinds: [KIND_GIFT_WRAP],
+    "#p": [recipientHex],
+    since: input.since ?? Math.round(Date.now() / 1000) - OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS,
+    limit: Math.max(1, Math.min(input.limit ?? maxDecryptAttempts, maxDecryptAttempts)),
+  });
+
+  const unique = new Map<string, BlindIssuanceAck>();
+  const sorted = [...events]
+    .sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0))
+    .slice(0, maxDecryptAttempts);
+  for (const event of sorted) {
+    try {
+      const decoded = await decodeGiftWrapWithSigner({
+        signer: input.signer,
+        event,
+      });
+      if (!decoded) {
+        continue;
+      }
+      const ack = parseBlindIssuanceAckDmContent(decoded.rumorContent);
+      if (!ack) {
+        continue;
+      }
+      if (input.electionId?.trim() && ack.electionId !== input.electionId.trim()) {
+        continue;
+      }
+      const key = `${ack.electionId}:${ack.requestId}:${ack.issuanceId}`;
+      if (!unique.has(key)) {
+        unique.set(key, ack);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return [...unique.values()];
+}
+
+export async function fetchOptionABlindIssuanceAckDmsWithNsec(input: {
+  nsec: string;
+  electionId?: string;
+  relays?: string[];
+  limit?: number;
+}) {
+  const secretKey = decodeNsecSecretKey(input.nsec);
+  const recipientHex = getPublicKey(secretKey);
+  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
+  const events = await queryBlindDmSync(relays, {
+    kinds: [KIND_GIFT_WRAP],
+    "#p": [recipientHex],
+    limit: Math.max(1, input.limit ?? 100),
+  });
+
+  const unique = new Map<string, BlindIssuanceAck>();
+  const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
+  for (const event of sorted) {
+    try {
+      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string };
+      if (!rumor || typeof rumor.content !== "string") {
+        continue;
+      }
+      const ack = parseBlindIssuanceAckDmContent(rumor.content);
+      if (!ack) {
+        continue;
+      }
+      if (input.electionId?.trim() && ack.electionId !== input.electionId.trim()) {
+        continue;
+      }
+      const key = `${ack.electionId}:${ack.requestId}:${ack.issuanceId}`;
+      if (!unique.has(key)) {
+        unique.set(key, ack);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return [...unique.values()];
+}
+
 export function subscribeOptionABlindRequestDms(input: {
   signer: SignerService;
   electionId?: string;
@@ -1285,6 +1443,27 @@ export function subscribeOptionABallotAcceptanceDms(input: {
     parse: parseBallotAcceptanceDmContent,
     keyOf: (value) => `${value.electionId}:${value.submissionId}`,
     onValue: input.onAcceptance,
+    onError: input.onError,
+  });
+}
+
+export function subscribeOptionABlindIssuanceAckDms(input: {
+  signer: SignerService;
+  electionId?: string;
+  relays?: string[];
+  since?: number;
+  onAck: (ack: BlindIssuanceAck) => void;
+  onError?: (error: Error) => void;
+}) {
+  return createSignerGiftWrapSubscription<BlindIssuanceAck>({
+    signer: input.signer,
+    electionId: input.electionId,
+    relays: input.relays,
+    since: input.since,
+    stage: "subscribe_issuance_acks",
+    parse: parseBlindIssuanceAckDmContent,
+    keyOf: (value) => `${value.electionId}:${value.requestId}:${value.issuanceId}`,
+    onValue: input.onAck,
     onError: input.onError,
   });
 }
