@@ -1,4 +1,4 @@
-import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
+import { generateSecretKey, getPublicKey, nip19, nip44 } from "nostr-tools";
 import {
   countAcceptedUniqueVoters,
   createEmptyVoterElectionLocalState,
@@ -163,6 +163,34 @@ function toNpub(pubkey: string): string {
   return nip19.npubEncode(pubkey);
 }
 
+function toHexPubkey(value: string) {
+  const trimmed = value.trim();
+  if (trimmed.startsWith("npub1")) {
+    const decoded = nip19.decode(trimmed);
+    if (decoded.type !== "npub") {
+      throw new Error("Expected npub.");
+    }
+    return decoded.data as string;
+  }
+  return trimmed;
+}
+
+function decodeNsecSecretKey(nsec: string | null | undefined) {
+  const trimmed = nsec?.trim() ?? "";
+  if (!trimmed) {
+    return null;
+  }
+  try {
+    const decoded = nip19.decode(trimmed);
+    if (decoded.type !== "nsec") {
+      return null;
+    }
+    return decoded.data as Uint8Array;
+  } catch {
+    return null;
+  }
+}
+
 function makeId(prefix: string) {
   return `${prefix}_${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`;
 }
@@ -302,7 +330,10 @@ function toSubmissionDecisionReason(input: {
   return "invalid_payload_shape";
 }
 
-function toQuestionnaireResponseAnswers(responses: QuestionnaireAnswer[]): QuestionnaireResponseAnswer[] {
+function toQuestionnaireResponseAnswers(
+  responses: QuestionnaireAnswer[],
+  options?: { coordinatorNpub?: string; responseSecretKey?: Uint8Array | null },
+): QuestionnaireResponseAnswer[] {
   return responses.map((answer) => {
     if (answer.type === "yes_no") {
       return {
@@ -318,10 +349,22 @@ function toQuestionnaireResponseAnswers(responses: QuestionnaireAnswer[]): Quest
         selectedOptionIds: [...answer.answer],
       };
     }
+    let text = answer.answer;
+    if (answer.encryptForCoordinator) {
+      const coordinatorNpub = options?.coordinatorNpub?.trim() ?? "";
+      const responseSecretKey = options?.responseSecretKey ?? null;
+      if (!coordinatorNpub || !responseSecretKey) {
+        throw new OptionARuntimeError("invalid_submission", "Coordinator encryption key is unavailable for free-text encryption.");
+      }
+      const coordinatorHex = toHexPubkey(coordinatorNpub);
+      const conversationKey = nip44.v2.utils.getConversationKey(responseSecretKey, coordinatorHex);
+      const ciphertext = nip44.v2.encrypt(answer.answer, conversationKey);
+      text = `enc:nip44v2:${ciphertext}`;
+    }
     return {
       questionId: answer.questionId,
       answerType: "free_text",
-      text: answer.answer,
+      text,
     };
   });
 }
@@ -1266,7 +1309,10 @@ export class QuestionnaireOptionAVoterRuntime {
           questionnaireId: this.state.electionId,
           signature: this.state.submission.credential,
         },
-        answers: toQuestionnaireResponseAnswers(this.state.submission.payload.responses),
+        answers: toQuestionnaireResponseAnswers(this.state.submission.payload.responses, {
+          coordinatorNpub: this.state.coordinatorNpub,
+          responseSecretKey: decodeNsecSecretKey(this.state.responseNsec),
+        }),
       });
       if (!republished || republished.successes <= 0) {
         throw new OptionARuntimeError("dm_delivery_failed", "No relay accepted the public ballot submission.");
@@ -1366,7 +1412,10 @@ export class QuestionnaireOptionAVoterRuntime {
         questionnaireId: this.state.electionId,
         signature: submission.credential,
       },
-      answers: toQuestionnaireResponseAnswers(submission.payload.responses),
+      answers: toQuestionnaireResponseAnswers(submission.payload.responses, {
+        coordinatorNpub: this.state.coordinatorNpub,
+        responseSecretKey,
+      }),
     });
     optionAFlowLog("voter", "submit_vote_public_publish_result", {
       electionId: this.state.electionId,

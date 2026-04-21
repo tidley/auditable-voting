@@ -87,6 +87,7 @@ function deriveElectionId() {
 function answerToOptionA(
   question: { questionId: string; type: "yes_no" | "multiple_choice" | "free_text" },
   value: unknown,
+  encryptForCoordinator = false,
 ): QuestionnaireAnswer | null {
   if (question.type === "yes_no") {
     if (value !== "yes" && value !== "no") {
@@ -107,7 +108,7 @@ function answerToOptionA(
   if (!text) {
     return null;
   }
-  return { questionId: question.questionId, type: "text", answer: text };
+  return { questionId: question.questionId, type: "text", answer: text, encryptForCoordinator };
 }
 
 function mapDefinitionQuestions(definition: QuestionnaireDefinition) {
@@ -244,6 +245,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     maxLength?: number;
   }>>([]);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
+  const [encryptFreeTextByQuestionId, setEncryptFreeTextByQuestionId] = useState<Record<string, boolean>>({});
   const [refreshNonce, setRefreshNonce] = useState(0);
   const autoRequestSentForRef = useRef<Record<string, true>>({});
   const autoRequestInFlightForRef = useRef<Record<string, true>>({});
@@ -313,6 +315,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
     previousElectionIdRef.current = electionId;
     setAnswers({});
+    setEncryptFreeTextByQuestionId({});
   }, [electionId]);
 
   useEffect(() => {
@@ -907,7 +910,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       return;
     }
     const next = questions
-      .map((question) => answerToOptionA(question, answers[question.questionId]))
+      .map((question) => answerToOptionA(
+        question,
+        answers[question.questionId],
+        question.type === "free_text" ? Boolean(encryptFreeTextByQuestionId[question.questionId]) : false,
+      ))
       .filter((value): value is QuestionnaireAnswer => Boolean(value));
     runtime.updateDraftResponses(next);
     setRefreshNonce((value) => value + 1);
@@ -1400,13 +1407,30 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                 </div>
               ) : null}
               {question.type === "free_text" ? (
-                <textarea
-                  className='simple-voter-input simple-questionnaire-free-text'
-                  rows={3}
-                  maxLength={question.maxLength ?? 500}
-                  value={typeof answers[question.questionId] === "string" ? (answers[question.questionId] as string) : ""}
-                  onChange={(event) => setAnswers((current) => ({ ...current, [question.questionId]: event.target.value }))}
-                />
+                <>
+                  <textarea
+                    className='simple-voter-input simple-questionnaire-free-text'
+                    rows={3}
+                    maxLength={question.maxLength ?? 500}
+                    value={typeof answers[question.questionId] === "string" ? (answers[question.questionId] as string) : ""}
+                    onChange={(event) => setAnswers((current) => ({ ...current, [question.questionId]: event.target.value }))}
+                  />
+                  <label className='simple-questionnaire-choice-row'>
+                    <input
+                      type='checkbox'
+                      checked={Boolean(encryptFreeTextByQuestionId[question.questionId])}
+                      disabled={!coordinatorNpub}
+                      onChange={(event) => {
+                        const checked = event.target.checked;
+                        setEncryptFreeTextByQuestionId((current) => ({
+                          ...current,
+                          [question.questionId]: checked,
+                        }));
+                      }}
+                    />
+                    <span>Encrypt for coordinator</span>
+                  </label>
+                </>
               ) : null}
             </article>
           ))}

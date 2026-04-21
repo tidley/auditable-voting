@@ -58,7 +58,6 @@ export default function SimpleAuditorApp() {
   const [selectedLiveState, setSelectedLiveState] = useState<string | null>(null);
   const [selectedResultSummary, setSelectedResultSummary] = useState<QuestionnaireResultSummary | null>(null);
   const [voterSearchQuery, setVoterSearchQuery] = useState("");
-  const [fullResultsOpen, setFullResultsOpen] = useState(false);
   const [freeTextViewerQuestionId, setFreeTextViewerQuestionId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [questionnaireRefreshStatus, setQuestionnaireRefreshStatus] = useState<string | null>(null);
@@ -426,13 +425,6 @@ export default function SimpleAuditorApp() {
     return `${entry.title} · ${entry.questionnaireId}`;
   }
 
-  function formatPublishState(includedInLatestPublish: boolean) {
-    if (selectedLatestPublishAt === null) {
-      return "Unpublished";
-    }
-    return includedInLatestPublish ? "Published" : "Unpublished";
-  }
-
   function exportResults() {
     if (!selectedQuestionnaire || !selectedResultSummary || (selectedLiveState ?? selectedQuestionnaire.state) !== "results_published") {
       return;
@@ -635,16 +627,6 @@ export default function SimpleAuditorApp() {
                       </article>
                     ))}
                   </div>
-                  <button
-                    type='button'
-                    className='simple-voter-secondary simple-auditor-full-results'
-                    onClick={() => {
-                      setVoterSearchQuery("");
-                      setFullResultsOpen(true);
-                    }}
-                  >
-                    View Full Results
-                  </button>
                   {canExportResults ? (
                     <button
                       type='button'
@@ -671,49 +653,14 @@ export default function SimpleAuditorApp() {
               <>
                 <p className='simple-voter-question'>{selectedQuestionnaire.title}</p>
                 <p className='simple-submitted-score'>Total responses: {selectedResponseDetails.length}</p>
-                <ul className='simple-voter-list'>
-                  {selectedResponseDetails.map((entry) => (
-                    <li key={entry.event.id} className='simple-voter-list-item'>
-                      <div className='simple-submitted-vote-row'>
-                        <div className='simple-submitted-vote-copy'>
-                          <p className='simple-voter-question'>
-                            Response {entry.response.responseId} {entry.accepted
-                              ? <span className='simple-status-valid'>[Valid]</span>
-                              : <span className='simple-status-invalid'>[Invalid: duplicate nullifier]</span>}
-                          </p>
-                          <p className='simple-voter-note'>Event {entry.event.id}</p>
-                          <p className='simple-voter-note'>
-                            Publish state: {formatPublishState(entry.includedInLatestPublish)} | Submitted: {formatQuestionnaireTime(Number(entry.event.created_at ?? 0))}
-                          </p>
-                        </div>
-                        <TokenFingerprint tokenId={entry.response.authorPubkey} compact large hideMetadata />
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            ) : (
-              <p className='simple-voter-empty'>No submitted responses found for this round yet.</p>
-            )
-          ) : (
-            <p className='simple-voter-empty'>Choose a questionnaire round to inspect responses.</p>
-          )}
-        </section>
-
-        {fullResultsOpen && selectedQuestionnaire ? (
-          <section className='token-fingerprint-overlay' role='dialog' aria-modal='true' aria-label='Full questionnaire results'>
-            <button type='button' className='token-fingerprint-overlay-close' onClick={() => setFullResultsOpen(false)}>Close</button>
-            <div className='token-fingerprint-overlay-card simple-auditor-full-results-card'>
-              <h3 className='simple-voter-question'>Full Results · {selectedQuestionnaire.title}</h3>
-              <label className='simple-voter-label' htmlFor='simple-auditor-voter-search'>Filter by voter ID</label>
-              <input
-                id='simple-auditor-voter-search'
-                className='simple-voter-input'
-                value={voterSearchQuery}
-                onChange={(event) => setVoterSearchQuery(event.target.value)}
-                placeholder='Search by voter npub, response ID, or token...'
-              />
-              {filteredResponseDetails.length > 0 ? (
+                <label className='simple-voter-label' htmlFor='simple-auditor-submitted-search'>Filter by voter ID</label>
+                <input
+                  id='simple-auditor-submitted-search'
+                  className='simple-voter-input'
+                  value={voterSearchQuery}
+                  onChange={(event) => setVoterSearchQuery(event.target.value)}
+                  placeholder='Search by voter npub, response ID, or token...'
+                />
                 <ul className='simple-voter-list simple-auditor-result-list'>
                   {filteredResponseDetails.map((entry) => (
                     <li key={entry.event.id} className='simple-voter-list-item'>
@@ -723,6 +670,9 @@ export default function SimpleAuditorApp() {
                         </div>
                         <div className='simple-auditor-result-body'>
                           <p className='simple-voter-question'>{entry.response.authorPubkey}</p>
+                          <p className='simple-voter-note'>
+                            Submitted: {formatQuestionnaireTime(Number(entry.response.submittedAt ?? entry.event.created_at ?? 0))}
+                          </p>
                           <p className='simple-voter-note'>Response: {entry.response.responseId} · {entry.accepted ? "Valid" : "Invalid"}</p>
                           {Array.isArray(entry.response.answers) && entry.response.answers.length > 0 ? (
                             <ul className='simple-delivery-diagnostics simple-delivery-diagnostics-compact'>
@@ -751,12 +701,17 @@ export default function SimpleAuditorApp() {
                     </li>
                   ))}
                 </ul>
-              ) : (
-                <p className='simple-voter-empty'>No voter responses match the current filter.</p>
-              )}
-            </div>
-          </section>
-        ) : null}
+                {filteredResponseDetails.length === 0 ? (
+                  <p className='simple-voter-empty'>No voter responses match the current filter.</p>
+                ) : null}
+              </>
+            ) : (
+              <p className='simple-voter-empty'>No submitted responses found for this round yet.</p>
+            )
+          ) : (
+            <p className='simple-voter-empty'>Choose a questionnaire round to inspect responses.</p>
+          )}
+        </section>
 
         {freeTextViewerQuestionId && selectedQuestionnaire ? (
           <section className='token-fingerprint-overlay' role='dialog' aria-modal='true' aria-label='Free-text responses'>

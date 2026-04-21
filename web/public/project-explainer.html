@@ -202,49 +202,29 @@ The current repository contains only the browser app. It has voter, coordinator,
 
 ### Coordinator
 
-1. Build the questionnaire.
-2. Add eligible voter npubs.
-3. Send invites or share invite links (generated links use the current host by default).
-4. Process blind ballot requests.
-5. Process submitted responses.
-6. Close the questionnaire and publish results.
+1. Build and publish a questionnaire definition (public event).
+2. Invite voter npubs to that questionnaire.
+3. Receive blind-token requests over private DMs.
+4. Issue blind signatures to authorised voters over private DMs.
+5. Watch public submissions and publish public accept/reject decisions.
+6. Close the round and publish the result summary.
 
 ### Voter
 
 1. Open an invite or log in as **Voter**.
 2. Open the questionnaire.
-3. The app requests a blind ballot credential automatically when invite context and login are present (or use `Request ballot` manually).
+3. Request a blind ballot credential (auto when invite context exists, or use `Request ballot`).
 4. Wait for `Credential ready: Yes`.
 5. Fill in the response fields.
-6. Submit the response (the button shows `Waiting for coordinator...` until submission is available).
-7. Private request, issuance, and submission steps now send explicit acknowledgements, so retries can back off once the next phase has definitely received the message.
-
-Invite links can point to a public questionnaire id and default to the current host. Signer login opens the Vote tab directly, completes voter login, and loads the public questionnaire definition, including the blind-signing public key, without scanning old encrypted invite DMs. Manual invite checks and credential-result polling use recent bounded signer DM reads.
-
-On Android, signer sessions prefer Amber through NIP-46 when available so `get_public_key`, `sign_event`, `nip04`, and `nip44` operations stay on one signer identity, and the app now requests the full permission set up front during connect.
-
-The login gateway now orders controls as `Signer`/`nsec`, then signer choice (`NOS2X-FOX`/`Amber`), then one login action button. It can also generate Nostr Connect links directly, show a QR code for the `nostrconnect://` URL, and copy both `nostrconnect://` and Amber-compatible `bunker://` (`nsecbunker`) variants.
-
-Blind request, issuance, submission, and acceptance DMs now also resolve recipient NIP-17 relay-list hints (`kind:10050`) before static fallbacks, keep curated fallback relay redundancy, and only count a DM publish as delivered when at least one relay actually accepts it.
-
-Private questionnaire recovery now uses shared websocket inbox subscriptions, sticky successful relay subsets per questionnaire, and bounded refreshes on focus/visibility/online instead of relying only on repeated timer-driven resend loops.
-
-Invite-link clipboard writes are best-effort, so browser focus restrictions do not throw unhandled errors after async relay work.
-
-The voter page labels the questionnaire voting identity separately from the signer account and shows request, credential, and response state. The `Vote` tab remains available so voters can browse current and older invited questionnaires; unavailable actions show waiting states until questionnaire context is ready. Silent invite polling does not force tab switches away from Configure/Settings. Resending a blind-ballot request keeps the same request id; the coordinator republishes the existing credential DM rather than issuing a second credential. Blind-request and ballot-submission sends only move to "sent" after confirmed relay acceptance. Credential delivery now mixes recipient relay hints with fallback relays, publishes to more relays, retries issued credentials until submission proves receipt, and uses wider bounded signer DM scans for recovery. On first login/open, the Vote flow auto-sends the blind-ballot request when invite context exists, and `Submit response` remains `Waiting for coordinator...` until the credential and response prerequisites are satisfied.
-
-The private questionnaire phases now also send explicit blind-request, credential-receipt, and submission-receipt acknowledgements. That lets the coordinator and voter stop unnecessary resends once delivery is confirmed instead of inferring success only from later state.
-
-When a response is submitted with the ephemeral response key, the app also sends a best-effort encrypted self-copy of the submission back to the voter's login identity. This lets a voter log in later, select the questionnaire from the Vote tab, and recover the submitted response marker and answers from their own NIP-17 mailbox even if browser-local state was lost.
-
-Drafted response fields stay intact when the credential or refreshed definition arrives for the same questionnaire.
+6. Submit publicly with an ephemeral response npub and blind-token proof.
+7. Wait for the coordinator’s public submission decision.
 
 ### Auditor
 
 1. Open **Auditor**.
-2. Review discovered rounds and recent public questionnaires.
-3. Filter by coordinator, questionnaire ID, round ID, prompt, or npub.
-4. Compare public state, accepted counts, rejected counts, and published summaries.
+2. Read public submissions and public submission decisions.
+3. Verify accepted/rejected outcomes and per-question totals.
+4. Open full results to inspect per-response detail when payloads are public.
 
 ## Privacy Model
 
@@ -279,7 +259,8 @@ sequenceDiagram
 
 - questionnaire definitions
 - questionnaire state changes
-- public rounds and ballots in the simple voting path
+- public questionnaire submissions
+- public coordinator submission decisions (accept/reject)
 - published result summaries
 - auditor-discovered public questionnaire metadata
 
@@ -365,12 +346,10 @@ flowchart LR
   E --> V --> D --> T --> R
 ```
 
-Auditors can inspect recent public questionnaires, public round data, and published result summaries. When the coordinator closes and publishes a questionnaire, it also attempts to publish accepted response payload events, including free-text answers, so auditors can inspect full results where those public payload events were accepted by relays. The published result summary now also carries canonical per-response refs with slim answer payloads, so the auditor can still render the detailed responder rows when relays fragment the separate public response events.
+Auditors derive results from public submissions and public coordinator decisions.  
+The published summary includes per-response references as a parity backfill, so the auditor can still render full responder rows even when relay visibility is fragmented.
 
 The auditor view keeps normal refreshes bounded to recent questionnaires to avoid relay pressure. Use `Search historic data` next to the questionnaire selector to explicitly scan a wider historical window when an older published questionnaire or result payload is missing from the default list.
-
-Signed-in voters with no active invite now also do a low-rate automatic invite refresh, and the shared gift-wrap inbox suppresses duplicate relay copies before signer decrypt, reducing bunker and relay churn while waiting for private questionnaire delivery. While waiting for a ballot on signer-backed mobile browsers, the client now mostly re-arms DM subscriptions and only falls back to low-rate mailbox refresh reads, reducing Amber bunker/rate-limit churn while still recovering when push delivery is missed. Successful signer DM decrypts are cached per event so repeated recovery scans do not keep re-asking Amber to unwrap the same gift-wrapped message.
-Blind issuance discovery now also performs one broader relay fallback scan when the narrow recipient relay subset is empty, reducing cases where a ballot is visible in another Nostr client before the vote UI notices it.
 
 ## Current Limits
 
@@ -378,7 +357,8 @@ Blind issuance discovery now also performs one broader relay fallback scan when 
 - Coordinator private keys and blind-signing keys are browser-local.
 - The questionnaire path is currently single-coordinator.
 - Larger multi-coordinator live runs are still operationally fragile on public relays.
-- Published summaries are auditable against visible public state, but encrypted/private answer contents require coordinator-side processing.
+- Auditor detail is near real-time (poll-based), but exact freshness depends on relay propagation and indexing.
+- If a response payload is encrypted/private, the auditor can still show metadata/decision status but not plaintext answers.
 
 ## Short Summary
 

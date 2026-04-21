@@ -122,7 +122,7 @@ export interface BlindBallotIssuance {
 export type QuestionnaireAnswer =
   | { questionId: string; type: "yes_no"; answer: "yes" | "no" }
   | { questionId: string; type: "multiple_choice"; answer: string[] }
-  | { questionId: string; type: "text"; answer: string };
+  | { questionId: string; type: "text"; answer: string; encryptForCoordinator?: boolean };
 
 export interface QuestionnaireBallotPayload {
   electionId: ElectionId;
