@@ -3475,7 +3475,7 @@ export default function SimpleCoordinatorApp() {
       setOptimisticKnownVoterNpubs((current) => (current.includes(invitedNpub) ? current : [...current, invitedNpub]));
       setKnownVoterInviteStatus(
         sent.dmDelivered
-          ? `Invite DM sent to ${deriveActorDisplayId(invitedNpub)}. ${copied ? "Link copied." : "Link generated; browser blocked clipboard copy."}`
+          ? `Invite DM sent to ${deriveActorDisplayId(invitedNpub)}.${copied ? " Link copied." : ""}`
           : `Invite saved locally for ${deriveActorDisplayId(invitedNpub)}; DM delivery failed (${sent.dmFailureReason ?? "unknown error"}). ${copied ? "Link copied." : "Browser blocked clipboard copy."}`,
       );
       setAutoSendFollowers((current) => ({
@@ -3675,8 +3675,9 @@ export default function SimpleCoordinatorApp() {
     }
     try {
       await optionACoordinatorRuntime.authorizeRequester(invitedNpub);
-      setKnownVoterInviteStatus(`Authorised ${deriveActorDisplayId(invitedNpub)} and processed request.`);
       setKnownVoterInviteRefreshNonce((value) => value + 1);
+      setKnownVoterInviteStatus(`Authorised ${deriveActorDisplayId(invitedNpub)}. Sending invite...`);
+      await sendInviteToKnownVoter(invitedNpub);
     } catch (error) {
       setKnownVoterInviteStatus(error instanceof Error ? error.message : "Authorisation failed.");
     }
