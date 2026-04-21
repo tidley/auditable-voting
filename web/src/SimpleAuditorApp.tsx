@@ -560,12 +560,16 @@ export default function SimpleAuditorApp() {
           <h2 className='simple-voter-section-title'>Questionnaire Results</h2>
           {selectedQuestionnaire ? (
             <>
-              <div className='simple-auditor-results-status'>
-                <span className='simple-voter-question'>{publishedTotalCount} Response{publishedTotalCount === 1 ? "" : "s"} - {publishedValidityPercent}%</span>
-                <div className='simple-auditor-results-progress' aria-hidden='true'>
-                  <span style={{ width: `${publishedValidityPercent}%` }} />
-                </div>
-                <span className='simple-voter-note'>Published at: {formatQuestionnaireTime(Number(selectedResultSummary?.createdAt ?? selectedQuestionnaire.resultPublishedAt ?? 0))}</span>
+              <div className='simple-auditor-results-meta'>
+                <span className='simple-voter-note'>
+                  {publishedTotalCount} Response{publishedTotalCount === 1 ? "" : "s"} • {publishedValidityPercent}%
+                </span>
+                <span className='simple-auditor-phase-pill'>
+                  Round phase: {formatQuestionnaireStateLabel(selectedLiveState ?? selectedQuestionnaire.state)}
+                </span>
+                <span className='simple-voter-note'>
+                  Published at: {formatQuestionnaireTime(Number(selectedResultSummary?.createdAt ?? selectedQuestionnaire.resultPublishedAt ?? 0))}
+                </span>
               </div>
               <div className='simple-auditor-summary-grid'>
                 <div className='simple-auditor-summary-card'>
@@ -651,16 +655,23 @@ export default function SimpleAuditorApp() {
           {selectedQuestionnaire ? (
             selectedResponseDetails.length > 0 ? (
               <>
-                <p className='simple-voter-question'>{selectedQuestionnaire.title}</p>
-                <p className='simple-submitted-score'>Total responses: {selectedResponseDetails.length}</p>
-                <label className='simple-voter-label' htmlFor='simple-auditor-submitted-search'>Filter by voter ID</label>
-                <input
-                  id='simple-auditor-submitted-search'
-                  className='simple-voter-input'
-                  value={voterSearchQuery}
-                  onChange={(event) => setVoterSearchQuery(event.target.value)}
-                  placeholder='Search by voter npub, response ID, or token...'
-                />
+                <p className='simple-voter-note'>For question: {selectedQuestionnaire.title}</p>
+                <div className='simple-auditor-submitted-toolbar'>
+                  <div className='simple-auditor-submitted-stat'>
+                    <p className='simple-auditor-summary-label'>Total responses</p>
+                    <p className='simple-auditor-score'>{selectedResponseDetails.length}</p>
+                  </div>
+                  <div className='simple-auditor-submitted-filter'>
+                    <label className='simple-voter-label' htmlFor='simple-auditor-submitted-search'>Filter by voter ID</label>
+                    <input
+                      id='simple-auditor-submitted-search'
+                      className='simple-voter-input'
+                      value={voterSearchQuery}
+                      onChange={(event) => setVoterSearchQuery(event.target.value)}
+                      placeholder='Search by voter npub, response ID, or token...'
+                    />
+                  </div>
+                </div>
                 <ul className='simple-voter-list simple-auditor-result-list'>
                   {filteredResponseDetails.map((entry) => (
                     <li key={entry.event.id} className='simple-voter-list-item'>
@@ -669,11 +680,16 @@ export default function SimpleAuditorApp() {
                           <TokenFingerprint tokenId={entry.response.authorPubkey} compact large hideMetadata />
                         </div>
                         <div className='simple-auditor-result-body'>
-                          <p className='simple-voter-question'>{entry.response.authorPubkey}</p>
+                          <div className='simple-auditor-result-head'>
+                            <p className='simple-voter-question'>{entry.response.authorPubkey}</p>
+                            <span className={`simple-auditor-validity-pill ${entry.accepted ? "is-valid" : "is-invalid"}`}>
+                              {entry.accepted ? "Valid" : "Invalid"}
+                            </span>
+                          </div>
                           <p className='simple-voter-note'>
                             Submitted: {formatQuestionnaireTime(Number(entry.response.submittedAt ?? entry.event.created_at ?? 0))}
                           </p>
-                          <p className='simple-voter-note'>Response: {entry.response.responseId} · {entry.accepted ? "Valid" : "Invalid"}</p>
+                          <p className='simple-voter-note'>Response ID: {entry.response.responseId}</p>
                           {Array.isArray(entry.response.answers) && entry.response.answers.length > 0 ? (
                             <ul className='simple-delivery-diagnostics simple-delivery-diagnostics-compact'>
                               {entry.response.answers.map((answer) => {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { NostrEvent } from "nostr-tools";
+import { nip19, nip44, type NostrEvent } from "nostr-tools";
 import { fetchQuestionnaireEventsWithFallback, getQuestionnaireReadRelays, parseQuestionnaireDefinitionEvent, parseQuestionnaireStateEvent, publishQuestionnaireDefinition, publishQuestionnaireResultSummary, publishQuestionnaireState, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESPONSE_PRIVATE_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND, subscribeQuestionnaireEvents } from "./questionnaireNostr";
 import { buildQuestionnaireResultSummary, deriveEffectiveQuestionnaireState, processQuestionnaireResponses, selectLatestQuestionnaireDefinition, selectLatestQuestionnaireResultSummary, selectLatestQuestionnaireState, type QuestionnaireAcceptedResponse } from "./questionnaireRuntime";
 import { buildSimpleNamespacedLocalStorageKey, loadSimpleActorState } from "./simpleLocalState";
@@ -26,6 +26,7 @@ import { tryWriteClipboard } from "./clipboard";
 import { fetchQuestionnaireBlindResponses } from "./questionnaireTransport";
 import { evaluateQuestionnaireBlindAdmissions, fetchQuestionnaireSubmissionDecisions } from "./questionnaireTransport";
 import { publishQuestionnaireBlindResponsePublicByCoordinator } from "./questionnaireResponsePublish";
+import { decodeNsec } from "./nostrIdentity";
 
 const DEFAULT_QUESTIONNAIRE_ID_PREFIX = "q";
 const QUESTIONNAIRE_DRAFT_ID_STORAGE_KEY = "coordinator.questionnaire-draft-id.v1";
@@ -324,6 +325,44 @@ function toRejectedReasonFromDecision(reason: string) {
     return "duplicate_response" as const;
   }
   return "invalid_payload_shape" as const;
+}
+
+function toHexPubkey(value: string) {
+  const trimmed = value.trim();
+  if (trimmed.startsWith("npub1")) {
+    const decoded = nip19.decode(trimmed);
+    if (decoded.type === "npub") {
+      return decoded.data as string;
+    }
+  }
+  return trimmed;
+}
+
+function decryptCoordinatorFreeText(input: {
+  text: string;
+  authorPubkey: string;
+  coordinatorNsec: string;
+}) {
+  const trimmed = input.text.trim();
+  if (!trimmed.startsWith("enc:nip44v2:")) {
+    return trimmed;
+  }
+  const ciphertext = trimmed.slice("enc:nip44v2:".length);
+  if (!ciphertext) {
+    return "(encrypted text unavailable)";
+  }
+  const coordinatorSecretKey = decodeNsec(input.coordinatorNsec);
+  if (!coordinatorSecretKey) {
+    return "(encrypted text unavailable)";
+  }
+  try {
+    const authorHex = toHexPubkey(input.authorPubkey);
+    const conversationKey = nip44.v2.utils.getConversationKey(coordinatorSecretKey, authorHex);
+    const plaintext = nip44.v2.decrypt(ciphertext, conversationKey);
+    return plaintext.trim() || "(empty)";
+  } catch {
+    return "(encrypted text unavailable)";
+  }
 }
 
 function buildDefinition(input: {
@@ -1163,13 +1202,17 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           if (answer?.answerType !== "free_text") {
             return null;
           }
-          const trimmed = answer.text.trim();
-          if (!trimmed) {
+          const text = decryptCoordinatorFreeText({
+            text: answer.text,
+            authorPubkey: entry.authorPubkey,
+            coordinatorNsec,
+          });
+          if (!text.trim()) {
             return null;
           }
           return {
             responderId: deriveActorDisplayId(entry.authorPubkey),
-            text: trimmed,
+            text,
             submittedAt: entry.payload.submittedAt,
           };
         })
@@ -1184,7 +1227,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         responses,
       };
     });
-  }, [acceptedResponsesForDisplay, latestDefinition]);
+  }, [acceptedResponsesForDisplay, coordinatorNsec, latestDefinition]);
   const responders = useMemo(() => (
     acceptedResponsesForDisplay
       .map((response) => ({
@@ -1971,20 +2014,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                 >
                   Free text
                 </button>
-                <button
-                  type='button'
-                  className='simple-voter-secondary'
-                  onClick={() => addQuestionBelow(index)}
-                >
-                  +
-                </button>
-                <button
-                  type='button'
-                  className='simple-voter-secondary'
-                  onClick={() => deleteQuestion(index)}
-                >
-                  -
-                </button>
               </div>
               <input
                 id={`question-prompt-${index}`}
@@ -2103,6 +2132,20 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                   disabled={!canMoveDown}
                 >
                   Move down
+                </button>
+                <button
+                  type='button'
+                  className='simple-voter-secondary'
+                  onClick={() => addQuestionBelow(index)}
+                >
+                  +
+                </button>
+                <button
+                  type='button'
+                  className='simple-voter-secondary'
+                  onClick={() => deleteQuestion(index)}
+                >
+                  -
                 </button>
               </div>
             </div>
