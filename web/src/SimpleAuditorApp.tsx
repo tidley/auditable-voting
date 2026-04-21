@@ -564,7 +564,7 @@ export default function SimpleAuditorApp() {
                 <span className='simple-voter-note'>
                   {publishedTotalCount} Response{publishedTotalCount === 1 ? "" : "s"} • {publishedValidityPercent}%
                 </span>
-                <span className='simple-auditor-phase-pill'>
+                <span className='simple-voter-note'>
                   Round phase: {formatQuestionnaireStateLabel(selectedLiveState ?? selectedQuestionnaire.state)}
                 </span>
                 <span className='simple-voter-note'>
@@ -682,8 +682,8 @@ export default function SimpleAuditorApp() {
                         <div className='simple-auditor-result-body'>
                           <div className='simple-auditor-result-head'>
                             <p className='simple-voter-question'>{entry.response.authorPubkey}</p>
-                            <span className={`simple-auditor-validity-pill ${entry.accepted ? "is-valid" : "is-invalid"}`}>
-                              {entry.accepted ? "Valid" : "Invalid"}
+                            <span className='simple-voter-note'>
+                              Status: {entry.accepted ? "Valid" : "Invalid"}
                             </span>
                           </div>
                           <p className='simple-voter-note'>
@@ -691,12 +691,17 @@ export default function SimpleAuditorApp() {
                           </p>
                           <p className='simple-voter-note'>Response ID: {entry.response.responseId}</p>
                           {Array.isArray(entry.response.answers) && entry.response.answers.length > 0 ? (
-                            <ul className='simple-delivery-diagnostics simple-delivery-diagnostics-compact'>
+                            <ol className='simple-delivery-diagnostics simple-delivery-diagnostics-compact simple-auditor-answer-list'>
                               {entry.response.answers.map((answer) => {
                                 const question = selectedQuestionById.get(answer.questionId);
                                 const prompt = question?.prompt || answer.questionId;
                                 if (answer.answerType === "yes_no") {
-                                  return <li key={`${entry.event.id}:${answer.questionId}`} className='simple-delivery-ok'>{prompt}: {answer.value ? "Yes" : "No"}</li>;
+                                  return (
+                                    <li key={`${entry.event.id}:${answer.questionId}`}>
+                                      <span className='simple-auditor-answer-prompt'>{prompt}: </span>
+                                      <span className='simple-auditor-answer-value'>{answer.value ? "Yes" : "No"}</span>
+                                    </li>
+                                  );
                                 }
                                 if (answer.answerType === "multiple_choice") {
                                   const selectedLabels = answer.selectedOptionIds.map((optionId) => (
@@ -704,11 +709,21 @@ export default function SimpleAuditorApp() {
                                       ? question.options.find((option) => option.optionId === optionId)?.label ?? optionId
                                       : optionId
                                   ));
-                                  return <li key={`${entry.event.id}:${answer.questionId}`} className='simple-delivery-ok'>{prompt}: {selectedLabels.join(", ") || "No option selected"}</li>;
+                                  return (
+                                    <li key={`${entry.event.id}:${answer.questionId}`}>
+                                      <span className='simple-auditor-answer-prompt'>{prompt}: </span>
+                                      <span className='simple-auditor-answer-value'>{selectedLabels.join(", ") || "No option selected"}</span>
+                                    </li>
+                                  );
                                 }
-                                return <li key={`${entry.event.id}:${answer.questionId}`} className='simple-delivery-ok'>{prompt}: {answer.text || "(empty)"}</li>;
+                                return (
+                                  <li key={`${entry.event.id}:${answer.questionId}`}>
+                                    <span className='simple-auditor-answer-prompt'>{prompt}: </span>
+                                    <span className='simple-auditor-answer-value'>{answer.text || "(empty)"}</span>
+                                  </li>
+                                );
                               })}
-                            </ul>
+                            </ol>
                           ) : (
                             <p className='simple-voter-note'>Answer payload is encrypted or unavailable in public events.</p>
                           )}
