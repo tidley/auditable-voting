@@ -14,6 +14,7 @@ import { mapRelayPublishResult } from "./nostrPublishResult";
 
 const OPTION_A_BLIND_DM_RELAYS_MAX = 8;
 const OPTION_A_BLIND_DM_READ_RELAYS_MAX = 6;
+const OPTION_A_BLIND_DM_READ_RELAYS_FALLBACK_MAX = 8;
 const OPTION_A_BLIND_DM_HINT_RELAYS_MAX = 8;
 const OPTION_A_BLIND_DM_MAX_WAIT_MS = 1500;
 const OPTION_A_BLIND_DM_STAGGER_MS = 250;
@@ -243,8 +244,8 @@ function buildRelays(relays?: string[]) {
   return normalizeRelaysRust([...(relays ?? []), ...SIMPLE_DM_RELAYS]);
 }
 
-function selectReadRelays(relays: string[]) {
-  return relays.slice(0, Math.min(OPTION_A_BLIND_DM_READ_RELAYS_MAX, relays.length));
+function selectReadRelays(relays: string[], maxRelays = OPTION_A_BLIND_DM_READ_RELAYS_MAX) {
+  return relays.slice(0, Math.min(maxRelays, relays.length));
 }
 
 function selectPublishRelays(relays: string[]) {
@@ -484,12 +485,34 @@ async function resolveRecipientPublishRelays(recipientHex: string, fallbackRelay
   return selectPublishRelays(mixRecipientAndFallbackRelays(recipientRelays, fallbackRelays));
 }
 
-async function resolveRecipientReadRelays(recipientHex: string, fallbackRelays: string[]) {
+async function resolveRecipientReadRelayCandidates(recipientHex: string, fallbackRelays: string[]) {
   const recipientRelays = await fetchRecipientNip17Relays({
     recipientHex,
     discoveryRelays: selectHintRelays(fallbackRelays),
   });
-  return selectReadRelays(mixRecipientAndFallbackRelays(recipientRelays, fallbackRelays));
+  return mixRecipientAndFallbackRelays(recipientRelays, fallbackRelays);
+}
+
+async function resolveRecipientReadRelays(recipientHex: string, fallbackRelays: string[]) {
+  const relayCandidates = await resolveRecipientReadRelayCandidates(recipientHex, fallbackRelays);
+  return selectReadRelays(relayCandidates);
+}
+
+async function queryBlindDmSyncWithFallback(relayCandidates: string[], filter: Record<string, unknown>) {
+  const primaryRelays = selectReadRelays(relayCandidates, OPTION_A_BLIND_DM_READ_RELAYS_MAX);
+  const primaryEvents = await queryBlindDmSync(primaryRelays, filter);
+  const shouldFallbackRead = primaryEvents.length === 0
+    && relayCandidates.length > primaryRelays.length;
+  const fallbackRelays = shouldFallbackRead
+    ? selectReadRelays(relayCandidates, OPTION_A_BLIND_DM_READ_RELAYS_FALLBACK_MAX)
+    : [];
+  const fallbackEvents = shouldFallbackRead
+    ? await queryBlindDmSync(fallbackRelays, filter).catch(() => [] as NostrEvent[])
+    : [];
+  return {
+    relays: shouldFallbackRead ? fallbackRelays : primaryRelays,
+    events: [...primaryEvents, ...fallbackEvents],
+  };
 }
 
 function parseBlindRequestDmContent(content: string): BlindBallotRequest | null {
@@ -1258,9 +1281,9 @@ export async function fetchOptionABlindIssuanceDms(input: {
   }
   const recipientRaw = await input.signer.getPublicKey();
   const recipientHex = toHexPubkey(recipientRaw);
-  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
+  const relayCandidates = await resolveRecipientReadRelayCandidates(recipientHex, buildRelays(input.relays));
   const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
-  const events = await queryBlindDmSync(relays, {
+  const { events } = await queryBlindDmSyncWithFallback(relayCandidates, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     since: input.since ?? Math.round(Date.now() / 1000) - OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS,
@@ -1306,8 +1329,8 @@ export async function fetchOptionABlindIssuanceDmsWithNsec(input: {
 }) {
   const secretKey = decodeNsecSecretKey(input.nsec);
   const recipientHex = getPublicKey(secretKey);
-  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
-  const events = await queryBlindDmSync(relays, {
+  const relayCandidates = await resolveRecipientReadRelayCandidates(recipientHex, buildRelays(input.relays));
+  const { events } = await queryBlindDmSyncWithFallback(relayCandidates, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     limit: Math.max(1, input.limit ?? 100),
@@ -1664,9 +1687,9 @@ export async function fetchOptionABlindRequestAckDms(input: {
   }
   const recipientRaw = await input.signer.getPublicKey();
   const recipientHex = toHexPubkey(recipientRaw);
-  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
+  const relayCandidates = await resolveRecipientReadRelayCandidates(recipientHex, buildRelays(input.relays));
   const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
-  const events = await queryBlindDmSync(relays, {
+  const { events } = await queryBlindDmSyncWithFallback(relayCandidates, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     since: input.since ?? Math.round(Date.now() / 1000) - OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS,
@@ -1711,8 +1734,8 @@ export async function fetchOptionABlindRequestAckDmsWithNsec(input: {
 }) {
   const secretKey = decodeNsecSecretKey(input.nsec);
   const recipientHex = getPublicKey(secretKey);
-  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
-  const events = await queryBlindDmSync(relays, {
+  const relayCandidates = await resolveRecipientReadRelayCandidates(recipientHex, buildRelays(input.relays));
+  const { events } = await queryBlindDmSyncWithFallback(relayCandidates, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     limit: Math.max(1, input.limit ?? 100),

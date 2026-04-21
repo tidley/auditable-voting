@@ -194,6 +194,51 @@ describe("questionnaireOptionABlindDm", () => {
     expect(fetchedIssuances[0]?.issuanceId).toBe("issuance_2");
   });
 
+  it("falls back to broader relay reads when the primary issuance scan is empty", async () => {
+    const recipientSecret = generateSecretKey();
+    const recipientHex = getPublicKey(recipientSecret);
+    const recipientNpub = nip19.npubEncode(recipientHex);
+    const recipientNsec = nip19.nsecEncode(recipientSecret);
+    const senderSecret = generateSecretKey();
+
+    const issuance = {
+      type: "blind_ballot_response" as const,
+      schemaVersion: 1 as const,
+      electionId: "q_fallback",
+      requestId: "request_fallback",
+      issuanceId: "issuance_fallback",
+      invitedNpub: recipientNpub,
+      blindSignature: "sig_fallback",
+      issuedAt: new Date().toISOString(),
+    };
+
+    const wrappedIssuance = nip17.wrapEvent(
+      senderSecret,
+      { publicKey: recipientHex, relayUrl: "wss://relay.example" },
+      JSON.stringify({
+        type: "optiona_blind_issuance_dm",
+        schemaVersion: 1,
+        issuance,
+        sentAt: new Date().toISOString(),
+      }),
+      "Option A blind issuance",
+    );
+
+    querySync
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([wrappedIssuance]);
+
+    const fetchedIssuances = await fetchOptionABlindIssuanceDmsWithNsec({
+      nsec: recipientNsec,
+      electionId: "q_fallback",
+      limit: 20,
+    });
+
+    expect(fetchedIssuances).toHaveLength(1);
+    expect(fetchedIssuances[0]?.issuanceId).toBe("issuance_fallback");
+    expect(querySync).toHaveBeenCalledTimes(2);
+  });
+
   it("reads ballot submission and acceptance DMs via local nsec", async () => {
     const recipientSecret = generateSecretKey();
     const recipientHex = getPublicKey(recipientSecret);

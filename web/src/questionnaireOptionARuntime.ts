@@ -122,6 +122,7 @@ const OPTION_A_SUBMISSION_ACK_RETRY_MS = 2 * 60 * 1000;
 const OPTION_A_SELF_COPY_RECOVERY_LOOKBACK_SECONDS = Math.round(36 * 60 * 60);
 const OPTION_A_VOTER_DM_LOOKBACK_SECONDS = Math.round(36 * 60 * 60);
 const OPTION_A_VOTER_REFRESH_DM_LIMIT = 8;
+const OPTION_A_VOTER_ISSUANCE_REFRESH_DM_LIMIT = 24;
 
 export type OptionARuntimeErrorCode =
   | "not_logged_in"
@@ -962,14 +963,14 @@ export class QuestionnaireOptionAVoterRuntime {
           ? fetchOptionABlindIssuanceDmsWithNsec({
             nsec: this.fallbackNsec,
             electionId,
-            limit: 100,
+            limit: OPTION_A_VOTER_ISSUANCE_REFRESH_DM_LIMIT,
           })
           : fetchOptionABlindIssuanceDms({
             signer: this.signer,
             electionId,
             relays: this.getPreferredDmRelays(),
-            limit: OPTION_A_VOTER_REFRESH_DM_LIMIT,
-            maxDecryptAttempts: OPTION_A_VOTER_REFRESH_DM_LIMIT,
+            limit: OPTION_A_VOTER_ISSUANCE_REFRESH_DM_LIMIT,
+            maxDecryptAttempts: OPTION_A_VOTER_ISSUANCE_REFRESH_DM_LIMIT,
             since: requestSince,
           });
         fetchTasks.push(
