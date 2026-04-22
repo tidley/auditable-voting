@@ -59,12 +59,16 @@ export async function fetchQuestionnaireDefinitions(input: {
   questionnaireId?: string;
   relays?: string[];
   limit?: number;
+  readRelayLimit?: number;
+  preferKindOnly?: boolean;
 }) {
   const events = (await fetchQuestionnaireEventsWithFallback({
     questionnaireId: input.questionnaireId,
     kind: QUESTIONNAIRE_DEFINITION_KIND,
     relays: input.relays,
     limit: input.limit,
+    readRelayLimit: input.readRelayLimit,
+    preferKindOnly: input.preferKindOnly,
     parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireDefinitionEvent(event)?.questionnaireId ?? null,
   })).events;
 
@@ -110,12 +114,15 @@ export async function fetchQuestionnaireBlindResponses(input: {
   questionnaireId: string;
   relays?: string[];
   limit?: number;
+  readRelayLimit?: number;
+  preferKindOnly?: boolean;
 }) {
   const events = (await fetchQuestionnaireEventsWithFallback({
     questionnaireId: input.questionnaireId,
     kind: QUESTIONNAIRE_RESPONSE_BLIND_KIND,
     relays: input.relays,
-    readRelayLimit: 8,
+    readRelayLimit: input.readRelayLimit ?? 8,
+    preferKindOnly: input.preferKindOnly,
     limit: input.limit ?? 200,
     parseQuestionnaireIdFromEvent: (event) => {
       const parsed = parseQuestionnaireBlindResponseEvent(event.content);
@@ -241,12 +248,15 @@ export async function fetchQuestionnaireSubmissionDecisions(input: {
   questionnaireId: string;
   relays?: string[];
   limit?: number;
+  readRelayLimit?: number;
+  preferKindOnly?: boolean;
 }) {
   const events = (await fetchQuestionnaireEventsWithFallback({
     questionnaireId: input.questionnaireId,
     kind: QUESTIONNAIRE_SUBMISSION_DECISION_KIND,
     relays: input.relays,
-    readRelayLimit: 8,
+    readRelayLimit: input.readRelayLimit ?? 8,
+    preferKindOnly: input.preferKindOnly,
     limit: input.limit ?? 400,
     parseQuestionnaireIdFromEvent: (event) => {
       const parsed = parseQuestionnaireSubmissionDecisionEvent(event.content);
@@ -263,12 +273,16 @@ export async function fetchQuestionnaireState(input: {
   questionnaireId: string;
   relays?: string[];
   limit?: number;
+  readRelayLimit?: number;
+  preferKindOnly?: boolean;
 }) {
   const events = (await fetchQuestionnaireEventsWithFallback({
     questionnaireId: input.questionnaireId,
     kind: QUESTIONNAIRE_STATE_KIND,
     relays: input.relays,
     limit: input.limit,
+    readRelayLimit: input.readRelayLimit,
+    preferKindOnly: input.preferKindOnly,
     parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireStateEvent(event)?.questionnaireId ?? null,
   })).events;
 
@@ -281,12 +295,16 @@ export async function fetchQuestionnaireResultSummary(input: {
   questionnaireId: string;
   relays?: string[];
   limit?: number;
+  readRelayLimit?: number;
+  preferKindOnly?: boolean;
 }) {
   const events = (await fetchQuestionnaireEventsWithFallback({
     questionnaireId: input.questionnaireId,
     kind: QUESTIONNAIRE_RESULT_SUMMARY_KIND,
     relays: input.relays,
     limit: input.limit,
+    readRelayLimit: input.readRelayLimit,
+    preferKindOnly: input.preferKindOnly,
     parseQuestionnaireIdFromEvent: (event) => {
       try {
         const parsed = JSON.parse(event.content) as { questionnaireId?: string };

@@ -73,7 +73,8 @@ This is the practical order of operations for the current app.
 1. Open **Auditor** view.
 2. Review recent public questionnaires or filter by coordinator npub and/or questionnaire ID.
 3. Confirm accepted unique responder totals and published response/result state match expectations.
-4. If relays fragmented the separate public response events, the published result summary now still carries slim per-response refs and answer payloads so Auditor can reconstruct the detailed responder rows.
+4. Use **Submitted Votes** for per-response details (search/filter), and enable `Show invalid votes` only when reviewing rejected rows.
+5. If relays fragmented separate public response events, the published result summary still carries slim per-response refs and answer payloads so Auditor can reconstruct detailed responder rows.
 
 ### Operational notes
 
@@ -84,6 +85,9 @@ This is the practical order of operations for the current app.
 - Private questionnaire recovery now uses shared websocket inbox subscriptions, duplicate-event suppression before signer decrypt, sticky successful relay subsets, and bounded refreshes on focus/visibility/online instead of relying only on repeated timer-driven resend loops.
 - While waiting for a ballot on signer-backed mobile browsers, the client now mostly re-arms DM subscriptions and only falls back to low-rate mailbox refresh reads, reducing Amber bunker/rate-limit churn while still recovering when push delivery is missed. Successful signer DM decrypts are cached per event so repeated recovery scans do not keep re-asking Amber to unwrap the same gift-wrapped message.
 - Blind issuance discovery now also performs one broader relay fallback scan when the narrow recipient relay subset is empty, reducing cases where a ballot is visible in another Nostr client before the vote UI notices it.
+- In coordinator results, free-text values stored as `enc:nip44v2:` can now be decrypted locally when the coordinator key is available.
+- Coordinator `Closing / Closed` metadata now reflects actual close-state timing and marks overdue open rounds as `Past due` to avoid misleading historical timestamps.
+- Auditor coordinator filters are now retained across refresh/fetch churn, and selected-round refreshes use lighter kind-only relay reads to reduce relay notice spam.
 
 ---
 
@@ -232,6 +236,8 @@ The present web client is built with:
 - **clearer voter ballot progress** that labels the per-questionnaire voting identity separately from the signer account and shows request, credential, and response state
 - **safer voter tab switching** so `Vote` remains available for browsing current and older invited questionnaires and background invite refresh does not force the UI away from Configure/Settings
 - **self-copy submission recovery** that sends a best-effort encrypted copy of each ephemeral-key submission to the voter's login identity, so returning voters can recover submitted response markers and answers from their own NIP-17 mailbox
+- **coordinator self-copy state recovery** that sends coordinator questionnaire state snapshots (excluding private blind-signing key material) to the coordinator's own NIP-17 mailbox so signed-in coordinators can recover state after reload/login
+- **relay-copy quorum checks for state backups** so voter/coordinator self-state DM snapshots are only marked successful after read-after-write confirmation on at least two relays
 - **single-flight coordinator queue processing** so automatic request/submission checks do not overlap relay work
 - **idempotent ballot resend** so a voter can resend the same blind request, the coordinator republishes the existing credential DM, and background loops avoid rebroadcasting already delivered credentials
 - **more redundant DM delivery** that mixes recipient NIP-17 relay hints with fallback relays, widens credential publish fanout, and retries issued credentials until submission proves receipt

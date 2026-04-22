@@ -17,6 +17,7 @@ import type {
 } from "./questionnaireProtocol";
 
 const AUDITOR_REFRESH_INTERVAL_MS = 15000;
+const AUDITOR_QUESTIONNAIRE_LIST_REFRESH_INTERVAL_MS = 120000;
 const AUDITOR_QUESTIONNAIRE_DETAIL_LIMIT = 20;
 const AUDITOR_QUESTIONNAIRE_HISTORIC_LIMIT = 2000;
 const AUDITOR_QUESTIONNAIRE_HISTORIC_BATCH_SIZE = 8;
@@ -58,6 +59,7 @@ export default function SimpleAuditorApp() {
   const [selectedLiveState, setSelectedLiveState] = useState<string | null>(null);
   const [selectedResultSummary, setSelectedResultSummary] = useState<QuestionnaireResultSummary | null>(null);
   const [voterSearchQuery, setVoterSearchQuery] = useState("");
+  const [showInvalidVotes, setShowInvalidVotes] = useState(false);
   const [freeTextViewerQuestionId, setFreeTextViewerQuestionId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [questionnaireRefreshStatus, setQuestionnaireRefreshStatus] = useState<string | null>(null);
@@ -74,6 +76,8 @@ export default function SimpleAuditorApp() {
     const historic = Boolean(input?.historic);
     const definitions = await fetchQuestionnaireDefinitions({
       limit: historic ? AUDITOR_QUESTIONNAIRE_HISTORIC_LIMIT : 400,
+      readRelayLimit: 2,
+      preferKindOnly: true,
     });
       const latestDefinitionById = new Map<string, Awaited<ReturnType<typeof fetchQuestionnaireDefinitions>>[number]>();
       for (const entry of definitions) {
@@ -106,8 +110,18 @@ export default function SimpleAuditorApp() {
         const batchEntries = await Promise.all(batch.map(async (entry): Promise<AuditorQuestionnaireEntry> => {
         const id = entry.definition.questionnaireId;
         const [stateEntries, resultEntries] = await Promise.all([
-          fetchQuestionnaireState({ questionnaireId: id, limit: 50 }).catch(() => []),
-          fetchQuestionnaireResultSummary({ questionnaireId: id, limit: 50 }).catch(() => []),
+          fetchQuestionnaireState({
+            questionnaireId: id,
+            limit: 50,
+            readRelayLimit: 2,
+            preferKindOnly: true,
+          }).catch(() => []),
+          fetchQuestionnaireResultSummary({
+            questionnaireId: id,
+            limit: 50,
+            readRelayLimit: 2,
+            preferKindOnly: true,
+          }).catch(() => []),
         ]);
         const latestState = [...stateEntries]
           .sort((left, right) => Number(right.event.created_at ?? right.state.createdAt ?? 0) - Number(left.event.created_at ?? left.state.createdAt ?? 0))[0]
@@ -155,8 +169,6 @@ export default function SimpleAuditorApp() {
           : "No public questionnaires discovered yet.",
       );
     } catch {
-      setQuestionnaires([]);
-      setSelectedQuestionnaireId("");
       setQuestionnaireRefreshStatus("Failed to refresh public questionnaires.");
     } finally {
       refreshInFlightRef.current = false;
@@ -178,18 +190,26 @@ export default function SimpleAuditorApp() {
         fetchQuestionnaireBlindResponses({
           questionnaireId: selectedId,
           limit: AUDITOR_QUESTIONNAIRE_RESPONSE_LIMIT,
+          readRelayLimit: 2,
+          preferKindOnly: true,
         }),
         fetchQuestionnaireSubmissionDecisions({
           questionnaireId: selectedId,
           limit: AUDITOR_QUESTIONNAIRE_RESPONSE_LIMIT,
+          readRelayLimit: 2,
+          preferKindOnly: true,
         }).catch(() => []),
         fetchQuestionnaireResultSummary({
           questionnaireId: selectedId,
           limit: 50,
+          readRelayLimit: 2,
+          preferKindOnly: true,
         }).catch(() => []),
         fetchQuestionnaireState({
           questionnaireId: selectedId,
           limit: 50,
+          readRelayLimit: 2,
+          preferKindOnly: true,
         }).catch(() => []),
       ]);
       const admissions = evaluateQuestionnaireBlindAdmissions({
@@ -245,15 +265,31 @@ export default function SimpleAuditorApp() {
         await refreshSelectedQuestionnaireResponses();
       }
     };
+    const runSelectedRefresh = async () => {
+      if (cancelled) {
+        return;
+      }
+      await refreshSelectedQuestionnaireResponses();
+    };
+    const runQuestionnaireListRefresh = async () => {
+      if (cancelled) {
+        return;
+      }
+      await refreshQuestionnaires();
+    };
 
     void runRefresh();
-    const intervalId = window.setInterval(() => {
-      void runRefresh();
+    const selectedIntervalId = window.setInterval(() => {
+      void runSelectedRefresh();
     }, AUDITOR_REFRESH_INTERVAL_MS);
+    const listIntervalId = window.setInterval(() => {
+      void runQuestionnaireListRefresh();
+    }, AUDITOR_QUESTIONNAIRE_LIST_REFRESH_INTERVAL_MS);
 
     return () => {
       cancelled = true;
-      window.clearInterval(intervalId);
+      window.clearInterval(selectedIntervalId);
+      window.clearInterval(listIntervalId);
     };
   }, [refreshQuestionnaires, refreshSelectedQuestionnaireResponses]);
 
@@ -279,6 +315,12 @@ export default function SimpleAuditorApp() {
   );
 
   const [selectedCoordinatorNpub, setSelectedCoordinatorNpub] = useState("");
+  const coordinatorSelectOptions = useMemo(() => {
+    if (!selectedCoordinatorNpub || coordinatorOptions.includes(selectedCoordinatorNpub)) {
+      return coordinatorOptions;
+    }
+    return [selectedCoordinatorNpub, ...coordinatorOptions];
+  }, [coordinatorOptions, selectedCoordinatorNpub]);
 
   const filteredQuestionnaires = useMemo(
     () => questionnaires.filter((questionnaire) => {
@@ -304,9 +346,6 @@ export default function SimpleAuditorApp() {
   );
 
   useEffect(() => {
-    if (selectedCoordinatorNpub && !coordinatorOptions.includes(selectedCoordinatorNpub)) {
-      setSelectedCoordinatorNpub("");
-    }
     if (filteredQuestionnaires.length === 0) {
       if (selectedQuestionnaireId) {
         setSelectedQuestionnaireId("");
@@ -316,7 +355,7 @@ export default function SimpleAuditorApp() {
     if (!selectedQuestionnaireId || !filteredQuestionnaires.some((entry) => entry.questionnaireId === selectedQuestionnaireId)) {
       setSelectedQuestionnaireId(filteredQuestionnaires[0].questionnaireId);
     }
-  }, [coordinatorOptions, filteredQuestionnaires, selectedCoordinatorNpub, selectedQuestionnaireId]);
+  }, [filteredQuestionnaires, selectedQuestionnaireId]);
 
   const selectedQuestionnaire = useMemo(
     () => filteredQuestionnaires.find((entry) => entry.questionnaireId === selectedQuestionnaireId)
@@ -360,16 +399,19 @@ export default function SimpleAuditorApp() {
     && selectedResultSummary,
   );
   const filteredResponseDetails = useMemo(() => {
+    const visibilityFiltered = showInvalidVotes
+      ? selectedResponseDetails
+      : selectedResponseDetails.filter((entry) => entry.accepted);
     const query = voterSearchQuery.trim().toLowerCase();
     if (!query) {
-      return selectedResponseDetails;
+      return visibilityFiltered;
     }
-    return selectedResponseDetails.filter((entry) => (
+    return visibilityFiltered.filter((entry) => (
       entry.response.authorPubkey.toLowerCase().includes(query)
       || entry.response.responseId.toLowerCase().includes(query)
       || entry.response.tokenNullifier.toLowerCase().includes(query)
     ));
-  }, [selectedResponseDetails, voterSearchQuery]);
+  }, [selectedResponseDetails, showInvalidVotes, voterSearchQuery]);
 
   async function refreshNow() {
     setQuestionnaireRefreshStatus("Refreshing public questionnaires...");
@@ -483,7 +525,7 @@ export default function SimpleAuditorApp() {
                 onChange={(event) => setSelectedCoordinatorNpub(event.target.value)}
               >
                 <option value=''>Any coordinator npub</option>
-                {coordinatorOptions.map((coordinatorNpub) => (
+                {coordinatorSelectOptions.map((coordinatorNpub) => (
                   <option key={coordinatorNpub} value={coordinatorNpub}>
                     {coordinatorNpub}
                   </option>
@@ -670,6 +712,15 @@ export default function SimpleAuditorApp() {
                       onChange={(event) => setVoterSearchQuery(event.target.value)}
                       placeholder='Search by voter npub, response ID, or token...'
                     />
+                    <label className='simple-voter-note simple-auditor-invalid-toggle'>
+                      <input
+                        type='checkbox'
+                        checked={showInvalidVotes}
+                        onChange={(event) => setShowInvalidVotes(event.target.checked)}
+                      />
+                      {" "}
+                      Show invalid votes
+                    </label>
                   </div>
                 </div>
                 <ul className='simple-voter-list simple-auditor-result-list'>
@@ -678,13 +729,13 @@ export default function SimpleAuditorApp() {
                       <div className='simple-auditor-result-row'>
                         <div className='simple-auditor-result-marker'>
                           <TokenFingerprint tokenId={entry.response.authorPubkey} compact large hideMetadata />
+                          <p className='simple-voter-note simple-auditor-marker-status'>
+                            Status: {entry.accepted ? "Valid" : "Invalid"}
+                          </p>
                         </div>
                         <div className='simple-auditor-result-body'>
                           <div className='simple-auditor-result-head'>
                             <p className='simple-voter-question'>{entry.response.authorPubkey}</p>
-                            <span className='simple-voter-note'>
-                              Status: {entry.accepted ? "Valid" : "Invalid"}
-                            </span>
                           </div>
                           <p className='simple-voter-note'>
                             Submitted: {formatQuestionnaireTime(Number(entry.response.submittedAt ?? entry.event.created_at ?? 0))}

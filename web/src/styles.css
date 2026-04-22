@@ -1888,6 +1888,15 @@ code {
   align-items: flex-start;
 }
 
+.simple-auditor-result-marker {
+  display: grid;
+  gap: 8px;
+}
+
+.simple-auditor-marker-status {
+  margin: 0;
+}
+
 .simple-auditor-result-body {
   min-width: 0;
   display: grid;
@@ -1909,6 +1918,8 @@ code {
 
 .simple-auditor-answer-value {
   color: #4ade80;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .simple-auditor-submitted-toolbar {
@@ -1932,6 +1943,16 @@ code {
 
 .simple-auditor-submitted-filter .simple-voter-input {
   margin-bottom: 0;
+}
+
+.simple-auditor-invalid-toggle {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.simple-auditor-invalid-toggle input[type="checkbox"] {
+  transform: translateY(-1px);
 }
 
 .simple-auditor-submitted-stat .simple-auditor-summary-label,

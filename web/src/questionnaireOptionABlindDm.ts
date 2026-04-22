@@ -5,6 +5,7 @@ import type {
   BallotSubmission,
   BlindBallotIssuance,
   BlindBallotRequest,
+  CoordinatorElectionState,
 } from "./questionnaireOptionA";
 import type { SignerService } from "./services/signerService";
 import { getSharedNostrPool } from "./sharedNostrPool";
@@ -30,6 +31,7 @@ const KIND_NIP17_RELAY_LIST = 10050;
 const OPTION_A_BLIND_DM_QUERY_MAX_CONCURRENCY = 2;
 const OPTION_A_BLIND_DM_RELAY_BACKOFF_MS = 60 * 1000;
 const OPTION_A_BLIND_DM_SIGNER_DECODE_CACHE_LIMIT = 512;
+const OPTION_A_DM_EXISTENCE_CHECK_MAX_RELAYS = 6;
 
 const optionABlindDmRelayCooldownUntil = new Map<string, number>();
 const optionABlindDmInFlightQueries = new Map<string, Promise<NostrEvent[]>>();
@@ -112,6 +114,51 @@ type BallotAcceptanceDmEnvelope = {
   type: "optiona_ballot_acceptance_dm";
   schemaVersion: 1;
   acceptance: BallotAcceptanceResult;
+  sentAt: string;
+};
+
+export type OptionAVoterStateSnapshot = {
+  type: "voter_state_snapshot";
+  schemaVersion: 1;
+  electionId: string;
+  invitedNpub: string;
+  coordinatorNpub: string;
+  loginVerified: boolean;
+  loginVerifiedAt?: string | null;
+  blindRequest?: BlindBallotRequest | null;
+  blindRequestSent: boolean;
+  blindRequestSentAt?: string | null;
+  blindIssuance?: BlindBallotIssuance | null;
+  credentialReady: boolean;
+  responseNpub?: string | null;
+  draftResponses?: BallotSubmission["payload"]["responses"];
+  submission?: BallotSubmission | null;
+  submissionAccepted?: boolean | null;
+  submissionAcceptedAt?: string | null;
+  lastUpdatedAt: string;
+};
+
+export type OptionACoordinatorStateSnapshot = {
+  type: "coordinator_state_snapshot";
+  schemaVersion: 1;
+  electionId: string;
+  coordinatorNpub: string;
+  state: Omit<CoordinatorElectionState, "blindSigningPrivateKey">;
+  pendingAuthorizationsByNpub?: Record<string, BlindBallotRequest[]>;
+  lastUpdatedAt: string;
+};
+
+type VoterStateDmEnvelope = {
+  type: "optiona_voter_state_dm";
+  schemaVersion: 1;
+  snapshot: OptionAVoterStateSnapshot;
+  sentAt: string;
+};
+
+type CoordinatorStateDmEnvelope = {
+  type: "optiona_coordinator_state_dm";
+  schemaVersion: 1;
+  snapshot: OptionACoordinatorStateSnapshot;
   sentAt: string;
 };
 
@@ -207,6 +254,13 @@ export type OptionABlindRequestFetchDiagnostics = {
   dedupedCount: number;
   rejectReasons: Record<string, number>;
   since?: number;
+};
+
+export type OptionADmEventCopyCheckResult = {
+  eventId: string;
+  confirmedCopies: number;
+  confirmedRelays: string[];
+  checkedRelays: string[];
 };
 
 function toHexPubkey(pubkey: string) {
@@ -668,8 +722,57 @@ function parseBlindIssuanceAckDmContent(content: string): BlindIssuanceAck | nul
   }
 }
 
+function parseVoterStateDmContent(content: string): OptionAVoterStateSnapshot | null {
+  try {
+    const parsed = JSON.parse(content) as Partial<VoterStateDmEnvelope> | OptionAVoterStateSnapshot;
+    const snapshot = (parsed as VoterStateDmEnvelope).type === "optiona_voter_state_dm"
+      ? (parsed as VoterStateDmEnvelope).snapshot
+      : parsed as OptionAVoterStateSnapshot;
+    if (
+      snapshot?.type !== "voter_state_snapshot"
+      || snapshot.schemaVersion !== 1
+      || typeof snapshot.electionId !== "string"
+      || typeof snapshot.invitedNpub !== "string"
+      || typeof snapshot.coordinatorNpub !== "string"
+      || typeof snapshot.loginVerified !== "boolean"
+      || typeof snapshot.blindRequestSent !== "boolean"
+      || typeof snapshot.credentialReady !== "boolean"
+      || typeof snapshot.lastUpdatedAt !== "string"
+    ) {
+      return null;
+    }
+    return snapshot;
+  } catch {
+    return null;
+  }
+}
+
+function parseCoordinatorStateDmContent(content: string): OptionACoordinatorStateSnapshot | null {
+  try {
+    const parsed = JSON.parse(content) as Partial<CoordinatorStateDmEnvelope> | OptionACoordinatorStateSnapshot;
+    const snapshot = (parsed as CoordinatorStateDmEnvelope).type === "optiona_coordinator_state_dm"
+      ? (parsed as CoordinatorStateDmEnvelope).snapshot
+      : parsed as OptionACoordinatorStateSnapshot;
+    if (
+      snapshot?.type !== "coordinator_state_snapshot"
+      || snapshot.schemaVersion !== 1
+      || typeof snapshot.electionId !== "string"
+      || typeof snapshot.coordinatorNpub !== "string"
+      || typeof snapshot.lastUpdatedAt !== "string"
+      || !snapshot.state
+      || typeof snapshot.state !== "object"
+      || typeof snapshot.state.lastUpdatedAt !== "string"
+    ) {
+      return null;
+    }
+    return snapshot;
+  } catch {
+    return null;
+  }
+}
+
 function optionABlindDmSubject(
-  envelope: BlindRequestDmEnvelope | BlindIssuanceDmEnvelope | BlindRequestAckDmEnvelope | BlindIssuanceAckDmEnvelope | BallotSubmissionDmEnvelope | BallotSubmissionAckDmEnvelope | BallotAcceptanceDmEnvelope,
+  envelope: BlindRequestDmEnvelope | BlindIssuanceDmEnvelope | BlindRequestAckDmEnvelope | BlindIssuanceAckDmEnvelope | BallotSubmissionDmEnvelope | BallotSubmissionAckDmEnvelope | BallotAcceptanceDmEnvelope | VoterStateDmEnvelope | CoordinatorStateDmEnvelope,
 ) {
   switch (envelope.type) {
     case "optiona_blind_request_dm":
@@ -686,6 +789,10 @@ function optionABlindDmSubject(
       return "Auditable Voting ballot submission ack";
     case "optiona_ballot_acceptance_dm":
       return "Auditable Voting ballot acceptance";
+    case "optiona_voter_state_dm":
+      return "Auditable Voting voter state";
+    case "optiona_coordinator_state_dm":
+      return "Auditable Voting coordinator state";
   }
 }
 
@@ -694,7 +801,7 @@ function createRumor(input: {
   recipientHex: string;
   relayUrl?: string;
   subject: string;
-  envelope: BlindRequestDmEnvelope | BlindIssuanceDmEnvelope | BlindRequestAckDmEnvelope | BlindIssuanceAckDmEnvelope | BallotSubmissionDmEnvelope | BallotSubmissionAckDmEnvelope | BallotAcceptanceDmEnvelope;
+  envelope: BlindRequestDmEnvelope | BlindIssuanceDmEnvelope | BlindRequestAckDmEnvelope | BlindIssuanceAckDmEnvelope | BallotSubmissionDmEnvelope | BallotSubmissionAckDmEnvelope | BallotAcceptanceDmEnvelope | VoterStateDmEnvelope | CoordinatorStateDmEnvelope;
 }) {
   const rumor = {
     kind: KIND_RUMOR_MESSAGE,
@@ -908,7 +1015,7 @@ function createSignerGiftWrapSubscription<T>(input: {
 async function publishEnvelope(input: {
   signer: SignerService;
   recipientNpub: string;
-  envelope: BlindRequestDmEnvelope | BlindIssuanceDmEnvelope | BlindRequestAckDmEnvelope | BlindIssuanceAckDmEnvelope | BallotSubmissionDmEnvelope | BallotSubmissionAckDmEnvelope | BallotAcceptanceDmEnvelope;
+  envelope: BlindRequestDmEnvelope | BlindIssuanceDmEnvelope | BlindRequestAckDmEnvelope | BlindIssuanceAckDmEnvelope | BallotSubmissionDmEnvelope | BallotSubmissionAckDmEnvelope | BallotAcceptanceDmEnvelope | VoterStateDmEnvelope | CoordinatorStateDmEnvelope;
   fallbackNsec?: string;
   relays?: string[];
   channel: string;
@@ -1170,6 +1277,50 @@ export async function publishOptionABlindIssuanceAckDm(input: {
       type: "optiona_blind_issuance_ack_dm",
       schemaVersion: 1,
       ack: input.ack,
+      sentAt: new Date().toISOString(),
+    },
+  });
+}
+
+export async function publishOptionAVoterStateDm(input: {
+  signer: SignerService;
+  recipientNpub: string;
+  snapshot: OptionAVoterStateSnapshot;
+  fallbackNsec?: string;
+  relays?: string[];
+}) {
+  return publishEnvelope({
+    signer: input.signer,
+    recipientNpub: input.recipientNpub,
+    fallbackNsec: input.fallbackNsec,
+    relays: input.relays,
+    channel: `optiona-voter-state:${input.snapshot.electionId}:${input.snapshot.invitedNpub}`,
+    envelope: {
+      type: "optiona_voter_state_dm",
+      schemaVersion: 1,
+      snapshot: input.snapshot,
+      sentAt: new Date().toISOString(),
+    },
+  });
+}
+
+export async function publishOptionACoordinatorStateDm(input: {
+  signer: SignerService;
+  recipientNpub: string;
+  snapshot: OptionACoordinatorStateSnapshot;
+  fallbackNsec?: string;
+  relays?: string[];
+}) {
+  return publishEnvelope({
+    signer: input.signer,
+    recipientNpub: input.recipientNpub,
+    fallbackNsec: input.fallbackNsec,
+    relays: input.relays,
+    channel: `optiona-coordinator-state:${input.snapshot.electionId}:${input.snapshot.coordinatorNpub}`,
+    envelope: {
+      type: "optiona_coordinator_state_dm",
+      schemaVersion: 1,
+      snapshot: input.snapshot,
       sentAt: new Date().toISOString(),
     },
   });
@@ -1903,6 +2054,237 @@ export async function fetchOptionABallotSubmissionAckDmsWithNsec(input: {
     }
   }
   return [...unique.values()];
+}
+
+export async function fetchOptionAVoterStateDms(input: {
+  signer: SignerService;
+  electionId?: string;
+  relays?: string[];
+  limit?: number;
+  since?: number;
+  maxDecryptAttempts?: number;
+}) {
+  if (!input.signer.nip44Decrypt) {
+    return [] as OptionAVoterStateSnapshot[];
+  }
+  const recipientRaw = await input.signer.getPublicKey();
+  const recipientHex = toHexPubkey(recipientRaw);
+  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
+  const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
+  const events = await queryBlindDmSync(relays, {
+    kinds: [KIND_GIFT_WRAP],
+    "#p": [recipientHex],
+    since: input.since ?? Math.round(Date.now() / 1000) - OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS,
+    limit: Math.max(1, Math.min(input.limit ?? maxDecryptAttempts, maxDecryptAttempts)),
+  });
+  const unique = new Map<string, OptionAVoterStateSnapshot>();
+  const sorted = [...events]
+    .sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0))
+    .slice(0, maxDecryptAttempts);
+  for (const event of sorted) {
+    try {
+      const decoded = await decodeGiftWrapWithSigner({
+        signer: input.signer,
+        event,
+      });
+      if (!decoded) {
+        continue;
+      }
+      const snapshot = parseVoterStateDmContent(decoded.rumorContent);
+      if (!snapshot) {
+        continue;
+      }
+      if (input.electionId?.trim() && snapshot.electionId !== input.electionId.trim()) {
+        continue;
+      }
+      const key = `${snapshot.electionId}:${snapshot.invitedNpub}:${snapshot.lastUpdatedAt}`;
+      if (!unique.has(key)) {
+        unique.set(key, snapshot);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return [...unique.values()];
+}
+
+export async function fetchOptionAVoterStateDmsWithNsec(input: {
+  nsec: string;
+  electionId?: string;
+  relays?: string[];
+  limit?: number;
+  since?: number;
+}) {
+  const secretKey = decodeNsecSecretKey(input.nsec);
+  const recipientHex = getPublicKey(secretKey);
+  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
+  const events = await queryBlindDmSync(relays, {
+    kinds: [KIND_GIFT_WRAP],
+    "#p": [recipientHex],
+    since: input.since,
+    limit: Math.max(1, input.limit ?? 100),
+  });
+  const unique = new Map<string, OptionAVoterStateSnapshot>();
+  const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
+  for (const event of sorted) {
+    try {
+      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string };
+      if (!rumor || typeof rumor.content !== "string") {
+        continue;
+      }
+      const snapshot = parseVoterStateDmContent(rumor.content);
+      if (!snapshot) {
+        continue;
+      }
+      if (input.electionId?.trim() && snapshot.electionId !== input.electionId.trim()) {
+        continue;
+      }
+      const key = `${snapshot.electionId}:${snapshot.invitedNpub}:${snapshot.lastUpdatedAt}`;
+      if (!unique.has(key)) {
+        unique.set(key, snapshot);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return [...unique.values()];
+}
+
+export async function fetchOptionACoordinatorStateDms(input: {
+  signer: SignerService;
+  electionId?: string;
+  relays?: string[];
+  limit?: number;
+  since?: number;
+  maxDecryptAttempts?: number;
+}) {
+  if (!input.signer.nip44Decrypt) {
+    return [] as OptionACoordinatorStateSnapshot[];
+  }
+  const recipientRaw = await input.signer.getPublicKey();
+  const recipientHex = toHexPubkey(recipientRaw);
+  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
+  const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
+  const events = await queryBlindDmSync(relays, {
+    kinds: [KIND_GIFT_WRAP],
+    "#p": [recipientHex],
+    since: input.since ?? Math.round(Date.now() / 1000) - OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS,
+    limit: Math.max(1, Math.min(input.limit ?? maxDecryptAttempts, maxDecryptAttempts)),
+  });
+  const unique = new Map<string, OptionACoordinatorStateSnapshot>();
+  const sorted = [...events]
+    .sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0))
+    .slice(0, maxDecryptAttempts);
+  for (const event of sorted) {
+    try {
+      const decoded = await decodeGiftWrapWithSigner({
+        signer: input.signer,
+        event,
+      });
+      if (!decoded) {
+        continue;
+      }
+      const snapshot = parseCoordinatorStateDmContent(decoded.rumorContent);
+      if (!snapshot) {
+        continue;
+      }
+      if (input.electionId?.trim() && snapshot.electionId !== input.electionId.trim()) {
+        continue;
+      }
+      const key = `${snapshot.electionId}:${snapshot.coordinatorNpub}:${snapshot.lastUpdatedAt}`;
+      if (!unique.has(key)) {
+        unique.set(key, snapshot);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return [...unique.values()];
+}
+
+export async function fetchOptionACoordinatorStateDmsWithNsec(input: {
+  nsec: string;
+  electionId?: string;
+  relays?: string[];
+  limit?: number;
+  since?: number;
+}) {
+  const secretKey = decodeNsecSecretKey(input.nsec);
+  const recipientHex = getPublicKey(secretKey);
+  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
+  const events = await queryBlindDmSync(relays, {
+    kinds: [KIND_GIFT_WRAP],
+    "#p": [recipientHex],
+    since: input.since,
+    limit: Math.max(1, input.limit ?? 100),
+  });
+  const unique = new Map<string, OptionACoordinatorStateSnapshot>();
+  const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
+  for (const event of sorted) {
+    try {
+      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string };
+      if (!rumor || typeof rumor.content !== "string") {
+        continue;
+      }
+      const snapshot = parseCoordinatorStateDmContent(rumor.content);
+      if (!snapshot) {
+        continue;
+      }
+      if (input.electionId?.trim() && snapshot.electionId !== input.electionId.trim()) {
+        continue;
+      }
+      const key = `${snapshot.electionId}:${snapshot.coordinatorNpub}:${snapshot.lastUpdatedAt}`;
+      if (!unique.has(key)) {
+        unique.set(key, snapshot);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return [...unique.values()];
+}
+
+export async function confirmOptionADmEventCopies(input: {
+  eventId: string;
+  relays: string[];
+  minCopies?: number;
+}) {
+  const eventId = input.eventId.trim();
+  if (!eventId) {
+    return {
+      eventId: "",
+      confirmedCopies: 0,
+      confirmedRelays: [],
+      checkedRelays: [],
+    } satisfies OptionADmEventCopyCheckResult;
+  }
+  const minCopies = Math.max(1, input.minCopies ?? 2);
+  const checkedRelays = filterBlindDmReadRelays(normalizeRelaysRust(input.relays))
+    .slice(0, OPTION_A_DM_EXISTENCE_CHECK_MAX_RELAYS);
+  const confirmedRelays: string[] = [];
+  for (const relay of checkedRelays) {
+    try {
+      const events = await queryBlindDmSync([relay], {
+        ids: [eventId],
+        kinds: [KIND_GIFT_WRAP],
+        limit: 1,
+      });
+      if (events.some((event) => event.id === eventId)) {
+        confirmedRelays.push(relay);
+        if (confirmedRelays.length >= minCopies) {
+          break;
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+  return {
+    eventId,
+    confirmedCopies: confirmedRelays.length,
+    confirmedRelays,
+    checkedRelays,
+  } satisfies OptionADmEventCopyCheckResult;
 }
 
 export function subscribeOptionABlindRequestDms(input: {

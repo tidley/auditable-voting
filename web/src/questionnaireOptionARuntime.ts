@@ -71,6 +71,11 @@ import {
   fetchOptionABallotAcceptanceDmsWithNsec,
   fetchOptionABallotSubmissionDms,
   fetchOptionABallotSubmissionDmsWithNsec,
+  confirmOptionADmEventCopies,
+  fetchOptionACoordinatorStateDms,
+  fetchOptionACoordinatorStateDmsWithNsec,
+  fetchOptionAVoterStateDms,
+  fetchOptionAVoterStateDmsWithNsec,
   fetchOptionABlindIssuanceDms,
   fetchOptionABlindIssuanceDmsWithNsec,
   fetchOptionABlindRequestDms,
@@ -78,6 +83,8 @@ import {
   publishOptionABallotSubmissionAckDm,
   publishOptionABallotAcceptanceDm,
   publishOptionABallotSubmissionDm,
+  publishOptionACoordinatorStateDm,
+  publishOptionAVoterStateDm,
   publishOptionABlindIssuanceAckDm,
   publishOptionABlindIssuanceDm,
   publishOptionABlindRequestAckDm,
@@ -92,6 +99,8 @@ import {
   type BallotSubmissionAck,
   type BlindRequestAck,
   type BlindIssuanceAck,
+  type OptionACoordinatorStateSnapshot,
+  type OptionAVoterStateSnapshot,
   type OptionABlindRequestFetchDiagnostics,
 } from "./questionnaireOptionABlindDm";
 import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
@@ -130,9 +139,11 @@ const OPTION_A_BLIND_REQUEST_ACK_RESEND_AFTER_MS = 20 * 60 * 1000;
 const OPTION_A_SUBMISSION_REPUBLISH_RETRY_MS = 3 * 60 * 1000;
 const OPTION_A_SUBMISSION_ACK_RETRY_MS = 2 * 60 * 1000;
 const OPTION_A_SELF_COPY_RECOVERY_LOOKBACK_SECONDS = Math.round(36 * 60 * 60);
+const OPTION_A_STATE_SELF_COPY_PUBLISH_MIN_INTERVAL_MS = 15 * 1000;
 const OPTION_A_VOTER_DM_LOOKBACK_SECONDS = Math.round(36 * 60 * 60);
 const OPTION_A_VOTER_REFRESH_DM_LIMIT = 8;
 const OPTION_A_VOTER_ISSUANCE_REFRESH_DM_LIMIT = 24;
+const OPTION_A_STATE_SELF_COPY_MIN_RELAY_COPIES = 2;
 
 export type OptionARuntimeErrorCode =
   | "not_logged_in"
@@ -405,6 +416,8 @@ export class QuestionnaireOptionAVoterRuntime {
   private state: VoterElectionLocalState | null = null;
   private requestBlindBallotInflight: Promise<VoterElectionLocalState> | null = null;
   private submitVoteInflight: Promise<VoterElectionLocalState> | null = null;
+  private lastSelfStateSnapshotHash: string | null = null;
+  private lastSelfStateSnapshotPublishedAt = 0;
   private refreshFetchInFlight = false;
   private submissionRepublishAttemptAtBySubmissionId = new Map<string, number>();
   private blindIssuanceAckInflightByRequestId = new Map<string, Promise<void>>();
@@ -460,6 +473,184 @@ export class QuestionnaireOptionAVoterRuntime {
     if (relays.length > 0) {
       recordElectionPrivateRelaySuccesses(this.electionId, relays);
     }
+  }
+
+  private buildVoterSelfStateSnapshot(state: VoterElectionLocalState): OptionAVoterStateSnapshot {
+    return {
+      type: "voter_state_snapshot",
+      schemaVersion: 1,
+      electionId: state.electionId,
+      invitedNpub: state.invitedNpub,
+      coordinatorNpub: state.coordinatorNpub,
+      loginVerified: state.loginVerified,
+      loginVerifiedAt: state.loginVerifiedAt ?? null,
+      blindRequest: state.blindRequest ?? null,
+      blindRequestSent: state.blindRequestSent,
+      blindRequestSentAt: state.blindRequestSentAt ?? null,
+      blindIssuance: state.blindIssuance ?? null,
+      credentialReady: state.credentialReady,
+      responseNpub: state.responseNpub ?? null,
+      draftResponses: state.draftResponses,
+      submission: state.submission ?? null,
+      submissionAccepted: state.submissionAccepted ?? null,
+      submissionAcceptedAt: state.submissionAcceptedAt ?? null,
+      lastUpdatedAt: state.lastUpdatedAt,
+    };
+  }
+
+  private async publishVoterStateSelfDm(options?: { force?: boolean; reason?: string }) {
+    if (!this.state?.loginVerified || !this.state.invitedNpub) {
+      return;
+    }
+    const now = Date.now();
+    if (!options?.force && now - this.lastSelfStateSnapshotPublishedAt < OPTION_A_STATE_SELF_COPY_PUBLISH_MIN_INTERVAL_MS) {
+      return;
+    }
+    const snapshot = this.buildVoterSelfStateSnapshot(this.state);
+    const fingerprint = await sha256Hex(JSON.stringify(snapshot));
+    if (!options?.force && this.lastSelfStateSnapshotHash === fingerprint) {
+      return;
+    }
+    try {
+      const result = await publishOptionAVoterStateDm({
+        signer: this.signer,
+        recipientNpub: this.state.invitedNpub,
+        snapshot,
+        fallbackNsec: this.fallbackNsec,
+        relays: this.getPreferredDmRelays(),
+      });
+      this.rememberPrivateRelaySuccesses(result);
+      const relayCandidates = result.relayResults.map((entry) => entry.relay);
+      const copyCheck = await confirmOptionADmEventCopies({
+        eventId: result.eventId ?? "",
+        relays: relayCandidates,
+        minCopies: OPTION_A_STATE_SELF_COPY_MIN_RELAY_COPIES,
+      });
+      if (copyCheck.confirmedCopies >= OPTION_A_STATE_SELF_COPY_MIN_RELAY_COPIES) {
+        this.lastSelfStateSnapshotHash = fingerprint;
+        this.lastSelfStateSnapshotPublishedAt = now;
+        optionAFlowLog("voter", "state_self_copy_publish_result", {
+          electionId: this.state.electionId,
+          invitedNpub: this.state.invitedNpub,
+          reason: options?.reason ?? "unspecified",
+          successes: result.successes,
+          failures: result.failures,
+          confirmedCopies: copyCheck.confirmedCopies,
+          confirmedRelays: copyCheck.confirmedRelays,
+        });
+      } else {
+        optionAFlowLog("voter", "state_self_copy_publish_insufficient_copies", {
+          electionId: this.state.electionId,
+          invitedNpub: this.state.invitedNpub,
+          reason: options?.reason ?? "unspecified",
+          eventId: result.eventId,
+          successes: result.successes,
+          failures: result.failures,
+          confirmedCopies: copyCheck.confirmedCopies,
+          checkedRelays: copyCheck.checkedRelays,
+          requiredCopies: OPTION_A_STATE_SELF_COPY_MIN_RELAY_COPIES,
+        });
+      }
+    } catch (error) {
+      optionAFlowLog("voter", "state_self_copy_publish_failed", {
+        electionId: this.state.electionId,
+        invitedNpub: this.state.invitedNpub,
+        reason: options?.reason ?? "unspecified",
+        error: error instanceof Error ? error.message : "unknown",
+      });
+    }
+  }
+
+  private applyRecoveredVoterStateSnapshot(snapshot: OptionAVoterStateSnapshot) {
+    if (!this.state) {
+      return false;
+    }
+    if (snapshot.electionId !== this.state.electionId || snapshot.invitedNpub !== this.state.invitedNpub) {
+      return false;
+    }
+    const currentUpdatedAtMs = Date.parse(this.state.lastUpdatedAt);
+    const snapshotUpdatedAtMs = Date.parse(snapshot.lastUpdatedAt);
+    const snapshotLooksNewer = Number.isFinite(snapshotUpdatedAtMs) && (
+      !Number.isFinite(currentUpdatedAtMs) || snapshotUpdatedAtMs >= currentUpdatedAtMs
+    );
+    const fillsMissingProgress = (
+      (!this.state.blindRequestSent && snapshot.blindRequestSent)
+      || (!this.state.credentialReady && snapshot.credentialReady)
+      || (!this.state.submission && Boolean(snapshot.submission))
+      || (this.state.submissionAccepted == null && snapshot.submissionAccepted != null)
+    );
+    if (!snapshotLooksNewer && !fillsMissingProgress) {
+      return false;
+    }
+
+    const next: VoterElectionLocalState = {
+      ...this.state,
+      coordinatorNpub: this.state.coordinatorNpub || snapshot.coordinatorNpub,
+      loginVerified: this.state.loginVerified || snapshot.loginVerified,
+      loginVerifiedAt: this.state.loginVerifiedAt ?? snapshot.loginVerifiedAt ?? null,
+      blindRequest: this.state.blindRequest ?? snapshot.blindRequest ?? null,
+      blindRequestSent: this.state.blindRequestSent || snapshot.blindRequestSent,
+      blindRequestSentAt: this.state.blindRequestSentAt ?? snapshot.blindRequestSentAt ?? null,
+      blindIssuance: this.state.blindIssuance ?? snapshot.blindIssuance ?? null,
+      credentialReady: this.state.credentialReady || snapshot.credentialReady,
+      responseNpub: this.state.responseNpub ?? snapshot.responseNpub ?? null,
+      draftResponses: this.state.draftResponses.length > 0
+        ? this.state.draftResponses
+        : (snapshot.draftResponses ?? []),
+      submission: this.state.submission ?? snapshot.submission ?? null,
+      submissionAccepted: this.state.submissionAccepted ?? snapshot.submissionAccepted ?? null,
+      submissionAcceptedAt: this.state.submissionAcceptedAt ?? snapshot.submissionAcceptedAt ?? null,
+      lastUpdatedAt: snapshotLooksNewer ? snapshot.lastUpdatedAt : this.state.lastUpdatedAt,
+    };
+    if (next.blindIssuance) {
+      storeBlindIssuance(next.blindIssuance);
+      if (next.blindIssuance.definition) {
+        storeCachedQuestionnaireDefinition(next.blindIssuance.definition);
+      }
+    }
+    if (next.submission) {
+      enqueueSubmission(next.submission);
+    }
+    this.state = next;
+    saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
+    optionAFlowLog("voter", "state_self_copy_recovered", {
+      electionId: this.state.electionId,
+      invitedNpub: this.state.invitedNpub,
+      blindRequestSent: this.state.blindRequestSent,
+      credentialReady: this.state.credentialReady,
+      hasSubmission: Boolean(this.state.submission),
+      submissionAccepted: this.state.submissionAccepted,
+    });
+    return true;
+  }
+
+  async recoverVoterStateFromSelfDm() {
+    if (!this.state) {
+      throw new OptionARuntimeError("not_logged_in", "Login is required.");
+    }
+    const voterNsec = this.fallbackNsec?.trim() ?? "";
+    const since = Math.floor(Date.now() / 1000) - OPTION_A_SELF_COPY_RECOVERY_LOOKBACK_SECONDS;
+    const snapshots = voterNsec
+      ? await fetchOptionAVoterStateDmsWithNsec({
+        nsec: voterNsec,
+        electionId: this.state.electionId,
+        limit: 100,
+        since,
+      })
+      : await fetchOptionAVoterStateDms({
+        signer: this.signer,
+        electionId: this.state.electionId,
+        limit: 40,
+        maxDecryptAttempts: 40,
+        since,
+      });
+    const latest = snapshots
+      .filter((snapshot) => snapshot.electionId === this.state?.electionId && snapshot.invitedNpub === this.state?.invitedNpub)
+      .sort((left, right) => Date.parse(right.lastUpdatedAt) - Date.parse(left.lastUpdatedAt))[0] ?? null;
+    if (latest) {
+      this.applyRecoveredVoterStateSnapshot(latest);
+    }
+    return this.state;
   }
 
   restartVoterDmSubscriptions() {
@@ -690,7 +881,10 @@ export class QuestionnaireOptionAVoterRuntime {
     if (restored.blindIssuance) {
       void this.ensureBlindIssuanceAck(restored.blindIssuance).catch(() => undefined);
     }
-    return await this.recoverSubmittedBallotFromSelfDm().catch(() => restored);
+    await this.recoverVoterStateFromSelfDm().catch(() => restored);
+    await this.recoverSubmittedBallotFromSelfDm().catch(() => restored);
+    void this.publishVoterStateSelfDm({ reason: "login_with_signer" });
+    return this.state ?? restored;
   }
 
   bootstrapWithLocalIdentity(input: {
@@ -767,6 +961,8 @@ export class QuestionnaireOptionAVoterRuntime {
     if (restored.blindIssuance) {
       void this.ensureBlindIssuanceAck(restored.blindIssuance).catch(() => undefined);
     }
+    void this.recoverVoterStateFromSelfDm().catch(() => restored);
+    void this.publishVoterStateSelfDm({ reason: "bootstrap_local_identity" });
     return restored;
   }
 
@@ -788,6 +984,7 @@ export class QuestionnaireOptionAVoterRuntime {
     };
     enqueueSubmission(submission);
     saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
+    void this.publishVoterStateSelfDm({ reason: "submission_self_copy_recovered" });
     optionAFlowLog("voter", "submission_self_copy_recovered", {
       electionId: this.state.electionId,
       submissionId: submission.submissionId,
@@ -840,6 +1037,7 @@ export class QuestionnaireOptionAVoterRuntime {
     if (updated.ok) {
       this.state = updated.state;
       saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
+      void this.publishVoterStateSelfDm({ reason: "draft_responses_updated" });
     }
   }
 
@@ -868,6 +1066,7 @@ export class QuestionnaireOptionAVoterRuntime {
     if (this.state.blindIssuance) {
       void this.ensureBlindIssuanceAck(this.state.blindIssuance).catch(() => undefined);
       saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
+      void this.publishVoterStateSelfDm({ reason: "request_blind_ballot_already_issued" });
       return this.state;
     }
 
@@ -939,6 +1138,7 @@ export class QuestionnaireOptionAVoterRuntime {
         minRetryMs,
       });
       saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
+      void this.publishVoterStateSelfDm({ reason: "request_blind_ballot_skip_cooldown" });
       return this.state;
     }
     const requestAck = request ? readBlindRequestAckRecord(request.requestId) : null;
@@ -956,6 +1156,7 @@ export class QuestionnaireOptionAVoterRuntime {
         minRetryMs: OPTION_A_BLIND_REQUEST_ACK_RETRY_MS,
       });
       saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
+      void this.publishVoterStateSelfDm({ reason: "request_blind_ballot_skip_acknowledged" });
       return this.state;
     }
     if (
@@ -974,6 +1175,7 @@ export class QuestionnaireOptionAVoterRuntime {
         minRetryMs: OPTION_A_BLIND_REQUEST_ACK_RESEND_AFTER_MS,
       });
       saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
+      void this.publishVoterStateSelfDm({ reason: "request_blind_ballot_skip_ack_backoff" });
       return this.state;
     }
     if (
@@ -989,6 +1191,7 @@ export class QuestionnaireOptionAVoterRuntime {
       });
     }
     saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
+    void this.publishVoterStateSelfDm({ reason: "request_blind_ballot_pre_publish" });
     if (!this.state.coordinatorNpub?.trim()) {
       throw new OptionARuntimeError(
         "invite_missing",
@@ -1024,6 +1227,7 @@ export class QuestionnaireOptionAVoterRuntime {
     this.startVoterDmSubscriptions();
     enqueueBlindRequest(request);
     saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
+    void this.publishVoterStateSelfDm({ reason: "request_blind_ballot_sent", force: true });
     optionAFlowLog("voter", "blind_request_sent", {
       electionId: this.state.electionId,
       requestId: request.requestId,
@@ -1224,6 +1428,7 @@ export class QuestionnaireOptionAVoterRuntime {
     }
     this.state = next;
     saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
+    void this.publishVoterStateSelfDm({ reason: "refresh_issuance_acceptance" });
     return this.state;
   }
 
@@ -1318,6 +1523,7 @@ export class QuestionnaireOptionAVoterRuntime {
         throw new OptionARuntimeError("dm_delivery_failed", "No relay accepted the public ballot submission.");
       }
       await this.publishBallotSubmissionSelfCopyDm(this.state.submission, { fallbackNsec: this.state.responseNsec });
+      void this.publishVoterStateSelfDm({ reason: "submit_vote_republish_existing", force: true });
       return this.state;
     }
 
@@ -1399,6 +1605,7 @@ export class QuestionnaireOptionAVoterRuntime {
     };
     this.startVoterDmSubscriptions();
     saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
+    void this.publishVoterStateSelfDm({ reason: "submit_vote_created", force: true });
     const published = await publishQuestionnaireBlindResponsePublic({
       responseNsec,
       questionnaireId: this.state.electionId,
@@ -1427,6 +1634,7 @@ export class QuestionnaireOptionAVoterRuntime {
       throw new OptionARuntimeError("dm_delivery_failed", "No relay accepted the public ballot submission.");
     }
     await this.publishBallotSubmissionSelfCopyDm(submission, { fallbackNsec: responseNsec });
+    void this.publishVoterStateSelfDm({ reason: "submit_vote_completed", force: true });
     optionAFlowLog("voter", "submit_vote_completed", {
       electionId: this.state.electionId,
       submissionId: submission.submissionId,
@@ -1504,6 +1712,8 @@ export class QuestionnaireOptionAVoterRuntime {
 export class QuestionnaireOptionACoordinatorRuntime {
   private state: CoordinatorElectionState | null = null;
   private coordinatorNpub: string | null = null;
+  private lastSelfStateSnapshotHash: string | null = null;
+  private lastSelfStateSnapshotPublishedAt = 0;
   private pendingAuthorizationsByNpub: Record<string, BlindBallotRequest[]> = {};
   private issuanceDmRepublishRequests = new Map<string, string>();
   private stopBlindRequestSubscription: (() => void) | null = null;
@@ -1653,6 +1863,200 @@ export class QuestionnaireOptionACoordinatorRuntime {
     if (relays.length > 0) {
       recordElectionPrivateRelaySuccesses(this.electionId, relays);
     }
+  }
+
+  private buildCoordinatorSelfStateSnapshot(state: CoordinatorElectionState): OptionACoordinatorStateSnapshot {
+    const { blindSigningPrivateKey: _ignored, ...stateWithoutPrivateKey } = state;
+    const pendingAuthorizationsByNpub = Object.fromEntries(
+      Object.entries(this.pendingAuthorizationsByNpub).map(([npub, requests]) => [npub, [...requests]]),
+    );
+    return {
+      type: "coordinator_state_snapshot",
+      schemaVersion: 1,
+      electionId: state.election.electionId,
+      coordinatorNpub: state.election.coordinatorNpub,
+      state: stateWithoutPrivateKey,
+      pendingAuthorizationsByNpub,
+      lastUpdatedAt: state.lastUpdatedAt,
+    };
+  }
+
+  private async publishCoordinatorStateSelfDm(options?: { force?: boolean; reason?: string }) {
+    if (!this.state || !this.coordinatorNpub) {
+      return;
+    }
+    const now = Date.now();
+    if (!options?.force && now - this.lastSelfStateSnapshotPublishedAt < OPTION_A_STATE_SELF_COPY_PUBLISH_MIN_INTERVAL_MS) {
+      return;
+    }
+    const snapshot = this.buildCoordinatorSelfStateSnapshot(this.state);
+    const fingerprint = await sha256Hex(JSON.stringify(snapshot));
+    if (!options?.force && this.lastSelfStateSnapshotHash === fingerprint) {
+      return;
+    }
+    try {
+      const result = await publishOptionACoordinatorStateDm({
+        signer: this.signer,
+        recipientNpub: this.coordinatorNpub,
+        snapshot,
+        fallbackNsec: this.fallbackNsec,
+        relays: this.getPreferredDmRelays(),
+      });
+      this.rememberPrivateRelaySuccesses(result);
+      const relayCandidates = result.relayResults.map((entry) => entry.relay);
+      const copyCheck = await confirmOptionADmEventCopies({
+        eventId: result.eventId ?? "",
+        relays: relayCandidates,
+        minCopies: OPTION_A_STATE_SELF_COPY_MIN_RELAY_COPIES,
+      });
+      if (copyCheck.confirmedCopies >= OPTION_A_STATE_SELF_COPY_MIN_RELAY_COPIES) {
+        this.lastSelfStateSnapshotHash = fingerprint;
+        this.lastSelfStateSnapshotPublishedAt = now;
+        optionAFlowLog("coordinator", "state_self_copy_publish_result", {
+          electionId: this.state.election.electionId,
+          coordinatorNpub: this.coordinatorNpub,
+          reason: options?.reason ?? "unspecified",
+          successes: result.successes,
+          failures: result.failures,
+          confirmedCopies: copyCheck.confirmedCopies,
+          confirmedRelays: copyCheck.confirmedRelays,
+        });
+      } else {
+        optionAFlowLog("coordinator", "state_self_copy_publish_insufficient_copies", {
+          electionId: this.state.election.electionId,
+          coordinatorNpub: this.coordinatorNpub,
+          reason: options?.reason ?? "unspecified",
+          eventId: result.eventId,
+          successes: result.successes,
+          failures: result.failures,
+          confirmedCopies: copyCheck.confirmedCopies,
+          checkedRelays: copyCheck.checkedRelays,
+          requiredCopies: OPTION_A_STATE_SELF_COPY_MIN_RELAY_COPIES,
+        });
+      }
+    } catch (error) {
+      optionAFlowLog("coordinator", "state_self_copy_publish_failed", {
+        electionId: this.state.election.electionId,
+        coordinatorNpub: this.coordinatorNpub,
+        reason: options?.reason ?? "unspecified",
+        error: error instanceof Error ? error.message : "unknown",
+      });
+    }
+  }
+
+  private persistCoordinatorState(reason: string, options?: { force?: boolean }) {
+    if (!this.state || !this.coordinatorNpub) {
+      return;
+    }
+    saveCoordinatorState({ coordinatorNpub: this.coordinatorNpub, state: this.state });
+    void this.publishCoordinatorStateSelfDm({
+      reason,
+      force: options?.force,
+    });
+  }
+
+  private applyRecoveredCoordinatorStateSnapshot(snapshot: OptionACoordinatorStateSnapshot) {
+    if (!this.state || !this.coordinatorNpub) {
+      return false;
+    }
+    if (snapshot.electionId !== this.state.election.electionId || snapshot.coordinatorNpub !== this.coordinatorNpub) {
+      return false;
+    }
+    const currentUpdatedAtMs = Date.parse(this.state.lastUpdatedAt);
+    const snapshotUpdatedAtMs = Date.parse(snapshot.lastUpdatedAt);
+    const snapshotLooksNewer = Number.isFinite(snapshotUpdatedAtMs) && (
+      !Number.isFinite(currentUpdatedAtMs) || snapshotUpdatedAtMs >= currentUpdatedAtMs
+    );
+    const fillsMissingProgress = (
+      Object.keys(snapshot.state.issuedBlindResponses).length > Object.keys(this.state.issuedBlindResponses).length
+      || Object.keys(snapshot.state.receivedSubmissions).length > Object.keys(this.state.receivedSubmissions).length
+      || Object.keys(snapshot.state.acceptanceResults).length > Object.keys(this.state.acceptanceResults).length
+      || Object.keys(snapshot.pendingAuthorizationsByNpub ?? {}).length > Object.keys(this.pendingAuthorizationsByNpub).length
+    );
+    if (!snapshotLooksNewer && !fillsMissingProgress) {
+      return false;
+    }
+
+    const merged = restoreCoordinatorElectionState({
+      persisted: {
+        ...this.state,
+        election: {
+          ...this.state.election,
+          ...snapshot.state.election,
+        },
+        whitelist: {
+          ...this.state.whitelist,
+          ...snapshot.state.whitelist,
+        },
+        pendingBlindRequests: {
+          ...this.state.pendingBlindRequests,
+          ...snapshot.state.pendingBlindRequests,
+        },
+        issuedBlindResponses: {
+          ...this.state.issuedBlindResponses,
+          ...snapshot.state.issuedBlindResponses,
+        },
+        receivedSubmissions: {
+          ...this.state.receivedSubmissions,
+          ...snapshot.state.receivedSubmissions,
+        },
+        acceptedNullifiers: {
+          ...this.state.acceptedNullifiers,
+          ...snapshot.state.acceptedNullifiers,
+        },
+        acceptanceResults: {
+          ...this.state.acceptanceResults,
+          ...snapshot.state.acceptanceResults,
+        },
+        blindSigningPrivateKey: this.state.blindSigningPrivateKey ?? null,
+        lastUpdatedAt: snapshotLooksNewer ? snapshot.lastUpdatedAt : this.state.lastUpdatedAt,
+      },
+    });
+    this.pendingAuthorizationsByNpub = {
+      ...this.pendingAuthorizationsByNpub,
+      ...(snapshot.pendingAuthorizationsByNpub ?? {}),
+    };
+    this.state = merged;
+    upsertElectionSummary(this.state.election);
+    saveCoordinatorState({ coordinatorNpub: this.coordinatorNpub, state: this.state });
+    optionAFlowLog("coordinator", "state_self_copy_recovered", {
+      electionId: this.state.election.electionId,
+      coordinatorNpub: this.coordinatorNpub,
+      issuedBlindResponses: Object.keys(this.state.issuedBlindResponses).length,
+      receivedSubmissions: Object.keys(this.state.receivedSubmissions).length,
+      acceptanceResults: Object.keys(this.state.acceptanceResults).length,
+      pendingAuthorizations: Object.keys(this.pendingAuthorizationsByNpub).length,
+    });
+    return true;
+  }
+
+  async recoverCoordinatorStateFromSelfDm() {
+    if (!this.state || !this.coordinatorNpub) {
+      throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
+    }
+    const coordinatorNsec = this.fallbackNsec?.trim() ?? "";
+    const since = Math.floor(Date.now() / 1000) - OPTION_A_SELF_COPY_RECOVERY_LOOKBACK_SECONDS;
+    const snapshots = coordinatorNsec
+      ? await fetchOptionACoordinatorStateDmsWithNsec({
+        nsec: coordinatorNsec,
+        electionId: this.state.election.electionId,
+        limit: 120,
+        since,
+      })
+      : await fetchOptionACoordinatorStateDms({
+        signer: this.signer,
+        electionId: this.state.election.electionId,
+        limit: 60,
+        maxDecryptAttempts: 60,
+        since,
+      });
+    const latest = snapshots
+      .filter((snapshot) => snapshot.electionId === this.state?.election.electionId && snapshot.coordinatorNpub === this.coordinatorNpub)
+      .sort((left, right) => Date.parse(right.lastUpdatedAt) - Date.parse(left.lastUpdatedAt))[0] ?? null;
+    if (latest) {
+      this.applyRecoveredCoordinatorStateSnapshot(latest);
+    }
+    return this.state;
   }
 
   private async publishBlindRequestAckDm(request: BlindBallotRequest) {
@@ -1844,8 +2248,10 @@ export class QuestionnaireOptionACoordinatorRuntime {
   async loginWithSigner(summary?: Partial<ElectionSummary>) {
     this.coordinatorNpub = toNpub(await this.signer.getPublicKey());
     const state = this.ensureCoordinatorState(summary);
+    await this.recoverCoordinatorStateFromSelfDm().catch(() => this.state ?? state);
     await this.ensureBlindSigningKey();
     this.startCoordinatorDmSubscriptions();
+    void this.publishCoordinatorStateSelfDm({ reason: "login_with_signer" });
     return this.state ?? state;
   }
 
@@ -1870,6 +2276,8 @@ export class QuestionnaireOptionACoordinatorRuntime {
         this.startCoordinatorDmSubscriptions();
       }
     }
+    void this.recoverCoordinatorStateFromSelfDm().catch(() => this.state ?? state);
+    void this.publishCoordinatorStateSelfDm({ reason: "bootstrap_local_identity" });
     return state;
   }
 
@@ -1916,7 +2324,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
     upsertElectionSummary(nextSummary);
     const created = emptyCoordinatorState(nextSummary);
     this.state = created;
-    saveCoordinatorState({ coordinatorNpub: this.coordinatorNpub, state: created });
+    this.persistCoordinatorState("coordinator_state_created", { force: true });
     return created;
   }
 
@@ -1935,7 +2343,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
           },
         };
         upsertElectionSummary(this.state.election);
-        saveCoordinatorState({ coordinatorNpub: this.coordinatorNpub, state: this.state });
+        this.persistCoordinatorState("blind_signing_public_key_backfilled");
       }
       return existingPrivateKey;
     }
@@ -1949,7 +2357,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       },
     };
     upsertElectionSummary(this.state.election);
-    saveCoordinatorState({ coordinatorNpub: this.coordinatorNpub, state: this.state });
+    this.persistCoordinatorState("blind_signing_key_generated", { force: true });
     return privateKey;
   }
 
@@ -1975,7 +2383,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       throw new OptionARuntimeError("invalid_submission", "Could not add whitelist entry.");
     }
     this.state = reduced.state;
-    saveCoordinatorState({ coordinatorNpub: this.coordinatorNpub, state: this.state });
+    this.persistCoordinatorState("whitelist_added", { force: true });
     return this.state;
   }
 
@@ -2064,7 +2472,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       dmFailureReason = error instanceof Error ? error.message : "Invite DM publish failed.";
     }
     publishInviteToMailbox(invite);
-    saveCoordinatorState({ coordinatorNpub: this.coordinatorNpub, state: this.state });
+    this.persistCoordinatorState("invite_sent", { force: true });
     return {
       invite,
       dmDelivered,
@@ -2497,7 +2905,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       dequeueBlindRequest(request.requestId);
     }
     this.state = next;
-    saveCoordinatorState({ coordinatorNpub: this.coordinatorNpub, state: this.state });
+    this.persistCoordinatorState("process_pending_blind_requests", { force: true });
     return this.state;
   }
 
@@ -2683,7 +3091,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
     }
 
     this.state = next;
-    saveCoordinatorState({ coordinatorNpub: this.coordinatorNpub, state: this.state });
+    this.persistCoordinatorState("process_pending_submissions", { force: true });
     return this.state;
   }
 

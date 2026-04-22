@@ -50,6 +50,7 @@ The shipped app currently includes:
 - new questionnaires now default to protocol v2 `public_submission_v1`, so coordinator verification and result publication are driven from public submissions + public submission-decision events (not private submission DMs)
 - invite links with a public questionnaire id now avoid encrypted invite-mailbox scans after signer login, and signer-backed DM reads are recent and bounded to reduce Amber bunker prompts
 - coordinator questionnaire close timers are now opt-in (default off) so rounds stay open until explicitly closed unless a timer is enabled
+- coordinator results metadata now shows an accurate `Closing / Closed` label from state transition timing and marks overdue open rounds as `Past due`
 - generated voter invite links now default to the current page host so deployments work without hard-coded domains
 - Android signer sessions now prefer Amber via NIP-46 when available, so signer-backed questionnaire DM flows use one consistent signer identity for `get_public_key`, `sign_event`, and `nip44_*`
 - the login gateway now shows login controls in order: `Signer`/`nsec`, then signer choice (`NOS2X-FOX`/`Amber`), then one action button; it can also generate/copy `nostrconnect://` URLs, show QR for login handoff, and copy an Amber-compatible `bunker://` (`nsecbunker`) variant
@@ -68,12 +69,18 @@ The shipped app currently includes:
 - blind issuance discovery now does one broader relay fallback scan when the narrow recipient relay subset is empty, reducing cases where the ballot is visible in another client but not yet surfaced in the vote UI
 - credential delivery is biased back toward reliability: DM writes mix recipient relay hints with fallback relays, publish to more relays, and retry issued credentials until the voter submits
 - ballot submission sends include a best-effort encrypted self-copy to the voter's login identity so submitted response markers and answers can be recovered after logging back in
+- coordinator runtime state is now also self-journaled to the coordinator's own NIP-17 inbox (without private blind-signing key material), so a signed-in coordinator can recover questionnaire state from DM history
+- voter/coordinator self-state backup DM writes now require post-publish confirmation on at least 2 relays before they are marked successful (quorum-style copy check)
 - local browser persistence, backup, and optional passphrase protection
 - voter questionnaire participation history is now stored locally and included in voter backups/restores
 - auditor round selection now supports lead-coordinator filter, coordinator-npub filter, and free-text search (npub/round ID/prompt), with slower non-overlapping refreshes to reduce relay REQ spikes
+- auditor coordinator filters now persist across refresh cycles and temporary relay/query failures instead of being cleared
 - auditor questionnaire discovery now reads recent public questionnaire definitions by kind-only backfill when no questionnaire ID is selected, then shows state and published response totals when available
+- auditor selected-round refresh now prefers kind-only reads on a small relay subset to reduce `too many concurrent REQs` and `unindexed tag filter` relay notices
 - published questionnaire result summaries now carry canonical per-response refs plus slim answer payloads, so Auditor can still show full responder rows when relays fragment the separate public response events
 - auditor per-response detail rows are now derived from public submissions + public coordinator decisions (with published response refs as parity backfill), avoiding coordinator-local fallback divergence
+- auditor now uses the in-page `Submitted Votes` panel as the canonical per-response view (search + pagination), with invalid rows hidden behind an explicit `Show invalid votes` toggle by default
+- coordinator results can now decrypt `enc:nip44v2:` free-text answers when the coordinator key is available locally
 - mobile signer ballot wait loops now poll and resend less aggressively to reduce Amber rate-limit churn while retaining recovery scans
 - auditor questionnaire discovery has an explicit `Search historic data` action next to the questionnaire selector for wider historical scans when older published questionnaires or public result payloads are not in the default recent list
 - optional relay hint resolution via NIP-65, disabled by default

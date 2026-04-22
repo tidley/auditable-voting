@@ -274,6 +274,28 @@ function formatQuestionnaireMetadataState(state: QuestionnaireStateValue | null,
   return "Published";
 }
 
+function formatClosingClosedLabel(input: {
+  latestDefinition: QuestionnaireDefinition | null;
+  latestState: QuestionnaireStateValue | null;
+  latestStateCreatedAt: number | null;
+}) {
+  if (!input.latestDefinition?.closeAt || !Number.isFinite(input.latestDefinition.closeAt)) {
+    return "Not scheduled";
+  }
+  const scheduledCloseAtLabel = formatUnixTimestamp(input.latestDefinition.closeAt);
+  if (input.latestState === "closed" || input.latestState === "results_published") {
+    if (input.latestStateCreatedAt && Number.isFinite(input.latestStateCreatedAt)) {
+      return formatUnixTimestamp(input.latestStateCreatedAt);
+    }
+    return scheduledCloseAtLabel;
+  }
+  const nowUnix = Math.floor(Date.now() / 1000);
+  if (input.latestState === "open" && input.latestDefinition.closeAt <= nowUnix) {
+    return `Past due (${scheduledCloseAtLabel})`;
+  }
+  return scheduledCloseAtLabel;
+}
+
 function downloadJsonFile(filename: string, payload: unknown) {
   if (typeof window === "undefined") {
     return;
@@ -418,6 +440,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [isCloseAndPublishInFlight, setIsCloseAndPublishInFlight] = useState(false);
   const [latestDefinition, setLatestDefinition] = useState<QuestionnaireDefinition | null>(null);
   const [latestState, setLatestState] = useState<QuestionnaireStateValue | null>(null);
+  const [latestStateCreatedAt, setLatestStateCreatedAt] = useState<number | null>(null);
   const [latestAcceptedCount, setLatestAcceptedCount] = useState(0);
   const [latestRejectedCount, setLatestRejectedCount] = useState(0);
   const [latestAcceptedResponses, setLatestAcceptedResponses] = useState<QuestionnaireAcceptedResponse[]>([]);
@@ -549,6 +572,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     setLastResponseSeenEventId(latestResponseEvent?.id ?? null);
 
     setLatestDefinition(definition);
+    setLatestStateCreatedAt(state?.createdAt ?? null);
     setLatestState(deriveEffectiveQuestionnaireState({
       definition,
       latestState: state,
@@ -1138,6 +1162,11 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const checklistDescriptionAdded = description.trim().length > 0;
   const checklistNotPublished = !publishedDefinition;
   const metadataStateLabel = formatQuestionnaireMetadataState(latestState, Boolean(latestDefinition));
+  const metadataClosingClosedLabel = formatClosingClosedLabel({
+    latestDefinition,
+    latestState,
+    latestStateCreatedAt,
+  });
   const selectedQuestionnaireOptions = availableQuestionnaireIds.length > 0
     ? availableQuestionnaireIds
     : (questionnaireId.trim() ? [questionnaireId.trim()] : []);
@@ -1757,7 +1786,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             </div>
             <div className='simple-questionnaire-metadata-item'>
               <dt>Closing / Closed</dt>
-              <dd>{latestDefinition?.closeAt ? formatUnixTimestamp(latestDefinition.closeAt) : "Not scheduled"}</dd>
+              <dd>{metadataClosingClosedLabel}</dd>
             </div>
           </dl>
         </div>

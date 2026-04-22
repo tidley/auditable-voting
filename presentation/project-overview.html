@@ -585,10 +585,11 @@
           <li>Blind issuance discovery now does one broader relay fallback scan when the narrow recipient relay subset is empty, reducing cases where Amethyst sees a ballot before the vote UI does</li>
           <li>Credential delivery now mixes recipient relay hints with fallback relays, widens publish fanout, and retries issued credentials until the voter submits</li>
           <li>Published questionnaire definitions include the blind-signing public key, are cached locally, and are attached to invites and credential issuances, so linked voters can request ballots even when historical invite DMs are unavailable</li>
-          <li>Accepted DM submissions now feed the same coordinator response summary as public questionnaire response events, and voters receive an encrypted self-copy for later recovery</li>
+          <li>Protocol v2 questionnaire rounds are now driven by public submissions + public coordinator decisions, while legacy rounds remain dual-read for migration safety</li>
           <li>Auditors can run an explicit historic questionnaire search when older published rounds or public response payloads are outside the default recent scan window</li>
           <li>Auditors now discover recent public questionnaires through kind-only backfill when no questionnaire ID is selected, then show state and published response totals where available</li>
           <li>Published questionnaire summaries now carry canonical per-response refs with slim answer payloads, so Auditor can still show detailed responder rows when public response events are fragmented across relays</li>
+          <li>Auditor now uses `Submitted Votes` as the main per-response panel with search/pagination, and invalid rows are hidden by default behind `Show invalid votes`</li>
           <li>Submitted voters see their responder marker pattern and expandable QR directly on the Vote page</li>
           <li>Mailbox ticket publishes now keep one deterministic anchor relay, rotate secondary relays by recipient, and temporarily cool down relays that rate-limit</li>
           <li>Coordinator follower rows now expose per-ticket relay publish diagnostics for debugging delivery gaps</li>

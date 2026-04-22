@@ -224,7 +224,7 @@ The current repository contains only the browser app. It has voter, coordinator,
 1. Open **Auditor**.
 2. Read public submissions and public submission decisions.
 3. Verify accepted/rejected outcomes and per-question totals.
-4. Open full results to inspect per-response detail when payloads are public.
+4. Use **Submitted Votes** for per-response detail (search/filter), and enable `Show invalid votes` when you need rejected-row diagnostics.
 
 ## Privacy Model
 
@@ -358,7 +358,7 @@ The auditor view keeps normal refreshes bounded to recent questionnaires to avoi
 - The questionnaire path is currently single-coordinator.
 - Larger multi-coordinator live runs are still operationally fragile on public relays.
 - Auditor detail is near real-time (poll-based), but exact freshness depends on relay propagation and indexing.
-- If a response payload is encrypted/private, the auditor can still show metadata/decision status but not plaintext answers.
+- If a response payload is encrypted/private, the auditor can still show metadata/decision status but not plaintext answers; coordinator-side results can decrypt `enc:nip44v2:` text when the key is present locally.
 
 ## Short Summary
 
