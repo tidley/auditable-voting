@@ -18,6 +18,8 @@ Usage (Linux x86_64):
 
 Other platforms:
 - Download prebuilt release assets:
+  - auditable-voting-worker-linux-arm64.tar.gz
+  - auditable-voting-worker-linux-armv7.tar.gz
   - auditable-voting-worker-windows-x64.zip
   - auditable-voting-worker-macos-x64.tar.gz
   - auditable-voting-worker-macos-arm64.tar.gz

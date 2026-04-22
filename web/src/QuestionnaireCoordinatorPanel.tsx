@@ -1328,6 +1328,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     return `${prefix}worker-helper/README.txt`;
   }, []);
   const workerReleaseBaseUrl = "https://github.com/tidley/auditable-voting/releases/latest/download";
+  const workerLinuxArm64DownloadUrl = `${workerReleaseBaseUrl}/auditable-voting-worker-linux-arm64.tar.gz`;
+  const workerLinuxArm64ChecksumUrl = `${workerLinuxArm64DownloadUrl}.sha256`;
+  const workerLinuxArmv7DownloadUrl = `${workerReleaseBaseUrl}/auditable-voting-worker-linux-armv7.tar.gz`;
+  const workerLinuxArmv7ChecksumUrl = `${workerLinuxArmv7DownloadUrl}.sha256`;
   const workerWindowsDownloadUrl = `${workerReleaseBaseUrl}/auditable-voting-worker-windows-x64.zip`;
   const workerWindowsChecksumUrl = `${workerWindowsDownloadUrl}.sha256`;
   const workerMacOsX64DownloadUrl = `${workerReleaseBaseUrl}/auditable-voting-worker-macos-x64.tar.gz`;
@@ -2123,6 +2127,18 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                   </a>
                   <a className='simple-voter-secondary' href={workerHelperChecksumUrl} download>
                     Linux x64 checksum
+                  </a>
+                  <a className='simple-voter-secondary' href={workerLinuxArm64DownloadUrl} target='_blank' rel='noreferrer'>
+                    Linux arm64 (Pi)
+                  </a>
+                  <a className='simple-voter-secondary' href={workerLinuxArm64ChecksumUrl} target='_blank' rel='noreferrer'>
+                    Linux arm64 checksum
+                  </a>
+                  <a className='simple-voter-secondary' href={workerLinuxArmv7DownloadUrl} target='_blank' rel='noreferrer'>
+                    Linux armv7 (Pi)
+                  </a>
+                  <a className='simple-voter-secondary' href={workerLinuxArmv7ChecksumUrl} target='_blank' rel='noreferrer'>
+                    Linux armv7 checksum
                   </a>
                   <a className='simple-voter-secondary' href={workerWindowsDownloadUrl} target='_blank' rel='noreferrer'>
                     Windows x64

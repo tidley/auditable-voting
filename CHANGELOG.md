@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.15] - 2026-04-22
+
+### Changed
+- Extended worker release CI to publish Raspberry Pi binaries:
+  - `auditable-voting-worker-linux-arm64.tar.gz`
+  - `auditable-voting-worker-linux-armv7.tar.gz`
+- Updated worker download docs to include Raspberry Pi assets.
+
 ## [0.1.14] - 2026-04-22
 
 ### Changed
