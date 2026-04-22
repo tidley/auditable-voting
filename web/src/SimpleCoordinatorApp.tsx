@@ -107,7 +107,7 @@ import {
   QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN,
 } from "./questionnaireProtocolConstants";
 
-type CoordinatorTab = "configure" | "participants" | "voting" | "settings";
+type CoordinatorTab = "configure" | "delegate" | "participants" | "voting" | "settings";
 
 type SimpleCoordinatorKeypair = {
   npub: string;
@@ -5620,6 +5620,15 @@ export default function SimpleCoordinatorApp() {
           <button
             type='button'
             role='tab'
+            aria-selected={activeTab === 'delegate'}
+            className={`simple-voter-tab${activeTab === 'delegate' ? ' is-active' : ''}`}
+            onClick={() => selectTab('delegate')}
+          >
+            Delegate
+          </button>
+          <button
+            type='button'
+            role='tab'
             aria-selected={activeTab === 'participants'}
             className={`simple-voter-tab${activeTab === 'participants' ? ' is-active' : ''}`}
             onClick={() => selectTab('participants')}
@@ -5776,6 +5785,25 @@ export default function SimpleCoordinatorApp() {
                 onStatusChange={updateQuestionnaireRosterAnnouncement}
               />
             </SimpleCollapsibleSection>
+          </section>
+        ) : null}
+
+        {activeTab === 'delegate' ? (
+          <section
+            className='simple-voter-tab-panel'
+            role='tabpanel'
+            aria-label='Delegate'
+          >
+            <QuestionnaireCoordinatorPanel
+              coordinatorNsec={keypair?.nsec ?? null}
+              coordinatorNpub={keypair?.npub ?? null}
+              knownVoterCount={optionAKnownVoterCount}
+              optionAAcceptedCount={optionAAcceptedCount}
+              optionAAcceptedResponses={optionAAcceptedResponses}
+              blindSigningPublicKey={optionABlindSigningPublicKey}
+              view='delegate'
+              onStatusChange={updateQuestionnaireRosterAnnouncement}
+            />
           </section>
         ) : null}
 

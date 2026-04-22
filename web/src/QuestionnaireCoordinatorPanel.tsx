@@ -80,7 +80,7 @@ type QuestionnaireCoordinatorPanelProps = {
   optionAAcceptedCount?: number;
   optionAAcceptedResponses?: QuestionnaireAcceptedResponse[];
   blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
-  view?: "build" | "responses" | "participants";
+  view?: "build" | "delegate" | "responses" | "participants";
   onInviteParticipants?: () => void;
   onStatusChange?: (status: {
     questionnaireId: string;
@@ -2033,6 +2033,164 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
 
   const view = props.view ?? "build";
 
+  if (view === "delegate") {
+    return (
+      <div className='simple-voter-card simple-questionnaire-panel'>
+        <h3 className='simple-voter-question'>Delegate</h3>
+        <p className='simple-voter-note'>Configure delegated worker setup, download, and election delegation controls.</p>
+
+        <h4 className='simple-voter-section-title'>Delegated worker</h4>
+        <div className='simple-questionnaire-worker-section'>
+          <label className='simple-voter-label' htmlFor='delegation-mode'>Mode</label>
+          <select
+            id='delegation-mode'
+            className='simple-voter-input'
+            value={delegationMode}
+            onChange={(event) => setDelegationMode(event.target.value === "delegated_worker" ? "delegated_worker" : "browser_only")}
+          >
+            <option value='browser_only'>Browser only</option>
+            <option value='delegated_worker'>Delegated Nostr worker</option>
+          </select>
+
+          {delegationMode === "delegated_worker" ? (
+            <>
+              <div className='simple-worker-helper-download'>
+                <p className='simple-voter-note'>
+                  Worker helper download (Linux x64): use this binary for quick outbound-only deployment on VPS or homelab Linux.
+                </p>
+                <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
+                  <a className='simple-voter-secondary' href={workerHelperDownloadUrl} download>
+                    Download worker helper
+                  </a>
+                  <a className='simple-voter-secondary' href={workerHelperChecksumUrl} download>
+                    Download checksum
+                  </a>
+                  <a className='simple-voter-secondary' href={workerHelperReadmeUrl} target='_blank' rel='noreferrer'>
+                    Setup notes
+                  </a>
+                </div>
+              </div>
+
+              <label className='simple-voter-label' htmlFor='delegated-worker-npub'>Worker npub</label>
+              <input
+                id='delegated-worker-npub'
+                className='simple-voter-input'
+                placeholder='npub1...'
+                value={delegatedWorkerNpub}
+                onChange={(event) => setDelegatedWorkerNpub(event.target.value)}
+              />
+
+              <label className='simple-voter-label' htmlFor='delegated-worker-relays'>Control relays</label>
+              <textarea
+                id='delegated-worker-relays'
+                className='simple-voter-input'
+                rows={2}
+                placeholder='wss://relay1.example, wss://relay2.example'
+                value={delegatedWorkerControlRelays}
+                onChange={(event) => setDelegatedWorkerControlRelays(event.target.value)}
+              />
+
+              <label className='simple-voter-label' htmlFor='delegated-worker-expiry'>Expiry (minutes)</label>
+              <input
+                id='delegated-worker-expiry'
+                className='simple-voter-input'
+                value={delegatedWorkerExpiryMinutes}
+                onChange={(event) => setDelegatedWorkerExpiryMinutes(event.target.value)}
+              />
+
+              <p className='simple-voter-label'>Capabilities</p>
+              <div className='simple-questionnaire-worker-capabilities'>
+                <label className='simple-voter-note'>
+                  <input
+                    type='checkbox'
+                    checked={delegatedWorkerCapabilities.includes("issue_blind_tokens")}
+                    onChange={() => toggleWorkerCapability("issue_blind_tokens")}
+                  />
+                  Issue blind tokens
+                </label>
+                <label className='simple-voter-note'>
+                  <input
+                    type='checkbox'
+                    checked={delegatedWorkerCapabilities.includes("verify_public_submissions")}
+                    onChange={() => toggleWorkerCapability("verify_public_submissions")}
+                  />
+                  Verify public submissions
+                </label>
+                <label className='simple-voter-note'>
+                  <input
+                    type='checkbox'
+                    checked={delegatedWorkerCapabilities.includes("publish_submission_decisions")}
+                    onChange={() => toggleWorkerCapability("publish_submission_decisions")}
+                  />
+                  Publish submission decisions
+                </label>
+                <label className='simple-voter-note'>
+                  <input
+                    type='checkbox'
+                    checked={delegatedWorkerCapabilities.includes("publish_result_summary")}
+                    onChange={() => toggleWorkerCapability("publish_result_summary")}
+                  />
+                  Publish result summary
+                </label>
+              </div>
+
+              <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
+                <button type='button' className='simple-voter-primary' onClick={() => void delegateToWorker()}>
+                  Delegate to worker
+                </button>
+                <button
+                  type='button'
+                  className='simple-voter-secondary'
+                  onClick={() => void revokeWorkerDelegation()}
+                  disabled={!activeWorkerDelegation}
+                >
+                  Revoke delegation
+                </button>
+              </div>
+
+              <div className='simple-questionnaire-worker-status-card'>
+                <p className='simple-voter-note'>Delegation state: {delegationStatusLabel}</p>
+                <p className='simple-voter-note'>Worker npub: {selectedWorkerStatus?.workerNpub || activeWorkerDelegation?.workerNpub || "Not selected"}</p>
+                <p className='simple-voter-note'>Last heartbeat: {selectedWorkerStatus?.heartbeatAt ? new Date(selectedWorkerStatus.heartbeatAt).toLocaleString() : "Not seen"}</p>
+                <p className='simple-voter-note'>Last blind issuance: {selectedWorkerStatus?.lastBlindIssuanceAt ? new Date(selectedWorkerStatus.lastBlindIssuanceAt).toLocaleString() : "Not reported"}</p>
+                <p className='simple-voter-note'>Last vote verification: {selectedWorkerStatus?.lastVoteVerificationAt ? new Date(selectedWorkerStatus.lastVoteVerificationAt).toLocaleString() : "Not reported"}</p>
+                <p className='simple-voter-note'>Last decision publish: {selectedWorkerStatus?.lastDecisionPublishAt ? new Date(selectedWorkerStatus.lastDecisionPublishAt).toLocaleString() : "Not reported"}</p>
+              </div>
+
+              <div className='simple-questionnaire-worker-available-list'>
+                <p className='simple-voter-label'>Available agents</p>
+                {availableWorkerStatuses.length === 0 ? (
+                  <p className='simple-voter-empty'>No worker status announcements seen yet.</p>
+                ) : (
+                  <ul className='simple-voter-list'>
+                    {availableWorkerStatuses.map((snapshot) => (
+                      <li key={`${snapshot.workerNpub}:${snapshot.heartbeatAt}`} className='simple-voter-list-item'>
+                        <button
+                          type='button'
+                          className='simple-voter-secondary'
+                          onClick={() => {
+                            setDelegatedWorkerNpub(snapshot.workerNpub);
+                            if (Array.isArray(snapshot.advertisedRelays) && snapshot.advertisedRelays.length > 0) {
+                              setDelegatedWorkerControlRelays(snapshot.advertisedRelays.join(", "));
+                            }
+                          }}
+                        >
+                          {deriveActorDisplayId(snapshot.workerNpub)} · {snapshot.state} · {new Date(snapshot.heartbeatAt).toLocaleTimeString()}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </>
+          ) : null}
+        </div>
+
+        {status ? <p className='simple-voter-note'>{status}</p> : null}
+      </div>
+    );
+  }
+
   if (view === "participants") {
     return (
       <div className='simple-voter-card simple-questionnaire-panel'>
@@ -2333,153 +2491,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             onChange={(event) => setCloseAfterMinutes(event.target.value)}
           />
         </div>
-      </div>
-
-      <h4 className='simple-voter-section-title'>Delegated worker</h4>
-      <div className='simple-questionnaire-worker-section'>
-        <label className='simple-voter-label' htmlFor='delegation-mode'>Mode</label>
-        <select
-          id='delegation-mode'
-          className='simple-voter-input'
-          value={delegationMode}
-          onChange={(event) => setDelegationMode(event.target.value === "delegated_worker" ? "delegated_worker" : "browser_only")}
-        >
-          <option value='browser_only'>Browser only</option>
-          <option value='delegated_worker'>Delegated Nostr worker</option>
-        </select>
-
-        {delegationMode === "delegated_worker" ? (
-          <>
-            <div className='simple-worker-helper-download'>
-              <p className='simple-voter-note'>
-                Worker helper download (Linux x64): use this binary for quick outbound-only deployment on VPS or homelab Linux.
-              </p>
-              <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
-                <a className='simple-voter-secondary' href={workerHelperDownloadUrl} download>
-                  Download worker helper
-                </a>
-                <a className='simple-voter-secondary' href={workerHelperChecksumUrl} download>
-                  Download checksum
-                </a>
-                <a className='simple-voter-secondary' href={workerHelperReadmeUrl} target='_blank' rel='noreferrer'>
-                  Setup notes
-                </a>
-              </div>
-            </div>
-
-            <label className='simple-voter-label' htmlFor='delegated-worker-npub'>Worker npub</label>
-            <input
-              id='delegated-worker-npub'
-              className='simple-voter-input'
-              placeholder='npub1...'
-              value={delegatedWorkerNpub}
-              onChange={(event) => setDelegatedWorkerNpub(event.target.value)}
-            />
-
-            <label className='simple-voter-label' htmlFor='delegated-worker-relays'>Control relays</label>
-            <textarea
-              id='delegated-worker-relays'
-              className='simple-voter-input'
-              rows={2}
-              placeholder='wss://relay1.example, wss://relay2.example'
-              value={delegatedWorkerControlRelays}
-              onChange={(event) => setDelegatedWorkerControlRelays(event.target.value)}
-            />
-
-            <label className='simple-voter-label' htmlFor='delegated-worker-expiry'>Expiry (minutes)</label>
-            <input
-              id='delegated-worker-expiry'
-              className='simple-voter-input'
-              value={delegatedWorkerExpiryMinutes}
-              onChange={(event) => setDelegatedWorkerExpiryMinutes(event.target.value)}
-            />
-
-            <p className='simple-voter-label'>Capabilities</p>
-            <div className='simple-questionnaire-worker-capabilities'>
-              <label className='simple-voter-note'>
-                <input
-                  type='checkbox'
-                  checked={delegatedWorkerCapabilities.includes("issue_blind_tokens")}
-                  onChange={() => toggleWorkerCapability("issue_blind_tokens")}
-                />
-                Issue blind tokens
-              </label>
-              <label className='simple-voter-note'>
-                <input
-                  type='checkbox'
-                  checked={delegatedWorkerCapabilities.includes("verify_public_submissions")}
-                  onChange={() => toggleWorkerCapability("verify_public_submissions")}
-                />
-                Verify public submissions
-              </label>
-              <label className='simple-voter-note'>
-                <input
-                  type='checkbox'
-                  checked={delegatedWorkerCapabilities.includes("publish_submission_decisions")}
-                  onChange={() => toggleWorkerCapability("publish_submission_decisions")}
-                />
-                Publish submission decisions
-              </label>
-              <label className='simple-voter-note'>
-                <input
-                  type='checkbox'
-                  checked={delegatedWorkerCapabilities.includes("publish_result_summary")}
-                  onChange={() => toggleWorkerCapability("publish_result_summary")}
-                />
-                Publish result summary
-              </label>
-            </div>
-
-            <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
-              <button type='button' className='simple-voter-primary' onClick={() => void delegateToWorker()}>
-                Delegate to worker
-              </button>
-              <button
-                type='button'
-                className='simple-voter-secondary'
-                onClick={() => void revokeWorkerDelegation()}
-                disabled={!activeWorkerDelegation}
-              >
-                Revoke delegation
-              </button>
-            </div>
-
-            <div className='simple-questionnaire-worker-status-card'>
-              <p className='simple-voter-note'>Delegation state: {delegationStatusLabel}</p>
-              <p className='simple-voter-note'>Worker npub: {selectedWorkerStatus?.workerNpub || activeWorkerDelegation?.workerNpub || "Not selected"}</p>
-              <p className='simple-voter-note'>Last heartbeat: {selectedWorkerStatus?.heartbeatAt ? new Date(selectedWorkerStatus.heartbeatAt).toLocaleString() : "Not seen"}</p>
-              <p className='simple-voter-note'>Last blind issuance: {selectedWorkerStatus?.lastBlindIssuanceAt ? new Date(selectedWorkerStatus.lastBlindIssuanceAt).toLocaleString() : "Not reported"}</p>
-              <p className='simple-voter-note'>Last vote verification: {selectedWorkerStatus?.lastVoteVerificationAt ? new Date(selectedWorkerStatus.lastVoteVerificationAt).toLocaleString() : "Not reported"}</p>
-              <p className='simple-voter-note'>Last decision publish: {selectedWorkerStatus?.lastDecisionPublishAt ? new Date(selectedWorkerStatus.lastDecisionPublishAt).toLocaleString() : "Not reported"}</p>
-            </div>
-
-            <div className='simple-questionnaire-worker-available-list'>
-              <p className='simple-voter-label'>Available agents</p>
-              {availableWorkerStatuses.length === 0 ? (
-                <p className='simple-voter-empty'>No worker status announcements seen yet.</p>
-              ) : (
-                <ul className='simple-voter-list'>
-                  {availableWorkerStatuses.map((snapshot) => (
-                    <li key={`${snapshot.workerNpub}:${snapshot.heartbeatAt}`} className='simple-voter-list-item'>
-                      <button
-                        type='button'
-                        className='simple-voter-secondary'
-                        onClick={() => {
-                          setDelegatedWorkerNpub(snapshot.workerNpub);
-                          if (Array.isArray(snapshot.advertisedRelays) && snapshot.advertisedRelays.length > 0) {
-                            setDelegatedWorkerControlRelays(snapshot.advertisedRelays.join(", "));
-                          }
-                        }}
-                      >
-                        {deriveActorDisplayId(snapshot.workerNpub)} · {snapshot.state} · {new Date(snapshot.heartbeatAt).toLocaleTimeString()}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </>
-        ) : null}
       </div>
 
       <h4 className='simple-voter-section-title'>Questions</h4>

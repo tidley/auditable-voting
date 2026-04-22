@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.11] - 2026-04-22
+
+### Changed
+- Moved delegated worker setup/download/configuration from Build into a dedicated `Delegate` tab.
+- Added the coordinator `Delegate` tab between `Build` and `Invite`.
+
 ## [0.1.10] - 2026-04-22
 
 ### Changed
