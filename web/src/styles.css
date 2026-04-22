@@ -1865,6 +1865,12 @@ code {
   gap: 12px;
 }
 
+.simple-auditor-result-head .simple-voter-question,
+.simple-auditor-result-body .simple-voter-note {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .simple-auditor-result-list {
   padding-left: 0;
   list-style: none;
@@ -1963,6 +1969,34 @@ code {
 @media (max-width: 900px) {
   .simple-auditor-submitted-toolbar {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .simple-auditor-result-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .simple-auditor-result-marker {
+    justify-items: start;
+  }
+
+  .simple-auditor-result-marker .token-fingerprint-large .token-fingerprint-grid {
+    width: 88px;
+    height: 88px;
+    padding: 6px;
+    border-radius: 14px;
+  }
+
+  .simple-auditor-result-marker .token-fingerprint-large .token-fingerprint-qr-shell {
+    min-width: 84px;
+    min-height: 84px;
+  }
+
+  .simple-auditor-result-marker .token-fingerprint-large .token-fingerprint-qr {
+    width: 84px;
+    height: 84px;
+    border-radius: 10px;
   }
 }
 

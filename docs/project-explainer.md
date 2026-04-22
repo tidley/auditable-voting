@@ -3,7 +3,7 @@
 This document is written as a technical explainer for readers who want to understand:
 
 - what the system is trying to achieve
-- why it uses Nostr and blind signatures
+- why it uses public relay infrastructure and blind signatures
 - how voters, coordinators, and observers interact
 - what is public, what is private, and what can be verified
 
@@ -34,7 +34,7 @@ The main goals are:
 - **privacy**: coordinators should not be able to deanonymise ballots
 - **auditability**: observers should be able to recompute the tally
 - **portability**: the client can run as a static web app
-- **resilience**: Nostr relays act as the shared public event layer
+- **resilience**: public relays act as the shared event layer (Nostr-compatible in the current implementation)
 
 ---
 

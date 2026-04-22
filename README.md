@@ -1,6 +1,6 @@
 # Auditable Voting
 
-Client-only Nostr voting with browser-based voter, coordinator, and auditor flows.
+Client-only voting on public relay infrastructure, with browser-based voter, coordinator, and auditor flows.
 
 ## Current state
 

@@ -183,6 +183,7 @@ const AUTO_BALLOT_SIGNER_SUBSCRIPTION_REARM_MIN_INTERVAL_MS = 15_000;
 const AUTO_BALLOT_SIGNER_BACKGROUND_FETCH_MIN_INTERVAL_MS = 90_000;
 const AUTO_BALLOT_SIGNER_LIFECYCLE_FETCH_MIN_INTERVAL_MS = 45_000;
 const AUTO_BALLOT_SIGNER_INITIAL_PULL_DELAY_MS = 8_000;
+type BallotWaitRefreshMode = "manual" | "lifecycle" | "background" | "restart_only";
 
 function isLikelyMobileClient() {
   if (typeof window === "undefined" || typeof navigator === "undefined") {
@@ -258,6 +259,19 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const signerWaitRestartAtRef = useRef(0);
   const signerWaitFetchAtRef = useRef(0);
   const signerInitialPullTimeoutIdsRef = useRef<number[]>([]);
+  const ballotWaitQueueRef = useRef<{
+    inFlight: boolean;
+    pending: boolean;
+    pendingRestartSubscriptions: boolean;
+    pendingForceWhenHidden: boolean;
+    mode: BallotWaitRefreshMode;
+  }>({
+    inFlight: false,
+    pending: false,
+    pendingRestartSubscriptions: false,
+    pendingForceWhenHidden: false,
+    mode: "lifecycle",
+  });
 
   const inviteContext = useMemo(() => parseInviteFromUrl(), []);
   const [electionId, setElectionId] = useState(inviteContext.electionId ?? deriveElectionId());
@@ -288,7 +302,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     signerWaitFetchAtRef.current = now - AUTO_BALLOT_SIGNER_LIFECYCLE_FETCH_MIN_INTERVAL_MS;
   }
 
-  function recoverSignerBackedBallotWait(mode: "manual" | "lifecycle" | "background" | "restart_only") {
+  function recoverSignerBackedBallotWait(mode: BallotWaitRefreshMode) {
     if (!runtime) {
       return;
     }
@@ -312,13 +326,79 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     signerWaitFetchAtRef.current = now;
   }
 
+  function mergeBallotWaitRefreshMode(
+    current: BallotWaitRefreshMode,
+    next: BallotWaitRefreshMode,
+  ): BallotWaitRefreshMode {
+    const rank: Record<BallotWaitRefreshMode, number> = {
+      restart_only: 0,
+      background: 1,
+      lifecycle: 2,
+      manual: 3,
+    };
+    return rank[next] > rank[current] ? next : current;
+  }
+
+  function queueBallotWaitRefresh(input?: {
+    restartSubscriptions?: boolean;
+    forceWhenHidden?: boolean;
+    mode?: BallotWaitRefreshMode;
+  }) {
+    if (!runtime) {
+      return;
+    }
+    const pendingMode = input?.mode ?? "lifecycle";
+    const queue = ballotWaitQueueRef.current;
+    queue.pending = true;
+    queue.pendingRestartSubscriptions = queue.pendingRestartSubscriptions || Boolean(input?.restartSubscriptions);
+    queue.pendingForceWhenHidden = queue.pendingForceWhenHidden || Boolean(input?.forceWhenHidden);
+    queue.mode = mergeBallotWaitRefreshMode(queue.mode, pendingMode);
+    if (queue.inFlight) {
+      return;
+    }
+    queue.inFlight = true;
+    void (async () => {
+      try {
+        while (queue.pending) {
+          const restartSubscriptions = queue.pendingRestartSubscriptions;
+          const forceWhenHidden = queue.pendingForceWhenHidden;
+          const mode = queue.mode;
+          queue.pending = false;
+          queue.pendingRestartSubscriptions = false;
+          queue.pendingForceWhenHidden = false;
+          queue.mode = "lifecycle";
+
+          if (!forceWhenHidden && typeof document !== "undefined" && document.visibilityState === "hidden") {
+            continue;
+          }
+
+          if (props.localVoterNsec?.trim()) {
+            runtime.refreshIssuanceAndAcceptance(restartSubscriptions ? { restartSubscriptions: true } : undefined);
+          } else {
+            if (restartSubscriptions && mode === "restart_only") {
+              recoverSignerBackedBallotWait("restart_only");
+            } else if (restartSubscriptions && mode === "background") {
+              recoverSignerBackedBallotWait("background");
+            } else if (restartSubscriptions && mode === "manual") {
+              recoverSignerBackedBallotWait("manual");
+            } else {
+              recoverSignerBackedBallotWait(mode);
+            }
+          }
+          setRefreshNonce((value) => value + 1);
+        }
+      } finally {
+        queue.inFlight = false;
+      }
+    })();
+  }
+
   function scheduleSignerInitialPull() {
     if (props.localVoterNsec?.trim()) {
       return;
     }
     const timeoutId = window.setTimeout(() => {
-      recoverSignerBackedBallotWait("manual");
-      setRefreshNonce((value) => value + 1);
+      queueBallotWaitRefresh({ mode: "manual", forceWhenHidden: true });
     }, AUTO_BALLOT_SIGNER_INITIAL_PULL_DELAY_MS);
     signerInitialPullTimeoutIdsRef.current.push(timeoutId);
   }
@@ -416,16 +496,30 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     if (!needsStatusRefresh) {
       return;
     }
-    const intervalId = window.setInterval(() => {
-      try {
-        runtime.refreshIssuanceAndAcceptance({ restartSubscriptions: true });
-        setRefreshNonce((value) => value + 1);
-      } catch {
-        // Keep polling best-effort; explicit actions surface errors.
-      }
-    }, 60000);
+    let cancelled = false;
+    let timeoutId: number | null = null;
+    const poll = () => {
+      timeoutId = window.setTimeout(() => {
+        if (cancelled) {
+          return;
+        }
+        try {
+          queueBallotWaitRefresh({ restartSubscriptions: true, mode: "lifecycle" });
+        } catch {
+          // Keep polling best-effort; explicit actions surface errors.
+        } finally {
+          if (!cancelled) {
+            poll();
+          }
+        }
+      }, 60000);
+    };
+    poll();
     return () => {
-      window.clearInterval(intervalId);
+      cancelled = true;
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
     };
   }, [runtime, signedInNpub, props.localVoterNsec, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission, snapshot?.submissionAccepted]);
 
@@ -455,12 +549,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         // Best-effort; refresh below still uses the active runtime snapshot.
       }
       try {
-        if (!props.localVoterNsec?.trim() && snapshot.blindRequestSent && !snapshot.credentialReady && !snapshot.submission) {
-          recoverSignerBackedBallotWait("lifecycle");
-        } else {
-          runtime.refreshIssuanceAndAcceptance();
-        }
-        setRefreshNonce((value) => value + 1);
+        queueBallotWaitRefresh({ mode: "lifecycle" });
       } catch {
         // Keep lifecycle refresh best-effort; explicit actions surface errors.
       }
@@ -975,12 +1064,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
     try {
       ensureLocalSession({ allowInviteMissing: true, allowRelayInviteFetch: true });
-      if (!props.localVoterNsec?.trim() && snapshot?.blindRequestSent && !snapshot.credentialReady && !snapshot.submission) {
-        recoverSignerBackedBallotWait("manual");
-      } else {
-        runtime.refreshIssuanceAndAcceptance({ restartSubscriptions: true });
-      }
-      setRefreshNonce((value) => value + 1);
+      queueBallotWaitRefresh({
+        restartSubscriptions: true,
+        mode: "manual",
+        forceWhenHidden: true,
+      });
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Refresh failed.");
     }
@@ -1074,9 +1162,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     const pollMs = AUTO_BALLOT_RETRY_POLL_MS;
     const resendMs = AUTO_BALLOT_RETRY_RESEND_MS;
     const key = snapshot.electionId + ":" + snapshot.invitedNpub;
-    const retry = () => {
-      runtime.refreshIssuanceAndAcceptance();
-      setRefreshNonce((value) => value + 1);
+    let cancelled = false;
+    let timeoutId: number | null = null;
+    const retry = async () => {
+      if (cancelled) {
+        return;
+      }
+      queueBallotWaitRefresh({ mode: "lifecycle" });
       const now = Date.now();
       const lastAttemptAt = requestRetryAtRef.current[key] ?? 0;
       if (now - lastAttemptAt < resendMs) {
@@ -1084,19 +1176,32 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       }
       requestRetryAtRef.current[key] = now;
       try {
-        void runtime.requestBlindBallot({ minRetryMs: resendMs }).then(() => {
-          markSignerWaitRecoveryBaseline();
-          scheduleSignerInitialPull();
-          runtime.refreshIssuanceAndAcceptance({ restartSubscriptions: true });
-          setRefreshNonce((value) => value + 1);
-        }).catch(() => undefined);
+        await runtime.requestBlindBallot({ minRetryMs: resendMs });
+        markSignerWaitRecoveryBaseline();
+        scheduleSignerInitialPull();
+        queueBallotWaitRefresh({
+          restartSubscriptions: true,
+          mode: "manual",
+          forceWhenHidden: true,
+        });
       } catch {
         // Retry is best-effort; explicit controls surface errors.
       }
     };
-    const intervalId = window.setInterval(retry, pollMs);
+    const loop = () => {
+      timeoutId = window.setTimeout(async () => {
+        await retry();
+        if (!cancelled) {
+          loop();
+        }
+      }, pollMs);
+    };
+    loop();
     return () => {
-      window.clearInterval(intervalId);
+      cancelled = true;
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
     };
   }, [runtime, props.localVoterNsec, snapshot?.electionId, snapshot?.invitedNpub, snapshot?.loginVerified, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission]);
 
@@ -1109,14 +1214,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       return;
     }
     const timeoutIds = AUTO_BALLOT_SIGNER_REFRESH_SCHEDULE_MS.map((delayMs, index) => window.setTimeout(() => {
-      const mode: "manual" | "lifecycle" | "background" | "restart_only" =
+      const mode: BallotWaitRefreshMode =
         index === 0
           ? "manual"
           : index === AUTO_BALLOT_SIGNER_REFRESH_SCHEDULE_MS.length - 1
             ? "background"
             : "restart_only";
-      recoverSignerBackedBallotWait(mode);
-      setRefreshNonce((value) => value + 1);
+      queueBallotWaitRefresh({ mode });
     }, delayMs));
     return () => {
       for (const timeoutId of timeoutIds) {
@@ -1133,16 +1237,25 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     if (hasLocalSecretKey) {
       return;
     }
+    let cancelled = false;
+    let timeoutId: number | null = null;
     const tick = () => {
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
-        return;
-      }
-      recoverSignerBackedBallotWait("lifecycle");
-      setRefreshNonce((value) => value + 1);
+      timeoutId = window.setTimeout(() => {
+        if (cancelled) {
+          return;
+        }
+        queueBallotWaitRefresh({ mode: "lifecycle" });
+        if (!cancelled) {
+          tick();
+        }
+      }, AUTO_BALLOT_SIGNER_KEEPALIVE_REFRESH_MS);
     };
-    const intervalId = window.setInterval(tick, AUTO_BALLOT_SIGNER_KEEPALIVE_REFRESH_MS);
+    tick();
     return () => {
-      window.clearInterval(intervalId);
+      cancelled = true;
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
     };
   }, [runtime, props.localVoterNsec, snapshot?.loginVerified, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission]);
 
@@ -1154,12 +1267,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     if (hasLocalSecretKey || !isLikelyMobileClient()) {
       return;
     }
+    let cancelled = false;
+    let timeoutId: number | null = null;
     const refresh = () => {
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
-        return;
-      }
-      recoverSignerBackedBallotWait("background");
-      setRefreshNonce((value) => value + 1);
+      queueBallotWaitRefresh({ mode: "background" });
     };
     const onVisible = () => {
       if (typeof document !== "undefined" && document.visibilityState !== "visible") {
@@ -1167,12 +1278,26 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       }
       refresh();
     };
-    const intervalId = window.setInterval(refresh, AUTO_BALLOT_MOBILE_RECOVERY_PULL_MS);
+    const loop = () => {
+      timeoutId = window.setTimeout(() => {
+        if (cancelled) {
+          return;
+        }
+        refresh();
+        if (!cancelled) {
+          loop();
+        }
+      }, AUTO_BALLOT_MOBILE_RECOVERY_PULL_MS);
+    };
+    loop();
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", onVisible);
     window.addEventListener("online", onVisible);
     return () => {
-      window.clearInterval(intervalId);
+      cancelled = true;
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onVisible);
       window.removeEventListener("online", onVisible);

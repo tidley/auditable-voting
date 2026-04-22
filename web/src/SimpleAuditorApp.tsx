@@ -66,7 +66,15 @@ export default function SimpleAuditorApp() {
   const [responseRefreshStatus, setResponseRefreshStatus] = useState<string | null>(null);
   const [historicSearchInFlight, setHistoricSearchInFlight] = useState(false);
   const selectedQuestionnaireIdRef = useRef("");
-  const refreshInFlightRef = useRef(false);
+  const refreshQueueRef = useRef<{
+    pendingList: boolean;
+    pendingSelected: boolean;
+    inFlightPromise: Promise<void> | null;
+  }>({
+    pendingList: false,
+    pendingSelected: false,
+    inFlightPromise: null,
+  });
 
   useEffect(() => {
     selectedQuestionnaireIdRef.current = selectedQuestionnaireId;
@@ -151,38 +159,37 @@ export default function SimpleAuditorApp() {
   }, []);
 
   const refreshQuestionnaires = useCallback(async () => {
-    if (refreshInFlightRef.current) {
-      return;
-    }
-    refreshInFlightRef.current = true;
     try {
       const entries = await loadQuestionnairesFromNostr();
-
-      setQuestionnaires(entries);
+      setQuestionnaires((previous) => (
+        areQuestionnaireEntriesEqual(previous, entries) ? previous : entries
+      ));
       const selectedId = selectedQuestionnaireIdRef.current.trim();
-      if (!selectedId || !entries.some((entry) => entry.questionnaireId === selectedId)) {
-        setSelectedQuestionnaireId(entries[0]?.questionnaireId ?? "");
-      }
-      setQuestionnaireRefreshStatus(
+      const nextSelectedId = (!selectedId || !entries.some((entry) => entry.questionnaireId === selectedId))
+        ? (entries[0]?.questionnaireId ?? "")
+        : selectedId;
+      setSelectedQuestionnaireId((previous) => (previous === nextSelectedId ? previous : nextSelectedId));
+      const nextStatus = (
         entries.length > 0
           ? "Questionnaires refreshed from Nostr."
-          : "No public questionnaires discovered yet.",
+          : "No public questionnaires discovered yet."
       );
+      setQuestionnaireRefreshStatus((previous) => (previous === nextStatus ? previous : nextStatus));
     } catch {
-      setQuestionnaireRefreshStatus("Failed to refresh public questionnaires.");
-    } finally {
-      refreshInFlightRef.current = false;
+      const nextStatus = "Failed to refresh public questionnaires.";
+      setQuestionnaireRefreshStatus((previous) => (previous === nextStatus ? previous : nextStatus));
     }
   }, [loadQuestionnairesFromNostr]);
 
   const refreshSelectedQuestionnaireResponses = useCallback(async () => {
     const selectedId = selectedQuestionnaireIdRef.current.trim();
     if (!selectedId) {
-      setSelectedResponseDetails([]);
-      setSelectedLatestPublishAt(null);
-      setSelectedLiveState(null);
-      setSelectedResultSummary(null);
-      setResponseRefreshStatus("Choose a questionnaire round.");
+      setSelectedResponseDetails((previous) => (previous.length === 0 ? previous : []));
+      setSelectedLatestPublishAt((previous) => (previous === null ? previous : null));
+      setSelectedLiveState((previous) => (previous === null ? previous : null));
+      setSelectedResultSummary((previous) => (previous === null ? previous : null));
+      const nextStatus = "Choose a questionnaire round.";
+      setResponseRefreshStatus((previous) => (previous === nextStatus ? previous : nextStatus));
       return;
     }
     try {
@@ -240,70 +247,145 @@ export default function SimpleAuditorApp() {
           }));
         details = mergeAuditorResponseDetails(details, summaryRefDetails);
       }
-      setSelectedResponseDetails(details);
-      setSelectedLatestPublishAt(latestPublishAt);
-      setSelectedLiveState(latestState?.state.state ?? null);
-      setSelectedResultSummary(latestResult?.summary ?? null);
-      setResponseRefreshStatus("Questionnaire responses refreshed from Nostr.");
+      const nextLiveState = latestState?.state.state ?? null;
+      const nextResultSummary = latestResult?.summary ?? null;
+      setSelectedResponseDetails((previous) => (
+        areAuditorResponseDetailsEqual(previous, details) ? previous : details
+      ));
+      setSelectedLatestPublishAt((previous) => (previous === latestPublishAt ? previous : latestPublishAt));
+      setSelectedLiveState((previous) => (previous === nextLiveState ? previous : nextLiveState));
+      setSelectedResultSummary((previous) => (
+        areQuestionnaireResultSummaryEqual(previous, nextResultSummary) ? previous : nextResultSummary
+      ));
+      const nextStatus = "Questionnaire responses refreshed from Nostr.";
+      setResponseRefreshStatus((previous) => (previous === nextStatus ? previous : nextStatus));
     } catch {
-      setSelectedResponseDetails([]);
-      setSelectedLatestPublishAt(null);
-      setSelectedLiveState(null);
-      setSelectedResultSummary(null);
-      setResponseRefreshStatus("Failed to refresh questionnaire responses.");
+      setSelectedResponseDetails((previous) => (previous.length === 0 ? previous : []));
+      setSelectedLatestPublishAt((previous) => (previous === null ? previous : null));
+      setSelectedLiveState((previous) => (previous === null ? previous : null));
+      setSelectedResultSummary((previous) => (previous === null ? previous : null));
+      const nextStatus = "Failed to refresh questionnaire responses.";
+      setResponseRefreshStatus((previous) => (previous === nextStatus ? previous : nextStatus));
     }
-  }, [questionnaires]);
+  }, []);
+
+  const drainRefreshQueue = useCallback(async (forceWhenHidden = false) => {
+    if (refreshQueueRef.current.inFlightPromise) {
+      await refreshQueueRef.current.inFlightPromise;
+      return;
+    }
+    refreshQueueRef.current.inFlightPromise = (async () => {
+      while (refreshQueueRef.current.pendingList || refreshQueueRef.current.pendingSelected) {
+        const visible = typeof document === "undefined" || document.visibilityState === "visible";
+        if (!visible && !forceWhenHidden) {
+          break;
+        }
+        const runList = refreshQueueRef.current.pendingList;
+        const runSelected = refreshQueueRef.current.pendingSelected;
+        refreshQueueRef.current.pendingList = false;
+        refreshQueueRef.current.pendingSelected = false;
+        if (runList) {
+          await refreshQuestionnaires();
+        }
+        if (runSelected) {
+          await refreshSelectedQuestionnaireResponses();
+        }
+      }
+    })();
+    try {
+      await refreshQueueRef.current.inFlightPromise;
+    } finally {
+      refreshQueueRef.current.inFlightPromise = null;
+    }
+  }, [refreshQuestionnaires, refreshSelectedQuestionnaireResponses]);
+
+  const enqueueRefresh = useCallback(async (input?: {
+    list?: boolean;
+    selected?: boolean;
+    forceWhenHidden?: boolean;
+  }) => {
+    const list = input?.list !== false;
+    const selected = input?.selected !== false;
+    if (list) {
+      refreshQueueRef.current.pendingList = true;
+    }
+    if (selected) {
+      refreshQueueRef.current.pendingSelected = true;
+    }
+    await drainRefreshQueue(Boolean(input?.forceWhenHidden));
+  }, [drainRefreshQueue]);
 
   useEffect(() => {
     let cancelled = false;
-    const runRefresh = async () => {
-      if (cancelled) {
-        return;
-      }
-      await refreshQuestionnaires();
-      if (!cancelled) {
-        await refreshSelectedQuestionnaireResponses();
-      }
-    };
-    const runSelectedRefresh = async () => {
-      if (cancelled) {
-        return;
-      }
-      await refreshSelectedQuestionnaireResponses();
-    };
-    const runQuestionnaireListRefresh = async () => {
-      if (cancelled) {
-        return;
-      }
-      await refreshQuestionnaires();
+    let selectedTimeoutId: number | null = null;
+    let listTimeoutId: number | null = null;
+
+    const scheduleSelected = (delayMs: number) => {
+      selectedTimeoutId = window.setTimeout(async () => {
+        if (cancelled) {
+          return;
+        }
+        await enqueueRefresh({ list: false, selected: true });
+        if (!cancelled) {
+          scheduleSelected(AUDITOR_REFRESH_INTERVAL_MS);
+        }
+      }, delayMs);
     };
 
-    void runRefresh();
-    const selectedIntervalId = window.setInterval(() => {
-      void runSelectedRefresh();
-    }, AUDITOR_REFRESH_INTERVAL_MS);
-    const listIntervalId = window.setInterval(() => {
-      void runQuestionnaireListRefresh();
-    }, AUDITOR_QUESTIONNAIRE_LIST_REFRESH_INTERVAL_MS);
+    const scheduleList = (delayMs: number) => {
+      listTimeoutId = window.setTimeout(async () => {
+        if (cancelled) {
+          return;
+        }
+        await enqueueRefresh({ list: true, selected: false });
+        if (!cancelled) {
+          scheduleList(AUDITOR_QUESTIONNAIRE_LIST_REFRESH_INTERVAL_MS);
+        }
+      }, delayMs);
+    };
+
+    const handleForegroundRefresh = () => {
+      if (cancelled) {
+        return;
+      }
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        return;
+      }
+      void enqueueRefresh({ list: true, selected: true });
+    };
+
+    void enqueueRefresh({ list: true, selected: true, forceWhenHidden: true });
+    scheduleSelected(AUDITOR_REFRESH_INTERVAL_MS);
+    scheduleList(AUDITOR_QUESTIONNAIRE_LIST_REFRESH_INTERVAL_MS);
+    document.addEventListener("visibilitychange", handleForegroundRefresh);
+    window.addEventListener("focus", handleForegroundRefresh);
+    window.addEventListener("online", handleForegroundRefresh);
 
     return () => {
       cancelled = true;
-      window.clearInterval(selectedIntervalId);
-      window.clearInterval(listIntervalId);
+      if (selectedTimeoutId !== null) {
+        window.clearTimeout(selectedTimeoutId);
+      }
+      if (listTimeoutId !== null) {
+        window.clearTimeout(listTimeoutId);
+      }
+      document.removeEventListener("visibilitychange", handleForegroundRefresh);
+      window.removeEventListener("focus", handleForegroundRefresh);
+      window.removeEventListener("online", handleForegroundRefresh);
     };
-  }, [refreshQuestionnaires, refreshSelectedQuestionnaireResponses]);
+  }, [enqueueRefresh]);
 
   useEffect(() => {
     if (!selectedQuestionnaireId.trim()) {
-      setSelectedResponseDetails([]);
-      setSelectedLatestPublishAt(null);
-      setSelectedLiveState(null);
-      setSelectedResultSummary(null);
+      setSelectedResponseDetails((previous) => (previous.length === 0 ? previous : []));
+      setSelectedLatestPublishAt((previous) => (previous === null ? previous : null));
+      setSelectedLiveState((previous) => (previous === null ? previous : null));
+      setSelectedResultSummary((previous) => (previous === null ? previous : null));
       return;
     }
-    setVoterSearchQuery("");
-    void refreshSelectedQuestionnaireResponses();
-  }, [refreshSelectedQuestionnaireResponses, selectedQuestionnaireId]);
+    setVoterSearchQuery((previous) => (previous ? "" : previous));
+    void enqueueRefresh({ list: false, selected: true, forceWhenHidden: true });
+  }, [enqueueRefresh, selectedQuestionnaireId]);
 
   const coordinatorOptions = useMemo(
     () => [...new Set(
@@ -400,7 +482,7 @@ export default function SimpleAuditorApp() {
   );
   const filteredResponseDetails = useMemo(() => {
     const visibilityFiltered = showInvalidVotes
-      ? selectedResponseDetails
+      ? selectedResponseDetails.filter((entry) => !entry.accepted)
       : selectedResponseDetails.filter((entry) => entry.accepted);
     const query = voterSearchQuery.trim().toLowerCase();
     if (!query) {
@@ -414,10 +496,11 @@ export default function SimpleAuditorApp() {
   }, [selectedResponseDetails, showInvalidVotes, voterSearchQuery]);
 
   async function refreshNow() {
-    setQuestionnaireRefreshStatus("Refreshing public questionnaires...");
-    setResponseRefreshStatus("Refreshing questionnaire responses...");
-    await refreshQuestionnaires();
-    await refreshSelectedQuestionnaireResponses();
+    const nextQuestionnaireStatus = "Refreshing public questionnaires...";
+    const nextResponseStatus = "Refreshing questionnaire responses...";
+    setQuestionnaireRefreshStatus((previous) => (previous === nextQuestionnaireStatus ? previous : nextQuestionnaireStatus));
+    setResponseRefreshStatus((previous) => (previous === nextResponseStatus ? previous : nextResponseStatus));
+    await enqueueRefresh({ list: true, selected: true, forceWhenHidden: true });
   }
 
   async function searchHistoricData() {
@@ -425,10 +508,13 @@ export default function SimpleAuditorApp() {
       return;
     }
     setHistoricSearchInFlight(true);
-    setQuestionnaireRefreshStatus("Searching historic questionnaire data...");
+    const searchingStatus = "Searching historic questionnaire data...";
+    setQuestionnaireRefreshStatus((previous) => (previous === searchingStatus ? previous : searchingStatus));
     try {
       const entries = await loadQuestionnairesFromNostr({ historic: true });
-      setQuestionnaires(entries);
+      setQuestionnaires((previous) => (
+        areQuestionnaireEntriesEqual(previous, entries) ? previous : entries
+      ));
       const selectedId = selectedQuestionnaireIdRef.current.trim();
       if (!selectedId || !entries.some((entry) => entry.questionnaireId === selectedId)) {
         const query = searchQuery.trim().toLowerCase();
@@ -441,16 +527,19 @@ export default function SimpleAuditorApp() {
             || entry.eventId.toLowerCase().includes(query)
           ))
           : null;
-        setSelectedQuestionnaireId((match ?? entries[0])?.questionnaireId ?? "");
+        const nextSelectedId = (match ?? entries[0])?.questionnaireId ?? "";
+        setSelectedQuestionnaireId((previous) => (previous === nextSelectedId ? previous : nextSelectedId));
       }
-      setQuestionnaireRefreshStatus(
+      const nextStatus = (
         entries.length > 0
           ? `Historic search loaded ${entries.length} questionnaire${entries.length === 1 ? "" : "s"}.`
-          : "No historic public questionnaires discovered.",
+          : "No historic public questionnaires discovered."
       );
-      await refreshSelectedQuestionnaireResponses();
+      setQuestionnaireRefreshStatus((previous) => (previous === nextStatus ? previous : nextStatus));
+      await enqueueRefresh({ list: false, selected: true, forceWhenHidden: true });
     } catch {
-      setQuestionnaireRefreshStatus("Historic questionnaire search failed.");
+      const nextStatus = "Historic questionnaire search failed.";
+      setQuestionnaireRefreshStatus((previous) => (previous === nextStatus ? previous : nextStatus));
     } finally {
       setHistoricSearchInFlight(false);
     }
@@ -719,7 +808,7 @@ export default function SimpleAuditorApp() {
                         onChange={(event) => setShowInvalidVotes(event.target.checked)}
                       />
                       {" "}
-                      Show invalid votes
+                      Show invalid votes only
                     </label>
                   </div>
                 </div>
@@ -796,9 +885,15 @@ export default function SimpleAuditorApp() {
         </section>
 
         {freeTextViewerQuestionId && selectedQuestionnaire ? (
-          <section className='token-fingerprint-overlay' role='dialog' aria-modal='true' aria-label='Free-text responses'>
+          <section
+            className='token-fingerprint-overlay'
+            role='dialog'
+            aria-modal='true'
+            aria-label='Free-text responses'
+            onClick={() => setFreeTextViewerQuestionId(null)}
+          >
             <button type='button' className='token-fingerprint-overlay-close' onClick={() => setFreeTextViewerQuestionId(null)}>Close</button>
-            <div className='token-fingerprint-overlay-card simple-auditor-full-results-card'>
+            <div className='token-fingerprint-overlay-card simple-auditor-full-results-card' onClick={(event) => event.stopPropagation()}>
               <h3 className='simple-voter-question'>
                 {selectedQuestionById.get(freeTextViewerQuestionId)?.prompt || freeTextViewerQuestionId}
               </h3>
@@ -833,6 +928,87 @@ export default function SimpleAuditorApp() {
       </section>
     </main>
   );
+}
+
+function areQuestionnaireEntriesEqual(
+  left: AuditorQuestionnaireEntry[],
+  right: AuditorQuestionnaireEntry[],
+) {
+  if (left === right) {
+    return true;
+  }
+  if (left.length !== right.length) {
+    return false;
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    const a = left[index];
+    const b = right[index];
+    if (
+      a.questionnaireId !== b.questionnaireId
+      || a.title !== b.title
+      || a.description !== b.description
+      || a.coordinatorNpub !== b.coordinatorNpub
+      || a.createdAt !== b.createdAt
+      || a.openAt !== b.openAt
+      || a.closeAt !== b.closeAt
+      || a.state !== b.state
+      || a.publishedAcceptedResponseCount !== b.publishedAcceptedResponseCount
+      || a.publishedRejectedResponseCount !== b.publishedRejectedResponseCount
+      || a.resultPublishedAt !== b.resultPublishedAt
+      || a.eventId !== b.eventId
+      || !areQuestionsEqual(a.questions, b.questions)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function areQuestionsEqual(left: QuestionnaireQuestion[], right: QuestionnaireQuestion[]) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function areQuestionnaireResultSummaryEqual(
+  left: QuestionnaireResultSummary | null,
+  right: QuestionnaireResultSummary | null,
+) {
+  if (left === right) {
+    return true;
+  }
+  if (!left || !right) {
+    return false;
+  }
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function areAuditorResponseDetailsEqual(
+  left: AuditorQuestionnaireResponseDetail[],
+  right: AuditorQuestionnaireResponseDetail[],
+) {
+  if (left === right) {
+    return true;
+  }
+  if (left.length !== right.length) {
+    return false;
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    const a = left[index];
+    const b = right[index];
+    if (
+      a.event.id !== b.event.id
+      || Number(a.event.created_at ?? 0) !== Number(b.event.created_at ?? 0)
+      || a.accepted !== b.accepted
+      || a.rejectionReason !== b.rejectionReason
+      || a.includedInLatestPublish !== b.includedInLatestPublish
+      || a.response.responseId !== b.response.responseId
+      || a.response.authorPubkey !== b.response.authorPubkey
+      || a.response.tokenNullifier !== b.response.tokenNullifier
+      || JSON.stringify(a.response.answers ?? []) !== JSON.stringify(b.response.answers ?? [])
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function normalizeToNpub(value: string) {
