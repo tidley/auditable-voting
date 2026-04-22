@@ -30,6 +30,15 @@ WORKER_POLL_SECONDS=15
 cargo run --release
 ```
 
+## Prebuilt binaries
+
+GitHub Releases include worker binaries for:
+
+- Linux x64: `auditable-voting-worker-linux-x64.tar.gz`
+- Windows x64: `auditable-voting-worker-windows-x64.zip`
+- macOS Intel: `auditable-voting-worker-macos-x64.tar.gz`
+- macOS Apple Silicon: `auditable-voting-worker-macos-arm64.tar.gz`
+
 ## Current responsibilities
 
 - announce worker presence/status to the coordinator via NIP-17 DM

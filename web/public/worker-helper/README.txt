@@ -16,7 +16,10 @@ Usage (Linux x86_64):
    ./auditable-voting-worker-linux-x64
 
 Other platforms:
-- Build from source in /worker:
+- Download prebuilt release assets:
+  - auditable-voting-worker-windows-x64.zip
+  - auditable-voting-worker-macos-x64.tar.gz
+  - auditable-voting-worker-macos-arm64.tar.gz
+- Or build from source in /worker:
   cd worker
   cargo build --release
-

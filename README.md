@@ -214,7 +214,12 @@ The default remains browser-only coordination. You can optionally enable `Delega
 - worker can be revoked at any time with a signed revocation (also public + DM)
 - worker runtime is outbound-only to relays and does not require inbound ports
 - current delegated worker responsibilities are focused on public-submission verification and decision publication with delegation provenance
-- coordinator Build now exposes a direct worker-helper binary download (`Linux x64`) plus checksum/setup notes for portable bootstrap
+- coordinator Delegate tab exposes a direct worker-helper bootstrap download (`Linux x64`) plus checksum/setup notes
+- GitHub Releases now publish cross-platform worker assets for:
+  - Linux x64 (`auditable-voting-worker-linux-x64.tar.gz`)
+  - Windows x64 (`auditable-voting-worker-windows-x64.zip`)
+  - macOS Intel (`auditable-voting-worker-macos-x64.tar.gz`)
+  - macOS Apple Silicon (`auditable-voting-worker-macos-arm64.tar.gz`)
 
 Public state:
 
