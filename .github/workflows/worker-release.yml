@@ -123,6 +123,7 @@ jobs:
       - name: Upload assets to GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           if [ -z "${TAG_NAME:-}" ]; then
