@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.8] - 2026-04-22
+
+### Changed
+- Applied a single-flight, visibility-aware ballot wait scheduler in the voter flow to reduce overlapping mobile/signer retry loops.
+- Paused hidden-tab ballot wait retries and resumed foreground recovery on `focus`/`online`/`visibilitychange`.
+- Reduced retry churn while preserving automatic recovery for delayed blind issuance delivery.
+
 ## [0.1.7] - 2026-04-22
 
 ### Changed

@@ -258,6 +258,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const inviteRefreshAtRef = useRef(0);
   const signerWaitRestartAtRef = useRef(0);
   const signerWaitFetchAtRef = useRef(0);
+  const ballotWaitLifecycleTriggerAtRef = useRef(0);
   const signerInitialPullTimeoutIdsRef = useRef<number[]>([]);
   const ballotWaitQueueRef = useRef<{
     inFlight: boolean;
@@ -401,6 +402,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       queueBallotWaitRefresh({ mode: "manual", forceWhenHidden: true });
     }, AUTO_BALLOT_SIGNER_INITIAL_PULL_DELAY_MS);
     signerInitialPullTimeoutIdsRef.current.push(timeoutId);
+  }
+
+  function isPageVisible() {
+    return typeof document === "undefined" || document.visibilityState === "visible";
   }
 
   useEffect(() => {
@@ -1163,30 +1168,45 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     const resendMs = AUTO_BALLOT_RETRY_RESEND_MS;
     const key = snapshot.electionId + ":" + snapshot.invitedNpub;
     let cancelled = false;
+    let retryInFlight = false;
     let timeoutId: number | null = null;
     const retry = async () => {
-      if (cancelled) {
+      if (retryInFlight) {
         return;
       }
-      queueBallotWaitRefresh({ mode: "lifecycle" });
-      const now = Date.now();
-      const lastAttemptAt = requestRetryAtRef.current[key] ?? 0;
-      if (now - lastAttemptAt < resendMs) {
-        return;
-      }
-      requestRetryAtRef.current[key] = now;
+      retryInFlight = true;
       try {
-        await runtime.requestBlindBallot({ minRetryMs: resendMs });
-        markSignerWaitRecoveryBaseline();
-        scheduleSignerInitialPull();
-        queueBallotWaitRefresh({
-          restartSubscriptions: true,
-          mode: "manual",
-          forceWhenHidden: true,
-        });
-      } catch {
-        // Retry is best-effort; explicit controls surface errors.
+        if (cancelled || !isPageVisible()) {
+          return;
+        }
+        queueBallotWaitRefresh({ mode: "lifecycle" });
+        const now = Date.now();
+        const lastAttemptAt = requestRetryAtRef.current[key] ?? 0;
+        if (now - lastAttemptAt < resendMs) {
+          return;
+        }
+        requestRetryAtRef.current[key] = now;
+        try {
+          await runtime.requestBlindBallot({ minRetryMs: resendMs });
+          markSignerWaitRecoveryBaseline();
+          scheduleSignerInitialPull();
+          queueBallotWaitRefresh({
+            restartSubscriptions: true,
+            mode: "manual",
+            forceWhenHidden: true,
+          });
+        } catch {
+          // Retry is best-effort; explicit controls surface errors.
+        }
+      } finally {
+        retryInFlight = false;
       }
+    };
+    const onVisible = () => {
+      if (!isPageVisible()) {
+        return;
+      }
+      void retry();
     };
     const loop = () => {
       timeoutId = window.setTimeout(async () => {
@@ -1197,13 +1217,75 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       }, pollMs);
     };
     loop();
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    window.addEventListener("online", onVisible);
     return () => {
       cancelled = true;
       if (timeoutId !== null) {
         window.clearTimeout(timeoutId);
       }
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+      window.removeEventListener("online", onVisible);
     };
   }, [runtime, props.localVoterNsec, snapshot?.electionId, snapshot?.invitedNpub, snapshot?.loginVerified, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission]);
+
+  useEffect(() => {
+    if (!runtime || !snapshot?.loginVerified || !snapshot.blindRequestSent || snapshot.credentialReady || snapshot.submission) {
+      return;
+    }
+    const hasLocalSecretKey = Boolean(props.localVoterNsec?.trim());
+    if (hasLocalSecretKey) {
+      return;
+    }
+    const pollMs = isLikelyMobileClient()
+      ? AUTO_BALLOT_MOBILE_RECOVERY_PULL_MS
+      : AUTO_BALLOT_SIGNER_KEEPALIVE_REFRESH_MS;
+    let cancelled = false;
+    let timeoutId: number | null = null;
+    const triggerForegroundRefresh = (mode: BallotWaitRefreshMode) => {
+      if (!isPageVisible()) {
+        return;
+      }
+      const now = Date.now();
+      if (now - ballotWaitLifecycleTriggerAtRef.current < 1_500) {
+        return;
+      }
+      ballotWaitLifecycleTriggerAtRef.current = now;
+      queueBallotWaitRefresh({ mode });
+    };
+    const loop = () => {
+      timeoutId = window.setTimeout(() => {
+        if (cancelled) {
+          return;
+        }
+        if (isPageVisible()) {
+          const mode: BallotWaitRefreshMode = isLikelyMobileClient() ? "background" : "lifecycle";
+          queueBallotWaitRefresh({ mode });
+        }
+        if (!cancelled) {
+          loop();
+        }
+      }, pollMs);
+    };
+    const onVisible = () => {
+      triggerForegroundRefresh(isLikelyMobileClient() ? "background" : "lifecycle");
+    };
+    loop();
+    window.addEventListener("focus", onVisible);
+    window.addEventListener("online", onVisible);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+      window.removeEventListener("focus", onVisible);
+      window.removeEventListener("online", onVisible);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [runtime, props.localVoterNsec, snapshot?.loginVerified, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission]);
 
   useEffect(() => {
     if (!runtime || !snapshot?.loginVerified || !snapshot.blindRequestSent || snapshot.credentialReady || snapshot.submission) {
@@ -1226,81 +1308,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       for (const timeoutId of timeoutIds) {
         window.clearTimeout(timeoutId);
       }
-    };
-  }, [runtime, props.localVoterNsec, snapshot?.loginVerified, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission]);
-
-  useEffect(() => {
-    if (!runtime || !snapshot?.loginVerified || !snapshot.blindRequestSent || snapshot.credentialReady || snapshot.submission) {
-      return;
-    }
-    const hasLocalSecretKey = Boolean(props.localVoterNsec?.trim());
-    if (hasLocalSecretKey) {
-      return;
-    }
-    let cancelled = false;
-    let timeoutId: number | null = null;
-    const tick = () => {
-      timeoutId = window.setTimeout(() => {
-        if (cancelled) {
-          return;
-        }
-        queueBallotWaitRefresh({ mode: "lifecycle" });
-        if (!cancelled) {
-          tick();
-        }
-      }, AUTO_BALLOT_SIGNER_KEEPALIVE_REFRESH_MS);
-    };
-    tick();
-    return () => {
-      cancelled = true;
-      if (timeoutId !== null) {
-        window.clearTimeout(timeoutId);
-      }
-    };
-  }, [runtime, props.localVoterNsec, snapshot?.loginVerified, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission]);
-
-  useEffect(() => {
-    if (!runtime || !snapshot?.loginVerified || !snapshot.blindRequestSent || snapshot.credentialReady || snapshot.submission) {
-      return;
-    }
-    const hasLocalSecretKey = Boolean(props.localVoterNsec?.trim());
-    if (hasLocalSecretKey || !isLikelyMobileClient()) {
-      return;
-    }
-    let cancelled = false;
-    let timeoutId: number | null = null;
-    const refresh = () => {
-      queueBallotWaitRefresh({ mode: "background" });
-    };
-    const onVisible = () => {
-      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
-        return;
-      }
-      refresh();
-    };
-    const loop = () => {
-      timeoutId = window.setTimeout(() => {
-        if (cancelled) {
-          return;
-        }
-        refresh();
-        if (!cancelled) {
-          loop();
-        }
-      }, AUTO_BALLOT_MOBILE_RECOVERY_PULL_MS);
-    };
-    loop();
-    document.addEventListener("visibilitychange", onVisible);
-    window.addEventListener("focus", onVisible);
-    window.addEventListener("online", onVisible);
-    return () => {
-      cancelled = true;
-      if (timeoutId !== null) {
-        window.clearTimeout(timeoutId);
-      }
-      document.removeEventListener("visibilitychange", onVisible);
-      window.removeEventListener("focus", onVisible);
-      window.removeEventListener("online", onVisible);
     };
   }, [runtime, props.localVoterNsec, snapshot?.loginVerified, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission]);
 
