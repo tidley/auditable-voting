@@ -4,16 +4,23 @@ mod store;
 
 use crate::config::WorkerConfig;
 use crate::model::{
-    is_expired, now_iso, ElectionRuntimeState, QuestionnaireBlindResponseEvent,
+    is_expired, now_iso, BlindBallotIssuance, BlindBallotIssuanceEnvelope, BlindBallotRequest,
+    BlindBallotRequestEnvelope, ElectionRuntimeState, QuestionnaireBlindResponseEvent,
     QuestionnaireSubmissionDecisionEvent, WorkerCapability, WorkerDelegationCertificate,
-    WorkerDelegationEnvelope, WorkerDelegationRevocation, WorkerPersistentState,
-    WorkerRevocationEnvelope, WorkerStatusEnvelope, WorkerStatusSnapshot,
-    IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND, IMPLEMENTATION_KIND_QUESTIONNAIRE_SUBMISSION_DECISION,
+    WorkerDelegationEnvelope, WorkerDelegationRevocation, WorkerElectionConfigEnvelope,
+    WorkerElectionConfigSnapshot, WorkerPersistentState, WorkerRevocationEnvelope,
+    WorkerStatusEnvelope, WorkerStatusSnapshot, IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND,
+    IMPLEMENTATION_KIND_QUESTIONNAIRE_RESULT_SUMMARY, IMPLEMENTATION_KIND_QUESTIONNAIRE_SUBMISSION_DECISION,
     OPTIONA_WORKER_DELEGATION_KIND, OPTIONA_WORKER_DELEGATION_REVOCATION_KIND,
 };
 use crate::store::WorkerStore;
 use anyhow::{Context, Result};
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine as _;
+use blind_rsa_signatures::SecretKeySha384PSSDeterministic;
+use crypto_bigint::BoxedUint;
 use nostr_sdk::prelude::*;
+use rsa::RsaPrivateKey;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -23,6 +30,56 @@ use tracing_subscriber::EnvFilter;
 
 const DEFAULT_DM_LOOKBACK_SECS: u64 = 12 * 60 * 60;
 const DEFAULT_PUBLIC_LOOKBACK_SECS: u64 = 12 * 60 * 60;
+
+fn parse_jwk_component(jwk: &serde_json::Value, key: &str) -> Result<BoxedUint> {
+    let value = jwk
+        .get(key)
+        .and_then(|entry| entry.as_str())
+        .with_context(|| format!("missing JWK component '{key}'"))?;
+    let decoded = URL_SAFE_NO_PAD
+        .decode(value.as_bytes())
+        .with_context(|| format!("invalid base64url for JWK component '{key}'"))?;
+    Ok(BoxedUint::from_be_slice_vartime(&decoded))
+}
+
+fn sign_blinded_message(blinded_hex: &str, private_jwk: &serde_json::Value) -> Result<String> {
+    let clean = blinded_hex.trim();
+    if clean.is_empty() || clean.len() % 2 != 0 {
+        anyhow::bail!("invalid blinded message encoding");
+    }
+    let mut blinded_bytes = Vec::with_capacity(clean.len() / 2);
+    for chunk in clean.as_bytes().chunks(2) {
+        let pair = std::str::from_utf8(chunk).context("invalid blinded message bytes")?;
+        let value = u8::from_str_radix(pair, 16).context("invalid blinded message hex")?;
+        blinded_bytes.push(value);
+    }
+    let n = parse_jwk_component(private_jwk, "n")?;
+    let e = parse_jwk_component(private_jwk, "e")?;
+    let d = parse_jwk_component(private_jwk, "d")?;
+    let p = parse_jwk_component(private_jwk, "p")?;
+    let q = parse_jwk_component(private_jwk, "q")?;
+    let mut key = RsaPrivateKey::from_components(n, e, d, vec![p, q])
+        .context("unable to construct RSA private key from JWK")?;
+    key.validate().context("invalid RSA private key")?;
+    key.precompute().context("unable to precompute RSA key")?;
+    let signing_key = SecretKeySha384PSSDeterministic::new(key);
+    let signature = signing_key
+        .blind_sign(&blinded_bytes)
+        .context("blind signing failed")?;
+    Ok(signature
+        .0
+        .iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect::<String>())
+}
+
+fn random_suffix() -> String {
+    format!(
+        "{}{:08x}",
+        Timestamp::now().as_secs(),
+        rand::random::<u32>()
+    )
+}
 
 #[derive(Clone)]
 struct WorkerRuntime {
@@ -238,6 +295,20 @@ impl WorkerRuntime {
                 };
                 self.apply_revocation(envelope.revocation).await?;
             }
+            "optiona_worker_election_config_dm" => {
+                let envelope: WorkerElectionConfigEnvelope = match serde_json::from_value(value) {
+                    Ok(parsed) => parsed,
+                    Err(_) => return Ok(()),
+                };
+                self.apply_election_config(envelope.snapshot).await?;
+            }
+            "optiona_blind_request_dm" => {
+                let envelope: BlindBallotRequestEnvelope = match serde_json::from_value(value) {
+                    Ok(parsed) => parsed,
+                    Err(_) => return Ok(()),
+                };
+                self.handle_blind_request(envelope.request).await?;
+            }
             _ => {}
         }
         Ok(())
@@ -294,6 +365,7 @@ impl WorkerRuntime {
                 .filter(|entry| {
                     entry.capabilities.contains(&WorkerCapability::VerifyPublicSubmissions)
                         || entry.capabilities.contains(&WorkerCapability::PublishSubmissionDecisions)
+                        || entry.capabilities.contains(&WorkerCapability::PublishResultSummary)
                 })
                 .map(|entry| entry.election_id.clone())
                 .collect::<Vec<_>>()
@@ -355,6 +427,12 @@ impl WorkerRuntime {
             election
                 .accepted_nullifiers
                 .insert(submission.token_nullifier.clone());
+            election
+                .accepted_response_authors
+                .insert(submission.author_pubkey.clone());
+            election.accepted_response_count = election.accepted_response_count.saturating_add(1);
+        } else {
+            election.rejected_response_count = election.rejected_response_count.saturating_add(1);
         }
         election
             .processed_submission_ids
@@ -380,6 +458,26 @@ impl WorkerRuntime {
                 .published_decisions
                 .insert(decision.submission_id.clone(), event_id);
             election.last_decision_publish_at = Some(now_iso());
+        }
+
+        let should_publish_summary = election.capabilities.contains(&WorkerCapability::PublishResultSummary)
+            && !election.summary_published
+            && election.expected_invitee_count.unwrap_or(0) > 0
+            && (election.accepted_response_authors.len() as u64) >= election.expected_invitee_count.unwrap_or(0);
+        if should_publish_summary {
+            let summary_event_id = self
+                .publish_result_summary(
+                    &submission.questionnaire_id,
+                    election.accepted_response_count,
+                    election.rejected_response_count,
+                )
+                .await?;
+            election.summary_published = true;
+            election.last_result_summary_publish_at = Some(now_iso());
+            info!(
+                "published questionnaire result summary for election {} event_id={}",
+                submission.questionnaire_id, summary_event_id
+            );
         }
 
         self.store.save(&state)?;
@@ -420,6 +518,131 @@ impl WorkerRuntime {
         Ok(output.val.to_hex())
     }
 
+    async fn publish_result_summary(
+        &self,
+        election_id: &str,
+        accepted_count: u64,
+        rejected_count: u64,
+    ) -> Result<String> {
+        let content = serde_json::json!({
+            "schemaVersion": 1,
+            "eventType": "questionnaire_result_summary",
+            "questionnaireId": election_id,
+            "createdAt": Timestamp::now().as_secs() as i64,
+            "coordinatorPubkey": self.config.coordinator_npub,
+            "acceptedResponseCount": accepted_count,
+            "rejectedResponseCount": rejected_count,
+            "acceptedNullifierCount": accepted_count,
+            "questionSummaries": [],
+        })
+        .to_string();
+        let mut builder =
+            EventBuilder::new(Kind::Custom(IMPLEMENTATION_KIND_QUESTIONNAIRE_RESULT_SUMMARY), content);
+        let tags = vec![
+            vec!["t".to_string(), "questionnaire_result_summary".to_string()],
+            vec!["questionnaire-id".to_string(), election_id.to_string()],
+            vec!["worker".to_string(), self.worker_npub.clone()],
+            vec!["coordinator".to_string(), self.config.coordinator_npub.clone()],
+        ];
+        for tag in tags {
+            if let Ok(parsed) = Tag::parse(tag) {
+                builder = builder.tag(parsed);
+            }
+        }
+        let output = self.client.send_event_builder(builder).await?;
+        Ok(output.val.to_hex())
+    }
+
+    async fn apply_election_config(&self, snapshot: WorkerElectionConfigSnapshot) -> Result<()> {
+        if snapshot.message_type != "worker_election_config" || snapshot.schema_version != 1 {
+            return Ok(());
+        }
+        if snapshot.worker_npub != self.worker_npub {
+            return Ok(());
+        }
+        if snapshot.coordinator_npub != self.config.coordinator_npub {
+            return Ok(());
+        }
+        let mut state = self.state.lock().await;
+        let election = state
+            .elections
+            .entry(snapshot.election_id.clone())
+            .or_insert_with(ElectionRuntimeState::default);
+        if election.election_id.is_empty() {
+            election.election_id = snapshot.election_id.clone();
+        }
+        if election.delegation_id.is_empty() {
+            election.delegation_id = snapshot.delegation_id.clone();
+        }
+        if election.delegation_id != snapshot.delegation_id {
+            return Ok(());
+        }
+        election.expected_invitee_count = snapshot.expected_invitee_count;
+        if snapshot.blind_signing_private_key.is_some() {
+            election.blind_signing_private_key = snapshot.blind_signing_private_key;
+        }
+        self.store.save(&state)?;
+        Ok(())
+    }
+
+    async fn handle_blind_request(&self, request: BlindBallotRequest) -> Result<()> {
+        let mut state = self.state.lock().await;
+        let Some(election) = state.elections.get_mut(&request.election_id) else {
+            return Ok(());
+        };
+        if election.revoked || is_expired(&election.expires_at) {
+            return Ok(());
+        }
+        if !election.capabilities.contains(&WorkerCapability::IssueBlindTokens) {
+            return Ok(());
+        }
+        if election.seen_blind_request_ids.contains(&request.request_id) {
+            return Ok(());
+        }
+        let Some(private_key) = election.blind_signing_private_key.clone() else {
+            warn!(
+                "blind request ignored for election {} because no blind signing key is configured",
+                request.election_id
+            );
+            return Ok(());
+        };
+        if private_key.key_id != request.blind_signing_key_id {
+            warn!(
+                "blind request ignored for election {} due to key-id mismatch request={} worker={}",
+                request.election_id, request.blind_signing_key_id, private_key.key_id
+            );
+            return Ok(());
+        }
+        let blind_signature = sign_blinded_message(&request.blinded_message, &private_key.private_jwk)?;
+        let issuance = BlindBallotIssuance {
+            message_type: "blind_ballot_response".to_string(),
+            schema_version: 1,
+            election_id: request.election_id.clone(),
+            request_id: request.request_id.clone(),
+            issuance_id: format!("issuance_{}", random_suffix()),
+            invited_npub: request.invited_npub.clone(),
+            token_commitment: request.token_commitment.clone(),
+            blind_signing_key_id: request.blind_signing_key_id.clone(),
+            blind_signature,
+            definition: None,
+            issued_at: now_iso(),
+        };
+        let envelope = BlindBallotIssuanceEnvelope {
+            message_type: "optiona_blind_issuance_dm".to_string(),
+            schema_version: 1,
+            issuance,
+            sent_at: now_iso(),
+        };
+        let content = serde_json::to_string(&envelope)?;
+        let recipient = PublicKey::from_bech32(&request.invited_npub)
+            .context("invalid invited npub on blind request")?;
+        let _ = self.client.send_private_msg(recipient, content, []).await?;
+        election.seen_blind_request_ids.insert(request.request_id);
+        election.last_blind_issuance_at = Some(now_iso());
+        self.store.save(&state)?;
+        Ok(())
+    }
+
     async fn apply_delegation(&self, delegation: WorkerDelegationCertificate) -> Result<()> {
         if delegation.message_type != "worker_delegation" || delegation.schema_version != 1 {
             return Ok(());
@@ -449,12 +672,23 @@ impl WorkerRuntime {
             .elections
             .entry(delegation.election_id.clone())
             .or_insert_with(ElectionRuntimeState::default);
+        let delegation_changed = existing.delegation_id != delegation.delegation_id;
         existing.election_id = delegation.election_id.clone();
         existing.delegation_id = delegation.delegation_id.clone();
         existing.capabilities = delegation.capabilities.clone();
         existing.control_relays = delegation.control_relays.clone();
         existing.revoked = false;
         existing.expires_at = delegation.expires_at.clone();
+        if delegation_changed {
+            existing.seen_blind_request_ids.clear();
+            existing.accepted_response_authors.clear();
+            existing.accepted_response_count = 0;
+            existing.rejected_response_count = 0;
+            existing.expected_invitee_count = None;
+            existing.blind_signing_private_key = None;
+            existing.summary_published = false;
+            existing.last_result_summary_publish_at = None;
+        }
         self.store.save(&state)?;
         Ok(())
     }

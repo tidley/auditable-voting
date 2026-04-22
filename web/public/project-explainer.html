@@ -205,10 +205,10 @@ The current repository contains only the browser app. It has voter, coordinator,
 1. Build and publish a questionnaire definition (public event).
 2. Invite voter npubs to that questionnaire.
 3. Optional: open the `Delegate` tab, switch mode to `Delegated Nostr worker`, use the startup helper/downloads, and delegate one election (coordinator remains root authority).
-4. Receive blind-token requests over private DMs.
-5. Issue blind signatures to authorised voters over private DMs.
-6. Watch public submissions and publish public accept/reject decisions.
-7. Close the round and publish the result summary.
+4. Receive blind-token requests over private DMs (or delegate handling to a worker).
+5. Issue blind signatures to authorised voters over private DMs (or let the delegated worker issue for that round).
+6. Watch public submissions and publish public accept/reject decisions (or delegate decision publication).
+7. Close the round and publish the result summary (or enable worker auto-summary once all invitees have accepted responses).
 
 ### Voter
 

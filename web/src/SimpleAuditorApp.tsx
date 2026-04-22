@@ -5,9 +5,11 @@ import {
   evaluateQuestionnaireBlindAdmissions,
   fetchQuestionnaireBlindResponses,
   fetchQuestionnaireDefinitions,
+  fetchQuestionnaireWorkerDelegationStatus,
   fetchQuestionnaireSubmissionDecisions,
   fetchQuestionnaireResultSummary,
   fetchQuestionnaireState,
+  type QuestionnaireWorkerDelegationStatus,
 } from "./questionnaireTransport";
 import { formatQuestionnaireStateLabel } from "./questionnaireRuntime";
 import type {
@@ -58,6 +60,7 @@ export default function SimpleAuditorApp() {
   const [selectedLatestPublishAt, setSelectedLatestPublishAt] = useState<number | null>(null);
   const [selectedLiveState, setSelectedLiveState] = useState<string | null>(null);
   const [selectedResultSummary, setSelectedResultSummary] = useState<QuestionnaireResultSummary | null>(null);
+  const [selectedWorkerDelegationStatus, setSelectedWorkerDelegationStatus] = useState<QuestionnaireWorkerDelegationStatus | null>(null);
   const [voterSearchQuery, setVoterSearchQuery] = useState("");
   const [showInvalidVotes, setShowInvalidVotes] = useState(false);
   const [freeTextViewerQuestionId, setFreeTextViewerQuestionId] = useState<string | null>(null);
@@ -188,12 +191,13 @@ export default function SimpleAuditorApp() {
       setSelectedLatestPublishAt((previous) => (previous === null ? previous : null));
       setSelectedLiveState((previous) => (previous === null ? previous : null));
       setSelectedResultSummary((previous) => (previous === null ? previous : null));
+      setSelectedWorkerDelegationStatus((previous) => (previous === null ? previous : null));
       const nextStatus = "Choose a questionnaire round.";
       setResponseRefreshStatus((previous) => (previous === nextStatus ? previous : nextStatus));
       return;
     }
     try {
-      const [responseEntries, decisionEntries, resultEntries, stateEntries] = await Promise.all([
+      const [responseEntries, decisionEntries, resultEntries, stateEntries, delegationStatus] = await Promise.all([
         fetchQuestionnaireBlindResponses({
           questionnaireId: selectedId,
           limit: AUDITOR_QUESTIONNAIRE_RESPONSE_LIMIT,
@@ -218,6 +222,10 @@ export default function SimpleAuditorApp() {
           readRelayLimit: 2,
           preferKindOnly: true,
         }).catch(() => []),
+        fetchQuestionnaireWorkerDelegationStatus({
+          questionnaireId: selectedId,
+          readRelayLimit: 2,
+        }).catch(() => null),
       ]);
       const admissions = evaluateQuestionnaireBlindAdmissions({
         entries: responseEntries,
@@ -257,6 +265,11 @@ export default function SimpleAuditorApp() {
       setSelectedResultSummary((previous) => (
         areQuestionnaireResultSummaryEqual(previous, nextResultSummary) ? previous : nextResultSummary
       ));
+      setSelectedWorkerDelegationStatus((previous) => (
+        areWorkerDelegationStatusesEqual(previous, delegationStatus)
+          ? previous
+          : delegationStatus
+      ));
       const nextStatus = "Questionnaire responses refreshed from Nostr.";
       setResponseRefreshStatus((previous) => (previous === nextStatus ? previous : nextStatus));
     } catch {
@@ -264,6 +277,7 @@ export default function SimpleAuditorApp() {
       setSelectedLatestPublishAt((previous) => (previous === null ? previous : null));
       setSelectedLiveState((previous) => (previous === null ? previous : null));
       setSelectedResultSummary((previous) => (previous === null ? previous : null));
+      setSelectedWorkerDelegationStatus((previous) => (previous === null ? previous : null));
       const nextStatus = "Failed to refresh questionnaire responses.";
       setResponseRefreshStatus((previous) => (previous === nextStatus ? previous : nextStatus));
     }
@@ -715,6 +729,12 @@ export default function SimpleAuditorApp() {
                   <p className='simple-auditor-summary-label'>Round phase</p>
                   <p className='simple-voter-question'>{formatQuestionnaireStateLabel(selectedLiveState ?? selectedQuestionnaire.state)}</p>
                 </div>
+                <div className='simple-auditor-summary-card'>
+                  <p className='simple-auditor-summary-label'>Delegated worker</p>
+                  <p className='simple-voter-question'>
+                    {formatWorkerDelegationStatus(selectedWorkerDelegationStatus)}
+                  </p>
+                </div>
               </div>
               {selectedResultSummary ? (
                 <>
@@ -979,6 +999,40 @@ function areQuestionnaireResultSummaryEqual(
     return false;
   }
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function areWorkerDelegationStatusesEqual(
+  left: QuestionnaireWorkerDelegationStatus | null,
+  right: QuestionnaireWorkerDelegationStatus | null,
+) {
+  if (left === right) {
+    return true;
+  }
+  if (!left || !right) {
+    return false;
+  }
+  return (
+    left.state === right.state
+    && left.delegationId === right.delegationId
+    && left.workerNpub === right.workerNpub
+    && left.expiresAt === right.expiresAt
+    && left.updatedAt === right.updatedAt
+  );
+}
+
+function formatWorkerDelegationStatus(status: QuestionnaireWorkerDelegationStatus | null) {
+  if (!status || status.state === "none") {
+    return "None";
+  }
+  const worker = status.workerNpub ? normalizeToNpub(status.workerNpub) : "";
+  const workerSuffix = worker ? ` (${worker})` : "";
+  if (status.state === "active") {
+    return `Active${workerSuffix}`;
+  }
+  if (status.state === "revoked") {
+    return `Revoked${workerSuffix}`;
+  }
+  return `Expired${workerSuffix}`;
 }
 
 function areAuditorResponseDetailsEqual(

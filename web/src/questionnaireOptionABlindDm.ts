@@ -7,6 +7,7 @@ import type {
   BlindBallotRequest,
   CoordinatorElectionState,
 } from "./questionnaireOptionA";
+import type { QuestionnaireBlindPrivateKey } from "./questionnaireBlindSignature";
 import type { SignerService } from "./services/signerService";
 import type {
   WorkerDelegationCertificate,
@@ -185,6 +186,25 @@ type WorkerDelegationRevocationDmEnvelope = {
   type: "optiona_worker_delegation_revocation_dm";
   schemaVersion: 1;
   revocation: WorkerDelegationRevocation;
+  sentAt: string;
+};
+
+export type WorkerElectionConfigSnapshot = {
+  type: "worker_election_config";
+  schemaVersion: 1;
+  electionId: string;
+  delegationId: string;
+  coordinatorNpub: string;
+  workerNpub: string;
+  expectedInviteeCount?: number;
+  blindSigningPrivateKey?: QuestionnaireBlindPrivateKey | null;
+  sentAt: string;
+};
+
+type WorkerElectionConfigDmEnvelope = {
+  type: "optiona_worker_election_config_dm";
+  schemaVersion: 1;
+  snapshot: WorkerElectionConfigSnapshot;
   sentAt: string;
 };
 
@@ -868,6 +888,35 @@ function parseWorkerDelegationRevocationDmContent(content: string): WorkerDelega
   }
 }
 
+function parseWorkerElectionConfigDmContent(content: string): WorkerElectionConfigSnapshot | null {
+  try {
+    const parsed = JSON.parse(content) as Partial<WorkerElectionConfigDmEnvelope> | WorkerElectionConfigSnapshot;
+    const snapshot = (parsed as WorkerElectionConfigDmEnvelope).type === "optiona_worker_election_config_dm"
+      ? (parsed as WorkerElectionConfigDmEnvelope).snapshot
+      : parsed as WorkerElectionConfigSnapshot;
+    if (
+      snapshot?.type !== "worker_election_config"
+      || snapshot.schemaVersion !== 1
+      || typeof snapshot.electionId !== "string"
+      || typeof snapshot.delegationId !== "string"
+      || typeof snapshot.coordinatorNpub !== "string"
+      || typeof snapshot.workerNpub !== "string"
+      || typeof snapshot.sentAt !== "string"
+    ) {
+      return null;
+    }
+    if (
+      snapshot.expectedInviteeCount !== undefined
+      && (!Number.isFinite(snapshot.expectedInviteeCount) || snapshot.expectedInviteeCount < 0)
+    ) {
+      return null;
+    }
+    return snapshot;
+  } catch {
+    return null;
+  }
+}
+
 function optionABlindDmSubject(
   envelope: BlindRequestDmEnvelope
     | BlindIssuanceDmEnvelope
@@ -880,7 +929,8 @@ function optionABlindDmSubject(
     | CoordinatorStateDmEnvelope
     | WorkerStatusDmEnvelope
     | WorkerDelegationDmEnvelope
-    | WorkerDelegationRevocationDmEnvelope,
+    | WorkerDelegationRevocationDmEnvelope
+    | WorkerElectionConfigDmEnvelope,
 ) {
   switch (envelope.type) {
     case "optiona_blind_request_dm":
@@ -907,6 +957,8 @@ function optionABlindDmSubject(
       return "Auditable Voting worker delegation";
     case "optiona_worker_delegation_revocation_dm":
       return "Auditable Voting worker delegation revocation";
+    case "optiona_worker_election_config_dm":
+      return "Auditable Voting worker election config";
   }
 }
 
@@ -926,7 +978,8 @@ function createRumor(input: {
     | CoordinatorStateDmEnvelope
     | WorkerStatusDmEnvelope
     | WorkerDelegationDmEnvelope
-    | WorkerDelegationRevocationDmEnvelope;
+    | WorkerDelegationRevocationDmEnvelope
+    | WorkerElectionConfigDmEnvelope;
 }) {
   const rumor = {
     kind: KIND_RUMOR_MESSAGE,
@@ -1523,6 +1576,28 @@ export async function publishOptionAWorkerDelegationRevocationDm(input: {
       type: "optiona_worker_delegation_revocation_dm",
       schemaVersion: 1,
       revocation: input.revocation,
+      sentAt: new Date().toISOString(),
+    },
+  });
+}
+
+export async function publishOptionAWorkerElectionConfigDm(input: {
+  signer: SignerService;
+  recipientNpub: string;
+  snapshot: WorkerElectionConfigSnapshot;
+  fallbackNsec?: string;
+  relays?: string[];
+}) {
+  return publishEnvelope({
+    signer: input.signer,
+    recipientNpub: input.recipientNpub,
+    fallbackNsec: input.fallbackNsec,
+    relays: input.relays,
+    channel: `optiona-worker-election-config:${input.snapshot.electionId}:${input.snapshot.delegationId}`,
+    envelope: {
+      type: "optiona_worker_election_config_dm",
+      schemaVersion: 1,
+      snapshot: input.snapshot,
       sentAt: new Date().toISOString(),
     },
   });
@@ -2625,6 +2700,48 @@ export async function fetchOptionAWorkerDelegationRevocationDmsWithNsec(input: {
       const key = `${revocation.electionId}:${revocation.delegationId}:${revocation.revokedAt}`;
       if (!unique.has(key)) {
         unique.set(key, revocation);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return [...unique.values()];
+}
+
+export async function fetchOptionAWorkerElectionConfigDmsWithNsec(input: {
+  nsec: string;
+  electionId?: string;
+  relays?: string[];
+  limit?: number;
+  since?: number;
+}) {
+  const secretKey = decodeNsecSecretKey(input.nsec);
+  const recipientHex = getPublicKey(secretKey);
+  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
+  const events = await queryBlindDmSync(relays, {
+    kinds: [KIND_GIFT_WRAP],
+    "#p": [recipientHex],
+    since: input.since,
+    limit: Math.max(1, input.limit ?? 200),
+  });
+  const unique = new Map<string, WorkerElectionConfigSnapshot>();
+  const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
+  for (const event of sorted) {
+    try {
+      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string };
+      if (!rumor || typeof rumor.content !== "string") {
+        continue;
+      }
+      const snapshot = parseWorkerElectionConfigDmContent(rumor.content);
+      if (!snapshot) {
+        continue;
+      }
+      if (input.electionId?.trim() && snapshot.electionId !== input.electionId.trim()) {
+        continue;
+      }
+      const key = `${snapshot.electionId}:${snapshot.delegationId}`;
+      if (!unique.has(key)) {
+        unique.set(key, snapshot);
       }
     } catch {
       continue;

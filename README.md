@@ -214,7 +214,7 @@ The default remains browser-only coordination. You can optionally enable `Delega
 - delegation is published publicly for auditability and also sent privately to the worker over NIP-17 DM
 - worker can be revoked at any time with a signed revocation (also public + DM)
 - worker runtime is outbound-only to relays and does not require inbound ports
-- current delegated worker responsibilities are focused on public-submission verification and decision publication with delegation provenance
+- delegated worker can issue blind tokens, verify public submissions, publish public submission decisions, and (optionally) auto-publish a result summary once all expected invitees have accepted responses
 - coordinator Delegate tab exposes worker downloads plus a startup helper that can generate a worker `nsec`/`npub` and copy a launch command using the current coordinator `npub`
 - GitHub Releases now publish cross-platform worker assets for:
   - Linux x64 (`auditable-voting-worker-linux-x64.tar.gz`)

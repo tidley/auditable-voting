@@ -46,7 +46,6 @@ export const SIMPLE_DM_RELAYS = [
   'wss://nostr.mom',
   'wss://relay.layer.systems',
   'wss://nostr.bond',
-  'wss://relay.nostr.band',
   'wss://auth.nostr1.com',
   'wss://inbox.nostr.wine',
   'wss://nostr-pub.wellorder.net',

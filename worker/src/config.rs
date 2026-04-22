@@ -17,7 +17,6 @@ const DEFAULT_WORKER_RELAYS: &[&str] = &[
     "wss://nip17.tomdwyer.uk",
     "wss://relay.layer.systems",
     "wss://nostr.bond",
-    "wss://relay.nostr.band",
     "wss://auth.nostr1.com",
     "wss://inbox.nostr.wine",
     "wss://relay.0xchat.com",

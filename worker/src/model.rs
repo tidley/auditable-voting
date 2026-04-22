@@ -6,6 +6,7 @@ pub const OPTIONA_WORKER_DELEGATION_KIND: u16 = 31994;
 pub const OPTIONA_WORKER_DELEGATION_REVOCATION_KIND: u16 = 31995;
 pub const IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND: u16 = 14124;
 pub const IMPLEMENTATION_KIND_QUESTIONNAIRE_SUBMISSION_DECISION: u16 = 14125;
+pub const IMPLEMENTATION_KIND_QUESTIONNAIRE_RESULT_SUMMARY: u16 = 14123;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -99,6 +100,93 @@ pub struct WorkerRevocationEnvelope {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct WorkerElectionConfigSnapshot {
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub schema_version: u8,
+    pub election_id: String,
+    pub delegation_id: String,
+    pub coordinator_npub: String,
+    pub worker_npub: String,
+    pub expected_invitee_count: Option<u64>,
+    pub blind_signing_private_key: Option<QuestionnaireBlindPrivateKey>,
+    pub sent_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkerElectionConfigEnvelope {
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub schema_version: u8,
+    pub snapshot: WorkerElectionConfigSnapshot,
+    pub sent_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestionnaireBlindPrivateKey {
+    pub scheme: String,
+    pub key_id: String,
+    pub jwk: serde_json::Value,
+    pub private_jwk: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlindBallotRequest {
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub schema_version: u8,
+    pub election_id: String,
+    pub request_id: String,
+    pub invited_npub: String,
+    pub blinded_message: String,
+    pub token_commitment: String,
+    pub blind_signing_key_id: String,
+    pub client_nonce: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlindBallotRequestEnvelope {
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub schema_version: u8,
+    pub request: BlindBallotRequest,
+    pub sent_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlindBallotIssuance {
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub schema_version: u8,
+    pub election_id: String,
+    pub request_id: String,
+    pub issuance_id: String,
+    pub invited_npub: String,
+    pub token_commitment: String,
+    pub blind_signing_key_id: String,
+    pub blind_signature: String,
+    pub definition: Option<serde_json::Value>,
+    pub issued_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlindBallotIssuanceEnvelope {
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub schema_version: u8,
+    pub issuance: BlindBallotIssuance,
+    pub sent_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct QuestionnaireBlindResponseEvent {
     pub schema_version: u8,
     pub event_type: String,
@@ -107,6 +195,8 @@ pub struct QuestionnaireBlindResponseEvent {
     pub submitted_at: i64,
     pub author_pubkey: String,
     pub token_nullifier: String,
+    #[serde(default)]
+    pub answers: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -136,6 +226,14 @@ pub struct ElectionRuntimeState {
     pub processed_submission_ids: HashSet<String>,
     pub accepted_nullifiers: HashSet<String>,
     pub published_decisions: HashMap<String, String>,
+    pub seen_blind_request_ids: HashSet<String>,
+    pub accepted_response_authors: HashSet<String>,
+    pub accepted_response_count: u64,
+    pub rejected_response_count: u64,
+    pub expected_invitee_count: Option<u64>,
+    pub summary_published: bool,
+    pub last_result_summary_publish_at: Option<String>,
+    pub blind_signing_private_key: Option<QuestionnaireBlindPrivateKey>,
     pub last_blind_issuance_at: Option<String>,
     pub last_vote_verification_at: Option<String>,
     pub last_decision_publish_at: Option<String>,

@@ -124,6 +124,7 @@ import {
   publishQuestionnaireSubmissionDecisionPublic,
 } from "./questionnaireResponsePublish";
 import {
+  fetchQuestionnaireActiveWorkerDelegationForCapability,
   fetchQuestionnaireBlindResponses,
 } from "./questionnaireTransport";
 import type { QuestionnaireResponseAnswer } from "./questionnaireProtocol";
@@ -1240,15 +1241,28 @@ export class QuestionnaireOptionAVoterRuntime {
     if (!this.state || !request || !this.state.coordinatorNpub) {
       return null;
     }
+    let recipientNpub = this.state.coordinatorNpub;
+    try {
+      const delegation = await fetchQuestionnaireActiveWorkerDelegationForCapability({
+        questionnaireId: this.state.electionId,
+        capability: "issue_blind_tokens",
+      });
+      if (delegation?.workerNpub?.trim()) {
+        recipientNpub = delegation.workerNpub.trim();
+      }
+    } catch {
+      // Fall back to coordinator DM routing.
+    }
     optionAFlowLog("voter", "blind_request_publish_attempt", {
       electionId: this.state.electionId,
       requestId: request.requestId,
       coordinatorNpub: this.state.coordinatorNpub,
+      recipientNpub,
     });
     try {
       const result = await publishOptionABlindRequestDm({
         signer: this.signer,
-        recipientNpub: this.state.coordinatorNpub,
+        recipientNpub,
         request,
         fallbackNsec: this.fallbackNsec,
         relays: this.getPreferredDmRelays(),
@@ -2260,6 +2274,8 @@ export class QuestionnaireOptionACoordinatorRuntime {
     coordinatorNpub: string;
     summary?: Partial<ElectionSummary>;
     startDmSubscriptions?: boolean;
+    recoverSelfState?: boolean;
+    publishSelfState?: boolean;
   }) {
     const nextCoordinatorNpub = toNpub(input.coordinatorNpub);
     const coordinatorChanged = this.coordinatorNpub !== nextCoordinatorNpub;
@@ -2277,8 +2293,12 @@ export class QuestionnaireOptionACoordinatorRuntime {
         this.startCoordinatorDmSubscriptions();
       }
     }
-    void this.recoverCoordinatorStateFromSelfDm().catch(() => this.state ?? state);
-    void this.publishCoordinatorStateSelfDm({ reason: "bootstrap_local_identity" });
+    if (input.recoverSelfState ?? true) {
+      void this.recoverCoordinatorStateFromSelfDm().catch(() => this.state ?? state);
+    }
+    if (input.publishSelfState ?? true) {
+      void this.publishCoordinatorStateSelfDm({ reason: "bootstrap_local_identity" });
+    }
     return state;
   }
 
@@ -2485,6 +2505,15 @@ export class QuestionnaireOptionACoordinatorRuntime {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
     }
+    if (isDelegatedWorkerCapabilityEnabled({
+      electionId: this.electionId,
+      capability: "issue_blind_tokens",
+    })) {
+      optionAFlowLog("coordinator", "blind_requests_sync_skipped_delegated_worker", {
+        electionId: this.electionId,
+      });
+      return 0;
+    }
 
     try {
       const since = this.getDmReadSince();
@@ -2573,6 +2602,15 @@ export class QuestionnaireOptionACoordinatorRuntime {
   }) {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
+    }
+    if (isDelegatedWorkerCapabilityEnabled({
+      electionId: this.electionId,
+      capability: "issue_blind_tokens",
+    })) {
+      optionAFlowLog("coordinator", "blind_issuance_publish_skipped_delegated_worker", {
+        electionId: this.electionId,
+      });
+      return 0;
     }
 
     const forcedRequestIds = new Set([
@@ -2687,6 +2725,18 @@ export class QuestionnaireOptionACoordinatorRuntime {
   async syncSubmissionsFromDm() {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
+    }
+    if (isDelegatedWorkerCapabilityEnabled({
+      electionId: this.electionId,
+      capability: "verify_public_submissions",
+    }) || isDelegatedWorkerCapabilityEnabled({
+      electionId: this.electionId,
+      capability: "publish_submission_decisions",
+    })) {
+      optionAFlowLog("coordinator", "submissions_sync_skipped_delegated_worker", {
+        electionId: this.electionId,
+      });
+      return 0;
     }
     const publicSubmissionFlow = shouldUsePublicSubmissionFlow({
       summaryFlowMode: this.state.election.flowMode ?? null,
@@ -2822,6 +2872,8 @@ export class QuestionnaireOptionACoordinatorRuntime {
     }
     const blindSigningPrivateKey = await this.ensureBlindSigningKey();
     const queue = listBlindRequests(this.electionId);
+    const pendingAuthorizationsBefore = JSON.stringify(this.pendingAuthorizationsByNpub);
+    const originalState = this.state;
     optionAFlowLog("coordinator", "process_blind_requests_started", {
       electionId: this.electionId,
       queued: queue.length,
@@ -2915,7 +2967,11 @@ export class QuestionnaireOptionACoordinatorRuntime {
       dequeueBlindRequest(request.requestId);
     }
     this.state = next;
-    this.persistCoordinatorState("process_pending_blind_requests", { force: true });
+    const stateChanged = next !== originalState;
+    const pendingAuthorizationsChanged = pendingAuthorizationsBefore !== JSON.stringify(this.pendingAuthorizationsByNpub);
+    if (stateChanged || pendingAuthorizationsChanged) {
+      this.persistCoordinatorState("process_pending_blind_requests");
+    }
     return this.state;
   }
 
@@ -2945,6 +3001,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       });
       return this.state;
     }
+    const originalState = this.state;
     let next = this.state;
     const publicSubmissionFlow = shouldUsePublicSubmissionFlow({
       summaryFlowMode: this.state.election.flowMode ?? null,
@@ -3113,7 +3170,9 @@ export class QuestionnaireOptionACoordinatorRuntime {
     }
 
     this.state = next;
-    this.persistCoordinatorState("process_pending_submissions", { force: true });
+    if (next !== originalState) {
+      this.persistCoordinatorState("process_pending_submissions");
+    }
     return this.state;
   }
 
@@ -3199,6 +3258,8 @@ export async function processOptionAQueuesForCoordinator(input: {
       coordinatorNpub,
       summary,
       startDmSubscriptions: false,
+      recoverSelfState: false,
+      publishSelfState: false,
     });
     await runtime.processPendingBlindRequests();
     await runtime.processPendingSubmissions(input.requiredQuestionIdsByElectionId?.[electionId] ?? []);
@@ -3252,6 +3313,8 @@ export async function processOptionAQueuesForCoordinatorLive(input: {
       coordinatorNpub,
       summary,
       startDmSubscriptions: false,
+      recoverSelfState: false,
+      publishSelfState: false,
     });
     await runtime.syncBlindRequestsFromDm();
     await runtime.processPendingBlindRequests();

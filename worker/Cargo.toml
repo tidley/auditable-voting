@@ -1,13 +1,18 @@
 [package]
 name = "auditable-voting-worker"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Delegated Nostr worker for auditable-voting elections"
 
 [dependencies]
 anyhow = "1.0"
+base64 = "0.22"
+blind-rsa-signatures = "0.17.1"
 chrono = { version = "0.4", features = ["serde"] }
+crypto-bigint = "0.7.3"
 nostr-sdk = { version = "0.44.1", features = ["nip59"] }
+rand = "0.9"
+rsa = "0.10.0-rc.15"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.48.0", features = ["full"] }

@@ -49,9 +49,9 @@ This is the practical order of operations for the current app.
 2. In **Build**, set questionnaire ID, title, description, questions, and (optionally) enable the close timer (default is off).
 3. In **Invite**, add or import voter npubs and invite expected participants.
 4. Send invites (`Send invite` / `Invite all whitelisted`) or share the invite link (generated links use the current host by default).
-5. As voters appear, run `Process requests` / `Check responses` to process blind request and response queues.
+5. As voters appear, run `Process requests` / `Check responses` to process blind request and response queues (or delegate those duties to a worker).
    - Verified voters can now pre-request and coordinators can pre-issue before publish.
-  - If needed, open the `Delegate` tab, switch to `Delegated Nostr worker`, generate worker credentials/startup command, then delegate while keeping the browser as control authority.
+  - If needed, open the `Delegate` tab, switch to `Delegated Nostr worker`, generate worker credentials/startup command, then delegate while keeping the browser as control authority (worker can issue blind tokens and publish decisions/summaries for the delegated election).
 6. Publish the questionnaire when ready (`Publish Questionnaire`, state becomes `Open`).
 
 ### 2. Voter joins second
