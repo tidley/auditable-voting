@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { nip19, nip44, type NostrEvent } from "nostr-tools";
+import { getPublicKey, generateSecretKey, nip19, nip44, type NostrEvent } from "nostr-tools";
 import { fetchQuestionnaireEventsWithFallback, getQuestionnaireReadRelays, parseQuestionnaireDefinitionEvent, parseQuestionnaireStateEvent, publishQuestionnaireDefinition, publishQuestionnaireResultSummary, publishQuestionnaireState, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESPONSE_PRIVATE_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND, subscribeQuestionnaireEvents } from "./questionnaireNostr";
 import { buildQuestionnaireResultSummary, deriveEffectiveQuestionnaireState, processQuestionnaireResponses, selectLatestQuestionnaireDefinition, selectLatestQuestionnaireResultSummary, selectLatestQuestionnaireState, type QuestionnaireAcceptedResponse } from "./questionnaireRuntime";
 import { buildSimpleNamespacedLocalStorageKey, loadSimpleActorState } from "./simpleLocalState";
@@ -487,6 +487,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [delegatedWorkerCapabilities, setDelegatedWorkerCapabilities] = useState<WorkerCapability[]>(
     storedDraft.delegatedWorkerCapabilities ?? ["issue_blind_tokens", "verify_public_submissions", "publish_submission_decisions"],
   );
+  const [generatedWorkerNsec, setGeneratedWorkerNsec] = useState("");
+  const [generatedWorkerNpub, setGeneratedWorkerNpub] = useState("");
   const [activeWorkerDelegation, setActiveWorkerDelegation] = useState<WorkerDelegationCertificate | null>(null);
   const [lastWorkerRevocationState, setLastWorkerRevocationState] = useState<WorkerDelegationState | null>(null);
   const [availableWorkerStatuses, setAvailableWorkerStatuses] = useState<WorkerStatusSnapshot[]>([]);
@@ -1332,6 +1334,24 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const workerMacOsX64ChecksumUrl = `${workerMacOsX64DownloadUrl}.sha256`;
   const workerMacOsArm64DownloadUrl = `${workerReleaseBaseUrl}/auditable-voting-worker-macos-arm64.tar.gz`;
   const workerMacOsArm64ChecksumUrl = `${workerMacOsArm64DownloadUrl}.sha256`;
+  const helperRelayList = useMemo(
+    () => parseDelegatedControlRelays(delegatedWorkerControlRelays).join(","),
+    [delegatedWorkerControlRelays],
+  );
+  const workerStartupCommand = useMemo(() => {
+    const coordinator = coordinatorNpub.trim() || "npub1...";
+    const workerNsec = generatedWorkerNsec.trim() || "nsec1...";
+    const relayOverride = delegatedWorkerControlRelays.trim();
+    const lines = [
+      `WORKER_NSEC=${workerNsec} \\`,
+      `  COORDINATOR_NPUB=${coordinator} \\`,
+    ];
+    if (relayOverride) {
+      lines.push(`  WORKER_RELAYS=${helperRelayList} \\`);
+    }
+    lines.push("  ./auditable-voting-worker-linux-x64");
+    return lines.join("\n");
+  }, [coordinatorNpub, delegatedWorkerControlRelays, generatedWorkerNsec, helperRelayList]);
 
   const titleReady = title.trim().length > 0;
   const hasQuestion = questions.length > 0;
@@ -2060,6 +2080,16 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     }
   }
 
+  function generateWorkerCredentials() {
+    const secretKey = generateSecretKey();
+    const nsec = nip19.nsecEncode(secretKey);
+    const npub = nip19.npubEncode(getPublicKey(secretKey));
+    setGeneratedWorkerNsec(nsec);
+    setGeneratedWorkerNpub(npub);
+    setDelegatedWorkerNpub(npub);
+    setStatus(`Generated worker credentials for ${deriveActorDisplayId(npub)}.`);
+  }
+
   const view = props.view ?? "build";
 
   if (view === "delegate") {
@@ -2126,6 +2156,49 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                 value={delegatedWorkerNpub}
                 onChange={(event) => setDelegatedWorkerNpub(event.target.value)}
               />
+              <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
+                <button type='button' className='simple-voter-secondary' onClick={generateWorkerCredentials}>
+                  Generate worker nsec
+                </button>
+                <button
+                  type='button'
+                  className='simple-voter-secondary'
+                  onClick={() => void tryWriteClipboard(workerStartupCommand)}
+                  disabled={!coordinatorNpub.trim()}
+                >
+                  Copy startup command
+                </button>
+              </div>
+              {generatedWorkerNpub ? (
+                <p className='simple-voter-note'>Generated worker npub: {generatedWorkerNpub}</p>
+              ) : null}
+              {generatedWorkerNsec ? (
+                <div className='simple-voter-field-stack'>
+                  <label className='simple-voter-label' htmlFor='generated-worker-nsec'>Generated worker nsec (store securely)</label>
+                  <textarea
+                    id='generated-worker-nsec'
+                    className='simple-voter-input'
+                    rows={2}
+                    readOnly
+                    value={generatedWorkerNsec}
+                  />
+                </div>
+              ) : null}
+              <div className='simple-voter-field-stack'>
+                <label className='simple-voter-label' htmlFor='worker-startup-command'>Startup command</label>
+                <textarea
+                  id='worker-startup-command'
+                  className='simple-voter-input'
+                  rows={4}
+                  readOnly
+                  value={workerStartupCommand}
+                />
+                <p className='simple-voter-note'>
+                  {delegatedWorkerControlRelays.trim()
+                    ? "This command includes WORKER_RELAYS from the current relay input."
+                    : "WORKER_RELAYS is omitted; worker uses the built-in default client relay set."}
+                </p>
+              </div>
 
               <label className='simple-voter-label' htmlFor='delegated-worker-relays'>Control relays</label>
               <textarea

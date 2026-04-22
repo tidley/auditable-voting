@@ -207,7 +207,7 @@ At a high level:
 
 ### Optional delegated worker mode
 
-The default remains browser-only coordination. You can optionally enable `Delegated Nostr worker` on the coordinator Build tab:
+The default remains browser-only coordination. You can optionally enable `Delegated Nostr worker` on the coordinator Delegate tab:
 
 - coordinator remains root authority
 - coordinator signs an election-scoped delegation certificate for one worker `npub`
@@ -215,7 +215,7 @@ The default remains browser-only coordination. You can optionally enable `Delega
 - worker can be revoked at any time with a signed revocation (also public + DM)
 - worker runtime is outbound-only to relays and does not require inbound ports
 - current delegated worker responsibilities are focused on public-submission verification and decision publication with delegation provenance
-- coordinator Delegate tab exposes a direct worker-helper bootstrap download (`Linux x64`) plus checksum/setup notes
+- coordinator Delegate tab exposes worker downloads plus a startup helper that can generate a worker `nsec`/`npub` and copy a launch command using the current coordinator `npub`
 - GitHub Releases now publish cross-platform worker assets for:
   - Linux x64 (`auditable-voting-worker-linux-x64.tar.gz`)
   - Windows x64 (`auditable-voting-worker-windows-x64.zip`)

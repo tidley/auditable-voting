@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.14] - 2026-04-22
+
+### Changed
+- Added a Delegate-tab startup helper to generate worker credentials (`nsec`/`npub`) and copy a launch command using the current coordinator identity.
+- Updated Delegate and explainer docs to reflect the dedicated Delegate-tab worker setup flow.
+
 ## [0.1.13] - 2026-04-22
 
 ### Changed
