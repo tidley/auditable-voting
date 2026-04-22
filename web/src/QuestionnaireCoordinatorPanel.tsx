@@ -27,6 +27,26 @@ import { fetchQuestionnaireBlindResponses } from "./questionnaireTransport";
 import { evaluateQuestionnaireBlindAdmissions, fetchQuestionnaireSubmissionDecisions } from "./questionnaireTransport";
 import { publishQuestionnaireBlindResponsePublicByCoordinator } from "./questionnaireResponsePublish";
 import { decodeNsec } from "./nostrIdentity";
+import { normalizeRelaysRust } from "./wasm/auditableVotingCore";
+import { createSignerService } from "./services/signerService";
+import {
+  fetchOptionAWorkerStatusDmsWithNsec,
+  publishOptionAWorkerDelegationDm,
+  publishOptionAWorkerDelegationRevocationDm,
+} from "./questionnaireOptionABlindDm";
+import {
+  createWorkerDelegationCertificate,
+  createWorkerDelegationRevocation,
+  loadStoredWorkerDelegation,
+  normaliseWorkerNpub,
+  publishWorkerDelegationCertificate,
+  publishWorkerDelegationRevocation,
+  upsertStoredWorkerDelegation,
+  type WorkerCapability,
+  type WorkerDelegationCertificate,
+  type WorkerDelegationState,
+  type WorkerStatusSnapshot,
+} from "./questionnaireWorkerDelegation";
 
 const DEFAULT_QUESTIONNAIRE_ID_PREFIX = "q";
 const QUESTIONNAIRE_DRAFT_ID_STORAGE_KEY = "coordinator.questionnaire-draft-id.v1";
@@ -186,6 +206,11 @@ type StoredQuestionnaireDraft = {
   closeTimerEnabled: boolean;
   closeAfterMinutes: string;
   questions: QuestionnaireQuestionDraft[];
+  delegationMode?: "browser_only" | "delegated_worker";
+  delegatedWorkerNpub?: string;
+  delegatedWorkerControlRelays?: string;
+  delegatedWorkerExpiryMinutes?: string;
+  delegatedWorkerCapabilities?: WorkerCapability[];
 };
 
 function normaliseStoredQuestions(input: unknown): QuestionnaireQuestionDraft[] {
@@ -238,6 +263,18 @@ function readStoredQuestionnaireDraft(): StoredQuestionnaireDraft {
         ? parsed.closeAfterMinutes
         : QUESTIONNAIRE_TIMER_FALLBACK_MINUTES,
       questions: normaliseStoredQuestions(parsed.questions),
+      delegationMode: parsed.delegationMode === "delegated_worker" ? "delegated_worker" : "browser_only",
+      delegatedWorkerNpub: typeof parsed.delegatedWorkerNpub === "string" ? parsed.delegatedWorkerNpub : "",
+      delegatedWorkerControlRelays: typeof parsed.delegatedWorkerControlRelays === "string" ? parsed.delegatedWorkerControlRelays : "",
+      delegatedWorkerExpiryMinutes: typeof parsed.delegatedWorkerExpiryMinutes === "string" ? parsed.delegatedWorkerExpiryMinutes : "120",
+      delegatedWorkerCapabilities: Array.isArray(parsed.delegatedWorkerCapabilities)
+        ? parsed.delegatedWorkerCapabilities.filter((entry): entry is WorkerCapability => (
+          entry === "issue_blind_tokens"
+          || entry === "verify_public_submissions"
+          || entry === "publish_submission_decisions"
+          || entry === "publish_result_summary"
+        ))
+        : ["issue_blind_tokens", "verify_public_submissions", "publish_submission_decisions"],
     };
   } catch {
     return {
@@ -432,6 +469,16 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [closeTimerEnabled, setCloseTimerEnabled] = useState(storedDraft.closeTimerEnabled);
   const [closeAfterMinutes, setCloseAfterMinutes] = useState(storedDraft.closeAfterMinutes);
   const [questions, setQuestions] = useState<QuestionnaireQuestionDraft[]>(storedDraft.questions);
+  const [delegationMode, setDelegationMode] = useState<"browser_only" | "delegated_worker">(storedDraft.delegationMode ?? "browser_only");
+  const [delegatedWorkerNpub, setDelegatedWorkerNpub] = useState(storedDraft.delegatedWorkerNpub ?? "");
+  const [delegatedWorkerControlRelays, setDelegatedWorkerControlRelays] = useState(storedDraft.delegatedWorkerControlRelays ?? "");
+  const [delegatedWorkerExpiryMinutes, setDelegatedWorkerExpiryMinutes] = useState(storedDraft.delegatedWorkerExpiryMinutes ?? "120");
+  const [delegatedWorkerCapabilities, setDelegatedWorkerCapabilities] = useState<WorkerCapability[]>(
+    storedDraft.delegatedWorkerCapabilities ?? ["issue_blind_tokens", "verify_public_submissions", "publish_submission_decisions"],
+  );
+  const [activeWorkerDelegation, setActiveWorkerDelegation] = useState<WorkerDelegationCertificate | null>(null);
+  const [lastWorkerRevocationState, setLastWorkerRevocationState] = useState<WorkerDelegationState | null>(null);
+  const [availableWorkerStatuses, setAvailableWorkerStatuses] = useState<WorkerStatusSnapshot[]>([]);
   const [showInviteQr, setShowInviteQr] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [coordinatorNsec, setCoordinatorNsec] = useState("");
@@ -540,6 +587,111 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       window.clearInterval(intervalId);
     };
   }, [coordinatorNpub, coordinatorNsec, props.coordinatorNpub, props.coordinatorNsec]);
+
+  useEffect(() => {
+    const electionId = questionnaireId.trim();
+    if (!electionId) {
+      setActiveWorkerDelegation(null);
+      setLastWorkerRevocationState(null);
+      return;
+    }
+    const stored = loadStoredWorkerDelegation(electionId);
+    setActiveWorkerDelegation(stored?.activeDelegation ?? null);
+    if (stored?.lastRevocation?.delegationId) {
+      setLastWorkerRevocationState("revoked");
+    } else {
+      const expiresAtMs = Date.parse(stored?.activeDelegation?.expiresAt ?? "");
+      if (Number.isFinite(expiresAtMs) && expiresAtMs <= Date.now()) {
+        setLastWorkerRevocationState("expired");
+      } else if (stored?.activeDelegation) {
+        setLastWorkerRevocationState("active");
+      } else {
+        setLastWorkerRevocationState(null);
+      }
+    }
+  }, [questionnaireId]);
+
+  useEffect(() => {
+    const electionId = questionnaireId.trim();
+    if (!electionId) {
+      return;
+    }
+    if (delegationMode === "browser_only" && !activeWorkerDelegation) {
+      upsertStoredWorkerDelegation({
+        electionId,
+        mode: "browser_only",
+        activeDelegation: null,
+        lastRevocation: null,
+        lastUpdatedAt: new Date().toISOString(),
+      });
+    }
+  }, [activeWorkerDelegation, delegationMode, questionnaireId]);
+
+  useEffect(() => {
+    const nsec = coordinatorNsec.trim();
+    const coordinatorNpubTrimmed = coordinatorNpub.trim();
+    if (!nsec || !coordinatorNpubTrimmed) {
+      setAvailableWorkerStatuses([]);
+      return;
+    }
+    let cancelled = false;
+    const refreshStatuses = async () => {
+      try {
+        const snapshots = await fetchOptionAWorkerStatusDmsWithNsec({
+          nsec,
+          coordinatorNpub: coordinatorNpubTrimmed,
+          limit: 150,
+          since: Math.floor(Date.now() / 1000) - (24 * 60 * 60),
+        });
+        if (cancelled) {
+          return;
+        }
+        const latestByWorker = new Map<string, WorkerStatusSnapshot>();
+        for (const snapshot of snapshots) {
+          const existing = latestByWorker.get(snapshot.workerNpub);
+          if (!existing) {
+            latestByWorker.set(snapshot.workerNpub, snapshot);
+            continue;
+          }
+          if (Date.parse(snapshot.heartbeatAt) > Date.parse(existing.heartbeatAt)) {
+            latestByWorker.set(snapshot.workerNpub, snapshot);
+          }
+        }
+        setAvailableWorkerStatuses(
+          [...latestByWorker.values()].sort((left, right) => Date.parse(right.heartbeatAt) - Date.parse(left.heartbeatAt)),
+        );
+      } catch {
+        if (!cancelled) {
+          setAvailableWorkerStatuses((current) => current);
+        }
+      }
+    };
+    void refreshStatuses();
+    const intervalId = window.setInterval(() => {
+      void refreshStatuses();
+    }, 25_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [coordinatorNpub, coordinatorNsec]);
+
+  function parseDelegatedControlRelays(value: string) {
+    return normalizeRelaysRust(
+      value
+        .split(/[\n,\s]+/)
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0),
+    );
+  }
+
+  function toggleWorkerCapability(capability: WorkerCapability) {
+    setDelegatedWorkerCapabilities((current) => (
+      current.includes(capability)
+        ? current.filter((entry) => entry !== capability)
+        : [...current, capability]
+    ));
+  }
 
   const applyQuestionnaireSnapshot = useCallback((input: {
     definitionEvents: NostrEvent[];
@@ -983,12 +1135,29 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       closeTimerEnabled,
       closeAfterMinutes,
       questions,
+      delegationMode,
+      delegatedWorkerNpub,
+      delegatedWorkerControlRelays,
+      delegatedWorkerExpiryMinutes,
+      delegatedWorkerCapabilities,
     };
     window.localStorage.setItem(
       buildSimpleNamespacedLocalStorageKey(QUESTIONNAIRE_DRAFT_DATA_STORAGE_KEY),
       JSON.stringify(snapshot),
     );
-  }, [closeAfterMinutes, closeTimerEnabled, description, questionnaireId, questions, title]);
+  }, [
+    closeAfterMinutes,
+    closeTimerEnabled,
+    delegatedWorkerCapabilities,
+    delegatedWorkerControlRelays,
+    delegatedWorkerExpiryMinutes,
+    delegatedWorkerNpub,
+    delegationMode,
+    description,
+    questionnaireId,
+    questions,
+    title,
+  ]);
 
   function updateQuestion(index: number, updater: (question: QuestionnaireQuestionDraft) => QuestionnaireQuestionDraft) {
     setQuestions((current) => current.map((entry, entryIndex) => (
@@ -1101,6 +1270,47 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       return "";
     }
   }, [questionnaireId]);
+
+  const selectedWorkerStatus = useMemo(() => {
+    const workerNpub = normaliseWorkerNpub(delegatedWorkerNpub);
+    if (!workerNpub) {
+      return null;
+    }
+    return availableWorkerStatuses.find((entry) => entry.workerNpub === workerNpub) ?? null;
+  }, [availableWorkerStatuses, delegatedWorkerNpub]);
+
+  const delegationStatusLabel = useMemo(() => {
+    if (lastWorkerRevocationState === "revoked") {
+      return "Revoked";
+    }
+    const active = activeWorkerDelegation;
+    if (!active) {
+      return "None";
+    }
+    const expiresAtMs = Date.parse(active.expiresAt);
+    if (Number.isFinite(expiresAtMs) && expiresAtMs <= Date.now()) {
+      return "Expired";
+    }
+    if (selectedWorkerStatus?.delegationId === active.delegationId && selectedWorkerStatus.delegationState === "active") {
+      return "Active";
+    }
+    return "Pending activation";
+  }, [activeWorkerDelegation, lastWorkerRevocationState, selectedWorkerStatus]);
+  const workerHelperDownloadUrl = useMemo(() => {
+    const basePath = import.meta.env.BASE_URL || "/";
+    const prefix = basePath.endsWith("/") ? basePath : `${basePath}/`;
+    return `${prefix}worker-helper/auditable-voting-worker-linux-x64.tar.gz`;
+  }, []);
+  const workerHelperChecksumUrl = useMemo(() => {
+    const basePath = import.meta.env.BASE_URL || "/";
+    const prefix = basePath.endsWith("/") ? basePath : `${basePath}/`;
+    return `${prefix}worker-helper/auditable-voting-worker-linux-x64.tar.gz.sha256`;
+  }, []);
+  const workerHelperReadmeUrl = useMemo(() => {
+    const basePath = import.meta.env.BASE_URL || "/";
+    const prefix = basePath.endsWith("/") ? basePath : `${basePath}/`;
+    return `${prefix}worker-helper/README.txt`;
+  }, []);
 
   const titleReady = title.trim().length > 0;
   const hasQuestion = questions.length > 0;
@@ -1705,6 +1915,122 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     }
   }
 
+  async function delegateToWorker() {
+    const electionId = questionnaireId.trim();
+    const coordinatorNsecTrimmed = coordinatorNsec.trim();
+    const coordinatorNpubTrimmed = coordinatorNpub.trim();
+    const workerNpub = normaliseWorkerNpub(delegatedWorkerNpub);
+    const expiryMinutes = Number.parseInt(delegatedWorkerExpiryMinutes, 10);
+    if (!electionId || !coordinatorNsecTrimmed || !coordinatorNpubTrimmed) {
+      setStatus("Coordinator identity and questionnaire ID are required before delegation.");
+      return;
+    }
+    if (!workerNpub) {
+      setStatus("Enter a valid worker npub.");
+      return;
+    }
+    if (!Number.isFinite(expiryMinutes) || expiryMinutes <= 0) {
+      setStatus("Delegation expiry must be a positive number of minutes.");
+      return;
+    }
+    if (delegatedWorkerCapabilities.length === 0) {
+      setStatus("Select at least one worker capability.");
+      return;
+    }
+    const controlRelays = parseDelegatedControlRelays(delegatedWorkerControlRelays);
+    if (controlRelays.length === 0) {
+      setStatus("Enter at least one worker control relay.");
+      return;
+    }
+    const delegation = createWorkerDelegationCertificate({
+      electionId,
+      coordinatorNpub: coordinatorNpubTrimmed,
+      workerNpub,
+      capabilities: delegatedWorkerCapabilities,
+      controlRelays,
+      expiresAt: new Date(Date.now() + expiryMinutes * 60 * 1000).toISOString(),
+    });
+    setStatus("Publishing worker delegation...");
+    try {
+      const publicResult = await publishWorkerDelegationCertificate({
+        coordinatorNsec: coordinatorNsecTrimmed,
+        delegation,
+        relays: controlRelays,
+      });
+      const dmResult = await publishOptionAWorkerDelegationDm({
+        signer: createSignerService(),
+        recipientNpub: workerNpub,
+        delegation,
+        fallbackNsec: coordinatorNsecTrimmed,
+        relays: controlRelays,
+      });
+      setActiveWorkerDelegation(delegation);
+      setLastWorkerRevocationState("pending_activation");
+      upsertStoredWorkerDelegation({
+        electionId,
+        mode: "delegated_worker",
+        activeDelegation: delegation,
+        lastRevocation: null,
+        lastUpdatedAt: new Date().toISOString(),
+      });
+      setStatus(
+        `Worker delegated (${publicResult.successes} public relay successes, ${dmResult.successes} DM relay successes).`,
+      );
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Worker delegation failed.");
+    }
+  }
+
+  async function revokeWorkerDelegation() {
+    const electionId = questionnaireId.trim();
+    const coordinatorNsecTrimmed = coordinatorNsec.trim();
+    const coordinatorNpubTrimmed = coordinatorNpub.trim();
+    const active = activeWorkerDelegation;
+    if (!active || !electionId || !coordinatorNsecTrimmed || !coordinatorNpubTrimmed) {
+      setStatus("No active worker delegation to revoke.");
+      return;
+    }
+    const revocation = createWorkerDelegationRevocation({
+      delegationId: active.delegationId,
+      electionId,
+      coordinatorNpub: coordinatorNpubTrimmed,
+      workerNpub: active.workerNpub,
+      reason: "revoked_by_coordinator",
+    });
+    const controlRelays = active.controlRelays.length > 0
+      ? active.controlRelays
+      : parseDelegatedControlRelays(delegatedWorkerControlRelays);
+    setStatus("Publishing worker revocation...");
+    try {
+      const publicResult = await publishWorkerDelegationRevocation({
+        coordinatorNsec: coordinatorNsecTrimmed,
+        revocation,
+        relays: controlRelays,
+      });
+      const dmResult = await publishOptionAWorkerDelegationRevocationDm({
+        signer: createSignerService(),
+        recipientNpub: active.workerNpub,
+        revocation,
+        fallbackNsec: coordinatorNsecTrimmed,
+        relays: controlRelays,
+      });
+      setLastWorkerRevocationState("revoked");
+      setActiveWorkerDelegation(null);
+      upsertStoredWorkerDelegation({
+        electionId,
+        mode: "browser_only",
+        activeDelegation: null,
+        lastRevocation: revocation,
+        lastUpdatedAt: new Date().toISOString(),
+      });
+      setStatus(
+        `Worker revocation published (${publicResult.successes} public relay successes, ${dmResult.successes} DM relay successes).`,
+      );
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Worker revocation failed.");
+    }
+  }
+
   const view = props.view ?? "build";
 
   if (view === "participants") {
@@ -2007,6 +2333,153 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             onChange={(event) => setCloseAfterMinutes(event.target.value)}
           />
         </div>
+      </div>
+
+      <h4 className='simple-voter-section-title'>Delegated worker</h4>
+      <div className='simple-questionnaire-worker-section'>
+        <label className='simple-voter-label' htmlFor='delegation-mode'>Mode</label>
+        <select
+          id='delegation-mode'
+          className='simple-voter-input'
+          value={delegationMode}
+          onChange={(event) => setDelegationMode(event.target.value === "delegated_worker" ? "delegated_worker" : "browser_only")}
+        >
+          <option value='browser_only'>Browser only</option>
+          <option value='delegated_worker'>Delegated Nostr worker</option>
+        </select>
+
+        {delegationMode === "delegated_worker" ? (
+          <>
+            <div className='simple-worker-helper-download'>
+              <p className='simple-voter-note'>
+                Worker helper download (Linux x64): use this binary for quick outbound-only deployment on VPS or homelab Linux.
+              </p>
+              <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
+                <a className='simple-voter-secondary' href={workerHelperDownloadUrl} download>
+                  Download worker helper
+                </a>
+                <a className='simple-voter-secondary' href={workerHelperChecksumUrl} download>
+                  Download checksum
+                </a>
+                <a className='simple-voter-secondary' href={workerHelperReadmeUrl} target='_blank' rel='noreferrer'>
+                  Setup notes
+                </a>
+              </div>
+            </div>
+
+            <label className='simple-voter-label' htmlFor='delegated-worker-npub'>Worker npub</label>
+            <input
+              id='delegated-worker-npub'
+              className='simple-voter-input'
+              placeholder='npub1...'
+              value={delegatedWorkerNpub}
+              onChange={(event) => setDelegatedWorkerNpub(event.target.value)}
+            />
+
+            <label className='simple-voter-label' htmlFor='delegated-worker-relays'>Control relays</label>
+            <textarea
+              id='delegated-worker-relays'
+              className='simple-voter-input'
+              rows={2}
+              placeholder='wss://relay1.example, wss://relay2.example'
+              value={delegatedWorkerControlRelays}
+              onChange={(event) => setDelegatedWorkerControlRelays(event.target.value)}
+            />
+
+            <label className='simple-voter-label' htmlFor='delegated-worker-expiry'>Expiry (minutes)</label>
+            <input
+              id='delegated-worker-expiry'
+              className='simple-voter-input'
+              value={delegatedWorkerExpiryMinutes}
+              onChange={(event) => setDelegatedWorkerExpiryMinutes(event.target.value)}
+            />
+
+            <p className='simple-voter-label'>Capabilities</p>
+            <div className='simple-questionnaire-worker-capabilities'>
+              <label className='simple-voter-note'>
+                <input
+                  type='checkbox'
+                  checked={delegatedWorkerCapabilities.includes("issue_blind_tokens")}
+                  onChange={() => toggleWorkerCapability("issue_blind_tokens")}
+                />
+                Issue blind tokens
+              </label>
+              <label className='simple-voter-note'>
+                <input
+                  type='checkbox'
+                  checked={delegatedWorkerCapabilities.includes("verify_public_submissions")}
+                  onChange={() => toggleWorkerCapability("verify_public_submissions")}
+                />
+                Verify public submissions
+              </label>
+              <label className='simple-voter-note'>
+                <input
+                  type='checkbox'
+                  checked={delegatedWorkerCapabilities.includes("publish_submission_decisions")}
+                  onChange={() => toggleWorkerCapability("publish_submission_decisions")}
+                />
+                Publish submission decisions
+              </label>
+              <label className='simple-voter-note'>
+                <input
+                  type='checkbox'
+                  checked={delegatedWorkerCapabilities.includes("publish_result_summary")}
+                  onChange={() => toggleWorkerCapability("publish_result_summary")}
+                />
+                Publish result summary
+              </label>
+            </div>
+
+            <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
+              <button type='button' className='simple-voter-primary' onClick={() => void delegateToWorker()}>
+                Delegate to worker
+              </button>
+              <button
+                type='button'
+                className='simple-voter-secondary'
+                onClick={() => void revokeWorkerDelegation()}
+                disabled={!activeWorkerDelegation}
+              >
+                Revoke delegation
+              </button>
+            </div>
+
+            <div className='simple-questionnaire-worker-status-card'>
+              <p className='simple-voter-note'>Delegation state: {delegationStatusLabel}</p>
+              <p className='simple-voter-note'>Worker npub: {selectedWorkerStatus?.workerNpub || activeWorkerDelegation?.workerNpub || "Not selected"}</p>
+              <p className='simple-voter-note'>Last heartbeat: {selectedWorkerStatus?.heartbeatAt ? new Date(selectedWorkerStatus.heartbeatAt).toLocaleString() : "Not seen"}</p>
+              <p className='simple-voter-note'>Last blind issuance: {selectedWorkerStatus?.lastBlindIssuanceAt ? new Date(selectedWorkerStatus.lastBlindIssuanceAt).toLocaleString() : "Not reported"}</p>
+              <p className='simple-voter-note'>Last vote verification: {selectedWorkerStatus?.lastVoteVerificationAt ? new Date(selectedWorkerStatus.lastVoteVerificationAt).toLocaleString() : "Not reported"}</p>
+              <p className='simple-voter-note'>Last decision publish: {selectedWorkerStatus?.lastDecisionPublishAt ? new Date(selectedWorkerStatus.lastDecisionPublishAt).toLocaleString() : "Not reported"}</p>
+            </div>
+
+            <div className='simple-questionnaire-worker-available-list'>
+              <p className='simple-voter-label'>Available agents</p>
+              {availableWorkerStatuses.length === 0 ? (
+                <p className='simple-voter-empty'>No worker status announcements seen yet.</p>
+              ) : (
+                <ul className='simple-voter-list'>
+                  {availableWorkerStatuses.map((snapshot) => (
+                    <li key={`${snapshot.workerNpub}:${snapshot.heartbeatAt}`} className='simple-voter-list-item'>
+                      <button
+                        type='button'
+                        className='simple-voter-secondary'
+                        onClick={() => {
+                          setDelegatedWorkerNpub(snapshot.workerNpub);
+                          if (Array.isArray(snapshot.advertisedRelays) && snapshot.advertisedRelays.length > 0) {
+                            setDelegatedWorkerControlRelays(snapshot.advertisedRelays.join(", "));
+                          }
+                        }}
+                      >
+                        {deriveActorDisplayId(snapshot.workerNpub)} · {snapshot.state} · {new Date(snapshot.heartbeatAt).toLocaleTimeString()}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </>
+        ) : null}
       </div>
 
       <h4 className='simple-voter-section-title'>Questions</h4>

@@ -51,6 +51,7 @@ This is the practical order of operations for the current app.
 4. Send invites (`Send invite` / `Invite all whitelisted`) or share the invite link (generated links use the current host by default).
 5. As voters appear, run `Process requests` / `Check responses` to process blind request and response queues.
    - Verified voters can now pre-request and coordinators can pre-issue before publish.
+   - If needed, switch Build mode to `Delegated Nostr worker`, download the worker helper binary from Build, delegate, then keep the browser as control authority while the worker handles delegated duties.
 6. Publish the questionnaire when ready (`Publish Questionnaire`, state becomes `Open`).
 
 ### 2. Voter joins second
@@ -216,6 +217,7 @@ The present web client is built with:
 - **optional NIP-65 relay hints**, disabled by default, for relay discovery experiments
 - **`@cloudflare/blindrsa-ts`** for the RSABSSA blind-signature primitive used in the current issuance path
 - **Rust compiled to WebAssembly** for deterministic protocol logic, including validation helpers and the new coordinator control engine
+- **an optional Rust delegated worker daemon** (`worker/`) for election-scoped delegated issuance/verification operations over outbound-only relay connections, with coordinator-signed delegation and revocation control
 - **a real OpenMLS-backed coordinator engine inside the Rust core**, hidden behind a stable Rust abstraction so the browser code does not depend on MLS types directly; the browser coordinator path now bootstraps and joins the supervisory MLS group through Nostr carrier events, and the lead waits for sub-coordinator welcome acknowledgement only after the non-lead has completed an initial coordinator-control backfill pass before opening the first public round in the repaired small live cases
 - **a Rust mixed-replay engine for public rounds and ballots**, now used by the voter, coordinator, and auditor public-state views to derive round state, accepted ballots, and rejection reasons
 - **versioned Rust snapshots and replay diagnostics** for the shared protocol engine, so the browser can restore state, validate snapshot compatibility, and surface replay issues without re-implementing protocol rules in TypeScript

@@ -6,6 +6,8 @@ Client-only voting on public relay infrastructure, with browser-based voter, coo
 
 This repo now contains only the static web app in `web/`.
 
+An optional delegated worker daemon now also lives in `worker/` for election-scoped coordinator delegation.
+
 The shipped app currently includes:
 
 - landing-page login gateway on `/` with role selection (`voter`, `coordinator`, `auditor`)
@@ -92,6 +94,7 @@ Empirically, recent local-preview runs are solid at `1 coordinator / 2 voters / 
 ## What is in this repo
 
 - `web/` — the shipped React + Vite app
+- `worker/` — optional Rust delegated-worker daemon (outbound-only relay connections; no inbound HTTP)
 - `docs/project-explainer.md` — the main written explainer
 - `presentation/project-overview.html` — the portable presentation deck
 - `.github/workflows/static.yml` — GitHub Pages deployment
@@ -139,6 +142,25 @@ Open:
 - `http://127.0.0.1:5173/dashboard.html`
 - `http://127.0.0.1:5173/simple.html`
 
+Optional delegated worker daemon:
+
+```bash
+cd worker
+cargo run
+```
+
+Required worker environment:
+
+```bash
+WORKER_NSEC=nsec1...
+COORDINATOR_NPUB=npub1...
+WORKER_RELAYS=wss://relay1.example,wss://relay2.example
+# Optional:
+# WORKER_STATE_DIR=/var/lib/auditable-voting-worker
+# WORKER_HEARTBEAT_SECONDS=30
+# WORKER_POLL_SECONDS=15
+```
+
 ## Build and verification
 
 Production build:
@@ -181,6 +203,18 @@ At a high level:
 8. In course-feedback mode, acknowledgement visibility is diagnostic only; a valid accepted ballot also confirms ticket delivery completion.
 9. The voter unblinds enough shares locally and submits a ballot from an ephemeral key, carrying stable `request_id` and `ticket_id` lineage in the ballot payload.
 10. Coordinators and auditors validate ballots and recompute the tally from public data.
+
+### Optional delegated worker mode
+
+The default remains browser-only coordination. You can optionally enable `Delegated Nostr worker` on the coordinator Build tab:
+
+- coordinator remains root authority
+- coordinator signs an election-scoped delegation certificate for one worker `npub`
+- delegation is published publicly for auditability and also sent privately to the worker over NIP-17 DM
+- worker can be revoked at any time with a signed revocation (also public + DM)
+- worker runtime is outbound-only to relays and does not require inbound ports
+- current delegated worker responsibilities are focused on public-submission verification and decision publication with delegation provenance
+- coordinator Build now exposes a direct worker-helper binary download (`Linux x64`) plus checksum/setup notes for portable bootstrap
 
 Public state:
 

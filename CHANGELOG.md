@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.9] - 2026-04-22
+
+### Added
+- Added an optional delegated Rust worker daemon (`worker/`) with outbound-only relay operation, local durable state, heartbeat status, delegation/revocation handling, and delegated public submission-decision publishing.
+- Added a downloadable worker helper package (`Linux x64`) exposed from Coordinator Build mode, including checksum and setup notes.
+- Added coordinator Build support for delegated worker management (mode selection, worker status, capability-scoped delegation controls).
+
+### Changed
+- Updated project documentation and explainer/presentation material to include delegated-worker operation and portability guidance.
+
 ## [0.1.8] - 2026-04-22
 
 ### Changed

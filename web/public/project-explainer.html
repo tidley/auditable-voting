@@ -204,10 +204,11 @@ The current repository contains only the browser app. It has voter, coordinator,
 
 1. Build and publish a questionnaire definition (public event).
 2. Invite voter npubs to that questionnaire.
-3. Receive blind-token requests over private DMs.
-4. Issue blind signatures to authorised voters over private DMs.
-5. Watch public submissions and publish public accept/reject decisions.
-6. Close the round and publish the result summary.
+3. Optional: switch Build mode to `Delegated Nostr worker`, download the worker helper binary, and delegate one election (coordinator remains root authority).
+4. Receive blind-token requests over private DMs.
+5. Issue blind signatures to authorised voters over private DMs.
+6. Watch public submissions and publish public accept/reject decisions.
+7. Close the round and publish the result summary.
 
 ### Voter
 
@@ -294,9 +295,10 @@ The client uses:
 
 - React and TypeScript for the browser UI
 - `nostr-tools` for Nostr identities, events, relay reads, and relay writes
-- NIP-17 gift-wrapped DMs for private request, issuance, submission, and acceptance traffic
+- NIP-17 gift-wrapped DMs for private request and issuance traffic
 - `@cloudflare/blindrsa-ts` for RSABSSA blind signatures
 - Rust/Wasm for deterministic replay and protocol validation in the public round path
+- an optional Rust worker daemon (`worker/`) for delegated election operations over outbound-only relay connections
 - browser storage for private active state and recovery
 
 ## Blind Issuance

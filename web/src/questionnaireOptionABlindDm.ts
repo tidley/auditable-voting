@@ -8,6 +8,11 @@ import type {
   CoordinatorElectionState,
 } from "./questionnaireOptionA";
 import type { SignerService } from "./services/signerService";
+import type {
+  WorkerDelegationCertificate,
+  WorkerDelegationRevocation,
+  WorkerStatusSnapshot,
+} from "./questionnaireWorkerDelegation";
 import { getSharedNostrPool } from "./sharedNostrPool";
 import { SIMPLE_DM_RELAYS } from "./simpleShardDm";
 import { normalizeRelaysRust } from "./wasm/auditableVotingCore";
@@ -159,6 +164,27 @@ type CoordinatorStateDmEnvelope = {
   type: "optiona_coordinator_state_dm";
   schemaVersion: 1;
   snapshot: OptionACoordinatorStateSnapshot;
+  sentAt: string;
+};
+
+type WorkerStatusDmEnvelope = {
+  type: "optiona_worker_status_dm";
+  schemaVersion: 1;
+  snapshot: WorkerStatusSnapshot;
+  sentAt: string;
+};
+
+type WorkerDelegationDmEnvelope = {
+  type: "optiona_worker_delegation_dm";
+  schemaVersion: 1;
+  delegation: WorkerDelegationCertificate;
+  sentAt: string;
+};
+
+type WorkerDelegationRevocationDmEnvelope = {
+  type: "optiona_worker_delegation_revocation_dm";
+  schemaVersion: 1;
+  revocation: WorkerDelegationRevocation;
   sentAt: string;
 };
 
@@ -771,8 +797,90 @@ function parseCoordinatorStateDmContent(content: string): OptionACoordinatorStat
   }
 }
 
+function parseWorkerStatusDmContent(content: string): WorkerStatusSnapshot | null {
+  try {
+    const parsed = JSON.parse(content) as Partial<WorkerStatusDmEnvelope> | WorkerStatusSnapshot;
+    const snapshot = (parsed as WorkerStatusDmEnvelope).type === "optiona_worker_status_dm"
+      ? (parsed as WorkerStatusDmEnvelope).snapshot
+      : parsed as WorkerStatusSnapshot;
+    if (
+      snapshot?.type !== "worker_status"
+      || snapshot.schemaVersion !== 1
+      || typeof snapshot.workerNpub !== "string"
+      || typeof snapshot.coordinatorNpub !== "string"
+      || typeof snapshot.state !== "string"
+      || typeof snapshot.heartbeatAt !== "string"
+    ) {
+      return null;
+    }
+    return snapshot;
+  } catch {
+    return null;
+  }
+}
+
+function parseWorkerDelegationDmContent(content: string): WorkerDelegationCertificate | null {
+  try {
+    const parsed = JSON.parse(content) as Partial<WorkerDelegationDmEnvelope> | WorkerDelegationCertificate;
+    const delegation = (parsed as WorkerDelegationDmEnvelope).type === "optiona_worker_delegation_dm"
+      ? (parsed as WorkerDelegationDmEnvelope).delegation
+      : parsed as WorkerDelegationCertificate;
+    if (
+      delegation?.type !== "worker_delegation"
+      || delegation.schemaVersion !== 1
+      || typeof delegation.delegationId !== "string"
+      || typeof delegation.electionId !== "string"
+      || typeof delegation.coordinatorNpub !== "string"
+      || typeof delegation.workerNpub !== "string"
+      || !Array.isArray(delegation.capabilities)
+      || !Array.isArray(delegation.controlRelays)
+      || typeof delegation.issuedAt !== "string"
+      || typeof delegation.expiresAt !== "string"
+    ) {
+      return null;
+    }
+    return delegation;
+  } catch {
+    return null;
+  }
+}
+
+function parseWorkerDelegationRevocationDmContent(content: string): WorkerDelegationRevocation | null {
+  try {
+    const parsed = JSON.parse(content) as Partial<WorkerDelegationRevocationDmEnvelope> | WorkerDelegationRevocation;
+    const revocation = (parsed as WorkerDelegationRevocationDmEnvelope).type === "optiona_worker_delegation_revocation_dm"
+      ? (parsed as WorkerDelegationRevocationDmEnvelope).revocation
+      : parsed as WorkerDelegationRevocation;
+    if (
+      revocation?.type !== "worker_delegation_revocation"
+      || revocation.schemaVersion !== 1
+      || typeof revocation.delegationId !== "string"
+      || typeof revocation.electionId !== "string"
+      || typeof revocation.coordinatorNpub !== "string"
+      || typeof revocation.workerNpub !== "string"
+      || typeof revocation.revokedAt !== "string"
+    ) {
+      return null;
+    }
+    return revocation;
+  } catch {
+    return null;
+  }
+}
+
 function optionABlindDmSubject(
-  envelope: BlindRequestDmEnvelope | BlindIssuanceDmEnvelope | BlindRequestAckDmEnvelope | BlindIssuanceAckDmEnvelope | BallotSubmissionDmEnvelope | BallotSubmissionAckDmEnvelope | BallotAcceptanceDmEnvelope | VoterStateDmEnvelope | CoordinatorStateDmEnvelope,
+  envelope: BlindRequestDmEnvelope
+    | BlindIssuanceDmEnvelope
+    | BlindRequestAckDmEnvelope
+    | BlindIssuanceAckDmEnvelope
+    | BallotSubmissionDmEnvelope
+    | BallotSubmissionAckDmEnvelope
+    | BallotAcceptanceDmEnvelope
+    | VoterStateDmEnvelope
+    | CoordinatorStateDmEnvelope
+    | WorkerStatusDmEnvelope
+    | WorkerDelegationDmEnvelope
+    | WorkerDelegationRevocationDmEnvelope,
 ) {
   switch (envelope.type) {
     case "optiona_blind_request_dm":
@@ -793,6 +901,12 @@ function optionABlindDmSubject(
       return "Auditable Voting voter state";
     case "optiona_coordinator_state_dm":
       return "Auditable Voting coordinator state";
+    case "optiona_worker_status_dm":
+      return "Auditable Voting worker status";
+    case "optiona_worker_delegation_dm":
+      return "Auditable Voting worker delegation";
+    case "optiona_worker_delegation_revocation_dm":
+      return "Auditable Voting worker delegation revocation";
   }
 }
 
@@ -801,7 +915,18 @@ function createRumor(input: {
   recipientHex: string;
   relayUrl?: string;
   subject: string;
-  envelope: BlindRequestDmEnvelope | BlindIssuanceDmEnvelope | BlindRequestAckDmEnvelope | BlindIssuanceAckDmEnvelope | BallotSubmissionDmEnvelope | BallotSubmissionAckDmEnvelope | BallotAcceptanceDmEnvelope | VoterStateDmEnvelope | CoordinatorStateDmEnvelope;
+  envelope: BlindRequestDmEnvelope
+    | BlindIssuanceDmEnvelope
+    | BlindRequestAckDmEnvelope
+    | BlindIssuanceAckDmEnvelope
+    | BallotSubmissionDmEnvelope
+    | BallotSubmissionAckDmEnvelope
+    | BallotAcceptanceDmEnvelope
+    | VoterStateDmEnvelope
+    | CoordinatorStateDmEnvelope
+    | WorkerStatusDmEnvelope
+    | WorkerDelegationDmEnvelope
+    | WorkerDelegationRevocationDmEnvelope;
 }) {
   const rumor = {
     kind: KIND_RUMOR_MESSAGE,
@@ -1015,7 +1140,18 @@ function createSignerGiftWrapSubscription<T>(input: {
 async function publishEnvelope(input: {
   signer: SignerService;
   recipientNpub: string;
-  envelope: BlindRequestDmEnvelope | BlindIssuanceDmEnvelope | BlindRequestAckDmEnvelope | BlindIssuanceAckDmEnvelope | BallotSubmissionDmEnvelope | BallotSubmissionAckDmEnvelope | BallotAcceptanceDmEnvelope | VoterStateDmEnvelope | CoordinatorStateDmEnvelope;
+  envelope: BlindRequestDmEnvelope
+    | BlindIssuanceDmEnvelope
+    | BlindRequestAckDmEnvelope
+    | BlindIssuanceAckDmEnvelope
+    | BallotSubmissionDmEnvelope
+    | BallotSubmissionAckDmEnvelope
+    | BallotAcceptanceDmEnvelope
+    | VoterStateDmEnvelope
+    | CoordinatorStateDmEnvelope
+    | WorkerStatusDmEnvelope
+    | WorkerDelegationDmEnvelope
+    | WorkerDelegationRevocationDmEnvelope;
   fallbackNsec?: string;
   relays?: string[];
   channel: string;
@@ -1321,6 +1457,72 @@ export async function publishOptionACoordinatorStateDm(input: {
       type: "optiona_coordinator_state_dm",
       schemaVersion: 1,
       snapshot: input.snapshot,
+      sentAt: new Date().toISOString(),
+    },
+  });
+}
+
+export async function publishOptionAWorkerStatusDm(input: {
+  signer: SignerService;
+  recipientNpub: string;
+  snapshot: WorkerStatusSnapshot;
+  fallbackNsec?: string;
+  relays?: string[];
+}) {
+  return publishEnvelope({
+    signer: input.signer,
+    recipientNpub: input.recipientNpub,
+    fallbackNsec: input.fallbackNsec,
+    relays: input.relays,
+    channel: `optiona-worker-status:${input.snapshot.workerNpub}:${input.snapshot.coordinatorNpub}`,
+    envelope: {
+      type: "optiona_worker_status_dm",
+      schemaVersion: 1,
+      snapshot: input.snapshot,
+      sentAt: new Date().toISOString(),
+    },
+  });
+}
+
+export async function publishOptionAWorkerDelegationDm(input: {
+  signer: SignerService;
+  recipientNpub: string;
+  delegation: WorkerDelegationCertificate;
+  fallbackNsec?: string;
+  relays?: string[];
+}) {
+  return publishEnvelope({
+    signer: input.signer,
+    recipientNpub: input.recipientNpub,
+    fallbackNsec: input.fallbackNsec,
+    relays: input.relays,
+    channel: `optiona-worker-delegation:${input.delegation.electionId}:${input.delegation.delegationId}`,
+    envelope: {
+      type: "optiona_worker_delegation_dm",
+      schemaVersion: 1,
+      delegation: input.delegation,
+      sentAt: new Date().toISOString(),
+    },
+  });
+}
+
+export async function publishOptionAWorkerDelegationRevocationDm(input: {
+  signer: SignerService;
+  recipientNpub: string;
+  revocation: WorkerDelegationRevocation;
+  fallbackNsec?: string;
+  relays?: string[];
+}) {
+  return publishEnvelope({
+    signer: input.signer,
+    recipientNpub: input.recipientNpub,
+    fallbackNsec: input.fallbackNsec,
+    relays: input.relays,
+    channel: `optiona-worker-revocation:${input.revocation.electionId}:${input.revocation.delegationId}`,
+    envelope: {
+      type: "optiona_worker_delegation_revocation_dm",
+      schemaVersion: 1,
+      revocation: input.revocation,
       sentAt: new Date().toISOString(),
     },
   });
@@ -2244,6 +2446,193 @@ export async function fetchOptionACoordinatorStateDmsWithNsec(input: {
   return [...unique.values()];
 }
 
+export async function fetchOptionAWorkerStatusDms(input: {
+  signer: SignerService;
+  coordinatorNpub?: string;
+  workerNpub?: string;
+  relays?: string[];
+  limit?: number;
+  since?: number;
+  maxDecryptAttempts?: number;
+}) {
+  if (!input.signer.nip44Decrypt) {
+    return [] as WorkerStatusSnapshot[];
+  }
+  const recipientRaw = await input.signer.getPublicKey();
+  const recipientHex = toHexPubkey(recipientRaw);
+  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
+  const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
+  const events = await queryBlindDmSync(relays, {
+    kinds: [KIND_GIFT_WRAP],
+    "#p": [recipientHex],
+    since: input.since ?? Math.round(Date.now() / 1000) - OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS,
+    limit: Math.max(1, Math.min(input.limit ?? maxDecryptAttempts, maxDecryptAttempts)),
+  });
+  const coordinatorFilter = input.coordinatorNpub?.trim() ?? "";
+  const workerFilter = input.workerNpub?.trim() ?? "";
+  const unique = new Map<string, WorkerStatusSnapshot>();
+  const sorted = [...events]
+    .sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0))
+    .slice(0, maxDecryptAttempts);
+  for (const event of sorted) {
+    try {
+      const decoded = await decodeGiftWrapWithSigner({ signer: input.signer, event });
+      if (!decoded) {
+        continue;
+      }
+      const snapshot = parseWorkerStatusDmContent(decoded.rumorContent);
+      if (!snapshot) {
+        continue;
+      }
+      if (coordinatorFilter && snapshot.coordinatorNpub !== coordinatorFilter) {
+        continue;
+      }
+      if (workerFilter && snapshot.workerNpub !== workerFilter) {
+        continue;
+      }
+      const key = `${snapshot.workerNpub}:${snapshot.coordinatorNpub}:${snapshot.heartbeatAt}`;
+      if (!unique.has(key)) {
+        unique.set(key, snapshot);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return [...unique.values()];
+}
+
+export async function fetchOptionAWorkerStatusDmsWithNsec(input: {
+  nsec: string;
+  coordinatorNpub?: string;
+  workerNpub?: string;
+  relays?: string[];
+  limit?: number;
+  since?: number;
+}) {
+  const secretKey = decodeNsecSecretKey(input.nsec);
+  const recipientHex = getPublicKey(secretKey);
+  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
+  const events = await queryBlindDmSync(relays, {
+    kinds: [KIND_GIFT_WRAP],
+    "#p": [recipientHex],
+    since: input.since,
+    limit: Math.max(1, input.limit ?? 100),
+  });
+  const coordinatorFilter = input.coordinatorNpub?.trim() ?? "";
+  const workerFilter = input.workerNpub?.trim() ?? "";
+  const unique = new Map<string, WorkerStatusSnapshot>();
+  const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
+  for (const event of sorted) {
+    try {
+      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string };
+      if (!rumor || typeof rumor.content !== "string") {
+        continue;
+      }
+      const snapshot = parseWorkerStatusDmContent(rumor.content);
+      if (!snapshot) {
+        continue;
+      }
+      if (coordinatorFilter && snapshot.coordinatorNpub !== coordinatorFilter) {
+        continue;
+      }
+      if (workerFilter && snapshot.workerNpub !== workerFilter) {
+        continue;
+      }
+      const key = `${snapshot.workerNpub}:${snapshot.coordinatorNpub}:${snapshot.heartbeatAt}`;
+      if (!unique.has(key)) {
+        unique.set(key, snapshot);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return [...unique.values()];
+}
+
+export async function fetchOptionAWorkerDelegationDmsWithNsec(input: {
+  nsec: string;
+  electionId?: string;
+  relays?: string[];
+  limit?: number;
+  since?: number;
+}) {
+  const secretKey = decodeNsecSecretKey(input.nsec);
+  const recipientHex = getPublicKey(secretKey);
+  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
+  const events = await queryBlindDmSync(relays, {
+    kinds: [KIND_GIFT_WRAP],
+    "#p": [recipientHex],
+    since: input.since,
+    limit: Math.max(1, input.limit ?? 100),
+  });
+  const unique = new Map<string, WorkerDelegationCertificate>();
+  const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
+  for (const event of sorted) {
+    try {
+      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string };
+      if (!rumor || typeof rumor.content !== "string") {
+        continue;
+      }
+      const delegation = parseWorkerDelegationDmContent(rumor.content);
+      if (!delegation) {
+        continue;
+      }
+      if (input.electionId?.trim() && delegation.electionId !== input.electionId.trim()) {
+        continue;
+      }
+      const key = `${delegation.electionId}:${delegation.delegationId}`;
+      if (!unique.has(key)) {
+        unique.set(key, delegation);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return [...unique.values()];
+}
+
+export async function fetchOptionAWorkerDelegationRevocationDmsWithNsec(input: {
+  nsec: string;
+  electionId?: string;
+  relays?: string[];
+  limit?: number;
+  since?: number;
+}) {
+  const secretKey = decodeNsecSecretKey(input.nsec);
+  const recipientHex = getPublicKey(secretKey);
+  const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
+  const events = await queryBlindDmSync(relays, {
+    kinds: [KIND_GIFT_WRAP],
+    "#p": [recipientHex],
+    since: input.since,
+    limit: Math.max(1, input.limit ?? 100),
+  });
+  const unique = new Map<string, WorkerDelegationRevocation>();
+  const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
+  for (const event of sorted) {
+    try {
+      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string };
+      if (!rumor || typeof rumor.content !== "string") {
+        continue;
+      }
+      const revocation = parseWorkerDelegationRevocationDmContent(rumor.content);
+      if (!revocation) {
+        continue;
+      }
+      if (input.electionId?.trim() && revocation.electionId !== input.electionId.trim()) {
+        continue;
+      }
+      const key = `${revocation.electionId}:${revocation.delegationId}:${revocation.revokedAt}`;
+      if (!unique.has(key)) {
+        unique.set(key, revocation);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return [...unique.values()];
+}
+
 export async function confirmOptionADmEventCopies(input: {
   eventId: string;
   relays: string[];
@@ -2434,6 +2823,80 @@ export function subscribeOptionABlindIssuanceAckDms(input: {
     parse: parseBlindIssuanceAckDmContent,
     keyOf: (value) => `${value.electionId}:${value.requestId}:${value.issuanceId}`,
     onValue: input.onAck,
+    onError: input.onError,
+  });
+}
+
+export function subscribeOptionAWorkerStatusDms(input: {
+  signer: SignerService;
+  coordinatorNpub?: string;
+  workerNpub?: string;
+  relays?: string[];
+  since?: number;
+  onSnapshot: (snapshot: WorkerStatusSnapshot) => void;
+  onError?: (error: Error) => void;
+}) {
+  const coordinatorFilter = input.coordinatorNpub?.trim() ?? "";
+  const workerFilter = input.workerNpub?.trim() ?? "";
+  return createSignerGiftWrapSubscription<WorkerStatusSnapshot>({
+    signer: input.signer,
+    relays: input.relays,
+    since: input.since,
+    stage: "subscribe_worker_status",
+    parse: parseWorkerStatusDmContent,
+    keyOf: (value) => `${value.workerNpub}:${value.coordinatorNpub}:${value.heartbeatAt}`,
+    onValue: input.onSnapshot,
+    onError: input.onError,
+    validate: (value) => {
+      if (coordinatorFilter && value.coordinatorNpub !== coordinatorFilter) {
+        return false;
+      }
+      if (workerFilter && value.workerNpub !== workerFilter) {
+        return false;
+      }
+      return true;
+    },
+  });
+}
+
+export function subscribeOptionAWorkerDelegationDms(input: {
+  signer: SignerService;
+  electionId?: string;
+  relays?: string[];
+  since?: number;
+  onDelegation: (delegation: WorkerDelegationCertificate) => void;
+  onError?: (error: Error) => void;
+}) {
+  return createSignerGiftWrapSubscription<WorkerDelegationCertificate>({
+    signer: input.signer,
+    electionId: input.electionId,
+    relays: input.relays,
+    since: input.since,
+    stage: "subscribe_worker_delegations",
+    parse: parseWorkerDelegationDmContent,
+    keyOf: (value) => `${value.electionId}:${value.delegationId}`,
+    onValue: input.onDelegation,
+    onError: input.onError,
+  });
+}
+
+export function subscribeOptionAWorkerDelegationRevocationDms(input: {
+  signer: SignerService;
+  electionId?: string;
+  relays?: string[];
+  since?: number;
+  onRevocation: (revocation: WorkerDelegationRevocation) => void;
+  onError?: (error: Error) => void;
+}) {
+  return createSignerGiftWrapSubscription<WorkerDelegationRevocation>({
+    signer: input.signer,
+    electionId: input.electionId,
+    relays: input.relays,
+    since: input.since,
+    stage: "subscribe_worker_revocations",
+    parse: parseWorkerDelegationRevocationDmContent,
+    keyOf: (value) => `${value.electionId}:${value.delegationId}:${value.revokedAt}`,
+    onValue: input.onRevocation,
     onError: input.onError,
   });
 }

@@ -118,6 +118,7 @@ import {
   buildQuestionnaireBlindTokenSignedMessage,
   deriveQuestionnaireTokenNullifier,
 } from "./questionnaireBlindToken";
+import { isDelegatedWorkerCapabilityEnabled } from "./questionnaireWorkerDelegation";
 import {
   publishQuestionnaireBlindResponsePublic,
   publishQuestionnaireSubmissionDecisionPublic,
@@ -2810,6 +2811,15 @@ export class QuestionnaireOptionACoordinatorRuntime {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
     }
+    if (isDelegatedWorkerCapabilityEnabled({
+      electionId: this.electionId,
+      capability: "issue_blind_tokens",
+    })) {
+      optionAFlowLog("coordinator", "process_blind_requests_delegated_worker_enabled", {
+        electionId: this.electionId,
+      });
+      return this.state;
+    }
     const blindSigningPrivateKey = await this.ensureBlindSigningKey();
     const queue = listBlindRequests(this.electionId);
     optionAFlowLog("coordinator", "process_blind_requests_started", {
@@ -2922,6 +2932,18 @@ export class QuestionnaireOptionACoordinatorRuntime {
   private async processPendingSubmissionsInternal(requiredQuestionIds: string[]) {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
+    }
+    if (isDelegatedWorkerCapabilityEnabled({
+      electionId: this.electionId,
+      capability: "verify_public_submissions",
+    }) || isDelegatedWorkerCapabilityEnabled({
+      electionId: this.electionId,
+      capability: "publish_submission_decisions",
+    })) {
+      optionAFlowLog("coordinator", "process_submissions_delegated_worker_enabled", {
+        electionId: this.electionId,
+      });
+      return this.state;
     }
     let next = this.state;
     const publicSubmissionFlow = shouldUsePublicSubmissionFlow({
