@@ -28,6 +28,7 @@ pub struct WorkerConfig {
     pub worker_nsec: String,
     pub coordinator_npub: String,
     pub worker_relays: Vec<RelayUrl>,
+    pub worker_relays_from_env: bool,
     pub worker_state_dir: PathBuf,
     pub heartbeat_seconds: u64,
     pub poll_seconds: u64,
@@ -39,8 +40,10 @@ impl WorkerConfig {
             .context("WORKER_NSEC is required")?;
         let coordinator_npub = env::var("COORDINATOR_NPUB")
             .context("COORDINATOR_NPUB is required")?;
-        let raw_relays = env::var("WORKER_RELAYS")
-            .unwrap_or_else(|_| DEFAULT_WORKER_RELAYS.join(","));
+        let (raw_relays, worker_relays_from_env) = match env::var("WORKER_RELAYS") {
+            Ok(value) => (value, true),
+            Err(_) => (DEFAULT_WORKER_RELAYS.join(","), false),
+        };
         let worker_state_dir = env::var("WORKER_STATE_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("./worker-state"));
@@ -61,6 +64,7 @@ impl WorkerConfig {
             worker_nsec,
             coordinator_npub,
             worker_relays,
+            worker_relays_from_env,
             worker_state_dir,
             heartbeat_seconds,
             poll_seconds,

@@ -19,6 +19,7 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
 use tracing::{info, warn};
+use tracing_subscriber::EnvFilter;
 
 const DEFAULT_DM_LOOKBACK_SECS: u64 = 12 * 60 * 60;
 const DEFAULT_PUBLIC_LOOKBACK_SECS: u64 = 12 * 60 * 60;
@@ -36,8 +37,10 @@ struct WorkerRuntime {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_env_filter(env_filter)
         .init();
 
     let config = WorkerConfig::from_env()?;
@@ -47,6 +50,26 @@ async fn main() -> Result<()> {
     let worker_npub = worker_pubkey.to_bech32()?;
     let coordinator_pubkey = PublicKey::from_bech32(&config.coordinator_npub)
         .context("COORDINATOR_NPUB is not a valid npub")?;
+
+    let relay_strings = config
+        .worker_relays
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    info!(
+        "starting auditable-voting-worker v{}",
+        env!("CARGO_PKG_VERSION")
+    );
+    info!(
+        "worker startup config: coordinator_npub={}, relay_source={}, relay_count={}, relays={:?}, state_dir={}, heartbeat_seconds={}, poll_seconds={}",
+        config.coordinator_npub,
+        if config.worker_relays_from_env { "env" } else { "default" },
+        relay_strings.len(),
+        relay_strings,
+        config.worker_state_dir.display(),
+        config.heartbeat_seconds,
+        config.poll_seconds,
+    );
 
     let client = Client::new(keys);
     for relay in &config.worker_relays {

@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.16] - 2026-04-22
+
+### Changed
+- Added worker startup logging (version, coordinator, relay source/list, state dir, heartbeat/poll settings).
+- Defaulted worker logging to `info` when `RUST_LOG` is not set.
+
 ## [0.1.15] - 2026-04-22
 
 ### Changed
