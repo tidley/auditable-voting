@@ -13,7 +13,8 @@ Optional delegated worker daemon for election-scoped coordinator delegation.
 ```bash
 WORKER_NSEC=nsec1...
 COORDINATOR_NPUB=npub1...
-WORKER_RELAYS=wss://relay1.example,wss://relay2.example
+# Optional override:
+# WORKER_RELAYS=wss://strfry.bitsbytom.com,wss://nos.lol
 ```
 
 Optional:

@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.13] - 2026-04-22
+
+### Changed
+- Added a Build-page `Configure Worker` shortcut next to questionnaire publish controls.
+- Updated delegated worker setup so control relays default to the client relay set when left blank.
+- Made delegated worker expiry optional and off by default.
+- Extended Delegate downloads to include Windows/macOS worker binaries and checksums.
+- Updated worker runtime/docs so `WORKER_RELAYS` is optional with built-in defaults (no placeholder relay domains).
+
 ## [0.1.12] - 2026-04-22
 
 ### Changed

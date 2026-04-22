@@ -3,6 +3,26 @@ use nostr_sdk::prelude::RelayUrl;
 use std::env;
 use std::path::PathBuf;
 
+const DEFAULT_WORKER_RELAYS: &[&str] = &[
+    "wss://strfry.bitsbytom.com",
+    "wss://nos.lol",
+    "wss://relay.primal.net",
+    "wss://offchain.pub",
+    "wss://nostr.mom",
+    "wss://nostr-pub.wellorder.net",
+    "wss://relay.damus.io",
+    "wss://purplepag.es",
+    "wss://eden.nostr.land",
+    "wss://nip17.com",
+    "wss://nip17.tomdwyer.uk",
+    "wss://relay.layer.systems",
+    "wss://nostr.bond",
+    "wss://relay.nostr.band",
+    "wss://auth.nostr1.com",
+    "wss://inbox.nostr.wine",
+    "wss://relay.0xchat.com",
+];
+
 #[derive(Debug, Clone)]
 pub struct WorkerConfig {
     pub worker_nsec: String,
@@ -20,7 +40,7 @@ impl WorkerConfig {
         let coordinator_npub = env::var("COORDINATOR_NPUB")
             .context("COORDINATOR_NPUB is required")?;
         let raw_relays = env::var("WORKER_RELAYS")
-            .context("WORKER_RELAYS is required")?;
+            .unwrap_or_else(|_| DEFAULT_WORKER_RELAYS.join(","));
         let worker_state_dir = env::var("WORKER_STATE_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("./worker-state"));

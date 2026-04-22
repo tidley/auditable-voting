@@ -5782,6 +5782,7 @@ export default function SimpleCoordinatorApp() {
                 blindSigningPublicKey={optionABlindSigningPublicKey}
                 view='build'
                 onInviteParticipants={() => selectTab('participants')}
+                onConfigureWorker={() => selectTab('delegate')}
                 onStatusChange={updateQuestionnaireRosterAnnouncement}
               />
             </SimpleCollapsibleSection>

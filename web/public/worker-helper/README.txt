@@ -12,8 +12,9 @@ Usage (Linux x86_64):
 3. Run:
    WORKER_NSEC=nsec1... \
    COORDINATOR_NPUB=npub1... \
-   WORKER_RELAYS=wss://relay1.example,wss://relay2.example \
    ./auditable-voting-worker-linux-x64
+
+   WORKER_RELAYS is optional. If not set, the worker uses the default client relay set.
 
 Other platforms:
 - Download prebuilt release assets:

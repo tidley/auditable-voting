@@ -29,6 +29,8 @@ import { publishQuestionnaireBlindResponsePublicByCoordinator } from "./question
 import { decodeNsec } from "./nostrIdentity";
 import { normalizeRelaysRust } from "./wasm/auditableVotingCore";
 import { createSignerService } from "./services/signerService";
+import { SIMPLE_PUBLIC_RELAYS } from "./simpleVotingSession";
+import { SIMPLE_DM_RELAYS } from "./simpleShardDm";
 import {
   fetchOptionAWorkerStatusDmsWithNsec,
   publishOptionAWorkerDelegationDm,
@@ -82,6 +84,7 @@ type QuestionnaireCoordinatorPanelProps = {
   blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
   view?: "build" | "delegate" | "responses" | "participants";
   onInviteParticipants?: () => void;
+  onConfigureWorker?: () => void;
   onStatusChange?: (status: {
     questionnaireId: string;
     state: QuestionnaireStateValue | null;
@@ -209,9 +212,15 @@ type StoredQuestionnaireDraft = {
   delegationMode?: "browser_only" | "delegated_worker";
   delegatedWorkerNpub?: string;
   delegatedWorkerControlRelays?: string;
+  delegatedWorkerExpiryEnabled?: boolean;
   delegatedWorkerExpiryMinutes?: string;
   delegatedWorkerCapabilities?: WorkerCapability[];
 };
+
+const DEFAULT_WORKER_CONTROL_RELAYS = normalizeRelaysRust([
+  ...SIMPLE_PUBLIC_RELAYS,
+  ...SIMPLE_DM_RELAYS,
+]);
 
 function normaliseStoredQuestions(input: unknown): QuestionnaireQuestionDraft[] {
   if (!Array.isArray(input) || input.length === 0) {
@@ -266,7 +275,8 @@ function readStoredQuestionnaireDraft(): StoredQuestionnaireDraft {
       delegationMode: parsed.delegationMode === "delegated_worker" ? "delegated_worker" : "browser_only",
       delegatedWorkerNpub: typeof parsed.delegatedWorkerNpub === "string" ? parsed.delegatedWorkerNpub : "",
       delegatedWorkerControlRelays: typeof parsed.delegatedWorkerControlRelays === "string" ? parsed.delegatedWorkerControlRelays : "",
-      delegatedWorkerExpiryMinutes: typeof parsed.delegatedWorkerExpiryMinutes === "string" ? parsed.delegatedWorkerExpiryMinutes : "120",
+      delegatedWorkerExpiryEnabled: parsed.delegatedWorkerExpiryEnabled === true,
+      delegatedWorkerExpiryMinutes: typeof parsed.delegatedWorkerExpiryMinutes === "string" ? parsed.delegatedWorkerExpiryMinutes : "",
       delegatedWorkerCapabilities: Array.isArray(parsed.delegatedWorkerCapabilities)
         ? parsed.delegatedWorkerCapabilities.filter((entry): entry is WorkerCapability => (
           entry === "issue_blind_tokens"
@@ -472,7 +482,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [delegationMode, setDelegationMode] = useState<"browser_only" | "delegated_worker">(storedDraft.delegationMode ?? "browser_only");
   const [delegatedWorkerNpub, setDelegatedWorkerNpub] = useState(storedDraft.delegatedWorkerNpub ?? "");
   const [delegatedWorkerControlRelays, setDelegatedWorkerControlRelays] = useState(storedDraft.delegatedWorkerControlRelays ?? "");
-  const [delegatedWorkerExpiryMinutes, setDelegatedWorkerExpiryMinutes] = useState(storedDraft.delegatedWorkerExpiryMinutes ?? "120");
+  const [delegatedWorkerExpiryEnabled, setDelegatedWorkerExpiryEnabled] = useState(storedDraft.delegatedWorkerExpiryEnabled ?? false);
+  const [delegatedWorkerExpiryMinutes, setDelegatedWorkerExpiryMinutes] = useState(storedDraft.delegatedWorkerExpiryMinutes ?? "");
   const [delegatedWorkerCapabilities, setDelegatedWorkerCapabilities] = useState<WorkerCapability[]>(
     storedDraft.delegatedWorkerCapabilities ?? ["issue_blind_tokens", "verify_public_submissions", "publish_submission_decisions"],
   );
@@ -677,12 +688,13 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   }, [coordinatorNpub, coordinatorNsec]);
 
   function parseDelegatedControlRelays(value: string) {
-    return normalizeRelaysRust(
+    const parsed = normalizeRelaysRust(
       value
         .split(/[\n,\s]+/)
         .map((entry) => entry.trim())
         .filter((entry) => entry.length > 0),
     );
+    return parsed.length > 0 ? parsed : DEFAULT_WORKER_CONTROL_RELAYS;
   }
 
   function toggleWorkerCapability(capability: WorkerCapability) {
@@ -1138,6 +1150,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       delegationMode,
       delegatedWorkerNpub,
       delegatedWorkerControlRelays,
+      delegatedWorkerExpiryEnabled,
       delegatedWorkerExpiryMinutes,
       delegatedWorkerCapabilities,
     };
@@ -1150,6 +1163,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     closeTimerEnabled,
     delegatedWorkerCapabilities,
     delegatedWorkerControlRelays,
+    delegatedWorkerExpiryEnabled,
     delegatedWorkerExpiryMinutes,
     delegatedWorkerNpub,
     delegationMode,
@@ -1311,6 +1325,13 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     const prefix = basePath.endsWith("/") ? basePath : `${basePath}/`;
     return `${prefix}worker-helper/README.txt`;
   }, []);
+  const workerReleaseBaseUrl = "https://github.com/tidley/auditable-voting/releases/latest/download";
+  const workerWindowsDownloadUrl = `${workerReleaseBaseUrl}/auditable-voting-worker-windows-x64.zip`;
+  const workerWindowsChecksumUrl = `${workerWindowsDownloadUrl}.sha256`;
+  const workerMacOsX64DownloadUrl = `${workerReleaseBaseUrl}/auditable-voting-worker-macos-x64.tar.gz`;
+  const workerMacOsX64ChecksumUrl = `${workerMacOsX64DownloadUrl}.sha256`;
+  const workerMacOsArm64DownloadUrl = `${workerReleaseBaseUrl}/auditable-voting-worker-macos-arm64.tar.gz`;
+  const workerMacOsArm64ChecksumUrl = `${workerMacOsArm64DownloadUrl}.sha256`;
 
   const titleReady = title.trim().length > 0;
   const hasQuestion = questions.length > 0;
@@ -1920,7 +1941,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     const coordinatorNsecTrimmed = coordinatorNsec.trim();
     const coordinatorNpubTrimmed = coordinatorNpub.trim();
     const workerNpub = normaliseWorkerNpub(delegatedWorkerNpub);
-    const expiryMinutes = Number.parseInt(delegatedWorkerExpiryMinutes, 10);
+    const expiryMinutes = delegatedWorkerExpiryEnabled
+      ? Number.parseInt(delegatedWorkerExpiryMinutes, 10)
+      : Number.NaN;
     if (!electionId || !coordinatorNsecTrimmed || !coordinatorNpubTrimmed) {
       setStatus("Coordinator identity and questionnaire ID are required before delegation.");
       return;
@@ -1929,7 +1952,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       setStatus("Enter a valid worker npub.");
       return;
     }
-    if (!Number.isFinite(expiryMinutes) || expiryMinutes <= 0) {
+    if (delegatedWorkerExpiryEnabled && (!Number.isFinite(expiryMinutes) || expiryMinutes <= 0)) {
       setStatus("Delegation expiry must be a positive number of minutes.");
       return;
     }
@@ -1948,7 +1971,13 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       workerNpub,
       capabilities: delegatedWorkerCapabilities,
       controlRelays,
-      expiresAt: new Date(Date.now() + expiryMinutes * 60 * 1000).toISOString(),
+      expiresAt: new Date(
+        Date.now() + (
+          delegatedWorkerExpiryEnabled
+            ? expiryMinutes
+            : QUESTIONNAIRE_TIMER_DISABLED_CLOSE_MINUTES
+        ) * 60 * 1000,
+      ).toISOString(),
     });
     setStatus("Publishing worker delegation...");
     try {
@@ -2056,14 +2085,32 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             <>
               <div className='simple-worker-helper-download'>
                 <p className='simple-voter-note'>
-                  Worker helper download (Linux x64): use this binary for quick outbound-only deployment on VPS or homelab Linux.
+                  Worker helper downloads:
                 </p>
                 <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
                   <a className='simple-voter-secondary' href={workerHelperDownloadUrl} download>
-                    Download worker helper
+                    Linux x64
                   </a>
                   <a className='simple-voter-secondary' href={workerHelperChecksumUrl} download>
-                    Download checksum
+                    Linux x64 checksum
+                  </a>
+                  <a className='simple-voter-secondary' href={workerWindowsDownloadUrl} target='_blank' rel='noreferrer'>
+                    Windows x64
+                  </a>
+                  <a className='simple-voter-secondary' href={workerWindowsChecksumUrl} target='_blank' rel='noreferrer'>
+                    Windows checksum
+                  </a>
+                  <a className='simple-voter-secondary' href={workerMacOsX64DownloadUrl} target='_blank' rel='noreferrer'>
+                    macOS x64
+                  </a>
+                  <a className='simple-voter-secondary' href={workerMacOsX64ChecksumUrl} target='_blank' rel='noreferrer'>
+                    macOS x64 checksum
+                  </a>
+                  <a className='simple-voter-secondary' href={workerMacOsArm64DownloadUrl} target='_blank' rel='noreferrer'>
+                    macOS arm64
+                  </a>
+                  <a className='simple-voter-secondary' href={workerMacOsArm64ChecksumUrl} target='_blank' rel='noreferrer'>
+                    macOS arm64 checksum
                   </a>
                   <a className='simple-voter-secondary' href={workerHelperReadmeUrl} target='_blank' rel='noreferrer'>
                     Setup notes
@@ -2085,15 +2132,34 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                 id='delegated-worker-relays'
                 className='simple-voter-input'
                 rows={2}
-                placeholder='wss://relay1.example, wss://relay2.example'
+                placeholder={DEFAULT_WORKER_CONTROL_RELAYS.join(", ")}
                 value={delegatedWorkerControlRelays}
                 onChange={(event) => setDelegatedWorkerControlRelays(event.target.value)}
               />
+              <p className='simple-voter-note'>Leave blank to use the default client relay set.</p>
 
-              <label className='simple-voter-label' htmlFor='delegated-worker-expiry'>Expiry (minutes)</label>
+              <label className='simple-voter-note' htmlFor='delegated-worker-expiry-enabled'>
+                <input
+                  id='delegated-worker-expiry-enabled'
+                  type='checkbox'
+                  checked={delegatedWorkerExpiryEnabled}
+                  onChange={(event) => {
+                    const enabled = event.target.checked;
+                    setDelegatedWorkerExpiryEnabled(enabled);
+                    if (!enabled) {
+                      setDelegatedWorkerExpiryMinutes("");
+                    } else if (!delegatedWorkerExpiryMinutes.trim()) {
+                      setDelegatedWorkerExpiryMinutes("120");
+                    }
+                  }}
+                />
+                Set delegation expiry
+              </label>
+              <label className='simple-voter-label' htmlFor='delegated-worker-expiry'>Expiry (minutes, optional)</label>
               <input
                 id='delegated-worker-expiry'
                 className='simple-voter-input'
+                disabled={!delegatedWorkerExpiryEnabled}
                 value={delegatedWorkerExpiryMinutes}
                 onChange={(event) => setDelegatedWorkerExpiryMinutes(event.target.value)}
               />
@@ -2704,6 +2770,14 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             Open Questionnaire
           </button>
         )}
+        <button
+          type='button'
+          className='simple-voter-secondary'
+          onClick={props.onConfigureWorker}
+          disabled={!props.onConfigureWorker}
+        >
+          Configure Worker
+        </button>
         {publishedDefinition ? (
           <button
             type='button'
