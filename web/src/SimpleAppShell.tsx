@@ -13,7 +13,7 @@ import SimpleQrPanel from "./SimpleQrPanel";
 
 type SimpleRole = "voter" | "coordinator" | "auditor";
 type GatewayAuthMode = "signer" | "nsec";
-type GatewaySignerChoice = "nip07" | "amber";
+type GatewaySignerChoice = "nip07" | "amber" | "manual";
 const GATEWAY_SIGNER_NPUB_STORAGE_KEY = "app:auditable-voting:gateway:signer_npub";
 const AMBER_FULLY_TRUST_HINT = "Change from `Approve basic actions` to `I fully trust this application` when Amber opens. This allows the application to fully coordinate.";
 
@@ -257,11 +257,20 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
                 >
                   Amber
                 </button>
+                <button
+                  type='button'
+                  role='tab'
+                  aria-selected={gatewaySignerChoice === "manual"}
+                  className={`simple-role-switch-button${gatewaySignerChoice === "manual" ? " is-active" : ""}`}
+                  onClick={() => setGatewaySignerChoice("manual")}
+                >
+                  Manual
+                </button>
               </div>
             </section>
           ) : null}
 
-          {gatewayAuthMode === "signer" ? (
+          {gatewayAuthMode === "signer" && gatewaySignerChoice !== "manual" ? (
             <div className='simple-login-actions'>
               <button type='button' className='simple-voter-secondary' onClick={() => void runSignerLogin()}>
                 {gatewaySignerChoice === "amber" ? "Log in with Amber" : "Log in with NOS2X-FOX"}
@@ -288,7 +297,7 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
             </>
           ) : null}
 
-          {gatewayAuthMode === "signer" ? (
+          {gatewayAuthMode === "signer" && gatewaySignerChoice === "manual" ? (
             <>
               <div className='simple-login-actions'>
                 <button

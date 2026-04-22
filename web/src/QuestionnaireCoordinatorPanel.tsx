@@ -1347,8 +1347,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const workerLinuxArmv7ChecksumUrl = `${workerLinuxArmv7DownloadUrl}.sha256`;
   const workerWindowsDownloadUrl = `${workerReleaseBaseUrl}/auditable-voting-worker-windows-x64.zip`;
   const workerWindowsChecksumUrl = `${workerWindowsDownloadUrl}.sha256`;
-  const workerMacOsX64DownloadUrl = `${workerReleaseBaseUrl}/auditable-voting-worker-macos-x64.tar.gz`;
-  const workerMacOsX64ChecksumUrl = `${workerMacOsX64DownloadUrl}.sha256`;
   const workerMacOsArm64DownloadUrl = `${workerReleaseBaseUrl}/auditable-voting-worker-macos-arm64.tar.gz`;
   const workerMacOsArm64ChecksumUrl = `${workerMacOsArm64DownloadUrl}.sha256`;
   const helperRelayList = useMemo(
@@ -2193,8 +2191,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                   </div>
                   <div className='simple-delegate-download-row'>
                     <span className='simple-delegate-download-label'>macOS</span>
-                    <a className='simple-delegate-link' href={workerMacOsArm64DownloadUrl} target='_blank' rel='noreferrer'>Apple Silicon</a>
-                    <a className='simple-delegate-link' href={workerMacOsX64DownloadUrl} target='_blank' rel='noreferrer'>Intel</a>
+                    <a className='simple-delegate-link' href={workerMacOsArm64DownloadUrl} target='_blank' rel='noreferrer'>Download</a>
+                    <a className='simple-delegate-link' href={workerMacOsArm64ChecksumUrl} target='_blank' rel='noreferrer'>Checksum</a>
                   </div>
                 </div>
                 <a className='simple-delegate-link simple-delegate-link-readme' href={workerHelperReadmeUrl} target='_blank' rel='noreferrer'>
