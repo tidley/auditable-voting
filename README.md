@@ -184,6 +184,15 @@ npm run build
 
 `npm run test:relay-load` runs a Node-only `1 coordinator / 40 voters / 1 round` mailbox relay-load scenario with an in-memory relay pool. It exercises the request, ticket, and acknowledgement path without Playwright or headless Chromium, and checks that ticket publishes keep the anchor relays while rotating secondary relays.
 
+Opt-in live public-relay smoke test for the delegated questionnaire blind-token flow:
+
+```bash
+cd web
+npm run test:live-delegate-coordinator
+```
+
+That command publishes ephemeral questionnaire, delegation, DM, submission-decision, and result-summary events to public relays. It is intentionally separate from the default verification set because it depends on live public relay behaviour.
+
 Coordinator-control replay tests also run in the new root Rust crate:
 
 ```bash

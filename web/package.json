@@ -1,7 +1,7 @@
 {
   "name": "auditable-voting-web",
   "private": true,
-  "version": "0.1.21",
+  "version": "0.1.22",
   "type": "module",
   "scripts": {
     "build:wasm": "npm run build:wasm:legacy && npm run build:wasm:coordinator",
@@ -14,6 +14,7 @@
     "preverify:simple-blind-shares": "node scripts/ensure-wasm-artifacts.mjs",
     "pretest:live-relays": "node scripts/ensure-wasm-artifacts.mjs",
     "pretest:live-relays:repeat": "node scripts/ensure-wasm-artifacts.mjs",
+    "pretest:live-delegate-coordinator": "node scripts/ensure-wasm-artifacts.mjs",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0 --port 5173",
@@ -24,7 +25,8 @@
     "test:course-feedback-preflight": "vitest run src/questionnaireProtocol.test.ts src/questionnaireRuntime.test.ts src/questionnaireResponderIdentity.test.ts src/questionnaireTransport.test.ts src/questionnaireCourseFeedbackPreflight.test.ts",
     "verify:simple-blind-shares": "tsx scripts/verify-simple-blind-shares.ts",
     "test:live-relays": "node scripts/live-simple-relay-check.js",
-    "test:live-relays:repeat": "node scripts/live-simple-relay-repeat.js"
+    "test:live-relays:repeat": "node scripts/live-simple-relay-repeat.js",
+    "test:live-delegate-coordinator": "tsx scripts/live-delegate-coordinator-smoke.ts"
   },
   "dependencies": {
     "@cloudflare/blindrsa-ts": "^0.4.5",

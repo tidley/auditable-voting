@@ -1,20 +1,49 @@
 // @vitest-environment jsdom
+import { getPublicKey, nip19 } from "nostr-tools";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   processOptionAQueuesForCoordinator,
   QuestionnaireOptionACoordinatorRuntime,
   QuestionnaireOptionAVoterRuntime,
 } from "./questionnaireOptionARuntime";
-import { listBlindRequests, readBlindIssuance } from "./questionnaireOptionAStorage";
+import type { BallotAcceptanceResult, BallotSubmission } from "./questionnaireOptionA";
+import { reduceCoordinatorEvent } from "./questionnaireOptionA";
+import {
+  dequeueBlindRequest,
+  listBlindRequests,
+  loadCoordinatorState,
+  readAcceptance,
+  readBlindIssuance,
+  saveCoordinatorState,
+  storeAcceptance,
+  storeBlindIssuance,
+} from "./questionnaireOptionAStorage";
 import {
   fetchOptionABallotSubmissionDmsWithNsec,
+  publishOptionABallotAcceptanceDm,
   publishOptionABallotSubmissionDm,
   publishOptionABlindIssuanceDm,
   publishOptionABlindRequestDm,
 } from "./questionnaireOptionABlindDm";
-import { publishQuestionnaireBlindResponsePublic } from "./questionnaireResponsePublish";
+import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
+import {
+  buildQuestionnaireBlindTokenSignedMessage,
+} from "./questionnaireBlindToken";
+import {
+  signBlindedQuestionnaireToken,
+  toQuestionnaireBlindPublicKey,
+  verifyQuestionnaireBlindSignature,
+} from "./questionnaireBlindSignature";
+import { publishQuestionnaireResultSummary } from "./questionnaireNostr";
+import type { QuestionnaireDefinition, QuestionnaireResponseAnswer } from "./questionnaireProtocol";
+import { buildQuestionnaireResultSummary } from "./questionnaireRuntime";
+import {
+  publishQuestionnaireBlindResponsePublic,
+  publishQuestionnaireSubmissionDecisionPublic,
+} from "./questionnaireResponsePublish";
 import type { SignerService } from "./services/signerService";
 import { fetchQuestionnaireActiveWorkerDelegationForCapability } from "./questionnaireTransport";
+import { createWorkerDelegationCertificate, upsertStoredWorkerDelegation } from "./questionnaireWorkerDelegation";
 
 const publicBlindResponseStore = vi.hoisted(() => ({
   entries: [] as Array<{
@@ -66,6 +95,18 @@ vi.mock("./questionnaireOptionABlindDm", () => ({
     failures: 0,
     relayResults: [],
   }),
+  publishOptionACoordinatorStateDm: vi.fn().mockResolvedValue({
+    eventId: "mock-option-a-coordinator-state-dm",
+    successes: 1,
+    failures: 0,
+    relayResults: [],
+  }),
+  publishOptionAVoterStateDm: vi.fn().mockResolvedValue({
+    eventId: "mock-option-a-voter-state-dm",
+    successes: 1,
+    failures: 0,
+    relayResults: [],
+  }),
   publishOptionABallotSubmissionAckDm: vi.fn().mockResolvedValue({
     eventId: "mock-option-a-submission-ack-dm",
     successes: 1,
@@ -113,6 +154,7 @@ vi.mock("./questionnaireOptionABlindDm", () => ({
 
 vi.mock("./questionnaireResponsePublish", () => ({
   publishQuestionnaireBlindResponsePublic: vi.fn(async (input: {
+    responseNsec: string;
     questionnaireId: string;
     responseId: string;
     submittedAt?: number;
@@ -134,7 +176,7 @@ vi.mock("./questionnaireResponsePublish", () => ({
         questionnaireId: input.questionnaireId,
         responseId: input.responseId,
         submittedAt: createdAt,
-        authorPubkey: "npub1testpublicsubmissionauthorxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        authorPubkey: nip19.npubEncode(getPublicKey(nip19.decode(input.responseNsec).data as Uint8Array)),
         tokenNullifier: input.tokenNullifier,
         tokenProof: input.tokenProof,
         answers: input.answers,
@@ -154,6 +196,29 @@ vi.mock("./questionnaireResponsePublish", () => ({
     relayResults: [],
   })),
 }));
+
+vi.mock("./questionnaireNostr", async () => {
+  const actual = await vi.importActual<typeof import("./questionnaireNostr")>("./questionnaireNostr");
+  return {
+    ...actual,
+    publishQuestionnaireResultSummary: vi.fn(async (input: {
+      resultSummary: { questionnaireId: string };
+    }) => ({
+      eventId: `summary-${input.resultSummary.questionnaireId}`,
+      event: {
+        id: `summary-${input.resultSummary.questionnaireId}`,
+        kind: actual.QUESTIONNAIRE_RESULT_SUMMARY_KIND,
+        tags: [
+          ["t", "questionnaire_result_summary"],
+          ["questionnaire-id", input.resultSummary.questionnaireId],
+        ],
+      },
+      successes: 1,
+      failures: 0,
+      relayResults: [],
+    })),
+  };
+});
 
 vi.mock("./questionnaireTransport", () => ({
   fetchQuestionnaireActiveWorkerDelegationForCapability: vi.fn().mockResolvedValue(null),
@@ -176,6 +241,318 @@ function signer(npub: string): SignerService {
       return { ...event, pubkey: npub };
     },
   };
+}
+
+function buildDefinition(input: {
+  electionId: string;
+  coordinatorNpub: string;
+  title?: string;
+}) : QuestionnaireDefinition {
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    schemaVersion: 1,
+    eventType: "questionnaire_definition",
+    protocolVersion: 2,
+    flowMode: "public_submission_v1",
+    responseMode: "blind_token",
+    questionnaireId: input.electionId,
+    title: input.title ?? "Runtime",
+    description: "Test",
+    createdAt: now,
+    openAt: now - 30,
+    closeAt: now + 3600,
+    coordinatorPubkey: input.coordinatorNpub,
+    coordinatorEncryptionPubkey: input.coordinatorNpub,
+    responseVisibility: "public",
+    eligibilityMode: "allowlist",
+    allowMultipleResponsesPerPubkey: false,
+    questions: [
+      {
+        questionId: "q1",
+        prompt: "Approve?",
+        required: true,
+        type: "yes_no",
+      },
+    ],
+  };
+}
+
+async function processDelegatedCoordinatorQueues(input: {
+  electionId: string;
+  coordinatorNpub: string;
+  workerNpub: string;
+  expectedInviteeCount: number;
+}) {
+  const cachedDefinition = readCachedQuestionnaireDefinition(input.electionId);
+  if (!cachedDefinition) {
+    throw new Error("Delegate coordinator test requires a cached questionnaire definition.");
+  }
+  const loaded = loadCoordinatorState({
+    coordinatorNpub: input.coordinatorNpub,
+    electionId: input.electionId,
+  });
+  if (!loaded?.blindSigningPrivateKey) {
+    throw new Error("Delegate coordinator test requires persisted blind-signing key.");
+  }
+  let next = loaded;
+
+  for (const request of listBlindRequests(input.electionId)) {
+    const claimed = reduceCoordinatorEvent(next, {
+      type: "LOGIN_VERIFIED",
+      electionId: input.electionId,
+      invitedNpub: request.invitedNpub,
+    });
+    if (claimed.ok) {
+      next = claimed.state;
+    }
+
+    const received = reduceCoordinatorEvent(next, {
+      type: "BLIND_REQUEST_RECEIVED",
+      request,
+    });
+    if (!received.ok && received.error !== "already_issued") {
+      throw new Error(`Unexpected delegated blind-request error: ${received.error}`);
+    }
+    if (received.ok) {
+      next = received.state;
+    }
+
+    const existingIssuance = next.issuedBlindResponses[request.requestId] ?? readBlindIssuance(request.requestId);
+    const issuance = existingIssuance ?? {
+      type: "blind_ballot_response" as const,
+      schemaVersion: 1 as const,
+      electionId: input.electionId,
+      requestId: request.requestId,
+      issuanceId: `issuance_${request.requestId}`,
+      invitedNpub: request.invitedNpub,
+      tokenCommitment: request.tokenCommitment,
+      blindSigningKeyId: loaded.blindSigningPrivateKey.keyId,
+      blindSignature: await signBlindedQuestionnaireToken({
+        privateKey: loaded.blindSigningPrivateKey,
+        blindedMessage: request.blindedMessage,
+      }),
+      definition: cachedDefinition,
+      issuedAt: new Date().toISOString(),
+    };
+
+    if (!existingIssuance) {
+      const issued = reduceCoordinatorEvent(next, {
+        type: "BLIND_SIGNATURE_ISSUED",
+        issuance,
+      });
+      if (!issued.ok) {
+        throw new Error(`Unexpected delegated blind-issuance error: ${issued.error}`);
+      }
+      next = issued.state;
+    }
+
+    storeBlindIssuance(issuance);
+    dequeueBlindRequest(request.requestId);
+    await publishOptionABlindIssuanceDm({
+      signer: signer(input.workerNpub),
+      recipientNpub: issuance.invitedNpub,
+      issuance,
+    });
+  }
+
+  saveCoordinatorState({
+    coordinatorNpub: input.coordinatorNpub,
+    state: next,
+  });
+
+  for (const entry of publicBlindResponseStore.entries.filter((candidate) => candidate.response.questionnaireId === input.electionId)) {
+    if (next.acceptanceResults[entry.response.responseId]) {
+      continue;
+    }
+
+    const issuance = Object.values(next.issuedBlindResponses)
+      .find((candidate) => candidate.tokenCommitment === entry.response.tokenProof.tokenCommitment);
+
+    const submission: BallotSubmission = {
+      type: "ballot_submission",
+      schemaVersion: 1,
+      electionId: input.electionId,
+      submissionId: entry.response.responseId,
+      invitedNpub: entry.response.authorPubkey,
+      responseNpub: entry.response.authorPubkey,
+      tokenCommitment: entry.response.tokenProof.tokenCommitment,
+      blindSigningKeyId: issuance?.blindSigningKeyId ?? loaded.blindSigningPrivateKey.keyId,
+      credential: entry.response.tokenProof.signature,
+      nullifier: entry.response.tokenNullifier,
+      payload: {
+        electionId: input.electionId,
+        responses: [
+          {
+            questionId: "q1",
+            type: "yes_no",
+            answer: (entry.response.answers[0] as QuestionnaireResponseAnswer | undefined)?.answerType === "yes_no"
+              && Boolean((entry.response.answers[0] as QuestionnaireResponseAnswer & { value?: boolean }).value)
+              ? "yes"
+              : "no",
+          },
+        ],
+      },
+      submittedAt: new Date((entry.response.submittedAt ?? entry.event.created_at) * 1000).toISOString(),
+    };
+
+    const received = reduceCoordinatorEvent(next, {
+      type: "BALLOT_SUBMISSION_RECEIVED",
+      submission,
+    });
+
+    let result: BallotAcceptanceResult;
+    if (!received.ok) {
+      result = {
+        type: "ballot_acceptance_result",
+        schemaVersion: 1,
+        electionId: input.electionId,
+        submissionId: submission.submissionId,
+        accepted: false,
+        reason: "already_voted",
+        decidedAt: new Date().toISOString(),
+      };
+    } else {
+      next = received.state;
+      const publicKey = next.election.blindSigningPublicKey ?? toQuestionnaireBlindPublicKey(loaded.blindSigningPrivateKey);
+      const credentialValid = Boolean(issuance) && await verifyQuestionnaireBlindSignature({
+        publicKey,
+        message: buildQuestionnaireBlindTokenSignedMessage({
+          questionnaireId: input.electionId,
+          tokenSecretCommitment: submission.tokenCommitment,
+        }),
+        signature: submission.credential,
+      });
+
+      if (!credentialValid) {
+        result = {
+          type: "ballot_acceptance_result",
+          schemaVersion: 1,
+          electionId: input.electionId,
+          submissionId: submission.submissionId,
+          accepted: false,
+          reason: "invalid_credential",
+          decidedAt: new Date().toISOString(),
+        };
+      } else {
+        const accepted: BallotAcceptanceResult = {
+          type: "ballot_acceptance_result",
+          schemaVersion: 1,
+          electionId: input.electionId,
+          submissionId: submission.submissionId,
+          accepted: true,
+          decidedAt: new Date().toISOString(),
+        };
+        const reducedAccepted = reduceCoordinatorEvent(next, {
+          type: "BALLOT_ACCEPTED",
+          result: accepted,
+        });
+        if (!reducedAccepted.ok) {
+          result = {
+            ...accepted,
+            accepted: false,
+            reason: reducedAccepted.error === "duplicate_nullifier" ? "duplicate_nullifier" : "already_voted",
+          };
+        } else {
+          next = reducedAccepted.state;
+          result = accepted;
+        }
+      }
+    }
+
+    storeAcceptance(result);
+    await publishQuestionnaireSubmissionDecisionPublic({
+      coordinatorNsec: "nsec1delegatecoordinatormockxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      questionnaireId: input.electionId,
+      submissionId: submission.submissionId,
+      tokenNullifier: submission.nullifier,
+      accepted: result.accepted,
+      reason: result.accepted ? "accepted" : "invalid_payload_shape",
+      coordinatorNpub: input.coordinatorNpub,
+      decidedAt: Math.floor(Date.parse(result.decidedAt) / 1000),
+    });
+    if (result.accepted) {
+      await publishOptionABallotAcceptanceDm({
+        signer: signer(input.workerNpub),
+        recipientNpub: submission.responseNpub ?? submission.invitedNpub,
+        acceptance: result,
+      });
+    }
+  }
+
+  saveCoordinatorState({
+    coordinatorNpub: input.coordinatorNpub,
+    state: next,
+  });
+
+  const decisions = publicBlindResponseStore.entries
+    .filter((entry) => entry.response.questionnaireId === input.electionId)
+    .map((entry) => ({
+      entry,
+      result: next.acceptanceResults[entry.response.responseId] ?? readAcceptance(entry.response.responseId),
+    }))
+    .filter((entry): entry is typeof entry & { result: BallotAcceptanceResult } => Boolean(entry.result));
+
+  if (decisions.length >= input.expectedInviteeCount) {
+    const acceptedResponses = decisions
+      .filter((entry) => entry.result.accepted)
+      .map((entry) => ({
+        eventId: entry.entry.event.id,
+        authorPubkey: entry.entry.response.authorPubkey,
+        envelope: {
+          schemaVersion: 1 as const,
+          eventType: "questionnaire_response_private" as const,
+          questionnaireId: entry.entry.response.questionnaireId,
+          responseId: entry.entry.response.responseId,
+          createdAt: entry.entry.response.submittedAt ?? entry.entry.event.created_at,
+          authorPubkey: entry.entry.response.authorPubkey,
+          ciphertextScheme: "nip44v2" as const,
+          ciphertextRecipient: input.coordinatorNpub,
+          ciphertext: "",
+          payloadHash: entry.entry.response.tokenProof.tokenCommitment,
+        },
+        payload: {
+          schemaVersion: 1 as const,
+          kind: "questionnaire_response_payload" as const,
+          questionnaireId: entry.entry.response.questionnaireId,
+          responseId: entry.entry.response.responseId,
+          submittedAt: entry.entry.response.submittedAt ?? entry.entry.event.created_at,
+          answers: entry.entry.response.answers as QuestionnaireResponseAnswer[],
+        },
+      }));
+    const rejectedResponses = decisions
+      .filter((entry) => !entry.result.accepted)
+      .map((entry) => ({
+        eventId: entry.entry.event.id,
+        authorPubkey: entry.entry.response.authorPubkey,
+        responseId: entry.entry.response.responseId,
+        reason: "invalid_payload_shape" as const,
+      }));
+    const summary = buildQuestionnaireResultSummary({
+      definition: cachedDefinition,
+      coordinatorPubkey: input.coordinatorNpub,
+      acceptedResponses,
+      rejectedResponses,
+    });
+    summary.acceptedNullifierCount = new Set(
+      decisions
+        .filter((entry) => entry.result.accepted)
+        .map((entry) => entry.entry.response.tokenNullifier.trim())
+        .filter((value) => value.length > 0),
+    ).size;
+    summary.publishedResponseRefs = decisions.map((entry) => ({
+      responseId: entry.entry.response.responseId,
+      authorPubkey: entry.entry.response.authorPubkey,
+      submittedAt: entry.entry.response.submittedAt ?? entry.entry.event.created_at,
+      accepted: entry.result.accepted,
+      answers: entry.entry.response.answers as QuestionnaireResponseAnswer[],
+    }));
+    await publishQuestionnaireResultSummary({
+      coordinatorNsec: "nsec1delegatecoordinatormockxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      resultSummary: summary,
+    });
+  }
+
+  return next;
 }
 
 describe("questionnaireOptionARuntime", () => {
@@ -491,5 +868,122 @@ describe("questionnaireOptionARuntime", () => {
 
     voterTwo.refreshIssuanceAndAcceptance();
     expect(voterTwo.getSnapshot()?.credentialReady).toBe(true);
+  });
+
+  it("runs delegated request -> issuance -> submission -> summary end to end", async () => {
+    const workerNpub = "npub1delegatecoordinatorruntime00000000000000000000000";
+    const definition = buildDefinition({
+      electionId,
+      coordinatorNpub,
+    });
+    storeCachedQuestionnaireDefinition(definition);
+
+    const delegation = createWorkerDelegationCertificate({
+      electionId,
+      coordinatorNpub,
+      workerNpub,
+      capabilities: [
+        "issue_blind_tokens",
+        "verify_public_submissions",
+        "publish_submission_decisions",
+        "publish_result_summary",
+      ],
+      controlRelays: ["wss://worker-relay.example"],
+      expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+    });
+
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+    upsertStoredWorkerDelegation({
+      electionId,
+      mode: "delegated_worker",
+      activeDelegation: delegation,
+      lastRevocation: null,
+      lastUpdatedAt: new Date().toISOString(),
+    });
+
+    coordinator.addWhitelistNpub(voterNpub);
+    vi.mocked(fetchQuestionnaireActiveWorkerDelegationForCapability).mockResolvedValueOnce(delegation);
+    const sentInvite = await coordinator.sendInvite(voterNpub, {
+      title: "Runtime",
+      description: "Test",
+      voteUrl: "https://example.org/vote",
+    });
+    expect(sentInvite.invite.issueBlindTokensWorker?.workerNpub).toBe(workerNpub);
+
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionId);
+    await voter.loginWithSigner(sentInvite.invite);
+    voter.updateDraftResponses([{ questionId: "q1", type: "yes_no", answer: "yes" }]);
+    await voter.requestBlindBallot({ forceResend: true });
+
+    const requestId = voter.getSnapshot()?.blindRequest?.requestId;
+    expect(requestId).toBeTruthy();
+    await coordinator.processPendingBlindRequests();
+    expect(readBlindIssuance(requestId ?? "")).toBe(null);
+
+    await processDelegatedCoordinatorQueues({
+      electionId,
+      coordinatorNpub,
+      workerNpub,
+      expectedInviteeCount: 1,
+    });
+
+    voter.refreshIssuanceAndAcceptance();
+    expect(voter.getSnapshot()?.credentialReady).toBe(true);
+    expect(vi.mocked(publishOptionABlindIssuanceDm)).toHaveBeenCalledWith(expect.objectContaining({
+      recipientNpub: voterNpub,
+    }));
+
+    await voter.submitVote(["q1"]);
+    const submission = voter.getSnapshot()?.submission;
+    expect(submission?.submissionId).toBeTruthy();
+
+    await coordinator.processPendingSubmissions(["q1"]);
+    expect(readAcceptance(submission?.submissionId ?? "")).toBe(null);
+
+    await processDelegatedCoordinatorQueues({
+      electionId,
+      coordinatorNpub,
+      workerNpub,
+      expectedInviteeCount: 1,
+    });
+
+    voter.refreshIssuanceAndAcceptance();
+    expect(voter.getSnapshot()?.submissionAccepted).toBe(true);
+
+    const recoveredCoordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
+    recoveredCoordinator.bootstrapCoordinatorNpub({
+      coordinatorNpub,
+      summary: loadCoordinatorState({ coordinatorNpub, electionId })?.election,
+      startDmSubscriptions: false,
+      recoverSelfState: false,
+      publishSelfState: false,
+    });
+    expect(recoveredCoordinator.getAcceptedUniqueCount()).toBe(1);
+
+    expect(vi.mocked(publishQuestionnaireSubmissionDecisionPublic)).toHaveBeenCalledWith(expect.objectContaining({
+      submissionId: submission?.submissionId,
+      accepted: true,
+    }));
+    expect(vi.mocked(publishOptionABallotAcceptanceDm)).toHaveBeenCalledWith(expect.objectContaining({
+      recipientNpub: submission?.responseNpub,
+    }));
+    expect(vi.mocked(publishQuestionnaireResultSummary)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(publishQuestionnaireResultSummary)).toHaveBeenCalledWith(expect.objectContaining({
+      resultSummary: expect.objectContaining({
+        questionnaireId: electionId,
+        acceptedResponseCount: 1,
+        rejectedResponseCount: 0,
+        acceptedNullifierCount: 1,
+        questionSummaries: [
+          expect.objectContaining({
+            questionId: "q1",
+            answerType: "yes_no",
+            yesCount: 1,
+            noCount: 0,
+          }),
+        ],
+      }),
+    }));
   });
 });
