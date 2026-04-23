@@ -1,7 +1,7 @@
 {
   "name": "auditable-voting-web",
   "private": true,
-  "version": "0.1.24",
+  "version": "0.1.25",
   "type": "module",
   "scripts": {
     "build:wasm": "npm run build:wasm:legacy && npm run build:wasm:coordinator",
@@ -38,6 +38,8 @@
     "react-dom": "^18.2.0"
   },
   "devDependencies": {
+    "@emnapi/core": "^1.10.0",
+    "@emnapi/runtime": "^1.10.0",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
     "@types/node": "^25.5.0",
