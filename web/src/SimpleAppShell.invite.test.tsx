@@ -12,7 +12,7 @@ vi.mock("./SimpleCoordinatorApp", () => ({
 }));
 
 vi.mock("./SimpleAuditorApp", () => ({
-  default: () => <div>Auditor app</div>,
+  default: () => <div>Observer app</div>,
 }));
 
 vi.mock("./SimpleRelayPanel", () => ({

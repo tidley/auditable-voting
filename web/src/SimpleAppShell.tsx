@@ -100,7 +100,7 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
         ? "Voter"
         : role === "coordinator"
           ? "Coordinator"
-          : "Auditor"
+          : "Observer"
     ),
     [role],
   );
@@ -110,7 +110,7 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
         ? "Voter"
         : gatewayRole === "coordinator"
           ? "Coordinator"
-          : "Auditor"
+          : "Observer"
     ),
     [gatewayRole],
   );
@@ -373,7 +373,7 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
               className={`simple-role-switch-button${gatewayRole === "auditor" ? " is-active" : ""}`}
               onClick={() => setGatewayRole("auditor")}
             >
-              Auditor
+              Observer
             </button>
           </div>
 
@@ -475,7 +475,7 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
               className={`simple-role-switch-button${role === 'auditor' ? ' is-active' : ''}`}
               onClick={() => handleRoleSelect('auditor')}
             >
-              Auditor
+              Observer
             </button>
           </div>
         ) : null}

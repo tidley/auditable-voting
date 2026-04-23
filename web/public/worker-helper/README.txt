@@ -1,4 +1,4 @@
-auditable-voting-worker delegate coordinator binaries
+auditable-voting-worker audit proxy binaries
 
 Included:
 - auditable-voting-worker-linux-x64.tar.gz
@@ -14,15 +14,15 @@ Usage (Linux x86_64):
    COORDINATOR_NPUB=npub1... \
    ./auditable-voting-worker-linux-x64
 
-   WORKER_RELAYS is optional. If not set, the delegate coordinator uses the default client relay set.
+   WORKER_RELAYS is optional. If not set, the audit proxy uses the default client relay set.
 
 Coordinator Build page launcher downloads:
 - The Autoconfigured action on each platform row now saves a single launcher script.
-- That launcher script includes the current coordinator npub, the effective relay list, and the generated delegate coordinator nsec when present.
-- It also starts the delegate coordinator with `RUST_LOG=debug` so blind-request processing shows up in the helper logs by default.
-- On first run it downloads the matching raw binary asset automatically, then starts the delegate coordinator.
-- Right-click copy link works on the Autoconfigured action. The copied shareable URL intentionally omits WORKER_NSEC, so set your own delegate coordinator secret before running it.
-- The Build page `Advanced` block exposes the raw binary/checksum links and direct command-line launch snippet if you want to run the delegate coordinator manually.
+- That launcher script includes the current coordinator npub, the effective relay list, and the generated audit proxy nsec when present.
+- It also starts the audit proxy with `RUST_LOG=debug` so blind-request processing shows up in the helper logs by default.
+- On first run it downloads the matching raw binary asset automatically, then starts the audit proxy.
+- Right-click copy link works on the Autoconfigured action. The copied shareable URL intentionally omits WORKER_NSEC, so set your own audit proxy secret before running it.
+- The Build page `Advanced` block exposes the raw binary/checksum links and direct command-line launch snippet if you want to run the audit proxy manually.
 
 Other platforms:
 - Download prebuilt release assets:
@@ -39,9 +39,9 @@ Other platforms:
   cd worker
   cargo build --release
 
-Delegate coordinator responsibilities:
-- announce delegate coordinator status to coordinator
-- receive delegate coordinator election-config state including the blind-signing key and questionnaire definition
+Audit proxy responsibilities:
+- announce audit proxy status to coordinator
+- receive audit proxy election-config state including the blind-signing key and questionnaire definition
 - process delegated blind-token requests
 - issue blind-signature responses for delegated elections, including the questionnaire definition when available
 - verify public submissions and publish delegated decisions

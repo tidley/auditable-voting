@@ -482,7 +482,7 @@
         </div>
         <div class="flow-box">
           <h4>Keep a public record</h4>
-          <p>so auditors can recompute</p>
+          <p>so observers can recompute</p>
         </div>
         <div class="flow-box">
           <h4>Reject duplicates</h4>
@@ -564,8 +564,8 @@
       <div class="card">
         <h3>Why that matters here</h3>
         <ul>
-          <li>Auditors can read the same public state as coordinators</li>
-          <li>Auditors can now scope rounds by lead coordinator, coordinator npub, and free-text search (npub/round ID/prompt), while non-overlapping refreshes reduce relay REQ bursts</li>
+          <li>Observers can read the same public state as coordinators</li>
+          <li>Observers can now scope rounds by lead coordinator, coordinator npub, and free-text search (npub/round ID/prompt), while non-overlapping refreshes reduce relay REQ bursts</li>
           <li>Static clients can participate without a proprietary backend</li>
           <li>Coordinator rosters and per-round keys can be announced in public</li>
           <li>The lead coordinator can push share-index assignments to sub-coordinators before issuance starts</li>
@@ -586,10 +586,10 @@
           <li>Credential delivery now mixes recipient relay hints with fallback relays, widens publish fanout, and retries issued credentials until the voter submits</li>
           <li>Published questionnaire definitions include the blind-signing public key, are cached locally, and are attached to invites and credential issuances, so linked voters can request ballots even when historical invite DMs are unavailable</li>
           <li>Protocol v2 questionnaire rounds are now driven by public submissions + public coordinator decisions, while legacy rounds remain dual-read for migration safety</li>
-          <li>Auditors can run an explicit historic questionnaire search when older published rounds or public response payloads are outside the default recent scan window</li>
-          <li>Auditors now discover recent public questionnaires through kind-only backfill when no questionnaire ID is selected, then show state and published response totals where available</li>
-          <li>Published questionnaire summaries now carry canonical per-response refs with slim answer payloads, so Auditor can still show detailed responder rows when public response events are fragmented across relays</li>
-          <li>Auditor now uses `Submitted Votes` as the main per-response panel with search/pagination, and invalid rows are hidden by default behind `Show invalid votes`</li>
+          <li>Observers can run an explicit historic questionnaire search when older published rounds or public response payloads are outside the default recent scan window</li>
+          <li>Observers now discover recent public questionnaires through kind-only backfill when no questionnaire ID is selected, then show state and published response totals where available</li>
+          <li>Published questionnaire summaries now carry canonical per-response refs with slim answer payloads, so Observer can still show detailed responder rows when public response events are fragmented across relays</li>
+          <li>Observer now uses `Submitted Votes` as the main per-response panel with search/pagination, and invalid rows are hidden by default behind `Show invalid votes`</li>
           <li>Submitted voters see their responder marker pattern and expandable QR directly on the Vote page</li>
           <li>Mailbox ticket publishes now keep one deterministic anchor relay, rotate secondary relays by recipient, and temporarily cool down relays that rate-limit</li>
           <li>Coordinator follower rows now expose per-ticket relay publish diagnostics for debugging delivery gaps</li>
@@ -618,7 +618,7 @@
           <tr>
             <td><strong>Independent audit</strong></td>
             <td>Requires privileged API or database access</td>
-            <td>Auditors subscribe to the same public relay data</td>
+            <td>Observers subscribe to the same public relay data</td>
           </tr>
           <tr>
             <td><strong>Client portability</strong></td>
@@ -677,7 +677,7 @@
           <tr>
             <td><strong>Deterministic core</strong></td>
             <td>Rust/Wasm engine</td>
-            <td>Coordinator control plus the voter, coordinator, and auditor public-state replay can now move out of ad hoc UI code into one deterministic core, with versioned snapshots and Rust-derived replay diagnostics.</td>
+            <td>Coordinator control plus the voter, coordinator, and observer public-state replay can now move out of ad hoc UI code into one deterministic core, with versioned snapshots and Rust-derived replay diagnostics.</td>
           </tr>
           <tr>
             <td><strong>User control</strong></td>
@@ -704,7 +704,7 @@
         </ul>
       </div>
       <div class="card">
-        <h3>What auditors gain</h3>
+        <h3>What observers gain</h3>
         <ul>
           <li>They can verify the ballot used the right roster for that round</li>
           <li>They can reject shares from unauthorised coordinators</li>
@@ -729,7 +729,7 @@
           <p>Combines enough shares locally</p>
         </div>
         <div class="flow-box">
-          <h4>Auditor</h4>
+          <h4>Observer</h4>
           <p>Checks threshold and coordinator set from public state</p>
         </div>
       </div>
@@ -791,7 +791,7 @@
     <h2>The system is only credible if outsiders can reconstruct the result themselves</h2>
     <div class="grid-2">
       <div class="card">
-        <h3>What an auditor reads</h3>
+        <h3>What an observer reads</h3>
         <ul>
           <li>Round announcement and coordinator roster</li>
           <li>Per-round blind-key announcements</li>
@@ -800,7 +800,7 @@
         </ul>
       </div>
       <div class="card">
-        <h3>What an auditor checks</h3>
+        <h3>What an observer checks</h3>
         <ul>
           <li>Was each ballot bound to the correct round?</li>
           <li>Did it meet threshold from authorised coordinators only?</li>
@@ -810,9 +810,9 @@
       </div>
     </div>
     <div class="quote">
-      <p>“Auditor” is not an administrator role. It is the proof that the protocol state is public enough to be challenged by anyone.</p>
+      <p>“Observer” is not an administrator role. It is the proof that the protocol state is public enough to be challenged by anyone.</p>
     </div>
-    <div class="speaker-note">This connects directly to the new Auditor screen in the client: auditability is a protocol property, not just a dashboard feature.</div>
+    <div class="speaker-note">This connects directly to the new Observer screen in the client: auditability is a protocol property, not just a dashboard feature.</div>
   </section>
 
   <section class="slide">
@@ -838,10 +838,10 @@
         <ul>
           <li>Publicly auditable rounds and ballots</li>
           <li>Static client deployment</li>
-          <li>Optional downloadable Rust delegate coordinator runtime with shareable autoconfigured launchers and Advanced CLI path (outbound-only relay mode)</li>
-          <li>Coordinator-offline blind-request routing via cached delegate coordinator hints</li>
-          <li>Delegate coordinator DM polling now tolerates randomised gift-wrap timestamps by using fixed-lookback replay with event-id dedupe</li>
-          <li>Delegate-coordinator-issued blind credentials now carry the questionnaire definition needed to render ballots offline</li>
+          <li>Optional downloadable Rust audit proxy runtime with shareable autoconfigured launchers and Advanced CLI path (outbound-only relay mode)</li>
+          <li>Coordinator-offline blind-request routing via cached audit proxy hints</li>
+          <li>Audit proxy DM polling now tolerates randomised gift-wrap timestamps by using fixed-lookback replay with event-id dedupe</li>
+          <li>Audit-proxy-issued blind credentials now carry the questionnaire definition needed to render ballots offline</li>
           <li>Coordinator-blind authorisation</li>
           <li>Portable observer verification</li>
         </ul>
@@ -868,7 +868,7 @@
     <div class="closing">
       <h2>Why this works: the stack aligns the trust boundaries with the protocol boundaries</h2>
       <div class="quote">
-        <p>Nostr handles <strong>shared signed public state</strong>. Blind signatures handle <strong>private unlinkable authorisation</strong>. Ephemeral keys handle <strong>public ballot separation</strong>. Auditors handle <strong>independent recomputation</strong>.</p>
+        <p>Nostr handles <strong>shared signed public state</strong>. Blind signatures handle <strong>private unlinkable authorisation</strong>. Ephemeral keys handle <strong>public ballot separation</strong>. Observers handle <strong>independent recomputation</strong>.</p>
       </div>
       <div class="grid-3">
         <div class="stat">

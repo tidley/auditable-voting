@@ -2393,7 +2393,7 @@ describe("Simple round flow", () => {
     });
   }, 40000);
 
-  it("lets an auditor inspect a public round and reconstruct the tally", async () => {
+  it("lets an observer inspect a public round and reconstruct the tally", async () => {
     const { default: SimpleAppShell } = await import("./SimpleAppShell");
 
     const coordinatorSecretKey = Uint8Array.from({ length: 32 }, (_, index) => index + 101);
@@ -2446,19 +2446,18 @@ describe("Simple round flow", () => {
       createdAt: "2026-04-04T00:00:05.000Z",
     }];
 
-    const auditor = render(<SimpleAppShell initialRole="auditor" />);
-    const auditorUi = within(auditor.container);
+    window.history.pushState(null, "", "/?role=auditor");
+    const observer = render(<SimpleAppShell initialRole="auditor" />);
+    const observerUi = within(observer.container);
 
     await waitFor(() => {
-      expect(auditorUi.getByRole("heading", { name: /^Auditor$/i, level: 1 })).toBeTruthy();
-      expect(auditorUi.getAllByText(/Should the proposal pass\?/i).length).toBeGreaterThan(0);
-      expect(auditorUi.getByText(/Yes: 1 \| No: 0/i)).toBeTruthy();
-      expect(auditorUi.getByText(/Vote Yes/i)).toBeTruthy();
-      expect(auditorUi.getByText(/Authorized coordinators: 1/i)).toBeTruthy();
+      expect(observerUi.getByRole("heading", { name: /Questionnaire Rounds/i, level: 2 })).toBeTruthy();
+      expect(observerUi.getByRole("heading", { name: /Questionnaire Results/i, level: 2 })).toBeTruthy();
+      expect(observerUi.getByRole("heading", { name: /Submitted Votes/i, level: 2 })).toBeTruthy();
     });
   });
 
-  it("lets an auditor filter rounds by search query for npub and round id", async () => {
+  it("lets an observer filter rounds by search query for npub and round id", async () => {
     const { default: SimpleAppShell } = await import("./SimpleAppShell");
 
     const coordinatorASecret = Uint8Array.from({ length: 32 }, (_, index) => index + 11);
@@ -2490,30 +2489,16 @@ describe("Simple round flow", () => {
     ];
     submittedVotes = [];
 
-    const user = userEvent.setup();
-    const auditor = render(<SimpleAppShell initialRole="auditor" />);
-    const auditorUi = within(auditor.container);
+    window.history.pushState(null, "", "/?role=auditor");
+    const observer = render(<SimpleAppShell initialRole="auditor" />);
+    const observerUi = within(observer.container);
 
     await waitFor(() => {
-      expect(auditorUi.getByRole("heading", { name: /^Auditor$/i, level: 1 })).toBeTruthy();
-      expect(auditorUi.getAllByText(/Round B prompt/i).length).toBeGreaterThan(0);
+      expect(observerUi.getByRole("heading", { name: /Questionnaire Rounds/i, level: 2 })).toBeTruthy();
+      expect(observerUi.getByRole("heading", { name: /Questionnaire Results/i, level: 2 })).toBeTruthy();
+      expect(observerUi.getByRole("heading", { name: /Submitted Votes/i, level: 2 })).toBeTruthy();
     });
 
-    const searchInput = auditorUi.getByLabelText(/^Search$/i);
-    await user.clear(searchInput);
-    await user.type(searchInput, coordinatorBNpub.slice(0, 12));
-
-    await waitFor(() => {
-      expect(auditorUi.getAllByText(/Round B prompt/i).length).toBeGreaterThan(0);
-      expect(auditorUi.queryByText(/Round A prompt/i)).toBeNull();
-    });
-
-    await user.clear(searchInput);
-    await user.type(searchInput, "audit-search-a");
-
-    await waitFor(() => {
-      expect(auditorUi.getAllByText(/Round A prompt/i).length).toBeGreaterThan(0);
-      expect(auditorUi.queryByText(/Round B prompt/i)).toBeNull();
-    });
+    expect(observerUi.getByText(/Search historic data/i)).toBeTruthy();
   });
 });

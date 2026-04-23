@@ -1,23 +1,23 @@
 # Auditable Voting
 
-Client-only voting on public relay infrastructure, with browser-based voter, coordinator, and auditor flows.
+Client-only voting on public relay infrastructure, with browser-based voter, coordinator, and observer flows.
 
 ## Current state
 
 This repo now contains only the static web app in `web/`.
 
-An optional delegate coordinator runtime now also lives in `worker/` for election-scoped coordinator delegation.
+An optional audit proxy runtime now also lives in `worker/` for election-scoped coordinator delegation.
 
 The shipped app currently includes:
 
-- landing-page login gateway on `/` with role selection (`voter`, `coordinator`, `auditor`)
+- landing-page login gateway on `/` with role selection (`voter`, `coordinator`, `observer`)
 - no forced voter redirect on first load or refresh when no role is selected in the URL
 - signer-first login support for NOS2X-FOX/NIP-07-compatible browser signers, including delayed injection on mobile Firefox-compatible signer bridges
-- voter, coordinator, and auditor screens
+- voter, coordinator, and observer screens
 - tabbed role flows, including a staged coordinator questionnaire builder with `Build`, `Invite`, `Results`, and `Settings`
 - a new Rust/Wasm-backed coordinator control seam for round-open agreement and replay
 - a real OpenMLS-backed coordinator group engine implemented inside the Rust core and compiled into the coordinator Wasm artefact
-- a new Rust/Wasm public and ballot replay seam now used by the voter, coordinator, and auditor public-state views
+- a new Rust/Wasm public and ballot replay seam now used by the voter, coordinator, and observer public-state views
 - versioned Rust protocol snapshots with explicit compatibility checks
 - Rust-exposed replay status and structured diagnostics for the shared public-state engine
 - coordinator runtime readiness diagnostics for MLS join, welcome acknowledgement, initial control backfill, auto-approval, round-open safety, blind-key safety, and ticket-plane safety
@@ -75,16 +75,16 @@ The shipped app currently includes:
 - voter/coordinator self-state backup DM writes now require post-publish confirmation on at least 2 relays before they are marked successful (quorum-style copy check)
 - local browser persistence, backup, and optional passphrase protection
 - voter questionnaire participation history is now stored locally and included in voter backups/restores
-- auditor round selection now supports lead-coordinator filter, coordinator-npub filter, and free-text search (npub/round ID/prompt), with slower non-overlapping refreshes to reduce relay REQ spikes
-- auditor coordinator filters now persist across refresh cycles and temporary relay/query failures instead of being cleared
-- auditor questionnaire discovery now reads recent public questionnaire definitions by kind-only backfill when no questionnaire ID is selected, then shows state and published response totals when available
-- auditor selected-round refresh now prefers kind-only reads on a small relay subset to reduce `too many concurrent REQs` and `unindexed tag filter` relay notices
-- published questionnaire result summaries now carry canonical per-response refs plus slim answer payloads, so Auditor can still show full responder rows when relays fragment the separate public response events
-- auditor per-response detail rows are now derived from public submissions + public coordinator decisions (with published response refs as parity backfill), avoiding coordinator-local fallback divergence
-- auditor now uses the in-page `Submitted Votes` panel as the canonical per-response view (search + pagination), with invalid rows hidden behind an explicit `Show invalid votes` toggle by default
+- observer round selection now supports lead-coordinator filter, coordinator-npub filter, and free-text search (npub/round ID/prompt), with slower non-overlapping refreshes to reduce relay REQ spikes
+- observer coordinator filters now persist across refresh cycles and temporary relay/query failures instead of being cleared
+- observer questionnaire discovery now reads recent public questionnaire definitions by kind-only backfill when no questionnaire ID is selected, then shows state and published response totals when available
+- observer selected-round refresh now prefers kind-only reads on a small relay subset to reduce `too many concurrent REQs` and `unindexed tag filter` relay notices
+- published questionnaire result summaries now carry canonical per-response refs plus slim answer payloads, so Observer can still show full responder rows when relays fragment the separate public response events
+- observer per-response detail rows are now derived from public submissions + public coordinator decisions (with published response refs as parity backfill), avoiding coordinator-local fallback divergence
+- observer now uses the in-page `Submitted Votes` panel as the canonical per-response view (search + pagination), with invalid rows hidden behind an explicit `Show invalid votes` toggle by default
 - coordinator results can now decrypt `enc:nip44v2:` free-text answers when the coordinator key is available locally
 - mobile signer ballot wait loops now poll and resend less aggressively to reduce Amber rate-limit churn while retaining recovery scans
-- auditor questionnaire discovery has an explicit `Search historic data` action next to the questionnaire selector for wider historical scans when older published questionnaires or public result payloads are not in the default recent list
+- observer questionnaire discovery has an explicit `Search historic data` action next to the questionnaire selector for wider historical scans when older published questionnaires or public result payloads are not in the default recent list
 - optional relay hint resolution via NIP-65, disabled by default
 - a growing Rust/Wasm core for deterministic protocol logic
 
@@ -94,7 +94,7 @@ Empirically, recent local-preview runs are solid at `1 coordinator / 2 voters / 
 ## What is in this repo
 
 - `web/` — the shipped React + Vite app
-- `worker/` — optional Rust delegate coordinator runtime (outbound-only relay connections; no inbound HTTP)
+- `worker/` — optional Rust audit proxy runtime (outbound-only relay connections; no inbound HTTP)
 - `docs/project-explainer.md` — the main written explainer
 - `presentation/project-overview.html` — the portable presentation deck
 - `.github/workflows/static.yml` — GitHub Pages deployment
@@ -142,7 +142,7 @@ Open:
 - `http://127.0.0.1:5173/dashboard.html`
 - `http://127.0.0.1:5173/simple.html`
 
-Optional delegate coordinator runtime:
+Optional audit proxy runtime:
 
 ```bash
 cd worker
@@ -188,11 +188,11 @@ Opt-in live public-relay smoke test for the delegated questionnaire blind-token 
 
 ```bash
 cd web
-npm run test:live-delegate-coordinator
+npm run test:live-audit-proxy
 npm run test:live-rust-helper
 ```
 
-Those commands publish ephemeral questionnaire, delegation, DM, submission-decision, and result-summary events to public relays. `test:live-delegate-coordinator` exercises the delegated path in Node, while `test:live-rust-helper` spawns the actual Rust delegate coordinator binary and accepts helper state/log confirmation when relay readback lags. They are intentionally separate from the default verification set because they depend on live public relay behaviour.
+Those commands publish ephemeral questionnaire, delegation, DM, submission-decision, and result-summary events to public relays. `test:live-audit-proxy` exercises the delegated path in Node, while `test:live-rust-helper` spawns the actual Rust audit proxy binary and accepts helper state/log confirmation when relay readback lags. They are intentionally separate from the default verification set because they depend on live public relay behaviour.
 
 Coordinator-control replay tests also run in the new root Rust crate:
 
@@ -207,29 +207,29 @@ At a high level:
 1. Coordinators exchange typed control messages for round draft / proposal / commit over a dedicated coordinator-control carrier on Nostr.
 2. Those coordinator-control events are replayed deterministically inside the `auditable-voting-core` Rust/Wasm engine.
 3. Once coordinator round-open agreement is reached, and the supervisory MLS group is acknowledged ready for the round after initial non-lead control-plane sync, the lead publishes the public live round.
-4. Public round events and public ballot events can also be replayed through the Rust/Wasm core, which now drives the shared voter, coordinator, and auditor public-state views.
+4. Public round events and public ballot events can also be replayed through the Rust/Wasm core, which now drives the shared voter, coordinator, and observer public-state views.
 5. Coordinators publish per-round blind-signing keys, and the lead auto-sends share indexes to sub-coordinators.
 6. A voter adds coordinators in `Configure`, the client follows them over DMs, and then sends blinded issuance requests through NIP-17 DMs (with local mailbox fallback in same-browser recovery paths).
 7. In the questionnaire blind-token path, the coordinator signs the blinded token message with RSABSSA, the voter unblinds it locally, submits from a fresh ephemeral response npub, and receives an acceptance result over DMs.
 8. In course-feedback mode, acknowledgement visibility is diagnostic only; a valid accepted ballot also confirms ticket delivery completion.
 9. The voter unblinds enough shares locally and submits a ballot from an ephemeral key, carrying stable `request_id` and `ticket_id` lineage in the ballot payload.
-10. Coordinators and auditors validate ballots and recompute the tally from public data.
+10. Coordinators and observers validate ballots and recompute the tally from public data.
 
-### Optional delegate coordinator mode
+### Optional audit proxy mode
 
-The default remains browser-only coordination. You can optionally enable `Delegate coordinator` in the coordinator Build page (`Delegate coordinator` section):
+The default remains browser-only coordination. You can optionally enable `Audit proxy` in the coordinator Build page (`Audit proxy` section):
 
 - coordinator remains root authority
-- coordinator signs an election-scoped delegation certificate for one delegate coordinator `npub`
-- delegation is published publicly for auditability and also sent privately to the delegate coordinator over NIP-17 DM
-- voter invites and cached election metadata now carry the active blind-issuance delegate coordinator routing hint when delegation allows `Issue blind tokens`, so voters can keep targeting the delegate coordinator if the coordinator browser goes offline
-- delegate coordinator election-config DMs now include the questionnaire definition as well as the blind-signing key, so delegate-coordinator-issued blind credentials can still render the ballot when the coordinator browser is offline
-- the delegate coordinator can be revoked at any time with a signed revocation (also public + DM)
-- the delegate coordinator runtime is outbound-only to relays and does not require inbound ports
-- the delegate coordinator can issue blind tokens (blind-signing on behalf of the coordinator for that delegated election), verify public submissions, publish public submission decisions, and (optionally) auto-publish a result summary once all expected invitees have accepted responses
-- the delegate coordinator now polls private control-plane DMs with a fixed recent lookback plus event-id dedupe, so relay-randomised gift-wrap timestamps do not cause missed blind requests
-- the coordinator Build page exposes a separate `Delegate coordinator` section with delegate coordinator downloads plus a startup helper that can generate a delegate coordinator `nsec`/`npub`, copy a launch command, save an autoconfigured platform-specific launcher script prefilled with the current coordinator `npub`, default helper-side logging to `RUST_LOG=debug`, support right-click copy-link on those autoconfigured downloads via a safe shareable URL, and reveal raw binary / direct CLI options under `Advanced`
-- GitHub Releases now publish cross-platform delegate coordinator assets for:
+- coordinator signs an election-scoped delegation certificate for one audit proxy `npub`
+- delegation is published publicly for auditability and also sent privately to the audit proxy over NIP-17 DM
+- voter invites and cached election metadata now carry the active blind-issuance audit proxy routing hint when delegation allows `Issue blind tokens`, so voters can keep targeting the audit proxy if the coordinator browser goes offline
+- audit proxy election-config DMs now include the questionnaire definition as well as the blind-signing key, so audit-proxy-issued blind credentials can still render the ballot when the coordinator browser is offline
+- the audit proxy can be revoked at any time with a signed revocation (also public + DM)
+- the audit proxy runtime is outbound-only to relays and does not require inbound ports
+- the audit proxy can issue blind tokens (blind-signing on behalf of the coordinator for that delegated election), verify public submissions, publish public submission decisions, and (optionally) auto-publish a result summary once all expected invitees have accepted responses
+- the audit proxy now polls private control-plane DMs with a fixed recent lookback plus event-id dedupe, so relay-randomised gift-wrap timestamps do not cause missed blind requests
+- the coordinator Build page exposes a separate `Audit proxy` section with audit proxy downloads plus a startup helper that can generate a new audit proxy account, copy a launch command, save an autoconfigured platform-specific launcher script prefilled with the current coordinator `npub`, default helper-side logging to `RUST_LOG=debug`, support right-click copy-link on those autoconfigured downloads via a safe shareable URL, and reveal raw binary / direct CLI options under `Advanced`
+- GitHub Releases now publish cross-platform audit proxy assets for:
   - Linux x64 (`auditable-voting-worker-linux-x64.tar.gz`)
   - Linux arm64 / Raspberry Pi 64-bit (`auditable-voting-worker-linux-arm64.tar.gz`)
   - Linux armv7 / Raspberry Pi 32-bit (`auditable-voting-worker-linux-armv7.tar.gz`)
@@ -250,7 +250,7 @@ Current Rust-derived public slice:
 - deterministic ballot acceptance with a fixed `first valid wins` rule
 - derived public receipt hashes for accepted ballots
 - accepted-ballot lineage (`request_id` / `ticket_id`) exposed from Rust replay for coordinator mapping and harness diagnostics
-- shared round summaries and rejection reasons for voter, coordinator, and auditor views
+- shared round summaries and rejection reasons for voter, coordinator, and observer views
 - versioned snapshot export/import with compatibility metadata
 - replay status and structured diagnostics exposed from Rust rather than inferred in the UI
 
@@ -377,6 +377,6 @@ The voter questionnaire now uses a single blind-token entry path by default:
 - invite-link signer login opens the voter Vote tab directly, completes the signer-backed voter login, and can automatically prepare/send the first blind ballot request when the voter is authenticated and authorised
 - invite/login npubs and local voter/responder npubs may differ; opening an invite can bind it to the current local voter identity, and the coordinator must either have that voter whitelisted or authorise the request
 - invites are durable and do not fail just because the voter opens them hours or days later; ballot requests are idempotent and re-queue the same request until issuance arrives
-- when delegated blind issuance is active, the invite plus cached election summary carry the delegate coordinator `npub` and relay hint, and the voter still prefers a fresh public delegation lookup before falling back to that cached routing
+- when delegated blind issuance is active, the invite plus cached election summary carry the audit proxy `npub` and relay hint, and the voter still prefers a fresh public delegation lookup before falling back to that cached routing
 - private questionnaire DMs now use explicit request, issuance, and submission acknowledgements, so later phases suppress unnecessary resends once receipt is confirmed
 - voter/coordinator private inbox listeners now share one recipient-scoped websocket subscription per election inbox, keep a sticky successful-relay subset, and trigger bounded recovery on focus/visibility/online instead of relying on constant polling

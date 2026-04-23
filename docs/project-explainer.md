@@ -49,11 +49,11 @@ This is the practical order of operations for the current app.
 2. In **Build**, set questionnaire ID, title, description, questions, and (optionally) enable the close timer (default is off).
 3. In **Invite**, add or import voter npubs and invite expected participants.
 4. Send invites (`Send invite` / `Invite all whitelisted`) or share the invite link (generated links use the current host by default).
-5. As voters appear, run `Process requests` / `Check responses` to process blind request and response queues (or delegate those duties to a delegate coordinator).
+5. As voters appear, run `Process requests` / `Check responses` to process blind request and response queues (or delegate those duties to an audit proxy).
    - Verified voters can now pre-request and coordinators can pre-issue before publish.
-   - If needed, use the separate **Build** page `Delegate coordinator` section, switch to `Delegate coordinator`, generate delegate coordinator credentials/startup command, or save an autoconfigured platform-specific launcher script that already includes the current coordinator `npub`; right-click copy-link uses a shareable launcher URL that intentionally omits the delegate coordinator secret, and raw binary / direct CLI options now sit under `Advanced`.
-   - When blind-token issuance is delegated, invite payloads and cached election metadata carry the delegate coordinator routing hint so voters can keep DMing the delegate coordinator even if the coordinator browser is no longer open.
-   - Delegate coordinator election-config DMs now also carry the questionnaire definition, so delegate-coordinator-issued blind credentials can still render the ballot if the coordinator browser is offline.
+   - If needed, use the separate **Build** page `Audit proxy` section, switch to `Audit proxy`, generate audit proxy credentials/startup command, or save an autoconfigured platform-specific launcher script that already includes the current coordinator `npub`; right-click copy-link uses a shareable launcher URL that intentionally omits the audit proxy secret, and raw binary / direct CLI options now sit under `Advanced`.
+   - When blind-token issuance is delegated, invite payloads and cached election metadata carry the audit proxy routing hint so voters can keep DMing the audit proxy even if the coordinator browser is no longer open.
+   - Audit proxy election-config DMs now also carry the questionnaire definition, so audit-proxy-issued blind credentials can still render the ballot if the coordinator browser is offline.
 6. Publish the questionnaire when ready (`Publish Questionnaire`, state becomes `Open`).
    - If the Build page reports that the blind-signing key is still initialising in the current tab, use the `Reload page` action shown in that status message and then try publishing again.
 
@@ -72,13 +72,13 @@ This is the practical order of operations for the current app.
 2. Close the questionnaire when collection is complete.
 3. Publish summary/results and share questionnaire ID + coordinator npub for independent checks.
 
-### 4. Auditor verifies last
+### 4. Observer verifies last
 
-1. Open **Auditor** view.
+1. Open **Observer** view.
 2. Review recent public questionnaires or filter by coordinator npub and/or questionnaire ID.
 3. Confirm accepted unique responder totals and published response/result state match expectations.
 4. Use **Submitted Votes** for per-response details (search/filter), and enable `Show invalid votes` only when reviewing rejected rows.
-5. If relays fragmented separate public response events, the published result summary still carries slim per-response refs and answer payloads so Auditor can reconstruct detailed responder rows.
+5. If relays fragmented separate public response events, the published result summary still carries slim per-response refs and answer payloads so Observer can reconstruct detailed responder rows.
 
 ### Operational notes
 
@@ -91,7 +91,7 @@ This is the practical order of operations for the current app.
 - Blind issuance discovery now also performs one broader relay fallback scan when the narrow recipient relay subset is empty, reducing cases where a ballot is visible in another Nostr client before the vote UI notices it.
 - In coordinator results, free-text values stored as `enc:nip44v2:` can now be decrypted locally when the coordinator key is available.
 - Coordinator `Closing / Closed` metadata now reflects actual close-state timing and marks overdue open rounds as `Past due` to avoid misleading historical timestamps.
-- Auditor coordinator filters are now retained across refresh/fetch churn, and selected-round refreshes use lighter kind-only relay reads to reduce relay notice spam.
+- Observer coordinator filters are now retained across refresh/fetch churn, and selected-round refreshes use lighter kind-only relay reads to reduce relay notice spam.
 
 ---
 
@@ -182,7 +182,7 @@ flowchart LR
   C1[Coordinator A Browser]
   C2[Coordinator B Browser]
   N[Nostr Relays]
-  O[Observer / Auditor]
+  O[Observer / Observer]
   B[(IndexedDB / Local State)]
 
   V --> B
@@ -209,7 +209,7 @@ This matters because the system is trying to move toward a client-side model, no
 
 The present web client is built with:
 
-- **React 18** for the voter, coordinator, and auditor interfaces
+- **React 18** for the voter, coordinator, and observer interfaces
 - **TypeScript 5** for the browser application logic
 - **Vite 5** for local development and static-site bundling
 - **`nostr-tools` 2.x** for Nostr keys, event signing, subscriptions, and relay publishing
@@ -220,10 +220,10 @@ The present web client is built with:
 - **optional NIP-65 relay hints**, disabled by default, for relay discovery experiments
 - **`@cloudflare/blindrsa-ts`** for the RSABSSA blind-signature primitive used in the current issuance path
 - **Rust compiled to WebAssembly** for deterministic protocol logic, including validation helpers and the new coordinator control engine
-- **an optional Rust delegate coordinator runtime** (`worker/`) for election-scoped delegated issuance/verification operations over outbound-only relay connections, with coordinator-signed delegation and revocation control
-- **fixed-lookback delegate coordinator DM polling with event-id dedupe**, so relay-randomised gift-wrap timestamps do not cause missed delegated blind requests
+- **an optional Rust audit proxy runtime** (`worker/`) for election-scoped delegated issuance/verification operations over outbound-only relay connections, with coordinator-signed delegation and revocation control
+- **fixed-lookback audit proxy DM polling with event-id dedupe**, so relay-randomised gift-wrap timestamps do not cause missed delegated blind requests
 - **a real OpenMLS-backed coordinator engine inside the Rust core**, hidden behind a stable Rust abstraction so the browser code does not depend on MLS types directly; the browser coordinator path now bootstraps and joins the supervisory MLS group through Nostr carrier events, and the lead waits for sub-coordinator welcome acknowledgement only after the non-lead has completed an initial coordinator-control backfill pass before opening the first public round in the repaired small live cases
-- **a Rust mixed-replay engine for public rounds and ballots**, now used by the voter, coordinator, and auditor public-state views to derive round state, accepted ballots, and rejection reasons
+- **a Rust mixed-replay engine for public rounds and ballots**, now used by the voter, coordinator, and observer public-state views to derive round state, accepted ballots, and rejection reasons
 - **versioned Rust snapshots and replay diagnostics** for the shared protocol engine, so the browser can restore state, validate snapshot compatibility, and surface replay issues without re-implementing protocol rules in TypeScript
 - **coordinator runtime readiness diagnostics** surfaced in the browser for MLS join, welcome acknowledgement, initial control backfill, auto-approval, round-open safety, blind-key safety, and ticket-plane safety
 - **startup control-carrier diagnostics** for exact publish payloads, live/backfill filter shapes, relay write/read overlap, and `kind_only` versus filtered startup probes
@@ -253,9 +253,9 @@ The present web client is built with:
 - **course-feedback coordinator bypass** so legacy live-round / blind-key / ticket queue gating is disabled for questionnaire acceptance paths, with explicit debug assertions for bypass state
 - **course-feedback batch orchestration** in the live harness (`LIVE_BATCH_SIZE`, default `5`) so enrolment and submission advance in checkpointed waves instead of all-voter cold-start concurrency
 - **questionnaire response observation fallback** that prefers bounded kind-only reads plus local questionnaire-id filtering (and relay probes) when custom tag-indexed reads are unreliable on public relays
-- **auditor coordinator filtering + search** so public round review can be scoped by lead coordinator, coordinator npub, and free-text query (npub/round ID/prompt), with non-overlapping refreshes to reduce relay REQ bursts
-- **auditor historic search** so the normal view stays bounded to recent questionnaire data, but auditors can explicitly scan a wider historical window when an older published questionnaire or public result payload is missing
-- **auditor questionnaire discovery** so recent public questionnaire definitions are read by kind-only backfill when no questionnaire ID is selected, with state and published response totals shown when available
+- **observer coordinator filtering + search** so public round review can be scoped by lead coordinator, coordinator npub, and free-text query (npub/round ID/prompt), with non-overlapping refreshes to reduce relay REQ bursts
+- **observer historic search** so the normal view stays bounded to recent questionnaire data, but observers can explicitly scan a wider historical window when an older published questionnaire or public result payload is missing
+- **observer questionnaire discovery** so recent public questionnaire definitions are read by kind-only backfill when no questionnaire ID is selected, with state and published response totals shown when available
 - **ticket scheduler diagnostics and tunable transport knobs** for first-send prioritisation, resend eligibility reasons, bounded concurrency, and retry-age experimentation during live relay reliability testing
 - **observation-plane recovery diagnostics** that separate live vs backfill visibility and classify resend recoveries for published-but-unobserved tickets
 - **request-id keyed mailbox reader bindings** with immutable per-request mailbox ids for live/backfill ticket observation, plus explicit read/backfill mailbox-consistency diagnostics
@@ -319,7 +319,7 @@ In the current migration slice:
 - the Rust/Wasm core replays those events under one canonical ordering rule
 - ballot acceptance uses one fixed rule, documented in code: **first valid ballot wins**
 - accepted ballots now carry stable `request_id` / `ticket_id` lineage through Rust replay for coordinator row mapping and harness truth
-- the voter, coordinator, and auditor public-state views now consume that Rust-derived state instead of separate TypeScript reducers
+- the voter, coordinator, and observer public-state views now consume that Rust-derived state instead of separate TypeScript reducers
 
 ---
 
@@ -629,13 +629,13 @@ Threshold issuance means one coordinator alone should not define the whole syste
 The repository now focuses on the client-side web app only:
 
 - `/` now opens a login + role gateway instead of forcing voter mode
-- role selection is explicit (`voter`, `coordinator`, `auditor`) and persisted into URL only after user selection
+- role selection is explicit (`voter`, `coordinator`, `observer`) and persisted into URL only after user selection
 - signer login now tolerates delayed NIP-07 injection and `nostr:ready` signalling for Firefox/Android-style signer bridges
 - `simple.html` is the main client-side shell
 - voter and coordinator flows use `Configure`, `Vote`/`Voting`, and `Settings` tabs
 - coordinator round-open agreement now goes through a Rust/Wasm coordinator-control service
 - coordinator control messages are replayed deterministically from Nostr history instead of being inferred from relay arrival order
-- the voter, coordinator, and auditor public-state views now use shared Rust-derived replay state
+- the voter, coordinator, and observer public-state views now use shared Rust-derived replay state
 - adding a coordinator in the voter flow immediately starts the follow/notify DM path
 - the lead coordinator now auto-sends share indexes to sub-coordinators
 - each coordinator sends its own ticket share directly to the voter
@@ -660,8 +660,8 @@ Current live evidence is mixed: `1 coordinator / 2 voters / 2 rounds` has comple
 The current coordinator-control seam is intentionally incremental:
 
 - the voter issuance path still uses the existing blind-signature DM flow
-- the public ballot and auditor path still use public Nostr events, but the auditor’s reducer logic is now Rust-owned
-- the coordinator control path and the auditor’s public replay path now run behind the Rust/Wasm replay engine
+- the public ballot and observer path still use public Nostr events, but the observer’s reducer logic is now Rust-owned
+- the coordinator control path and the observer’s public replay path now run behind the Rust/Wasm replay engine
 
 That keeps the user-facing flow largely intact while moving the most order-sensitive coordinator logic out of React components.
 
@@ -776,6 +776,6 @@ The questionnaire runtime currently provides:
 - Android Amber NIP-46 sessions now request `sign_event`, `nip04_encrypt/decrypt`, and `nip44_encrypt/decrypt` up front during connect so later flow steps do not trigger capability escalation prompts
 - invite/login npubs and local voter/responder npubs may differ; the invite can be opened against the current local voter identity, then the coordinator either auto-issues for whitelisted voters or manually authorises unexpected requesters
 - invites are durable and can remain idle indefinitely; ballot request retries preserve the same request id and re-queue until the coordinator issues a credential, and the credential issuance can also carry the questionnaire definition as a recovery path
-- delegated blind-token routing is cached in the invite and election summary, and the voter still re-checks the public delegation before falling back to that cached delegate coordinator `npub`
+- delegated blind-token routing is cached in the invite and election summary, and the voter still re-checks the public delegation before falling back to that cached audit proxy `npub`
 - accepted DM submissions feed the same coordinator response summaries as public questionnaire response events
 - after a response is submitted, the voter Vote page shows the responder marker with its coloured pattern and expandable QR
