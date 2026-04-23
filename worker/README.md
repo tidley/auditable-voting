@@ -41,7 +41,15 @@ GitHub Releases include worker binaries for:
 - Windows x64: `auditable-voting-worker-windows-x64.zip`
 - macOS Apple Silicon: `auditable-voting-worker-macos-arm64.tar.gz`
 
-The coordinator Build page can also save an autoconfigured platform-specific launcher script that downloads the correct binary and fills in the current coordinator `npub`, effective relay list, and generated worker `nsec` when present. Raw binary links and direct command-line launch snippets are also available there under `Advanced`.
+Each archive extracts a platform-specific executable with the same stem as the asset:
+
+- Linux x64: `./auditable-voting-worker-linux-x64`
+- Linux arm64: `./auditable-voting-worker-linux-arm64`
+- Linux armv7: `./auditable-voting-worker-linux-armv7`
+- Windows x64: `.\auditable-voting-worker-windows-x64.exe`
+- macOS Apple Silicon: `./auditable-voting-worker-macos-arm64`
+
+The coordinator Build page can also save an autoconfigured platform-specific launcher script that downloads the correct binary and fills in the current coordinator `npub`, effective relay list, and generated worker `nsec` when present. Right-click copy-link is supported through a shareable URL that intentionally omits `WORKER_NSEC`. Raw binary links and direct command-line launch snippets are also available there under `Advanced`.
 
 ## Current responsibilities
 

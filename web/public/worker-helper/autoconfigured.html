@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en-GB">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Autoconfigured Worker Launcher</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+        background: #07111f;
+        color: #dbeafe;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background:
+          radial-gradient(circle at top left, rgba(59, 130, 246, 0.16), transparent 34%),
+          radial-gradient(circle at bottom right, rgba(16, 185, 129, 0.12), transparent 32%),
+          #07111f;
+      }
+
+      main {
+        width: min(720px, calc(100vw - 32px));
+        display: grid;
+        gap: 16px;
+        padding: 24px;
+        border: 1px solid #29405f;
+        border-radius: 16px;
+        background: rgba(7, 17, 31, 0.94);
+        box-shadow: 0 24px 60px rgba(2, 6, 23, 0.45);
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 1.45rem;
+      }
+
+      p {
+        margin: 0;
+        line-height: 1.55;
+        color: #bfd3f2;
+      }
+
+      code,
+      pre {
+        font-family: "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      }
+
+      pre {
+        margin: 0;
+        padding: 14px;
+        border-radius: 12px;
+        border: 1px solid #304767;
+        background: #020617;
+        color: #4ade80;
+        overflow: auto;
+        font-size: 0.86rem;
+        line-height: 1.45;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 10px 14px;
+        border: 1px solid #475569;
+        background: #0f172a;
+        color: #dbeafe;
+        text-decoration: none;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .button:hover {
+        background: #1e293b;
+      }
+
+      .note {
+        color: #93c5fd;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Autoconfigured worker launcher</h1>
+      <p id="status">Preparing launcher download...</p>
+      <p class="note">This shareable link never includes <code>WORKER_NSEC</code>. Set your own worker secret before running it.</p>
+      <div class="actions">
+        <button id="download-button" class="button" type="button">Download launcher</button>
+      </div>
+      <pre id="preview"></pre>
+    </main>
+    <script>
+      const RELEASE_BASE_URL = "https://github.com/tidley/auditable-voting/releases/latest/download";
+      const TARGETS = {
+        linuxX64: {
+          assetFilename: "auditable-voting-worker-linux-x64.tar.gz",
+          assetUrl: new URL("./auditable-voting-worker-linux-x64.tar.gz", window.location.href).toString(),
+          binaryFilename: "auditable-voting-worker-linux-x64",
+          legacyBinaryFilename: "auditable-voting-worker",
+          launcherFilename: "start-auditable-voting-worker-linux-x64.sh",
+          shell: "bash",
+        },
+        linuxArm64: {
+          assetFilename: "auditable-voting-worker-linux-arm64.tar.gz",
+          assetUrl: `${RELEASE_BASE_URL}/auditable-voting-worker-linux-arm64.tar.gz`,
+          binaryFilename: "auditable-voting-worker-linux-arm64",
+          legacyBinaryFilename: "auditable-voting-worker",
+          launcherFilename: "start-auditable-voting-worker-linux-arm64.sh",
+          shell: "bash",
+        },
+        linuxArmv7: {
+          assetFilename: "auditable-voting-worker-linux-armv7.tar.gz",
+          assetUrl: `${RELEASE_BASE_URL}/auditable-voting-worker-linux-armv7.tar.gz`,
+          binaryFilename: "auditable-voting-worker-linux-armv7",
+          legacyBinaryFilename: "auditable-voting-worker",
+          launcherFilename: "start-auditable-voting-worker-linux-armv7.sh",
+          shell: "bash",
+        },
+        windowsX64: {
+          assetFilename: "auditable-voting-worker-windows-x64.zip",
+          assetUrl: `${RELEASE_BASE_URL}/auditable-voting-worker-windows-x64.zip`,
+          binaryFilename: "auditable-voting-worker-windows-x64.exe",
+          legacyBinaryFilename: "auditable-voting-worker.exe",
+          launcherFilename: "start-auditable-voting-worker-windows-x64.ps1",
+          shell: "powershell",
+        },
+        macosArm64: {
+          assetFilename: "auditable-voting-worker-macos-arm64.tar.gz",
+          assetUrl: `${RELEASE_BASE_URL}/auditable-voting-worker-macos-arm64.tar.gz`,
+          binaryFilename: "auditable-voting-worker-macos-arm64",
+          legacyBinaryFilename: "auditable-voting-worker",
+          launcherFilename: "start-auditable-voting-worker-macos-arm64.sh",
+          shell: "bash",
+        },
+      };
+
+      function escapeForDoubleQuotedBash(value) {
+        return value
+          .replace(/\\/g, "\\\\")
+          .replace(/"/g, '\\"')
+          .replace(/\$/g, "\\$")
+          .replace(/`/g, "\\`");
+      }
+
+      function escapeForPowerShellSingleQuotedString(value) {
+        return value.replace(/'/g, "''");
+      }
+
+      function buildLauncherContents({ target, coordinatorNpub, workerNpub, workerRelays }) {
+        const nsecPlaceholder = "nsec1...";
+        if (target.shell === "powershell") {
+          const expectedNpub = workerNpub ? `Write-Host 'Expected worker npub: ${escapeForPowerShellSingleQuotedString(workerNpub)}'\n` : "";
+          const legacyBinaryFilename = (target.legacyBinaryFilename || "").trim();
+          return [
+            "$ErrorActionPreference = 'Stop'",
+            "",
+            "# Generated from the coordinator Build page shareable Autoconfigured link.",
+            "# WORKER_NSEC is intentionally not embedded in shareable links.",
+            expectedNpub.trimEnd(),
+            "$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path",
+            `$AssetUrl = '${escapeForPowerShellSingleQuotedString(target.assetUrl)}'`,
+            `$ArchivePath = Join-Path $ScriptDir '${escapeForPowerShellSingleQuotedString(target.assetFilename)}'`,
+            `$BinaryPath = Join-Path $ScriptDir '${escapeForPowerShellSingleQuotedString(target.binaryFilename)}'`,
+            legacyBinaryFilename
+              ? `$LegacyBinaryPath = Join-Path $ScriptDir '${escapeForPowerShellSingleQuotedString(legacyBinaryFilename)}'`
+              : "$LegacyBinaryPath = $null",
+            "",
+            "if (-not (Test-Path $BinaryPath)) {",
+            "  Write-Host \"Downloading worker binary...\"",
+            "  Invoke-WebRequest -Uri $AssetUrl -OutFile $ArchivePath",
+            "  Expand-Archive -Path $ArchivePath -DestinationPath $ScriptDir -Force",
+            "}",
+            "",
+            `if (-not $env:WORKER_NSEC) { $env:WORKER_NSEC = '${nsecPlaceholder}' }`,
+            `if (-not $env:COORDINATOR_NPUB) { $env:COORDINATOR_NPUB = '${escapeForPowerShellSingleQuotedString(coordinatorNpub)}' }`,
+            `if (-not $env:WORKER_RELAYS) { $env:WORKER_RELAYS = '${escapeForPowerShellSingleQuotedString(workerRelays)}' }`,
+            "if (-not $env:WORKER_STATE_DIR) { $env:WORKER_STATE_DIR = (Join-Path $ScriptDir '.worker-state') }",
+            "New-Item -ItemType Directory -Force -Path $env:WORKER_STATE_DIR | Out-Null",
+            "",
+            "if (Test-Path $BinaryPath) {",
+            "  $ExecutablePath = $BinaryPath",
+            "} elseif ($LegacyBinaryPath -and (Test-Path $LegacyBinaryPath)) {",
+            "  $ExecutablePath = $LegacyBinaryPath",
+            "} else {",
+            "  throw 'Worker executable not found after extraction.'",
+            "}",
+            "",
+            "Write-Host \"Starting worker...\"",
+            "& $ExecutablePath",
+            "",
+          ].filter(Boolean).join("\n");
+        }
+
+        const expectedNpub = workerNpub ? `# Expected worker npub: ${escapeForDoubleQuotedBash(workerNpub)}\n` : "";
+        const legacyBinaryFilename = (target.legacyBinaryFilename || "").trim();
+        return [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          "",
+          "# Generated from the coordinator Build page shareable Autoconfigured link.",
+          "# WORKER_NSEC is intentionally not embedded in shareable links.",
+          expectedNpub.trimEnd(),
+          'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
+          `ASSET_URL="${escapeForDoubleQuotedBash(target.assetUrl)}"`,
+          `ASSET_NAME="${escapeForDoubleQuotedBash(target.assetFilename)}"`,
+          `BINARY_NAME="${escapeForDoubleQuotedBash(target.binaryFilename)}"`,
+          `LEGACY_BINARY_NAME="${escapeForDoubleQuotedBash(legacyBinaryFilename)}"`,
+          "",
+          "download_asset() {",
+          "  if command -v curl >/dev/null 2>&1; then",
+          '    curl -L --fail "$ASSET_URL" -o "$SCRIPT_DIR/$ASSET_NAME"',
+          "    return",
+          "  fi",
+          "  if command -v wget >/dev/null 2>&1; then",
+          '    wget -O "$SCRIPT_DIR/$ASSET_NAME" "$ASSET_URL"',
+          "    return",
+          "  fi",
+          '  echo "Need curl or wget to download $ASSET_NAME" >&2',
+          "  exit 1",
+          "}",
+          "",
+          'if [ ! -x "$SCRIPT_DIR/$BINARY_NAME" ]; then',
+          '  echo "Downloading worker binary..."',
+          "  download_asset",
+          '  tar -xzf "$SCRIPT_DIR/$ASSET_NAME" -C "$SCRIPT_DIR"',
+          '  chmod +x "$SCRIPT_DIR/$BINARY_NAME" || true',
+          '  if [ -n "$LEGACY_BINARY_NAME" ]; then',
+          '    chmod +x "$SCRIPT_DIR/$LEGACY_BINARY_NAME" || true',
+          "  fi",
+          "fi",
+          "",
+          `export WORKER_NSEC="\${WORKER_NSEC:-${nsecPlaceholder}}"`,
+          `export COORDINATOR_NPUB="\${COORDINATOR_NPUB:-${escapeForDoubleQuotedBash(coordinatorNpub)}}"`,
+          `export WORKER_RELAYS="\${WORKER_RELAYS:-${escapeForDoubleQuotedBash(workerRelays)}}"`,
+          'export WORKER_STATE_DIR="${WORKER_STATE_DIR:-$SCRIPT_DIR/.worker-state}"',
+          'mkdir -p "$WORKER_STATE_DIR"',
+          "",
+          'if [ -x "$SCRIPT_DIR/$BINARY_NAME" ]; then',
+          '  EXECUTABLE_PATH="$SCRIPT_DIR/$BINARY_NAME"',
+          'elif [ -n "$LEGACY_BINARY_NAME" ] && [ -x "$SCRIPT_DIR/$LEGACY_BINARY_NAME" ]; then',
+          '  EXECUTABLE_PATH="$SCRIPT_DIR/$LEGACY_BINARY_NAME"',
+          "else",
+          '  echo "Worker executable not found after extraction." >&2',
+          "  exit 1",
+          "fi",
+          "",
+          'echo "Starting worker..."',
+          'exec "$EXECUTABLE_PATH"',
+          "",
+        ].filter(Boolean).join("\n");
+      }
+
+      function downloadTextFile(filename, contents) {
+        const blob = new Blob([contents], { type: "text/plain;charset=utf-8" });
+        const url = window.URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = filename;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        window.URL.revokeObjectURL(url);
+      }
+
+      const params = new URLSearchParams(window.location.search);
+      const targetKey = params.get("target") || "linuxX64";
+      const target = TARGETS[targetKey];
+      const coordinatorNpub = (params.get("coordinator_npub") || "npub1...").trim();
+      const workerNpub = (params.get("worker_npub") || "").trim();
+      const workerRelays = (params.get("worker_relays") || "").trim();
+      const statusNode = document.getElementById("status");
+      const previewNode = document.getElementById("preview");
+      const downloadButton = document.getElementById("download-button");
+
+      if (!target) {
+        statusNode.textContent = "Unsupported worker target in this link.";
+      } else {
+        const contents = buildLauncherContents({
+          target,
+          coordinatorNpub,
+          workerNpub,
+          workerRelays,
+        });
+        previewNode.textContent = contents;
+        downloadButton.addEventListener("click", () => {
+          downloadTextFile(target.launcherFilename, contents);
+        });
+        statusNode.textContent = `Prepared ${target.launcherFilename}.`;
+        downloadTextFile(target.launcherFilename, contents);
+      }
+    </script>
+  </body>
+</html>

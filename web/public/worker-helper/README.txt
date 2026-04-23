@@ -20,6 +20,7 @@ Coordinator Build page launcher downloads:
 - The Autoconfigured action on each platform row now saves a single launcher script.
 - That launcher script includes the current coordinator npub, the effective relay list, and the generated worker nsec when present.
 - On first run it downloads the matching raw binary asset automatically, then starts the worker.
+- Right-click copy link works on the Autoconfigured action. The copied shareable URL intentionally omits WORKER_NSEC, so set your own worker secret before running it.
 - The Build page `Advanced` block exposes the raw binary/checksum links and direct command-line launch snippet if you want to run the worker manually.
 
 Other platforms:
@@ -28,6 +29,11 @@ Other platforms:
   - auditable-voting-worker-linux-armv7.tar.gz
   - auditable-voting-worker-windows-x64.zip
   - auditable-voting-worker-macos-arm64.tar.gz
+- Matching extracted executables use the same platform-specific names:
+  - auditable-voting-worker-linux-arm64
+  - auditable-voting-worker-linux-armv7
+  - auditable-voting-worker-windows-x64.exe
+  - auditable-voting-worker-macos-arm64
 - Or build from source in /worker:
   cd worker
   cargo build --release

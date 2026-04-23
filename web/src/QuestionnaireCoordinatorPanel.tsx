@@ -398,6 +398,7 @@ type WorkerLauncherTarget = {
   assetUrl: string;
   checksumUrl: string;
   binaryFilename: string;
+  legacyBinaryFilename?: string;
   launcherFilename: string;
   shell: "bash" | "powershell";
 };
@@ -431,6 +432,7 @@ function buildWorkerLauncherContents(input: {
       ? `Write-Host 'Expected worker npub: ${escapeForPowerShellSingleQuotedString(workerNpub)}'\n`
       : "";
     const relays = escapeForPowerShellSingleQuotedString(workerRelays);
+    const legacyBinaryFilename = input.target.legacyBinaryFilename?.trim();
     return [
       "$ErrorActionPreference = 'Stop'",
       "",
@@ -441,6 +443,9 @@ function buildWorkerLauncherContents(input: {
       `$AssetUrl = '${escapeForPowerShellSingleQuotedString(input.target.assetUrl)}'`,
       `$ArchivePath = Join-Path $ScriptDir '${escapeForPowerShellSingleQuotedString(input.target.assetFilename)}'`,
       `$BinaryPath = Join-Path $ScriptDir '${escapeForPowerShellSingleQuotedString(input.target.binaryFilename)}'`,
+      legacyBinaryFilename
+        ? `$LegacyBinaryPath = Join-Path $ScriptDir '${escapeForPowerShellSingleQuotedString(legacyBinaryFilename)}'`
+        : "$LegacyBinaryPath = $null",
       "",
       "if (-not (Test-Path $BinaryPath)) {",
       "  Write-Host \"Downloading worker binary...\"",
@@ -454,8 +459,16 @@ function buildWorkerLauncherContents(input: {
       "if (-not $env:WORKER_STATE_DIR) { $env:WORKER_STATE_DIR = (Join-Path $ScriptDir '.worker-state') }",
       "New-Item -ItemType Directory -Force -Path $env:WORKER_STATE_DIR | Out-Null",
       "",
+      "if (Test-Path $BinaryPath) {",
+      "  $ExecutablePath = $BinaryPath",
+      "} elseif ($LegacyBinaryPath -and (Test-Path $LegacyBinaryPath)) {",
+      "  $ExecutablePath = $LegacyBinaryPath",
+      "} else {",
+      "  throw 'Worker executable not found after extraction.'",
+      "}",
+      "",
       "Write-Host \"Starting worker...\"",
-      "& $BinaryPath",
+      "& $ExecutablePath",
       "",
     ].filter(Boolean).join("\n");
   }
@@ -463,6 +476,7 @@ function buildWorkerLauncherContents(input: {
   const coordinator = escapeForDoubleQuotedBash(coordinatorNpub);
   const nsec = escapeForDoubleQuotedBash(workerNsec);
   const relays = escapeForDoubleQuotedBash(workerRelays);
+  const legacyBinaryFilename = input.target.legacyBinaryFilename?.trim() ?? "";
   const expectedNpubComment = workerNpub
     ? `# Expected worker npub: ${escapeForDoubleQuotedBash(workerNpub)}\n`
     : "";
@@ -477,6 +491,7 @@ function buildWorkerLauncherContents(input: {
     `ASSET_URL="${escapeForDoubleQuotedBash(input.target.assetUrl)}"`,
     `ASSET_NAME="${escapeForDoubleQuotedBash(input.target.assetFilename)}"`,
     `BINARY_NAME="${escapeForDoubleQuotedBash(input.target.binaryFilename)}"`,
+    `LEGACY_BINARY_NAME="${escapeForDoubleQuotedBash(legacyBinaryFilename)}"`,
     "",
     "download_asset() {",
     "  if command -v curl >/dev/null 2>&1; then",
@@ -496,6 +511,9 @@ function buildWorkerLauncherContents(input: {
     "  download_asset",
     '  tar -xzf "$SCRIPT_DIR/$ASSET_NAME" -C "$SCRIPT_DIR"',
     '  chmod +x "$SCRIPT_DIR/$BINARY_NAME" || true',
+    '  if [ -n "$LEGACY_BINARY_NAME" ]; then',
+    '    chmod +x "$SCRIPT_DIR/$LEGACY_BINARY_NAME" || true',
+    "  fi",
     "fi",
     "",
     `export WORKER_NSEC="\${WORKER_NSEC:-${nsec}}"`,
@@ -504,8 +522,17 @@ function buildWorkerLauncherContents(input: {
     'export WORKER_STATE_DIR="${WORKER_STATE_DIR:-$SCRIPT_DIR/.worker-state}"',
     'mkdir -p "$WORKER_STATE_DIR"',
     "",
+    'if [ -x "$SCRIPT_DIR/$BINARY_NAME" ]; then',
+    '  EXECUTABLE_PATH="$SCRIPT_DIR/$BINARY_NAME"',
+    'elif [ -n "$LEGACY_BINARY_NAME" ] && [ -x "$SCRIPT_DIR/$LEGACY_BINARY_NAME" ]; then',
+    '  EXECUTABLE_PATH="$SCRIPT_DIR/$LEGACY_BINARY_NAME"',
+    "else",
+    '  echo "Worker executable not found after extraction." >&2',
+    "  exit 1",
+    "fi",
+    "",
     'echo "Starting worker..."',
-    'exec "$SCRIPT_DIR/$BINARY_NAME"',
+    'exec "$EXECUTABLE_PATH"',
     "",
   ].filter(Boolean).join("\n");
 }
@@ -521,25 +548,72 @@ function buildWorkerDirectCommand(input: {
   const workerRelays = input.workerRelays.trim();
 
   if (input.target.shell === "powershell") {
+    const legacyBinaryFilename = input.target.legacyBinaryFilename?.trim();
     return [
       `Invoke-WebRequest -Uri '${escapeForPowerShellSingleQuotedString(input.target.assetUrl)}' -OutFile '${escapeForPowerShellSingleQuotedString(input.target.assetFilename)}'`,
       `Expand-Archive -Path '${escapeForPowerShellSingleQuotedString(input.target.assetFilename)}' -DestinationPath '.' -Force`,
       `$env:WORKER_NSEC='${escapeForPowerShellSingleQuotedString(workerNsec)}'`,
       `$env:COORDINATOR_NPUB='${escapeForPowerShellSingleQuotedString(coordinatorNpub)}'`,
       `$env:WORKER_RELAYS='${escapeForPowerShellSingleQuotedString(workerRelays)}'`,
-      `.\\${input.target.binaryFilename}`,
+      `if (Test-Path '.\\${escapeForPowerShellSingleQuotedString(input.target.binaryFilename)}') {`,
+      `  .\\${input.target.binaryFilename}`,
+      ...(legacyBinaryFilename
+        ? [
+            `} elseif (Test-Path '.\\${escapeForPowerShellSingleQuotedString(legacyBinaryFilename)}') {`,
+            `  .\\${legacyBinaryFilename}`,
+          ]
+        : []),
+      "} else {",
+      "  throw 'Worker executable not found after extraction.'",
+      "}",
     ].join("\n");
   }
 
+  const legacyBinaryFilename = input.target.legacyBinaryFilename?.trim() ?? "";
   return [
     `curl -L "${escapeForDoubleQuotedBash(input.target.assetUrl)}" -o "${escapeForDoubleQuotedBash(input.target.assetFilename)}"`,
     `tar -xzf "${escapeForDoubleQuotedBash(input.target.assetFilename)}"`,
     `chmod +x "./${escapeForDoubleQuotedBash(input.target.binaryFilename)}" || true`,
-    `WORKER_NSEC="${escapeForDoubleQuotedBash(workerNsec)}" \\`,
-    `COORDINATOR_NPUB="${escapeForDoubleQuotedBash(coordinatorNpub)}" \\`,
-    `WORKER_RELAYS="${escapeForDoubleQuotedBash(workerRelays)}" \\`,
-    `./${escapeForDoubleQuotedBash(input.target.binaryFilename)}`,
+    legacyBinaryFilename
+      ? `chmod +x "./${escapeForDoubleQuotedBash(legacyBinaryFilename)}" || true`
+      : "",
+    `if [ -x "./${escapeForDoubleQuotedBash(input.target.binaryFilename)}" ]; then`,
+    `  WORKER_NSEC="${escapeForDoubleQuotedBash(workerNsec)}" \\`,
+    `  COORDINATOR_NPUB="${escapeForDoubleQuotedBash(coordinatorNpub)}" \\`,
+    `  WORKER_RELAYS="${escapeForDoubleQuotedBash(workerRelays)}" \\`,
+    `  ./${escapeForDoubleQuotedBash(input.target.binaryFilename)}`,
+    legacyBinaryFilename ? `elif [ -x "./${escapeForDoubleQuotedBash(legacyBinaryFilename)}" ]; then` : "else",
+    ...(legacyBinaryFilename
+      ? [
+          `  WORKER_NSEC="${escapeForDoubleQuotedBash(workerNsec)}" \\`,
+          `  COORDINATOR_NPUB="${escapeForDoubleQuotedBash(coordinatorNpub)}" \\`,
+          `  WORKER_RELAYS="${escapeForDoubleQuotedBash(workerRelays)}" \\`,
+          `  ./${escapeForDoubleQuotedBash(legacyBinaryFilename)}`,
+        ]
+      : []),
+    "else",
+    "  echo 'Worker executable not found after extraction.' >&2",
+    "  exit 1",
+    "fi",
   ].join("\n");
+}
+
+function buildAutoconfiguredWorkerLauncherHref(input: {
+  baseUrl: string;
+  targetKey: WorkerLauncherTargetKey;
+  coordinatorNpub: string;
+  workerNpub?: string;
+  workerRelays: string;
+}) {
+  const params = new URLSearchParams({
+    target: input.targetKey,
+    coordinator_npub: input.coordinatorNpub.trim() || "npub1...",
+    worker_relays: input.workerRelays.trim(),
+  });
+  if (input.workerNpub?.trim()) {
+    params.set("worker_npub", input.workerNpub.trim());
+  }
+  return `${input.baseUrl}?${params.toString()}`;
 }
 
 function percentageLabel(count: number, total: number) {
@@ -1521,6 +1595,11 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     const prefix = basePath.endsWith("/") ? basePath : `${basePath}/`;
     return `${prefix}worker-helper/README.txt`;
   }, []);
+  const workerAutoconfiguredLauncherPageUrl = useMemo(() => {
+    const basePath = import.meta.env.BASE_URL || "/";
+    const prefix = basePath.endsWith("/") ? basePath : `${basePath}/`;
+    return `${prefix}worker-helper/autoconfigured.html`;
+  }, []);
   const workerReleaseBaseUrl = "https://github.com/tidley/auditable-voting/releases/latest/download";
   const workerLinuxArm64DownloadUrl = `${workerReleaseBaseUrl}/auditable-voting-worker-linux-arm64.tar.gz`;
   const workerLinuxArm64ChecksumUrl = `${workerLinuxArm64DownloadUrl}.sha256`;
@@ -1539,7 +1618,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       assetFilename: "auditable-voting-worker-linux-x64.tar.gz",
       assetUrl: workerHelperDownloadUrl,
       checksumUrl: workerHelperChecksumUrl,
-      binaryFilename: "auditable-voting-worker",
+      binaryFilename: "auditable-voting-worker-linux-x64",
+      legacyBinaryFilename: "auditable-voting-worker",
       launcherFilename: "start-auditable-voting-worker-linux-x64.sh",
       shell: "bash",
     },
@@ -1547,7 +1627,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       assetFilename: "auditable-voting-worker-linux-arm64.tar.gz",
       assetUrl: workerLinuxArm64DownloadUrl,
       checksumUrl: workerLinuxArm64ChecksumUrl,
-      binaryFilename: "auditable-voting-worker",
+      binaryFilename: "auditable-voting-worker-linux-arm64",
+      legacyBinaryFilename: "auditable-voting-worker",
       launcherFilename: "start-auditable-voting-worker-linux-arm64.sh",
       shell: "bash",
     },
@@ -1555,7 +1636,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       assetFilename: "auditable-voting-worker-linux-armv7.tar.gz",
       assetUrl: workerLinuxArmv7DownloadUrl,
       checksumUrl: workerLinuxArmv7ChecksumUrl,
-      binaryFilename: "auditable-voting-worker",
+      binaryFilename: "auditable-voting-worker-linux-armv7",
+      legacyBinaryFilename: "auditable-voting-worker",
       launcherFilename: "start-auditable-voting-worker-linux-armv7.sh",
       shell: "bash",
     },
@@ -1563,7 +1645,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       assetFilename: "auditable-voting-worker-windows-x64.zip",
       assetUrl: workerWindowsDownloadUrl,
       checksumUrl: workerWindowsChecksumUrl,
-      binaryFilename: "auditable-voting-worker.exe",
+      binaryFilename: "auditable-voting-worker-windows-x64.exe",
+      legacyBinaryFilename: "auditable-voting-worker.exe",
       launcherFilename: "start-auditable-voting-worker-windows-x64.ps1",
       shell: "powershell",
     },
@@ -1571,7 +1654,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       assetFilename: "auditable-voting-worker-macos-arm64.tar.gz",
       assetUrl: workerMacOsArm64DownloadUrl,
       checksumUrl: workerMacOsArm64ChecksumUrl,
-      binaryFilename: "auditable-voting-worker",
+      binaryFilename: "auditable-voting-worker-macos-arm64",
+      legacyBinaryFilename: "auditable-voting-worker",
       launcherFilename: "start-auditable-voting-worker-macos-arm64.sh",
       shell: "bash",
     },
@@ -1592,11 +1676,48 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       target,
       coordinatorNpub,
       workerNsec: generatedWorkerNsec,
-      workerNpub: generatedWorkerNpub,
+      workerNpub: delegatedWorkerNpub,
       workerRelays: helperRelayList,
     });
     downloadTextFile(target.launcherFilename, contents, "text/plain;charset=utf-8");
-  }, [coordinatorNpub, generatedWorkerNpub, generatedWorkerNsec, helperRelayList]);
+  }, [coordinatorNpub, delegatedWorkerNpub, generatedWorkerNsec, helperRelayList]);
+  const autoconfiguredWorkerLauncherHrefs = useMemo<Record<WorkerLauncherTargetKey, string>>(() => ({
+    linuxX64: buildAutoconfiguredWorkerLauncherHref({
+      baseUrl: workerAutoconfiguredLauncherPageUrl,
+      targetKey: "linuxX64",
+      coordinatorNpub,
+      workerNpub: delegatedWorkerNpub,
+      workerRelays: helperRelayList,
+    }),
+    linuxArm64: buildAutoconfiguredWorkerLauncherHref({
+      baseUrl: workerAutoconfiguredLauncherPageUrl,
+      targetKey: "linuxArm64",
+      coordinatorNpub,
+      workerNpub: delegatedWorkerNpub,
+      workerRelays: helperRelayList,
+    }),
+    linuxArmv7: buildAutoconfiguredWorkerLauncherHref({
+      baseUrl: workerAutoconfiguredLauncherPageUrl,
+      targetKey: "linuxArmv7",
+      coordinatorNpub,
+      workerNpub: delegatedWorkerNpub,
+      workerRelays: helperRelayList,
+    }),
+    windowsX64: buildAutoconfiguredWorkerLauncherHref({
+      baseUrl: workerAutoconfiguredLauncherPageUrl,
+      targetKey: "windowsX64",
+      coordinatorNpub,
+      workerNpub: delegatedWorkerNpub,
+      workerRelays: helperRelayList,
+    }),
+    macosArm64: buildAutoconfiguredWorkerLauncherHref({
+      baseUrl: workerAutoconfiguredLauncherPageUrl,
+      targetKey: "macosArm64",
+      coordinatorNpub,
+      workerNpub: delegatedWorkerNpub,
+      workerRelays: helperRelayList,
+    }),
+  }), [coordinatorNpub, delegatedWorkerNpub, helperRelayList, workerAutoconfiguredLauncherPageUrl]);
   const selectedWorkerLauncherTarget = workerLauncherTargets[selectedWorkerDownloadTarget];
   const workerDirectCommand = useMemo(() => buildWorkerDirectCommand({
     target: selectedWorkerLauncherTarget,
@@ -2941,18 +3062,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           Configure Worker
         </button>
       </div>
-      {publishedDefinition ? (
-        <div className='simple-voter-action-row simple-voter-action-row-inline'>
-          <button
-            type='button'
-            className='simple-voter-secondary'
-            onClick={props.onInviteParticipants}
-            disabled={!props.onInviteParticipants}
-          >
-            Invite participants
-          </button>
-        </div>
-      ) : null}
       {!coordinatorNsec.trim() ? (
         <p className='simple-voter-note'>Coordinator key is not loaded yet.</p>
       ) : null}
@@ -3078,26 +3187,74 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                   <p className='simple-voter-note'>
                     Autoconfigured saves a platform-specific launcher script with the current coordinator `npub`, effective relay list, and generated worker `nsec` when one is present.
                   </p>
+                  <p className='simple-voter-note'>
+                    Right-click copy link is supported. Shared Autoconfigured links intentionally omit `WORKER_NSEC`, so the receiving operator must supply their own worker secret.
+                  </p>
                   <div className='simple-delegate-download-grid'>
                     <div className='simple-delegate-download-row'>
                       <span className='simple-delegate-download-label'>Linux x64</span>
-                      <button type='button' className='simple-delegate-link simple-delegate-button' onClick={() => downloadConfiguredWorkerLauncher(workerLauncherTargets.linuxX64)}>Autoconfigured</button>
+                      <a
+                        className='simple-delegate-link simple-delegate-button'
+                        href={autoconfiguredWorkerLauncherHrefs.linuxX64}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          downloadConfiguredWorkerLauncher(workerLauncherTargets.linuxX64);
+                        }}
+                      >
+                        Autoconfigured
+                      </a>
                     </div>
                     <div className='simple-delegate-download-row'>
                       <span className='simple-delegate-download-label'>Linux arm64</span>
-                      <button type='button' className='simple-delegate-link simple-delegate-button' onClick={() => downloadConfiguredWorkerLauncher(workerLauncherTargets.linuxArm64)}>Autoconfigured</button>
+                      <a
+                        className='simple-delegate-link simple-delegate-button'
+                        href={autoconfiguredWorkerLauncherHrefs.linuxArm64}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          downloadConfiguredWorkerLauncher(workerLauncherTargets.linuxArm64);
+                        }}
+                      >
+                        Autoconfigured
+                      </a>
                     </div>
                     <div className='simple-delegate-download-row'>
                       <span className='simple-delegate-download-label'>Linux armv7</span>
-                      <button type='button' className='simple-delegate-link simple-delegate-button' onClick={() => downloadConfiguredWorkerLauncher(workerLauncherTargets.linuxArmv7)}>Autoconfigured</button>
+                      <a
+                        className='simple-delegate-link simple-delegate-button'
+                        href={autoconfiguredWorkerLauncherHrefs.linuxArmv7}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          downloadConfiguredWorkerLauncher(workerLauncherTargets.linuxArmv7);
+                        }}
+                      >
+                        Autoconfigured
+                      </a>
                     </div>
                     <div className='simple-delegate-download-row'>
                       <span className='simple-delegate-download-label'>Windows</span>
-                      <button type='button' className='simple-delegate-link simple-delegate-button' onClick={() => downloadConfiguredWorkerLauncher(workerLauncherTargets.windowsX64)}>Autoconfigured</button>
+                      <a
+                        className='simple-delegate-link simple-delegate-button'
+                        href={autoconfiguredWorkerLauncherHrefs.windowsX64}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          downloadConfiguredWorkerLauncher(workerLauncherTargets.windowsX64);
+                        }}
+                      >
+                        Autoconfigured
+                      </a>
                     </div>
                     <div className='simple-delegate-download-row'>
                       <span className='simple-delegate-download-label'>macOS</span>
-                      <button type='button' className='simple-delegate-link simple-delegate-button' onClick={() => downloadConfiguredWorkerLauncher(workerLauncherTargets.macosArm64)}>Autoconfigured</button>
+                      <a
+                        className='simple-delegate-link simple-delegate-button'
+                        href={autoconfiguredWorkerLauncherHrefs.macosArm64}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          downloadConfiguredWorkerLauncher(workerLauncherTargets.macosArm64);
+                        }}
+                      >
+                        Autoconfigured
+                      </a>
                     </div>
                   </div>
                 </section>
@@ -3291,6 +3448,18 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           </div>
         </SimpleCollapsibleSection>
       </div>
+      {publishedDefinition ? (
+        <div className='simple-voter-action-row simple-voter-action-row-inline'>
+          <button
+            type='button'
+            className='simple-voter-secondary'
+            onClick={props.onInviteParticipants}
+            disabled={!props.onInviteParticipants}
+          >
+            Invite participants
+          </button>
+        </div>
+      ) : null}
     </>
   );
 }
