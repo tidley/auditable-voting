@@ -252,6 +252,8 @@ pub struct WorkerPersistentState {
     pub last_heartbeat_at: Option<String>,
     pub last_dm_scan_at: Option<String>,
     pub last_public_scan_at: Option<String>,
+    #[serde(default)]
+    pub seen_control_event_ids: HashMap<String, String>,
 }
 
 pub fn now_iso() -> String {

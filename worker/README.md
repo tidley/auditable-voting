@@ -49,13 +49,14 @@ Each archive extracts a platform-specific executable with the same stem as the a
 - Windows x64: `.\auditable-voting-worker-windows-x64.exe`
 - macOS Apple Silicon: `./auditable-voting-worker-macos-arm64`
 
-The coordinator Build page can also save an autoconfigured platform-specific launcher script that downloads the correct binary and fills in the current coordinator `npub`, effective relay list, and generated delegate coordinator `nsec` when present. Right-click copy-link is supported through a shareable URL that intentionally omits `WORKER_NSEC`. Raw binary links and direct command-line launch snippets are also available there under `Advanced`.
+The coordinator Build page can also save an autoconfigured platform-specific launcher script that downloads the correct binary and fills in the current coordinator `npub`, effective relay list, and generated delegate coordinator `nsec` when present. Those launcher scripts and direct command-line snippets default helper-side logging to `RUST_LOG=debug`. Right-click copy-link is supported through a shareable URL that intentionally omits `WORKER_NSEC`. Raw binary links and direct command-line launch snippets are also available there under `Advanced`.
 
 ## Current responsibilities
 
 - announce delegate coordinator presence/status to the coordinator via NIP-17 DM
 - consume delegation/revocation messages from DM and public events
 - persist delegate coordinator runtime state locally
+- poll recent control-plane gift-wrapped DMs with fixed-lookback replay protection so relay-randomised timestamps do not hide delegated blind requests
 - consume delegate coordinator election-config DMs carrying the blind-signing key and questionnaire definition
 - consume delegated blind-token requests over private DMs
 - issue blind-signature responses on behalf of the coordinator for delegated elections with `Issue blind tokens` enabled, including the questionnaire definition when available so voters can render ballots offline

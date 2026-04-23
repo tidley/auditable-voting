@@ -226,7 +226,8 @@ The default remains browser-only coordination. You can optionally enable `Delega
 - the delegate coordinator can be revoked at any time with a signed revocation (also public + DM)
 - the delegate coordinator runtime is outbound-only to relays and does not require inbound ports
 - the delegate coordinator can issue blind tokens (blind-signing on behalf of the coordinator for that delegated election), verify public submissions, publish public submission decisions, and (optionally) auto-publish a result summary once all expected invitees have accepted responses
-- the coordinator Build page exposes a separate `Delegate coordinator` section with delegate coordinator downloads plus a startup helper that can generate a delegate coordinator `nsec`/`npub`, copy a launch command, save an autoconfigured platform-specific launcher script prefilled with the current coordinator `npub`, support right-click copy-link on those autoconfigured downloads via a safe shareable URL, and reveal raw binary / direct CLI options under `Advanced`
+- the delegate coordinator now polls private control-plane DMs with a fixed recent lookback plus event-id dedupe, so relay-randomised gift-wrap timestamps do not cause missed blind requests
+- the coordinator Build page exposes a separate `Delegate coordinator` section with delegate coordinator downloads plus a startup helper that can generate a delegate coordinator `nsec`/`npub`, copy a launch command, save an autoconfigured platform-specific launcher script prefilled with the current coordinator `npub`, default helper-side logging to `RUST_LOG=debug`, support right-click copy-link on those autoconfigured downloads via a safe shareable URL, and reveal raw binary / direct CLI options under `Advanced`
 - GitHub Releases now publish cross-platform delegate coordinator assets for:
   - Linux x64 (`auditable-voting-worker-linux-x64.tar.gz`)
   - Linux arm64 / Raspberry Pi 64-bit (`auditable-voting-worker-linux-arm64.tar.gz`)

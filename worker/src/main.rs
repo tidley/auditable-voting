@@ -18,6 +18,7 @@ use anyhow::{Context, Result};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
 use blind_rsa_signatures::SecretKeySha384PSSDeterministic;
+use chrono::Utc;
 use crypto_bigint::BoxedUint;
 use nostr_sdk::prelude::*;
 use rsa::RsaPrivateKey;
@@ -25,11 +26,12 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use tracing_subscriber::EnvFilter;
 
 const DEFAULT_DM_LOOKBACK_SECS: u64 = 12 * 60 * 60;
 const DEFAULT_PUBLIC_LOOKBACK_SECS: u64 = 12 * 60 * 60;
+const CONTROL_DM_DEDUPE_RETENTION_SECS: i64 = 3 * 24 * 60 * 60;
 
 fn parse_jwk_component(jwk: &serde_json::Value, key: &str) -> Result<BoxedUint> {
     let value = jwk
@@ -282,17 +284,28 @@ impl WorkerRuntime {
     }
 
     async fn poll_control_plane(&self) -> Result<()> {
-        let since_ts = {
-            let state = self.state.lock().await;
-            iso_or_default_to_timestamp(state.last_dm_scan_at.as_deref(), DEFAULT_DM_LOOKBACK_SECS)
-        };
+        let since_ts = fixed_lookback_timestamp(DEFAULT_DM_LOOKBACK_SECS);
         let filter = Filter::new()
             .kind(Kind::GiftWrap)
             .pubkey(self.worker_pubkey)
             .since(since_ts)
             .limit(250);
         let events = self.client.fetch_events(filter, Duration::from_secs(8)).await?;
-        for event in events {
+        let unseen_events = {
+            let mut state = self.state.lock().await;
+            prune_seen_control_events(&mut state.seen_control_event_ids, Utc::now());
+            events
+                .into_iter()
+                .filter(|event| !state.seen_control_event_ids.contains_key(&event.id.to_string()))
+                .collect::<Vec<_>>()
+        };
+        debug!(
+            "control plane poll fetched {} unseen gift-wrapped events",
+            unseen_events.len()
+        );
+        let mut seen_event_ids = Vec::with_capacity(unseen_events.len());
+        for event in unseen_events {
+            seen_event_ids.push(event.id.to_string());
             let Ok(unwrapped) = self.client.unwrap_gift_wrap(&event).await else {
                 continue;
             };
@@ -303,6 +316,13 @@ impl WorkerRuntime {
             self.process_control_message(&rumor_content).await?;
         }
         let mut state = self.state.lock().await;
+        let seen_at = now_iso();
+        for event_id in seen_event_ids {
+            state
+                .seen_control_event_ids
+                .insert(event_id, seen_at.clone());
+        }
+        prune_seen_control_events(&mut state.seen_control_event_ids, Utc::now());
         state.last_dm_scan_at = Some(now_iso());
         self.store.save(&state)?;
         Ok(())
@@ -341,6 +361,12 @@ impl WorkerRuntime {
                     Ok(parsed) => parsed,
                     Err(_) => return Ok(()),
                 };
+                info!(
+                    "blind request received: election_id={}, request_id={}, invited_npub={}",
+                    envelope.request.election_id,
+                    envelope.request.request_id,
+                    envelope.request.invited_npub
+                );
                 self.handle_blind_request(envelope.request).await?;
             }
             _ => {}
@@ -656,6 +682,12 @@ impl WorkerRuntime {
         let recipient = PublicKey::from_bech32(&request.invited_npub)
             .context("invalid invited npub on blind request")?;
         let _ = self.client.send_private_msg(recipient, content, []).await?;
+        info!(
+            "blind issuance published: election_id={}, request_id={}, invited_npub={}",
+            request.election_id,
+            request.request_id,
+            request.invited_npub
+        );
         election.seen_blind_request_ids.insert(request.request_id);
         election.last_blind_issuance_at = Some(now_iso());
         self.store.save(&state)?;
@@ -754,10 +786,28 @@ fn iso_or_default_to_timestamp(input: Option<&str>, fallback_lookback_secs: u64)
     Timestamp::from(now.saturating_sub(fallback_lookback_secs))
 }
 
+fn fixed_lookback_timestamp(lookback_secs: u64) -> Timestamp {
+    let now = Timestamp::now().as_secs();
+    Timestamp::from(now.saturating_sub(lookback_secs))
+}
+
+fn prune_seen_control_events(
+    seen_control_event_ids: &mut std::collections::HashMap<String, String>,
+    now: chrono::DateTime<Utc>,
+) {
+    seen_control_event_ids.retain(|_, seen_at| {
+        chrono::DateTime::parse_from_rfc3339(seen_at)
+            .map(|parsed| now.signed_duration_since(parsed.with_timezone(&Utc)).num_seconds() < CONTROL_DM_DEDUPE_RETENTION_SECS)
+            .unwrap_or(false)
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Duration as ChronoDuration;
     use serde_json::json;
+    use std::collections::HashMap;
 
     fn sample_request() -> BlindBallotRequest {
         BlindBallotRequest {
@@ -843,5 +893,36 @@ mod tests {
         assert_eq!(issuance.blind_signature, "blind_signature_worker_definition");
         assert_eq!(issuance.definition, Some(definition));
         assert_eq!(issuance.issued_at, "2026-04-23T00:00:00Z");
+    }
+
+    #[test]
+    fn fixed_lookback_timestamp_does_not_depend_on_last_scan_state() {
+        let now = Timestamp::now().as_secs();
+        let lookback = 600;
+        let since = fixed_lookback_timestamp(lookback).as_secs();
+        assert!(since <= now);
+        assert!(now.saturating_sub(since) <= lookback + 1);
+    }
+
+    #[test]
+    fn prune_seen_control_events_removes_old_entries() {
+        let now = Utc::now();
+        let mut seen = HashMap::from([
+            (
+                "recent".to_string(),
+                (now - ChronoDuration::hours(1)).to_rfc3339(),
+            ),
+            (
+                "stale".to_string(),
+                (now - ChronoDuration::days(10)).to_rfc3339(),
+            ),
+            ("invalid".to_string(), "not-a-timestamp".to_string()),
+        ]);
+
+        prune_seen_control_events(&mut seen, now);
+
+        assert!(seen.contains_key("recent"));
+        assert!(!seen.contains_key("stale"));
+        assert!(!seen.contains_key("invalid"));
     }
 }
