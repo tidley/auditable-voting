@@ -21,8 +21,14 @@ Other platforms:
   - auditable-voting-worker-linux-arm64.tar.gz
   - auditable-voting-worker-linux-armv7.tar.gz
   - auditable-voting-worker-windows-x64.zip
-  - auditable-voting-worker-macos-x64.tar.gz
   - auditable-voting-worker-macos-arm64.tar.gz
 - Or build from source in /worker:
   cd worker
   cargo build --release
+
+Delegated worker responsibilities:
+- announce worker status to coordinator
+- process delegated blind-token requests
+- issue blind-signature responses for delegated elections
+- verify public submissions and publish delegated decisions
+- optionally auto-publish result summary when all expected invitees have responded

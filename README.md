@@ -207,21 +207,21 @@ At a high level:
 
 ### Optional delegated worker mode
 
-The default remains browser-only coordination. You can optionally enable `Delegated Nostr worker` on the coordinator Delegate tab:
+The default remains browser-only coordination. You can optionally enable `Delegated Nostr worker` in the coordinator Build page (Delegated worker section):
 
 - coordinator remains root authority
 - coordinator signs an election-scoped delegation certificate for one worker `npub`
 - delegation is published publicly for auditability and also sent privately to the worker over NIP-17 DM
+- voter invites and cached election metadata now carry the active blind-issuance worker routing hint when delegation allows `Issue blind tokens`, so voters can keep targeting the worker if the coordinator browser goes offline
 - worker can be revoked at any time with a signed revocation (also public + DM)
 - worker runtime is outbound-only to relays and does not require inbound ports
-- delegated worker can issue blind tokens, verify public submissions, publish public submission decisions, and (optionally) auto-publish a result summary once all expected invitees have accepted responses
-- coordinator Delegate tab exposes worker downloads plus a startup helper that can generate a worker `nsec`/`npub` and copy a launch command using the current coordinator `npub`
+- delegated worker can issue blind tokens (blind-signing on behalf of the coordinator for that delegated election), verify public submissions, publish public submission decisions, and (optionally) auto-publish a result summary once all expected invitees have accepted responses
+- coordinator Build page exposes worker downloads plus a startup helper that can generate a worker `nsec`/`npub` and copy a launch command using the current coordinator `npub`
 - GitHub Releases now publish cross-platform worker assets for:
   - Linux x64 (`auditable-voting-worker-linux-x64.tar.gz`)
   - Linux arm64 / Raspberry Pi 64-bit (`auditable-voting-worker-linux-arm64.tar.gz`)
   - Linux armv7 / Raspberry Pi 32-bit (`auditable-voting-worker-linux-armv7.tar.gz`)
   - Windows x64 (`auditable-voting-worker-windows-x64.zip`)
-  - macOS Intel (`auditable-voting-worker-macos-x64.tar.gz`)
   - macOS Apple Silicon (`auditable-voting-worker-macos-arm64.tar.gz`)
 
 Public state:
@@ -365,5 +365,6 @@ The voter questionnaire now uses a single blind-token entry path by default:
 - invite-link signer login opens the voter Vote tab directly, completes the signer-backed voter login, and can automatically prepare/send the first blind ballot request when the voter is authenticated and authorised
 - invite/login npubs and local voter/responder npubs may differ; opening an invite can bind it to the current local voter identity, and the coordinator must either have that voter whitelisted or authorise the request
 - invites are durable and do not fail just because the voter opens them hours or days later; ballot requests are idempotent and re-queue the same request until issuance arrives
+- when delegated blind issuance is active, the invite plus cached election summary carry the worker `npub` and relay hint, and the voter still prefers a fresh public delegation lookup before falling back to that cached routing
 - private questionnaire DMs now use explicit request, issuance, and submission acknowledgements, so later phases suppress unnecessary resends once receipt is confirmed
 - voter/coordinator private inbox listeners now share one recipient-scoped websocket subscription per election inbox, keep a sticky successful-relay subset, and trigger bounded recovery on focus/visibility/online instead of relying on constant polling

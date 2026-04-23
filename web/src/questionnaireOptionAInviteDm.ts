@@ -157,6 +157,12 @@ function selectReadRelays(relays: string[], maxRelays = OPTION_A_INVITE_DM_READ_
   return relays.slice(0, Math.min(maxRelays, relays.length));
 }
 
+function selectFallbackReadRelays(relays: string[], primaryRelays: string[], maxRelays = OPTION_A_INVITE_DM_READ_RELAYS_FALLBACK_MAX) {
+  const primarySet = new Set(primaryRelays);
+  const fallbackOnly = relays.filter((relay) => !primarySet.has(relay));
+  return fallbackOnly.slice(0, Math.min(maxRelays, fallbackOnly.length));
+}
+
 function selectPublishRelays(relays: string[]) {
   return relays.slice(0, Math.min(OPTION_A_INVITE_DM_RELAYS_MAX, relays.length));
 }
@@ -215,7 +221,7 @@ async function resolveRecipientReadRelays(recipientHex: string, fallbackRelays: 
     recipientHex,
     discoveryRelays: selectHintRelays(fallbackRelays),
   });
-  return selectReadRelays(mixRecipientAndFallbackRelays(recipientRelays, fallbackRelays));
+  return mixRecipientAndFallbackRelays(recipientRelays, fallbackRelays);
 }
 
 function parseInviteDmContent(content: string, tags?: string[][]): ElectionInviteMessage | null {
@@ -319,6 +325,78 @@ function parseGiftWrapPayload(payload: string): NostrEvent | null {
   } catch {
     return null;
   }
+}
+
+async function parseInviteGiftWrapWithSigner(event: NostrEvent, signer: SignerService) {
+  const wrapPubkey = typeof event.pubkey === "string" ? event.pubkey : "";
+  if (!wrapPubkey || typeof event.content !== "string" || !event.content.trim() || !signer.nip44Decrypt) {
+    return null;
+  }
+  const sealPayload = await signer.nip44Decrypt(wrapPubkey, event.content);
+  const sealEvent = parseGiftWrapPayload(sealPayload);
+  if (!sealEvent) {
+    return null;
+  }
+  const rumorPayload = await signer.nip44Decrypt(sealEvent.pubkey, sealEvent.content);
+  const rumor = JSON.parse(rumorPayload) as { content?: string; tags?: string[][] };
+  if (!rumor || typeof rumor.content !== "string") {
+    return null;
+  }
+  return parseInviteDmContent(rumor.content, rumor.tags);
+}
+
+function parseInviteGiftWrapWithNsec(event: NostrEvent, secretKey: Uint8Array) {
+  const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string; tags?: string[][] };
+  if (!rumor || typeof rumor.content !== "string") {
+    return null;
+  }
+  return parseInviteDmContent(rumor.content, rumor.tags);
+}
+
+async function collectInvitesFromGiftWrapEvents(input: {
+  events: NostrEvent[];
+  recipientNpub: string;
+  electionId?: string;
+  parseInvite: (event: NostrEvent) => Promise<ElectionInviteMessage | null> | ElectionInviteMessage | null;
+  trackPermissionErrors?: boolean;
+}) {
+  const unique = new Map<string, ElectionInviteMessage>();
+  let permissionError: string | null = null;
+  for (const event of [...input.events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0))) {
+    try {
+      const invite = await input.parseInvite(event);
+      if (!invite) {
+        continue;
+      }
+      if (invite.invitedNpub !== input.recipientNpub) {
+        continue;
+      }
+      if (input.electionId?.trim() && invite.electionId !== input.electionId.trim()) {
+        continue;
+      }
+      const key = `${invite.electionId}:${invite.coordinatorNpub}`;
+      if (!unique.has(key)) {
+        unique.set(key, invite);
+      }
+    } catch (error) {
+      if (input.trackPermissionErrors && !permissionError && error instanceof Error) {
+        const message = error.message.toLowerCase();
+        if (
+          message.includes("permission")
+          || message.includes("rejected")
+          || message.includes("denied")
+          || message.includes("nip-44")
+          || message.includes("nip44")
+        ) {
+          permissionError = error.message;
+        }
+      }
+    }
+  }
+  return {
+    invites: [...unique.values()],
+    permissionError,
+  };
 }
 
 export async function publishOptionAInviteDm(input: {
@@ -464,75 +542,43 @@ export async function fetchOptionAInviteDms(input: {
     limit: Math.max(1, Math.min(input.limit ?? maxDecryptAttempts, maxDecryptAttempts)),
   } as const;
   const primaryEvents = await queryInviteDmSync(primaryRelays, filter);
-  const shouldFallbackRead = primaryEvents.length === 0
+  const primaryResult = await collectInvitesFromGiftWrapEvents({
+    events: primaryEvents.slice(0, maxDecryptAttempts),
+    recipientNpub,
+    electionId: input.electionId,
+    parseInvite: (event) => parseInviteGiftWrapWithSigner(event, input.signer),
+    trackPermissionErrors: true,
+  });
+  const shouldFallbackRead = primaryResult.invites.length === 0
     && resolvedReadRelays.length > primaryRelays.length;
   const fallbackRelays = shouldFallbackRead
-    ? selectReadRelays(resolvedReadRelays, OPTION_A_INVITE_DM_READ_RELAYS_FALLBACK_MAX)
+    ? selectFallbackReadRelays(resolvedReadRelays, primaryRelays, OPTION_A_INVITE_DM_READ_RELAYS_FALLBACK_MAX)
     : [];
   const fallbackEvents = shouldFallbackRead
     ? await queryInviteDmSync(fallbackRelays, filter).catch(() => [] as NostrEvent[])
     : [];
-  const events = [...primaryEvents, ...fallbackEvents];
-
-  const unique = new Map<string, ElectionInviteMessage>();
-  const sorted = [...events]
-    .sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0))
-    .slice(0, maxDecryptAttempts);
-  let signerPermissionError: string | null = null;
-  for (const event of sorted) {
-    const wrapPubkey = typeof event.pubkey === "string" ? event.pubkey : "";
-    if (!wrapPubkey || typeof event.content !== "string" || !event.content.trim()) {
-      continue;
-    }
-    try {
-      const sealPayload = await input.signer.nip44Decrypt(wrapPubkey, event.content);
-      const sealEvent = parseGiftWrapPayload(sealPayload);
-      if (!sealEvent) {
-        continue;
-      }
-      const rumorPayload = await input.signer.nip44Decrypt(sealEvent.pubkey, sealEvent.content);
-      const rumor = JSON.parse(rumorPayload) as { content?: string; tags?: string[][] };
-      if (!rumor || typeof rumor.content !== "string") {
-        continue;
-      }
-      const invite = parseInviteDmContent(rumor.content, rumor.tags);
-      if (!invite) {
-        continue;
-      }
-      if (invite.invitedNpub !== recipientNpub) {
-        continue;
-      }
-      if (input.electionId?.trim() && invite.electionId !== input.electionId.trim()) {
-        continue;
-      }
-      const key = `${invite.electionId}:${invite.coordinatorNpub}`;
-      if (!unique.has(key)) {
-        unique.set(key, invite);
-      }
-    } catch (error) {
-      if (!signerPermissionError && error instanceof Error) {
-        const message = error.message.toLowerCase();
-        if (
-          message.includes("permission")
-          || message.includes("rejected")
-          || message.includes("denied")
-          || message.includes("nip-44")
-          || message.includes("nip44")
-        ) {
-          signerPermissionError = error.message;
-        }
-      }
-      continue;
-    }
-  }
-  if (unique.size === 0 && signerPermissionError) {
+  const fallbackResult = fallbackEvents.length > 0
+    ? await collectInvitesFromGiftWrapEvents({
+      events: fallbackEvents.slice(0, maxDecryptAttempts),
+      recipientNpub,
+      electionId: input.electionId,
+      parseInvite: (event) => parseInviteGiftWrapWithSigner(event, input.signer),
+      trackPermissionErrors: true,
+    })
+    : { invites: [] as ElectionInviteMessage[], permissionError: null as string | null };
+  const values = [...new Map(
+    [...primaryResult.invites, ...fallbackResult.invites]
+      .map((invite) => [`${invite.electionId}:${invite.coordinatorNpub}`, invite] as const),
+  ).values()];
+  const signerPermissionError = primaryResult.permissionError ?? fallbackResult.permissionError;
+  if (values.length === 0 && signerPermissionError) {
     throw new Error(`Could not read invite DMs: ${signerPermissionError}`);
   }
-  const values = [...unique.values()];
   optionAInviteDmLog("fetch_finished", {
     recipientNpub,
     electionId: input.electionId ?? "",
     resultCount: values.length,
+    fallbackRelayCount: fallbackRelays.length,
   });
   return values;
 }
@@ -554,41 +600,30 @@ export async function fetchOptionAInviteDmsWithNsec(input: {
     limit: Math.max(1, input.limit ?? 50),
   } as const;
   const primaryEvents = await queryInviteDmSync(primaryRelays, filter);
-  const shouldFallbackRead = primaryEvents.length === 0
+  const primaryResult = await collectInvitesFromGiftWrapEvents({
+    events: primaryEvents,
+    recipientNpub,
+    electionId: input.electionId,
+    parseInvite: (event) => parseInviteGiftWrapWithNsec(event, secretKey),
+  });
+  const shouldFallbackRead = primaryResult.invites.length === 0
     && resolvedReadRelays.length > primaryRelays.length;
   const fallbackRelays = shouldFallbackRead
-    ? selectReadRelays(resolvedReadRelays, OPTION_A_INVITE_DM_READ_RELAYS_FALLBACK_MAX)
+    ? selectFallbackReadRelays(resolvedReadRelays, primaryRelays, OPTION_A_INVITE_DM_READ_RELAYS_FALLBACK_MAX)
     : [];
   const fallbackEvents = shouldFallbackRead
     ? await queryInviteDmSync(fallbackRelays, filter).catch(() => [] as NostrEvent[])
     : [];
-  const events = [...primaryEvents, ...fallbackEvents];
-
-  const unique = new Map<string, ElectionInviteMessage>();
-  const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
-  for (const event of sorted) {
-    try {
-      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string; tags?: string[][] };
-      if (!rumor || typeof rumor.content !== "string") {
-        continue;
-      }
-      const invite = parseInviteDmContent(rumor.content, rumor.tags);
-      if (!invite) {
-        continue;
-      }
-      if (invite.invitedNpub !== recipientNpub) {
-        continue;
-      }
-      if (input.electionId?.trim() && invite.electionId !== input.electionId.trim()) {
-        continue;
-      }
-      const key = `${invite.electionId}:${invite.coordinatorNpub}`;
-      if (!unique.has(key)) {
-        unique.set(key, invite);
-      }
-    } catch {
-      continue;
-    }
-  }
-  return [...unique.values()];
+  const fallbackResult = fallbackEvents.length > 0
+    ? await collectInvitesFromGiftWrapEvents({
+      events: fallbackEvents,
+      recipientNpub,
+      electionId: input.electionId,
+      parseInvite: (event) => parseInviteGiftWrapWithNsec(event, secretKey),
+    })
+    : { invites: [] as ElectionInviteMessage[] };
+  return [...new Map(
+    [...primaryResult.invites, ...fallbackResult.invites]
+      .map((invite) => [`${invite.electionId}:${invite.coordinatorNpub}`, invite] as const),
+  ).values()];
 }

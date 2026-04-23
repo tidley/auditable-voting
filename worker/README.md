@@ -39,7 +39,6 @@ GitHub Releases include worker binaries for:
 - Linux arm64 / Raspberry Pi 64-bit: `auditable-voting-worker-linux-arm64.tar.gz`
 - Linux armv7 / Raspberry Pi 32-bit: `auditable-voting-worker-linux-armv7.tar.gz`
 - Windows x64: `auditable-voting-worker-windows-x64.zip`
-- macOS Intel: `auditable-voting-worker-macos-x64.tar.gz`
 - macOS Apple Silicon: `auditable-voting-worker-macos-arm64.tar.gz`
 
 ## Current responsibilities
@@ -47,5 +46,8 @@ GitHub Releases include worker binaries for:
 - announce worker presence/status to the coordinator via NIP-17 DM
 - consume delegation/revocation messages from DM and public events
 - persist delegation runtime state locally
+- consume delegated blind-token requests over private DMs
+- issue blind-signature responses on behalf of the coordinator for delegated elections with `Issue blind tokens` enabled
 - process public questionnaire submissions for delegated elections
 - publish delegated public submission decisions with delegation provenance tags
+- optionally auto-publish result summaries when delegated capability is enabled and expected invitee completion is reached

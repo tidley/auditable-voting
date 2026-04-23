@@ -221,6 +221,107 @@ describe("questionnaireOptionAInviteDm", () => {
     expect(typeof giftWrapQuery?.since).toBe("number");
   });
 
+  it("falls back to additional relays when primary relays contain no usable invite", async () => {
+    const recipientHex = "b".repeat(64);
+    const primarySenderHex = "c".repeat(64);
+    const fallbackSenderHex = "e".repeat(64);
+    const primaryWrapPubkey = "d".repeat(64);
+    const fallbackWrapPubkey = "f".repeat(64);
+    const recipientNpub = nip19.npubEncode(recipientHex);
+    const invite = {
+      type: "election_invite" as const,
+      schemaVersion: 1 as const,
+      electionId: "e-fallback",
+      title: "Fallback invite",
+      description: "",
+      voteUrl: "https://example.test/vote",
+      invitedNpub: recipientNpub,
+      coordinatorNpub: nip19.npubEncode(fallbackSenderHex),
+      expiresAt: null,
+    };
+
+    querySync.mockImplementation(async (relays: string[], filter: { kinds?: number[] }) => {
+      if (Array.isArray(filter?.kinds) && filter.kinds.includes(10050)) {
+        return [];
+      }
+      if (Array.isArray(filter?.kinds) && filter.kinds.includes(1059)) {
+        return relays.length <= 3
+          ? [{
+            id: "primary-dm",
+            kind: 1059,
+            pubkey: primaryWrapPubkey,
+            content: "ciphertext-primary",
+            created_at: 123,
+            tags: [["p", recipientHex]],
+            sig: "sig",
+          }]
+          : [{
+            id: "fallback-dm",
+            kind: 1059,
+            pubkey: fallbackWrapPubkey,
+            content: "ciphertext-fallback",
+            created_at: 124,
+            tags: [["p", recipientHex]],
+            sig: "sig",
+          }];
+      }
+      return [];
+    });
+
+    const signer = makeSigner({
+      getPublicKey: async () => recipientHex,
+      nip44Decrypt: async (pubkey) => {
+        if (pubkey === primaryWrapPubkey) {
+          return JSON.stringify({
+            id: "seal-primary",
+            kind: 13,
+            pubkey: primarySenderHex,
+            created_at: 123,
+            tags: [],
+            content: "sealed-primary",
+            sig: "sig",
+          });
+        }
+        if (pubkey === primarySenderHex) {
+          return JSON.stringify({ content: "not an invite" });
+        }
+        if (pubkey === fallbackWrapPubkey) {
+          return JSON.stringify({
+            id: "seal-fallback",
+            kind: 13,
+            pubkey: fallbackSenderHex,
+            created_at: 124,
+            tags: [],
+            content: "sealed-fallback",
+            sig: "sig",
+          });
+        }
+        if (pubkey === fallbackSenderHex) {
+          return JSON.stringify({
+            content: JSON.stringify({
+              type: "optiona_invite_dm",
+              schemaVersion: 1,
+              invite,
+              sentAt: new Date().toISOString(),
+            }),
+          });
+        }
+        return "";
+      },
+    });
+
+    const invites = await fetchOptionAInviteDms({
+      signer,
+      electionId: "e-fallback",
+      limit: 20,
+    });
+
+    expect(invites).toHaveLength(1);
+    expect(invites[0]?.electionId).toBe("e-fallback");
+    const giftWrapQueries = querySync.mock.calls.filter((call) => Array.isArray(call?.[1]?.kinds) && call[1].kinds.includes(1059));
+    expect(giftWrapQueries).toHaveLength(2);
+  });
+
   it("recovers invite payload from DM tags when message content is a short link", async () => {
     const recipientHex = "b".repeat(64);
     const senderHex = "c".repeat(64);
@@ -334,5 +435,77 @@ describe("questionnaireOptionAInviteDm", () => {
     expect(invites).toHaveLength(1);
     expect(invites[0]?.electionId).toBe("e3");
     expect(invites[0]?.invitedNpub).toBe(recipientNpub);
+  });
+
+  it("falls back to additional relays when local-nsec primary relays miss the invite", async () => {
+    const recipientSecret = generateSecretKey();
+    const recipientHex = getPublicKey(recipientSecret);
+    const recipientNpub = nip19.npubEncode(recipientHex);
+    const recipientNsec = nip19.nsecEncode(recipientSecret);
+    const primarySenderSecret = generateSecretKey();
+    const fallbackSenderSecret = generateSecretKey();
+    const primaryWrapped = nip17.wrapEvent(
+      primarySenderSecret,
+      { publicKey: recipientHex, relayUrl: "wss://relay.example" },
+      JSON.stringify({
+        type: "optiona_invite_dm",
+        schemaVersion: 1,
+        invite: {
+          type: "election_invite",
+          schemaVersion: 1,
+          electionId: "wrong-election",
+          title: "Wrong",
+          description: "",
+          voteUrl: "https://example.test/vote",
+          invitedNpub: recipientNpub,
+          coordinatorNpub: nip19.npubEncode(getPublicKey(primarySenderSecret)),
+          expiresAt: null,
+        },
+        sentAt: new Date().toISOString(),
+      }),
+      "Option A invite",
+    );
+    const fallbackWrapped = nip17.wrapEvent(
+      fallbackSenderSecret,
+      { publicKey: recipientHex, relayUrl: "wss://relay.example" },
+      JSON.stringify({
+        type: "optiona_invite_dm",
+        schemaVersion: 1,
+        invite: {
+          type: "election_invite",
+          schemaVersion: 1,
+          electionId: "e3-fallback",
+          title: "Right",
+          description: "",
+          voteUrl: "https://example.test/vote",
+          invitedNpub: recipientNpub,
+          coordinatorNpub: nip19.npubEncode(getPublicKey(fallbackSenderSecret)),
+          expiresAt: null,
+        },
+        sentAt: new Date().toISOString(),
+      }),
+      "Option A invite",
+    );
+
+    querySync.mockImplementation(async (relays: string[], filter: { kinds?: number[] }) => {
+      if (Array.isArray(filter?.kinds) && filter.kinds.includes(10050)) {
+        return [];
+      }
+      if (Array.isArray(filter?.kinds) && filter.kinds.includes(1059)) {
+        return relays.length <= 3 ? [primaryWrapped] : [fallbackWrapped];
+      }
+      return [];
+    });
+
+    const invites = await fetchOptionAInviteDmsWithNsec({
+      nsec: recipientNsec,
+      electionId: "e3-fallback",
+      limit: 20,
+    });
+
+    expect(invites).toHaveLength(1);
+    expect(invites[0]?.electionId).toBe("e3-fallback");
+    const giftWrapQueries = querySync.mock.calls.filter((call) => Array.isArray(call?.[1]?.kinds) && call[1].kinds.includes(1059));
+    expect(giftWrapQueries).toHaveLength(2);
   });
 });

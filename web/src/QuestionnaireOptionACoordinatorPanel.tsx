@@ -11,7 +11,6 @@ import {
   QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN,
 } from "./questionnaireProtocolConstants";
 import { deriveActorDisplayId } from "./actorDisplay";
-import { tryWriteClipboard } from "./clipboard";
 
 function deriveElectionId() {
   const params = new URLSearchParams(window.location.search);
@@ -124,11 +123,10 @@ export default function QuestionnaireOptionACoordinatorPanel(props: Props) {
           },
         }),
       });
-      const copied = await tryWriteClipboard(buildInviteUrl({ invite: sent.invite }));
       setStatus(
         sent.dmDelivered
-          ? `Invite DM sent to ${deriveActorDisplayId(npub)}. ${copied ? "Voter URL copied." : "Browser blocked clipboard copy."}`
-          : `Invite saved locally for ${deriveActorDisplayId(npub)}; DM delivery failed (${sent.dmFailureReason ?? "unknown error"}). ${copied ? "URL copied." : "Browser blocked clipboard copy."}`,
+          ? `Invite DM sent to ${deriveActorDisplayId(npub)}.`
+          : `Invite saved locally for ${deriveActorDisplayId(npub)}; DM delivery failed (${sent.dmFailureReason ?? "unknown error"}).`,
       );
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Invite failed.");

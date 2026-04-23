@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { finalizeEvent, getPublicKey, nip19, nip44 } from "nostr-tools";
-import { fetchQuestionnaireDefinitions } from "./questionnaireTransport";
+import {
+  fetchQuestionnaireActiveWorkerDelegationForCapability,
+  fetchQuestionnaireDefinitions,
+} from "./questionnaireTransport";
 import { parseInviteFromUrl } from "./questionnaireInvite";
 import { createSignerService, SignerServiceError, type SignerService } from "./services/signerService";
 import {
@@ -23,6 +26,7 @@ import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition }
 import type { QuestionnaireDefinition } from "./questionnaireProtocol";
 import TokenFingerprint from "./TokenFingerprint";
 import { decodeNsec } from "./nostrIdentity";
+import { buildIssueBlindTokensWorkerRouting } from "./questionnaireWorkerRouting";
 
 function toHexPubkey(value: string) {
   const trimmed = value.trim();
@@ -127,7 +131,10 @@ function latestDefinitionFromEntries(entries: Awaited<ReturnType<typeof fetchQue
   return [...entries].sort((a, b) => (b.event.created_at ?? 0) - (a.event.created_at ?? 0))[0]?.definition ?? null;
 }
 
-function cacheDefinitionForVoting(definition: QuestionnaireDefinition) {
+function cacheDefinitionForVoting(
+  definition: QuestionnaireDefinition,
+  issueBlindTokensWorker?: ElectionInviteMessage["issueBlindTokensWorker"],
+) {
   storeCachedQuestionnaireDefinition(definition);
   const electionId = definition.questionnaireId.trim();
   const coordinatorNpub = definition.coordinatorPubkey.trim();
@@ -145,13 +152,20 @@ function cacheDefinitionForVoting(definition: QuestionnaireDefinition) {
     closedAt: Number.isFinite(definition.closeAt) ? new Date(definition.closeAt * 1000).toISOString() : existing?.closedAt ?? null,
     coordinatorNpub,
     blindSigningPublicKey: definition.blindSigningPublicKey ?? existing?.blindSigningPublicKey ?? null,
+    issueBlindTokensWorker: issueBlindTokensWorker === undefined
+      ? existing?.issueBlindTokensWorker ?? null
+      : issueBlindTokensWorker,
     protocolVersion: definition.protocolVersion ?? existing?.protocolVersion,
     flowMode: definition.flowMode ?? existing?.flowMode,
     responseMode: definition.responseMode ?? existing?.responseMode,
   });
 }
 
-function buildInviteFromPublicDefinition(definition: QuestionnaireDefinition, invitedNpub: string): ElectionInviteMessage | null {
+function buildInviteFromPublicDefinition(
+  definition: QuestionnaireDefinition,
+  invitedNpub: string,
+  issueBlindTokensWorker?: ElectionInviteMessage["issueBlindTokensWorker"],
+): ElectionInviteMessage | null {
   const electionId = definition.questionnaireId.trim();
   const coordinatorNpub = definition.coordinatorPubkey.trim();
   if (!electionId || !coordinatorNpub || !invitedNpub.trim()) {
@@ -167,6 +181,7 @@ function buildInviteFromPublicDefinition(definition: QuestionnaireDefinition, in
     invitedNpub: invitedNpub.trim(),
     coordinatorNpub,
     blindSigningPublicKey: definition.blindSigningPublicKey ?? null,
+    issueBlindTokensWorker: issueBlindTokensWorker ?? null,
     definition,
     expiresAt: null,
   };
@@ -821,6 +836,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       return null;
     }
 
+    const existingSummary = loadElectionSummary(targetElectionId);
     let definition = readCachedQuestionnaireDefinition(targetElectionId);
     try {
       const latest = latestDefinitionFromEntries(await fetchQuestionnaireDefinitions({
@@ -837,8 +853,25 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     if (!definition) {
       return null;
     }
-    cacheDefinitionForVoting(definition);
-    return buildInviteFromPublicDefinition(definition, voterNpub);
+    let issueBlindTokensWorker = existingSummary?.issueBlindTokensWorker ?? null;
+    try {
+      const delegation = await fetchQuestionnaireActiveWorkerDelegationForCapability({
+        questionnaireId: targetElectionId,
+        capability: "issue_blind_tokens",
+      });
+      issueBlindTokensWorker = delegation?.workerNpub?.trim()
+        ? buildIssueBlindTokensWorkerRouting({
+          delegationId: delegation.delegationId,
+          workerNpub: delegation.workerNpub,
+          controlRelays: delegation.controlRelays,
+          expiresAt: delegation.expiresAt,
+        })
+        : null;
+    } catch {
+      // Keep cached worker routing when a fresh public delegation lookup fails.
+    }
+    cacheDefinitionForVoting(definition, issueBlindTokensWorker);
+    return buildInviteFromPublicDefinition(definition, voterNpub, issueBlindTokensWorker);
   }
 
   async function loginWithLocalIdentity(voterNpub: string) {

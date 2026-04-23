@@ -19,6 +19,7 @@ vi.mock("./questionnaireInvite", () => ({
 }));
 
 vi.mock("./questionnaireTransport", () => ({
+  fetchQuestionnaireActiveWorkerDelegationForCapability: vi.fn().mockResolvedValue(null),
   fetchQuestionnaireDefinitions: vi.fn().mockResolvedValue([]),
 }));
 

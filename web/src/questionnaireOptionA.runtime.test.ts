@@ -14,6 +14,7 @@ import {
 } from "./questionnaireOptionABlindDm";
 import { publishQuestionnaireBlindResponsePublic } from "./questionnaireResponsePublish";
 import type { SignerService } from "./services/signerService";
+import { fetchQuestionnaireActiveWorkerDelegationForCapability } from "./questionnaireTransport";
 
 const publicBlindResponseStore = vi.hoisted(() => ({
   entries: [] as Array<{
@@ -155,6 +156,7 @@ vi.mock("./questionnaireResponsePublish", () => ({
 }));
 
 vi.mock("./questionnaireTransport", () => ({
+  fetchQuestionnaireActiveWorkerDelegationForCapability: vi.fn().mockResolvedValue(null),
   fetchQuestionnaireBlindResponses: vi.fn(async (input: { questionnaireId: string }) =>
     publicBlindResponseStore.entries.filter((entry) => entry.response.questionnaireId === input.questionnaireId)),
 }));
@@ -208,6 +210,38 @@ describe("questionnaireOptionARuntime", () => {
 
     const resumed = await voter.loginWithSigner(null);
     expect(resumed.loginVerified).toBe(true);
+  });
+
+  it("routes blind requests to the delegated worker from invite metadata when available", async () => {
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+    coordinator.addWhitelistNpub(voterNpub);
+    const sentInvite = await coordinator.sendInvite(voterNpub, {
+      title: "Runtime",
+      description: "Test",
+      voteUrl: "https://example.org/vote",
+    });
+    const workerNpub = "npub1workerhint000000000000000000000000000000000000000000";
+    const invite = {
+      ...sentInvite.invite,
+      issueBlindTokensWorker: {
+        delegationId: "delegation_hint_1",
+        workerNpub,
+        controlRelays: ["wss://worker-relay.example"],
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+    };
+
+    vi.mocked(fetchQuestionnaireActiveWorkerDelegationForCapability).mockResolvedValueOnce(null);
+
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionId);
+    await voter.loginWithSigner(invite);
+    await voter.requestBlindBallot({ forceResend: true });
+
+    expect(vi.mocked(publishOptionABlindRequestDm)).toHaveBeenCalledWith(expect.objectContaining({
+      recipientNpub: workerNpub,
+      relays: expect.arrayContaining(["wss://worker-relay.example"]),
+    }));
   });
 
   it("runs request -> issuance -> submit -> acceptance and supports resume", async () => {

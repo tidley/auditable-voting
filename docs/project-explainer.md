@@ -51,7 +51,8 @@ This is the practical order of operations for the current app.
 4. Send invites (`Send invite` / `Invite all whitelisted`) or share the invite link (generated links use the current host by default).
 5. As voters appear, run `Process requests` / `Check responses` to process blind request and response queues (or delegate those duties to a worker).
    - Verified voters can now pre-request and coordinators can pre-issue before publish.
-  - If needed, open the `Delegate` tab, switch to `Delegated Nostr worker`, generate worker credentials/startup command, then delegate while keeping the browser as control authority (worker can issue blind tokens and publish decisions/summaries for the delegated election).
+   - If needed, use the **Build** page `Delegated worker` section, switch to `Delegated Nostr worker`, generate worker credentials/startup command, then delegate while keeping the browser as control authority (worker can issue blind tokens and publish decisions/summaries for the delegated election).
+   - When blind-token issuance is delegated, invite payloads and cached election metadata carry the worker routing hint so voters can keep DMing the worker even if the coordinator browser is no longer open.
 6. Publish the questionnaire when ready (`Publish Questionnaire`, state becomes `Open`).
 
 ### 2. Voter joins second
@@ -772,5 +773,6 @@ The questionnaire runtime currently provides:
 - Android Amber NIP-46 sessions now request `sign_event`, `nip04_encrypt/decrypt`, and `nip44_encrypt/decrypt` up front during connect so later flow steps do not trigger capability escalation prompts
 - invite/login npubs and local voter/responder npubs may differ; the invite can be opened against the current local voter identity, then the coordinator either auto-issues for whitelisted voters or manually authorises unexpected requesters
 - invites are durable and can remain idle indefinitely; ballot request retries preserve the same request id and re-queue until the coordinator issues a credential, and the credential issuance can also carry the questionnaire definition as a recovery path
+- delegated blind-token routing is cached in the invite and election summary, and the voter still re-checks the public delegation before falling back to that cached worker `npub`
 - accepted DM submissions feed the same coordinator response summaries as public questionnaire response events
 - after a response is submitted, the voter Vote page shows the responder marker with its coloured pattern and expandable QR

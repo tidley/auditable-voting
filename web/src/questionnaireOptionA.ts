@@ -41,9 +41,17 @@ export interface ElectionSummary {
   closedAt?: IsoTime | null;
   coordinatorNpub: Npub;
   blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
+  issueBlindTokensWorker?: IssueBlindTokensWorkerRouting | null;
   protocolVersion?: 1 | 2;
   flowMode?: QuestionnaireFlowMode;
   responseMode?: QuestionnaireResponseMode;
+}
+
+export interface IssueBlindTokensWorkerRouting {
+  delegationId: string;
+  workerNpub: Npub;
+  controlRelays?: string[];
+  expiresAt?: IsoTime | null;
 }
 
 export interface WhitelistEntry {
@@ -67,6 +75,7 @@ export interface ElectionInviteMessage {
   invitedNpub: Npub;
   coordinatorNpub: Npub;
   blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
+  issueBlindTokensWorker?: IssueBlindTokensWorkerRouting | null;
   definition?: QuestionnaireDefinition | null;
   expiresAt?: IsoTime | null;
 }

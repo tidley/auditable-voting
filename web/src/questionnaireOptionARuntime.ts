@@ -130,6 +130,11 @@ import {
 import type { QuestionnaireResponseAnswer } from "./questionnaireProtocol";
 import type { QuestionnaireSubmissionDecisionReason } from "./questionnaireProtocol";
 import { QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1, type QuestionnaireFlowMode } from "./questionnaireProtocolConstants";
+import {
+  buildIssueBlindTokensWorkerRouting,
+  mergeBlindRequestRoutingRelays,
+  selectIssueBlindTokensWorkerRouting,
+} from "./questionnaireWorkerRouting";
 
 const OPTION_A_COORDINATOR_DM_LOOKBACK_SECONDS = 24 * 60 * 60;
 const OPTION_A_COORDINATOR_SIGNER_DM_LIMIT = 60;
@@ -186,6 +191,13 @@ function toHexPubkey(value: string) {
     return decoded.data as string;
   }
   return trimmed;
+}
+
+function withIssueBlindTokensWorkerRouting(summary: ElectionSummary, routing = summary.issueBlindTokensWorker ?? null): ElectionSummary {
+  return {
+    ...summary,
+    issueBlindTokensWorker: routing,
+  };
 }
 
 function decodeNsecSecretKey(nsec: string | null | undefined) {
@@ -468,6 +480,49 @@ export class QuestionnaireOptionAVoterRuntime {
 
   private getPreferredDmRelays() {
     return readElectionPrivateRelayPrefs(this.electionId);
+  }
+
+  private rememberIssueBlindTokensWorkerRouting(routing = this.state?.inviteMessage?.issueBlindTokensWorker ?? null) {
+    const summary = loadElectionSummary(this.electionId);
+    if (summary) {
+      upsertElectionSummary(withIssueBlindTokensWorkerRouting(summary, routing));
+    }
+    if (this.state?.inviteMessage) {
+      this.state = {
+        ...this.state,
+        inviteMessage: {
+          ...this.state.inviteMessage,
+          issueBlindTokensWorker: routing,
+        },
+        lastUpdatedAt: nowIso(),
+      };
+    }
+  }
+
+  private async resolveIssueBlindTokensWorkerRouting() {
+    const hinted = selectIssueBlindTokensWorkerRouting({
+      invite: this.state?.inviteMessage ?? null,
+      summary: loadElectionSummary(this.electionId),
+    });
+    try {
+      const delegation = await fetchQuestionnaireActiveWorkerDelegationForCapability({
+        questionnaireId: this.electionId,
+        capability: "issue_blind_tokens",
+      });
+      if (delegation?.workerNpub?.trim()) {
+        const resolved = buildIssueBlindTokensWorkerRouting({
+          delegationId: delegation.delegationId,
+          workerNpub: delegation.workerNpub,
+          controlRelays: delegation.controlRelays,
+          expiresAt: delegation.expiresAt,
+        });
+        this.rememberIssueBlindTokensWorkerRouting(resolved);
+        return resolved;
+      }
+    } catch {
+      // Fall back to cached invite/summary routing.
+    }
+    return hinted;
   }
 
   private rememberPrivateRelaySuccesses(result: { relayResults?: Array<{ relay: string; success: boolean }> } | null | undefined) {
@@ -838,6 +893,9 @@ export class QuestionnaireOptionAVoterRuntime {
     }
 
     const summary = loadElectionSummary(this.electionId);
+    if (invite?.issueBlindTokensWorker && summary) {
+      upsertElectionSummary(withIssueBlindTokensWorkerRouting(summary, invite.issueBlindTokensWorker));
+    }
     const loadedVoterState = loadVoterState({
       voterNpub: signerNpub,
       electionId: this.electionId,
@@ -910,6 +968,9 @@ export class QuestionnaireOptionAVoterRuntime {
       : rawInvite;
 
     const summary = loadElectionSummary(this.electionId);
+    if (invite?.issueBlindTokensWorker && summary) {
+      upsertElectionSummary(withIssueBlindTokensWorkerRouting(summary, invite.issueBlindTokensWorker));
+    }
     const existingState = loadVoterState({
       voterNpub: invitedNpub,
       electionId: this.electionId,
@@ -1241,23 +1302,15 @@ export class QuestionnaireOptionAVoterRuntime {
     if (!this.state || !request || !this.state.coordinatorNpub) {
       return null;
     }
-    let recipientNpub = this.state.coordinatorNpub;
-    try {
-      const delegation = await fetchQuestionnaireActiveWorkerDelegationForCapability({
-        questionnaireId: this.state.electionId,
-        capability: "issue_blind_tokens",
-      });
-      if (delegation?.workerNpub?.trim()) {
-        recipientNpub = delegation.workerNpub.trim();
-      }
-    } catch {
-      // Fall back to coordinator DM routing.
-    }
+    const routing = await this.resolveIssueBlindTokensWorkerRouting();
+    const recipientNpub = routing?.workerNpub?.trim() || this.state.coordinatorNpub;
+    const relays = mergeBlindRequestRoutingRelays(this.getPreferredDmRelays(), routing);
     optionAFlowLog("voter", "blind_request_publish_attempt", {
       electionId: this.state.electionId,
       requestId: request.requestId,
       coordinatorNpub: this.state.coordinatorNpub,
       recipientNpub,
+      delegationId: routing?.delegationId ?? null,
     });
     try {
       const result = await publishOptionABlindRequestDm({
@@ -1265,7 +1318,7 @@ export class QuestionnaireOptionAVoterRuntime {
         recipientNpub,
         request,
         fallbackNsec: this.fallbackNsec,
-        relays: this.getPreferredDmRelays(),
+        relays,
       });
       this.rememberPrivateRelaySuccesses(result);
       return result;
@@ -2322,6 +2375,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
             flowMode: summary?.flowMode ?? existing.election.flowMode,
             responseMode: summary?.responseMode ?? existing.election.responseMode,
             blindSigningPublicKey: summary?.blindSigningPublicKey ?? existing.election.blindSigningPublicKey,
+            issueBlindTokensWorker: summary?.issueBlindTokensWorker ?? existing.election.issueBlindTokensWorker ?? null,
           },
         },
       });
@@ -2338,6 +2392,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       closedAt: summary?.closedAt ?? null,
       coordinatorNpub: this.coordinatorNpub,
       blindSigningPublicKey: summary?.blindSigningPublicKey ?? null,
+      issueBlindTokensWorker: summary?.issueBlindTokensWorker ?? null,
       protocolVersion: summary?.protocolVersion,
       flowMode: summary?.flowMode,
       responseMode: summary?.responseMode,
@@ -2447,6 +2502,28 @@ export class QuestionnaireOptionACoordinatorRuntime {
       throw new OptionARuntimeError("not_whitelisted", "Invite target is not whitelisted.");
     }
     const blindSigningPrivateKey = await this.ensureBlindSigningKey();
+    let issueBlindTokensWorker = selectIssueBlindTokensWorkerRouting({
+      summary: loadElectionSummary(this.electionId) ?? this.state.election,
+    });
+    try {
+      const delegation = await fetchQuestionnaireActiveWorkerDelegationForCapability({
+        questionnaireId: this.electionId,
+        capability: "issue_blind_tokens",
+        relays: this.getPreferredDmRelays(),
+      });
+      if (delegation?.workerNpub?.trim()) {
+        issueBlindTokensWorker = buildIssueBlindTokensWorkerRouting({
+          delegationId: delegation.delegationId,
+          workerNpub: delegation.workerNpub,
+          controlRelays: delegation.controlRelays,
+          expiresAt: delegation.expiresAt,
+        });
+        this.state.election = withIssueBlindTokensWorkerRouting(this.state.election, issueBlindTokensWorker);
+        upsertElectionSummary(this.state.election);
+      }
+    } catch {
+      // Keep cached worker routing hint when fresh public lookup fails.
+    }
     const invite: ElectionInviteMessage = {
       type: "election_invite",
       schemaVersion: 1,
@@ -2457,6 +2534,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       invitedNpub: normalizedInvitedNpub,
       coordinatorNpub: this.coordinatorNpub,
       blindSigningPublicKey: toQuestionnaireBlindPublicKey(blindSigningPrivateKey),
+      issueBlindTokensWorker,
       definition: readCachedQuestionnaireDefinition(this.electionId),
       expiresAt: null,
     };

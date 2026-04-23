@@ -3471,12 +3471,11 @@ export default function SimpleCoordinatorApp() {
           },
         }),
       });
-      const copied = await tryWriteClipboard(buildInviteUrl({ invite: sent.invite }));
       setOptimisticKnownVoterNpubs((current) => (current.includes(invitedNpub) ? current : [...current, invitedNpub]));
       setKnownVoterInviteStatus(
         sent.dmDelivered
-          ? `Invite DM sent to ${deriveActorDisplayId(invitedNpub)}.${copied ? " Link copied." : ""}`
-          : `Invite saved locally for ${deriveActorDisplayId(invitedNpub)}; DM delivery failed (${sent.dmFailureReason ?? "unknown error"}). ${copied ? "Link copied." : "Browser blocked clipboard copy."}`,
+          ? `Invite DM sent to ${deriveActorDisplayId(invitedNpub)}.`
+          : `Invite saved locally for ${deriveActorDisplayId(invitedNpub)}; DM delivery failed (${sent.dmFailureReason ?? "unknown error"}).`,
       );
       setAutoSendFollowers((current) => ({
         ...current,
@@ -3500,7 +3499,6 @@ export default function SimpleCoordinatorApp() {
       return;
     }
 
-    const copiedLinks: string[] = [];
     let sentCount = 0;
     for (const invitedNpub of targets) {
       try {
@@ -3523,7 +3521,6 @@ export default function SimpleCoordinatorApp() {
             },
           }),
         });
-        copiedLinks.push(buildInviteUrl({ invite: sent.invite }));
         setAutoSendFollowers((current) => ({
           ...current,
           [invitedNpub]: true,
@@ -3534,13 +3531,10 @@ export default function SimpleCoordinatorApp() {
       }
     }
 
-    const copied = copiedLinks.length > 0
-      ? await tryWriteClipboard(copiedLinks.join("\n"))
-      : false;
     setKnownVoterInviteRefreshNonce((value) => value + 1);
     setKnownVoterInviteStatus(
       sentCount > 0
-        ? `Bulk invited ${sentCount}/${targets.length} whitelisted voters for ${optionAElectionId || "this questionnaire"}. ${copied ? "Invite links copied (newline-separated)." : "Browser blocked clipboard copy."}`
+        ? `Bulk invited ${sentCount}/${targets.length} whitelisted voters for ${optionAElectionId || "this questionnaire"}.`
         : "Bulk invite could not send any invitations.",
     );
   }
