@@ -189,9 +189,10 @@ Opt-in live public-relay smoke test for the delegated questionnaire blind-token 
 ```bash
 cd web
 npm run test:live-delegate-coordinator
+npm run test:live-rust-helper
 ```
 
-That command publishes ephemeral questionnaire, delegation, DM, submission-decision, and result-summary events to public relays. It is intentionally separate from the default verification set because it depends on live public relay behaviour.
+Those commands publish ephemeral questionnaire, delegation, DM, submission-decision, and result-summary events to public relays. `test:live-delegate-coordinator` exercises the delegated path in Node, while `test:live-rust-helper` spawns the actual Rust delegate coordinator binary and accepts helper state/log confirmation when relay readback lags. They are intentionally separate from the default verification set because they depend on live public relay behaviour.
 
 Coordinator-control replay tests also run in the new root Rust crate:
 
