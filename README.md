@@ -6,7 +6,7 @@ Client-only voting on public relay infrastructure, with browser-based voter, coo
 
 This repo now contains only the static web app in `web/`.
 
-An optional delegated worker daemon now also lives in `worker/` for election-scoped coordinator delegation.
+An optional delegate coordinator runtime now also lives in `worker/` for election-scoped coordinator delegation.
 
 The shipped app currently includes:
 
@@ -94,7 +94,7 @@ Empirically, recent local-preview runs are solid at `1 coordinator / 2 voters / 
 ## What is in this repo
 
 - `web/` — the shipped React + Vite app
-- `worker/` — optional Rust delegated-worker daemon (outbound-only relay connections; no inbound HTTP)
+- `worker/` — optional Rust delegate coordinator runtime (outbound-only relay connections; no inbound HTTP)
 - `docs/project-explainer.md` — the main written explainer
 - `presentation/project-overview.html` — the portable presentation deck
 - `.github/workflows/static.yml` — GitHub Pages deployment
@@ -142,7 +142,7 @@ Open:
 - `http://127.0.0.1:5173/dashboard.html`
 - `http://127.0.0.1:5173/simple.html`
 
-Optional delegated worker daemon:
+Optional delegate coordinator runtime:
 
 ```bash
 cd worker
@@ -205,20 +205,20 @@ At a high level:
 9. The voter unblinds enough shares locally and submits a ballot from an ephemeral key, carrying stable `request_id` and `ticket_id` lineage in the ballot payload.
 10. Coordinators and auditors validate ballots and recompute the tally from public data.
 
-### Optional delegated worker mode
+### Optional delegate coordinator mode
 
-The default remains browser-only coordination. You can optionally enable `Delegated Nostr worker` in the coordinator Build page (Delegated worker section):
+The default remains browser-only coordination. You can optionally enable `Delegate coordinator` in the coordinator Build page (`Delegate coordinator` section):
 
 - coordinator remains root authority
-- coordinator signs an election-scoped delegation certificate for one worker `npub`
-- delegation is published publicly for auditability and also sent privately to the worker over NIP-17 DM
-- voter invites and cached election metadata now carry the active blind-issuance worker routing hint when delegation allows `Issue blind tokens`, so voters can keep targeting the worker if the coordinator browser goes offline
-- worker election-config DMs now include the questionnaire definition as well as the blind-signing key, so worker-issued blind credentials can still render the ballot when the coordinator browser is offline
-- worker can be revoked at any time with a signed revocation (also public + DM)
-- worker runtime is outbound-only to relays and does not require inbound ports
-- delegated worker can issue blind tokens (blind-signing on behalf of the coordinator for that delegated election), verify public submissions, publish public submission decisions, and (optionally) auto-publish a result summary once all expected invitees have accepted responses
-- coordinator Build page exposes a separate `Delegated worker` section with worker downloads plus a startup helper that can generate a worker `nsec`/`npub`, copy a launch command, save an autoconfigured platform-specific launcher script prefilled with the current coordinator `npub`, support right-click copy-link on those autoconfigured downloads via a safe shareable URL, and reveal raw binary / direct CLI options under `Advanced`
-- GitHub Releases now publish cross-platform worker assets for:
+- coordinator signs an election-scoped delegation certificate for one delegate coordinator `npub`
+- delegation is published publicly for auditability and also sent privately to the delegate coordinator over NIP-17 DM
+- voter invites and cached election metadata now carry the active blind-issuance delegate coordinator routing hint when delegation allows `Issue blind tokens`, so voters can keep targeting the delegate coordinator if the coordinator browser goes offline
+- delegate coordinator election-config DMs now include the questionnaire definition as well as the blind-signing key, so delegate-coordinator-issued blind credentials can still render the ballot when the coordinator browser is offline
+- the delegate coordinator can be revoked at any time with a signed revocation (also public + DM)
+- the delegate coordinator runtime is outbound-only to relays and does not require inbound ports
+- the delegate coordinator can issue blind tokens (blind-signing on behalf of the coordinator for that delegated election), verify public submissions, publish public submission decisions, and (optionally) auto-publish a result summary once all expected invitees have accepted responses
+- the coordinator Build page exposes a separate `Delegate coordinator` section with delegate coordinator downloads plus a startup helper that can generate a delegate coordinator `nsec`/`npub`, copy a launch command, save an autoconfigured platform-specific launcher script prefilled with the current coordinator `npub`, support right-click copy-link on those autoconfigured downloads via a safe shareable URL, and reveal raw binary / direct CLI options under `Advanced`
+- GitHub Releases now publish cross-platform delegate coordinator assets for:
   - Linux x64 (`auditable-voting-worker-linux-x64.tar.gz`)
   - Linux arm64 / Raspberry Pi 64-bit (`auditable-voting-worker-linux-arm64.tar.gz`)
   - Linux armv7 / Raspberry Pi 32-bit (`auditable-voting-worker-linux-armv7.tar.gz`)
@@ -366,6 +366,6 @@ The voter questionnaire now uses a single blind-token entry path by default:
 - invite-link signer login opens the voter Vote tab directly, completes the signer-backed voter login, and can automatically prepare/send the first blind ballot request when the voter is authenticated and authorised
 - invite/login npubs and local voter/responder npubs may differ; opening an invite can bind it to the current local voter identity, and the coordinator must either have that voter whitelisted or authorise the request
 - invites are durable and do not fail just because the voter opens them hours or days later; ballot requests are idempotent and re-queue the same request until issuance arrives
-- when delegated blind issuance is active, the invite plus cached election summary carry the worker `npub` and relay hint, and the voter still prefers a fresh public delegation lookup before falling back to that cached routing
+- when delegated blind issuance is active, the invite plus cached election summary carry the delegate coordinator `npub` and relay hint, and the voter still prefers a fresh public delegation lookup before falling back to that cached routing
 - private questionnaire DMs now use explicit request, issuance, and submission acknowledgements, so later phases suppress unnecessary resends once receipt is confirmed
 - voter/coordinator private inbox listeners now share one recipient-scoped websocket subscription per election inbox, keep a sticky successful-relay subset, and trigger bounded recovery on focus/visibility/online instead of relying on constant polling

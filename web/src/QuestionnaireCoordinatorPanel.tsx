@@ -60,6 +60,7 @@ const QUESTIONNAIRE_DRAFT_ID_STORAGE_KEY = "coordinator.questionnaire-draft-id.v
 const IDENTITY_REFRESH_INTERVAL_MS = 10000;
 const QUESTIONNAIRE_TIMER_FALLBACK_MINUTES = "60";
 const QUESTIONNAIRE_TIMER_DISABLED_CLOSE_MINUTES = 5_256_000; // 10 years
+const BLIND_SIGNING_KEY_RELOAD_STATUS = "Blind-signing key is still initialising in this tab. Reload the page to refresh coordinator state, then try publishing again.";
 
 function readDeploymentModeFromUrl() {
   if (typeof window === "undefined") {
@@ -429,7 +430,7 @@ function buildWorkerLauncherContents(input: {
     const coordinator = escapeForPowerShellSingleQuotedString(coordinatorNpub);
     const nsec = escapeForPowerShellSingleQuotedString(workerNsec);
     const npubLine = workerNpub
-      ? `Write-Host 'Expected worker npub: ${escapeForPowerShellSingleQuotedString(workerNpub)}'\n`
+      ? `Write-Host 'Expected delegate coordinator npub: ${escapeForPowerShellSingleQuotedString(workerNpub)}'\n`
       : "";
     const relays = escapeForPowerShellSingleQuotedString(workerRelays);
     const legacyBinaryFilename = input.target.legacyBinaryFilename?.trim();
@@ -448,7 +449,7 @@ function buildWorkerLauncherContents(input: {
         : "$LegacyBinaryPath = $null",
       "",
       "if (-not (Test-Path $BinaryPath)) {",
-      "  Write-Host \"Downloading worker binary...\"",
+      "  Write-Host \"Downloading delegate coordinator binary...\"",
       "  Invoke-WebRequest -Uri $AssetUrl -OutFile $ArchivePath",
       "  Expand-Archive -Path $ArchivePath -DestinationPath $ScriptDir -Force",
       "}",
@@ -464,10 +465,10 @@ function buildWorkerLauncherContents(input: {
       "} elseif ($LegacyBinaryPath -and (Test-Path $LegacyBinaryPath)) {",
       "  $ExecutablePath = $LegacyBinaryPath",
       "} else {",
-      "  throw 'Worker executable not found after extraction.'",
+      "  throw 'Delegate coordinator executable not found after extraction.'",
       "}",
       "",
-      "Write-Host \"Starting worker...\"",
+      "Write-Host \"Starting delegate coordinator...\"",
       "& $ExecutablePath",
       "",
     ].filter(Boolean).join("\n");
@@ -478,7 +479,7 @@ function buildWorkerLauncherContents(input: {
   const relays = escapeForDoubleQuotedBash(workerRelays);
   const legacyBinaryFilename = input.target.legacyBinaryFilename?.trim() ?? "";
   const expectedNpubComment = workerNpub
-    ? `# Expected worker npub: ${escapeForDoubleQuotedBash(workerNpub)}\n`
+    ? `# Expected delegate coordinator npub: ${escapeForDoubleQuotedBash(workerNpub)}\n`
     : "";
   return [
     "#!/usr/bin/env bash",
@@ -507,7 +508,7 @@ function buildWorkerLauncherContents(input: {
     "}",
     "",
     'if [ ! -x "$SCRIPT_DIR/$BINARY_NAME" ]; then',
-    '  echo "Downloading worker binary..."',
+    '  echo "Downloading delegate coordinator binary..."',
     "  download_asset",
     '  tar -xzf "$SCRIPT_DIR/$ASSET_NAME" -C "$SCRIPT_DIR"',
     '  chmod +x "$SCRIPT_DIR/$BINARY_NAME" || true',
@@ -527,11 +528,11 @@ function buildWorkerLauncherContents(input: {
     'elif [ -n "$LEGACY_BINARY_NAME" ] && [ -x "$SCRIPT_DIR/$LEGACY_BINARY_NAME" ]; then',
     '  EXECUTABLE_PATH="$SCRIPT_DIR/$LEGACY_BINARY_NAME"',
     "else",
-    '  echo "Worker executable not found after extraction." >&2',
+    '  echo "Delegate coordinator executable not found after extraction." >&2',
     "  exit 1",
     "fi",
     "",
-    'echo "Starting worker..."',
+    'echo "Starting delegate coordinator..."',
     'exec "$EXECUTABLE_PATH"',
     "",
   ].filter(Boolean).join("\n");
@@ -564,7 +565,7 @@ function buildWorkerDirectCommand(input: {
           ]
         : []),
       "} else {",
-      "  throw 'Worker executable not found after extraction.'",
+      "  throw 'Delegate coordinator executable not found after extraction.'",
       "}",
     ].join("\n");
   }
@@ -592,7 +593,7 @@ function buildWorkerDirectCommand(input: {
         ]
       : []),
     "else",
-    "  echo 'Worker executable not found after extraction.' >&2",
+    "  echo 'Delegate coordinator executable not found after extraction.' >&2",
     "  exit 1",
     "fi",
   ].join("\n");
@@ -819,6 +820,22 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     filteredCount: 0,
     kindOnlyCount: 0,
   });
+  const reloadPage = useCallback(() => {
+    if (typeof window !== "undefined") {
+      window.location.reload();
+    }
+  }, []);
+  const statusNeedsReloadAction = status === BLIND_SIGNING_KEY_RELOAD_STATUS;
+  const statusNotice = status ? (
+    <div className='simple-status-row'>
+      <p className='simple-voter-note'>{status}</p>
+      {statusNeedsReloadAction ? (
+        <button type='button' className='simple-voter-secondary simple-status-action' onClick={reloadPage}>
+          Reload page
+        </button>
+      ) : null}
+    </div>
+  ) : null;
   const [resultReadDiagnostics, setResultReadDiagnostics] = useState({
     mode: "filtered",
     filteredCount: 0,
@@ -1988,7 +2005,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     }
 
     if (!builtDefinition.blindSigningPublicKey) {
-      setStatus("Blind-signing key is still initialising. Try publishing again in a moment.");
+      setStatus(BLIND_SIGNING_KEY_RELOAD_STATUS);
       return;
     }
 
@@ -2356,7 +2373,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       return;
     }
     if (!workerNpub) {
-      setStatus("Enter a valid worker npub.");
+      setStatus("Enter a valid delegate coordinator npub.");
       return;
     }
     if (delegatedWorkerExpiryEnabled && (!Number.isFinite(expiryMinutes) || expiryMinutes <= 0)) {
@@ -2364,12 +2381,12 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       return;
     }
     if (delegatedWorkerCapabilities.length === 0) {
-      setStatus("Select at least one worker capability.");
+      setStatus("Select at least one delegate coordinator capability.");
       return;
     }
     const controlRelays = parseDelegatedControlRelays(delegatedWorkerControlRelays);
     if (controlRelays.length === 0) {
-      setStatus("Enter at least one worker control relay.");
+      setStatus("Enter at least one delegate coordinator control relay.");
       return;
     }
     const delegation = createWorkerDelegationCertificate({
@@ -2414,7 +2431,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         sentAt: new Date().toISOString(),
       }
       : null;
-    setStatus("Publishing worker delegation...");
+    setStatus("Publishing delegate coordinator delegation...");
     try {
       const publicResult = await publishWorkerDelegationCertificate({
         coordinatorNsec: coordinatorNsecTrimmed,
@@ -2463,10 +2480,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         });
       }
       setStatus(
-        `Worker delegated (${publicResult.successes} public relay successes, ${dmResult.successes} delegation DM relay successes${configResultSummary}).`,
+        `Delegate coordinator configured (${publicResult.successes} public relay successes, ${dmResult.successes} delegation DM relay successes${configResultSummary}).`,
       );
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Worker delegation failed.");
+      setStatus(error instanceof Error ? error.message : "Delegate coordinator configuration failed.");
     }
   }
 
@@ -2476,7 +2493,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     const coordinatorNpubTrimmed = coordinatorNpub.trim();
     const active = activeWorkerDelegation;
     if (!active || !electionId || !coordinatorNsecTrimmed || !coordinatorNpubTrimmed) {
-      setStatus("No active worker delegation to revoke.");
+      setStatus("No active delegate coordinator delegation to revoke.");
       return;
     }
     const revocation = createWorkerDelegationRevocation({
@@ -2489,7 +2506,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     const controlRelays = active.controlRelays.length > 0
       ? active.controlRelays
       : parseDelegatedControlRelays(delegatedWorkerControlRelays);
-    setStatus("Publishing worker revocation...");
+    setStatus("Publishing delegate coordinator revocation...");
     try {
       const publicResult = await publishWorkerDelegationRevocation({
         coordinatorNsec: coordinatorNsecTrimmed,
@@ -2520,10 +2537,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         });
       }
       setStatus(
-        `Worker revocation published (${publicResult.successes} public relay successes, ${dmResult.successes} DM relay successes).`,
+        `Delegate coordinator revocation published (${publicResult.successes} public relay successes, ${dmResult.successes} DM relay successes).`,
       );
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Worker revocation failed.");
+      setStatus(error instanceof Error ? error.message : "Delegate coordinator revocation failed.");
     }
   }
 
@@ -2534,7 +2551,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     setGeneratedWorkerNsec(nsec);
     setGeneratedWorkerNpub(npub);
     setDelegatedWorkerNpub(npub);
-    setStatus(`Generated worker credentials for ${deriveActorDisplayId(npub)}.`);
+    setStatus(`Generated delegate coordinator credentials for ${deriveActorDisplayId(npub)}.`);
   }
 
   const view = props.view ?? "build";
@@ -2575,7 +2592,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         {publishValidation && !publishValidation.valid ? (
           <p className='simple-voter-note'>Validation: {publishValidation.errors[0] ?? "unknown_error"}.</p>
         ) : null}
-        {status ? <p className='simple-voter-note'>{status}</p> : null}
+        {statusNotice}
       </div>
     );
   }
@@ -3060,7 +3077,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           onClick={props.onConfigureWorker}
           disabled={!props.onConfigureWorker}
         >
-          Configure Worker
+          Configure Delegate Coordinator
         </button>
       </div>
       {!coordinatorNsec.trim() ? (
@@ -3075,12 +3092,12 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           <pre>{JSON.stringify(builtDefinition, null, 2)}</pre>
         </div>
       ) : null}
-      {status ? <p className='simple-voter-note'>{status}</p> : null}
+      {statusNotice}
       {!latestDefinition ? <p className='simple-voter-note'>No questionnaire definition found for this id yet.</p> : null}
         </div>
       </SimpleCollapsibleSection>
       <div id='delegated-worker-section'>
-        <SimpleCollapsibleSection title='Delegated worker'>
+        <SimpleCollapsibleSection title='Delegate coordinator'>
           <div className='simple-questionnaire-worker-section'>
             <label className='simple-voter-label' htmlFor='delegation-mode'>Mode</label>
             <select
@@ -3090,17 +3107,17 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
               onChange={(event) => setDelegationMode(event.target.value === "delegated_worker" ? "delegated_worker" : "browser_only")}
             >
               <option value='browser_only'>Browser only</option>
-              <option value='delegated_worker'>Delegated Nostr worker</option>
+              <option value='delegated_worker'>Delegate coordinator</option>
             </select>
 
             {delegationMode === "delegated_worker" ? (
               <>
                 <section className='simple-delegate-section'>
-                  <h4 className='simple-delegate-title'>Available agents</h4>
+                  <h4 className='simple-delegate-title'>Available delegate coordinators</h4>
                   {availableWorkerStatuses.length === 0 ? (
                     <div className='simple-delegate-empty'>
-                      <p className='simple-voter-empty'>No worker status announcements seen yet.</p>
-                      <p className='simple-voter-note'>Start a worker node to see it appear here.</p>
+                      <p className='simple-voter-empty'>No delegate coordinator status announcements seen yet.</p>
+                      <p className='simple-voter-note'>Start a delegate coordinator to see it appear here.</p>
                     </div>
                   ) : (
                     <ul className='simple-voter-list simple-delegate-agent-list'>
@@ -3127,9 +3144,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                 <section className='simple-delegate-section'>
                   <h4 className='simple-delegate-title'>Setup</h4>
                   <p className='simple-voter-note'>
-                    Configure your environment variables and ensure the worker can reach the specified coordinator node.
+                    Configure your environment variables and ensure the delegate coordinator can reach the specified coordinator node.
                   </p>
-                  <label className='simple-voter-label' htmlFor='delegated-worker-npub'>Worker npub</label>
+                  <label className='simple-voter-label' htmlFor='delegated-worker-npub'>Delegate coordinator npub</label>
                   <input
                     id='delegated-worker-npub'
                     className='simple-voter-input'
@@ -3139,7 +3156,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                   />
                   <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
                     <button type='button' className='simple-voter-secondary' onClick={generateWorkerCredentials}>
-                      Generate worker nsec
+                      Generate delegate coordinator nsec
                     </button>
                     <button
                       type='button'
@@ -3151,11 +3168,11 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                     </button>
                   </div>
                   {generatedWorkerNpub ? (
-                    <p className='simple-voter-note'>Generated worker npub: {generatedWorkerNpub}</p>
+                    <p className='simple-voter-note'>Generated delegate coordinator npub: {generatedWorkerNpub}</p>
                   ) : null}
                   {generatedWorkerNsec ? (
                     <div className='simple-voter-field-stack'>
-                      <label className='simple-voter-label' htmlFor='generated-worker-nsec'>Generated worker nsec (store securely)</label>
+                      <label className='simple-voter-label' htmlFor='generated-worker-nsec'>Generated delegate coordinator nsec (store securely)</label>
                       <textarea
                         id='generated-worker-nsec'
                         className='simple-voter-input'
@@ -3176,20 +3193,20 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                   <p className='simple-voter-note simple-delegate-warning-note'>
                     {delegatedWorkerControlRelays.trim()
                       ? "This command includes WORKER_RELAYS from the current relay input."
-                      : "WORKER_RELAYS is omitted; worker uses the built-in default client relay set."}
+                      : "WORKER_RELAYS is omitted; the delegate coordinator uses the built-in default client relay set."}
                   </p>
                   <a className='simple-voter-secondary simple-delegate-link-readme' href={workerHelperReadmeUrl} target='_blank' rel='noreferrer'>
-                    Setup notes
+                    Delegate coordinator information
                   </a>
                 </section>
 
                 <section className='simple-delegate-section'>
-                  <h4 className='simple-delegate-title'>Worker helper downloads</h4>
+                  <h4 className='simple-delegate-title'>Delegate coordinator downloads</h4>
                   <p className='simple-voter-note'>
-                    Autoconfigured saves a platform-specific launcher script with the current coordinator `npub`, effective relay list, and generated worker `nsec` when one is present.
+                    Autoconfigured saves a platform-specific launcher script with the current coordinator `npub`, effective relay list, and generated delegate coordinator `nsec` when one is present.
                   </p>
                   <p className='simple-voter-note'>
-                    Right-click copy link is supported. Shared Autoconfigured links intentionally omit `WORKER_NSEC`, so the receiving operator must supply their own worker secret.
+                    Right-click copy link is supported. Shared Autoconfigured links intentionally omit `WORKER_NSEC`, so the receiving operator must supply their own delegate coordinator secret.
                   </p>
                   <div className='simple-delegate-download-grid'>
                     <div className='simple-delegate-download-row'>
@@ -3313,7 +3330,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                 </section>
 
                 <section className='simple-delegate-section'>
-                  <h4 className='simple-delegate-title'>Delegation Status</h4>
+                  <h4 className='simple-delegate-title'>Delegate coordinator status</h4>
                   <div className='simple-delegate-status-overview'>
                     <span>Status overview</span>
                     <strong className='simple-delegate-status-badge'>
@@ -3322,7 +3339,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                   </div>
                   <div className='simple-delegate-status-grid'>
                     <p className='simple-voter-note'>Delegation state <span>{delegationStatusLabel}</span></p>
-                    <p className='simple-voter-note'>Worker npub <span>{selectedWorkerStatus?.workerNpub || activeWorkerDelegation?.workerNpub || "Not selected"}</span></p>
+                    <p className='simple-voter-note'>Delegate coordinator npub <span>{selectedWorkerStatus?.workerNpub || activeWorkerDelegation?.workerNpub || "Not selected"}</span></p>
                     <p className='simple-voter-note'>Last heartbeat <span>{selectedWorkerStatus?.heartbeatAt ? new Date(selectedWorkerStatus.heartbeatAt).toLocaleString() : "Not seen"}</span></p>
                     <p className='simple-voter-note'>Last blind issuance <span>{selectedWorkerStatus?.lastBlindIssuanceAt ? new Date(selectedWorkerStatus.lastBlindIssuanceAt).toLocaleString() : "Not reported"}</span></p>
                     <p className='simple-voter-note'>Last vote verification <span>{selectedWorkerStatus?.lastVoteVerificationAt ? new Date(selectedWorkerStatus.lastVoteVerificationAt).toLocaleString() : "Not reported"}</span></p>
@@ -3344,7 +3361,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                     </button>
                   </div>
                   <p className='simple-voter-note'>
-                    Delegation defaults to all supported worker responsibilities. Open this section only if you need to narrow capabilities, override relays, or set an expiry.
+                    Delegation defaults to all supported delegate coordinator responsibilities. Open this section only if you need to narrow capabilities, override relays, or set an expiry.
                   </p>
                   <div id='worker-more-options' className='simple-collapsible-body'>
                     <div className='simple-collapsible-body-inner'>

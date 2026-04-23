@@ -730,7 +730,7 @@ export default function SimpleAuditorApp() {
                   <p className='simple-voter-question'>{formatQuestionnaireStateLabel(selectedLiveState ?? selectedQuestionnaire.state)}</p>
                 </div>
                 <div className='simple-auditor-summary-card'>
-                  <p className='simple-auditor-summary-label'>Delegated worker</p>
+                  <p className='simple-auditor-summary-label'>Delegate coordinator</p>
                   <p className='simple-voter-question'>
                     {formatWorkerDelegationStatus(selectedWorkerDelegationStatus)}
                   </p>

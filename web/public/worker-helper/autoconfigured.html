@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Autoconfigured Worker Launcher</title>
+    <title>Autoconfigured Delegate Coordinator Launcher</title>
     <style>
       :root {
         color-scheme: dark;
@@ -93,9 +93,9 @@
   </head>
   <body>
     <main>
-      <h1>Autoconfigured worker launcher</h1>
+      <h1>Autoconfigured delegate coordinator launcher</h1>
       <p id="status">Preparing launcher download...</p>
-      <p class="note">This shareable link never includes <code>WORKER_NSEC</code>. Set your own worker secret before running it.</p>
+      <p class="note">This shareable link never includes <code>WORKER_NSEC</code>. Set your own delegate coordinator secret before running it.</p>
       <div class="actions">
         <button id="download-button" class="button" type="button">Download launcher</button>
       </div>
@@ -161,7 +161,7 @@
       function buildLauncherContents({ target, coordinatorNpub, workerNpub, workerRelays }) {
         const nsecPlaceholder = "nsec1...";
         if (target.shell === "powershell") {
-          const expectedNpub = workerNpub ? `Write-Host 'Expected worker npub: ${escapeForPowerShellSingleQuotedString(workerNpub)}'\n` : "";
+          const expectedNpub = workerNpub ? `Write-Host 'Expected delegate coordinator npub: ${escapeForPowerShellSingleQuotedString(workerNpub)}'\n` : "";
           const legacyBinaryFilename = (target.legacyBinaryFilename || "").trim();
           return [
             "$ErrorActionPreference = 'Stop'",
@@ -178,7 +178,7 @@
               : "$LegacyBinaryPath = $null",
             "",
             "if (-not (Test-Path $BinaryPath)) {",
-            "  Write-Host \"Downloading worker binary...\"",
+            "  Write-Host \"Downloading delegate coordinator binary...\"",
             "  Invoke-WebRequest -Uri $AssetUrl -OutFile $ArchivePath",
             "  Expand-Archive -Path $ArchivePath -DestinationPath $ScriptDir -Force",
             "}",
@@ -194,16 +194,16 @@
             "} elseif ($LegacyBinaryPath -and (Test-Path $LegacyBinaryPath)) {",
             "  $ExecutablePath = $LegacyBinaryPath",
             "} else {",
-            "  throw 'Worker executable not found after extraction.'",
+            "  throw 'Delegate coordinator executable not found after extraction.'",
             "}",
             "",
-            "Write-Host \"Starting worker...\"",
+            "Write-Host \"Starting delegate coordinator...\"",
             "& $ExecutablePath",
             "",
           ].filter(Boolean).join("\n");
         }
 
-        const expectedNpub = workerNpub ? `# Expected worker npub: ${escapeForDoubleQuotedBash(workerNpub)}\n` : "";
+        const expectedNpub = workerNpub ? `# Expected delegate coordinator npub: ${escapeForDoubleQuotedBash(workerNpub)}\n` : "";
         const legacyBinaryFilename = (target.legacyBinaryFilename || "").trim();
         return [
           "#!/usr/bin/env bash",
@@ -232,7 +232,7 @@
           "}",
           "",
           'if [ ! -x "$SCRIPT_DIR/$BINARY_NAME" ]; then',
-          '  echo "Downloading worker binary..."',
+          '  echo "Downloading delegate coordinator binary..."',
           "  download_asset",
           '  tar -xzf "$SCRIPT_DIR/$ASSET_NAME" -C "$SCRIPT_DIR"',
           '  chmod +x "$SCRIPT_DIR/$BINARY_NAME" || true',
@@ -252,11 +252,11 @@
           'elif [ -n "$LEGACY_BINARY_NAME" ] && [ -x "$SCRIPT_DIR/$LEGACY_BINARY_NAME" ]; then',
           '  EXECUTABLE_PATH="$SCRIPT_DIR/$LEGACY_BINARY_NAME"',
           "else",
-          '  echo "Worker executable not found after extraction." >&2',
+          '  echo "Delegate coordinator executable not found after extraction." >&2',
           "  exit 1",
           "fi",
           "",
-          'echo "Starting worker..."',
+          'echo "Starting delegate coordinator..."',
           'exec "$EXECUTABLE_PATH"',
           "",
         ].filter(Boolean).join("\n");
@@ -285,7 +285,7 @@
       const downloadButton = document.getElementById("download-button");
 
       if (!target) {
-        statusNode.textContent = "Unsupported worker target in this link.";
+        statusNode.textContent = "Unsupported delegate coordinator target in this link.";
       } else {
         const contents = buildLauncherContents({
           target,

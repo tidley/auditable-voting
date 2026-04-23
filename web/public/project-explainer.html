@@ -204,11 +204,13 @@ The current repository contains only the browser app. It has voter, coordinator,
 
 1. Build and publish a questionnaire definition (public event).
 2. Invite voter npubs to that questionnaire.
-3. Optional: in the separate **Build** page `Delegated worker` section, switch mode to `Delegated Nostr worker`, use the startup helper/downloads or save an autoconfigured platform launcher that already includes the current coordinator `npub`; right-click copy-link uses a shareable launcher URL that omits the worker secret, raw binary and direct CLI options sit under `Advanced`, and delegation still leaves the coordinator as root authority.
-4. Receive blind-token requests over private DMs (or delegate handling to a worker).
-5. Issue blind signatures to authorised voters over private DMs (or let the delegated worker blind-sign on behalf of the coordinator for that delegated round). Invite payloads and cached election metadata now carry the delegated worker routing hint so voters can keep targeting the worker if the coordinator browser goes offline, and worker election-config DMs also carry the questionnaire definition so worker-issued blind credentials can still render the ballot if the coordinator browser is offline.
+3. Optional: in the separate **Build** page `Delegate coordinator` section, switch mode to `Delegate coordinator`, use the startup helper/downloads or save an autoconfigured platform launcher that already includes the current coordinator `npub`; right-click copy-link uses a shareable launcher URL that omits the delegate coordinator secret, raw binary and direct CLI options sit under `Advanced`, and delegation still leaves the coordinator as root authority.
+4. Receive blind-token requests over private DMs (or delegate handling to a delegate coordinator).
+5. Issue blind signatures to authorised voters over private DMs (or let the delegate coordinator blind-sign on behalf of the coordinator for that delegated round). Invite payloads and cached election metadata now carry the delegate coordinator routing hint so voters can keep targeting the delegate coordinator if the coordinator browser goes offline, and delegate coordinator election-config DMs also carry the questionnaire definition so delegate-coordinator-issued blind credentials can still render the ballot if the coordinator browser is offline.
 6. Watch public submissions and publish public accept/reject decisions (or delegate decision publication).
-7. Close the round and publish the result summary (or enable worker auto-summary once all invitees have accepted responses).
+7. Close the round and publish the result summary (or enable delegate coordinator auto-summary once all invitees have accepted responses).
+
+If the Build page reports that the blind-signing key is still initialising in the current tab, use the `Reload page` action shown in that status message and then try publishing again.
 
 ### Voter
 
@@ -298,7 +300,7 @@ The client uses:
 - NIP-17 gift-wrapped DMs for private request and issuance traffic
 - `@cloudflare/blindrsa-ts` for RSABSSA blind signatures
 - Rust/Wasm for deterministic replay and protocol validation in the public round path
-- an optional Rust worker daemon (`worker/`) for delegated election operations over outbound-only relay connections
+- an optional Rust delegate coordinator runtime (`worker/`) for delegated election operations over outbound-only relay connections
 - browser storage for private active state and recovery
 
 ## Blind Issuance

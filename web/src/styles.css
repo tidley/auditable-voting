@@ -1383,6 +1383,21 @@ code {
   word-break: break-word;
 }
 
+.simple-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.simple-status-row .simple-voter-note {
+  flex: 1 1 320px;
+}
+
+.simple-status-action {
+  flex: 0 0 auto;
+}
+
 .simple-delivery-diagnostics {
   display: grid;
   gap: 5px;

@@ -49,12 +49,13 @@ This is the practical order of operations for the current app.
 2. In **Build**, set questionnaire ID, title, description, questions, and (optionally) enable the close timer (default is off).
 3. In **Invite**, add or import voter npubs and invite expected participants.
 4. Send invites (`Send invite` / `Invite all whitelisted`) or share the invite link (generated links use the current host by default).
-5. As voters appear, run `Process requests` / `Check responses` to process blind request and response queues (or delegate those duties to a worker).
+5. As voters appear, run `Process requests` / `Check responses` to process blind request and response queues (or delegate those duties to a delegate coordinator).
    - Verified voters can now pre-request and coordinators can pre-issue before publish.
-   - If needed, use the separate **Build** page `Delegated worker` section, switch to `Delegated Nostr worker`, generate worker credentials/startup command, or save an autoconfigured platform-specific launcher script that already includes the current coordinator `npub`; right-click copy-link uses a shareable launcher URL that intentionally omits the worker secret, and raw binary / direct CLI options now sit under `Advanced`.
-   - When blind-token issuance is delegated, invite payloads and cached election metadata carry the worker routing hint so voters can keep DMing the worker even if the coordinator browser is no longer open.
-   - Worker election-config DMs now also carry the questionnaire definition, so worker-issued blind credentials can still render the ballot if the coordinator browser is offline.
+   - If needed, use the separate **Build** page `Delegate coordinator` section, switch to `Delegate coordinator`, generate delegate coordinator credentials/startup command, or save an autoconfigured platform-specific launcher script that already includes the current coordinator `npub`; right-click copy-link uses a shareable launcher URL that intentionally omits the delegate coordinator secret, and raw binary / direct CLI options now sit under `Advanced`.
+   - When blind-token issuance is delegated, invite payloads and cached election metadata carry the delegate coordinator routing hint so voters can keep DMing the delegate coordinator even if the coordinator browser is no longer open.
+   - Delegate coordinator election-config DMs now also carry the questionnaire definition, so delegate-coordinator-issued blind credentials can still render the ballot if the coordinator browser is offline.
 6. Publish the questionnaire when ready (`Publish Questionnaire`, state becomes `Open`).
+   - If the Build page reports that the blind-signing key is still initialising in the current tab, use the `Reload page` action shown in that status message and then try publishing again.
 
 ### 2. Voter joins second
 
@@ -219,7 +220,7 @@ The present web client is built with:
 - **optional NIP-65 relay hints**, disabled by default, for relay discovery experiments
 - **`@cloudflare/blindrsa-ts`** for the RSABSSA blind-signature primitive used in the current issuance path
 - **Rust compiled to WebAssembly** for deterministic protocol logic, including validation helpers and the new coordinator control engine
-- **an optional Rust delegated worker daemon** (`worker/`) for election-scoped delegated issuance/verification operations over outbound-only relay connections, with coordinator-signed delegation and revocation control
+- **an optional Rust delegate coordinator runtime** (`worker/`) for election-scoped delegated issuance/verification operations over outbound-only relay connections, with coordinator-signed delegation and revocation control
 - **a real OpenMLS-backed coordinator engine inside the Rust core**, hidden behind a stable Rust abstraction so the browser code does not depend on MLS types directly; the browser coordinator path now bootstraps and joins the supervisory MLS group through Nostr carrier events, and the lead waits for sub-coordinator welcome acknowledgement only after the non-lead has completed an initial coordinator-control backfill pass before opening the first public round in the repaired small live cases
 - **a Rust mixed-replay engine for public rounds and ballots**, now used by the voter, coordinator, and auditor public-state views to derive round state, accepted ballots, and rejection reasons
 - **versioned Rust snapshots and replay diagnostics** for the shared protocol engine, so the browser can restore state, validate snapshot compatibility, and surface replay issues without re-implementing protocol rules in TypeScript
@@ -774,6 +775,6 @@ The questionnaire runtime currently provides:
 - Android Amber NIP-46 sessions now request `sign_event`, `nip04_encrypt/decrypt`, and `nip44_encrypt/decrypt` up front during connect so later flow steps do not trigger capability escalation prompts
 - invite/login npubs and local voter/responder npubs may differ; the invite can be opened against the current local voter identity, then the coordinator either auto-issues for whitelisted voters or manually authorises unexpected requesters
 - invites are durable and can remain idle indefinitely; ballot request retries preserve the same request id and re-queue until the coordinator issues a credential, and the credential issuance can also carry the questionnaire definition as a recovery path
-- delegated blind-token routing is cached in the invite and election summary, and the voter still re-checks the public delegation before falling back to that cached worker `npub`
+- delegated blind-token routing is cached in the invite and election summary, and the voter still re-checks the public delegation before falling back to that cached delegate coordinator `npub`
 - accepted DM submissions feed the same coordinator response summaries as public questionnaire response events
 - after a response is submitted, the voter Vote page shows the responder marker with its coloured pattern and expandable QR
