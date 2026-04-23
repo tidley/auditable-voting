@@ -51,7 +51,7 @@ This is the practical order of operations for the current app.
 4. Send invites (`Send invite` / `Invite all whitelisted`) or share the invite link (generated links use the current host by default).
 5. As voters appear, run `Process requests` / `Check responses` to process blind request and response queues (or delegate those duties to a worker).
    - Verified voters can now pre-request and coordinators can pre-issue before publish.
-   - If needed, use the **Build** page `Delegated worker` section, switch to `Delegated Nostr worker`, generate worker credentials/startup command, then delegate while keeping the browser as control authority (worker can issue blind tokens and publish decisions/summaries for the delegated election).
+   - If needed, use the **Build** page `Delegated worker` section, switch to `Delegated Nostr worker`, generate worker credentials/startup command, or download a platform-specific launcher script that already includes the current coordinator `npub`, then delegate while keeping the browser as control authority (worker can issue blind tokens and publish decisions/summaries for the delegated election).
    - When blind-token issuance is delegated, invite payloads and cached election metadata carry the worker routing hint so voters can keep DMing the worker even if the coordinator browser is no longer open.
 6. Publish the questionnaire when ready (`Publish Questionnaire`, state becomes `Open`).
 

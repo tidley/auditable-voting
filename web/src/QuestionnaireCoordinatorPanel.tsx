@@ -366,6 +366,139 @@ function downloadJsonFile(filename: string, payload: unknown) {
   window.URL.revokeObjectURL(url);
 }
 
+function downloadTextFile(filename: string, contents: string, type = "text/plain;charset=utf-8") {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const blob = new Blob([contents], { type });
+  const url = window.URL.createObjectURL(blob);
+  const anchor = window.document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  window.document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.URL.revokeObjectURL(url);
+}
+
+function escapeForDoubleQuotedBash(value: string) {
+  return value
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\$/g, "\\$")
+    .replace(/`/g, "\\`");
+}
+
+function escapeForPowerShellSingleQuotedString(value: string) {
+  return value.replace(/'/g, "''");
+}
+
+type WorkerLauncherTarget = {
+  assetFilename: string;
+  assetUrl: string;
+  binaryFilename: string;
+  launcherFilename: string;
+  shell: "bash" | "powershell";
+};
+
+function buildWorkerLauncherContents(input: {
+  target: WorkerLauncherTarget;
+  coordinatorNpub: string;
+  workerNsec: string;
+  workerNpub: string;
+  workerRelays: string;
+}) {
+  const coordinatorNpub = input.coordinatorNpub.trim() || "npub1...";
+  const workerNsec = input.workerNsec.trim() || "nsec1...";
+  const workerNpub = input.workerNpub.trim();
+  const workerRelays = input.workerRelays.trim();
+
+  if (input.target.shell === "powershell") {
+    const coordinator = escapeForPowerShellSingleQuotedString(coordinatorNpub);
+    const nsec = escapeForPowerShellSingleQuotedString(workerNsec);
+    const npubLine = workerNpub
+      ? `Write-Host 'Expected worker npub: ${escapeForPowerShellSingleQuotedString(workerNpub)}'\n`
+      : "";
+    const relays = escapeForPowerShellSingleQuotedString(workerRelays);
+    return [
+      "$ErrorActionPreference = 'Stop'",
+      "",
+      "# Generated from the coordinator Build page.",
+      "# Treat this file as sensitive if WORKER_NSEC is populated with a real secret.",
+      npubLine.trimEnd(),
+      "$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path",
+      `$AssetUrl = '${escapeForPowerShellSingleQuotedString(input.target.assetUrl)}'`,
+      `$ArchivePath = Join-Path $ScriptDir '${escapeForPowerShellSingleQuotedString(input.target.assetFilename)}'`,
+      `$BinaryPath = Join-Path $ScriptDir '${escapeForPowerShellSingleQuotedString(input.target.binaryFilename)}'`,
+      "",
+      "if (-not (Test-Path $BinaryPath)) {",
+      "  Write-Host \"Downloading worker binary...\"",
+      "  Invoke-WebRequest -Uri $AssetUrl -OutFile $ArchivePath",
+      "  Expand-Archive -Path $ArchivePath -DestinationPath $ScriptDir -Force",
+      "}",
+      "",
+      `if (-not $env:WORKER_NSEC) { $env:WORKER_NSEC = '${nsec}' }`,
+      `if (-not $env:COORDINATOR_NPUB) { $env:COORDINATOR_NPUB = '${coordinator}' }`,
+      `if (-not $env:WORKER_RELAYS) { $env:WORKER_RELAYS = '${relays}' }`,
+      "if (-not $env:WORKER_STATE_DIR) { $env:WORKER_STATE_DIR = (Join-Path $ScriptDir '.worker-state') }",
+      "New-Item -ItemType Directory -Force -Path $env:WORKER_STATE_DIR | Out-Null",
+      "",
+      "Write-Host \"Starting worker...\"",
+      "& $BinaryPath",
+      "",
+    ].filter(Boolean).join("\n");
+  }
+
+  const coordinator = escapeForDoubleQuotedBash(coordinatorNpub);
+  const nsec = escapeForDoubleQuotedBash(workerNsec);
+  const relays = escapeForDoubleQuotedBash(workerRelays);
+  const expectedNpubComment = workerNpub
+    ? `# Expected worker npub: ${escapeForDoubleQuotedBash(workerNpub)}\n`
+    : "";
+  return [
+    "#!/usr/bin/env bash",
+    "set -euo pipefail",
+    "",
+    "# Generated from the coordinator Build page.",
+    "# Treat this file as sensitive if WORKER_NSEC is populated with a real secret.",
+    expectedNpubComment.trimEnd(),
+    'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
+    `ASSET_URL="${escapeForDoubleQuotedBash(input.target.assetUrl)}"`,
+    `ASSET_NAME="${escapeForDoubleQuotedBash(input.target.assetFilename)}"`,
+    `BINARY_NAME="${escapeForDoubleQuotedBash(input.target.binaryFilename)}"`,
+    "",
+    "download_asset() {",
+    "  if command -v curl >/dev/null 2>&1; then",
+    '    curl -L --fail "$ASSET_URL" -o "$SCRIPT_DIR/$ASSET_NAME"',
+    "    return",
+    "  fi",
+    "  if command -v wget >/dev/null 2>&1; then",
+    '    wget -O "$SCRIPT_DIR/$ASSET_NAME" "$ASSET_URL"',
+    "    return",
+    "  fi",
+    '  echo "Need curl or wget to download $ASSET_NAME" >&2',
+    "  exit 1",
+    "}",
+    "",
+    'if [ ! -x "$SCRIPT_DIR/$BINARY_NAME" ]; then',
+    '  echo "Downloading worker binary..."',
+    "  download_asset",
+    '  tar -xzf "$SCRIPT_DIR/$ASSET_NAME" -C "$SCRIPT_DIR"',
+    '  chmod +x "$SCRIPT_DIR/$BINARY_NAME" || true',
+    "fi",
+    "",
+    `export WORKER_NSEC="\${WORKER_NSEC:-${nsec}}"`,
+    `export COORDINATOR_NPUB="\${COORDINATOR_NPUB:-${coordinator}}"`,
+    `export WORKER_RELAYS="\${WORKER_RELAYS:-${relays}}"`,
+    'export WORKER_STATE_DIR="${WORKER_STATE_DIR:-$SCRIPT_DIR/.worker-state}"',
+    'mkdir -p "$WORKER_STATE_DIR"',
+    "",
+    'echo "Starting worker..."',
+    'exec "$SCRIPT_DIR/$BINARY_NAME"',
+    "",
+  ].filter(Boolean).join("\n");
+}
+
 function percentageLabel(count: number, total: number) {
   if (total <= 0) {
     return "0%";
@@ -1356,6 +1489,59 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     () => parseDelegatedControlRelays(delegatedWorkerControlRelays).join(","),
     [delegatedWorkerControlRelays],
   );
+  const workerLauncherTargets = useMemo<Record<string, WorkerLauncherTarget>>(() => ({
+    linuxX64: {
+      assetFilename: "auditable-voting-worker-linux-x64.tar.gz",
+      assetUrl: workerHelperDownloadUrl,
+      binaryFilename: "auditable-voting-worker",
+      launcherFilename: "start-auditable-voting-worker-linux-x64.sh",
+      shell: "bash",
+    },
+    linuxArm64: {
+      assetFilename: "auditable-voting-worker-linux-arm64.tar.gz",
+      assetUrl: workerLinuxArm64DownloadUrl,
+      binaryFilename: "auditable-voting-worker",
+      launcherFilename: "start-auditable-voting-worker-linux-arm64.sh",
+      shell: "bash",
+    },
+    linuxArmv7: {
+      assetFilename: "auditable-voting-worker-linux-armv7.tar.gz",
+      assetUrl: workerLinuxArmv7DownloadUrl,
+      binaryFilename: "auditable-voting-worker",
+      launcherFilename: "start-auditable-voting-worker-linux-armv7.sh",
+      shell: "bash",
+    },
+    windowsX64: {
+      assetFilename: "auditable-voting-worker-windows-x64.zip",
+      assetUrl: workerWindowsDownloadUrl,
+      binaryFilename: "auditable-voting-worker.exe",
+      launcherFilename: "start-auditable-voting-worker-windows-x64.ps1",
+      shell: "powershell",
+    },
+    macosArm64: {
+      assetFilename: "auditable-voting-worker-macos-arm64.tar.gz",
+      assetUrl: workerMacOsArm64DownloadUrl,
+      binaryFilename: "auditable-voting-worker",
+      launcherFilename: "start-auditable-voting-worker-macos-arm64.sh",
+      shell: "bash",
+    },
+  }), [
+    workerHelperDownloadUrl,
+    workerLinuxArm64DownloadUrl,
+    workerLinuxArmv7DownloadUrl,
+    workerMacOsArm64DownloadUrl,
+    workerWindowsDownloadUrl,
+  ]);
+  const downloadConfiguredWorkerLauncher = useCallback((target: WorkerLauncherTarget) => {
+    const contents = buildWorkerLauncherContents({
+      target,
+      coordinatorNpub,
+      workerNsec: generatedWorkerNsec,
+      workerNpub: generatedWorkerNpub,
+      workerRelays: helperRelayList,
+    });
+    downloadTextFile(target.launcherFilename, contents, "text/plain;charset=utf-8");
+  }, [coordinatorNpub, generatedWorkerNpub, generatedWorkerNsec, helperRelayList]);
   const workerStartupCommand = useMemo(() => {
     const coordinator = coordinatorNpub.trim() || "npub1...";
     const workerNsec = generatedWorkerNsec.trim() || "nsec1...";
@@ -2738,30 +2924,38 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
 
                 <section className='simple-delegate-section'>
                   <h4 className='simple-delegate-title'>Worker helper downloads</h4>
+                  <p className='simple-voter-note'>
+                    Download saves a platform-specific launcher script with the current coordinator `npub`, effective relay list, and generated worker `nsec` when one is present. Use Binary for the raw release asset.
+                  </p>
                   <div className='simple-delegate-download-grid'>
                     <div className='simple-delegate-download-row'>
                       <span className='simple-delegate-download-label'>Linux x64</span>
-                      <a className='simple-delegate-link' href={workerHelperDownloadUrl} download>Download</a>
+                      <button type='button' className='simple-delegate-link simple-delegate-button' onClick={() => downloadConfiguredWorkerLauncher(workerLauncherTargets.linuxX64)}>Download</button>
+                      <a className='simple-delegate-link' href={workerHelperDownloadUrl} download>Binary</a>
                       <a className='simple-delegate-link' href={workerHelperChecksumUrl} download>Checksum</a>
                     </div>
                     <div className='simple-delegate-download-row'>
                       <span className='simple-delegate-download-label'>Linux arm64</span>
-                      <a className='simple-delegate-link' href={workerLinuxArm64DownloadUrl} target='_blank' rel='noreferrer'>Download</a>
+                      <button type='button' className='simple-delegate-link simple-delegate-button' onClick={() => downloadConfiguredWorkerLauncher(workerLauncherTargets.linuxArm64)}>Download</button>
+                      <a className='simple-delegate-link' href={workerLinuxArm64DownloadUrl} target='_blank' rel='noreferrer'>Binary</a>
                       <a className='simple-delegate-link' href={workerLinuxArm64ChecksumUrl} target='_blank' rel='noreferrer'>Checksum</a>
                     </div>
                     <div className='simple-delegate-download-row'>
                       <span className='simple-delegate-download-label'>Linux armv7</span>
-                      <a className='simple-delegate-link' href={workerLinuxArmv7DownloadUrl} target='_blank' rel='noreferrer'>Download</a>
+                      <button type='button' className='simple-delegate-link simple-delegate-button' onClick={() => downloadConfiguredWorkerLauncher(workerLauncherTargets.linuxArmv7)}>Download</button>
+                      <a className='simple-delegate-link' href={workerLinuxArmv7DownloadUrl} target='_blank' rel='noreferrer'>Binary</a>
                       <a className='simple-delegate-link' href={workerLinuxArmv7ChecksumUrl} target='_blank' rel='noreferrer'>Checksum</a>
                     </div>
                     <div className='simple-delegate-download-row'>
                       <span className='simple-delegate-download-label'>Windows</span>
-                      <a className='simple-delegate-link' href={workerWindowsDownloadUrl} target='_blank' rel='noreferrer'>Download</a>
+                      <button type='button' className='simple-delegate-link simple-delegate-button' onClick={() => downloadConfiguredWorkerLauncher(workerLauncherTargets.windowsX64)}>Download</button>
+                      <a className='simple-delegate-link' href={workerWindowsDownloadUrl} target='_blank' rel='noreferrer'>Binary</a>
                       <a className='simple-delegate-link' href={workerWindowsChecksumUrl} target='_blank' rel='noreferrer'>Checksum</a>
                     </div>
                     <div className='simple-delegate-download-row'>
                       <span className='simple-delegate-download-label'>macOS</span>
-                      <a className='simple-delegate-link' href={workerMacOsArm64DownloadUrl} target='_blank' rel='noreferrer'>Download</a>
+                      <button type='button' className='simple-delegate-link simple-delegate-button' onClick={() => downloadConfiguredWorkerLauncher(workerLauncherTargets.macosArm64)}>Download</button>
+                      <a className='simple-delegate-link' href={workerMacOsArm64DownloadUrl} target='_blank' rel='noreferrer'>Binary</a>
                       <a className='simple-delegate-link' href={workerMacOsArm64ChecksumUrl} target='_blank' rel='noreferrer'>Checksum</a>
                     </div>
                   </div>

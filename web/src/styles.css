@@ -1137,7 +1137,7 @@ code {
 
 .simple-delegate-download-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   gap: 10px;
   align-items: center;
   padding: 10px 12px;
@@ -1166,6 +1166,14 @@ code {
 
 .simple-delegate-link:hover {
   color: #f8fafc;
+}
+
+.simple-delegate-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
 }
 
 .simple-delegate-link-readme {

@@ -41,6 +41,8 @@ GitHub Releases include worker binaries for:
 - Windows x64: `auditable-voting-worker-windows-x64.zip`
 - macOS Apple Silicon: `auditable-voting-worker-macos-arm64.tar.gz`
 
+The coordinator Build page can also generate a platform-specific launcher script that downloads the correct binary and fills in the current coordinator `npub`, effective relay list, and generated worker `nsec` when present.
+
 ## Current responsibilities
 
 - announce worker presence/status to the coordinator via NIP-17 DM
