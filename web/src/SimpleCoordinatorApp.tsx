@@ -5757,30 +5757,28 @@ export default function SimpleCoordinatorApp() {
             )}
             </SimpleCollapsibleSection>
 
-            <SimpleCollapsibleSection title='Questionnaire draft'>
-              <QuestionnaireCoordinatorPanel
-                coordinatorNsec={keypair?.nsec ?? null}
-                coordinatorNpub={keypair?.npub ?? null}
-                knownVoterCount={optionAKnownVoterCount}
-                optionAAcceptedCount={optionAAcceptedCount}
-                optionAAcceptedResponses={optionAAcceptedResponses}
-                blindSigningPublicKey={optionABlindSigningPublicKey}
-                view='build'
-                onInviteParticipants={() => selectTab('participants')}
-                onConfigureWorker={() => {
-                  selectTab('configure');
-                  if (typeof window !== "undefined") {
-                    window.requestAnimationFrame(() => {
-                      document.getElementById("delegated-worker-section")?.scrollIntoView({
-                        behavior: "smooth",
-                        block: "start",
-                      });
+            <QuestionnaireCoordinatorPanel
+              coordinatorNsec={keypair?.nsec ?? null}
+              coordinatorNpub={keypair?.npub ?? null}
+              knownVoterCount={optionAKnownVoterCount}
+              optionAAcceptedCount={optionAAcceptedCount}
+              optionAAcceptedResponses={optionAAcceptedResponses}
+              blindSigningPublicKey={optionABlindSigningPublicKey}
+              view='build'
+              onInviteParticipants={() => selectTab('participants')}
+              onConfigureWorker={() => {
+                selectTab('configure');
+                if (typeof window !== "undefined") {
+                  window.requestAnimationFrame(() => {
+                    document.getElementById("delegated-worker-section")?.scrollIntoView({
+                      behavior: "smooth",
+                      block: "start",
                     });
-                  }
-                }}
-                onStatusChange={updateQuestionnaireRosterAnnouncement}
-              />
-            </SimpleCollapsibleSection>
+                  });
+                }
+              }}
+              onStatusChange={updateQuestionnaireRosterAnnouncement}
+            />
           </section>
         ) : null}
 

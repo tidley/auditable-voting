@@ -396,10 +396,21 @@ function escapeForPowerShellSingleQuotedString(value: string) {
 type WorkerLauncherTarget = {
   assetFilename: string;
   assetUrl: string;
+  checksumUrl: string;
   binaryFilename: string;
   launcherFilename: string;
   shell: "bash" | "powershell";
 };
+
+type WorkerLauncherTargetKey = "linuxX64" | "linuxArm64" | "linuxArmv7" | "windowsX64" | "macosArm64";
+
+const WORKER_LAUNCHER_TARGET_OPTIONS: Array<{ key: WorkerLauncherTargetKey; label: string }> = [
+  { key: "linuxX64", label: "Linux x64" },
+  { key: "linuxArm64", label: "Linux arm64" },
+  { key: "linuxArmv7", label: "Linux armv7" },
+  { key: "windowsX64", label: "Windows x64" },
+  { key: "macosArm64", label: "macOS Apple Silicon" },
+];
 
 function buildWorkerLauncherContents(input: {
   target: WorkerLauncherTarget;
@@ -497,6 +508,38 @@ function buildWorkerLauncherContents(input: {
     'exec "$SCRIPT_DIR/$BINARY_NAME"',
     "",
   ].filter(Boolean).join("\n");
+}
+
+function buildWorkerDirectCommand(input: {
+  target: WorkerLauncherTarget;
+  coordinatorNpub: string;
+  workerNsec: string;
+  workerRelays: string;
+}) {
+  const coordinatorNpub = input.coordinatorNpub.trim() || "npub1...";
+  const workerNsec = input.workerNsec.trim() || "nsec1...";
+  const workerRelays = input.workerRelays.trim();
+
+  if (input.target.shell === "powershell") {
+    return [
+      `Invoke-WebRequest -Uri '${escapeForPowerShellSingleQuotedString(input.target.assetUrl)}' -OutFile '${escapeForPowerShellSingleQuotedString(input.target.assetFilename)}'`,
+      `Expand-Archive -Path '${escapeForPowerShellSingleQuotedString(input.target.assetFilename)}' -DestinationPath '.' -Force`,
+      `$env:WORKER_NSEC='${escapeForPowerShellSingleQuotedString(workerNsec)}'`,
+      `$env:COORDINATOR_NPUB='${escapeForPowerShellSingleQuotedString(coordinatorNpub)}'`,
+      `$env:WORKER_RELAYS='${escapeForPowerShellSingleQuotedString(workerRelays)}'`,
+      `.\\${input.target.binaryFilename}`,
+    ].join("\n");
+  }
+
+  return [
+    `curl -L "${escapeForDoubleQuotedBash(input.target.assetUrl)}" -o "${escapeForDoubleQuotedBash(input.target.assetFilename)}"`,
+    `tar -xzf "${escapeForDoubleQuotedBash(input.target.assetFilename)}"`,
+    `chmod +x "./${escapeForDoubleQuotedBash(input.target.binaryFilename)}" || true`,
+    `WORKER_NSEC="${escapeForDoubleQuotedBash(workerNsec)}" \\`,
+    `COORDINATOR_NPUB="${escapeForDoubleQuotedBash(coordinatorNpub)}" \\`,
+    `WORKER_RELAYS="${escapeForDoubleQuotedBash(workerRelays)}" \\`,
+    `./${escapeForDoubleQuotedBash(input.target.binaryFilename)}`,
+  ].join("\n");
 }
 
 function percentageLabel(count: number, total: number) {
@@ -633,6 +676,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     })(),
   );
   const [workerMoreOptionsCollapsed, setWorkerMoreOptionsCollapsed] = useState(true);
+  const [workerDownloadAdvancedCollapsed, setWorkerDownloadAdvancedCollapsed] = useState(true);
+  const [selectedWorkerDownloadTarget, setSelectedWorkerDownloadTarget] = useState<WorkerLauncherTargetKey>("linuxX64");
   const [generatedWorkerNsec, setGeneratedWorkerNsec] = useState("");
   const [generatedWorkerNpub, setGeneratedWorkerNpub] = useState("");
   const [activeWorkerDelegation, setActiveWorkerDelegation] = useState<WorkerDelegationCertificate | null>(null);
@@ -1493,6 +1538,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     linuxX64: {
       assetFilename: "auditable-voting-worker-linux-x64.tar.gz",
       assetUrl: workerHelperDownloadUrl,
+      checksumUrl: workerHelperChecksumUrl,
       binaryFilename: "auditable-voting-worker",
       launcherFilename: "start-auditable-voting-worker-linux-x64.sh",
       shell: "bash",
@@ -1500,6 +1546,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     linuxArm64: {
       assetFilename: "auditable-voting-worker-linux-arm64.tar.gz",
       assetUrl: workerLinuxArm64DownloadUrl,
+      checksumUrl: workerLinuxArm64ChecksumUrl,
       binaryFilename: "auditable-voting-worker",
       launcherFilename: "start-auditable-voting-worker-linux-arm64.sh",
       shell: "bash",
@@ -1507,6 +1554,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     linuxArmv7: {
       assetFilename: "auditable-voting-worker-linux-armv7.tar.gz",
       assetUrl: workerLinuxArmv7DownloadUrl,
+      checksumUrl: workerLinuxArmv7ChecksumUrl,
       binaryFilename: "auditable-voting-worker",
       launcherFilename: "start-auditable-voting-worker-linux-armv7.sh",
       shell: "bash",
@@ -1514,6 +1562,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     windowsX64: {
       assetFilename: "auditable-voting-worker-windows-x64.zip",
       assetUrl: workerWindowsDownloadUrl,
+      checksumUrl: workerWindowsChecksumUrl,
       binaryFilename: "auditable-voting-worker.exe",
       launcherFilename: "start-auditable-voting-worker-windows-x64.ps1",
       shell: "powershell",
@@ -1521,16 +1570,22 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     macosArm64: {
       assetFilename: "auditable-voting-worker-macos-arm64.tar.gz",
       assetUrl: workerMacOsArm64DownloadUrl,
+      checksumUrl: workerMacOsArm64ChecksumUrl,
       binaryFilename: "auditable-voting-worker",
       launcherFilename: "start-auditable-voting-worker-macos-arm64.sh",
       shell: "bash",
     },
   }), [
     workerHelperDownloadUrl,
+    workerHelperChecksumUrl,
     workerLinuxArm64DownloadUrl,
+    workerLinuxArm64ChecksumUrl,
     workerLinuxArmv7DownloadUrl,
+    workerLinuxArmv7ChecksumUrl,
     workerMacOsArm64DownloadUrl,
+    workerMacOsArm64ChecksumUrl,
     workerWindowsDownloadUrl,
+    workerWindowsChecksumUrl,
   ]);
   const downloadConfiguredWorkerLauncher = useCallback((target: WorkerLauncherTarget) => {
     const contents = buildWorkerLauncherContents({
@@ -1542,6 +1597,13 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     });
     downloadTextFile(target.launcherFilename, contents, "text/plain;charset=utf-8");
   }, [coordinatorNpub, generatedWorkerNpub, generatedWorkerNsec, helperRelayList]);
+  const selectedWorkerLauncherTarget = workerLauncherTargets[selectedWorkerDownloadTarget];
+  const workerDirectCommand = useMemo(() => buildWorkerDirectCommand({
+    target: selectedWorkerLauncherTarget,
+    coordinatorNpub,
+    workerNsec: generatedWorkerNsec,
+    workerRelays: helperRelayList,
+  }), [coordinatorNpub, generatedWorkerNsec, helperRelayList, selectedWorkerLauncherTarget]);
   const workerStartupCommand = useMemo(() => {
     const coordinator = coordinatorNpub.trim() || "npub1...";
     const workerNsec = generatedWorkerNsec.trim() || "nsec1...";
@@ -2580,7 +2642,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   }
 
   return (
-    <div className='simple-voter-card simple-questionnaire-panel'>
+    <>
+      <SimpleCollapsibleSection title='Questionnaire draft'>
+        <div className='simple-voter-card simple-questionnaire-panel'>
       <div className='simple-questionnaire-header'>
         <div>
           <h3 className='simple-voter-question'>{title.trim() || "Untitled questionnaire"}</h3>
@@ -2877,6 +2941,34 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           Configure Worker
         </button>
       </div>
+      {publishedDefinition ? (
+        <div className='simple-voter-action-row simple-voter-action-row-inline'>
+          <button
+            type='button'
+            className='simple-voter-secondary'
+            onClick={props.onInviteParticipants}
+            disabled={!props.onInviteParticipants}
+          >
+            Invite participants
+          </button>
+        </div>
+      ) : null}
+      {!coordinatorNsec.trim() ? (
+        <p className='simple-voter-note'>Coordinator key is not loaded yet.</p>
+      ) : null}
+      {publishValidation && !publishValidation.valid ? (
+        <p className='simple-voter-note'>Validation: {publishValidation.errors[0] ?? "unknown_error"}.</p>
+      ) : null}
+      {showPreview ? (
+        <div className='simple-questionnaire-preview'>
+          <h4 className='simple-voter-section-title'>Draft preview</h4>
+          <pre>{JSON.stringify(builtDefinition, null, 2)}</pre>
+        </div>
+      ) : null}
+      {status ? <p className='simple-voter-note'>{status}</p> : null}
+      {!latestDefinition ? <p className='simple-voter-note'>No questionnaire definition found for this id yet.</p> : null}
+        </div>
+      </SimpleCollapsibleSection>
       <div id='delegated-worker-section'>
         <SimpleCollapsibleSection title='Delegated worker'>
           <div className='simple-questionnaire-worker-section'>
@@ -2920,48 +3012,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                       ))}
                     </ul>
                   )}
-                </section>
-
-                <section className='simple-delegate-section'>
-                  <h4 className='simple-delegate-title'>Worker helper downloads</h4>
-                  <p className='simple-voter-note'>
-                    Download saves a platform-specific launcher script with the current coordinator `npub`, effective relay list, and generated worker `nsec` when one is present. Use Binary for the raw release asset.
-                  </p>
-                  <div className='simple-delegate-download-grid'>
-                    <div className='simple-delegate-download-row'>
-                      <span className='simple-delegate-download-label'>Linux x64</span>
-                      <button type='button' className='simple-delegate-link simple-delegate-button' onClick={() => downloadConfiguredWorkerLauncher(workerLauncherTargets.linuxX64)}>Download</button>
-                      <a className='simple-delegate-link' href={workerHelperDownloadUrl} download>Binary</a>
-                      <a className='simple-delegate-link' href={workerHelperChecksumUrl} download>Checksum</a>
-                    </div>
-                    <div className='simple-delegate-download-row'>
-                      <span className='simple-delegate-download-label'>Linux arm64</span>
-                      <button type='button' className='simple-delegate-link simple-delegate-button' onClick={() => downloadConfiguredWorkerLauncher(workerLauncherTargets.linuxArm64)}>Download</button>
-                      <a className='simple-delegate-link' href={workerLinuxArm64DownloadUrl} target='_blank' rel='noreferrer'>Binary</a>
-                      <a className='simple-delegate-link' href={workerLinuxArm64ChecksumUrl} target='_blank' rel='noreferrer'>Checksum</a>
-                    </div>
-                    <div className='simple-delegate-download-row'>
-                      <span className='simple-delegate-download-label'>Linux armv7</span>
-                      <button type='button' className='simple-delegate-link simple-delegate-button' onClick={() => downloadConfiguredWorkerLauncher(workerLauncherTargets.linuxArmv7)}>Download</button>
-                      <a className='simple-delegate-link' href={workerLinuxArmv7DownloadUrl} target='_blank' rel='noreferrer'>Binary</a>
-                      <a className='simple-delegate-link' href={workerLinuxArmv7ChecksumUrl} target='_blank' rel='noreferrer'>Checksum</a>
-                    </div>
-                    <div className='simple-delegate-download-row'>
-                      <span className='simple-delegate-download-label'>Windows</span>
-                      <button type='button' className='simple-delegate-link simple-delegate-button' onClick={() => downloadConfiguredWorkerLauncher(workerLauncherTargets.windowsX64)}>Download</button>
-                      <a className='simple-delegate-link' href={workerWindowsDownloadUrl} target='_blank' rel='noreferrer'>Binary</a>
-                      <a className='simple-delegate-link' href={workerWindowsChecksumUrl} target='_blank' rel='noreferrer'>Checksum</a>
-                    </div>
-                    <div className='simple-delegate-download-row'>
-                      <span className='simple-delegate-download-label'>macOS</span>
-                      <button type='button' className='simple-delegate-link simple-delegate-button' onClick={() => downloadConfiguredWorkerLauncher(workerLauncherTargets.macosArm64)}>Download</button>
-                      <a className='simple-delegate-link' href={workerMacOsArm64DownloadUrl} target='_blank' rel='noreferrer'>Binary</a>
-                      <a className='simple-delegate-link' href={workerMacOsArm64ChecksumUrl} target='_blank' rel='noreferrer'>Checksum</a>
-                    </div>
-                  </div>
-                  <a className='simple-voter-secondary simple-delegate-link-readme' href={workerHelperReadmeUrl} target='_blank' rel='noreferrer'>
-                    Setup notes
-                  </a>
                 </section>
 
                 <section className='simple-delegate-section'>
@@ -3018,6 +3068,90 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                       ? "This command includes WORKER_RELAYS from the current relay input."
                       : "WORKER_RELAYS is omitted; worker uses the built-in default client relay set."}
                   </p>
+                  <a className='simple-voter-secondary simple-delegate-link-readme' href={workerHelperReadmeUrl} target='_blank' rel='noreferrer'>
+                    Setup notes
+                  </a>
+                </section>
+
+                <section className='simple-delegate-section'>
+                  <h4 className='simple-delegate-title'>Worker helper downloads</h4>
+                  <p className='simple-voter-note'>
+                    Autoconfigured saves a platform-specific launcher script with the current coordinator `npub`, effective relay list, and generated worker `nsec` when one is present.
+                  </p>
+                  <div className='simple-delegate-download-grid'>
+                    <div className='simple-delegate-download-row'>
+                      <span className='simple-delegate-download-label'>Linux x64</span>
+                      <button type='button' className='simple-delegate-link simple-delegate-button' onClick={() => downloadConfiguredWorkerLauncher(workerLauncherTargets.linuxX64)}>Autoconfigured</button>
+                    </div>
+                    <div className='simple-delegate-download-row'>
+                      <span className='simple-delegate-download-label'>Linux arm64</span>
+                      <button type='button' className='simple-delegate-link simple-delegate-button' onClick={() => downloadConfiguredWorkerLauncher(workerLauncherTargets.linuxArm64)}>Autoconfigured</button>
+                    </div>
+                    <div className='simple-delegate-download-row'>
+                      <span className='simple-delegate-download-label'>Linux armv7</span>
+                      <button type='button' className='simple-delegate-link simple-delegate-button' onClick={() => downloadConfiguredWorkerLauncher(workerLauncherTargets.linuxArmv7)}>Autoconfigured</button>
+                    </div>
+                    <div className='simple-delegate-download-row'>
+                      <span className='simple-delegate-download-label'>Windows</span>
+                      <button type='button' className='simple-delegate-link simple-delegate-button' onClick={() => downloadConfiguredWorkerLauncher(workerLauncherTargets.windowsX64)}>Autoconfigured</button>
+                    </div>
+                    <div className='simple-delegate-download-row'>
+                      <span className='simple-delegate-download-label'>macOS</span>
+                      <button type='button' className='simple-delegate-link simple-delegate-button' onClick={() => downloadConfiguredWorkerLauncher(workerLauncherTargets.macosArm64)}>Autoconfigured</button>
+                    </div>
+                  </div>
+                </section>
+
+                <section className={`simple-delegate-section simple-collapsible-section${workerDownloadAdvancedCollapsed ? " is-collapsed" : ""}`}>
+                  <div className='simple-collapsible-header'>
+                    <h4 className='simple-delegate-title simple-collapsible-title'>Advanced</h4>
+                    <button
+                      type='button'
+                      className='simple-collapsible-toggle'
+                      aria-expanded={!workerDownloadAdvancedCollapsed}
+                      aria-controls='worker-download-advanced'
+                      onClick={() => setWorkerDownloadAdvancedCollapsed((current) => !current)}
+                    >
+                      {workerDownloadAdvancedCollapsed ? "Show" : "Hide"}
+                    </button>
+                  </div>
+                  <p className='simple-voter-note'>
+                    Use this path if you want the raw release asset and a direct command-line launch instead of the generated helper script.
+                  </p>
+                  <div id='worker-download-advanced' className='simple-collapsible-body'>
+                    <div className='simple-collapsible-body-inner'>
+                      <label className='simple-voter-label' htmlFor='worker-download-target'>Platform</label>
+                      <select
+                        id='worker-download-target'
+                        className='simple-voter-input'
+                        value={selectedWorkerDownloadTarget}
+                        onChange={(event) => setSelectedWorkerDownloadTarget(event.target.value as WorkerLauncherTargetKey)}
+                      >
+                        {WORKER_LAUNCHER_TARGET_OPTIONS.map((option) => (
+                          <option key={option.key} value={option.key}>{option.label}</option>
+                        ))}
+                      </select>
+                      <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
+                        <a className='simple-voter-secondary' href={selectedWorkerLauncherTarget.assetUrl} target='_blank' rel='noreferrer'>
+                          Download binary
+                        </a>
+                        <a className='simple-voter-secondary' href={selectedWorkerLauncherTarget.checksumUrl} target='_blank' rel='noreferrer'>
+                          Download checksum
+                        </a>
+                        <button type='button' className='simple-voter-secondary' onClick={() => void tryWriteClipboard(workerDirectCommand)}>
+                          Copy command
+                        </button>
+                      </div>
+                      <label className='simple-voter-label' htmlFor='worker-direct-command'>Direct command-line launch</label>
+                      <textarea
+                        id='worker-direct-command'
+                        className='simple-voter-input simple-delegate-command'
+                        rows={selectedWorkerLauncherTarget.shell === "powershell" ? 6 : 7}
+                        readOnly
+                        value={workerDirectCommand}
+                      />
+                    </div>
+                  </div>
                 </section>
 
                 <section className='simple-delegate-section'>
@@ -3157,32 +3291,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           </div>
         </SimpleCollapsibleSection>
       </div>
-      {publishedDefinition ? (
-        <div className='simple-voter-action-row simple-voter-action-row-inline'>
-          <button
-            type='button'
-            className='simple-voter-secondary'
-            onClick={props.onInviteParticipants}
-            disabled={!props.onInviteParticipants}
-          >
-            Invite participants
-          </button>
-        </div>
-      ) : null}
-      {!coordinatorNsec.trim() ? (
-        <p className='simple-voter-note'>Coordinator key is not loaded yet.</p>
-      ) : null}
-      {publishValidation && !publishValidation.valid ? (
-        <p className='simple-voter-note'>Validation: {publishValidation.errors[0] ?? "unknown_error"}.</p>
-      ) : null}
-      {showPreview ? (
-        <div className='simple-questionnaire-preview'>
-          <h4 className='simple-voter-section-title'>Draft preview</h4>
-          <pre>{JSON.stringify(builtDefinition, null, 2)}</pre>
-        </div>
-      ) : null}
-      {status ? <p className='simple-voter-note'>{status}</p> : null}
-      {!latestDefinition ? <p className='simple-voter-note'>No questionnaire definition found for this id yet.</p> : null}
-    </div>
+    </>
   );
 }

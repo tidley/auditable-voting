@@ -17,9 +17,10 @@ Usage (Linux x86_64):
    WORKER_RELAYS is optional. If not set, the worker uses the default client relay set.
 
 Coordinator Build page launcher downloads:
-- The Download action on each platform row now saves a single launcher script.
+- The Autoconfigured action on each platform row now saves a single launcher script.
 - That launcher script includes the current coordinator npub, the effective relay list, and the generated worker nsec when present.
 - On first run it downloads the matching raw binary asset automatically, then starts the worker.
+- The Build page `Advanced` block exposes the raw binary/checksum links and direct command-line launch snippet if you want to run the worker manually.
 
 Other platforms:
 - Download prebuilt release assets:

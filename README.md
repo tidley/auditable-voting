@@ -216,7 +216,7 @@ The default remains browser-only coordination. You can optionally enable `Delega
 - worker can be revoked at any time with a signed revocation (also public + DM)
 - worker runtime is outbound-only to relays and does not require inbound ports
 - delegated worker can issue blind tokens (blind-signing on behalf of the coordinator for that delegated election), verify public submissions, publish public submission decisions, and (optionally) auto-publish a result summary once all expected invitees have accepted responses
-- coordinator Build page exposes worker downloads plus a startup helper that can generate a worker `nsec`/`npub`, copy a launch command, and download a platform-specific launcher script prefilled with the current coordinator `npub`
+- coordinator Build page exposes a separate `Delegated worker` section with worker downloads plus a startup helper that can generate a worker `nsec`/`npub`, copy a launch command, save an autoconfigured platform-specific launcher script prefilled with the current coordinator `npub`, and reveal raw binary / direct CLI options under `Advanced`
 - GitHub Releases now publish cross-platform worker assets for:
   - Linux x64 (`auditable-voting-worker-linux-x64.tar.gz`)
   - Linux arm64 / Raspberry Pi 64-bit (`auditable-voting-worker-linux-arm64.tar.gz`)
