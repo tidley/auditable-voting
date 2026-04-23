@@ -22,7 +22,7 @@ import SimpleQrPanel from "./SimpleQrPanel";
 import TokenFingerprint from "./TokenFingerprint";
 import { deriveActorDisplayId } from "./actorDisplay";
 import { getSharedNostrPool } from "./sharedNostrPool";
-import { storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
+import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import { tryWriteClipboard } from "./clipboard";
 import { fetchQuestionnaireBlindResponses } from "./questionnaireTransport";
 import { evaluateQuestionnaireBlindAdmissions, fetchQuestionnaireSubmissionDecisions } from "./questionnaireTransport";
@@ -2410,6 +2410,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         blindSigningPrivateKey: delegatedWorkerCapabilities.includes("issue_blind_tokens")
           ? coordinatorState?.blindSigningPrivateKey ?? null
           : null,
+        definition: latestDefinition ?? readCachedQuestionnaireDefinition(electionId),
         sentAt: new Date().toISOString(),
       }
       : null;

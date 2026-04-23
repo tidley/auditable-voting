@@ -53,6 +53,7 @@ This is the practical order of operations for the current app.
    - Verified voters can now pre-request and coordinators can pre-issue before publish.
    - If needed, use the separate **Build** page `Delegated worker` section, switch to `Delegated Nostr worker`, generate worker credentials/startup command, or save an autoconfigured platform-specific launcher script that already includes the current coordinator `npub`; right-click copy-link uses a shareable launcher URL that intentionally omits the worker secret, and raw binary / direct CLI options now sit under `Advanced`.
    - When blind-token issuance is delegated, invite payloads and cached election metadata carry the worker routing hint so voters can keep DMing the worker even if the coordinator browser is no longer open.
+   - Worker election-config DMs now also carry the questionnaire definition, so worker-issued blind credentials can still render the ballot if the coordinator browser is offline.
 6. Publish the questionnaire when ready (`Publish Questionnaire`, state becomes `Open`).
 
 ### 2. Voter joins second

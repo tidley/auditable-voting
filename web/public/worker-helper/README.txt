@@ -40,7 +40,8 @@ Other platforms:
 
 Delegated worker responsibilities:
 - announce worker status to coordinator
+- receive worker election-config state including the blind-signing key and questionnaire definition
 - process delegated blind-token requests
-- issue blind-signature responses for delegated elections
+- issue blind-signature responses for delegated elections, including the questionnaire definition when available
 - verify public submissions and publish delegated decisions
 - optionally auto-publish result summary when all expected invitees have responded

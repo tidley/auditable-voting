@@ -56,8 +56,9 @@ The coordinator Build page can also save an autoconfigured platform-specific lau
 - announce worker presence/status to the coordinator via NIP-17 DM
 - consume delegation/revocation messages from DM and public events
 - persist delegation runtime state locally
+- consume worker election-config DMs carrying the blind-signing key and questionnaire definition
 - consume delegated blind-token requests over private DMs
-- issue blind-signature responses on behalf of the coordinator for delegated elections with `Issue blind tokens` enabled
+- issue blind-signature responses on behalf of the coordinator for delegated elections with `Issue blind tokens` enabled, including the questionnaire definition when available so voters can render ballots offline
 - process public questionnaire submissions for delegated elections
 - publish delegated public submission decisions with delegation provenance tags
 - optionally auto-publish result summaries when delegated capability is enabled and expected invitee completion is reached

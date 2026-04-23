@@ -81,6 +81,40 @@ fn random_suffix() -> String {
     )
 }
 
+fn apply_worker_election_config(
+    election: &mut ElectionRuntimeState,
+    snapshot: &WorkerElectionConfigSnapshot,
+) {
+    election.expected_invitee_count = snapshot.expected_invitee_count;
+    if snapshot.blind_signing_private_key.is_some() {
+        election.blind_signing_private_key = snapshot.blind_signing_private_key.clone();
+    }
+    if snapshot.definition.is_some() {
+        election.definition = snapshot.definition.clone();
+    }
+}
+
+fn build_blind_issuance(
+    request: &BlindBallotRequest,
+    election: &ElectionRuntimeState,
+    blind_signature: String,
+    issued_at: String,
+) -> BlindBallotIssuance {
+    BlindBallotIssuance {
+        message_type: "blind_ballot_response".to_string(),
+        schema_version: 1,
+        election_id: request.election_id.clone(),
+        request_id: request.request_id.clone(),
+        issuance_id: format!("issuance_{}", random_suffix()),
+        invited_npub: request.invited_npub.clone(),
+        token_commitment: request.token_commitment.clone(),
+        blind_signing_key_id: request.blind_signing_key_id.clone(),
+        blind_signature,
+        definition: election.definition.clone(),
+        issued_at,
+    }
+}
+
 #[derive(Clone)]
 struct WorkerRuntime {
     config: WorkerConfig,
@@ -577,10 +611,7 @@ impl WorkerRuntime {
         if election.delegation_id != snapshot.delegation_id {
             return Ok(());
         }
-        election.expected_invitee_count = snapshot.expected_invitee_count;
-        if snapshot.blind_signing_private_key.is_some() {
-            election.blind_signing_private_key = snapshot.blind_signing_private_key;
-        }
+        apply_worker_election_config(election, &snapshot);
         self.store.save(&state)?;
         Ok(())
     }
@@ -614,19 +645,7 @@ impl WorkerRuntime {
             return Ok(());
         }
         let blind_signature = sign_blinded_message(&request.blinded_message, &private_key.private_jwk)?;
-        let issuance = BlindBallotIssuance {
-            message_type: "blind_ballot_response".to_string(),
-            schema_version: 1,
-            election_id: request.election_id.clone(),
-            request_id: request.request_id.clone(),
-            issuance_id: format!("issuance_{}", random_suffix()),
-            invited_npub: request.invited_npub.clone(),
-            token_commitment: request.token_commitment.clone(),
-            blind_signing_key_id: request.blind_signing_key_id.clone(),
-            blind_signature,
-            definition: None,
-            issued_at: now_iso(),
-        };
+        let issuance = build_blind_issuance(&request, election, blind_signature, now_iso());
         let envelope = BlindBallotIssuanceEnvelope {
             message_type: "optiona_blind_issuance_dm".to_string(),
             schema_version: 1,
@@ -686,6 +705,7 @@ impl WorkerRuntime {
             existing.rejected_response_count = 0;
             existing.expected_invitee_count = None;
             existing.blind_signing_private_key = None;
+            existing.definition = None;
             existing.summary_published = false;
             existing.last_result_summary_publish_at = None;
         }
@@ -732,4 +752,96 @@ fn iso_or_default_to_timestamp(input: Option<&str>, fallback_lookback_secs: u64)
     }
     let now = Timestamp::now().as_secs();
     Timestamp::from(now.saturating_sub(fallback_lookback_secs))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn sample_request() -> BlindBallotRequest {
+        BlindBallotRequest {
+            message_type: "blind_ballot_request".to_string(),
+            schema_version: 1,
+            election_id: "q_worker_definition".to_string(),
+            request_id: "request_worker_definition".to_string(),
+            invited_npub: "npub1invitee000000000000000000000000000000000000000000000000".to_string(),
+            blinded_message: "abcd".to_string(),
+            token_commitment: "token_commitment".to_string(),
+            blind_signing_key_id: "key_worker_definition".to_string(),
+            client_nonce: "nonce_worker_definition".to_string(),
+            created_at: now_iso(),
+        }
+    }
+
+    #[test]
+    fn apply_worker_election_config_stores_definition() {
+        let definition = json!({
+            "schemaVersion": 2,
+            "eventType": "questionnaire_definition",
+            "questionnaireId": "q_worker_definition",
+            "title": "Delegated definition",
+            "description": "Sent via worker config",
+            "questions": [{
+                "id": "q1",
+                "prompt": "Question 1",
+                "kind": "free_text"
+            }]
+        });
+        let mut election = ElectionRuntimeState::default();
+        let snapshot = WorkerElectionConfigSnapshot {
+            message_type: "worker_election_config".to_string(),
+            schema_version: 1,
+            election_id: "q_worker_definition".to_string(),
+            delegation_id: "delegation_worker_definition".to_string(),
+            coordinator_npub: "npub1coordinator000000000000000000000000000000000000000000".to_string(),
+            worker_npub: "npub1worker000000000000000000000000000000000000000000000000".to_string(),
+            expected_invitee_count: Some(3),
+            blind_signing_private_key: None,
+            definition: Some(definition.clone()),
+            sent_at: now_iso(),
+        };
+
+        apply_worker_election_config(&mut election, &snapshot);
+
+        assert_eq!(election.expected_invitee_count, Some(3));
+        assert_eq!(election.definition, Some(definition));
+    }
+
+    #[test]
+    fn build_blind_issuance_carries_worker_definition() {
+        let definition = json!({
+            "schemaVersion": 2,
+            "eventType": "questionnaire_definition",
+            "questionnaireId": "q_worker_definition",
+            "title": "Delegated definition",
+            "description": "Sent in blind issuance",
+            "questions": [{
+                "id": "q1",
+                "prompt": "Question 1",
+                "kind": "free_text"
+            }]
+        });
+        let request = sample_request();
+        let election = ElectionRuntimeState {
+            definition: Some(definition.clone()),
+            ..ElectionRuntimeState::default()
+        };
+
+        let issuance = build_blind_issuance(
+            &request,
+            &election,
+            "blind_signature_worker_definition".to_string(),
+            "2026-04-23T00:00:00Z".to_string(),
+        );
+
+        assert_eq!(issuance.election_id, request.election_id);
+        assert_eq!(issuance.request_id, request.request_id);
+        assert_eq!(issuance.invited_npub, request.invited_npub);
+        assert_eq!(issuance.token_commitment, request.token_commitment);
+        assert_eq!(issuance.blind_signing_key_id, request.blind_signing_key_id);
+        assert_eq!(issuance.blind_signature, "blind_signature_worker_definition");
+        assert_eq!(issuance.definition, Some(definition));
+        assert_eq!(issuance.issued_at, "2026-04-23T00:00:00Z");
+    }
 }

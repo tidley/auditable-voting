@@ -206,7 +206,7 @@ The current repository contains only the browser app. It has voter, coordinator,
 2. Invite voter npubs to that questionnaire.
 3. Optional: in the separate **Build** page `Delegated worker` section, switch mode to `Delegated Nostr worker`, use the startup helper/downloads or save an autoconfigured platform launcher that already includes the current coordinator `npub`; right-click copy-link uses a shareable launcher URL that omits the worker secret, raw binary and direct CLI options sit under `Advanced`, and delegation still leaves the coordinator as root authority.
 4. Receive blind-token requests over private DMs (or delegate handling to a worker).
-5. Issue blind signatures to authorised voters over private DMs (or let the delegated worker blind-sign on behalf of the coordinator for that delegated round). Invite payloads and cached election metadata now carry the delegated worker routing hint so voters can keep targeting the worker if the coordinator browser goes offline.
+5. Issue blind signatures to authorised voters over private DMs (or let the delegated worker blind-sign on behalf of the coordinator for that delegated round). Invite payloads and cached election metadata now carry the delegated worker routing hint so voters can keep targeting the worker if the coordinator browser goes offline, and worker election-config DMs also carry the questionnaire definition so worker-issued blind credentials can still render the ballot if the coordinator browser is offline.
 6. Watch public submissions and publish public accept/reject decisions (or delegate decision publication).
 7. Close the round and publish the result summary (or enable worker auto-summary once all invitees have accepted responses).
 

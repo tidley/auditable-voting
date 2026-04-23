@@ -110,6 +110,7 @@ pub struct WorkerElectionConfigSnapshot {
     pub worker_npub: String,
     pub expected_invitee_count: Option<u64>,
     pub blind_signing_private_key: Option<QuestionnaireBlindPrivateKey>,
+    pub definition: Option<serde_json::Value>,
     pub sent_at: String,
 }
 
@@ -234,6 +235,7 @@ pub struct ElectionRuntimeState {
     pub summary_published: bool,
     pub last_result_summary_publish_at: Option<String>,
     pub blind_signing_private_key: Option<QuestionnaireBlindPrivateKey>,
+    pub definition: Option<serde_json::Value>,
     pub last_blind_issuance_at: Option<String>,
     pub last_vote_verification_at: Option<String>,
     pub last_decision_publish_at: Option<String>,

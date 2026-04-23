@@ -8,6 +8,7 @@ import type {
   CoordinatorElectionState,
 } from "./questionnaireOptionA";
 import type { QuestionnaireBlindPrivateKey } from "./questionnaireBlindSignature";
+import type { QuestionnaireDefinition } from "./questionnaireProtocol";
 import type { SignerService } from "./services/signerService";
 import type {
   WorkerDelegationCertificate,
@@ -198,6 +199,7 @@ export type WorkerElectionConfigSnapshot = {
   workerNpub: string;
   expectedInviteeCount?: number;
   blindSigningPrivateKey?: QuestionnaireBlindPrivateKey | null;
+  definition?: QuestionnaireDefinition | null;
   sentAt: string;
 };
 

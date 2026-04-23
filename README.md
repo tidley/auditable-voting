@@ -213,6 +213,7 @@ The default remains browser-only coordination. You can optionally enable `Delega
 - coordinator signs an election-scoped delegation certificate for one worker `npub`
 - delegation is published publicly for auditability and also sent privately to the worker over NIP-17 DM
 - voter invites and cached election metadata now carry the active blind-issuance worker routing hint when delegation allows `Issue blind tokens`, so voters can keep targeting the worker if the coordinator browser goes offline
+- worker election-config DMs now include the questionnaire definition as well as the blind-signing key, so worker-issued blind credentials can still render the ballot when the coordinator browser is offline
 - worker can be revoked at any time with a signed revocation (also public + DM)
 - worker runtime is outbound-only to relays and does not require inbound ports
 - delegated worker can issue blind tokens (blind-signing on behalf of the coordinator for that delegated election), verify public submissions, publish public submission decisions, and (optionally) auto-publish a result summary once all expected invitees have accepted responses
