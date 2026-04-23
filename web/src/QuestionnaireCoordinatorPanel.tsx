@@ -454,6 +454,7 @@ function buildWorkerLauncherContents(input: {
       "  Expand-Archive -Path $ArchivePath -DestinationPath $ScriptDir -Force",
       "}",
       "",
+      `if (-not $env:RUST_LOG) { $env:RUST_LOG = 'debug' }`,
       `if (-not $env:WORKER_NSEC) { $env:WORKER_NSEC = '${nsec}' }`,
       `if (-not $env:COORDINATOR_NPUB) { $env:COORDINATOR_NPUB = '${coordinator}' }`,
       `if (-not $env:WORKER_RELAYS) { $env:WORKER_RELAYS = '${relays}' }`,
@@ -517,6 +518,7 @@ function buildWorkerLauncherContents(input: {
     "  fi",
     "fi",
     "",
+    'export RUST_LOG="${RUST_LOG:-debug}"',
     `export WORKER_NSEC="\${WORKER_NSEC:-${nsec}}"`,
     `export COORDINATOR_NPUB="\${COORDINATOR_NPUB:-${coordinator}}"`,
     `export WORKER_RELAYS="\${WORKER_RELAYS:-${relays}}"`,
@@ -553,6 +555,7 @@ function buildWorkerDirectCommand(input: {
     return [
       `Invoke-WebRequest -Uri '${escapeForPowerShellSingleQuotedString(input.target.assetUrl)}' -OutFile '${escapeForPowerShellSingleQuotedString(input.target.assetFilename)}'`,
       `Expand-Archive -Path '${escapeForPowerShellSingleQuotedString(input.target.assetFilename)}' -DestinationPath '.' -Force`,
+      "$env:RUST_LOG='debug'",
       `$env:WORKER_NSEC='${escapeForPowerShellSingleQuotedString(workerNsec)}'`,
       `$env:COORDINATOR_NPUB='${escapeForPowerShellSingleQuotedString(coordinatorNpub)}'`,
       `$env:WORKER_RELAYS='${escapeForPowerShellSingleQuotedString(workerRelays)}'`,
@@ -579,13 +582,15 @@ function buildWorkerDirectCommand(input: {
       ? `chmod +x "./${escapeForDoubleQuotedBash(legacyBinaryFilename)}" || true`
       : "",
     `if [ -x "./${escapeForDoubleQuotedBash(input.target.binaryFilename)}" ]; then`,
-    `  WORKER_NSEC="${escapeForDoubleQuotedBash(workerNsec)}" \\`,
+      '  RUST_LOG="debug" \\',
+      `  WORKER_NSEC="${escapeForDoubleQuotedBash(workerNsec)}" \\`,
     `  COORDINATOR_NPUB="${escapeForDoubleQuotedBash(coordinatorNpub)}" \\`,
     `  WORKER_RELAYS="${escapeForDoubleQuotedBash(workerRelays)}" \\`,
     `  ./${escapeForDoubleQuotedBash(input.target.binaryFilename)}`,
     legacyBinaryFilename ? `elif [ -x "./${escapeForDoubleQuotedBash(legacyBinaryFilename)}" ]; then` : "else",
     ...(legacyBinaryFilename
       ? [
+          '  RUST_LOG="debug" \\',
           `  WORKER_NSEC="${escapeForDoubleQuotedBash(workerNsec)}" \\`,
           `  COORDINATOR_NPUB="${escapeForDoubleQuotedBash(coordinatorNpub)}" \\`,
           `  WORKER_RELAYS="${escapeForDoubleQuotedBash(workerRelays)}" \\`,
@@ -1747,6 +1752,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     const workerNsec = generatedWorkerNsec.trim() || "nsec1...";
     const relayOverride = delegatedWorkerControlRelays.trim();
     const lines = [
+      "RUST_LOG=debug \\",
       `WORKER_NSEC=${workerNsec} \\`,
       `  COORDINATOR_NPUB=${coordinator} \\`,
     ];

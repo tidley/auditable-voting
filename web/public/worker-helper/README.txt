@@ -19,6 +19,7 @@ Usage (Linux x86_64):
 Coordinator Build page launcher downloads:
 - The Autoconfigured action on each platform row now saves a single launcher script.
 - That launcher script includes the current coordinator npub, the effective relay list, and the generated delegate coordinator nsec when present.
+- It also starts the delegate coordinator with `RUST_LOG=debug` so blind-request processing shows up in the helper logs by default.
 - On first run it downloads the matching raw binary asset automatically, then starts the delegate coordinator.
 - Right-click copy link works on the Autoconfigured action. The copied shareable URL intentionally omits WORKER_NSEC, so set your own delegate coordinator secret before running it.
 - The Build page `Advanced` block exposes the raw binary/checksum links and direct command-line launch snippet if you want to run the delegate coordinator manually.
