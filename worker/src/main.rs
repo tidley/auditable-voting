@@ -10,8 +10,9 @@ use crate::model::{
     WorkerDelegationEnvelope, WorkerDelegationRevocation, WorkerElectionConfigEnvelope,
     WorkerElectionConfigSnapshot, WorkerPersistentState, WorkerRevocationEnvelope,
     WorkerStatusEnvelope, WorkerStatusSnapshot, IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND,
-    IMPLEMENTATION_KIND_QUESTIONNAIRE_RESULT_SUMMARY, IMPLEMENTATION_KIND_QUESTIONNAIRE_SUBMISSION_DECISION,
-    OPTIONA_WORKER_DELEGATION_KIND, OPTIONA_WORKER_DELEGATION_REVOCATION_KIND,
+    IMPLEMENTATION_KIND_QUESTIONNAIRE_RESULT_SUMMARY,
+    IMPLEMENTATION_KIND_QUESTIONNAIRE_SUBMISSION_DECISION, OPTIONA_WORKER_DELEGATION_KIND,
+    OPTIONA_WORKER_DELEGATION_REVOCATION_KIND,
 };
 use crate::store::WorkerStore;
 use anyhow::{Context, Result};
@@ -22,16 +23,19 @@ use chrono::Utc;
 use crypto_bigint::BoxedUint;
 use nostr_sdk::prelude::*;
 use rsa::RsaPrivateKey;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
-use tokio::time::sleep;
-use tracing::{debug, info, warn};
+use tokio::task::JoinHandle;
+use tokio::time::{sleep, timeout};
+use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 
-const DEFAULT_DM_LOOKBACK_SECS: u64 = 12 * 60 * 60;
+const DEFAULT_DM_LOOKBACK_SECS: u64 = 36 * 60 * 60;
 const DEFAULT_PUBLIC_LOOKBACK_SECS: u64 = 12 * 60 * 60;
 const CONTROL_DM_DEDUPE_RETENTION_SECS: i64 = 3 * 24 * 60 * 60;
+const PRIVATE_DM_SEND_TIMEOUT_SECS: u64 = 12;
 
 fn parse_jwk_component(jwk: &serde_json::Value, key: &str) -> Result<BoxedUint> {
     let value = jwk
@@ -130,15 +134,11 @@ struct WorkerRuntime {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
-    tracing_subscriber::fmt()
-        .with_env_filter(env_filter)
-        .init();
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    tracing_subscriber::fmt().with_env_filter(env_filter).init();
 
     let config = WorkerConfig::from_env()?;
-    let keys = Keys::parse(&config.worker_nsec)
-        .context("WORKER_NSEC is not a valid nsec")?;
+    let keys = Keys::parse(&config.worker_nsec).context("WORKER_NSEC is not a valid nsec")?;
     let worker_pubkey = keys.public_key();
     let worker_npub = worker_pubkey.to_bech32()?;
     let coordinator_pubkey = PublicKey::from_bech32(&config.coordinator_npub)
@@ -166,7 +166,9 @@ async fn main() -> Result<()> {
 
     let client = Client::new(keys);
     for relay in &config.worker_relays {
-        client.add_relay(relay.clone()).await
+        client
+            .add_relay(relay.clone())
+            .await
             .with_context(|| format!("unable to add relay {}", relay))?;
     }
     client.connect().await;
@@ -175,7 +177,11 @@ async fn main() -> Result<()> {
     let mut persistent = store.load()?;
     persistent.worker_npub = worker_npub.clone();
     persistent.coordinator_npub = config.coordinator_npub.clone();
-    persistent.relays = config.worker_relays.iter().map(ToString::to_string).collect();
+    persistent.relays = config
+        .worker_relays
+        .iter()
+        .map(ToString::to_string)
+        .collect();
     store.save(&persistent)?;
 
     let runtime = WorkerRuntime {
@@ -190,113 +196,270 @@ async fn main() -> Result<()> {
 
     info!("worker started as {}", worker_npub);
 
-    let heartbeat_runtime = runtime.clone();
-    let heartbeat_task = tokio::spawn(async move {
+    let mut heartbeat_task = spawn_heartbeat_task(runtime.clone());
+    let mut control_task = spawn_control_task(runtime.clone());
+    let mut public_task = spawn_public_task(runtime.clone());
+
+    loop {
+        tokio::select! {
+            result = &mut heartbeat_task => {
+                log_task_exit("heartbeat", result);
+                heartbeat_task = spawn_heartbeat_task(runtime.clone());
+            },
+            result = &mut control_task => {
+                log_task_exit("control plane", result);
+                control_task = spawn_control_task(runtime.clone());
+            },
+            result = &mut public_task => {
+                log_task_exit("public plane", result);
+                public_task = spawn_public_task(runtime.clone());
+            },
+        }
+    }
+}
+
+fn spawn_heartbeat_task(runtime: WorkerRuntime) -> JoinHandle<()> {
+    tokio::spawn(async move {
         loop {
-            if let Err(error) = heartbeat_runtime.send_status_heartbeat().await {
+            if let Err(error) = runtime.send_status_heartbeat().await {
                 warn!("status heartbeat failed: {error}");
             }
-            sleep(Duration::from_secs(heartbeat_runtime.config.heartbeat_seconds)).await;
+            sleep(Duration::from_secs(runtime.config.heartbeat_seconds)).await;
         }
-    });
+    })
+}
 
-    let control_runtime = runtime.clone();
-    let control_task = tokio::spawn(async move {
+fn spawn_control_task(runtime: WorkerRuntime) -> JoinHandle<()> {
+    tokio::spawn(async move {
         loop {
-            if let Err(error) = control_runtime.poll_control_plane().await {
+            if let Err(error) = runtime.poll_control_plane().await {
                 warn!("control plane poll failed: {error}");
             }
-            sleep(Duration::from_secs(control_runtime.config.poll_seconds)).await;
+            sleep(Duration::from_secs(runtime.config.poll_seconds)).await;
         }
-    });
+    })
+}
 
-    let public_runtime = runtime.clone();
-    let public_task = tokio::spawn(async move {
+fn spawn_public_task(runtime: WorkerRuntime) -> JoinHandle<()> {
+    tokio::spawn(async move {
         loop {
-            if let Err(error) = public_runtime.poll_public_plane().await {
+            if let Err(error) = runtime.poll_public_plane().await {
                 warn!("public plane poll failed: {error}");
             }
-            sleep(Duration::from_secs(public_runtime.config.poll_seconds)).await;
+            sleep(Duration::from_secs(runtime.config.poll_seconds)).await;
         }
-    });
+    })
+}
 
-    tokio::select! {
-        _ = heartbeat_task => {},
-        _ = control_task => {},
-        _ = public_task => {},
+fn log_task_exit(label: &str, result: std::result::Result<(), tokio::task::JoinError>) {
+    match result {
+        Ok(()) => error!("{label} task exited unexpectedly; restarting"),
+        Err(error) if error.is_panic() => error!("{label} task panicked: {error}; restarting"),
+        Err(error) => error!("{label} task failed: {error}; restarting"),
     }
-
-    Ok(())
 }
 
 impl WorkerRuntime {
-    async fn send_status_heartbeat(&self) -> Result<()> {
-        let mut state = self.state.lock().await;
-        let mut active: Option<&ElectionRuntimeState> = None;
-        for election in state.elections.values() {
-            if election.revoked || is_expired(&election.expires_at) {
-                continue;
-            }
-            active = Some(election);
-            break;
+    async fn fetch_events_best_effort(
+        &self,
+        label: &str,
+        filter: Filter,
+        timeout_secs: u64,
+    ) -> Vec<Event> {
+        let mut tasks = tokio::task::JoinSet::new();
+        for relay in self.config.worker_relays.clone() {
+            let client = self.client.clone();
+            let filter_for_task = filter.clone();
+            tasks.spawn(async move {
+                let result = client
+                    .fetch_events_from(
+                        [relay.clone()],
+                        filter_for_task,
+                        Duration::from_secs(timeout_secs),
+                    )
+                    .await;
+                (relay, result)
+            });
         }
-        let snapshot = WorkerStatusSnapshot {
-            message_type: "worker_status".to_string(),
-            schema_version: 1,
-            worker_npub: self.worker_npub.clone(),
-            coordinator_npub: self.config.coordinator_npub.clone(),
-            worker_version: env!("CARGO_PKG_VERSION").to_string(),
-            state: if active.is_some() { "active".to_string() } else { "online".to_string() },
-            heartbeat_at: now_iso(),
-            active_election_id: active.map(|entry| entry.election_id.clone()),
-            delegation_id: active.map(|entry| entry.delegation_id.clone()),
-            delegation_state: active.map(|entry| {
-                if entry.revoked {
-                    "revoked".to_string()
-                } else if is_expired(&entry.expires_at) {
-                    "expired".to_string()
-                } else {
-                    "active".to_string()
+
+        let mut events_by_id = BTreeMap::new();
+        let mut successes = 0usize;
+        let mut failures = Vec::new();
+        while let Some(result) = tasks.join_next().await {
+            match result {
+                Ok((relay, Ok(events))) => {
+                    successes = successes.saturating_add(1);
+                    for event in events {
+                        events_by_id.insert(event.id, event);
+                    }
+                    debug!("{label} relay read succeeded: {relay}");
                 }
-            }),
-            last_blind_issuance_at: active.and_then(|entry| entry.last_blind_issuance_at.clone()),
-            last_vote_verification_at: active.and_then(|entry| entry.last_vote_verification_at.clone()),
-            last_decision_publish_at: active.and_then(|entry| entry.last_decision_publish_at.clone()),
-            supported_capabilities: vec![
-                WorkerCapability::IssueBlindTokens,
-                WorkerCapability::VerifyPublicSubmissions,
-                WorkerCapability::PublishSubmissionDecisions,
-                WorkerCapability::PublishResultSummary,
-            ],
-            advertised_relays: self.config.worker_relays.iter().map(ToString::to_string).collect(),
+                Ok((relay, Err(error))) => failures.push(format!("{relay}: {error}")),
+                Err(error) => failures.push(format!("join error: {error}")),
+            }
+        }
+        if !failures.is_empty() {
+            warn!(
+                "{label} relay read completed with {} successes and {} failures: {}",
+                successes,
+                failures.len(),
+                failures.join("; ")
+            );
+        }
+        events_by_id.into_values().collect()
+    }
+
+    async fn send_status_heartbeat(&self) -> Result<()> {
+        let snapshot = {
+            let state = self.state.lock().await;
+            let mut active: Option<&ElectionRuntimeState> = None;
+            for election in state.elections.values() {
+                if election.revoked || is_expired(&election.expires_at) {
+                    continue;
+                }
+                active = Some(election);
+                break;
+            }
+            WorkerStatusSnapshot {
+                message_type: "worker_status".to_string(),
+                schema_version: 1,
+                worker_npub: self.worker_npub.clone(),
+                coordinator_npub: self.config.coordinator_npub.clone(),
+                worker_version: env!("CARGO_PKG_VERSION").to_string(),
+                state: if active.is_some() {
+                    "active".to_string()
+                } else {
+                    "online".to_string()
+                },
+                heartbeat_at: now_iso(),
+                active_election_id: active.map(|entry| entry.election_id.clone()),
+                delegation_id: active.map(|entry| entry.delegation_id.clone()),
+                delegation_state: active.map(|entry| {
+                    if entry.revoked {
+                        "revoked".to_string()
+                    } else if is_expired(&entry.expires_at) {
+                        "expired".to_string()
+                    } else {
+                        "active".to_string()
+                    }
+                }),
+                last_blind_issuance_at: active
+                    .and_then(|entry| entry.last_blind_issuance_at.clone()),
+                last_vote_verification_at: active
+                    .and_then(|entry| entry.last_vote_verification_at.clone()),
+                last_decision_publish_at: active
+                    .and_then(|entry| entry.last_decision_publish_at.clone()),
+                supported_capabilities: vec![
+                    WorkerCapability::IssueBlindTokens,
+                    WorkerCapability::VerifyPublicSubmissions,
+                    WorkerCapability::PublishSubmissionDecisions,
+                    WorkerCapability::PublishResultSummary,
+                ],
+                advertised_relays: self
+                    .config
+                    .worker_relays
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+            }
         };
-        let envelope = WorkerStatusEnvelope {
+        let _envelope = WorkerStatusEnvelope {
             message_type: "optiona_worker_status_dm".to_string(),
             schema_version: 1,
             snapshot,
             sent_at: now_iso(),
         };
-        let content = serde_json::to_string(&envelope)?;
-        let _ = self.client.send_private_msg(self.coordinator_pubkey, content, []).await?;
+        // Keep heartbeat state local. Control-plane DMs must not compete with
+        // status publishing, because slow relay writes can delay ballot issuance.
+        let mut state = self.state.lock().await;
         state.last_heartbeat_at = Some(now_iso());
         self.store.save(&state)?;
         Ok(())
+    }
+
+    async fn send_private_msg_best_effort(
+        &self,
+        recipient: PublicKey,
+        content: String,
+        label: &str,
+    ) -> Result<usize> {
+        let signer = self.client.signer().await?;
+        let event =
+            EventBuilder::private_msg(&signer, recipient, content, std::iter::empty::<Tag>())
+                .await
+                .with_context(|| format!("{label} gift-wrap construction failed"))?;
+        let mut tasks = tokio::task::JoinSet::new();
+        for relay in self.config.worker_relays.clone() {
+            let client = self.client.clone();
+            let event_for_task = event.clone();
+            tasks.spawn(async move {
+                let result = timeout(
+                    Duration::from_secs(PRIVATE_DM_SEND_TIMEOUT_SECS),
+                    client.send_event_to([relay.clone()], &event_for_task),
+                )
+                .await;
+                (relay, result)
+            });
+        }
+        let mut successes = 0usize;
+        let mut failures = Vec::new();
+        while let Some(result) = tasks.join_next().await {
+            match result {
+                Ok((relay, Ok(Ok(output)))) => {
+                    successes += output.success.len();
+                    if output.success.is_empty() {
+                        failures.push(format!("{}: {:?}", relay, output.failed));
+                    }
+                }
+                Ok((relay, Ok(Err(error)))) => failures.push(format!("{relay}: {error}")),
+                Ok((relay, Err(_))) => failures.push(format!("{relay}: timed out")),
+                Err(error) => failures.push(format!("join error: {error}")),
+            }
+        }
+        if successes == 0 {
+            anyhow::bail!(
+                "{label} private DM publish failed on all relays: {}",
+                failures.join("; ")
+            );
+        }
+        if !failures.is_empty() {
+            debug!(
+                "{label} private DM publish completed with {} successes and {} failures: {}",
+                successes,
+                failures.len(),
+                failures.join("; ")
+            );
+        }
+        Ok(successes)
     }
 
     async fn poll_control_plane(&self) -> Result<()> {
         let since_ts = fixed_lookback_timestamp(DEFAULT_DM_LOOKBACK_SECS);
         let filter = Filter::new()
             .kind(Kind::GiftWrap)
-            .pubkey(self.worker_pubkey)
+            .custom_tag(
+                SingleLetterTag::lowercase(Alphabet::P),
+                self.worker_pubkey.to_hex(),
+            )
             .since(since_ts)
             .limit(250);
-        let events = self.client.fetch_events(filter, Duration::from_secs(8)).await?;
+        let events = self
+            .fetch_events_best_effort("control plane", filter, 8)
+            .await;
+        info!(
+            "control plane poll fetched {} gift-wrapped events for worker",
+            events.len()
+        );
         let unseen_events = {
             let mut state = self.state.lock().await;
             prune_seen_control_events(&mut state.seen_control_event_ids, Utc::now());
             events
                 .into_iter()
-                .filter(|event| !state.seen_control_event_ids.contains_key(&event.id.to_string()))
+                .filter(|event| {
+                    !state
+                        .seen_control_event_ids
+                        .contains_key(&event.id.to_string())
+                })
                 .collect::<Vec<_>>()
         };
         debug!(
@@ -305,15 +468,24 @@ impl WorkerRuntime {
         );
         let mut seen_event_ids = Vec::with_capacity(unseen_events.len());
         for event in unseen_events {
-            seen_event_ids.push(event.id.to_string());
-            let Ok(unwrapped) = self.client.unwrap_gift_wrap(&event).await else {
-                continue;
+            let unwrapped = match self.client.unwrap_gift_wrap(&event).await {
+                Ok(unwrapped) => unwrapped,
+                Err(error) => {
+                    warn!("failed to unwrap control gift-wrap {}: {error}", event.id);
+                    continue;
+                }
             };
             let rumor_content = unwrapped.rumor.content;
             if rumor_content.trim().is_empty() {
                 continue;
             }
-            self.process_control_message(&rumor_content).await?;
+            match self.process_control_message(&rumor_content).await {
+                Ok(true) => seen_event_ids.push(event.id.to_string()),
+                Ok(false) => {}
+                Err(error) => {
+                    warn!("control message from event {} failed: {error}", event.id);
+                }
+            }
         }
         let mut state = self.state.lock().await;
         let seen_at = now_iso();
@@ -328,38 +500,46 @@ impl WorkerRuntime {
         Ok(())
     }
 
-    async fn process_control_message(&self, content: &str) -> Result<()> {
+    async fn process_control_message(&self, content: &str) -> Result<bool> {
         let value: serde_json::Value = match serde_json::from_str(content) {
             Ok(parsed) => parsed,
-            Err(_) => return Ok(()),
+            Err(_) => return Ok(true),
         };
-        let message_type = value.get("type").and_then(|entry| entry.as_str()).unwrap_or_default();
+        let message_type = value
+            .get("type")
+            .and_then(|entry| entry.as_str())
+            .unwrap_or_default();
+        info!("control message parsed: type={message_type}");
         match message_type {
             "optiona_worker_delegation_dm" => {
                 let envelope: WorkerDelegationEnvelope = match serde_json::from_value(value) {
                     Ok(parsed) => parsed,
-                    Err(_) => return Ok(()),
+                    Err(_) => return Ok(true),
                 };
                 self.apply_delegation(envelope.delegation).await?;
             }
             "optiona_worker_delegation_revocation_dm" => {
                 let envelope: WorkerRevocationEnvelope = match serde_json::from_value(value) {
                     Ok(parsed) => parsed,
-                    Err(_) => return Ok(()),
+                    Err(_) => return Ok(true),
                 };
                 self.apply_revocation(envelope.revocation).await?;
             }
             "optiona_worker_election_config_dm" => {
                 let envelope: WorkerElectionConfigEnvelope = match serde_json::from_value(value) {
                     Ok(parsed) => parsed,
-                    Err(_) => return Ok(()),
+                    Err(_) => return Ok(true),
                 };
+                info!(
+                    "worker election config received: election_id={}, delegation_id={}",
+                    envelope.snapshot.election_id, envelope.snapshot.delegation_id
+                );
                 self.apply_election_config(envelope.snapshot).await?;
             }
             "optiona_blind_request_dm" => {
                 let envelope: BlindBallotRequestEnvelope = match serde_json::from_value(value) {
                     Ok(parsed) => parsed,
-                    Err(_) => return Ok(()),
+                    Err(_) => return Ok(true),
                 };
                 info!(
                     "blind request received: election_id={}, request_id={}, invited_npub={}",
@@ -367,11 +547,11 @@ impl WorkerRuntime {
                     envelope.request.request_id,
                     envelope.request.invited_npub
                 );
-                self.handle_blind_request(envelope.request).await?;
+                return self.handle_blind_request(envelope.request).await;
             }
-            _ => {}
+            _ => return Ok(true),
         }
-        Ok(())
+        Ok(true)
     }
 
     async fn poll_public_plane(&self) -> Result<()> {
@@ -384,10 +564,7 @@ impl WorkerRuntime {
     }
 
     async fn poll_public_delegations_and_revocations(&self) -> Result<()> {
-        let since_ts = {
-            let state = self.state.lock().await;
-            iso_or_default_to_timestamp(state.last_public_scan_at.as_deref(), DEFAULT_PUBLIC_LOOKBACK_SECS)
-        };
+        let since_ts = fixed_lookback_timestamp(DEFAULT_PUBLIC_LOOKBACK_SECS);
         let filter = Filter::new()
             .author(self.coordinator_pubkey)
             .kinds(vec![
@@ -396,16 +573,22 @@ impl WorkerRuntime {
             ])
             .since(since_ts)
             .limit(300);
-        let events = self.client.fetch_events(filter, Duration::from_secs(8)).await?;
+        let events = self
+            .fetch_events_best_effort("delegation plane", filter, 8)
+            .await;
         for event in events {
             match event.kind {
                 Kind::Custom(kind) if kind == OPTIONA_WORKER_DELEGATION_KIND => {
-                    if let Ok(delegation) = serde_json::from_str::<WorkerDelegationCertificate>(&event.content) {
+                    if let Ok(delegation) =
+                        serde_json::from_str::<WorkerDelegationCertificate>(&event.content)
+                    {
                         self.apply_delegation(delegation).await?;
                     }
                 }
                 Kind::Custom(kind) if kind == OPTIONA_WORKER_DELEGATION_REVOCATION_KIND => {
-                    if let Ok(revocation) = serde_json::from_str::<WorkerDelegationRevocation>(&event.content) {
+                    if let Ok(revocation) =
+                        serde_json::from_str::<WorkerDelegationRevocation>(&event.content)
+                    {
                         self.apply_revocation(revocation).await?;
                     }
                 }
@@ -423,9 +606,15 @@ impl WorkerRuntime {
                 .values()
                 .filter(|entry| !entry.revoked && !is_expired(&entry.expires_at))
                 .filter(|entry| {
-                    entry.capabilities.contains(&WorkerCapability::VerifyPublicSubmissions)
-                        || entry.capabilities.contains(&WorkerCapability::PublishSubmissionDecisions)
-                        || entry.capabilities.contains(&WorkerCapability::PublishResultSummary)
+                    entry
+                        .capabilities
+                        .contains(&WorkerCapability::VerifyPublicSubmissions)
+                        || entry
+                            .capabilities
+                            .contains(&WorkerCapability::PublishSubmissionDecisions)
+                        || entry
+                            .capabilities
+                            .contains(&WorkerCapability::PublishResultSummary)
                 })
                 .map(|entry| entry.election_id.clone())
                 .collect::<Vec<_>>()
@@ -434,24 +623,42 @@ impl WorkerRuntime {
             return Ok(());
         }
 
-        let since_ts = {
-            let state = self.state.lock().await;
-            iso_or_default_to_timestamp(state.last_public_scan_at.as_deref(), DEFAULT_PUBLIC_LOOKBACK_SECS)
-        };
+        let since_ts = fixed_lookback_timestamp(DEFAULT_PUBLIC_LOOKBACK_SECS);
         let filter = Filter::new()
-            .kind(Kind::Custom(IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND))
+            .kind(Kind::Custom(
+                IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND,
+            ))
+            .hashtag("questionnaire_response_blind")
             .since(since_ts)
             .limit(500);
-        let events = self.client.fetch_events(filter, Duration::from_secs(8)).await?;
+        let events = self
+            .fetch_events_best_effort("public plane", filter, 8)
+            .await;
+        info!(
+            "public plane poll fetched {} blind response events",
+            events.len()
+        );
 
         for event in events {
-            let submission = match serde_json::from_str::<QuestionnaireBlindResponseEvent>(&event.content) {
-                Ok(parsed) => parsed,
-                Err(_) => continue,
-            };
+            let submission =
+                match serde_json::from_str::<QuestionnaireBlindResponseEvent>(&event.content) {
+                    Ok(parsed) => parsed,
+                    Err(error) => {
+                        warn!("failed to parse blind response event {}: {error}", event.id);
+                        continue;
+                    }
+                };
             if !elections_to_process.contains(&submission.questionnaire_id) {
+                debug!(
+                    "skipping blind response for unrelated questionnaire: event_id={}, questionnaire_id={}",
+                    event.id, submission.questionnaire_id
+                );
                 continue;
             }
+            info!(
+                "public blind response received: questionnaire_id={}, response_id={}",
+                submission.questionnaire_id, submission.response_id
+            );
             self.handle_submission(submission).await?;
         }
         Ok(())
@@ -462,7 +669,10 @@ impl WorkerRuntime {
         let Some(election) = state.elections.get_mut(&submission.questionnaire_id) else {
             return Ok(());
         };
-        if election.processed_submission_ids.contains(&submission.response_id) {
+        if election
+            .processed_submission_ids
+            .contains(&submission.response_id)
+        {
             return Ok(());
         }
 
@@ -478,7 +688,10 @@ impl WorkerRuntime {
         {
             accepted = false;
             reason = "invalid_payload_shape".to_string();
-        } else if election.accepted_nullifiers.contains(&submission.token_nullifier) {
+        } else if election
+            .accepted_nullifiers
+            .contains(&submission.token_nullifier)
+        {
             accepted = false;
             reason = "duplicate_nullifier".to_string();
         }
@@ -499,7 +712,10 @@ impl WorkerRuntime {
             .insert(submission.response_id.clone());
         election.last_vote_verification_at = Some(now_iso());
 
-        if election.capabilities.contains(&WorkerCapability::PublishSubmissionDecisions) {
+        if election
+            .capabilities
+            .contains(&WorkerCapability::PublishSubmissionDecisions)
+        {
             let decision = QuestionnaireSubmissionDecisionEvent {
                 schema_version: 1,
                 event_type: "questionnaire_submission_decision".to_string(),
@@ -520,10 +736,13 @@ impl WorkerRuntime {
             election.last_decision_publish_at = Some(now_iso());
         }
 
-        let should_publish_summary = election.capabilities.contains(&WorkerCapability::PublishResultSummary)
+        let should_publish_summary = election
+            .capabilities
+            .contains(&WorkerCapability::PublishResultSummary)
             && !election.summary_published
             && election.expected_invitee_count.unwrap_or(0) > 0
-            && (election.accepted_response_authors.len() as u64) >= election.expected_invitee_count.unwrap_or(0);
+            && (election.accepted_response_authors.len() as u64)
+                >= election.expected_invitee_count.unwrap_or(0);
         if should_publish_summary {
             let summary_event_id = self
                 .publish_result_summary(
@@ -554,15 +773,34 @@ impl WorkerRuntime {
             content,
         );
         let tags = vec![
-            vec!["t".to_string(), "questionnaire_submission_decision".to_string()],
-            vec!["questionnaire".to_string(), decision.questionnaire_id.clone()],
+            vec![
+                "t".to_string(),
+                "questionnaire_submission_decision".to_string(),
+            ],
+            vec![
+                "questionnaire".to_string(),
+                decision.questionnaire_id.clone(),
+            ],
             vec!["schema".to_string(), "1".to_string()],
-            vec!["etype".to_string(), "questionnaire_submission_decision".to_string()],
+            vec![
+                "etype".to_string(),
+                "questionnaire_submission_decision".to_string(),
+            ],
             vec!["submission-id".to_string(), decision.submission_id.clone()],
             vec!["nullifier".to_string(), decision.token_nullifier.clone()],
-            vec!["accepted".to_string(), if decision.accepted { "1".to_string() } else { "0".to_string() }],
+            vec![
+                "accepted".to_string(),
+                if decision.accepted {
+                    "1".to_string()
+                } else {
+                    "0".to_string()
+                },
+            ],
             vec!["reason".to_string(), decision.reason.clone()],
-            vec!["coordinator".to_string(), decision.coordinator_pubkey.clone()],
+            vec![
+                "coordinator".to_string(),
+                decision.coordinator_pubkey.clone(),
+            ],
             vec!["worker".to_string(), self.worker_npub.clone()],
             vec![
                 "delegation-id".to_string(),
@@ -596,13 +834,18 @@ impl WorkerRuntime {
             "questionSummaries": [],
         })
         .to_string();
-        let mut builder =
-            EventBuilder::new(Kind::Custom(IMPLEMENTATION_KIND_QUESTIONNAIRE_RESULT_SUMMARY), content);
+        let mut builder = EventBuilder::new(
+            Kind::Custom(IMPLEMENTATION_KIND_QUESTIONNAIRE_RESULT_SUMMARY),
+            content,
+        );
         let tags = vec![
             vec!["t".to_string(), "questionnaire_result_summary".to_string()],
             vec!["questionnaire-id".to_string(), election_id.to_string()],
             vec!["worker".to_string(), self.worker_npub.clone()],
-            vec!["coordinator".to_string(), self.config.coordinator_npub.clone()],
+            vec![
+                "coordinator".to_string(),
+                self.config.coordinator_npub.clone(),
+            ],
         ];
         for tag in tags {
             if let Ok(parsed) = Tag::parse(tag) {
@@ -639,39 +882,68 @@ impl WorkerRuntime {
         }
         apply_worker_election_config(election, &snapshot);
         self.store.save(&state)?;
+        info!(
+            "worker election config applied: election_id={}, delegation_id={}, expected_invitee_count={:?}, has_blind_signing_key={}, has_definition={}",
+            snapshot.election_id,
+            snapshot.delegation_id,
+            snapshot.expected_invitee_count,
+            snapshot.blind_signing_private_key.is_some(),
+            snapshot.definition.is_some(),
+        );
         Ok(())
     }
 
-    async fn handle_blind_request(&self, request: BlindBallotRequest) -> Result<()> {
-        let mut state = self.state.lock().await;
-        let Some(election) = state.elections.get_mut(&request.election_id) else {
-            return Ok(());
+    async fn handle_blind_request(&self, request: BlindBallotRequest) -> Result<bool> {
+        let election = {
+            let state = self.state.lock().await;
+            let Some(election) = state.elections.get(&request.election_id) else {
+                info!(
+                    "blind request deferred for election {} because no worker config is loaded yet",
+                    request.election_id
+                );
+                return Ok(false);
+            };
+            if election.revoked || is_expired(&election.expires_at) {
+                return Ok(true);
+            }
+            if !election
+                .capabilities
+                .contains(&WorkerCapability::IssueBlindTokens)
+            {
+                return Ok(true);
+            }
+            if election
+                .seen_blind_request_ids
+                .contains(&request.request_id)
+            {
+                info!(
+                    "blind request replay received; re-publishing issuance: election_id={}, request_id={}",
+                    request.election_id, request.request_id
+                );
+            }
+            if election.blind_signing_private_key.is_none() {
+                warn!(
+                    "blind request deferred for election {} because no blind signing key is configured",
+                    request.election_id
+                );
+                return Ok(false);
+            }
+            election.clone()
         };
-        if election.revoked || is_expired(&election.expires_at) {
-            return Ok(());
-        }
-        if !election.capabilities.contains(&WorkerCapability::IssueBlindTokens) {
-            return Ok(());
-        }
-        if election.seen_blind_request_ids.contains(&request.request_id) {
-            return Ok(());
-        }
-        let Some(private_key) = election.blind_signing_private_key.clone() else {
-            warn!(
-                "blind request ignored for election {} because no blind signing key is configured",
-                request.election_id
-            );
-            return Ok(());
-        };
+        let private_key = election
+            .blind_signing_private_key
+            .clone()
+            .expect("checked above");
         if private_key.key_id != request.blind_signing_key_id {
             warn!(
                 "blind request ignored for election {} due to key-id mismatch request={} worker={}",
                 request.election_id, request.blind_signing_key_id, private_key.key_id
             );
-            return Ok(());
+            return Ok(true);
         }
-        let blind_signature = sign_blinded_message(&request.blinded_message, &private_key.private_jwk)?;
-        let issuance = build_blind_issuance(&request, election, blind_signature, now_iso());
+        let blind_signature =
+            sign_blinded_message(&request.blinded_message, &private_key.private_jwk)?;
+        let issuance = build_blind_issuance(&request, &election, blind_signature, now_iso());
         let envelope = BlindBallotIssuanceEnvelope {
             message_type: "optiona_blind_issuance_dm".to_string(),
             schema_version: 1,
@@ -681,17 +953,24 @@ impl WorkerRuntime {
         let content = serde_json::to_string(&envelope)?;
         let recipient = PublicKey::from_bech32(&request.invited_npub)
             .context("invalid invited npub on blind request")?;
-        let _ = self.client.send_private_msg(recipient, content, []).await?;
+        let successes = self
+            .send_private_msg_best_effort(recipient, content, "blind issuance")
+            .await?;
         info!(
-            "blind issuance published: election_id={}, request_id={}, invited_npub={}",
+            "blind issuance published: election_id={}, request_id={}, invited_npub={}, relay_successes={}",
             request.election_id,
             request.request_id,
-            request.invited_npub
+            request.invited_npub,
+            successes
         );
+        let mut state = self.state.lock().await;
+        let Some(election) = state.elections.get_mut(&request.election_id) else {
+            return Ok(false);
+        };
         election.seen_blind_request_ids.insert(request.request_id);
         election.last_blind_issuance_at = Some(now_iso());
         self.store.save(&state)?;
-        Ok(())
+        Ok(true)
     }
 
     async fn apply_delegation(&self, delegation: WorkerDelegationCertificate) -> Result<()> {
@@ -746,7 +1025,9 @@ impl WorkerRuntime {
     }
 
     async fn apply_revocation(&self, revocation: WorkerDelegationRevocation) -> Result<()> {
-        if revocation.message_type != "worker_delegation_revocation" || revocation.schema_version != 1 {
+        if revocation.message_type != "worker_delegation_revocation"
+            || revocation.schema_version != 1
+        {
             return Ok(());
         }
         if revocation.worker_npub != self.worker_npub {
@@ -773,19 +1054,6 @@ impl WorkerRuntime {
     }
 }
 
-fn iso_or_default_to_timestamp(input: Option<&str>, fallback_lookback_secs: u64) -> Timestamp {
-    if let Some(value) = input {
-        if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(value) {
-            let unix = parsed.timestamp();
-            if unix > 0 {
-                return Timestamp::from(unix as u64);
-            }
-        }
-    }
-    let now = Timestamp::now().as_secs();
-    Timestamp::from(now.saturating_sub(fallback_lookback_secs))
-}
-
 fn fixed_lookback_timestamp(lookback_secs: u64) -> Timestamp {
     let now = Timestamp::now().as_secs();
     Timestamp::from(now.saturating_sub(lookback_secs))
@@ -797,7 +1065,11 @@ fn prune_seen_control_events(
 ) {
     seen_control_event_ids.retain(|_, seen_at| {
         chrono::DateTime::parse_from_rfc3339(seen_at)
-            .map(|parsed| now.signed_duration_since(parsed.with_timezone(&Utc)).num_seconds() < CONTROL_DM_DEDUPE_RETENTION_SECS)
+            .map(|parsed| {
+                now.signed_duration_since(parsed.with_timezone(&Utc))
+                    .num_seconds()
+                    < CONTROL_DM_DEDUPE_RETENTION_SECS
+            })
             .unwrap_or(false)
     });
 }
@@ -815,7 +1087,8 @@ mod tests {
             schema_version: 1,
             election_id: "q_worker_definition".to_string(),
             request_id: "request_worker_definition".to_string(),
-            invited_npub: "npub1invitee000000000000000000000000000000000000000000000000".to_string(),
+            invited_npub: "npub1invitee000000000000000000000000000000000000000000000000"
+                .to_string(),
             blinded_message: "abcd".to_string(),
             token_commitment: "token_commitment".to_string(),
             blind_signing_key_id: "key_worker_definition".to_string(),
@@ -844,7 +1117,8 @@ mod tests {
             schema_version: 1,
             election_id: "q_worker_definition".to_string(),
             delegation_id: "delegation_worker_definition".to_string(),
-            coordinator_npub: "npub1coordinator000000000000000000000000000000000000000000".to_string(),
+            coordinator_npub: "npub1coordinator000000000000000000000000000000000000000000"
+                .to_string(),
             worker_npub: "npub1worker000000000000000000000000000000000000000000000000".to_string(),
             expected_invitee_count: Some(3),
             blind_signing_private_key: None,
@@ -890,7 +1164,10 @@ mod tests {
         assert_eq!(issuance.invited_npub, request.invited_npub);
         assert_eq!(issuance.token_commitment, request.token_commitment);
         assert_eq!(issuance.blind_signing_key_id, request.blind_signing_key_id);
-        assert_eq!(issuance.blind_signature, "blind_signature_worker_definition");
+        assert_eq!(
+            issuance.blind_signature,
+            "blind_signature_worker_definition"
+        );
         assert_eq!(issuance.definition, Some(definition));
         assert_eq!(issuance.issued_at, "2026-04-23T00:00:00Z");
     }

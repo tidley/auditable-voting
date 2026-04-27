@@ -36,6 +36,7 @@ const KIND_RUMOR_MESSAGE = 14;
 const KIND_GIFT_WRAP = 1059;
 const KIND_NIP17_RELAY_LIST = 10050;
 const OPTION_A_BLIND_DM_QUERY_MAX_CONCURRENCY = 2;
+const OPTION_A_BLIND_DM_QUERY_TIMEOUT_MS = 8_000;
 const OPTION_A_BLIND_DM_RELAY_BACKOFF_MS = 60 * 1000;
 const OPTION_A_BLIND_DM_SIGNER_DECODE_CACHE_LIMIT = 512;
 const OPTION_A_DM_EXISTENCE_CHECK_MAX_RELAYS = 6;
@@ -270,6 +271,24 @@ async function withBlindDmQuerySlot<T>(task: () => Promise<T>): Promise<T> {
   }
 }
 
+async function withBlindDmTimeout<T>(task: Promise<T>, timeoutMs = OPTION_A_BLIND_DM_QUERY_TIMEOUT_MS): Promise<T> {
+  let timer: ReturnType<typeof globalThis.setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      task,
+      new Promise<T>((_, reject) => {
+        timer = globalThis.setTimeout(() => {
+          reject(new Error(`blind DM relay query timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) {
+      globalThis.clearTimeout(timer);
+    }
+  }
+}
+
 async function queryBlindDmSync(relays: string[], filter: Record<string, unknown>) {
   const queryRelays = filterBlindDmReadRelays(normalizeRelaysRust(relays));
   const key = JSON.stringify({ relays: queryRelays, filter });
@@ -280,7 +299,7 @@ async function queryBlindDmSync(relays: string[], filter: Record<string, unknown
   const run = withBlindDmQuerySlot(async () => {
     const pool = getSharedNostrPool();
     try {
-      return await pool.querySync(queryRelays, filter);
+      return await withBlindDmTimeout(pool.querySync(queryRelays, filter));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       applyBlindDmRelayBackoff(queryRelays, message);

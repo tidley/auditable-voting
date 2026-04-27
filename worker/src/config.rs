@@ -35,10 +35,9 @@ pub struct WorkerConfig {
 
 impl WorkerConfig {
     pub fn from_env() -> Result<Self> {
-        let worker_nsec = env::var("WORKER_NSEC")
-            .context("WORKER_NSEC is required")?;
-        let coordinator_npub = env::var("COORDINATOR_NPUB")
-            .context("COORDINATOR_NPUB is required")?;
+        let worker_nsec = env::var("WORKER_NSEC").context("WORKER_NSEC is required")?;
+        let coordinator_npub =
+            env::var("COORDINATOR_NPUB").context("COORDINATOR_NPUB is required")?;
         let (raw_relays, worker_relays_from_env) = match env::var("WORKER_RELAYS") {
             Ok(value) => (value, true),
             Err(_) => (DEFAULT_WORKER_RELAYS.join(","), false),
@@ -73,9 +72,12 @@ impl WorkerConfig {
 
 fn parse_relays(value: &str) -> Result<Vec<RelayUrl>> {
     let mut relays: Vec<RelayUrl> = Vec::new();
-    for relay in value.split(',').map(str::trim).filter(|entry| !entry.is_empty()) {
-        let url = RelayUrl::parse(relay)
-            .with_context(|| format!("invalid relay URL: {relay}"))?;
+    for relay in value
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+    {
+        let url = RelayUrl::parse(relay).with_context(|| format!("invalid relay URL: {relay}"))?;
         relays.push(url);
     }
     if relays.is_empty() {

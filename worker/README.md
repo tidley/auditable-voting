@@ -56,7 +56,7 @@ The coordinator Build page can also save an autoconfigured platform-specific lau
 - announce audit proxy presence/status to the coordinator via NIP-17 DM
 - consume delegation/revocation messages from DM and public events
 - persist audit proxy runtime state locally
-- poll recent control-plane gift-wrapped DMs with fixed-lookback replay protection so relay-randomised timestamps do not hide delegated blind requests
+- poll recent control-plane gift-wrapped DMs with a 36-hour fixed-lookback replay window so NIP-17 randomised timestamps do not hide delegated blind requests, and keep requests retryable until the election config arrives
 - consume audit proxy election-config DMs carrying the blind-signing key and questionnaire definition
 - consume delegated blind-token requests over private DMs
 - issue blind-signature responses on behalf of the coordinator for delegated elections with `Issue blind tokens` enabled, including the questionnaire definition when available so voters can render ballots offline
