@@ -37,6 +37,18 @@ const DEFAULT_DM_LOOKBACK_SECS: u64 = 7 * 24 * 60 * 60;
 const DEFAULT_PUBLIC_LOOKBACK_SECS: u64 = 12 * 60 * 60;
 const CONTROL_DM_DEDUPE_RETENTION_SECS: i64 = 14 * 24 * 60 * 60;
 const PRIVATE_DM_SEND_TIMEOUT_SECS: u64 = 12;
+const DISALLOWED_WORKER_READ_RELAYS: &[&str] = &[
+    "wss://strfry.bitsbytom.com",
+    "wss://nip17.tomdwyer.uk",
+    "wss://relay.nostr.band",
+    "wss://offchain.pub",
+    "wss://relay.damus.io",
+    "wss://relay.primal.net",
+    "wss://nostr.mom",
+    "wss://nostr.wine",
+    "wss://eden.nostr.land",
+    "wss://purplepag.es",
+];
 
 fn parse_jwk_component(jwk: &serde_json::Value, key: &str) -> Result<BoxedUint> {
     let value = jwk
@@ -526,11 +538,13 @@ impl WorkerRuntime {
             for relay in &election.control_relays {
                 match RelayUrl::parse(relay) {
                     Ok(parsed) => relays.push(parsed),
-                    Err(error) => warn!("ignoring invalid delegated control relay {relay}: {error}"),
+                    Err(error) => {
+                        warn!("ignoring invalid delegated control relay {relay}: {error}")
+                    }
                 }
             }
         }
-        dedupe_relays(relays)
+        sanitize_relay_urls(dedupe_relays(relays))
     }
 
     async fn ensure_relays_connected(&self, relays: &[RelayUrl]) {
@@ -680,6 +694,7 @@ impl WorkerRuntime {
             events.len()
         );
 
+        let mut unrelated_response_count = 0usize;
         for event in events {
             let submission =
                 match serde_json::from_str::<QuestionnaireBlindResponseEvent>(&event.content) {
@@ -690,10 +705,7 @@ impl WorkerRuntime {
                     }
                 };
             if !elections_to_process.contains(&submission.questionnaire_id) {
-                debug!(
-                    "skipping blind response for unrelated questionnaire: event_id={}, questionnaire_id={}",
-                    event.id, submission.questionnaire_id
-                );
+                unrelated_response_count = unrelated_response_count.saturating_add(1);
                 continue;
             }
             info!(
@@ -701,6 +713,12 @@ impl WorkerRuntime {
                 submission.questionnaire_id, submission.response_id
             );
             self.handle_submission(submission).await?;
+        }
+        if unrelated_response_count > 0 {
+            debug!(
+                "public plane skipped {} blind response events for unrelated questionnaires",
+                unrelated_response_count
+            );
         }
         Ok(())
     }
@@ -1035,6 +1053,8 @@ impl WorkerRuntime {
             "activating delegation {} for election {}",
             delegation.delegation_id, delegation.election_id
         );
+        let sanitized_control_relays = sanitize_control_relay_strings(&delegation.control_relays);
+        let control_relays = parse_control_relays(&sanitized_control_relays);
         let mut state = self.state.lock().await;
         state
             .known_delegations
@@ -1047,7 +1067,7 @@ impl WorkerRuntime {
         existing.election_id = delegation.election_id.clone();
         existing.delegation_id = delegation.delegation_id.clone();
         existing.capabilities = delegation.capabilities.clone();
-        existing.control_relays = delegation.control_relays.clone();
+        existing.control_relays = sanitized_control_relays;
         existing.revoked = false;
         existing.expires_at = delegation.expires_at.clone();
         if delegation_changed {
@@ -1062,17 +1082,7 @@ impl WorkerRuntime {
             existing.last_result_summary_publish_at = None;
         }
         self.store.save(&state)?;
-        let control_relays = delegation
-            .control_relays
-            .iter()
-            .filter_map(|relay| match RelayUrl::parse(relay) {
-                Ok(parsed) => Some(parsed),
-                Err(error) => {
-                    warn!("ignoring invalid delegation control relay {relay}: {error}");
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
+        drop(state);
         self.ensure_relays_connected(&control_relays).await;
         Ok(())
     }
@@ -1116,11 +1126,66 @@ fn dedupe_relays(relays: Vec<RelayUrl>) -> Vec<RelayUrl> {
     let mut seen = std::collections::HashSet::new();
     let mut deduped = Vec::with_capacity(relays.len());
     for relay in relays {
-        if seen.insert(relay.to_string()) {
+        if seen.insert(normalize_relay_key(&relay.to_string())) {
             deduped.push(relay);
         }
     }
     deduped
+}
+
+fn normalize_relay_key(relay: &str) -> String {
+    relay.trim().trim_end_matches('/').to_ascii_lowercase()
+}
+
+fn is_disallowed_worker_relay(relay: &str) -> bool {
+    let key = normalize_relay_key(relay);
+    DISALLOWED_WORKER_READ_RELAYS
+        .iter()
+        .any(|entry| normalize_relay_key(entry) == key)
+}
+
+fn sanitize_relay_urls(relays: Vec<RelayUrl>) -> Vec<RelayUrl> {
+    relays
+        .into_iter()
+        .filter(|relay| {
+            let blocked = is_disallowed_worker_relay(&relay.to_string());
+            if blocked {
+                warn!("ignoring deprecated or unreliable worker relay {relay}");
+            }
+            !blocked
+        })
+        .collect()
+}
+
+fn sanitize_control_relay_strings(relays: &[String]) -> Vec<String> {
+    let mut relay_urls = Vec::new();
+    for relay in relays {
+        if is_disallowed_worker_relay(relay) {
+            warn!("ignoring deprecated or unreliable delegated control relay {relay}");
+            continue;
+        }
+        match RelayUrl::parse(relay) {
+            Ok(parsed) => relay_urls.push(parsed),
+            Err(error) => warn!("ignoring invalid delegated control relay {relay}: {error}"),
+        }
+    }
+    dedupe_relays(relay_urls)
+        .into_iter()
+        .map(|relay| relay.to_string())
+        .collect()
+}
+
+fn parse_control_relays(relays: &[String]) -> Vec<RelayUrl> {
+    relays
+        .iter()
+        .filter_map(|relay| match RelayUrl::parse(relay) {
+            Ok(parsed) => Some(parsed),
+            Err(error) => {
+                warn!("ignoring invalid delegation control relay {relay}: {error}");
+                None
+            }
+        })
+        .collect()
 }
 
 fn prune_seen_control_events(
@@ -1249,6 +1314,20 @@ mod tests {
     fn control_dm_lookback_covers_randomized_gift_wrap_timestamps() {
         assert!(DEFAULT_DM_LOOKBACK_SECS >= 7 * 24 * 60 * 60);
         assert!(CONTROL_DM_DEDUPE_RETENTION_SECS as u64 > DEFAULT_DM_LOOKBACK_SECS);
+    }
+
+    #[test]
+    fn delegated_relay_sanitizer_drops_deprecated_relays() {
+        let relays = sanitize_control_relay_strings(&[
+            "wss://relay.nostr.net".to_string(),
+            "wss://strfry.bitsbytom.com".to_string(),
+            "wss://nip17.tomdwyer.uk".to_string(),
+            "wss://relay.nostr.band".to_string(),
+            "wss://offchain.pub".to_string(),
+            "wss://relay.nostr.net/".to_string(),
+        ]);
+
+        assert_eq!(relays, vec!["wss://relay.nostr.net".to_string()]);
     }
 
     #[test]

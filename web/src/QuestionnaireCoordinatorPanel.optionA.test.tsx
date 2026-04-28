@@ -10,6 +10,7 @@ import QuestionnaireCoordinatorPanel from "./QuestionnaireCoordinatorPanel";
 
 afterEach(() => {
   cleanup();
+  window.localStorage.clear();
 });
 
 describe("QuestionnaireCoordinatorPanel option_a mode", () => {
@@ -36,5 +37,17 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(auditProxySection?.className).not.toContain("is-collapsed");
     expect((screen.getByLabelText("Mode") as HTMLSelectElement).value).toBe("delegated_worker");
     expect(screen.getByText(/Generated audit proxy npub:/)).toBeTruthy();
+  });
+
+  it("generates a new questionnaire id when the coordinator New ID event fires", () => {
+    render(<QuestionnaireCoordinatorPanel />);
+
+    const idInput = screen.getByLabelText("Questionnaire ID") as HTMLInputElement;
+    const previousId = idInput.value;
+
+    fireEvent(window, new Event("auditable-voting:coordinator-new"));
+
+    expect(idInput.value).toMatch(/^q_[a-f0-9]+$/);
+    expect(idInput.value).not.toBe(previousId);
   });
 });

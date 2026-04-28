@@ -81,7 +81,7 @@ checksum = "ef49f5882e4b6afaac09ad239a4f8c70a24b8f2b0897edb1f706008efd109cf4"
 
 [[package]]
 name = "auditable-voting-worker"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "anyhow",
  "base64",

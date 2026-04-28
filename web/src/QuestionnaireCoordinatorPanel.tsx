@@ -788,6 +788,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [coordinatorNpub, setCoordinatorNpub] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [isCloseAndPublishInFlight, setIsCloseAndPublishInFlight] = useState(false);
+  const regenerateQuestionnaireId = useCallback(() => {
+    setQuestionnaireId(generateQuestionnaireId());
+  }, []);
   const [latestDefinition, setLatestDefinition] = useState<QuestionnaireDefinition | null>(null);
   const [latestState, setLatestState] = useState<QuestionnaireStateValue | null>(null);
   const [latestStateCreatedAt, setLatestStateCreatedAt] = useState<number | null>(null);
@@ -1436,6 +1439,16 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       payloadMode: "Encrypted",
     });
   }, [latestAcceptedCount, latestRejectedCount, latestState, props, questionnaireId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.addEventListener("auditable-voting:coordinator-new", regenerateQuestionnaireId);
+    return () => {
+      window.removeEventListener("auditable-voting:coordinator-new", regenerateQuestionnaireId);
+    };
+  }, [regenerateQuestionnaireId]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -2831,7 +2844,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           onChange={(event) => setQuestionnaireId(event.target.value)}
         />
         <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
-          <button type='button' className='simple-voter-secondary' onClick={() => setQuestionnaireId(generateQuestionnaireId())}>
+          <button type='button' className='simple-voter-secondary' onClick={regenerateQuestionnaireId}>
             Generate ID
           </button>
           <button type='button' className='simple-voter-secondary' onClick={() => void tryWriteClipboard(questionnaireId)}>

@@ -409,9 +409,6 @@ function orderBlindDmReadRelays(relays: string[]) {
       add(relay);
     }
   }
-  for (const relay of normalized) {
-    add(relay);
-  }
   return ordered;
 }
 
