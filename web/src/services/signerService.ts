@@ -57,7 +57,7 @@ const AMBER_CONNECT_RELAYS = [
   "wss://relay.primal.net",
   "wss://nos.lol",
   "wss://relay.damus.io",
-  "wss://offchain.pub",
+  "wss://nostr.wine",
 ];
 
 const AMBER_CONNECT_PERMISSIONS = [

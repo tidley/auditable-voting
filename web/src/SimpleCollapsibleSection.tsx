@@ -1,19 +1,28 @@
-import { useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 
 export default function SimpleCollapsibleSection({
   title,
   children,
   defaultCollapsed = false,
   renderWhenExpanded = false,
+  expandSignal,
 }: {
   title: string;
   children: ReactNode;
   defaultCollapsed?: boolean;
   renderWhenExpanded?: boolean;
+  expandSignal?: number;
 }) {
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
   const titleId = useId();
   const bodyId = `${titleId}-body`;
+
+  useEffect(() => {
+    if (expandSignal === undefined || expandSignal <= 0) {
+      return;
+    }
+    setCollapsed(false);
+  }, [expandSignal]);
 
   return (
     <section

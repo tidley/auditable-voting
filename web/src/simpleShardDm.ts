@@ -37,12 +37,12 @@ import {
 
 export const SIMPLE_DM_RELAYS = [
   'wss://nip17.com',
-  'wss://relay.nostr.band',
+  'wss://relay.nostr.info',
   'wss://relay.damus.io',
   'wss://relay.nostr.net',
   'wss://relay.primal.net',
   'wss://nos.lol',
-  'wss://offchain.pub',
+  'wss://nostr.wine',
   'wss://nostr.mom',
   'wss://relay.layer.systems',
   'wss://nostr.bond',

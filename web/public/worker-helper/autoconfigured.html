@@ -158,8 +158,24 @@
         return value.replace(/'/g, "''");
       }
 
+      function sanitizeWorkerRelays(value) {
+        const replacements = new Map([
+          [`wss://strfry.${"bitsbytom.com"}`, "wss://relay.nostr.net"],
+          [`wss://nip17.${"tomdwyer.uk"}`, "wss://relay.nostr.info"],
+          [`wss://offchain.${"pub"}`, "wss://nostr.wine"],
+        ]);
+        return Array.from(new Set(
+          value
+            .split(/[\n,\s]+/)
+            .map((entry) => entry.trim())
+            .filter(Boolean)
+            .map((entry) => replacements.get(entry) || entry),
+        )).join(",");
+      }
+
       function buildLauncherContents({ target, coordinatorNpub, workerNpub, workerRelays }) {
         const nsecPlaceholder = "nsec1...";
+        const sanitizedWorkerRelays = sanitizeWorkerRelays(workerRelays);
         if (target.shell === "powershell") {
           const expectedNpub = workerNpub ? `Write-Host 'Expected audit proxy npub: ${escapeForPowerShellSingleQuotedString(workerNpub)}'\n` : "";
           const legacyBinaryFilename = (target.legacyBinaryFilename || "").trim();
@@ -186,7 +202,7 @@
             `if (-not $env:RUST_LOG) { $env:RUST_LOG = 'debug' }`,
             `if (-not $env:WORKER_NSEC) { $env:WORKER_NSEC = '${nsecPlaceholder}' }`,
             `if (-not $env:COORDINATOR_NPUB) { $env:COORDINATOR_NPUB = '${escapeForPowerShellSingleQuotedString(coordinatorNpub)}' }`,
-            `if (-not $env:WORKER_RELAYS) { $env:WORKER_RELAYS = '${escapeForPowerShellSingleQuotedString(workerRelays)}' }`,
+            `if (-not $env:WORKER_RELAYS) { $env:WORKER_RELAYS = '${escapeForPowerShellSingleQuotedString(sanitizedWorkerRelays)}' }`,
             "if (-not $env:WORKER_STATE_DIR) { $env:WORKER_STATE_DIR = (Join-Path $ScriptDir '.worker-state') }",
             "New-Item -ItemType Directory -Force -Path $env:WORKER_STATE_DIR | Out-Null",
             "",
@@ -245,7 +261,7 @@
           'export RUST_LOG="${RUST_LOG:-debug}"',
           `export WORKER_NSEC="\${WORKER_NSEC:-${nsecPlaceholder}}"`,
           `export COORDINATOR_NPUB="\${COORDINATOR_NPUB:-${escapeForDoubleQuotedBash(coordinatorNpub)}}"`,
-          `export WORKER_RELAYS="\${WORKER_RELAYS:-${escapeForDoubleQuotedBash(workerRelays)}}"`,
+          `export WORKER_RELAYS="\${WORKER_RELAYS:-${escapeForDoubleQuotedBash(sanitizedWorkerRelays)}}"`,
           'export WORKER_STATE_DIR="${WORKER_STATE_DIR:-$SCRIPT_DIR/.worker-state}"',
           'mkdir -p "$WORKER_STATE_DIR"',
           "",

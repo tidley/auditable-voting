@@ -22,9 +22,9 @@ import type { SimpleDmAcknowledgement, SimpleShardRequest, SimpleShardResponse }
 export const SIMPLE_MAILBOX_RELAYS = [
   "wss://relay.nostr.net",
   "wss://relay.primal.net",
-  "wss://relay.nostr.band",
+  "wss://relay.nostr.info",
   "wss://nos.lol",
-  "wss://offchain.pub",
+  "wss://nostr.wine",
   "wss://nostr.mom",
   "wss://relay.layer.systems",
   "wss://nostr.bond",

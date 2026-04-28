@@ -18,7 +18,7 @@ export const SIMPLE_PUBLIC_RELAYS = [
   "wss://relay.nostr.net",
   "wss://nos.lol",
   "wss://relay.primal.net",
-  "wss://offchain.pub",
+  "wss://nostr.wine",
   "wss://nostr.mom",
   "wss://nostr-pub.wellorder.net",
   "wss://relay.damus.io",

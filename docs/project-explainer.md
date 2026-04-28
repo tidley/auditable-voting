@@ -51,7 +51,7 @@ This is the practical order of operations for the current app.
 4. Send invites (`Send invite` / `Invite all whitelisted`) or share the invite link (generated links use the current host by default).
 5. As voters appear, run `Process requests` / `Check responses` to process blind request and response queues (or delegate those duties to an audit proxy).
    - Verified voters can now pre-request and coordinators can pre-issue before publish.
-   - If needed, use the separate **Build** page `Audit proxy` section, switch to `Audit proxy`, generate audit proxy credentials/startup command, or save an autoconfigured platform-specific launcher script that already includes the current coordinator `npub`; right-click copy-link uses a shareable launcher URL that intentionally omits the audit proxy secret, and raw binary / direct CLI options now sit under `Advanced`.
+   - If needed, use the separate **Build** page `Audit proxy` section, switch to `Audit proxy`, use Set up audit proxy to open the section and pre-generate audit proxy credentials, then copy the startup command, or save an autoconfigured platform-specific launcher script that already includes the current coordinator `npub`; right-click copy-link uses a shareable launcher URL that intentionally omits the audit proxy secret, and raw binary / direct CLI options now sit under `Advanced`.
    - When blind-token issuance is delegated, invite payloads and cached election metadata carry the audit proxy routing hint so voters can keep DMing the audit proxy even if the coordinator browser is no longer open.
    - Audit proxy election-config DMs now also carry the questionnaire definition, so audit-proxy-issued blind credentials can still render the ballot if the coordinator browser is offline.
 6. Publish the questionnaire when ready (`Publish Questionnaire`, state becomes `Open`).
@@ -567,7 +567,7 @@ The current client also distinguishes between:
 - **read/subscription fanout**, which is intentionally kept to a smaller primary subset
 
 That split reduces relay-side `too many concurrent REQs` failures while keeping the write path reasonably redundant.
-Automatic voter and coordinator actions are also paced with a random `0-30s` delay, slower retry windows, and a sender-scoped ticket publish queue so many browser actors do not all publish into the same public relays at once. The default relay lists now include public relays such as `relay.nostr.net`, `relay.nostr.band`, `offchain.pub`, `nostr.mom`, and `nostr-pub.wellorder.net`; mailbox publishes keep one deterministic anchor relay, rotate secondary relays by recipient, and apply temporary cooldowns when relays return rate-limit/pow/spam/policy failures.
+Automatic voter and coordinator actions are also paced with a random `0-30s` delay, slower retry windows, and a sender-scoped ticket publish queue so many browser actors do not all publish into the same public relays at once. The default relay lists now include public relays such as `relay.nostr.net`, `relay.nostr.info`, `nostr.wine`, `nostr.mom`, and `nostr-pub.wellorder.net`; mailbox publishes keep one deterministic anchor relay, rotate secondary relays by recipient, and apply temporary cooldowns when relays return rate-limit/pow/spam/policy failures.
 
 ---
 

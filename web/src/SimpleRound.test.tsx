@@ -706,7 +706,7 @@ vi.mock("./simpleShardCertificate", () => ({
 vi.mock("./simpleShardDm", () => ({
   SIMPLE_DM_RELAYS: [
     "wss://nip17.com",
-    "wss://relay.nostr.band",
+    "wss://relay.nostr.info",
     "wss://relay.nostr.net",
     "wss://nos.lol",
   ],
@@ -946,7 +946,7 @@ vi.mock("./simpleShardDm", () => ({
         successes: 1,
         failures: 0,
         relayResults: [
-          { relay: "wss://relay.nostr.band", success: true },
+          { relay: "wss://relay.nostr.info", success: true },
           { relay: "wss://relay.nostr.net", success: true },
         ],
       };
@@ -986,7 +986,7 @@ vi.mock("./simpleShardDm", () => ({
       successes: 1,
       failures: 0,
       relayResults: [
-        { relay: "wss://relay.nostr.band", success: true },
+        { relay: "wss://relay.nostr.info", success: true },
         { relay: "wss://relay.nostr.net", success: true },
       ],
     };
@@ -1114,7 +1114,7 @@ vi.mock("./simpleVotingSession", () => ({
   SIMPLE_PUBLIC_RELAYS: [
     "wss://nos.lol",
     "wss://relay.snort.social",
-    "wss://relay.nostr.band",
+    "wss://relay.nostr.info",
     "wss://relay.damus.io",
   ],
   publishSimpleLiveVote: vi.fn(async (input: {
