@@ -20,9 +20,9 @@ import { createSimpleBlindShareResponse } from "./simpleShardCertificate";
 import type { SimpleDmAcknowledgement, SimpleShardRequest, SimpleShardResponse } from "./simpleShardDm";
 
 export const SIMPLE_MAILBOX_RELAYS = [
-  "wss://strfry.bitsbytom.com",
+  "wss://relay.nostr.net",
   "wss://relay.primal.net",
-  "wss://nip17.tomdwyer.uk",
+  "wss://relay.nostr.band",
   "wss://nos.lol",
   "wss://offchain.pub",
   "wss://nostr.mom",
@@ -49,7 +49,7 @@ const SIMPLE_MAILBOX_TICKET_RELAYS_MAX = 4;
 const SIMPLE_MAILBOX_ACK_RELAYS_MAX = 3;
 const SIMPLE_MAILBOX_READ_RELAYS_MAX = 5;
 const SIMPLE_MAILBOX_ANCHOR_RELAYS = [
-  "wss://strfry.bitsbytom.com",
+  "wss://relay.nostr.net",
   "wss://relay.primal.net",
 ];
 const SIMPLE_MAILBOX_ANCHORS_PER_MESSAGE_MAX = 1;

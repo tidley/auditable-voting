@@ -706,8 +706,8 @@ vi.mock("./simpleShardCertificate", () => ({
 vi.mock("./simpleShardDm", () => ({
   SIMPLE_DM_RELAYS: [
     "wss://nip17.com",
-    "wss://nip17.tomdwyer.uk",
     "wss://relay.nostr.band",
+    "wss://relay.nostr.net",
     "wss://nos.lol",
   ],
   sendSimpleCoordinatorFollow: vi.fn(async (input: {
@@ -946,8 +946,8 @@ vi.mock("./simpleShardDm", () => ({
         successes: 1,
         failures: 0,
         relayResults: [
-          { relay: "wss://nip17.tomdwyer.uk", success: true },
-          { relay: "wss://strfry.bitsbytom.com", success: true },
+          { relay: "wss://relay.nostr.band", success: true },
+          { relay: "wss://relay.nostr.net", success: true },
         ],
       };
     }
@@ -986,8 +986,8 @@ vi.mock("./simpleShardDm", () => ({
       successes: 1,
       failures: 0,
       relayResults: [
-        { relay: "wss://nip17.tomdwyer.uk", success: true },
-        { relay: "wss://strfry.bitsbytom.com", success: true },
+        { relay: "wss://relay.nostr.band", success: true },
+        { relay: "wss://relay.nostr.net", success: true },
       ],
     };
   }),

@@ -117,7 +117,7 @@ describe("questionnaireOptionABlindDm", () => {
       "wss://recipient.one",
       "wss://recipient.two",
       "wss://nip17.com",
-      "wss://nip17.tomdwyer.uk",
+      "wss://relay.nostr.band",
       "wss://recipient.three",
       "wss://recipient.four",
     ]);

@@ -4,7 +4,7 @@ use std::env;
 use std::path::PathBuf;
 
 const DEFAULT_WORKER_RELAYS: &[&str] = &[
-    "wss://strfry.bitsbytom.com",
+    "wss://relay.nostr.net",
     "wss://nos.lol",
     "wss://relay.primal.net",
     "wss://offchain.pub",
@@ -14,7 +14,7 @@ const DEFAULT_WORKER_RELAYS: &[&str] = &[
     "wss://purplepag.es",
     "wss://eden.nostr.land",
     "wss://nip17.com",
-    "wss://nip17.tomdwyer.uk",
+    "wss://relay.nostr.band",
     "wss://relay.layer.systems",
     "wss://nostr.bond",
     "wss://auth.nostr1.com",

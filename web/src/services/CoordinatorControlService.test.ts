@@ -206,7 +206,7 @@ describe("CoordinatorControlService", () => {
           successes: 0,
           failures: 2,
           relayResults: [
-            { relay: "wss://strfry.bitsbytom.com", success: false, error: "timeout" },
+            { relay: "wss://relay.nostr.net", success: false, error: "timeout" },
             { relay: "wss://nos.lol", success: false, error: "timeout" },
           ],
         };
@@ -277,7 +277,7 @@ describe("CoordinatorControlService", () => {
         successes: 0,
         failures: 2,
         relayResults: [
-          { relay: "wss://strfry.bitsbytom.com", success: false, error: "timeout" },
+          { relay: "wss://relay.nostr.net", success: false, error: "timeout" },
           { relay: "wss://nos.lol", success: false, error: "timeout" },
         ],
       };

@@ -2809,25 +2809,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         </div>
       </div>
 
-      <label className='simple-voter-label' htmlFor='questionnaire-title'>Name</label>
-      <input
-        id='questionnaire-title'
-        className='simple-voter-input'
-        value={title}
-        placeholder='Enter questionnaire name'
-        onChange={(event) => setTitle(event.target.value)}
-      />
-      <label className='simple-voter-label' htmlFor='questionnaire-description'>Description</label>
-      <textarea
-        id='questionnaire-description'
-        className='simple-voter-input'
-        rows={3}
-        value={description}
-        placeholder='Describe what this questionnaire is for'
-        onChange={(event) => setDescription(event.target.value)}
-      />
-      <SimpleCollapsibleSection title='Advanced identity' defaultCollapsed>
-        <p className='simple-voter-note'>The questionnaire ID is generated automatically. Only change it if you need a specific public identifier.</p>
+      <div className='simple-questionnaire-id-panel'>
         <label className='simple-voter-label' htmlFor='questionnaire-id'>Questionnaire ID</label>
         <input
           id='questionnaire-id'
@@ -2846,6 +2828,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             Show voter QR
           </button>
         </div>
+        <p className='simple-voter-note'>Use a unique ID for each questionnaire so voters and observers load the correct public events.</p>
         {showInviteQr && questionnaireId.trim() ? (
           <SimpleQrPanel
             value={inviteLink || questionnaireId.trim()}
@@ -2855,7 +2838,25 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             downloadFilename='questionnaire-voter-link-qr.png'
           />
         ) : null}
-      </SimpleCollapsibleSection>
+      </div>
+
+      <label className='simple-voter-label' htmlFor='questionnaire-title'>Name</label>
+      <input
+        id='questionnaire-title'
+        className='simple-voter-input'
+        value={title}
+        placeholder='Enter questionnaire name'
+        onChange={(event) => setTitle(event.target.value)}
+      />
+      <label className='simple-voter-label' htmlFor='questionnaire-description'>Description</label>
+      <textarea
+        id='questionnaire-description'
+        className='simple-voter-input'
+        rows={3}
+        value={description}
+        placeholder='Describe what this questionnaire is for'
+        onChange={(event) => setDescription(event.target.value)}
+      />
 
       <div className='simple-questionnaire-close-timer-row'>
         <label className='simple-questionnaire-close-timer-toggle' htmlFor='questionnaire-close-timer-enabled'>

@@ -37,9 +37,9 @@ import {
 
 export const SIMPLE_DM_RELAYS = [
   'wss://nip17.com',
-  'wss://nip17.tomdwyer.uk',
+  'wss://relay.nostr.band',
   'wss://relay.damus.io',
-  'wss://strfry.bitsbytom.com',
+  'wss://relay.nostr.net',
   'wss://relay.primal.net',
   'wss://nos.lol',
   'wss://offchain.pub',

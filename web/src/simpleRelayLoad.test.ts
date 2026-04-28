@@ -212,14 +212,14 @@ describe("simple relay load without browser", () => {
       const relays = relaysForEvent(SIMPLE_MAILBOX_TICKET_KIND, ticketEventId);
       expect(relays).toHaveLength(4);
       const anchors = relays.filter(
-        (relay) => relay === "wss://strfry.bitsbytom.com" || relay === "wss://relay.primal.net",
+        (relay) => relay === "wss://relay.nostr.net" || relay === "wss://relay.primal.net",
       );
       expect(anchors.length).toBeGreaterThanOrEqual(1);
       for (const anchor of anchors) {
         anchorsSeen.add(anchor);
       }
       for (const relay of relays) {
-        if (relay !== "wss://strfry.bitsbytom.com" && relay !== "wss://relay.primal.net") {
+        if (relay !== "wss://relay.nostr.net" && relay !== "wss://relay.primal.net") {
           secondaryTicketRelays.add(relay);
         }
       }
