@@ -227,7 +227,7 @@ The default remains browser-only coordination. You can optionally enable `Audit 
 - the audit proxy can be revoked at any time with a signed revocation (also public + DM)
 - the audit proxy runtime is outbound-only to relays and does not require inbound ports
 - the audit proxy can issue blind tokens (blind-signing on behalf of the coordinator for that delegated election), verify public submissions, publish public submission decisions, and (optionally) auto-publish a result summary once all expected invitees have accepted responses
-- the audit proxy now polls private control-plane DMs with a fixed recent lookback plus event-id dedupe, so relay-randomised gift-wrap timestamps do not cause missed blind requests
+- the audit proxy now polls private control-plane DMs with a seven-day fixed lookback plus event-id dedupe, so relay-randomised gift-wrap timestamps do not cause missed blind requests; status heartbeats are published back to the coordinator and runtime reads include active delegation control relays as well as startup relays
 - the coordinator Build page exposes a separate `Audit proxy` section with audit proxy downloads plus a startup helper; the Set up audit proxy button opens the section and pre-generates a new audit proxy account, then the section can copy a launch command, save an autoconfigured platform-specific launcher script prefilled with the current coordinator `npub`, default helper-side logging to `RUST_LOG=debug`, support right-click copy-link on those autoconfigured downloads via a safe shareable URL, and reveal raw binary / direct CLI options under `Advanced`
 - GitHub Releases now publish cross-platform audit proxy assets for:
   - Linux x64 (`auditable-voting-worker-linux-x64.tar.gz`)

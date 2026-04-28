@@ -301,7 +301,7 @@ The client uses:
 - `@cloudflare/blindrsa-ts` for RSABSSA blind signatures
 - Rust/Wasm for deterministic replay and protocol validation in the public round path
 - an optional Rust audit proxy runtime (`worker/`) for delegated election operations over outbound-only relay connections
-- fixed-lookback audit proxy DM polling with event-id dedupe so relay-randomised gift-wrap timestamps do not cause missed delegated blind requests
+- seven-day fixed-lookback audit proxy DM polling with event-id dedupe so relay-randomised gift-wrap timestamps do not cause missed delegated blind requests, plus status heartbeats back to the coordinator and active delegation control-relay reads
 - browser storage for private active state and recovery
 
 ## Blind Issuance

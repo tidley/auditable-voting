@@ -32,9 +32,9 @@ use tokio::time::{sleep, timeout};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 
-const DEFAULT_DM_LOOKBACK_SECS: u64 = 36 * 60 * 60;
+const DEFAULT_DM_LOOKBACK_SECS: u64 = 7 * 24 * 60 * 60;
 const DEFAULT_PUBLIC_LOOKBACK_SECS: u64 = 12 * 60 * 60;
-const CONTROL_DM_DEDUPE_RETENTION_SECS: i64 = 3 * 24 * 60 * 60;
+const CONTROL_DM_DEDUPE_RETENTION_SECS: i64 = 14 * 24 * 60 * 60;
 const PRIVATE_DM_SEND_TIMEOUT_SECS: u64 = 12;
 
 fn parse_jwk_component(jwk: &serde_json::Value, key: &str) -> Result<BoxedUint> {
@@ -267,7 +267,9 @@ impl WorkerRuntime {
         timeout_secs: u64,
     ) -> Vec<Event> {
         let mut tasks = tokio::task::JoinSet::new();
-        for relay in self.config.worker_relays.clone() {
+        let relays = self.effective_worker_relays().await;
+        self.ensure_relays_connected(&relays).await;
+        for relay in relays {
             let client = self.client.clone();
             let filter_for_task = filter.clone();
             tasks.spawn(async move {
@@ -363,14 +365,15 @@ impl WorkerRuntime {
                     .collect(),
             }
         };
-        let _envelope = WorkerStatusEnvelope {
+        let envelope = WorkerStatusEnvelope {
             message_type: "optiona_worker_status_dm".to_string(),
             schema_version: 1,
             snapshot,
             sent_at: now_iso(),
         };
-        // Keep heartbeat state local. Control-plane DMs must not compete with
-        // status publishing, because slow relay writes can delay ballot issuance.
+        let content = serde_json::to_string(&envelope)?;
+        self.send_private_msg_best_effort(self.coordinator_pubkey, content, "worker status")
+            .await?;
         let mut state = self.state.lock().await;
         state.last_heartbeat_at = Some(now_iso());
         self.store.save(&state)?;
@@ -389,7 +392,9 @@ impl WorkerRuntime {
                 .await
                 .with_context(|| format!("{label} gift-wrap construction failed"))?;
         let mut tasks = tokio::task::JoinSet::new();
-        for relay in self.config.worker_relays.clone() {
+        let relays = self.effective_worker_relays().await;
+        self.ensure_relays_connected(&relays).await;
+        for relay in relays {
             let client = self.client.clone();
             let event_for_task = event.clone();
             tasks.spawn(async move {
@@ -435,6 +440,11 @@ impl WorkerRuntime {
 
     async fn poll_control_plane(&self) -> Result<()> {
         let since_ts = fixed_lookback_timestamp(DEFAULT_DM_LOOKBACK_SECS);
+        debug!(
+            "control plane polling gift-wraps with fixed lookback: lookback_secs={}, since={}",
+            DEFAULT_DM_LOOKBACK_SECS,
+            since_ts.as_secs()
+        );
         let filter = Filter::new()
             .kind(Kind::GiftWrap)
             .custom_tag(
@@ -498,6 +508,31 @@ impl WorkerRuntime {
         state.last_dm_scan_at = Some(now_iso());
         self.store.save(&state)?;
         Ok(())
+    }
+
+    async fn effective_worker_relays(&self) -> Vec<RelayUrl> {
+        let mut relays = self.config.worker_relays.clone();
+        let state = self.state.lock().await;
+        for election in state.elections.values() {
+            if election.revoked || is_expired(&election.expires_at) {
+                continue;
+            }
+            for relay in &election.control_relays {
+                match RelayUrl::parse(relay) {
+                    Ok(parsed) => relays.push(parsed),
+                    Err(error) => warn!("ignoring invalid delegated control relay {relay}: {error}"),
+                }
+            }
+        }
+        dedupe_relays(relays)
+    }
+
+    async fn ensure_relays_connected(&self, relays: &[RelayUrl]) {
+        for relay in relays {
+            if let Err(error) = self.client.add_relay(relay.clone()).await {
+                warn!("unable to add effective relay {relay}: {error}");
+            }
+        }
     }
 
     async fn process_control_message(&self, content: &str) -> Result<bool> {
@@ -1021,6 +1056,18 @@ impl WorkerRuntime {
             existing.last_result_summary_publish_at = None;
         }
         self.store.save(&state)?;
+        let control_relays = delegation
+            .control_relays
+            .iter()
+            .filter_map(|relay| match RelayUrl::parse(relay) {
+                Ok(parsed) => Some(parsed),
+                Err(error) => {
+                    warn!("ignoring invalid delegation control relay {relay}: {error}");
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        self.ensure_relays_connected(&control_relays).await;
         Ok(())
     }
 
@@ -1057,6 +1104,17 @@ impl WorkerRuntime {
 fn fixed_lookback_timestamp(lookback_secs: u64) -> Timestamp {
     let now = Timestamp::now().as_secs();
     Timestamp::from(now.saturating_sub(lookback_secs))
+}
+
+fn dedupe_relays(relays: Vec<RelayUrl>) -> Vec<RelayUrl> {
+    let mut seen = std::collections::HashSet::new();
+    let mut deduped = Vec::with_capacity(relays.len());
+    for relay in relays {
+        if seen.insert(relay.to_string()) {
+            deduped.push(relay);
+        }
+    }
+    deduped
 }
 
 fn prune_seen_control_events(
@@ -1182,6 +1240,12 @@ mod tests {
     }
 
     #[test]
+    fn control_dm_lookback_covers_randomized_gift_wrap_timestamps() {
+        assert!(DEFAULT_DM_LOOKBACK_SECS >= 7 * 24 * 60 * 60);
+        assert!(CONTROL_DM_DEDUPE_RETENTION_SECS as u64 > DEFAULT_DM_LOOKBACK_SECS);
+    }
+
+    #[test]
     fn prune_seen_control_events_removes_old_entries() {
         let now = Utc::now();
         let mut seen = HashMap::from([
@@ -1191,7 +1255,7 @@ mod tests {
             ),
             (
                 "stale".to_string(),
-                (now - ChronoDuration::days(10)).to_rfc3339(),
+                (now - ChronoDuration::days(30)).to_rfc3339(),
             ),
             ("invalid".to_string(), "not-a-timestamp".to_string()),
         ]);
