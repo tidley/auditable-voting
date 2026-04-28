@@ -80,7 +80,7 @@ jobs:
           mkdir -p release
           cp "worker/target/${{ matrix.target }}/release/${{ matrix.source_binary_name }}" "release/${{ matrix.packaged_binary_name }}"
           cp worker/README.md release/README.txt
-          tar -C release -czf "${{ matrix.asset_name }}" .
+          tar -C release -czf "${{ matrix.asset_name }}" "${{ matrix.packaged_binary_name }}" README.txt
 
       - name: Package zip asset
         if: matrix.package_type == 'zip'

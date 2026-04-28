@@ -218,39 +218,69 @@ pub struct QuestionnaireSubmissionDecisionEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ElectionRuntimeState {
+    #[serde(default)]
     pub election_id: String,
+    #[serde(default)]
     pub delegation_id: String,
+    #[serde(default)]
     pub capabilities: Vec<WorkerCapability>,
+    #[serde(default)]
     pub control_relays: Vec<String>,
+    #[serde(default)]
     pub revoked: bool,
+    #[serde(default)]
     pub expires_at: String,
+    #[serde(default)]
     pub processed_submission_ids: HashSet<String>,
+    #[serde(default)]
     pub accepted_nullifiers: HashSet<String>,
+    #[serde(default)]
     pub published_decisions: HashMap<String, String>,
+    #[serde(default)]
     pub seen_blind_request_ids: HashSet<String>,
+    #[serde(default)]
     pub accepted_response_authors: HashSet<String>,
+    #[serde(default)]
     pub accepted_response_count: u64,
+    #[serde(default)]
     pub rejected_response_count: u64,
+    #[serde(default)]
     pub expected_invitee_count: Option<u64>,
+    #[serde(default)]
     pub summary_published: bool,
+    #[serde(default)]
     pub last_result_summary_publish_at: Option<String>,
+    #[serde(default)]
     pub blind_signing_private_key: Option<QuestionnaireBlindPrivateKey>,
+    #[serde(default)]
     pub definition: Option<serde_json::Value>,
+    #[serde(default)]
     pub last_blind_issuance_at: Option<String>,
+    #[serde(default)]
     pub last_vote_verification_at: Option<String>,
+    #[serde(default)]
     pub last_decision_publish_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WorkerPersistentState {
+    #[serde(default)]
     pub coordinator_npub: String,
+    #[serde(default)]
     pub worker_npub: String,
+    #[serde(default)]
     pub relays: Vec<String>,
+    #[serde(default)]
     pub known_delegations: HashMap<String, WorkerDelegationCertificate>,
+    #[serde(default)]
     pub revocations: HashMap<String, WorkerDelegationRevocation>,
+    #[serde(default)]
     pub elections: HashMap<String, ElectionRuntimeState>,
+    #[serde(default)]
     pub last_heartbeat_at: Option<String>,
+    #[serde(default)]
     pub last_dm_scan_at: Option<String>,
+    #[serde(default)]
     pub last_public_scan_at: Option<String>,
     #[serde(default)]
     pub seen_control_event_ids: HashMap<String, String>,
@@ -264,5 +294,54 @@ pub fn is_expired(iso_time: &str) -> bool {
     match DateTime::parse_from_rfc3339(iso_time) {
         Ok(parsed) => parsed.with_timezone(&Utc) <= Utc::now(),
         Err(_) => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn persistent_state_loads_legacy_runtime_state_without_new_fields() {
+        let raw = r#"{
+            "coordinator_npub": "npub1coordinator",
+            "worker_npub": "npub1worker",
+            "relays": ["wss://relay.nostr.net"],
+            "known_delegations": {},
+            "revocations": {},
+            "elections": {
+                "q_legacy": {
+                    "election_id": "q_legacy",
+                    "delegation_id": "delegation_legacy",
+                    "capabilities": [],
+                    "control_relays": ["wss://relay.nostr.net"],
+                    "revoked": false,
+                    "expires_at": "2036-01-01T00:00:00Z",
+                    "processed_submission_ids": [],
+                    "accepted_nullifiers": [],
+                    "published_decisions": {},
+                    "accepted_response_authors": [],
+                    "accepted_response_count": 0,
+                    "rejected_response_count": 0,
+                    "expected_invitee_count": null,
+                    "summary_published": false,
+                    "last_result_summary_publish_at": null,
+                    "blind_signing_private_key": null,
+                    "definition": null,
+                    "last_blind_issuance_at": null,
+                    "last_vote_verification_at": null,
+                    "last_decision_publish_at": null
+                }
+            },
+            "last_heartbeat_at": null,
+            "last_dm_scan_at": null,
+            "last_public_scan_at": null
+        }"#;
+
+        let state: WorkerPersistentState = serde_json::from_str(raw).unwrap();
+        let election = state.elections.get("q_legacy").unwrap();
+
+        assert!(election.seen_blind_request_ids.is_empty());
+        assert!(state.seen_control_event_ids.is_empty());
     }
 }
