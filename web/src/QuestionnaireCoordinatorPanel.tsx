@@ -2800,7 +2800,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
 
   return (
     <>
-      <SimpleCollapsibleSection title='Questionnaire draft'>
+      <SimpleCollapsibleSection title='Build questionnaire'>
         <div className='simple-voter-card simple-questionnaire-panel'>
       <div className='simple-questionnaire-header'>
         <div>
@@ -2809,34 +2809,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         </div>
       </div>
 
-      <h4 className='simple-voter-section-title'>Questionnaire identity</h4>
-      <label className='simple-voter-label' htmlFor='questionnaire-id'>Questionnaire ID</label>
-      <input
-        id='questionnaire-id'
-        className='simple-voter-input'
-        value={questionnaireId}
-        onChange={(event) => setQuestionnaireId(event.target.value)}
-      />
-      <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
-        <button type='button' className='simple-voter-secondary' onClick={() => setQuestionnaireId(generateQuestionnaireId())}>
-          Generate ID
-        </button>
-        <button type='button' className='simple-voter-secondary' onClick={() => void tryWriteClipboard(questionnaireId)}>
-          Copy ID
-        </button>
-        <button type='button' className='simple-voter-secondary' onClick={() => setShowInviteQr((current) => !current)}>
-          Show QR
-        </button>
-      </div>
-      {showInviteQr && questionnaireId.trim() ? (
-        <SimpleQrPanel
-          value={inviteLink || questionnaireId.trim()}
-          title='Voter link'
-          copyLabel='Copy link'
-          downloadLabel='Download QR'
-          downloadFilename='questionnaire-voter-link-qr.png'
-        />
-      ) : null}
       <label className='simple-voter-label' htmlFor='questionnaire-title'>Name</label>
       <input
         id='questionnaire-title'
@@ -2854,6 +2826,37 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         placeholder='Describe what this questionnaire is for'
         onChange={(event) => setDescription(event.target.value)}
       />
+      <SimpleCollapsibleSection title='Advanced identity' defaultCollapsed>
+        <p className='simple-voter-note'>The questionnaire ID is generated automatically. Only change it if you need a specific public identifier.</p>
+        <label className='simple-voter-label' htmlFor='questionnaire-id'>Questionnaire ID</label>
+        <input
+          id='questionnaire-id'
+          className='simple-voter-input'
+          value={questionnaireId}
+          onChange={(event) => setQuestionnaireId(event.target.value)}
+        />
+        <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
+          <button type='button' className='simple-voter-secondary' onClick={() => setQuestionnaireId(generateQuestionnaireId())}>
+            Generate ID
+          </button>
+          <button type='button' className='simple-voter-secondary' onClick={() => void tryWriteClipboard(questionnaireId)}>
+            Copy ID
+          </button>
+          <button type='button' className='simple-voter-secondary' onClick={() => setShowInviteQr((current) => !current)}>
+            Show voter QR
+          </button>
+        </div>
+        {showInviteQr && questionnaireId.trim() ? (
+          <SimpleQrPanel
+            value={inviteLink || questionnaireId.trim()}
+            title='Voter link'
+            copyLabel='Copy link'
+            downloadLabel='Download QR'
+            downloadFilename='questionnaire-voter-link-qr.png'
+          />
+        ) : null}
+      </SimpleCollapsibleSection>
+
       <div className='simple-questionnaire-close-timer-row'>
         <label className='simple-questionnaire-close-timer-toggle' htmlFor='questionnaire-close-timer-enabled'>
           <input
@@ -3060,8 +3063,30 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       </ul>
 
       <div className='simple-voter-action-row simple-voter-action-row-inline'>
-        <button type='button' className='simple-voter-secondary' onClick={() => setShowPreview((current) => !current)}>
-          Preview questionnaire
+        {!publishedDefinition ? (
+          <button type='button' className='simple-voter-primary' disabled={!canPublishDraft} onClick={() => void publishDefinition()}>
+            Publish questionnaire
+          </button>
+        ) : currentState === "open" || currentState === "closed" ? (
+          <button type='button' className='simple-voter-primary' disabled={closeAndPublishButtonDisabled} onClick={() => void closeAndPublishResults()}>
+            {currentState === "open" ? "Close + publish results" : "Publish results"}
+          </button>
+        ) : currentState === "results_published" ? (
+          <button type='button' className='simple-voter-primary' disabled>
+            Counted
+          </button>
+        ) : (
+          <button type='button' className='simple-voter-primary' disabled={!canOpenQuestionnaire} onClick={() => void publishState("open")}>
+            Open questionnaire
+          </button>
+        )}
+        <button
+          type='button'
+          className='simple-voter-secondary'
+          onClick={props.onConfigureWorker}
+          disabled={!props.onConfigureWorker}
+        >
+          Set up audit proxy
         </button>
         <button type='button' className='simple-voter-secondary' disabled={!inviteLink} onClick={() => {
           if (!inviteLink) {
@@ -3072,30 +3097,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         >
           Copy invite link
         </button>
-        {!publishedDefinition ? (
-          <button type='button' className='simple-voter-primary' disabled={!canPublishDraft} onClick={() => void publishDefinition()}>
-            Publish Questionnaire
-          </button>
-        ) : currentState === "open" || currentState === "closed" ? (
-          <button type='button' className='simple-voter-primary' disabled={closeAndPublishButtonDisabled} onClick={() => void closeAndPublishResults()}>
-            {currentState === "open" ? "Close + Publish Results" : "Publish Results"}
-          </button>
-        ) : currentState === "results_published" ? (
-          <button type='button' className='simple-voter-primary' disabled>
-            Counted
-          </button>
-        ) : (
-          <button type='button' className='simple-voter-primary' disabled={!canOpenQuestionnaire} onClick={() => void publishState("open")}>
-            Open Questionnaire
-          </button>
-        )}
-        <button
-          type='button'
-          className='simple-voter-secondary'
-          onClick={props.onConfigureWorker}
-          disabled={!props.onConfigureWorker}
-        >
-          Configure Delegate Coordinator
+        <button type='button' className='simple-voter-secondary' onClick={() => setShowPreview((current) => !current)}>
+          Preview JSON
         </button>
       </div>
       {!coordinatorNsec.trim() ? (
@@ -3111,11 +3114,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         </div>
       ) : null}
       {statusNotice}
-      {!latestDefinition ? <p className='simple-voter-note'>No questionnaire definition found for this id yet.</p> : null}
         </div>
       </SimpleCollapsibleSection>
       <div id='delegated-worker-section'>
-        <SimpleCollapsibleSection title='Audit proxy'>
+        <SimpleCollapsibleSection title='Audit proxy' defaultCollapsed>
           <div className='simple-questionnaire-worker-section'>
             <label className='simple-voter-label' htmlFor='delegation-mode'>Mode</label>
             <select
