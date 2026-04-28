@@ -43,6 +43,14 @@ textarea {
   font: inherit;
 }
 
+button[data-press-cooldown-active="true"] {
+  cursor: wait !important;
+  opacity: 0.62 !important;
+  pointer-events: none;
+  transform: translateY(1px) !important;
+  transition: opacity 120ms ease, transform 120ms ease, filter 120ms ease;
+}
+
 code {
   font-family: "SFMono-Regular", "JetBrains Mono", monospace;
 }

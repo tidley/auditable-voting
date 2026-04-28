@@ -30,8 +30,6 @@ import { publishQuestionnaireBlindResponsePublicByCoordinator } from "./question
 import { decodeNsec } from "./nostrIdentity";
 import { normalizeRelaysRust } from "./wasm/auditableVotingCore";
 import { createSignerService } from "./services/signerService";
-import { SIMPLE_PUBLIC_RELAYS } from "./simpleVotingSession";
-import { SIMPLE_DM_RELAYS } from "./simpleShardDm";
 import { loadCoordinatorState, loadElectionSummary, upsertElectionSummary } from "./questionnaireOptionAStorage";
 import {
   type WorkerElectionConfigSnapshot,
@@ -224,8 +222,16 @@ type StoredQuestionnaireDraft = {
 };
 
 const DEFAULT_WORKER_CONTROL_RELAYS = normalizeRelaysRust([
-  ...SIMPLE_PUBLIC_RELAYS,
-  ...SIMPLE_DM_RELAYS,
+  "wss://relay.nostr.net",
+  "wss://nos.lol",
+  "wss://relay.nostr.info",
+  "wss://nip17.com",
+  "wss://relay.layer.systems",
+  "wss://nostr.bond",
+  "wss://auth.nostr1.com",
+  "wss://inbox.nostr.wine",
+  "wss://nostr-pub.wellorder.net",
+  "wss://relay.0xchat.com",
 ]);
 const DEPRECATED_WORKER_RELAY_REPLACEMENTS = new Map<string, string>([
   [`wss://strfry.${"bitsbytom.com"}`, "wss://relay.nostr.net"],
@@ -462,11 +468,9 @@ function buildWorkerLauncherContents(input: {
         ? `$LegacyBinaryPath = Join-Path $ScriptDir '${escapeForPowerShellSingleQuotedString(legacyBinaryFilename)}'`
         : "$LegacyBinaryPath = $null",
       "",
-      "if (-not (Test-Path $BinaryPath)) {",
-      "  Write-Host \"Downloading audit proxy binary...\"",
-      "  Invoke-WebRequest -Uri $AssetUrl -OutFile $ArchivePath",
-      "  Expand-Archive -Path $ArchivePath -DestinationPath $ScriptDir -Force",
-      "}",
+      "Write-Host \"Refreshing audit proxy binary...\"",
+      "Invoke-WebRequest -Uri $AssetUrl -OutFile $ArchivePath",
+      "Expand-Archive -Path $ArchivePath -DestinationPath $ScriptDir -Force",
       "",
       `if (-not $env:RUST_LOG) { $env:RUST_LOG = 'debug' }`,
       `if (-not $env:WORKER_NSEC) { $env:WORKER_NSEC = '${nsec}' }`,
@@ -483,6 +487,7 @@ function buildWorkerLauncherContents(input: {
       "  throw 'Audit proxy executable not found after extraction.'",
       "}",
       "",
+      "try { & $ExecutablePath --version } catch { Write-Host 'Audit proxy version check unavailable.' }",
       "Write-Host \"Starting audit proxy...\"",
       "& $ExecutablePath",
       "",
@@ -522,15 +527,13 @@ function buildWorkerLauncherContents(input: {
     "  exit 1",
     "}",
     "",
-    'if [ ! -x "$SCRIPT_DIR/$BINARY_NAME" ]; then',
-    '  echo "Downloading audit proxy binary..."',
+    'echo "Refreshing audit proxy binary..."',
     "  download_asset",
     '  tar -xzf "$SCRIPT_DIR/$ASSET_NAME" -C "$SCRIPT_DIR"',
     '  chmod +x "$SCRIPT_DIR/$BINARY_NAME" || true',
     '  if [ -n "$LEGACY_BINARY_NAME" ]; then',
     '    chmod +x "$SCRIPT_DIR/$LEGACY_BINARY_NAME" || true',
     "  fi",
-    "fi",
     "",
     'export RUST_LOG="${RUST_LOG:-debug}"',
     `export WORKER_NSEC="\${WORKER_NSEC:-${nsec}}"`,
@@ -548,6 +551,7 @@ function buildWorkerLauncherContents(input: {
     "  exit 1",
     "fi",
     "",
+    '"$EXECUTABLE_PATH" --version || true',
     'echo "Starting audit proxy..."',
     'exec "$EXECUTABLE_PATH"',
     "",
@@ -1612,16 +1616,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     }
     return "Pending activation";
   }, [activeWorkerDelegation, lastWorkerRevocationState, selectedWorkerStatus]);
-  const workerHelperDownloadUrl = useMemo(() => {
-    const basePath = import.meta.env.BASE_URL || "/";
-    const prefix = basePath.endsWith("/") ? basePath : `${basePath}/`;
-    return `${prefix}worker-helper/auditable-voting-worker-linux-x64.tar.gz`;
-  }, []);
-  const workerHelperChecksumUrl = useMemo(() => {
-    const basePath = import.meta.env.BASE_URL || "/";
-    const prefix = basePath.endsWith("/") ? basePath : `${basePath}/`;
-    return `${prefix}worker-helper/auditable-voting-worker-linux-x64.tar.gz.sha256`;
-  }, []);
+  const workerReleaseBaseUrl = "https://github.com/tidley/auditable-voting/releases/latest/download";
+  const workerHelperDownloadUrl = `${workerReleaseBaseUrl}/auditable-voting-worker-linux-x64.tar.gz`;
+  const workerHelperChecksumUrl = `${workerHelperDownloadUrl}.sha256`;
   const workerHelperReadmeUrl = useMemo(() => {
     const basePath = import.meta.env.BASE_URL || "/";
     const prefix = basePath.endsWith("/") ? basePath : `${basePath}/`;
@@ -1632,7 +1629,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     const prefix = basePath.endsWith("/") ? basePath : `${basePath}/`;
     return `${prefix}worker-helper/autoconfigured.html`;
   }, []);
-  const workerReleaseBaseUrl = "https://github.com/tidley/auditable-voting/releases/latest/download";
   const workerLinuxArm64DownloadUrl = `${workerReleaseBaseUrl}/auditable-voting-worker-linux-arm64.tar.gz`;
   const workerLinuxArm64ChecksumUrl = `${workerLinuxArm64DownloadUrl}.sha256`;
   const workerLinuxArmv7DownloadUrl = `${workerReleaseBaseUrl}/auditable-voting-worker-linux-armv7.tar.gz`;

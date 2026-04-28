@@ -6,19 +6,13 @@ use std::path::PathBuf;
 const DEFAULT_WORKER_RELAYS: &[&str] = &[
     "wss://relay.nostr.net",
     "wss://nos.lol",
-    "wss://relay.primal.net",
-    "wss://nostr.wine",
-    "wss://nostr.mom",
-    "wss://nostr-pub.wellorder.net",
-    "wss://relay.damus.io",
-    "wss://purplepag.es",
-    "wss://eden.nostr.land",
-    "wss://nip17.com",
     "wss://relay.nostr.info",
+    "wss://nip17.com",
     "wss://relay.layer.systems",
     "wss://nostr.bond",
     "wss://auth.nostr1.com",
     "wss://inbox.nostr.wine",
+    "wss://nostr-pub.wellorder.net",
     "wss://relay.0xchat.com",
 ];
 

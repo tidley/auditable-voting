@@ -16,6 +16,7 @@ type GatewayAuthMode = "signer" | "nsec";
 type GatewaySignerChoice = "nip07" | "amber" | "manual";
 const GATEWAY_SIGNER_NPUB_STORAGE_KEY = "app:auditable-voting:gateway:signer_npub";
 const AMBER_FULLY_TRUST_HINT = "Change from `Approve basic actions` to `I fully trust this application` when Amber opens. This allows the application to fully coordinate.";
+const BUTTON_PRESS_FEEDBACK_MS = 1000;
 
 type SimpleAppShellProps = {
   initialRole?: SimpleRole;
@@ -81,6 +82,63 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
   const [gatewayNostrConnectUri, setGatewayNostrConnectUri] = useState("");
   const [gatewayNsecBunkerUri, setGatewayNsecBunkerUri] = useState("");
   const [gatewayShowConnectQr, setGatewayShowConnectQr] = useState(false);
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+    const cooldowns = new WeakMap<HTMLButtonElement, number>();
+    const timers = new WeakMap<HTMLButtonElement, number>();
+
+    const findButton = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) {
+        return null;
+      }
+      return target.closest("button") as HTMLButtonElement | null;
+    };
+
+    const preventDuringCooldown = (event: MouseEvent) => {
+      const button = findButton(event);
+      if (!button || button.disabled || button.dataset.pressCooldownDisabled === "true") {
+        return;
+      }
+      const cooldownUntil = cooldowns.get(button) ?? 0;
+      if (cooldownUntil > Date.now()) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+    };
+
+    const applyCooldown = (event: MouseEvent) => {
+      const button = findButton(event);
+      if (!button || button.disabled || button.dataset.pressCooldownDisabled === "true") {
+        return;
+      }
+      cooldowns.set(button, Date.now() + BUTTON_PRESS_FEEDBACK_MS);
+      button.dataset.pressCooldownActive = "true";
+      button.setAttribute("aria-disabled", "true");
+      const existingTimer = timers.get(button);
+      if (existingTimer) {
+        window.clearTimeout(existingTimer);
+      }
+      const timer = window.setTimeout(() => {
+        cooldowns.delete(button);
+        timers.delete(button);
+        delete button.dataset.pressCooldownActive;
+        button.removeAttribute("aria-disabled");
+      }, BUTTON_PRESS_FEEDBACK_MS);
+      timers.set(button, timer);
+    };
+
+    document.addEventListener("click", preventDuringCooldown, true);
+    document.addEventListener("click", applyCooldown);
+    return () => {
+      document.removeEventListener("click", preventDuringCooldown, true);
+      document.removeEventListener("click", applyCooldown);
+      // Timers are short-lived; removed listeners prevent new cooldowns after unmount.
+    };
+  }, []);
 
   const handleRoleSelect = (nextRole: SimpleRole) => {
     setRole(nextRole);

@@ -240,6 +240,38 @@ describe("questionnaireOptionABlindDm", () => {
     expect(querySync).toHaveBeenCalledTimes(2);
   });
 
+  it("prefers NIP-17 relays that accept p-tag gift-wrap reads", async () => {
+    const recipientSecret = generateSecretKey();
+    const recipientHex = getPublicKey(recipientSecret);
+    const recipientNsec = nip19.nsecEncode(recipientSecret);
+    querySync.mockResolvedValue([]);
+
+    await fetchOptionABlindRequestDmsWithNsec({
+      nsec: recipientNsec,
+      electionId: "q_read_relays",
+      limit: 20,
+    });
+
+    const giftWrapCall = querySync.mock.calls.find((call) => {
+      const filter = call[1] as { kinds?: number[] };
+      return filter.kinds?.[0] === 1059;
+    });
+    const relays = giftWrapCall?.[0] as string[];
+
+    expect(relays).toEqual([
+      "wss://relay.nostr.net",
+      "wss://nos.lol",
+      "wss://relay.nostr.info",
+      "wss://nip17.com",
+      "wss://relay.layer.systems",
+      "wss://nostr.bond",
+    ]);
+    expect(relays).not.toContain("wss://relay.damus.io");
+    expect(relays).not.toContain("wss://relay.primal.net");
+    expect(relays).not.toContain("wss://nostr.wine");
+    expect(relays).not.toContain("wss://nostr.mom");
+  });
+
   it("reuses cached signer decrypts for repeated issuance scans of the same event", async () => {
     const recipientHex = getPublicKey(generateSecretKey());
     const recipientNpub = nip19.npubEncode(recipientHex);

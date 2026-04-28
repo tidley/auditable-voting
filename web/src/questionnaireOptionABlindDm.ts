@@ -40,6 +40,24 @@ const OPTION_A_BLIND_DM_QUERY_TIMEOUT_MS = 8_000;
 const OPTION_A_BLIND_DM_RELAY_BACKOFF_MS = 60 * 1000;
 const OPTION_A_BLIND_DM_SIGNER_DECODE_CACHE_LIMIT = 512;
 const OPTION_A_DM_EXISTENCE_CHECK_MAX_RELAYS = 6;
+const OPTION_A_BLIND_DM_READ_PRIORITY_RELAYS = [
+  "wss://relay.nostr.net",
+  "wss://nos.lol",
+  "wss://relay.nostr.info",
+  "wss://nip17.com",
+  "wss://relay.layer.systems",
+  "wss://nostr.bond",
+  "wss://auth.nostr1.com",
+  "wss://inbox.nostr.wine",
+  "wss://nostr-pub.wellorder.net",
+  "wss://relay.0xchat.com",
+];
+const OPTION_A_BLIND_DM_READ_UNINDEXED_TAG_RELAYS = new Set([
+  "wss://relay.damus.io",
+  "wss://relay.primal.net",
+  "wss://nostr.wine",
+  "wss://nostr.mom",
+]);
 
 const optionABlindDmRelayCooldownUntil = new Map<string, number>();
 const optionABlindDmInFlightQueries = new Map<string, Promise<NostrEvent[]>>();
@@ -245,14 +263,15 @@ function applyBlindDmRelayBackoff(relays: string[], reason: string) {
 
 function filterBlindDmReadRelays(relays: string[]) {
   const now = Date.now();
-  const available = relays.filter((relay) => {
+  const ordered = orderBlindDmReadRelays(relays);
+  const available = ordered.filter((relay) => {
     const until = optionABlindDmRelayCooldownUntil.get(relay) ?? 0;
     return until <= now;
   });
   if (available.length > 0) {
     return available;
   }
-  return relays.slice(0, Math.max(1, Math.min(2, relays.length)));
+  return ordered.slice(0, Math.max(1, Math.min(2, ordered.length)));
 }
 
 async function withBlindDmQuerySlot<T>(task: () => Promise<T>): Promise<T> {
@@ -368,7 +387,32 @@ function buildRelays(relays?: string[]) {
 }
 
 function selectReadRelays(relays: string[], maxRelays = OPTION_A_BLIND_DM_READ_RELAYS_MAX) {
-  return relays.slice(0, Math.min(maxRelays, relays.length));
+  const ordered = filterBlindDmReadRelays(relays);
+  return ordered.slice(0, Math.min(maxRelays, ordered.length));
+}
+
+function orderBlindDmReadRelays(relays: string[]) {
+  const normalized = normalizeRelaysRust(relays);
+  const relaySet = new Set(normalized);
+  const ordered: string[] = [];
+  const add = (relay: string) => {
+    if (relaySet.has(relay) && !ordered.includes(relay)) {
+      ordered.push(relay);
+    }
+  };
+
+  for (const relay of OPTION_A_BLIND_DM_READ_PRIORITY_RELAYS) {
+    add(relay);
+  }
+  for (const relay of normalized) {
+    if (!OPTION_A_BLIND_DM_READ_UNINDEXED_TAG_RELAYS.has(relay)) {
+      add(relay);
+    }
+  }
+  for (const relay of normalized) {
+    add(relay);
+  }
+  return ordered;
 }
 
 function selectPublishRelays(relays: string[]) {

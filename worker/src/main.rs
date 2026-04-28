@@ -24,6 +24,7 @@ use crypto_bigint::BoxedUint;
 use nostr_sdk::prelude::*;
 use rsa::RsaPrivateKey;
 use std::collections::BTreeMap;
+use std::env;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -134,6 +135,11 @@ struct WorkerRuntime {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    if env::args().any(|arg| arg == "--version" || arg == "-V") {
+        println!("auditable-voting-worker {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt().with_env_filter(env_filter).init();
 

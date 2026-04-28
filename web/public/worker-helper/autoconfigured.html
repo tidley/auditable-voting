@@ -86,6 +86,12 @@
         background: #1e293b;
       }
 
+      .button:disabled {
+        cursor: wait;
+        opacity: 0.62;
+        transform: translateY(1px);
+      }
+
       .note {
         color: #93c5fd;
       }
@@ -106,7 +112,7 @@
       const TARGETS = {
         linuxX64: {
           assetFilename: "auditable-voting-worker-linux-x64.tar.gz",
-          assetUrl: new URL("./auditable-voting-worker-linux-x64.tar.gz", window.location.href).toString(),
+          assetUrl: `${RELEASE_BASE_URL}/auditable-voting-worker-linux-x64.tar.gz`,
           binaryFilename: "auditable-voting-worker-linux-x64",
           legacyBinaryFilename: "auditable-voting-worker",
           launcherFilename: "start-auditable-voting-worker-linux-x64.sh",
@@ -193,11 +199,9 @@
               ? `$LegacyBinaryPath = Join-Path $ScriptDir '${escapeForPowerShellSingleQuotedString(legacyBinaryFilename)}'`
               : "$LegacyBinaryPath = $null",
             "",
-            "if (-not (Test-Path $BinaryPath)) {",
-            "  Write-Host \"Downloading audit proxy binary...\"",
-            "  Invoke-WebRequest -Uri $AssetUrl -OutFile $ArchivePath",
-            "  Expand-Archive -Path $ArchivePath -DestinationPath $ScriptDir -Force",
-            "}",
+            "Write-Host \"Refreshing audit proxy binary...\"",
+            "Invoke-WebRequest -Uri $AssetUrl -OutFile $ArchivePath",
+            "Expand-Archive -Path $ArchivePath -DestinationPath $ScriptDir -Force",
             "",
             `if (-not $env:RUST_LOG) { $env:RUST_LOG = 'debug' }`,
             `if (-not $env:WORKER_NSEC) { $env:WORKER_NSEC = '${nsecPlaceholder}' }`,
@@ -214,6 +218,7 @@
             "  throw 'Audit proxy executable not found after extraction.'",
             "}",
             "",
+            "try { & $ExecutablePath --version } catch { Write-Host 'Audit proxy version check unavailable.' }",
             "Write-Host \"Starting audit proxy...\"",
             "& $ExecutablePath",
             "",
@@ -248,15 +253,13 @@
           "  exit 1",
           "}",
           "",
-          'if [ ! -x "$SCRIPT_DIR/$BINARY_NAME" ]; then',
-          '  echo "Downloading audit proxy binary..."',
+          'echo "Refreshing audit proxy binary..."',
           "  download_asset",
           '  tar -xzf "$SCRIPT_DIR/$ASSET_NAME" -C "$SCRIPT_DIR"',
           '  chmod +x "$SCRIPT_DIR/$BINARY_NAME" || true',
           '  if [ -n "$LEGACY_BINARY_NAME" ]; then',
           '    chmod +x "$SCRIPT_DIR/$LEGACY_BINARY_NAME" || true',
           "  fi",
-          "fi",
           "",
           'export RUST_LOG="${RUST_LOG:-debug}"',
           `export WORKER_NSEC="\${WORKER_NSEC:-${nsecPlaceholder}}"`,
@@ -274,6 +277,7 @@
           "  exit 1",
           "fi",
           "",
+          '"$EXECUTABLE_PATH" --version || true',
           'echo "Starting audit proxy..."',
           'exec "$EXECUTABLE_PATH"',
           "",
@@ -313,6 +317,10 @@
         });
         previewNode.textContent = contents;
         downloadButton.addEventListener("click", () => {
+          downloadButton.disabled = true;
+          window.setTimeout(() => {
+            downloadButton.disabled = false;
+          }, 1000);
           downloadTextFile(target.launcherFilename, contents);
         });
         statusNode.textContent = `Prepared ${target.launcherFilename}.`;
