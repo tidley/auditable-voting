@@ -54,10 +54,11 @@ type NostrConnectSignerLike = {
 };
 
 const AMBER_CONNECT_RELAYS = [
-  "wss://relay.primal.net",
+  "wss://relay.nostr.net",
   "wss://nos.lol",
-  "wss://relay.damus.io",
-  "wss://nostr.wine",
+  "wss://relay.nostr.info",
+  "wss://relay.nos.social",
+  "wss://relay.momostr.pink",
 ];
 
 const AMBER_CONNECT_PERMISSIONS = [

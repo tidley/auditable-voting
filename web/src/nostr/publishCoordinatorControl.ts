@@ -14,7 +14,7 @@ import {
 } from "../core/coordinatorEventBridge";
 import type { CoordinatorOutboundTransportMessage } from "../core/coordinatorCoreAdapter";
 
-const COORDINATOR_CONTROL_PRIMARY_RELAYS_MAX = 3;
+const COORDINATOR_CONTROL_PRIMARY_RELAYS_MAX = 5;
 
 function buildControlRelays(relays?: string[]) {
   const normalized = normalizeRelaysRust([...(relays ?? []), ...SIMPLE_PUBLIC_RELAYS]);

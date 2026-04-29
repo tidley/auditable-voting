@@ -3,7 +3,14 @@ use nostr_sdk::prelude::RelayUrl;
 use std::env;
 use std::path::PathBuf;
 
-const DEFAULT_WORKER_RELAYS: &[&str] = &["wss://relay.nostr.net", "wss://nos.lol"];
+const DEFAULT_WORKER_RELAYS: &[&str] = &[
+    "wss://relay.nostr.net",
+    "wss://nos.lol",
+    "wss://relay.nostr.info",
+    "wss://relay.nos.social",
+    "wss://relay.momostr.pink",
+    "wss://relay.azzamo.net",
+];
 
 #[derive(Debug, Clone)]
 pub struct WorkerConfig {

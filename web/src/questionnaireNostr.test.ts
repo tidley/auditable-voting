@@ -10,10 +10,14 @@ describe("questionnaireNostr relay selection", () => {
       "wss://nostr.mom",
       "wss://relay.nostr.net",
       "wss://nos.lol",
+      "wss://relay.nostr.info",
+      "wss://relay.nos.social",
     ], 8);
 
     expect(relays).toContain("wss://relay.nostr.net");
     expect(relays).toContain("wss://nos.lol");
+    expect(relays).toContain("wss://relay.nostr.info");
+    expect(relays).toContain("wss://relay.nos.social");
     expect(relays).not.toContain("wss://relay.damus.io");
     expect(relays).not.toContain("wss://relay.primal.net");
     expect(relays).not.toContain("wss://nostr.wine");

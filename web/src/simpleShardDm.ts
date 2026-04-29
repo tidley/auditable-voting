@@ -36,20 +36,12 @@ import {
 } from "./simpleMailbox";
 
 export const SIMPLE_DM_RELAYS = [
-  'wss://nip17.com',
-  'wss://relay.nostr.info',
-  'wss://relay.damus.io',
   'wss://relay.nostr.net',
-  'wss://relay.primal.net',
   'wss://nos.lol',
-  'wss://nostr.wine',
-  'wss://nostr.mom',
-  'wss://relay.layer.systems',
-  'wss://nostr.bond',
-  'wss://auth.nostr1.com',
-  'wss://inbox.nostr.wine',
-  'wss://nostr-pub.wellorder.net',
-  'wss://relay.0xchat.com',
+  'wss://relay.nostr.info',
+  'wss://relay.nos.social',
+  'wss://relay.momostr.pink',
+  'wss://relay.azzamo.net',
 ];
 
 const SIMPLE_DM_PUBLISH_MAX_WAIT_MS = 1500;
@@ -58,13 +50,13 @@ const SIMPLE_DM_ACK_BACKFILL_INTERVAL_MS = 2000;
 const SIMPLE_DM_WELCOME_BACKFILL_INTERVAL_MS = 4000;
 const SIMPLE_DM_PUBLISH_STAGGER_MS = 250;
 const SIMPLE_DM_MIN_PUBLISH_INTERVAL_MS = 300;
-const SIMPLE_DM_READ_RELAYS_MAX = 2;
-const SIMPLE_DM_FOLLOW_READ_RELAYS_MAX = 4;
-const SIMPLE_DM_FOLLOW_PUBLISH_RELAYS_MAX = 4;
-const SIMPLE_DM_TICKET_READ_RELAYS_MAX = 3;
-const SIMPLE_DM_ACK_READ_RELAYS_MAX = 3;
-const SIMPLE_DM_TICKET_PUBLISH_RELAYS_MAX = 3;
-const SIMPLE_DM_ACK_PUBLISH_RELAYS_MAX = 3;
+const SIMPLE_DM_READ_RELAYS_MAX = 5;
+const SIMPLE_DM_FOLLOW_READ_RELAYS_MAX = 5;
+const SIMPLE_DM_FOLLOW_PUBLISH_RELAYS_MAX = 5;
+const SIMPLE_DM_TICKET_READ_RELAYS_MAX = 5;
+const SIMPLE_DM_ACK_READ_RELAYS_MAX = 5;
+const SIMPLE_DM_TICKET_PUBLISH_RELAYS_MAX = 5;
+const SIMPLE_DM_ACK_PUBLISH_RELAYS_MAX = 5;
 
 export type SimpleDmAcknowledgedAction =
   | 'simple_coordinator_follow'

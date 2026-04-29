@@ -116,8 +116,8 @@ describe("questionnaireOptionABlindDm", () => {
     expect(relays.slice(0, 6)).toEqual([
       "wss://recipient.one",
       "wss://recipient.two",
-      "wss://nip17.com",
-      "wss://relay.nostr.info",
+      "wss://relay.nostr.net",
+      "wss://nos.lol",
       "wss://recipient.three",
       "wss://recipient.four",
     ]);
@@ -262,9 +262,9 @@ describe("questionnaireOptionABlindDm", () => {
       "wss://relay.nostr.net",
       "wss://nos.lol",
       "wss://relay.nostr.info",
-      "wss://nip17.com",
-      "wss://relay.layer.systems",
-      "wss://nostr.bond",
+      "wss://relay.nos.social",
+      "wss://relay.momostr.pink",
+      "wss://relay.azzamo.net",
     ]);
     expect(relays).not.toContain("wss://relay.damus.io");
     expect(relays).not.toContain("wss://relay.primal.net");

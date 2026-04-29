@@ -50,9 +50,7 @@ This is the practical browser-based flow. Start as the coordinator, then use a s
 3. In **Build**, enter the questionnaire name, description, and questions. The Build heading shows the current name, for example `Build questionnaire: How did we do`.
 4. Use **Generate ID** only when you want a fresh questionnaire ID. Use **Copy ID** beside the Questionnaire ID when sharing the public identifier with observers.
 5. Use **Show questionnaire link** if you want a QR/link for the questionnaire.
-6. Add or import voter `npub`s in **Invite**.
-7. Send invites with **Invite** or **Invite all whitelisted**.
-8. Click **Publish questionnaire** when the draft is ready. This publishes the questionnaire definition and opens the round.
+6. Click **Publish questionnaire** when the draft is ready. This publishes the questionnaire definition and opens the round.
 
 ### 2. Optional: coordinator enables an audit proxy
 
@@ -62,7 +60,12 @@ This is the practical browser-based flow. Start as the coordinator, then use a s
 4. Use **Audit proxy details** or **Helper download and launch command** if you need the helper download, checksum, or a direct launch command.
 5. Wait for a heartbeat in **Audit proxy status** before relying on the proxy for issuance or verification.
 
-### 3. Voter requests and submits
+### 3. Coordinator invites voters
+
+1. Add or import voter `npub`s in **Invite**.
+2. Send invites with **Invite** or **Invite all whitelisted**.
+
+### 4. Voter requests and submits
 
 1. Open the invite link as the invited voter, or open the app as **Voter** and click **Check invites**.
 2. Open the pending questionnaire.
@@ -71,13 +74,13 @@ This is the practical browser-based flow. Start as the coordinator, then use a s
 5. Complete the questionnaire and click **Submit response**.
 6. If no proxy is selected, the coordinator browser must stay online long enough to process requests and responses. If a proxy is selected and active, the voter can wait for the proxy instead.
 
-### 4. Coordinator or proxy processes responses
+### 5. Coordinator or proxy processes responses
 
 1. In the coordinator tab, use **Process requests** / **Check responses** while running browser-only.
 2. If delegated, leave the helper running and check its heartbeat/reporting in **Audit proxy status**.
 3. Close the questionnaire and publish final results when collection is complete, if you want a fixed final summary.
 
-### 5. Observer verifies
+### 6. Observer verifies
 
 1. Open the app as **Observer**.
 2. Search by coordinator `npub` or questionnaire ID.
@@ -572,7 +575,7 @@ The current client also distinguishes between:
 - **read/subscription fanout**, which is intentionally kept to a smaller primary subset
 
 That split reduces relay-side `too many concurrent REQs` failures while keeping the write path reasonably redundant.
-Automatic voter and coordinator actions are also paced with a random `0-30s` delay, slower retry windows, and a sender-scoped ticket publish queue so many browser actors do not all publish into the same public relays at once. The audit proxy defaults and generated helper commands now use `relay.nostr.net` and `nos.lol` only, and persisted legacy delegated relay lists are sanitised back to that pair before polling; browser-side NIP-17 reads still prefer relays that accept `#p` gift-wrap filters before falling back to endpoints known to reject those filters as unindexed. Mailbox publishes keep one deterministic anchor relay, rotate secondary relays by recipient, and apply temporary cooldowns when relays return rate-limit/pow/spam/policy failures.
+Automatic voter and coordinator actions are also paced with a random `0-30s` delay, slower retry windows, and a sender-scoped ticket publish queue so many browser actors do not all publish into the same public relays at once. The audit proxy defaults and generated helper commands now use a nostrwat.ch-checked control relay set (relay.nostr.net, nos.lol, relay.nostr.info, relay.nos.social, relay.momostr.pink, and relay.azzamo.net), and persisted legacy delegated relay lists are sanitised onto that curated set before polling; browser-side NIP-17 reads still prefer relays that accept `#p` gift-wrap filters before falling back to endpoints known to reject those filters as unindexed. Mailbox publishes keep one deterministic anchor relay, rotate secondary relays by recipient, and apply temporary cooldowns when relays return rate-limit/pow/spam/policy failures.
 
 ---
 

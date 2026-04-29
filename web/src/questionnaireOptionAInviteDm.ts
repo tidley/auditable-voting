@@ -9,7 +9,7 @@ import { parseInviteFromUrl } from "./questionnaireInvite";
 import { mapRelayPublishResult } from "./nostrPublishResult";
 
 const OPTION_A_INVITE_DM_RELAYS_MAX = 12;
-const OPTION_A_INVITE_DM_READ_RELAYS_MAX = 3;
+const OPTION_A_INVITE_DM_READ_RELAYS_MAX = 5;
 const OPTION_A_INVITE_DM_READ_RELAYS_FALLBACK_MAX = 8;
 const OPTION_A_INVITE_DM_MAX_WAIT_MS = 1500;
 const OPTION_A_INVITE_DM_STAGGER_MS = 250;

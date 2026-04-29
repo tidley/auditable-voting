@@ -7,7 +7,7 @@ import {
   SIMPLE_COORDINATOR_CONTROL_KIND,
 } from "../core/coordinatorEventBridge";
 
-const COORDINATOR_CONTROL_READ_RELAYS_MAX = 3;
+const COORDINATOR_CONTROL_READ_RELAYS_MAX = 5;
 export const COORDINATOR_CONTROL_DEFAULT_LIMIT = 200;
 
 export type CoordinatorControlReadMode = "kind_only" | "kind_election" | "kind_election_group";

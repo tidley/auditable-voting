@@ -25,7 +25,7 @@ export const SIMPLE_BLIND_KEY_BITS = 3072;
 export const SIMPLE_BLIND_HASH = "SHA-384";
 export const SIMPLE_BLIND_SALT_LENGTH = 48;
 const SIMPLE_BLIND_DOMAIN_SEPARATOR = "auditable-voting/simple-blind/v2";
-const SIMPLE_PUBLIC_READ_RELAYS_MAX = 2;
+const SIMPLE_PUBLIC_READ_RELAYS_MAX = 5;
 const SIMPLE_BLIND_KEY_BACKFILL_INTERVAL_MS = 5000;
 
 export type SimpleBlindPublicKey = {

@@ -21,18 +21,11 @@ import type { SimpleDmAcknowledgement, SimpleShardRequest, SimpleShardResponse }
 
 export const SIMPLE_MAILBOX_RELAYS = [
   "wss://relay.nostr.net",
-  "wss://relay.primal.net",
-  "wss://relay.nostr.info",
   "wss://nos.lol",
-  "wss://nostr.wine",
-  "wss://nostr.mom",
-  "wss://relay.layer.systems",
-  "wss://nostr.bond",
-  "wss://relay.0xchat.com",
-  "wss://relay.damus.io",
-  "wss://nostr-pub.wellorder.net",
-  "wss://purplepag.es",
-  "wss://eden.nostr.land",
+  "wss://relay.nostr.info",
+  "wss://relay.nos.social",
+  "wss://relay.momostr.pink",
+  "wss://relay.azzamo.net",
 ];
 
 export const SIMPLE_MAILBOX_REQUEST_KIND = 31100;
@@ -44,13 +37,13 @@ const SIMPLE_MAILBOX_PUBLISH_MAX_WAIT_MS = 1500;
 const SIMPLE_MAILBOX_SUBSCRIPTION_MAX_WAIT_MS = 3000;
 const SIMPLE_MAILBOX_PUBLISH_STAGGER_MS = 1000;
 const SIMPLE_MAILBOX_MIN_PUBLISH_INTERVAL_MS = 5000;
-const SIMPLE_MAILBOX_REQUEST_RELAYS_MAX = 4;
-const SIMPLE_MAILBOX_TICKET_RELAYS_MAX = 4;
-const SIMPLE_MAILBOX_ACK_RELAYS_MAX = 3;
+const SIMPLE_MAILBOX_REQUEST_RELAYS_MAX = 5;
+const SIMPLE_MAILBOX_TICKET_RELAYS_MAX = 5;
+const SIMPLE_MAILBOX_ACK_RELAYS_MAX = 5;
 const SIMPLE_MAILBOX_READ_RELAYS_MAX = 5;
 const SIMPLE_MAILBOX_ANCHOR_RELAYS = [
   "wss://relay.nostr.net",
-  "wss://relay.primal.net",
+  "wss://nos.lol",
 ];
 const SIMPLE_MAILBOX_ANCHORS_PER_MESSAGE_MAX = 1;
 const SIMPLE_MAILBOX_RELAY_HEALTH_MAX_PENALTY_MS = 30 * 60_000;

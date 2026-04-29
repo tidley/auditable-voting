@@ -48,7 +48,6 @@ const DISALLOWED_WORKER_READ_RELAYS: &[&str] = &[
     "wss://nostr.wine",
     "wss://eden.nostr.land",
     "wss://purplepag.es",
-    "wss://relay.nostr.info",
     "wss://nip17.com",
     "wss://relay.layer.systems",
     "wss://nostr.bond",
@@ -1334,6 +1333,9 @@ mod tests {
             "wss://relay.nostr.band".to_string(),
             "wss://offchain.pub".to_string(),
             "wss://relay.nostr.info".to_string(),
+            "wss://relay.nos.social".to_string(),
+            "wss://relay.momostr.pink".to_string(),
+            "wss://relay.azzamo.net".to_string(),
             "wss://nip17.com".to_string(),
             "wss://relay.layer.systems".to_string(),
             "wss://nostr.bond".to_string(),
@@ -1348,7 +1350,11 @@ mod tests {
             relays,
             vec![
                 "wss://relay.nostr.net".to_string(),
-                "wss://nos.lol".to_string()
+                "wss://nos.lol".to_string(),
+                "wss://relay.nostr.info".to_string(),
+                "wss://relay.nos.social".to_string(),
+                "wss://relay.momostr.pink".to_string(),
+                "wss://relay.azzamo.net".to_string()
             ]
         );
     }

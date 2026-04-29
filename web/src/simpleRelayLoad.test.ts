@@ -210,16 +210,16 @@ describe("simple relay load without browser", () => {
     const anchorsSeen = new Set<string>();
     for (const ticketEventId of ticketEventIds) {
       const relays = relaysForEvent(SIMPLE_MAILBOX_TICKET_KIND, ticketEventId);
-      expect(relays).toHaveLength(4);
+      expect(relays).toHaveLength(5);
       const anchors = relays.filter(
-        (relay) => relay === "wss://relay.nostr.net" || relay === "wss://relay.primal.net",
+        (relay) => relay === "wss://relay.nostr.net" || relay === "wss://nos.lol",
       );
       expect(anchors.length).toBeGreaterThanOrEqual(1);
       for (const anchor of anchors) {
         anchorsSeen.add(anchor);
       }
       for (const relay of relays) {
-        if (relay !== "wss://relay.nostr.net" && relay !== "wss://relay.primal.net") {
+        if (relay !== "wss://relay.nostr.net" && relay !== "wss://nos.lol") {
           secondaryTicketRelays.add(relay);
         }
       }
@@ -227,8 +227,8 @@ describe("simple relay load without browser", () => {
 
     expect(anchorsSeen.size).toBeGreaterThanOrEqual(2);
     expect(secondaryTicketRelays.size).toBeGreaterThanOrEqual(3);
-    expect(publishCalls.filter((call) => call.kind === SIMPLE_MAILBOX_REQUEST_KIND)).toHaveLength(40 * 4);
-    expect(publishCalls.filter((call) => call.kind === SIMPLE_MAILBOX_TICKET_KIND)).toHaveLength(40 * 4);
-    expect(publishCalls.filter((call) => call.kind === SIMPLE_MAILBOX_ACK_KIND)).toHaveLength(40 * 3);
+    expect(publishCalls.filter((call) => call.kind === SIMPLE_MAILBOX_REQUEST_KIND)).toHaveLength(40 * 5);
+    expect(publishCalls.filter((call) => call.kind === SIMPLE_MAILBOX_TICKET_KIND)).toHaveLength(40 * 5);
+    expect(publishCalls.filter((call) => call.kind === SIMPLE_MAILBOX_ACK_KIND)).toHaveLength(40 * 5);
   });
 });

@@ -17,20 +17,18 @@ import { normalizeRelaysRust, sortRecordsByCreatedAtDescRust } from "./wasm/audi
 export const SIMPLE_PUBLIC_RELAYS = [
   "wss://relay.nostr.net",
   "wss://nos.lol",
-  "wss://relay.primal.net",
-  "wss://nostr.wine",
-  "wss://nostr.mom",
-  "wss://nostr-pub.wellorder.net",
-  "wss://relay.damus.io",
-  "wss://purplepag.es",
-  "wss://eden.nostr.land",
+  "wss://relay.nostr.info",
+  "wss://relay.nos.social",
+  "wss://nostr.oxtr.dev",
+  "wss://relay.copylaradio.com",
+  "wss://relay.cypherflow.ai",
 ];
 
 export const SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS = 1500;
 export const SIMPLE_PUBLIC_SUBSCRIPTION_MAX_WAIT_MS = 1500;
 export const SIMPLE_PUBLIC_PUBLISH_STAGGER_MS = 300;
 export const SIMPLE_PUBLIC_MIN_PUBLISH_INTERVAL_MS = 500;
-const SIMPLE_PUBLIC_READ_RELAYS_MAX = 2;
+const SIMPLE_PUBLIC_READ_RELAYS_MAX = 5;
 
 // Use regular custom event kinds so relays preserve the full transcript instead of replacing by author/d-tag.
 export const SIMPLE_LIVE_VOTE_KIND = 14090;

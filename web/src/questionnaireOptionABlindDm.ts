@@ -44,13 +44,9 @@ const OPTION_A_BLIND_DM_READ_PRIORITY_RELAYS = [
   "wss://relay.nostr.net",
   "wss://nos.lol",
   "wss://relay.nostr.info",
-  "wss://nip17.com",
-  "wss://relay.layer.systems",
-  "wss://nostr.bond",
-  "wss://auth.nostr1.com",
-  "wss://inbox.nostr.wine",
-  "wss://nostr-pub.wellorder.net",
-  "wss://relay.0xchat.com",
+  "wss://relay.nos.social",
+  "wss://relay.momostr.pink",
+  "wss://relay.azzamo.net",
 ];
 const OPTION_A_BLIND_DM_READ_UNINDEXED_TAG_RELAYS = new Set([
   "wss://relay.damus.io",
