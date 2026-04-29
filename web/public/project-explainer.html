@@ -198,6 +198,56 @@ Auditable Voting is a client-side voting app on public relay infrastructure for 
 
 The current repository contains only the browser app. It has voter, coordinator, and observer roles; private traffic uses NIP-17 DMs; public state is replayed from public relay events.
 
+## Quick Start
+
+Use these steps to run a complete local smoke test from a fresh checkout.
+
+### 1. Start the web app
+
+1. Install dependencies:
+
+   ```bash
+   npm --prefix web install
+   ```
+
+2. Start Vite locally:
+
+   ```bash
+   npm --prefix web run dev -- --host 127.0.0.1 --port 5173
+   ```
+
+3. Open these pages in separate browser tabs or profiles so each role can keep its own local identity:
+
+   - Coordinator: `http://127.0.0.1:5173/simple-coordinator.html?role=coordinator`
+   - Voter: `http://127.0.0.1:5173/simple.html?role=voter`
+   - Observer: `http://127.0.0.1:5173/dashboard.html?role=auditor`
+
+### 2. Create and publish the questionnaire
+
+1. In the coordinator tab, create or load a coordinator identity.
+2. In **Build**, click **New ID** if you want a fresh coordinator/questionnaire pair.
+3. Add a title, description, and at least one question.
+4. In **Invite**, add the voter `npub` from the voter tab.
+5. Click **Invite** or **Invite all whitelisted**.
+6. Optional: click **Set up audit proxy** if this questionnaire should delegate blind issuance and verification to the helper. The proxy section opens and generates a proxy account automatically.
+7. Click **Publish Questionnaire** so the questionnaire becomes public and open.
+
+### 3. Request and issue a blind ballot
+
+1. In the voter tab, use the invite link or click **Check invites** and open the pending questionnaire.
+2. Click **Request ballot** if the request did not start automatically.
+3. If no proxy is selected, keep the coordinator tab open and click **Process requests** / **Check responses** until the credential is issued.
+4. If a proxy is selected, start the generated helper command from the coordinator's audit proxy section and wait for the proxy heartbeat.
+5. In the voter tab, wait until the page shows `Credential ready: Yes`.
+
+### 4. Submit and verify
+
+1. Complete the questionnaire in the voter tab and click **Submit response**.
+2. In the coordinator tab, process responses or let the proxy publish decisions if that capability was delegated.
+3. In the observer tab, open the questionnaire by coordinator `npub` or questionnaire ID.
+4. Confirm that submitted votes, accepted responses, expected participant count, and result percentages match the public events.
+5. Closing the questionnaire and publishing a summary is optional for live turnout: the observer can show current accepted responses before closure when public response and decision events are available.
+
 ## Current Flow
 
 ### Coordinator
@@ -212,7 +262,7 @@ The current repository contains only the browser app. It has voter, coordinator,
 
 If the Build page reports that the blind-signing key is still initialising in the current tab, wait a moment and try publishing again; the app now attempts to recover the locally persisted blind-signing key before blocking publication.
 
-## Audit Proxy
+### Audit Proxy
 
 The audit proxy is an optional Rust helper for keeping delegated questionnaire work running when the coordinator browser is not open. It does not become the root authority for the questionnaire: the coordinator still creates the questionnaire, owns the coordinator identity, signs the delegation, and can revoke or replace the proxy.
 
