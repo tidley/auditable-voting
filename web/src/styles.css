@@ -1047,6 +1047,18 @@ code {
   margin-bottom: 0;
 }
 
+.simple-questionnaire-field-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.simple-questionnaire-field-heading .simple-voter-label {
+  margin: 0;
+}
+
 .simple-voter-header-actions {
   margin-left: auto;
   justify-content: flex-end;
@@ -1126,7 +1138,7 @@ code {
   padding: 12px;
   border: 1px solid #2e405f;
   border-radius: 10px;
-  background: linear-gradient(180deg, rgba(10, 24, 55, 0.95), rgba(6, 16, 40, 0.96));
+  background: #08162f;
 }
 
 .simple-delegate-title {

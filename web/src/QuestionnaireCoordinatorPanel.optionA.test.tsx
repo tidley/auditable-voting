@@ -20,9 +20,10 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(screen.getByLabelText("Name")).toBeTruthy();
     expect(screen.getByLabelText("Questionnaire ID")).toBeTruthy();
     expect(screen.getByText("Generate ID")).toBeTruthy();
+    expect(screen.getByText("Show questionnaire link")).toBeTruthy();
   });
 
-  it("opens audit proxy setup and generates proxy credentials from the checklist button", () => {
+  it("keeps audit proxy setup out of the build actions until publication", () => {
     const onConfigureWorker = vi.fn();
     render(<QuestionnaireCoordinatorPanel onConfigureWorker={onConfigureWorker} />);
 
@@ -30,13 +31,16 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       .find((element) => element.tagName.toLowerCase() === "h2");
     const auditProxySection = auditProxyHeading.closest("section");
     expect(auditProxySection?.className).toContain("is-collapsed");
+    expect(screen.queryByText("Set up audit proxy")).toBeNull();
 
-    fireEvent.click(screen.getByText("Set up audit proxy"));
+    fireEvent.click(auditProxySection?.querySelector("button") as HTMLButtonElement);
+    fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "delegated_worker" } });
+    fireEvent.click(screen.getByText("Generate new account"));
 
-    expect(onConfigureWorker).toHaveBeenCalled();
+    expect(onConfigureWorker).not.toHaveBeenCalled();
     expect(auditProxySection?.className).not.toContain("is-collapsed");
     expect((screen.getByLabelText("Mode") as HTMLSelectElement).value).toBe("delegated_worker");
-    expect(screen.getByText(/Generated audit proxy npub:/)).toBeTruthy();
+    expect(screen.getByLabelText("Generated audit proxy nsec (store securely)")).toBeTruthy();
   });
 
   it("generates a new questionnaire id when the coordinator New ID event fires", () => {

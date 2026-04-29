@@ -781,7 +781,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     })(),
   );
   const [workerMoreOptionsCollapsed, setWorkerMoreOptionsCollapsed] = useState(true);
-  const [workerDownloadAdvancedCollapsed, setWorkerDownloadAdvancedCollapsed] = useState(true);
   const [auditProxyExpandSignal, setAuditProxyExpandSignal] = useState(0);
   const [selectedWorkerDownloadTarget, setSelectedWorkerDownloadTarget] = useState<WorkerLauncherTargetKey>("linuxX64");
   const [generatedWorkerNsec, setGeneratedWorkerNsec] = useState("");
@@ -2673,7 +2672,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     setGeneratedWorkerNsec(nsec);
     setGeneratedWorkerNpub(npub);
     setDelegatedWorkerNpub(npub);
-    setStatus(`Generated audit proxy credentials for ${deriveActorDisplayId(npub)}.`);
   }
 
   function setupAuditProxyFromChecklist() {
@@ -2923,17 +2921,21 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
 
   return (
     <>
-      <SimpleCollapsibleSection title='Build questionnaire'>
+      <SimpleCollapsibleSection title={`Build questionnaire${title.trim() ? `: ${title.trim()}` : ""}`}>
         <div className='simple-voter-card simple-questionnaire-panel'>
       <div className='simple-questionnaire-header'>
         <div>
-          <h3 className='simple-voter-question'>{title.trim() || "Untitled questionnaire"}</h3>
           <p className='simple-voter-note'>State: {buildStateLabel}</p>
         </div>
       </div>
 
       <div className='simple-questionnaire-id-panel'>
-        <label className='simple-voter-label' htmlFor='questionnaire-id'>Questionnaire ID</label>
+        <div className='simple-questionnaire-field-heading'>
+          <label className='simple-voter-label' htmlFor='questionnaire-id'>Questionnaire ID</label>
+          <button type='button' className='simple-voter-secondary' onClick={() => void tryWriteClipboard(questionnaireId)}>
+            Copy ID
+          </button>
+        </div>
         <input
           id='questionnaire-id'
           className='simple-voter-input'
@@ -2944,18 +2946,14 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           <button type='button' className='simple-voter-secondary' onClick={regenerateQuestionnaireId}>
             Generate ID
           </button>
-          <button type='button' className='simple-voter-secondary' onClick={() => void tryWriteClipboard(questionnaireId)}>
-            Copy ID
-          </button>
           <button type='button' className='simple-voter-secondary' onClick={() => setShowInviteQr((current) => !current)}>
-            Show voter QR
+            Show questionnaire link
           </button>
         </div>
-        <p className='simple-voter-note'>Use a unique ID for each questionnaire so voters and observers load the correct public events.</p>
         {showInviteQr && questionnaireId.trim() ? (
           <SimpleQrPanel
             value={inviteLink || questionnaireId.trim()}
-            title='Voter link'
+            title='Questionnaire link'
             copyLabel='Copy link'
             downloadLabel='Download QR'
             downloadFilename='questionnaire-voter-link-qr.png'
@@ -3204,22 +3202,15 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             Open questionnaire
           </button>
         )}
-        <button
-          type='button'
-          className='simple-voter-secondary'
-          onClick={setupAuditProxyFromChecklist}
-        >
-          Set up audit proxy
-        </button>
-        <button type='button' className='simple-voter-secondary' disabled={!inviteLink} onClick={() => {
-          if (!inviteLink) {
-            return;
-          }
-          void tryWriteClipboard(inviteLink);
-        }}
-        >
-          Copy invite link
-        </button>
+        {publishedDefinition ? (
+          <button
+            type='button'
+            className='simple-voter-primary'
+            onClick={setupAuditProxyFromChecklist}
+          >
+            Set up audit proxy
+          </button>
+        ) : null}
         <button type='button' className='simple-voter-secondary' onClick={() => setShowPreview((current) => !current)}>
           Preview JSON
         </button>
@@ -3286,9 +3277,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
 
                 <section className='simple-delegate-section'>
                   <h4 className='simple-delegate-title'>Setup</h4>
-                  <p className='simple-voter-note'>
-                    Configure your environment variables and ensure the audit proxy can reach the specified coordinator node.
-                  </p>
                   <label className='simple-voter-label' htmlFor='delegated-worker-npub'>Audit proxy npub</label>
                   <input
                     id='delegated-worker-npub'
@@ -3301,18 +3289,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                     <button type='button' className='simple-voter-secondary' onClick={generateWorkerCredentials}>
                       Generate new account
                     </button>
-                    <button
-                      type='button'
-                      className='simple-voter-secondary'
-                      onClick={() => void tryWriteClipboard(workerStartupCommand)}
-                      disabled={!coordinatorNpub.trim()}
-                    >
-                      Copy startup command
-                    </button>
                   </div>
-                  {generatedWorkerNpub ? (
-                    <p className='simple-voter-note'>Generated audit proxy npub: {generatedWorkerNpub}</p>
-                  ) : null}
                   {generatedWorkerNsec ? (
                     <div className='simple-voter-field-stack'>
                       <label className='simple-voter-label' htmlFor='generated-worker-nsec'>Generated audit proxy nsec (store securely)</label>
@@ -3325,7 +3302,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                       />
                     </div>
                   ) : null}
-                  <label className='simple-voter-label' htmlFor='worker-startup-command'>Startup command</label>
+                  <label className='simple-voter-label' htmlFor='worker-startup-command'>Quick start command</label>
                   <textarea
                     id='worker-startup-command'
                     className='simple-voter-input simple-delegate-command'
@@ -3333,13 +3310,16 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                     readOnly
                     value={workerStartupCommand}
                   />
-                  <p className='simple-voter-note simple-delegate-warning-note'>
-                    {delegatedWorkerControlRelays.trim()
-                      ? "This command includes WORKER_RELAYS from the current relay input."
-                      : "WORKER_RELAYS is omitted; the audit proxy uses the built-in default client relay set."}
-                  </p>
+                  <button
+                    type='button'
+                    className='simple-voter-secondary'
+                    onClick={() => void tryWriteClipboard(workerStartupCommand)}
+                    disabled={!coordinatorNpub.trim()}
+                  >
+                    Copy quick start command
+                  </button>
                   <a className='simple-voter-secondary simple-delegate-link-readme' href={workerHelperReadmeUrl} target='_blank' rel='noreferrer'>
-                    Audit proxy information
+                    Audit proxy details
                   </a>
                 </section>
 
@@ -3420,24 +3400,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                   </div>
                 </section>
 
-                <section className={`simple-delegate-section simple-collapsible-section${workerDownloadAdvancedCollapsed ? " is-collapsed" : ""}`}>
-                  <div className='simple-collapsible-header'>
-                    <h4 className='simple-delegate-title simple-collapsible-title'>Advanced</h4>
-                    <button
-                      type='button'
-                      className='simple-collapsible-toggle'
-                      aria-expanded={!workerDownloadAdvancedCollapsed}
-                      aria-controls='worker-download-advanced'
-                      onClick={() => setWorkerDownloadAdvancedCollapsed((current) => !current)}
-                    >
-                      {workerDownloadAdvancedCollapsed ? "Show" : "Hide"}
-                    </button>
-                  </div>
-                  <p className='simple-voter-note'>
-                    Use this path if you want the raw release asset and a direct command-line launch instead of the generated helper script.
-                  </p>
-                  <div id='worker-download-advanced' className='simple-collapsible-body'>
-                    <div className='simple-collapsible-body-inner'>
+                <section className='simple-delegate-section'>
+                  <h4 className='simple-delegate-title'>Helper download and launch command</h4>
                       <label className='simple-voter-label' htmlFor='worker-download-target'>Platform</label>
                       <select
                         id='worker-download-target'
@@ -3468,8 +3432,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                         readOnly
                         value={workerDirectCommand}
                       />
-                    </div>
-                  </div>
                 </section>
 
                 <section className='simple-delegate-section'>

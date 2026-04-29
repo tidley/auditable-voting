@@ -198,55 +198,50 @@ Auditable Voting is a client-side voting app on public relay infrastructure for 
 
 The current repository contains only the browser app. It has voter, coordinator, and observer roles; private traffic uses NIP-17 DMs; public state is replayed from public relay events.
 
-## Quick Start
+## Quick Start: Run an Auditable Vote in the Browser
 
-Use these steps to run a complete local smoke test from a fresh checkout.
+This is the practical browser-based flow. Start as the coordinator, then use a separate browser profile, private window, or second device for the voter so each role has its own local identity.
 
-### 1. Start the web app
+### 1. Coordinator builds the questionnaire
 
-1. Install dependencies:
+1. Open the app as **Coordinator**.
+2. Create or load a coordinator identity.
+3. In **Build**, enter the questionnaire name, description, and questions. The Build heading shows the current name, for example `Build questionnaire: How did we do`.
+4. Use **Generate ID** only when you want a fresh questionnaire ID. Use **Copy ID** beside the Questionnaire ID when sharing the public identifier with observers.
+5. Use **Show questionnaire link** if you want a QR/link for the questionnaire.
+6. Add or import voter `npub`s in **Invite**.
+7. Send invites with **Invite** or **Invite all whitelisted**.
+8. Click **Publish questionnaire** when the draft is ready. This publishes the questionnaire definition and opens the round.
 
-   ```bash
-   npm --prefix web install
-   ```
+### 2. Optional: coordinator enables an audit proxy
 
-2. Start Vite locally:
+1. After publishing, click **Set up audit proxy** if this questionnaire should keep processing while the coordinator browser is offline.
+2. The audit proxy section opens and generates a proxy account.
+3. Copy the **Quick start command** and run it on the machine that should host the proxy.
+4. Use **Audit proxy details** or **Helper download and launch command** if you need the helper download, checksum, or a direct launch command.
+5. Wait for a heartbeat in **Audit proxy status** before relying on the proxy for issuance or verification.
 
-   ```bash
-   npm --prefix web run dev -- --host 127.0.0.1 --port 5173
-   ```
+### 3. Voter requests and submits
 
-3. Open these pages in separate browser tabs or profiles so each role can keep its own local identity:
+1. Open the invite link as the invited voter, or open the app as **Voter** and click **Check invites**.
+2. Open the pending questionnaire.
+3. Click **Request ballot** if the blind credential request does not start automatically.
+4. Wait for `Credential ready: Yes`.
+5. Complete the questionnaire and click **Submit response**.
+6. If no proxy is selected, the coordinator browser must stay online long enough to process requests and responses. If a proxy is selected and active, the voter can wait for the proxy instead.
 
-   - Coordinator: `http://127.0.0.1:5173/simple-coordinator.html?role=coordinator`
-   - Voter: `http://127.0.0.1:5173/simple.html?role=voter`
-   - Observer: `http://127.0.0.1:5173/dashboard.html?role=auditor`
+### 4. Coordinator or proxy processes responses
 
-### 2. Create and publish the questionnaire
+1. In the coordinator tab, use **Process requests** / **Check responses** while running browser-only.
+2. If delegated, leave the helper running and check its heartbeat/reporting in **Audit proxy status**.
+3. Close the questionnaire and publish final results when collection is complete, if you want a fixed final summary.
 
-1. In the coordinator tab, create or load a coordinator identity.
-2. In **Build**, click **New ID** if you want a fresh coordinator/questionnaire pair.
-3. Add a title, description, and at least one question.
-4. In **Invite**, add the voter `npub` from the voter tab.
-5. Click **Invite** or **Invite all whitelisted**.
-6. Optional: click **Set up audit proxy** if this questionnaire should delegate blind issuance and verification to the helper. The proxy section opens and generates a proxy account automatically.
-7. Click **Publish Questionnaire** so the questionnaire becomes public and open.
+### 5. Observer verifies
 
-### 3. Request and issue a blind ballot
-
-1. In the voter tab, use the invite link or click **Check invites** and open the pending questionnaire.
-2. Click **Request ballot** if the request did not start automatically.
-3. If no proxy is selected, keep the coordinator tab open and click **Process requests** / **Check responses** until the credential is issued.
-4. If a proxy is selected, start the generated helper command from the coordinator's audit proxy section and wait for the proxy heartbeat.
-5. In the voter tab, wait until the page shows `Credential ready: Yes`.
-
-### 4. Submit and verify
-
-1. Complete the questionnaire in the voter tab and click **Submit response**.
-2. In the coordinator tab, process responses or let the proxy publish decisions if that capability was delegated.
-3. In the observer tab, open the questionnaire by coordinator `npub` or questionnaire ID.
-4. Confirm that submitted votes, accepted responses, expected participant count, and result percentages match the public events.
-5. Closing the questionnaire and publishing a summary is optional for live turnout: the observer can show current accepted responses before closure when public response and decision events are available.
+1. Open the app as **Observer**.
+2. Search by coordinator `npub` or questionnaire ID.
+3. Confirm submitted votes, accepted responses, expected participant count, and result percentages from the public events.
+4. The observer can show current accepted responses before closure when public response and decision events are available.
 
 ## Current Flow
 
@@ -254,7 +249,7 @@ Use these steps to run a complete local smoke test from a fresh checkout.
 
 1. Build and publish a questionnaire definition (public event).
 2. Invite voter npubs to that questionnaire.
-3. Optional: in the separate **Build** page `Audit proxy` section, use Set up audit proxy to open the section and pre-generate an audit proxy account, then use the startup helper/downloads or save an autoconfigured platform launcher that already includes the current coordinator `npub`; right-click copy-link uses a shareable launcher URL that omits the audit proxy secret, generated launchers refresh the helper binary from GitHub Releases on each run, raw binary and direct CLI options sit under `Advanced`, and delegation still leaves the coordinator as root authority.
+3. Optional: in the separate **Build** page `Audit proxy` section, use Set up audit proxy after publication to open the section and generate an audit proxy account, then use the quick start command or helper downloads or save an autoconfigured platform launcher that already includes the current coordinator `npub`; right-click copy-link uses a shareable launcher URL that omits the audit proxy secret, generated launchers refresh the helper binary from GitHub Releases on each run, raw binary and direct CLI options sit under `Helper download and launch command`, and delegation still leaves the coordinator as root authority.
 4. Receive blind-token requests over private DMs (or delegate handling to an audit proxy).
 5. Issue blind signatures to authorised voters over private DMs (or let the audit proxy blind-sign on behalf of the coordinator for that delegated round). Invite payloads and cached election metadata now carry the audit proxy routing hint so voters can keep targeting the audit proxy if the coordinator browser goes offline, and audit proxy election-config DMs also carry the questionnaire definition so audit-proxy-issued blind credentials can still render the ballot if the coordinator browser is offline.
 6. Watch public submissions and publish public accept/reject decisions (or delegate decision publication).

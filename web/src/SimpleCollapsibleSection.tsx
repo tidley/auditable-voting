@@ -7,7 +7,7 @@ export default function SimpleCollapsibleSection({
   renderWhenExpanded = false,
   expandSignal,
 }: {
-  title: string;
+  title: ReactNode;
   children: ReactNode;
   defaultCollapsed?: boolean;
   renderWhenExpanded?: boolean;

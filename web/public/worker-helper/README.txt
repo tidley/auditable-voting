@@ -22,7 +22,7 @@ Coordinator Build page launcher downloads:
 - It also starts the audit proxy with `RUST_LOG=debug` so blind-request processing shows up in the helper logs by default.
 - On first run it downloads the matching raw binary asset automatically, then starts the audit proxy.
 - Right-click copy link works on the Autoconfigured action. The copied shareable URL intentionally omits WORKER_NSEC, so set your own audit proxy secret before running it.
-- The Build page `Advanced` block exposes the raw binary/checksum links and direct command-line launch snippet if you want to run the audit proxy manually.
+- The Build page `Helper download and launch command` block exposes the raw binary/checksum links and direct command-line launch snippet if you want to run the audit proxy manually.
 
 Other platforms:
 - Download prebuilt release assets:

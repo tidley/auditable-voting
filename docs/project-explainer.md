@@ -39,65 +39,50 @@ The main goals are:
 ---
 
 
-## Quick Start: Run an Auditable Vote (Step by Step)
+## Quick Start: Run an Auditable Vote in the Browser
 
-This is the practical order of operations for the current app.
+This is the practical browser-based flow. Start as the coordinator, then use a separate browser profile, private window, or second device for the voter so each role has its own local identity.
 
-### 1. Coordinator prepares first
+### 1. Coordinator builds the questionnaire
 
-1. Open the app as **Coordinator** and create or log in to a coordinator identity.
-2. In **Build**, set questionnaire ID, title, description, questions, and (optionally) enable the close timer (default is off).
-3. In **Invite**, add or import voter npubs and invite expected participants.
-4. Send invites (`Send invite` / `Invite all whitelisted`) or share the invite link (generated links use the current host by default).
-5. As voters appear, run `Process requests` / `Check responses` to process blind request and response queues (or delegate those duties to an audit proxy).
-   - Verified voters can now pre-request and coordinators can pre-issue before publish.
-   - If needed, use the separate **Build** page `Audit proxy` section, switch to `Audit proxy`, use Set up audit proxy to open the section and pre-generate audit proxy credentials, then copy the startup command, or save an autoconfigured platform-specific launcher script that already includes the current coordinator `npub`; right-click copy-link uses a shareable launcher URL that intentionally omits the audit proxy secret, generated launchers refresh the helper binary from GitHub Releases on each run, and raw binary / direct CLI options now sit under `Advanced`.
-   - When blind-token issuance is delegated, invite payloads and cached election metadata carry the audit proxy routing hint so voters can keep DMing the audit proxy even if the coordinator browser is no longer open.
-   - Audit proxy election-config DMs now also carry the questionnaire definition, so audit-proxy-issued blind credentials can still render the ballot if the coordinator browser is offline.
-6. Publish the questionnaire when ready (`Publish Questionnaire`, state becomes `Open`).
-   - If the Build page reports that the blind-signing key is still initialising in the current tab, wait a moment and try publishing again; the app now attempts to recover the locally persisted blind-signing key before blocking publication.
+1. Open the app as **Coordinator**.
+2. Create or load a coordinator identity.
+3. In **Build**, enter the questionnaire name, description, and questions. The Build heading shows the current name, for example `Build questionnaire: How did we do`.
+4. Use **Generate ID** only when you want a fresh questionnaire ID. Use **Copy ID** beside the Questionnaire ID when sharing the public identifier with observers.
+5. Use **Show questionnaire link** if you want a QR/link for the questionnaire.
+6. Add or import voter `npub`s in **Invite**.
+7. Send invites with **Invite** or **Invite all whitelisted**.
+8. Click **Publish questionnaire** when the draft is ready. This publishes the questionnaire definition and opens the round.
 
-### 2. Audit proxy option
+### 2. Optional: coordinator enables an audit proxy
 
-The audit proxy is an optional Rust helper for keeping delegated questionnaire work running when the coordinator browser is not open. It does not become the root authority for the questionnaire: the coordinator still creates the questionnaire, owns the coordinator identity, signs the delegation, and can revoke or replace the proxy.
+1. After publishing, click **Set up audit proxy** if this questionnaire should keep processing while the coordinator browser is offline.
+2. The audit proxy section opens and generates a proxy account.
+3. Copy the **Quick start command** and run it on the machine that should host the proxy.
+4. Use **Audit proxy details** or **Helper download and launch command** if you need the helper download, checksum, or a direct launch command.
+5. Wait for a heartbeat in **Audit proxy status** before relying on the proxy for issuance or verification.
 
-The proxy receives two private control messages from the coordinator:
+### 3. Voter requests and submits
 
-1. a signed worker delegation that names the questionnaire, proxy `npub`, capabilities, control relays, and expiry
-2. an election config message containing the questionnaire metadata, blind-signing material needed for delegated issuance, and the routing hints voters should use
-
-After activation, the proxy polls only its own NIP-17 mailbox over outbound relay connections. It can issue blind ballot credentials, publish submission decisions, verify public submissions, and publish result summaries when those capabilities are delegated. It sends heartbeats and operation reports back to the coordinator so the Build page can show whether the proxy is active.
-
-For voters, the important distinction is who is expected to answer the blind request:
-
-- without a proxy, `Waiting for coordinator` means the coordinator browser must come online and process the request
-- with a proxy, `Waiting for audit proxy` means the delegated helper should issue the credential, even if the coordinator browser has gone offline
-
-Invite payloads and cached questionnaire metadata include the proxy routing hint, so voters keep targeting the proxy after reloads. The helper currently defaults to `relay.nostr.net` and `nos.lol`, and sanitises older persisted relay lists back to that pair before polling so it avoids known unreliable or deprecated endpoints.
-
-### 3. Voter joins second
-
-1. Open the invite link, or open the app as **Voter** and log in.
-2. If needed, use `Check invites`, then `Open` (or `Open + request ballot`) for the pending invite.
-3. The app auto-requests the blind ballot when invite context and login are present; otherwise click `Request ballot`.
+1. Open the invite link as the invited voter, or open the app as **Voter** and click **Check invites**.
+2. Open the pending questionnaire.
+3. Click **Request ballot** if the blind credential request does not start automatically.
 4. Wait for `Credential ready: Yes`.
-5. Complete responses and click `Submit response` (it names the coordinator or audit proxy while prerequisites are incomplete).
-6. Private request, issuance, and submission steps now send explicit acknowledgements, so later retries back off once the next phase has definitely received the message.
+5. Complete the questionnaire and click **Submit response**.
+6. If no proxy is selected, the coordinator browser must stay online long enough to process requests and responses. If a proxy is selected and active, the voter can wait for the proxy instead.
 
-### 4. Coordinator finalises third
+### 4. Coordinator or proxy processes responses
 
-1. In **Responses**, monitor accepted/rejected counts and unique responders.
-2. Close the questionnaire when collection is complete.
-3. Publish summary/results and share questionnaire ID + coordinator npub for independent checks.
+1. In the coordinator tab, use **Process requests** / **Check responses** while running browser-only.
+2. If delegated, leave the helper running and check its heartbeat/reporting in **Audit proxy status**.
+3. Close the questionnaire and publish final results when collection is complete, if you want a fixed final summary.
 
-### 5. Observer verifies last
+### 5. Observer verifies
 
-1. Open **Observer** view.
-2. Review recent public questionnaires or filter by coordinator npub and/or questionnaire ID.
-3. Confirm accepted unique responder totals and published response/result state match expectations.
-4. Compare live accepted responses with the public expected-response count when the coordinator has published one.
-5. Use **Submitted Votes** for per-response details (search/filter), and enable `Show invalid votes` only when reviewing rejected rows.
-6. If relays fragmented separate public response events, the published result summary still carries slim per-response refs and answer payloads so Observer can reconstruct detailed responder rows.
+1. Open the app as **Observer**.
+2. Search by coordinator `npub` or questionnaire ID.
+3. Confirm submitted votes, accepted responses, expected participant count, and result percentages from the public events.
+4. The observer can show current accepted responses before closure when public response and decision events are available.
 
 ### Operational notes
 
