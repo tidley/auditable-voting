@@ -3,8 +3,10 @@ import { recordRelayCloseReasons, selectRelaysWithBackoff, rankRelaysByBackoff }
 import {
   fetchQuestionnaireEventsWithFallback,
   parseQuestionnaireDefinitionEvent,
+  parseQuestionnaireParticipantCountEvent,
   parseQuestionnaireStateEvent,
   QUESTIONNAIRE_DEFINITION_KIND,
+  QUESTIONNAIRE_PARTICIPANT_COUNT_KIND,
   QUESTIONNAIRE_RESULT_SUMMARY_KIND,
   QUESTIONNAIRE_STATE_KIND,
 } from "./questionnaireNostr";
@@ -13,6 +15,7 @@ import { SIMPLE_PUBLIC_RELAYS } from "./simpleVotingSession";
 import { normalizeRelaysRust } from "./wasm/auditableVotingCore";
 import type {
   QuestionnaireDefinition,
+  QuestionnaireParticipantCountEvent,
   QuestionnaireResultSummary,
   QuestionnaireStateEvent,
 } from "./questionnaireProtocol";
@@ -92,6 +95,28 @@ export async function fetchQuestionnaireDefinitions(input: {
   return events
     .map((event) => ({ event, definition: parseQuestionnaireDefinitionEvent(event) }))
     .filter((entry): entry is { event: NostrEvent; definition: QuestionnaireDefinition } => Boolean(entry.definition));
+}
+
+export async function fetchQuestionnaireParticipantCount(input: {
+  questionnaireId: string;
+  relays?: string[];
+  limit?: number;
+  readRelayLimit?: number;
+  preferKindOnly?: boolean;
+}) {
+  const events = (await fetchQuestionnaireEventsWithFallback({
+    questionnaireId: input.questionnaireId,
+    kind: QUESTIONNAIRE_PARTICIPANT_COUNT_KIND,
+    relays: input.relays,
+    limit: input.limit,
+    readRelayLimit: input.readRelayLimit,
+    preferKindOnly: input.preferKindOnly,
+    parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireParticipantCountEvent(event)?.questionnaireId ?? null,
+  })).events;
+
+  return events
+    .map((event) => ({ event, participantCount: parseQuestionnaireParticipantCountEvent(event) }))
+    .filter((entry): entry is { event: NostrEvent; participantCount: QuestionnaireParticipantCountEvent } => Boolean(entry.participantCount));
 }
 
 export function subscribeQuestionnaireDefinitions(input: {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getPublicKey, generateSecretKey, nip19, nip44, type NostrEvent } from "nostr-tools";
-import { fetchQuestionnaireEventsWithFallback, getQuestionnaireReadRelays, parseQuestionnaireDefinitionEvent, parseQuestionnaireStateEvent, publishQuestionnaireDefinition, publishQuestionnaireResultSummary, publishQuestionnaireState, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESPONSE_PRIVATE_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND, subscribeQuestionnaireEvents } from "./questionnaireNostr";
+import { fetchQuestionnaireEventsWithFallback, getQuestionnaireReadRelays, parseQuestionnaireDefinitionEvent, parseQuestionnaireStateEvent, publishQuestionnaireDefinition, publishQuestionnaireParticipantCount, publishQuestionnaireResultSummary, publishQuestionnaireState, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESPONSE_PRIVATE_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND, subscribeQuestionnaireEvents } from "./questionnaireNostr";
 import { buildQuestionnaireResultSummary, deriveEffectiveQuestionnaireState, processQuestionnaireResponses, selectLatestQuestionnaireDefinition, selectLatestQuestionnaireResultSummary, selectLatestQuestionnaireState, type QuestionnaireAcceptedResponse } from "./questionnaireRuntime";
 import { buildSimpleNamespacedLocalStorageKey, loadSimpleActorState } from "./simpleLocalState";
 import {
@@ -730,7 +730,6 @@ function buildDefinition(input: {
   description: string;
   closeAfterMinutes?: number;
   questions: QuestionnaireQuestionDraft[];
-  expectedInviteeCount?: number;
   blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
 }): QuestionnaireDefinition {
   const createdAt = nowUnix();
@@ -754,7 +753,6 @@ function buildDefinition(input: {
     responseVisibility: "private",
     eligibilityMode: "open",
     allowMultipleResponsesPerPubkey: false,
-    expectedInviteeCount: Math.max(0, Math.floor(input.expectedInviteeCount ?? 0)),
     blindSigningPublicKey: input.blindSigningPublicKey ?? null,
     questions: input.questions,
   };
@@ -1619,10 +1617,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       description: description.trim(),
       closeAfterMinutes: closeMinutes,
       questions,
-      expectedInviteeCount: props.knownVoterCount ?? 0,
       blindSigningPublicKey: effectiveBlindSigningPublicKey ?? null,
     });
-  }, [closeAfterMinutes, closeTimerEnabled, coordinatorNpub, description, effectiveBlindSigningPublicKey, props.knownVoterCount, questionnaireId, questions, title]);
+  }, [closeAfterMinutes, closeTimerEnabled, coordinatorNpub, description, effectiveBlindSigningPublicKey, questionnaireId, questions, title]);
 
   const inviteLink = useMemo(() => {
     const id = questionnaireId.trim();
@@ -1818,6 +1815,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     lines.push("  ./auditable-voting-worker-linux-x64");
     return lines.join("\n");
   }, [coordinatorNpub, delegatedWorkerControlRelays, generatedWorkerNsec, helperRelayList]);
+  const lastParticipantCountPublishKeyRef = useRef("");
 
   const titleReady = title.trim().length > 0;
   const hasQuestion = questions.length > 0;
@@ -1849,6 +1847,12 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   );
   const publishedDefinition = Boolean(latestDefinition);
   const currentState: QuestionnaireStateValue = latestState ?? "draft";
+  useEffect(() => {
+    if (!publishedDefinition || !coordinatorNsec.trim() || !coordinatorNpub.trim() || !questionnaireId.trim()) {
+      return;
+    }
+    void publishParticipantCountSnapshot({ silent: true });
+  }, [coordinatorNsec, coordinatorNpub, publishedDefinition, props.knownVoterCount, questionnaireId]);
   const acceptedResponsesForDisplay = useMemo(() => {
     const byKey = new Map<string, QuestionnaireAcceptedResponse>();
     for (const response of latestAcceptedResponses) {
@@ -2116,9 +2120,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         relaySuccessCount: result.successes,
       });
       if (result.successes > 0) {
-        storeCachedQuestionnaireDefinition(builtDefinition);
+        storeCachedQuestionnaireDefinition(definitionToPublish);
         setDefinitionPublishSucceededAt(new Date().toISOString());
         setStatus(`Questionnaire draft published (${result.successes}/${result.relayResults.length} relays).`);
+        await publishParticipantCountSnapshot({ silent: true });
         await publishState("open");
       } else {
         setStatus("Questionnaire draft publish failed.");
@@ -2127,6 +2132,50 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     } catch {
       setDefinitionPublishDiagnostic((current) => ({ ...current, attempted: true, succeeded: false }));
       setStatus("Questionnaire draft publish failed.");
+    }
+  }
+
+  async function publishParticipantCountSnapshot(input?: { silent?: boolean }) {
+    const id = questionnaireId.trim();
+    const coordinatorNsecTrimmed = coordinatorNsec.trim();
+    const coordinatorNpubTrimmed = coordinatorNpub.trim();
+    if (!id || !coordinatorNsecTrimmed || !coordinatorNpubTrimmed) {
+      return false;
+    }
+    const expectedInviteeCount = Math.max(0, Math.floor(props.knownVoterCount ?? 0));
+    const dedupeKey = `${id}:${expectedInviteeCount}`;
+    if (input?.silent && lastParticipantCountPublishKeyRef.current === dedupeKey) {
+      return true;
+    }
+
+    try {
+      const result = await publishQuestionnaireParticipantCount({
+        coordinatorNsec: coordinatorNsecTrimmed,
+        participantCount: {
+          schemaVersion: 1,
+          eventType: "questionnaire_participant_count",
+          questionnaireId: id,
+          expectedInviteeCount,
+          createdAt: nowUnix(),
+          coordinatorPubkey: coordinatorNpubTrimmed,
+        },
+      });
+      if (result.successes > 0) {
+        lastParticipantCountPublishKeyRef.current = dedupeKey;
+      }
+      if (!input?.silent) {
+        setStatus(
+          result.successes > 0
+            ? `Expected participant count published (${expectedInviteeCount}).`
+            : "Expected participant count publish failed.",
+        );
+      }
+      return result.successes > 0;
+    } catch {
+      if (!input?.silent) {
+        setStatus("Expected participant count publish failed.");
+      }
+      return false;
     }
   }
 

@@ -95,7 +95,7 @@ Invite payloads and cached questionnaire metadata include the proxy routing hint
 1. Open **Observer** view.
 2. Review recent public questionnaires or filter by coordinator npub and/or questionnaire ID.
 3. Confirm accepted unique responder totals and published response/result state match expectations.
-4. Compare live accepted responses with the public expected-response count when the questionnaire definition includes one.
+4. Compare live accepted responses with the public expected-response count when the coordinator has published one.
 5. Use **Submitted Votes** for per-response details (search/filter), and enable `Show invalid votes` only when reviewing rejected rows.
 6. If relays fragmented separate public response events, the published result summary still carries slim per-response refs and answer payloads so Observer can reconstruct detailed responder rows.
 
@@ -274,7 +274,7 @@ The present web client is built with:
 - **questionnaire response observation fallback** that prefers bounded kind-only reads plus local questionnaire-id filtering (and relay probes) when custom tag-indexed reads are unreliable on public relays
 - **observer coordinator filtering + search** so public round review can be scoped by lead coordinator, coordinator npub, and free-text query (npub/round ID/prompt), with non-overlapping refreshes to reduce relay REQ bursts
 - **observer historic search** so the normal view stays bounded to recent questionnaire data, but observers can explicitly scan a wider historical window when an older published questionnaire or public result payload is missing
-- **observer questionnaire discovery** so recent public questionnaire definitions are read by kind-only backfill when no questionnaire ID is selected, with state, expected invitee count, live verified response totals, and published response totals shown when available
+- **observer questionnaire discovery** so recent public questionnaire definitions are read by kind-only backfill when no questionnaire ID is selected, with state, replaceable expected-participant count events, live verified response totals, and published response totals shown when available
 - **ticket scheduler diagnostics and tunable transport knobs** for first-send prioritisation, resend eligibility reasons, bounded concurrency, and retry-age experimentation during live relay reliability testing
 - **observation-plane recovery diagnostics** that separate live vs backfill visibility and classify resend recoveries for published-but-unobserved tickets
 - **request-id keyed mailbox reader bindings** with immutable per-request mailbox ids for live/backfill ticket observation, plus explicit read/backfill mailbox-consistency diagnostics
@@ -549,7 +549,7 @@ That means:
 - duplicate rejection is deterministic
 - tallying rules are deterministic
 - results are reproducible from relay history
-- newly published questionnaire definitions expose expected invitee count, so observers can compare accepted responses with expected turnout without seeing the private invite list
+- coordinators publish a separate parameterised replaceable expected-participant count event, so observers can compare accepted responses with expected turnout without seeing the private invite list
 
 ```mermaid
 flowchart LR

@@ -57,9 +57,17 @@ export type QuestionnaireDefinition = {
   responseVisibility: "public" | "private";
   eligibilityMode: "open" | "allowlist";
   allowMultipleResponsesPerPubkey: boolean;
-  expectedInviteeCount?: number | null;
   blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
   questions: QuestionnaireQuestion[];
+};
+
+export type QuestionnaireParticipantCountEvent = {
+  schemaVersion: 1;
+  eventType: "questionnaire_participant_count";
+  questionnaireId: string;
+  expectedInviteeCount: number;
+  createdAt: number;
+  coordinatorPubkey: string;
 };
 
 export type QuestionnaireStateValue = "draft" | "open" | "closed" | "results_published";
@@ -245,13 +253,6 @@ export function validateQuestionnaireDefinition(input: QuestionnaireDefinition):
         }
       }
     }
-  }
-  if (
-    input.expectedInviteeCount !== undefined
-    && input.expectedInviteeCount !== null
-    && (!Number.isFinite(input.expectedInviteeCount) || input.expectedInviteeCount < 0)
-  ) {
-    errors.push("expected_invitee_count_invalid");
   }
   return { valid: errors.length === 0, errors };
 }

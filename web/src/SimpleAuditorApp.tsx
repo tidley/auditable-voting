@@ -6,6 +6,7 @@ import {
   evaluateQuestionnaireBlindAdmissions,
   fetchQuestionnaireBlindResponses,
   fetchQuestionnaireDefinitions,
+  fetchQuestionnaireParticipantCount,
   fetchQuestionnaireWorkerDelegationStatus,
   fetchQuestionnaireSubmissionDecisions,
   fetchQuestionnaireResultSummary,
@@ -123,7 +124,7 @@ export default function SimpleAuditorApp() {
         const batch = candidates.slice(index, index + AUDITOR_QUESTIONNAIRE_HISTORIC_BATCH_SIZE);
         const batchEntries = await Promise.all(batch.map(async (entry): Promise<AuditorQuestionnaireEntry> => {
         const id = entry.definition.questionnaireId;
-        const [stateEntries, resultEntries] = await Promise.all([
+        const [stateEntries, resultEntries, participantCountEntries] = await Promise.all([
           fetchQuestionnaireState({
             questionnaireId: id,
             limit: 50,
@@ -136,6 +137,12 @@ export default function SimpleAuditorApp() {
             readRelayLimit: 2,
             preferKindOnly: true,
           }).catch(() => []),
+          fetchQuestionnaireParticipantCount({
+            questionnaireId: id,
+            limit: 50,
+            readRelayLimit: 2,
+            preferKindOnly: true,
+          }).catch(() => []),
         ]);
         const latestState = [...stateEntries]
           .sort((left, right) => Number(right.event.created_at ?? right.state.createdAt ?? 0) - Number(left.event.created_at ?? left.state.createdAt ?? 0))[0]
@@ -143,18 +150,18 @@ export default function SimpleAuditorApp() {
         const latestResult = [...resultEntries]
           .sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0))[0]
           ?.summary ?? null;
+        const coordinatorNpub = normalizeToNpub(entry.definition.coordinatorPubkey);
+        const latestParticipantCount = selectLatestParticipantCount(participantCountEntries, id, coordinatorNpub);
         return {
           questionnaireId: id,
           title: entry.definition.title || "Untitled questionnaire",
           description: entry.definition.description || "",
-          coordinatorNpub: normalizeToNpub(entry.definition.coordinatorPubkey),
+          coordinatorNpub,
           createdAt: Number(entry.event.created_at ?? entry.definition.createdAt ?? 0),
           openAt: Number.isFinite(entry.definition.openAt) ? entry.definition.openAt : null,
           closeAt: Number.isFinite(entry.definition.closeAt) ? entry.definition.closeAt : null,
           state: latestState,
-          expectedInviteeCount: Number.isFinite(entry.definition.expectedInviteeCount ?? Number.NaN)
-            ? Math.max(0, Math.floor(Number(entry.definition.expectedInviteeCount)))
-            : null,
+          expectedInviteeCount: latestParticipantCount?.expectedInviteeCount ?? null,
           publishedAcceptedResponseCount: latestResult?.acceptedResponseCount ?? null,
           publishedRejectedResponseCount: latestResult?.rejectedResponseCount ?? null,
           resultPublishedAt: Number(latestResult?.createdAt ?? 0) || null,
@@ -203,7 +210,7 @@ export default function SimpleAuditorApp() {
       return;
     }
     try {
-      const [responseEntries, decisionEntries, resultEntries, stateEntries, delegationStatus] = await Promise.all([
+      const [responseEntries, decisionEntries, resultEntries, stateEntries, delegationStatus, participantCountEntries] = await Promise.all([
         fetchQuestionnaireBlindResponses({
           questionnaireId: selectedId,
           limit: AUDITOR_QUESTIONNAIRE_RESPONSE_LIMIT,
@@ -232,6 +239,12 @@ export default function SimpleAuditorApp() {
           questionnaireId: selectedId,
           readRelayLimit: 2,
         }).catch(() => null),
+        fetchQuestionnaireParticipantCount({
+          questionnaireId: selectedId,
+          limit: 50,
+          readRelayLimit: 2,
+          preferKindOnly: true,
+        }).catch(() => []),
       ]);
       const admissions = evaluateQuestionnaireBlindAdmissions({
         entries: responseEntries,
@@ -276,6 +289,15 @@ export default function SimpleAuditorApp() {
           ? previous
           : delegationStatus
       ));
+      setQuestionnaires((previous) => previous.map((entry) => {
+        if (entry.questionnaireId !== selectedId) {
+          return entry;
+        }
+        const latestParticipantCount = selectLatestParticipantCount(participantCountEntries, selectedId, entry.coordinatorNpub);
+        return latestParticipantCount
+          ? { ...entry, expectedInviteeCount: latestParticipantCount.expectedInviteeCount }
+          : entry;
+      }));
       const nextStatus = "Questionnaire responses refreshed from Nostr.";
       setResponseRefreshStatus((previous) => (previous === nextStatus ? previous : nextStatus));
     } catch {
@@ -1180,6 +1202,23 @@ function normalizeToNpub(value: string) {
   } catch {
     return trimmed;
   }
+}
+
+function selectLatestParticipantCount(
+  entries: Awaited<ReturnType<typeof fetchQuestionnaireParticipantCount>>,
+  questionnaireId: string,
+  coordinatorNpub: string,
+) {
+  const expectedCoordinator = normalizeToNpub(coordinatorNpub);
+  return entries
+    .filter((entry) => entry.participantCount.questionnaireId === questionnaireId)
+    .filter((entry) => normalizeToNpub(entry.participantCount.coordinatorPubkey) === expectedCoordinator)
+    .filter((entry) => normalizeToNpub(entry.event.pubkey) === expectedCoordinator)
+    .sort((left, right) => (
+      Number(right.event.created_at ?? right.participantCount.createdAt ?? 0)
+      - Number(left.event.created_at ?? left.participantCount.createdAt ?? 0)
+    ))[0]
+    ?.participantCount ?? null;
 }
 
 function mergeAuditorResponseDetails(

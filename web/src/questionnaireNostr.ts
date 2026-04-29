@@ -11,6 +11,7 @@ import {
 import { normalizeRelaysRust, sha256HexRust } from "./wasm/auditableVotingCore";
 import type {
   QuestionnaireDefinition,
+  QuestionnaireParticipantCountEvent,
   QuestionnaireResponsePayload,
   QuestionnaireResponsePrivateEnvelope,
   QuestionnaireResultSummary,
@@ -19,12 +20,14 @@ import type {
 import { normalizeQuestionnaireDefinition } from "./questionnaireProtocol";
 import {
   IMPLEMENTATION_KIND_QUESTIONNAIRE_DEFINITION,
+  IMPLEMENTATION_KIND_QUESTIONNAIRE_PARTICIPANT_COUNT,
   IMPLEMENTATION_KIND_QUESTIONNAIRE_RESULT_SUMMARY,
   IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_PRIVATE,
   IMPLEMENTATION_KIND_QUESTIONNAIRE_STATE,
 } from "./questionnaireProtocolConstants";
 
 export const QUESTIONNAIRE_DEFINITION_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_DEFINITION;
+export const QUESTIONNAIRE_PARTICIPANT_COUNT_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_PARTICIPANT_COUNT;
 export const QUESTIONNAIRE_STATE_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_STATE;
 export const QUESTIONNAIRE_RESPONSE_PRIVATE_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_PRIVATE;
 export const QUESTIONNAIRE_RESULT_SUMMARY_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_RESULT_SUMMARY;
@@ -134,6 +137,25 @@ export async function publishQuestionnaireDefinition(input: {
     content: JSON.stringify(input.definition),
     relays: input.relays,
     channel: "questionnaire-definition",
+  });
+}
+
+export async function publishQuestionnaireParticipantCount(input: {
+  coordinatorNsec: string;
+  participantCount: QuestionnaireParticipantCountEvent;
+  relays?: string[];
+}) {
+  return publishEvent({
+    nsec: input.coordinatorNsec,
+    kind: QUESTIONNAIRE_PARTICIPANT_COUNT_KIND,
+    tags: [
+      ["d", input.participantCount.questionnaireId],
+      ["t", "questionnaire_participant_count"],
+      ["questionnaire-id", input.participantCount.questionnaireId],
+    ],
+    content: JSON.stringify(input.participantCount),
+    relays: input.relays,
+    channel: "questionnaire-participant-count",
   });
 }
 
@@ -419,6 +441,34 @@ export function parseQuestionnaireDefinitionEvent(
       return null;
     }
     return normalizeQuestionnaireDefinition(parsed);
+  } catch {
+    return null;
+  }
+}
+
+export function parseQuestionnaireParticipantCountEvent(
+  event: Pick<NostrEvent, "kind" | "content">,
+): QuestionnaireParticipantCountEvent | null {
+  if (event.kind !== QUESTIONNAIRE_PARTICIPANT_COUNT_KIND) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(event.content) as QuestionnaireParticipantCountEvent;
+    if (
+      parsed?.eventType !== "questionnaire_participant_count"
+      || parsed?.schemaVersion !== 1
+      || typeof parsed.questionnaireId !== "string"
+      || !Number.isFinite(parsed.expectedInviteeCount)
+      || parsed.expectedInviteeCount < 0
+      || !Number.isFinite(parsed.createdAt)
+      || typeof parsed.coordinatorPubkey !== "string"
+    ) {
+      return null;
+    }
+    return {
+      ...parsed,
+      expectedInviteeCount: Math.max(0, Math.floor(parsed.expectedInviteeCount)),
+    };
   } catch {
     return null;
   }
