@@ -11,7 +11,7 @@ import {
   type QuestionnaireResultSummary,
   type QuestionnaireStateValue,
 } from "./questionnaireProtocol";
-import type { QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
+import { toQuestionnaireBlindPublicKey, type QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
 import { QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN } from "./questionnaireProtocolConstants";
 import {
   QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1,
@@ -58,7 +58,7 @@ const QUESTIONNAIRE_DRAFT_ID_STORAGE_KEY = "coordinator.questionnaire-draft-id.v
 const IDENTITY_REFRESH_INTERVAL_MS = 10000;
 const QUESTIONNAIRE_TIMER_FALLBACK_MINUTES = "60";
 const QUESTIONNAIRE_TIMER_DISABLED_CLOSE_MINUTES = 5_256_000; // 10 years
-const BLIND_SIGNING_KEY_RELOAD_STATUS = "Blind-signing key is still initialising in this tab. Reload the page to refresh coordinator state, then try publishing again.";
+const BLIND_SIGNING_KEY_RELOAD_STATUS = "Blind-signing key is still initialising in this tab. Please wait a moment, then try publishing again.";
 
 function readDeploymentModeFromUrl() {
   if (typeof window === "undefined") {
@@ -788,6 +788,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [coordinatorNpub, setCoordinatorNpub] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [isCloseAndPublishInFlight, setIsCloseAndPublishInFlight] = useState(false);
+  const [recoveredBlindSigningPublicKey, setRecoveredBlindSigningPublicKey] = useState<QuestionnaireBlindPublicKey | null>(null);
   const regenerateQuestionnaireId = useCallback(() => {
     setQuestionnaireId(generateQuestionnaireId());
   }, []);
@@ -847,20 +848,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     filteredCount: 0,
     kindOnlyCount: 0,
   });
-  const reloadPage = useCallback(() => {
-    if (typeof window !== "undefined") {
-      window.location.reload();
-    }
-  }, []);
-  const statusNeedsReloadAction = status === BLIND_SIGNING_KEY_RELOAD_STATUS;
   const statusNotice = status ? (
     <div className='simple-status-row'>
       <p className='simple-voter-note'>{status}</p>
-      {statusNeedsReloadAction ? (
-        <button type='button' className='simple-voter-secondary simple-status-action' onClick={reloadPage}>
-          Reload page
-        </button>
-      ) : null}
     </div>
   ) : null;
   const [resultReadDiagnostics, setResultReadDiagnostics] = useState({
@@ -1565,6 +1555,43 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       return current.filter((_, currentIndex) => currentIndex !== index);
     });
   }
+
+  const resolveBlindSigningPublicKey = useCallback(() => {
+    const fromProps = props.blindSigningPublicKey ?? null;
+    if (fromProps) {
+      return fromProps;
+    }
+    const electionId = questionnaireId.trim();
+    const coordinator = coordinatorNpub.trim();
+    if (!electionId || !coordinator) {
+      return null;
+    }
+    const localState = loadCoordinatorState({
+      coordinatorNpub: coordinator,
+      electionId,
+    });
+    const fromPrivateKey = localState?.blindSigningPrivateKey
+      ? toQuestionnaireBlindPublicKey(localState.blindSigningPrivateKey)
+      : null;
+    const resolved = fromPrivateKey
+      ?? localState?.election.blindSigningPublicKey
+      ?? loadElectionSummary(electionId)?.blindSigningPublicKey
+      ?? null;
+    if (resolved) {
+      setRecoveredBlindSigningPublicKey(resolved);
+    }
+    return resolved;
+  }, [coordinatorNpub, props.blindSigningPublicKey, questionnaireId]);
+
+  useEffect(() => {
+    setRecoveredBlindSigningPublicKey(props.blindSigningPublicKey ?? null);
+    if (!props.blindSigningPublicKey) {
+      resolveBlindSigningPublicKey();
+    }
+  }, [props.blindSigningPublicKey, resolveBlindSigningPublicKey]);
+
+  const effectiveBlindSigningPublicKey = props.blindSigningPublicKey ?? recoveredBlindSigningPublicKey;
+
   const builtDefinition = useMemo(() => {
     if (!coordinatorNpub.trim() || !questionnaireId.trim()) {
       return null;
@@ -1583,9 +1610,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       description: description.trim(),
       closeAfterMinutes: closeMinutes,
       questions,
-      blindSigningPublicKey: props.blindSigningPublicKey ?? null,
+      blindSigningPublicKey: effectiveBlindSigningPublicKey ?? null,
     });
-  }, [closeAfterMinutes, closeTimerEnabled, coordinatorNpub, description, props.blindSigningPublicKey, questionnaireId, questions, title]);
+  }, [closeAfterMinutes, closeTimerEnabled, coordinatorNpub, description, effectiveBlindSigningPublicKey, questionnaireId, questions, title]);
 
   const inviteLink = useMemo(() => {
     const id = questionnaireId.trim();
@@ -2019,7 +2046,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   }
 
   async function publishDefinition() {
-    if (!coordinatorNsec.trim() || !builtDefinition) {
+    let definitionToPublish = builtDefinition;
+    if (!coordinatorNsec.trim() || !definitionToPublish) {
       setStatus("Coordinator key or questionnaire definition is missing.");
       return;
     }
@@ -2029,12 +2057,22 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       return;
     }
 
-    if (!builtDefinition.blindSigningPublicKey) {
+    if (!definitionToPublish.blindSigningPublicKey) {
+      const recoveredKey = resolveBlindSigningPublicKey();
+      if (recoveredKey) {
+        definitionToPublish = {
+          ...definitionToPublish,
+          blindSigningPublicKey: recoveredKey,
+        };
+      }
+    }
+
+    if (!definitionToPublish.blindSigningPublicKey) {
       setStatus(BLIND_SIGNING_KEY_RELOAD_STATUS);
       return;
     }
 
-    const validation = validateQuestionnaireDefinition(builtDefinition);
+    const validation = validateQuestionnaireDefinition(definitionToPublish);
     if (!validation.valid) {
       setStatus(`Definition invalid: ${validation.errors[0] ?? "unknown_error"}.`);
       return;
@@ -2056,7 +2094,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     try {
       const result = await publishQuestionnaireDefinition({
         coordinatorNsec,
-        definition: builtDefinition,
+        definition: definitionToPublish,
       });
       setDefinitionPublishDiagnostic({
         attempted: true,
