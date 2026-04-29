@@ -247,7 +247,8 @@ Drafted response fields stay intact when the credential or refreshed definition 
 1. Open **Observer**.
 2. Read public submissions and public submission decisions.
 3. Verify accepted/rejected outcomes and per-question totals.
-4. Use **Submitted Votes** for per-response detail (search/filter), and enable `Show invalid votes` when you need rejected-row diagnostics.
+4. Compare live accepted responses with the public expected-response count when the questionnaire definition includes one.
+5. Use **Submitted Votes** for per-response detail (search/filter), and enable `Show invalid votes` when you need rejected-row diagnostics.
 
 ## Privacy Model
 
@@ -286,6 +287,7 @@ sequenceDiagram
 - public coordinator submission decisions (accept/reject)
 - published result summaries
 - observer-discovered public questionnaire metadata
+- expected invitee count for newly published questionnaire definitions, so observers can see turnout/completion without private invite contents
 
 ## What Stays Private Or Local
 
@@ -373,6 +375,8 @@ flowchart LR
 
 Observers derive results from public submissions and public coordinator decisions.
 The published summary includes per-response references as a parity backfill, so the observer can still render full responder rows even when relay visibility is fragmented.
+
+Before a final result summary exists, the observer derives a live provisional summary from verified public submissions and labels it as live relay-derived data. Newly published questionnaire definitions also carry an expected invitee count, letting the observer show accepted responses against the expected participant total while keeping individual invitees private.
 
 The observer view keeps normal refreshes bounded to recent questionnaires to avoid relay pressure. Use `Search historic data` next to the questionnaire selector to explicitly scan a wider historical window when an older published questionnaire or result payload is missing from the default list.
 

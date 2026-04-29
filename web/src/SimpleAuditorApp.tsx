@@ -16,6 +16,7 @@ import { formatQuestionnaireStateLabel } from "./questionnaireRuntime";
 import type {
   QuestionnairePublishedResponseRef,
   QuestionnaireQuestion,
+  QuestionnaireResultQuestionSummary,
   QuestionnaireResultSummary,
 } from "./questionnaireProtocol";
 
@@ -35,6 +36,7 @@ type AuditorQuestionnaireEntry = {
   openAt: number | null;
   closeAt: number | null;
   state: string | null;
+  expectedInviteeCount: number | null;
   publishedAcceptedResponseCount: number | null;
   publishedRejectedResponseCount: number | null;
   resultPublishedAt: number | null;
@@ -150,6 +152,9 @@ export default function SimpleAuditorApp() {
           openAt: Number.isFinite(entry.definition.openAt) ? entry.definition.openAt : null,
           closeAt: Number.isFinite(entry.definition.closeAt) ? entry.definition.closeAt : null,
           state: latestState,
+          expectedInviteeCount: Number.isFinite(entry.definition.expectedInviteeCount ?? Number.NaN)
+            ? Math.max(0, Math.floor(Number(entry.definition.expectedInviteeCount)))
+            : null,
           publishedAcceptedResponseCount: latestResult?.acceptedResponseCount ?? null,
           publishedRejectedResponseCount: latestResult?.rejectedResponseCount ?? null,
           resultPublishedAt: Number(latestResult?.createdAt ?? 0) || null,
@@ -465,6 +470,14 @@ export default function SimpleAuditorApp() {
     [selectedQuestionnaire?.questions],
   );
 
+  const liveQuestionSummaries = useMemo(
+    () => buildLiveQuestionSummaries(
+      selectedQuestionnaire?.questions ?? [],
+      selectedResponseDetails.filter((entry) => entry.accepted),
+    ),
+    [selectedQuestionnaire?.questions, selectedResponseDetails],
+  );
+
   const liveAcceptedCount = useMemo(
     () => selectedResponseDetails.filter((entry) => entry.accepted).length,
     [selectedResponseDetails],
@@ -484,12 +497,23 @@ export default function SimpleAuditorApp() {
     () => selectedResponseDetails.filter((entry) => !entry.accepted && !entry.includedInLatestPublish).length,
     [selectedResponseDetails],
   );
-  const publishedValidCount = selectedResultSummary?.acceptedResponseCount ?? selectedQuestionnaire?.publishedAcceptedResponseCount ?? 0;
-  const publishedInvalidCount = selectedResultSummary?.rejectedResponseCount ?? selectedQuestionnaire?.publishedRejectedResponseCount ?? 0;
-  const publishedTotalCount = Math.max(0, publishedValidCount + publishedInvalidCount);
-  const publishedValidityPercent = publishedTotalCount > 0
-    ? ((publishedValidCount / publishedTotalCount) * 100).toFixed(1)
+  const displayValidCount = selectedResultSummary?.acceptedResponseCount ?? liveAcceptedCount;
+  const displayInvalidCount = selectedResultSummary?.rejectedResponseCount ?? liveRejectedCount;
+  const displayTotalCount = Math.max(0, displayValidCount + displayInvalidCount);
+  const displayValidityPercent = displayTotalCount > 0
+    ? ((displayValidCount / displayTotalCount) * 100).toFixed(1)
     : "0.0";
+  const expectedInviteeCount = selectedQuestionnaire?.expectedInviteeCount ?? null;
+  const expectedResponseText = expectedInviteeCount === null
+    ? "Not published"
+    : `${expectedInviteeCount} expected`;
+  const responseCompletionText = expectedInviteeCount === null
+    ? "Unknown"
+    : expectedInviteeCount > 0
+      ? `${displayValidCount}/${expectedInviteeCount} accepted (${Math.min(100, Math.max(0, (displayValidCount / expectedInviteeCount) * 100)).toFixed(1)}%)`
+      : "No invitees expected";
+  const displayedQuestionSummaries = selectedResultSummary?.questionSummaries ?? liveQuestionSummaries;
+  const resultSummarySourceLabel = selectedResultSummary ? "Published result summary" : "Live verified submissions";
   const canExportResults = Boolean(
     selectedQuestionnaire
     && (selectedLiveState ?? selectedQuestionnaire.state) === "results_published"
@@ -708,13 +732,19 @@ export default function SimpleAuditorApp() {
             <>
               <div className='simple-auditor-results-meta'>
                 <span className='simple-voter-note'>
-                  {publishedTotalCount} Response{publishedTotalCount === 1 ? "" : "s"} • {publishedValidityPercent}%
+                  {displayTotalCount} Response{displayTotalCount === 1 ? "" : "s"} • {displayValidityPercent}%
                 </span>
                 <span className='simple-voter-note'>
                   Round phase: {formatQuestionnaireStateLabel(selectedLiveState ?? selectedQuestionnaire.state)}
                 </span>
                 <span className='simple-voter-note'>
                   Published at: {formatQuestionnaireTime(Number(selectedResultSummary?.createdAt ?? selectedQuestionnaire.resultPublishedAt ?? 0))}
+                </span>
+                <span className='simple-voter-note'>
+                  Source: {resultSummarySourceLabel}
+                </span>
+                <span className='simple-voter-note'>
+                  Expected responses: {expectedResponseText}
                 </span>
               </div>
               <div className='simple-auditor-summary-grid'>
@@ -731,16 +761,21 @@ export default function SimpleAuditorApp() {
                   <p className='simple-voter-question'>{formatQuestionnaireStateLabel(selectedLiveState ?? selectedQuestionnaire.state)}</p>
                 </div>
                 <div className='simple-auditor-summary-card'>
+                  <p className='simple-auditor-summary-label'>Expected responses</p>
+                  <p className='simple-voter-question'>{expectedResponseText}</p>
+                  <p className='simple-voter-note'>{responseCompletionText}</p>
+                </div>
+                <div className='simple-auditor-summary-card'>
                   <p className='simple-auditor-summary-label'>Audit proxy</p>
                   <p className='simple-voter-question'>
                     {formatWorkerDelegationStatus(selectedWorkerDelegationStatus)}
                   </p>
                 </div>
               </div>
-              {selectedResultSummary ? (
+              {displayedQuestionSummaries.length > 0 ? (
                 <>
                   <div className='simple-auditor-question-grid'>
-                    {selectedResultSummary.questionSummaries.map((summary) => (
+                    {displayedQuestionSummaries.map((summary) => (
                       <article key={`${summary.questionId}:${summary.answerType}`} className='simple-auditor-question-card'>
                         <h3 className='simple-voter-question'>{selectedQuestionById.get(summary.questionId)?.prompt || `Question ${summary.questionId}`}</h3>
                         {summary.answerType === "yes_no" ? (
@@ -792,9 +827,12 @@ export default function SimpleAuditorApp() {
                       Export results
                     </button>
                   ) : null}
+                  {!selectedResultSummary ? (
+                    <p className='simple-voter-note'>No published result summary yet; showing live verified submissions found on public relays.</p>
+                  ) : null}
                 </>
               ) : (
-                <p className='simple-voter-empty'>No published result summary yet for this questionnaire.</p>
+                <p className='simple-voter-empty'>No published result summary or live verified submissions yet for this questionnaire.</p>
               )}
             </>
           ) : (
@@ -973,6 +1011,7 @@ function areQuestionnaireEntriesEqual(
       || a.openAt !== b.openAt
       || a.closeAt !== b.closeAt
       || a.state !== b.state
+      || a.expectedInviteeCount !== b.expectedInviteeCount
       || a.publishedAcceptedResponseCount !== b.publishedAcceptedResponseCount
       || a.publishedRejectedResponseCount !== b.publishedRejectedResponseCount
       || a.resultPublishedAt !== b.resultPublishedAt
@@ -1034,6 +1073,68 @@ function formatWorkerDelegationStatus(status: QuestionnaireWorkerDelegationStatu
     return `Revoked${workerSuffix}`;
   }
   return `Expired${workerSuffix}`;
+}
+
+function buildLiveQuestionSummaries(
+  questions: QuestionnaireQuestion[],
+  acceptedResponses: AuditorQuestionnaireResponseDetail[],
+): QuestionnaireResultQuestionSummary[] {
+  return questions.map((question): QuestionnaireResultQuestionSummary => {
+    if (question.type === "yes_no") {
+      let yesCount = 0;
+      let noCount = 0;
+      for (const entry of acceptedResponses) {
+        const answer = entry.response.answers?.find((candidate) => candidate.questionId === question.questionId);
+        if (answer?.answerType !== "yes_no") {
+          continue;
+        }
+        if (answer.value) {
+          yesCount += 1;
+        } else {
+          noCount += 1;
+        }
+      }
+      return {
+        questionId: question.questionId,
+        answerType: "yes_no",
+        yesCount,
+        noCount,
+      };
+    }
+
+    if (question.type === "multiple_choice") {
+      const optionCounts = Object.fromEntries(question.options.map((option) => [option.optionId, 0]));
+      for (const entry of acceptedResponses) {
+        const answer = entry.response.answers?.find((candidate) => candidate.questionId === question.questionId);
+        if (answer?.answerType !== "multiple_choice") {
+          continue;
+        }
+        for (const optionId of answer.selectedOptionIds) {
+          if (Object.prototype.hasOwnProperty.call(optionCounts, optionId)) {
+            optionCounts[optionId] += 1;
+          }
+        }
+      }
+      return {
+        questionId: question.questionId,
+        answerType: "multiple_choice",
+        optionCounts,
+      };
+    }
+
+    let freeTextCount = 0;
+    for (const entry of acceptedResponses) {
+      const answer = entry.response.answers?.find((candidate) => candidate.questionId === question.questionId);
+      if (answer?.answerType === "free_text" && answer.text.trim()) {
+        freeTextCount += 1;
+      }
+    }
+    return {
+      questionId: question.questionId,
+      answerType: "free_text",
+      freeTextCount,
+    };
+  });
 }
 
 function areAuditorResponseDetailsEqual(

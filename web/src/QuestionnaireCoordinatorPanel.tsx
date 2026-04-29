@@ -730,6 +730,7 @@ function buildDefinition(input: {
   description: string;
   closeAfterMinutes?: number;
   questions: QuestionnaireQuestionDraft[];
+  expectedInviteeCount?: number;
   blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
 }): QuestionnaireDefinition {
   const createdAt = nowUnix();
@@ -753,6 +754,7 @@ function buildDefinition(input: {
     responseVisibility: "private",
     eligibilityMode: "open",
     allowMultipleResponsesPerPubkey: false,
+    expectedInviteeCount: Math.max(0, Math.floor(input.expectedInviteeCount ?? 0)),
     blindSigningPublicKey: input.blindSigningPublicKey ?? null,
     questions: input.questions,
   };
@@ -1617,9 +1619,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       description: description.trim(),
       closeAfterMinutes: closeMinutes,
       questions,
+      expectedInviteeCount: props.knownVoterCount ?? 0,
       blindSigningPublicKey: effectiveBlindSigningPublicKey ?? null,
     });
-  }, [closeAfterMinutes, closeTimerEnabled, coordinatorNpub, description, effectiveBlindSigningPublicKey, questionnaireId, questions, title]);
+  }, [closeAfterMinutes, closeTimerEnabled, coordinatorNpub, description, effectiveBlindSigningPublicKey, props.knownVoterCount, questionnaireId, questions, title]);
 
   const inviteLink = useMemo(() => {
     const id = questionnaireId.trim();
