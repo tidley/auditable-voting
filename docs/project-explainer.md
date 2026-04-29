@@ -55,7 +55,7 @@ This is the practical order of operations for the current app.
    - When blind-token issuance is delegated, invite payloads and cached election metadata carry the audit proxy routing hint so voters can keep DMing the audit proxy even if the coordinator browser is no longer open.
    - Audit proxy election-config DMs now also carry the questionnaire definition, so audit-proxy-issued blind credentials can still render the ballot if the coordinator browser is offline.
 6. Publish the questionnaire when ready (`Publish Questionnaire`, state becomes `Open`).
-   - If the Build page reports that the blind-signing key is still initialising in the current tab, use the `Reload page` action shown in that status message and then try publishing again.
+   - If the Build page reports that the blind-signing key is still initialising in the current tab, wait a moment and try publishing again; the app now attempts to recover the locally persisted blind-signing key before blocking publication.
 
 ### 2. Voter joins second
 
@@ -567,7 +567,7 @@ The current client also distinguishes between:
 - **read/subscription fanout**, which is intentionally kept to a smaller primary subset
 
 That split reduces relay-side `too many concurrent REQs` failures while keeping the write path reasonably redundant.
-Automatic voter and coordinator actions are also paced with a random `0-30s` delay, slower retry windows, and a sender-scoped ticket publish queue so many browser actors do not all publish into the same public relays at once. The default relay lists now include public relays such as `relay.nostr.net`, `nos.lol`, `relay.nostr.info`, `nip17.com`, and `nostr-pub.wellorder.net`; NIP-17 reads prefer relays that accept `#p` gift-wrap filters before falling back to endpoints known to reject those filters as unindexed. Mailbox publishes keep one deterministic anchor relay, rotate secondary relays by recipient, and apply temporary cooldowns when relays return rate-limit/pow/spam/policy failures.
+Automatic voter and coordinator actions are also paced with a random `0-30s` delay, slower retry windows, and a sender-scoped ticket publish queue so many browser actors do not all publish into the same public relays at once. The audit proxy defaults and generated helper commands now use `relay.nostr.net` and `nos.lol` only, and persisted legacy delegated relay lists are sanitised back to that pair before polling; browser-side NIP-17 reads still prefer relays that accept `#p` gift-wrap filters before falling back to endpoints known to reject those filters as unindexed. Mailbox publishes keep one deterministic anchor relay, rotate secondary relays by recipient, and apply temporary cooldowns when relays return rate-limit/pow/spam/policy failures.
 
 ---
 

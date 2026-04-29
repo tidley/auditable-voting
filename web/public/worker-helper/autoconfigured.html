@@ -167,8 +167,23 @@
       function sanitizeWorkerRelays(value) {
         const replacements = new Map([
           [`wss://strfry.${"bitsbytom.com"}`, "wss://relay.nostr.net"],
-          [`wss://nip17.${"tomdwyer.uk"}`, "wss://relay.nostr.info"],
-          [`wss://offchain.${"pub"}`, "wss://nostr.wine"],
+          [`wss://nip17.${"tomdwyer.uk"}`, "wss://nos.lol"],
+          [`wss://offchain.${"pub"}`, "wss://nos.lol"],
+          ["wss://relay.nostr.band", "wss://relay.nostr.net"],
+          ["wss://relay.damus.io", "wss://relay.nostr.net"],
+          ["wss://relay.primal.net", "wss://nos.lol"],
+          ["wss://nostr.mom", "wss://relay.nostr.net"],
+          ["wss://nostr.wine", "wss://nos.lol"],
+          ["wss://eden.nostr.land", "wss://relay.nostr.net"],
+          ["wss://purplepag.es", "wss://nos.lol"],
+          ["wss://relay.nostr.info", "wss://relay.nostr.net"],
+          ["wss://nip17.com", "wss://nos.lol"],
+          ["wss://relay.layer.systems", "wss://relay.nostr.net"],
+          ["wss://nostr.bond", "wss://nos.lol"],
+          ["wss://auth.nostr1.com", "wss://relay.nostr.net"],
+          ["wss://inbox.nostr.wine", "wss://nos.lol"],
+          ["wss://nostr-pub.wellorder.net", "wss://relay.nostr.net"],
+          ["wss://relay.0xchat.com", "wss://nos.lol"],
         ]);
         return Array.from(new Set(
           value

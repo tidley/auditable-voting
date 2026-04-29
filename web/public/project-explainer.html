@@ -210,7 +210,7 @@ The current repository contains only the browser app. It has voter, coordinator,
 6. Watch public submissions and publish public accept/reject decisions (or delegate decision publication).
 7. Close the round and publish the result summary (or enable audit proxy auto-summary once all invitees have accepted responses).
 
-If the Build page reports that the blind-signing key is still initialising in the current tab, use the `Reload page` action shown in that status message and then try publishing again.
+If the Build page reports that the blind-signing key is still initialising in the current tab, wait a moment and try publishing again; the app now attempts to recover the locally persisted blind-signing key before blocking publication.
 
 ### Voter
 
@@ -301,7 +301,7 @@ The client uses:
 - `@cloudflare/blindrsa-ts` for RSABSSA blind signatures
 - Rust/Wasm for deterministic replay and protocol validation in the public round path
 - an optional Rust audit proxy runtime (`worker/`) for delegated election operations over outbound-only relay connections
-- seven-day fixed-lookback audit proxy DM polling with event-id dedupe so relay-randomised gift-wrap timestamps do not cause missed delegated blind requests, plus status heartbeats back to the coordinator, active delegation control-relay reads, and default relays that accept `#p` gift-wrap filters
+- seven-day fixed-lookback audit proxy DM polling with event-id dedupe so relay-randomised gift-wrap timestamps do not cause missed delegated blind requests, plus status heartbeats back to the coordinator, active delegation control-relay reads, and a tight helper relay set of `relay.nostr.net` and `nos.lol`; persisted legacy relay lists are sanitised back to that pair before polling
 - browser storage for private active state and recovery
 
 ## Blind Issuance

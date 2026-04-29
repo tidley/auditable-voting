@@ -176,7 +176,7 @@
           <a class="topbar-link" href="./">Home</a>
           <a class="topbar-link" href="./simple.html?role=voter">Voter</a>
           <a class="topbar-link" href="./simple-coordinator.html?role=coordinator">Coordinator</a>
-          <a class="topbar-link" href="./dashboard.html?role=auditor">Auditor</a>
+          <a class="topbar-link" href="./dashboard.html?role=auditor">Observer</a>
         </nav>
       </header>
       <section class="layout">
@@ -196,41 +196,44 @@
 
 Auditable Voting is a client-side voting app on public relay infrastructure for private credential issuance, anonymous response submission, and independent auditing.
 
-The current repository contains only the browser app. It has voter, coordinator, and auditor roles; private traffic uses NIP-17 DMs; public state is replayed from public relay events.
+The current repository contains only the browser app. It has voter, coordinator, and observer roles; private traffic uses NIP-17 DMs; public state is replayed from public relay events.
 
 ## Current Flow
 
 ### Coordinator
 
-1. Build the questionnaire.
-2. Add eligible voter npubs.
-3. Optional: switch Build mode to `Delegated Nostr worker`, download the worker helper binary, and delegate one election while keeping coordinator authority in-browser.
-4. Send invites or share invite links.
-5. Process blind ballot requests.
-6. Process submitted responses.
-7. Close the questionnaire and publish results.
+1. Build and publish a questionnaire definition (public event).
+2. Invite voter npubs to that questionnaire.
+3. Optional: in the separate **Build** page `Audit proxy` section, use Set up audit proxy to open the section and pre-generate an audit proxy account, then use the startup helper/downloads or save an autoconfigured platform launcher that already includes the current coordinator `npub`; right-click copy-link uses a shareable launcher URL that omits the audit proxy secret, generated launchers refresh the helper binary from GitHub Releases on each run, raw binary and direct CLI options sit under `Advanced`, and delegation still leaves the coordinator as root authority.
+4. Receive blind-token requests over private DMs (or delegate handling to an audit proxy).
+5. Issue blind signatures to authorised voters over private DMs (or let the audit proxy blind-sign on behalf of the coordinator for that delegated round). Invite payloads and cached election metadata now carry the audit proxy routing hint so voters can keep targeting the audit proxy if the coordinator browser goes offline, and audit proxy election-config DMs also carry the questionnaire definition so audit-proxy-issued blind credentials can still render the ballot if the coordinator browser is offline.
+6. Watch public submissions and publish public accept/reject decisions (or delegate decision publication).
+7. Close the round and publish the result summary (or enable audit proxy auto-summary once all invitees have accepted responses).
+
+If the Build page reports that the blind-signing key is still initialising in the current tab, wait a moment and try publishing again; the app now attempts to recover the locally persisted blind-signing key before blocking publication.
 
 ### Voter
 
 1. Open an invite or log in as **Voter**.
 2. Open the questionnaire.
-3. Request a blind ballot credential.
+3. Request a blind ballot credential (auto when invite context exists, or use `Request ballot`).
 4. Wait for `Credential ready: Yes`.
 5. Fill in the response fields.
-6. Submit the response.
+6. Submit publicly with an ephemeral response npub and blind-token proof.
+7. Wait for the coordinator’s public submission decision.
 
 Drafted response fields stay intact when the credential or refreshed definition arrives for the same questionnaire.
 
-### Auditor
+### Observer
 
-1. Open **Auditor**.
-2. Review discovered rounds and recent public questionnaires.
-3. Filter by coordinator, questionnaire ID, round ID, prompt, or npub.
-4. Compare public state, accepted counts, rejected counts, and published summaries.
+1. Open **Observer**.
+2. Read public submissions and public submission decisions.
+3. Verify accepted/rejected outcomes and per-question totals.
+4. Use **Submitted Votes** for per-response detail (search/filter), and enable `Show invalid votes` when you need rejected-row diagnostics.
 
 ## Privacy Model
 
-The Option A questionnaire path now uses a real blind-signing shape:
+The questionnaire path now uses a real blind-signing shape:
 
 1. The coordinator has a questionnaire blind-signing key.
 2. The voter creates a local token secret and commitment.
@@ -247,7 +250,7 @@ sequenceDiagram
   participant V as Voter identity
   participant E as Ephemeral response key
   participant C as Coordinator
-  participant A as Auditor
+  participant A as Observer
 
   V->>C: Blinded credential request
   C->>V: Blind signature
@@ -261,9 +264,10 @@ sequenceDiagram
 
 - questionnaire definitions
 - questionnaire state changes
-- public rounds and ballots in the simple voting path
+- public questionnaire submissions
+- public coordinator submission decisions (accept/reject)
 - published result summaries
-- auditor-discovered public questionnaire metadata
+- observer-discovered public questionnaire metadata
 
 ## What Stays Private Or Local
 
@@ -280,7 +284,7 @@ sequenceDiagram
 flowchart LR
   V[Voter Browser]
   C[Coordinator Browser]
-  A[Auditor Browser]
+  A[Observer Browser]
   N[Nostr Relays]
   L[(Local Browser State)]
 
@@ -298,7 +302,8 @@ The client uses:
 - NIP-17 gift-wrapped DMs for private request and issuance traffic
 - `@cloudflare/blindrsa-ts` for RSABSSA blind signatures
 - Rust/Wasm for deterministic replay and protocol validation in the public round path
-- an optional Rust worker daemon (`worker/`) for delegated election operations over outbound-only relay connections
+- an optional Rust audit proxy runtime (`worker/`) for delegated election operations over outbound-only relay connections
+- seven-day fixed-lookback audit proxy DM polling with event-id dedupe so relay-randomised gift-wrap timestamps do not cause missed delegated blind requests, plus status heartbeats back to the coordinator, active delegation control-relay reads, and a tight helper relay set of `relay.nostr.net` and `nos.lol`; persisted legacy relay lists are sanitised back to that pair before polling
 - browser storage for private active state and recovery
 
 ## Blind Issuance
@@ -333,7 +338,7 @@ flowchart TD
   O --> D
 ```
 
-The current rule is first valid spend wins. Questionnaire Option A rejects duplicate nullifiers and duplicate accepted spends for the same token commitment.
+The current rule is first valid spend wins. The questionnaire path rejects duplicate nullifiers and duplicate accepted spends for the same token commitment.
 
 ## Auditability
 
@@ -348,15 +353,19 @@ flowchart LR
   E --> V --> D --> T --> R
 ```
 
-Auditors can inspect recent public questionnaires and public round data. The private answer payload remains private unless the questionnaire mode publishes answers.
+Observers derive results from public submissions and public coordinator decisions.
+The published summary includes per-response references as a parity backfill, so the observer can still render full responder rows even when relay visibility is fragmented.
+
+The observer view keeps normal refreshes bounded to recent questionnaires to avoid relay pressure. Use `Search historic data` next to the questionnaire selector to explicitly scan a wider historical window when an older published questionnaire or result payload is missing from the default list.
 
 ## Current Limits
 
 - Public relays can delay, drop, or rate-limit traffic.
 - Coordinator private keys and blind-signing keys are browser-local.
-- The questionnaire Option A path is currently single-coordinator.
+- The questionnaire path is currently single-coordinator.
 - Larger multi-coordinator live runs are still operationally fragile on public relays.
-- Published summaries are auditable against visible public state, but encrypted/private answer contents require coordinator-side processing.
+- Observer detail is near real-time (poll-based), but exact freshness depends on relay propagation and indexing.
+- If a response payload is encrypted/private, the observer can still show metadata/decision status but not plaintext answers; coordinator-side results can decrypt `enc:nip44v2:` text when the key is present locally.
 
 ## Short Summary
 

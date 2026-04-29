@@ -14,7 +14,7 @@ Optional audit proxy runtime for election-scoped coordinator delegation.
 WORKER_NSEC=nsec1...
 COORDINATOR_NPUB=npub1...
 # Optional override:
-# WORKER_RELAYS=wss://relay.nostr.net,wss://nos.lol,wss://relay.nostr.info,wss://nip17.com
+# WORKER_RELAYS=wss://relay.nostr.net,wss://nos.lol
 ```
 
 Optional:

@@ -48,6 +48,14 @@ const DISALLOWED_WORKER_READ_RELAYS: &[&str] = &[
     "wss://nostr.wine",
     "wss://eden.nostr.land",
     "wss://purplepag.es",
+    "wss://relay.nostr.info",
+    "wss://nip17.com",
+    "wss://relay.layer.systems",
+    "wss://nostr.bond",
+    "wss://auth.nostr1.com",
+    "wss://inbox.nostr.wine",
+    "wss://nostr-pub.wellorder.net",
+    "wss://relay.0xchat.com",
 ];
 
 fn parse_jwk_component(jwk: &serde_json::Value, key: &str) -> Result<BoxedUint> {
@@ -1320,14 +1328,29 @@ mod tests {
     fn delegated_relay_sanitizer_drops_deprecated_relays() {
         let relays = sanitize_control_relay_strings(&[
             "wss://relay.nostr.net".to_string(),
+            "wss://nos.lol".to_string(),
             "wss://strfry.bitsbytom.com".to_string(),
             "wss://nip17.tomdwyer.uk".to_string(),
             "wss://relay.nostr.band".to_string(),
             "wss://offchain.pub".to_string(),
+            "wss://relay.nostr.info".to_string(),
+            "wss://nip17.com".to_string(),
+            "wss://relay.layer.systems".to_string(),
+            "wss://nostr.bond".to_string(),
+            "wss://auth.nostr1.com".to_string(),
+            "wss://inbox.nostr.wine".to_string(),
+            "wss://nostr-pub.wellorder.net".to_string(),
+            "wss://relay.0xchat.com".to_string(),
             "wss://relay.nostr.net/".to_string(),
         ]);
 
-        assert_eq!(relays, vec!["wss://relay.nostr.net".to_string()]);
+        assert_eq!(
+            relays,
+            vec![
+                "wss://relay.nostr.net".to_string(),
+                "wss://nos.lol".to_string()
+            ]
+        );
     }
 
     #[test]
