@@ -1,0 +1,21 @@
+[Unit]
+Description=Auditable Voting Worker (Audit Proxy)
+Documentation=https://github.com/tidley/auditable-voting
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/auditable-voting-worker/env
+ExecStart=/usr/local/bin/auditable-voting-worker
+Restart=on-failure
+RestartSec=10
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=auditable-voting-worker
+
+WorkingDirectory=/var/lib/auditable-voting-worker
+
+[Install]
+WantedBy=multi-user.target
