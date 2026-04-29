@@ -57,22 +57,40 @@ This is the practical order of operations for the current app.
 6. Publish the questionnaire when ready (`Publish Questionnaire`, state becomes `Open`).
    - If the Build page reports that the blind-signing key is still initialising in the current tab, wait a moment and try publishing again; the app now attempts to recover the locally persisted blind-signing key before blocking publication.
 
-### 2. Voter joins second
+### 2. Audit proxy option
+
+The audit proxy is an optional Rust helper for keeping delegated questionnaire work running when the coordinator browser is not open. It does not become the root authority for the questionnaire: the coordinator still creates the questionnaire, owns the coordinator identity, signs the delegation, and can revoke or replace the proxy.
+
+The proxy receives two private control messages from the coordinator:
+
+1. a signed worker delegation that names the questionnaire, proxy `npub`, capabilities, control relays, and expiry
+2. an election config message containing the questionnaire metadata, blind-signing material needed for delegated issuance, and the routing hints voters should use
+
+After activation, the proxy polls only its own NIP-17 mailbox over outbound relay connections. It can issue blind ballot credentials, publish submission decisions, verify public submissions, and publish result summaries when those capabilities are delegated. It sends heartbeats and operation reports back to the coordinator so the Build page can show whether the proxy is active.
+
+For voters, the important distinction is who is expected to answer the blind request:
+
+- without a proxy, `Waiting for coordinator` means the coordinator browser must come online and process the request
+- with a proxy, `Waiting for audit proxy` means the delegated helper should issue the credential, even if the coordinator browser has gone offline
+
+Invite payloads and cached questionnaire metadata include the proxy routing hint, so voters keep targeting the proxy after reloads. The helper currently defaults to `relay.nostr.net` and `nos.lol`, and sanitises older persisted relay lists back to that pair before polling so it avoids known unreliable or deprecated endpoints.
+
+### 3. Voter joins second
 
 1. Open the invite link, or open the app as **Voter** and log in.
 2. If needed, use `Check invites`, then `Open` (or `Open + request ballot`) for the pending invite.
 3. The app auto-requests the blind ballot when invite context and login are present; otherwise click `Request ballot`.
 4. Wait for `Credential ready: Yes`.
-5. Complete responses and click `Submit response` (it shows `Waiting for coordinator...` while prerequisites are incomplete).
+5. Complete responses and click `Submit response` (it names the coordinator or audit proxy while prerequisites are incomplete).
 6. Private request, issuance, and submission steps now send explicit acknowledgements, so later retries back off once the next phase has definitely received the message.
 
-### 3. Coordinator finalises third
+### 4. Coordinator finalises third
 
 1. In **Responses**, monitor accepted/rejected counts and unique responders.
 2. Close the questionnaire when collection is complete.
 3. Publish summary/results and share questionnaire ID + coordinator npub for independent checks.
 
-### 4. Observer verifies last
+### 5. Observer verifies last
 
 1. Open **Observer** view.
 2. Review recent public questionnaires or filter by coordinator npub and/or questionnaire ID.

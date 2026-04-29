@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { nip19, type NostrEvent } from "nostr-tools";
 import TokenFingerprint from "./TokenFingerprint";
+import { deriveActorDisplayId } from "./actorDisplay";
 import {
   evaluateQuestionnaireBlindAdmissions,
   fetchQuestionnaireBlindResponses,
@@ -730,7 +731,7 @@ export default function SimpleAuditorApp() {
                   <p className='simple-voter-question'>{formatQuestionnaireStateLabel(selectedLiveState ?? selectedQuestionnaire.state)}</p>
                 </div>
                 <div className='simple-auditor-summary-card'>
-                  <p className='simple-auditor-summary-label'>Delegate coordinator</p>
+                  <p className='simple-auditor-summary-label'>Audit proxy</p>
                   <p className='simple-voter-question'>
                     {formatWorkerDelegationStatus(selectedWorkerDelegationStatus)}
                   </p>
@@ -1025,7 +1026,7 @@ function formatWorkerDelegationStatus(status: QuestionnaireWorkerDelegationStatu
     return "None";
   }
   const worker = status.workerNpub ? normalizeToNpub(status.workerNpub) : "";
-  const workerSuffix = worker ? ` (${worker})` : "";
+  const workerSuffix = worker ? ` (${deriveActorDisplayId(worker)})` : "";
   if (status.state === "active") {
     return `Active${workerSuffix}`;
   }

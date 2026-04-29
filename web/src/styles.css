@@ -1488,10 +1488,16 @@ code {
 }
 
 .simple-auditor-summary-card {
+  min-width: 0;
   padding: 14px 16px;
   border: 1px solid #334155;
   background: linear-gradient(180deg, rgba(17, 24, 39, 0.96), rgba(15, 23, 42, 0.96));
   border-radius: 10px;
+}
+
+.simple-auditor-summary-card .simple-voter-question {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .simple-auditor-summary-label {

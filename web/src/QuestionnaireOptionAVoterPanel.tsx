@@ -1071,6 +1071,17 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     setRefreshNonce((value) => value + 1);
   }
 
+  function getCredentialIssuerDisplayName() {
+    const targetElectionId = snapshot?.electionId?.trim() || electionId.trim();
+    const invite = snapshot?.inviteMessage
+      ?? activeInvite
+      ?? pendingInvites.find((entry) => entry.electionId === targetElectionId)
+      ?? null;
+    const summary = targetElectionId ? loadElectionSummary(targetElectionId) : null;
+    const issueBlindTokensWorker = invite?.issueBlindTokensWorker ?? summary?.issueBlindTokensWorker ?? null;
+    return issueBlindTokensWorker?.workerNpub?.trim() ? "audit proxy" : "coordinator";
+  }
+
   async function requestBallot() {
     if (!runtime) {
       return;
@@ -1086,9 +1097,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         autoRequestSentForRef.current[requestKey] = true;
       }
       setActiveInvite(null);
+      const credentialIssuerName = getCredentialIssuerDisplayName();
       setStatus(wasAlreadyWaiting
-        ? "Blind ballot request resent. Waiting for coordinator issuance."
-        : "Blind ballot request sent. Waiting for coordinator issuance."
+        ? `Blind ballot request resent. Waiting for ${credentialIssuerName} issuance.`
+        : `Blind ballot request sent. Waiting for ${credentialIssuerName} issuance.`
       );
       setRefreshNonce((value) => value + 1);
     } catch (error) {
@@ -1176,7 +1188,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         markSignerWaitRecoveryBaseline();
         scheduleSignerInitialPull();
         setActiveInvite(null);
-        setStatus("Blind ballot request sent. Waiting for coordinator issuance.");
+        setStatus(`Blind ballot request sent. Waiting for ${getCredentialIssuerDisplayName()} issuance.`);
         setRefreshNonce((value) => value + 1);
       }).catch((error) => {
         setStatus(error instanceof Error ? error.message : "Request failed.");
@@ -1373,7 +1385,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         markSignerWaitRecoveryBaseline();
         scheduleSignerInitialPull();
         setActiveInvite(null);
-        setStatus("Blind ballot request sent. Waiting for coordinator issuance.");
+        setStatus(`Blind ballot request sent. Waiting for ${getCredentialIssuerDisplayName()} issuance.`);
         setRefreshNonce((value) => value + 1);
       }).catch((error) => {
         setStatus(error instanceof Error ? error.message : "Could not send blind ballot request.");
@@ -1443,31 +1455,45 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     snapshot?.blindIssuance
     && readBlindIssuanceAckRecord(snapshot.blindIssuance.requestId)?.issuanceId === snapshot.blindIssuance.issuanceId,
   );
-  const pendingStatus = waitingForCredential && requestAck
-    ? "Ballot request acknowledged. Waiting for coordinator issuance."
-    : snapshot?.submission && snapshot.submissionAccepted == null && submissionAck
-      ? "Submission received. Waiting for coordinator decision."
-      : null;
-  const displayStatus = snapshot?.credentialReady
-    ? (issuanceAckSent ? "Credential received (ack sent)." : "Ballot credential ready.")
-    : pendingStatus ?? status;
   const coordinatorNpub = snapshot?.coordinatorNpub?.trim()
     || activeInvite?.coordinatorNpub?.trim()
     || inviteDropdownOptions.find((invite) => invite.electionId === electionId.trim())?.coordinatorNpub?.trim()
     || "";
+  const selectedInviteForElection = inviteDropdownOptions.find((invite) => invite.electionId === (snapshot?.electionId?.trim() || electionId.trim())) ?? null;
+  const electionSummary = (snapshot?.electionId?.trim() || electionId.trim())
+    ? loadElectionSummary(snapshot?.electionId?.trim() || electionId.trim())
+    : null;
+  const issueBlindTokensWorker = snapshot?.inviteMessage?.issueBlindTokensWorker
+    ?? activeInvite?.issueBlindTokensWorker
+    ?? selectedInviteForElection?.issueBlindTokensWorker
+    ?? electionSummary?.issueBlindTokensWorker
+    ?? null;
+  const credentialIssuerNpub = issueBlindTokensWorker?.workerNpub?.trim() || coordinatorNpub;
+  const credentialIssuerIsProxy = Boolean(issueBlindTokensWorker?.workerNpub?.trim());
+  const credentialIssuerName = credentialIssuerIsProxy ? "audit proxy" : "coordinator";
+  const credentialIssuerLabel = credentialIssuerNpub ? deriveActorDisplayId(credentialIssuerNpub) : "Unknown";
+  const decisionActorName = credentialIssuerIsProxy ? "audit proxy" : "coordinator";
+  const pendingStatus = waitingForCredential && requestAck
+    ? `Ballot request acknowledged. Waiting for ${credentialIssuerName} issuance.`
+    : snapshot?.submission && snapshot.submissionAccepted == null && submissionAck
+      ? `Submission received. Waiting for ${decisionActorName} decision.`
+      : null;
+  const displayStatus = snapshot?.credentialReady
+    ? (issuanceAckSent ? "Credential received (ack sent)." : "Ballot credential ready.")
+    : pendingStatus ?? status;
   const coordinatorLabel = coordinatorNpub ? deriveActorDisplayId(coordinatorNpub) : "Unknown";
   const requestStateText = snapshot?.blindRequestSent ? "Sent" : "Not sent";
   const credentialStateText = snapshot?.credentialReady
     ? "Received"
     : snapshot?.blindRequestSent
-      ? "Waiting for coordinator"
+      ? `Waiting for ${credentialIssuerName}`
       : "Not requested";
   const submissionStateText = snapshot?.submissionAccepted === true
     ? "Accepted"
     : snapshot?.submissionAccepted === false
       ? "Rejected"
       : snapshot?.submission
-        ? "Waiting for coordinator"
+        ? `Waiting for ${decisionActorName}`
         : "Not submitted";
   const submittedMarkerNpub = snapshot?.responseNpub ?? snapshot?.submission?.responseNpub ?? snapshot?.submission?.invitedNpub ?? "";
 
@@ -1659,7 +1685,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               ? "Please answer all questions marked 'Required'"
               : canSubmitNow
                 ? "Submit response"
-                : "Waiting for coordinator..."}
+                : `Waiting for ${waitingForCredential ? credentialIssuerName : decisionActorName}...`}
         </button>
       </div>
       {snapshot?.submission ? (
@@ -1681,10 +1707,22 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       <section className='simple-settings-card' aria-label='Ballot progress'>
         <h4 className='simple-voter-section-title'>Ballot progress</h4>
         <p className='simple-voter-note'>Coordinator: {coordinatorLabel}</p>
+        {credentialIssuerIsProxy ? (
+          <p className='simple-voter-note'>Ballot credential issuer: audit proxy {credentialIssuerLabel}</p>
+        ) : null}
         {coordinatorNpub ? (
           <TokenFingerprint
             tokenId={coordinatorNpub}
             label='Coordinator marker'
+            showQr
+            compact
+            hideMetadata
+          />
+        ) : null}
+        {credentialIssuerIsProxy && credentialIssuerNpub ? (
+          <TokenFingerprint
+            tokenId={credentialIssuerNpub}
+            label='Audit proxy marker'
             showQr
             compact
             hideMetadata
@@ -1698,7 +1736,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           <li className={snapshot?.submissionAccepted === true ? "is-complete" : snapshot?.submission ? "is-pending" : ""}><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Response: {submissionStateText}</li>
         </ul>
         {waitingForCredential ? (
-          <p className='simple-voter-note'>Waiting for the coordinator to issue your ballot credential. This page checks automatically; the coordinator can press Process requests.</p>
+          <p className='simple-voter-note'>
+            {credentialIssuerIsProxy
+              ? "Waiting for the audit proxy to issue your ballot credential. This page checks automatically; the coordinator does not need to stay online once the proxy has received its delegation."
+              : "Waiting for the coordinator to issue your ballot credential. This page checks automatically; the coordinator must be online and can press Process requests."}
+          </p>
         ) : null}
       </section>
       {displayStatus ? <p className='simple-voter-note'>{displayStatus}</p> : null}
