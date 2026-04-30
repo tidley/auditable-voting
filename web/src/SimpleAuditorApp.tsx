@@ -824,11 +824,6 @@ export default function SimpleAuditorApp() {
                   <p className='simple-voter-question'>{selectedQuestionnaire.questionnaireId}</p>
                 </div>
                 <div className='simple-auditor-summary-card'>
-                  <p className='simple-auditor-summary-label'>Expected responses</p>
-                  <p className='simple-voter-question'>{expectedResponseText}</p>
-                  <p className='simple-voter-note'>{responseCompletionText}</p>
-                </div>
-                <div className='simple-auditor-summary-card'>
                   <p className='simple-auditor-summary-label'>Published at</p>
                   <p className='simple-voter-question'>
                     {formatQuestionnaireTime(Number(selectedResultSummary?.createdAt ?? selectedQuestionnaire.resultPublishedAt ?? 0))}
