@@ -1190,7 +1190,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     const url = new URL(window.location.href);
     url.searchParams.set("role", "auditor");
     url.searchParams.set("questionnaire", targetQuestionnaireId);
-    window.location.href = url.toString();
+    window.open(url.toString(), "_blank", "noopener,noreferrer");
   }
 
   useEffect(() => {
