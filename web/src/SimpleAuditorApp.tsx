@@ -500,6 +500,10 @@ export default function SimpleAuditorApp() {
     () => new Map((selectedQuestionnaire?.questions ?? []).map((question) => [question.questionId, question])),
     [selectedQuestionnaire?.questions],
   );
+  const selectedQuestionNumberById = useMemo(
+    () => new Map((selectedQuestionnaire?.questions ?? []).map((question, index) => [question.questionId, index + 1])),
+    [selectedQuestionnaire?.questions],
+  );
 
   const liveQuestionSummaries = useMemo(
     () => buildLiveQuestionSummaries(
@@ -802,12 +806,10 @@ export default function SimpleAuditorApp() {
                     <p className='simple-auditor-status-value'>Audit proxy: {formatWorkerDelegationStatus(selectedWorkerDelegationStatus)}</p>
                   </div>
                 </article>
-                <article className='simple-auditor-status-card simple-auditor-status-card-icon'>
-                  <span className='simple-auditor-status-icon simple-auditor-status-icon-blue' aria-hidden='true'>i</span>
+                <article className='simple-auditor-status-card'>
                   <div>
                     <p className='simple-auditor-summary-label'>Campaign progress</p>
-                    <p className='simple-auditor-status-value'>Round phase: {selectedRoundPhaseLabel}</p>
-                    <p className='simple-auditor-status-note'>{responseCompletionText}</p>
+                    <p className='simple-auditor-status-value'>{responseCompletionText}</p>
                   </div>
                 </article>
               </div>
@@ -820,10 +822,6 @@ export default function SimpleAuditorApp() {
                 <div className='simple-auditor-summary-card'>
                   <p className='simple-auditor-summary-label'>Questionnaire ID</p>
                   <p className='simple-voter-question'>{selectedQuestionnaire.questionnaireId}</p>
-                </div>
-                <div className='simple-auditor-summary-card'>
-                  <p className='simple-auditor-summary-label'>Round phase</p>
-                  <p className='simple-voter-question'>{selectedRoundPhaseLabel}</p>
                 </div>
                 <div className='simple-auditor-summary-card'>
                   <p className='simple-auditor-summary-label'>Expected responses</p>
@@ -840,11 +838,17 @@ export default function SimpleAuditorApp() {
               {displayedQuestionSummaries.length > 0 ? (
                 <>
                   <div className='simple-auditor-question-grid'>
-                    {displayedQuestionSummaries.map((summary) => (
+                    {displayedQuestionSummaries.map((summary) => {
+                      const questionNumber = selectedQuestionNumberById.get(summary.questionId);
+                      const questionTitle = selectedQuestionById.get(summary.questionId)?.prompt || `Question ${summary.questionId}`;
+                      return (
                       <article key={`${summary.questionId}:${summary.answerType}`} className='simple-auditor-question-card'>
                         <div className='simple-auditor-question-card-head'>
                           <div>
-                            <h3 className='simple-voter-question'>{selectedQuestionById.get(summary.questionId)?.prompt || `Question ${summary.questionId}`}</h3>
+                            <h3 className='simple-voter-question'>
+                              {questionNumber ? `Q${questionNumber}. ` : ""}
+                              {questionTitle}
+                            </h3>
                           </div>
                         </div>
                         {summary.answerType === "yes_no" ? (
@@ -907,7 +911,6 @@ export default function SimpleAuditorApp() {
                           </div>
                         ) : (
                           <div className='simple-auditor-free-text-cardlet'>
-                            <div className='simple-auditor-free-text-icon' aria-hidden='true'>#</div>
                             <div>
                               <p className='simple-voter-question'>{summary.freeTextCount} response{summary.freeTextCount === 1 ? "" : "s"} collected</p>
                             </div>
@@ -921,7 +924,8 @@ export default function SimpleAuditorApp() {
                           </div>
                         )}
                       </article>
-                    ))}
+                      );
+                    })}
                   </div>
                   {!selectedResultSummary ? (
                     <p className='simple-voter-note'>No published result summary yet; showing live verified submissions found on public relays.</p>
@@ -997,7 +1001,8 @@ export default function SimpleAuditorApp() {
                             <ol className='simple-auditor-answer-list'>
                               {entry.response.answers.map((answer) => {
                                 const question = selectedQuestionById.get(answer.questionId);
-                                const prompt = question?.prompt || answer.questionId;
+                                const questionNumber = selectedQuestionNumberById.get(answer.questionId);
+                                const prompt = `${questionNumber ? `Q${questionNumber}. ` : ""}${question?.prompt || answer.questionId}`;
                                 if (answer.answerType === "yes_no") {
                                   return (
                                     <li key={`${entry.event.id}:${answer.questionId}`}>
