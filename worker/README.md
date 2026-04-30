@@ -7,6 +7,7 @@ Optional audit proxy runtime for election-scoped coordinator delegation.
 - outbound relay connections only
 - no inbound HTTP server
 - no open inbound ports required
+- configured or delegated relays known to be unreliable are still tried, but failures put them into exponential backoff so preferred relays remain the normal path
 
 ## Required environment
 
@@ -57,6 +58,7 @@ The coordinator Build page can also save an autoconfigured platform-specific lau
 - consume delegation/revocation messages from DM and public events
 - persist audit proxy runtime state locally
 - poll recent control-plane gift-wrapped DMs with a 36-hour fixed-lookback replay window so NIP-17 randomised timestamps do not hide delegated blind requests, and keep requests retryable until the election config arrives
+- retry configured and delegated control relays with per-relay backoff instead of permanently dropping older persisted relay hints
 - consume audit proxy election-config DMs carrying the blind-signing key and questionnaire definition
 - consume delegated blind-token requests over private DMs
 - issue blind-signature responses on behalf of the coordinator for delegated elections with `Issue blind tokens` enabled, including the questionnaire definition when available so voters can render ballots offline

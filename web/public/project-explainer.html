@@ -276,7 +276,7 @@ For voters, the important distinction is who is expected to answer the blind req
 - without a proxy, `Waiting for coordinator` means the coordinator browser must come online and process the request
 - with a proxy, `Waiting for audit proxy` means the delegated helper should issue the credential, even if the coordinator browser has gone offline
 
-Invite payloads and cached questionnaire metadata include the proxy routing hint, so voters keep targeting the proxy after reloads. The helper currently defaults to a nostrwat.ch-checked control relay set (relay.nostr.net, nos.lol, relay.nostr.info, relay.nos.social, relay.momostr.pink, and relay.azzamo.net), and sanitises older persisted relay lists onto that curated set before polling so it avoids known unreliable or deprecated endpoints.
+Invite payloads and cached questionnaire metadata include the proxy routing hint, so voters keep targeting the proxy after reloads. The helper currently defaults to a nostrwat.ch-checked control relay set (relay.nostr.net, nos.lol, relay.nostr.info, relay.nos.social, relay.momostr.pink, and relay.azzamo.net), and retains older persisted relay hints while retrying known unreliable endpoints with per-relay exponential backoff.
 
 ### Voter
 
@@ -369,7 +369,7 @@ The client uses:
 - `@cloudflare/blindrsa-ts` for RSABSSA blind signatures
 - Rust/Wasm for deterministic replay and protocol validation in the public round path
 - an optional Rust audit proxy runtime (`worker/`) for delegated election operations over outbound-only relay connections
-- seven-day fixed-lookback audit proxy DM polling with event-id dedupe so relay-randomised gift-wrap timestamps do not cause missed delegated blind requests, plus status heartbeats back to the coordinator, active delegation control-relay reads, and a nostrwat.ch-checked helper relay set (relay.nostr.net, nos.lol, relay.nostr.info, relay.nos.social, relay.momostr.pink, and relay.azzamo.net); persisted legacy relay lists are sanitised onto that curated set before polling
+- seven-day fixed-lookback audit proxy DM polling with event-id dedupe so relay-randomised gift-wrap timestamps do not cause missed delegated blind requests, plus status heartbeats back to the coordinator, active delegation control-relay reads, and a nostrwat.ch-checked helper relay set (relay.nostr.net, nos.lol, relay.nostr.info, relay.nos.social, relay.momostr.pink, and relay.azzamo.net); older persisted relay hints are retained but known unreliable endpoints are retried with per-relay exponential backoff
 - browser storage for private active state and recovery
 
 ## Blind Issuance

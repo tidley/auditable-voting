@@ -23,10 +23,10 @@ use chrono::Utc;
 use crypto_bigint::BoxedUint;
 use nostr_sdk::prelude::*;
 use rsa::RsaPrivateKey;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::{sleep, timeout};
@@ -37,7 +37,7 @@ const DEFAULT_DM_LOOKBACK_SECS: u64 = 7 * 24 * 60 * 60;
 const DEFAULT_PUBLIC_LOOKBACK_SECS: u64 = 12 * 60 * 60;
 const CONTROL_DM_DEDUPE_RETENTION_SECS: i64 = 14 * 24 * 60 * 60;
 const PRIVATE_DM_SEND_TIMEOUT_SECS: u64 = 12;
-const DISALLOWED_WORKER_READ_RELAYS: &[&str] = &[
+const DISCOURAGED_WORKER_READ_RELAYS: &[&str] = &[
     "wss://strfry.bitsbytom.com",
     "wss://nip17.tomdwyer.uk",
     "wss://relay.nostr.band",
@@ -56,6 +56,8 @@ const DISALLOWED_WORKER_READ_RELAYS: &[&str] = &[
     "wss://nostr-pub.wellorder.net",
     "wss://relay.0xchat.com",
 ];
+const DISCOURAGED_RELAY_INITIAL_BACKOFF_SECS: u64 = 60;
+const DISCOURAGED_RELAY_MAX_BACKOFF_SECS: u64 = 60 * 60;
 
 fn parse_jwk_component(jwk: &serde_json::Value, key: &str) -> Result<BoxedUint> {
     let value = jwk
@@ -150,6 +152,13 @@ struct WorkerRuntime {
     coordinator_pubkey: PublicKey,
     store: Arc<WorkerStore>,
     state: Arc<Mutex<WorkerPersistentState>>,
+    relay_backoff: Arc<Mutex<HashMap<String, RelayBackoffState>>>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct RelayBackoffState {
+    failures: u32,
+    next_retry_at: Option<Instant>,
 }
 
 #[tokio::main]
@@ -217,6 +226,7 @@ async fn main() -> Result<()> {
         coordinator_pubkey,
         store,
         state: Arc::new(Mutex::new(persistent)),
+        relay_backoff: Arc::new(Mutex::new(HashMap::new())),
     };
 
     info!("worker started as {}", worker_npub);
@@ -315,13 +325,17 @@ impl WorkerRuntime {
         while let Some(result) = tasks.join_next().await {
             match result {
                 Ok((relay, Ok(events))) => {
+                    self.record_relay_attempt_result(&relay, true, label).await;
                     successes = successes.saturating_add(1);
                     for event in events {
                         events_by_id.insert(event.id, event);
                     }
                     debug!("{label} relay read succeeded: {relay}");
                 }
-                Ok((relay, Err(error))) => failures.push(format!("{relay}: {error}")),
+                Ok((relay, Err(error))) => {
+                    self.record_relay_attempt_result(&relay, false, label).await;
+                    failures.push(format!("{relay}: {error}"));
+                }
                 Err(error) => failures.push(format!("join error: {error}")),
             }
         }
@@ -436,13 +450,22 @@ impl WorkerRuntime {
         while let Some(result) = tasks.join_next().await {
             match result {
                 Ok((relay, Ok(Ok(output)))) => {
+                    let relay_success = !output.success.is_empty();
+                    self.record_relay_attempt_result(&relay, relay_success, label)
+                        .await;
                     successes += output.success.len();
-                    if output.success.is_empty() {
+                    if !relay_success {
                         failures.push(format!("{}: {:?}", relay, output.failed));
                     }
                 }
-                Ok((relay, Ok(Err(error)))) => failures.push(format!("{relay}: {error}")),
-                Ok((relay, Err(_))) => failures.push(format!("{relay}: timed out")),
+                Ok((relay, Ok(Err(error)))) => {
+                    self.record_relay_attempt_result(&relay, false, label).await;
+                    failures.push(format!("{relay}: {error}"));
+                }
+                Ok((relay, Err(_))) => {
+                    self.record_relay_attempt_result(&relay, false, label).await;
+                    failures.push(format!("{relay}: timed out"));
+                }
                 Err(error) => failures.push(format!("join error: {error}")),
             }
         }
@@ -551,7 +574,8 @@ impl WorkerRuntime {
                 }
             }
         }
-        sanitize_relay_urls(dedupe_relays(relays))
+        drop(state);
+        self.select_relay_retry_batch(dedupe_relays(relays)).await
     }
 
     async fn ensure_relays_connected(&self, relays: &[RelayUrl]) {
@@ -560,6 +584,59 @@ impl WorkerRuntime {
                 warn!("unable to add effective relay {relay}: {error}");
             }
         }
+    }
+
+    async fn select_relay_retry_batch(&self, relays: Vec<RelayUrl>) -> Vec<RelayUrl> {
+        let now = Instant::now();
+        let relay_backoff = self.relay_backoff.lock().await;
+        let mut selected = Vec::with_capacity(relays.len());
+        for relay in relays {
+            if !is_discouraged_worker_relay(&relay.to_string()) {
+                selected.push(relay);
+                continue;
+            }
+
+            let key = normalize_relay_key(&relay.to_string());
+            match relay_backoff
+                .get(&key)
+                .and_then(|state| state.next_retry_at)
+            {
+                Some(next_retry_at) if next_retry_at > now => {
+                    let wait_secs = next_retry_at.saturating_duration_since(now).as_secs();
+                    debug!(
+                        "discouraged worker relay {relay} is in backoff; retrying in {wait_secs}s"
+                    );
+                }
+                _ => {
+                    debug!("trying discouraged worker relay {relay}");
+                    selected.push(relay);
+                }
+            }
+        }
+        selected
+    }
+
+    async fn record_relay_attempt_result(&self, relay: &RelayUrl, success: bool, label: &str) {
+        if !is_discouraged_worker_relay(&relay.to_string()) {
+            return;
+        }
+        let key = normalize_relay_key(&relay.to_string());
+        let mut relay_backoff = self.relay_backoff.lock().await;
+        if success {
+            if relay_backoff.remove(&key).is_some() {
+                info!("{label} discouraged relay recovered and will be retried normally: {relay}");
+            }
+            return;
+        }
+
+        let entry = relay_backoff.entry(key).or_default();
+        entry.failures = entry.failures.saturating_add(1);
+        let delay = discouraged_relay_retry_delay(entry.failures);
+        entry.next_retry_at = Some(Instant::now() + delay);
+        warn!(
+            "{label} discouraged relay failed; backing off for {}s before retrying {relay}",
+            delay.as_secs()
+        );
     }
 
     async fn process_control_message(&self, content: &str) -> Result<bool> {
@@ -1144,32 +1221,28 @@ fn normalize_relay_key(relay: &str) -> String {
     relay.trim().trim_end_matches('/').to_ascii_lowercase()
 }
 
-fn is_disallowed_worker_relay(relay: &str) -> bool {
+fn is_discouraged_worker_relay(relay: &str) -> bool {
     let key = normalize_relay_key(relay);
-    DISALLOWED_WORKER_READ_RELAYS
+    DISCOURAGED_WORKER_READ_RELAYS
         .iter()
         .any(|entry| normalize_relay_key(entry) == key)
 }
 
-fn sanitize_relay_urls(relays: Vec<RelayUrl>) -> Vec<RelayUrl> {
-    relays
-        .into_iter()
-        .filter(|relay| {
-            let blocked = is_disallowed_worker_relay(&relay.to_string());
-            if blocked {
-                warn!("ignoring deprecated or unreliable worker relay {relay}");
-            }
-            !blocked
-        })
-        .collect()
+fn discouraged_relay_retry_delay(failures: u32) -> Duration {
+    let exponent = failures.saturating_sub(1).min(10);
+    let secs = DISCOURAGED_RELAY_INITIAL_BACKOFF_SECS
+        .saturating_mul(2u64.saturating_pow(exponent))
+        .min(DISCOURAGED_RELAY_MAX_BACKOFF_SECS);
+    Duration::from_secs(secs)
 }
 
 fn sanitize_control_relay_strings(relays: &[String]) -> Vec<String> {
     let mut relay_urls = Vec::new();
     for relay in relays {
-        if is_disallowed_worker_relay(relay) {
-            warn!("ignoring deprecated or unreliable delegated control relay {relay}");
-            continue;
+        if is_discouraged_worker_relay(relay) {
+            debug!(
+                "delegated control relay {relay} is discouraged; worker will retry it with backoff"
+            );
         }
         match RelayUrl::parse(relay) {
             Ok(parsed) => relay_urls.push(parsed),
@@ -1324,7 +1397,7 @@ mod tests {
     }
 
     #[test]
-    fn delegated_relay_sanitizer_drops_deprecated_relays() {
+    fn delegated_relay_sanitizer_keeps_discouraged_relays_for_backoff_retries() {
         let relays = sanitize_control_relay_strings(&[
             "wss://relay.nostr.net".to_string(),
             "wss://nos.lol".to_string(),
@@ -1351,11 +1424,38 @@ mod tests {
             vec![
                 "wss://relay.nostr.net".to_string(),
                 "wss://nos.lol".to_string(),
+                "wss://strfry.bitsbytom.com".to_string(),
+                "wss://nip17.tomdwyer.uk".to_string(),
+                "wss://relay.nostr.band".to_string(),
+                "wss://offchain.pub".to_string(),
                 "wss://relay.nostr.info".to_string(),
                 "wss://relay.nos.social".to_string(),
                 "wss://relay.momostr.pink".to_string(),
-                "wss://relay.azzamo.net".to_string()
+                "wss://relay.azzamo.net".to_string(),
+                "wss://nip17.com".to_string(),
+                "wss://relay.layer.systems".to_string(),
+                "wss://nostr.bond".to_string(),
+                "wss://auth.nostr1.com".to_string(),
+                "wss://inbox.nostr.wine".to_string(),
+                "wss://nostr-pub.wellorder.net".to_string(),
+                "wss://relay.0xchat.com".to_string()
             ]
+        );
+    }
+
+    #[test]
+    fn discouraged_relay_retry_delay_backs_off_to_cap() {
+        assert_eq!(
+            discouraged_relay_retry_delay(1),
+            Duration::from_secs(DISCOURAGED_RELAY_INITIAL_BACKOFF_SECS)
+        );
+        assert_eq!(
+            discouraged_relay_retry_delay(2),
+            Duration::from_secs(DISCOURAGED_RELAY_INITIAL_BACKOFF_SECS * 2)
+        );
+        assert_eq!(
+            discouraged_relay_retry_delay(20),
+            Duration::from_secs(DISCOURAGED_RELAY_MAX_BACKOFF_SECS)
         );
     }
 
