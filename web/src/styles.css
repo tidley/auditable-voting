@@ -1667,11 +1667,11 @@ code {
 .simple-auditor-results-progress span {
   display: block;
   height: 100%;
-  background: #9b9ad5;
+  background: #2563eb;
 }
 
 .simple-auditor-results-progress-green span {
-  background: #6ee7d8;
+  background: #14b8a6;
 }
 
 .simple-auditor-question-grid {
@@ -1775,11 +1775,11 @@ code {
 }
 
 .simple-auditor-dot-purple {
-  background: #b8adff;
+  background: #2563eb;
 }
 
 .simple-auditor-dot-mint {
-  background: #6ee7d8;
+  background: #f97316;
 }
 
 .simple-auditor-option-bars {
@@ -1827,9 +1827,9 @@ code {
   place-items: center;
   width: 44px;
   height: 44px;
-  border: 1px solid rgba(184, 173, 255, 0.45);
+  border: 1px solid rgba(249, 115, 22, 0.58);
   border-radius: 8px;
-  color: #b8adff;
+  color: #f97316;
   font-weight: 900;
 }
 
@@ -2416,16 +2416,22 @@ code {
 }
 
 .simple-auditor-answer-list li {
-  display: contents;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 100%;
   color: #f8fafc;
 }
 
 .simple-auditor-answer-prompt {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  color: #aab7d9;
+  font-size: 0.76rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 .simple-auditor-answer-value {

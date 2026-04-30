@@ -542,7 +542,9 @@ export default function SimpleAuditorApp() {
   const responseCompletionText = expectedInviteeCount === null
     ? "Unknown"
     : expectedInviteeCount > 0
-      ? `${displayValidCount}/${expectedInviteeCount} accepted (${Math.min(100, Math.max(0, (displayValidCount / expectedInviteeCount) * 100)).toFixed(1)}%)`
+      ? displayValidCount > expectedInviteeCount
+        ? `${displayValidCount} accepted (${expectedInviteeCount} expected)`
+        : `${displayValidCount}/${expectedInviteeCount} accepted (${Math.min(100, Math.max(0, (displayValidCount / expectedInviteeCount) * 100)).toFixed(1)}%)`
       : "No invitees expected";
   const displayedQuestionSummaries = selectedResultSummary?.questionSummaries ?? liveQuestionSummaries;
   const resultSummarySourceLabel = selectedResultSummary ? "Published result summary" : "Live verified submissions";
@@ -867,7 +869,7 @@ export default function SimpleAuditorApp() {
                                   <div
                                     className='simple-auditor-donut'
                                     style={{
-                                      background: `conic-gradient(#b8adff 0 ${yesPercent}%, #6ee7d8 ${yesPercent}% 100%)`,
+                                      background: `conic-gradient(#2563eb 0 ${yesPercent}%, #f97316 ${yesPercent}% 100%)`,
                                     }}
                                     aria-hidden='true'
                                   >
@@ -913,7 +915,6 @@ export default function SimpleAuditorApp() {
                             <div className='simple-auditor-free-text-icon' aria-hidden='true'>#</div>
                             <div>
                               <p className='simple-voter-question'>{summary.freeTextCount} response{summary.freeTextCount === 1 ? "" : "s"} collected</p>
-                              <p className='simple-voter-note'>Free-text payloads are listed separately to keep the result view readable.</p>
                             </div>
                             <button
                               type='button'
