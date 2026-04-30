@@ -534,6 +534,7 @@ export default function SimpleAuditorApp() {
   const displayValidityPercent = displayTotalCount > 0
     ? ((displayValidCount / displayTotalCount) * 100).toFixed(1)
     : "0.0";
+  const displayValidityPercentNumber = Number(displayValidityPercent);
   const expectedInviteeCount = selectedQuestionnaire?.expectedInviteeCount ?? null;
   const expectedResponseText = expectedInviteeCount === null
     ? "Not published"
@@ -760,27 +761,57 @@ export default function SimpleAuditorApp() {
           )}
         </section>
 
-        <section className='simple-voter-section simple-auditor-panel'>
-          <h2 className='simple-voter-section-title'>Questionnaire Results</h2>
+        <section className='simple-voter-section simple-auditor-panel simple-auditor-results-dashboard'>
           {selectedQuestionnaire ? (
             <>
-              <div className='simple-auditor-results-meta'>
-                <span className='simple-voter-note'>
-                  {displayTotalCount} Response{displayTotalCount === 1 ? "" : "s"} • {displayValidityPercent}%
-                </span>
-                <span className='simple-voter-note'>
-                  Round phase: {selectedRoundPhaseLabel}
-                </span>
-                <span className='simple-voter-note'>
-                  Published at: {formatQuestionnaireTime(Number(selectedResultSummary?.createdAt ?? selectedQuestionnaire.resultPublishedAt ?? 0))}
-                </span>
-                <span className='simple-voter-note'>
-                  Source: {resultSummarySourceLabel}
-                </span>
-                <span className='simple-voter-note'>
-                  Expected responses: {expectedResponseText}
-                </span>
+              <div className='simple-auditor-results-hero'>
+                <div className='simple-auditor-results-title-block'>
+                  <p className='simple-auditor-breadcrumb'>Questionnaires / {selectedQuestionnaire.questionnaireId}</p>
+                  <h2 className='simple-voter-section-title'>Questionnaire Results</h2>
+                  <div className='simple-auditor-results-meta'>
+                    <span className='simple-auditor-pill simple-auditor-pill-green'>{selectedRoundPhaseLabel}</span>
+                    <span className='simple-auditor-pill'>{displayTotalCount} response{displayTotalCount === 1 ? "" : "s"}</span>
+                    <span className='simple-auditor-pill'>{resultSummarySourceLabel}</span>
+                  </div>
+                </div>
+                {canExportResults ? (
+                  <button
+                    type='button'
+                    className='simple-voter-secondary simple-auditor-export-button'
+                    onClick={exportResults}
+                  >
+                    Export results
+                  </button>
+                ) : null}
               </div>
+
+              <div className='simple-auditor-status-grid'>
+                <article className='simple-auditor-status-card'>
+                  <p className='simple-auditor-summary-label'>Validation status</p>
+                  <p className='simple-auditor-status-value'>{displayValidCount}/{displayTotalCount || 0} accepted</p>
+                  <p className='simple-auditor-status-note'>{displayValidityPercent}% success</p>
+                  <div className='simple-auditor-results-progress simple-auditor-results-progress-green' aria-hidden='true'>
+                    <span style={{ width: `${Math.min(100, Math.max(0, displayValidityPercentNumber))}%` }} />
+                  </div>
+                </article>
+                <article className='simple-auditor-status-card simple-auditor-status-card-icon'>
+                  <span className='simple-auditor-status-icon' aria-hidden='true'>!</span>
+                  <div>
+                    <p className='simple-auditor-summary-label'>Security layer</p>
+                    <p className='simple-auditor-status-value'>Audit proxy: {formatWorkerDelegationStatus(selectedWorkerDelegationStatus)}</p>
+                    <p className='simple-auditor-status-note'>Delegated issuance and verification</p>
+                  </div>
+                </article>
+                <article className='simple-auditor-status-card simple-auditor-status-card-icon'>
+                  <span className='simple-auditor-status-icon simple-auditor-status-icon-blue' aria-hidden='true'>i</span>
+                  <div>
+                    <p className='simple-auditor-summary-label'>Campaign progress</p>
+                    <p className='simple-auditor-status-value'>Round phase: {selectedRoundPhaseLabel}</p>
+                    <p className='simple-auditor-status-note'>{responseCompletionText}</p>
+                  </div>
+                </article>
+              </div>
+
               <div className='simple-auditor-summary-grid'>
                 <div className='simple-auditor-summary-card'>
                   <p className='simple-auditor-summary-label'>Question</p>
@@ -800,9 +831,9 @@ export default function SimpleAuditorApp() {
                   <p className='simple-voter-note'>{responseCompletionText}</p>
                 </div>
                 <div className='simple-auditor-summary-card'>
-                  <p className='simple-auditor-summary-label'>Audit proxy</p>
+                  <p className='simple-auditor-summary-label'>Published at</p>
                   <p className='simple-voter-question'>
-                    {formatWorkerDelegationStatus(selectedWorkerDelegationStatus)}
+                    {formatQuestionnaireTime(Number(selectedResultSummary?.createdAt ?? selectedQuestionnaire.resultPublishedAt ?? 0))}
                   </p>
                 </div>
               </div>
@@ -811,56 +842,91 @@ export default function SimpleAuditorApp() {
                   <div className='simple-auditor-question-grid'>
                     {displayedQuestionSummaries.map((summary) => (
                       <article key={`${summary.questionId}:${summary.answerType}`} className='simple-auditor-question-card'>
-                        <h3 className='simple-voter-question'>{selectedQuestionById.get(summary.questionId)?.prompt || `Question ${summary.questionId}`}</h3>
+                        <div className='simple-auditor-question-card-head'>
+                          <div>
+                            <h3 className='simple-voter-question'>{selectedQuestionById.get(summary.questionId)?.prompt || `Question ${summary.questionId}`}</h3>
+                            <p className='simple-voter-note'>
+                              {summary.answerType === "yes_no"
+                                ? "Single choice response"
+                                : summary.answerType === "multiple_choice"
+                                  ? "Multiple selection frequency"
+                                  : "Free-text responses"}
+                            </p>
+                          </div>
+                          {summary.answerType === "multiple_choice" ? (
+                            <span className='simple-auditor-mini-badge'>Aggr. view</span>
+                          ) : null}
+                        </div>
                         {summary.answerType === "yes_no" ? (
-                          <div className='simple-auditor-bars'>
-                            <p className='simple-voter-note'>Yes: {summary.yesCount}</p>
-                            <div className='simple-auditor-results-progress' aria-hidden='true'>
-                              <span style={{ width: `${(summary.yesCount + summary.noCount) > 0 ? (summary.yesCount / (summary.yesCount + summary.noCount)) * 100 : 0}%` }} />
-                            </div>
-                            <p className='simple-voter-note'>No: {summary.noCount}</p>
-                            <div className='simple-auditor-results-progress' aria-hidden='true'>
-                              <span style={{ width: `${(summary.yesCount + summary.noCount) > 0 ? (summary.noCount / (summary.yesCount + summary.noCount)) * 100 : 0}%` }} />
-                            </div>
+                          <div className='simple-auditor-donut-layout'>
+                            {(() => {
+                              const total = summary.yesCount + summary.noCount;
+                              const yesPercent = total > 0 ? (summary.yesCount / total) * 100 : 0;
+                              return (
+                                <>
+                                  <div
+                                    className='simple-auditor-donut'
+                                    style={{
+                                      background: `conic-gradient(#b8adff 0 ${yesPercent}%, #6ee7d8 ${yesPercent}% 100%)`,
+                                    }}
+                                    aria-hidden='true'
+                                  >
+                                    <div className='simple-auditor-donut-core'>
+                                      <strong>{total}</strong>
+                                      <span>Total</span>
+                                    </div>
+                                  </div>
+                                  <div className='simple-auditor-donut-legend'>
+                                    <span><i className='simple-auditor-dot simple-auditor-dot-purple' />Yes <strong>{summary.yesCount}</strong></span>
+                                    <span><i className='simple-auditor-dot simple-auditor-dot-mint' />No <strong>{summary.noCount}</strong></span>
+                                  </div>
+                                </>
+                              );
+                            })()}
                           </div>
                         ) : summary.answerType === "multiple_choice" ? (
-                          <ul className='simple-delivery-diagnostics simple-delivery-diagnostics-compact'>
-                            {Object.entries(summary.optionCounts).map(([optionId, count]) => (
-                              <li key={optionId} className='simple-delivery-ok'>
-                                {(() => {
-                                  const question = selectedQuestionById.get(summary.questionId);
-                                  if (question?.type !== "multiple_choice") {
-                                    return optionId;
-                                  }
-                                  return question.options.find((option) => option.optionId === optionId)?.label ?? optionId;
-                                })()}: {count}
-                              </li>
-                            ))}
-                          </ul>
+                          <div className='simple-auditor-option-bars'>
+                            {Object.entries(summary.optionCounts)
+                              .sort(([, leftCount], [, rightCount]) => rightCount - leftCount)
+                              .map(([optionId, count]) => {
+                                const question = selectedQuestionById.get(summary.questionId);
+                                const label = question?.type === "multiple_choice"
+                                  ? question.options.find((option) => option.optionId === optionId)?.label ?? optionId
+                                  : optionId;
+                                const maxCount = Math.max(1, ...Object.values(summary.optionCounts));
+                                const percentOfAccepted = displayValidCount > 0 ? (count / displayValidCount) * 100 : 0;
+                                return (
+                                  <div key={optionId} className='simple-auditor-option-bar-row'>
+                                    <div className='simple-auditor-option-bar-label'>
+                                      <span>{label}</span>
+                                      <strong>{count} ({percentOfAccepted.toFixed(0)}%)</strong>
+                                    </div>
+                                    <div className='simple-auditor-results-progress' aria-hidden='true'>
+                                      <span style={{ width: `${Math.max(4, (count / maxCount) * 100)}%` }} />
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                          </div>
                         ) : (
-                          <>
-                            <p className='simple-voter-note'>Free-text responses: {summary.freeTextCount}</p>
+                          <div className='simple-auditor-free-text-cardlet'>
+                            <div className='simple-auditor-free-text-icon' aria-hidden='true'>#</div>
+                            <div>
+                              <p className='simple-voter-question'>{summary.freeTextCount} response{summary.freeTextCount === 1 ? "" : "s"} collected</p>
+                              <p className='simple-voter-note'>Free-text payloads are listed separately to keep the result view readable.</p>
+                            </div>
                             <button
                               type='button'
-                              className='simple-voter-secondary'
+                              className='simple-voter-secondary simple-auditor-text-button'
                               onClick={() => setFreeTextViewerQuestionId(summary.questionId)}
                             >
-                              View
+                              View text submissions
                             </button>
-                          </>
+                          </div>
                         )}
                       </article>
                     ))}
                   </div>
-                  {canExportResults ? (
-                    <button
-                      type='button'
-                      className='simple-voter-secondary simple-auditor-full-results'
-                      onClick={exportResults}
-                    >
-                      Export results
-                    </button>
-                  ) : null}
                   {!selectedResultSummary ? (
                     <p className='simple-voter-note'>No published result summary yet; showing live verified submissions found on public relays.</p>
                   ) : null}
@@ -874,12 +940,14 @@ export default function SimpleAuditorApp() {
           )}
         </section>
 
-        <section className='simple-voter-section'>
-          <h2 className='simple-voter-section-title'>Submitted Votes</h2>
+        <section className='simple-voter-section simple-auditor-submissions-section'>
+          <div className='simple-auditor-submissions-header'>
+            <h2 className='simple-voter-section-title'>Submitted Votes</h2>
+            <span className='simple-auditor-pill'>{filteredResponseDetails.length} shown</span>
+          </div>
           {selectedQuestionnaire ? (
             selectedResponseDetails.length > 0 ? (
               <>
-                <p className='simple-voter-note'>For question: {selectedQuestionnaire.title}</p>
                 <div className='simple-auditor-submitted-toolbar'>
                   <div className='simple-auditor-submitted-stat'>
                     <p className='simple-auditor-summary-label'>Total responses</p>
@@ -911,28 +979,34 @@ export default function SimpleAuditorApp() {
                       <div className='simple-auditor-result-row'>
                         <div className='simple-auditor-result-marker'>
                           <TokenFingerprint tokenId={entry.response.authorPubkey} compact large hideMetadata />
-                          <p className='simple-voter-note simple-auditor-marker-status'>
-                            Status: {entry.accepted ? "Valid" : "Invalid"}
+                          <p className={`simple-auditor-status-chip ${entry.accepted ? "simple-auditor-status-chip-valid" : "simple-auditor-status-chip-invalid"}`}>
+                            {entry.accepted ? "Valid" : "Invalid"}
                           </p>
                         </div>
                         <div className='simple-auditor-result-body'>
                           <div className='simple-auditor-result-head'>
-                            <p className='simple-voter-question'>{entry.response.authorPubkey}</p>
+                            <div>
+                              <p className='simple-auditor-table-kicker'>Voter identity and status</p>
+                              <p className='simple-voter-question' title={entry.response.authorPubkey}>{deriveActorDisplayId(entry.response.authorPubkey)}</p>
+                            </div>
+                            <div className='simple-auditor-submission-time'>
+                              <p className='simple-auditor-table-kicker'>Submission time</p>
+                              <p className='simple-voter-note'>
+                                {formatQuestionnaireTime(Number(entry.response.submittedAt ?? entry.event.created_at ?? 0))}
+                              </p>
+                            </div>
                           </div>
-                          <p className='simple-voter-note'>
-                            Submitted: {formatQuestionnaireTime(Number(entry.response.submittedAt ?? entry.event.created_at ?? 0))}
-                          </p>
                           <p className='simple-voter-note'>Response ID: {entry.response.responseId}</p>
                           {Array.isArray(entry.response.answers) && entry.response.answers.length > 0 ? (
-                            <ol className='simple-delivery-diagnostics simple-delivery-diagnostics-compact simple-auditor-answer-list'>
+                            <ol className='simple-auditor-answer-list'>
                               {entry.response.answers.map((answer) => {
                                 const question = selectedQuestionById.get(answer.questionId);
                                 const prompt = question?.prompt || answer.questionId;
                                 if (answer.answerType === "yes_no") {
                                   return (
                                     <li key={`${entry.event.id}:${answer.questionId}`}>
-                                      <span className='simple-auditor-answer-prompt'>{prompt}: </span>
-                                      <span className='simple-auditor-answer-value'>{answer.value ? "Yes" : "No"}</span>
+                                      <span className='simple-auditor-answer-prompt'>{prompt}</span>
+                                      <span className='simple-auditor-answer-chip'>{answer.value ? "Yes" : "No"}</span>
                                     </li>
                                   );
                                 }
@@ -944,15 +1018,19 @@ export default function SimpleAuditorApp() {
                                   ));
                                   return (
                                     <li key={`${entry.event.id}:${answer.questionId}`}>
-                                      <span className='simple-auditor-answer-prompt'>{prompt}: </span>
-                                      <span className='simple-auditor-answer-value'>{selectedLabels.join(", ") || "No option selected"}</span>
+                                      <span className='simple-auditor-answer-prompt'>{prompt}</span>
+                                      {selectedLabels.length > 0 ? selectedLabels.map((label) => (
+                                        <span key={label} className='simple-auditor-answer-chip'>{label}</span>
+                                      )) : (
+                                        <span className='simple-auditor-answer-chip'>No option selected</span>
+                                      )}
                                     </li>
                                   );
                                 }
                                 return (
                                   <li key={`${entry.event.id}:${answer.questionId}`}>
-                                    <span className='simple-auditor-answer-prompt'>{prompt}: </span>
-                                    <span className='simple-auditor-answer-value'>{answer.text || "(empty)"}</span>
+                                    <span className='simple-auditor-answer-prompt'>{prompt}</span>
+                                    <span className='simple-auditor-answer-chip simple-auditor-answer-chip-text'>{answer.text || "(empty)"}</span>
                                   </li>
                                 );
                               })}
