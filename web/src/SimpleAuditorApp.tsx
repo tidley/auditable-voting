@@ -774,11 +774,6 @@ export default function SimpleAuditorApp() {
                 <div className='simple-auditor-results-title-block'>
                   <p className='simple-auditor-breadcrumb'>Questionnaires / {selectedQuestionnaire.questionnaireId}</p>
                   <h2 className='simple-voter-section-title'>Questionnaire Results</h2>
-                  <div className='simple-auditor-results-meta'>
-                    <span className='simple-auditor-pill simple-auditor-pill-green'>{selectedRoundPhaseLabel}</span>
-                    <span className='simple-auditor-pill'>{displayTotalCount} response{displayTotalCount === 1 ? "" : "s"}</span>
-                    <span className='simple-auditor-pill'>{resultSummarySourceLabel}</span>
-                  </div>
                 </div>
                 {canExportResults ? (
                   <button
