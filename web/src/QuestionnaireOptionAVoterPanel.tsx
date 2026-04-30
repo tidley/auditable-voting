@@ -194,6 +194,7 @@ const AUTO_BALLOT_RETRY_RESEND_MS = 8 * 60_000;
 const AUTO_BALLOT_SIGNER_REFRESH_SCHEDULE_MS = [15_000, 45_000, 120_000] as const;
 const AUTO_BALLOT_SIGNER_KEEPALIVE_REFRESH_MS = 75_000;
 const AUTO_BALLOT_MOBILE_RECOVERY_PULL_MS = 45_000;
+const AUTO_BALLOT_WAIT_FOREGROUND_REFRESH_MS = 8_000;
 const AUTO_BALLOT_SIGNER_SUBSCRIPTION_REARM_MIN_INTERVAL_MS = 15_000;
 const AUTO_BALLOT_SIGNER_BACKGROUND_FETCH_MIN_INTERVAL_MS = 90_000;
 const AUTO_BALLOT_SIGNER_LIFECYCLE_FETCH_MIN_INTERVAL_MS = 45_000;
@@ -588,6 +589,46 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, [runtime, props.localVoterNsec, snapshot?.loginVerified, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission, snapshot?.submissionAccepted]);
+
+  useEffect(() => {
+    if (!runtime || !snapshot?.loginVerified || !snapshot.blindRequestSent || snapshot.credentialReady || snapshot.submission) {
+      return;
+    }
+    let cancelled = false;
+    let timeoutId: number | null = null;
+    const tick = () => {
+      timeoutId = window.setTimeout(() => {
+        if (cancelled) {
+          return;
+        }
+        if (isPageVisible()) {
+          try {
+            ensureLocalSession({ allowInviteMissing: true, allowRelayInviteFetch: true });
+          } catch {
+            // The active runtime snapshot is still enough for a best-effort pull.
+          }
+          try {
+            queueBallotWaitRefresh({
+              restartSubscriptions: true,
+              mode: "manual",
+            });
+          } catch {
+            // Keep the automatic refresh best-effort; the button still surfaces errors.
+          }
+        }
+        if (!cancelled) {
+          tick();
+        }
+      }, AUTO_BALLOT_WAIT_FOREGROUND_REFRESH_MS);
+    };
+    tick();
+    return () => {
+      cancelled = true;
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+    };
+  }, [runtime, snapshot?.loginVerified, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission]);
 
   useEffect(() => {
     setQuestionnaireTitle("Questionnaire");

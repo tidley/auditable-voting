@@ -68,6 +68,7 @@ The shipped app currently includes:
 - blind request/submission DM reads now use recent since-bounded windows, and successful credential DMs are not rebroadcast by every background queue pass
 - shared gift-wrap inbox subscriptions now deduplicate repeated relay copies before signer decrypt, and signer-side refresh reads are kept tighter to reduce bunker/rate-limit churn while waiting for ballot delivery
 - signer-backed voter waits now primarily re-arm DM subscriptions and only fall back to low-rate mailbox refresh reads, reducing Amber bunker/rate-limit churn while still recovering when push delivery is missed; successful signer DM decrypts are now cached per event so repeated refresh scans do not keep re-hitting Amber for the same gift-wrapped message
+- voters waiting for a blind credential now run a visible-page status refresh every 8 seconds, matching the manual `Refresh status` recovery path so mobile browsers surface newly delivered ballots without a tap
 - blind issuance discovery now does one broader relay fallback scan when the narrow recipient relay subset is empty, reducing cases where the ballot is visible in another client but not yet surfaced in the vote UI
 - credential delivery is biased back toward reliability: DM writes mix recipient relay hints with fallback relays, publish to more relays, and retry issued credentials until the voter submits
 - ballot submission sends include a best-effort encrypted self-copy to the voter's login identity so submitted response markers and answers can be recovered after logging back in

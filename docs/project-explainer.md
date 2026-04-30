@@ -255,6 +255,7 @@ The present web client is built with:
 - **idempotent ballot resend** so a voter can resend the same blind request, the coordinator republishes the existing credential DM, and background loops avoid rebroadcasting already delivered credentials
 - **more redundant DM delivery** that mixes recipient NIP-17 relay hints with fallback relays, widens credential publish fanout, and retries issued credentials until submission proves receipt
 - **wider bounded signer DM scans** for invite/issuance/acceptance recovery so Amber/signer users are less likely to miss valid envelopes in busy relay histories
+- **foreground credential recovery polling** so voters waiting for a blind ballot automatically run the manual status-refresh path every 8 seconds while the page is visible
 - **explicit questionnaire phase acknowledgements** for blind request receipt, credential receipt, and submission receipt, so resend logic can stop once delivery is confirmed instead of inferring success only from later state
 - **shared recipient inbox subscriptions + sticky relay preferences** so private questionnaire reads reuse one websocket inbox per recipient, remember recently successful relays per questionnaire, and trigger bounded lifecycle recovery on foreground/network return
 - **course-feedback coordinator bypass** so legacy live-round / blind-key / ticket queue gating is disabled for questionnaire acceptance paths, with explicit debug assertions for bypass state
