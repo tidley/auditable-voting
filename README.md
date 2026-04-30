@@ -4,6 +4,12 @@ Static, browser-first questionnaire voting over Nostr relays.
 
 Auditable Voting lets a coordinator publish a questionnaire, invite known voters, issue blind ballot credentials, accept public blind-token responses, and let observers verify the public result stream. It runs as a static web app, with an optional outbound-only Rust audit proxy for coordinator-offline issuance, verification, closing, and result publication.
 
+Live site:
+
+```text
+https://npub1hkze8k84da0qm4lu75x32z33qepyzdqc735jnj5a602x8q4cstksnkvl3a.nsite.lol/
+```
+
 ## Status
 
 Experimental.
