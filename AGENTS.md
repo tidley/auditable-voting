@@ -22,50 +22,69 @@ Older server, deployment, and Cashu-stack code has been removed.
 ```text
 auditable-voting/
 ├── AGENTS.md
+├── Makefile
 ├── README.md
 ├── .env.example
 ├── .github/workflows/static.yml
 ├── docs/project-explainer.md
 ├── presentation/project-overview.html
-└── web/
-    ├── package.json
-    ├── vite.config.ts
-    ├── index.html
-    ├── vote.html
-    ├── dashboard.html
-    ├── simple.html
-    ├── simple-coordinator.html
-    ├── public/
-    ├── scripts/
-    └── src/
+├── web/
+│   ├── package.json
+│   ├── vite.config.ts
+│   ├── index.html
+│   ├── vote.html
+│   ├── dashboard.html
+│   ├── simple.html
+│   ├── simple-coordinator.html
+│   ├── public/
+│   ├── scripts/
+│   └── src/
+└── worker/
+    ├── Cargo.toml
+    ├── .env.example
+    ├── src/
+    └── contrib/
+        └── systemd/
+            └── auditable-voting-worker.service
 ```
 
 ## Commands
 
+All targets are available via the root `Makefile`. Run `make help` for the full list.
+
 Install:
 
 ```bash
-npm --prefix web install
+make install
 ```
 
 Run locally:
 
 ```bash
-npm --prefix web run dev -- --host 127.0.0.1 --port 5173
+make dev
 ```
 
 Build:
 
 ```bash
-npm --prefix web run build
+make build
 ```
 
 Tests:
 
 ```bash
-cd web
-npx vitest run
-npm run verify:simple-blind-shares
+make test
+make verify
+```
+
+Worker (audit proxy):
+
+```bash
+cp worker/.env.example worker/.env
+# Edit worker/.env with WORKER_NSEC and COORDINATOR_NPUB
+make install-worker
+make worker-status
+make worker-logs
 ```
 
 ## Working rules
