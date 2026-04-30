@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getPublicKey, generateSecretKey, nip19, nip44, type NostrEvent } from "nostr-tools";
 import { fetchQuestionnaireEventsWithFallback, getQuestionnaireReadRelays, parseQuestionnaireDefinitionEvent, parseQuestionnaireStateEvent, publishQuestionnaireDefinition, publishQuestionnaireParticipantCount, publishQuestionnaireResultSummary, publishQuestionnaireState, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESPONSE_PRIVATE_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND, subscribeQuestionnaireEvents } from "./questionnaireNostr";
-import { buildQuestionnaireResultSummary, deriveEffectiveQuestionnaireState, processQuestionnaireResponses, selectLatestQuestionnaireDefinition, selectLatestQuestionnaireResultSummary, selectLatestQuestionnaireState, type QuestionnaireAcceptedResponse } from "./questionnaireRuntime";
+import { buildQuestionnaireResultSummary, deriveEffectiveQuestionnaireState, formatQuestionnaireStateEventLabel, processQuestionnaireResponses, selectLatestQuestionnaireDefinition, selectLatestQuestionnaireResultSummary, selectLatestQuestionnaireState, type QuestionnaireAcceptedResponse } from "./questionnaireRuntime";
 import { buildSimpleNamespacedLocalStorageKey, loadSimpleActorState } from "./simpleLocalState";
 import {
   validateQuestionnaireDefinition,
@@ -9,6 +9,7 @@ import {
   type QuestionnaireQuestion,
   type QuestionnaireResponseAnswer,
   type QuestionnaireResultSummary,
+  type QuestionnaireStateEvent,
   type QuestionnaireStateValue,
 } from "./questionnaireProtocol";
 import { toQuestionnaireBlindPublicKey, type QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
@@ -252,6 +253,7 @@ const CURRENTLY_IMPLEMENTED_WORKER_CAPABILITIES: WorkerCapability[] = [
   "issue_blind_tokens",
   "verify_public_submissions",
   "publish_submission_decisions",
+  "close_questionnaire",
   "publish_result_summary",
 ];
 
@@ -803,6 +805,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   }, []);
   const [latestDefinition, setLatestDefinition] = useState<QuestionnaireDefinition | null>(null);
   const [latestState, setLatestState] = useState<QuestionnaireStateValue | null>(null);
+  const [latestStateEvent, setLatestStateEvent] = useState<QuestionnaireStateEvent | null>(null);
   const [latestStateCreatedAt, setLatestStateCreatedAt] = useState<number | null>(null);
   const [latestAcceptedCount, setLatestAcceptedCount] = useState(0);
   const [latestRejectedCount, setLatestRejectedCount] = useState(0);
@@ -1044,6 +1047,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     setLastResponseSeenEventId(latestResponseEvent?.id ?? null);
 
     setLatestDefinition(definition);
+    setLatestStateEvent(state);
     setLatestStateCreatedAt(state?.createdAt ?? null);
     setLatestState(deriveEffectiveQuestionnaireState({
       definition,
@@ -1875,6 +1879,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     : 0;
   const buildStateLabel = !publishedDefinition
     ? "Draft"
+    : latestStateEvent?.state === "closed" && latestStateEvent.closedBy === "audit_proxy"
+      ? "Closed by audit proxy"
     : currentState === "results_published"
       ? "Counted"
       : currentState === "closed"
@@ -1884,7 +1890,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           : "Draft";
   const checklistDescriptionAdded = description.trim().length > 0;
   const checklistNotPublished = !publishedDefinition;
-  const metadataStateLabel = formatQuestionnaireMetadataState(latestState, Boolean(latestDefinition));
+  const metadataStateLabel = latestStateEvent
+    ? formatQuestionnaireStateEventLabel(latestStateEvent)
+    : formatQuestionnaireMetadataState(latestState, Boolean(latestDefinition));
   const metadataClosingClosedLabel = formatClosingClosedLabel({
     latestDefinition,
     latestState,
@@ -2528,6 +2536,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       ).toISOString(),
     });
     const needsElectionConfigDm = delegatedWorkerCapabilities.includes("issue_blind_tokens")
+      || delegatedWorkerCapabilities.includes("close_questionnaire")
       || delegatedWorkerCapabilities.includes("publish_result_summary");
     const coordinatorState = needsElectionConfigDm
       ? loadCoordinatorState({
@@ -3540,6 +3549,14 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                               type='checkbox'
                               checked={delegatedWorkerCapabilities.includes("publish_submission_decisions")}
                               onChange={() => toggleWorkerCapability("publish_submission_decisions")}
+                            />
+                          </label>
+                          <label className='simple-delegate-capability-row'>
+                            <span>Close questionnaire after all valid responses</span>
+                            <input
+                              type='checkbox'
+                              checked={delegatedWorkerCapabilities.includes("close_questionnaire")}
+                              onChange={() => toggleWorkerCapability("close_questionnaire")}
                             />
                           </label>
                           <label className='simple-delegate-capability-row'>

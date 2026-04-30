@@ -13,12 +13,13 @@ import {
   fetchQuestionnaireState,
   type QuestionnaireWorkerDelegationStatus,
 } from "./questionnaireTransport";
-import { formatQuestionnaireStateLabel } from "./questionnaireRuntime";
+import { formatQuestionnaireStateEventLabel, formatQuestionnaireStateLabel } from "./questionnaireRuntime";
 import type {
   QuestionnairePublishedResponseRef,
   QuestionnaireQuestion,
   QuestionnaireResultQuestionSummary,
   QuestionnaireResultSummary,
+  QuestionnaireStateEvent,
 } from "./questionnaireProtocol";
 
 const AUDITOR_REFRESH_INTERVAL_MS = 15000;
@@ -63,6 +64,7 @@ export default function SimpleAuditorApp() {
   const [selectedResponseDetails, setSelectedResponseDetails] = useState<AuditorQuestionnaireResponseDetail[]>([]);
   const [selectedLatestPublishAt, setSelectedLatestPublishAt] = useState<number | null>(null);
   const [selectedLiveState, setSelectedLiveState] = useState<string | null>(null);
+  const [selectedLiveStateEvent, setSelectedLiveStateEvent] = useState<QuestionnaireStateEvent | null>(null);
   const [selectedResultSummary, setSelectedResultSummary] = useState<QuestionnaireResultSummary | null>(null);
   const [selectedWorkerDelegationStatus, setSelectedWorkerDelegationStatus] = useState<QuestionnaireWorkerDelegationStatus | null>(null);
   const [voterSearchQuery, setVoterSearchQuery] = useState("");
@@ -203,6 +205,7 @@ export default function SimpleAuditorApp() {
       setSelectedResponseDetails((previous) => (previous.length === 0 ? previous : []));
       setSelectedLatestPublishAt((previous) => (previous === null ? previous : null));
       setSelectedLiveState((previous) => (previous === null ? previous : null));
+      setSelectedLiveStateEvent((previous) => (previous === null ? previous : null));
       setSelectedResultSummary((previous) => (previous === null ? previous : null));
       setSelectedWorkerDelegationStatus((previous) => (previous === null ? previous : null));
       const nextStatus = "Choose a questionnaire round.";
@@ -275,12 +278,16 @@ export default function SimpleAuditorApp() {
         details = mergeAuditorResponseDetails(details, summaryRefDetails);
       }
       const nextLiveState = latestState?.state.state ?? null;
+      const nextLiveStateEvent = latestState?.state ?? null;
       const nextResultSummary = latestResult?.summary ?? null;
       setSelectedResponseDetails((previous) => (
         areAuditorResponseDetailsEqual(previous, details) ? previous : details
       ));
       setSelectedLatestPublishAt((previous) => (previous === latestPublishAt ? previous : latestPublishAt));
       setSelectedLiveState((previous) => (previous === nextLiveState ? previous : nextLiveState));
+      setSelectedLiveStateEvent((previous) => (
+        JSON.stringify(previous) === JSON.stringify(nextLiveStateEvent) ? previous : nextLiveStateEvent
+      ));
       setSelectedResultSummary((previous) => (
         areQuestionnaireResultSummaryEqual(previous, nextResultSummary) ? previous : nextResultSummary
       ));
@@ -304,6 +311,7 @@ export default function SimpleAuditorApp() {
       setSelectedResponseDetails((previous) => (previous.length === 0 ? previous : []));
       setSelectedLatestPublishAt((previous) => (previous === null ? previous : null));
       setSelectedLiveState((previous) => (previous === null ? previous : null));
+      setSelectedLiveStateEvent((previous) => (previous === null ? previous : null));
       setSelectedResultSummary((previous) => (previous === null ? previous : null));
       setSelectedWorkerDelegationStatus((previous) => (previous === null ? previous : null));
       const nextStatus = "Failed to refresh questionnaire responses.";
@@ -422,6 +430,7 @@ export default function SimpleAuditorApp() {
       setSelectedResponseDetails((previous) => (previous.length === 0 ? previous : []));
       setSelectedLatestPublishAt((previous) => (previous === null ? previous : null));
       setSelectedLiveState((previous) => (previous === null ? previous : null));
+      setSelectedLiveStateEvent((previous) => (previous === null ? previous : null));
       setSelectedResultSummary((previous) => (previous === null ? previous : null));
       return;
     }
@@ -536,6 +545,9 @@ export default function SimpleAuditorApp() {
       : "No invitees expected";
   const displayedQuestionSummaries = selectedResultSummary?.questionSummaries ?? liveQuestionSummaries;
   const resultSummarySourceLabel = selectedResultSummary ? "Published result summary" : "Live verified submissions";
+  const selectedRoundPhaseLabel = selectedLiveStateEvent
+    ? formatQuestionnaireStateEventLabel(selectedLiveStateEvent)
+    : formatQuestionnaireStateLabel(selectedLiveState ?? selectedQuestionnaire?.state);
   const canExportResults = Boolean(
     selectedQuestionnaire
     && (selectedLiveState ?? selectedQuestionnaire.state) === "results_published"
@@ -757,7 +769,7 @@ export default function SimpleAuditorApp() {
                   {displayTotalCount} Response{displayTotalCount === 1 ? "" : "s"} • {displayValidityPercent}%
                 </span>
                 <span className='simple-voter-note'>
-                  Round phase: {formatQuestionnaireStateLabel(selectedLiveState ?? selectedQuestionnaire.state)}
+                  Round phase: {selectedRoundPhaseLabel}
                 </span>
                 <span className='simple-voter-note'>
                   Published at: {formatQuestionnaireTime(Number(selectedResultSummary?.createdAt ?? selectedQuestionnaire.resultPublishedAt ?? 0))}
@@ -780,7 +792,7 @@ export default function SimpleAuditorApp() {
                 </div>
                 <div className='simple-auditor-summary-card'>
                   <p className='simple-auditor-summary-label'>Round phase</p>
-                  <p className='simple-voter-question'>{formatQuestionnaireStateLabel(selectedLiveState ?? selectedQuestionnaire.state)}</p>
+                  <p className='simple-voter-question'>{selectedRoundPhaseLabel}</p>
                 </div>
                 <div className='simple-auditor-summary-card'>
                   <p className='simple-auditor-summary-label'>Expected responses</p>

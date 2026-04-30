@@ -19,6 +19,7 @@ export type WorkerCapability =
   | "issue_blind_tokens"
   | "verify_public_submissions"
   | "publish_submission_decisions"
+  | "close_questionnaire"
   | "publish_result_summary";
 
 export type WorkerDelegationState = "pending_activation" | "active" | "revoked" | "expired";

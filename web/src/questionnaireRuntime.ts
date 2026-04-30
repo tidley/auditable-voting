@@ -14,6 +14,9 @@ export type QuestionnaireRejectedReason =
   | "invalid_payload_shape";
 
 export function formatQuestionnaireStateLabel(state: string | null | undefined) {
+  if (state === "closed_by_audit_proxy") {
+    return "Closed by audit proxy";
+  }
   if (state === "draft") {
     return "Draft";
   }
@@ -27,6 +30,13 @@ export function formatQuestionnaireStateLabel(state: string | null | undefined) 
     return "Results published";
   }
   return "None";
+}
+
+export function formatQuestionnaireStateEventLabel(state: QuestionnaireStateEvent | null | undefined) {
+  if (state?.state === "closed" && state.closedBy === "audit_proxy") {
+    return "Closed by audit proxy";
+  }
+  return formatQuestionnaireStateLabel(state?.state);
 }
 
 export function formatQuestionnaireTokenStatusLabel(status: string) {

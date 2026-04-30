@@ -66,6 +66,10 @@ Shape:
 - `state: "draft" | "open" | "closed" | "results_published"`
 - `createdAt`
 - `coordinatorPubkey`
+- optional delegated close provenance:
+  - `closedBy: "audit_proxy"`
+  - `delegationId`
+  - `workerPubkey`
 
 Tags:
 
@@ -73,7 +77,7 @@ Tags:
 - `["questionnaire-id", "<id>"]`
 - `["state", "<state>"]`
 
-Latest valid coordinator state for a questionnaire is authoritative.
+Latest valid state for a questionnaire is authoritative. A delegated audit proxy may publish `state: "closed"` only when its coordinator-signed delegation includes close authority and the accepted valid response count has reached the expected invitee count.
 
 ## 5. Response submission modes
 

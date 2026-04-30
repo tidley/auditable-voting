@@ -64,4 +64,4 @@ The coordinator Build page can also save an autoconfigured platform-specific lau
 - issue blind-signature responses on behalf of the coordinator for delegated elections with `Issue blind tokens` enabled, including the questionnaire definition when available so voters can render ballots offline
 - process public questionnaire submissions for delegated elections
 - publish delegated public submission decisions with delegation provenance tags
-- optionally auto-publish result summaries when delegated capability is enabled and expected invitee completion is reached
+- optionally publish a delegated close-state event and result summary when delegated capabilities are enabled and expected invitee completion is reached using accepted valid responses only

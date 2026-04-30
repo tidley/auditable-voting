@@ -10,7 +10,7 @@ use crate::model::{
     WorkerDelegationEnvelope, WorkerDelegationRevocation, WorkerElectionConfigEnvelope,
     WorkerElectionConfigSnapshot, WorkerPersistentState, WorkerRevocationEnvelope,
     WorkerStatusEnvelope, WorkerStatusSnapshot, IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND,
-    IMPLEMENTATION_KIND_QUESTIONNAIRE_RESULT_SUMMARY,
+    IMPLEMENTATION_KIND_QUESTIONNAIRE_RESULT_SUMMARY, IMPLEMENTATION_KIND_QUESTIONNAIRE_STATE,
     IMPLEMENTATION_KIND_QUESTIONNAIRE_SUBMISSION_DECISION, OPTIONA_WORKER_DELEGATION_KIND,
     OPTIONA_WORKER_DELEGATION_REVOCATION_KIND,
 };
@@ -37,6 +37,7 @@ const DEFAULT_DM_LOOKBACK_SECS: u64 = 7 * 24 * 60 * 60;
 const DEFAULT_PUBLIC_LOOKBACK_SECS: u64 = 12 * 60 * 60;
 const CONTROL_DM_DEDUPE_RETENTION_SECS: i64 = 14 * 24 * 60 * 60;
 const PRIVATE_DM_SEND_TIMEOUT_SECS: u64 = 12;
+const COMPLETION_CLOSE_GRACE_SECS: u64 = 5;
 const DISCOURAGED_WORKER_READ_RELAYS: &[&str] = &[
     "wss://strfry.bitsbytom.com",
     "wss://nip17.tomdwyer.uk",
@@ -394,6 +395,7 @@ impl WorkerRuntime {
                     WorkerCapability::IssueBlindTokens,
                     WorkerCapability::VerifyPublicSubmissions,
                     WorkerCapability::PublishSubmissionDecisions,
+                    WorkerCapability::CloseQuestionnaire,
                     WorkerCapability::PublishResultSummary,
                 ],
                 advertised_relays: self
@@ -753,6 +755,9 @@ impl WorkerRuntime {
                             .contains(&WorkerCapability::PublishSubmissionDecisions)
                         || entry
                             .capabilities
+                            .contains(&WorkerCapability::CloseQuestionnaire)
+                        || entry
+                            .capabilities
                             .contains(&WorkerCapability::PublishResultSummary)
                 })
                 .map(|entry| entry.election_id.clone())
@@ -804,6 +809,7 @@ impl WorkerRuntime {
                 unrelated_response_count
             );
         }
+        self.finalize_completed_elections().await?;
         Ok(())
     }
 
@@ -879,30 +885,95 @@ impl WorkerRuntime {
             election.last_decision_publish_at = Some(now_iso());
         }
 
-        let should_publish_summary = election
-            .capabilities
-            .contains(&WorkerCapability::PublishResultSummary)
-            && !election.summary_published
-            && election.expected_invitee_count.unwrap_or(0) > 0
-            && (election.accepted_response_authors.len() as u64)
-                >= election.expected_invitee_count.unwrap_or(0);
-        if should_publish_summary {
-            let summary_event_id = self
-                .publish_result_summary(
-                    &submission.questionnaire_id,
-                    election.accepted_response_count,
-                    election.rejected_response_count,
-                )
-                .await?;
-            election.summary_published = true;
-            election.last_result_summary_publish_at = Some(now_iso());
-            info!(
-                "published questionnaire result summary for election {} event_id={}",
-                submission.questionnaire_id, summary_event_id
-            );
+        self.store.save(&state)?;
+        Ok(())
+    }
+
+    async fn finalize_completed_elections(&self) -> Result<()> {
+        #[derive(Debug, Clone)]
+        struct CompletionAction {
+            election_id: String,
+            delegation_id: String,
+            accepted_count: u64,
+            rejected_count: u64,
+            close_questionnaire: bool,
+            publish_summary: bool,
         }
 
-        self.store.save(&state)?;
+        let actions = {
+            let state = self.state.lock().await;
+            state
+                .elections
+                .values()
+                .filter(|entry| !entry.revoked && !is_expired(&entry.expires_at))
+                .filter_map(|entry| {
+                    let expected = entry.expected_invitee_count.unwrap_or(0);
+                    let accepted_unique = entry.accepted_response_authors.len() as u64;
+                    if expected == 0 || accepted_unique < expected {
+                        return None;
+                    }
+                    let close_questionnaire = entry
+                        .capabilities
+                        .contains(&WorkerCapability::CloseQuestionnaire)
+                        && !entry.questionnaire_close_published;
+                    let publish_summary = entry
+                        .capabilities
+                        .contains(&WorkerCapability::PublishResultSummary)
+                        && !entry.summary_published;
+                    if !close_questionnaire && !publish_summary {
+                        return None;
+                    }
+                    Some(CompletionAction {
+                        election_id: entry.election_id.clone(),
+                        delegation_id: entry.delegation_id.clone(),
+                        accepted_count: entry.accepted_response_count,
+                        rejected_count: entry.rejected_response_count,
+                        close_questionnaire,
+                        publish_summary,
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+
+        for action in actions {
+            if action.close_questionnaire {
+                sleep(Duration::from_secs(COMPLETION_CLOSE_GRACE_SECS)).await;
+                let close_event_id = self
+                    .publish_questionnaire_closed_state(&action.election_id, &action.delegation_id)
+                    .await?;
+                let mut state = self.state.lock().await;
+                if let Some(election) = state.elections.get_mut(&action.election_id) {
+                    election.questionnaire_close_published = true;
+                    election.last_questionnaire_close_publish_at = Some(now_iso());
+                }
+                self.store.save(&state)?;
+                info!(
+                    "published delegated questionnaire close for election {} event_id={}",
+                    action.election_id, close_event_id
+                );
+            }
+
+            if action.publish_summary {
+                let summary_event_id = self
+                    .publish_result_summary(
+                        &action.election_id,
+                        action.accepted_count,
+                        action.rejected_count,
+                    )
+                    .await?;
+                let mut state = self.state.lock().await;
+                if let Some(election) = state.elections.get_mut(&action.election_id) {
+                    election.summary_published = true;
+                    election.last_result_summary_publish_at = Some(now_iso());
+                }
+                self.store.save(&state)?;
+                info!(
+                    "published questionnaire result summary for election {} event_id={}",
+                    action.election_id, summary_event_id
+                );
+            }
+        }
+
         Ok(())
     }
 
@@ -949,6 +1020,48 @@ impl WorkerRuntime {
                 "delegation-id".to_string(),
                 decision.delegation_id.clone().unwrap_or_default(),
             ],
+        ];
+        for tag in tags {
+            if let Ok(parsed) = Tag::parse(tag) {
+                builder = builder.tag(parsed);
+            }
+        }
+        let output = self.client.send_event_builder(builder).await?;
+        Ok(output.val.to_hex())
+    }
+
+    async fn publish_questionnaire_closed_state(
+        &self,
+        election_id: &str,
+        delegation_id: &str,
+    ) -> Result<String> {
+        let content = serde_json::json!({
+            "schemaVersion": 1,
+            "eventType": "questionnaire_state",
+            "questionnaireId": election_id,
+            "state": "closed",
+            "createdAt": Timestamp::now().as_secs() as i64,
+            "coordinatorPubkey": self.config.coordinator_npub,
+            "closedBy": "audit_proxy",
+            "delegationId": delegation_id,
+            "workerPubkey": self.worker_npub,
+        })
+        .to_string();
+        let mut builder = EventBuilder::new(
+            Kind::Custom(IMPLEMENTATION_KIND_QUESTIONNAIRE_STATE),
+            content,
+        );
+        let tags = vec![
+            vec!["t".to_string(), "questionnaire_state".to_string()],
+            vec!["questionnaire-id".to_string(), election_id.to_string()],
+            vec!["state".to_string(), "closed".to_string()],
+            vec!["closed-by".to_string(), "audit_proxy".to_string()],
+            vec!["worker".to_string(), self.worker_npub.clone()],
+            vec![
+                "coordinator".to_string(),
+                self.config.coordinator_npub.clone(),
+            ],
+            vec!["delegation-id".to_string(), delegation_id.to_string()],
         ];
         for tag in tags {
             if let Ok(parsed) = Tag::parse(tag) {
@@ -1164,6 +1277,8 @@ impl WorkerRuntime {
             existing.definition = None;
             existing.summary_published = false;
             existing.last_result_summary_publish_at = None;
+            existing.questionnaire_close_published = false;
+            existing.last_questionnaire_close_publish_at = None;
         }
         self.store.save(&state)?;
         drop(state);

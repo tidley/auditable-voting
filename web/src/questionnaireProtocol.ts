@@ -79,6 +79,9 @@ export type QuestionnaireStateEvent = {
   state: QuestionnaireStateValue;
   createdAt: number;
   coordinatorPubkey: string;
+  closedBy?: "audit_proxy" | "coordinator";
+  delegationId?: string;
+  workerPubkey?: string;
 };
 
 export type QuestionnaireResponseAnswer =

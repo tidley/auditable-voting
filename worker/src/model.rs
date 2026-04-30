@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 pub const OPTIONA_WORKER_DELEGATION_KIND: u16 = 31994;
 pub const OPTIONA_WORKER_DELEGATION_REVOCATION_KIND: u16 = 31995;
+pub const IMPLEMENTATION_KIND_QUESTIONNAIRE_STATE: u16 = 14121;
 pub const IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND: u16 = 14124;
 pub const IMPLEMENTATION_KIND_QUESTIONNAIRE_SUBMISSION_DECISION: u16 = 14125;
 pub const IMPLEMENTATION_KIND_QUESTIONNAIRE_RESULT_SUMMARY: u16 = 14123;
@@ -14,6 +15,7 @@ pub enum WorkerCapability {
     IssueBlindTokens,
     VerifyPublicSubmissions,
     PublishSubmissionDecisions,
+    CloseQuestionnaire,
     PublishResultSummary,
 }
 
@@ -250,6 +252,10 @@ pub struct ElectionRuntimeState {
     pub summary_published: bool,
     #[serde(default)]
     pub last_result_summary_publish_at: Option<String>,
+    #[serde(default)]
+    pub questionnaire_close_published: bool,
+    #[serde(default)]
+    pub last_questionnaire_close_publish_at: Option<String>,
     #[serde(default)]
     pub blind_signing_private_key: Option<QuestionnaireBlindPrivateKey>,
     #[serde(default)]

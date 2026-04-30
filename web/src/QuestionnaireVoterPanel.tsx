@@ -192,7 +192,7 @@ function selectorLifecycleFromState(state: string | null | undefined): SelectorL
   if (state === "results_published" || state === "counted") {
     return "counted";
   }
-  if (state === "closed" || state === "ended" || state === "archived") {
+  if (state === "closed" || state === "closed_by_audit_proxy" || state === "ended" || state === "archived") {
     return "closed";
   }
   return "unknown";
@@ -927,7 +927,9 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
         stateReadMode: stateFetch.diagnostics.mode,
         resultReadMode: resultFetch.diagnostics.mode,
       });
-      const explicitState = latestExplicitState?.state ?? null;
+      const explicitState = latestExplicitState?.state === "closed" && latestExplicitState.closedBy === "audit_proxy"
+        ? "closed_by_audit_proxy"
+        : latestExplicitState?.state ?? null;
       const lifecycle = lifecycleFromExplicitState(explicitState);
       if (definitionEvents.length === 0) {
         setLastQuestionnaireRejectReason("no_definition_events");
