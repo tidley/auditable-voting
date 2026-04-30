@@ -796,12 +796,10 @@ export default function SimpleAuditorApp() {
                     <span style={{ width: `${Math.min(100, Math.max(0, displayValidityPercentNumber))}%` }} />
                   </div>
                 </article>
-                <article className='simple-auditor-status-card simple-auditor-status-card-icon'>
-                  <span className='simple-auditor-status-icon' aria-hidden='true'>!</span>
+                <article className='simple-auditor-status-card'>
                   <div>
                     <p className='simple-auditor-summary-label'>Security layer</p>
                     <p className='simple-auditor-status-value'>Audit proxy: {formatWorkerDelegationStatus(selectedWorkerDelegationStatus)}</p>
-                    <p className='simple-auditor-status-note'>Delegated issuance and verification</p>
                   </div>
                 </article>
                 <article className='simple-auditor-status-card simple-auditor-status-card-icon'>
@@ -847,17 +845,7 @@ export default function SimpleAuditorApp() {
                         <div className='simple-auditor-question-card-head'>
                           <div>
                             <h3 className='simple-voter-question'>{selectedQuestionById.get(summary.questionId)?.prompt || `Question ${summary.questionId}`}</h3>
-                            <p className='simple-voter-note'>
-                              {summary.answerType === "yes_no"
-                                ? "Single choice response"
-                                : summary.answerType === "multiple_choice"
-                                  ? "Multiple selection frequency"
-                                  : "Free-text responses"}
-                            </p>
                           </div>
-                          {summary.answerType === "multiple_choice" ? (
-                            <span className='simple-auditor-mini-badge'>Aggr. view</span>
-                          ) : null}
                         </div>
                         {summary.answerType === "yes_no" ? (
                           <div className='simple-auditor-donut-layout'>
@@ -879,8 +867,16 @@ export default function SimpleAuditorApp() {
                                     </div>
                                   </div>
                                   <div className='simple-auditor-donut-legend'>
-                                    <span><i className='simple-auditor-dot simple-auditor-dot-purple' />Yes <strong>{summary.yesCount}</strong></span>
-                                    <span><i className='simple-auditor-dot simple-auditor-dot-mint' />No <strong>{summary.noCount}</strong></span>
+                                    <span>
+                                      <i className='simple-auditor-dot simple-auditor-dot-purple' />
+                                      Yes
+                                      <strong>{summary.yesCount} ({total > 0 ? ((summary.yesCount / total) * 100).toFixed(0) : "0"}%)</strong>
+                                    </span>
+                                    <span>
+                                      <i className='simple-auditor-dot simple-auditor-dot-mint' />
+                                      No
+                                      <strong>{summary.noCount} ({total > 0 ? ((summary.noCount / total) * 100).toFixed(0) : "0"}%)</strong>
+                                    </span>
                                   </div>
                                 </>
                               );
@@ -888,8 +884,7 @@ export default function SimpleAuditorApp() {
                           </div>
                         ) : summary.answerType === "multiple_choice" ? (
                           <div className='simple-auditor-option-bars'>
-                            {Object.entries(summary.optionCounts)
-                              .sort(([, leftCount], [, rightCount]) => rightCount - leftCount)
+                            {getMultipleChoiceSummaryEntries(summary, selectedQuestionById.get(summary.questionId))
                               .map(([optionId, count]) => {
                                 const question = selectedQuestionById.get(summary.questionId);
                                 const label = question?.type === "multiple_choice"
@@ -904,7 +899,7 @@ export default function SimpleAuditorApp() {
                                       <strong>{count} ({percentOfAccepted.toFixed(0)}%)</strong>
                                     </div>
                                     <div className='simple-auditor-results-progress' aria-hidden='true'>
-                                      <span style={{ width: `${Math.max(4, (count / maxCount) * 100)}%` }} />
+                                      <span style={{ width: count > 0 ? `${Math.max(4, (count / maxCount) * 100)}%` : "0%" }} />
                                     </div>
                                   </div>
                                 );
@@ -921,7 +916,7 @@ export default function SimpleAuditorApp() {
                               className='simple-voter-secondary simple-auditor-text-button'
                               onClick={() => setFreeTextViewerQuestionId(summary.questionId)}
                             >
-                              View text submissions
+                              View answers
                             </button>
                           </div>
                         )}
@@ -1186,6 +1181,16 @@ function formatWorkerDelegationStatus(status: QuestionnaireWorkerDelegationStatu
     return `Revoked${workerSuffix}`;
   }
   return `Expired${workerSuffix}`;
+}
+
+function getMultipleChoiceSummaryEntries(
+  summary: Extract<QuestionnaireResultQuestionSummary, { answerType: "multiple_choice" }>,
+  question: QuestionnaireQuestion | undefined,
+) {
+  if (question?.type === "multiple_choice") {
+    return question.options.map((option) => [option.optionId, summary.optionCounts[option.optionId] ?? 0] as const);
+  }
+  return Object.entries(summary.optionCounts);
 }
 
 function buildLiveQuestionSummaries(

@@ -1702,18 +1702,6 @@ code {
   margin-bottom: 2px;
 }
 
-.simple-auditor-mini-badge {
-  flex: 0 0 auto;
-  padding: 4px 6px;
-  border-radius: 4px;
-  background: #243451;
-  color: #aebbe1;
-  font-size: 0.58rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 .simple-auditor-donut-layout {
   display: grid;
   grid-template-columns: 132px minmax(0, 1fr);
@@ -1813,8 +1801,8 @@ code {
 
 .simple-auditor-free-text-cardlet {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
   gap: 14px;
   padding: 14px;
   border: 1px solid rgba(104, 119, 152, 0.5);
@@ -1834,7 +1822,8 @@ code {
 }
 
 .simple-auditor-text-button {
-  white-space: nowrap;
+  grid-column: 1 / -1;
+  justify-self: start;
 }
 
 .simple-auditor-bars {
@@ -2407,26 +2396,22 @@ code {
 }
 
 .simple-auditor-answer-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  display: grid;
+  gap: 10px;
   margin: 8px 0 0;
   padding-left: 0;
   list-style: none;
 }
 
 .simple-auditor-answer-list li {
-  display: inline-flex;
-  align-items: center;
-  flex-wrap: wrap;
+  display: grid;
   gap: 6px;
   max-width: 100%;
   color: #f8fafc;
 }
 
 .simple-auditor-answer-prompt {
-  display: inline-flex;
-  align-items: center;
+  display: block;
   max-width: 100%;
   color: #aab7d9;
   font-size: 0.76rem;
@@ -2443,6 +2428,7 @@ code {
 .simple-auditor-answer-chip {
   display: inline-flex;
   align-items: center;
+  width: fit-content;
   max-width: 100%;
   padding: 4px 8px;
   border: 1px solid rgba(143, 165, 216, 0.45);
@@ -2551,13 +2537,12 @@ code {
 
 @media (max-width: 640px) {
   .simple-auditor-result-row {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: auto minmax(0, 1fr);
   }
 
   .simple-auditor-results-hero,
   .simple-auditor-submissions-header,
-  .simple-auditor-question-card-head,
-  .simple-auditor-free-text-cardlet {
+  .simple-auditor-question-card-head {
     grid-template-columns: minmax(0, 1fr);
     flex-direction: column;
     align-items: stretch;
@@ -2596,6 +2581,12 @@ code {
     width: 84px;
     height: 84px;
     border-radius: 10px;
+  }
+}
+
+@media (max-width: 430px) {
+  .simple-auditor-result-row {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
