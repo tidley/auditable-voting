@@ -65,3 +65,4 @@ The coordinator Build page can also save an autoconfigured platform-specific lau
 - process public questionnaire submissions for delegated elections
 - publish delegated public submission decisions with delegation provenance tags
 - optionally publish a delegated close-state event and result summary when delegated capabilities are enabled and expected invitee completion is reached using accepted valid responses only
+- exit cleanly after every active delegated election has reached expected accepted completion, published its delegated close event when enabled, and published its result summary

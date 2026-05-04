@@ -111,7 +111,8 @@ It can:
 - verify public blind-token submissions;
 - publish accept/reject decisions;
 - close the questionnaire after all expected invitees have accepted valid responses;
-- publish the result summary.
+- publish the result summary;
+- exit cleanly once delegated close and summary publication are complete.
 
 Run it locally:
 

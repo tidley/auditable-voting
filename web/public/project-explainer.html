@@ -269,7 +269,7 @@ The proxy receives two private control messages from the coordinator:
 1. a signed worker delegation that names the questionnaire, proxy `npub`, capabilities, control relays, and expiry
 2. an election config message containing the questionnaire metadata, blind-signing material needed for delegated issuance, and the routing hints voters should use
 
-After activation, the proxy polls only its own NIP-17 mailbox over outbound relay connections. It can issue blind ballot credentials, publish submission decisions, verify public submissions, close the questionnaire once the accepted valid response count reaches the expected invitee count, and publish result summaries when those capabilities are delegated. It sends heartbeats and operation reports back to the coordinator so the Build page can show whether the proxy is active.
+After activation, the proxy polls only its own NIP-17 mailbox over outbound relay connections. It can issue blind ballot credentials, publish submission decisions, verify public submissions, close the questionnaire once the accepted valid response count reaches the expected invitee count, and publish result summaries when those capabilities are delegated. It sends heartbeats and operation reports back to the coordinator so the Build page can show whether the proxy is active, then exits cleanly once completed delegated close and summary work has been published.
 
 Proxy closure is guarded by the same accepted-response set used for summary publication. Rejected, duplicate, invalid, or spam submissions do not count towards automatic closure. The delegated close event is published as questionnaire state with proxy provenance, so Coordinator and Observer views label it as `Closed by audit proxy`.
 
@@ -371,7 +371,7 @@ The client uses:
 - `@cloudflare/blindrsa-ts` for RSABSSA blind signatures
 - Rust/Wasm for deterministic replay and protocol validation in the public round path
 - an optional Rust audit proxy runtime (`worker/`) for delegated election operations over outbound-only relay connections
-- seven-day fixed-lookback audit proxy DM polling with event-id dedupe so relay-randomised gift-wrap timestamps do not cause missed delegated blind requests, plus status heartbeats back to the coordinator, active delegation control-relay reads, delegated close + auto-summary after all expected invitees have accepted valid responses, and a nostrwat.ch-checked helper relay set (relay.nostr.net, nos.lol, relay.nostr.info, relay.nos.social, relay.momostr.pink, and relay.azzamo.net); older persisted relay hints are retained but known unreliable endpoints are retried with per-relay exponential backoff
+- seven-day fixed-lookback audit proxy DM polling with event-id dedupe so relay-randomised gift-wrap timestamps do not cause missed delegated blind requests, plus status heartbeats back to the coordinator, active delegation control-relay reads, delegated close + auto-summary after all expected invitees have accepted valid responses, clean exit after completed delegated work, and a nostrwat.ch-checked helper relay set (relay.nostr.net, nos.lol, relay.nostr.info, relay.nos.social, relay.momostr.pink, and relay.azzamo.net); older persisted relay hints are retained but known unreliable endpoints are retried with per-relay exponential backoff
 - browser storage for private active state and recovery
 
 ## Blind Issuance

@@ -29,7 +29,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use tokio::time::{sleep, timeout};
+use tokio::time::{interval, sleep, timeout};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -235,9 +235,19 @@ async fn main() -> Result<()> {
     let mut heartbeat_task = spawn_heartbeat_task(runtime.clone());
     let mut control_task = spawn_control_task(runtime.clone());
     let mut public_task = spawn_public_task(runtime.clone());
+    let mut completion_check = interval(Duration::from_secs(1));
 
     loop {
         tokio::select! {
+            _ = completion_check.tick() => {
+                if runtime.should_terminate_after_completion().await {
+                    info!("all delegated questionnaire work is complete; audit proxy is terminating");
+                    heartbeat_task.abort();
+                    control_task.abort();
+                    public_task.abort();
+                    break;
+                }
+            },
             result = &mut heartbeat_task => {
                 log_task_exit("heartbeat", result);
                 heartbeat_task = spawn_heartbeat_task(runtime.clone());
@@ -252,6 +262,8 @@ async fn main() -> Result<()> {
             },
         }
     }
+
+    Ok(())
 }
 
 fn spawn_heartbeat_task(runtime: WorkerRuntime) -> JoinHandle<()> {
@@ -296,6 +308,39 @@ fn log_task_exit(label: &str, result: std::result::Result<(), tokio::task::JoinE
 }
 
 impl WorkerRuntime {
+    async fn should_terminate_after_completion(&self) -> bool {
+        let state = self.state.lock().await;
+        let mut active_count = 0usize;
+
+        for election in state.elections.values() {
+            if election.revoked || is_expired(&election.expires_at) {
+                continue;
+            }
+            active_count = active_count.saturating_add(1);
+
+            let expected = election.expected_invitee_count.unwrap_or(0);
+            let accepted_unique = election.accepted_response_authors.len() as u64;
+            let has_summary_capability = election
+                .capabilities
+                .contains(&WorkerCapability::PublishResultSummary);
+            let close_done = !election
+                .capabilities
+                .contains(&WorkerCapability::CloseQuestionnaire)
+                || election.questionnaire_close_published;
+
+            if expected == 0
+                || accepted_unique < expected
+                || !has_summary_capability
+                || !election.summary_published
+                || !close_done
+            {
+                return false;
+            }
+        }
+
+        active_count > 0
+    }
+
     async fn fetch_events_best_effort(
         &self,
         label: &str,

@@ -25,9 +25,13 @@ import {
   publishOptionAWorkerElectionConfigDm,
   type WorkerElectionConfigSnapshot,
 } from "../src/questionnaireOptionABlindDm";
+import type { ElectionInviteMessage } from "../src/questionnaireOptionA";
+import { publishOptionAInviteDm } from "../src/questionnaireOptionAInviteDm";
+import { buildInviteUrl } from "../src/questionnaireInvite";
 import {
   QUESTIONNAIRE_RESULT_SUMMARY_KIND,
   publishQuestionnaireDefinition,
+  publishQuestionnaireParticipantCount,
   publishQuestionnaireState,
 } from "../src/questionnaireNostr";
 import type {
@@ -47,6 +51,7 @@ import {
 import { publishQuestionnaireBlindResponsePublic } from "../src/questionnaireResponsePublish";
 import { QUESTIONNAIRE_SUBMISSION_DECISION_KIND } from "../src/questionnaireResponsePublish";
 import { createWorkerDelegationCertificate, publishWorkerDelegationCertificate } from "../src/questionnaireWorkerDelegation";
+import { buildIssueBlindTokensWorkerRouting } from "../src/questionnaireWorkerRouting";
 import { getSharedNostrPool } from "../src/sharedNostrPool";
 import { SIMPLE_PUBLIC_RELAYS } from "../src/simpleVotingSession";
 import type { SignerService } from "../src/services/signerService";
@@ -86,6 +91,31 @@ function sleep(ms: number) {
   return new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function randomDelayMs(minMs: number, maxMs: number) {
+  const lower = Math.max(0, Math.floor(minMs));
+  const upper = Math.max(lower, Math.floor(maxMs));
+  if (upper <= lower) {
+    return lower;
+  }
+  return nodeCrypto.randomInt(lower, upper + 1);
+}
+
+async function runWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  task: (item: T, index: number) => Promise<void>,
+) {
+  const workerCount = Math.max(1, Math.min(Math.floor(concurrency), items.length));
+  let nextIndex = 0;
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      await task(items[index], index);
+    }
+  }));
 }
 
 async function withTimeout<T>(label: string, task: Promise<T>, timeoutMs: number): Promise<T> {
@@ -319,12 +349,16 @@ function attachWorkerLogCapture(child: ChildProcessWithoutNullStreams) {
 function watchWorkerExit(child: ChildProcessWithoutNullStreams) {
   let exitError: Error | null = null;
   let stopping = false;
-  child.once("exit", (code, signal) => {
-    if (stopping) {
-      return;
-    }
-    exitError = new Error(`Rust helper exited unexpectedly (code=${code}, signal=${signal})`);
-    process.stderr.write(`${exitError.message}\n`);
+  let expectedExitAllowed = false;
+  const exitPromise = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+    child.once("exit", (code, signal) => {
+      resolve({ code, signal });
+      if (stopping || (expectedExitAllowed && code === 0)) {
+        return;
+      }
+      exitError = new Error(`Rust helper exited unexpectedly (code=${code}, signal=${signal})`);
+      process.stderr.write(`${exitError.message}\n`);
+    });
   });
   return {
     assertRunning() {
@@ -334,6 +368,14 @@ function watchWorkerExit(child: ChildProcessWithoutNullStreams) {
     },
     markStopping() {
       stopping = true;
+    },
+    allowExpectedExit() {
+      expectedExitAllowed = true;
+    },
+    async waitForExpectedExit(timeoutMs: number) {
+      expectedExitAllowed = true;
+      const exit = await withTimeout("Rust helper completion exit", exitPromise, timeoutMs);
+      assert.equal(exit.code, 0, `expected Rust helper to exit cleanly after completion, signal=${exit.signal}`);
     },
   };
 }
@@ -395,6 +437,15 @@ async function main() {
   const configRetryLimit = envInt("OPTIONA_LIVE_RUST_HELPER_CONFIG_RETRY_LIMIT", 3);
   const requestRetryLimit = envInt("OPTIONA_LIVE_RUST_HELPER_REQUEST_RETRY_LIMIT", 3);
   const voterCount = envInt("OPTIONA_LIVE_RUST_HELPER_VOTER_COUNT", 1);
+  const delegationTtlMs = envInt("OPTIONA_LIVE_RUST_HELPER_DELEGATION_TTL_MS", 10 * 60_000);
+  const inviteConcurrency = envInt("OPTIONA_LIVE_RUST_HELPER_INVITE_CONCURRENCY", Math.min(5, voterCount));
+  const responseDelayMinMs = envInt("OPTIONA_LIVE_RUST_HELPER_RESPONSE_DELAY_MIN_MS", 5_000);
+  const responseDelayMaxMs = Math.max(
+    responseDelayMinMs,
+    envInt("OPTIONA_LIVE_RUST_HELPER_RESPONSE_DELAY_MAX_MS", 30_000),
+  );
+  const inviteBaseUrl = process.env.OPTIONA_LIVE_RUST_HELPER_INVITE_BASE_URL?.trim()
+    || "https://auditable-voting.pages.dev/";
   const requireRelayReadback = envBool("OPTIONA_LIVE_RUST_HELPER_REQUIRE_RELAY_READBACK", false);
   const workerBinary = resolveWorkerBinary();
   const workerStateDir = await fs.mkdtemp(path.join(os.tmpdir(), "auditable-voting-worker-live-"));
@@ -417,6 +468,8 @@ async function main() {
   process.stdout.write(`Audit proxy: ${worker.npub}\n`);
   process.stdout.write(`Voters: ${voters.length}\n`);
   process.stdout.write(`First voter: ${voters[0]?.npub ?? "none"}\n`);
+  process.stdout.write(`Bulk invite concurrency: ${Math.max(1, Math.min(inviteConcurrency, voters.length))}\n`);
+  process.stdout.write(`Voter response delay: ${Math.round(responseDelayMinMs / 1000)}-${Math.round(responseDelayMaxMs / 1000)}s\n`);
   process.stdout.write(`Binary: ${workerBinary}\n`);
   process.stdout.write(`State dir: ${workerStateDir}\n`);
   process.stdout.write(`Relays: ${relays.join(", ")}\n`);
@@ -464,6 +517,20 @@ async function main() {
     });
     assert(publishedState.successes > 0, "expected questionnaire state publish to succeed on at least one relay");
 
+    const publishedParticipantCount = await publishQuestionnaireParticipantCount({
+      coordinatorNsec: coordinator.nsec,
+      participantCount: {
+        schemaVersion: 1,
+        eventType: "questionnaire_participant_count",
+        questionnaireId,
+        expectedInviteeCount: voters.length,
+        createdAt: Math.floor(Date.now() / 1000),
+        coordinatorPubkey: coordinator.npub,
+      },
+      relays,
+    });
+    assert(publishedParticipantCount.successes > 0, "expected questionnaire participant count publish to succeed on at least one relay");
+
     const delegation = createWorkerDelegationCertificate({
       electionId: questionnaireId,
       coordinatorNpub: coordinator.npub,
@@ -472,10 +539,11 @@ async function main() {
         "issue_blind_tokens",
         "verify_public_submissions",
         "publish_submission_decisions",
+        "close_questionnaire",
         "publish_result_summary",
       ],
       controlRelays: relays,
-      expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+      expiresAt: new Date(Date.now() + delegationTtlMs).toISOString(),
     });
     const publishedDelegation = await publishWorkerDelegationCertificate({
       coordinatorNsec: coordinator.nsec,
@@ -563,6 +631,49 @@ async function main() {
     }
     assert(configApplied, `helper never applied election config after ${configRetryLimit} publish attempts`);
 
+    const issueBlindTokensWorker = buildIssueBlindTokensWorkerRouting({
+      delegationId: delegation.delegationId,
+      workerNpub: visibleDelegation?.workerNpub ?? worker.npub,
+      controlRelays: visibleDelegation?.controlRelays ?? relays,
+      expiresAt: delegation.expiresAt,
+    });
+    process.stdout.write(`Bulk inviting ${voters.length} voters before responses start...\n`);
+    let invitedCount = 0;
+    await runWithConcurrency(voters, inviteConcurrency, async (voter, index) => {
+      const draftInvite: ElectionInviteMessage = {
+        type: "election_invite",
+        schemaVersion: 1,
+        electionId: questionnaireId,
+        title: definition.title,
+        description: definition.description,
+        voteUrl: "",
+        invitedNpub: voter.npub,
+        coordinatorNpub: coordinator.npub,
+        blindSigningPublicKey,
+        issueBlindTokensWorker,
+        definition,
+        expiresAt: null,
+      };
+      const invite: ElectionInviteMessage = {
+        ...draftInvite,
+        voteUrl: buildInviteUrl({ baseUrl: inviteBaseUrl, invite: draftInvite }),
+      };
+      const publishedInvite = await publishOptionAInviteDm({
+        signer: signer(coordinator.npub),
+        invite,
+        fallbackNsec: coordinator.nsec,
+        relays,
+      });
+      assert(
+        publishedInvite.successes > 0,
+        `expected voter ${index + 1}/${voters.length} invite DM publish to succeed on at least one relay`,
+      );
+      invitedCount += 1;
+      if (invitedCount === voters.length || invitedCount % 10 === 0) {
+        process.stdout.write(`Bulk invited ${invitedCount}/${voters.length} voters\n`);
+      }
+    });
+
     const completedVoters: Array<{
       requestId: string;
       issuanceId: string | undefined;
@@ -577,6 +688,10 @@ async function main() {
 
     for (const [index, voter] of voters.entries()) {
       const voterLabel = `voter ${index + 1}/${voters.length}`;
+      const voterDelayMs = randomDelayMs(responseDelayMinMs, responseDelayMaxMs);
+      process.stdout.write(`Waiting ${Math.round(voterDelayMs / 1000)}s before ${voterLabel} responds\n`);
+      await sleep(voterDelayMs);
+      workerExit.assertRunning();
       const tokenSecret = nodeCrypto.randomBytes(32).toString("hex");
       const tokenCommitment = sha256Hex(tokenSecret);
       const blindTokenMessage = buildQuestionnaireBlindTokenSignedMessage({
@@ -732,6 +847,7 @@ async function main() {
       });
       process.stdout.write(`Completed ${voterLabel}: request=${request.requestId}, submission=${submissionId}\n`);
     }
+    workerExit.allowExpectedExit();
 
     const submissionIds = new Set(completedVoters.map((entry) => entry.submissionId));
     const publicResponses = await waitForValue(
@@ -908,6 +1024,7 @@ async function main() {
       assert(submissionDecisionCameFromRelayReadback, "submission decision required relay readback but only helper state confirmed success");
       assert(summaryCameFromRelayReadback, "result summary required relay readback but only helper state confirmed success");
     }
+    await workerExit.waitForExpectedExit(Math.max(30_000, intervalMs * 4));
 
     process.stdout.write("rust helper live smoke passed\n");
     process.stdout.write(`Voters completed: ${completedVoters.length}\n`);

@@ -544,14 +544,26 @@ export default function SimpleAuditorApp() {
     ? "Not published"
     : `${expectedInviteeCount} expected`;
   const responseCompletionText = expectedInviteeCount === null
-    ? "Unknown"
+    ? displayValidCount > 0
+      ? `${displayValidCount} accepted; expected count not published`
+      : "Expected count not published"
     : expectedInviteeCount > 0
       ? displayValidCount > expectedInviteeCount
         ? `${displayValidCount} accepted (${expectedInviteeCount} expected)`
         : `${displayValidCount}/${expectedInviteeCount} accepted (${Math.min(100, Math.max(0, (displayValidCount / expectedInviteeCount) * 100)).toFixed(1)}%)`
       : "No invitees expected";
-  const displayedQuestionSummaries = selectedResultSummary?.questionSummaries ?? liveQuestionSummaries;
+  const hasPublishedQuestionSummaries = (selectedResultSummary?.questionSummaries?.length ?? 0) > 0;
+  const displayedQuestionSummaries = hasPublishedQuestionSummaries
+    ? selectedResultSummary?.questionSummaries ?? []
+    : liveQuestionSummaries;
   const resultSummarySourceLabel = selectedResultSummary ? "Published result summary" : "Live verified submissions";
+  const publishedAtLabel = selectedResultSummary
+    ? "Result summary published at"
+    : "Questionnaire published at";
+  const publishedAtTime = selectedResultSummary?.createdAt
+    ?? selectedQuestionnaire?.createdAt
+    ?? selectedQuestionnaire?.resultPublishedAt
+    ?? 0;
   const selectedRoundPhaseLabel = selectedLiveStateEvent
     ? formatQuestionnaireStateEventLabel(selectedLiveStateEvent)
     : formatQuestionnaireStateLabel(selectedLiveState ?? selectedQuestionnaire?.state);
@@ -819,9 +831,9 @@ export default function SimpleAuditorApp() {
                   <p className='simple-voter-question'>{selectedQuestionnaire.questionnaireId}</p>
                 </div>
                 <div className='simple-auditor-summary-card'>
-                  <p className='simple-auditor-summary-label'>Published at</p>
+                  <p className='simple-auditor-summary-label'>{publishedAtLabel}</p>
                   <p className='simple-voter-question'>
-                    {formatQuestionnaireTime(Number(selectedResultSummary?.createdAt ?? selectedQuestionnaire.resultPublishedAt ?? 0))}
+                    {formatQuestionnaireTime(Number(publishedAtTime))}
                   </p>
                 </div>
               </div>
@@ -919,10 +931,16 @@ export default function SimpleAuditorApp() {
                   </div>
                   {!selectedResultSummary ? (
                     <p className='simple-voter-note'>No published result summary yet; showing live verified submissions found on public relays.</p>
+                  ) : !hasPublishedQuestionSummaries && liveQuestionSummaries.length > 0 ? (
+                    <p className='simple-voter-note'>Published result summary contains counts only; showing live per-question aggregates from verified submissions.</p>
                   ) : null}
                 </>
               ) : (
-                <p className='simple-voter-empty'>No published result summary or live verified submissions yet for this questionnaire.</p>
+                <p className='simple-voter-empty'>
+                  {selectedResultSummary
+                    ? "Published result summary contains no per-question aggregates, and no live answer payloads are available yet."
+                    : "No published result summary or live verified submissions yet for this questionnaire."}
+                </p>
               )}
             </>
           ) : (
