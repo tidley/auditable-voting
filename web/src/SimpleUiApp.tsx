@@ -279,6 +279,36 @@ function readLinkedQuestionnaireIdFromUrl() {
   return (params.get("q") ?? params.get("election_id") ?? params.get("questionnaire") ?? "").trim();
 }
 
+function readPrivateQuestionnaireInviteCodeFromUrl() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  return (new URLSearchParams(window.location.search).get("invite_code") ?? "").trim();
+}
+
+export function selectQuestionnaireVoterIdentity(input: {
+  privateInviteCode?: string;
+  signerNpub?: string;
+  voterKeypair?: { npub?: string; nsec?: string } | null;
+}) {
+  const hasPrivateInviteCode = Boolean(input.privateInviteCode?.trim());
+  const localNpub = input.voterKeypair?.npub?.trim() ?? "";
+  const localNsec = input.voterKeypair?.nsec ?? "";
+  const signerNpub = input.signerNpub?.trim() ?? "";
+  if (hasPrivateInviteCode) {
+    return {
+      activeVoterNpub: localNpub,
+      localVoterNsec: localNsec,
+      autoSignerLogin: false,
+    };
+  }
+  return {
+    activeVoterNpub: signerNpub || localNpub,
+    localVoterNsec: signerNpub ? "" : localNsec,
+    autoSignerLogin: Boolean(signerNpub),
+  };
+}
+
 async function verifyAnnouncedQuestionnaireIsReady(questionnaireId: string) {
   const [definitionFetch, stateFetch] = await Promise.all([
     fetchQuestionnaireEventsWithFallback({
@@ -315,6 +345,7 @@ export default function SimpleUiApp() {
   const [coordinatorScannerActive, setCoordinatorScannerActive] = useState(false);
   const [coordinatorScannerStatus, setCoordinatorScannerStatus] = useState<string | null>(null);
   const linkedQuestionnaireId = useMemo(() => readLinkedQuestionnaireIdFromUrl(), []);
+  const linkedPrivateInviteCode = useMemo(() => readPrivateQuestionnaireInviteCodeFromUrl(), []);
   const [announcedQuestionnaireIds, setAnnouncedQuestionnaireIds] = useState<string[]>(() => (
     linkedQuestionnaireId ? [linkedQuestionnaireId] : []
   ));
@@ -326,7 +357,14 @@ export default function SimpleUiApp() {
   const [identityStatus, setIdentityStatus] = useState<string | null>(null);
   const [signerNpub, setSignerNpub] = useState<string>("");
   const [signerStatus, setSignerStatus] = useState<string | null>(null);
-  const activeVoterNpub = signerNpub.trim() || voterKeypair?.npub?.trim() || "";
+  const questionnaireVoterIdentity = selectQuestionnaireVoterIdentity({
+    privateInviteCode: linkedPrivateInviteCode,
+    signerNpub,
+    voterKeypair,
+  });
+  const activeVoterNpub = questionnaireVoterIdentity.activeVoterNpub;
+  const questionnaireLocalVoterNsec = questionnaireVoterIdentity.localVoterNsec;
+  const questionnaireAutoSignerLogin = questionnaireVoterIdentity.autoSignerLogin;
   const [backupStatus, setBackupStatus] = useState<string | null>(null);
   const [storagePassphrase, setStoragePassphrase] = useState("");
   const [storageLocked, setStorageLocked] = useState(false);
@@ -2993,8 +3031,8 @@ export default function SimpleUiApp() {
               announcedQuestionnaireIds={readyAnnouncedQuestionnaireIds}
               optionAAnnouncedQuestionnaireIds={announcedQuestionnaireIds}
               localVoterNpub={activeVoterNpub}
-              localVoterNsec={signerNpub ? "" : (voterKeypair?.nsec ?? "")}
-              autoSignerLogin={Boolean(signerNpub.trim())}
+              localVoterNsec={questionnaireLocalVoterNsec}
+              autoSignerLogin={questionnaireAutoSignerLogin}
               optionARequestBlindBallotNonce={optionARequestBlindBallotNonce}
             />
             {isCourseFeedbackMode || hideLegacyLiveVotePanel || questionnaireModeActive ? null : (
