@@ -12,11 +12,14 @@ import { tryWriteClipboard } from "./clipboard";
 import SimpleQrPanel from "./SimpleQrPanel";
 
 type SimpleRole = "voter" | "coordinator" | "auditor";
-type GatewayAuthMode = "signer" | "nsec";
-type GatewaySignerChoice = "nip07" | "amber" | "manual";
 const GATEWAY_SIGNER_NPUB_STORAGE_KEY = "app:auditable-voting:gateway:signer_npub";
 const AMBER_FULLY_TRUST_HINT = "Change from `Approve basic actions` to `I fully trust this application` when Amber opens. This allows the application to fully coordinate.";
 const BUTTON_PRESS_FEEDBACK_MS = 1000;
+const ROLE_OPTIONS: Array<{ role: SimpleRole; label: string }> = [
+  { role: "auditor", label: "Observer" },
+  { role: "coordinator", label: "Coordinator" },
+  { role: "voter", label: "Voter" },
+];
 
 type SimpleAppShellProps = {
   initialRole?: SimpleRole;
@@ -69,19 +72,32 @@ function writeRoleToUrl(role: SimpleRole) {
   window.history.replaceState({}, "", url.toString());
 }
 
-export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShellProps) {
+function roleLabel(role: SimpleRole) {
+  return ROLE_OPTIONS.find((entry) => entry.role === role)?.label ?? "Observer";
+}
+
+function isMobileBrowser() {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+  return /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent || "");
+}
+
+export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShellProps) {
   const [role, setRole] = useState<SimpleRole>(() => readRoleFromUrl() ?? initialRole);
   const [roleSwitchMinimized, setRoleSwitchMinimized] = useState(true);
   const [showGateway, setShowGateway] = useState(() => !hasRoleInUrl() || shouldForceGatewayFromUrl());
-  const [gatewayRole, setGatewayRole] = useState<SimpleRole>(initialRole);
+  const [gatewayRole, setGatewayRole] = useState<SimpleRole>(() => readRoleFromUrl() ?? initialRole);
   const [gatewayNsec, setGatewayNsec] = useState("");
   const [gatewaySignerNpub, setGatewaySignerNpub] = useState("");
   const [gatewayStatus, setGatewayStatus] = useState<string | null>(null);
-  const [gatewayAuthMode, setGatewayAuthMode] = useState<GatewayAuthMode>("signer");
-  const [gatewaySignerChoice, setGatewaySignerChoice] = useState<GatewaySignerChoice>("nip07");
+  const [gatewayNsecOpen, setGatewayNsecOpen] = useState(false);
+  const [gatewayAdvancedOpen, setGatewayAdvancedOpen] = useState(false);
   const [gatewayNostrConnectUri, setGatewayNostrConnectUri] = useState("");
   const [gatewayNsecBunkerUri, setGatewayNsecBunkerUri] = useState("");
   const [gatewayShowConnectQr, setGatewayShowConnectQr] = useState(false);
+  const preferredSignerLabel = useMemo(() => (isMobileBrowser() ? "Amber" : "NOS2X-FOX"), []);
+  const preferredSignerIsAmber = preferredSignerLabel === "Amber";
 
   useEffect(() => {
     if (typeof document === "undefined") {
@@ -152,30 +168,12 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
     writeRoleToUrl(role);
   }, [role, showGateway]);
 
-  const roleTitle = useMemo(
-    () => (
-      role === "voter"
-        ? "Voter"
-        : role === "coordinator"
-          ? "Coordinator"
-          : "Observer"
-    ),
-    [role],
-  );
-  const gatewayRoleTitle = useMemo(
-    () => (
-      gatewayRole === "voter"
-        ? "Voter"
-        : gatewayRole === "coordinator"
-          ? "Coordinator"
-          : "Observer"
-    ),
-    [gatewayRole],
-  );
+  const roleTitle = useMemo(() => roleLabel(role), [role]);
+  const gatewayRoleTitle = useMemo(() => roleLabel(gatewayRole), [gatewayRole]);
   const gatewayContinueLabel = useMemo(() => {
-    const hasSignerIdentity = gatewayAuthMode === "signer" && gatewaySignerNpub.trim().length > 0;
+    const hasSignerIdentity = gatewaySignerNpub.trim().length > 0;
     return `${hasSignerIdentity ? "Login" : "Continue"} as ${gatewayRoleTitle}`;
-  }, [gatewayAuthMode, gatewayRoleTitle, gatewaySignerNpub]);
+  }, [gatewayRoleTitle, gatewaySignerNpub]);
 
   async function loginWithSigner() {
     try {
@@ -192,27 +190,42 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
         setRoleSwitchMinimized(true);
         setShowGateway(false);
       }
-      return true;
+      return npub;
     } catch (error) {
       if (error instanceof SignerServiceError) {
         setGatewayStatus(error.message);
-        return false;
+        return null;
       }
       setGatewayStatus("Signer login failed.");
-      return false;
+      return null;
     }
   }
 
-  async function runSignerLogin() {
-    if (gatewaySignerChoice === "amber") {
+  async function runSignerLogin(options?: { continueAfterLogin?: boolean }) {
+    if (preferredSignerIsAmber) {
       setGatewayStatus(AMBER_FULLY_TRUST_HINT);
-      const loggedIn = await loginWithSigner();
-      if (!loggedIn) {
+      const npub = await loginWithSigner();
+      if (!npub) {
         await prepareAmberConnectLinks();
+        return;
+      }
+      if (options?.continueAfterLogin) {
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY, npub);
+        }
+        setRole(gatewayRole);
+        setShowGateway(false);
       }
       return;
     }
-    await loginWithSigner();
+    const npub = await loginWithSigner();
+    if (npub && options?.continueAfterLogin) {
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY, npub);
+      }
+      setRole(gatewayRole);
+      setShowGateway(false);
+    }
   }
 
   async function continueFromGateway() {
@@ -257,6 +270,19 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
     }
   }
 
+  async function ensureAmberConnectLinks() {
+    if (gatewayNostrConnectUri.trim() && gatewayNsecBunkerUri.trim()) {
+      return {
+        nostrConnectUri: gatewayNostrConnectUri,
+        nsecBunkerUri: gatewayNsecBunkerUri,
+      };
+    }
+    const bundle = await createAmberConnectBundle();
+    setGatewayNostrConnectUri(bundle.nostrConnectUri);
+    setGatewayNsecBunkerUri(bundle.nsecBunkerUri);
+    return bundle;
+  }
+
   async function copyGatewayValue(value: string, label: string) {
     if (!value.trim()) {
       return;
@@ -265,83 +291,84 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
     setGatewayStatus(copied ? `${label} copied.` : `Could not copy ${label.toLowerCase()}.`);
   }
 
+  async function copyPreparedGatewayValue(kind: "nostr-connect" | "nsec-bunker") {
+    try {
+      const bundle = await ensureAmberConnectLinks();
+      const value = kind === "nostr-connect" ? bundle.nostrConnectUri : bundle.nsecBunkerUri;
+      await copyGatewayValue(value, kind === "nostr-connect" ? "Nostr Connect URL" : "nsec-bunker URL");
+    } catch (error) {
+      setGatewayStatus(error instanceof Error && error.message.trim() ? error.message : "Could not prepare Nostr Connect links.");
+    }
+  }
+
   if (showGateway) {
     return (
       <div className='simple-app-shell'>
         <section className='simple-login-gateway' aria-label='Login and role selection'>
           <h1 className='simple-login-title'>Auditable Voting</h1>
-          <p className='simple-login-subtitle'>Choose a role directly, or login first via signer or nsec.</p>
 
-          <div className='simple-role-switch simple-role-switch-login simple-role-switch-login-auth' role='tablist' aria-label='Authentication method'>
-            <button
-              type='button'
-              role='tab'
-              aria-selected={gatewayAuthMode === "signer"}
-              className={`simple-role-switch-button${gatewayAuthMode === "signer" ? " is-active" : ""}`}
-              onClick={() => setGatewayAuthMode("signer")}
-            >
-              Signer
-            </button>
-            <button
-              type='button'
-              role='tab'
-              aria-selected={gatewayAuthMode === "nsec"}
-              className={`simple-role-switch-button${gatewayAuthMode === "nsec" ? " is-active" : ""}`}
-              onClick={() => setGatewayAuthMode("nsec")}
-            >
-              nsec
+          <label className='simple-voter-label'>Select role</label>
+          <div className='simple-role-switch simple-role-switch-login' role='tablist' aria-label='Role selection'>
+            {ROLE_OPTIONS.map((option) => (
+              <button
+                key={option.role}
+                type='button'
+                role='tab'
+                aria-selected={gatewayRole === option.role}
+                className={`simple-role-switch-button${gatewayRole === option.role ? " is-active" : ""}`}
+                onClick={() => setGatewayRole(option.role)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+
+          <div className='simple-login-actions'>
+            <button type='button' className='simple-voter-primary' onClick={() => void continueFromGateway()}>
+              {gatewayContinueLabel}
             </button>
           </div>
 
-          {gatewayAuthMode === "signer" ? (
-            <section className='simple-voter-section'>
-              <label className='simple-voter-label'>Select signer</label>
-              <div className='simple-role-switch simple-role-switch-login' role='tablist' aria-label='Signer selection'>
-                <button
-                  type='button'
-                  role='tab'
-                  aria-selected={gatewaySignerChoice === "nip07"}
-                  className={`simple-role-switch-button${gatewaySignerChoice === "nip07" ? " is-active" : ""}`}
-                  onClick={() => setGatewaySignerChoice("nip07")}
-                >
-                  NOS2X-FOX
-                </button>
-                <button
-                  type='button'
-                  role='tab'
-                  aria-selected={gatewaySignerChoice === "amber"}
-                  className={`simple-role-switch-button${gatewaySignerChoice === "amber" ? " is-active" : ""}`}
-                  onClick={() => setGatewaySignerChoice("amber")}
-                >
-                  Amber
-                </button>
-                <button
-                  type='button'
-                  role='tab'
-                  aria-selected={gatewaySignerChoice === "manual"}
-                  className={`simple-role-switch-button${gatewaySignerChoice === "manual" ? " is-active" : ""}`}
-                  onClick={() => setGatewaySignerChoice("manual")}
-                >
-                  Manual
-                </button>
-              </div>
-            </section>
-          ) : null}
-
-          {gatewayAuthMode === "signer" && gatewaySignerChoice !== "manual" ? (
-            <div className='simple-login-actions'>
-              <button type='button' className='simple-voter-secondary' onClick={() => void runSignerLogin()}>
-                {gatewaySignerChoice === "amber" ? "Log in with Amber" : "Log in with NOS2X-FOX"}
+          <div className='simple-login-existing'>
+            <p className='simple-login-existing-title'>Or login using existing profile:</p>
+            <div className='simple-login-actions simple-login-existing-actions'>
+              <button
+                type='button'
+                className='simple-voter-secondary'
+                onClick={() => void runSignerLogin({ continueAfterLogin: true })}
+              >
+                {preferredSignerLabel}
+              </button>
+              <button
+                type='button'
+                className='simple-voter-secondary'
+                aria-expanded={gatewayNsecOpen}
+                aria-controls='gateway-nsec-panel'
+                onClick={() => {
+                  setGatewayNsecOpen((current) => !current);
+                  setGatewayAdvancedOpen(false);
+                }}
+              >
+                Enter nsec
+              </button>
+              <button
+                type='button'
+                className='simple-voter-secondary'
+                aria-expanded={gatewayAdvancedOpen}
+                aria-controls='gateway-advanced-panel'
+                onClick={() => {
+                  setGatewayAdvancedOpen((current) => !current);
+                  setGatewayNsecOpen(false);
+                }}
+              >
+                Advanced
               </button>
             </div>
-          ) : null}
-          {gatewayAuthMode === "signer" && gatewaySignerChoice === "amber" ? (
-            <p className='simple-voter-note'>{AMBER_FULLY_TRUST_HINT}</p>
-          ) : null}
+          </div>
 
-          {gatewayAuthMode === "nsec" ? (
-            <>
-              <label className='simple-voter-label' htmlFor='gateway-nsec'>Login via nsec</label>
+          {gatewayNsecOpen ? (
+            <section id='gateway-nsec-panel' className='simple-login-panel' aria-label='nsec login'>
+              <label className='simple-voter-label' htmlFor='gateway-nsec'>Enter nsec</label>
               <input
                 id='gateway-nsec'
                 className='simple-voter-input'
@@ -352,36 +379,37 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
                 autoCapitalize='off'
                 autoCorrect='off'
               />
-            </>
-          ) : null}
-
-          {gatewayAuthMode === "signer" && gatewaySignerChoice === "manual" ? (
-            <>
               <div className='simple-login-actions'>
-                <button
-                  type='button'
-                  className='simple-voter-secondary'
-                  onClick={() => void copyGatewayValue(gatewayNostrConnectUri, "Nostr Connect URL")}
-                  disabled={!gatewayNostrConnectUri.trim()}
-                >
-                  Copy Nostr Connect URL
-                </button>
-                <button
-                  type='button'
-                  className='simple-voter-secondary'
-                  onClick={() => void copyGatewayValue(gatewayNsecBunkerUri, "nsecbunker URL")}
-                  disabled={!gatewayNsecBunkerUri.trim()}
-                >
-                  Copy nsecbunker URL
+                <button type='button' className='simple-voter-primary' onClick={() => void continueFromGateway()}>
+                  Continue with nsec
                 </button>
               </div>
-              <div className='simple-login-actions'>
+            </section>
+          ) : null}
+
+          {gatewayAdvancedOpen ? (
+            <section id='gateway-advanced-panel' className='simple-login-panel' aria-label='Advanced signer options'>
+              <div className='simple-login-actions simple-login-advanced-actions'>
+                <button
+                  type='button'
+                  className='simple-voter-secondary'
+                  onClick={() => void copyPreparedGatewayValue("nostr-connect")}
+                >
+                  Copy nostr-connect URL
+                </button>
+                <button
+                  type='button'
+                  className='simple-voter-secondary'
+                  onClick={() => void copyPreparedGatewayValue("nsec-bunker")}
+                >
+                  Copy nsec-bunker URL
+                </button>
                 <button
                   type='button'
                   className='simple-voter-secondary'
                   onClick={() => void prepareAmberConnectLinks()}
                 >
-                  Show Nostr Connect QR
+                  Show nostr-connect QR
                 </button>
               </div>
               {gatewaySignerNpub ? <p className='simple-voter-note'>Signer: {gatewaySignerNpub}</p> : null}
@@ -390,56 +418,12 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
                   value={gatewayNostrConnectUri}
                   title='Nostr Connect URL'
                   description='Scan in Amber or copy this URL directly.'
-                  copyLabel='Copy Nostr Connect URL'
+                  copyLabel='Copy nostr-connect URL'
                   downloadFilename='nostr-connect-qr.png'
                 />
               ) : null}
-              {gatewayNsecBunkerUri.trim() ? (
-                <p className='simple-voter-note'>
-                  Amber-compatible nsecbunker URL:
-                  {" "}
-                  <code>{gatewayNsecBunkerUri}</code>
-                </p>
-              ) : null}
-            </>
+            </section>
           ) : null}
-
-          <label className='simple-voter-label'>Select role</label>
-          <div className='simple-role-switch simple-role-switch-login' role='tablist' aria-label='Role selection'>
-            <button
-              type='button'
-              role='tab'
-              aria-selected={gatewayRole === "voter"}
-              className={`simple-role-switch-button${gatewayRole === "voter" ? " is-active" : ""}`}
-              onClick={() => setGatewayRole("voter")}
-            >
-              Voter
-            </button>
-            <button
-              type='button'
-              role='tab'
-              aria-selected={gatewayRole === "coordinator"}
-              className={`simple-role-switch-button${gatewayRole === "coordinator" ? " is-active" : ""}`}
-              onClick={() => setGatewayRole("coordinator")}
-            >
-              Coordinator
-            </button>
-            <button
-              type='button'
-              role='tab'
-              aria-selected={gatewayRole === "auditor"}
-              className={`simple-role-switch-button${gatewayRole === "auditor" ? " is-active" : ""}`}
-              onClick={() => setGatewayRole("auditor")}
-            >
-              Observer
-            </button>
-          </div>
-
-          <div className='simple-login-actions'>
-            <button type='button' className='simple-voter-primary' onClick={() => void continueFromGateway()}>
-              {gatewayContinueLabel}
-            </button>
-          </div>
           {gatewayStatus ? <p className='simple-voter-note'>{gatewayStatus}</p> : null}
         </section>
         <footer className='simple-app-version' aria-label='App version'>
@@ -508,33 +492,18 @@ export default function SimpleAppShell({ initialRole = "voter" }: SimpleAppShell
             role='tablist'
             aria-label='Simple role switch'
           >
-            <button
-              type='button'
-              role='tab'
-              aria-selected={role === 'voter'}
-              className={`simple-role-switch-button${role === 'voter' ? ' is-active' : ''}`}
-              onClick={() => handleRoleSelect('voter')}
-            >
-              Voter
-            </button>
-            <button
-              type='button'
-              role='tab'
-              aria-selected={role === 'coordinator'}
-              className={`simple-role-switch-button${role === 'coordinator' ? ' is-active' : ''}`}
-              onClick={() => handleRoleSelect('coordinator')}
-            >
-              Coordinator
-            </button>
-            <button
-              type='button'
-              role='tab'
-              aria-selected={role === 'auditor'}
-              className={`simple-role-switch-button${role === 'auditor' ? ' is-active' : ''}`}
-              onClick={() => handleRoleSelect('auditor')}
-            >
-              Observer
-            </button>
+            {ROLE_OPTIONS.map((option) => (
+              <button
+                key={option.role}
+                type='button'
+                role='tab'
+                aria-selected={role === option.role}
+                className={`simple-role-switch-button${role === option.role ? ' is-active' : ''}`}
+                onClick={() => handleRoleSelect(option.role)}
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
         ) : null}
       </div>

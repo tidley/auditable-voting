@@ -41,7 +41,7 @@ The main goals are:
 
 ## Quick Start: Run an Auditable Vote in the Browser
 
-This is the practical browser-based flow. Start as the coordinator, then use a separate browser profile, private window, or second device for the voter so each role has its own local identity.
+This is the practical browser-based flow. The root landing page defaults to **Observer** for public verification; choose **Coordinator** when setting up a questionnaire, then use a separate browser profile, private window, or second device for the voter so each role has its own local identity.
 
 ### 1. Coordinator builds the questionnaire
 

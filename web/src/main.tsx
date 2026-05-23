@@ -11,6 +11,6 @@ installDynamicImportRecovery();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <SimpleAppShell initialRole="voter" />
+    <SimpleAppShell initialRole="auditor" />
   </React.StrictMode>
 );

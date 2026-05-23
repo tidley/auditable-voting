@@ -541,6 +541,36 @@ code {
   gap: 10px;
 }
 
+.simple-login-existing {
+  display: grid;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #1e293b;
+}
+
+.simple-login-existing-title {
+  margin: 0;
+  color: #cbd5e1;
+  font-weight: 700;
+  text-align: center;
+}
+
+.simple-login-existing-actions,
+.simple-login-advanced-actions {
+  align-items: stretch;
+}
+
+.simple-login-existing-actions > button,
+.simple-login-advanced-actions > button {
+  min-width: 140px;
+}
+
+.simple-login-panel {
+  display: grid;
+  gap: 10px;
+  padding-top: 4px;
+}
+
 .simple-role-switch-login {
   width: 100%;
 }

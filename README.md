@@ -37,7 +37,7 @@ auditable-voting/
 
 Key web routes:
 
-- `/` - main app shell
+- `/` - main app shell, defaulting to Observer
 - `/vote.html` - voter entry point
 - `/dashboard.html` - coordinator and auditor dashboard
 - `/simple.html` - simplified voter flow
