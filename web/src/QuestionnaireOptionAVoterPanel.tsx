@@ -392,7 +392,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           }
 
           if (props.localVoterNsec?.trim()) {
-            runtime.refreshIssuanceAndAcceptance(restartSubscriptions ? { restartSubscriptions: true } : undefined);
+            // Automatic long-polling must not churn Firefox's relay subscriptions.
+            // Explicit refresh/resend actions pass forceWhenHidden and can still re-arm them.
+            const shouldRestartLocalSubscriptions = restartSubscriptions && forceWhenHidden;
+            runtime.refreshIssuanceAndAcceptance(shouldRestartLocalSubscriptions ? { restartSubscriptions: true } : undefined);
           } else {
             if (restartSubscriptions && mode === "restart_only") {
               recoverSignerBackedBallotWait("restart_only");
@@ -512,6 +515,16 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     bearerInviteBootstrapForRef.current[key] = true;
     let cancelled = false;
     let retryTimeoutId: number | null = null;
+    const schedulePrivateInviteRetry = (message: string) => {
+      delete bearerInviteBootstrapForRef.current[key];
+      if (cancelled) {
+        return;
+      }
+      setStatus(message);
+      retryTimeoutId = window.setTimeout(() => {
+        setPrivateInviteBootstrapRetryNonce((value) => value + 1);
+      }, 3000);
+    };
     void (async () => {
       try {
         const publicInvite = await buildPublicQuestionnaireInvite(localVoterNpub);
@@ -519,12 +532,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           || inviteContext.coordinatorNpub?.trim()
           || "";
         if (cancelled || !coordinatorNpub) {
-          delete bearerInviteBootstrapForRef.current[key];
           if (!cancelled) {
-            setStatus("Looking up questionnaire metadata before requesting a ballot...");
-            retryTimeoutId = window.setTimeout(() => {
-              setPrivateInviteBootstrapRetryNonce((value) => value + 1);
-            }, 1500);
+            schedulePrivateInviteRetry("Looking up questionnaire metadata before requesting a ballot...");
           }
           return;
         }
@@ -567,6 +576,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         setStatus("Opened " + title + " from private invite code. Requesting ballot...");
         setRefreshNonce((value) => value + 1);
         if (autoRequestInFlightForRef.current[requestKey]) {
+          schedulePrivateInviteRetry("Opened " + title + " from private invite code. Waiting to request ballot...");
           return;
         }
         autoRequestInFlightForRef.current[requestKey] = true;
@@ -586,9 +596,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           delete autoRequestInFlightForRef.current[requestKey];
         }
       } catch (error) {
-        delete bearerInviteBootstrapForRef.current[key];
         if (!cancelled) {
-          setStatus(error instanceof Error ? error.message : "Could not open private invite code.");
+          const message = error instanceof Error ? error.message : "Could not open private invite code.";
+          schedulePrivateInviteRetry(message);
         }
       }
     })();
@@ -651,7 +661,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           return;
         }
         try {
-          queueBallotWaitRefresh({ restartSubscriptions: true, mode: "lifecycle" });
+          queueBallotWaitRefresh({ mode: "lifecycle" });
         } catch {
           // Keep polling best-effort; explicit actions surface errors.
         } finally {
@@ -718,6 +728,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
 
   useEffect(() => {
     if (!runtime || !snapshot?.loginVerified || !snapshot.blindRequestSent || snapshot.credentialReady || snapshot.submission) {
+      return;
+    }
+    if (props.localVoterNsec?.trim()) {
       return;
     }
     let cancelled = false;
@@ -1371,6 +1384,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     if (!runtime || !snapshot || !snapshot.loginVerified) {
       return;
     }
+    if (inviteContext.inviteCode) {
+      return;
+    }
     if (snapshot.blindRequestSent || snapshot.credentialReady || snapshot.submission) {
       return;
     }
@@ -1863,7 +1879,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                     <input
                       type='checkbox'
                       checked={Boolean(encryptFreeTextByQuestionId[question.questionId])}
-                      disabled={!coordinatorNpub}
                       onChange={(event) => {
                         const checked = event.target.checked;
                         setEncryptFreeTextByQuestionId((current) => ({

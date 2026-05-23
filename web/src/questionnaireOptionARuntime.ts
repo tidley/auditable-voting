@@ -1490,7 +1490,8 @@ export class QuestionnaireOptionAVoterRuntime {
       }
     }
 
-    let next = this.state;
+    const previousState = this.state;
+    let next = previousState;
     if (next.blindRequest) {
       const issuance = readBlindIssuance(next.blindRequest.requestId);
       if (issuance) {
@@ -1530,9 +1531,11 @@ export class QuestionnaireOptionAVoterRuntime {
         }
       }
     }
-    this.state = next;
-    saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
-    void this.publishVoterStateSelfDm({ reason: "refresh_issuance_acceptance" });
+    if (next !== previousState) {
+      this.state = next;
+      saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
+      void this.publishVoterStateSelfDm({ reason: "refresh_issuance_acceptance" });
+    }
     return this.state;
   }
 

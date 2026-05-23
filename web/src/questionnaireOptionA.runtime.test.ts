@@ -24,6 +24,7 @@ import {
   publishOptionABallotSubmissionDm,
   publishOptionABlindIssuanceDm,
   publishOptionABlindRequestDm,
+  publishOptionAVoterStateDm,
 } from "./questionnaireOptionABlindDm";
 import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import {
@@ -836,6 +837,30 @@ describe("questionnaireOptionARuntime", () => {
     expect(voter.getSnapshot()?.coordinatorNpub).toBe(coordinatorNpub);
     await coordinator.processPendingBlindRequests();
     expect(coordinator.getSnapshot()?.bearerInviteCodes[inviteCodeHash]?.redeemedNpub).toBe(privateCodeNpub);
+  });
+
+  it("does not republish unchanged voter state during credential wait refresh", async () => {
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+    coordinator.addWhitelistNpub(voterNpub);
+    const sentInvite = await coordinator.sendInvite(voterNpub, {
+      title: "Runtime",
+      description: "Test",
+      voteUrl: "https://example.org/vote",
+    });
+
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionId);
+    await voter.loginWithSigner(sentInvite.invite);
+    await voter.requestBlindBallot({ forceResend: true });
+    await Promise.resolve();
+    await Promise.resolve();
+    vi.mocked(publishOptionAVoterStateDm).mockClear();
+
+    const before = voter.getSnapshot();
+    const refreshed = voter.refreshIssuanceAndAcceptance();
+
+    expect(refreshed).toBe(before);
+    expect(publishOptionAVoterStateDm).not.toHaveBeenCalled();
   });
 
   it("binds an invite to a local ephemeral voter identity when explicitly allowed", async () => {
