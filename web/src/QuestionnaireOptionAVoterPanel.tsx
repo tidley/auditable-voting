@@ -498,8 +498,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       return;
     }
     const localVoterNpub = props.localVoterNpub?.trim() ?? "";
-    const hasLocalSecretKey = Boolean(props.localVoterNsec?.trim());
-    if (!localVoterNpub || (props.autoSignerLogin && !hasLocalSecretKey)) {
+    if (!localVoterNpub) {
       return;
     }
     const targetElectionId = electionId.trim() || inviteContext.electionId?.trim();
@@ -532,13 +531,26 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         if (publicInvite) {
           publishInviteToMailbox(publicInvite);
         }
-        const next = runtime.bootstrapWithLocalIdentity({
-          invitedNpub: localVoterNpub,
-          coordinatorNpub,
-          invite: publicInvite,
-          allowInviteRecipientMismatch: true,
-          allowInviteMissing: true,
-        });
+        let next: VoterElectionLocalState;
+        try {
+          next = runtime.bootstrapWithLocalIdentity({
+            invitedNpub: localVoterNpub,
+            coordinatorNpub,
+            invite: publicInvite,
+            allowInviteRecipientMismatch: true,
+            allowInviteMissing: true,
+          });
+        } catch (error) {
+          if (!(error instanceof OptionARuntimeError && error.code === "invite_mismatch")) {
+            throw error;
+          }
+          next = runtime.bootstrapWithLocalIdentity({
+            invitedNpub: localVoterNpub,
+            coordinatorNpub,
+            invite: null,
+            allowInviteMissing: true,
+          });
+        }
         if (cancelled) {
           return;
         }
@@ -593,7 +605,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     inviteContext.coordinatorNpub,
     privateInviteBootstrapRetryNonce,
     props.localVoterNpub,
-    props.localVoterNsec,
     props.autoSignerLogin,
     electionId,
     latestAnnouncedQuestionnaireId,
@@ -1121,7 +1132,20 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         }
 
         const voterRuntime = new QuestionnaireOptionAVoterRuntime(createVoterSignerService(props.localVoterNsec), preferredInvite.electionId, props.localVoterNsec);
-        const next = await voterRuntime.loginWithSigner(preferredInvite);
+        let next: VoterElectionLocalState;
+        try {
+          next = await voterRuntime.loginWithSigner(preferredInvite);
+        } catch (error) {
+          if (!(inviteContext.inviteCode && publicQuestionnaireInvite && error instanceof OptionARuntimeError && error.code === "invite_mismatch")) {
+            throw error;
+          }
+          next = voterRuntime.bootstrapWithLocalIdentity({
+            invitedNpub: signerNpub,
+            coordinatorNpub: publicQuestionnaireInvite.coordinatorNpub,
+            invite: null,
+            allowInviteMissing: true,
+          });
+        }
         setElectionId(preferredInvite.electionId);
         setRuntime(voterRuntime);
         setSignedInNpub(next.invitedNpub);
@@ -1137,7 +1161,20 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         return;
       }
 
-      const next = await runtime.loginWithSigner(inviteContext.invite ?? publicQuestionnaireInvite);
+      let next: VoterElectionLocalState;
+      try {
+        next = await runtime.loginWithSigner(inviteContext.invite ?? publicQuestionnaireInvite);
+      } catch (error) {
+        if (!(inviteContext.inviteCode && publicQuestionnaireInvite && error instanceof OptionARuntimeError && error.code === "invite_mismatch")) {
+          throw error;
+        }
+        next = runtime.bootstrapWithLocalIdentity({
+          invitedNpub: signerNpub,
+          coordinatorNpub: publicQuestionnaireInvite.coordinatorNpub,
+          invite: null,
+          allowInviteMissing: true,
+        });
+      }
       setSignedInNpub(next.invitedNpub);
       const invites = publicQuestionnaireInvite
         ? []
