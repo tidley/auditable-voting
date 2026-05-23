@@ -873,6 +873,22 @@ code {
   font-weight: 700;
 }
 
+.simple-questionnaire-type-option {
+  min-height: 40px;
+  transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease, color 160ms ease;
+}
+
+.simple-questionnaire-type-option.is-active {
+  border-color: #93c5fd;
+  background: #2563eb;
+  color: #f8fafc;
+  box-shadow: 0 0 0 2px rgba(147, 197, 253, 0.24), inset 0 -3px 0 rgba(191, 219, 254, 0.9);
+}
+
+.simple-questionnaire-type-option.is-active:hover {
+  background: #1d4ed8;
+}
+
 .simple-questionnaire-responses-section {
   display: grid;
   gap: 12px;
@@ -1828,6 +1844,72 @@ code {
 
 .simple-voter-field-stack-tight {
   margin-bottom: 0;
+}
+
+.simple-invite-share-panel {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #0b1426;
+}
+
+.simple-invite-share-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.simple-invite-link-preview {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #25344c;
+  border-radius: 6px;
+  background: #020617;
+  color: #bfdbfe;
+  font-family: "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.simple-invite-share-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.simple-private-invite-list {
+  gap: 0;
+}
+
+.simple-vote-status-list li.simple-private-invite-row {
+  display: grid;
+  align-items: start;
+  gap: 12px;
+  padding: 16px 0 18px;
+  border-top: 1px solid #25344c;
+}
+
+.simple-private-invite-list li.simple-private-invite-row:first-child {
+  padding-top: 4px;
+  border-top: 0;
+}
+
+.simple-private-invite-list li.simple-private-invite-row:last-child {
+  padding-bottom: 4px;
+}
+
+.simple-private-invite-row-head,
+.simple-private-invite-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.simple-private-invite-note {
+  margin: 0;
 }
 
 .simple-voter-field-head {
@@ -2946,6 +3028,7 @@ code {
 
 .simple-vote-status-list li {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   font-size: 1.08rem;
@@ -2979,6 +3062,67 @@ code {
 .simple-vote-status-list li.is-pending .simple-vote-status-icon {
   color: #94a3b8;
   border-color: #475569;
+}
+
+.simple-status-indicator {
+  color: #cbd5e1;
+  background: rgba(15, 23, 42, 0.72);
+  border-color: #475569;
+  font-size: 0.95rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.simple-status-indicator.is-private-invite-available,
+.simple-status-indicator.is-voter-invited {
+  color: #075985;
+  background: #7dd3fc;
+  border-color: #7dd3fc;
+}
+
+.simple-status-indicator.is-private-invite-redeemed,
+.simple-status-indicator.is-voter-accepted {
+  color: #052e16;
+  background: #4ade80;
+  border-color: #4ade80;
+}
+
+.simple-status-indicator.is-private-invite-revoked,
+.simple-status-indicator.is-voter-rejected {
+  color: #450a0a;
+  background: #f87171;
+  border-color: #f87171;
+}
+
+.simple-status-indicator.is-voter-whitelisted {
+  color: #e2e8f0;
+  background: #334155;
+  border-color: #64748b;
+}
+
+.simple-status-indicator.is-voter-claimed {
+  color: #083344;
+  background: #67e8f9;
+  border-color: #67e8f9;
+}
+
+.simple-status-indicator.is-voter-requested,
+.simple-status-indicator.is-voter-pending {
+  color: #451a03;
+  background: #fbbf24;
+  border-color: #fbbf24;
+}
+
+.simple-status-indicator.is-voter-issued {
+  color: #1e1b4b;
+  background: #a5b4fc;
+  border-color: #a5b4fc;
+}
+
+.simple-status-indicator.is-voter-received {
+  color: #431407;
+  background: #fb923c;
+  border-color: #fb923c;
 }
 
 .simple-imported-contact-list {

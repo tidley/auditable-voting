@@ -29,6 +29,7 @@ import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition }
 import {
   buildQuestionnaireBlindTokenSignedMessage,
 } from "./questionnaireBlindToken";
+import { hashQuestionnaireInviteCode } from "./questionnaireInviteCode";
 import {
   signBlindedQuestionnaireToken,
   toQuestionnaireBlindPublicKey,
@@ -781,6 +782,60 @@ describe("questionnaireOptionARuntime", () => {
     await coordinator.authorizeRequester(otherNpub);
     voter.refreshIssuanceAndAcceptance();
     expect(voter.getSnapshot()?.credentialReady).toBe(true);
+  });
+
+  it("redeems a private invite code into the first requester whitelist entry", async () => {
+    const inviteCode = "private-invite-code-1";
+    const inviteCodeHash = await hashQuestionnaireInviteCode(inviteCode);
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+    coordinator.addBearerInviteCode(inviteCodeHash);
+
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(otherNpub), electionId);
+    voter.setBearerInviteCode(inviteCode);
+    await voter.loginWithSigner(null);
+    voter.updateDraftResponses([{ questionId: "q1", type: "yes_no", answer: "yes" }]);
+    await voter.requestBlindBallot();
+    await coordinator.processPendingBlindRequests();
+
+    const redeemed = coordinator.getSnapshot()?.bearerInviteCodes[inviteCodeHash];
+    expect(redeemed?.state).toBe("redeemed");
+    expect(redeemed?.redeemedNpub).toBe(otherNpub);
+    expect(coordinator.getSnapshot()?.whitelist[otherNpub]?.inviteCodeHash).toBe(inviteCodeHash);
+    expect(coordinator.getPendingAuthorizations().some((entry) => entry.invitedNpub === otherNpub)).toBe(false);
+    voter.refreshIssuanceAndAcceptance();
+    expect(voter.getSnapshot()?.credentialReady).toBe(true);
+
+    const secondNpub = "npub1secondcoderuntime0000000000000000000000000000000";
+    const secondVoter = new QuestionnaireOptionAVoterRuntime(signer(secondNpub), electionId);
+    secondVoter.setBearerInviteCode(inviteCode);
+    await secondVoter.loginWithSigner(null);
+    await secondVoter.requestBlindBallot();
+    await coordinator.processPendingBlindRequests();
+    expect(coordinator.getSnapshot()?.whitelist[secondNpub]).toBeUndefined();
+    expect(coordinator.getPendingAuthorizations().some((entry) => entry.invitedNpub === secondNpub)).toBe(true);
+  });
+
+  it("recovers coordinator routing from the public summary for a private invite code request", async () => {
+    const inviteCode = "private-invite-code-routing";
+    const inviteCodeHash = await hashQuestionnaireInviteCode(inviteCode);
+    const privateCodeNpub = "npub1privatecoderuntime00000000000000000000000000000";
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(privateCodeNpub), electionId);
+    voter.setBearerInviteCode(inviteCode);
+    const bootstrapped = voter.bootstrapWithLocalIdentity({
+      invitedNpub: privateCodeNpub,
+      allowInviteMissing: true,
+    });
+    expect(bootstrapped.coordinatorNpub).toBe("");
+
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+    coordinator.addBearerInviteCode(inviteCodeHash);
+
+    await voter.requestBlindBallot();
+    expect(voter.getSnapshot()?.coordinatorNpub).toBe(coordinatorNpub);
+    await coordinator.processPendingBlindRequests();
+    expect(coordinator.getSnapshot()?.bearerInviteCodes[inviteCodeHash]?.redeemedNpub).toBe(privateCodeNpub);
   });
 
   it("binds an invite to a local ephemeral voter identity when explicitly allowed", async () => {

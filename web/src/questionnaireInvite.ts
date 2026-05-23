@@ -1,16 +1,20 @@
 import type { ElectionInviteMessage } from "./questionnaireOptionA";
+import { normaliseQuestionnaireInviteCode } from "./questionnaireInviteCode";
 
 const DEFAULT_INVITE_BASE_URL = "https://example.invalid/";
 
 export function parseInviteFromUrl(search = typeof window !== "undefined" ? window.location.search : ""): {
   electionId: string | null;
   invite: ElectionInviteMessage | null;
+  inviteCode: string | null;
+  coordinatorNpub: string | null;
 } {
   const params = new URLSearchParams(search);
   const electionId = (params.get("q") ?? params.get("election_id") ?? params.get("questionnaire") ?? "").trim() || null;
   const coordinatorNpub = (params.get("coordinator") ?? "").trim();
   const invitedNpub = (params.get("invited") ?? "").trim();
   const encodedInvite = (params.get("invite") ?? "").trim();
+  const inviteCode = normaliseQuestionnaireInviteCode(params.get("invite_code") ?? params.get("code"));
   if (!encodedInvite) {
     if (electionId && coordinatorNpub && invitedNpub) {
       const voteUrl = typeof window !== "undefined"
@@ -30,9 +34,11 @@ export function parseInviteFromUrl(search = typeof window !== "undefined" ? wind
           definition: null,
           expiresAt: null,
         },
+        inviteCode: inviteCode || null,
+        coordinatorNpub: coordinatorNpub || null,
       };
     }
-    return { electionId, invite: null };
+    return { electionId, invite: null, inviteCode: inviteCode || null, coordinatorNpub: coordinatorNpub || null };
   }
 
   try {
@@ -45,11 +51,11 @@ export function parseInviteFromUrl(search = typeof window !== "undefined" ? wind
       || typeof parsed?.invitedNpub !== "string"
       || typeof parsed?.coordinatorNpub !== "string"
     ) {
-      return { electionId, invite: null };
+      return { electionId, invite: null, inviteCode: inviteCode || null, coordinatorNpub: coordinatorNpub || null };
     }
-    return { electionId: parsed.electionId, invite: parsed };
+    return { electionId: parsed.electionId, invite: parsed, inviteCode: inviteCode || null, coordinatorNpub: parsed.coordinatorNpub || coordinatorNpub || null };
   } catch {
-    return { electionId, invite: null };
+    return { electionId, invite: null, inviteCode: inviteCode || null, coordinatorNpub: coordinatorNpub || null };
   }
 }
 
@@ -57,10 +63,38 @@ export function buildInviteUrl(input: {
   baseUrl?: string;
   invite: ElectionInviteMessage;
 }) {
+  return buildQuestionnaireInviteUrl({
+    baseUrl: input.baseUrl,
+    electionId: input.invite.electionId,
+  });
+}
+
+export function buildQuestionnaireInviteUrl(input: {
+  baseUrl?: string;
+  electionId: string;
+  coordinatorNpub?: string | null;
+  invitedNpub?: string | null;
+  inviteCode?: string | null;
+  login?: boolean;
+}) {
   const base = input.baseUrl ?? (typeof window !== "undefined" ? window.location.href : DEFAULT_INVITE_BASE_URL);
   const url = new URL("./", base);
-  url.searchParams.set("login", "1");
+  if (input.login !== false) {
+    url.searchParams.set("login", "1");
+  }
   url.searchParams.set("role", "voter");
-  url.searchParams.set("q", input.invite.electionId);
+  url.searchParams.set("q", input.electionId.trim());
+  const coordinatorNpub = input.coordinatorNpub?.trim() ?? "";
+  const invitedNpub = input.invitedNpub?.trim() ?? "";
+  if (coordinatorNpub) {
+    url.searchParams.set("coordinator", coordinatorNpub);
+  }
+  if (coordinatorNpub && invitedNpub) {
+    url.searchParams.set("invited", invitedNpub);
+  }
+  const inviteCode = normaliseQuestionnaireInviteCode(input.inviteCode);
+  if (inviteCode) {
+    url.searchParams.set("invite_code", inviteCode);
+  }
   return url.toString();
 }

@@ -2548,6 +2548,17 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       setStatus("Blind-signing private key is not available yet. Publish questionnaire and try again.");
       return;
     }
+    const whitelistNpubs = Object.keys(coordinatorState?.whitelist ?? {})
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+    const bearerInviteCodes = Object.values(coordinatorState?.bearerInviteCodes ?? {});
+    const unclaimedPrivateInviteCount = bearerInviteCodes
+      .filter((entry) => entry.state !== "revoked")
+      .filter((entry) => {
+        const redeemedNpub = entry.redeemedNpub?.trim() ?? "";
+        return !redeemedNpub || !whitelistNpubs.includes(redeemedNpub);
+      }).length;
+    const expectedInviteeCount = Math.max(0, props.knownVoterCount ?? 0, whitelistNpubs.length) + unclaimedPrivateInviteCount;
     const workerElectionConfigSnapshot: WorkerElectionConfigSnapshot | null = needsElectionConfigDm
       ? {
         type: "worker_election_config",
@@ -2556,7 +2567,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         delegationId: delegation.delegationId,
         coordinatorNpub: coordinatorNpubTrimmed,
         workerNpub,
-        expectedInviteeCount: Math.max(0, props.knownVoterCount ?? 0),
+        expectedInviteeCount,
+        whitelistNpubs,
+        bearerInviteCodes,
+        eligibilityRequired: delegatedWorkerCapabilities.includes("issue_blind_tokens"),
         blindSigningPrivateKey: delegatedWorkerCapabilities.includes("issue_blind_tokens")
           ? coordinatorState?.blindSigningPrivateKey ?? null
           : null,
@@ -3030,21 +3044,24 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
               <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
                 <button
                   type='button'
-                  className={`simple-voter-secondary${question.type === "yes_no" ? " is-active" : ""}`}
+                  className={`simple-voter-secondary simple-questionnaire-type-option${question.type === "yes_no" ? " is-active" : ""}`}
+                  aria-pressed={question.type === "yes_no"}
                   onClick={() => setQuestionType(index, "yes_no")}
                 >
                   Yes/No
                 </button>
                 <button
                   type='button'
-                  className={`simple-voter-secondary${question.type === "multiple_choice" ? " is-active" : ""}`}
+                  className={`simple-voter-secondary simple-questionnaire-type-option${question.type === "multiple_choice" ? " is-active" : ""}`}
+                  aria-pressed={question.type === "multiple_choice"}
                   onClick={() => setQuestionType(index, "multiple_choice")}
                 >
                   Multiple choice
                 </button>
                 <button
                   type='button'
-                  className={`simple-voter-secondary${question.type === "free_text" ? " is-active" : ""}`}
+                  className={`simple-voter-secondary simple-questionnaire-type-option${question.type === "free_text" ? " is-active" : ""}`}
+                  aria-pressed={question.type === "free_text"}
                   onClick={() => setQuestionType(index, "free_text")}
                 >
                   Free text

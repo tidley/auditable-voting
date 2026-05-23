@@ -63,7 +63,19 @@ import {
   processOptionAQueuesForCoordinatorLive,
   QuestionnaireOptionACoordinatorRuntime,
 } from "./questionnaireOptionARuntime";
-import { buildInviteUrl } from "./questionnaireInvite";
+import { buildInviteUrl, buildQuestionnaireInviteUrl } from "./questionnaireInvite";
+import {
+  buildQuestionnaireInviteMailtoHref,
+  buildQuestionnaireInviteShareSubject,
+  buildQuestionnaireInviteShareText,
+  buildQuestionnaireInviteSmsHref,
+  buildQuestionnaireInviteWhatsAppHref,
+} from "./questionnaireInviteShare";
+import {
+  generateQuestionnaireInviteCode,
+  hashQuestionnaireInviteCode,
+} from "./questionnaireInviteCode";
+import { readCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import {
   primeNip65RelayHints,
   setNip65EnabledForSession,
@@ -96,10 +108,20 @@ import {
 } from "./wasm/auditableVotingCore";
 import { createSignerService, SignerServiceError } from "./services/signerService";
 import { getSharedNostrPool } from "./sharedNostrPool";
-import type { BallotSubmission, QuestionnaireAnswer } from "./questionnaireOptionA";
+import type {
+  BallotSubmission,
+  BearerInviteCodeState,
+  QuestionnaireAnswer,
+  WhitelistClaimState,
+} from "./questionnaireOptionA";
 import type { QuestionnaireResponsePayload } from "./questionnaireProtocol";
 import type { QuestionnaireAcceptedResponse } from "./questionnaireRuntime";
-import { loadCoordinatorState } from "./questionnaireOptionAStorage";
+import { loadCoordinatorState, loadElectionSummary } from "./questionnaireOptionAStorage";
+import {
+  publishOptionAWorkerElectionConfigDm,
+  type WorkerElectionConfigSnapshot,
+} from "./questionnaireOptionABlindDm";
+import { loadStoredWorkerDelegation } from "./questionnaireWorkerDelegation";
 import { tryWriteClipboard } from "./clipboard";
 import {
   QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1,
@@ -165,6 +187,96 @@ function optionASubmissionToAcceptedResponse(submission: BallotSubmission): Ques
       payloadHash: submission.submissionId,
     },
     payload,
+  };
+}
+
+type StatusIndicatorView = {
+  className: string;
+  icon: string;
+  label: string;
+};
+
+function privateInviteStatusIndicator(state: BearerInviteCodeState): StatusIndicatorView {
+  if (state === "redeemed") {
+    return {
+      className: "simple-vote-status-icon simple-status-indicator is-private-invite-redeemed",
+      icon: "✓",
+      label: "Private code redeemed",
+    };
+  }
+  if (state === "revoked") {
+    return {
+      className: "simple-vote-status-icon simple-status-indicator is-private-invite-revoked",
+      icon: "×",
+      label: "Private code revoked",
+    };
+  }
+  return {
+    className: "simple-vote-status-icon simple-status-indicator is-private-invite-available",
+    icon: "+",
+    label: "Private code available",
+  };
+}
+
+function whitelistStatusIndicator(state: WhitelistClaimState): StatusIndicatorView {
+  switch (state) {
+    case "vote_accepted":
+      return {
+        className: "simple-vote-status-icon simple-status-indicator is-voter-accepted",
+        icon: "✓",
+        label: "Vote accepted",
+      };
+    case "vote_rejected":
+      return {
+        className: "simple-vote-status-icon simple-status-indicator is-voter-rejected",
+        icon: "×",
+        label: "Vote rejected",
+      };
+    case "vote_received":
+      return {
+        className: "simple-vote-status-icon simple-status-indicator is-voter-received",
+        icon: "V",
+        label: "Vote received",
+      };
+    case "blind_signature_issued":
+      return {
+        className: "simple-vote-status-icon simple-status-indicator is-voter-issued",
+        icon: "S",
+        label: "Ballot issued",
+      };
+    case "blind_request_received":
+      return {
+        className: "simple-vote-status-icon simple-status-indicator is-voter-requested",
+        icon: "R",
+        label: "Ballot requested",
+      };
+    case "claimed":
+      return {
+        className: "simple-vote-status-icon simple-status-indicator is-voter-claimed",
+        icon: "C",
+        label: "Invite claimed",
+      };
+    case "invited":
+      return {
+        className: "simple-vote-status-icon simple-status-indicator is-voter-invited",
+        icon: "I",
+        label: "Invite sent",
+      };
+    case "whitelisted":
+    default:
+      return {
+        className: "simple-vote-status-icon simple-status-indicator is-voter-whitelisted",
+        icon: "W",
+        label: "Whitelisted",
+      };
+  }
+}
+
+function pendingAuthorisationStatusIndicator(): StatusIndicatorView {
+  return {
+    className: "simple-vote-status-icon simple-status-indicator is-voter-pending",
+    icon: "?",
+    label: "Waiting for authorisation",
   };
 }
 
@@ -820,6 +932,7 @@ export default function SimpleCoordinatorApp() {
   const [knownVoterDraftNpub, setKnownVoterDraftNpub] = useState("");
   const [knownVoterInviteStatus, setKnownVoterInviteStatus] = useState<string | null>(null);
   const [knownVoterInviteRefreshNonce, setKnownVoterInviteRefreshNonce] = useState(0);
+  const [privateInviteLinksByHash, setPrivateInviteLinksByHash] = useState<Record<string, string>>({});
   const [optimisticKnownVoterNpubs, setOptimisticKnownVoterNpubs] = useState<string[]>([]);
   const [knownVoterContactsLoading, setKnownVoterContactsLoading] = useState(false);
   const [importedKnownVoterContacts, setImportedKnownVoterContacts] = useState<ImportedKnownVoterContact[]>([]);
@@ -948,9 +1061,76 @@ export default function SimpleCoordinatorApp() {
   useEffect(() => {
     setKnownVoterInviteStatus(null);
     setOptimisticKnownVoterNpubs([]);
+    setPrivateInviteLinksByHash({});
   }, [optionAElectionId]);
   const optionAAcceptedCount = Math.max(optionACoordinatorRuntime?.getAcceptedUniqueCount() ?? 0, optionAAcceptedResponses.length);
   const optionAKnownVoterCount = Math.max(followers.length, visibleOptionAKnownVoters.length);
+  const publicQuestionnaireInviteUrl = useMemo(() => {
+    const electionId = optionAElectionId.trim();
+    if (!electionId) {
+      return "";
+    }
+    return buildQuestionnaireInviteUrl({ electionId });
+  }, [optionAElectionId]);
+  const publicQuestionnaireInviteCopy = useMemo(() => {
+    const electionId = optionAElectionId.trim();
+    const cachedDefinition = electionId ? readCachedQuestionnaireDefinition(electionId) : null;
+    const electionSummary = electionId ? loadElectionSummary(electionId) : null;
+    const title =
+      cachedDefinition?.title?.trim()
+      || electionSummary?.title?.trim()
+      || questionPrompt.trim()
+      || "Questionnaire";
+    const description =
+      cachedDefinition?.description?.trim()
+      || electionSummary?.description?.trim()
+      || "";
+    return { title, description };
+  }, [knownVoterInviteRefreshNonce, optionAElectionId, questionPrompt]);
+  const publicQuestionnaireInviteShareSubject = useMemo(() => (
+    buildQuestionnaireInviteShareSubject({ title: publicQuestionnaireInviteCopy.title })
+  ), [publicQuestionnaireInviteCopy.title]);
+  const publicQuestionnaireInviteShareText = useMemo(() => (
+    publicQuestionnaireInviteUrl
+      ? buildQuestionnaireInviteShareText({
+        title: publicQuestionnaireInviteCopy.title,
+        description: publicQuestionnaireInviteCopy.description,
+        inviteUrl: publicQuestionnaireInviteUrl,
+      })
+      : ""
+  ), [publicQuestionnaireInviteCopy.description, publicQuestionnaireInviteCopy.title, publicQuestionnaireInviteUrl]);
+  const publicQuestionnaireInviteMailtoHref = useMemo(() => (
+    publicQuestionnaireInviteUrl
+      ? buildQuestionnaireInviteMailtoHref({
+        title: publicQuestionnaireInviteCopy.title,
+        description: publicQuestionnaireInviteCopy.description,
+        inviteUrl: publicQuestionnaireInviteUrl,
+      })
+      : ""
+  ), [publicQuestionnaireInviteCopy.description, publicQuestionnaireInviteCopy.title, publicQuestionnaireInviteUrl]);
+  const publicQuestionnaireInviteSmsHref = useMemo(() => (
+    publicQuestionnaireInviteUrl
+      ? buildQuestionnaireInviteSmsHref({
+        title: publicQuestionnaireInviteCopy.title,
+        description: publicQuestionnaireInviteCopy.description,
+        inviteUrl: publicQuestionnaireInviteUrl,
+      })
+      : ""
+  ), [publicQuestionnaireInviteCopy.description, publicQuestionnaireInviteCopy.title, publicQuestionnaireInviteUrl]);
+  const publicQuestionnaireInviteWhatsAppHref = useMemo(() => (
+    publicQuestionnaireInviteUrl
+      ? buildQuestionnaireInviteWhatsAppHref({
+        title: publicQuestionnaireInviteCopy.title,
+        description: publicQuestionnaireInviteCopy.description,
+        inviteUrl: publicQuestionnaireInviteUrl,
+      })
+      : ""
+  ), [publicQuestionnaireInviteCopy.description, publicQuestionnaireInviteCopy.title, publicQuestionnaireInviteUrl]);
+  const privateInviteCodeEntries = useMemo(() => {
+    const entries = Object.values(optionACoordinatorRuntime?.getSnapshot()?.bearerInviteCodes ?? {});
+    return entries.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }, [optionACoordinatorRuntime, knownVoterInviteRefreshNonce]);
+  const availablePrivateInviteCodeCount = privateInviteCodeEntries.filter((entry) => entry.state === "available").length;
   const filteredImportedKnownVoterContacts = useMemo(() => {
     const query = knownVoterContactSearch.trim().toLowerCase();
     if (!query) {
@@ -3264,6 +3444,245 @@ export default function SimpleCoordinatorApp() {
     };
   }, [loginWithSigner, refreshIdentity, signOutSignerSession]);
 
+  async function sharePublicQuestionnaireInvite() {
+    if (!publicQuestionnaireInviteUrl) {
+      setKnownVoterInviteStatus("Publish or open a questionnaire first.");
+      return;
+    }
+    if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+      try {
+        await navigator.share({
+          title: publicQuestionnaireInviteShareSubject,
+          text: publicQuestionnaireInviteShareText,
+          url: publicQuestionnaireInviteUrl,
+        });
+        setKnownVoterInviteStatus("Invite share opened.");
+        return;
+      } catch (error) {
+        if (typeof DOMException !== "undefined" && error instanceof DOMException && error.name === "AbortError") {
+          setKnownVoterInviteStatus("Invite share cancelled.");
+          return;
+        }
+      }
+    }
+
+    await tryWriteClipboard(publicQuestionnaireInviteUrl);
+    setKnownVoterInviteStatus("Invite link copied.");
+  }
+
+  function buildPrivateInviteShare(input: { inviteUrl: string }) {
+    return {
+      subject: buildQuestionnaireInviteShareSubject({ title: publicQuestionnaireInviteCopy.title }),
+      text: buildQuestionnaireInviteShareText({
+        title: publicQuestionnaireInviteCopy.title,
+        description: publicQuestionnaireInviteCopy.description,
+        inviteUrl: input.inviteUrl,
+      }),
+      mailtoHref: buildQuestionnaireInviteMailtoHref({
+        title: publicQuestionnaireInviteCopy.title,
+        description: publicQuestionnaireInviteCopy.description,
+        inviteUrl: input.inviteUrl,
+      }),
+      smsHref: buildQuestionnaireInviteSmsHref({
+        title: publicQuestionnaireInviteCopy.title,
+        description: publicQuestionnaireInviteCopy.description,
+        inviteUrl: input.inviteUrl,
+      }),
+      whatsAppHref: buildQuestionnaireInviteWhatsAppHref({
+        title: publicQuestionnaireInviteCopy.title,
+        description: publicQuestionnaireInviteCopy.description,
+        inviteUrl: input.inviteUrl,
+      }),
+    };
+  }
+
+  async function copyPrivateInviteCodeLink(codeHash: string) {
+    const inviteUrl = privateInviteLinksByHash[codeHash] ?? "";
+    if (!inviteUrl) {
+      setKnownVoterInviteStatus("This private link is not available in this page session. Create a new private code link if you need another link.");
+      return;
+    }
+    await tryWriteClipboard(inviteUrl);
+    setKnownVoterInviteStatus("Private code link copied.");
+  }
+
+  async function sharePrivateInviteCodeLink(codeHash: string) {
+    const inviteUrl = privateInviteLinksByHash[codeHash] ?? "";
+    if (!inviteUrl) {
+      setKnownVoterInviteStatus("This private link is not available in this page session. Create a new private code link if you need another link.");
+      return;
+    }
+    const inviteShare = buildPrivateInviteShare({ inviteUrl });
+    if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+      try {
+        await navigator.share({
+          title: inviteShare.subject,
+          text: inviteShare.text,
+          url: inviteUrl,
+        });
+        setKnownVoterInviteStatus("Private invite share opened.");
+        return;
+      } catch (error) {
+        if (typeof DOMException !== "undefined" && error instanceof DOMException && error.name === "AbortError") {
+          setKnownVoterInviteStatus("Private invite share cancelled.");
+          return;
+        }
+      }
+    }
+
+    await tryWriteClipboard(inviteUrl);
+    setKnownVoterInviteStatus("Private code link copied.");
+  }
+
+  function buildActiveWorkerElectionConfigSnapshot(): { snapshot: WorkerElectionConfigSnapshot; workerNpub: string; relays: string[] } | null {
+    const electionId = optionAElectionId.trim();
+    const coordinatorNpub = activeCoordinatorNpub.trim();
+    if (!electionId || !coordinatorNpub) {
+      return null;
+    }
+    const storedWorker = loadStoredWorkerDelegation(electionId);
+    const delegation = storedWorker?.activeDelegation ?? null;
+    if (!delegation || storedWorker?.mode !== "delegated_worker") {
+      return null;
+    }
+    if (storedWorker.lastRevocation?.delegationId === delegation.delegationId) {
+      return null;
+    }
+    if (Date.parse(delegation.expiresAt) <= Date.now()) {
+      return null;
+    }
+    const needsConfig = delegation.capabilities.includes("issue_blind_tokens")
+      || delegation.capabilities.includes("close_questionnaire")
+      || delegation.capabilities.includes("publish_result_summary");
+    if (!needsConfig) {
+      return null;
+    }
+    const coordinatorState = optionACoordinatorRuntime?.getSnapshot()
+      ?? loadCoordinatorState({ coordinatorNpub, electionId });
+    if (!coordinatorState) {
+      return null;
+    }
+    if (delegation.capabilities.includes("issue_blind_tokens") && !coordinatorState.blindSigningPrivateKey) {
+      return null;
+    }
+    const whitelistNpubs = Object.keys(coordinatorState.whitelist ?? {})
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+    const bearerInviteCodes = Object.values(coordinatorState.bearerInviteCodes ?? {});
+    const unclaimedPrivateInviteCount = bearerInviteCodes
+      .filter((entry) => entry.state !== "revoked")
+      .filter((entry) => {
+        const redeemedNpub = entry.redeemedNpub?.trim() ?? "";
+        return !redeemedNpub || !whitelistNpubs.includes(redeemedNpub);
+      }).length;
+    const expectedInviteeCount = Math.max(0, optionAKnownVoterCount, whitelistNpubs.length) + unclaimedPrivateInviteCount;
+    return {
+      workerNpub: delegation.workerNpub,
+      relays: delegation.controlRelays,
+      snapshot: {
+        type: "worker_election_config",
+        schemaVersion: 1,
+        electionId,
+        delegationId: delegation.delegationId,
+        coordinatorNpub,
+        workerNpub: delegation.workerNpub,
+        expectedInviteeCount,
+        whitelistNpubs,
+        bearerInviteCodes,
+        eligibilityRequired: delegation.capabilities.includes("issue_blind_tokens"),
+        blindSigningPrivateKey: delegation.capabilities.includes("issue_blind_tokens")
+          ? coordinatorState.blindSigningPrivateKey ?? null
+          : null,
+        definition: readCachedQuestionnaireDefinition(electionId),
+        sentAt: new Date().toISOString(),
+      },
+    };
+  }
+
+  async function syncActiveWorkerElectionConfig() {
+    const config = buildActiveWorkerElectionConfigSnapshot();
+    if (!config) {
+      return false;
+    }
+    await publishOptionAWorkerElectionConfigDm({
+      signer: createSignerService(),
+      recipientNpub: config.workerNpub,
+      snapshot: config.snapshot,
+      fallbackNsec: keypair?.nsec ?? undefined,
+      relays: config.relays,
+    });
+    return true;
+  }
+
+  async function createPrivateInviteCodeLink() {
+    const electionId = optionAElectionId.trim();
+    if (!optionACoordinatorRuntime || !electionId) {
+      setKnownVoterInviteStatus("Publish or open a questionnaire first.");
+      return;
+    }
+    try {
+      await optionACoordinatorRuntime.ensureBlindSigningPublicKey();
+      const inviteCode = generateQuestionnaireInviteCode();
+      const inviteCodeHash = await hashQuestionnaireInviteCode(inviteCode);
+      optionACoordinatorRuntime.addBearerInviteCode(inviteCodeHash);
+      const inviteUrl = buildQuestionnaireInviteUrl({
+        electionId,
+        inviteCode,
+        login: false,
+      });
+      setPrivateInviteLinksByHash((current) => ({
+        ...current,
+        [inviteCodeHash]: inviteUrl,
+      }));
+      await tryWriteClipboard(inviteUrl);
+      await syncActiveWorkerElectionConfig().catch(() => false);
+      setKnownVoterInviteRefreshNonce((value) => value + 1);
+      setKnownVoterInviteStatus("Private code link ready and copied. The first voter to open it claims this invite.");
+    } catch (error) {
+      setKnownVoterInviteStatus(error instanceof Error ? error.message : "Could not create private code link.");
+    }
+  }
+
+  function revokePrivateInviteCode(codeHash: string) {
+    try {
+      optionACoordinatorRuntime?.revokeBearerInviteCode(codeHash);
+      setPrivateInviteLinksByHash((current) => {
+        const next = { ...current };
+        delete next[codeHash];
+        return next;
+      });
+      void syncActiveWorkerElectionConfig().catch(() => false);
+      setKnownVoterInviteRefreshNonce((value) => value + 1);
+      setKnownVoterInviteStatus("Private invite code revoked.");
+    } catch (error) {
+      setKnownVoterInviteStatus(error instanceof Error ? error.message : "Could not revoke private invite code.");
+    }
+  }
+
+  function buildKnownVoterInviteLink(invitedNpub: string) {
+    const electionId = optionAElectionId.trim();
+    const coordinatorNpub = activeCoordinatorNpub.trim();
+    const normalizedInvitedNpub = invitedNpub.trim();
+    if (!electionId || !coordinatorNpub || !normalizedInvitedNpub) {
+      return "";
+    }
+    return buildQuestionnaireInviteUrl({
+      electionId,
+      coordinatorNpub,
+      invitedNpub: normalizedInvitedNpub,
+    });
+  }
+
+  async function copyKnownVoterInviteLink(invitedNpub: string) {
+    const inviteUrl = buildKnownVoterInviteLink(invitedNpub);
+    if (!inviteUrl) {
+      setKnownVoterInviteStatus("Publish or open a questionnaire first.");
+      return;
+    }
+    await tryWriteClipboard(inviteUrl);
+    setKnownVoterInviteStatus(`Personalised invite link copied for ${deriveActorDisplayId(invitedNpub)}.`);
+  }
+
   async function importKnownVotersFromContacts() {
     if (!optionACoordinatorRuntime) {
       setKnownVoterInviteStatus("Open or publish a questionnaire first.");
@@ -3394,6 +3813,9 @@ export default function SimpleCoordinatorApp() {
         ? `Added ${addedCount}/${selectedImportedKnownVoterNpubs.length} selected contact${selectedImportedKnownVoterNpubs.length === 1 ? "" : "s"} to known voters.`
         : "Could not add selected contacts.",
     );
+    if (addedCount > 0) {
+      void syncActiveWorkerElectionConfig().catch(() => false);
+    }
   }
 
   function toggleImportedKnownVoterSelection(npub: string) {
@@ -3456,7 +3878,7 @@ export default function SimpleCoordinatorApp() {
       const sent = await optionACoordinatorRuntime.sendInvite(invitedNpub, {
         title: questionPrompt.trim() || "Questionnaire",
         description: "",
-        voteUrl: buildInviteUrl({
+        voteUrl: buildKnownVoterInviteLink(invitedNpub) || buildInviteUrl({
           invite: {
             type: "election_invite",
             schemaVersion: 1,
@@ -3482,6 +3904,7 @@ export default function SimpleCoordinatorApp() {
         [invitedNpub]: true,
       }));
       setKnownVoterInviteRefreshNonce((value) => value + 1);
+      void syncActiveWorkerElectionConfig().catch(() => false);
     } catch (error) {
       setKnownVoterInviteStatus(error instanceof Error ? error.message : "Invite failed.");
     }
@@ -3506,7 +3929,7 @@ export default function SimpleCoordinatorApp() {
         const sent = await optionACoordinatorRuntime.sendInvite(invitedNpub, {
           title: questionPrompt.trim() || "Questionnaire",
           description: "",
-          voteUrl: buildInviteUrl({
+          voteUrl: buildKnownVoterInviteLink(invitedNpub) || buildInviteUrl({
             invite: {
               type: "election_invite",
               schemaVersion: 1,
@@ -3532,6 +3955,7 @@ export default function SimpleCoordinatorApp() {
     }
 
     setKnownVoterInviteRefreshNonce((value) => value + 1);
+    void syncActiveWorkerElectionConfig().catch(() => false);
     setKnownVoterInviteStatus(
       sentCount > 0
         ? `Bulk invited ${sentCount}/${targets.length} whitelisted voters for ${optionAElectionId || "this questionnaire"}.`
@@ -5975,6 +6399,142 @@ export default function SimpleCoordinatorApp() {
             {optionAElectionId ? (
               <SimpleCollapsibleSection title='Invite voters'>
                 <div className='simple-voter-field-stack'>
+                  <div className='simple-invite-share-panel' aria-label='Share questionnaire link'>
+                    <div className='simple-invite-share-copy'>
+                      <h3 className='simple-voter-question'>Share invite link</h3>
+                      <p className='simple-voter-note'>
+                        Opens the voter login for this questionnaire. Email, WhatsApp, SMS, and device sharing use the apps already on this device.
+                      </p>
+                    </div>
+                    <p className='simple-invite-link-preview'>{publicQuestionnaireInviteUrl}</p>
+                    <div className='simple-invite-share-actions'>
+                      <button
+                        type='button'
+                        className='simple-voter-secondary'
+                        onClick={() => {
+                          void tryWriteClipboard(publicQuestionnaireInviteUrl);
+                          setKnownVoterInviteStatus("Invite link copied.");
+                        }}
+                        disabled={!publicQuestionnaireInviteUrl}
+                      >
+                        Copy link
+                      </button>
+                      <a className='simple-voter-secondary' href={publicQuestionnaireInviteMailtoHref}>
+                        Invite by email
+                      </a>
+                      <a className='simple-voter-secondary' href={publicQuestionnaireInviteWhatsAppHref} target='_blank' rel='noreferrer'>
+                        WhatsApp
+                      </a>
+                      <a className='simple-voter-secondary' href={publicQuestionnaireInviteSmsHref}>
+                        SMS
+                      </a>
+                      <button
+                        type='button'
+                        className='simple-voter-secondary'
+                        onClick={() => void sharePublicQuestionnaireInvite()}
+                        disabled={!publicQuestionnaireInviteUrl}
+                      >
+                        Share...
+                      </button>
+                    </div>
+                  </div>
+                  <div className='simple-invite-share-panel' aria-label='Create private invite code link'>
+                    <div className='simple-invite-share-copy'>
+                      <h3 className='simple-voter-question'>Private code link</h3>
+                      <p className='simple-voter-note'>
+                        Creates a one-use link with no npub in the URL. The voter looks up coordinator or audit-proxy routing from public questionnaire metadata.
+                      </p>
+                    </div>
+                    <div className='simple-invite-share-actions'>
+                      <button
+                        type='button'
+                        className='simple-voter-secondary'
+                        onClick={() => void createPrivateInviteCodeLink()}
+                        disabled={!publicQuestionnaireInviteUrl || !optionACoordinatorRuntime}
+                      >
+                        Create private code link
+                      </button>
+                      <span className='simple-voter-note'>
+                        {availablePrivateInviteCodeCount} available
+                      </span>
+                    </div>
+                    {privateInviteCodeEntries.length > 0 ? (
+                      <ul className='simple-vote-status-list simple-private-invite-list'>
+                        {privateInviteCodeEntries.slice(0, 6).map((entry) => {
+                          const privateInviteUrl = privateInviteLinksByHash[entry.codeHash] ?? "";
+                          const canSharePrivateInvite = entry.state === "available" && privateInviteUrl.length > 0;
+                          const privateInviteShare = canSharePrivateInvite
+                            ? buildPrivateInviteShare({ inviteUrl: privateInviteUrl })
+                            : null;
+                          const statusIndicator = privateInviteStatusIndicator(entry.state);
+
+                          return (
+                            <li key={entry.codeHash} className='simple-private-invite-row'>
+                              <div className='simple-private-invite-row-head'>
+                                <span className={statusIndicator.className} aria-label={statusIndicator.label} title={statusIndicator.label}>
+                                  {statusIndicator.icon}
+                                </span>
+                                <span>
+                                  code {entry.codeHash.slice(0, 10)} - {entry.state}
+                                  {entry.redeemedNpub ? ` by ${deriveActorDisplayId(entry.redeemedNpub)}` : ""}
+                                </span>
+                              </div>
+                              {canSharePrivateInvite && privateInviteShare ? (
+                                <>
+                                  <p className='simple-invite-link-preview'>{privateInviteUrl}</p>
+                                  <div className='simple-private-invite-actions'>
+                                    <button
+                                      type='button'
+                                      className='simple-voter-secondary'
+                                      onClick={() => void copyPrivateInviteCodeLink(entry.codeHash)}
+                                    >
+                                      Copy link
+                                    </button>
+                                    <a className='simple-voter-secondary' href={privateInviteShare.mailtoHref}>
+                                      Invite by email
+                                    </a>
+                                    <a className='simple-voter-secondary' href={privateInviteShare.whatsAppHref} target='_blank' rel='noreferrer'>
+                                      WhatsApp
+                                    </a>
+                                    <a className='simple-voter-secondary' href={privateInviteShare.smsHref}>
+                                      SMS
+                                    </a>
+                                    <button
+                                      type='button'
+                                      className='simple-voter-secondary'
+                                      onClick={() => void sharePrivateInviteCodeLink(entry.codeHash)}
+                                    >
+                                      Share...
+                                    </button>
+                                    <button
+                                      type='button'
+                                      className='simple-voter-secondary'
+                                      onClick={() => revokePrivateInviteCode(entry.codeHash)}
+                                    >
+                                      Revoke
+                                    </button>
+                                  </div>
+                                </>
+                              ) : entry.state === "available" ? (
+                                <div className='simple-private-invite-actions'>
+                                  <p className='simple-voter-note simple-private-invite-note'>
+                                    Link unavailable after this page session. Create a new private code link if you need to send another.
+                                  </p>
+                                  <button
+                                    type='button'
+                                    className='simple-voter-secondary'
+                                    onClick={() => revokePrivateInviteCode(entry.codeHash)}
+                                  >
+                                    Revoke
+                                  </button>
+                                </div>
+                              ) : null}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    ) : null}
+                  </div>
                   <div className='simple-voter-action-row simple-voter-action-row-inline'>
                     <input
                       className='simple-voter-input simple-voter-input-inline'
@@ -6070,20 +6630,32 @@ export default function SimpleCoordinatorApp() {
                   {visibleOptionAKnownVoters.length > 0 ? (
                     <>
                       <ul className='simple-vote-status-list'>
-                        {visibleOptionAKnownVoters.map((entry) => (
-                          <li key={entry.invitedNpub}>
-                            <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-                            {deriveActorDisplayId(entry.invitedNpub)} - {entry.claimState}
-                            <button
-                              type='button'
-                              className='simple-voter-secondary'
-                              style={{ marginLeft: 8 }}
-                              onClick={() => sendInviteToKnownVoter(entry.invitedNpub)}
-                            >
-                              {entry.claimState === "invited" ? "Resend invite" : "Send invite"}
-                            </button>
-                          </li>
-                        ))}
+                        {visibleOptionAKnownVoters.map((entry) => {
+                          const statusIndicator = whitelistStatusIndicator(entry.claimState);
+                          return (
+                            <li key={entry.invitedNpub}>
+                              <span className={statusIndicator.className} aria-label={statusIndicator.label} title={statusIndicator.label}>
+                                {statusIndicator.icon}
+                              </span>
+                              {deriveActorDisplayId(entry.invitedNpub)} - {entry.claimState}
+                              <button
+                                type='button'
+                                className='simple-voter-secondary'
+                                style={{ marginLeft: 8 }}
+                                onClick={() => sendInviteToKnownVoter(entry.invitedNpub)}
+                              >
+                                {entry.claimState === "invited" ? "Resend invite" : "Send invite"}
+                              </button>
+                              <button
+                                type='button'
+                                className='simple-voter-secondary'
+                                onClick={() => void copyKnownVoterInviteLink(entry.invitedNpub)}
+                              >
+                                Copy personalised link
+                              </button>
+                            </li>
+                          );
+                        })}
                       </ul>
                       <div className='simple-voter-action-row simple-voter-action-row-inline'>
                         <button
@@ -6110,20 +6682,25 @@ export default function SimpleCoordinatorApp() {
                     <>
                       <p className='simple-voter-note'>Pending requester authorisation</p>
                       <ul className='simple-vote-status-list'>
-                        {optionAPendingAuthorizations.map((entry) => (
-                          <li key={entry.invitedNpub}>
-                            <span className='simple-vote-status-icon' aria-hidden='true'>•</span>
-                            {deriveActorDisplayId(entry.invitedNpub)} requested a ballot ({entry.requestCount})
-                            <button
-                              type='button'
-                              className='simple-voter-secondary'
-                              style={{ marginLeft: 8 }}
-                              onClick={() => authorizePendingRequester(entry.invitedNpub)}
-                            >
-                              Authorise
-                            </button>
-                          </li>
-                        ))}
+                        {optionAPendingAuthorizations.map((entry) => {
+                          const statusIndicator = pendingAuthorisationStatusIndicator();
+                          return (
+                            <li key={entry.invitedNpub}>
+                              <span className={statusIndicator.className} aria-label={statusIndicator.label} title={statusIndicator.label}>
+                                {statusIndicator.icon}
+                              </span>
+                              {deriveActorDisplayId(entry.invitedNpub)} requested a ballot ({entry.requestCount})
+                              <button
+                                type='button'
+                                className='simple-voter-secondary'
+                                style={{ marginLeft: 8 }}
+                                onClick={() => authorizePendingRequester(entry.invitedNpub)}
+                              >
+                                Authorise
+                              </button>
+                            </li>
+                          );
+                        })}
                       </ul>
                     </>
                   ) : null}

@@ -3,6 +3,7 @@ import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue
 import type {
   BallotAcceptanceResult,
   BallotSubmission,
+  BearerInviteCodeEntry,
   BlindBallotIssuance,
   BlindBallotRequest,
   CoordinatorElectionState,
@@ -213,6 +214,9 @@ export type WorkerElectionConfigSnapshot = {
   coordinatorNpub: string;
   workerNpub: string;
   expectedInviteeCount?: number;
+  whitelistNpubs?: string[];
+  bearerInviteCodes?: BearerInviteCodeEntry[];
+  eligibilityRequired?: boolean;
   blindSigningPrivateKey?: QuestionnaireBlindPrivateKey | null;
   definition?: QuestionnaireDefinition | null;
   sentAt: string;
@@ -966,6 +970,21 @@ function parseWorkerElectionConfigDmContent(content: string): WorkerElectionConf
     if (
       snapshot.expectedInviteeCount !== undefined
       && (!Number.isFinite(snapshot.expectedInviteeCount) || snapshot.expectedInviteeCount < 0)
+    ) {
+      return null;
+    }
+    if (
+      snapshot.whitelistNpubs !== undefined
+      && (!Array.isArray(snapshot.whitelistNpubs) || snapshot.whitelistNpubs.some((entry) => typeof entry !== "string"))
+    ) {
+      return null;
+    }
+    if (
+      snapshot.bearerInviteCodes !== undefined
+      && (!Array.isArray(snapshot.bearerInviteCodes) || snapshot.bearerInviteCodes.some((entry) => (
+        typeof entry?.codeHash !== "string"
+        || typeof entry?.state !== "string"
+      )))
     ) {
       return null;
     }

@@ -60,9 +60,23 @@ export interface WhitelistEntry {
   addedAt: IsoTime;
   inviteSentAt?: IsoTime | null;
   inviteEventId?: EventId | null;
+  inviteCodeHash?: Hex | null;
+  inviteCodeRedeemedAt?: IsoTime | null;
   claimState: WhitelistClaimState;
   issuanceId?: IssuanceId | null;
   submissionId?: SubmissionId | null;
+}
+
+export type BearerInviteCodeState = "available" | "redeemed" | "revoked";
+
+export interface BearerInviteCodeEntry {
+  electionId: ElectionId;
+  codeHash: Hex;
+  createdAt: IsoTime;
+  state: BearerInviteCodeState;
+  redeemedAt?: IsoTime | null;
+  redeemedNpub?: Npub | null;
+  revokedAt?: IsoTime | null;
 }
 
 export interface ElectionInviteMessage {
@@ -111,6 +125,7 @@ export interface BlindBallotRequest {
   blindSigningKeyId: string;
   clientNonce: string;
   createdAt: IsoTime;
+  inviteCodeHash?: Hex | null;
   lastSentAt?: IsoTime | null;
 }
 
@@ -193,6 +208,7 @@ export interface VoterElectionLocalState {
 export interface CoordinatorElectionState {
   election: ElectionSummary;
   whitelist: Record<Npub, WhitelistEntry>;
+  bearerInviteCodes: Record<Hex, BearerInviteCodeEntry>;
   pendingBlindRequests: Record<RequestId, BlindBallotRequest>;
   issuedBlindResponses: Record<RequestId, BlindBallotIssuance>;
   receivedSubmissions: Record<SubmissionId, BallotSubmission>;
@@ -270,6 +286,7 @@ function cloneCoordinatorState(state: CoordinatorElectionState): CoordinatorElec
   return {
     ...state,
     whitelist: { ...state.whitelist },
+    bearerInviteCodes: { ...(state.bearerInviteCodes ?? {}) },
     pendingBlindRequests: { ...state.pendingBlindRequests },
     issuedBlindResponses: { ...state.issuedBlindResponses },
     receivedSubmissions: { ...state.receivedSubmissions },
@@ -313,7 +330,8 @@ function sameBlindBallotRequest(left: BlindBallotRequest, right: BlindBallotRequ
     && left.tokenCommitment === right.tokenCommitment
     && left.blindSigningKeyId === right.blindSigningKeyId
     && left.clientNonce === right.clientNonce
-    && left.createdAt === right.createdAt;
+    && left.createdAt === right.createdAt
+    && (left.inviteCodeHash ?? null) === (right.inviteCodeHash ?? null);
 }
 
 function findIssuanceByTokenCommitment(
@@ -894,6 +912,7 @@ export function buildCoordinatorStorageKeys(input: { npub: Npub; electionId: Ele
   return {
     election: `${prefix}:election`,
     whitelist: `${prefix}:whitelist`,
+    bearerInviteCodes: `${prefix}:bearerInviteCodes`,
     requests: `${prefix}:requests`,
     issuances: `${prefix}:issuances`,
     submissions: `${prefix}:submissions`,

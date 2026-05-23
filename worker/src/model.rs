@@ -111,9 +111,30 @@ pub struct WorkerElectionConfigSnapshot {
     pub coordinator_npub: String,
     pub worker_npub: String,
     pub expected_invitee_count: Option<u64>,
+    #[serde(default)]
+    pub whitelist_npubs: Option<Vec<String>>,
+    #[serde(default)]
+    pub bearer_invite_codes: Option<Vec<BearerInviteCodeEntry>>,
+    #[serde(default)]
+    pub eligibility_required: Option<bool>,
     pub blind_signing_private_key: Option<QuestionnaireBlindPrivateKey>,
     pub definition: Option<serde_json::Value>,
     pub sent_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BearerInviteCodeEntry {
+    pub election_id: String,
+    pub code_hash: String,
+    pub created_at: String,
+    pub state: String,
+    #[serde(default)]
+    pub redeemed_at: Option<String>,
+    #[serde(default)]
+    pub redeemed_npub: Option<String>,
+    #[serde(default)]
+    pub revoked_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,6 +170,8 @@ pub struct BlindBallotRequest {
     pub blind_signing_key_id: String,
     pub client_nonce: String,
     pub created_at: String,
+    #[serde(default)]
+    pub invite_code_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -240,6 +263,14 @@ pub struct ElectionRuntimeState {
     pub published_decisions: HashMap<String, String>,
     #[serde(default)]
     pub seen_blind_request_ids: HashSet<String>,
+    #[serde(default)]
+    pub issued_invited_npubs: HashSet<String>,
+    #[serde(default)]
+    pub whitelist_npubs: HashSet<String>,
+    #[serde(default)]
+    pub bearer_invite_codes: HashMap<String, BearerInviteCodeEntry>,
+    #[serde(default)]
+    pub eligibility_required: bool,
     #[serde(default)]
     pub accepted_response_authors: HashSet<String>,
     #[serde(default)]
@@ -348,6 +379,10 @@ mod tests {
         let election = state.elections.get("q_legacy").unwrap();
 
         assert!(election.seen_blind_request_ids.is_empty());
+        assert!(election.issued_invited_npubs.is_empty());
+        assert!(election.whitelist_npubs.is_empty());
+        assert!(election.bearer_invite_codes.is_empty());
+        assert!(!election.eligibility_required);
         assert!(state.seen_control_event_ids.is_empty());
     }
 }

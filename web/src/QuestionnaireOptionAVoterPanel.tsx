@@ -10,7 +10,7 @@ import {
   QuestionnaireOptionAVoterRuntime,
   OptionARuntimeError,
 } from "./questionnaireOptionARuntime";
-import type { ElectionInviteMessage, QuestionnaireAnswer } from "./questionnaireOptionA";
+import type { ElectionInviteMessage, QuestionnaireAnswer, VoterElectionLocalState } from "./questionnaireOptionA";
 import { deriveActorDisplayId } from "./actorDisplay";
 import {
   loadElectionSummary,
@@ -265,11 +265,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [encryptFreeTextByQuestionId, setEncryptFreeTextByQuestionId] = useState<Record<string, boolean>>({});
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const [privateInviteBootstrapRetryNonce, setPrivateInviteBootstrapRetryNonce] = useState(0);
   const autoRequestSentForRef = useRef<Record<string, true>>({});
   const autoRequestInFlightForRef = useRef<Record<string, true>>({});
   const autoRequestLastAttemptAtRef = useRef<Record<string, number>>({});
   const requestRetryAtRef = useRef<Record<string, number>>({});
   const autoSignerLoginForRef = useRef<Record<string, true>>({});
+  const bearerInviteBootstrapForRef = useRef<Record<string, true>>({});
   const lifecycleRefreshAtRef = useRef(0);
   const inviteRefreshAtRef = useRef(0);
   const signerWaitRestartAtRef = useRef(0);
@@ -443,6 +445,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   }, [electionId, props.localVoterNsec]);
 
   useEffect(() => {
+    if (!runtime) {
+      return;
+    }
+    runtime.setBearerInviteCode(inviteContext.inviteCode);
+  }, [runtime, inviteContext.inviteCode]);
+
+  useEffect(() => {
     return () => {
       runtime?.dispose();
     };
@@ -483,6 +492,112 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       // Keep explicit login available.
     }
   }, [runtime, signedInNpub, props.autoSignerLogin, props.localVoterNpub, props.localVoterNsec, electionId, latestAnnouncedQuestionnaireId]);
+
+  useEffect(() => {
+    if (!runtime || !inviteContext.inviteCode) {
+      return;
+    }
+    const localVoterNpub = props.localVoterNpub?.trim() ?? "";
+    const hasLocalSecretKey = Boolean(props.localVoterNsec?.trim());
+    if (!localVoterNpub || (props.autoSignerLogin && !hasLocalSecretKey)) {
+      return;
+    }
+    const targetElectionId = electionId.trim() || inviteContext.electionId?.trim();
+    if (!targetElectionId) {
+      return;
+    }
+    const key = `${targetElectionId}:${localVoterNpub}:${inviteContext.inviteCode}`;
+    if (bearerInviteBootstrapForRef.current[key]) {
+      return;
+    }
+    bearerInviteBootstrapForRef.current[key] = true;
+    let cancelled = false;
+    let retryTimeoutId: number | null = null;
+    void (async () => {
+      try {
+        const publicInvite = await buildPublicQuestionnaireInvite(localVoterNpub);
+        const coordinatorNpub = publicInvite?.coordinatorNpub?.trim()
+          || inviteContext.coordinatorNpub?.trim()
+          || "";
+        if (cancelled || !coordinatorNpub) {
+          delete bearerInviteBootstrapForRef.current[key];
+          if (!cancelled) {
+            setStatus("Looking up questionnaire metadata before requesting a ballot...");
+            retryTimeoutId = window.setTimeout(() => {
+              setPrivateInviteBootstrapRetryNonce((value) => value + 1);
+            }, 1500);
+          }
+          return;
+        }
+        if (publicInvite) {
+          publishInviteToMailbox(publicInvite);
+        }
+        const next = runtime.bootstrapWithLocalIdentity({
+          invitedNpub: localVoterNpub,
+          coordinatorNpub,
+          invite: publicInvite,
+          allowInviteRecipientMismatch: true,
+          allowInviteMissing: true,
+        });
+        if (cancelled) {
+          return;
+        }
+        const requestKey = `${next.electionId}:${next.invitedNpub}`;
+        setSignedInNpub(next.invitedNpub);
+        setActiveInvite(!next.blindRequestSent && !next.credentialReady ? publicInvite : null);
+        setPendingInvites(publicInvite ? [publicInvite] : []);
+        const title = publicInvite?.title || targetElectionId;
+        if (next.blindRequestSent || next.credentialReady || next.submission) {
+          setStatus("Opened " + title + " from private invite code.");
+          setRefreshNonce((value) => value + 1);
+          return;
+        }
+        setStatus("Opened " + title + " from private invite code. Requesting ballot...");
+        setRefreshNonce((value) => value + 1);
+        if (autoRequestInFlightForRef.current[requestKey]) {
+          return;
+        }
+        autoRequestInFlightForRef.current[requestKey] = true;
+        autoRequestLastAttemptAtRef.current[requestKey] = Date.now();
+        try {
+          await runtime.requestBlindBallot();
+          if (cancelled) {
+            return;
+          }
+          autoRequestSentForRef.current[requestKey] = true;
+          markSignerWaitRecoveryBaseline();
+          scheduleSignerInitialPull();
+          setActiveInvite(null);
+          setStatus(`Blind ballot request sent. Waiting for ${getCredentialIssuerDisplayName()} issuance.`);
+          setRefreshNonce((value) => value + 1);
+        } finally {
+          delete autoRequestInFlightForRef.current[requestKey];
+        }
+      } catch (error) {
+        delete bearerInviteBootstrapForRef.current[key];
+        if (!cancelled) {
+          setStatus(error instanceof Error ? error.message : "Could not open private invite code.");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (retryTimeoutId !== null) {
+        window.clearTimeout(retryTimeoutId);
+      }
+    };
+  }, [
+    runtime,
+    inviteContext.inviteCode,
+    inviteContext.electionId,
+    inviteContext.coordinatorNpub,
+    privateInviteBootstrapRetryNonce,
+    props.localVoterNpub,
+    props.localVoterNsec,
+    props.autoSignerLogin,
+    electionId,
+    latestAnnouncedQuestionnaireId,
+  ]);
 
   useEffect(() => {
     if (!runtime || snapshot?.loginVerified) {
@@ -791,15 +906,18 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         return currentSnapshot;
       }
       const localInvite = findBestLocalInvite(localVoterNpub);
-      if (!localInvite?.coordinatorNpub?.trim()) {
+      if (!localInvite?.coordinatorNpub?.trim() && !inviteContext.coordinatorNpub?.trim()) {
         return currentSnapshot;
       }
     }
     const fallbackInvite = findBestLocalInvite(localVoterNpub);
+    const fallbackCoordinatorNpub = fallbackInvite?.coordinatorNpub?.trim()
+      || inviteContext.coordinatorNpub?.trim()
+      || undefined;
     const bootstrapNpub = fallbackInvite?.invitedNpub?.trim() || localVoterNpub;
     const next = runtime.bootstrapWithLocalIdentity({
       invitedNpub: bootstrapNpub,
-      coordinatorNpub: fallbackInvite?.coordinatorNpub ?? undefined,
+      coordinatorNpub: fallbackCoordinatorNpub,
       invite: fallbackInvite,
       allowInviteRecipientMismatch: Boolean(fallbackInvite && bootstrapNpub !== (fallbackInvite.invitedNpub ?? "").trim()),
       allowInviteMissing: options?.allowInviteMissing ?? Boolean(latestAnnouncedQuestionnaireId || electionId.trim()),
@@ -891,9 +1009,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       // The cached public definition is enough when a fresh relay read fails.
     }
 
-    if (!definition) {
-      return null;
-    }
     let issueBlindTokensWorker = existingSummary?.issueBlindTokensWorker ?? null;
     try {
       const delegation = await fetchQuestionnaireActiveWorkerDelegationForCapability({
@@ -910,6 +1025,28 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         : null;
     } catch {
       // Keep cached worker routing when a fresh public delegation lookup fails.
+    }
+    if (!definition) {
+      const coordinatorNpub = inviteContext.coordinatorNpub?.trim()
+        || existingSummary?.coordinatorNpub?.trim()
+        || "";
+      if (!coordinatorNpub || !voterNpub.trim()) {
+        return null;
+      }
+      return {
+        type: "election_invite",
+        schemaVersion: 1,
+        electionId: targetElectionId,
+        title: existingSummary?.title || "Questionnaire",
+        description: existingSummary?.description ?? "",
+        voteUrl: typeof window === "undefined" ? "" : window.location.href,
+        invitedNpub: voterNpub.trim(),
+        coordinatorNpub,
+        blindSigningPublicKey: existingSummary?.blindSigningPublicKey ?? null,
+        issueBlindTokensWorker,
+        definition: null,
+        expiresAt: null,
+      };
     }
     cacheDefinitionForVoting(definition, issueBlindTokensWorker);
     return buildInviteFromPublicDefinition(definition, voterNpub, issueBlindTokensWorker);
@@ -1041,7 +1178,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       const signedInTrimmed = signedInNpub.trim();
       const preferLocalIdentity = Boolean(!props.autoSignerLogin && localVoterNpub && (!signedInTrimmed || signedInTrimmed === localVoterNpub));
 
-      let next;
+      let next: VoterElectionLocalState;
       let needsSubmissionSelfCopyRecovery = false;
       if (preferLocalIdentity) {
         next = voterRuntime.bootstrapWithLocalIdentity({
@@ -1200,9 +1337,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     if (snapshot.blindRequestSent || snapshot.credentialReady || snapshot.submission) {
       return;
     }
+    if (inviteContext.inviteCode && !snapshot.coordinatorNpub?.trim()) {
+      return;
+    }
     const hasInviteContext = Boolean(
       snapshot.inviteMessage
       || activeInvite
+      || inviteContext.inviteCode
       || inviteContext.electionId === snapshot.electionId
       || latestAnnouncedQuestionnaireId === snapshot.electionId
       || pendingInvites.some((invite) => invite.electionId === snapshot.electionId),

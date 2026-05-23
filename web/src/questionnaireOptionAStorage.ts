@@ -3,6 +3,7 @@ import {
   buildVoterStorageKeys,
   type BallotAcceptanceResult,
   type BallotSubmission,
+  type BearerInviteCodeEntry,
   type BlindBallotIssuance,
   type BlindBallotRequest,
   type CoordinatorElectionState,
@@ -152,6 +153,7 @@ export function saveCoordinatorState(input: {
   });
   writeJson(keys.election, input.state.election);
   writeJson(keys.whitelist, input.state.whitelist);
+  writeJson(keys.bearerInviteCodes, input.state.bearerInviteCodes ?? {});
   writeJson(keys.requests, input.state.pendingBlindRequests);
   writeJson(keys.issuances, input.state.issuedBlindResponses);
   writeJson(keys.submissions, input.state.receivedSubmissions);
@@ -176,6 +178,7 @@ export function loadCoordinatorState(input: {
     electionId: input.electionId,
   });
   const whitelist = readJson<Record<Npub, WhitelistEntry>>(keys.whitelist, {});
+  const bearerInviteCodes = readJson<Record<string, BearerInviteCodeEntry>>(keys.bearerInviteCodes, {});
   const pendingBlindRequests = readJson<Record<string, BlindBallotRequest>>(keys.requests, {});
   const issuedBlindResponses = readJson<Record<string, BlindBallotIssuance>>(keys.issuances, {});
   const receivedSubmissions = readJson<Record<string, BallotSubmission>>(keys.submissions, {});
@@ -195,6 +198,7 @@ export function loadCoordinatorState(input: {
   return {
     election: summary,
     whitelist,
+    bearerInviteCodes,
     pendingBlindRequests,
     issuedBlindResponses,
     receivedSubmissions,

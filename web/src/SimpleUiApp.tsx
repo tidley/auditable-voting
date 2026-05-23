@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 import { decodeNsec, deriveNpubFromNsec, isValidNpub } from "./nostrIdentity";
 import { deriveActorDisplayId } from "./actorDisplay";
@@ -343,6 +343,7 @@ export default function SimpleUiApp() {
   const [knownBlindKeys, setKnownBlindKeys] = useState<Record<string, SimpleBlindKeyAnnouncement>>({});
   const [submitStatus, setSubmitStatus] = useState<string | null>(null);
   const [ballotTokenId, setBallotTokenId] = useState<string | null>(null);
+  const ballotTokenIdRef = useRef<string | null>(null);
   const [ticketAckSent, setTicketAckSent] = useState(false);
   const [ballotSubmitted, setBallotSubmitted] = useState(false);
   const [ballotAccepted, setBallotAccepted] = useState(false);
@@ -356,6 +357,16 @@ export default function SimpleUiApp() {
     hasDefinition: false,
     state: null,
   });
+  const handleQuestionnaireContextChange = useCallback((nextContext: { hasDefinition: boolean; state: string | null }) => {
+    setQuestionnaireContext((current) => (
+      current.hasDefinition === nextContext.hasDefinition && current.state === nextContext.state
+        ? current
+        : nextContext
+    ));
+    if (nextContext.hasDefinition) {
+      setVotePaneUnlocked((current) => current ? current : true);
+    }
+  }, []);
   const sentTicketReceiptAckIdsRef = useRef<Set<string>>(new Set());
   const ticketObservationMetaRef = useRef<Record<string, { liveAt?: number; backfillAt?: number }>>({});
   const ticketLiveQueryDebugRef = useRef<MailboxReadQueryDebug | null>(null);
@@ -463,6 +474,9 @@ export default function SimpleUiApp() {
   const voteTabActive = activeTab === "vote";
   const questionnaireModeActive = questionnaireContext.hasDefinition;
   const shouldActivateStartupRelayTraffic = (voteTabActive || hasConfiguredCoordinators) && !questionnaireModeActive;
+  useEffect(() => {
+    ballotTokenIdRef.current = ballotTokenId;
+  }, [ballotTokenId]);
   const knownRoundVotingIds = useMemo(() => {
     const values = new Set<string>();
 
@@ -515,95 +529,66 @@ export default function SimpleUiApp() {
       return;
     }
 
-    setPendingBlindRequests((current) => {
-      let changed = false;
-      const next = Object.fromEntries(
-        Object.entries(current).filter(([, requestEntry]) => {
-          const keep = !receivedRequestIds.has(requestEntry.request.requestId);
-          if (!keep) {
-            changed = true;
-          }
-          return keep;
-        }),
-      );
-      return changed ? next : current;
-    });
+    if (Object.values(pendingBlindRequests).some((requestEntry) => receivedRequestIds.has(requestEntry.request.requestId))) {
+      setPendingBlindRequests((current) => (
+        Object.fromEntries(
+          Object.entries(current).filter(([, requestEntry]) => !receivedRequestIds.has(requestEntry.request.requestId)),
+        )
+      ));
+    }
 
-    setRequestDeliveries((current) => {
-      let changed = false;
-      const next = Object.fromEntries(
-        Object.entries(current).filter(([, delivery]) => {
-          const keep = !delivery.requestId || !receivedRequestIds.has(delivery.requestId);
-          if (!keep) {
-            changed = true;
-          }
-          return keep;
-        }),
-      );
-      return changed ? next : current;
-    });
-  }, [receivedShards]);
+    if (Object.values(requestDeliveries).some((delivery) => delivery.requestId && receivedRequestIds.has(delivery.requestId))) {
+      setRequestDeliveries((current) => (
+        Object.fromEntries(
+          Object.entries(current).filter(([, delivery]) => !delivery.requestId || !receivedRequestIds.has(delivery.requestId)),
+        )
+      ));
+    }
+  }, [pendingBlindRequests, receivedShards, requestDeliveries]);
 
   useEffect(() => {
     const pendingKeys = new Set(Object.keys(pendingBlindRequests));
     const activeRoundIds = new Set(knownRoundVotingIds);
 
-    setRequestDeliveries((current) => {
-      let changed = false;
-      const next = Object.fromEntries(
-        Object.entries(current).filter(([key]) => {
-          const keep = pendingKeys.has(key);
-          if (!keep) {
-            changed = true;
-          }
-          return keep;
-        }),
-      );
-      return changed ? next : current;
-    });
+    if (Object.keys(requestDeliveries).some((key) => !pendingKeys.has(key))) {
+      setRequestDeliveries((current) => (
+        Object.fromEntries(Object.entries(current).filter(([key]) => pendingKeys.has(key)))
+      ));
+    }
 
-    setRoundReplyKeypairs((current) => {
-      let changed = false;
-      const next = Object.fromEntries(
-        Object.entries(current).filter(([votingId]) => {
-          const keep = activeRoundIds.has(votingId) || votingId === selectedVotingId;
-          if (!keep) {
-            changed = true;
-          }
-          return keep;
-        }),
-      );
-      return changed ? next : current;
-    });
+    if (Object.keys(roundReplyKeypairs).some((votingId) => !activeRoundIds.has(votingId) && votingId !== selectedVotingId)) {
+      setRoundReplyKeypairs((current) => (
+        Object.fromEntries(
+          Object.entries(current).filter(([votingId]) => activeRoundIds.has(votingId) || votingId === selectedVotingId),
+        )
+      ));
+    }
 
-    setKnownBlindKeys((current) => {
-      let changed = false;
-      const next = Object.fromEntries(
-        Object.entries(current).filter(([key, announcement]) => {
-          const keep = activeRoundIds.has(announcement.votingId) || announcement.votingId === selectedVotingId;
-          if (!keep) {
-            changed = true;
-          }
-          return keep;
-        }),
-      );
-      return changed ? next : current;
-    });
+    if (Object.values(knownBlindKeys).some((announcement) => !activeRoundIds.has(announcement.votingId) && announcement.votingId !== selectedVotingId)) {
+      setKnownBlindKeys((current) => (
+        Object.fromEntries(
+          Object.entries(current).filter(([, announcement]) => activeRoundIds.has(announcement.votingId) || announcement.votingId === selectedVotingId),
+        )
+      ));
+    }
 
-    setFollowDeliveries((current) => {
-      let changed = false;
-      const next = Object.fromEntries(
-        Object.entries(current).filter(([coordinatorNpub]) => {
-          const keep = configuredCoordinatorTargets.includes(coordinatorNpub);
-          if (!keep) {
-            changed = true;
-          }
-          return keep;
-        }),
-      );
-      return changed ? next : current;
-    });
-  }, [configuredCoordinatorTargets, knownRoundVotingIds, pendingBlindRequests, selectedVotingId]);
+    if (Object.keys(followDeliveries).some((coordinatorNpub) => !configuredCoordinatorTargets.includes(coordinatorNpub))) {
+      setFollowDeliveries((current) => (
+        Object.fromEntries(
+          Object.entries(current).filter(([coordinatorNpub]) => configuredCoordinatorTargets.includes(coordinatorNpub)),
+        )
+      ));
+    }
+  }, [
+    configuredCoordinatorTargets,
+    followDeliveries,
+    knownBlindKeys,
+    knownRoundVotingIds,
+    pendingBlindRequests,
+    requestDeliveries,
+    roundReplyKeypairs,
+    selectedVotingId,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -919,7 +904,9 @@ export default function SimpleUiApp() {
     const voterNsec = voterKeypair?.nsec?.trim() ?? "";
 
     if (!voterNsec || configuredCoordinatorTargets.length === 0) {
-      setReceivedShards([]);
+      if (receivedShards.length > 0) {
+        setReceivedShards([]);
+      }
       return;
     }
 
@@ -978,6 +965,7 @@ export default function SimpleUiApp() {
     };
   }, [
     configuredCoordinatorTargets.length,
+    receivedShards.length,
     unresolvedActiveRoundPendingBlindRequests,
     roundReplyKeypairs,
     voterKeypair?.nsec,
@@ -1934,7 +1922,7 @@ export default function SimpleUiApp() {
     return () => window.clearInterval(intervalId);
   }, [configuredCoordinatorTargets, dmAcknowledgements, followDeliveries, questionnaireModeActive, voterKeypair?.npub, voterKeypair?.nsec]);
 
-  const uniqueShardResponses = Array.from(
+  const uniqueShardResponses = useMemo(() => Array.from(
     new Map(
       receivedShards.flatMap((shard) => {
         const parsed = shard.shardCertificate ? parseSimpleShardCertificate(shard.shardCertificate) : null;
@@ -1952,7 +1940,7 @@ export default function SimpleUiApp() {
         return [[shard.coordinatorNpub, shard] as const];
       }),
     ).values(),
-  );
+  ), [configuredCoordinatorTargets, receivedShards, selectedVotingId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1971,11 +1959,17 @@ export default function SimpleUiApp() {
         })),
     ).then((tokenId) => {
       if (!cancelled) {
-        setBallotTokenId(tokenId);
+        if (ballotTokenIdRef.current !== tokenId) {
+          ballotTokenIdRef.current = tokenId;
+          setBallotTokenId(tokenId);
+        }
       }
     }).catch(() => {
       if (!cancelled) {
-        setBallotTokenId(null);
+        if (ballotTokenIdRef.current !== null) {
+          ballotTokenIdRef.current = null;
+          setBallotTokenId(null);
+        }
       }
     });
 
@@ -2993,12 +2987,7 @@ export default function SimpleUiApp() {
             aria-label='Vote'
           >
             <QuestionnaireVoterPanel
-              onContextChange={(nextContext) => {
-                setQuestionnaireContext(nextContext);
-                if (nextContext.hasDefinition) {
-                  setVotePaneUnlocked(true);
-                }
-              }}
+              onContextChange={handleQuestionnaireContextChange}
               participationHistory={questionnaireParticipationHistory}
               onParticipationHistoryChange={setQuestionnaireParticipationHistory}
               announcedQuestionnaireIds={readyAnnouncedQuestionnaireIds}

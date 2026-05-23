@@ -20,6 +20,7 @@ The active product is the client in `web/` plus the optional audit proxy in `wor
 
 - Browser voter, coordinator, and observer flows.
 - Nostr-first transport using public events and NIP-17 private control traffic.
+- Browser-only invite sharing by copied link, email, WhatsApp, SMS, native device share actions, personalised links for pre-whitelisted voter npubs, or one-use private code links with per-code share controls that whitelist the first claimant.
 - Blind credential issuance for allowlisted participants.
 - Public blind-token submissions from ephemeral response keys.
 - Live observer results derived from public submissions and decisions.
@@ -107,7 +108,7 @@ The audit proxy is an optional Rust helper. It uses the delegated coordinator ro
 It can:
 
 - receive delegation and questionnaire config over NIP-17 gift-wraps;
-- issue blind credentials to eligible voters;
+- issue blind credentials to eligible voters, including voters who claim a one-use private invite code;
 - verify public blind-token submissions;
 - publish accept/reject decisions;
 - close the questionnaire after all expected invitees have accepted valid responses;

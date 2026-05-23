@@ -62,8 +62,12 @@ This is the practical browser-based flow. Start as the coordinator, then use a s
 
 ### 3. Coordinator invites voters
 
-1. Add or import voter `npub`s in **Invite**.
-2. Send invites with **Invite** or **Invite all whitelisted**.
+1. Share the questionnaire link from **Invite** with **Copy link**, **Invite by email**, **WhatsApp**, **SMS**, or **Share**. These actions use the browser/device apps already available; no provider API key or service registration is needed.
+2. Use **Create private code link** when the coordinator wants a one-use bearer invite with no `npub` in the URL. The voter looks up coordinator and audit-proxy routing from the public questionnaire metadata on Nostr before requesting a ballot. The created row can be copied or sent by email, WhatsApp, SMS, or native share while the raw link is available in that page session. The first voter to open that link claims the code with their local voter identity; the code can be revoked until it is claimed.
+3. Add or import voter `npub`s in **Invite** when you want to pre-authorise known voters.
+4. Use **Copy personalised link** beside a whitelisted voter when the link should carry that pre-authorised voter `npub`. The voter must still sign in as that `npub`; the personalised URL reveals the invitee `npub` to whoever sees the link.
+5. Send Nostr invite DMs with **Invite** or **Invite all whitelisted**.
+6. Voters who arrive from a shared link without being whitelisted can still request a ballot, then appear under requester authorisation for the coordinator.
 
 ### 4. Voter requests and submits
 
@@ -228,7 +232,7 @@ The present web client is built with:
 - **`@cloudflare/blindrsa-ts`** for the RSABSSA blind-signature primitive used in the current issuance path
 - **Rust compiled to WebAssembly** for deterministic protocol logic, including validation helpers and the new coordinator control engine
 - **an optional Rust audit proxy runtime** (`worker/`) for election-scoped delegated issuance/verification operations over outbound-only relay connections, with coordinator-signed delegation and revocation control
-- **seven-day fixed-lookback audit proxy DM polling with event-id dedupe**, so relay-randomised gift-wrap timestamps do not cause missed delegated blind requests; the helper publishes status heartbeats back to the coordinator, uses active delegation control relays in addition to startup relays, can publish a delegated close event plus result summary once all expected invitees have accepted valid responses, exits cleanly after completed delegated work, and defaults to control relays that accept `#p` gift-wrap reads
+- **seven-day fixed-lookback audit proxy DM polling with event-id dedupe**, so relay-randomised gift-wrap timestamps do not cause missed delegated blind requests; the helper publishes status heartbeats back to the coordinator, uses active delegation control relays in addition to startup relays, can redeem one-use private invite-code hashes from the coordinator config, can publish a delegated close event plus result summary once all expected invitees have accepted valid responses, exits cleanly after completed delegated work, and defaults to control relays that accept `#p` gift-wrap reads
 - **a real OpenMLS-backed coordinator engine inside the Rust core**, hidden behind a stable Rust abstraction so the browser code does not depend on MLS types directly; the browser coordinator path now bootstraps and joins the supervisory MLS group through Nostr carrier events, and the lead waits for sub-coordinator welcome acknowledgement only after the non-lead has completed an initial coordinator-control backfill pass before opening the first public round in the repaired small live cases
 - **a Rust mixed-replay engine for public rounds and ballots**, now used by the voter, coordinator, and observer public-state views to derive round state, accepted ballots, and rejection reasons
 - **versioned Rust snapshots and replay diagnostics** for the shared protocol engine, so the browser can restore state, validate snapshot compatibility, and surface replay issues without re-implementing protocol rules in TypeScript
@@ -241,7 +245,7 @@ The present web client is built with:
 - **voter questionnaire vote gating** that only enables Vote after announced questionnaire ids are verified as publicly readable (`definition` present + state `open`/`published`)
 - **questionnaire discovery over direct live subscriptions** with one startup backfill plus one bounded retry, and explicit per-voter discovery timing diagnostics for startup visibility failures
 - **voter draft preservation** so response fields are not cleared when a blind ballot credential or refreshed definition arrives for the same questionnaire
-- **linked invite login** that opens the public questionnaire without scanning old encrypted invite DMs, with recent bounded signer DM reads for manual invite checks and credential-result polling
+- **linked invite login and no-service share actions** that open the public questionnaire without scanning old encrypted invite DMs, with recent bounded signer DM reads for manual invite checks and credential-result polling
 - **Android signer routing** that prefers Amber through NIP-46 when available, keeping signer-backed questionnaire DM operations on one signer identity
 - **gateway Nostr Connect helpers** that present login controls in order (`Signer`/`nsec`, then `NOS2X-FOX`/`Amber`, then a single login action), can generate/copy a `nostrconnect://` URL, show it as a QR code, and expose an Amber-compatible `bunker://` (`nsecbunker`) copy path
 - **blind DM relay targeting** so blind request/issuance/submission/acceptance DMs resolve recipient `kind:10050` relay-list hints before static fallbacks
@@ -772,6 +776,7 @@ The questionnaire runtime currently provides:
 
 - signer-based login entry points in voter/coordinator questionnaire headers
 - coordinator whitelist and invite actions
+- coordinator public-link sharing through copy, email, WhatsApp, SMS, and the native browser share sheet without API keys or external service accounts, plus one-use private code links with per-code share controls and per-whitelisted-voter personalised links carrying `coordinator` and `invited` URL parameters
 - invite delivery over NIP-17 gift-wrapped DMs (`kind 1059` with `kind 13` seal / `kind 14` rumor), with bounded recent relay-history invite discovery on manual voter checks
 - published questionnaire definitions that include the blind-signing public key, plus caching and invite-attached definitions, so voters can render linked questionnaires and request ballots even when the signer cannot read historical invite DMs
 - credential-attached definition refreshes that do not clear drafted response fields
@@ -782,6 +787,7 @@ The questionnaire runtime currently provides:
 - single accepted submission accounting with duplicate protection
 - local resume keyed by election id and signer `npub`
 - invite-link signer login opens the voter Vote tab directly, completes the signer-backed voter login, and can auto-prepare/send the first blind request once login is verified
+- private code links open the questionnaire directly, keep all `npub`s out of the URL, resolve coordinator and audit-proxy routing from public questionnaire metadata, store only a code hash in coordinator state, and redeem the first matching blind request into a normal whitelist entry; active audit proxies receive the same hash registry in their election-config DM
 - Android Amber NIP-46 sessions now request `sign_event`, `nip04_encrypt/decrypt`, and `nip44_encrypt/decrypt` up front during connect so later flow steps do not trigger capability escalation prompts
 - invite/login npubs and local voter/responder npubs may differ; the invite can be opened against the current local voter identity, then the coordinator either auto-issues for whitelisted voters or manually authorises unexpected requesters
 - invites are durable and can remain idle indefinitely; ballot request retries preserve the same request id and re-queue until the coordinator issues a credential, and the credential issuance can also carry the questionnaire definition as a recovery path

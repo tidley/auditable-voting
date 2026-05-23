@@ -12,6 +12,7 @@ import {
   type BallotAcceptanceResult,
   type BallotRejectReason,
   type BallotSubmission,
+  type BearerInviteCodeEntry,
   type BlindBallotIssuance,
   type BlindBallotRequest,
   type CoordinatorElectionState,
@@ -135,6 +136,11 @@ import {
   mergeBlindRequestRoutingRelays,
   selectIssueBlindTokensWorkerRouting,
 } from "./questionnaireWorkerRouting";
+import {
+  hashQuestionnaireInviteCode,
+  isQuestionnaireInviteCodeHash,
+  normaliseQuestionnaireInviteCode,
+} from "./questionnaireInviteCode";
 
 const OPTION_A_COORDINATOR_DM_LOOKBACK_SECONDS = 24 * 60 * 60;
 const OPTION_A_COORDINATOR_SIGNER_DM_LIMIT = 60;
@@ -299,6 +305,7 @@ function emptyCoordinatorState(summary: ElectionSummary): CoordinatorElectionSta
   return {
     election: summary,
     whitelist: {},
+    bearerInviteCodes: {},
     pendingBlindRequests: {},
     issuedBlindResponses: {},
     receivedSubmissions: {},
@@ -439,6 +446,7 @@ export class QuestionnaireOptionAVoterRuntime {
   private stopBlindIssuanceSubscription: (() => void) | null = null;
   private stopSubmissionAckSubscription: (() => void) | null = null;
   private stopAcceptanceSubscription: (() => void) | null = null;
+  private bearerInviteCode: string | null = null;
 
   constructor(
     private readonly signer: SignerService,
@@ -448,6 +456,10 @@ export class QuestionnaireOptionAVoterRuntime {
 
   getSnapshot() {
     return this.state;
+  }
+
+  setBearerInviteCode(code: string | null | undefined) {
+    this.bearerInviteCode = normaliseQuestionnaireInviteCode(code) || null;
   }
 
   getFlags() {
@@ -1135,6 +1147,9 @@ export class QuestionnaireOptionAVoterRuntime {
 
     let next = this.state;
     let request = next.blindRequest;
+    const inviteCodeHash = this.bearerInviteCode
+      ? await hashQuestionnaireInviteCode(this.bearerInviteCode)
+      : "";
     if (!request) {
       const blindSigningPublicKey = next.inviteMessage?.blindSigningPublicKey
         ?? loadElectionSummary(next.electionId)?.blindSigningPublicKey
@@ -1163,6 +1178,7 @@ export class QuestionnaireOptionAVoterRuntime {
         blindSigningKeyId: blindSigningPublicKey.keyId,
         clientNonce: makeId("nonce"),
         createdAt: nowIso(),
+        inviteCodeHash: inviteCodeHash || null,
       };
       const created = reduceVoterEvent(next, { type: "BLIND_REQUEST_CREATED", request });
       if (!created.ok) {
@@ -1183,8 +1199,28 @@ export class QuestionnaireOptionAVoterRuntime {
         },
       };
     }
+    if (request && inviteCodeHash && !request.inviteCodeHash) {
+      request = {
+        ...request,
+        inviteCodeHash,
+      };
+      next = {
+        ...next,
+        blindRequest: request,
+      };
+    }
 
     this.state = next;
+    if (!this.state.coordinatorNpub?.trim()) {
+      const summaryCoordinatorNpub = loadElectionSummary(this.state.electionId)?.coordinatorNpub?.trim() ?? "";
+      if (summaryCoordinatorNpub) {
+        this.state = {
+          ...this.state,
+          coordinatorNpub: summaryCoordinatorNpub,
+          lastUpdatedAt: nowIso(),
+        };
+      }
+    }
     const minRetryMs = Math.max(0, options?.minRetryMs ?? OPTION_A_BLIND_REQUEST_RETRY_MS);
     const lastSentMs = this.state.blindRequestSentAt ? Date.parse(this.state.blindRequestSentAt) : Number.NaN;
     if (
@@ -2039,6 +2075,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       Object.keys(snapshot.state.issuedBlindResponses).length > Object.keys(this.state.issuedBlindResponses).length
       || Object.keys(snapshot.state.receivedSubmissions).length > Object.keys(this.state.receivedSubmissions).length
       || Object.keys(snapshot.state.acceptanceResults).length > Object.keys(this.state.acceptanceResults).length
+      || Object.keys(snapshot.state.bearerInviteCodes ?? {}).length > Object.keys(this.state.bearerInviteCodes ?? {}).length
       || Object.keys(snapshot.pendingAuthorizationsByNpub ?? {}).length > Object.keys(this.pendingAuthorizationsByNpub).length
     );
     if (!snapshotLooksNewer && !fillsMissingProgress) {
@@ -2055,6 +2092,10 @@ export class QuestionnaireOptionACoordinatorRuntime {
         whitelist: {
           ...this.state.whitelist,
           ...snapshot.state.whitelist,
+        },
+        bearerInviteCodes: {
+          ...(this.state.bearerInviteCodes ?? {}),
+          ...(snapshot.state.bearerInviteCodes ?? {}),
         },
         pendingBlindRequests: {
           ...this.state.pendingBlindRequests,
@@ -2461,6 +2502,121 @@ export class QuestionnaireOptionACoordinatorRuntime {
     this.state = reduced.state;
     this.persistCoordinatorState("whitelist_added", { force: true });
     return this.state;
+  }
+
+  addBearerInviteCode(codeHash: string) {
+    if (!this.state || !this.coordinatorNpub) {
+      throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
+    }
+    const normalisedHash = (codeHash ?? "").trim().toLowerCase();
+    if (!isQuestionnaireInviteCodeHash(normalisedHash)) {
+      throw new OptionARuntimeError("invalid_submission", "Private invite code is invalid.");
+    }
+    const existing = this.state.bearerInviteCodes?.[normalisedHash] ?? null;
+    if (existing?.state === "redeemed") {
+      return existing;
+    }
+    const entry: BearerInviteCodeEntry = {
+      electionId: this.electionId,
+      codeHash: normalisedHash,
+      createdAt: existing?.createdAt ?? nowIso(),
+      state: existing?.state === "revoked" ? "revoked" : "available",
+      redeemedAt: existing?.redeemedAt ?? null,
+      redeemedNpub: existing?.redeemedNpub ?? null,
+      revokedAt: existing?.revokedAt ?? null,
+    };
+    this.state = {
+      ...this.state,
+      bearerInviteCodes: {
+        ...(this.state.bearerInviteCodes ?? {}),
+        [normalisedHash]: entry,
+      },
+      lastUpdatedAt: nowIso(),
+    };
+    this.persistCoordinatorState("bearer_invite_code_added", { force: true });
+    return entry;
+  }
+
+  revokeBearerInviteCode(codeHash: string) {
+    if (!this.state || !this.coordinatorNpub) {
+      throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
+    }
+    const normalisedHash = (codeHash ?? "").trim().toLowerCase();
+    const existing = this.state.bearerInviteCodes?.[normalisedHash] ?? null;
+    if (!existing || existing.state !== "available") {
+      return existing;
+    }
+    const revoked: BearerInviteCodeEntry = {
+      ...existing,
+      state: "revoked",
+      revokedAt: nowIso(),
+    };
+    this.state = {
+      ...this.state,
+      bearerInviteCodes: {
+        ...(this.state.bearerInviteCodes ?? {}),
+        [normalisedHash]: revoked,
+      },
+      lastUpdatedAt: revoked.revokedAt ?? nowIso(),
+    };
+    this.persistCoordinatorState("bearer_invite_code_revoked", { force: true });
+    return revoked;
+  }
+
+  private redeemBearerInviteCodeForRequest(
+    state: CoordinatorElectionState,
+    request: BlindBallotRequest,
+  ): CoordinatorElectionState {
+    const codeHash = (request.inviteCodeHash ?? "").trim().toLowerCase();
+    if (!isQuestionnaireInviteCodeHash(codeHash)) {
+      return state;
+    }
+    const codes = state.bearerInviteCodes ?? {};
+    const codeEntry = codes[codeHash] ?? null;
+    if (!codeEntry || codeEntry.electionId !== this.electionId || codeEntry.state === "revoked") {
+      return state;
+    }
+    const redeemedNpub = codeEntry.redeemedNpub?.trim() ?? "";
+    if (codeEntry.state === "redeemed" && redeemedNpub && redeemedNpub !== request.invitedNpub) {
+      return state;
+    }
+
+    const redeemedAt = codeEntry.redeemedAt ?? nowIso();
+    const existingWhitelistEntry = state.whitelist[request.invitedNpub] ?? null;
+    const whitelistEntry: WhitelistEntry = existingWhitelistEntry
+      ? {
+        ...existingWhitelistEntry,
+        inviteCodeHash: existingWhitelistEntry.inviteCodeHash ?? codeHash,
+        inviteCodeRedeemedAt: existingWhitelistEntry.inviteCodeRedeemedAt ?? redeemedAt,
+      }
+      : {
+        electionId: this.electionId,
+        invitedNpub: request.invitedNpub,
+        addedAt: redeemedAt,
+        inviteCodeHash: codeHash,
+        inviteCodeRedeemedAt: redeemedAt,
+        claimState: "whitelisted",
+      };
+
+    const redeemedCodeEntry: BearerInviteCodeEntry = {
+      ...codeEntry,
+      state: "redeemed",
+      redeemedAt,
+      redeemedNpub: request.invitedNpub,
+    };
+
+    return {
+      ...state,
+      whitelist: {
+        ...state.whitelist,
+        [request.invitedNpub]: whitelistEntry,
+      },
+      bearerInviteCodes: {
+        ...codes,
+        [codeHash]: redeemedCodeEntry,
+      },
+      lastUpdatedAt: redeemedAt,
+    };
   }
 
   async authorizeRequester(invitedNpub: string) {
@@ -2958,6 +3114,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
     });
     let next = this.state;
     for (const request of queue) {
+      next = this.redeemBearerInviteCodeForRequest(next, request);
       const claimed = reduceCoordinatorEvent(next, {
         type: "LOGIN_VERIFIED",
         electionId: this.electionId,

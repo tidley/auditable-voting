@@ -4,12 +4,13 @@ mod store;
 
 use crate::config::WorkerConfig;
 use crate::model::{
-    is_expired, now_iso, BlindBallotIssuance, BlindBallotIssuanceEnvelope, BlindBallotRequest,
-    BlindBallotRequestEnvelope, ElectionRuntimeState, QuestionnaireBlindResponseEvent,
-    QuestionnaireSubmissionDecisionEvent, WorkerCapability, WorkerDelegationCertificate,
-    WorkerDelegationEnvelope, WorkerDelegationRevocation, WorkerElectionConfigEnvelope,
-    WorkerElectionConfigSnapshot, WorkerPersistentState, WorkerRevocationEnvelope,
-    WorkerStatusEnvelope, WorkerStatusSnapshot, IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND,
+    is_expired, now_iso, BearerInviteCodeEntry, BlindBallotIssuance, BlindBallotIssuanceEnvelope,
+    BlindBallotRequest, BlindBallotRequestEnvelope, ElectionRuntimeState,
+    QuestionnaireBlindResponseEvent, QuestionnaireSubmissionDecisionEvent, WorkerCapability,
+    WorkerDelegationCertificate, WorkerDelegationEnvelope, WorkerDelegationRevocation,
+    WorkerElectionConfigEnvelope, WorkerElectionConfigSnapshot, WorkerPersistentState,
+    WorkerRevocationEnvelope, WorkerStatusEnvelope, WorkerStatusSnapshot,
+    IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND,
     IMPLEMENTATION_KIND_QUESTIONNAIRE_RESULT_SUMMARY, IMPLEMENTATION_KIND_QUESTIONNAIRE_STATE,
     IMPLEMENTATION_KIND_QUESTIONNAIRE_SUBMISSION_DECISION, OPTIONA_WORKER_DELEGATION_KIND,
     OPTIONA_WORKER_DELEGATION_REVOCATION_KIND,
@@ -114,12 +115,119 @@ fn apply_worker_election_config(
     election: &mut ElectionRuntimeState,
     snapshot: &WorkerElectionConfigSnapshot,
 ) {
+    if election.election_id.is_empty() {
+        election.election_id = snapshot.election_id.clone();
+    }
     election.expected_invitee_count = snapshot.expected_invitee_count;
+    if snapshot.whitelist_npubs.is_some()
+        || snapshot.bearer_invite_codes.is_some()
+        || snapshot.eligibility_required.is_some()
+    {
+        election.eligibility_required = snapshot.eligibility_required.unwrap_or(true);
+    }
+    if let Some(whitelist_npubs) = &snapshot.whitelist_npubs {
+        election.whitelist_npubs = whitelist_npubs
+            .iter()
+            .map(|entry| entry.trim().to_string())
+            .filter(|entry| !entry.is_empty())
+            .collect();
+    }
+    if let Some(codes) = &snapshot.bearer_invite_codes {
+        merge_bearer_invite_codes(election, codes);
+    }
     if snapshot.blind_signing_private_key.is_some() {
         election.blind_signing_private_key = snapshot.blind_signing_private_key.clone();
     }
     if snapshot.definition.is_some() {
         election.definition = snapshot.definition.clone();
+    }
+}
+
+fn normalize_invite_code_hash(value: &str) -> Option<String> {
+    let normalized = value.trim().to_ascii_lowercase();
+    if normalized.len() != 64 || !normalized.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(normalized)
+}
+
+fn merge_bearer_invite_codes(election: &mut ElectionRuntimeState, codes: &[BearerInviteCodeEntry]) {
+    for incoming in codes {
+        let Some(code_hash) = normalize_invite_code_hash(&incoming.code_hash) else {
+            continue;
+        };
+        if incoming.election_id != election.election_id {
+            continue;
+        }
+        let existing = election.bearer_invite_codes.get(&code_hash).cloned();
+        let next = match (existing, incoming.state.as_str()) {
+            (Some(existing), _) if existing.state == "redeemed" => existing,
+            (_, "available" | "redeemed" | "revoked") => BearerInviteCodeEntry {
+                code_hash: code_hash.clone(),
+                ..incoming.clone()
+            },
+            _ => continue,
+        };
+        election.bearer_invite_codes.insert(code_hash, next);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BlindRequestAuthorization {
+    Authorized { state_changed: bool },
+    Deferred,
+    Rejected,
+}
+
+fn authorize_blind_request(
+    election: &mut ElectionRuntimeState,
+    request: &BlindBallotRequest,
+) -> BlindRequestAuthorization {
+    if election.whitelist_npubs.contains(&request.invited_npub) {
+        return BlindRequestAuthorization::Authorized {
+            state_changed: false,
+        };
+    }
+
+    let invite_code_hash = request
+        .invite_code_hash
+        .as_deref()
+        .and_then(normalize_invite_code_hash);
+    if let Some(code_hash) = invite_code_hash {
+        let Some(entry) = election.bearer_invite_codes.get_mut(&code_hash) else {
+            return BlindRequestAuthorization::Deferred;
+        };
+        match entry.state.as_str() {
+            "available" => {
+                let redeemed_at = now_iso();
+                entry.state = "redeemed".to_string();
+                entry.redeemed_at = Some(redeemed_at);
+                entry.redeemed_npub = Some(request.invited_npub.clone());
+                election
+                    .whitelist_npubs
+                    .insert(request.invited_npub.clone());
+                return BlindRequestAuthorization::Authorized {
+                    state_changed: true,
+                };
+            }
+            "redeemed" if entry.redeemed_npub.as_deref() == Some(request.invited_npub.as_str()) => {
+                let inserted = election
+                    .whitelist_npubs
+                    .insert(request.invited_npub.clone());
+                return BlindRequestAuthorization::Authorized {
+                    state_changed: inserted,
+                };
+            }
+            _ => return BlindRequestAuthorization::Rejected,
+        }
+    }
+
+    if election.eligibility_required {
+        BlindRequestAuthorization::Rejected
+    } else {
+        BlindRequestAuthorization::Authorized {
+            state_changed: false,
+        }
     }
 }
 
@@ -1196,8 +1304,8 @@ impl WorkerRuntime {
 
     async fn handle_blind_request(&self, request: BlindBallotRequest) -> Result<bool> {
         let election = {
-            let state = self.state.lock().await;
-            let Some(election) = state.elections.get(&request.election_id) else {
+            let mut state = self.state.lock().await;
+            let Some(election) = state.elections.get_mut(&request.election_id) else {
                 info!(
                     "blind request deferred for election {} because no worker config is loaded yet",
                     request.election_id
@@ -1229,7 +1337,41 @@ impl WorkerRuntime {
                 );
                 return Ok(false);
             }
-            election.clone()
+            if !election
+                .seen_blind_request_ids
+                .contains(&request.request_id)
+                && election
+                    .issued_invited_npubs
+                    .contains(&request.invited_npub)
+            {
+                warn!(
+                    "blind request ignored because this invited npub already has a delegated issuance: election_id={}, request_id={}, invited_npub={}",
+                    request.election_id, request.request_id, request.invited_npub
+                );
+                return Ok(true);
+            }
+            let state_changed_by_authorization = match authorize_blind_request(election, &request) {
+                BlindRequestAuthorization::Authorized { state_changed } => state_changed,
+                BlindRequestAuthorization::Deferred => {
+                    info!(
+                        "blind request deferred for election {} because invite-code eligibility is not loaded yet",
+                        request.election_id
+                    );
+                    return Ok(false);
+                }
+                BlindRequestAuthorization::Rejected => {
+                    warn!(
+                        "blind request rejected by delegated eligibility: election_id={}, request_id={}, invited_npub={}",
+                        request.election_id, request.request_id, request.invited_npub
+                    );
+                    return Ok(true);
+                }
+            };
+            let cloned = election.clone();
+            if state_changed_by_authorization {
+                self.store.save(&state)?;
+            }
+            cloned
         };
         let private_key = election
             .blind_signing_private_key
@@ -1269,6 +1411,7 @@ impl WorkerRuntime {
             return Ok(false);
         };
         election.seen_blind_request_ids.insert(request.request_id);
+        election.issued_invited_npubs.insert(request.invited_npub);
         election.last_blind_issuance_at = Some(now_iso());
         self.store.save(&state)?;
         Ok(true)
@@ -1314,6 +1457,10 @@ impl WorkerRuntime {
         existing.expires_at = delegation.expires_at.clone();
         if delegation_changed {
             existing.seen_blind_request_ids.clear();
+            existing.issued_invited_npubs.clear();
+            existing.whitelist_npubs.clear();
+            existing.bearer_invite_codes.clear();
+            existing.eligibility_required = false;
             existing.accepted_response_authors.clear();
             existing.accepted_response_count = 0;
             existing.rejected_response_count = 0;
@@ -1463,6 +1610,7 @@ mod tests {
             blind_signing_key_id: "key_worker_definition".to_string(),
             client_nonce: "nonce_worker_definition".to_string(),
             created_at: now_iso(),
+            invite_code_hash: None,
         }
     }
 
@@ -1490,6 +1638,18 @@ mod tests {
                 .to_string(),
             worker_npub: "npub1worker000000000000000000000000000000000000000000000000".to_string(),
             expected_invitee_count: Some(3),
+            whitelist_npubs: Some(vec!["npub1knownvoter".to_string()]),
+            bearer_invite_codes: Some(vec![BearerInviteCodeEntry {
+                election_id: "q_worker_definition".to_string(),
+                code_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    .to_string(),
+                created_at: now_iso(),
+                state: "available".to_string(),
+                redeemed_at: None,
+                redeemed_npub: None,
+                revoked_at: None,
+            }]),
+            eligibility_required: Some(true),
             blind_signing_private_key: None,
             definition: Some(definition.clone()),
             sent_at: now_iso(),
@@ -1498,7 +1658,85 @@ mod tests {
         apply_worker_election_config(&mut election, &snapshot);
 
         assert_eq!(election.expected_invitee_count, Some(3));
+        assert!(election.eligibility_required);
+        assert!(election.whitelist_npubs.contains("npub1knownvoter"));
+        assert!(election
+            .bearer_invite_codes
+            .contains_key("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
         assert_eq!(election.definition, Some(definition));
+    }
+
+    #[test]
+    fn private_invite_code_authorizes_first_claimant_only() {
+        let code_hash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let mut election = ElectionRuntimeState {
+            election_id: "q_worker_definition".to_string(),
+            eligibility_required: true,
+            bearer_invite_codes: HashMap::from([(
+                code_hash.to_string(),
+                BearerInviteCodeEntry {
+                    election_id: "q_worker_definition".to_string(),
+                    code_hash: code_hash.to_string(),
+                    created_at: now_iso(),
+                    state: "available".to_string(),
+                    redeemed_at: None,
+                    redeemed_npub: None,
+                    revoked_at: None,
+                },
+            )]),
+            ..ElectionRuntimeState::default()
+        };
+
+        let mut request = sample_request();
+        request.invite_code_hash = Some(code_hash.to_string());
+
+        assert_eq!(
+            authorize_blind_request(&mut election, &request),
+            BlindRequestAuthorization::Authorized {
+                state_changed: true
+            }
+        );
+        assert!(election.whitelist_npubs.contains(&request.invited_npub));
+        assert_eq!(
+            election
+                .bearer_invite_codes
+                .get(code_hash)
+                .and_then(|entry| entry.redeemed_npub.as_deref()),
+            Some(request.invited_npub.as_str())
+        );
+
+        assert_eq!(
+            authorize_blind_request(&mut election, &request),
+            BlindRequestAuthorization::Authorized {
+                state_changed: false
+            }
+        );
+
+        let mut second_request = sample_request();
+        second_request.invited_npub =
+            "npub1secondinvitee0000000000000000000000000000000000000000".to_string();
+        second_request.invite_code_hash = Some(code_hash.to_string());
+        assert_eq!(
+            authorize_blind_request(&mut election, &second_request),
+            BlindRequestAuthorization::Rejected
+        );
+    }
+
+    #[test]
+    fn unknown_private_invite_code_defers_for_later_config() {
+        let mut election = ElectionRuntimeState {
+            election_id: "q_worker_definition".to_string(),
+            eligibility_required: true,
+            ..ElectionRuntimeState::default()
+        };
+        let mut request = sample_request();
+        request.invite_code_hash =
+            Some("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_string());
+
+        assert_eq!(
+            authorize_blind_request(&mut election, &request),
+            BlindRequestAuthorization::Deferred
+        );
     }
 
     #[test]

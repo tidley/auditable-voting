@@ -46,6 +46,7 @@ function makeCoordinatorState(): CoordinatorElectionState {
       coordinatorNpub,
     },
     whitelist: {},
+    bearerInviteCodes: {},
     pendingBlindRequests: {},
     issuedBlindResponses: {},
     receivedSubmissions: {},
@@ -561,6 +562,7 @@ describe("questionnaireOptionA", () => {
     expect(storageKeys.invite).toBe(`app:auditable-voting:voter:${voterNpub}:${electionId}:invite`);
     const coordinatorKeys = buildCoordinatorStorageKeys({ npub: coordinatorNpub, electionId });
     expect(coordinatorKeys.whitelist).toBe(`app:auditable-voting:coordinator:${coordinatorNpub}:${electionId}:whitelist`);
+    expect(coordinatorKeys.bearerInviteCodes).toBe(`app:auditable-voting:coordinator:${coordinatorNpub}:${electionId}:bearerInviteCodes`);
 
     const validBlindRequest = validateBlindBallotRequest({
       request: makeBlindRequest("request-1"),
