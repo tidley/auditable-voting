@@ -191,6 +191,7 @@ function buildInviteFromPublicDefinition(
 
 const LEGACY_INVITE_TITLE = "Should the proposal pass?";
 const AUTO_BALLOT_REQUEST_MIN_INTERVAL_MS = 15_000;
+const AUTO_BALLOT_PAGE_LOAD_REQUEST_DELAY_MS = 1_000;
 const AUTO_BALLOT_RETRY_POLL_MS = 20_000;
 const AUTO_BALLOT_RETRY_RESEND_MS = 8 * 60_000;
 const AUTO_BALLOT_SIGNER_REFRESH_SCHEDULE_MS = [15_000, 45_000, 120_000] as const;
@@ -271,6 +272,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const autoRequestSentForRef = useRef<Record<string, true>>({});
   const autoRequestInFlightForRef = useRef<Record<string, true>>({});
   const autoRequestLastAttemptAtRef = useRef<Record<string, number>>({});
+  const autoRequestDelayedForRef = useRef<Record<string, true>>({});
   const requestRetryAtRef = useRef<Record<string, number>>({});
   const autoSignerLoginForRef = useRef<Record<string, true>>({});
   const bearerInviteBootstrapForRef = useRef<Record<string, true>>({});
@@ -1351,6 +1353,69 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       setStatus(error instanceof Error ? error.message : "Request failed.");
     }
   }
+
+  useEffect(() => {
+    if (!runtime || !snapshot?.loginVerified) {
+      return;
+    }
+    if (snapshot.blindRequestSent || snapshot.credentialReady || snapshot.submission) {
+      return;
+    }
+    const targetElectionId = snapshot.electionId?.trim();
+    const targetInvitedNpub = snapshot.invitedNpub?.trim();
+    if (!targetElectionId || !targetInvitedNpub) {
+      return;
+    }
+    const hasQuestionnaireContext = Boolean(
+      questions.length > 0
+      || snapshot.inviteMessage
+      || activeInvite
+      || inviteContext.inviteCode
+      || inviteContext.electionId === targetElectionId
+      || latestAnnouncedQuestionnaireId === targetElectionId
+      || pendingInvites.some((invite) => invite.electionId === targetElectionId)
+      || readCachedQuestionnaireDefinition(targetElectionId),
+    );
+    if (!hasQuestionnaireContext) {
+      return;
+    }
+    const key = `${targetElectionId}:${targetInvitedNpub}:page-load`;
+    if (autoRequestDelayedForRef.current[key]) {
+      return;
+    }
+    autoRequestDelayedForRef.current[key] = true;
+    const timeoutId = window.setTimeout(() => {
+      const current = runtime.getSnapshot();
+      if (
+        !current?.loginVerified
+        || current.electionId !== targetElectionId
+        || current.invitedNpub !== targetInvitedNpub
+        || current.blindRequestSent
+        || current.credentialReady
+        || current.submission
+      ) {
+        return;
+      }
+      void requestBallot();
+    }, AUTO_BALLOT_PAGE_LOAD_REQUEST_DELAY_MS);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    activeInvite,
+    inviteContext.electionId,
+    inviteContext.inviteCode,
+    latestAnnouncedQuestionnaireId,
+    pendingInvites,
+    questions.length,
+    runtime,
+    snapshot?.blindRequestSent,
+    snapshot?.credentialReady,
+    snapshot?.electionId,
+    snapshot?.invitedNpub,
+    snapshot?.loginVerified,
+    snapshot?.submission,
+  ]);
 
   function refreshStatus() {
     if (!runtime) {
