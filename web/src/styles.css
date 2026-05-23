@@ -583,6 +583,7 @@ code {
 }
 
 .simple-role-switch-wrap {
+  position: relative;
   display: grid;
   gap: 16px;
   margin-bottom: 20px;
@@ -656,6 +657,14 @@ code {
   border: 1px solid #334155;
   background: #0f172a;
   box-shadow: 0 20px 48px rgba(2, 6, 23, 0.35);
+}
+
+.simple-role-switch-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 30;
+  width: min(560px, 100%);
 }
 
 .simple-role-switch-button {
@@ -1589,6 +1598,8 @@ code {
 }
 
 .simple-auditor-results-dashboard {
+  padding: 24px 26px;
+  border-top: 0;
   background: #081b2f;
   border-color: rgba(104, 119, 152, 0.38);
   box-shadow: 0 22px 80px rgba(0, 0, 0, 0.22);
@@ -2588,6 +2599,8 @@ code {
 }
 
 .simple-auditor-submissions-section {
+  padding: 24px 26px;
+  border-top: 0;
   background: #081b2f;
   border-color: rgba(104, 119, 152, 0.38);
 }
@@ -2639,6 +2652,11 @@ code {
 }
 
 @media (max-width: 640px) {
+  .simple-auditor-results-dashboard,
+  .simple-auditor-submissions-section {
+    padding: 18px;
+  }
+
   .simple-auditor-result-row {
     grid-template-columns: auto minmax(0, 1fr);
   }

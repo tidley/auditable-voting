@@ -72,6 +72,20 @@ function writeRoleToUrl(role: SimpleRole) {
   window.history.replaceState({}, "", url.toString());
 }
 
+function getLandingPageUrl() {
+  if (typeof window === "undefined") {
+    return "/";
+  }
+  return new URL(import.meta.env.BASE_URL || "/", window.location.origin).toString();
+}
+
+function returnToLandingPage() {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.location.assign(getLandingPageUrl());
+}
+
 function roleLabel(role: SimpleRole) {
   return ROLE_OPTIONS.find((entry) => entry.role === role)?.label ?? "Observer";
 }
@@ -316,6 +330,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                 role='tab'
                 aria-selected={gatewayRole === option.role}
                 className={`simple-role-switch-button${gatewayRole === option.role ? " is-active" : ""}`}
+                data-press-cooldown-disabled='true'
                 onClick={() => setGatewayRole(option.role)}
               >
                 {option.label}
@@ -444,6 +459,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
             onClick={() => setRoleSwitchMinimized((current) => !current)}
             aria-expanded={!roleSwitchMinimized}
             aria-controls='simple-role-switch-panel'
+            data-press-cooldown-disabled='true'
           >
             {roleTitle}
           </button>
@@ -454,18 +470,8 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                 className='simple-voter-secondary'
                 onClick={() => {
                   if (typeof window !== "undefined") {
-                    window.dispatchEvent(new Event(`auditable-voting:${role}-login`));
-                  }
-                }}
-              >
-                Login
-              </button>
-              <button
-                type='button'
-                className='simple-voter-secondary'
-                onClick={() => {
-                  if (typeof window !== "undefined") {
                     window.dispatchEvent(new Event(`auditable-voting:${role}-signout`));
+                    returnToLandingPage();
                   }
                 }}
               >
@@ -488,7 +494,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
         {!roleSwitchMinimized ? (
           <div
             id='simple-role-switch-panel'
-            className='simple-role-switch'
+            className='simple-role-switch simple-role-switch-menu'
             role='tablist'
             aria-label='Simple role switch'
           >
@@ -499,6 +505,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                 role='tab'
                 aria-selected={role === option.role}
                 className={`simple-role-switch-button${role === option.role ? ' is-active' : ''}`}
+                data-press-cooldown-disabled='true'
                 onClick={() => handleRoleSelect(option.role)}
               >
                 {option.label}

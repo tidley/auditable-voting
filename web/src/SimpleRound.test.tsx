@@ -2451,7 +2451,7 @@ describe("Simple round flow", () => {
     const observerUi = within(observer.container);
 
     await waitFor(() => {
-      expect(observerUi.getByRole("heading", { name: /Questionnaire Rounds/i, level: 2 })).toBeTruthy();
+      expect(observerUi.getByRole("heading", { name: /Find Published Questionnaires/i, level: 2 })).toBeTruthy();
       expect(observerUi.getByRole("heading", { name: /Questionnaire Results/i, level: 2 })).toBeTruthy();
       expect(observerUi.getByRole("heading", { name: /Submitted Votes/i, level: 2 })).toBeTruthy();
     });
@@ -2494,11 +2494,13 @@ describe("Simple round flow", () => {
     const observerUi = within(observer.container);
 
     await waitFor(() => {
-      expect(observerUi.getByRole("heading", { name: /Questionnaire Rounds/i, level: 2 })).toBeTruthy();
+      expect(observerUi.getByRole("heading", { name: /Find Published Questionnaires/i, level: 2 })).toBeTruthy();
       expect(observerUi.getByRole("heading", { name: /Questionnaire Results/i, level: 2 })).toBeTruthy();
       expect(observerUi.getByRole("heading", { name: /Submitted Votes/i, level: 2 })).toBeTruthy();
     });
 
-    expect(observerUi.getByText(/Search historic data/i)).toBeTruthy();
+    expect(observerUi.getByLabelText(/Search/i)).toBeTruthy();
+    expect(observerUi.getByLabelText(/Questionnaire Coordinator Identity/i)).toBeTruthy();
+    expect(observerUi.queryByText(/Search historic data/i)).toBeNull();
   });
 });

@@ -74,7 +74,7 @@ export default function SimpleAuditorApp() {
   const [searchQuery, setSearchQuery] = useState("");
   const [questionnaireRefreshStatus, setQuestionnaireRefreshStatus] = useState<string | null>(null);
   const [responseRefreshStatus, setResponseRefreshStatus] = useState<string | null>(null);
-  const [historicSearchInFlight, setHistoricSearchInFlight] = useState(false);
+  const [refreshInFlight, setRefreshInFlight] = useState(false);
   const selectedQuestionnaireIdRef = useRef("");
   const refreshQueueRef = useRef<{
     pendingList: boolean;
@@ -341,6 +341,7 @@ export default function SimpleAuditorApp() {
       await refreshQueueRef.current.inFlightPromise;
       return;
     }
+    setRefreshInFlight(true);
     refreshQueueRef.current.inFlightPromise = (async () => {
       while (refreshQueueRef.current.pendingList || refreshQueueRef.current.pendingSelected) {
         const visible = typeof document === "undefined" || document.visibilityState === "visible";
@@ -363,6 +364,7 @@ export default function SimpleAuditorApp() {
       await refreshQueueRef.current.inFlightPromise;
     } finally {
       refreshQueueRef.current.inFlightPromise = null;
+      setRefreshInFlight(false);
     }
   }, [refreshQuestionnaires, refreshSelectedQuestionnaireResponses]);
 
@@ -612,48 +614,6 @@ export default function SimpleAuditorApp() {
     await enqueueRefresh({ list: true, selected: true, forceWhenHidden: true });
   }
 
-  async function searchHistoricData() {
-    if (historicSearchInFlight) {
-      return;
-    }
-    setHistoricSearchInFlight(true);
-    const searchingStatus = "Searching historic questionnaire data...";
-    setQuestionnaireRefreshStatus((previous) => (previous === searchingStatus ? previous : searchingStatus));
-    try {
-      const entries = await loadQuestionnairesFromNostr({ historic: true });
-      setQuestionnaires((previous) => (
-        areQuestionnaireEntriesEqual(previous, entries) ? previous : entries
-      ));
-      const selectedId = selectedQuestionnaireIdRef.current.trim();
-      if (!selectedId || !entries.some((entry) => entry.questionnaireId === selectedId)) {
-        const query = searchQuery.trim().toLowerCase();
-        const match = query
-          ? entries.find((entry) => (
-            entry.questionnaireId.toLowerCase().includes(query)
-            || entry.title.toLowerCase().includes(query)
-            || entry.description.toLowerCase().includes(query)
-            || entry.coordinatorNpub.toLowerCase().includes(query)
-            || entry.eventId.toLowerCase().includes(query)
-          ))
-          : null;
-        const nextSelectedId = (match ?? entries[0])?.questionnaireId ?? "";
-        setSelectedQuestionnaireId((previous) => (previous === nextSelectedId ? previous : nextSelectedId));
-      }
-      const nextStatus = (
-        entries.length > 0
-          ? `Historic search loaded ${entries.length} questionnaire${entries.length === 1 ? "" : "s"}.`
-          : "No historic public questionnaires discovered."
-      );
-      setQuestionnaireRefreshStatus((previous) => (previous === nextStatus ? previous : nextStatus));
-      await enqueueRefresh({ list: false, selected: true, forceWhenHidden: true });
-    } catch {
-      const nextStatus = "Historic questionnaire search failed.";
-      setQuestionnaireRefreshStatus((previous) => (previous === nextStatus ? previous : nextStatus));
-    } finally {
-      setHistoricSearchInFlight(false);
-    }
-  }
-
   function formatQuestionnaireTime(unix: number | null) {
     if (!unix) {
       return "Not set";
@@ -706,29 +666,18 @@ export default function SimpleAuditorApp() {
       <section className='simple-voter-page'>
         <section className='simple-voter-section simple-auditor-panel' data-refresh-status={questionnaireRefreshStatus ?? ""}>
           <div className='simple-voter-header-row'>
-            <h2 className='simple-voter-section-title'>Questionnaire Rounds</h2>
-            <button type='button' className='simple-voter-secondary' onClick={() => void refreshNow()}>
-              Refresh
+            <h2 className='simple-voter-section-title'>Find Published Questionnaires</h2>
+            <button
+              type='button'
+              className='simple-voter-secondary'
+              onClick={() => void refreshNow()}
+              disabled={refreshInFlight}
+            >
+              {refreshInFlight ? "Busy..." : "Refresh"}
             </button>
           </div>
           {questionnaires.length > 0 ? (
             <>
-              <label className='simple-voter-label' htmlFor='simple-auditor-coordinator-npub'>
-                Coordinator npub
-              </label>
-              <select
-                id='simple-auditor-coordinator-npub'
-                className='simple-voter-input'
-                value={selectedCoordinatorNpub}
-                onChange={(event) => setSelectedCoordinatorNpub(event.target.value)}
-              >
-                <option value=''>Any coordinator npub</option>
-                {coordinatorSelectOptions.map((coordinatorNpub) => (
-                  <option key={coordinatorNpub} value={coordinatorNpub}>
-                    {coordinatorNpub}
-                  </option>
-                ))}
-              </select>
               <label className='simple-voter-label' htmlFor='simple-auditor-search'>
                 Search
               </label>
@@ -739,60 +688,46 @@ export default function SimpleAuditorApp() {
                 onChange={(event) => setSearchQuery(event.target.value)}
                 placeholder='Filter by npub, round/questionnaire ID, or prompt...'
               />
+              <label className='simple-voter-label' htmlFor='simple-auditor-coordinator-npub'>
+                Questionnaire Coordinator Identity
+              </label>
+              <select
+                id='simple-auditor-coordinator-npub'
+                className='simple-voter-input'
+                value={selectedCoordinatorNpub}
+                onChange={(event) => setSelectedCoordinatorNpub(event.target.value)}
+              >
+                <option value=''>Any questionnaire coordinator</option>
+                {coordinatorSelectOptions.map((coordinatorNpub) => (
+                  <option key={coordinatorNpub} value={coordinatorNpub}>
+                    {coordinatorNpub}
+                  </option>
+                ))}
+              </select>
               {filteredQuestionnaires.length > 0 ? (
                 <>
                   <label className='simple-voter-label' htmlFor='simple-auditor-round'>
                     Round
                   </label>
-                  <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
-                    <select
-                      id='simple-auditor-round'
-                      className='simple-voter-input'
-                      value={selectedQuestionnaire?.questionnaireId ?? ''}
-                      onChange={(event) => setSelectedQuestionnaireId(event.target.value)}
-                    >
-                      {filteredQuestionnaires.map((entry) => (
-                        <option key={entry.eventId} value={entry.questionnaireId}>
-                          {formatRoundOptionLabel(entry)}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type='button'
-                      className='simple-voter-secondary'
-                      onClick={() => void searchHistoricData()}
-                      disabled={historicSearchInFlight}
-                    >
-                      {historicSearchInFlight ? "Searching..." : "Search historic data"}
-                    </button>
-                  </div>
+                  <select
+                    id='simple-auditor-round'
+                    className='simple-voter-input'
+                    value={selectedQuestionnaire?.questionnaireId ?? ''}
+                    onChange={(event) => setSelectedQuestionnaireId(event.target.value)}
+                  >
+                    {filteredQuestionnaires.map((entry) => (
+                      <option key={entry.eventId} value={entry.questionnaireId}>
+                        {formatRoundOptionLabel(entry)}
+                      </option>
+                    ))}
+                  </select>
                 </>
               ) : (
-                <>
-                  <p className='simple-voter-note'>No questionnaire rounds found for the selected filters.</p>
-                  <button
-                    type='button'
-                    className='simple-voter-secondary'
-                    onClick={() => void searchHistoricData()}
-                    disabled={historicSearchInFlight}
-                  >
-                    {historicSearchInFlight ? "Searching..." : "Search historic data"}
-                  </button>
-                </>
+                <p className='simple-voter-note'>No questionnaire rounds found for the selected filters.</p>
               )}
             </>
           ) : (
-            <>
-              <p className='simple-voter-empty'>No public questionnaire rounds discovered yet.</p>
-              <button
-                type='button'
-                className='simple-voter-secondary'
-                onClick={() => void searchHistoricData()}
-                disabled={historicSearchInFlight}
-              >
-                {historicSearchInFlight ? "Searching..." : "Search historic data"}
-              </button>
-            </>
+            <p className='simple-voter-empty'>No public questionnaire rounds discovered yet.</p>
           )}
         </section>
 

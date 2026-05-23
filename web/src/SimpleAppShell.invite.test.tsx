@@ -19,6 +19,10 @@ vi.mock("./SimpleRelayPanel", () => ({
   default: () => <div>Relay panel</div>,
 }));
 
+vi.mock("./simpleAppVersion", () => ({
+  SIMPLE_APP_VERSION: "test",
+}));
+
 vi.mock("./services/signerService", () => ({
   createAmberConnectBundle: async () => ({
     nostrConnectUri: "nostrconnect://mock",
@@ -49,6 +53,24 @@ describe("SimpleAppShell invite-link login", () => {
       "Coordinator",
       "Voter",
     ]);
+  });
+
+  it("keeps role switcher controls immediately reusable after clicking", async () => {
+    const user = userEvent.setup();
+    const { default: SimpleAppShell } = await import("./SimpleAppShell");
+
+    render(<SimpleAppShell />);
+
+    const coordinatorTab = screen.getByRole("tab", { name: "Coordinator" });
+    await user.click(coordinatorTab);
+    expect(coordinatorTab.getAttribute("aria-disabled")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Continue as Coordinator" }));
+    expect(screen.queryByRole("button", { name: "Login" })).toBeNull();
+
+    const activeRoleToggle = screen.getByRole("button", { name: "Coordinator" });
+    await user.click(activeRoleToggle);
+    expect(activeRoleToggle.getAttribute("aria-disabled")).toBeNull();
   });
 
   it("enters the voter app immediately after signer login on a linked questionnaire", async () => {
