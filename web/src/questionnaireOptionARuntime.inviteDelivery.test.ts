@@ -9,6 +9,10 @@ vi.mock("./questionnaireOptionAInviteDm", () => ({
   fetchOptionAInviteDms: vi.fn().mockResolvedValue([]),
 }));
 
+vi.mock("./questionnaireTransport", () => ({
+  fetchQuestionnaireActiveWorkerDelegationForCapability: vi.fn().mockResolvedValue(null),
+}));
+
 import { QuestionnaireOptionACoordinatorRuntime } from "./questionnaireOptionARuntime";
 
 function signer(npub: string): SignerService {
