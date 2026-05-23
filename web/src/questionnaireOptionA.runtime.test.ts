@@ -32,6 +32,7 @@ import {
 } from "./questionnaireBlindToken";
 import { hashQuestionnaireInviteCode } from "./questionnaireInviteCode";
 import {
+  generateQuestionnaireBlindKeyPair,
   signBlindedQuestionnaireToken,
   toQuestionnaireBlindPublicKey,
   verifyQuestionnaireBlindSignature,
@@ -837,6 +838,37 @@ describe("questionnaireOptionARuntime", () => {
     expect(voter.getSnapshot()?.coordinatorNpub).toBe(coordinatorNpub);
     await coordinator.processPendingBlindRequests();
     expect(coordinator.getSnapshot()?.bearerInviteCodes[inviteCodeHash]?.redeemedNpub).toBe(privateCodeNpub);
+  });
+
+  it("hydrates private code ballot requests from cached public questionnaire metadata", async () => {
+    const inviteCode = "private-invite-code-cached-definition";
+    const privateCodeNpub = "npub1cacheddefinitionvoter0000000000000000000000000";
+    const privateKey = await generateQuestionnaireBlindKeyPair();
+    storeCachedQuestionnaireDefinition({
+      ...buildDefinition({ electionId, coordinatorNpub }),
+      blindSigningPublicKey: toQuestionnaireBlindPublicKey(privateKey),
+    });
+
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(privateCodeNpub), electionId);
+    voter.setBearerInviteCode(inviteCode);
+    const bootstrapped = voter.bootstrapWithLocalIdentity({
+      invitedNpub: privateCodeNpub,
+      allowInviteMissing: true,
+    });
+    expect(bootstrapped.coordinatorNpub).toBe(coordinatorNpub);
+
+    const requested = await voter.requestBlindBallot({ forceResend: true });
+
+    expect(requested.blindRequestSent).toBe(true);
+    expect(requested.coordinatorNpub).toBe(coordinatorNpub);
+    expect(vi.mocked(publishOptionABlindRequestDm)).toHaveBeenCalledWith(expect.objectContaining({
+      recipientNpub: coordinatorNpub,
+      request: expect.objectContaining({
+        electionId,
+        invitedNpub: privateCodeNpub,
+        blindSigningKeyId: toQuestionnaireBlindPublicKey(privateKey).keyId,
+      }),
+    }));
   });
 
   it("does not republish unchanged voter state during credential wait refresh", async () => {

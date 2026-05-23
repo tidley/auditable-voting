@@ -584,7 +584,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         autoRequestInFlightForRef.current[requestKey] = true;
         autoRequestLastAttemptAtRef.current[requestKey] = Date.now();
         try {
-          await runtime.requestBlindBallot();
+          await runtime.requestBlindBallot({ forceResend: true });
           if (cancelled) {
             return;
           }
@@ -1400,6 +1400,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     if (!runtime || !snapshot || !snapshot.loginVerified) {
       return;
     }
+    if (inviteContext.inviteCode) {
+      return;
+    }
     if (snapshot.blindRequestSent || snapshot.credentialReady || snapshot.submission) {
       return;
     }
@@ -1428,7 +1431,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     try {
       autoRequestInFlightForRef.current[key] = true;
       autoRequestLastAttemptAtRef.current[key] = Date.now();
-      void runtime.requestBlindBallot({ forceResend: Boolean(inviteContext.inviteCode) }).then(() => {
+      void runtime.requestBlindBallot().then(() => {
         autoRequestSentForRef.current[key] = true;
         markSignerWaitRecoveryBaseline();
         scheduleSignerInitialPull();

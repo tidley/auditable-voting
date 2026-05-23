@@ -222,12 +222,26 @@ function cacheQuestionnaireDefinitionForRuntime(definition: QuestionnaireDefinit
     return;
   }
   const summary = loadElectionSummary(electionId);
-  if (summary) {
-    upsertElectionSummary({
-      ...summary,
-      questionnaireRelays: definition.questionnaireRelays,
-    });
+  const coordinatorNpub = definition.coordinatorPubkey.trim();
+  if (!summary && !coordinatorNpub) {
+    return;
   }
+  const closed = Number.isFinite(definition.closeAt) && definition.closeAt <= Math.floor(Date.now() / 1000);
+  upsertElectionSummary({
+    electionId,
+    title: definition.title || summary?.title || "Questionnaire",
+    description: definition.description ?? summary?.description ?? "",
+    state: summary?.state ?? (closed ? "closed" : "open"),
+    openedAt: Number.isFinite(definition.openAt) ? new Date(definition.openAt * 1000).toISOString() : summary?.openedAt ?? null,
+    closedAt: Number.isFinite(definition.closeAt) ? new Date(definition.closeAt * 1000).toISOString() : summary?.closedAt ?? null,
+    coordinatorNpub: summary?.coordinatorNpub || coordinatorNpub,
+    blindSigningPublicKey: definition.blindSigningPublicKey ?? summary?.blindSigningPublicKey ?? null,
+    questionnaireRelays: definition.questionnaireRelays,
+    issueBlindTokensWorker: summary?.issueBlindTokensWorker ?? null,
+    protocolVersion: definition.protocolVersion ?? summary?.protocolVersion,
+    flowMode: definition.flowMode ?? summary?.flowMode,
+    responseMode: definition.responseMode ?? summary?.responseMode,
+  });
 }
 
 function decodeNsecSecretKey(nsec: string | null | undefined) {
@@ -1007,14 +1021,19 @@ export class QuestionnaireOptionAVoterRuntime {
       ? { ...rawInvite, invitedNpub }
       : rawInvite;
 
+    const cachedDefinition = readCachedQuestionnaireDefinition(this.electionId);
+    if (cachedDefinition) {
+      cacheQuestionnaireDefinitionForRuntime(cachedDefinition);
+    }
     const summary = loadElectionSummary(this.electionId);
+    const definitionCoordinatorNpub = cachedDefinition?.coordinatorPubkey?.trim() ?? "";
     if (invite?.issueBlindTokensWorker && summary) {
       upsertElectionSummary(withIssueBlindTokensWorkerRouting(summary, invite.issueBlindTokensWorker));
     }
     const existingState = loadVoterState({
       voterNpub: invitedNpub,
       electionId: this.electionId,
-      coordinatorNpub: input.coordinatorNpub ?? invite?.coordinatorNpub ?? summary?.coordinatorNpub,
+      coordinatorNpub: input.coordinatorNpub ?? invite?.coordinatorNpub ?? summary?.coordinatorNpub ?? definitionCoordinatorNpub,
     });
     if (!existingState && !invite && !input.allowInviteMissing) {
       throw new OptionARuntimeError(
@@ -1025,10 +1044,14 @@ export class QuestionnaireOptionAVoterRuntime {
     const loadedVoterState = existingState ?? createEmptyVoterElectionLocalState({
       electionId: this.electionId,
       invitedNpub,
-      coordinatorNpub: input.coordinatorNpub ?? invite?.coordinatorNpub ?? summary?.coordinatorNpub ?? "",
+      coordinatorNpub: input.coordinatorNpub ?? invite?.coordinatorNpub ?? summary?.coordinatorNpub ?? definitionCoordinatorNpub,
       now: nowIso(),
     });
-    const resolvedCoordinatorNpub = input.coordinatorNpub ?? invite?.coordinatorNpub ?? summary?.coordinatorNpub ?? "";
+    const resolvedCoordinatorNpub = input.coordinatorNpub
+      ?? invite?.coordinatorNpub
+      ?? summary?.coordinatorNpub
+      ?? definitionCoordinatorNpub
+      ?? "";
     const voterState = resolvedCoordinatorNpub && loadedVoterState.coordinatorNpub !== resolvedCoordinatorNpub
       ? { ...loadedVoterState, coordinatorNpub: resolvedCoordinatorNpub, lastUpdatedAt: nowIso() }
       : loadedVoterState;
@@ -1181,9 +1204,15 @@ export class QuestionnaireOptionAVoterRuntime {
     const inviteCodeHash = this.bearerInviteCode
       ? await hashQuestionnaireInviteCode(this.bearerInviteCode)
       : "";
+    const cachedDefinition = readCachedQuestionnaireDefinition(next.electionId);
+    if (cachedDefinition) {
+      cacheQuestionnaireDefinitionForRuntime(cachedDefinition);
+    }
+    const summary = loadElectionSummary(next.electionId);
     if (!request) {
       const blindSigningPublicKey = next.inviteMessage?.blindSigningPublicKey
-        ?? loadElectionSummary(next.electionId)?.blindSigningPublicKey
+        ?? summary?.blindSigningPublicKey
+        ?? cachedDefinition?.blindSigningPublicKey
         ?? null;
       if (!blindSigningPublicKey) {
         throw new OptionARuntimeError("issuance_failed", "Coordinator blind-signing key is not available yet.");
@@ -1243,7 +1272,9 @@ export class QuestionnaireOptionAVoterRuntime {
 
     this.state = next;
     if (!this.state.coordinatorNpub?.trim()) {
-      const summaryCoordinatorNpub = loadElectionSummary(this.state.electionId)?.coordinatorNpub?.trim() ?? "";
+      const summaryCoordinatorNpub = summary?.coordinatorNpub?.trim()
+        || cachedDefinition?.coordinatorPubkey?.trim()
+        || "";
       if (summaryCoordinatorNpub) {
         this.state = {
           ...this.state,
