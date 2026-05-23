@@ -2500,6 +2500,25 @@ code {
   color: #cdd8f7;
 }
 
+.simple-auditor-answer-item-free-text {
+  width: 100%;
+}
+
+.simple-auditor-answer-free-text {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid rgba(143, 165, 216, 0.42);
+  border-radius: 8px;
+  background: rgba(15, 31, 52, 0.92);
+  color: #dce7ff;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .simple-auditor-submitted-toolbar {
   display: grid;
   grid-template-columns: 170px minmax(0, 1fr);

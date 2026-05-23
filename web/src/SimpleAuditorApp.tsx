@@ -1012,7 +1012,7 @@ export default function SimpleAuditorApp() {
                           <div className='simple-auditor-result-head'>
                             <div>
                               <p className='simple-auditor-table-kicker'>Voter identity and status</p>
-                              <p className='simple-voter-question' title={entry.response.authorPubkey}>{deriveActorDisplayId(entry.response.authorPubkey)}</p>
+                              <p className='simple-voter-question' title={entry.response.authorPubkey}>Voter ID: {deriveActorDisplayId(entry.response.authorPubkey)}</p>
                             </div>
                             <div className='simple-auditor-submission-time'>
                               <p className='simple-auditor-table-kicker'>Submission time</p>
@@ -1054,9 +1054,9 @@ export default function SimpleAuditorApp() {
                                   );
                                 }
                                 return (
-                                  <li key={`${entry.event.id}:${answer.questionId}`}>
+                                  <li key={`${entry.event.id}:${answer.questionId}`} className='simple-auditor-answer-item-free-text'>
                                     <span className='simple-auditor-answer-prompt'>{prompt}</span>
-                                    <span className='simple-auditor-answer-chip simple-auditor-answer-chip-text'>{answer.text || "(empty)"}</span>
+                                    <div className='simple-auditor-answer-free-text'>{answer.text || "(empty)"}</div>
                                   </li>
                                 );
                               })}

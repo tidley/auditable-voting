@@ -1400,13 +1400,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     if (!runtime || !snapshot || !snapshot.loginVerified) {
       return;
     }
-    if (inviteContext.inviteCode) {
-      return;
-    }
     if (snapshot.blindRequestSent || snapshot.credentialReady || snapshot.submission) {
-      return;
-    }
-    if (inviteContext.inviteCode && !snapshot.coordinatorNpub?.trim()) {
       return;
     }
     const hasInviteContext = Boolean(
@@ -1434,7 +1428,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     try {
       autoRequestInFlightForRef.current[key] = true;
       autoRequestLastAttemptAtRef.current[key] = Date.now();
-      void runtime.requestBlindBallot().then(() => {
+      void runtime.requestBlindBallot({ forceResend: Boolean(inviteContext.inviteCode) }).then(() => {
         autoRequestSentForRef.current[key] = true;
         markSignerWaitRecoveryBaseline();
         scheduleSignerInitialPull();
@@ -1450,7 +1444,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       delete autoRequestInFlightForRef.current[key];
       // Keep manual request available if automatic send cannot proceed yet.
     }
-  }, [activeInvite, latestAnnouncedQuestionnaireId, pendingInvites, runtime, snapshot]);
+  }, [activeInvite, inviteContext.electionId, inviteContext.inviteCode, latestAnnouncedQuestionnaireId, pendingInvites, runtime, snapshot]);
 
   useEffect(() => {
     if (!runtime || !snapshot?.loginVerified || !snapshot.blindRequestSent || snapshot.credentialReady || snapshot.submission) {
@@ -1747,6 +1741,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         ? `Waiting for ${decisionActorName}`
         : "Not submitted";
   const submittedMarkerNpub = snapshot?.responseNpub ?? snapshot?.submission?.responseNpub ?? snapshot?.submission?.invitedNpub ?? "";
+  const submittedMarkerLabel = submittedMarkerNpub ? deriveActorDisplayId(submittedMarkerNpub) : "Unknown";
 
   return (
     <div className='simple-voter-card simple-optiona-voter-page'>
@@ -1939,18 +1934,21 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         </button>
       </div>
       {snapshot?.submission ? (
-        <section className='simple-settings-card' aria-label='Submitted responder marker'>
-          <h4 className='simple-voter-section-title'>Submitted responder marker</h4>
+        <section className='simple-settings-card' aria-label='Submitted voter ID'>
+          <h4 className='simple-voter-section-title'>Submitted voter ID</h4>
           <TokenFingerprint
             tokenId={submittedMarkerNpub}
-            label='Submitted responder marker'
+            label='Submitted voter ID'
             large
             showQr
             hideMetadata
           />
           <p className='simple-voter-note'>Submission ID: {snapshot.submission.submissionId}</p>
           {submittedMarkerNpub ? (
-            <p className='simple-voter-note'>Responder npub: {submittedMarkerNpub}</p>
+            <>
+              <p className='simple-voter-note'>Voter ID: {submittedMarkerLabel}</p>
+              <p className='simple-voter-note'>Voter npub: {submittedMarkerNpub}</p>
+            </>
           ) : null}
         </section>
       ) : null}
