@@ -8,6 +8,10 @@ import {
   type QuestionnaireResponseMode,
 } from "./questionnaireProtocolConstants";
 import type { QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
+import {
+  normalizeQuestionnaireRelays,
+  questionnaireRelaysForMetadata,
+} from "./questionnaireRelays";
 
 export type QuestionnaireQuestionBase = {
   questionId: string;
@@ -58,6 +62,7 @@ export type QuestionnaireDefinition = {
   eligibilityMode: "open" | "allowlist";
   allowMultipleResponsesPerPubkey: boolean;
   blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
+  questionnaireRelays?: string[];
   questions: QuestionnaireQuestion[];
 };
 
@@ -215,6 +220,12 @@ export function validateQuestionnaireDefinition(input: QuestionnaireDefinition):
   if (!isNonEmpty(input.coordinatorEncryptionPubkey)) {
     errors.push("coordinator_encryption_pubkey_missing");
   }
+  if (input.questionnaireRelays !== undefined) {
+    const normalizedRelays = normalizeQuestionnaireRelays(input.questionnaireRelays);
+    if (!Array.isArray(input.questionnaireRelays) || normalizedRelays.length !== input.questionnaireRelays.length) {
+      errors.push("questionnaire_relays_invalid");
+    }
+  }
   if (!Number.isFinite(input.openAt) || !Number.isFinite(input.closeAt) || input.openAt >= input.closeAt) {
     errors.push("invalid_open_close_window");
   }
@@ -271,11 +282,13 @@ export function normalizeQuestionnaireDefinition(
     ?? (responseMode === QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN
       ? QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1
       : QUESTIONNAIRE_FLOW_MODE_LEGACY_PRIVATE_DM);
+  const questionnaireRelays = questionnaireRelaysForMetadata(input.questionnaireRelays ?? []);
   return {
     ...input,
     responseMode,
     flowMode,
     protocolVersion: input.protocolVersion ?? QUESTIONNAIRE_PROTOCOL_VERSION_V1,
+    ...(questionnaireRelays ? { questionnaireRelays } : { questionnaireRelays: undefined }),
   };
 }
 

@@ -1182,6 +1182,8 @@ export default function SimpleCoordinatorApp() {
     }
     let cancelled = false;
     try {
+      const cachedDefinition = readCachedQuestionnaireDefinition(optionAElectionId);
+      const existingSummary = loadElectionSummary(optionAElectionId);
       optionACoordinatorRuntime.bootstrapCoordinatorNpub({
         coordinatorNpub: activeCoordinatorNpub,
         summary: {
@@ -1189,6 +1191,7 @@ export default function SimpleCoordinatorApp() {
           title: questionPrompt,
           description: "",
           state: "open",
+          questionnaireRelays: cachedDefinition?.questionnaireRelays ?? existingSummary?.questionnaireRelays,
           protocolVersion: QUESTIONNAIRE_PROTOCOL_VERSION_V2,
           flowMode: QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1,
           responseMode: QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN,

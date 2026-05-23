@@ -209,7 +209,8 @@ This is the practical browser-based flow. Start as the coordinator, then use a s
 3. In **Build**, enter the questionnaire name, description, and questions. The Build heading shows the current name, for example `Build questionnaire: How did we do`.
 4. Use **Generate ID** only when you want a fresh questionnaire ID. Use **Copy ID** beside the Questionnaire ID when sharing the public identifier with observers.
 5. Use **Show questionnaire link** if you want a QR/link for the questionnaire.
-6. Click **Publish questionnaire** when the draft is ready. This publishes the questionnaire definition and opens the round.
+6. Optionally edit **Questionnaire relays** if this round should prefer a non-default relay set.
+7. Click **Publish questionnaire** when the draft is ready. This publishes the questionnaire definition and opens the round.
 
 ### 2. Optional: coordinator enables an audit proxy
 
@@ -254,7 +255,7 @@ This is the practical browser-based flow. Start as the coordinator, then use a s
 
 ### Coordinator
 
-1. Build and publish a questionnaire definition (public event).
+1. Build and publish a questionnaire definition (public event), including non-default relay hints when configured.
 2. Share the public questionnaire link by copy, email, WhatsApp, SMS, or native device sharing, optionally using personalised links for pre-authorised voter npubs.
 3. Optional: in the separate **Build** page `Audit proxy` section, use Set up audit proxy after publication to open the section and generate an audit proxy account, then use the quick start command or helper downloads or save an autoconfigured platform launcher that already includes the current coordinator `npub`; right-click copy-link uses a shareable launcher URL that omits the audit proxy secret, generated launchers refresh the helper binary from GitHub Releases on each run, raw binary and direct CLI options sit under `Helper download and launch command`, and delegation still leaves the coordinator as root authority.
 4. Receive blind-token requests over private DMs (or delegate handling to an audit proxy).
@@ -282,7 +283,7 @@ For voters, the important distinction is who is expected to answer the blind req
 - without a proxy, `Waiting for coordinator` means the coordinator browser must come online and process the request
 - with a proxy, `Waiting for audit proxy` means the delegated helper should issue the credential, even if the coordinator browser has gone offline
 
-Invite payloads and cached questionnaire metadata include the proxy routing hint, so voters keep targeting the proxy after reloads. The helper currently defaults to a nostrwat.ch-checked control relay set (relay.nostr.net, nos.lol, relay.nostr.info, relay.nos.social, relay.momostr.pink, and relay.azzamo.net), and retains older persisted relay hints while retrying known unreliable endpoints with per-relay exponential backoff.
+Invite payloads and cached questionnaire metadata include the proxy routing hint, and public questionnaire metadata can include non-default questionnaire relay hints. Voters keep targeting the proxy after reloads and prefer the questionnaire relay hints for the round's public events and NIP-17 traffic. The helper currently defaults to a nostrwat.ch-checked control relay set (relay.nostr.net, nos.lol, relay.nostr.info, relay.nos.social, relay.momostr.pink, and relay.azzamo.net), and retains older persisted relay hints while retrying known unreliable endpoints with per-relay exponential backoff.
 
 ### Voter
 

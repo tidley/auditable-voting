@@ -24,6 +24,7 @@ import {
 import { fetchOptionAInviteDms, fetchOptionAInviteDmsWithNsec } from "./questionnaireOptionAInviteDm";
 import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import type { QuestionnaireDefinition } from "./questionnaireProtocol";
+import { mergeQuestionnaireRelayHints } from "./questionnaireRelays";
 import TokenFingerprint from "./TokenFingerprint";
 import { decodeNsec } from "./nostrIdentity";
 import { buildIssueBlindTokensWorkerRouting } from "./questionnaireWorkerRouting";
@@ -152,6 +153,7 @@ function cacheDefinitionForVoting(
     closedAt: Number.isFinite(definition.closeAt) ? new Date(definition.closeAt * 1000).toISOString() : existing?.closedAt ?? null,
     coordinatorNpub,
     blindSigningPublicKey: definition.blindSigningPublicKey ?? existing?.blindSigningPublicKey ?? null,
+    questionnaireRelays: definition.questionnaireRelays,
     issueBlindTokensWorker: issueBlindTokensWorker === undefined
       ? existing?.issueBlindTokensWorker ?? null
       : issueBlindTokensWorker,
@@ -790,7 +792,15 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       setQuestions(mapDefinitionQuestions(localDefinition));
     }
     let cancelled = false;
-    void fetchQuestionnaireDefinitions({ questionnaireId: electionId, limit: 20 })
+    const definitionRelays = mergeQuestionnaireRelayHints(
+      localDefinition?.questionnaireRelays,
+      loadElectionSummary(electionId)?.questionnaireRelays,
+    );
+    void fetchQuestionnaireDefinitions({
+      questionnaireId: electionId,
+      limit: 20,
+      relays: definitionRelays.length > 0 ? definitionRelays : undefined,
+    })
       .then((entries) => {
         if (cancelled) {
           return;
@@ -1021,10 +1031,15 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
 
     const existingSummary = loadElectionSummary(targetElectionId);
     let definition = readCachedQuestionnaireDefinition(targetElectionId);
+    const knownQuestionnaireRelays = mergeQuestionnaireRelayHints(
+      definition?.questionnaireRelays,
+      existingSummary?.questionnaireRelays,
+    );
     try {
       const latest = latestDefinitionFromEntries(await fetchQuestionnaireDefinitions({
         questionnaireId: targetElectionId,
         limit: 20,
+        relays: knownQuestionnaireRelays.length > 0 ? knownQuestionnaireRelays : undefined,
       }));
       if (latest) {
         definition = latest;
@@ -1038,6 +1053,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       const delegation = await fetchQuestionnaireActiveWorkerDelegationForCapability({
         questionnaireId: targetElectionId,
         capability: "issue_blind_tokens",
+        relays: mergeQuestionnaireRelayHints(definition?.questionnaireRelays, knownQuestionnaireRelays),
       });
       issueBlindTokensWorker = delegation?.workerNpub?.trim()
         ? buildIssueBlindTokensWorkerRouting({

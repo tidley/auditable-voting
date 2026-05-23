@@ -41,6 +41,7 @@ export interface ElectionSummary {
   closedAt?: IsoTime | null;
   coordinatorNpub: Npub;
   blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
+  questionnaireRelays?: string[];
   issueBlindTokensWorker?: IssueBlindTokensWorkerRouting | null;
   protocolVersion?: 1 | 2;
   flowMode?: QuestionnaireFlowMode;

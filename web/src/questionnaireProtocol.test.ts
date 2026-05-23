@@ -7,6 +7,7 @@ import {
   type QuestionnaireResponsePayload,
 } from "./questionnaireProtocol";
 import { QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN } from "./questionnaireProtocolConstants";
+import { DEFAULT_QUESTIONNAIRE_RELAYS } from "./questionnaireRelays";
 
 function buildDefinition(): QuestionnaireDefinition {
   return {
@@ -67,6 +68,22 @@ describe("questionnaireProtocol", () => {
       responseMode: undefined,
     });
     expect(normalized.responseMode).toBe("legacy_private_envelope");
+  });
+
+  it("keeps non-default questionnaire relay hints in metadata", () => {
+    const normalized = normalizeQuestionnaireDefinition({
+      ...buildDefinition(),
+      questionnaireRelays: ["wss://relay.example.com"],
+    });
+    expect(normalized.questionnaireRelays).toEqual(["wss://relay.example.com"]);
+  });
+
+  it("omits default questionnaire relay hints from normalized metadata", () => {
+    const normalized = normalizeQuestionnaireDefinition({
+      ...buildDefinition(),
+      questionnaireRelays: DEFAULT_QUESTIONNAIRE_RELAYS,
+    });
+    expect(normalized.questionnaireRelays).toBeUndefined();
   });
 
   it("rejects a malformed questionnaire definition", () => {

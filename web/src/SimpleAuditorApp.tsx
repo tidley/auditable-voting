@@ -43,6 +43,7 @@ type AuditorQuestionnaireEntry = {
   publishedRejectedResponseCount: number | null;
   resultPublishedAt: number | null;
   questions: QuestionnaireQuestion[];
+  questionnaireRelays?: string[];
   eventId: string;
 };
 
@@ -84,10 +85,14 @@ export default function SimpleAuditorApp() {
     pendingSelected: false,
     inFlightPromise: null,
   });
+  const questionnairesRef = useRef<AuditorQuestionnaireEntry[]>([]);
 
   useEffect(() => {
     selectedQuestionnaireIdRef.current = selectedQuestionnaireId;
   }, [selectedQuestionnaireId]);
+  useEffect(() => {
+    questionnairesRef.current = questionnaires;
+  }, [questionnaires]);
 
   const loadQuestionnairesFromNostr = useCallback(async (input?: { historic?: boolean }) => {
     const historic = Boolean(input?.historic);
@@ -125,27 +130,31 @@ export default function SimpleAuditorApp() {
       for (let index = 0; index < candidates.length; index += AUDITOR_QUESTIONNAIRE_HISTORIC_BATCH_SIZE) {
         const batch = candidates.slice(index, index + AUDITOR_QUESTIONNAIRE_HISTORIC_BATCH_SIZE);
         const batchEntries = await Promise.all(batch.map(async (entry): Promise<AuditorQuestionnaireEntry> => {
-        const id = entry.definition.questionnaireId;
-        const [stateEntries, resultEntries, participantCountEntries] = await Promise.all([
-          fetchQuestionnaireState({
-            questionnaireId: id,
-            limit: 50,
-            readRelayLimit: 2,
-            preferKindOnly: true,
-          }).catch(() => []),
-          fetchQuestionnaireResultSummary({
-            questionnaireId: id,
-            limit: 50,
-            readRelayLimit: 2,
-            preferKindOnly: true,
-          }).catch(() => []),
-          fetchQuestionnaireParticipantCount({
-            questionnaireId: id,
-            limit: 50,
-            readRelayLimit: 2,
-            preferKindOnly: true,
-          }).catch(() => []),
-        ]);
+          const id = entry.definition.questionnaireId;
+          const questionnaireRelays = entry.definition.questionnaireRelays;
+          const [stateEntries, resultEntries, participantCountEntries] = await Promise.all([
+            fetchQuestionnaireState({
+              questionnaireId: id,
+              limit: 50,
+              readRelayLimit: 2,
+              preferKindOnly: true,
+              relays: questionnaireRelays,
+            }).catch(() => []),
+            fetchQuestionnaireResultSummary({
+              questionnaireId: id,
+              limit: 50,
+              readRelayLimit: 2,
+              preferKindOnly: true,
+              relays: questionnaireRelays,
+            }).catch(() => []),
+            fetchQuestionnaireParticipantCount({
+              questionnaireId: id,
+              limit: 50,
+              readRelayLimit: 2,
+              preferKindOnly: true,
+              relays: questionnaireRelays,
+            }).catch(() => []),
+          ]);
         const latestState = [...stateEntries]
           .sort((left, right) => Number(right.event.created_at ?? right.state.createdAt ?? 0) - Number(left.event.created_at ?? left.state.createdAt ?? 0))[0]
           ?.state.state ?? null;
@@ -168,6 +177,7 @@ export default function SimpleAuditorApp() {
           publishedRejectedResponseCount: latestResult?.rejectedResponseCount ?? null,
           resultPublishedAt: Number(latestResult?.createdAt ?? 0) || null,
           questions: entry.definition.questions ?? [],
+          questionnaireRelays,
           eventId: entry.event.id,
         };
         }));
@@ -213,40 +223,47 @@ export default function SimpleAuditorApp() {
       return;
     }
     try {
+      const questionnaireRelays = questionnairesRef.current.find((entry) => entry.questionnaireId === selectedId)?.questionnaireRelays;
       const [responseEntries, decisionEntries, resultEntries, stateEntries, delegationStatus, participantCountEntries] = await Promise.all([
         fetchQuestionnaireBlindResponses({
           questionnaireId: selectedId,
           limit: AUDITOR_QUESTIONNAIRE_RESPONSE_LIMIT,
           readRelayLimit: 2,
           preferKindOnly: true,
+          relays: questionnaireRelays,
         }),
         fetchQuestionnaireSubmissionDecisions({
           questionnaireId: selectedId,
           limit: AUDITOR_QUESTIONNAIRE_RESPONSE_LIMIT,
           readRelayLimit: 2,
           preferKindOnly: true,
+          relays: questionnaireRelays,
         }).catch(() => []),
         fetchQuestionnaireResultSummary({
           questionnaireId: selectedId,
           limit: 50,
           readRelayLimit: 2,
           preferKindOnly: true,
+          relays: questionnaireRelays,
         }).catch(() => []),
         fetchQuestionnaireState({
           questionnaireId: selectedId,
           limit: 50,
           readRelayLimit: 2,
           preferKindOnly: true,
+          relays: questionnaireRelays,
         }).catch(() => []),
         fetchQuestionnaireWorkerDelegationStatus({
           questionnaireId: selectedId,
           readRelayLimit: 2,
+          relays: questionnaireRelays,
         }).catch(() => null),
         fetchQuestionnaireParticipantCount({
           questionnaireId: selectedId,
           limit: 50,
           readRelayLimit: 2,
           preferKindOnly: true,
+          relays: questionnaireRelays,
         }).catch(() => []),
       ]);
       const admissions = evaluateQuestionnaireBlindAdmissions({
@@ -1137,6 +1154,7 @@ function areQuestionnaireEntriesEqual(
       || a.publishedRejectedResponseCount !== b.publishedRejectedResponseCount
       || a.resultPublishedAt !== b.resultPublishedAt
       || a.eventId !== b.eventId
+      || JSON.stringify(a.questionnaireRelays ?? []) !== JSON.stringify(b.questionnaireRelays ?? [])
       || !areQuestionsEqual(a.questions, b.questions)
     ) {
       return false;

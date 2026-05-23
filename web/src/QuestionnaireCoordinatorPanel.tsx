@@ -30,6 +30,11 @@ import { evaluateQuestionnaireBlindAdmissions, fetchQuestionnaireSubmissionDecis
 import { publishQuestionnaireBlindResponsePublicByCoordinator } from "./questionnaireResponsePublish";
 import { decodeNsec } from "./nostrIdentity";
 import { normalizeRelaysRust } from "./wasm/auditableVotingCore";
+import {
+  DEFAULT_QUESTIONNAIRE_RELAYS,
+  normalizeQuestionnaireRelays,
+  questionnaireRelaysForMetadata,
+} from "./questionnaireRelays";
 import { createSignerService } from "./services/signerService";
 import { loadCoordinatorState, loadElectionSummary, upsertElectionSummary } from "./questionnaireOptionAStorage";
 import {
@@ -100,17 +105,6 @@ type QuestionnaireCoordinatorPanelProps = {
 };
 
 type QuestionnaireQuestionDraft = QuestionnaireQuestion;
-type QuestionCardTypeLabel = "Yes / No" | "Multiple choice" | "Free text";
-
-function questionTypeLabel(type: QuestionnaireQuestionDraft["type"]): QuestionCardTypeLabel {
-  if (type === "multiple_choice") {
-    return "Multiple choice";
-  }
-  if (type === "free_text") {
-    return "Free text";
-  }
-  return "Yes / No";
-}
 
 function createYesNoQuestion(questionId: string, prompt = "", required = true): QuestionnaireQuestionDraft {
   return {
@@ -213,6 +207,7 @@ type StoredQuestionnaireDraft = {
   description: string;
   closeTimerEnabled: boolean;
   closeAfterMinutes: string;
+  questionnaireRelays?: string;
   questions: QuestionnaireQuestionDraft[];
   delegationMode?: "browser_only" | "delegated_worker";
   delegatedWorkerNpub?: string;
@@ -280,6 +275,10 @@ function sanitizeWorkerRelays(value: string) {
   return normalizeRelaysRust(relays);
 }
 
+function formatQuestionnaireRelays(relays: string[]) {
+  return relays.join("\n");
+}
+
 function readStoredQuestionnaireDraft(): StoredQuestionnaireDraft {
   const fallbackId = readStoredQuestionnaireDraftId();
   if (typeof window === "undefined") {
@@ -315,6 +314,7 @@ function readStoredQuestionnaireDraft(): StoredQuestionnaireDraft {
       closeAfterMinutes: typeof parsed.closeAfterMinutes === "string" && parsed.closeAfterMinutes.trim()
         ? parsed.closeAfterMinutes
         : QUESTIONNAIRE_TIMER_FALLBACK_MINUTES,
+      questionnaireRelays: typeof parsed.questionnaireRelays === "string" ? parsed.questionnaireRelays : "",
       questions: normaliseStoredQuestions(parsed.questions),
       delegationMode: parsed.delegationMode === "delegated_worker" ? "delegated_worker" : "browser_only",
       delegatedWorkerNpub: typeof parsed.delegatedWorkerNpub === "string" ? parsed.delegatedWorkerNpub : "",
@@ -734,6 +734,7 @@ function buildDefinition(input: {
   title: string;
   description: string;
   closeAfterMinutes?: number;
+  questionnaireRelays?: string[];
   questions: QuestionnaireQuestionDraft[];
   blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
 }): QuestionnaireDefinition {
@@ -759,6 +760,7 @@ function buildDefinition(input: {
     eligibilityMode: "open",
     allowMultipleResponsesPerPubkey: false,
     blindSigningPublicKey: input.blindSigningPublicKey ?? null,
+    ...(input.questionnaireRelays?.length ? { questionnaireRelays: input.questionnaireRelays } : {}),
     questions: input.questions,
   };
 }
@@ -772,6 +774,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [description, setDescription] = useState(storedDraft.description);
   const [closeTimerEnabled, setCloseTimerEnabled] = useState(storedDraft.closeTimerEnabled);
   const [closeAfterMinutes, setCloseAfterMinutes] = useState(storedDraft.closeAfterMinutes);
+  const [questionnaireRelaysInput, setQuestionnaireRelaysInput] = useState(storedDraft.questionnaireRelays ?? "");
   const [questions, setQuestions] = useState<QuestionnaireQuestionDraft[]>(storedDraft.questions);
   const [delegationMode, setDelegationMode] = useState<"browser_only" | "delegated_worker">(storedDraft.delegationMode ?? "browser_only");
   const [delegatedWorkerNpub, setDelegatedWorkerNpub] = useState(storedDraft.delegatedWorkerNpub ?? "");
@@ -875,6 +878,21 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     filteredCount: 0,
     kindOnlyCount: 0,
   });
+  const parsedQuestionnaireRelays = useMemo(
+    () => normalizeQuestionnaireRelays(questionnaireRelaysInput),
+    [questionnaireRelaysInput],
+  );
+  const questionnaireRelayMetadata = useMemo(
+    () => questionnaireRelaysForMetadata(parsedQuestionnaireRelays) ?? [],
+    [parsedQuestionnaireRelays],
+  );
+  const questionnaireRelayPublishHints = useMemo(
+    () => (questionnaireRelayMetadata.length > 0 ? questionnaireRelayMetadata : undefined),
+    [questionnaireRelayMetadata],
+  );
+  const questionnaireRelayStatus = questionnaireRelayMetadata.length > 0
+    ? `${questionnaireRelayMetadata.length} custom relay${questionnaireRelayMetadata.length === 1 ? "" : "s"} will be published in the questionnaire metadata.`
+    : "Using the default questionnaire relay set.";
 
   useEffect(() => {
     const nextNsec = typeof props.coordinatorNsec === "string" ? props.coordinatorNsec.trim() : "";
@@ -1086,6 +1104,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           kind: QUESTIONNAIRE_DEFINITION_KIND,
           parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireDefinitionEvent(event)?.questionnaireId ?? null,
           preferKindOnly: true,
+          relays: questionnaireRelayPublishHints,
           readRelayLimit: 8,
         }),
         fetchQuestionnaireEventsWithFallback({
@@ -1093,6 +1112,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           kind: QUESTIONNAIRE_STATE_KIND,
           parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireStateEvent(event)?.questionnaireId ?? null,
           preferKindOnly: true,
+          relays: questionnaireRelayPublishHints,
           readRelayLimit: 8,
         }),
         fetchQuestionnaireEventsWithFallback({
@@ -1100,6 +1120,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           kind: QUESTIONNAIRE_RESPONSE_PRIVATE_KIND,
           parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireIdFromResponseEvent(event),
           preferKindOnly: true,
+          relays: questionnaireRelayPublishHints,
           readRelayLimit: 8,
         }),
         fetchQuestionnaireEventsWithFallback({
@@ -1113,6 +1134,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
               return null;
             }
           },
+          relays: questionnaireRelayPublishHints,
         }),
       ]);
       applyQuestionnaireSnapshot({
@@ -1130,13 +1152,13 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     } catch {
       setStatus("Questionnaire refresh failed.");
     }
-  }, [applyQuestionnaireSnapshot, questionnaireId]);
+  }, [applyQuestionnaireSnapshot, questionnaireId, questionnaireRelayPublishHints]);
 
   useEffect(() => {
     let cancelled = false;
     const loadQuestionnaireOptions = async () => {
       try {
-        const relays = getQuestionnaireReadRelays();
+        const relays = getQuestionnaireReadRelays(questionnaireRelayPublishHints);
         const pool = getSharedNostrPool();
         const events = await pool.querySync(relays, {
           kinds: [QUESTIONNAIRE_DEFINITION_KIND],
@@ -1174,7 +1196,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     return () => {
       cancelled = true;
     };
-  }, [coordinatorNpub, questionnaireId]);
+  }, [coordinatorNpub, questionnaireId, questionnaireRelayPublishHints]);
 
   useEffect(() => {
     const id = questionnaireId.trim();
@@ -1206,6 +1228,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           kind: QUESTIONNAIRE_DEFINITION_KIND,
           parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireDefinitionEvent(event)?.questionnaireId ?? null,
           preferKindOnly: true,
+          relays: questionnaireRelayPublishHints,
           readRelayLimit: 8,
         }),
         fetchQuestionnaireEventsWithFallback({
@@ -1213,6 +1236,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           kind: QUESTIONNAIRE_STATE_KIND,
           parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireStateEvent(event)?.questionnaireId ?? null,
           preferKindOnly: true,
+          relays: questionnaireRelayPublishHints,
           readRelayLimit: 8,
         }),
         fetchQuestionnaireEventsWithFallback({
@@ -1220,6 +1244,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           kind: QUESTIONNAIRE_RESPONSE_PRIVATE_KIND,
           parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireIdFromResponseEvent(event),
           preferKindOnly: true,
+          relays: questionnaireRelayPublishHints,
           readRelayLimit: 8,
         }),
         fetchQuestionnaireEventsWithFallback({
@@ -1233,6 +1258,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
               return null;
             }
           },
+          relays: questionnaireRelayPublishHints,
         }),
       ]);
       if (cancelled) {
@@ -1280,6 +1306,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         kind: QUESTIONNAIRE_DEFINITION_KIND,
         parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireDefinitionEvent(event)?.questionnaireId ?? null,
         useQuestionnaireIdTagFilter: false,
+        relays: questionnaireRelayPublishHints,
         readRelayLimit: 8,
         onEvent: (event) => {
           definitionById.set(event.id, event);
@@ -1292,6 +1319,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         kind: QUESTIONNAIRE_STATE_KIND,
         parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireStateEvent(event)?.questionnaireId ?? null,
         useQuestionnaireIdTagFilter: false,
+        relays: questionnaireRelayPublishHints,
         readRelayLimit: 8,
         onEvent: (event) => {
           stateById.set(event.id, event);
@@ -1304,6 +1332,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         kind: QUESTIONNAIRE_RESPONSE_PRIVATE_KIND,
         parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireIdFromResponseEvent(event),
         useQuestionnaireIdTagFilter: false,
+        relays: questionnaireRelayPublishHints,
         readRelayLimit: 8,
         onEvent: (event) => {
           responseById.set(event.id, event);
@@ -1314,6 +1343,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       subscribeQuestionnaireEvents({
         questionnaireId: id,
         kind: QUESTIONNAIRE_RESULT_SUMMARY_KIND,
+        relays: questionnaireRelayPublishHints,
         parseQuestionnaireIdFromEvent: (event) => {
           try {
             const parsed = JSON.parse(event.content) as { questionnaireId?: string };
@@ -1336,7 +1366,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         unsubscribe();
       }
     };
-  }, [applyQuestionnaireSnapshot, questionnaireId]);
+  }, [applyQuestionnaireSnapshot, questionnaireId, questionnaireRelayPublishHints]);
 
   useEffect(() => {
     const draftQuestionnaireId = questionnaireId.trim();
@@ -1475,6 +1505,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       delegatedWorkerExpiryEnabled,
       delegatedWorkerExpiryMinutes,
       delegatedWorkerCapabilities,
+      questionnaireRelays: questionnaireRelaysInput,
     };
     window.localStorage.setItem(
       buildSimpleNamespacedLocalStorageKey(QUESTIONNAIRE_DRAFT_DATA_STORAGE_KEY),
@@ -1490,6 +1521,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     delegatedWorkerNpub,
     delegationMode,
     description,
+    questionnaireRelaysInput,
     questionnaireId,
     questions,
     title,
@@ -1622,10 +1654,11 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       title: title.trim(),
       description: description.trim(),
       closeAfterMinutes: closeMinutes,
+      questionnaireRelays: questionnaireRelayMetadata,
       questions,
       blindSigningPublicKey: effectiveBlindSigningPublicKey ?? null,
     });
-  }, [closeAfterMinutes, closeTimerEnabled, coordinatorNpub, description, effectiveBlindSigningPublicKey, questionnaireId, questions, title]);
+  }, [closeAfterMinutes, closeTimerEnabled, coordinatorNpub, description, effectiveBlindSigningPublicKey, questionnaireId, questionnaireRelayMetadata, questions, title]);
 
   const inviteLink = useMemo(() => {
     const id = questionnaireId.trim();
@@ -2119,6 +2152,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       const result = await publishQuestionnaireDefinition({
         coordinatorNsec,
         definition: definitionToPublish,
+        relays: questionnaireRelayPublishHints,
       });
       setDefinitionPublishDiagnostic({
         attempted: true,
@@ -2131,6 +2165,21 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       });
       if (result.successes > 0) {
         storeCachedQuestionnaireDefinition(definitionToPublish);
+        upsertElectionSummary({
+          electionId: definitionToPublish.questionnaireId,
+          title: definitionToPublish.title,
+          description: definitionToPublish.description ?? "",
+          state: "open",
+          openedAt: new Date(definitionToPublish.openAt * 1000).toISOString(),
+          closedAt: new Date(definitionToPublish.closeAt * 1000).toISOString(),
+          coordinatorNpub: definitionToPublish.coordinatorPubkey,
+          blindSigningPublicKey: definitionToPublish.blindSigningPublicKey ?? null,
+          questionnaireRelays: definitionToPublish.questionnaireRelays,
+          issueBlindTokensWorker: loadElectionSummary(definitionToPublish.questionnaireId)?.issueBlindTokensWorker ?? null,
+          protocolVersion: definitionToPublish.protocolVersion,
+          flowMode: definitionToPublish.flowMode,
+          responseMode: definitionToPublish.responseMode,
+        });
         setDefinitionPublishSucceededAt(new Date().toISOString());
         setStatus(`Questionnaire draft published (${result.successes}/${result.relayResults.length} relays).`);
         await publishParticipantCountSnapshot({ silent: true });
@@ -2153,7 +2202,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       return false;
     }
     const expectedInviteeCount = Math.max(0, Math.floor(props.knownVoterCount ?? 0));
-    const dedupeKey = `${id}:${expectedInviteeCount}`;
+    const dedupeKey = `${id}:${expectedInviteeCount}:${(questionnaireRelayPublishHints ?? []).join(",")}`;
     if (input?.silent && lastParticipantCountPublishKeyRef.current === dedupeKey) {
       return true;
     }
@@ -2169,6 +2218,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           createdAt: nowUnix(),
           coordinatorPubkey: coordinatorNpubTrimmed,
         },
+        relays: questionnaireRelayPublishHints,
       });
       if (result.successes > 0) {
         lastParticipantCountPublishKeyRef.current = dedupeKey;
@@ -2220,6 +2270,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           createdAt: nowUnix(),
           coordinatorPubkey: coordinatorNpub,
         },
+        relays: questionnaireRelayPublishHints,
       });
       setStatePublishDiagnostic({
         attempted: true,
@@ -2275,10 +2326,12 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           fetchQuestionnaireBlindResponses({
             questionnaireId: latestDefinition.questionnaireId,
             limit: 500,
+            relays: latestDefinition.questionnaireRelays ?? questionnaireRelayPublishHints,
           }).catch(() => []),
           fetchQuestionnaireSubmissionDecisions({
             questionnaireId: latestDefinition.questionnaireId,
             limit: 500,
+            relays: latestDefinition.questionnaireRelays ?? questionnaireRelayPublishHints,
           }).catch(() => []),
         ]);
         const admissions = evaluateQuestionnaireBlindAdmissions({
@@ -2342,6 +2395,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           kind: QUESTIONNAIRE_RESPONSE_PRIVATE_KIND,
           parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireIdFromResponseEvent(event),
           preferKindOnly: true,
+          relays: latestDefinition.questionnaireRelays ?? questionnaireRelayPublishHints,
           readRelayLimit: 8,
         })).events;
         const processed = processQuestionnaireResponses({
@@ -2364,6 +2418,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         const existingPublicResponses = await fetchQuestionnaireBlindResponses({
           questionnaireId: latestDefinition.questionnaireId,
           limit: 500,
+          relays: latestDefinition.questionnaireRelays ?? questionnaireRelayPublishHints,
         }).catch(() => []);
         const existingResponseIds = new Set(
           existingPublicResponses
@@ -2390,6 +2445,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             tokenCommitment,
             answers: response.payload.answers,
             questionnaireDefinitionEventId: null,
+            relays: latestDefinition.questionnaireRelays ?? questionnaireRelayPublishHints,
           });
           if (publishedResponse.successes > 0) {
             responsePublishSuccessCount += 1;
@@ -2422,6 +2478,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       const publishSummary = await publishQuestionnaireResultSummary({
         coordinatorNsec,
         resultSummary: summary,
+        relays: latestDefinition.questionnaireRelays ?? questionnaireRelayPublishHints,
       });
       const publishStateResult = await publishQuestionnaireState({
         coordinatorNsec,
@@ -2433,6 +2490,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           createdAt: nowUnix(),
           coordinatorPubkey: coordinatorNpub,
         },
+        relays: latestDefinition.questionnaireRelays ?? questionnaireRelayPublishHints,
       });
 
       if (publishSummary.successes > 0 && publishStateResult.successes > 0) {
@@ -3029,6 +3087,28 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         </div>
       </div>
 
+      <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
+        <div className='simple-questionnaire-field-heading'>
+          <label className='simple-voter-label' htmlFor='questionnaire-relays'>Questionnaire relays</label>
+          <button
+            type='button'
+            className='simple-voter-secondary'
+            onClick={() => setQuestionnaireRelaysInput("")}
+          >
+            Use default
+          </button>
+        </div>
+        <textarea
+          id='questionnaire-relays'
+          className='simple-voter-input'
+          rows={4}
+          value={questionnaireRelaysInput}
+          placeholder={formatQuestionnaireRelays(DEFAULT_QUESTIONNAIRE_RELAYS)}
+          onChange={(event) => setQuestionnaireRelaysInput(event.target.value)}
+        />
+        <p className='simple-voter-note'>{questionnaireRelayStatus}</p>
+      </div>
+
       <h4 className='simple-voter-section-title'>Questions</h4>
       <div className='simple-questionnaire-question-list'>
         {questions.map((question, index) => {
@@ -3039,7 +3119,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             <div key={`${question.questionId}-${index}`} className='simple-questionnaire-question-card'>
               <div className='simple-questionnaire-question-head'>
                 <p className='simple-voter-question'>Question {index + 1}</p>
-                <span className='simple-questionnaire-question-type'>{questionTypeLabel(question.type)}</span>
               </div>
               <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
                 <button

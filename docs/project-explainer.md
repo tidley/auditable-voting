@@ -50,7 +50,8 @@ This is the practical browser-based flow. Start as the coordinator, then use a s
 3. In **Build**, enter the questionnaire name, description, and questions. The Build heading shows the current name, for example `Build questionnaire: How did we do`.
 4. Use **Generate ID** only when you want a fresh questionnaire ID. Use **Copy ID** beside the Questionnaire ID when sharing the public identifier with observers.
 5. Use **Show questionnaire link** if you want a QR/link for the questionnaire.
-6. Click **Publish questionnaire** when the draft is ready. This publishes the questionnaire definition and opens the round.
+6. Optionally edit **Questionnaire relays** if this round should prefer a non-default relay set.
+7. Click **Publish questionnaire** when the draft is ready. This publishes the questionnaire definition and opens the round.
 
 ### 2. Optional: coordinator enables an audit proxy
 
@@ -229,6 +230,7 @@ The present web client is built with:
 - **NIP-17 gift-wrapped DMs** for follow, roster, MLS welcome, and share-assignment traffic
 - **NIP-17 gift-wrapped DMs** for blind ballot requests, blind issuance delivery, ballot submissions, and acceptance results (with local mailbox fallback for same-browser recovery), plus encrypted mailbox objects for legacy ticket delivery, acknowledgement traffic, and history-based recovery, with stable `request_id`, `ticket_id`, and `ack_id` lineages
 - **optional NIP-65 relay hints**, disabled by default, for relay discovery experiments
+- **per-questionnaire relay hints** in public questionnaire metadata when the coordinator uses a non-default relay set; voters cache those hints and prefer them for that questionnaire's public and private traffic
 - **`@cloudflare/blindrsa-ts`** for the RSABSSA blind-signature primitive used in the current issuance path
 - **Rust compiled to WebAssembly** for deterministic protocol logic, including validation helpers and the new coordinator control engine
 - **an optional Rust audit proxy runtime** (`worker/`) for election-scoped delegated issuance/verification operations over outbound-only relay connections, with coordinator-signed delegation and revocation control
@@ -778,7 +780,7 @@ The questionnaire runtime currently provides:
 - coordinator whitelist and invite actions
 - coordinator public-link sharing through copy, email, WhatsApp, SMS, and the native browser share sheet without API keys or external service accounts, plus one-use private code links with per-code share controls and per-whitelisted-voter personalised links carrying `coordinator` and `invited` URL parameters
 - invite delivery over NIP-17 gift-wrapped DMs (`kind 1059` with `kind 13` seal / `kind 14` rumor), with bounded recent relay-history invite discovery on manual voter checks
-- published questionnaire definitions that include the blind-signing public key, plus caching and invite-attached definitions, so voters can render linked questionnaires and request ballots even when the signer cannot read historical invite DMs
+- published questionnaire definitions that include the blind-signing public key and any non-default questionnaire relay hints, plus caching and invite-attached definitions, so voters can render linked questionnaires, prefer the coordinator-selected relay set, and request ballots even when the signer cannot read historical invite DMs
 - credential-attached definition refreshes that do not clear drafted response fields
 - RSABSSA blind request creation from a voter-held token secret
 - coordinator blind issuance processing over a blinded token message

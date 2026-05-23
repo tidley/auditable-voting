@@ -20,6 +20,7 @@ The active product is the client in `web/` plus the optional audit proxy in `wor
 
 - Browser voter, coordinator, and observer flows.
 - Nostr-first transport using public events and NIP-17 private control traffic.
+- Per-questionnaire relay hints published in questionnaire metadata when the coordinator uses a non-default relay set.
 - Browser-only invite sharing by copied link, email, WhatsApp, SMS, native device share actions, personalised links for pre-whitelisted voter npubs, or one-use private code links with per-code share controls that whitelist the first claimant and automatically request a ballot.
 - Blind credential issuance for allowlisted participants.
 - Public blind-token submissions from ephemeral response keys.
@@ -136,7 +137,7 @@ The proxy is outbound-only. It does not require inbound ports or a public server
 
 ## Protocol Summary
 
-1. The coordinator publishes a questionnaire definition and public expected-voter count.
+1. The coordinator publishes a questionnaire definition, optional non-default relay hints, and public expected-voter count.
 2. Voters request blind credentials over private NIP-17 messages.
 3. The coordinator or audit proxy blind-signs requests from eligible voters.
 4. Voters submit public blind-token responses from ephemeral response keys.

@@ -128,8 +128,9 @@ import {
   fetchQuestionnaireActiveWorkerDelegationForCapability,
   fetchQuestionnaireBlindResponses,
 } from "./questionnaireTransport";
-import type { QuestionnaireResponseAnswer } from "./questionnaireProtocol";
+import type { QuestionnaireDefinition, QuestionnaireResponseAnswer } from "./questionnaireProtocol";
 import type { QuestionnaireSubmissionDecisionReason } from "./questionnaireProtocol";
+import { mergeQuestionnaireRelayHints } from "./questionnaireRelays";
 import { QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1, type QuestionnaireFlowMode } from "./questionnaireProtocolConstants";
 import {
   buildIssueBlindTokensWorkerRouting,
@@ -204,6 +205,29 @@ function withIssueBlindTokensWorkerRouting(summary: ElectionSummary, routing = s
     ...summary,
     issueBlindTokensWorker: routing,
   };
+}
+
+function getPreferredQuestionnaireRelays(electionId: string) {
+  return mergeQuestionnaireRelayHints(
+    loadElectionSummary(electionId)?.questionnaireRelays,
+    readCachedQuestionnaireDefinition(electionId)?.questionnaireRelays,
+    readElectionPrivateRelayPrefs(electionId),
+  );
+}
+
+function cacheQuestionnaireDefinitionForRuntime(definition: QuestionnaireDefinition) {
+  storeCachedQuestionnaireDefinition(definition);
+  const electionId = definition.questionnaireId.trim();
+  if (!electionId) {
+    return;
+  }
+  const summary = loadElectionSummary(electionId);
+  if (summary) {
+    upsertElectionSummary({
+      ...summary,
+      questionnaireRelays: definition.questionnaireRelays,
+    });
+  }
 }
 
 function decodeNsecSecretKey(nsec: string | null | undefined) {
@@ -491,7 +515,7 @@ export class QuestionnaireOptionAVoterRuntime {
   }
 
   private getPreferredDmRelays() {
-    return readElectionPrivateRelayPrefs(this.electionId);
+    return getPreferredQuestionnaireRelays(this.electionId);
   }
 
   private rememberIssueBlindTokensWorkerRouting(routing = this.state?.inviteMessage?.issueBlindTokensWorker ?? null) {
@@ -520,6 +544,7 @@ export class QuestionnaireOptionAVoterRuntime {
       const delegation = await fetchQuestionnaireActiveWorkerDelegationForCapability({
         questionnaireId: this.electionId,
         capability: "issue_blind_tokens",
+        relays: this.getPreferredDmRelays(),
       });
       if (delegation?.workerNpub?.trim()) {
         const resolved = buildIssueBlindTokensWorkerRouting({
@@ -674,7 +699,7 @@ export class QuestionnaireOptionAVoterRuntime {
     if (next.blindIssuance) {
       storeBlindIssuance(next.blindIssuance);
       if (next.blindIssuance.definition) {
-        storeCachedQuestionnaireDefinition(next.blindIssuance.definition);
+        cacheQuestionnaireDefinitionForRuntime(next.blindIssuance.definition);
       }
     }
     if (next.submission) {
@@ -779,7 +804,7 @@ export class QuestionnaireOptionAVoterRuntime {
         onIssuance: (issuance) => {
           storeBlindIssuance(issuance);
           if (issuance.definition) {
-            storeCachedQuestionnaireDefinition(issuance.definition);
+            cacheQuestionnaireDefinitionForRuntime(issuance.definition);
           }
           void this.ensureBlindIssuanceAck(issuance).catch(() => undefined);
         },
@@ -924,6 +949,9 @@ export class QuestionnaireOptionAVoterRuntime {
 
     let next = voterState;
     if (invite) {
+      if (invite.definition) {
+        cacheQuestionnaireDefinitionForRuntime(invite.definition);
+      }
       const loaded = reduceVoterEvent(next, { type: "INVITE_LOADED", invite });
       if (!loaded.ok) {
         throw new OptionARuntimeError("invite_mismatch", "Invite could not be loaded.");
@@ -1007,6 +1035,9 @@ export class QuestionnaireOptionAVoterRuntime {
 
     let next = voterState;
     if (invite) {
+      if (invite.definition) {
+        cacheQuestionnaireDefinitionForRuntime(invite.definition);
+      }
       const loaded = reduceVoterEvent(next, { type: "INVITE_LOADED", invite });
       if (!loaded.ok) {
         throw new OptionARuntimeError("invite_mismatch", "Invite could not be loaded.");
@@ -1426,7 +1457,7 @@ export class QuestionnaireOptionAVoterRuntime {
             for (const issuance of issuanceMessages) {
               storeBlindIssuance(issuance);
               if (issuance.definition) {
-                storeCachedQuestionnaireDefinition(issuance.definition);
+                cacheQuestionnaireDefinitionForRuntime(issuance.definition);
               }
             }
           }).catch(() => null).then(() => undefined),
@@ -1496,7 +1527,7 @@ export class QuestionnaireOptionAVoterRuntime {
       const issuance = readBlindIssuance(next.blindRequest.requestId);
       if (issuance) {
         if (issuance.definition) {
-          storeCachedQuestionnaireDefinition(issuance.definition);
+          cacheQuestionnaireDefinitionForRuntime(issuance.definition);
         }
         const received = reduceVoterEvent(next, {
           type: "BLIND_ISSUANCE_RECEIVED",
@@ -1625,6 +1656,7 @@ export class QuestionnaireOptionAVoterRuntime {
           coordinatorNpub: this.state.coordinatorNpub,
           responseSecretKey: decodeNsecSecretKey(this.state.responseNsec),
         }),
+        relays: this.getPreferredDmRelays(),
       });
       if (!republished || republished.successes <= 0) {
         throw new OptionARuntimeError("dm_delivery_failed", "No relay accepted the public ballot submission.");
@@ -1730,6 +1762,7 @@ export class QuestionnaireOptionAVoterRuntime {
         coordinatorNpub: this.state.coordinatorNpub,
         responseSecretKey,
       }),
+      relays: this.getPreferredDmRelays(),
     });
     optionAFlowLog("voter", "submit_vote_public_publish_result", {
       electionId: this.state.electionId,
@@ -1962,7 +1995,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
   }
 
   private getPreferredDmRelays() {
-    return readElectionPrivateRelayPrefs(this.electionId);
+    return getPreferredQuestionnaireRelays(this.electionId);
   }
 
   private rememberPrivateRelaySuccesses(result: { relayResults?: Array<{ relay: string; success: boolean }> } | null | undefined) {
@@ -2419,6 +2452,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
             flowMode: summary?.flowMode ?? existing.election.flowMode,
             responseMode: summary?.responseMode ?? existing.election.responseMode,
             blindSigningPublicKey: summary?.blindSigningPublicKey ?? existing.election.blindSigningPublicKey,
+            questionnaireRelays: summary?.questionnaireRelays ?? existing.election.questionnaireRelays,
             issueBlindTokensWorker: summary?.issueBlindTokensWorker ?? existing.election.issueBlindTokensWorker ?? null,
           },
         },
@@ -2436,6 +2470,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       closedAt: summary?.closedAt ?? null,
       coordinatorNpub: this.coordinatorNpub,
       blindSigningPublicKey: summary?.blindSigningPublicKey ?? null,
+      questionnaireRelays: summary?.questionnaireRelays,
       issueBlindTokensWorker: summary?.issueBlindTokensWorker ?? null,
       protocolVersion: summary?.protocolVersion,
       flowMode: summary?.flowMode,
@@ -3250,6 +3285,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
     const publicResponses = await fetchQuestionnaireBlindResponses({
       questionnaireId: this.electionId,
       limit: 400,
+      relays: this.getPreferredDmRelays(),
     }).catch(() => []);
     for (const entry of publicResponses) {
       const existingSubmission = next.receivedSubmissions[entry.response.responseId];
@@ -3445,6 +3481,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
         decidedAt: Number.isFinite(Date.parse(result.decidedAt))
           ? Math.floor(Date.parse(result.decidedAt) / 1000)
           : Math.floor(Date.now() / 1000),
+        relays: this.getPreferredDmRelays(),
       });
       optionAFlowLog("coordinator", "submission_decision_public_publish_result", {
         electionId: this.electionId,
