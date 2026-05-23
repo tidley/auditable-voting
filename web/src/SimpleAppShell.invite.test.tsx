@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("./SimpleUiApp", () => ({
@@ -71,6 +71,23 @@ describe("SimpleAppShell invite-link login", () => {
     const activeRoleToggle = screen.getByRole("button", { name: "Coordinator" });
     await user.click(activeRoleToggle);
     expect(activeRoleToggle.getAttribute("aria-disabled")).toBeNull();
+  });
+
+  it("reactivates async buttons when UI feedback arrives", async () => {
+    const user = userEvent.setup();
+    const { default: SimpleAppShell } = await import("./SimpleAppShell");
+
+    render(<SimpleAppShell />);
+
+    await user.click(screen.getByRole("button", { name: "Advanced" }));
+    const copyButton = screen.getByRole("button", { name: "Copy nostr-connect URL" });
+    await user.click(copyButton);
+
+    expect(await screen.findByText(/copy nostr-connect url/i)).toBeTruthy();
+    await waitFor(() => {
+      expect(copyButton.getAttribute("aria-disabled")).toBeNull();
+      expect(copyButton.dataset.pressFeedbackActive).toBeUndefined();
+    });
   });
 
   it("enters the voter app immediately after signer login on a linked questionnaire", async () => {

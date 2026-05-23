@@ -57,7 +57,10 @@ import SimpleQrScanner from "./SimpleQrScanner";
 import SimpleRelayPanel from "./SimpleRelayPanel";
 import SimpleUnlockGate from "./SimpleUnlockGate";
 import TokenFingerprint from "./TokenFingerprint";
-import QuestionnaireCoordinatorPanel from "./QuestionnaireCoordinatorPanel";
+import QuestionnaireCoordinatorPanel, {
+  readStoredQuestionnaireRelayInput,
+  writeStoredQuestionnaireRelayInput,
+} from "./QuestionnaireCoordinatorPanel";
 import { extractNpubFromScan } from "./npubScan";
 import {
   processOptionAQueuesForCoordinatorLive,
@@ -909,6 +912,8 @@ export default function SimpleCoordinatorApp() {
     useState('');
   const [submittedVotes, setSubmittedVotes] = useState<SimpleSubmittedVote[]>([]);
   const [activeTab, setActiveTab] = useState<CoordinatorTab>("configure");
+  const [relaySettingsExpandSignal, setRelaySettingsExpandSignal] = useState(0);
+  const [questionnaireRelaysInput, setQuestionnaireRelaysInputState] = useState(() => readStoredQuestionnaireRelayInput());
   const [questionnaireRosterAnnouncement, setQuestionnaireRosterAnnouncement] = useState<{
     questionnaireId: string;
     state: string | null;
@@ -4849,6 +4854,27 @@ export default function SimpleCoordinatorApp() {
     setActiveTab(nextTab);
   }
 
+  const setQuestionnaireRelaysInput = useCallback((value: string) => {
+    setQuestionnaireRelaysInputState(value);
+    writeStoredQuestionnaireRelayInput(value);
+  }, []);
+
+  function openQuestionnaireRelaySettings() {
+    selectTab("settings");
+    setRelaySettingsExpandSignal((current) => current + 1);
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        document.getElementById("coordinator-relays-settings")?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      });
+    });
+  }
+
   async function submitToLeadCoordinator() {
     const coordinatorNpub = keypair?.npub ?? "";
     const coordinatorSecretKey = decodeNsec(keypair?.nsec ?? "");
@@ -6193,6 +6219,8 @@ export default function SimpleCoordinatorApp() {
               blindSigningPublicKey={optionABlindSigningPublicKey}
               view='build'
               onInviteParticipants={() => selectTab('participants')}
+              questionnaireRelaysInput={questionnaireRelaysInput}
+              onConfigureQuestionnaireRelays={openQuestionnaireRelaySettings}
               onConfigureWorker={() => {
                 selectTab('configure');
                 if (typeof window !== "undefined") {
@@ -6720,6 +6748,7 @@ export default function SimpleCoordinatorApp() {
               optionAAcceptedResponses={optionAAcceptedResponses}
               blindSigningPublicKey={optionABlindSigningPublicKey}
               view='participants'
+              questionnaireRelaysInput={questionnaireRelaysInput}
               onStatusChange={updateQuestionnaireRosterAnnouncement}
             />
           </section>
@@ -6747,6 +6776,7 @@ export default function SimpleCoordinatorApp() {
               optionAAcceptedResponses={optionAAcceptedResponses}
               blindSigningPublicKey={optionABlindSigningPublicKey}
               view='responses'
+              questionnaireRelaysInput={questionnaireRelaysInput}
               onStatusChange={updateQuestionnaireRosterAnnouncement}
             />
           </section>
@@ -6794,7 +6824,13 @@ export default function SimpleCoordinatorApp() {
                 and use NIP-65 inbox/outbox relay hints.
               </p>
             </section>
-            <SimpleRelayPanel />
+            <div id='coordinator-relays-settings'>
+              <SimpleRelayPanel
+                expandSignal={relaySettingsExpandSignal}
+                questionnaireRelaysInput={questionnaireRelaysInput}
+                onQuestionnaireRelaysInputChange={setQuestionnaireRelaysInput}
+              />
+            </div>
           </section>
         ) : null}
       </section>

@@ -10,11 +10,11 @@ import { deriveNpubFromNsec } from "./nostrIdentity";
 import { saveSimpleActorState } from "./simpleLocalState";
 import { tryWriteClipboard } from "./clipboard";
 import SimpleQrPanel from "./SimpleQrPanel";
+import { PRESS_FEEDBACK_SETTLED_EVENT } from "./pressFeedback";
 
 type SimpleRole = "voter" | "coordinator" | "auditor";
 const GATEWAY_SIGNER_NPUB_STORAGE_KEY = "app:auditable-voting:gateway:signer_npub";
 const AMBER_FULLY_TRUST_HINT = "Change from `Approve basic actions` to `I fully trust this application` when Amber opens. This allows the application to fully coordinate.";
-const BUTTON_PRESS_FEEDBACK_MS = 1000;
 const ROLE_OPTIONS: Array<{ role: SimpleRole; label: string }> = [
   { role: "auditor", label: "Observer" },
   { role: "coordinator", label: "Coordinator" },
@@ -117,8 +117,18 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
     if (typeof document === "undefined") {
       return;
     }
-    const cooldowns = new WeakMap<HTMLButtonElement, number>();
-    const timers = new WeakMap<HTMLButtonElement, number>();
+    type ButtonSnapshot = {
+      ariaExpanded: string;
+      ariaPressed: string;
+      ariaSelected: string;
+      className: string;
+      disabled: boolean;
+      text: string;
+    };
+
+    const pendingSnapshots = new WeakMap<HTMLButtonElement, ButtonSnapshot>();
+    const activeReleases = new WeakMap<HTMLButtonElement, () => void>();
+    const releaseHandlers = new Set<() => void>();
 
     const findButton = (event: MouseEvent) => {
       const target = event.target;
@@ -128,45 +138,114 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
       return target.closest("button") as HTMLButtonElement | null;
     };
 
-    const preventDuringCooldown = (event: MouseEvent) => {
+    const shouldIgnoreButton = (button: HTMLButtonElement) => (
+      button.disabled || button.dataset.pressFeedbackDisabled === "true"
+    );
+
+    const snapshotButton = (button: HTMLButtonElement): ButtonSnapshot => ({
+      ariaExpanded: button.getAttribute("aria-expanded") ?? "",
+      ariaPressed: button.getAttribute("aria-pressed") ?? "",
+      ariaSelected: button.getAttribute("aria-selected") ?? "",
+      className: button.className,
+      disabled: button.disabled,
+      text: button.textContent ?? "",
+    });
+
+    const snapshotsEqual = (left: ButtonSnapshot, right: ButtonSnapshot) => (
+      left.ariaExpanded === right.ariaExpanded &&
+      left.ariaPressed === right.ariaPressed &&
+      left.ariaSelected === right.ariaSelected &&
+      left.className === right.className &&
+      left.disabled === right.disabled &&
+      left.text === right.text
+    );
+
+    const buttonAlreadyResponded = (button: HTMLButtonElement, before: ButtonSnapshot) => (
+      !button.isConnected || button.disabled || !snapshotsEqual(before, snapshotButton(button))
+    );
+
+    const preventWhileAwaitingFeedback = (event: MouseEvent) => {
       const button = findButton(event);
-      if (!button || button.disabled || button.dataset.pressCooldownDisabled === "true") {
+      if (!button || shouldIgnoreButton(button)) {
         return;
       }
-      const cooldownUntil = cooldowns.get(button) ?? 0;
-      if (cooldownUntil > Date.now()) {
+      if (activeReleases.has(button)) {
         event.preventDefault();
         event.stopImmediatePropagation();
-      }
-    };
-
-    const applyCooldown = (event: MouseEvent) => {
-      const button = findButton(event);
-      if (!button || button.disabled || button.dataset.pressCooldownDisabled === "true") {
         return;
       }
-      cooldowns.set(button, Date.now() + BUTTON_PRESS_FEEDBACK_MS);
-      button.dataset.pressCooldownActive = "true";
-      button.setAttribute("aria-disabled", "true");
-      const existingTimer = timers.get(button);
-      if (existingTimer) {
-        window.clearTimeout(existingTimer);
-      }
-      const timer = window.setTimeout(() => {
-        cooldowns.delete(button);
-        timers.delete(button);
-        delete button.dataset.pressCooldownActive;
-        button.removeAttribute("aria-disabled");
-      }, BUTTON_PRESS_FEEDBACK_MS);
-      timers.set(button, timer);
+      pendingSnapshots.set(button, snapshotButton(button));
     };
 
-    document.addEventListener("click", preventDuringCooldown, true);
-    document.addEventListener("click", applyCooldown);
+    const releaseAll = () => {
+      for (const release of [...releaseHandlers]) {
+        release();
+      }
+    };
+
+    const awaitButtonFeedback = (event: MouseEvent) => {
+      const button = findButton(event);
+      if (!button || shouldIgnoreButton(button) || event.defaultPrevented) {
+        return;
+      }
+      const before = pendingSnapshots.get(button);
+      pendingSnapshots.delete(button);
+      if (!before || buttonAlreadyResponded(button, before)) {
+        return;
+      }
+      activeReleases.get(button)?.();
+
+      let observer: MutationObserver | null = null;
+      const release = () => {
+        observer?.disconnect();
+        observer = null;
+        releaseHandlers.delete(release);
+        activeReleases.delete(button);
+        if (!button.isConnected) {
+          return;
+        }
+        delete button.dataset.pressFeedbackActive;
+        if (button.dataset.pressFeedbackOwnsAriaDisabled === "true") {
+          button.removeAttribute("aria-disabled");
+        }
+        delete button.dataset.pressFeedbackOwnsAriaDisabled;
+      };
+
+      activeReleases.set(button, release);
+      releaseHandlers.add(release);
+      button.dataset.pressFeedbackActive = "true";
+      if (!button.hasAttribute("aria-disabled")) {
+        button.dataset.pressFeedbackOwnsAriaDisabled = "true";
+        button.setAttribute("aria-disabled", "true");
+      }
+
+      if (!document.body) {
+        release();
+        return;
+      }
+      observer = new MutationObserver(() => {
+        release();
+      });
+      observer.observe(document.body, {
+        attributes: true,
+        characterData: true,
+        childList: true,
+        subtree: true,
+      });
+    };
+
+    document.addEventListener("click", preventWhileAwaitingFeedback, true);
+    document.addEventListener("click", awaitButtonFeedback);
+    window.addEventListener(PRESS_FEEDBACK_SETTLED_EVENT, releaseAll);
+    window.addEventListener("pagehide", releaseAll);
+    document.addEventListener("visibilitychange", releaseAll);
     return () => {
-      document.removeEventListener("click", preventDuringCooldown, true);
-      document.removeEventListener("click", applyCooldown);
-      // Timers are short-lived; removed listeners prevent new cooldowns after unmount.
+      document.removeEventListener("click", preventWhileAwaitingFeedback, true);
+      document.removeEventListener("click", awaitButtonFeedback);
+      window.removeEventListener(PRESS_FEEDBACK_SETTLED_EVENT, releaseAll);
+      window.removeEventListener("pagehide", releaseAll);
+      document.removeEventListener("visibilitychange", releaseAll);
+      releaseAll();
     };
   }, []);
 
@@ -330,7 +409,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                 role='tab'
                 aria-selected={gatewayRole === option.role}
                 className={`simple-role-switch-button${gatewayRole === option.role ? " is-active" : ""}`}
-                data-press-cooldown-disabled='true'
+                data-press-feedback-disabled='true'
                 onClick={() => setGatewayRole(option.role)}
               >
                 {option.label}
@@ -459,7 +538,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
             onClick={() => setRoleSwitchMinimized((current) => !current)}
             aria-expanded={!roleSwitchMinimized}
             aria-controls='simple-role-switch-panel'
-            data-press-cooldown-disabled='true'
+            data-press-feedback-disabled='true'
           >
             {roleTitle}
           </button>
@@ -505,7 +584,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                 role='tab'
                 aria-selected={role === option.role}
                 className={`simple-role-switch-button${role === option.role ? ' is-active' : ''}`}
-                data-press-cooldown-disabled='true'
+                data-press-feedback-disabled='true'
                 onClick={() => handleRoleSelect(option.role)}
               >
                 {option.label}

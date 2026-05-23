@@ -43,7 +43,7 @@ textarea {
   font: inherit;
 }
 
-button[data-press-cooldown-active="true"] {
+button[data-press-feedback-active="true"] {
   cursor: wait !important;
   opacity: 0.62 !important;
   pointer-events: none;
@@ -684,9 +684,9 @@ code {
 }
 
 .simple-role-switch-button.is-active {
-  border-color: #2563eb;
-  background: #2563eb;
-  color: #f8fafc;
+  border-color: #60a5fa;
+  background: rgba(37, 99, 235, 0.08);
+  color: #bfdbfe;
 }
 
 .simple-voter-shell {

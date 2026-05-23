@@ -31,7 +31,6 @@ import { publishQuestionnaireBlindResponsePublicByCoordinator } from "./question
 import { decodeNsec } from "./nostrIdentity";
 import { normalizeRelaysRust } from "./wasm/auditableVotingCore";
 import {
-  DEFAULT_QUESTIONNAIRE_RELAYS,
   normalizeQuestionnaireRelays,
   questionnaireRelaysForMetadata,
 } from "./questionnaireRelays";
@@ -94,6 +93,8 @@ type QuestionnaireCoordinatorPanelProps = {
   blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
   view?: "build" | "responses" | "participants";
   onInviteParticipants?: () => void;
+  questionnaireRelaysInput?: string;
+  onConfigureQuestionnaireRelays?: () => void;
   onConfigureWorker?: () => void;
   onStatusChange?: (status: {
     questionnaireId: string;
@@ -275,10 +276,6 @@ function sanitizeWorkerRelays(value: string) {
   return normalizeRelaysRust(relays);
 }
 
-function formatQuestionnaireRelays(relays: string[]) {
-  return relays.join("\n");
-}
-
 function readStoredQuestionnaireDraft(): StoredQuestionnaireDraft {
   const fallbackId = readStoredQuestionnaireDraftId();
   if (typeof window === "undefined") {
@@ -337,6 +334,24 @@ function readStoredQuestionnaireDraft(): StoredQuestionnaireDraft {
       questions: [createYesNoQuestion("q1")],
     };
   }
+}
+
+export function readStoredQuestionnaireRelayInput() {
+  return readStoredQuestionnaireDraft().questionnaireRelays ?? "";
+}
+
+export function writeStoredQuestionnaireRelayInput(value: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const snapshot: StoredQuestionnaireDraft = {
+    ...readStoredQuestionnaireDraft(),
+    questionnaireRelays: value,
+  };
+  window.localStorage.setItem(
+    buildSimpleNamespacedLocalStorageKey(QUESTIONNAIRE_DRAFT_DATA_STORAGE_KEY),
+    JSON.stringify(snapshot),
+  );
 }
 
 function formatUnixTimestamp(timestampSeconds?: number | null) {
@@ -774,7 +789,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [description, setDescription] = useState(storedDraft.description);
   const [closeTimerEnabled, setCloseTimerEnabled] = useState(storedDraft.closeTimerEnabled);
   const [closeAfterMinutes, setCloseAfterMinutes] = useState(storedDraft.closeAfterMinutes);
-  const [questionnaireRelaysInput, setQuestionnaireRelaysInput] = useState(storedDraft.questionnaireRelays ?? "");
+  const questionnaireRelaysInput = props.questionnaireRelaysInput ?? storedDraft.questionnaireRelays ?? "";
   const [questions, setQuestions] = useState<QuestionnaireQuestionDraft[]>(storedDraft.questions);
   const [delegationMode, setDelegationMode] = useState<"browser_only" | "delegated_worker">(storedDraft.delegationMode ?? "browser_only");
   const [delegatedWorkerNpub, setDelegatedWorkerNpub] = useState(storedDraft.delegatedWorkerNpub ?? "");
@@ -3088,25 +3103,16 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       </div>
 
       <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
-        <div className='simple-questionnaire-field-heading'>
-          <label className='simple-voter-label' htmlFor='questionnaire-relays'>Questionnaire relays</label>
+        <p className='simple-voter-note'>{questionnaireRelayStatus}</p>
+        {props.onConfigureQuestionnaireRelays ? (
           <button
             type='button'
             className='simple-voter-secondary'
-            onClick={() => setQuestionnaireRelaysInput("")}
+            onClick={props.onConfigureQuestionnaireRelays}
           >
-            Use default
+            Open relay settings
           </button>
-        </div>
-        <textarea
-          id='questionnaire-relays'
-          className='simple-voter-input'
-          rows={4}
-          value={questionnaireRelaysInput}
-          placeholder={formatQuestionnaireRelays(DEFAULT_QUESTIONNAIRE_RELAYS)}
-          onChange={(event) => setQuestionnaireRelaysInput(event.target.value)}
-        />
-        <p className='simple-voter-note'>{questionnaireRelayStatus}</p>
+        ) : null}
       </div>
 
       <h4 className='simple-voter-section-title'>Questions</h4>
