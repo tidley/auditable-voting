@@ -69,6 +69,7 @@ vi.mock("./questionnaireOptionAInviteDm", () => ({
 }));
 
 import QuestionnaireOptionAVoterPanel from "./QuestionnaireOptionAVoterPanel";
+import { QuestionnaireOptionAVoterRuntime } from "./questionnaireOptionARuntime";
 import { storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import { fetchQuestionnaireDefinitions } from "./questionnaireTransport";
 import { fetchOptionAInviteDms } from "./questionnaireOptionAInviteDm";
@@ -78,6 +79,7 @@ const fetchOptionAInviteDmsMock = vi.mocked(fetchOptionAInviteDms);
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   window.localStorage.clear();
   window.history.pushState(null, "", "/");
   fetchQuestionnaireDefinitionsMock.mockReset();
@@ -249,6 +251,58 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
       expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Identity confirmed: Yes")).length).toBeGreaterThan(0);
     });
     expect(screen.queryByText("Login is required.")).toBeNull();
+  });
+
+  it("sends the delayed page-load ballot request for a linked local voter", async () => {
+    const localVoterNpub = "npub1" + "h".repeat(58);
+    const requestSpy = vi
+      .spyOn(QuestionnaireOptionAVoterRuntime.prototype, "requestBlindBallot")
+      .mockImplementation(async function mockedRequestBlindBallot(this: QuestionnaireOptionAVoterRuntime) {
+        return this.getSnapshot()!;
+      });
+    window.history.pushState(null, "", "/?role=voter&q=q_delayed_auto_request");
+    storeCachedQuestionnaireDefinition({
+      schemaVersion: 1,
+      eventType: "questionnaire_definition",
+      responseMode: "blind_token",
+      questionnaireId: "q_delayed_auto_request",
+      title: "Delayed auto request",
+      description: "Cached description",
+      createdAt: 1,
+      openAt: 1,
+      closeAt: 9999999999,
+      coordinatorPubkey: "npub1" + "b".repeat(58),
+      coordinatorEncryptionPubkey: "npub1" + "b".repeat(58),
+      responseVisibility: "private",
+      eligibilityMode: "open",
+      allowMultipleResponsesPerPubkey: false,
+      blindSigningPublicKey: {
+        scheme: "rsabssa-sha384-pss-deterministic-v1",
+        keyId: "blind_key",
+        jwk: { kty: "RSA", e: "AQAB", n: "test" },
+      },
+      questions: [{
+        questionId: "q1",
+        type: "yes_no",
+        prompt: "Delayed prompt",
+        required: true,
+      }],
+    });
+
+    render(
+      <QuestionnaireOptionAVoterPanel
+        localVoterNpub={localVoterNpub}
+      />,
+    );
+
+    await screen.findByText("Delayed prompt");
+    await waitFor(() => {
+      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Identity confirmed: Yes")).length).toBeGreaterThan(0);
+    });
+
+    await waitFor(() => {
+      expect(requestSpy).toHaveBeenCalled();
+    }, { timeout: 2500 });
   });
 
   it("renders questions from cached questionnaire definition when relay fetch is empty", async () => {

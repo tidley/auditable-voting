@@ -1384,7 +1384,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       return;
     }
     autoRequestDelayedForRef.current[key] = true;
+    let fired = false;
     const timeoutId = window.setTimeout(() => {
+      fired = true;
       const current = runtime.getSnapshot();
       if (
         !current?.loginVerified
@@ -1400,6 +1402,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }, AUTO_BALLOT_PAGE_LOAD_REQUEST_DELAY_MS);
     return () => {
       window.clearTimeout(timeoutId);
+      if (!fired) {
+        delete autoRequestDelayedForRef.current[key];
+      }
     };
   }, [
     activeInvite,
