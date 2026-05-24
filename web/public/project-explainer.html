@@ -206,7 +206,7 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 
 1. Open the app as **Coordinator**.
 2. Create or load a coordinator identity.
-3. In **Build**, enter the questionnaire name, description, and questions. The Build heading shows the current name, for example `Build questionnaire: How did we do`.
+3. In **Questionnaire**, enter the questionnaire name, description, and questions. The questionnaire builder heading shows the current name, for example `Build questionnaire: How did we do`.
 4. Use **Generate ID** only when you want a fresh questionnaire ID. Use **Copy ID** beside the Questionnaire ID when sharing the public identifier with observers.
 5. Use **Show questionnaire link** if you want a QR/link for the questionnaire.
 6. Optionally open **Settings → Relays** to add or remove questionnaire metadata relays before publishing if this round should prefer a non-default relay set.
@@ -222,9 +222,9 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 
 ### 3. Coordinator invites voters
 
-1. Share the questionnaire link from **Invite** with **Copy link**, **Invite by email**, **WhatsApp**, **SMS**, or **Share**. These actions use the browser/device apps already available; no provider API key or service registration is needed.
+1. Share the questionnaire link from **Participants** with **Copy link**, **Invite by email**, **WhatsApp**, **SMS**, or **Share**. These actions use the browser/device apps already available; no provider API key or service registration is needed.
 2. Use **Create private code link** when the coordinator wants a one-use bearer invite with no `npub` in the URL. The voter looks up coordinator and audit-proxy routing from the public questionnaire metadata on Nostr, then automatically requests a ballot. The created row can be copied or sent by email, WhatsApp, SMS, or native share while the raw link is available in that page session. The first voter to open that link claims the code with their local voter identity; the code can be revoked until it is claimed.
-3. Add or import voter `npub`s in **Invite** when you want to pre-authorise known voters.
+3. Add or import voter `npub`s in **Participants** when you want to pre-authorise known voters.
 4. Use **Copy personalised link** beside a whitelisted voter when the link should carry that pre-authorised voter `npub`. The voter must still sign in as that `npub`; the personalised URL reveals the invitee `npub` to whoever sees the link.
 5. Send Nostr invite DMs with **Invite** or **Invite all whitelisted**.
 6. Voters who arrive from a shared link without being whitelisted can still request a ballot, then appear under requester authorisation for the coordinator.
@@ -240,7 +240,7 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 
 ### 5. Coordinator or proxy processes responses
 
-1. In the coordinator **Invite** tab, use **Process requests** / **Check responses** while running browser-only. The same tab shows live accepted-response totals, per-question result bars, text responses, and responder rows as submissions are processed.
+1. In the coordinator **Participants** tab, use **Process requests** / **Check responses** while running browser-only. The same tab shows live accepted-response totals, per-question result bars, text responses, and responder rows as submissions are processed.
 2. If delegated, leave the helper running and check its heartbeat/reporting in **Audit proxy status**.
 3. Close the questionnaire and publish final results when collection is complete, if you want a fixed final summary.
 
@@ -257,13 +257,13 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 
 1. Build and publish a questionnaire definition (public event), including non-default relay hints when configured.
 2. Share the public questionnaire link by copy, email, WhatsApp, SMS, or native device sharing, optionally using personalised links for pre-authorised voter npubs.
-3. Optional: in the separate **Build** page `Audit proxy` section, use Set up audit proxy after publication to open the section and generate an audit proxy account, then use the quick start command or helper downloads or save an autoconfigured platform launcher that already includes the current coordinator `npub`; right-click copy-link uses a shareable launcher URL that omits the audit proxy secret, generated launchers refresh the helper binary from GitHub Releases on each run, raw binary and direct CLI options sit under `Helper download and launch command`, and delegation still leaves the coordinator as root authority.
+3. Optional: in the separate **Questionnaire** tab `Audit proxy` section, use Set up audit proxy after publication to open the section and generate an audit proxy account, then use the quick start command or helper downloads or save an autoconfigured platform launcher that already includes the current coordinator `npub`; right-click copy-link uses a shareable launcher URL that omits the audit proxy secret, generated launchers refresh the helper binary from GitHub Releases on each run, raw binary and direct CLI options sit under `Helper download and launch command`, and delegation still leaves the coordinator as root authority.
 4. Receive blind-token requests over private DMs (or delegate handling to an audit proxy).
 5. Issue blind signatures to authorised voters over private DMs (or let the audit proxy blind-sign on behalf of the coordinator for that delegated round). Invite payloads and cached election metadata now carry the audit proxy routing hint so voters can keep targeting the audit proxy if the coordinator browser goes offline, and audit proxy election-config DMs also carry the questionnaire definition so audit-proxy-issued blind credentials can still render the ballot if the coordinator browser is offline.
 6. Watch public submissions and publish public accept/reject decisions (or delegate decision publication).
 7. Close the round and publish the result summary (or delegate proxy close + auto-summary once all expected invitees have accepted valid responses).
 
-If the Build page reports that the blind-signing key is still initialising in the current tab, wait a moment and try publishing again; the app now attempts to recover the locally persisted blind-signing key before blocking publication.
+If the Questionnaire tab reports that the blind-signing key is still initialising, wait a moment and try publishing again; the app now attempts to recover the locally persisted blind-signing key before blocking publication.
 
 ### Audit Proxy
 
@@ -274,7 +274,7 @@ The proxy receives two private control messages from the coordinator:
 1. a signed worker delegation that names the questionnaire, proxy `npub`, capabilities, control relays, and expiry
 2. an election config message containing the questionnaire metadata, blind-signing material needed for delegated issuance, whitelisted voter npubs, private invite-code hashes, and the routing hints voters should use
 
-After activation, the proxy polls only its own NIP-17 mailbox over outbound relay connections. It can issue blind ballot credentials, including first-claim private code invites, publish submission decisions, verify public submissions, close the questionnaire once the accepted valid response count reaches the expected invitee count, and publish result summaries when those capabilities are delegated. It sends heartbeats and operation reports back to the coordinator so the Build page can show whether the proxy is active, then exits cleanly once completed delegated close and summary work has been published.
+After activation, the proxy polls only its own NIP-17 mailbox over outbound relay connections. It can issue blind ballot credentials, including first-claim private code invites, publish submission decisions, verify public submissions, close the questionnaire once the accepted valid response count reaches the expected invitee count, and publish result summaries when those capabilities are delegated. It sends heartbeats and operation reports back to the coordinator so the Questionnaire tab can show whether the proxy is active, then exits cleanly once completed delegated close and summary work has been published.
 
 Proxy closure is guarded by the same accepted-response set used for summary publication. Rejected, duplicate, invalid, or spam submissions do not count towards automatic closure. The delegated close event is published as questionnaire state with proxy provenance, so Coordinator and Observer views label it as `Closed by audit proxy`.
 

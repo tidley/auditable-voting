@@ -47,7 +47,7 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 
 1. Open the app as **Coordinator**.
 2. Create or load a coordinator identity.
-3. In **Build**, enter the questionnaire name, description, and questions. The Build heading shows the current name, for example `Build questionnaire: How did we do`.
+3. In **Questionnaire**, enter the questionnaire name, description, and questions. The questionnaire builder heading shows the current name, for example `Build questionnaire: How did we do`.
 4. Use **Generate ID** only when you want a fresh questionnaire ID. Use **Copy ID** beside the Questionnaire ID when sharing the public identifier with observers.
 5. Use **Show questionnaire link** if you want a QR/link for the questionnaire.
 6. Optionally open **Settings → Relays** to add or remove questionnaire metadata relays before publishing if this round should prefer a non-default relay set.
@@ -63,9 +63,9 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 
 ### 3. Coordinator invites voters
 
-1. Share the questionnaire link from **Invite** with **Copy link**, **Invite by email**, **WhatsApp**, **SMS**, or **Share**. These actions use the browser/device apps already available; no provider API key or service registration is needed.
+1. Share the questionnaire link from **Participants** with **Copy link**, **Invite by email**, **WhatsApp**, **SMS**, or **Share**. These actions use the browser/device apps already available; no provider API key or service registration is needed.
 2. Use **Create private code link** when the coordinator wants a one-use bearer invite with no `npub` in the URL. The voter looks up coordinator and audit-proxy routing from the public questionnaire metadata on Nostr, then automatically requests a ballot. The created row can be copied or sent by email, WhatsApp, SMS, or native share while the raw link is available in that page session. The first voter to open that link claims the code with their local voter identity; the code can be revoked until it is claimed.
-3. Add or import voter `npub`s in **Invite** when you want to pre-authorise known voters.
+3. Add or import voter `npub`s in **Participants** when you want to pre-authorise known voters.
 4. Use **Copy personalised link** beside a whitelisted voter when the link should carry that pre-authorised voter `npub`. The voter must still sign in as that `npub`; the personalised URL reveals the invitee `npub` to whoever sees the link.
 5. Send Nostr invite DMs with **Invite** or **Invite all whitelisted**.
 6. Voters who arrive from a shared link without being whitelisted can still request a ballot, then appear under requester authorisation for the coordinator.
@@ -81,7 +81,7 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 
 ### 5. Coordinator or proxy processes responses
 
-1. In the coordinator **Invite** tab, use **Process requests** / **Check responses** while running browser-only. The same tab shows live accepted-response totals, per-question result bars, text responses, and responder rows as submissions are processed.
+1. In the coordinator **Participants** tab, use **Process requests** / **Check responses** while running browser-only. The same tab shows live accepted-response totals, per-question result bars, text responses, and responder rows as submissions are processed.
 2. If delegated, leave the helper running and check its heartbeat/reporting in **Audit proxy status**.
 3. Close the questionnaire and publish final results when collection is complete, if you want a fixed final summary.
 
@@ -243,7 +243,7 @@ The present web client is built with:
 - **single-coordinator deterministic startup bypass** so `1 coordinator` runs do not block on MLS join/group observation paths
 - **blind-key publication diagnostics** that classify not-attempted vs publish/observe/apply stalls and expose event/relay evidence
 - **private-first questionnaire flow** with coordinator/voter UI panels, RSABSSA blind-token issuance, ephemeral response npubs, transport helpers, and relay-harness metrics
-- **staged questionnaire coordinator builder** (`Build` -> `Invite` with live results -> `Settings`) with zero default questions and explicit publish readiness checks
+- **staged questionnaire coordinator builder** (`Questionnaire` -> `Participants` with live results -> `Settings`) with zero default questions and explicit publish readiness checks
 - **voter questionnaire vote gating** that only enables Vote after announced questionnaire ids are verified as publicly readable (`definition` present + state `open`/`published`)
 - **questionnaire discovery over direct live subscriptions** with one startup backfill plus one bounded retry, and explicit per-voter discovery timing diagnostics for startup visibility failures
 - **voter draft preservation** so response fields are not cleared when a blind ballot credential or refreshed definition arrives for the same questionnaire

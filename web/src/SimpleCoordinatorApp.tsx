@@ -6062,7 +6062,7 @@ export default function SimpleCoordinatorApp() {
             className={`simple-voter-tab${activeTab === 'configure' ? ' is-active' : ''}`}
             onClick={() => selectTab('configure')}
           >
-            Build
+            Questionnaire
           </button>
           <button
             type='button'
@@ -6071,7 +6071,7 @@ export default function SimpleCoordinatorApp() {
             className={`simple-voter-tab${activeTab === 'participants' ? ' is-active' : ''}`}
             onClick={() => selectTab('participants')}
           >
-            Invite
+            Participants
           </button>
           <button
             type='button'
@@ -6088,7 +6088,7 @@ export default function SimpleCoordinatorApp() {
           <section
             className='simple-voter-tab-panel'
             role='tabpanel'
-            aria-label='Build'
+            aria-label='Questionnaire'
           >
             <SimpleCollapsibleSection title='Coordinator management' defaultCollapsed>
               <label
@@ -6233,7 +6233,7 @@ export default function SimpleCoordinatorApp() {
           <section
             className='simple-voter-tab-panel'
             role='tabpanel'
-            aria-label='Invite'
+            aria-label='Participants'
           >
             <SimpleCollapsibleSection title='Vote requests' defaultCollapsed>
               {coordinatorFollowerRows.length > 0 ? (
