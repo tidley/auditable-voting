@@ -201,7 +201,8 @@ After startup, other FIPS nodes can reach the mirror at
 
 If the machine already runs packaged FIPS, for example a Raspberry Pi with
 `ExecStart=/usr/bin/fips --config /etc/fips/fips.yaml`, reuse it without
-rebuilding FIPS or replacing the existing FIPS config, service, or firewall:
+rebuilding FIPS, requiring npm, or replacing the existing FIPS config, service,
+or firewall:
 
 ```bash
 sudo ./launch-auditable-voting-fips.sh --reuse-running-fips

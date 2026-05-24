@@ -42,12 +42,13 @@ Reuse an existing packaged FIPS install, such as a Raspberry Pi already running
 
   sudo ./launch-auditable-voting-fips.sh --reuse-running-fips
 
-That mode does not rebuild FIPS, does not replace `/etc/fips/fips.yaml`, and
-does not replace the existing `fips.service` or install a new FIPS firewall
-service. It builds/installs the web site, writes the web service, and adds the
-FIPS firewall drop-in for the web port. If `fips-firewall.service` is already
-active, it is restarted so the drop-in is loaded; otherwise the existing
-firewall state is left alone.
+That mode does not rebuild FIPS, does not require npm, does not replace
+`/etc/fips/fips.yaml`, and does not replace the existing `fips.service` or
+install a new FIPS firewall service. It installs the already-published static
+site from `PUBLIC_SITE_URL`, writes the web service, and adds the FIPS firewall
+drop-in for the web port. If `fips-firewall.service` is already active, it is
+restarted so the drop-in is loaded; otherwise the existing firewall state is
+left alone.
 
 By default the launcher advertises UDP as `udp:nat`, using FIPS' Nostr/STUN
 handoff flow. For a host with a stable public UDP endpoint:

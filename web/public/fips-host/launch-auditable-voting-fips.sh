@@ -14,6 +14,7 @@ FIPS_REPO="${FIPS_REPO:-https://github.com/jmcorgan/fips.git}"
 FIPS_REF="${FIPS_REF:-master}"
 APP_REPO="${APP_REPO:-https://github.com/tidley/auditable-voting.git}"
 APP_REF="${APP_REF:-main}"
+PUBLIC_SITE_URL="${PUBLIC_SITE_URL:-https://npub1hkze8k84da0qm4lu75x32z33qepyzdqc735jnj5a602x8q4cstksnkvl3a.nsite.lol/}"
 
 INSTALL_PREFIX="${INSTALL_PREFIX:-/opt/auditable-voting-fips}"
 STATE_DIR="${STATE_DIR:-/var/lib/auditable-voting-fips}"
@@ -39,6 +40,7 @@ ENABLE_PROXY=0
 START_SERVICES=1
 SKIP_FIPS_BUILD=0
 SKIP_APP_BUILD=0
+USE_PUBLIC_BUILD=0
 PRESERVE_FIPS_CONFIG=0
 PRESERVE_FIPS_SERVICE=0
 PRESERVE_FIPS_FIREWALL=0
@@ -56,6 +58,8 @@ Options:
   --no-start         Install files but do not enable/start systemd services.
   --skip-fips-build  Reuse an installed fips binary from PATH or FIPS_BIN_PATH.
   --skip-app-build   Reuse WEB_ROOT instead of cloning/building the web app.
+  --use-public-build Install the already-published static site instead of
+                     cloning/building with npm.
   --preserve-fips-config
                      Do not replace /etc/fips/fips.yaml.
   --preserve-fips-service
@@ -70,6 +74,7 @@ Options:
 Common environment overrides:
   FIPS_REF=master
   APP_REF=main
+  PUBLIC_SITE_URL=https://npub1hkze8k84da0qm4lu75x32z33qepyzdqc735jnj5a602x8q4cstksnkvl3a.nsite.lol/
   WEB_PORT=8080
   FIPS_POLICY=open
   FIPS_PUBLIC_UDP=0          # 0 advertises udp:nat; 1 advertises direct UDP
@@ -114,6 +119,9 @@ while [ "$#" -gt 0 ]; do
     --skip-app-build)
       SKIP_APP_BUILD=1
       ;;
+    --use-public-build)
+      USE_PUBLIC_BUILD=1
+      ;;
     --preserve-fips-config)
       PRESERVE_FIPS_CONFIG=1
       ;;
@@ -125,6 +133,7 @@ while [ "$#" -gt 0 ]; do
       ;;
     --reuse-running-fips)
       SKIP_FIPS_BUILD=1
+      USE_PUBLIC_BUILD=1
       PRESERVE_FIPS_CONFIG=1
       PRESERVE_FIPS_SERVICE=1
       PRESERVE_FIPS_FIREWALL=1
@@ -151,7 +160,6 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
 }
 
-require_command git
 require_command systemctl
 require_command ip
 require_command python3
@@ -159,11 +167,17 @@ require_command awk
 require_command sed
 
 if [ "$SKIP_FIPS_BUILD" -eq 0 ]; then
+  require_command git
   require_command cargo
 fi
 
-if [ "$SKIP_APP_BUILD" -eq 0 ]; then
-  require_command npm
+if [ "$SKIP_APP_BUILD" -eq 0 ] && [ "$USE_PUBLIC_BUILD" -eq 0 ]; then
+  if command -v npm >/dev/null 2>&1; then
+    require_command git
+  else
+    USE_PUBLIC_BUILD=1
+    log "npm not found; using published static site from $PUBLIC_SITE_URL"
+  fi
 fi
 
 if [ "$START_SERVICES" -eq 1 ] && [ "$PRESERVE_FIPS_FIREWALL" -ne 1 ]; then
@@ -428,6 +442,11 @@ build_web_app() {
     return
   fi
 
+  if [ "$USE_PUBLIC_BUILD" -eq 1 ]; then
+    install_public_web_app
+    return
+  fi
+
   log "Cloning/building Auditable Voting from $APP_REPO ($APP_REF)"
   clone_or_update_repo "$APP_REPO" "$APP_REF" "$APP_SRC_DIR"
   npm --prefix "$APP_SRC_DIR/web" ci
@@ -436,6 +455,77 @@ build_web_app() {
   rm -rf "$WEB_ROOT"
   mkdir -p "$WEB_ROOT"
   cp -a "$APP_SRC_DIR/web/dist/." "$WEB_ROOT/"
+}
+
+install_public_web_app() {
+  local tmp
+  tmp="$(mktemp -d)"
+
+  log "Installing published static site from $PUBLIC_SITE_URL"
+
+  if command -v wget >/dev/null 2>&1; then
+    wget \
+      --quiet \
+      --recursive \
+      --level=1 \
+      --page-requisites \
+      --no-parent \
+      --no-host-directories \
+      --directory-prefix "$tmp" \
+      "$PUBLIC_SITE_URL"
+  elif command -v curl >/dev/null 2>&1; then
+    install_public_web_app_with_curl "$tmp"
+  else
+    rm -rf "$tmp"
+    die "need wget or curl to install the published static site"
+  fi
+
+  if [ ! -f "$tmp/index.html" ]; then
+    local candidate
+    candidate="$(find "$tmp" -name index.html -type f | head -1 || true)"
+    [ -n "$candidate" ] || {
+      rm -rf "$tmp"
+      die "published static site download did not contain index.html"
+    }
+    cp -a "$(dirname "$candidate")/." "$tmp/"
+  fi
+
+  rm -rf "$WEB_ROOT"
+  mkdir -p "$WEB_ROOT"
+  cp -a "$tmp/." "$WEB_ROOT/"
+  rm -rf "$tmp"
+}
+
+install_public_web_app_with_curl() {
+  local tmp="$1"
+  local base_url origin asset asset_path asset_url
+
+  base_url="${PUBLIC_SITE_URL%/}/"
+  origin="$(printf '%s\n' "$base_url" | sed -E 's#^(https?://[^/]+).*#\1#')"
+
+  curl -L --fail "$base_url" -o "$tmp/index.html"
+
+  grep -Eo '(src|href)="[^"]+"' "$tmp/index.html" \
+    | sed -E 's/^[^"]+"//; s/"$//' \
+    | grep -E '^(\/)?(assets|fips-host|worker-helper)\/|^[^:?#]+\.html($|[?#])' \
+    | sort -u \
+    | while read -r asset; do
+        asset="${asset%%\#*}"
+        asset="${asset%%\?*}"
+        [ -n "$asset" ] || continue
+        case "$asset" in
+          /*)
+            asset_path="${asset#/}"
+            asset_url="$origin/$asset_path"
+            ;;
+          *)
+            asset_path="$asset"
+            asset_url="$base_url$asset"
+            ;;
+        esac
+        mkdir -p "$tmp/$(dirname "$asset_path")"
+        curl -L --fail "$asset_url" -o "$tmp/$asset_path" || true
+      done
 }
 
 write_web_runner_and_unit() {
