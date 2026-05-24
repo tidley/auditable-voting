@@ -73,6 +73,23 @@ describe("SimpleAppShell invite-link login", () => {
     expect(activeRoleToggle.getAttribute("aria-disabled")).toBeNull();
   });
 
+  it("closes the role switcher when clicking outside of it", async () => {
+    const user = userEvent.setup();
+    const { default: SimpleAppShell } = await import("./SimpleAppShell");
+
+    render(<SimpleAppShell />);
+
+    await user.click(screen.getByRole("button", { name: "Continue as Observer" }));
+    await user.click(screen.getByRole("button", { name: "Observer" }));
+    expect(screen.getByRole("tablist", { name: "Simple role switch" })).toBeTruthy();
+
+    await user.click(screen.getByText("Observer app"));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("tablist", { name: "Simple role switch" })).toBeNull();
+    });
+  });
+
   it("reactivates async buttons when UI feedback arrives", async () => {
     const user = userEvent.setup();
     const { default: SimpleAppShell } = await import("./SimpleAppShell");

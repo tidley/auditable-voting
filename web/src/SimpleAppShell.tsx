@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { nip19 } from "nostr-tools";
 import SimpleAuditorApp from "./SimpleAuditorApp";
 import SimpleCoordinatorApp from "./SimpleCoordinatorApp";
@@ -110,8 +110,27 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
   const [gatewayNostrConnectUri, setGatewayNostrConnectUri] = useState("");
   const [gatewayNsecBunkerUri, setGatewayNsecBunkerUri] = useState("");
   const [gatewayShowConnectQr, setGatewayShowConnectQr] = useState(false);
+  const roleSwitchWrapRef = useRef<HTMLDivElement | null>(null);
   const preferredSignerLabel = useMemo(() => (isMobileBrowser() ? "Amber" : "NOS2X-FOX"), []);
   const preferredSignerIsAmber = preferredSignerLabel === "Amber";
+
+  useEffect(() => {
+    if (roleSwitchMinimized || typeof document === "undefined") {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const wrapper = roleSwitchWrapRef.current;
+      const target = event.target;
+      if (!wrapper || !(target instanceof Node) || wrapper.contains(target)) {
+        return;
+      }
+      setRoleSwitchMinimized(true);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    return () => document.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [roleSwitchMinimized]);
 
   useEffect(() => {
     if (typeof document === "undefined") {
@@ -530,7 +549,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
 
   return (
     <div className='simple-app-shell'>
-      <div className='simple-role-switch-wrap'>
+      <div className='simple-role-switch-wrap' ref={roleSwitchWrapRef}>
         <div className='simple-role-switch-topbar'>
           <button
             type='button'
