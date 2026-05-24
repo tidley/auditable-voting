@@ -151,6 +151,13 @@ Move these to the FIPS path when available:
 - blinded response delivery
 - acknowledgements and retries
 
+Current practical bridge:
+
+- `web/public/fips-host/launch-auditable-voting-fips.sh` bootstraps a Linux FIPS host for the static app
+- it builds the upstream `jmcorgan/fips` Rust daemon, enables Nostr overlay discovery, and advertises the node as a `fips-overlay-v1` endpoint
+- it builds this app and serves it on the host's `fips0` address, so other FIPS nodes can open `http://<fips-node-npub>.fips:8080/`
+- it can also install the existing audit proxy as a systemd service, but this does not yet move browser private-control traffic onto FIPS
+
 This is the unreliable section today, and it is the best candidate for a direct path.
 
 ### Fallback rule

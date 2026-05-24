@@ -374,6 +374,7 @@ The client uses:
 - Rust/Wasm for deterministic replay and protocol validation in the public round path
 - an optional Rust audit proxy runtime (`worker/`) for delegated election operations over outbound-only relay connections
 - seven-day fixed-lookback audit proxy DM polling with event-id dedupe so relay-randomised gift-wrap timestamps do not cause missed delegated blind requests, plus status heartbeats back to the coordinator, active delegation control-relay reads, delegated close + auto-summary after all expected invitees have accepted valid responses, and a nostrwat.ch-checked helper relay set (relay.nostr.net, nos.lol, relay.nostr.info, relay.nos.social, relay.momostr.pink, and relay.azzamo.net); persisted legacy relay lists are sanitised onto that curated set before polling
+- an optional FIPS host launcher (`web/public/fips-host/launch-auditable-voting-fips.sh`) that builds the upstream FIPS Rust daemon, enables `fips-overlay-v1` Nostr endpoint adverts, serves the static app on the host's `fips0` address, opens the chosen mesh web port through the FIPS firewall, and can install the audit proxy as a disabled systemd service
 - browser storage for private active state and recovery
 
 ## Blind Issuance

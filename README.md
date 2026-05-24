@@ -170,6 +170,43 @@ nsyte deploy web/dist \
 
 `.secrets/nsite.env` should define `NSEC` and `NPUB`. Do not commit it.
 
+### FIPS-hosted mirror
+
+The static app can also be hosted on a FIPS mesh node. The launcher at
+`web/public/fips-host/launch-auditable-voting-fips.sh` builds the latest
+upstream FIPS daemon, enables Nostr overlay discovery, advertises the node as a
+FIPS endpoint, builds this site, and serves it on the node's `fips0` address.
+It can also install an optional audit-proxy service template.
+
+From GitHub Pages:
+
+```bash
+curl -L https://tidley.github.io/auditable-voting/fips-host/launch-auditable-voting-fips.sh -o launch-auditable-voting-fips.sh
+chmod +x launch-auditable-voting-fips.sh
+sudo ./launch-auditable-voting-fips.sh
+```
+
+From nsite:
+
+```bash
+curl -L https://npub1hkze8k84da0qm4lu75x32z33qepyzdqc735jnj5a602x8q4cstksnkvl3a.nsite.lol/fips-host/launch-auditable-voting-fips.sh -o launch-auditable-voting-fips.sh
+chmod +x launch-auditable-voting-fips.sh
+sudo ./launch-auditable-voting-fips.sh
+```
+
+After startup, other FIPS nodes can reach the mirror at
+`http://<fips-node-npub>.fips:8080/`. By default the launcher advertises
+`udp:nat` via FIPS' Nostr/STUN handoff flow; set `FIPS_PUBLIC_UDP=1` and
+`FIPS_EXTERNAL_ADDR=IP:2121` for a stable public UDP endpoint.
+
+If the machine already runs packaged FIPS, for example a Raspberry Pi with
+`ExecStart=/usr/bin/fips --config /etc/fips/fips.yaml`, reuse it without
+rebuilding FIPS or replacing the existing FIPS config, service, or firewall:
+
+```bash
+sudo ./launch-auditable-voting-fips.sh --reuse-running-fips
+```
+
 ## Limitations
 
 - Relay support for filters, retention, and rate limits varies.
