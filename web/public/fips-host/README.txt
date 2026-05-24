@@ -50,6 +50,17 @@ drop-in for the web port. If `fips-firewall.service` is already active, it is
 restarted so the drop-in is loaded; otherwise the existing firewall state is
 left alone.
 
+When npm is available, the launcher builds Vite and installs the complete
+`web/dist/` tree as one static web root. When reusing a published build, it
+recursively downloads every referenced Vite asset, including dynamic JS chunks
+and WASM files, before replacing the live web root. This avoids stale or partial
+asset sets where browser module imports receive HTML fallback pages.
+
+To serve under a path prefix instead of the FIPS site root, build from source
+and set the Vite base path:
+
+  sudo WEB_BASE_PATH=/auditable-voting/ ./launch-auditable-voting-fips.sh
+
 By default the launcher advertises UDP as `udp:nat`, using FIPS' Nostr/STUN
 handoff flow. For a host with a stable public UDP endpoint:
 

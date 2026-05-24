@@ -208,6 +208,19 @@ or firewall:
 sudo ./launch-auditable-voting-fips.sh --reuse-running-fips
 ```
 
+When npm is available the launcher builds Vite and installs the complete
+`web/dist/` tree as the web root. Reuse mode downloads the published static
+site and recursively completes the referenced Vite assets, including dynamic JS
+chunks and WASM files, before replacing the live root. This avoids partial
+deployments where imported modules receive HTML fallback responses.
+
+To serve under a path prefix instead of the FIPS site root, build from source
+and set `WEB_BASE_PATH`, for example:
+
+```bash
+sudo WEB_BASE_PATH=/auditable-voting/ ./launch-auditable-voting-fips.sh
+```
+
 ## Limitations
 
 - Relay support for filters, retention, and rate limits varies.

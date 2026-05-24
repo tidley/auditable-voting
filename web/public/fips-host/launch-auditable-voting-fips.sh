@@ -22,6 +22,7 @@ APP_SRC_DIR="${APP_SRC_DIR:-$INSTALL_PREFIX/auditable-voting}"
 FIPS_SRC_DIR="${FIPS_SRC_DIR:-$INSTALL_PREFIX/fips}"
 WEB_ROOT="${WEB_ROOT:-$STATE_DIR/site}"
 WEB_PORT="${WEB_PORT:-8080}"
+WEB_BASE_PATH="${WEB_BASE_PATH:-/}"
 FIPS_IFACE="${FIPS_IFACE:-fips0}"
 FIPS_UDP_PORT="${FIPS_UDP_PORT:-2121}"
 FIPS_POLICY="${FIPS_POLICY:-open}"
@@ -76,6 +77,7 @@ Common environment overrides:
   APP_REF=main
   PUBLIC_SITE_URL=https://npub1hkze8k84da0qm4lu75x32z33qepyzdqc735jnj5a602x8q4cstksnkvl3a.nsite.lol/
   WEB_PORT=8080
+  WEB_BASE_PATH=/             # set to /auditable-voting/ when serving under that path
   FIPS_POLICY=open
   FIPS_PUBLIC_UDP=0          # 0 advertises udp:nat; 1 advertises direct UDP
   FIPS_EXTERNAL_ADDR=IP:2121 # optional direct advertise-as address
@@ -450,11 +452,53 @@ build_web_app() {
   log "Cloning/building Auditable Voting from $APP_REPO ($APP_REF)"
   clone_or_update_repo "$APP_REPO" "$APP_REF" "$APP_SRC_DIR"
   npm --prefix "$APP_SRC_DIR/web" ci
-  VITE_BASE_PATH=/ npm --prefix "$APP_SRC_DIR/web" run build
+  VITE_BASE_PATH="$WEB_BASE_PATH" npm --prefix "$APP_SRC_DIR/web" run build
 
-  rm -rf "$WEB_ROOT"
-  mkdir -p "$WEB_ROOT"
-  cp -a "$APP_SRC_DIR/web/dist/." "$WEB_ROOT/"
+  sync_web_root_from_dir "$APP_SRC_DIR/web/dist" "$WEB_BASE_PATH"
+}
+
+sync_web_root_from_dir() {
+  local source_dir="$1"
+  local install_base="${2:-/}"
+  local staging previous install_dir
+
+  [ -f "$source_dir/index.html" ] || die "$source_dir/index.html is missing"
+
+  log "Installing complete static web root from $source_dir"
+  mkdir -p "$STATE_DIR"
+  mkdir -p "$(dirname "$WEB_ROOT")"
+  staging="$(mktemp -d "$STATE_DIR/site.new.XXXXXX")"
+
+  install_base="/${install_base#/}"
+  if [ "$install_base" != "/" ]; then
+    install_base="${install_base%/}"
+  fi
+
+  if [ "$install_base" = "/" ]; then
+    install_dir="$staging"
+  else
+    install_dir="$staging/${install_base#/}"
+    mkdir -p "$install_dir"
+  fi
+
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a --delete "$source_dir"/ "$install_dir"/
+  else
+    cp -a "$source_dir/." "$install_dir/"
+  fi
+
+  [ -f "$install_dir/index.html" ] || {
+    rm -rf "$staging"
+    die "staged static site is missing index.html"
+  }
+
+  previous="$STATE_DIR/site.previous.$$"
+  rm -rf "$previous"
+  if [ -e "$WEB_ROOT" ] || [ -L "$WEB_ROOT" ]; then
+    mv "$WEB_ROOT" "$previous"
+  fi
+  mv "$staging" "$WEB_ROOT"
+  rm -rf "$previous"
 }
 
 install_public_web_app() {
@@ -490,9 +534,9 @@ install_public_web_app() {
     cp -a "$(dirname "$candidate")/." "$tmp/"
   fi
 
-  rm -rf "$WEB_ROOT"
-  mkdir -p "$WEB_ROOT"
-  cp -a "$tmp/." "$WEB_ROOT/"
+  complete_public_web_app_assets "$tmp"
+  mirror_public_base_entrypoints "$tmp"
+  sync_web_root_from_dir "$tmp" /
   rm -rf "$tmp"
 }
 
@@ -526,6 +570,165 @@ install_public_web_app_with_curl() {
         mkdir -p "$tmp/$(dirname "$asset_path")"
         curl -L --fail "$asset_url" -o "$tmp/$asset_path" || true
       done
+}
+
+extract_public_asset_refs() {
+  local file="$1"
+  local ext
+
+  ext='js|mjs|css|wasm|html|json|webmanifest|png|jpg|jpeg|gif|svg|webp|ico|txt|map|woff2?|ttf|otf'
+
+  {
+    grep -Eoh "[\"'\`][^\"'\`]+\.($ext)([?#][^\"'\`]*)?[\"'\`]" "$file" \
+      | sed -E "s/^[\"'\`]//; s/[\"'\`]$//"
+    grep -Eoh "url\([[:space:]]*['\"]?[^'\")]+\.($ext)([?#][^'\")]*)?['\"]?[[:space:]]*\)" "$file" \
+      | sed -E "s/^url\([[:space:]]*['\"]?//; s/['\"]?[[:space:]]*\)$//"
+  } 2>/dev/null || true
+}
+
+resolve_public_asset_ref() {
+  local tmp="$1"
+  local source_path="$2"
+  local ref="$3"
+  local source_dir asset_path
+
+  ref="${ref%%\#*}"
+  ref="${ref%%\?*}"
+  [ -n "$ref" ] || return 1
+
+  case "$ref" in
+    *'${'*|*'{'*|*'}'*|*,*)
+      return 1
+      ;;
+  esac
+
+  case "$ref" in
+    http://*|https://*|data:*|mailto:*|tel:*|javascript:*)
+      return 1
+      ;;
+    /*)
+      asset_path="${ref#/}"
+      ;;
+    ./*|../*)
+      source_dir="$(dirname "$source_path")"
+      [ "$source_dir" = "." ] && source_dir=""
+      if [ -n "$source_dir" ]; then
+        asset_path="$source_dir/$ref"
+      else
+        asset_path="$ref"
+      fi
+      ;;
+    *)
+      source_dir="$(dirname "$source_path")"
+      [ "$source_dir" = "." ] && source_dir=""
+      if [ -n "$source_dir" ]; then
+        asset_path="$source_dir/$ref"
+      else
+        asset_path="$ref"
+      fi
+      ;;
+  esac
+
+  asset_path="$(realpath -m --relative-to="$tmp" "$tmp/$asset_path" 2>/dev/null || true)"
+  [ -n "$asset_path" ] || return 1
+
+  case "$asset_path" in
+    ..|../*|/*)
+      return 1
+      ;;
+  esac
+
+  printf '%s\n' "$asset_path"
+}
+
+public_site_base_path() {
+  local base_url base_path
+
+  base_url="${PUBLIC_SITE_URL%/}/"
+  base_path="$(printf '%s\n' "$base_url" | sed -E 's#^https?://[^/]+/?##; s#/$##')"
+  printf '%s\n' "$base_path"
+}
+
+mirror_public_base_entrypoints() {
+  local tmp="$1"
+  local base_path html name
+
+  base_path="$(public_site_base_path)"
+  [ -n "$base_path" ] || return 0
+
+  mkdir -p "$tmp/$base_path"
+  while IFS= read -r -d '' html; do
+    name="$(basename "$html")"
+    cp -a "$html" "$tmp/$base_path/$name"
+  done < <(find "$tmp" -maxdepth 1 -type f -name '*.html' -print0)
+}
+
+download_public_asset_path() {
+  local tmp="$1"
+  local asset_path="$2"
+  local base_url origin base_path asset_url missing_assets
+
+  [ -f "$tmp/$asset_path" ] && return 1
+
+  missing_assets="$tmp/.public-missing-assets"
+  if [ -f "$missing_assets" ] && grep -Fxq "$asset_path" "$missing_assets"; then
+    return 1
+  fi
+
+  base_url="${PUBLIC_SITE_URL%/}/"
+  origin="$(printf '%s\n' "$base_url" | sed -E 's#^(https?://[^/]+).*#\1#')"
+  base_path="$(public_site_base_path)"
+
+  if [ -n "$base_path" ] && { [ "$asset_path" = "$base_path" ] || [ "${asset_path#"$base_path"/}" != "$asset_path" ]; }; then
+    asset_url="$origin/$asset_path"
+  else
+    asset_url="$base_url$asset_path"
+  fi
+
+  mkdir -p "$tmp/$(dirname "$asset_path")"
+  if command -v curl >/dev/null 2>&1; then
+    if curl --globoff -L --fail --silent "$asset_url" -o "$tmp/$asset_path"; then
+      return 0
+    fi
+  elif command -v wget >/dev/null 2>&1; then
+    if wget --quiet -O "$tmp/$asset_path" "$asset_url"; then
+      return 0
+    fi
+  else
+    die "need wget or curl to complete the published static asset set"
+  fi
+
+  rm -f "$tmp/$asset_path"
+  printf '%s\n' "$asset_path" >>"$missing_assets"
+  log "Warning: missing published asset: $asset_url"
+  return 1
+}
+
+complete_public_web_app_assets() {
+  local tmp="$1"
+  local pass source source_path ref asset_path downloaded
+
+  log "Completing published static asset set"
+
+  pass=1
+  while [ "$pass" -le 8 ]; do
+    downloaded=0
+    while IFS= read -r -d '' source; do
+      source_path="${source#$tmp/}"
+      while IFS= read -r ref; do
+        asset_path="$(resolve_public_asset_ref "$tmp" "$source_path" "$ref" || true)"
+        [ -n "$asset_path" ] || continue
+        if download_public_asset_path "$tmp" "$asset_path"; then
+          downloaded=1
+        fi
+      done < <(extract_public_asset_refs "$source")
+    done < <(find "$tmp" -type f \( -name '*.html' -o -name '*.js' -o -name '*.mjs' -o -name '*.css' \) -print0)
+
+    [ "$downloaded" -eq 1 ] || break
+    pass=$((pass + 1))
+  done
+
+  rm -f "$tmp/.public-missing-assets"
 }
 
 write_web_runner_and_unit() {
