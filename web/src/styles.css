@@ -1071,7 +1071,7 @@ code {
 }
 
 .simple-voter-title {
-  font-size: clamp(1.9rem, 3.7vw, 2.7rem);
+  font-size: clamp(1.43rem, 2.78vw, 2.03rem);
   margin-bottom: 22px;
 }
 
@@ -2289,6 +2289,18 @@ code {
   background: #0b1221;
 }
 
+.simple-questionnaire-voter-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.simple-questionnaire-voter-heading .simple-questionnaire-voter-prompt {
+  flex: 1;
+  min-width: 0;
+}
+
 .simple-questionnaire-voter-number {
   margin: 0;
   color: #93c5fd;
@@ -2296,6 +2308,27 @@ code {
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+.simple-questionnaire-voter-requirement {
+  flex: none;
+  margin: 0;
+  padding: 4px 10px;
+  border: 1px solid rgba(125, 211, 252, 0.36);
+  border-radius: 999px;
+  background: rgba(14, 116, 144, 0.28);
+  color: #bae6fd;
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.simple-questionnaire-voter-requirement.is-optional {
+  border-color: rgba(148, 163, 184, 0.34);
+  background: rgba(51, 65, 85, 0.45);
+  color: #cbd5e1;
 }
 
 .simple-questionnaire-voter-prompt {
@@ -5463,7 +5496,7 @@ body.demo-page .demo-workspace {
   }
 
   .simple-voter-title {
-    font-size: clamp(1.4rem, 5.8vw, 1.74rem);
+    font-size: clamp(1.05rem, 4.35vw, 1.31rem);
   }
 
   .simple-voter-tabs {

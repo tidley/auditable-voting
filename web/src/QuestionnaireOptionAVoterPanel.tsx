@@ -16,7 +16,6 @@ import {
   loadElectionSummary,
   readBallotSubmissionAckRecord,
   readBlindRequestAckRecord,
-  readBlindIssuanceAckRecord,
   listInvitesFromMailbox,
   publishInviteToMailbox,
   upsertElectionSummary,
@@ -268,6 +267,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [encryptFreeTextByQuestionId, setEncryptFreeTextByQuestionId] = useState<Record<string, boolean>>({});
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const [ballotStatusExpanded, setBallotStatusExpanded] = useState(false);
   const [privateInviteBootstrapRetryNonce, setPrivateInviteBootstrapRetryNonce] = useState(0);
   const autoRequestSentForRef = useRef<Record<string, true>>({});
   const autoRequestInFlightForRef = useRef<Record<string, true>>({});
@@ -1769,10 +1769,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const canSubmitNow = flags.canSubmitVote && requiredQuestionsAnswered;
   const requestAck = snapshot?.blindRequest ? readBlindRequestAckRecord(snapshot.blindRequest.requestId) : null;
   const submissionAck = snapshot?.submission ? readBallotSubmissionAckRecord(snapshot.submission.submissionId) : null;
-  const issuanceAckSent = Boolean(
-    snapshot?.blindIssuance
-    && readBlindIssuanceAckRecord(snapshot.blindIssuance.requestId)?.issuanceId === snapshot.blindIssuance.issuanceId,
-  );
   const coordinatorNpub = snapshot?.coordinatorNpub?.trim()
     || activeInvite?.coordinatorNpub?.trim()
     || inviteDropdownOptions.find((invite) => invite.electionId === electionId.trim())?.coordinatorNpub?.trim()
@@ -1796,9 +1792,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     : snapshot?.submission && snapshot.submissionAccepted == null && submissionAck
       ? `Submission received. Waiting for ${decisionActorName} decision.`
       : null;
-  const displayStatus = snapshot?.credentialReady
-    ? (issuanceAckSent ? "Credential received (ack sent)." : "Ballot credential ready.")
-    : pendingStatus ?? status;
+  const displayStatus = pendingStatus ?? (snapshot?.credentialReady ? null : status);
   const coordinatorLabel = coordinatorNpub ? deriveActorDisplayId(coordinatorNpub) : "Unknown";
   const requestStateText = snapshot?.blindRequestSent ? "Sent" : "Not sent";
   const credentialStateText = snapshot?.credentialReady
@@ -1895,9 +1889,12 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         <div className='simple-questionnaire-voter-list'>
           {questions.map((question, index) => (
             <article key={question.questionId} className='simple-questionnaire-voter-card'>
-              <p className='simple-questionnaire-voter-number'>Question {index + 1}</p>
-              <h4 className='simple-questionnaire-voter-prompt'>{question.prompt || "Untitled question"}</h4>
-              <p className='simple-questionnaire-voter-helper'>{question.required ? "Required" : "Optional"}</p>
+              <div className='simple-questionnaire-voter-heading'>
+                <h4 className='simple-questionnaire-voter-prompt'>Q{index + 1}: {question.prompt || "Untitled question"}</h4>
+                <p className={`simple-questionnaire-voter-requirement${question.required ? "" : " is-optional"}`}>
+                  {question.required ? "Required" : "Optional"}
+                </p>
+              </div>
               {question.type === "yes_no" ? (
                 <div className='simple-vote-button-grid simple-questionnaire-yes-no-grid'>
                   <button
@@ -1981,10 +1978,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       )}
 
       <div className='simple-voter-action-row simple-voter-action-row-inline simple-optiona-voter-controls'>
-        <button type='button' className='simple-voter-secondary' disabled={!canRequestOrResendBallot} onClick={requestBallot}>
-          {waitingForCredential ? "Resend request" : "Request ballot"}
-        </button>
-        <button type='button' className='simple-voter-secondary' onClick={refreshStatus}>Refresh status</button>
         <button
           type='button'
           className='simple-voter-primary'
@@ -2025,45 +2018,64 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           ) : null}
         </section>
       ) : null}
-      <section className='simple-settings-card' aria-label='Ballot progress'>
-        <h4 className='simple-voter-section-title'>Ballot progress</h4>
-        <p className='simple-voter-note'>Coordinator: {coordinatorLabel}</p>
-        {credentialIssuerIsProxy ? (
-          <p className='simple-voter-note'>Ballot credential issuer: audit proxy {credentialIssuerLabel}</p>
-        ) : null}
-        {coordinatorNpub ? (
-          <TokenFingerprint
-            tokenId={coordinatorNpub}
-            label='Coordinator marker'
-            showQr
-            compact
-            hideMetadata
-          />
-        ) : null}
-        {credentialIssuerIsProxy && credentialIssuerNpub ? (
-          <TokenFingerprint
-            tokenId={credentialIssuerNpub}
-            label='Audit proxy marker'
-            showQr
-            compact
-            hideMetadata
-          />
-        ) : null}
-        <p className='simple-voter-note'>Questionnaire ID: {electionId || "Missing"}</p>
-        <ul className='simple-vote-status-list'>
-          <li className={snapshot?.loginVerified ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Identity confirmed: {snapshot?.loginVerified ? "Yes" : "No"}</li>
-          <li className={snapshot?.blindRequestSent ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Ballot request: {requestStateText}</li>
-          <li className={snapshot?.credentialReady ? "is-complete" : waitingForCredential ? "is-pending" : ""}><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Ballot credential: {credentialStateText}</li>
-          <li className={snapshot?.submissionAccepted === true ? "is-complete" : snapshot?.submission ? "is-pending" : ""}><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Response: {submissionStateText}</li>
-        </ul>
-        {waitingForCredential ? (
-          <p className='simple-voter-note'>
-            {credentialIssuerIsProxy
-              ? "Waiting for the audit proxy to issue your ballot credential. This page checks automatically; the coordinator does not need to stay online once the proxy has received its delegation."
-              : "Waiting for the coordinator to issue your ballot credential. This page checks automatically; the coordinator must be online and can press Process requests."}
-          </p>
-        ) : null}
-      </section>
+      <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
+        <button
+          type='button'
+          className='simple-voter-secondary'
+          aria-expanded={ballotStatusExpanded}
+          aria-controls='questionnaire-ballot-status'
+          onClick={() => setBallotStatusExpanded((current) => !current)}
+        >
+          {ballotStatusExpanded ? "Hide ballot status" : "Show ballot status"}
+        </button>
+      </div>
+      {ballotStatusExpanded ? (
+        <section id='questionnaire-ballot-status' className='simple-settings-card' aria-label='Ballot status'>
+          <h4 className='simple-voter-section-title'>Ballot status</h4>
+          <div className='simple-voter-action-row simple-voter-action-row-inline simple-optiona-voter-controls'>
+            <button type='button' className='simple-voter-secondary' disabled={!canRequestOrResendBallot} onClick={requestBallot}>
+              {waitingForCredential ? "Resend request" : "Request ballot"}
+            </button>
+            <button type='button' className='simple-voter-secondary' onClick={refreshStatus}>Refresh status</button>
+          </div>
+          <p className='simple-voter-note'>Coordinator: {coordinatorLabel}</p>
+          {credentialIssuerIsProxy ? (
+            <p className='simple-voter-note'>Ballot credential issuer: audit proxy {credentialIssuerLabel}</p>
+          ) : null}
+          {coordinatorNpub ? (
+            <TokenFingerprint
+              tokenId={coordinatorNpub}
+              label='Coordinator marker'
+              showQr
+              compact
+              hideMetadata
+            />
+          ) : null}
+          {credentialIssuerIsProxy && credentialIssuerNpub ? (
+            <TokenFingerprint
+              tokenId={credentialIssuerNpub}
+              label='Audit proxy marker'
+              showQr
+              compact
+              hideMetadata
+            />
+          ) : null}
+          <p className='simple-voter-note'>Questionnaire ID: {electionId || "Missing"}</p>
+          <ul className='simple-vote-status-list'>
+            <li className={snapshot?.loginVerified ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Identity confirmed: {snapshot?.loginVerified ? "Yes" : "No"}</li>
+            <li className={snapshot?.blindRequestSent ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Ballot request: {requestStateText}</li>
+            <li className={snapshot?.credentialReady ? "is-complete" : waitingForCredential ? "is-pending" : ""}><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Ballot credential: {credentialStateText}</li>
+            <li className={snapshot?.submissionAccepted === true ? "is-complete" : snapshot?.submission ? "is-pending" : ""}><span className='simple-vote-status-icon' aria-hidden='true'>•</span> Response: {submissionStateText}</li>
+          </ul>
+          {waitingForCredential ? (
+            <p className='simple-voter-note'>
+              {credentialIssuerIsProxy
+                ? "Waiting for the audit proxy to issue your ballot credential. This page checks automatically; the coordinator does not need to stay online once the proxy has received its delegation."
+                : "Waiting for the coordinator to issue your ballot credential. This page checks automatically; the coordinator must be online and can press Process requests."}
+            </p>
+          ) : null}
+        </section>
+      ) : null}
       {displayStatus ? <p className='simple-voter-note'>{displayStatus}</p> : null}
       <span style={{ display: "none" }} aria-hidden='true'>{refreshNonce}</span>
     </div>

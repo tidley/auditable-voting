@@ -1545,9 +1545,12 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
               const selected = answerState[question.questionId];
               return (
                 <article key={question.questionId} className='simple-questionnaire-voter-card'>
-                  <p className='simple-questionnaire-voter-number'>Question {index + 1}</p>
-                  <h4 className='simple-questionnaire-voter-prompt'>{questionPrompt}</h4>
-                  <p className='simple-questionnaire-voter-helper'>{requirementLabel}</p>
+                  <div className='simple-questionnaire-voter-heading'>
+                    <h4 className='simple-questionnaire-voter-prompt'>Q{index + 1}: {questionPrompt}</h4>
+                    <p className={`simple-questionnaire-voter-requirement${question.required ? "" : " is-optional"}`}>
+                      {requirementLabel}
+                    </p>
+                  </div>
                   <div className='simple-vote-button-grid simple-questionnaire-yes-no-grid'>
                     <button
                       type='button'
@@ -1574,9 +1577,12 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
                 : [];
               return (
                 <article key={question.questionId} className='simple-questionnaire-voter-card'>
-                  <p className='simple-questionnaire-voter-number'>Question {index + 1}</p>
-                  <h4 className='simple-questionnaire-voter-prompt'>{questionPrompt}</h4>
-                  <p className='simple-questionnaire-voter-helper'>{requirementLabel}</p>
+                  <div className='simple-questionnaire-voter-heading'>
+                    <h4 className='simple-questionnaire-voter-prompt'>Q{index + 1}: {questionPrompt}</h4>
+                    <p className={`simple-questionnaire-voter-requirement${question.required ? "" : " is-optional"}`}>
+                      {requirementLabel}
+                    </p>
+                  </div>
                   <div className='simple-questionnaire-choice-list'>
                     {question.options.map((option) => (
                       <label key={option.optionId} className='simple-questionnaire-choice-row'>
@@ -1599,9 +1605,12 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
               : "";
             return (
               <article key={question.questionId} className='simple-questionnaire-voter-card'>
-                <p className='simple-questionnaire-voter-number'>Question {index + 1}</p>
-                <h4 className='simple-questionnaire-voter-prompt'>{questionPrompt}</h4>
-                <p className='simple-questionnaire-voter-helper'>{requirementLabel}</p>
+                <div className='simple-questionnaire-voter-heading'>
+                  <h4 className='simple-questionnaire-voter-prompt'>Q{index + 1}: {questionPrompt}</h4>
+                  <p className={`simple-questionnaire-voter-requirement${question.required ? "" : " is-optional"}`}>
+                    {requirementLabel}
+                  </p>
+                </div>
                 <label className='simple-voter-label simple-voter-label-tight' htmlFor={`questionnaire-free-text-${question.questionId}`}>
                   Additional comments
                 </label>

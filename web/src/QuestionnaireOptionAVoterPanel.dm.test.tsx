@@ -245,6 +245,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
       expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Questionnaire ID: q_local")).length).toBeGreaterThan(0);
     });
 
+    await user.click(screen.getByRole("button", { name: "Show ballot status" }));
     await user.click(screen.getAllByRole("button", { name: "Refresh status" }).at(-1)!);
 
     await waitFor(() => {
@@ -443,6 +444,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
       definition,
       issuedAt: "2026-04-18T00:01:00.000Z",
     });
+    await user.click(screen.getByRole("button", { name: "Show ballot status" }));
     await user.click(screen.getByRole("button", { name: "Refresh status" }));
 
     await waitFor(() => {
