@@ -3088,18 +3088,19 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           />
           <span>Enable close timer</span>
         </label>
-        <div className='simple-questionnaire-close-timer-minutes'>
-          <label className='simple-voter-label simple-voter-label-tight' htmlFor='questionnaire-close-minutes'>
-            Close after (minutes)
-          </label>
-          <input
-            id='questionnaire-close-minutes'
-            className='simple-voter-input simple-voter-input-inline'
-            value={closeAfterMinutes}
-            disabled={!closeTimerEnabled}
-            onChange={(event) => setCloseAfterMinutes(event.target.value)}
-          />
-        </div>
+        {closeTimerEnabled ? (
+          <div className='simple-questionnaire-close-timer-minutes'>
+            <label className='simple-voter-label simple-voter-label-tight' htmlFor='questionnaire-close-minutes'>
+              Close after (minutes)
+            </label>
+            <input
+              id='questionnaire-close-minutes'
+              className='simple-voter-input simple-voter-input-inline'
+              value={closeAfterMinutes}
+              onChange={(event) => setCloseAfterMinutes(event.target.value)}
+            />
+          </div>
+        ) : null}
       </div>
 
       <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
