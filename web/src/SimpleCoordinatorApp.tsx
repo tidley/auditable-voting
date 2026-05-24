@@ -132,7 +132,7 @@ import {
   QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN,
 } from "./questionnaireProtocolConstants";
 
-type CoordinatorTab = "configure" | "participants" | "voting" | "settings";
+type CoordinatorTab = "configure" | "participants" | "settings";
 
 type SimpleCoordinatorKeypair = {
   npub: string;
@@ -6076,15 +6076,6 @@ export default function SimpleCoordinatorApp() {
           <button
             type='button'
             role='tab'
-            aria-selected={activeTab === 'voting'}
-            className={`simple-voter-tab${activeTab === 'voting' ? ' is-active' : ''}`}
-            onClick={() => selectTab('voting')}
-          >
-            Results
-          </button>
-          <button
-            type='button'
-            role='tab'
             aria-selected={activeTab === 'settings'}
             className={`simple-voter-tab${activeTab === 'settings' ? ' is-active' : ''}`}
             onClick={() => selectTab('settings')}
@@ -6242,7 +6233,7 @@ export default function SimpleCoordinatorApp() {
           <section
             className='simple-voter-tab-panel'
             role='tabpanel'
-            aria-label='Participants'
+            aria-label='Invite'
           >
             <SimpleCollapsibleSection title='Vote requests' defaultCollapsed>
               {coordinatorFollowerRows.length > 0 ? (
@@ -6751,23 +6742,6 @@ export default function SimpleCoordinatorApp() {
               questionnaireRelaysInput={questionnaireRelaysInput}
               onStatusChange={updateQuestionnaireRosterAnnouncement}
             />
-          </section>
-        ) : null}
-        {activeTab === 'voting' ? (
-          <section
-            className='simple-voter-tab-panel'
-            role='tabpanel'
-            aria-label='Responses'
-          >
-            <div className='simple-voter-action-row simple-voter-action-row-inline'>
-              <button
-                type='button'
-                className='simple-voter-secondary'
-                onClick={processKnownVoterRequests}
-              >
-                Check responses
-              </button>
-            </div>
             <QuestionnaireCoordinatorPanel
               coordinatorNsec={keypair?.nsec ?? null}
               coordinatorNpub={keypair?.npub ?? null}

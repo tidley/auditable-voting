@@ -2838,8 +2838,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   if (view === "responses") {
     return (
       <div className='simple-voter-card simple-questionnaire-panel'>
-        <h3 className='simple-voter-question'>Responses</h3>
-        <p className='simple-voter-note'>View submitted responses and publish the response summary.</p>
+        <h3 className='simple-voter-question'>Live results</h3>
+        <p className='simple-voter-note'>Review the live response summary as voter submissions are processed, then publish a fixed final summary when collection is complete.</p>
 
         <div className='simple-questionnaire-responses-section'>
           <h4 className='simple-voter-section-title'>Questionnaire</h4>
@@ -2917,7 +2917,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           <p className='simple-voter-note'>{publishStatusText}</p>
           {currentState === "results_published" ? (
             <p className='simple-voter-note'>
-              Published results are available in this coordinator&apos;s <strong>Results</strong> tab and in <strong>Observer</strong> under the selected coordinator filters.
+              Published results are available here and in <strong>Observer</strong> under the selected coordinator filters.
             </p>
           ) : null}
         </div>

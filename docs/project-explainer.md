@@ -81,7 +81,7 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 
 ### 5. Coordinator or proxy processes responses
 
-1. In the coordinator tab, use **Process requests** / **Check responses** while running browser-only.
+1. In the coordinator **Invite** tab, use **Process requests** / **Check responses** while running browser-only. The same tab shows live accepted-response totals, per-question result bars, text responses, and responder rows as submissions are processed.
 2. If delegated, leave the helper running and check its heartbeat/reporting in **Audit proxy status**.
 3. Close the questionnaire and publish final results when collection is complete, if you want a fixed final summary.
 
@@ -243,7 +243,7 @@ The present web client is built with:
 - **single-coordinator deterministic startup bypass** so `1 coordinator` runs do not block on MLS join/group observation paths
 - **blind-key publication diagnostics** that classify not-attempted vs publish/observe/apply stalls and expose event/relay evidence
 - **private-first questionnaire flow** with coordinator/voter UI panels, RSABSSA blind-token issuance, ephemeral response npubs, transport helpers, and relay-harness metrics
-- **staged questionnaire coordinator builder** (`Build` -> `Audience` -> `Publish` -> `Responses` -> `Results`) with zero default questions and explicit publish readiness checks
+- **staged questionnaire coordinator builder** (`Build` -> `Invite` with live results -> `Settings`) with zero default questions and explicit publish readiness checks
 - **voter questionnaire vote gating** that only enables Vote after announced questionnaire ids are verified as publicly readable (`definition` present + state `open`/`published`)
 - **questionnaire discovery over direct live subscriptions** with one startup backfill plus one bounded retry, and explicit per-voter discovery timing diagnostics for startup visibility failures
 - **voter draft preservation** so response fields are not cleared when a blind ballot credential or refreshed definition arrives for the same questionnaire

@@ -14,8 +14,6 @@ import type { ElectionInviteMessage, QuestionnaireAnswer, VoterElectionLocalStat
 import { deriveActorDisplayId } from "./actorDisplay";
 import {
   loadElectionSummary,
-  readBallotSubmissionAckRecord,
-  readBlindRequestAckRecord,
   listInvitesFromMailbox,
   publishInviteToMailbox,
   upsertElectionSummary,
@@ -248,7 +246,7 @@ type QuestionnaireOptionAVoterPanelProps = {
 
 export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptionAVoterPanelProps) {
   const [runtime, setRuntime] = useState<QuestionnaireOptionAVoterRuntime | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
+  const [, setStatus] = useState<string | null>(null);
   const [signedInNpub, setSignedInNpub] = useState<string>("");
   const [pendingInvites, setPendingInvites] = useState<ElectionInviteMessage[]>([]);
   const [activeInvite, setActiveInvite] = useState<ElectionInviteMessage | null>(null);
@@ -1767,8 +1765,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     return value !== undefined && value !== null && String(value).trim().length > 0;
   });
   const canSubmitNow = flags.canSubmitVote && requiredQuestionsAnswered;
-  const requestAck = snapshot?.blindRequest ? readBlindRequestAckRecord(snapshot.blindRequest.requestId) : null;
-  const submissionAck = snapshot?.submission ? readBallotSubmissionAckRecord(snapshot.submission.submissionId) : null;
   const coordinatorNpub = snapshot?.coordinatorNpub?.trim()
     || activeInvite?.coordinatorNpub?.trim()
     || inviteDropdownOptions.find((invite) => invite.electionId === electionId.trim())?.coordinatorNpub?.trim()
@@ -1787,12 +1783,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const credentialIssuerName = credentialIssuerIsProxy ? "audit proxy" : "coordinator";
   const credentialIssuerLabel = credentialIssuerNpub ? deriveActorDisplayId(credentialIssuerNpub) : "Unknown";
   const decisionActorName = credentialIssuerIsProxy ? "audit proxy" : "coordinator";
-  const pendingStatus = waitingForCredential && requestAck
-    ? `Ballot request acknowledged. Waiting for ${credentialIssuerName} issuance.`
-    : snapshot?.submission && snapshot.submissionAccepted == null && submissionAck
-      ? `Submission received. Waiting for ${decisionActorName} decision.`
-      : null;
-  const displayStatus = pendingStatus ?? (snapshot?.credentialReady ? null : status);
   const coordinatorLabel = coordinatorNpub ? deriveActorDisplayId(coordinatorNpub) : "Unknown";
   const requestStateText = snapshot?.blindRequestSent ? "Sent" : "Not sent";
   const credentialStateText = snapshot?.credentialReady
@@ -2076,7 +2066,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           ) : null}
         </section>
       ) : null}
-      {displayStatus ? <p className='simple-voter-note'>{displayStatus}</p> : null}
       <span style={{ display: "none" }} aria-hidden='true'>{refreshNonce}</span>
     </div>
   );
