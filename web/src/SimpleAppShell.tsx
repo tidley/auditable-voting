@@ -11,6 +11,7 @@ import { saveSimpleActorState } from "./simpleLocalState";
 import { tryWriteClipboard } from "./clipboard";
 import SimpleQrPanel from "./SimpleQrPanel";
 import { PRESS_FEEDBACK_SETTLED_EVENT } from "./pressFeedback";
+import TokenFingerprint from "./TokenFingerprint";
 
 type SimpleRole = "voter" | "coordinator" | "auditor";
 const GATEWAY_SIGNER_NPUB_STORAGE_KEY = "app:auditable-voting:gateway:signer_npub";
@@ -417,9 +418,16 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
     return (
       <div className='simple-app-shell'>
         <section className='simple-login-gateway' aria-label='Login and role selection'>
-          <h1 className='simple-login-title'>Auditable Voting</h1>
+          <div className='simple-login-brand'>
+            <div className='simple-login-brand-mark' aria-hidden='true'>
+              <TokenFingerprint tokenId='auditable-voting' compact showQr={false} hideMetadata />
+            </div>
+            <div className='simple-login-brand-copy'>
+              <h1 className='simple-login-title'>Auditable Voting</h1>
+            </div>
+          </div>
 
-          <label className='simple-voter-label'>Select role</label>
+          <label className='simple-voter-label simple-login-role-label'>Select role</label>
           <div className='simple-role-switch simple-role-switch-login' role='tablist' aria-label='Role selection'>
             {ROLE_OPTIONS.map((option) => (
               <button
@@ -540,8 +548,8 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
           {gatewayStatus ? <p className='simple-voter-note'>{gatewayStatus}</p> : null}
         </section>
         <footer className='simple-app-version' aria-label='App version'>
-          <span>{SIMPLE_APP_VERSION}</span>
-          <a href='project-explainer.html'>Description</a>
+          <span>v{SIMPLE_APP_VERSION}</span>
+          <a href='project-explainer.html'>How it works</a>
         </footer>
       </div>
     );
@@ -577,14 +585,14 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
               </button>
               <button
                 type='button'
-                className='simple-voter-primary'
+                className='simple-voter-secondary simple-voter-outline-action'
                 onClick={() => {
                   if (typeof window !== "undefined") {
                     window.dispatchEvent(new Event(`auditable-voting:${role}-new`));
                   }
                 }}
               >
-                New ID
+                New identity
               </button>
             </div>
           ) : null}
@@ -622,8 +630,8 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
       )}
       {role === 'auditor' ? <SimpleRelayPanel /> : null}
       <footer className='simple-app-version' aria-label='App version'>
-        <span>{SIMPLE_APP_VERSION}</span>
-        <a href='project-explainer.html'>Description</a>
+        <span>v{SIMPLE_APP_VERSION}</span>
+        <a href='project-explainer.html'>How it works</a>
       </footer>
     </div>
   );

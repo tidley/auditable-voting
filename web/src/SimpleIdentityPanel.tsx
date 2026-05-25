@@ -138,7 +138,7 @@ export default function SimpleIdentityPanel({
               className='simple-voter-secondary'
               onClick={copyNpub}
             >
-              {copied ? 'Copied' : 'Copy npub'}
+              {copied ? 'Copied' : 'Copy identity'}
             </button>
           </div>
           <div className='simple-identity-field'>
@@ -185,7 +185,7 @@ export default function SimpleIdentityPanel({
                   onClick={() => onRestoreNsec(restoreNsec)}
                   disabled={!restoreNsec.trim()}
                 >
-                  Restore identity only
+                  Restore identity
                 </button>
               </div>
               {restoreMessage ? (

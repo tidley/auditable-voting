@@ -1849,7 +1849,7 @@ describe("Simple round flow", () => {
 
     await user.click(firstUi.getByRole("button", { name: /New/i }));
     const coordinatorInput = await firstUi.findByPlaceholderText(
-      'Enter coordinator npub...',
+      'Coordinator identity (npub1...)',
     );
     await user.type(coordinatorInput, "npub1examplecoordinatorxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
     await user.click(firstUi.getByRole("button", { name: /Add coordinator/i }));
@@ -1895,8 +1895,8 @@ describe("Simple round flow", () => {
     const leadUi = within(lead.container);
     const subUi = within(sub.container);
 
-    await user.click(leadUi.getByRole("button", { name: /New ID/i }));
-    await user.click(subUi.getByRole("button", { name: /New ID/i }));
+    await user.click(leadUi.getByRole("button", { name: /New identity/i }));
+    await user.click(subUi.getByRole("button", { name: /New identity/i }));
     await user.click(leadUi.getByRole("tab", { name: /^Settings$/i }));
     await user.click(subUi.getByRole("tab", { name: /^Settings$/i }));
 
@@ -1967,8 +1967,8 @@ describe("Simple round flow", () => {
     const voterOneUi = within(voterOne.container);
     const voterTwoUi = within(voterTwo.container);
 
-    await user.click(coordinatorOneUi.getByRole('button', { name: /New ID/i }));
-    await user.click(coordinatorTwoUi.getByRole('button', { name: /New ID/i }));
+    await user.click(coordinatorOneUi.getByRole('button', { name: /New identity/i }));
+    await user.click(coordinatorTwoUi.getByRole('button', { name: /New identity/i }));
     await user.click(voterOneUi.getByRole("button", { name: /New/i }));
     await user.click(voterTwoUi.getByRole("button", { name: /New/i }));
     await user.click(coordinatorOneUi.getByRole("tab", { name: /^Settings$/i }));
@@ -2006,12 +2006,12 @@ describe("Simple round flow", () => {
     await user.click(voterOneUi.getByRole("tab", { name: /^Configure$/i }));
     await user.click(voterTwoUi.getByRole("tab", { name: /^Configure$/i }));
     await user.type(
-      voterOneUi.getByPlaceholderText('Enter coordinator npub...'),
+      voterOneUi.getByPlaceholderText('Coordinator identity (npub1...)'),
       coordinatorOneNpub,
     );
     await user.click(voterOneUi.getByRole("button", { name: /Add coordinator/i }));
     await user.type(
-      voterTwoUi.getByPlaceholderText('Enter coordinator npub...'),
+      voterTwoUi.getByPlaceholderText('Coordinator identity (npub1...)'),
       coordinatorOneNpub,
     );
     await user.click(voterTwoUi.getByRole("button", { name: /Add coordinator/i }));
@@ -2136,8 +2136,8 @@ describe("Simple round flow", () => {
     const coordinatorTwoUi = within(coordinatorTwo.container);
     const voterUi = within(voter.container);
 
-    await user.click(coordinatorOneUi.getByRole("button", { name: /New ID/i }));
-    await user.click(coordinatorTwoUi.getByRole("button", { name: /New ID/i }));
+    await user.click(coordinatorOneUi.getByRole("button", { name: /New identity/i }));
+    await user.click(coordinatorTwoUi.getByRole("button", { name: /New identity/i }));
     await user.click(voterUi.getByRole("button", { name: /New/i }));
 
     await user.click(coordinatorOneUi.getByRole("tab", { name: /^Settings$/i }));
@@ -2168,7 +2168,7 @@ describe("Simple round flow", () => {
 
     await user.click(voterUi.getByRole("tab", { name: /^Configure$/i }));
     await user.type(
-      voterUi.getByPlaceholderText('Enter coordinator npub...'),
+      voterUi.getByPlaceholderText('Coordinator identity (npub1...)'),
       coordinatorOneNpub,
     );
     await user.click(voterUi.getByRole("button", { name: /Add coordinator/i }));
@@ -2241,8 +2241,8 @@ describe("Simple round flow", () => {
     const coordinatorTwoUi = within(coordinatorTwo.container);
     const voterUi = within(voter.container);
 
-    await user.click(coordinatorOneUi.getByRole("button", { name: /New ID/i }));
-    await user.click(coordinatorTwoUi.getByRole("button", { name: /New ID/i }));
+    await user.click(coordinatorOneUi.getByRole("button", { name: /New identity/i }));
+    await user.click(coordinatorTwoUi.getByRole("button", { name: /New identity/i }));
     await user.click(voterUi.getByRole("button", { name: /New/i }));
 
     await user.click(coordinatorOneUi.getByRole("tab", { name: /^Settings$/i }));
@@ -2269,12 +2269,12 @@ describe("Simple round flow", () => {
 
     await user.click(voterUi.getByRole("tab", { name: /^Configure$/i }));
     await user.type(
-      voterUi.getByPlaceholderText('Enter coordinator npub...'),
+      voterUi.getByPlaceholderText('Coordinator identity (npub1...)'),
       coordinatorOneNpub,
     );
     await user.click(voterUi.getByRole("button", { name: /Add coordinator/i }));
     await user.type(
-      voterUi.getByPlaceholderText('Enter coordinator npub...'),
+      voterUi.getByPlaceholderText('Coordinator identity (npub1...)'),
       coordinatorTwoNpub,
     );
     await user.click(voterUi.getByRole("button", { name: /Add coordinator/i }));
@@ -2332,7 +2332,7 @@ describe("Simple round flow", () => {
     const coordinatorUi = within(coordinator.container);
     const voterUi = within(voter.container);
 
-    await user.click(coordinatorUi.getByRole('button', { name: /New ID/i }));
+    await user.click(coordinatorUi.getByRole('button', { name: /New identity/i }));
     await user.click(voterUi.getByRole("button", { name: /New/i }));
     await user.click(coordinatorUi.getByRole("tab", { name: /^Settings$/i }));
     await user.click(voterUi.getByRole("tab", { name: /^Settings$/i }));
@@ -2351,7 +2351,7 @@ describe("Simple round flow", () => {
 
     await user.click(voterUi.getByRole("tab", { name: /^Configure$/i }));
     await user.type(
-      voterUi.getByPlaceholderText('Enter coordinator npub...'),
+      voterUi.getByPlaceholderText('Coordinator identity (npub1...)'),
       coordinatorNpub,
     );
     await user.click(voterUi.getByRole("button", { name: /Add coordinator/i }));

@@ -508,6 +508,7 @@ export default function SimpleUiApp() {
     () => sanitizeCoordinatorNpubs(manualCoordinators),
     [manualCoordinators],
   );
+  const coordinatorDraftIsValid = isValidNpub(coordinatorDraft.trim());
   const hasConfiguredCoordinators = configuredCoordinatorTargets.length > 0;
   const voteTabActive = activeTab === "vote";
   const questionnaireModeActive = questionnaireContext.hasDefinition;
@@ -2823,7 +2824,7 @@ export default function SimpleUiApp() {
     <main className='simple-voter-shell'>
       <section className='simple-voter-page'>
         <div className='simple-voter-header-row'>
-          <h1 className='simple-voter-title'>ID {voterId}</h1>
+          <h1 className='simple-voter-title'>Current identity: {voterId}</h1>
           <div className='simple-coordinator-header-actions'>
             {activeVoterNpub ? (
               <TokenFingerprint
@@ -2840,7 +2841,7 @@ export default function SimpleUiApp() {
               onClick={() => void tryWriteClipboard(activeVoterNpub)}
               disabled={!activeVoterNpub}
             >
-              Copy npub
+              Copy identity
             </button>
           </div>
         </div>
@@ -2858,7 +2859,7 @@ export default function SimpleUiApp() {
             className={`simple-voter-tab${activeTab === 'configure' ? ' is-active' : ''}`}
             onClick={() => selectTab('configure')}
           >
-            Configure
+            Join
           </button>
           <button
             type='button'
@@ -2884,7 +2885,7 @@ export default function SimpleUiApp() {
           <section
             className='simple-voter-tab-panel'
             role='tabpanel'
-            aria-label='Configure'
+            aria-label='Join'
           >
             <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
               <h4 className='simple-voter-section-title'>Request invite from coordinator</h4>
@@ -2903,15 +2904,15 @@ export default function SimpleUiApp() {
                       addCoordinatorInput();
                     }
                   }}
-                  placeholder='Enter coordinator npub...'
+                  placeholder='Coordinator identity (npub1...)'
                 />
                 <button
                   type='button'
-                  className='simple-voter-add-button'
+                  className='simple-voter-primary simple-voter-request-invite-button'
                   onClick={addCoordinatorInput}
-                  aria-label='Add coordinator'
+                  disabled={!coordinatorDraftIsValid}
                 >
-                  +
+                  Request invite
                 </button>
                 <button
                   type='button'
@@ -2921,11 +2922,11 @@ export default function SimpleUiApp() {
                     setCoordinatorScannerActive(true);
                   }}
                 >
-                  Scan QR of npub
+                  Scan QR of Coordinator
                 </button>
                 <button
                   type='button'
-                  className='simple-voter-secondary'
+                  className='simple-voter-secondary simple-voter-check-invites-button'
                   onClick={() => void checkQuestionnaireInvites()}
                 >
                   Check invites
@@ -3252,7 +3253,7 @@ export default function SimpleUiApp() {
                 <p className='simple-voter-note'>
                   {coordinatorsHaveBeenNotified
                     ? 'Waiting for the next live round and ticket.'
-                    : 'Add coordinators in Configure, then wait for the next live round and ticket.'}
+                    : 'Add coordinators in Join, then wait for the next live round and ticket.'}
                 </p>
               </div>
             )

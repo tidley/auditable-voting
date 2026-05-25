@@ -42,7 +42,8 @@ Key web routes:
 - `/dashboard.html` - coordinator and auditor dashboard
 - `/simple.html` - simplified voter flow
 - `/simple-coordinator.html` - simplified coordinator flow
-- `/project-explainer.html` - browser-readable project explainer
+- `/project-explainer.html` - public "How it works" page
+- `/technical-details.html` - technical protocol note
 
 ## Quick Start
 
@@ -232,7 +233,9 @@ sudo WEB_BASE_PATH=/auditable-voting/ ./launch-auditable-voting-fips.sh
 ## Documentation
 
 - `docs/project-explainer.md`
+- `docs/technical-protocol-note.md`
 - `web/public/project-explainer.html`
+- `web/public/technical-details.html`
 - `docs/questionnaire-blind-token-protocol.md`
 - `docs/questionnaire-protocol-decisions.md`
 - `presentation/project-overview.html`

@@ -3,522 +3,687 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Auditable Voting Explainer</title>
+    <title>How auditable voting works</title>
     <style>
       :root {
         color-scheme: dark;
-        --bg: #061129;
-        --paper: #0a1a38;
-        --paper-2: #0f2349;
-        --ink: #e7efff;
-        --muted: #9ab0d6;
-        --line: #203a69;
-        --accent: #4ea1ff;
-        --accent-soft: rgba(78, 161, 255, 0.14);
-        --code: #08162f;
+        --bg: #070d10;
+        --panel: #101820;
+        --panel-2: #0c1319;
+        --border: #2a3a46;
+        --border-strong: #3a4c59;
+        --text: #f3f7fa;
+        --muted: #b8c4cc;
+        --accent: #2dd4bf;
+        --accent-soft: rgba(45, 212, 191, 0.1);
+        --cta: #2563eb;
+        --cta-hover: #3b82f6;
+        --danger: #ef4444;
+        --warning: #f59e0b;
       }
 
       * { box-sizing: border-box; }
+
       html { scroll-behavior: smooth; }
+
+      ::selection {
+        background: rgba(45, 212, 191, 0.28);
+        color: var(--text);
+      }
+
       body {
         margin: 0;
-        background: radial-gradient(circle at 15% 0%, #102a57 0%, #08152f 42%, #061129 100%);
-        color: var(--ink);
+        background: var(--bg);
+        color: var(--text);
         font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
         line-height: 1.6;
       }
-      .page {
-        width: min(1100px, calc(100% - 28px));
-        margin: 20px auto 44px;
-        padding: 24px;
-        background: var(--paper);
-        border: 1px solid var(--line);
-        border-radius: 16px;
-        box-shadow: 0 18px 48px rgba(3, 8, 18, 0.52);
+
+      a { color: var(--accent); }
+
+      .shell {
+        width: min(1120px, calc(100% - 32px));
+        margin: 0 auto;
+        padding: 24px 0 56px;
       }
+
       .topbar {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 12px;
-        margin-bottom: 18px;
-        padding-bottom: 14px;
-        border-bottom: 1px solid var(--line);
+        gap: 16px;
+        padding-bottom: 18px;
+        border-bottom: 1px solid var(--border);
       }
-      .topbar-title { margin: 0; font-weight: 700; }
-      .topbar-links { display: flex; flex-wrap: wrap; gap: 8px; }
-      .topbar-link {
-        border: 1px solid var(--line);
-        background: var(--paper-2);
-        color: var(--ink);
+
+      .topbar-title {
+        margin: 0;
+        color: var(--text);
+        font-size: 0.95rem;
+        font-weight: 800;
+        letter-spacing: 0.02em;
+      }
+
+      .topbar-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        justify-content: flex-end;
+      }
+
+      .topbar-link,
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 38px;
+        padding: 8px 12px;
+        border: 1px solid var(--border-strong);
+        border-radius: 6px;
+        background: var(--panel-2);
+        color: var(--text);
         text-decoration: none;
-        padding: 6px 10px;
-        border-radius: 8px;
-        font-size: 0.86rem;
+        font-weight: 800;
+        line-height: 1.1;
       }
-      .topbar-link:hover { border-color: var(--accent); color: var(--accent); }
-      .layout {
+
+      .topbar-link:hover,
+      .button:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+
+      .button-primary {
+        border-color: var(--cta);
+        background: var(--cta);
+        color: #f8fbff;
+      }
+
+      .button-primary:hover {
+        border-color: var(--cta-hover);
+        background: var(--cta-hover);
+        color: #f8fbff;
+      }
+
+      .hero {
         display: grid;
-        grid-template-columns: 250px minmax(0, 1fr);
-        gap: 20px;
+        gap: 24px;
+        padding: 0 0 32px;
+        border-bottom: 1px solid var(--border);
       }
+
+      .page-layout {
+        display: grid;
+        grid-template-columns: 230px minmax(0, 1fr);
+        gap: 22px;
+        padding-top: 32px;
+      }
+
+      .page-content {
+        min-width: 0;
+      }
+
       .toc {
         position: sticky;
         top: 16px;
         align-self: start;
-        background: var(--paper-2);
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        padding: 12px;
         max-height: calc(100vh - 48px);
         overflow: auto;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--panel-2);
+        padding: 12px;
       }
-      .toc h2 { margin: 0 0 10px; font-size: 0.98rem; }
-      .toc ul { margin: 0; padding: 0; list-style: none; }
+
+      .toc h2 {
+        margin: 0 0 10px;
+        font-size: 0.98rem;
+      }
+
+      .toc ul {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
       .toc a {
         display: block;
+        border-radius: 6px;
+        padding: 5px 8px;
         color: var(--muted);
         text-decoration: none;
-        border-radius: 8px;
-        padding: 5px 8px;
+        text-decoration-thickness: 2px;
+        text-underline-offset: 6px;
         font-size: 0.88rem;
       }
-      .toc a:hover { background: var(--accent-soft); color: var(--ink); }
-      .toc-level-h3 a { padding-left: 18px; }
-      #content { min-width: 0; }
-      #content h1, #content h2, #content h3 { line-height: 1.2; color: var(--ink); }
-      #content h1 { font-size: 2rem; margin-top: 0; }
-      #content h2 {
-        margin-top: 2.2rem;
-        font-size: 1.45rem;
-        padding-top: 0.4rem;
-        border-top: 1px solid var(--line);
+
+      .toc a:hover {
+        background: var(--accent-soft);
+        color: var(--text);
       }
-      #content h3 { margin-top: 1.35rem; font-size: 1.1rem; }
-      #content p, #content li { color: var(--ink); }
-      #content a { color: var(--accent); }
-      #content ul, #content ol { padding-left: 1.4rem; }
-      #content code {
-        font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
-        background: var(--code);
-        border: 1px solid var(--line);
-        padding: 0.12rem 0.34rem;
-        border-radius: 0.32rem;
+
+      .toc a.is-active {
+        background: var(--accent-soft);
+        color: var(--text);
+        text-decoration-line: underline;
+        text-decoration-color: var(--accent);
       }
-      #content pre {
-        overflow-x: auto;
-        padding: 14px 16px;
-        background: var(--code);
-        border: 1px solid var(--line);
-        border-radius: 12px;
-      }
-      #content pre code { padding: 0; background: transparent; border: 0; }
-      .mermaid-wrap {
-        position: relative;
-        margin: 1rem 0 1.4rem;
-        padding: 16px;
-        border: 1px solid var(--line);
-        border-radius: 14px;
-        background: #08162f;
-        overflow-x: auto;
-        cursor: zoom-in;
-      }
-      .mermaid-wrap::after {
-        content: "Click to enlarge";
-        position: absolute;
-        right: 10px;
-        top: 8px;
-        color: var(--muted);
+
+      .hero-kicker,
+      .section-kicker {
+        margin: 0 0 8px;
+        color: var(--accent);
         font-size: 0.76rem;
-        background: rgba(8, 22, 47, 0.88);
-        border: 1px solid var(--line);
+        font-weight: 900;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3,
+      p { margin-top: 0; }
+
+      h1 {
+        max-width: 13ch;
+        margin-bottom: 12px;
+        font-size: clamp(2.45rem, 8vw, 5.4rem);
+        line-height: 0.98;
+        letter-spacing: 0;
+      }
+
+      .hero-subtitle {
+        max-width: 760px;
+        margin-bottom: 0;
+        color: var(--muted);
+        font-size: clamp(1.05rem, 2vw, 1.35rem);
+      }
+
+      .hero-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .short-version {
+        display: grid;
+        grid-template-columns: 1.1fr 0.9fr;
+        gap: 22px;
+        align-items: start;
+      }
+
+      .panel {
+        border: 1px solid var(--border);
         border-radius: 8px;
-        padding: 3px 7px;
-      }
-      .diagram-modal {
-        position: fixed;
-        inset: 0;
-        z-index: 20;
-        display: none;
-        padding: 24px;
-        background: rgba(2, 7, 18, 0.84);
-      }
-      .diagram-modal.is-open { display: grid; place-items: center; }
-      .diagram-modal-panel {
-        width: min(1200px, 96vw);
-        max-height: 92vh;
-        overflow: auto;
-        background: #08162f;
-        border: 1px solid var(--line);
-        border-radius: 12px;
+        background: var(--panel);
         padding: 22px;
-        cursor: zoom-out;
       }
-      .diagram-modal-panel svg { width: 100%; height: auto; }
-      blockquote {
-        margin: 1.2rem 0;
-        padding: 0.6rem 1rem;
+
+      .panel-accent {
+        border-top: 4px solid var(--accent);
+      }
+
+      .flow-list {
+        display: grid;
+        gap: 10px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        counter-reset: flow;
+      }
+
+      .flow-list.panel {
+        padding: 18px 22px 18px 32px;
+      }
+
+      .flow-list li {
+        display: grid;
+        grid-template-columns: 26px minmax(0, 1fr);
+        gap: 10px;
+        align-items: start;
+        color: var(--muted);
+        counter-increment: flow;
+      }
+
+      .flow-list li::before {
+        content: counter(flow) ".";
+        display: block;
+        color: var(--accent);
+        font-size: 0.95rem;
+        font-weight: 900;
+        line-height: 1.6;
+      }
+
+      .section {
+        padding: 34px 0;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .section h2 {
+        margin-bottom: 10px;
+        font-size: clamp(1.7rem, 4vw, 2.5rem);
+        line-height: 1.1;
+      }
+
+      .section-intro {
+        max-width: 800px;
+        color: var(--muted);
+        font-size: 1.06rem;
+      }
+
+      .grid-3,
+      .grid-2 {
+        display: grid;
+        gap: 14px;
+      }
+
+      .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+      .role-card,
+      .info-card {
+        min-width: 0;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--panel-2);
+        padding: 18px;
+      }
+
+      .role-card h3,
+      .info-card h3 {
+        margin-bottom: 8px;
+        font-size: 1.08rem;
+      }
+
+      .role-card p,
+      .info-card p,
+      .info-card li {
+        color: var(--muted);
+      }
+
+      .role-card ul,
+      .info-card ul,
+      .limitation-list {
+        margin: 0;
+        padding-left: 1.1rem;
+      }
+
+      .mental-model {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 1px;
+        overflow: hidden;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--border);
+      }
+
+      .mental-column {
+        padding: 18px;
+        background: var(--panel);
+      }
+
+      .mental-column h3 {
+        color: var(--accent);
+        margin-bottom: 12px;
+      }
+
+      .mental-column p {
+        margin: 0 0 8px;
+        color: var(--muted);
+      }
+
+      .trust-box {
+        display: grid;
+        gap: 10px;
         border-left: 4px solid var(--accent);
         background: var(--accent-soft);
       }
-      @media (max-width: 900px) {
-        .page { width: calc(100% - 16px); padding: 18px; }
-        .layout { grid-template-columns: 1fr; }
-        .toc { position: static; max-height: none; }
+
+      .trust-box p {
+        margin: 0;
+        color: var(--text);
+      }
+
+      .limitation-list li::marker { color: var(--warning); }
+
+      .technical-strip {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        flex-wrap: wrap;
+      }
+
+      .technical-strip p {
+        max-width: 720px;
+        margin: 0;
+        color: var(--muted);
+      }
+
+      code {
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: var(--bg);
+        padding: 1px 5px;
+        color: var(--text);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.92em;
+      }
+
+      @media (max-width: 860px) {
+        .topbar,
+        .technical-strip {
+          align-items: stretch;
+          flex-direction: column;
+        }
+
+        .page-layout {
+          grid-template-columns: 1fr;
+        }
+
+        .toc {
+          position: static;
+          max-height: none;
+        }
+
+        .topbar-links,
+        .hero-actions {
+          justify-content: flex-start;
+        }
+
+        .short-version,
+        .grid-2,
+        .grid-3,
+        .mental-model {
+          grid-template-columns: 1fr;
+        }
+
+        h1 { max-width: none; }
       }
     </style>
   </head>
   <body>
-    <main class="page">
+    <main class="shell">
       <header class="topbar">
-        <p class="topbar-title">Auditable Voting Explainer</p>
+        <p class="topbar-title">Auditable Voting</p>
         <nav class="topbar-links" aria-label="Quick links">
           <a class="topbar-link" href="./">Home</a>
           <a class="topbar-link" href="./dashboard.html?role=auditor">Observer</a>
           <a class="topbar-link" href="./simple-coordinator.html?role=coordinator">Coordinator</a>
           <a class="topbar-link" href="./simple.html?role=voter">Voter</a>
+          <a class="topbar-link" href="./technical-details.html">Technical details</a>
         </nav>
       </header>
-      <section class="layout">
+
+      <div class="page-layout">
         <nav class="toc" aria-label="On this page">
           <h2>On this page</h2>
           <ul id="toc-list"></ul>
         </nav>
-        <article id="content" aria-label="Project explainer"></article>
-      </section>
+
+        <div class="page-content" id="page-content">
+          <section class="hero" aria-labelledby="page-title">
+            <div>
+              <p class="hero-kicker">How it works</p>
+              <h1 id="page-title">How auditable voting works</h1>
+              <p class="hero-subtitle">Anonymous voting with public verification, using blind credentials and Nostr relays.</p>
+            </div>
+            <div class="short-version">
+              <div class="panel panel-accent">
+                <h2 id="short-version">The short version</h2>
+                <p>This system lets a coordinator confirm who is allowed to vote without learning how each person voted. Voters receive a blind credential, submit their response from a fresh identity, and observers can recompute the result from public data.</p>
+                <div class="hero-actions">
+                  <a class="button" href="./technical-details.html">Technical details</a>
+                </div>
+              </div>
+              <ol class="flow-list panel" aria-label="One minute flow">
+                <li>A coordinator confirms that a voter is eligible.</li>
+                <li>The voter requests a blind ballot credential.</li>
+                <li>The coordinator signs it without seeing the final credential.</li>
+                <li>The voter submits a public ballot anonymously.</li>
+                <li>Anyone can verify that accepted ballots are valid, unique, and correctly tallied.</li>
+              </ol>
+            </div>
+          </section>
+
+          <section class="section" aria-labelledby="what-this-is">
+        <p class="section-kicker">Purpose</p>
+        <h2 id="what-this-is">What this system is trying to do</h2>
+        <p class="section-intro">It separates two things that are usually hard to combine: eligibility and privacy. The coordinator can confirm that a voter is allowed to participate, but should not be able to see how they voted. Observers can independently recompute the result from public data.</p>
+        <div class="mental-model" aria-label="Role model">
+          <div class="mental-column">
+            <h3>Voter</h3>
+            <p>Gets a credential</p>
+            <p>Submits anonymously</p>
+            <p>Keeps private keys local</p>
+          </div>
+          <div class="mental-column">
+            <h3>Coordinator</h3>
+            <p>Confirms eligibility</p>
+            <p>Issues blind credential</p>
+            <p>Publishes round metadata</p>
+          </div>
+          <div class="mental-column">
+            <h3>Observer</h3>
+            <p>Recomputes results</p>
+            <p>Checks public ballots</p>
+            <p>Detects duplicates</p>
+          </div>
+        </div>
+          </section>
+
+          <section class="section" aria-labelledby="problem">
+        <p class="section-kicker">Why it matters</p>
+        <h2 id="problem">What problem it solves</h2>
+        <p class="section-intro">Most online voting systems force an uncomfortable tradeoff: either the operator can link voters to votes, or the public cannot independently verify the result. Auditable Voting tries to keep voter privacy while making the count independently checkable.</p>
+        <div class="grid-2">
+          <article class="info-card">
+            <h3>Eligibility</h3>
+            <p>The coordinator decides who may take part and issues a ballot credential only to authorised voters.</p>
+          </article>
+          <article class="info-card">
+            <h3>Privacy</h3>
+            <p>The final ballot is submitted from a fresh response identity with a blind credential, not from the invited voter's normal identity.</p>
+          </article>
+        </div>
+          </section>
+
+          <section class="section" aria-labelledby="roles">
+        <p class="section-kicker">Roles</p>
+        <h2 id="roles">Who uses it</h2>
+        <div class="grid-3">
+          <article class="role-card">
+            <h3>For voters</h3>
+            <ul>
+              <li>Open an invite or request ballot access.</li>
+              <li>Wait for a ballot credential.</li>
+              <li>Submit the questionnaire without exposing the normal voter identity as the ballot identity.</li>
+            </ul>
+          </article>
+          <article class="role-card">
+            <h3>For coordinators</h3>
+            <ul>
+              <li>Create and publish a questionnaire.</li>
+              <li>Invite voters or approve requests.</li>
+              <li>Issue blind credentials and watch results arrive.</li>
+            </ul>
+          </article>
+          <article class="role-card">
+            <h3>For observers</h3>
+            <ul>
+              <li>Search by questionnaire or coordinator identity.</li>
+              <li>Check accepted and rejected public ballots.</li>
+              <li>Recompute the public result stream.</li>
+            </ul>
+          </article>
+        </div>
+          </section>
+
+          <section class="section" aria-labelledby="public-private">
+        <p class="section-kicker">Data boundaries</p>
+        <h2 id="public-private">What is public vs private</h2>
+        <div class="grid-2">
+          <article class="info-card">
+            <h3>Public</h3>
+            <ul>
+              <li>Questionnaire definitions and round state.</li>
+              <li>Anonymous public ballot submissions.</li>
+              <li>Coordinator accept/reject decisions.</li>
+              <li>Published result summaries.</li>
+            </ul>
+          </article>
+          <article class="info-card">
+            <h3>Private or local</h3>
+            <ul>
+              <li>Voter and coordinator signing keys.</li>
+              <li>Token secrets and blinding factors.</li>
+              <li>Unspent ballot credentials.</li>
+              <li>Browser-local recovery state.</li>
+            </ul>
+          </article>
+        </div>
+          </section>
+
+          <section class="section" aria-labelledby="audit">
+        <p class="section-kicker">Auditability</p>
+        <h2 id="audit">What observers can verify</h2>
+        <div class="panel panel-accent">
+          <ul>
+            <li>Which public ballots were accepted.</li>
+            <li>Whether a credential was spent more than once.</li>
+            <li>Whether rejected ballots were rejected for deterministic reasons.</li>
+            <li>Whether the published tally matches the accepted public ballots.</li>
+          </ul>
+        </div>
+          </section>
+
+          <section class="section" aria-labelledby="trust">
+        <p class="section-kicker">Trust model</p>
+        <h2 id="trust">Who has to be trusted</h2>
+        <div class="trust-box panel">
+          <p>The coordinator is trusted to decide who may participate.</p>
+          <p>The coordinator should not learn how an eligible voter voted.</p>
+          <p>The public does not need to trust the coordinator's tally, because observers can recompute the result from public events.</p>
+          <p>The voter must protect their local keys and browser state.</p>
+        </div>
+          </section>
+
+          <section class="section" aria-labelledby="test-vote">
+        <p class="section-kicker">Try it</p>
+        <h2 id="test-vote">Run a test vote</h2>
+        <div class="grid-3">
+          <article class="role-card">
+            <h3>1. Coordinator</h3>
+            <p>Open Coordinator, set up a vote, publish it, then share invite links from Voters.</p>
+          </article>
+          <article class="role-card">
+            <h3>2. Voter</h3>
+            <p>Open the invite as Voter, request ballot access if needed, fill in the questionnaire, and submit.</p>
+          </article>
+          <article class="role-card">
+            <h3>3. Observer</h3>
+            <p>Open Observer and search for the questionnaire ID or coordinator identity to verify the public result stream.</p>
+          </article>
+        </div>
+          </section>
+
+          <section class="section" aria-labelledby="limits">
+        <p class="section-kicker">Current status</p>
+        <h2 id="limits">Current limitations</h2>
+        <p class="section-intro">This is experimental software. The design is intended to be auditable, but it should not be treated as production election infrastructure without independent protocol and implementation review.</p>
+        <ul class="limitation-list">
+          <li>Public relay reliability can affect delivery and discovery.</li>
+          <li>Browser-held secret material needs careful handling.</li>
+          <li>The cryptographic design needs external review before production use.</li>
+          <li>Large multi-coordinator runs are not yet reliable on the current public relay set.</li>
+        </ul>
+          </section>
+
+          <section class="section" aria-labelledby="technical">
+        <p class="section-kicker">Deeper reading</p>
+        <h2 id="technical">Technical details</h2>
+        <div class="technical-strip">
+          <p>The technical note covers Nostr event flow, NIP-17 private messages, RSABSSA blind credentials, duplicate-spend handling, audit-proxy delegation, relay behaviour, and current implementation limits.</p>
+          <a class="button button-primary" href="./technical-details.html">Open technical details</a>
+        </div>
+          </section>
+        </div>
+      </div>
     </main>
-
-    <div class="diagram-modal" id="diagram-modal" role="dialog" aria-modal="true" aria-label="Expanded diagram">
-      <div class="diagram-modal-panel" id="diagram-modal-panel"></div>
-    </div>
-
-    <script id="source" type="text/plain"># Auditable Voting Explainer
-
-Auditable Voting is a client-side voting app on public relay infrastructure for private credential issuance, anonymous response submission, and independent auditing.
-
-The current repository contains only the browser app. It has voter, coordinator, and observer roles; private traffic uses NIP-17 DMs; public state is replayed from public relay events.
-
-## Quick Start: Run an Auditable Vote in the Browser
-
-This is the practical browser-based flow. The root landing page defaults to **Observer** for public verification; choose **Coordinator** when setting up a questionnaire, then use a separate browser profile, private window, or second device for the voter so each role has its own local identity.
-
-### 1. Coordinator builds the questionnaire
-
-1. Open the app as **Coordinator**.
-2. Create or load a coordinator identity.
-3. In **Questionnaire**, enter the questionnaire name, description, and questions. The questionnaire builder heading shows the current name, for example `Build questionnaire: How did we do`.
-4. Use **Generate ID** only when you want a fresh questionnaire ID. Use **Copy ID** beside the Questionnaire ID when sharing the public identifier with observers.
-5. Use **Show questionnaire link** if you want a QR/link for the questionnaire.
-6. Optionally open **Settings → Relays** to add or remove questionnaire metadata relays before publishing if this round should prefer a non-default relay set.
-7. Click **Publish questionnaire** when the draft is ready. This publishes the questionnaire definition and opens the round.
-
-### 2. Optional: coordinator enables an audit proxy
-
-1. After publishing, click **Set up audit proxy** if this questionnaire should keep processing while the coordinator browser is offline.
-2. The audit proxy section opens and generates a proxy account.
-3. Copy the **Quick start command** and run it on the machine that should host the proxy.
-4. Use **Audit proxy details** or **Helper download and launch command** if you need the helper download, checksum, or a direct launch command.
-5. Wait for a heartbeat in **Audit proxy status** before relying on the proxy for issuance or verification.
-
-### 3. Coordinator invites voters
-
-1. Share the questionnaire link from **Participants** with **Copy link**, **Invite by email**, **WhatsApp**, **SMS**, or **Share**. These actions use the browser/device apps already available; no provider API key or service registration is needed.
-2. Use **Create private code link** when the coordinator wants a one-use bearer invite with no `npub` in the URL. The voter looks up coordinator and audit-proxy routing from the public questionnaire metadata on Nostr, then automatically requests a ballot. The created row can be copied or sent by email, WhatsApp, SMS, or native share while the raw link is available in that page session. The first voter to open that link claims the code with their local voter identity; the code can be revoked until it is claimed.
-3. Add or import voter `npub`s in **Participants** when you want to pre-authorise known voters.
-4. Use **Copy personalised link** beside a whitelisted voter when the link should carry that pre-authorised voter `npub`. The voter must still sign in as that `npub`; the personalised URL reveals the invitee `npub` to whoever sees the link.
-5. Send Nostr invite DMs with **Invite** or **Invite all whitelisted**.
-6. Voters who arrive from a shared link without being whitelisted can still request a ballot, then appear under requester authorisation for the coordinator.
-
-### 4. Voter requests and submits
-
-1. Open the invite link as the invited voter, or open the app as **Voter** and click **Check invites**.
-2. Open the pending questionnaire.
-3. Click **Request ballot** if the blind credential request does not start automatically.
-4. Wait for `Credential ready: Yes`.
-5. Complete the questionnaire and click **Submit response**.
-6. If no proxy is selected, the coordinator browser must stay online long enough to process requests and responses. If a proxy is selected and active, the voter can wait for the proxy instead.
-
-### 5. Coordinator or proxy processes responses
-
-1. In the coordinator **Participants** tab, use **Process requests** / **Check responses** while running browser-only. The same tab shows live accepted-response totals, per-question result bars, text responses, and responder rows as submissions are processed.
-2. If delegated, leave the helper running and check its heartbeat/reporting in **Audit proxy status**.
-3. Close the questionnaire and publish final results when collection is complete, if you want a fixed final summary.
-
-### 6. Observer verifies
-
-1. Open the app as **Observer**.
-2. Search by coordinator `npub` or questionnaire ID.
-3. Confirm submitted votes, accepted responses, expected participant count, and result percentages from the public events.
-4. The observer can show current accepted responses before closure when public response and decision events are available.
-
-## Current Flow
-
-### Coordinator
-
-1. Build and publish a questionnaire definition (public event), including non-default relay hints when configured.
-2. Share the public questionnaire link by copy, email, WhatsApp, SMS, or native device sharing, optionally using personalised links for pre-authorised voter npubs.
-3. Optional: in the separate **Questionnaire** tab `Audit proxy` section, use Set up audit proxy after publication to open the section and generate an audit proxy account, then use the quick start command or helper downloads or save an autoconfigured platform launcher that already includes the current coordinator `npub`; right-click copy-link uses a shareable launcher URL that omits the audit proxy secret, generated launchers refresh the helper binary from GitHub Releases on each run, raw binary and direct CLI options sit under `Helper download and launch command`, and delegation still leaves the coordinator as root authority.
-4. Receive blind-token requests over private DMs (or delegate handling to an audit proxy).
-5. Issue blind signatures to authorised voters over private DMs (or let the audit proxy blind-sign on behalf of the coordinator for that delegated round). Invite payloads and cached election metadata now carry the audit proxy routing hint so voters can keep targeting the audit proxy if the coordinator browser goes offline, and audit proxy election-config DMs also carry the questionnaire definition so audit-proxy-issued blind credentials can still render the ballot if the coordinator browser is offline.
-6. Watch public submissions and publish public accept/reject decisions (or delegate decision publication).
-7. Close the round and publish the result summary (or delegate proxy close + auto-summary once all expected invitees have accepted valid responses).
-
-If the Questionnaire tab reports that the blind-signing key is still initialising, wait a moment and try publishing again; the app now attempts to recover the locally persisted blind-signing key before blocking publication.
-
-### Audit Proxy
-
-The audit proxy is an optional Rust helper for keeping delegated questionnaire work running when the coordinator browser is not open. It does not become the root authority for the questionnaire: the coordinator still creates the questionnaire, owns the coordinator identity, signs the delegation, and can revoke or replace the proxy.
-
-The proxy receives two private control messages from the coordinator:
-
-1. a signed worker delegation that names the questionnaire, proxy `npub`, capabilities, control relays, and expiry
-2. an election config message containing the questionnaire metadata, blind-signing material needed for delegated issuance, whitelisted voter npubs, private invite-code hashes, and the routing hints voters should use
-
-After activation, the proxy polls only its own NIP-17 mailbox over outbound relay connections. It can issue blind ballot credentials, including first-claim private code invites, publish submission decisions, verify public submissions, close the questionnaire once the accepted valid response count reaches the expected invitee count, and publish result summaries when those capabilities are delegated. It sends heartbeats and operation reports back to the coordinator so the Questionnaire tab can show whether the proxy is active, then exits cleanly once completed delegated close and summary work has been published.
-
-Proxy closure is guarded by the same accepted-response set used for summary publication. Rejected, duplicate, invalid, or spam submissions do not count towards automatic closure. The delegated close event is published as questionnaire state with proxy provenance, so Coordinator and Observer views label it as `Closed by audit proxy`.
-
-For voters, the important distinction is who is expected to answer the blind request:
-
-- without a proxy, `Waiting for coordinator` means the coordinator browser must come online and process the request
-- with a proxy, `Waiting for audit proxy` means the delegated helper should issue the credential, even if the coordinator browser has gone offline
-
-Invite payloads and cached questionnaire metadata include the proxy routing hint, and public questionnaire metadata can include non-default questionnaire relay hints. Voters keep targeting the proxy after reloads and prefer the questionnaire relay hints for the round's public events and NIP-17 traffic. The helper currently defaults to a nostrwat.ch-checked control relay set (relay.nostr.net, nos.lol, relay.nostr.info, relay.nos.social, relay.momostr.pink, and relay.azzamo.net), and retains older persisted relay hints while retrying known unreliable endpoints with per-relay exponential backoff.
-
-### Voter
-
-1. Open an invite or log in as **Voter**.
-2. Open the questionnaire.
-3. Request a blind ballot credential (auto when invite context exists, or use `Request ballot`).
-4. Wait for `Credential ready: Yes`.
-5. Fill in the response fields.
-6. Submit publicly with an ephemeral response npub and blind-token proof.
-7. Wait for the coordinator’s public submission decision.
-
-### Observer
-
-1. Open **Observer**.
-2. Read public submissions and public submission decisions.
-3. Verify accepted/rejected outcomes and per-question totals.
-4. Compare live accepted responses with the public expected-response count when the coordinator has published one.
-5. Use **Submitted Votes** for per-response detail (search/filter), and enable `Show invalid votes` when you need rejected-row diagnostics.
-
-## Privacy Model
-
-The questionnaire path now uses a real blind-signing shape:
-
-1. The coordinator has a questionnaire blind-signing key.
-2. The voter creates a local token secret and commitment.
-3. The voter blinds the token message with RSABSSA.
-4. The coordinator signs only the blinded message.
-5. The voter unblinds the signature locally.
-6. The voter submits using a fresh ephemeral response npub.
-7. The coordinator verifies the unblinded credential and accepts the first spend for the token nullifier.
-
-The submitted response no longer uses the invited voter npub as the ballot identity.
-
-```mermaid
-sequenceDiagram
-  participant V as Voter identity
-  participant E as Ephemeral response key
-  participant C as Coordinator
-  participant A as Observer
-
-  V->>C: Blinded credential request
-  C->>V: Blind signature
-  V->>V: Unblind credential locally
-  E->>C: Submit response + token proof
-  C->>C: Verify credential and nullifier
-  C->>A: Publish/update summary
-```
-
-## What Is Public
-
-- questionnaire definitions
-- questionnaire state changes
-- public questionnaire submissions
-- public coordinator submission decisions (accept/reject)
-- published result summaries
-- observer-discovered public questionnaire metadata
-- separate parameterised replaceable expected-participant count events, so observers can see turnout/completion without private invite contents
-
-## What Stays Private Or Local
-
-- voter login keys
-- coordinator signing keys
-- voter token secrets and blinding factors
-- unspent credentials
-- private response payloads
-- local recovery state
-
-## Architecture
-
-```mermaid
-flowchart LR
-  V[Voter Browser]
-  C[Coordinator Browser]
-  A[Observer Browser]
-  N[Nostr Relays]
-  L[(Local Browser State)]
-
-  V <--> N
-  C <--> N
-  A <--> N
-  V --> L
-  C --> L
-```
-
-The client uses:
-
-- React and TypeScript for the browser UI
-- `nostr-tools` for Nostr identities, events, relay reads, and relay writes
-- NIP-17 gift-wrapped DMs for private request and issuance traffic
-- `@cloudflare/blindrsa-ts` for RSABSSA blind signatures
-- Rust/Wasm for deterministic replay and protocol validation in the public round path
-- an optional Rust audit proxy runtime (`worker/`) for delegated election operations over outbound-only relay connections
-- seven-day fixed-lookback audit proxy DM polling with event-id dedupe so relay-randomised gift-wrap timestamps do not cause missed delegated blind requests, plus status heartbeats back to the coordinator, active delegation control-relay reads, delegated close + auto-summary after all expected invitees have accepted valid responses, clean exit after completed delegated work, and a nostrwat.ch-checked helper relay set (relay.nostr.net, nos.lol, relay.nostr.info, relay.nos.social, relay.momostr.pink, and relay.azzamo.net); older persisted relay hints are retained but known unreliable endpoints are retried with per-relay exponential backoff
-- an optional FIPS host launcher (`web/public/fips-host/launch-auditable-voting-fips.sh`) that builds the upstream FIPS Rust daemon, enables `fips-overlay-v1` Nostr endpoint adverts, installs the complete Vite static build on the host's `fips0` address, opens the chosen mesh web port through the FIPS firewall, and can install the audit proxy as a disabled systemd service
-- browser storage for private active state and recovery
-
-## Blind Issuance
-
-```mermaid
-flowchart LR
-  M[Token Message]
-  B[Blinding]
-  R[Blinded Request]
-  S[Coordinator Blind-Signs]
-  U[Unblinding]
-  T[Spendable Credential]
-
-  M --> B --> R --> S --> U --> T
-```
-
-The coordinator signs a blinded token message. The voter finalises the credential locally and spends it through an ephemeral response key.
-
-## Duplicate Spend Rule
-
-```mermaid
-flowchart TD
-  A[Spend A with Token X]
-  B[Spend B with Token X]
-  O[Canonical Ordering]
-  K[Keep First Valid Spend]
-  D[Reject Duplicate]
-
-  A --> O
-  B --> O
-  O --> K
-  O --> D
-```
-
-The current rule is first valid spend wins. The questionnaire flow rejects duplicate nullifiers and duplicate accepted spends for the same token commitment.
-
-## Auditability
-
-```mermaid
-flowchart LR
-  E[Nostr Events]
-  V[Validate]
-  D[Deduplicate]
-  T[Compute Summary]
-  R[Independent Result]
-
-  E --> V --> D --> T --> R
-```
-
-Observers derive results from public submissions and public coordinator decisions.  
-The published summary includes per-response references as a parity backfill, so the observer can still render full responder rows even when relay visibility is fragmented.
-
-Before a final result summary exists, the observer derives a live provisional summary from verified public submissions and labels it as live relay-derived data. Coordinators also publish a separate parameterised replaceable expected-participant count event, letting the observer show accepted responses against the expected participant total while keeping individual invitees private.
-
-The observer view keeps normal refreshes bounded to recent questionnaires to avoid relay pressure. If an older published questionnaire or result payload is missing from the default list, reopen the direct questionnaire link or refresh from a relay set that still indexes that event.
-
-## Current Limits
-
-- Public relays can delay, drop, or rate-limit traffic.
-- Coordinator private keys and blind-signing keys are browser-local.
-- The questionnaire path is currently single-coordinator.
-- Larger multi-coordinator live runs are still operationally fragile on public relays.
-- Observer detail is near real-time (poll-based), but exact freshness depends on relay propagation and indexing.
-- If a response payload is encrypted/private, the observer can still show metadata/decision status but not plaintext answers; coordinator-side results can decrypt `enc:nip44v2:` text when the key is present locally.
-
-## Short Summary
-
-> Private eligibility, blind credential issuance, ephemeral response submission, public audit.
-</script>
-
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script type="module">
-      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
-
-      const source = document.getElementById("source").textContent;
-      const content = document.getElementById("content");
+    <script>
+      const content = document.getElementById("page-content");
       const tocList = document.getElementById("toc-list");
-      const modal = document.getElementById("diagram-modal");
-      const modalPanel = document.getElementById("diagram-modal-panel");
+      const tocLinksById = new Map();
+      const headings = content ? [...content.querySelectorAll("h1[id], h2[id]")] : [];
 
-      marked.setOptions({ gfm: true, breaks: false });
-      content.innerHTML = marked.parse(source);
-
-      const usedHeadingIds = new Set();
-      const slugify = (value) => value.toLowerCase().trim().replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-");
-
-      for (const heading of content.querySelectorAll("h2, h3")) {
+      for (const heading of headings) {
+        const id = heading.id;
         const text = heading.textContent?.trim() ?? "";
-        if (!text) continue;
-        const baseId = slugify(text) || "section";
-        let nextId = baseId;
-        let dedupe = 2;
-        while (usedHeadingIds.has(nextId) || document.getElementById(nextId)) {
-          nextId = `${baseId}-${dedupe}`;
-          dedupe += 1;
-        }
-        usedHeadingIds.add(nextId);
-        heading.id = nextId;
-
+        if (!id || !text) continue;
         const item = document.createElement("li");
-        item.className = `toc-level-${heading.tagName.toLowerCase()}`;
         const link = document.createElement("a");
-        link.href = `#${nextId}`;
+        link.href = `#${id}`;
         link.textContent = text;
         item.appendChild(link);
-        tocList.appendChild(item);
+        tocList?.appendChild(item);
+        tocLinksById.set(id, link);
       }
 
-      for (const block of content.querySelectorAll("pre code.language-mermaid")) {
-        const wrapper = document.createElement("button");
-        wrapper.type = "button";
-        wrapper.className = "mermaid-wrap";
-        wrapper.setAttribute("aria-label", "Enlarge diagram");
-
-        const diagram = document.createElement("div");
-        diagram.className = "mermaid";
-        diagram.textContent = block.textContent;
-        wrapper.appendChild(diagram);
-
-        const pre = block.closest("pre");
-        pre.replaceWith(wrapper);
-      }
-
-      mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "loose" });
-      await mermaid.run({ querySelector: ".mermaid" });
-
-      for (const wrapper of content.querySelectorAll(".mermaid-wrap")) {
-        wrapper.addEventListener("click", () => {
-          modalPanel.innerHTML = wrapper.innerHTML;
-          modal.classList.add("is-open");
-        });
-      }
-
-      const closeModal = () => {
-        modal.classList.remove("is-open");
-        modalPanel.innerHTML = "";
+      const setActiveTocLink = (id) => {
+        if (!id || !tocLinksById.has(id)) {
+          return;
+        }
+        for (const [linkId, link] of tocLinksById) {
+          const active = linkId === id;
+          link.classList.toggle("is-active", active);
+          if (active) {
+            link.setAttribute("aria-current", "location");
+          } else {
+            link.removeAttribute("aria-current");
+          }
+        }
       };
-      modal.addEventListener("click", closeModal);
-      window.addEventListener("keydown", (event) => {
-        if (event.key === "Escape") closeModal();
+
+      const getHashTargetId = () => decodeURIComponent(window.location.hash.replace(/^#/, ""));
+      setActiveTocLink(getHashTargetId() || headings[0]?.id);
+
+      tocList?.addEventListener("click", (event) => {
+        const link = event.target instanceof Element ? event.target.closest("a[href^='#']") : null;
+        if (!link) {
+          return;
+        }
+        setActiveTocLink(link.getAttribute("href")?.slice(1) ?? "");
       });
+
+      window.addEventListener("hashchange", () => setActiveTocLink(getHashTargetId()));
+
+      const visibleHeadings = new Map();
+      const headingObserver = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          const target = entry.target;
+          if (!(target instanceof HTMLElement)) {
+            continue;
+          }
+          if (entry.isIntersecting) {
+            visibleHeadings.set(target.id, entry.boundingClientRect.top);
+          } else {
+            visibleHeadings.delete(target.id);
+          }
+        }
+        if (visibleHeadings.size === 0) {
+          return;
+        }
+        const [activeId] = [...visibleHeadings.entries()].sort((left, right) => left[1] - right[1])[0];
+        setActiveTocLink(activeId);
+      }, {
+        rootMargin: "-12% 0px -70% 0px",
+        threshold: [0, 1],
+      });
+
+      for (const heading of headings) {
+        headingObserver.observe(heading);
+      }
     </script>
   </body>
 </html>

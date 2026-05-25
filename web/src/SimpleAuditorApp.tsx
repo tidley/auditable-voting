@@ -24,6 +24,7 @@ import type {
 
 const AUDITOR_REFRESH_INTERVAL_MS = 15000;
 const AUDITOR_QUESTIONNAIRE_LIST_REFRESH_INTERVAL_MS = 120000;
+const AUDITOR_AUTO_REFRESH_THROTTLE_MS = 60000;
 const AUDITOR_QUESTIONNAIRE_DETAIL_LIMIT = 20;
 const AUDITOR_QUESTIONNAIRE_HISTORIC_LIMIT = 2000;
 const AUDITOR_QUESTIONNAIRE_HISTORIC_BATCH_SIZE = 8;
@@ -51,6 +52,50 @@ type AuditorQuestionnaireResponseDetail = ReturnType<typeof evaluateQuestionnair
   includedInLatestPublish: boolean;
 };
 
+type AuditorMemoryCache = {
+  questionnaires: AuditorQuestionnaireEntry[];
+  selectedQuestionnaireId: string;
+  selectedResponseDetails: AuditorQuestionnaireResponseDetail[];
+  selectedLatestPublishAt: number | null;
+  selectedLiveState: string | null;
+  selectedLiveStateEvent: QuestionnaireStateEvent | null;
+  selectedResultSummary: QuestionnaireResultSummary | null;
+  selectedWorkerDelegationStatus: QuestionnaireWorkerDelegationStatus | null;
+  questionnaireRefreshStatus: string | null;
+  responseRefreshStatus: string | null;
+};
+
+let auditorLastRefreshStartedAt = 0;
+let auditorMemoryCache: AuditorMemoryCache = {
+  questionnaires: [],
+  selectedQuestionnaireId: "",
+  selectedResponseDetails: [],
+  selectedLatestPublishAt: null,
+  selectedLiveState: null,
+  selectedLiveStateEvent: null,
+  selectedResultSummary: null,
+  selectedWorkerDelegationStatus: null,
+  questionnaireRefreshStatus: null,
+  responseRefreshStatus: null,
+};
+
+function hasAuditorMemoryCacheData() {
+  return auditorMemoryCache.questionnaires.length > 0 || auditorMemoryCache.selectedResponseDetails.length > 0;
+}
+
+function shouldSkipAuditorAutoRefresh(activeQuestionnaireId: string) {
+  const selectedId = activeQuestionnaireId.trim();
+  if (
+    selectedId
+    && auditorMemoryCache.selectedQuestionnaireId
+    && selectedId !== auditorMemoryCache.selectedQuestionnaireId
+  ) {
+    return false;
+  }
+  return hasAuditorMemoryCacheData()
+    && Date.now() - auditorLastRefreshStartedAt < AUDITOR_AUTO_REFRESH_THROTTLE_MS;
+}
+
 function readInitialQuestionnaireIdFromUrl() {
   if (typeof window === "undefined") {
     return "";
@@ -60,22 +105,39 @@ function readInitialQuestionnaireIdFromUrl() {
 }
 
 export default function SimpleAuditorApp() {
-  const [questionnaires, setQuestionnaires] = useState<AuditorQuestionnaireEntry[]>([]);
-  const [selectedQuestionnaireId, setSelectedQuestionnaireId] = useState(() => readInitialQuestionnaireIdFromUrl());
-  const [selectedResponseDetails, setSelectedResponseDetails] = useState<AuditorQuestionnaireResponseDetail[]>([]);
-  const [selectedLatestPublishAt, setSelectedLatestPublishAt] = useState<number | null>(null);
-  const [selectedLiveState, setSelectedLiveState] = useState<string | null>(null);
-  const [selectedLiveStateEvent, setSelectedLiveStateEvent] = useState<QuestionnaireStateEvent | null>(null);
-  const [selectedResultSummary, setSelectedResultSummary] = useState<QuestionnaireResultSummary | null>(null);
-  const [selectedWorkerDelegationStatus, setSelectedWorkerDelegationStatus] = useState<QuestionnaireWorkerDelegationStatus | null>(null);
+  const initialQuestionnaireId = useMemo(() => readInitialQuestionnaireIdFromUrl() || auditorMemoryCache.selectedQuestionnaireId, []);
+  const canUseCachedSelection = initialQuestionnaireId === auditorMemoryCache.selectedQuestionnaireId;
+  const [questionnaires, setQuestionnaires] = useState<AuditorQuestionnaireEntry[]>(() => auditorMemoryCache.questionnaires);
+  const [selectedQuestionnaireId, setSelectedQuestionnaireId] = useState(initialQuestionnaireId);
+  const [selectedResponseDetails, setSelectedResponseDetails] = useState<AuditorQuestionnaireResponseDetail[]>(() => (
+    canUseCachedSelection ? auditorMemoryCache.selectedResponseDetails : []
+  ));
+  const [selectedLatestPublishAt, setSelectedLatestPublishAt] = useState<number | null>(() => (
+    canUseCachedSelection ? auditorMemoryCache.selectedLatestPublishAt : null
+  ));
+  const [selectedLiveState, setSelectedLiveState] = useState<string | null>(() => (
+    canUseCachedSelection ? auditorMemoryCache.selectedLiveState : null
+  ));
+  const [selectedLiveStateEvent, setSelectedLiveStateEvent] = useState<QuestionnaireStateEvent | null>(() => (
+    canUseCachedSelection ? auditorMemoryCache.selectedLiveStateEvent : null
+  ));
+  const [selectedResultSummary, setSelectedResultSummary] = useState<QuestionnaireResultSummary | null>(() => (
+    canUseCachedSelection ? auditorMemoryCache.selectedResultSummary : null
+  ));
+  const [selectedWorkerDelegationStatus, setSelectedWorkerDelegationStatus] = useState<QuestionnaireWorkerDelegationStatus | null>(() => (
+    canUseCachedSelection ? auditorMemoryCache.selectedWorkerDelegationStatus : null
+  ));
   const [voterSearchQuery, setVoterSearchQuery] = useState("");
   const [showInvalidVotes, setShowInvalidVotes] = useState(false);
   const [freeTextViewerQuestionId, setFreeTextViewerQuestionId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [questionnaireRefreshStatus, setQuestionnaireRefreshStatus] = useState<string | null>(null);
-  const [responseRefreshStatus, setResponseRefreshStatus] = useState<string | null>(null);
+  const [questionnaireRefreshStatus, setQuestionnaireRefreshStatus] = useState<string | null>(() => auditorMemoryCache.questionnaireRefreshStatus);
+  const [responseRefreshStatus, setResponseRefreshStatus] = useState<string | null>(() => (
+    canUseCachedSelection ? auditorMemoryCache.responseRefreshStatus : null
+  ));
   const [refreshInFlight, setRefreshInFlight] = useState(false);
   const selectedQuestionnaireIdRef = useRef("");
+  const selectedRefreshEffectHasRunRef = useRef(false);
   const refreshQueueRef = useRef<{
     pendingList: boolean;
     pendingSelected: boolean;
@@ -93,6 +155,31 @@ export default function SimpleAuditorApp() {
   useEffect(() => {
     questionnairesRef.current = questionnaires;
   }, [questionnaires]);
+  useEffect(() => {
+    auditorMemoryCache = {
+      questionnaires,
+      selectedQuestionnaireId,
+      selectedResponseDetails,
+      selectedLatestPublishAt,
+      selectedLiveState,
+      selectedLiveStateEvent,
+      selectedResultSummary,
+      selectedWorkerDelegationStatus,
+      questionnaireRefreshStatus,
+      responseRefreshStatus,
+    };
+  }, [
+    questionnaireRefreshStatus,
+    questionnaires,
+    responseRefreshStatus,
+    selectedLatestPublishAt,
+    selectedLiveState,
+    selectedLiveStateEvent,
+    selectedQuestionnaireId,
+    selectedResponseDetails,
+    selectedResultSummary,
+    selectedWorkerDelegationStatus,
+  ]);
 
   const loadQuestionnairesFromNostr = useCallback(async (input?: { historic?: boolean }) => {
     const historic = Boolean(input?.historic);
@@ -352,6 +439,9 @@ export default function SimpleAuditorApp() {
         const runSelected = refreshQueueRef.current.pendingSelected;
         refreshQueueRef.current.pendingList = false;
         refreshQueueRef.current.pendingSelected = false;
+        if (runList || runSelected) {
+          auditorLastRefreshStartedAt = Date.now();
+        }
         if (runList) {
           await refreshQuestionnaires();
         }
@@ -372,7 +462,11 @@ export default function SimpleAuditorApp() {
     list?: boolean;
     selected?: boolean;
     forceWhenHidden?: boolean;
+    automatic?: boolean;
   }) => {
+    if (input?.automatic && shouldSkipAuditorAutoRefresh(selectedQuestionnaireIdRef.current)) {
+      return;
+    }
     const list = input?.list !== false;
     const selected = input?.selected !== false;
     if (list) {
@@ -394,7 +488,7 @@ export default function SimpleAuditorApp() {
         if (cancelled) {
           return;
         }
-        await enqueueRefresh({ list: false, selected: true });
+        await enqueueRefresh({ list: false, selected: true, automatic: true });
         if (!cancelled) {
           scheduleSelected(AUDITOR_REFRESH_INTERVAL_MS);
         }
@@ -406,7 +500,7 @@ export default function SimpleAuditorApp() {
         if (cancelled) {
           return;
         }
-        await enqueueRefresh({ list: true, selected: false });
+        await enqueueRefresh({ list: true, selected: false, automatic: true });
         if (!cancelled) {
           scheduleList(AUDITOR_QUESTIONNAIRE_LIST_REFRESH_INTERVAL_MS);
         }
@@ -420,10 +514,10 @@ export default function SimpleAuditorApp() {
       if (typeof document !== "undefined" && document.visibilityState !== "visible") {
         return;
       }
-      void enqueueRefresh({ list: true, selected: true });
+      void enqueueRefresh({ list: true, selected: true, automatic: true });
     };
 
-    void enqueueRefresh({ list: true, selected: true, forceWhenHidden: true });
+    void enqueueRefresh({ list: true, selected: true, forceWhenHidden: true, automatic: true });
     scheduleSelected(AUDITOR_REFRESH_INTERVAL_MS);
     scheduleList(AUDITOR_QUESTIONNAIRE_LIST_REFRESH_INTERVAL_MS);
     document.addEventListener("visibilitychange", handleForegroundRefresh);
@@ -454,7 +548,9 @@ export default function SimpleAuditorApp() {
       return;
     }
     setVoterSearchQuery((previous) => (previous ? "" : previous));
-    void enqueueRefresh({ list: false, selected: true, forceWhenHidden: true });
+    const automatic = !selectedRefreshEffectHasRunRef.current;
+    selectedRefreshEffectHasRunRef.current = true;
+    void enqueueRefresh({ list: false, selected: true, forceWhenHidden: true, automatic });
   }, [enqueueRefresh, selectedQuestionnaireId]);
 
   const coordinatorOptions = useMemo(
@@ -815,7 +911,7 @@ export default function SimpleAuditorApp() {
                                   <div
                                     className='simple-auditor-donut'
                                     style={{
-                                      background: `conic-gradient(#2563eb 0 ${yesPercent}%, #f97316 ${yesPercent}% 100%)`,
+                                      background: `conic-gradient(var(--simple-green) 0 ${yesPercent}%, var(--simple-coral) ${yesPercent}% 100%)`,
                                     }}
                                     aria-hidden='true'
                                   >
@@ -826,12 +922,12 @@ export default function SimpleAuditorApp() {
                                   </div>
                                   <div className='simple-auditor-donut-legend'>
                                     <span>
-                                      <i className='simple-auditor-dot simple-auditor-dot-purple' />
+                                      <i className='simple-auditor-dot simple-auditor-dot-yes' />
                                       Yes
                                       <strong>{summary.yesCount} ({total > 0 ? ((summary.yesCount / total) * 100).toFixed(0) : "0"}%)</strong>
                                     </span>
                                     <span>
-                                      <i className='simple-auditor-dot simple-auditor-dot-mint' />
+                                      <i className='simple-auditor-dot simple-auditor-dot-no' />
                                       No
                                       <strong>{summary.noCount} ({total > 0 ? ((summary.noCount / total) * 100).toFixed(0) : "0"}%)</strong>
                                     </span>

@@ -29,7 +29,7 @@ export default function QuestionnaireOptionACoordinatorPanel(props: Props) {
   const [status, setStatus] = useState<string | null>(null);
   const [signedInNpub, setSignedInNpub] = useState("");
   const [whitelistInput, setWhitelistInput] = useState("");
-  const [title, setTitle] = useState(props.title ?? "Questionnaire");
+  const [title, setTitle] = useState(props.title ?? "Vote");
   const [description, setDescription] = useState(props.description ?? "");
   const [refreshNonce, setRefreshNonce] = useState(0);
   const queueProcessingInFlightRef = useRef(false);
@@ -189,23 +189,23 @@ export default function QuestionnaireOptionACoordinatorPanel(props: Props) {
       <div className='simple-questionnaire-header'>
         <div>
           <h3 className='simple-voter-question'>Coordinator</h3>
-          <p className='simple-voter-note'>Blind-token questionnaire flow</p>
+          <p className='simple-voter-note'>Blind credential flow</p>
         </div>
         <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
           <button type='button' className='simple-voter-secondary' onClick={() => void login()}>Login</button>
-          <button type='button' className='simple-voter-secondary' onClick={createNewId}>New ID</button>
+          <button type='button' className='simple-voter-secondary' onClick={createNewId}>New identity</button>
         </div>
       </div>
 
       {signedInNpub ? <p className='simple-voter-note'>Signed in as {signedInNpub}</p> : null}
-      <p className='simple-voter-note'>Election ID: {electionId}</p>
+      <p className='simple-voter-note'>Vote ID: {electionId}</p>
 
-      <label className='simple-voter-label' htmlFor='optiona-title'>Questionnaire title</label>
+      <label className='simple-voter-label' htmlFor='optiona-title'>Name</label>
       <input id='optiona-title' className='simple-voter-input' value={title} onChange={(event) => setTitle(event.target.value)} />
       <label className='simple-voter-label' htmlFor='optiona-description'>Description</label>
       <textarea id='optiona-description' className='simple-voter-input' value={description} rows={2} onChange={(event) => setDescription(event.target.value)} />
 
-      <h4 className='simple-voter-section-title'>Whitelist</h4>
+      <h4 className='simple-voter-section-title'>Voters</h4>
       <div className='simple-voter-action-row simple-voter-action-row-inline'>
         <input
           className='simple-voter-input simple-voter-input-inline'
@@ -216,7 +216,7 @@ export default function QuestionnaireOptionACoordinatorPanel(props: Props) {
         <button type='button' className='simple-voter-secondary' disabled={!signedInNpub.trim()} onClick={addWhitelist}>Add</button>
       </div>
 
-      {whitelistRows.length === 0 ? <p className='simple-voter-note'>No whitelisted voters yet.</p> : (
+      {whitelistRows.length === 0 ? <p className='simple-voter-note'>No voters yet.</p> : (
         <ul className='simple-vote-status-list'>
           {whitelistRows.map((entry) => (
             <li key={entry.invitedNpub}>
@@ -245,7 +245,7 @@ export default function QuestionnaireOptionACoordinatorPanel(props: Props) {
         </button>
       </div>
 
-      <p className='simple-voter-note'>Accepted unique responders: {runtime.getAcceptedUniqueCount()}</p>
+      <p className='simple-voter-note'>Accepted responses: {runtime.getAcceptedUniqueCount()}</p>
       {status ? <p className='simple-voter-note'>{status}</p> : null}
       <span style={{ display: "none" }} aria-hidden='true'>{refreshNonce}</span>
     </div>

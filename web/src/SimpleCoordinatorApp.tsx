@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { finalizeEvent, generateSecretKey, getPublicKey, nip19, nip44 } from "nostr-tools";
+import QRCode from "qrcode";
 import { decodeNsec, deriveNpubFromNsec, isValidNpub } from "./nostrIdentity";
 import { deriveActorDisplayId } from "./actorDisplay";
 import {
@@ -53,7 +54,6 @@ import {
 } from "./nostr/subscribeCoordinatorControl";
 import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
-import SimpleQrScanner from "./SimpleQrScanner";
 import SimpleRelayPanel from "./SimpleRelayPanel";
 import SimpleUnlockGate from "./SimpleUnlockGate";
 import TokenFingerprint from "./TokenFingerprint";
@@ -712,6 +712,107 @@ function normalizeInviteNpubInput(value: string): string | null {
   return null;
 }
 
+function GeneralInviteQrButton({ value }: { value: string }) {
+  const [qrSrc, setQrSrc] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const trimmed = value.trim();
+
+    if (!trimmed) {
+      setQrSrc(null);
+      return;
+    }
+
+    void QRCode.toDataURL(trimmed, {
+      errorCorrectionLevel: "M",
+      margin: 1,
+      width: 384,
+      color: {
+        dark: "#070d10",
+        light: "#ffffff",
+      },
+    }).then((nextQrSrc: string) => {
+      if (!cancelled) {
+        setQrSrc(nextQrSrc);
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setQrSrc(null);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [value]);
+
+  useEffect(() => {
+    if (!expanded) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setExpanded(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [expanded]);
+
+  if (!value.trim()) {
+    return null;
+  }
+
+  return (
+    <>
+      <button
+        type='button'
+        className='simple-invite-qr-trigger'
+        onClick={() => {
+          if (qrSrc) {
+            setExpanded(true);
+          }
+        }}
+        disabled={!qrSrc}
+        aria-label='Show large QR for general invite link'
+      >
+        {qrSrc ? (
+          <img src={qrSrc} alt='QR code for general invite link' />
+        ) : (
+          <span className='simple-invite-qr-fallback' aria-hidden='true' />
+        )}
+      </button>
+      {expanded && qrSrc ? (
+        <div
+          className='simple-invite-qr-overlay'
+          role='dialog'
+          aria-modal='true'
+          aria-label='General invite link QR'
+          onClick={() => setExpanded(false)}
+        >
+          <button
+            type='button'
+            className='simple-invite-qr-overlay-close'
+            onClick={() => setExpanded(false)}
+            aria-label='Close QR preview'
+          >
+            Close
+          </button>
+          <div className='simple-invite-qr-overlay-card' onClick={(event) => event.stopPropagation()}>
+            <h3 className='simple-voter-question'>General invite link</h3>
+            <img className='simple-invite-qr-overlay-image' src={qrSrc} alt='Large QR code for general invite link' />
+            <code className='simple-identity-code'>{value}</code>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 function createLocalNsecSignerService(nsec: string) {
   const secretKey = decodeNsec(nsec);
   if (!secretKey) {
@@ -927,10 +1028,15 @@ export default function SimpleCoordinatorApp() {
   }) => {
     setQuestionnaireRosterAnnouncement((current) => {
       const nextQuestionnaireId = nextStatus.questionnaireId.trim();
+      const questionnaireId = nextQuestionnaireId || current.questionnaireId;
+      const state = nextStatus.state ?? current.state;
+      if (current.questionnaireId === questionnaireId && current.state === state) {
+        return current;
+      }
       return {
         // Keep the last known questionnaire id when panel status callbacks emit transient blanks.
-        questionnaireId: nextQuestionnaireId || current.questionnaireId,
-        state: nextStatus.state ?? current.state,
+        questionnaireId,
+        state,
       };
     });
   }, []);
@@ -1085,7 +1191,7 @@ export default function SimpleCoordinatorApp() {
       cachedDefinition?.title?.trim()
       || electionSummary?.title?.trim()
       || questionPrompt.trim()
-      || "Questionnaire";
+      || "Vote";
     const description =
       cachedDefinition?.description?.trim()
       || electionSummary?.description?.trim()
@@ -3507,17 +3613,17 @@ export default function SimpleCoordinatorApp() {
   async function copyPrivateInviteCodeLink(codeHash: string) {
     const inviteUrl = privateInviteLinksByHash[codeHash] ?? "";
     if (!inviteUrl) {
-      setKnownVoterInviteStatus("This private link is not available in this page session. Create a new private code link if you need another link.");
+      setKnownVoterInviteStatus("This private link is not available in this page session. Create a new private link if you need another link.");
       return;
     }
     await tryWriteClipboard(inviteUrl);
-    setKnownVoterInviteStatus("Private code link copied.");
+    setKnownVoterInviteStatus("Private link copied.");
   }
 
   async function sharePrivateInviteCodeLink(codeHash: string) {
     const inviteUrl = privateInviteLinksByHash[codeHash] ?? "";
     if (!inviteUrl) {
-      setKnownVoterInviteStatus("This private link is not available in this page session. Create a new private code link if you need another link.");
+      setKnownVoterInviteStatus("This private link is not available in this page session. Create a new private link if you need another link.");
       return;
     }
     const inviteShare = buildPrivateInviteShare({ inviteUrl });
@@ -3539,7 +3645,7 @@ export default function SimpleCoordinatorApp() {
     }
 
     await tryWriteClipboard(inviteUrl);
-    setKnownVoterInviteStatus("Private code link copied.");
+    setKnownVoterInviteStatus("Private link copied.");
   }
 
   function buildActiveWorkerElectionConfigSnapshot(): { snapshot: WorkerElectionConfigSnapshot; workerNpub: string; relays: string[] } | null {
@@ -3625,7 +3731,7 @@ export default function SimpleCoordinatorApp() {
   async function createPrivateInviteCodeLink() {
     const electionId = optionAElectionId.trim();
     if (!optionACoordinatorRuntime || !electionId) {
-      setKnownVoterInviteStatus("Publish or open a questionnaire first.");
+      setKnownVoterInviteStatus("Publish or open a vote first.");
       return;
     }
     try {
@@ -3645,9 +3751,9 @@ export default function SimpleCoordinatorApp() {
       await tryWriteClipboard(inviteUrl);
       await syncActiveWorkerElectionConfig().catch(() => false);
       setKnownVoterInviteRefreshNonce((value) => value + 1);
-      setKnownVoterInviteStatus("Private code link ready and copied. The first voter to open it claims this invite.");
+      setKnownVoterInviteStatus("Private link ready and copied. The first voter to open it claims this invite.");
     } catch (error) {
-      setKnownVoterInviteStatus(error instanceof Error ? error.message : "Could not create private code link.");
+      setKnownVoterInviteStatus(error instanceof Error ? error.message : "Could not create private link.");
     }
   }
 
@@ -3884,14 +3990,14 @@ export default function SimpleCoordinatorApp() {
     try {
       optionACoordinatorRuntime.addWhitelistNpub(invitedNpub);
       const sent = await optionACoordinatorRuntime.sendInvite(invitedNpub, {
-        title: questionPrompt.trim() || "Questionnaire",
+        title: questionPrompt.trim() || "Vote",
         description: "",
         voteUrl: buildKnownVoterInviteLink(invitedNpub) || buildInviteUrl({
           invite: {
             type: "election_invite",
             schemaVersion: 1,
             electionId: optionAElectionId,
-            title: questionPrompt.trim() || "Questionnaire",
+            title: questionPrompt.trim() || "Vote",
             description: "",
             voteUrl: "",
             invitedNpub,
@@ -3935,14 +4041,14 @@ export default function SimpleCoordinatorApp() {
       try {
         optionACoordinatorRuntime.addWhitelistNpub(invitedNpub);
         const sent = await optionACoordinatorRuntime.sendInvite(invitedNpub, {
-          title: questionPrompt.trim() || "Questionnaire",
+          title: questionPrompt.trim() || "Vote",
           description: "",
           voteUrl: buildKnownVoterInviteLink(invitedNpub) || buildInviteUrl({
             invite: {
               type: "election_invite",
               schemaVersion: 1,
               electionId: optionAElectionId,
-              title: questionPrompt.trim() || "Questionnaire",
+              title: questionPrompt.trim() || "Vote",
               description: "",
               voteUrl: "",
               invitedNpub,
@@ -6027,7 +6133,7 @@ export default function SimpleCoordinatorApp() {
     <main className='simple-voter-shell'>
       <section className='simple-voter-page'>
         <div className='simple-voter-header-row'>
-          <h1 className='simple-voter-title'>ID {coordinatorId}</h1>
+          <h1 className='simple-voter-title'>Current identity: {coordinatorId}</h1>
           <div className='simple-coordinator-header-actions'>
             {activeCoordinatorNpub ? (
               <TokenFingerprint
@@ -6044,7 +6150,7 @@ export default function SimpleCoordinatorApp() {
               onClick={() => void tryWriteClipboard(activeCoordinatorNpub)}
               disabled={!activeCoordinatorNpub}
             >
-              Copy npub
+              Copy identity
             </button>
           </div>
         </div>
@@ -6062,7 +6168,7 @@ export default function SimpleCoordinatorApp() {
             className={`simple-voter-tab${activeTab === 'configure' ? ' is-active' : ''}`}
             onClick={() => selectTab('configure')}
           >
-            Questionnaire
+            Setup
           </button>
           <button
             type='button'
@@ -6071,7 +6177,7 @@ export default function SimpleCoordinatorApp() {
             className={`simple-voter-tab${activeTab === 'participants' ? ' is-active' : ''}`}
             onClick={() => selectTab('participants')}
           >
-            Participants
+            Voters
           </button>
           <button
             type='button'
@@ -6088,119 +6194,8 @@ export default function SimpleCoordinatorApp() {
           <section
             className='simple-voter-tab-panel'
             role='tabpanel'
-            aria-label='Questionnaire'
+            aria-label='Setup'
           >
-            <SimpleCollapsibleSection title='Coordinator management' defaultCollapsed>
-              <label
-                className='simple-voter-label'
-                htmlFor='simple-lead-coordinator-npub'
-              >
-                Lead coordinator npub
-              </label>
-              <div className='simple-voter-inline-field'>
-                <input
-                  id='simple-lead-coordinator-npub'
-                  className='simple-voter-input simple-voter-input-inline'
-                  value={leadCoordinatorNpub}
-                  onChange={(event) => {
-                    const nextLeadCoordinatorNpub = event.target.value;
-                    setLeadCoordinatorNpub(nextLeadCoordinatorNpub);
-                    setLeadScannerStatus(null);
-                    if (
-                      nextLeadCoordinatorNpub.trim() !== (keypair?.npub ?? '')
-                    ) {
-                      setQuestionShareIndex('');
-                    }
-                    setRegistrationStatus(null);
-                    setAssignmentStatus(null);
-                  }}
-                  placeholder='Leave blank if this coordinator is the lead'
-                />
-                <button
-                  type='button'
-                  className='simple-voter-secondary simple-voter-scan-button'
-                  onClick={() => {
-                    setLeadScannerStatus(null);
-                    setLeadScannerActive(true);
-                  }}
-                >
-                  Scan
-                </button>
-                {canShowNotifyLeadButton ? (
-                  <button
-                    type='button'
-                    className='simple-voter-secondary'
-                    onClick={() => void submitToLeadCoordinator()}
-                    disabled={
-                      !keypair?.nsec ||
-                      !leadCoordinatorNpub.trim() ||
-                      leadCoordinatorNpub.trim() === (keypair?.npub ?? '') ||
-                      hasAssignedShareIndex
-                    }
-                  >
-                    {hasAssignedShareIndex
-                      ? 'Coordinator notified'
-                      : 'Notify coordinator'}
-                  </button>
-                ) : null}
-              </div>
-              <SimpleQrScanner
-                active={leadScannerActive}
-                onDetected={handleLeadCoordinatorScanDetected}
-                onClose={() => setLeadScannerActive(false)}
-                prompt='Point the camera at the lead coordinator npub QR code.'
-              />
-              {leadScannerStatus ? (
-                <p className='simple-voter-note'>{leadScannerStatus}</p>
-              ) : null}
-              <p className='simple-voter-question'>
-                {isLeadCoordinator
-                  ? 'This coordinator publishes the live question.'
-                  : 'This coordinator follows the lead question and only issues shares.'}
-              </p>
-              {registrationStatus &&
-                !isLeadCoordinator &&
-                !hasAssignedShareIndex && (
-                  <p className='simple-voter-note'>{registrationStatus}</p>
-                )}
-              {assignmentStatus && (
-                <p className='simple-voter-note'>{assignmentStatus}</p>
-              )}
-            {isLeadCoordinator && (
-              <SimpleCollapsibleSection title='Sub-coordinators'>
-                {subCoordinators.length > 0 ? (
-                  <>
-                    <p className='simple-voter-question'>
-                      {subCoordinators.length} sub-coordinator
-                      {subCoordinators.length === 1 ? '' : 's'} submitted
-                      {expectedSubCoordinatorCount > 0
-                        ? ` of ${expectedSubCoordinatorCount} expected`
-                        : ''}
-                      .
-                    </p>
-                    <ul className='simple-voter-list'>
-                      {subCoordinators.map((application, index) => (
-                        <li
-                          key={application.id}
-                          className='simple-voter-list-item'
-                        >
-                          <p className='simple-voter-question'>
-                            Coordinator {application.coordinatorId} submitted as
-                            sub-coordinator #{index + 1}.
-                          </p>
-                        </li>
-                      ))}
-                    </ul>
-                  </>
-                ) : (
-                  <p className='simple-voter-empty'>
-                    No sub-coordinators have submitted yet.
-                  </p>
-                )}
-              </SimpleCollapsibleSection>
-            )}
-            </SimpleCollapsibleSection>
-
             <QuestionnaireCoordinatorPanel
               coordinatorNsec={keypair?.nsec ?? null}
               coordinatorNpub={keypair?.npub ?? null}
@@ -6233,9 +6228,9 @@ export default function SimpleCoordinatorApp() {
           <section
             className='simple-voter-tab-panel'
             role='tabpanel'
-            aria-label='Participants'
+            aria-label='Voters'
           >
-            <SimpleCollapsibleSection title='Vote requests' defaultCollapsed>
+            <SimpleCollapsibleSection title='Voter requests' defaultCollapsed>
               {coordinatorFollowerRows.length > 0 ? (
                 <div className='simple-follower-toolbar'>
                   <input
@@ -6420,15 +6415,18 @@ export default function SimpleCoordinatorApp() {
 
             {optionAElectionId ? (
               <SimpleCollapsibleSection title='Invite voters'>
-                <div className='simple-voter-field-stack'>
-                  <div className='simple-invite-share-panel' aria-label='Share questionnaire link'>
-                    <div className='simple-invite-share-copy'>
-                      <h3 className='simple-voter-question'>Share invite link</h3>
-                      <p className='simple-voter-note'>
-                        Opens the voter login for this questionnaire. Email, WhatsApp, SMS, and device sharing use the apps already on this device.
-                      </p>
-                    </div>
-                    <p className='simple-invite-link-preview'>{publicQuestionnaireInviteUrl}</p>
+	                <div className='simple-voter-field-stack'>
+	                  <div className='simple-invite-share-panel' aria-label='Share questionnaire link'>
+	                    <div className='simple-invite-share-heading'>
+	                      <div className='simple-invite-share-copy'>
+	                        <h3 className='simple-voter-question'>General invite link</h3>
+	                        <p className='simple-voter-note'>
+	                          Share this link with voters.
+	                        </p>
+	                      </div>
+	                      <GeneralInviteQrButton value={publicQuestionnaireInviteUrl} />
+	                    </div>
+	                    <p className='simple-invite-link-preview'>{publicQuestionnaireInviteUrl}</p>
                     <div className='simple-invite-share-actions'>
                       <button
                         type='button'
@@ -6462,9 +6460,9 @@ export default function SimpleCoordinatorApp() {
                   </div>
                   <div className='simple-invite-share-panel' aria-label='Create private invite code link'>
                     <div className='simple-invite-share-copy'>
-                      <h3 className='simple-voter-question'>Private code link</h3>
+                      <h3 className='simple-voter-question'>Private invite link</h3>
                       <p className='simple-voter-note'>
-                        Creates a one-use link with no npub in the URL. The voter looks up coordinator or audit-proxy routing from public questionnaire metadata.
+                        One-use invite.
                       </p>
                     </div>
                     <div className='simple-invite-share-actions'>
@@ -6474,7 +6472,7 @@ export default function SimpleCoordinatorApp() {
                         onClick={() => void createPrivateInviteCodeLink()}
                         disabled={!publicQuestionnaireInviteUrl || !optionACoordinatorRuntime}
                       >
-                        Create private code link
+                        Create private link
                       </button>
                       <span className='simple-voter-note'>
                         {availablePrivateInviteCodeCount} available
@@ -6513,7 +6511,7 @@ export default function SimpleCoordinatorApp() {
                                       Copy link
                                     </button>
                                     <a className='simple-voter-secondary' href={privateInviteShare.mailtoHref}>
-                                      Invite by email
+                                    Invite by email
                                     </a>
                                     <a className='simple-voter-secondary' href={privateInviteShare.whatsAppHref} target='_blank' rel='noreferrer'>
                                       WhatsApp
@@ -6540,7 +6538,7 @@ export default function SimpleCoordinatorApp() {
                               ) : entry.state === "available" ? (
                                 <div className='simple-private-invite-actions'>
                                   <p className='simple-voter-note simple-private-invite-note'>
-                                    Link unavailable after this page session. Create a new private code link if you need to send another.
+                                    Link unavailable after this page session. Create a new private link if you need to send another.
                                   </p>
                                   <button
                                     type='button'
@@ -6557,36 +6555,41 @@ export default function SimpleCoordinatorApp() {
                       </ul>
                     ) : null}
                   </div>
-                  <div className='simple-voter-action-row simple-voter-action-row-inline'>
+                  <div className='simple-invite-share-panel' aria-label='Invite via Nostr'>
+                    <div className='simple-invite-share-copy'>
+                      <h3 className='simple-voter-question'>Invite via Nostr</h3>
+                    </div>
                     <input
                       className='simple-voter-input simple-voter-input-inline'
                       value={knownVoterDraftNpub}
                       placeholder='npub1... or nostr:nprofile1...'
                       onChange={(event) => setKnownVoterDraftNpub(event.target.value)}
                     />
-                    <button
-                      type='button'
-                      className='simple-voter-secondary'
-                      disabled={!knownVoterDraftNpub.trim()}
-                      onClick={() => void inviteKnownVoterNpub()}
-                    >
-                      Invite
-                    </button>
-                    <button
-                      type='button'
-                      className='simple-voter-secondary'
-                      onClick={() => void importKnownVotersFromContacts()}
-                      disabled={knownVoterContactsLoading || !activeCoordinatorNpub}
-                    >
-                      {knownVoterContactsLoading ? 'Importing...' : 'Import contacts'}
-                    </button>
-                    <button
-                      type='button'
-                      className='simple-voter-secondary'
-                      onClick={processKnownVoterRequests}
-                    >
-                      Process requests
-                    </button>
+                    <div className='simple-invite-share-actions'>
+                      <button
+                        type='button'
+                        className='simple-voter-secondary'
+                        disabled={!knownVoterDraftNpub.trim()}
+                        onClick={() => void inviteKnownVoterNpub()}
+                      >
+                        Add
+                      </button>
+                      <button
+                        type='button'
+                        className='simple-voter-secondary'
+                        onClick={() => void importKnownVotersFromContacts()}
+                        disabled={knownVoterContactsLoading || !activeCoordinatorNpub}
+                      >
+                        {knownVoterContactsLoading ? 'Importing...' : 'Import contacts'}
+                      </button>
+                      <button
+                        type='button'
+                        className='simple-voter-secondary'
+                        onClick={processKnownVoterRequests}
+                      >
+                        Check requests
+                      </button>
+                    </div>
                   </div>
                   {importedKnownVoterContacts.length > 0 ? (
                     <div className='simple-voter-field-stack'>
@@ -6644,7 +6647,7 @@ export default function SimpleCoordinatorApp() {
                           onClick={addSelectedImportedContactsToWhitelist}
                           disabled={selectedImportedKnownVoterNpubs.length === 0}
                         >
-                          Add selected to whitelist
+                          Add selected voters
                         </button>
                       </div>
                     </div>
@@ -6673,7 +6676,7 @@ export default function SimpleCoordinatorApp() {
                                 className='simple-voter-secondary'
                                 onClick={() => void copyKnownVoterInviteLink(entry.invitedNpub)}
                               >
-                                Copy personalised link
+                                Copy invite link
                               </button>
                             </li>
                           );
@@ -6686,7 +6689,7 @@ export default function SimpleCoordinatorApp() {
                           onClick={sendInvitesToAllWhitelistedVoters}
                           disabled={visibleOptionAKnownVoters.length === 0}
                         >
-                          Invite all whitelisted
+                          Invite all voters
                         </button>
                         <button
                           type='button'
@@ -6698,11 +6701,11 @@ export default function SimpleCoordinatorApp() {
                       </div>
                     </>
                   ) : optionAHasInviteQueue ? null : (
-                    <p className='simple-voter-note'>No known voters added yet for this questionnaire.</p>
+                    <p className='simple-voter-note'>No voters added yet.</p>
                   )}
                   {optionAPendingAuthorizations.length > 0 ? (
                     <>
-                      <p className='simple-voter-note'>Pending requester authorisation</p>
+                      <p className='simple-voter-note'>Pending requests</p>
                       <ul className='simple-vote-status-list'>
                         {optionAPendingAuthorizations.map((entry) => {
                           const statusIndicator = pendingAuthorisationStatusIndicator();
@@ -6711,14 +6714,14 @@ export default function SimpleCoordinatorApp() {
                               <span className={statusIndicator.className} aria-label={statusIndicator.label} title={statusIndicator.label}>
                                 {statusIndicator.icon}
                               </span>
-                              {deriveActorDisplayId(entry.invitedNpub)} requested a ballot ({entry.requestCount})
+                              {deriveActorDisplayId(entry.invitedNpub)} wants access ({entry.requestCount})
                               <button
                                 type='button'
                                 className='simple-voter-secondary'
                                 style={{ marginLeft: 8 }}
                                 onClick={() => authorizePendingRequester(entry.invitedNpub)}
                               >
-                                Authorise
+                                Approve
                               </button>
                             </li>
                           );
@@ -6726,7 +6729,7 @@ export default function SimpleCoordinatorApp() {
                       </ul>
                     </>
                   ) : null}
-                  <p className='simple-voter-note'>Accepted unique responders: {optionACoordinatorRuntime?.getAcceptedUniqueCount() ?? 0}</p>
+                  <p className='simple-voter-note'>Accepted responses: {optionACoordinatorRuntime?.getAcceptedUniqueCount() ?? 0}</p>
                   {knownVoterInviteStatus ? <p className='simple-voter-note'>{knownVoterInviteStatus}</p> : null}
                 </div>
               </SimpleCollapsibleSection>
@@ -6791,11 +6794,10 @@ export default function SimpleCoordinatorApp() {
                   checked={nip65Enabled}
                   onChange={(event) => setNip65Enabled(event.target.checked)}
                 />
-                <span>Enable NIP-65 relay hints</span>
+                <span>Use relay hints</span>
               </label>
               <p className='simple-voter-note'>
-                Disabled by default. Turn this on only if you want to publish
-                and use NIP-65 inbox/outbox relay hints.
+                Advanced. Helps clients find your relays.
               </p>
             </section>
             <div id='coordinator-relays-settings'>

@@ -16,11 +16,11 @@ afterEach(() => {
 describe("QuestionnaireCoordinatorPanel option_a mode", () => {
   it("uses the standard coordinator questionnaire form even when option_a is requested", () => {
     render(<QuestionnaireCoordinatorPanel />);
-    expect(screen.getByText("Build questionnaire")).toBeTruthy();
+    expect(screen.getByText("Setup vote")).toBeTruthy();
     expect(screen.getByLabelText("Name")).toBeTruthy();
-    expect(screen.getByLabelText("Questionnaire ID")).toBeTruthy();
+    expect(screen.getByLabelText("Vote ID")).toBeTruthy();
     expect(screen.getByText("Generate ID")).toBeTruthy();
-    expect(screen.getByText("Show questionnaire link")).toBeTruthy();
+    expect(screen.queryByText("Show invite link")).toBeNull();
   });
 
   it("keeps audit proxy setup out of the build actions until publication", () => {
@@ -31,7 +31,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       .find((element) => element.tagName.toLowerCase() === "h2");
     const auditProxySection = auditProxyHeading.closest("section");
     expect(auditProxySection?.className).toContain("is-collapsed");
-    expect(screen.queryByText("Set up audit proxy")).toBeNull();
+    expect(screen.queryByText("Set up proxy")).toBeNull();
 
     fireEvent.click(auditProxySection?.querySelector("button") as HTMLButtonElement);
     fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "delegated_worker" } });
@@ -43,10 +43,27 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(screen.getByLabelText("Generated audit proxy nsec (store securely)")).toBeTruthy();
   });
 
-  it("generates a new questionnaire id when the coordinator New ID event fires", () => {
+  it("marks the JSON preview button as an expandable toggle", () => {
     render(<QuestionnaireCoordinatorPanel />);
 
-    const idInput = screen.getByLabelText("Questionnaire ID") as HTMLInputElement;
+    const previewButton = screen.getByRole("button", { name: "Preview JSON" });
+    expect(previewButton.getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.click(previewButton);
+
+    expect(previewButton.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByText("Draft preview")).toBeTruthy();
+
+    fireEvent.click(previewButton);
+
+    expect(previewButton.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText("Draft preview")).toBeNull();
+  });
+
+  it("generates a new questionnaire id when the coordinator New identity event fires", () => {
+    render(<QuestionnaireCoordinatorPanel />);
+
+    const idInput = screen.getByLabelText("Vote ID") as HTMLInputElement;
     const previousId = idInput.value;
 
     fireEvent(window, new Event("auditable-voting:coordinator-new"));
