@@ -64,6 +64,25 @@ const QUESTIONNAIRE_TIMER_FALLBACK_MINUTES = "60";
 const QUESTIONNAIRE_TIMER_DISABLED_CLOSE_MINUTES = 5_256_000; // 10 years
 const BLIND_SIGNING_KEY_RELOAD_STATUS = "Blind-signing key is still initialising in this tab. Please wait a moment, then try publishing again.";
 
+type CloseTimerUnit = "minutes" | "hours" | "days" | "weeks";
+
+const CLOSE_TIMER_UNITS: Array<{ value: CloseTimerUnit; label: string; minutes: number }> = [
+  { value: "minutes", label: "minutes", minutes: 1 },
+  { value: "hours", label: "hours", minutes: 60 },
+  { value: "days", label: "days", minutes: 60 * 24 },
+  { value: "weeks", label: "weeks", minutes: 60 * 24 * 7 },
+];
+
+function normaliseCloseTimerUnit(value: unknown): CloseTimerUnit {
+  return CLOSE_TIMER_UNITS.some((entry) => entry.value === value)
+    ? value as CloseTimerUnit
+    : "minutes";
+}
+
+function closeTimerUnitToMinutes(unit: CloseTimerUnit) {
+  return CLOSE_TIMER_UNITS.find((entry) => entry.value === unit)?.minutes ?? 1;
+}
+
 function readDeploymentModeFromUrl() {
   if (typeof window === "undefined") {
     return "legacy";
@@ -93,6 +112,7 @@ type QuestionnaireCoordinatorPanelProps = {
   view?: "build" | "responses" | "participants";
   onInviteParticipants?: () => void;
   questionnaireRelaysInput?: string;
+  onQuestionnaireRelaysInputChange?: (value: string) => void;
   onConfigureQuestionnaireRelays?: () => void;
   onConfigureWorker?: () => void;
   onStatusChange?: (status: {
@@ -207,6 +227,7 @@ type StoredQuestionnaireDraft = {
   description: string;
   closeTimerEnabled: boolean;
   closeAfterMinutes: string;
+  closeTimerUnit?: CloseTimerUnit;
   questionnaireRelays?: string;
   questions: QuestionnaireQuestionDraft[];
   delegationMode?: "browser_only" | "delegated_worker";
@@ -310,6 +331,7 @@ function readStoredQuestionnaireDraft(): StoredQuestionnaireDraft {
       closeAfterMinutes: typeof parsed.closeAfterMinutes === "string" && parsed.closeAfterMinutes.trim()
         ? parsed.closeAfterMinutes
         : QUESTIONNAIRE_TIMER_FALLBACK_MINUTES,
+      closeTimerUnit: normaliseCloseTimerUnit(parsed.closeTimerUnit),
       questionnaireRelays: typeof parsed.questionnaireRelays === "string" ? parsed.questionnaireRelays : "",
       questions: normaliseStoredQuestions(parsed.questions),
       delegationMode: parsed.delegationMode === "delegated_worker" ? "delegated_worker" : "browser_only",
@@ -829,7 +851,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [description, setDescription] = useState(storedDraft.description);
   const [closeTimerEnabled, setCloseTimerEnabled] = useState(storedDraft.closeTimerEnabled);
   const [closeAfterMinutes, setCloseAfterMinutes] = useState(storedDraft.closeAfterMinutes);
+  const [closeTimerUnit, setCloseTimerUnit] = useState<CloseTimerUnit>(normaliseCloseTimerUnit(storedDraft.closeTimerUnit));
   const questionnaireRelaysInput = props.questionnaireRelaysInput ?? storedDraft.questionnaireRelays ?? "";
+  const [useDefaultSetupRelays, setUseDefaultSetupRelays] = useState(() => normalizeQuestionnaireRelays(questionnaireRelaysInput).length === 0);
   const [questions, setQuestions] = useState<QuestionnaireQuestionDraft[]>(storedDraft.questions);
   const [delegationMode, setDelegationMode] = useState<"browser_only" | "delegated_worker">(storedDraft.delegationMode ?? "browser_only");
   const [delegatedWorkerNpub, setDelegatedWorkerNpub] = useState(storedDraft.delegatedWorkerNpub ?? "");
@@ -940,13 +964,24 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     () => questionnaireRelaysForMetadata(parsedQuestionnaireRelays) ?? [],
     [parsedQuestionnaireRelays],
   );
+  const previousQuestionnaireRelayMetadataCountRef = useRef(questionnaireRelayMetadata.length);
+  useEffect(() => {
+    const previousCount = previousQuestionnaireRelayMetadataCountRef.current;
+    if (questionnaireRelayMetadata.length > 0) {
+      setUseDefaultSetupRelays(false);
+    } else if (previousCount > 0) {
+      setUseDefaultSetupRelays(true);
+    }
+    previousQuestionnaireRelayMetadataCountRef.current = questionnaireRelayMetadata.length;
+  }, [questionnaireRelayMetadata.length]);
   const questionnaireRelayPublishHints = useMemo(
     () => (questionnaireRelayMetadata.length > 0 ? questionnaireRelayMetadata : undefined),
     [questionnaireRelayMetadata],
   );
-  const questionnaireRelayStatus = questionnaireRelayMetadata.length > 0
+  const setupRelaySettingsEnabled = !useDefaultSetupRelays;
+  const questionnaireRelayStatus = setupRelaySettingsEnabled && questionnaireRelayMetadata.length > 0
     ? `${questionnaireRelayMetadata.length} custom relay${questionnaireRelayMetadata.length === 1 ? "" : "s"} set.`
-    : "Using default relays.";
+    : "";
 
   useEffect(() => {
     const nextNsec = typeof props.coordinatorNsec === "string" ? props.coordinatorNsec.trim() : "";
@@ -1569,6 +1604,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       description,
       closeTimerEnabled,
       closeAfterMinutes,
+      closeTimerUnit,
       questions,
       delegationMode,
       delegatedWorkerNpub,
@@ -1585,6 +1621,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   }, [
     closeAfterMinutes,
     closeTimerEnabled,
+    closeTimerUnit,
     delegatedWorkerCapabilities,
     delegatedWorkerControlRelays,
     delegatedWorkerExpiryEnabled,
@@ -1619,17 +1656,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         return createFreeTextQuestion(questionId, prompt, required);
       }
       return createYesNoQuestion(questionId, prompt, required);
-    });
-  }
-
-  function addQuestionBelow(index: number) {
-    setQuestions((current) => {
-      const nextQuestion = createYesNoQuestion(deriveNextQuestionId(current));
-      return [
-        ...current.slice(0, index + 1),
-        nextQuestion,
-        ...current.slice(index + 1),
-      ];
     });
   }
 
@@ -1714,10 +1740,11 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     }
     let closeMinutes: number | undefined;
     if (closeTimerEnabled) {
-      closeMinutes = Number.parseInt(closeAfterMinutes, 10);
-      if (!Number.isFinite(closeMinutes) || closeMinutes <= 0) {
+      const closeAmount = Number.parseFloat(closeAfterMinutes);
+      if (!Number.isFinite(closeAmount) || closeAmount <= 0) {
         return null;
       }
+      closeMinutes = closeAmount * closeTimerUnitToMinutes(closeTimerUnit);
     }
     return buildDefinition({
       questionnaireId: questionnaireId.trim(),
@@ -1729,7 +1756,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       questions,
       blindSigningPublicKey: effectiveBlindSigningPublicKey ?? null,
     });
-  }, [closeAfterMinutes, closeTimerEnabled, coordinatorNpub, description, effectiveBlindSigningPublicKey, questionnaireId, questionnaireRelayMetadata, questions, title]);
+  }, [closeAfterMinutes, closeTimerEnabled, closeTimerUnit, coordinatorNpub, description, effectiveBlindSigningPublicKey, questionnaireId, questionnaireRelayMetadata, questions, title]);
 
   const selectedWorkerStatus = useMemo(() => {
     const workerNpub = normaliseWorkerNpub(delegatedWorkerNpub);
@@ -1987,6 +2014,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         : currentState === "open"
           ? "Open"
           : "Draft";
+  const setupHeadingStateLabel = buildStateLabel === "Open" ? "Active" : buildStateLabel;
   const checklistDescriptionAdded = description.trim().length > 0;
   const metadataStateLabel = activeStateEvent
     ? formatQuestionnaireStateEventLabel(activeStateEvent)
@@ -2849,13 +2877,12 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   if (view === "participants") {
     return (
       <div className='simple-voter-card simple-questionnaire-panel'>
-        <h3 className='simple-voter-question'>Publish vote</h3>
-        <p className='simple-voter-note'>Vote ID: {questionnaireId.trim() || "Not set"}</p>
+        <h3 className='simple-voter-question'>Publish questionnaire ID: {questionnaireId.trim() || "Not set"}</h3>
         <p className='simple-voter-note'>State: {buildStateLabel}</p>
         <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
           {!publishedDefinition ? (
             <button type='button' className='simple-voter-primary' disabled={!canPublishDraft} onClick={() => void publishDefinition()}>
-              Publish vote
+              Publish questionnaire
             </button>
           ) : currentState === "open" || currentState === "closed" ? (
             <button type='button' className='simple-voter-primary' disabled={closeAndPublishButtonDisabled} onClick={() => void closeAndPublishResults()}>
@@ -3081,46 +3108,47 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
 
   return (
     <>
-      <SimpleCollapsibleSection title={`Setup vote${title.trim() ? `: ${title.trim()}` : ""}`}>
+      <section className='simple-voter-section'>
+        <h2 className='simple-voter-section-title'>
+          {setupHeadingStateLabel}{title.trim() ? `: ${title.trim()}` : ""}
+        </h2>
         <div className='simple-voter-card simple-questionnaire-panel'>
-      <div className='simple-questionnaire-header'>
-        <div>
-          <p className='simple-voter-note'>State: {buildStateLabel}</p>
-        </div>
-      </div>
-
-      <div className='simple-questionnaire-id-panel'>
-        <div className='simple-questionnaire-field-heading'>
-          <label className='simple-voter-label' htmlFor='questionnaire-id'>Vote ID</label>
-        </div>
-        <div className='simple-questionnaire-id-row'>
+      <div className='simple-questionnaire-identity-grid'>
+        <div className='simple-questionnaire-form-field'>
+          <div className='simple-questionnaire-field-heading'>
+            <label className='simple-voter-label' htmlFor='questionnaire-title'>Name</label>
+          </div>
           <input
-            id='questionnaire-id'
-            className='simple-voter-input simple-voter-input-inline'
-            value={questionnaireId}
-            onChange={(event) => setQuestionnaireId(event.target.value)}
+            id='questionnaire-title'
+            className='simple-voter-input'
+            value={title}
+            placeholder='Vote name'
+            onChange={(event) => setTitle(event.target.value)}
           />
-          <button type='button' className='simple-voter-secondary simple-questionnaire-copy-id-button' onClick={() => void tryWriteClipboard(questionnaireId)}>
-            Copy ID
-          </button>
         </div>
-        <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
-          <button type='button' className='simple-voter-secondary' onClick={regenerateQuestionnaireId}>
-            Generate ID
-          </button>
+        <div className='simple-questionnaire-id-panel'>
+          <div className='simple-questionnaire-field-heading'>
+            <label className='simple-voter-label' htmlFor='questionnaire-id'>Vote ID</label>
+          </div>
+          <div className='simple-questionnaire-id-row'>
+            <input
+              id='questionnaire-id'
+              className='simple-voter-input simple-voter-input-inline'
+              value={questionnaireId}
+              onChange={(event) => setQuestionnaireId(event.target.value)}
+            />
+            <div className='simple-questionnaire-id-actions'>
+              <button type='button' className='simple-voter-secondary simple-questionnaire-copy-id-button' onClick={() => void tryWriteClipboard(questionnaireId)}>
+                Copy ID
+              </button>
+              <button type='button' className='simple-voter-secondary simple-questionnaire-generate-id-button' onClick={regenerateQuestionnaireId}>
+                Generate ID
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div className='simple-questionnaire-form-field'>
-        <label className='simple-voter-label' htmlFor='questionnaire-title'>Name</label>
-        <input
-          id='questionnaire-title'
-          className='simple-voter-input'
-          value={title}
-          placeholder='Vote name'
-          onChange={(event) => setTitle(event.target.value)}
-        />
-      </div>
       <div className='simple-questionnaire-form-field'>
         <label className='simple-voter-label' htmlFor='questionnaire-description'>Description</label>
         <textarea
@@ -3133,45 +3161,96 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         />
       </div>
 
-      <div className='simple-questionnaire-close-timer-row'>
-        <label className='simple-questionnaire-close-timer-toggle' htmlFor='questionnaire-close-timer-enabled'>
-          <input
-            id='questionnaire-close-timer-enabled'
-            type='checkbox'
-            checked={closeTimerEnabled}
-            onChange={(event) => setCloseTimerEnabled(event.target.checked)}
-          />
-          <span>Enable close timer</span>
-        </label>
-        {closeTimerEnabled ? (
-          <div className='simple-questionnaire-close-timer-minutes'>
+      <section className='simple-questionnaire-setup-subsection'>
+        <div className='simple-questionnaire-close-timer-row'>
+          <label className={`simple-questionnaire-close-timer-toggle${closeTimerEnabled ? " is-on" : ""}`} htmlFor='questionnaire-close-timer-enabled'>
+            <span>Enable close timer</span>
+            <input
+              id='questionnaire-close-timer-enabled'
+              type='checkbox'
+              role='switch'
+              aria-checked={closeTimerEnabled}
+              checked={closeTimerEnabled}
+              onChange={(event) => setCloseTimerEnabled(event.target.checked)}
+            />
+            <span className='simple-questionnaire-switch' aria-hidden='true'>
+              <span className='simple-questionnaire-switch-knob' />
+            </span>
+          </label>
+          <div className={`simple-questionnaire-close-timer-minutes${closeTimerEnabled ? "" : " is-disabled"}`}>
             <label className='simple-voter-label simple-voter-label-tight' htmlFor='questionnaire-close-minutes'>
-              Close after (minutes)
+              Close after
             </label>
             <input
               id='questionnaire-close-minutes'
-              className='simple-voter-input simple-voter-input-inline'
+              className='simple-voter-input simple-voter-input-inline simple-questionnaire-close-timer-input'
               value={closeAfterMinutes}
+              disabled={!closeTimerEnabled}
+              inputMode='numeric'
               onChange={(event) => setCloseAfterMinutes(event.target.value)}
             />
+            <fieldset className='simple-questionnaire-close-timer-units' disabled={!closeTimerEnabled}>
+              <legend>Close timer unit</legend>
+              {CLOSE_TIMER_UNITS.map((entry) => (
+                <label
+                  key={entry.value}
+                  className={`simple-questionnaire-close-timer-unit-option${closeTimerUnit === entry.value ? " is-selected" : ""}`}
+                >
+                  <input
+                    type='radio'
+                    name='questionnaire-close-timer-unit'
+                    value={entry.value}
+                    checked={closeTimerUnit === entry.value}
+                    onChange={() => setCloseTimerUnit(entry.value)}
+                  />
+                  <span>{entry.label}</span>
+                </label>
+              ))}
+            </fieldset>
+          </div>
+        </div>
+      </section>
+
+      <section className='simple-questionnaire-setup-subsection'>
+        <div className='simple-questionnaire-relay-row'>
+          <label className={`simple-relay-default-toggle${setupRelaySettingsEnabled ? " is-on" : ""}`}>
+            <span>Use custom relays</span>
+            <input
+              type='checkbox'
+              role='switch'
+              aria-checked={setupRelaySettingsEnabled}
+              checked={setupRelaySettingsEnabled}
+              onChange={(event) => {
+                const useCustomRelays = event.target.checked;
+                setUseDefaultSetupRelays(!useCustomRelays);
+                if (!useCustomRelays) {
+                  props.onQuestionnaireRelaysInputChange?.("");
+                }
+              }}
+            />
+            <span className='simple-questionnaire-switch' aria-hidden='true'>
+              <span className='simple-questionnaire-switch-knob' />
+            </span>
+          </label>
+          {props.onConfigureQuestionnaireRelays ? (
+            <button
+              type='button'
+              className='simple-voter-secondary simple-questionnaire-relay-settings-button'
+              onClick={props.onConfigureQuestionnaireRelays}
+              disabled={!setupRelaySettingsEnabled}
+            >
+              Open relay settings
+            </button>
+          ) : null}
+        </div>
+        {questionnaireRelayStatus ? (
+          <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
+            <p className='simple-voter-note'>{questionnaireRelayStatus}</p>
           </div>
         ) : null}
-      </div>
+      </section>
 
-      <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
-        <p className='simple-voter-note'>{questionnaireRelayStatus}</p>
-        {props.onConfigureQuestionnaireRelays ? (
-          <button
-            type='button'
-            className='simple-voter-secondary'
-            onClick={props.onConfigureQuestionnaireRelays}
-          >
-            Open relay settings
-          </button>
-        ) : null}
-      </div>
-
-      <h4 className='simple-voter-section-title'>Questions</h4>
+      <h4 className='simple-voter-section-title simple-questionnaire-questions-title'>Questions</h4>
       <div className='simple-questionnaire-question-list'>
         {questions.map((question, index) => {
           const canMoveUp = index > 0;
@@ -3181,6 +3260,22 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             <div key={`${question.questionId}-${index}`} className='simple-questionnaire-question-card'>
               <div className='simple-questionnaire-question-head'>
                 <p className='simple-voter-question'>Question {index + 1}</p>
+                <label className={`simple-questionnaire-required-toggle${question.required ? " is-on" : ""}`}>
+                  <span>Required</span>
+                  <input
+                    type='checkbox'
+                    role='switch'
+                    aria-checked={question.required}
+                    checked={question.required}
+                    onChange={(event) => {
+                      const checked = event.target.checked;
+                      updateQuestion(index, (entry) => ({ ...entry, required: checked }));
+                    }}
+                  />
+                  <span className='simple-questionnaire-switch' aria-hidden='true'>
+                    <span className='simple-questionnaire-switch-knob' />
+                  </span>
+                </label>
               </div>
               <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
                 <button
@@ -3218,18 +3313,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                   updateQuestion(index, (entry) => ({ ...entry, prompt: nextValue }));
                 }}
               />
-              <label className='simple-voter-note'>
-                <input
-                  type='checkbox'
-                  checked={question.required}
-                  onChange={(event) => {
-                    const checked = event.target.checked;
-                    updateQuestion(index, (entry) => ({ ...entry, required: checked }));
-                  }}
-                />
-                {" "}
-                Required
-              </label>
               {question.type === "multiple_choice" ? (
                 <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
                   <p className='simple-voter-note'>Options</p>
@@ -3308,37 +3391,32 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                   />
                 </div>
               ) : null}
-              <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
-                <button type='button' className='simple-voter-secondary' onClick={() => duplicateQuestion(index)}>Duplicate</button>
+              <div className='simple-questionnaire-question-actions'>
+                <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
+                  <button type='button' className='simple-voter-secondary' onClick={() => duplicateQuestion(index)}>Duplicate</button>
+                  <button
+                    type='button'
+                    className='simple-voter-secondary'
+                    onClick={() => moveQuestion(index, -1)}
+                    disabled={!canMoveUp}
+                  >
+                    Move up
+                  </button>
+                  <button
+                    type='button'
+                    className='simple-voter-secondary'
+                    onClick={() => moveQuestion(index, 1)}
+                    disabled={!canMoveDown}
+                  >
+                    Move down
+                  </button>
+                </div>
                 <button
                   type='button'
-                  className='simple-voter-secondary'
-                  onClick={() => moveQuestion(index, -1)}
-                  disabled={!canMoveUp}
-                >
-                  Move up
-                </button>
-                <button
-                  type='button'
-                  className='simple-voter-secondary'
-                  onClick={() => moveQuestion(index, 1)}
-                  disabled={!canMoveDown}
-                >
-                  Move down
-                </button>
-                <button
-                  type='button'
-                  className='simple-voter-secondary'
-                  onClick={() => addQuestionBelow(index)}
-                >
-                  +
-                </button>
-                <button
-                  type='button'
-                  className='simple-voter-secondary'
+                  className='simple-voter-secondary simple-questionnaire-remove-button'
                   onClick={() => deleteQuestion(index)}
                 >
-                  -
+                  Remove
                 </button>
               </div>
             </div>
@@ -3351,13 +3429,13 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         <li className={checklistDescriptionAdded ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>{checklistDescriptionAdded ? "✓" : "•"}</span> Description added</li>
         <li className={hasQuestion ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>{hasQuestion ? "✓" : "•"}</span> At least one question added</li>
         <li className={questionsValid ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>{questionsValid ? "✓" : "•"}</span> All question prompts and options complete</li>
-        <li className={publishedDefinition ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>{publishedDefinition ? "✓" : "•"}</span> {publishedDefinition ? "Vote published" : "Vote not yet published"}</li>
+        <li className={publishedDefinition ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>{publishedDefinition ? "✓" : "•"}</span> {publishedDefinition ? "Questionnaire published" : "Questionnaire not yet published"}</li>
       </ul>
 
       <div className='simple-voter-action-row simple-voter-action-row-inline'>
         {!publishedDefinition ? (
           <button type='button' className='simple-voter-primary' disabled={!canPublishDraft} onClick={() => void publishDefinition()}>
-            Publish vote
+            Publish questionnaire
           </button>
         ) : currentState === "open" || currentState === "closed" ? (
           <button type='button' className='simple-voter-primary' disabled={closeAndPublishButtonDisabled} onClick={() => void closeAndPublishResults()}>
@@ -3405,9 +3483,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       ) : null}
       {statusNotice}
         </div>
-      </SimpleCollapsibleSection>
+      </section>
       <div id='delegated-worker-section'>
-        <SimpleCollapsibleSection title='Audit proxy' defaultCollapsed expandSignal={auditProxyExpandSignal}>
+        <SimpleCollapsibleSection title='Audit proxy' titleToggleLabel='Audit proxy' defaultCollapsed expandSignal={auditProxyExpandSignal}>
           <div className='simple-questionnaire-worker-section'>
             <label className='simple-voter-label' htmlFor='delegation-mode'>Mode</label>
             <select

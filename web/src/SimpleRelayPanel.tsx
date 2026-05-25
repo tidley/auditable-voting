@@ -205,13 +205,21 @@ export default function SimpleRelayPanel({
     () => normalizeQuestionnaireRelays(questionnaireRelaysInput),
     [questionnaireRelaysInput],
   );
-  const displayedQuestionnaireRelays = configuredQuestionnaireRelays.length > 0
-    ? configuredQuestionnaireRelays
-    : DEFAULT_QUESTIONNAIRE_RELAYS;
   const questionnaireRelayMetadata = questionnaireRelaysForMetadata(configuredQuestionnaireRelays) ?? [];
-  const questionnaireRelayStatus = questionnaireRelayMetadata.length > 0
+  const [useDefaultQuestionnaireRelays, setUseDefaultQuestionnaireRelays] = useState(configuredQuestionnaireRelays.length === 0);
+  useEffect(() => {
+    if (configuredQuestionnaireRelays.length > 0) {
+      setUseDefaultQuestionnaireRelays(false);
+    }
+  }, [configuredQuestionnaireRelays.length]);
+  const displayedQuestionnaireRelays = useDefaultQuestionnaireRelays
+    ? DEFAULT_QUESTIONNAIRE_RELAYS
+    : configuredQuestionnaireRelays;
+  const questionnaireRelayStatus = !useDefaultQuestionnaireRelays && questionnaireRelayMetadata.length > 0
     ? `${questionnaireRelayMetadata.length} custom relay${questionnaireRelayMetadata.length === 1 ? "" : "s"} will be published in new questionnaire metadata.`
-    : "New questionnaires will use the default relay metadata.";
+    : !useDefaultQuestionnaireRelays
+      ? "Add at least one relay, or turn Use default back on."
+      : "";
 
   const setQuestionnaireRelays = (relays: string[]) => {
     onQuestionnaireRelaysInputChange?.(relays.join("\n"));
@@ -222,67 +230,84 @@ export default function SimpleRelayPanel({
     if (!nextRelay) {
       return;
     }
+    setUseDefaultQuestionnaireRelays(false);
     setQuestionnaireRelays([...displayedQuestionnaireRelays, nextRelay]);
     setQuestionnaireRelayDraft("");
   };
 
   const removeQuestionnaireRelay = (relay: string) => {
-    setQuestionnaireRelays(displayedQuestionnaireRelays.filter((entry) => entry !== relay));
+    const nextRelays = displayedQuestionnaireRelays.filter((entry) => entry !== relay);
+    if (nextRelays.length === 0) {
+      setUseDefaultQuestionnaireRelays(true);
+    }
+    setQuestionnaireRelays(nextRelays);
   };
 
   return (
     <SimpleCollapsibleSection
       title='Relays'
+      titleToggleLabel='Relays'
       defaultCollapsed
       renderWhenExpanded
       expandSignal={expandSignal}
     >
-      <p className='simple-voter-note'>
-        Traffic is routed via the selected relay sets below. Optional relay hints (
-        <a href='https://nostr-nips.com/nip-65'>NIP-65</a>) are used only when
-        enabled in Settings.
-      </p>
       {editableQuestionnaireRelays ? (
         <div className='simple-relay-group'>
-          <div className='simple-questionnaire-field-heading'>
-            <h3 className='simple-relay-heading'>Questionnaire metadata relays</h3>
-            <button
-              type='button'
-              className='simple-voter-secondary'
-              onClick={() => onQuestionnaireRelaysInputChange?.("")}
-            >
-              Use defaults
-            </button>
+          <div className='simple-relay-settings-head'>
+            <h3 className='simple-relay-heading'>Relays</h3>
+            <label className={`simple-relay-default-toggle${useDefaultQuestionnaireRelays ? " is-on" : ""}`}>
+              <span>Use default</span>
+              <input
+                type='checkbox'
+                role='switch'
+                aria-checked={useDefaultQuestionnaireRelays}
+                checked={useDefaultQuestionnaireRelays}
+                onChange={(event) => {
+                  const useDefaults = event.target.checked;
+                  setUseDefaultQuestionnaireRelays(useDefaults);
+                  if (useDefaults) {
+                    onQuestionnaireRelaysInputChange?.("");
+                    setQuestionnaireRelayDraft("");
+                  }
+                }}
+              />
+              <span className='simple-questionnaire-switch' aria-hidden='true'>
+                <span className='simple-questionnaire-switch-knob' />
+              </span>
+            </label>
           </div>
-          <p className='simple-voter-note'>{questionnaireRelayStatus}</p>
+          {questionnaireRelayStatus ? <p className='simple-voter-note'>{questionnaireRelayStatus}</p> : null}
           <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
             <input
               className='simple-voter-input simple-voter-input-inline'
               value={questionnaireRelayDraft}
               placeholder='wss://relay.example'
+              disabled={useDefaultQuestionnaireRelays}
               onChange={(event) => setQuestionnaireRelayDraft(event.target.value)}
             />
             <button
               type='button'
               className='simple-voter-secondary'
               onClick={addQuestionnaireRelay}
-              disabled={normalizeQuestionnaireRelays(questionnaireRelayDraft).length === 0}
+              disabled={useDefaultQuestionnaireRelays || normalizeQuestionnaireRelays(questionnaireRelayDraft).length === 0}
             >
               Add relay
             </button>
           </div>
           <RelayProbeList
-            title='Current questionnaire relays'
+            title={useDefaultQuestionnaireRelays ? 'Default questionnaire relays' : 'Custom questionnaire relays'}
             relays={displayedQuestionnaireRelays}
-            renderRelayAction={(relay) => (
-              <button
-                type='button'
-                className='simple-voter-secondary simple-relay-remove-button'
-                onClick={() => removeQuestionnaireRelay(relay)}
-              >
-                Remove
-              </button>
-            )}
+            renderRelayAction={useDefaultQuestionnaireRelays
+              ? undefined
+              : (relay) => (
+                <button
+                  type='button'
+                  className='simple-voter-secondary simple-relay-remove-button'
+                  onClick={() => removeQuestionnaireRelay(relay)}
+                >
+                  Remove
+                </button>
+              )}
           />
         </div>
       ) : null}

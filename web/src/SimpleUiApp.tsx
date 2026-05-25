@@ -9,7 +9,6 @@ import SimpleRelayPanel from "./SimpleRelayPanel";
 import SimpleUnlockGate from "./SimpleUnlockGate";
 import TokenFingerprint from "./TokenFingerprint";
 import { extractNpubFromScan } from "./npubScan";
-import { tryWriteClipboard } from "./clipboard";
 import {
   primeNip65RelayHints,
   setNip65EnabledForSession,
@@ -93,6 +92,7 @@ type SimpleVoterKeypair = {
   npub: string;
 };
 const GATEWAY_SIGNER_NPUB_STORAGE_KEY = "app:auditable-voting:gateway:signer_npub";
+const SIMPLE_IDENTITY_UPDATED_EVENT = "auditable-voting:identity-updated";
 
 type PendingBlindRequest = {
   coordinatorNpub: string;
@@ -1299,10 +1299,20 @@ export default function SimpleUiApp() {
     const npub = activeVoterNpub;
     if (!npub) {
       setVoterId("pending");
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent(SIMPLE_IDENTITY_UPDATED_EVENT, {
+          detail: { role: "voter", npub: "" },
+        }));
+      }
       return;
     }
 
     setVoterId(deriveActorDisplayId(npub));
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent(SIMPLE_IDENTITY_UPDATED_EVENT, {
+        detail: { role: "voter", npub },
+      }));
+    }
   }, [activeVoterNpub]);
 
   useEffect(() => {
@@ -2823,28 +2833,6 @@ export default function SimpleUiApp() {
   return (
     <main className='simple-voter-shell'>
       <section className='simple-voter-page'>
-        <div className='simple-voter-header-row'>
-          <h1 className='simple-voter-title'>Current identity: {voterId}</h1>
-          <div className='simple-coordinator-header-actions'>
-            {activeVoterNpub ? (
-              <TokenFingerprint
-                tokenId={activeVoterNpub}
-                compact
-                showQr
-                hideMetadata
-                qrValue={activeVoterNpub}
-              />
-            ) : null}
-            <button
-              type='button'
-              className='simple-voter-secondary'
-              onClick={() => void tryWriteClipboard(activeVoterNpub)}
-              disabled={!activeVoterNpub}
-            >
-              Copy identity
-            </button>
-          </div>
-        </div>
         {signerNpub ? <p className='simple-voter-note simple-signed-in-note'>Signed in as {signerNpub}</p> : null}
         {signerStatus && signerStatus !== `Signed in as ${signerNpub}.` ? <p className='simple-voter-note'>{signerStatus}</p> : null}
         <div
@@ -2922,7 +2910,7 @@ export default function SimpleUiApp() {
                     setCoordinatorScannerActive(true);
                   }}
                 >
-                  Scan QR of Coordinator
+                  Scan QR
                 </button>
                 <button
                   type='button'

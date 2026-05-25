@@ -7,11 +7,12 @@ import SimpleUiApp from "./SimpleUiApp";
 import { SIMPLE_APP_VERSION } from "./simpleAppVersion";
 import { createAmberConnectBundle, createSignerService, SignerServiceError } from "./services/signerService";
 import { deriveNpubFromNsec } from "./nostrIdentity";
-import { saveSimpleActorState } from "./simpleLocalState";
+import { loadSimpleActorState, saveSimpleActorState, type SimpleActorRole } from "./simpleLocalState";
 import { tryWriteClipboard } from "./clipboard";
 import SimpleQrPanel from "./SimpleQrPanel";
 import { PRESS_FEEDBACK_SETTLED_EVENT } from "./pressFeedback";
 import TokenFingerprint from "./TokenFingerprint";
+import { deriveActorDisplayId } from "./actorDisplay";
 
 type SimpleRole = "voter" | "coordinator" | "auditor";
 const GATEWAY_SIGNER_NPUB_STORAGE_KEY = "app:auditable-voting:gateway:signer_npub";
@@ -21,6 +22,7 @@ const ROLE_OPTIONS: Array<{ role: SimpleRole; label: string }> = [
   { role: "coordinator", label: "Coordinator" },
   { role: "voter", label: "Voter" },
 ];
+const IDENTITY_UPDATED_EVENT = "auditable-voting:identity-updated";
 
 type SimpleAppShellProps = {
   initialRole?: SimpleRole;
@@ -91,6 +93,10 @@ function roleLabel(role: SimpleRole) {
   return ROLE_OPTIONS.find((entry) => entry.role === role)?.label ?? "Observer";
 }
 
+function isSimpleActorRole(role: SimpleRole): role is SimpleActorRole {
+  return role === "voter" || role === "coordinator";
+}
+
 function isMobileBrowser() {
   if (typeof navigator === "undefined") {
     return false;
@@ -100,7 +106,8 @@ function isMobileBrowser() {
 
 export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShellProps) {
   const [role, setRole] = useState<SimpleRole>(() => readRoleFromUrl() ?? initialRole);
-  const [roleSwitchMinimized, setRoleSwitchMinimized] = useState(true);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [accountIdentityNpub, setAccountIdentityNpub] = useState("");
   const [showGateway, setShowGateway] = useState(() => !hasRoleInUrl() || shouldForceGatewayFromUrl());
   const [gatewayRole, setGatewayRole] = useState<SimpleRole>(() => readRoleFromUrl() ?? initialRole);
   const [gatewayNsec, setGatewayNsec] = useState("");
@@ -114,9 +121,57 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
   const roleSwitchWrapRef = useRef<HTMLDivElement | null>(null);
   const preferredSignerLabel = useMemo(() => (isMobileBrowser() ? "Amber" : "NOS2X-FOX"), []);
   const preferredSignerIsAmber = preferredSignerLabel === "Amber";
+  const accountIdentityLabel = accountIdentityNpub ? deriveActorDisplayId(accountIdentityNpub) : "pending";
 
   useEffect(() => {
-    if (roleSwitchMinimized || typeof document === "undefined") {
+    if (role !== "voter" && role !== "coordinator") {
+      setAccountIdentityNpub("");
+      return;
+    }
+
+    let cancelled = false;
+    const persistedSignerNpub = typeof window === "undefined"
+      ? ""
+      : window.localStorage.getItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY)?.trim() ?? "";
+    setAccountIdentityNpub(persistedSignerNpub);
+
+    loadSimpleActorState(role)
+      .then((state) => {
+        if (cancelled) {
+          return;
+        }
+        setAccountIdentityNpub(state?.keypair?.npub?.trim() || persistedSignerNpub);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAccountIdentityNpub(persistedSignerNpub);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [role]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const handleIdentityUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ role?: SimpleRole; npub?: string }>).detail;
+      if (!detail || detail.role !== role) {
+        return;
+      }
+      setAccountIdentityNpub(detail.npub?.trim() ?? "");
+    };
+
+    window.addEventListener(IDENTITY_UPDATED_EVENT, handleIdentityUpdated);
+    return () => window.removeEventListener(IDENTITY_UPDATED_EVENT, handleIdentityUpdated);
+  }, [role]);
+
+  useEffect(() => {
+    if (!accountMenuOpen || typeof document === "undefined") {
       return;
     }
 
@@ -126,12 +181,12 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
       if (!wrapper || !(target instanceof Node) || wrapper.contains(target)) {
         return;
       }
-      setRoleSwitchMinimized(true);
+      setAccountMenuOpen(false);
     };
 
     document.addEventListener("pointerdown", handlePointerDown, true);
     return () => document.removeEventListener("pointerdown", handlePointerDown, true);
-  }, [roleSwitchMinimized]);
+  }, [accountMenuOpen]);
 
   useEffect(() => {
     if (typeof document === "undefined") {
@@ -269,9 +324,33 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
     };
   }, []);
 
-  const handleRoleSelect = (nextRole: SimpleRole) => {
+  async function preserveLocalIdentityForRoleSwitch(nextRole: SimpleRole) {
+    if (role === nextRole || !isSimpleActorRole(role) || !isSimpleActorRole(nextRole)) {
+      return;
+    }
+
+    try {
+      const currentState = await loadSimpleActorState(role);
+      if (!currentState?.keypair?.nsec?.trim() || !currentState.keypair.npub.trim()) {
+        return;
+      }
+      const targetState = await loadSimpleActorState(nextRole);
+      await saveSimpleActorState({
+        role: nextRole,
+        keypair: currentState.keypair,
+        updatedAt: new Date().toISOString(),
+        cache: targetState?.cache,
+      });
+      setAccountIdentityNpub(currentState.keypair.npub);
+    } catch {
+      // Locked or unavailable local state should not block role switching.
+    }
+  }
+
+  const handleRoleSelect = async (nextRole: SimpleRole) => {
+    setAccountMenuOpen(false);
+    await preserveLocalIdentityForRoleSwitch(nextRole);
     setRole(nextRole);
-    setRoleSwitchMinimized(true);
   };
 
   useEffect(() => {
@@ -281,8 +360,10 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
     writeRoleToUrl(role);
   }, [role, showGateway]);
 
-  const roleTitle = useMemo(() => roleLabel(role), [role]);
   const gatewayRoleTitle = useMemo(() => roleLabel(gatewayRole), [gatewayRole]);
+  const currentRoleSummary = useMemo(() => (
+    isSimpleActorRole(role) ? `${roleLabel(role)} ${accountIdentityLabel}` : roleLabel(role)
+  ), [accountIdentityLabel, role]);
   const gatewayContinueLabel = useMemo(() => {
     const hasSignerIdentity = gatewaySignerNpub.trim().length > 0;
     return `${hasSignerIdentity ? "Login" : "Continue"} as ${gatewayRoleTitle}`;
@@ -300,7 +381,6 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
           window.localStorage.setItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY, npub);
         }
         setRole("voter");
-        setRoleSwitchMinimized(true);
         setShowGateway(false);
       }
       return npub;
@@ -559,66 +639,132 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
     <div className='simple-app-shell'>
       <div className='simple-role-switch-wrap' ref={roleSwitchWrapRef}>
         <div className='simple-role-switch-topbar'>
-          <button
-            type='button'
-            className='simple-role-switch-toggle'
-            onClick={() => setRoleSwitchMinimized((current) => !current)}
-            aria-expanded={!roleSwitchMinimized}
-            aria-controls='simple-role-switch-panel'
-            data-press-feedback-disabled='true'
-          >
-            {roleTitle}
-          </button>
-          {role === "voter" || role === "coordinator" ? (
-            <div className='simple-role-switch-actions'>
-              <button
-                type='button'
-                className='simple-voter-secondary'
-                onClick={() => {
-                  if (typeof window !== "undefined") {
-                    window.dispatchEvent(new Event(`auditable-voting:${role}-signout`));
-                    returnToLandingPage();
-                  }
-                }}
+          <div className='simple-account-menu-wrap'>
+            <button
+              type='button'
+              className='simple-role-switch-toggle simple-account-menu-toggle'
+              onClick={() => {
+                setAccountMenuOpen((current) => !current);
+              }}
+              aria-haspopup='menu'
+              aria-expanded={accountMenuOpen}
+              aria-controls='simple-app-menu'
+              data-press-feedback-disabled='true'
+            >
+              Menu
+            </button>
+            {accountMenuOpen ? (
+              <div
+                id='simple-app-menu'
+                className='simple-account-menu simple-main-menu'
+                role='menu'
+                aria-label='App menu'
               >
-                Sign out
-              </button>
-              <button
-                type='button'
-                className='simple-voter-secondary simple-voter-outline-action'
-                onClick={() => {
-                  if (typeof window !== "undefined") {
-                    window.dispatchEvent(new Event(`auditable-voting:${role}-new`));
-                  }
-                }}
-              >
-                New identity
-              </button>
-            </div>
-          ) : null}
-        </div>
-        {!roleSwitchMinimized ? (
-          <div
-            id='simple-role-switch-panel'
-            className='simple-role-switch simple-role-switch-menu'
-            role='tablist'
-            aria-label='Simple role switch'
-          >
-            {ROLE_OPTIONS.map((option) => (
-              <button
-                key={option.role}
-                type='button'
-                role='tab'
-                aria-selected={role === option.role}
-                className={`simple-role-switch-button${role === option.role ? ' is-active' : ''}`}
-                data-press-feedback-disabled='true'
-                onClick={() => handleRoleSelect(option.role)}
-              >
-                {option.label}
-              </button>
-            ))}
+                <div className='simple-account-menu-section' role='none'>
+                  <p className='simple-account-menu-kicker'>Role</p>
+                  <div
+                    className='simple-role-switch simple-role-switch-menu-inline'
+                    role='tablist'
+                    aria-label='Simple role switch'
+                  >
+                    {ROLE_OPTIONS.map((option) => (
+                      <button
+                        key={option.role}
+                        type='button'
+                        role='tab'
+                        aria-selected={role === option.role}
+                        className={`simple-role-switch-button${role === option.role ? ' is-active' : ''}`}
+                        data-press-feedback-disabled='true'
+                        onClick={() => {
+                          void handleRoleSelect(option.role);
+                        }}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {isSimpleActorRole(role) ? (
+                  <>
+                    <div className='simple-account-menu-identity' role='none'>
+                      <p className='simple-account-menu-kicker'>Identity</p>
+                      <p className='simple-account-menu-title'>{accountIdentityLabel}</p>
+                      {accountIdentityNpub ? (
+                        <div className='simple-account-identity-visuals'>
+                          <TokenFingerprint
+                            tokenId={accountIdentityNpub}
+                            compact
+                            showQr
+                            hideMetadata
+                            qrValue={accountIdentityNpub}
+                          />
+                          <div className='simple-account-identity-visual-labels' aria-hidden='true'>
+                            <span>Colour ID</span>
+                            <span>QR code</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className='simple-voter-note simple-account-menu-note'>Identity is loading.</p>
+                      )}
+                    </div>
+                    <button
+                      type='button'
+                      className='simple-account-menu-button'
+                      role='menuitem'
+                      disabled={!accountIdentityNpub}
+                      onClick={() => {
+                        setAccountMenuOpen(false);
+                        void tryWriteClipboard(accountIdentityNpub);
+                      }}
+                    >
+                      Copy identity
+                    </button>
+                    <button
+                      type='button'
+                      className='simple-account-menu-button'
+                      role='menuitem'
+                      onClick={() => {
+                        if (
+                          typeof window !== "undefined"
+                          && !window.confirm("Create a new identity for this role? Your current identity stays in this browser only if you have backed it up.")
+                        ) {
+                          return;
+                        }
+                        setAccountMenuOpen(false);
+                        if (typeof window !== "undefined") {
+                          window.dispatchEvent(new Event(`auditable-voting:${role}-new`));
+                        }
+                      }}
+                    >
+                      New identity
+                    </button>
+                    <button
+                      type='button'
+                      className='simple-account-menu-button'
+                      role='menuitem'
+                      onClick={() => {
+                        if (
+                          typeof window !== "undefined"
+                          && !window.confirm("Sign out and return to the landing page?")
+                        ) {
+                          return;
+                        }
+                        setAccountMenuOpen(false);
+                        if (typeof window !== "undefined") {
+                          window.dispatchEvent(new Event(`auditable-voting:${role}-signout`));
+                          returnToLandingPage();
+                        }
+                      }}
+                    >
+                      Sign out
+                    </button>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
           </div>
-        ) : null}
+          <p className='simple-current-role-summary'>{currentRoleSummary}</p>
+        </div>
       </div>
 
       {role === 'voter' ? (

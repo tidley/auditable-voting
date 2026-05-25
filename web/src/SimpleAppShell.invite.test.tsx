@@ -68,9 +68,10 @@ describe("SimpleAppShell invite-link login", () => {
     await user.click(screen.getByRole("button", { name: "Continue as Coordinator" }));
     expect(screen.queryByRole("button", { name: "Login" })).toBeNull();
 
-    const activeRoleToggle = screen.getByRole("button", { name: "Coordinator" });
-    await user.click(activeRoleToggle);
-    expect(activeRoleToggle.getAttribute("aria-disabled")).toBeNull();
+    const menuButton = screen.getByRole("button", { name: "Menu" });
+    await user.click(menuButton);
+    expect(menuButton.getAttribute("aria-disabled")).toBeNull();
+    expect(screen.getByRole("tab", { name: "Coordinator" }).getAttribute("aria-disabled")).toBeNull();
   });
 
   it("closes the role switcher when clicking outside of it", async () => {
@@ -80,7 +81,7 @@ describe("SimpleAppShell invite-link login", () => {
     render(<SimpleAppShell />);
 
     await user.click(screen.getByRole("button", { name: "Continue as Observer" }));
-    await user.click(screen.getByRole("button", { name: "Observer" }));
+    await user.click(screen.getByRole("button", { name: "Menu" }));
     expect(screen.getByRole("tablist", { name: "Simple role switch" })).toBeTruthy();
 
     await user.click(screen.getByText("Observer app"));

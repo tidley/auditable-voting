@@ -637,6 +637,13 @@ export default function SimpleAuditorApp() {
     () => selectedResponseDetails.filter((entry) => !entry.accepted).length,
     [selectedResponseDetails],
   );
+  const hasInvalidResponses = liveRejectedCount > 0;
+
+  useEffect(() => {
+    if (!hasInvalidResponses && showInvalidVotes) {
+      setShowInvalidVotes(false);
+    }
+  }, [hasInvalidResponses, showInvalidVotes]);
 
   const unpublishedAcceptedCount = useMemo(
     () => selectedResponseDetails.filter((entry) => entry.accepted && !entry.includedInLatestPublish).length,
@@ -905,13 +912,16 @@ export default function SimpleAuditorApp() {
                           <div className='simple-auditor-donut-layout'>
                             {(() => {
                               const total = summary.yesCount + summary.noCount;
+                              const hasResults = total > 0;
                               const yesPercent = total > 0 ? (summary.yesCount / total) * 100 : 0;
                               return (
                                 <>
                                   <div
-                                    className='simple-auditor-donut'
+                                    className={`simple-auditor-donut${hasResults ? "" : " is-empty"}`}
                                     style={{
-                                      background: `conic-gradient(var(--simple-green) 0 ${yesPercent}%, var(--simple-coral) ${yesPercent}% 100%)`,
+                                      background: hasResults
+                                        ? `conic-gradient(from 180deg, var(--simple-green) 0 ${yesPercent}%, var(--simple-coral) ${yesPercent}% 100%)`
+                                        : undefined,
                                     }}
                                     aria-hidden='true'
                                   >
@@ -977,9 +987,7 @@ export default function SimpleAuditorApp() {
                       );
                     })}
                   </div>
-                  {!selectedResultSummary ? (
-                    <p className='simple-voter-note'>No published result summary yet; showing live verified submissions found on public relays.</p>
-                  ) : !hasPublishedQuestionSummaries && liveQuestionSummaries.length > 0 ? (
+                  {selectedResultSummary && !hasPublishedQuestionSummaries && liveQuestionSummaries.length > 0 ? (
                     <p className='simple-voter-note'>Published result summary contains counts only; showing live per-question aggregates from verified submissions.</p>
                   ) : null}
                 </>
@@ -999,7 +1007,6 @@ export default function SimpleAuditorApp() {
         <section className='simple-voter-section simple-auditor-submissions-section'>
           <div className='simple-auditor-submissions-header'>
             <h2 className='simple-voter-section-title'>Submitted Votes</h2>
-            <span className='simple-auditor-pill'>{filteredResponseDetails.length} shown</span>
           </div>
           {selectedQuestionnaire ? (
             selectedResponseDetails.length > 0 ? (
@@ -1018,15 +1025,17 @@ export default function SimpleAuditorApp() {
                       onChange={(event) => setVoterSearchQuery(event.target.value)}
                       placeholder='Search by voter npub, response ID, or token...'
                     />
-                    <label className='simple-voter-note simple-auditor-invalid-toggle'>
-                      <input
-                        type='checkbox'
-                        checked={showInvalidVotes}
-                        onChange={(event) => setShowInvalidVotes(event.target.checked)}
-                      />
-                      {" "}
-                      Show invalid votes only
-                    </label>
+                    {hasInvalidResponses ? (
+                      <label className='simple-voter-note simple-auditor-invalid-toggle'>
+                        <input
+                          type='checkbox'
+                          checked={showInvalidVotes}
+                          onChange={(event) => setShowInvalidVotes(event.target.checked)}
+                        />
+                        {" "}
+                        Show {liveRejectedCount} invalid {liveRejectedCount === 1 ? "vote" : "votes"} only
+                      </label>
+                    ) : null}
                   </div>
                 </div>
                 <ul className='simple-voter-list simple-auditor-result-list'>
@@ -1035,15 +1044,16 @@ export default function SimpleAuditorApp() {
                       <div className='simple-auditor-result-row'>
                         <div className='simple-auditor-result-marker'>
                           <TokenFingerprint tokenId={entry.response.authorPubkey} compact large hideMetadata />
-                          <p className={`simple-auditor-status-chip ${entry.accepted ? "simple-auditor-status-chip-valid" : "simple-auditor-status-chip-invalid"}`}>
-                            {entry.accepted ? "Valid" : "Invalid"}
-                          </p>
+                          {!entry.accepted ? (
+                            <p className='simple-auditor-status-chip simple-auditor-status-chip-invalid'>
+                              Invalid
+                            </p>
+                          ) : null}
                         </div>
                         <div className='simple-auditor-result-body'>
                           <div className='simple-auditor-result-head'>
                             <div>
-                              <p className='simple-auditor-table-kicker'>Voter identity and status</p>
-                              <p className='simple-voter-question' title={entry.response.authorPubkey}>Voter ID: {deriveActorDisplayId(entry.response.authorPubkey)}</p>
+                              <p className='simple-voter-question' title={entry.response.authorPubkey}>Voter identity: {deriveActorDisplayId(entry.response.authorPubkey)}</p>
                             </div>
                             <div className='simple-auditor-submission-time'>
                               <p className='simple-auditor-table-kicker'>Submission time</p>
