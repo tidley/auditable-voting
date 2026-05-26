@@ -87,7 +87,7 @@ function deriveElectionId() {
 }
 
 function answerToOptionA(
-  question: { questionId: string; type: "yes_no" | "multiple_choice" | "free_text" },
+  question: { questionId: string; type: "yes_no" | "multiple_choice" | "rank" | "free_text" },
   value: unknown,
   encryptForCoordinator = false,
 ): QuestionnaireAnswer | null {
@@ -106,6 +106,15 @@ function answerToOptionA(
     }
     return { questionId: question.questionId, type: "multiple_choice", answer: answers };
   }
+  if (question.type === "rank") {
+    const answers = Array.isArray(value)
+      ? value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+      : [];
+    if (answers.length === 0) {
+      return null;
+    }
+    return { questionId: question.questionId, type: "rank", answer: answers };
+  }
   const text = typeof value === "string" ? value.trim() : "";
   if (!text) {
     return null;
@@ -119,8 +128,9 @@ function mapDefinitionQuestions(definition: QuestionnaireDefinition) {
     required: question.required,
     prompt: question.prompt,
     type: question.type,
-    options: question.type === "multiple_choice" ? question.options : undefined,
+    options: question.type === "multiple_choice" || question.type === "rank" ? question.options : undefined,
     multiSelect: question.type === "multiple_choice" ? question.multiSelect : undefined,
+    minimumRanked: question.type === "rank" ? question.minimumRanked : undefined,
     maxLength: question.type === "free_text" ? question.maxLength : undefined,
   }));
 }
@@ -244,6 +254,20 @@ type QuestionnaireOptionAVoterPanelProps = {
   requestBlindBallotNonce?: number;
 };
 
+function getRankRequirementState(optionCount: number, minimumRanked: number, selectedCount: number) {
+  const minimum = Math.max(0, Math.min(optionCount, Math.floor(minimumRanked)));
+  const missing = Math.max(0, minimum - selectedCount);
+  return {
+    minimum,
+    missing,
+    label: minimum > 0
+      ? missing > 0
+        ? `Choose ${missing} more`
+        : `${selectedCount}/${minimum} selected`
+      : "Optional",
+  };
+}
+
 export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptionAVoterPanelProps) {
   const [runtime, setRuntime] = useState<QuestionnaireOptionAVoterRuntime | null>(null);
   const [, setStatus] = useState<string | null>(null);
@@ -257,9 +281,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     questionId: string;
     required: boolean;
     prompt: string;
-    type: "yes_no" | "multiple_choice" | "free_text";
+    type: "yes_no" | "multiple_choice" | "rank" | "free_text";
     options?: Array<{ optionId: string; label: string }>;
     multiSelect?: boolean;
+    minimumRanked?: number;
     maxLength?: number;
   }>>([]);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
@@ -906,9 +931,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     };
   }, [activeInvite, electionId, inviteContext.invite, latestAnnouncedQuestionnaireId, pendingInvites.length, signedInNpub, snapshot?.blindRequest?.requestId, snapshot?.blindIssuance?.issuanceId, snapshot?.submission?.submissionId]);
 
-  const requiredQuestionIds = useMemo(
-    () => questions.filter((question) => question.required).map((question) => question.questionId),
+  const requiredQuestions = useMemo(
+    () => questions.filter((question) => question.required || (question.type === "rank" && (question.minimumRanked ?? 0) > 0)),
     [questions],
+  );
+  const requiredQuestionIds = useMemo(
+    () => requiredQuestions.map((question) => question.questionId),
+    [requiredQuestions],
   );
 
   function hasInFlightState(state = snapshot) {
@@ -1313,6 +1342,44 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       .filter((value): value is QuestionnaireAnswer => Boolean(value));
     runtime.updateDraftResponses(next);
     setRefreshNonce((value) => value + 1);
+  }
+
+  function addRankedAnswer(questionId: string, optionId: string) {
+    setAnswers((current) => {
+      const existing = Array.isArray(current[questionId])
+        ? (current[questionId] as string[])
+        : [];
+      if (existing.includes(optionId)) {
+        return current;
+      }
+      return { ...current, [questionId]: [...existing, optionId] };
+    });
+  }
+
+  function moveRankedAnswer(questionId: string, optionId: string, direction: -1 | 1) {
+    setAnswers((current) => {
+      const existing = Array.isArray(current[questionId])
+        ? [...(current[questionId] as string[])]
+        : [];
+      const index = existing.indexOf(optionId);
+      const target = index + direction;
+      if (index < 0 || target < 0 || target >= existing.length) {
+        return current;
+      }
+      const swap = existing[index];
+      existing[index] = existing[target];
+      existing[target] = swap;
+      return { ...current, [questionId]: existing };
+    });
+  }
+
+  function removeRankedAnswer(questionId: string, optionId: string) {
+    setAnswers((current) => {
+      const existing = Array.isArray(current[questionId])
+        ? (current[questionId] as string[])
+        : [];
+      return { ...current, [questionId]: existing.filter((entry) => entry !== optionId) };
+    });
   }
 
   function getCredentialIssuerDisplayName() {
@@ -1757,9 +1824,12 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const waitingForCredential = Boolean(snapshot?.blindRequestSent && !snapshot?.credentialReady && !snapshot?.submission);
   const canRequestOrResendBallot = flags.canRequestBallot || waitingForCredential;
 
-  const requiredQuestionsAnswered = questions.length > 0 && requiredQuestionIds.every((questionId) => {
-    const value = answers[questionId];
+  const requiredQuestionsAnswered = questions.length > 0 && requiredQuestions.every((question) => {
+    const value = answers[question.questionId];
     if (Array.isArray(value)) {
+      if (question.type === "rank") {
+        return value.length >= Math.max(1, question.minimumRanked ?? 1);
+      }
       return value.length > 0;
     }
     return value !== undefined && value !== null && String(value).trim().length > 0;
@@ -1799,6 +1869,12 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         : "Not submitted";
   const submittedMarkerNpub = snapshot?.responseNpub ?? snapshot?.submission?.responseNpub ?? snapshot?.submission?.invitedNpub ?? "";
   const submittedMarkerLabel = submittedMarkerNpub ? deriveActorDisplayId(submittedMarkerNpub) : "Unknown";
+  const questionnaireHeadingText = questionnaireTitle.trim() || questionnaireDescription.trim() || "Questionnaire";
+  const questionnaireDescriptionText = questionnaireDescription.trim();
+  const showQuestionnaireDescription = Boolean(
+    questionnaireDescriptionText && questionnaireDescriptionText !== questionnaireHeadingText,
+  );
+  const questionnaireDisplayId = snapshot?.electionId?.trim() || electionId.trim();
 
   return (
     <div className='simple-voter-card simple-optiona-voter-page'>
@@ -1867,7 +1943,16 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           </ul>
         </section>
       ) : null}
-      <h4 className='simple-voter-section-title'>{questionnaireDescription || questionnaireTitle}</h4>
+      <section className='simple-questionnaire-voter-overview' aria-label='Questionnaire summary'>
+        <div className='simple-questionnaire-voter-title-block'>
+          <p className='simple-questionnaire-voter-number'>Questionnaire</p>
+          <h4 className='simple-questionnaire-voter-prompt'>{questionnaireHeadingText}</h4>
+          {showQuestionnaireDescription ? (
+            <p className='simple-questionnaire-voter-description'>{questionnaireDescriptionText}</p>
+          ) : null}
+        </div>
+        <p className='simple-questionnaire-voter-id-chip'>Questionnaire ID: {questionnaireDisplayId || "Missing"}</p>
+      </section>
 
       {questions.length === 0 ? (
         <p className='simple-voter-note'>
@@ -1877,14 +1962,33 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         </p>
       ) : (
         <div className='simple-questionnaire-voter-list'>
-          {questions.map((question, index) => (
+          {questions.map((question, index) => {
+            const ranked = question.type === "rank" && Array.isArray(answers[question.questionId])
+              ? (answers[question.questionId] as string[])
+              : [];
+            const rankRequirement = question.type === "rank"
+              ? getRankRequirementState(question.options?.length ?? 0, question.minimumRanked ?? 0, ranked.length)
+              : null;
+            const requirementClass = rankRequirement
+              ? rankRequirement.missing > 0
+                ? " is-needed"
+                : question.required
+                  ? ""
+                  : " is-optional"
+              : question.required ? "" : " is-optional";
+            return (
             <article key={question.questionId} className='simple-questionnaire-voter-card'>
               <div className='simple-questionnaire-voter-heading'>
                 <h4 className='simple-questionnaire-voter-prompt'>Q{index + 1}: {question.prompt || "Untitled question"}</h4>
-                <p className={`simple-questionnaire-voter-requirement${question.required ? "" : " is-optional"}`}>
-                  {question.required ? "Required" : "Optional"}
+                <p className={`simple-questionnaire-voter-requirement${requirementClass}`}>
+                  {rankRequirement?.label ?? (question.required ? "Required" : "Optional")}
                 </p>
               </div>
+              {rankRequirement && rankRequirement.missing > 0 ? (
+                <p className='simple-questionnaire-rank-needed'>
+                  Choose at least {rankRequirement.minimum} ranked choices. {rankRequirement.missing} more needed.
+                </p>
+              ) : null}
               {question.type === "yes_no" ? (
                 <div className='simple-vote-button-grid simple-questionnaire-yes-no-grid'>
                   <button
@@ -1937,6 +2041,72 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                   })}
                 </div>
               ) : null}
+              {question.type === "rank" ? (
+                <div className='simple-questionnaire-rank-voter-grid'>
+                  {(() => {
+                    const rankedSet = new Set(ranked);
+                    const unrankedOptions = (question.options ?? []).filter((option) => !rankedSet.has(option.optionId));
+                    return (
+                      <>
+                        <div className='simple-questionnaire-choice-list'>
+                          {ranked.length > 0 ? ranked.map((optionId, rankedIndex) => {
+                            const option = (question.options ?? []).find((entry) => entry.optionId === optionId);
+                            if (!option) {
+                              return null;
+                            }
+                            return (
+                              <div key={option.optionId} className='simple-questionnaire-rank-row'>
+                                <span className='simple-questionnaire-rank-number'>{rankedIndex + 1}</span>
+                                <span>{option.label}</span>
+                                <div className='simple-questionnaire-rank-actions'>
+                                  <button
+                                    type='button'
+                                    className='simple-voter-secondary simple-questionnaire-rank-action'
+                                    onClick={() => moveRankedAnswer(question.questionId, option.optionId, -1)}
+                                    disabled={rankedIndex === 0}
+                                  >
+                                    Up
+                                  </button>
+                                  <button
+                                    type='button'
+                                    className='simple-voter-secondary simple-questionnaire-rank-action'
+                                    onClick={() => moveRankedAnswer(question.questionId, option.optionId, 1)}
+                                    disabled={rankedIndex === ranked.length - 1}
+                                  >
+                                    Down
+                                  </button>
+                                  <button
+                                    type='button'
+                                    className='simple-voter-secondary simple-questionnaire-rank-action'
+                                    onClick={() => removeRankedAnswer(question.questionId, option.optionId)}
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          }) : null}
+                        </div>
+                        {unrankedOptions.length > 0 ? (
+                          <div className='simple-questionnaire-choice-list'>
+                            {unrankedOptions.map((option) => (
+                              <button
+                                key={option.optionId}
+                                type='button'
+                                className='simple-voter-secondary simple-questionnaire-rank-add'
+                                onClick={() => addRankedAnswer(question.questionId, option.optionId)}
+                              >
+                                <span className='simple-questionnaire-rank-add-option'>{option.label}</span>
+                                <span className='simple-questionnaire-rank-add-prefix'>Add as #{ranked.length + 1}</span>
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </>
+                    );
+                  })()}
+                </div>
+              ) : null}
               {question.type === "free_text" ? (
                 <>
                   <textarea
@@ -1963,7 +2133,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                 </>
               ) : null}
             </article>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -1983,29 +2154,55 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           {snapshot?.submission
             ? "View results"
             : !requiredQuestionsAnswered
-              ? "Please answer all questions marked 'Required'"
+              ? "Please answer all required questions"
               : canSubmitNow
                 ? "Submit response"
                 : `Waiting for ${waitingForCredential ? credentialIssuerName : decisionActorName}...`}
         </button>
       </div>
       {snapshot?.submission ? (
-        <section className='simple-settings-card' aria-label='Submitted voter ID'>
-          <h4 className='simple-voter-section-title'>Submitted voter ID</h4>
-          <TokenFingerprint
-            tokenId={submittedMarkerNpub}
-            label='Submitted voter ID'
-            large
-            showQr
-            hideMetadata
-          />
-          <p className='simple-voter-note'>Submission ID: {snapshot.submission.submissionId}</p>
-          {submittedMarkerNpub ? (
-            <>
-              <p className='simple-voter-note'>Voter ID: {submittedMarkerLabel}</p>
-              <p className='simple-voter-note'>Voter npub: {submittedMarkerNpub}</p>
-            </>
-          ) : null}
+        <section className='simple-settings-card simple-submission-identity-card' aria-label='Voter ID used for private submission'>
+          <div className='simple-submission-identity-header'>
+            <div>
+              <p className='simple-questionnaire-voter-number'>Private submission identity</p>
+              <h4 className='simple-voter-section-title'>Voter ID used for private submission</h4>
+            </div>
+          </div>
+          <div className='simple-submission-identity-body'>
+            <div className='simple-submission-identity-visuals'>
+              <TokenFingerprint
+                tokenId={submittedMarkerNpub}
+                label='Voter ID used for private submission'
+                large
+                showQr
+                hideMetadata
+                fingerprintTitle='Colour ID: a visual fingerprint for checking this private submission identity at a glance.'
+                qrTitle='QR code: scan this to copy the full private submission identity.'
+              />
+              <div className='simple-submission-identity-visual-labels'>
+                <span data-tooltip='Colour ID: a visual fingerprint for checking this private submission identity at a glance.'>Colour ID</span>
+                <span data-tooltip='QR code: scan this to copy the full private submission identity.'>QR code</span>
+              </div>
+            </div>
+            <dl className='simple-submission-identity-details'>
+              <div>
+                <dt>Submission ID</dt>
+                <dd>{snapshot.submission.submissionId}</dd>
+              </div>
+              {submittedMarkerNpub ? (
+                <>
+                  <div>
+                    <dt>Submittor identity - short</dt>
+                    <dd>{submittedMarkerLabel}</dd>
+                  </div>
+                  <div>
+                    <dt>Submittor identity - full</dt>
+                    <dd>{submittedMarkerNpub}</dd>
+                  </div>
+                </>
+              ) : null}
+            </dl>
+          </div>
         </section>
       ) : null}
       <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>

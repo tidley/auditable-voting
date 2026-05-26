@@ -198,7 +198,7 @@ export default function QuestionnaireOptionACoordinatorPanel(props: Props) {
       </div>
 
       {signedInNpub ? <p className='simple-voter-note'>Signed in as {signedInNpub}</p> : null}
-      <p className='simple-voter-note'>Vote ID: {electionId}</p>
+      <p className='simple-voter-note'>Questionnaire ID: {electionId}</p>
 
       <label className='simple-voter-label' htmlFor='optiona-title'>Name</label>
       <input id='optiona-title' className='simple-voter-input' value={title} onChange={(event) => setTitle(event.target.value)} />

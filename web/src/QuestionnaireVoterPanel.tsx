@@ -20,6 +20,20 @@ const QUESTIONNAIRE_DISCOVERY_BACKFILL_RETRY_MAX = 1;
 const QUESTIONNAIRE_DISCOVERY_BACKFILL_RETRY_BASE_DELAY_MS = 1500;
 
 type QuestionnaireAnswerState = Record<string, boolean | string | string[]>;
+
+function getRankRequirementState(optionCount: number, minimumRanked: number, selectedCount: number) {
+  const minimum = Math.max(0, Math.min(optionCount, Math.floor(minimumRanked)));
+  const missing = Math.max(0, minimum - selectedCount);
+  return {
+    minimum,
+    missing,
+    label: minimum > 0
+      ? missing > 0
+        ? `Choose ${missing} more`
+        : `${selectedCount}/${minimum} selected`
+      : "Optional",
+  };
+}
 type SelectorLifecycle = "open" | "published" | "draft" | "closed" | "counted" | "unknown";
 type QuestionnaireSelectorEntry = {
   questionnaireId: string;
@@ -346,6 +360,21 @@ function buildResponseAnswers(definition: QuestionnaireDefinition, answerState: 
           questionId: question.questionId,
           answerType: "multiple_choice",
           selectedOptionIds,
+        });
+      }
+      continue;
+    }
+
+    if (question.type === "rank") {
+      const validOptions = new Set(question.options.map((option) => option.optionId));
+      const rankedOptionIds = Array.isArray(value)
+        ? value.filter((entry): entry is string => typeof entry === "string" && validOptions.has(entry))
+        : [];
+      if (rankedOptionIds.length > 0) {
+        answers.push({
+          questionId: question.questionId,
+          answerType: "rank",
+          rankedOptionIds,
         });
       }
       continue;
@@ -1166,6 +1195,44 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
     });
   }
 
+  function addRankedAnswer(questionId: string, optionId: string) {
+    setAnswerState((current) => {
+      const existing = Array.isArray(current[questionId])
+        ? (current[questionId] as string[])
+        : [];
+      if (existing.includes(optionId)) {
+        return current;
+      }
+      return { ...current, [questionId]: [...existing, optionId] };
+    });
+  }
+
+  function moveRankedAnswer(questionId: string, optionId: string, direction: -1 | 1) {
+    setAnswerState((current) => {
+      const existing = Array.isArray(current[questionId])
+        ? [...(current[questionId] as string[])]
+        : [];
+      const index = existing.indexOf(optionId);
+      const target = index + direction;
+      if (index < 0 || target < 0 || target >= existing.length) {
+        return current;
+      }
+      const swap = existing[index];
+      existing[index] = existing[target];
+      existing[target] = swap;
+      return { ...current, [questionId]: existing };
+    });
+  }
+
+  function removeRankedAnswer(questionId: string, optionId: string) {
+    setAnswerState((current) => {
+      const existing = Array.isArray(current[questionId])
+        ? (current[questionId] as string[])
+        : [];
+      return { ...current, [questionId]: existing.filter((entry) => entry !== optionId) };
+    });
+  }
+
   async function submitResponse() {
     setResponsePipelineDiagnostics((current) => ({
       ...current,
@@ -1595,6 +1662,87 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
                         <span>{option.label}</span>
                       </label>
                     ))}
+                  </div>
+                </article>
+              );
+            }
+
+            if (question.type === "rank") {
+              const ranked = Array.isArray(answerState[question.questionId])
+                ? (answerState[question.questionId] as string[])
+                : [];
+              const rankedSet = new Set(ranked);
+              const unrankedOptions = question.options.filter((option) => !rankedSet.has(option.optionId));
+              const minimumRanked = Math.max(0, Math.min(question.options.length, Math.floor(question.minimumRanked)));
+              const rankRequirement = getRankRequirementState(question.options.length, minimumRanked, ranked.length);
+              return (
+                <article key={question.questionId} className='simple-questionnaire-voter-card'>
+                  <div className='simple-questionnaire-voter-heading'>
+                    <h4 className='simple-questionnaire-voter-prompt'>Q{index + 1}: {questionPrompt}</h4>
+                    <p className={`simple-questionnaire-voter-requirement${rankRequirement.missing > 0 ? " is-needed" : question.required ? "" : " is-optional"}`}>
+                      {rankRequirement.label}
+                    </p>
+                  </div>
+                  {rankRequirement.missing > 0 ? (
+                    <p className='simple-questionnaire-rank-needed'>
+                      Choose at least {rankRequirement.minimum} ranked choices. {rankRequirement.missing} more needed.
+                    </p>
+                  ) : null}
+                  <div className='simple-questionnaire-rank-voter-grid'>
+                    <div className='simple-questionnaire-choice-list'>
+                      {ranked.length > 0 ? ranked.map((optionId, rankedIndex) => {
+                        const option = question.options.find((entry) => entry.optionId === optionId);
+                        if (!option) {
+                          return null;
+                        }
+                        return (
+                          <div key={option.optionId} className='simple-questionnaire-rank-row'>
+                            <span className='simple-questionnaire-rank-number'>{rankedIndex + 1}</span>
+                            <span>{option.label}</span>
+                            <div className='simple-questionnaire-rank-actions'>
+                              <button
+                                type='button'
+                                className='simple-voter-secondary simple-questionnaire-rank-action'
+                                onClick={() => moveRankedAnswer(question.questionId, option.optionId, -1)}
+                                disabled={rankedIndex === 0}
+                              >
+                                Up
+                              </button>
+                              <button
+                                type='button'
+                                className='simple-voter-secondary simple-questionnaire-rank-action'
+                                onClick={() => moveRankedAnswer(question.questionId, option.optionId, 1)}
+                                disabled={rankedIndex === ranked.length - 1}
+                              >
+                                Down
+                              </button>
+                              <button
+                                type='button'
+                                className='simple-voter-secondary simple-questionnaire-rank-action'
+                                onClick={() => removeRankedAnswer(question.questionId, option.optionId)}
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      }) : null}
+                    </div>
+                    {unrankedOptions.length > 0 ? (
+                      <div className='simple-questionnaire-choice-list'>
+                        {unrankedOptions.map((option) => (
+                          <button
+                            key={option.optionId}
+                            type='button'
+                            className='simple-voter-secondary simple-questionnaire-rank-add'
+                            onClick={() => addRankedAnswer(question.questionId, option.optionId)}
+                          >
+                            <span className='simple-questionnaire-rank-add-option'>{option.label}</span>
+                            <span className='simple-questionnaire-rank-add-prefix'>Add as #{ranked.length + 1}</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
                 </article>
               );

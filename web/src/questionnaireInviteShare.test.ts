@@ -1,11 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { buildQuestionnaireInviteUrl, parseInviteFromUrl } from "./questionnaireInvite";
 import {
-  buildQuestionnaireInviteMailtoHref,
   buildQuestionnaireInviteShareSubject,
   buildQuestionnaireInviteShareText,
-  buildQuestionnaireInviteSmsHref,
-  buildQuestionnaireInviteWhatsAppHref,
 } from "./questionnaireInviteShare";
 
 describe("questionnaire invite sharing", () => {
@@ -71,18 +68,5 @@ describe("questionnaire invite sharing", () => {
     expect(text).toContain("Course feedback");
     expect(text).toContain("Please complete this before Friday.");
     expect(text).toContain(inviteUrl);
-  });
-
-  it("encodes email, SMS, and WhatsApp hrefs without provider credentials", () => {
-    const inviteUrl = "https://vote.example/?login=1&role=voter&q=q_public_123";
-    const input = {
-      title: "Course feedback",
-      description: "",
-      inviteUrl,
-    };
-
-    expect(buildQuestionnaireInviteMailtoHref(input)).toContain("mailto:?");
-    expect(decodeURIComponent(buildQuestionnaireInviteSmsHref(input))).toContain(inviteUrl);
-    expect(decodeURIComponent(buildQuestionnaireInviteWhatsAppHref(input))).toContain(inviteUrl);
   });
 });

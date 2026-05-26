@@ -1,6 +1,15 @@
 import type { NostrEvent } from "nostr-tools";
 import { decryptQuestionnaireResponseEnvelope, parseQuestionnaireDefinitionEvent, parseQuestionnaireResponseEnvelope, parseQuestionnaireStateEvent } from "./questionnaireNostr";
-import { validateQuestionnaireResponsePayload, type QuestionnaireDefinition, type QuestionnaireResponsePayload, type QuestionnaireResponsePrivateEnvelope, type QuestionnaireResultSummary, type QuestionnaireStateEvent } from "./questionnaireProtocol";
+import {
+  calculateRankQuestionScores,
+  normaliseRankedOptionIds,
+  validateQuestionnaireResponsePayload,
+  type QuestionnaireDefinition,
+  type QuestionnaireResponsePayload,
+  type QuestionnaireResponsePrivateEnvelope,
+  type QuestionnaireResultSummary,
+  type QuestionnaireStateEvent,
+} from "./questionnaireProtocol";
 import { deriveQuestionnaireResultHash } from "./questionnaireBlindToken";
 
 export type QuestionnaireRejectedReason =
@@ -154,6 +163,9 @@ function toRejectedReason(errorCode: string): QuestionnaireRejectedReason {
     return "unknown_question_id";
   }
   if (errorCode.startsWith("missing_required_answer")) {
+    return "missing_required_answer";
+  }
+  if (errorCode.startsWith("rank_selection_count")) {
     return "missing_required_answer";
   }
   if (errorCode.startsWith("invalid_option_id")) {
@@ -316,6 +328,37 @@ export function buildQuestionnaireResultSummary(input: {
         questionId: question.questionId,
         answerType: "multiple_choice" as const,
         optionCounts,
+      };
+    }
+
+    if (question.type === "rank") {
+      const optionScores = Object.fromEntries(question.options.map((option) => [option.optionId, 0]));
+      const rankCounts: Record<string, Record<string, number>> = Object.fromEntries(
+        question.options.map((option) => [option.optionId, {}]),
+      );
+      let blankResponseCount = 0;
+      for (const response of input.acceptedResponses) {
+        const answer = response.payload.answers.find((entry) => entry.questionId === question.questionId);
+        const rankedOptionIds = answer?.answerType === "rank"
+          ? normaliseRankedOptionIds(question, answer.rankedOptionIds)
+          : [];
+        if (rankedOptionIds.length === 0) {
+          blankResponseCount += 1;
+        }
+        const responseScores = calculateRankQuestionScores(question, rankedOptionIds);
+        for (const [optionId, score] of Object.entries(responseScores)) {
+          optionScores[optionId] = (optionScores[optionId] ?? 0) + score;
+          const scoreKey = String(score);
+          rankCounts[optionId][scoreKey] = (rankCounts[optionId][scoreKey] ?? 0) + 1;
+        }
+      }
+      return {
+        questionId: question.questionId,
+        answerType: "rank" as const,
+        optionScores,
+        rankCounts,
+        responseCount: input.acceptedResponses.length,
+        blankResponseCount,
       };
     }
 

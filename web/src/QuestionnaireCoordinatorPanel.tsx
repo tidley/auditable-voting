@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getPublicKey, generateSecretKey, nip19, nip44, type NostrEvent } from "nostr-tools";
 import { fetchQuestionnaireEventsWithFallback, getQuestionnaireReadRelays, parseQuestionnaireDefinitionEvent, parseQuestionnaireStateEvent, publishQuestionnaireDefinition, publishQuestionnaireParticipantCount, publishQuestionnaireResultSummary, publishQuestionnaireState, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESPONSE_PRIVATE_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND, subscribeQuestionnaireEvents } from "./questionnaireNostr";
-import { buildQuestionnaireResultSummary, deriveEffectiveQuestionnaireState, formatQuestionnaireStateEventLabel, parseQuestionnaireResultSummaryEvent, processQuestionnaireResponses, selectLatestQuestionnaireDefinition, selectLatestQuestionnaireResultSummary, selectLatestQuestionnaireState, type QuestionnaireAcceptedResponse } from "./questionnaireRuntime";
+import { buildQuestionnaireResultSummary, deriveEffectiveQuestionnaireState, parseQuestionnaireResultSummaryEvent, processQuestionnaireResponses, selectLatestQuestionnaireDefinition, selectLatestQuestionnaireResultSummary, selectLatestQuestionnaireState, type QuestionnaireAcceptedResponse } from "./questionnaireRuntime";
 import { buildSimpleNamespacedLocalStorageKey, loadSimpleActorState } from "./simpleLocalState";
 import {
+  calculateRankQuestionScores,
+  normaliseRankedOptionIds,
   validateQuestionnaireDefinition,
   type QuestionnaireDefinition,
   type QuestionnaireQuestion,
@@ -19,8 +21,8 @@ import {
   QUESTIONNAIRE_PROTOCOL_VERSION_V2,
 } from "./questionnaireProtocolConstants";
 import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
-import TokenFingerprint from "./TokenFingerprint";
 import { deriveActorDisplayId } from "./actorDisplay";
+import QuestionnaireResultsDashboard, { type QuestionnaireResultsDashboardResponseDetail } from "./QuestionnaireResultsDashboard";
 import { getSharedNostrPool } from "./sharedNostrPool";
 import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import { tryWriteClipboard } from "./clipboard";
@@ -59,9 +61,11 @@ import { buildIssueBlindTokensWorkerRouting } from "./questionnaireWorkerRouting
 
 const DEFAULT_QUESTIONNAIRE_ID_PREFIX = "q";
 const QUESTIONNAIRE_DRAFT_ID_STORAGE_KEY = "coordinator.questionnaire-draft-id.v1";
+export const QUESTIONNAIRE_ID_RESET_EVENT = "auditable-voting:coordinator-questionnaire-id-reset";
 const IDENTITY_REFRESH_INTERVAL_MS = 10000;
 const QUESTIONNAIRE_TIMER_FALLBACK_MINUTES = "60";
 const QUESTIONNAIRE_TIMER_DISABLED_CLOSE_MINUTES = 5_256_000; // 10 years
+const QUESTIONNAIRE_TIMER_DISABLED_CLOSE_SECONDS = QUESTIONNAIRE_TIMER_DISABLED_CLOSE_MINUTES * 60;
 const BLIND_SIGNING_KEY_RELOAD_STATUS = "Blind-signing key is still initialising in this tab. Please wait a moment, then try publishing again.";
 
 type CloseTimerUnit = "minutes" | "hours" | "days" | "weeks";
@@ -149,6 +153,20 @@ function createMultipleChoiceQuestion(questionId: string, prompt = "", required 
   };
 }
 
+function createRankQuestion(questionId: string, prompt = "", minimumRanked = 0): QuestionnaireQuestionDraft {
+  return {
+    questionId,
+    type: "rank",
+    prompt,
+    required: minimumRanked > 0,
+    minimumRanked,
+    options: [
+      { optionId: "option_1", label: "Option 1" },
+      { optionId: "option_2", label: "Option 2" },
+    ],
+  };
+}
+
 function createFreeTextQuestion(questionId: string, prompt = "", required = false): QuestionnaireQuestionDraft {
   return {
     questionId,
@@ -162,6 +180,9 @@ function createFreeTextQuestion(questionId: string, prompt = "", required = fals
 function clearQuestionDraft(question: QuestionnaireQuestionDraft): QuestionnaireQuestionDraft {
   if (question.type === "multiple_choice") {
     return createMultipleChoiceQuestion(question.questionId, "", true);
+  }
+  if (question.type === "rank") {
+    return createRankQuestion(question.questionId, "", 0);
   }
   if (question.type === "free_text") {
     return createFreeTextQuestion(question.questionId, "", true);
@@ -190,6 +211,15 @@ function isQuestionDraftValid(question: QuestionnaireQuestionDraft): boolean {
   }
   if (question.type === "multiple_choice") {
     if (question.options.length < 2) {
+      return false;
+    }
+    return question.options.every((option) => option.label.trim().length > 0);
+  }
+  if (question.type === "rank") {
+    if (question.options.length < 2) {
+      return false;
+    }
+    if (!Number.isFinite(question.minimumRanked) || question.minimumRanked < 0 || question.minimumRanked > question.options.length) {
       return false;
     }
     return question.options.every((option) => option.label.trim().length > 0);
@@ -277,13 +307,30 @@ function normaliseStoredQuestions(input: unknown): QuestionnaireQuestionDraft[] 
   if (!Array.isArray(input) || input.length === 0) {
     return [createYesNoQuestion("q1")];
   }
-  const entries = input.filter((entry): entry is QuestionnaireQuestionDraft => (
-    Boolean(entry)
-    && typeof entry === "object"
-    && typeof (entry as { questionId?: unknown }).questionId === "string"
-    && typeof (entry as { type?: unknown }).type === "string"
-    && typeof (entry as { prompt?: unknown }).prompt === "string"
-  ));
+  const entries = input
+    .filter((entry): entry is QuestionnaireQuestionDraft => (
+      Boolean(entry)
+      && typeof entry === "object"
+      && typeof (entry as { questionId?: unknown }).questionId === "string"
+      && typeof (entry as { type?: unknown }).type === "string"
+      && typeof (entry as { prompt?: unknown }).prompt === "string"
+    ))
+    .map((entry) => {
+      if (entry.type !== "rank") {
+        return entry;
+      }
+      if (!Array.isArray(entry.options) || entry.options.length < 2) {
+        return createRankQuestion(entry.questionId, entry.prompt, 0);
+      }
+      const minimumRanked = Number.isFinite(entry.minimumRanked)
+        ? Math.min(entry.options.length, Math.max(0, Math.floor(entry.minimumRanked)))
+        : 0;
+      return {
+        ...entry,
+        minimumRanked,
+        required: minimumRanked > 0,
+      };
+    });
   return entries.length > 0 ? entries : [createYesNoQuestion("q1")];
 }
 
@@ -375,6 +422,23 @@ export function writeStoredQuestionnaireRelayInput(value: string) {
   );
 }
 
+export function resetStoredQuestionnaireDraftId() {
+  const nextId = generateQuestionnaireId();
+  if (typeof window === "undefined") {
+    return nextId;
+  }
+  window.localStorage.setItem(buildSimpleNamespacedLocalStorageKey(QUESTIONNAIRE_DRAFT_ID_STORAGE_KEY), nextId);
+  const snapshot: StoredQuestionnaireDraft = {
+    ...readStoredQuestionnaireDraft(),
+    questionnaireId: nextId,
+  };
+  window.localStorage.setItem(
+    buildSimpleNamespacedLocalStorageKey(QUESTIONNAIRE_DRAFT_DATA_STORAGE_KEY),
+    JSON.stringify(snapshot),
+  );
+  return nextId;
+}
+
 function formatUnixTimestamp(timestampSeconds?: number | null) {
   if (!timestampSeconds || !Number.isFinite(timestampSeconds)) {
     return "Not set";
@@ -403,11 +467,23 @@ function formatClosingClosedLabel(input: {
   latestState: QuestionnaireStateValue | null;
   latestStateCreatedAt: number | null;
 }) {
+  const isClosed = input.latestState === "closed" || input.latestState === "results_published";
   if (!input.latestDefinition?.closeAt || !Number.isFinite(input.latestDefinition.closeAt)) {
-    return "Not scheduled";
+    return isClosed ? "Closed" : "No closing time";
+  }
+  const closeDurationSeconds = definitionCloseDurationSeconds(input.latestDefinition);
+  const hasScheduledClose = closeDurationSeconds < QUESTIONNAIRE_TIMER_DISABLED_CLOSE_SECONDS;
+  if (!hasScheduledClose) {
+    if (!isClosed) {
+      return "No closing time";
+    }
+    if (input.latestStateCreatedAt && Number.isFinite(input.latestStateCreatedAt)) {
+      return formatUnixTimestamp(input.latestStateCreatedAt);
+    }
+    return "Closed";
   }
   const scheduledCloseAtLabel = formatUnixTimestamp(input.latestDefinition.closeAt);
-  if (input.latestState === "closed" || input.latestState === "results_published") {
+  if (isClosed) {
     if (input.latestStateCreatedAt && Number.isFinite(input.latestStateCreatedAt)) {
       return formatUnixTimestamp(input.latestStateCreatedAt);
     }
@@ -688,13 +764,6 @@ function buildAutoconfiguredWorkerLauncherHref(input: {
   return `${input.baseUrl}?${params.toString()}`;
 }
 
-function percentageLabel(count: number, total: number) {
-  if (total <= 0) {
-    return "0%";
-  }
-  return `${Math.round((count / total) * 100)}%`;
-}
-
 function parseQuestionnaireIdFromResponseEvent(event: Pick<NostrEvent, "content" | "tags" | "kind">): string | null {
   const tagMatch = Array.isArray(event.tags)
     ? event.tags.find((tag) => Array.isArray(tag) && tag[0] === "questionnaire-id" && typeof tag[1] === "string")
@@ -895,7 +964,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [lastResponseRejectReason, setLastResponseRejectReason] = useState<string | null>(null);
   const [latestResultAcceptedCount, setLatestResultAcceptedCount] = useState<number | null>(null);
   const [availableQuestionnaireIds, setAvailableQuestionnaireIds] = useState<string[]>([]);
-  const [expandedTextQuestionIds, setExpandedTextQuestionIds] = useState<Record<string, boolean>>({});
+  const [availableQuestionnaireTitles, setAvailableQuestionnaireTitles] = useState<Record<string, string>>({});
   const [definitionEventCount, setDefinitionEventCount] = useState(0);
   const [stateEventCount, setStateEventCount] = useState(0);
   const [responseEventCount, setResponseEventCount] = useState(0);
@@ -1286,6 +1355,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
 
         const coordinatorFilter = coordinatorNpub.trim();
         const ids = new Set<string>();
+        const titlesById: Record<string, string> = {};
         for (const event of events) {
           const parsed = parseQuestionnaireDefinitionEvent(event);
           if (!parsed) {
@@ -1295,7 +1365,11 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             continue;
           }
           if (parsed.questionnaireId.trim()) {
-            ids.add(parsed.questionnaireId.trim());
+            const parsedId = parsed.questionnaireId.trim();
+            ids.add(parsedId);
+            if (parsed.title.trim()) {
+              titlesById[parsedId] = parsed.title.trim();
+            }
           }
         }
         const selectedId = questionnaireId.trim();
@@ -1303,9 +1377,11 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           ids.add(selectedId);
         }
         setAvailableQuestionnaireIds([...ids].sort((left, right) => left.localeCompare(right)));
+        setAvailableQuestionnaireTitles(titlesById);
       } catch {
         const selectedId = questionnaireId.trim();
         setAvailableQuestionnaireIds(selectedId ? [selectedId] : []);
+        setAvailableQuestionnaireTitles({});
       }
     };
     void loadQuestionnaireOptions();
@@ -1583,11 +1659,24 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     if (typeof window === "undefined") {
       return;
     }
-    window.addEventListener("auditable-voting:coordinator-new", regenerateQuestionnaireId);
-    return () => {
-      window.removeEventListener("auditable-voting:coordinator-new", regenerateQuestionnaireId);
+    const parentOwnsIdentityReset = props.coordinatorNsec !== undefined || props.coordinatorNpub !== undefined;
+    const handleQuestionnaireIdReset = (event: Event) => {
+      const nextId = (event as CustomEvent<{ questionnaireId?: string }>).detail?.questionnaireId?.trim();
+      setQuestionnaireId(nextId || generateQuestionnaireId());
     };
-  }, [regenerateQuestionnaireId]);
+    const handleCoordinatorNewIdentity = () => {
+      if (parentOwnsIdentityReset) {
+        return;
+      }
+      setQuestionnaireId(resetStoredQuestionnaireDraftId());
+    };
+    window.addEventListener(QUESTIONNAIRE_ID_RESET_EVENT, handleQuestionnaireIdReset);
+    window.addEventListener("auditable-voting:coordinator-new", handleCoordinatorNewIdentity);
+    return () => {
+      window.removeEventListener(QUESTIONNAIRE_ID_RESET_EVENT, handleQuestionnaireIdReset);
+      window.removeEventListener("auditable-voting:coordinator-new", handleCoordinatorNewIdentity);
+    };
+  }, [props.coordinatorNpub, props.coordinatorNsec]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1651,6 +1740,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       const required = entry.required;
       if (type === "multiple_choice") {
         return createMultipleChoiceQuestion(questionId, prompt, required);
+      }
+      if (type === "rank") {
+        return createRankQuestion(questionId, prompt, required ? 1 : 0);
       }
       if (type === "free_text") {
         return createFreeTextQuestion(questionId, prompt, required);
@@ -1783,6 +1875,22 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     }
     return "Pending activation";
   }, [activeWorkerDelegation, lastWorkerRevocationState, selectedWorkerStatus]);
+  const dashboardCoordinatorText = useMemo(() => {
+    const active = activeWorkerDelegation;
+    if (active && lastWorkerRevocationState !== "revoked") {
+      const expiresAtMs = Date.parse(active.expiresAt);
+      const expired = Number.isFinite(expiresAtMs) && expiresAtMs <= Date.now();
+      if (!expired) {
+        const workerNpub = selectedWorkerStatus?.delegationId === active.delegationId
+          ? selectedWorkerStatus.workerNpub
+          : active.workerNpub;
+        return `Proxy: ${normaliseWorkerNpub(workerNpub)}`;
+      }
+    }
+    return coordinatorNpub.trim()
+      ? `Coordinator: ${coordinatorNpub.trim()}`
+      : "Coordinator: Unknown";
+  }, [activeWorkerDelegation, coordinatorNpub, lastWorkerRevocationState, selectedWorkerStatus]);
   const workerReleaseBaseUrl = "https://github.com/tidley/auditable-voting/releases/latest/download";
   const workerHelperDownloadUrl = `${workerReleaseBaseUrl}/auditable-voting-worker-linux-x64.tar.gz`;
   const workerHelperChecksumUrl = `${workerHelperDownloadUrl}.sha256`;
@@ -1997,36 +2105,57 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   }, [latestAcceptedResponses, props.optionAAcceptedResponses]);
   const displayAcceptedCount = Math.max(acceptedResponsesForDisplay.length, props.optionAAcceptedCount ?? 0);
   const knownVoterCount = props.knownVoterCount ?? 0;
-  const responseCompletionPercent = knownVoterCount > 0
-    ? Math.round((displayAcceptedCount / knownVoterCount) * 100)
-    : 0;
-  const responseCompletionRatio = knownVoterCount > 0
-    ? Math.min(100, Math.max(0, (displayAcceptedCount / knownVoterCount) * 100))
-    : 0;
   const buildStateLabel = !publishedDefinition
     ? "Draft"
     : activeStateEvent?.state === "closed" && activeStateEvent.closedBy === "audit_proxy"
       ? "Closed by audit proxy"
-    : currentState === "results_published"
-      ? "Counted"
-      : currentState === "closed"
-        ? "Ended"
-        : currentState === "open"
-          ? "Open"
-          : "Draft";
+      : currentState === "results_published"
+        ? "Counted"
+        : currentState === "closed"
+          ? "Ended"
+          : currentState === "open"
+            ? "Open"
+            : "Draft";
   const setupHeadingStateLabel = buildStateLabel === "Open" ? "Active" : buildStateLabel;
   const checklistDescriptionAdded = description.trim().length > 0;
-  const metadataStateLabel = activeStateEvent
-    ? formatQuestionnaireStateEventLabel(activeStateEvent)
-    : formatQuestionnaireMetadataState(currentState, Boolean(activePublishedDefinition));
-  const metadataClosingClosedLabel = formatClosingClosedLabel({
-    latestDefinition: activePublishedDefinition,
-    latestState: activePublishedDefinition ? currentState : null,
-    latestStateCreatedAt: activePublishedDefinition ? latestStateCreatedAt : null,
-  });
   const selectedQuestionnaireOptions = availableQuestionnaireIds.length > 0
     ? availableQuestionnaireIds
     : (questionnaireId.trim() ? [questionnaireId.trim()] : []);
+  const questionnaireOptionLabel = (id: string) => {
+    const selectedId = questionnaireId.trim();
+    const selectedTitle = activePublishedDefinition?.questionnaireId === selectedId
+      ? activePublishedDefinition.title.trim()
+      : title.trim();
+    const labelTitle = availableQuestionnaireTitles[id]?.trim() || (id === selectedId ? selectedTitle : "");
+    return labelTitle ? `${labelTitle} - ${id}` : id;
+  };
+  const coordinatorQuestionSummaries = useMemo(() => {
+    if (!activePublishedDefinition) {
+      return [];
+    }
+    return buildQuestionnaireResultSummary({
+      definition: activePublishedDefinition,
+      coordinatorPubkey: coordinatorNpub.trim(),
+      acceptedResponses: acceptedResponsesForDisplay,
+      rejectedResponses: [],
+    }).questionSummaries;
+  }, [acceptedResponsesForDisplay, activePublishedDefinition, coordinatorNpub]);
+  const coordinatorResponseDetails = useMemo<QuestionnaireResultsDashboardResponseDetail[]>(() => (
+    acceptedResponsesForDisplay.map((response) => ({
+      event: {
+        id: response.eventId,
+        created_at: response.payload.submittedAt,
+      },
+      accepted: true,
+      includedInLatestPublish: currentState === "results_published",
+      response: {
+        responseId: response.payload.responseId,
+        authorPubkey: response.authorPubkey,
+        submittedAt: response.payload.submittedAt,
+        answers: response.payload.answers,
+      },
+    }))
+  ), [acceptedResponsesForDisplay, currentState]);
   const questionResultCards = useMemo(() => {
     if (!activePublishedDefinition) {
       return [];
@@ -2079,6 +2208,47 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             count: optionCounts.get(option.optionId) ?? 0,
           })),
           acceptedTotal,
+        };
+      }
+
+      if (question.type === "rank") {
+        const optionScores = new Map(question.options.map((option) => [option.optionId, 0]));
+        const rankCounts = new Map(question.options.map((option) => [option.optionId, new Map<number, number>()]));
+        let blankResponseCount = 0;
+        for (const response of acceptedResponsesForDisplay) {
+          const answer = response.payload.answers.find((entry) => entry.questionId === question.questionId);
+          const rankedOptionIds = answer?.answerType === "rank"
+            ? normaliseRankedOptionIds(question, answer.rankedOptionIds)
+            : [];
+          if (rankedOptionIds.length === 0) {
+            blankResponseCount += 1;
+          }
+          const scores = calculateRankQuestionScores(question, rankedOptionIds);
+          for (const [optionId, score] of Object.entries(scores)) {
+            optionScores.set(optionId, (optionScores.get(optionId) ?? 0) + score);
+            const counts = rankCounts.get(optionId);
+            if (counts) {
+              counts.set(score, (counts.get(score) ?? 0) + 1);
+            }
+          }
+        }
+        const rows = question.options
+          .map((option) => ({
+            optionId: option.optionId,
+            label: option.label,
+            score: optionScores.get(option.optionId) ?? 0,
+            firstChoiceCount: rankCounts.get(option.optionId)?.get(question.options.length) ?? 0,
+          }))
+          .sort((left, right) => right.score - left.score || left.label.localeCompare(right.label));
+        return {
+          questionId: question.questionId,
+          index,
+          prompt: question.prompt,
+          typeBadge: "Ranked",
+          kind: "rank" as const,
+          rows,
+          acceptedTotal,
+          blankResponseCount,
         };
       }
 
@@ -2142,18 +2312,18 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       if (latestResultAcceptedCount !== null && latestResultAcceptedCount !== displayAcceptedCount) {
         return "Summary needs update";
       }
-      return "Already published";
+      return null;
     }
     if (displayAcceptedCount > 0 && currentState === "open") {
-      return "Ready to close and publish";
+      return null;
     }
     if (displayAcceptedCount <= 0) {
-      return "Nothing to publish yet";
+      return null;
     }
     if (canPublishResults) {
       return "Ready to publish";
     }
-    return "Nothing to publish yet";
+    return null;
   }, [canPublishResults, currentState, displayAcceptedCount, isCloseAndPublishInFlight, latestResultAcceptedCount, status]);
 
   function exportResults() {
@@ -2877,35 +3047,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   if (view === "participants") {
     return (
       <div className='simple-voter-card simple-questionnaire-panel'>
-        <h3 className='simple-voter-question'>Publish questionnaire ID: {questionnaireId.trim() || "Not set"}</h3>
-        <p className='simple-voter-note'>State: {buildStateLabel}</p>
-        <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
-          {!publishedDefinition ? (
-            <button type='button' className='simple-voter-primary' disabled={!canPublishDraft} onClick={() => void publishDefinition()}>
-              Publish questionnaire
-            </button>
-          ) : currentState === "open" || currentState === "closed" ? (
-            <button type='button' className='simple-voter-primary' disabled={closeAndPublishButtonDisabled} onClick={() => void closeAndPublishResults()}>
-              {currentState === "open" ? "Close + publish results" : "Publish results"}
-            </button>
-          ) : currentState === "results_published" ? (
-            <button type='button' className='simple-voter-primary' disabled>
-              Counted
-            </button>
-          ) : (
-            <button type='button' className='simple-voter-primary' disabled={!canOpenQuestionnaire} onClick={() => void publishState("open")}>
-              Open vote
-            </button>
-          )}
-          <button type='button' className='simple-voter-secondary' onClick={() => void refresh()}>
-            Refresh
-          </button>
-          {canExportResults ? (
-            <button type='button' className='simple-voter-secondary' onClick={exportResults}>
-              Export results
-            </button>
-          ) : null}
-        </div>
         {publishValidation && !publishValidation.valid ? (
           <p className='simple-voter-note'>Validation: {publishValidation.errors[0] ?? "unknown_error"}.</p>
         ) : null}
@@ -2916,193 +3057,76 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
 
   if (view === "responses") {
     return (
-      <div className='simple-voter-card simple-questionnaire-panel'>
-        <h3 className='simple-voter-question'>Live results</h3>
-        <p className='simple-voter-note'>Live response summary.</p>
-
-        <div className='simple-questionnaire-responses-section'>
-          <h4 className='simple-voter-section-title'>Vote</h4>
-          <label className='simple-voter-label' htmlFor='questionnaire-select'>Vote</label>
-          <select
-            id='questionnaire-select'
-            className='simple-voter-input'
-            value={questionnaireId}
-            onChange={(event) => setQuestionnaireId(event.target.value)}
-          >
-            {selectedQuestionnaireOptions.map((id) => (
-              <option key={id} value={id}>{id}</option>
-            ))}
-          </select>
-        </div>
-
-        <div className='simple-questionnaire-responses-section'>
-          <h4 className='simple-voter-section-title'>Details</h4>
-          <dl className='simple-questionnaire-metadata-grid'>
-            <div className='simple-questionnaire-metadata-item'>
-              <dt>Vote ID</dt>
-              <dd>{questionnaireId.trim() || "Not set"}</dd>
-            </div>
-            <div className='simple-questionnaire-metadata-item'>
-              <dt>State</dt>
-              <dd>{metadataStateLabel}</dd>
-            </div>
-            <div className='simple-questionnaire-metadata-item'>
-              <dt>Opened</dt>
-              <dd>{activePublishedDefinition?.openAt ? formatUnixTimestamp(activePublishedDefinition.openAt) : "Not opened"}</dd>
-            </div>
-            <div className='simple-questionnaire-metadata-item'>
-              <dt>Closing / Closed</dt>
-              <dd>{metadataClosingClosedLabel}</dd>
-            </div>
-          </dl>
-        </div>
-
-        <div className='simple-questionnaire-responses-section'>
-          <h4 className='simple-voter-section-title'>Responses</h4>
-          <div className='simple-questionnaire-summary-card' aria-live='polite'>
-            <p className='simple-questionnaire-summary-label'>Responses</p>
-            <p className='simple-questionnaire-summary-value'>{displayAcceptedCount} / {knownVoterCount}</p>
-            <p className='simple-questionnaire-summary-label'>Completion</p>
-            <p className='simple-questionnaire-summary-value'>{responseCompletionPercent}%</p>
-            <div className='simple-questionnaire-progress' aria-hidden='true'>
-              <span style={{ width: `${responseCompletionRatio}%` }} />
-            </div>
+      <>
+        <div className='simple-voter-card simple-questionnaire-panel'>
+          <div className='simple-questionnaire-responses-section'>
+            <h4 className='simple-voter-section-title'>Live Status</h4>
+            <select
+              id='questionnaire-select'
+              className='simple-voter-input'
+              value={questionnaireId}
+              aria-label='Questionnaire'
+              onChange={(event) => setQuestionnaireId(event.target.value)}
+            >
+              {selectedQuestionnaireOptions.map((id) => (
+                <option key={id} value={id}>{questionnaireOptionLabel(id)}</option>
+              ))}
+            </select>
           </div>
         </div>
 
-        <div className='simple-questionnaire-responses-section'>
-          <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
-            <button
-              type='button'
-              className='simple-voter-primary'
-              disabled={closeAndPublishButtonDisabled}
-              onClick={() => void closeAndPublishResults()}
-            >
-              {currentState === "open" ? "Close + publish results" : "Publish results"}
-            </button>
-            {canExportResults ? (
+        <QuestionnaireResultsDashboard
+          questionnaire={activePublishedDefinition ? {
+            questionnaireId: activePublishedDefinition.questionnaireId,
+            title: activePublishedDefinition.title || "Untitled questionnaire",
+            description: activePublishedDefinition.description ?? "",
+            createdAt: activePublishedDefinition.createdAt,
+            openAt: activePublishedDefinition.openAt,
+            closeAt: activePublishedDefinition.closeAt,
+            closedAt: currentState === "closed" || currentState === "results_published" ? latestStateCreatedAt : null,
+            state: currentState,
+            questions: activePublishedDefinition.questions,
+          } : null}
+          questionSummaries={coordinatorQuestionSummaries}
+          responseDetails={coordinatorResponseDetails}
+          displayValidCount={displayAcceptedCount}
+          displayInvalidCount={latestRejectedCount}
+          coordinatorText={dashboardCoordinatorText}
+          publishedAtLabel='Published'
+          publishedAtTime={activePublishedDefinition?.createdAt ?? null}
+          actions={(
+            <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
               <button
                 type='button'
-                className='simple-voter-secondary'
-                onClick={exportResults}
+                className='simple-voter-primary'
+                disabled={closeAndPublishButtonDisabled}
+                onClick={() => void closeAndPublishResults()}
               >
-                Export results
+                {currentState === "open" ? "Close + publish results" : "Publish results"}
               </button>
-            ) : null}
-            <button type='button' className='simple-voter-secondary' onClick={() => void refresh()}>
-              Refresh
-            </button>
-          </div>
-          <p className='simple-voter-note'>{publishStatusText}</p>
-          {currentState === "results_published" ? (
-            <p className='simple-voter-note'>
-              Published results are available here and in <strong>Observer</strong> under the selected coordinator filters.
-            </p>
-          ) : null}
-        </div>
-
-        <div className='simple-questionnaire-responses-section'>
-          <h4 className='simple-voter-section-title'>Question results</h4>
-          {questionResultCards.length === 0 ? (
-            <p className='simple-voter-empty'>No question results yet.</p>
-          ) : (
-            <div className='simple-questionnaire-question-list'>
-              {questionResultCards.map((card) => (
-                <article key={card.questionId} className='simple-questionnaire-question-card'>
-                  <div className='simple-questionnaire-question-head'>
-                    <p className='simple-voter-question'>Question {card.index + 1}</p>
-                    <span className='simple-questionnaire-question-type'>{card.typeBadge}</span>
-                  </div>
-                  <p className='simple-voter-note'>{card.prompt || "Untitled question"}</p>
-                  {card.kind === "yes_no" ? (
-                    <div className='simple-questionnaire-results-stack'>
-                      <div className='simple-questionnaire-result-row is-yes'>
-                        <div className='simple-questionnaire-progress' aria-hidden='true'>
-                          <span style={{ width: percentageLabel(card.yesCount, card.acceptedTotal) }} />
-                        </div>
-                        <p className='simple-questionnaire-result-label'>
-                          <span>Yes</span>
-                          <span>{percentageLabel(card.yesCount, card.acceptedTotal)} ({card.yesCount})</span>
-                        </p>
-                      </div>
-                      <div className='simple-questionnaire-result-row is-no'>
-                        <div className='simple-questionnaire-progress' aria-hidden='true'>
-                          <span style={{ width: percentageLabel(card.noCount, card.acceptedTotal) }} />
-                        </div>
-                        <p className='simple-questionnaire-result-label'>
-                          <span>No</span>
-                          <span>{percentageLabel(card.noCount, card.acceptedTotal)} ({card.noCount})</span>
-                        </p>
-                      </div>
-                    </div>
-                  ) : null}
-                  {card.kind === "multiple_choice" ? (
-                    <div className='simple-questionnaire-results-stack'>
-                      {card.rows.map((row) => (
-                        <div key={row.optionId} className='simple-questionnaire-option-row'>
-                          <div className='simple-questionnaire-progress' aria-hidden='true'>
-                            <span style={{ width: percentageLabel(row.count, card.acceptedTotal) }} />
-                          </div>
-                          <p className='simple-voter-note'>
-                            {row.label} - {percentageLabel(row.count, card.acceptedTotal)} ({row.count})
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                  {card.kind === "text" ? (
-                    <div className='simple-questionnaire-results-stack'>
-                      <p className='simple-voter-note'>Responses: {card.responses.length}</p>
-                      <button
-                        type='button'
-                        className='simple-voter-secondary'
-                        onClick={() => setExpandedTextQuestionIds((current) => ({
-                          ...current,
-                          [card.questionId]: !current[card.questionId],
-                        }))}
-                      >
-                        {expandedTextQuestionIds[card.questionId] ? "Hide responses" : "Show responses"}
-                      </button>
-                      {expandedTextQuestionIds[card.questionId] ? (
-                        card.responses.length > 0 ? (
-                          <ul className='simple-voter-list'>
-                            {card.responses.map((entry, index) => (
-                              <li key={`${card.questionId}-${index}`} className='simple-voter-list-item'>
-                                {entry.text}
-                              </li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <p className='simple-voter-empty'>No text responses yet.</p>
-                        )
-                      ) : null}
-                    </div>
-                  ) : null}
-                </article>
-              ))}
+              {canExportResults ? (
+                <button
+                  type='button'
+                  className='simple-voter-secondary'
+                  onClick={exportResults}
+                >
+                  Export results
+                </button>
+              ) : null}
+              <button type='button' className='simple-voter-secondary' onClick={() => void refresh()}>
+                Refresh
+              </button>
             </div>
           )}
-        </div>
+          emptyQuestionSummaryText='No question results yet.'
+          emptySelectionText='Publish a questionnaire to inspect results.'
+          emptyResponsesText='No submitted responses found for this questionnaire yet.'
+          emptyResponseSelectionText='Publish a questionnaire to inspect responses.'
+        />
 
-        <div className='simple-questionnaire-responses-section'>
-          <h4 className='simple-voter-section-title'>Responders</h4>
-          {responders.length === 0 ? (
-            <p className='simple-voter-empty'>No responders yet. Responders will appear here after submitting a response.</p>
-          ) : (
-            <ul className='simple-questionnaire-responder-list'>
-              {responders.map((responder) => (
-                <li key={responder.markerToken} className='simple-questionnaire-responder-row'>
-                  <TokenFingerprint tokenId={responder.markerToken} compact showQr={false} hideMetadata />
-                  <p className='simple-voter-question'>{responder.responderId}</p>
-                  <p className='simple-voter-note'>Submitted {formatUnixTimestamp(responder.submittedAt)}</p>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-
+        {publishStatusText ? <p className='simple-voter-note'>{publishStatusText}</p> : null}
         {status ? <p className='simple-voter-note'>{status}</p> : null}
-      </div>
+      </>
     );
   }
 
@@ -3128,7 +3152,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         </div>
         <div className='simple-questionnaire-id-panel'>
           <div className='simple-questionnaire-field-heading'>
-            <label className='simple-voter-label' htmlFor='questionnaire-id'>Vote ID</label>
+            <label className='simple-voter-label' htmlFor='questionnaire-id'>Questionnaire ID</label>
           </div>
           <div className='simple-questionnaire-id-row'>
             <input
@@ -3269,7 +3293,15 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                     checked={question.required}
                     onChange={(event) => {
                       const checked = event.target.checked;
-                      updateQuestion(index, (entry) => ({ ...entry, required: checked }));
+                      updateQuestion(index, (entry) => {
+                        if (entry.type === "rank") {
+                          const minimumRanked = checked
+                            ? Math.max(1, Math.min(entry.options.length, entry.minimumRanked || 1))
+                            : 0;
+                          return { ...entry, minimumRanked, required: minimumRanked > 0 };
+                        }
+                        return { ...entry, required: checked };
+                      });
                     }}
                   />
                   <span className='simple-questionnaire-switch' aria-hidden='true'>
@@ -3293,6 +3325,14 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                   onClick={() => setQuestionType(index, "multiple_choice")}
                 >
                   Multiple choice
+                </button>
+                <button
+                  type='button'
+                  className={`simple-voter-secondary simple-questionnaire-type-option${question.type === "rank" ? " is-active" : ""}`}
+                  aria-pressed={question.type === "rank"}
+                  onClick={() => setQuestionType(index, "rank")}
+                >
+                  Ranked
                 </button>
                 <button
                   type='button'
@@ -3355,9 +3395,12 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                   >
                     Add option
                   </button>
-                  <label className='simple-voter-note'>
+                  <label className={`simple-questionnaire-required-toggle${question.multiSelect ? " is-on" : ""}`}>
+                    <span>Allow multiple selections</span>
                     <input
                       type='checkbox'
+                      role='switch'
+                      aria-checked={question.multiSelect}
                       checked={question.multiSelect}
                       onChange={(event) => {
                         const checked = event.target.checked;
@@ -3368,9 +3411,83 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                         ));
                       }}
                     />
-                    {" "}
-                    Allow multiple selections
+                    <span className='simple-questionnaire-switch' aria-hidden='true'>
+                      <span className='simple-questionnaire-switch-knob' />
+                    </span>
                   </label>
+                </div>
+              ) : null}
+              {question.type === "rank" ? (
+                <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
+                  <p className='simple-voter-label simple-voter-label-tight'>Options</p>
+                  {question.options.map((option, optionIndex) => (
+                    <input
+                      key={`${question.questionId}-rank-option-${optionIndex}`}
+                      className='simple-voter-input'
+                      value={option.label}
+                      onChange={(event) => {
+                        const nextLabel = event.target.value;
+                        updateQuestion(index, (entry) => {
+                          if (entry.type !== "rank") {
+                            return entry;
+                          }
+                          return {
+                            ...entry,
+                            options: entry.options.map((entryOption, entryOptionIndex) => (
+                              entryOptionIndex === optionIndex ? { ...entryOption, label: nextLabel } : entryOption
+                            )),
+                          };
+                        });
+                      }}
+                    />
+                  ))}
+                  <div className='simple-questionnaire-rank-settings'>
+                    <label className='simple-voter-label simple-voter-label-tight' htmlFor={`question-rank-minimum-${index}`}>
+                      Minimum ranked choices
+                    </label>
+                    <select
+                      id={`question-rank-minimum-${index}`}
+                      className='simple-voter-input simple-questionnaire-rank-minimum'
+                      value={String(question.minimumRanked)}
+                      onChange={(event) => {
+                        const parsed = Number.parseInt(event.target.value, 10);
+                        updateQuestion(index, (entry) => {
+                          if (entry.type !== "rank") {
+                            return entry;
+                          }
+                          const minimumRanked = Number.isFinite(parsed)
+                            ? Math.min(entry.options.length, Math.max(0, parsed))
+                            : 0;
+                          return { ...entry, minimumRanked, required: minimumRanked > 0 };
+                        });
+                      }}
+                    >
+                      <option value='0'>None</option>
+                      {question.options.map((option, optionIndex) => (
+                        <option key={option.optionId} value={String(optionIndex + 1)}>
+                          {optionIndex + 1}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    type='button'
+                    className='simple-voter-secondary'
+                    onClick={() => {
+                      updateQuestion(index, (entry) => {
+                        if (entry.type !== "rank") {
+                          return entry;
+                        }
+                        const nextIndex = entry.options.length + 1;
+                        return {
+                          ...entry,
+                          options: [...entry.options, { optionId: `option_${nextIndex}`, label: `Option ${nextIndex}` }],
+                        };
+                      });
+                    }}
+                  >
+                    Add option
+                  </button>
                 </div>
               ) : null}
               {question.type === "free_text" ? (

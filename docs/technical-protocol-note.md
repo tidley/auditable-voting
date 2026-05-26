@@ -49,7 +49,7 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 
 1. Open the app as **Coordinator**.
 2. Create or load a coordinator identity.
-3. In **Questionnaire**, enter the questionnaire name, description, and questions. The questionnaire builder heading shows the current name, for example `Build questionnaire: How did we do`.
+3. In **Setup**, enter the questionnaire name, description, and questions. Supported question types are yes/no, multiple choice, ranked-choice, and free text. Ranked-choice answers are totalled as points, with the highest score preferred: first choice gets one point per available option, later choices count down from there, and unranked options get `0` points.
 4. Use **Generate ID** only when you want a fresh questionnaire ID. Use **Copy ID** beside the Questionnaire ID when sharing the public identifier with observers.
 5. Use **Show questionnaire link** if you want a QR/link for the questionnaire.
 6. Optionally open **Settings → Relays** to add or remove questionnaire metadata relays before publishing if this round should prefer a non-default relay set.
@@ -65,8 +65,8 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 
 ### 3. Coordinator invites voters
 
-1. Share the questionnaire link from **Participants** with **Copy link**, **Invite by email**, **WhatsApp**, **SMS**, or **Share**. These actions use the browser/device apps already available; no provider API key or service registration is needed.
-2. Use **Create private code link** when the coordinator wants a one-use bearer invite with no `npub` in the URL. The voter looks up coordinator and audit-proxy routing from the public questionnaire metadata on Nostr, then automatically requests a ballot. The created row can be copied or sent by email, WhatsApp, SMS, or native share while the raw link is available in that page session. The first voter to open that link claims the code with their local voter identity; the code can be revoked until it is claimed.
+1. Share the questionnaire link from **Participants** with **Copy link** or **Share**. These actions use the browser/device apps already available; no provider API key or service registration is needed.
+2. Use **Create single-use invite link** when the coordinator wants a one-use bearer invite. The voter looks up coordinator and audit-proxy routing from the public questionnaire metadata on Nostr, then automatically requests a ballot. The created row can be copied or opened in the native share sheet while the raw link is available in that page session. The first voter to open that link claims the code with their local voter identity; the code can be revoked until it is claimed.
 3. Add or import voter `npub`s in **Participants** when you want to pre-authorise known voters.
 4. Use **Copy personalised link** beside a whitelisted voter when the link should carry that pre-authorised voter `npub`. The voter must still sign in as that `npub`; the personalised URL reveals the invitee `npub` to whoever sees the link.
 5. Send Nostr invite DMs with **Invite** or **Invite all whitelisted**.
@@ -270,7 +270,7 @@ The present web client is built with:
 - **course-feedback coordinator bypass** so legacy live-round / blind-key / ticket queue gating is disabled for questionnaire acceptance paths, with explicit debug assertions for bypass state
 - **course-feedback batch orchestration** in the live harness (`LIVE_BATCH_SIZE`, default `5`) so enrolment and submission advance in checkpointed waves instead of all-voter cold-start concurrency
 - **questionnaire response observation fallback** that prefers bounded kind-only reads plus local questionnaire-id filtering (and relay probes) when custom tag-indexed reads are unreliable on public relays
-- **observer coordinator filtering + search** so public round review can be scoped by lead coordinator, coordinator npub, and free-text query (npub/round ID/prompt), with non-overlapping refreshes to reduce relay REQ bursts
+- **observer coordinator filtering + search** so public round review can be scoped by lead coordinator, coordinator npub, and free-text query (npub/round ID/prompt), with one automatic fetch per page session and explicit manual Refresh for later updates
 - **observer historic search** so the normal view stays bounded to recent questionnaire data, but observers can explicitly scan a wider historical window when an older published questionnaire or public result payload is missing
 - **observer questionnaire discovery** so recent public questionnaire definitions are read by kind-only backfill when no questionnaire ID is selected, with state, replaceable expected-participant count events, live verified response totals, and published response totals shown when available
 - **ticket scheduler diagnostics and tunable transport knobs** for first-send prioritisation, resend eligibility reasons, bounded concurrency, and retry-age experimentation during live relay reliability testing
@@ -781,7 +781,7 @@ The questionnaire runtime currently provides:
 
 - signer-based login entry points in voter/coordinator questionnaire headers
 - coordinator whitelist and invite actions
-- coordinator public-link sharing through copy, email, WhatsApp, SMS, and the native browser share sheet without API keys or external service accounts, plus one-use private code links with per-code share controls and per-whitelisted-voter personalised links carrying `coordinator` and `invited` URL parameters
+- coordinator public-link sharing through copy and the native browser share sheet without API keys or external service accounts, plus one-use private code links with per-code share controls and per-whitelisted-voter personalised links carrying `coordinator` and `invited` URL parameters
 - invite delivery over NIP-17 gift-wrapped DMs (`kind 1059` with `kind 13` seal / `kind 14` rumor), with bounded recent relay-history invite discovery on manual voter checks
 - published questionnaire definitions that include the blind-signing public key and any non-default questionnaire relay hints, plus caching and invite-attached definitions, so voters can render linked questionnaires, prefer the coordinator-selected relay set, and request ballots even when the signer cannot read historical invite DMs
 - credential-attached definition refreshes that do not clear drafted response fields

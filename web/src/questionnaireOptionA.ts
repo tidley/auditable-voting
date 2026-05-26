@@ -147,6 +147,7 @@ export interface BlindBallotIssuance {
 export type QuestionnaireAnswer =
   | { questionId: string; type: "yes_no"; answer: "yes" | "no" }
   | { questionId: string; type: "multiple_choice"; answer: string[] }
+  | { questionId: string; type: "rank"; answer: string[] }
   | { questionId: string; type: "text"; answer: string; encryptForCoordinator?: boolean };
 
 export interface QuestionnaireBallotPayload {
@@ -390,6 +391,14 @@ function validateResponsesSchema(responses: QuestionnaireAnswer[]) {
     }
     if (answer.type === "multiple_choice") {
       if (!Array.isArray(answer.answer) || answer.answer.length === 0 || answer.answer.some((option) => !option.trim())) {
+        return false;
+      }
+    }
+    if (answer.type === "rank") {
+      if (!Array.isArray(answer.answer) || answer.answer.length === 0 || answer.answer.some((option) => !option.trim())) {
+        return false;
+      }
+      if (new Set(answer.answer).size !== answer.answer.length) {
         return false;
       }
     }

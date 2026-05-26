@@ -25,31 +25,3 @@ export function buildQuestionnaireInviteShareText(input: {
     input.inviteUrl,
   ].filter((part) => part.length > 0).join("\n\n");
 }
-
-export function buildQuestionnaireInviteMailtoHref(input: {
-  title?: string | null;
-  description?: string | null;
-  inviteUrl: string;
-}) {
-  const params = new URLSearchParams({
-    subject: buildQuestionnaireInviteShareSubject(input),
-    body: buildQuestionnaireInviteShareText(input),
-  });
-  return `mailto:?${params.toString()}`;
-}
-
-export function buildQuestionnaireInviteSmsHref(input: {
-  title?: string | null;
-  description?: string | null;
-  inviteUrl: string;
-}) {
-  return `sms:?body=${encodeURIComponent(buildQuestionnaireInviteShareText(input))}`;
-}
-
-export function buildQuestionnaireInviteWhatsAppHref(input: {
-  title?: string | null;
-  description?: string | null;
-  inviteUrl: string;
-}) {
-  return `https://wa.me/?text=${encodeURIComponent(buildQuestionnaireInviteShareText(input))}`;
-}

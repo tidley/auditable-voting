@@ -40,7 +40,7 @@ Shape (camelCase in the shipped client):
 - `responseVisibility: "public" | "private"`
 - `eligibilityMode: "open" | "allowlist"`
 - `allowMultipleResponsesPerPubkey: boolean`
-- `questions[]` (`yes_no`, `multiple_choice`, `free_text`)
+- `questions[]` (`yes_no`, `multiple_choice`, `rank`, `free_text`)
 
 Tags:
 
@@ -53,7 +53,8 @@ Validation rules include:
 - `questionnaireId` present
 - `openAt < closeAt`
 - unique `questionId`
-- unique `optionId` within each multiple-choice question
+- unique `optionId` within each multiple-choice and rank question
+- ranked-choice questions use internal type `rank` and may set `minimumRanked` from `0` up to the option count
 - required coordinator keys present
 
 ## 4. Questionnaire state
@@ -125,6 +126,8 @@ Shape:
 - `rejectedResponseCount`
 - `questionSummaries[]`
 
+Ranked-choice summaries use total points per option, where higher is better. A ranked answer stores ordered `rankedOptionIds`; first choice receives one point per available option, later choices count down from there, and unranked options receive `0` points. If a ranked-choice question has `minimumRanked: 0` and a voter leaves it blank, every option receives `0` points for that response.
+
 Tags:
 
 - `["t", "questionnaire_result_summary"]`
@@ -158,7 +161,7 @@ Coordinator-side verification (especially in encrypted mode) additionally checks
 - payload decryption
 - answer schema validity
 - required answers
-- option validity and free-text length limits
+- option validity, rank minimums, and free-text length limits
 
 ## 9. Relay compatibility notes
 

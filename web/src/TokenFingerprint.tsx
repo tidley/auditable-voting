@@ -17,6 +17,8 @@ export default function TokenFingerprint({
   showQr = !compact,
   qrValue,
   hideMetadata = false,
+  fingerprintTitle,
+  qrTitle,
 }: {
   tokenId: string;
   label?: string;
@@ -27,6 +29,8 @@ export default function TokenFingerprint({
   showQr?: boolean;
   qrValue?: string;
   hideMetadata?: boolean;
+  fingerprintTitle?: string;
+  qrTitle?: string;
 }) {
   const [qrSrc, setQrSrc] = useState<string | null>(null);
   const [qrExpanded, setQrExpanded] = useState(false);
@@ -94,6 +98,7 @@ export default function TokenFingerprint({
             aria-label={showQr
               ? `Expand QR for token ${tokenIdLabel(tokenId)}`
               : (label ?? `Token fingerprint ${tokenIdLabel(tokenId)}`)}
+            data-tooltip={fingerprintTitle || undefined}
             style={{ gridTemplateColumns: `repeat(${size}, minmax(0, 1fr))` }}
             onClick={() => {
               if (showQr && qrSrc) {
@@ -132,6 +137,7 @@ export default function TokenFingerprint({
                 }
               }}
               aria-label={`Expand QR for token ${tokenIdLabel(tokenId)}`}
+              data-tooltip={qrTitle || undefined}
               disabled={!qrSrc}
             >
               {qrSrc ? (

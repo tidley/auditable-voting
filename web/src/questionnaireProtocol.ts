@@ -34,6 +34,12 @@ export type QuestionnaireMultipleChoiceQuestion = QuestionnaireQuestionBase & {
   options: QuestionnaireMultipleChoiceOption[];
 };
 
+export type QuestionnaireRankQuestion = QuestionnaireQuestionBase & {
+  type: "rank";
+  options: QuestionnaireMultipleChoiceOption[];
+  minimumRanked: number;
+};
+
 export type QuestionnaireFreeTextQuestion = QuestionnaireQuestionBase & {
   type: "free_text";
   maxLength: number;
@@ -42,6 +48,7 @@ export type QuestionnaireFreeTextQuestion = QuestionnaireQuestionBase & {
 export type QuestionnaireQuestion =
   | QuestionnaireYesNoQuestion
   | QuestionnaireMultipleChoiceQuestion
+  | QuestionnaireRankQuestion
   | QuestionnaireFreeTextQuestion;
 
 export type QuestionnaireDefinition = {
@@ -102,6 +109,11 @@ export type QuestionnaireResponseAnswer =
     }
   | {
       questionId: string;
+      answerType: "rank";
+      rankedOptionIds: string[];
+    }
+  | {
+      questionId: string;
       answerType: "free_text";
       text: string;
     };
@@ -139,6 +151,14 @@ export type QuestionnaireResultQuestionSummary =
       questionId: string;
       answerType: "multiple_choice";
       optionCounts: Record<string, number>;
+    }
+  | {
+      questionId: string;
+      answerType: "rank";
+      optionScores: Record<string, number>;
+      rankCounts: Record<string, Record<string, number>>;
+      responseCount: number;
+      blankResponseCount: number;
     }
   | {
       questionId: string;
@@ -196,6 +216,44 @@ function isNonEmpty(value: string | null | undefined) {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+export function clampRankMinimum(question: Pick<QuestionnaireRankQuestion, "options" | "minimumRanked">) {
+  const optionCount = Array.isArray(question.options) ? question.options.length : 0;
+  if (!Number.isFinite(question.minimumRanked)) {
+    return 0;
+  }
+  return Math.min(optionCount, Math.max(0, Math.floor(question.minimumRanked)));
+}
+
+export function normaliseRankedOptionIds(question: Pick<QuestionnaireRankQuestion, "options">, rankedOptionIds: unknown) {
+  const validOptions = new Set(question.options.map((option) => option.optionId));
+  const seen = new Set<string>();
+  const normalised: string[] = [];
+  if (!Array.isArray(rankedOptionIds)) {
+    return normalised;
+  }
+  for (const optionId of rankedOptionIds) {
+    if (typeof optionId !== "string" || !validOptions.has(optionId) || seen.has(optionId)) {
+      continue;
+    }
+    seen.add(optionId);
+    normalised.push(optionId);
+  }
+  return normalised.slice(0, question.options.length);
+}
+
+export function calculateRankQuestionScores(
+  question: Pick<QuestionnaireRankQuestion, "options">,
+  rankedOptionIds: unknown,
+) {
+  const normalised = normaliseRankedOptionIds(question, rankedOptionIds);
+  const optionCount = question.options.length;
+  const optionScores = Object.fromEntries(question.options.map((option) => [option.optionId, 0]));
+  normalised.forEach((optionId, index) => {
+    optionScores[optionId] = optionCount - index;
+  });
+  return optionScores;
+}
+
 export function validateQuestionnaireDefinition(input: QuestionnaireDefinition): ValidationResult {
   const errors: string[] = [];
   if (
@@ -243,9 +301,9 @@ export function validateQuestionnaireDefinition(input: QuestionnaireDefinition):
       }
       questionIds.add(question.questionId);
 
-      if (question.type === "multiple_choice") {
+      if (question.type === "multiple_choice" || question.type === "rank") {
         if (!Array.isArray(question.options) || question.options.length < 2) {
-          errors.push(`multiple_choice_insufficient_options:${question.questionId}`);
+          errors.push(`${question.type}_insufficient_options:${question.questionId}`);
           continue;
         }
         const optionIds = new Set<string>();
@@ -258,6 +316,17 @@ export function validateQuestionnaireDefinition(input: QuestionnaireDefinition):
             errors.push(`option_id_duplicate:${question.questionId}:${option.optionId}`);
           }
           optionIds.add(option.optionId);
+        }
+      }
+
+      if (question.type === "rank") {
+        if (
+          !Number.isFinite(question.minimumRanked)
+          || Math.floor(question.minimumRanked) !== question.minimumRanked
+          || question.minimumRanked < 0
+          || question.minimumRanked > question.options.length
+        ) {
+          errors.push(`rank_minimum_invalid:${question.questionId}`);
         }
       }
 
@@ -341,6 +410,34 @@ export function validateQuestionnaireResponsePayload(input: {
       continue;
     }
 
+    if (question.type === "rank") {
+      if (answer.answerType !== "rank") {
+        errors.push(`invalid_answer_type:${answer.questionId}`);
+        continue;
+      }
+      const ranked = Array.isArray(answer.rankedOptionIds) ? answer.rankedOptionIds : [];
+      const minimumRanked = clampRankMinimum(question);
+      if (ranked.length < minimumRanked) {
+        errors.push(`rank_selection_count:${answer.questionId}`);
+      }
+      if (ranked.length > question.options.length) {
+        errors.push(`rank_selection_count:${answer.questionId}`);
+      }
+      const validOptions = new Set(question.options.map((option) => option.optionId));
+      const seenRankedOptions = new Set<string>();
+      for (const optionId of ranked) {
+        if (typeof optionId !== "string" || !validOptions.has(optionId)) {
+          errors.push(`invalid_option_id:${answer.questionId}:${String(optionId)}`);
+          continue;
+        }
+        if (seenRankedOptions.has(optionId)) {
+          errors.push(`duplicate_ranked_option:${answer.questionId}:${optionId}`);
+        }
+        seenRankedOptions.add(optionId);
+      }
+      continue;
+    }
+
     if (answer.answerType !== "free_text") {
       errors.push(`invalid_answer_type:${answer.questionId}`);
       continue;
@@ -351,7 +448,10 @@ export function validateQuestionnaireResponsePayload(input: {
   }
 
   for (const question of definition.questions) {
-    if (question.required && !seenAnswers.has(question.questionId)) {
+    const rankMinimumMissing = question.type === "rank"
+      && clampRankMinimum(question) > 0
+      && !seenAnswers.has(question.questionId);
+    if ((question.required && !seenAnswers.has(question.questionId)) || rankMinimumMissing) {
       errors.push(`missing_required_answer:${question.questionId}`);
     }
   }

@@ -419,6 +419,13 @@ function toQuestionnaireResponseAnswers(
         selectedOptionIds: [...answer.answer],
       };
     }
+    if (answer.type === "rank") {
+      return {
+        questionId: answer.questionId,
+        answerType: "rank",
+        rankedOptionIds: [...answer.answer],
+      };
+    }
     let text = answer.answer;
     if (answer.encryptForCoordinator) {
       const coordinatorNpub = options?.coordinatorNpub?.trim() ?? "";
@@ -453,6 +460,13 @@ function fromQuestionnaireResponseAnswers(answers: QuestionnaireResponseAnswer[]
         questionId: answer.questionId,
         type: "multiple_choice",
         answer: [...answer.selectedOptionIds],
+      };
+    }
+    if (answer.answerType === "rank") {
+      return {
+        questionId: answer.questionId,
+        type: "rank",
+        answer: [...answer.rankedOptionIds],
       };
     }
     return {

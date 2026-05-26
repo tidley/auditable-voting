@@ -17,10 +17,11 @@ The active product is the client in `web/` plus the optional audit proxy in `wor
 - Browser voter, coordinator, and observer flows.
 - Nostr-first transport using public events and NIP-17 private control traffic.
 - Per-questionnaire relay hints published in questionnaire metadata when the coordinator uses a non-default relay set.
-- Browser-only invite sharing by copied link, email, WhatsApp, SMS, native device share actions, personalised links for pre-whitelisted voter npubs, or one-use private code links with per-code share controls that whitelist the first claimant and automatically request a ballot.
+- Yes/no, multiple-choice, ranked-choice, and free-text questionnaire questions.
+- Browser-only invite sharing by copied link, native device share actions, personalised links for pre-whitelisted voter npubs, or one-use private code links with per-code share controls that whitelist the first claimant and automatically request a ballot.
 - Blind credential issuance for allowlisted participants.
 - Public blind-token submissions from ephemeral response keys.
-- Live observer results derived from public submissions and decisions.
+- Observer results derived from public submissions and decisions, with one automatic fetch per page session and manual Refresh for updates.
 - Optional audit proxy that can issue credentials, verify submissions, publish decisions, close completed questionnaires, and publish result summaries.
 - Static deployment to GitHub Pages or nsite.
 

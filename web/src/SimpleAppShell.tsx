@@ -687,77 +687,90 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                 {isSimpleActorRole(role) ? (
                   <>
                     <div className='simple-account-menu-identity' role='none'>
-                      <p className='simple-account-menu-kicker'>Identity</p>
-                      <p className='simple-account-menu-title'>{accountIdentityLabel}</p>
-                      {accountIdentityNpub ? (
-                        <div className='simple-account-identity-visuals'>
-                          <TokenFingerprint
-                            tokenId={accountIdentityNpub}
-                            compact
-                            showQr
-                            hideMetadata
-                            qrValue={accountIdentityNpub}
-                          />
-                          <div className='simple-account-identity-visual-labels' aria-hidden='true'>
-                            <span>Colour ID</span>
-                            <span>QR code</span>
+                      <div className='simple-account-menu-identity-actions'>
+                        <p className='simple-account-menu-kicker'>Identity</p>
+                        <button
+                          type='button'
+                          className='simple-account-menu-button'
+                          role='menuitem'
+                          disabled={!accountIdentityNpub}
+                          onClick={() => {
+                            setAccountMenuOpen(false);
+                            void tryWriteClipboard(accountIdentityNpub);
+                          }}
+                        >
+                          Copy identity
+                        </button>
+                        <button
+                          type='button'
+                          className='simple-account-menu-button'
+                          role='menuitem'
+                          onClick={() => {
+                            if (
+                              typeof window !== "undefined"
+                              && !window.confirm("Create a new identity for this role? Your current identity stays in this browser only if you have backed it up.")
+                            ) {
+                              return;
+                            }
+                            setAccountMenuOpen(false);
+                            if (typeof window !== "undefined") {
+                              window.dispatchEvent(new Event(`auditable-voting:${role}-new`));
+                            }
+                          }}
+                        >
+                          New identity
+                        </button>
+                      </div>
+                      <div className='simple-account-menu-identity-detail'>
+                        <p
+                          className='simple-account-menu-title'
+                          data-tooltip={accountIdentityNpub ? `Short identity shown here. Full identity: ${accountIdentityNpub}` : undefined}
+                        >
+                          {accountIdentityLabel}
+                        </p>
+                        {accountIdentityNpub ? (
+                          <div className='simple-account-identity-visuals'>
+                            <TokenFingerprint
+                              tokenId={accountIdentityNpub}
+                              compact
+                              showQr
+                              hideMetadata
+                              qrValue={accountIdentityNpub}
+                              fingerprintTitle='Colour ID: a visual fingerprint for checking this identity at a glance.'
+                              qrTitle='QR code: scan this to copy the full identity.'
+                            />
+                            <div className='simple-account-identity-visual-labels' aria-hidden='true'>
+                              <span data-tooltip='Colour ID: a visual fingerprint for checking this identity at a glance.'>Colour ID</span>
+                              <span data-tooltip='QR code: scan this to copy the full identity.'>QR code</span>
+                            </div>
                           </div>
-                        </div>
-                      ) : (
-                        <p className='simple-voter-note simple-account-menu-note'>Identity is loading.</p>
-                      )}
+                        ) : (
+                          <p className='simple-voter-note simple-account-menu-note'>Identity is loading.</p>
+                        )}
+                      </div>
                     </div>
-                    <button
-                      type='button'
-                      className='simple-account-menu-button'
-                      role='menuitem'
-                      disabled={!accountIdentityNpub}
-                      onClick={() => {
-                        setAccountMenuOpen(false);
-                        void tryWriteClipboard(accountIdentityNpub);
-                      }}
-                    >
-                      Copy identity
-                    </button>
-                    <button
-                      type='button'
-                      className='simple-account-menu-button'
-                      role='menuitem'
-                      onClick={() => {
-                        if (
-                          typeof window !== "undefined"
-                          && !window.confirm("Create a new identity for this role? Your current identity stays in this browser only if you have backed it up.")
-                        ) {
-                          return;
-                        }
-                        setAccountMenuOpen(false);
-                        if (typeof window !== "undefined") {
-                          window.dispatchEvent(new Event(`auditable-voting:${role}-new`));
-                        }
-                      }}
-                    >
-                      New identity
-                    </button>
-                    <button
-                      type='button'
-                      className='simple-account-menu-button'
-                      role='menuitem'
-                      onClick={() => {
-                        if (
-                          typeof window !== "undefined"
-                          && !window.confirm("Sign out and return to the landing page?")
-                        ) {
-                          return;
-                        }
-                        setAccountMenuOpen(false);
-                        if (typeof window !== "undefined") {
-                          window.dispatchEvent(new Event(`auditable-voting:${role}-signout`));
-                          returnToLandingPage();
-                        }
-                      }}
-                    >
-                      Sign out
-                    </button>
+                    <div className='simple-account-menu-signout-section' role='none'>
+                      <button
+                        type='button'
+                        className='simple-account-menu-button'
+                        role='menuitem'
+                        onClick={() => {
+                          if (
+                            typeof window !== "undefined"
+                            && !window.confirm("Sign out and return to the landing page?")
+                          ) {
+                            return;
+                          }
+                          setAccountMenuOpen(false);
+                          if (typeof window !== "undefined") {
+                            window.dispatchEvent(new Event(`auditable-voting:${role}-signout`));
+                            returnToLandingPage();
+                          }
+                        }}
+                      >
+                        Sign out
+                      </button>
+                    </div>
                   </>
                 ) : null}
               </div>

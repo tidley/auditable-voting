@@ -76,13 +76,27 @@ function sortQuestionSummariesCanonical(summaries: QuestionnaireResultQuestionSu
   return [...summaries]
     .sort((left, right) => left.questionId.localeCompare(right.questionId))
     .map((summary) => {
-      if (summary.answerType !== "multiple_choice") {
+      if (summary.answerType !== "multiple_choice" && summary.answerType !== "rank") {
         return summary;
       }
-      const optionCounts = Object.fromEntries(
-        Object.entries(summary.optionCounts).sort(([left], [right]) => left.localeCompare(right)),
+      if (summary.answerType === "multiple_choice") {
+        const optionCounts = Object.fromEntries(
+          Object.entries(summary.optionCounts).sort(([left], [right]) => left.localeCompare(right)),
+        );
+        return { ...summary, optionCounts };
+      }
+      const optionScores = Object.fromEntries(
+        Object.entries(summary.optionScores).sort(([left], [right]) => left.localeCompare(right)),
       );
-      return { ...summary, optionCounts };
+      const rankCounts = Object.fromEntries(
+        Object.entries(summary.rankCounts)
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([optionId, counts]) => [
+            optionId,
+            Object.fromEntries(Object.entries(counts).sort(([left], [right]) => Number(left) - Number(right))),
+          ]),
+      );
+      return { ...summary, optionScores, rankCounts };
     });
 }
 

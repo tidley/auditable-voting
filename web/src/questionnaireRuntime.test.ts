@@ -43,10 +43,25 @@ const definition: QuestionnaireDefinition = {
       required: false,
       maxLength: 1000,
     },
+    {
+      questionId: "q4",
+      type: "rank",
+      prompt: "Rank future priorities",
+      required: false,
+      minimumRanked: 0,
+      options: [
+        { optionId: "community", label: "Community process" },
+        { optionId: "cost", label: "Cost" },
+        { optionId: "time", label: "Time" },
+      ],
+    },
   ],
 };
 
-function response(id: string, yes: boolean, option: string, freeText: string): QuestionnaireAcceptedResponse {
+function response(id: string, yes: boolean, option: string, freeText: string, rankedOptionIds: string[] = []): QuestionnaireAcceptedResponse {
+  const rankAnswer = rankedOptionIds.length > 0
+    ? [{ questionId: "q4", answerType: "rank" as const, rankedOptionIds }]
+    : [];
   return {
     eventId: `event-${id}`,
     authorPubkey: `npub1author${id}`,
@@ -72,6 +87,7 @@ function response(id: string, yes: boolean, option: string, freeText: string): Q
         { questionId: "q1", answerType: "yes_no", value: yes },
         { questionId: "q2", answerType: "multiple_choice", selectedOptionIds: [option] },
         { questionId: "q3", answerType: "free_text", text: freeText },
+        ...rankAnswer,
       ],
     },
   };
@@ -100,7 +116,7 @@ describe("questionnaireRuntime", () => {
       definition,
       coordinatorPubkey: definition.coordinatorPubkey,
       acceptedResponses: [
-        response("1", true, "good", "More examples"),
+        response("1", true, "good", "More examples", ["community", "cost"]),
         response("2", false, "fast", ""),
       ],
       rejectedResponses: [{
@@ -131,5 +147,22 @@ describe("questionnaireRuntime", () => {
 
     const freeText = summary.questionSummaries.find((entry) => entry.questionId === "q3");
     expect(freeText).toMatchObject({ answerType: "free_text", freeTextCount: 1 });
+
+    const rank = summary.questionSummaries.find((entry) => entry.questionId === "q4");
+    expect(rank).toMatchObject({
+      answerType: "rank",
+      optionScores: {
+        community: 3,
+        cost: 2,
+        time: 0,
+      },
+      rankCounts: {
+        community: { "0": 1, "3": 1 },
+        cost: { "0": 1, "2": 1 },
+        time: { "0": 2 },
+      },
+      responseCount: 2,
+      blankResponseCount: 1,
+    });
   });
 });

@@ -57,7 +57,9 @@ import SimpleIdentityPanel from "./SimpleIdentityPanel";
 import SimpleRelayPanel from "./SimpleRelayPanel";
 import SimpleUnlockGate from "./SimpleUnlockGate";
 import QuestionnaireCoordinatorPanel, {
+  QUESTIONNAIRE_ID_RESET_EVENT,
   readStoredQuestionnaireRelayInput,
+  resetStoredQuestionnaireDraftId,
   writeStoredQuestionnaireRelayInput,
 } from "./QuestionnaireCoordinatorPanel";
 import { extractNpubFromScan } from "./npubScan";
@@ -67,11 +69,8 @@ import {
 } from "./questionnaireOptionARuntime";
 import { buildInviteUrl, buildQuestionnaireInviteUrl } from "./questionnaireInvite";
 import {
-  buildQuestionnaireInviteMailtoHref,
   buildQuestionnaireInviteShareSubject,
   buildQuestionnaireInviteShareText,
-  buildQuestionnaireInviteSmsHref,
-  buildQuestionnaireInviteWhatsAppHref,
 } from "./questionnaireInviteShare";
 import {
   generateQuestionnaireInviteCode,
@@ -151,6 +150,13 @@ function optionAAnswerToQuestionnaireAnswer(answer: QuestionnaireAnswer): Questi
       questionId: answer.questionId,
       answerType: "multiple_choice",
       selectedOptionIds: answer.answer,
+    };
+  }
+  if (answer.type === "rank") {
+    return {
+      questionId: answer.questionId,
+      answerType: "rank",
+      rankedOptionIds: answer.answer,
     };
   }
   return {
@@ -1204,33 +1210,6 @@ export default function SimpleCoordinatorApp() {
   const publicQuestionnaireInviteShareText = useMemo(() => (
     publicQuestionnaireInviteUrl
       ? buildQuestionnaireInviteShareText({
-        title: publicQuestionnaireInviteCopy.title,
-        description: publicQuestionnaireInviteCopy.description,
-        inviteUrl: publicQuestionnaireInviteUrl,
-      })
-      : ""
-  ), [publicQuestionnaireInviteCopy.description, publicQuestionnaireInviteCopy.title, publicQuestionnaireInviteUrl]);
-  const publicQuestionnaireInviteMailtoHref = useMemo(() => (
-    publicQuestionnaireInviteUrl
-      ? buildQuestionnaireInviteMailtoHref({
-        title: publicQuestionnaireInviteCopy.title,
-        description: publicQuestionnaireInviteCopy.description,
-        inviteUrl: publicQuestionnaireInviteUrl,
-      })
-      : ""
-  ), [publicQuestionnaireInviteCopy.description, publicQuestionnaireInviteCopy.title, publicQuestionnaireInviteUrl]);
-  const publicQuestionnaireInviteSmsHref = useMemo(() => (
-    publicQuestionnaireInviteUrl
-      ? buildQuestionnaireInviteSmsHref({
-        title: publicQuestionnaireInviteCopy.title,
-        description: publicQuestionnaireInviteCopy.description,
-        inviteUrl: publicQuestionnaireInviteUrl,
-      })
-      : ""
-  ), [publicQuestionnaireInviteCopy.description, publicQuestionnaireInviteCopy.title, publicQuestionnaireInviteUrl]);
-  const publicQuestionnaireInviteWhatsAppHref = useMemo(() => (
-    publicQuestionnaireInviteUrl
-      ? buildQuestionnaireInviteWhatsAppHref({
         title: publicQuestionnaireInviteCopy.title,
         description: publicQuestionnaireInviteCopy.description,
         inviteUrl: publicQuestionnaireInviteUrl,
@@ -3465,8 +3444,10 @@ export default function SimpleCoordinatorApp() {
   }, [isCourseFeedbackMode, selectedSubmittedVote?.votingId]);
 
   function refreshIdentity() {
+    let nextQuestionnaireId = "";
     if (typeof window !== "undefined") {
       window.localStorage.removeItem(GATEWAY_SIGNER_NPUB_STORAGE_KEY);
+      nextQuestionnaireId = resetStoredQuestionnaireDraftId();
     }
     setSignerNpub("");
     setSignerStatus(null);
@@ -3515,6 +3496,11 @@ export default function SimpleCoordinatorApp() {
     coordinatorControlServiceRef.current = null;
     blindKeyDiagnosticsRef.current = createBlindKeyDiagnostics();
     roundBroadcastInFlightRef.current = null;
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent(QUESTIONNAIRE_ID_RESET_EVENT, {
+        detail: { questionnaireId: nextQuestionnaireId },
+      }));
+    }
   }
 
   function signOutSignerSession() {
@@ -3593,32 +3579,6 @@ export default function SimpleCoordinatorApp() {
     setKnownVoterInviteStatus("Invite link copied.");
   }
 
-  function buildPrivateInviteShare(input: { inviteUrl: string }) {
-    return {
-      subject: buildQuestionnaireInviteShareSubject({ title: publicQuestionnaireInviteCopy.title }),
-      text: buildQuestionnaireInviteShareText({
-        title: publicQuestionnaireInviteCopy.title,
-        description: publicQuestionnaireInviteCopy.description,
-        inviteUrl: input.inviteUrl,
-      }),
-      mailtoHref: buildQuestionnaireInviteMailtoHref({
-        title: publicQuestionnaireInviteCopy.title,
-        description: publicQuestionnaireInviteCopy.description,
-        inviteUrl: input.inviteUrl,
-      }),
-      smsHref: buildQuestionnaireInviteSmsHref({
-        title: publicQuestionnaireInviteCopy.title,
-        description: publicQuestionnaireInviteCopy.description,
-        inviteUrl: input.inviteUrl,
-      }),
-      whatsAppHref: buildQuestionnaireInviteWhatsAppHref({
-        title: publicQuestionnaireInviteCopy.title,
-        description: publicQuestionnaireInviteCopy.description,
-        inviteUrl: input.inviteUrl,
-      }),
-    };
-  }
-
   async function copyPrivateInviteCodeLink(codeHash: string) {
     const inviteUrl = privateInviteLinksByHash[codeHash] ?? "";
     if (!inviteUrl) {
@@ -3635,12 +3595,15 @@ export default function SimpleCoordinatorApp() {
       setKnownVoterInviteStatus("This private link is not available in this page session. Create a new private link if you need another link.");
       return;
     }
-    const inviteShare = buildPrivateInviteShare({ inviteUrl });
     if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
       try {
         await navigator.share({
-          title: inviteShare.subject,
-          text: inviteShare.text,
+          title: buildQuestionnaireInviteShareSubject({ title: publicQuestionnaireInviteCopy.title }),
+          text: buildQuestionnaireInviteShareText({
+            title: publicQuestionnaireInviteCopy.title,
+            description: publicQuestionnaireInviteCopy.description,
+            inviteUrl,
+          }),
           url: inviteUrl,
         });
         setKnownVoterInviteStatus("Private invite share opened.");
@@ -4969,6 +4932,21 @@ export default function SimpleCoordinatorApp() {
     setActiveTab(nextTab);
   }
 
+  function openInviteVotersSection() {
+    selectTab("participants");
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        document.getElementById("coordinator-invite-voters-section")?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      });
+    });
+  }
+
   const setQuestionnaireRelaysInput = useCallback((value: string) => {
     setQuestionnaireRelaysInputState(value);
     writeStoredQuestionnaireRelayInput(value);
@@ -6191,7 +6169,7 @@ export default function SimpleCoordinatorApp() {
               optionAAcceptedResponses={optionAAcceptedResponses}
               blindSigningPublicKey={optionABlindSigningPublicKey}
               view='build'
-              onInviteParticipants={() => selectTab('participants')}
+              onInviteParticipants={openInviteVotersSection}
               questionnaireRelaysInput={questionnaireRelaysInput}
               onQuestionnaireRelaysInputChange={setQuestionnaireRelaysInput}
               onConfigureQuestionnaireRelays={openQuestionnaireRelaySettings}
@@ -6402,9 +6380,10 @@ export default function SimpleCoordinatorApp() {
             </SimpleCollapsibleSection>
 
             {optionAElectionId ? (
-              <SimpleCollapsibleSection title='Invite voters'>
-	                <div className='simple-voter-field-stack'>
-	                  <div className='simple-invite-share-panel simple-invite-share-panel-general' aria-label='Share questionnaire link'>
+              <div id='coordinator-invite-voters-section'>
+                <SimpleCollapsibleSection title='Invite voters'>
+		                <div className='simple-voter-field-stack'>
+		                  <div className='simple-invite-share-panel simple-invite-share-panel-general' aria-label='Share questionnaire link'>
 	                    <div className='simple-invite-share-heading'>
 	                      <div className='simple-invite-share-copy'>
 	                        <h3 className='simple-voter-question'>General invite link</h3>
@@ -6453,9 +6432,6 @@ export default function SimpleCoordinatorApp() {
                         {privateInviteCodeEntries.slice(0, 6).map((entry) => {
                           const privateInviteUrl = privateInviteLinksByHash[entry.codeHash] ?? "";
                           const canSharePrivateInvite = entry.state === "available" && privateInviteUrl.length > 0;
-                          const privateInviteShare = canSharePrivateInvite
-                            ? buildPrivateInviteShare({ inviteUrl: privateInviteUrl })
-                            : null;
                           const statusIndicator = privateInviteStatusIndicator(entry.state);
 
                           return (
@@ -6469,7 +6445,7 @@ export default function SimpleCoordinatorApp() {
                                   {entry.redeemedNpub ? ` by ${deriveActorDisplayId(entry.redeemedNpub)}` : ""}
                                 </span>
                               </div>
-                              {canSharePrivateInvite && privateInviteShare ? (
+                              {canSharePrivateInvite ? (
                                 <>
                                   <p className='simple-invite-link-preview'>{privateInviteUrl}</p>
                                   <div className='simple-private-invite-actions'>
@@ -6480,15 +6456,6 @@ export default function SimpleCoordinatorApp() {
                                     >
                                       Copy link
                                     </button>
-                                    <a className='simple-voter-secondary' href={privateInviteShare.mailtoHref}>
-                                    Invite by email
-                                    </a>
-                                    <a className='simple-voter-secondary' href={privateInviteShare.whatsAppHref} target='_blank' rel='noreferrer'>
-                                      WhatsApp
-                                    </a>
-                                    <a className='simple-voter-secondary' href={privateInviteShare.smsHref}>
-                                      SMS
-                                    </a>
                                     <button
                                       type='button'
                                       className='simple-voter-secondary'
@@ -6507,9 +6474,6 @@ export default function SimpleCoordinatorApp() {
                                 </>
                               ) : entry.state === "available" ? (
                                 <div className='simple-private-invite-actions'>
-                                  <p className='simple-voter-note simple-private-invite-note'>
-                                    Link unavailable after this page session. Create a new private link if you need to send another.
-                                  </p>
                                   <button
                                     type='button'
                                     className='simple-voter-secondary'
@@ -6632,7 +6596,7 @@ export default function SimpleCoordinatorApp() {
                               <span className={statusIndicator.className} aria-label={statusIndicator.label} title={statusIndicator.label}>
                                 {statusIndicator.icon}
                               </span>
-                              {deriveActorDisplayId(entry.invitedNpub)} - {entry.claimState}
+                              {deriveActorDisplayId(entry.invitedNpub)} - {statusIndicator.label}
                               <button
                                 type='button'
                                 className='simple-voter-secondary'
@@ -6699,7 +6663,8 @@ export default function SimpleCoordinatorApp() {
                   ) : null}
                   {knownVoterInviteStatus ? <p className='simple-voter-note'>{knownVoterInviteStatus}</p> : null}
                 </div>
-              </SimpleCollapsibleSection>
+                </SimpleCollapsibleSection>
+              </div>
             ) : null}
             <QuestionnaireCoordinatorPanel
               coordinatorNsec={keypair?.nsec ?? null}

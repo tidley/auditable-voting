@@ -231,7 +231,7 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 
 1. Open the app as **Coordinator**.
 2. Create or load a coordinator identity.
-3. In **Questionnaire**, enter the questionnaire name, description, and questions. The questionnaire builder heading shows the current name, for example `Build questionnaire: How did we do`.
+3. In **Setup**, enter the questionnaire name, description, and questions. Supported question types are yes/no, multiple choice, ranked-choice, and free text. Ranked-choice answers are totalled as points, with the highest score preferred: first choice gets one point per available option, later choices count down from there, and unranked options get `0` points.
 4. Use **Generate ID** only when you want a fresh questionnaire ID. Use **Copy ID** beside the Questionnaire ID when sharing the public identifier with observers.
 5. Use **Show questionnaire link** if you want a QR/link for the questionnaire.
 6. Optionally open **Settings → Relays** to add or remove questionnaire metadata relays before publishing if this round should prefer a non-default relay set.
@@ -247,8 +247,8 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 
 ### 3. Coordinator invites voters
 
-1. Share the questionnaire link from **Participants** with **Copy link**, **Invite by email**, **WhatsApp**, **SMS**, or **Share**. These actions use the browser/device apps already available; no provider API key or service registration is needed.
-2. Use **Create private code link** when the coordinator wants a one-use bearer invite with no `npub` in the URL. The voter looks up coordinator and audit-proxy routing from the public questionnaire metadata on Nostr, then automatically requests a ballot. The created row can be copied or sent by email, WhatsApp, SMS, or native share while the raw link is available in that page session. The first voter to open that link claims the code with their local voter identity; the code can be revoked until it is claimed.
+1. Share the questionnaire link from **Participants** with **Copy link** or **Share**. These actions use the browser/device apps already available; no provider API key or service registration is needed.
+2. Use **Create single-use invite link** when the coordinator wants a one-use bearer invite. The voter looks up coordinator and audit-proxy routing from the public questionnaire metadata on Nostr, then automatically requests a ballot. The created row can be copied or opened in the native share sheet while the raw link is available in that page session. The first voter to open that link claims the code with their local voter identity; the code can be revoked until it is claimed.
 3. Add or import voter `npub`s in **Participants** when you want to pre-authorise known voters.
 4. Use **Copy personalised link** beside a whitelisted voter when the link should carry that pre-authorised voter `npub`. The voter must still sign in as that `npub`; the personalised URL reveals the invitee `npub` to whoever sees the link.
 5. Send Nostr invite DMs with **Invite** or **Invite all whitelisted**.
@@ -281,7 +281,7 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 ### Coordinator
 
 1. Build and publish a questionnaire definition (public event), including non-default relay hints when configured.
-2. Share the public questionnaire link by copy, email, WhatsApp, SMS, or native device sharing, optionally using personalised links for pre-authorised voter npubs.
+2. Share the public questionnaire link by copy or native device sharing, optionally using personalised links for pre-authorised voter npubs.
 3. Optional: in the separate **Questionnaire** tab `Audit proxy` section, use Set up audit proxy after publication to open the section and generate an audit proxy account, then use the quick start command or helper downloads or save an autoconfigured platform launcher that already includes the current coordinator `npub`; right-click copy-link uses a shareable launcher URL that omits the audit proxy secret, generated launchers refresh the helper binary from GitHub Releases on each run, raw binary and direct CLI options sit under `Helper download and launch command`, and delegation still leaves the coordinator as root authority.
 4. Receive blind-token requests over private DMs (or delegate handling to an audit proxy).
 5. Issue blind signatures to authorised voters over private DMs (or let the audit proxy blind-sign on behalf of the coordinator for that delegated round). Invite payloads and cached election metadata now carry the audit proxy routing hint so voters can keep targeting the audit proxy if the coordinator browser goes offline, and audit proxy election-config DMs also carry the questionnaire definition so audit-proxy-issued blind credentials can still render the ballot if the coordinator browser is offline.
@@ -344,7 +344,7 @@ The submitted response no longer uses the invited voter npub as the ballot ident
 
 ```mermaid
 sequenceDiagram
-  participant V as Voter identity
+  participant V as Submittor identity
   participant E as Ephemeral response key
   participant C as Coordinator
   participant A as Observer
@@ -457,7 +457,7 @@ The published summary includes per-response references as a parity backfill, so 
 
 Before a final result summary exists, the observer derives a live provisional summary from verified public submissions and labels it as live relay-derived data. Coordinators also publish a separate parameterised replaceable expected-participant count event, letting the observer show accepted responses against the expected participant total while keeping individual invitees private.
 
-The observer view keeps normal refreshes bounded to recent questionnaires to avoid relay pressure. If an older published questionnaire or result payload is missing from the default list, reopen the direct questionnaire link or refresh from a relay set that still indexes that event.
+The observer view fetches once when opened and then waits for an explicit Refresh click, keeping relay reads bounded to avoid relay pressure. If an older published questionnaire or result payload is missing from the default list, reopen the direct questionnaire link or refresh from a relay set that still indexes that event.
 
 ## Current Limits
 

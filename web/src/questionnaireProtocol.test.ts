@@ -129,6 +129,68 @@ describe("questionnaireProtocol", () => {
     expect(result.valid).toBe(true);
   });
 
+  it("validates ranked questions and enforces the configured minimum", () => {
+    const definition: QuestionnaireDefinition = {
+      ...buildDefinition(),
+      questions: [
+        {
+          questionId: "rank1",
+          type: "rank",
+          prompt: "Rank the next priorities",
+          required: true,
+          minimumRanked: 2,
+          options: [
+            { optionId: "mobility", label: "Mobility" },
+            { optionId: "water", label: "Water" },
+            { optionId: "housing", label: "Housing" },
+          ],
+        },
+      ],
+    };
+
+    expect(validateQuestionnaireDefinition(definition)).toMatchObject({ valid: true });
+
+    expect(validateQuestionnaireResponsePayload({
+      definition,
+      payload: {
+        schemaVersion: 1,
+        kind: "questionnaire_response_payload",
+        questionnaireId: definition.questionnaireId,
+        responseId: "resp_rank_valid",
+        submittedAt: 1712537200,
+        answers: [{ questionId: "rank1", answerType: "rank", rankedOptionIds: ["water", "mobility"] }],
+      },
+    })).toMatchObject({ valid: true });
+
+    const insufficient = validateQuestionnaireResponsePayload({
+      definition,
+      payload: {
+        schemaVersion: 1,
+        kind: "questionnaire_response_payload",
+        questionnaireId: definition.questionnaireId,
+        responseId: "resp_rank_short",
+        submittedAt: 1712537200,
+        answers: [{ questionId: "rank1", answerType: "rank", rankedOptionIds: ["water"] }],
+      },
+    });
+    expect(insufficient.valid).toBe(false);
+    expect(insufficient.errors).toContain("rank_selection_count:rank1");
+
+    const duplicate = validateQuestionnaireResponsePayload({
+      definition,
+      payload: {
+        schemaVersion: 1,
+        kind: "questionnaire_response_payload",
+        questionnaireId: definition.questionnaireId,
+        responseId: "resp_rank_duplicate",
+        submittedAt: 1712537200,
+        answers: [{ questionId: "rank1", answerType: "rank", rankedOptionIds: ["water", "water"] }],
+      },
+    });
+    expect(duplicate.valid).toBe(false);
+    expect(duplicate.errors).toContain("duplicate_ranked_option:rank1:water");
+  });
+
   it("classifies response payload shape errors", () => {
     const payload: QuestionnaireResponsePayload = {
       schemaVersion: 1,

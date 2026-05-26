@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { nip19, type NostrEvent } from "nostr-tools";
-import TokenFingerprint from "./TokenFingerprint";
-import { deriveActorDisplayId } from "./actorDisplay";
+import QuestionnaireResultsDashboard from "./QuestionnaireResultsDashboard";
 import {
   evaluateQuestionnaireBlindAdmissions,
   fetchQuestionnaireBlindResponses,
@@ -13,18 +12,16 @@ import {
   fetchQuestionnaireState,
   type QuestionnaireWorkerDelegationStatus,
 } from "./questionnaireTransport";
-import { formatQuestionnaireStateEventLabel, formatQuestionnaireStateLabel } from "./questionnaireRuntime";
-import type {
-  QuestionnairePublishedResponseRef,
-  QuestionnaireQuestion,
-  QuestionnaireResultQuestionSummary,
-  QuestionnaireResultSummary,
-  QuestionnaireStateEvent,
+import {
+  calculateRankQuestionScores,
+  normaliseRankedOptionIds,
+  type QuestionnairePublishedResponseRef,
+  type QuestionnaireQuestion,
+  type QuestionnaireResultQuestionSummary,
+  type QuestionnaireResultSummary,
+  type QuestionnaireStateEvent,
 } from "./questionnaireProtocol";
 
-const AUDITOR_REFRESH_INTERVAL_MS = 15000;
-const AUDITOR_QUESTIONNAIRE_LIST_REFRESH_INTERVAL_MS = 120000;
-const AUDITOR_AUTO_REFRESH_THROTTLE_MS = 60000;
 const AUDITOR_QUESTIONNAIRE_DETAIL_LIMIT = 20;
 const AUDITOR_QUESTIONNAIRE_HISTORIC_LIMIT = 2000;
 const AUDITOR_QUESTIONNAIRE_HISTORIC_BATCH_SIZE = 8;
@@ -65,7 +62,7 @@ type AuditorMemoryCache = {
   responseRefreshStatus: string | null;
 };
 
-let auditorLastRefreshStartedAt = 0;
+let auditorSessionAutoRefreshDone = false;
 let auditorMemoryCache: AuditorMemoryCache = {
   questionnaires: [],
   selectedQuestionnaireId: "",
@@ -78,23 +75,6 @@ let auditorMemoryCache: AuditorMemoryCache = {
   questionnaireRefreshStatus: null,
   responseRefreshStatus: null,
 };
-
-function hasAuditorMemoryCacheData() {
-  return auditorMemoryCache.questionnaires.length > 0 || auditorMemoryCache.selectedResponseDetails.length > 0;
-}
-
-function shouldSkipAuditorAutoRefresh(activeQuestionnaireId: string) {
-  const selectedId = activeQuestionnaireId.trim();
-  if (
-    selectedId
-    && auditorMemoryCache.selectedQuestionnaireId
-    && selectedId !== auditorMemoryCache.selectedQuestionnaireId
-  ) {
-    return false;
-  }
-  return hasAuditorMemoryCacheData()
-    && Date.now() - auditorLastRefreshStartedAt < AUDITOR_AUTO_REFRESH_THROTTLE_MS;
-}
 
 function readInitialQuestionnaireIdFromUrl() {
   if (typeof window === "undefined") {
@@ -127,9 +107,6 @@ export default function SimpleAuditorApp() {
   const [selectedWorkerDelegationStatus, setSelectedWorkerDelegationStatus] = useState<QuestionnaireWorkerDelegationStatus | null>(() => (
     canUseCachedSelection ? auditorMemoryCache.selectedWorkerDelegationStatus : null
   ));
-  const [voterSearchQuery, setVoterSearchQuery] = useState("");
-  const [showInvalidVotes, setShowInvalidVotes] = useState(false);
-  const [freeTextViewerQuestionId, setFreeTextViewerQuestionId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [questionnaireRefreshStatus, setQuestionnaireRefreshStatus] = useState<string | null>(() => auditorMemoryCache.questionnaireRefreshStatus);
   const [responseRefreshStatus, setResponseRefreshStatus] = useState<string | null>(() => (
@@ -138,6 +115,7 @@ export default function SimpleAuditorApp() {
   const [refreshInFlight, setRefreshInFlight] = useState(false);
   const selectedQuestionnaireIdRef = useRef("");
   const selectedRefreshEffectHasRunRef = useRef(false);
+  const selectedChangeFromRefreshRef = useRef(false);
   const refreshQueueRef = useRef<{
     pendingList: boolean;
     pendingSelected: boolean;
@@ -283,6 +261,10 @@ export default function SimpleAuditorApp() {
       const nextSelectedId = (!selectedId || !entries.some((entry) => entry.questionnaireId === selectedId))
         ? (entries[0]?.questionnaireId ?? "")
         : selectedId;
+      selectedQuestionnaireIdRef.current = nextSelectedId;
+      if (selectedId !== nextSelectedId) {
+        selectedChangeFromRefreshRef.current = true;
+      }
       setSelectedQuestionnaireId((previous) => (previous === nextSelectedId ? previous : nextSelectedId));
       const nextStatus = (
         entries.length > 0
@@ -439,9 +421,6 @@ export default function SimpleAuditorApp() {
         const runSelected = refreshQueueRef.current.pendingSelected;
         refreshQueueRef.current.pendingList = false;
         refreshQueueRef.current.pendingSelected = false;
-        if (runList || runSelected) {
-          auditorLastRefreshStartedAt = Date.now();
-        }
         if (runList) {
           await refreshQuestionnaires();
         }
@@ -464,8 +443,11 @@ export default function SimpleAuditorApp() {
     forceWhenHidden?: boolean;
     automatic?: boolean;
   }) => {
-    if (input?.automatic && shouldSkipAuditorAutoRefresh(selectedQuestionnaireIdRef.current)) {
-      return;
+    if (input?.automatic) {
+      if (auditorSessionAutoRefreshDone) {
+        return;
+      }
+      auditorSessionAutoRefreshDone = true;
     }
     const list = input?.list !== false;
     const selected = input?.selected !== false;
@@ -479,67 +461,12 @@ export default function SimpleAuditorApp() {
   }, [drainRefreshQueue]);
 
   useEffect(() => {
-    let cancelled = false;
-    let selectedTimeoutId: number | null = null;
-    let listTimeoutId: number | null = null;
-
-    const scheduleSelected = (delayMs: number) => {
-      selectedTimeoutId = window.setTimeout(async () => {
-        if (cancelled) {
-          return;
-        }
-        await enqueueRefresh({ list: false, selected: true, automatic: true });
-        if (!cancelled) {
-          scheduleSelected(AUDITOR_REFRESH_INTERVAL_MS);
-        }
-      }, delayMs);
-    };
-
-    const scheduleList = (delayMs: number) => {
-      listTimeoutId = window.setTimeout(async () => {
-        if (cancelled) {
-          return;
-        }
-        await enqueueRefresh({ list: true, selected: false, automatic: true });
-        if (!cancelled) {
-          scheduleList(AUDITOR_QUESTIONNAIRE_LIST_REFRESH_INTERVAL_MS);
-        }
-      }, delayMs);
-    };
-
-    const handleForegroundRefresh = () => {
-      if (cancelled) {
-        return;
-      }
-      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
-        return;
-      }
-      void enqueueRefresh({ list: true, selected: true, automatic: true });
-    };
-
     void enqueueRefresh({ list: true, selected: true, forceWhenHidden: true, automatic: true });
-    scheduleSelected(AUDITOR_REFRESH_INTERVAL_MS);
-    scheduleList(AUDITOR_QUESTIONNAIRE_LIST_REFRESH_INTERVAL_MS);
-    document.addEventListener("visibilitychange", handleForegroundRefresh);
-    window.addEventListener("focus", handleForegroundRefresh);
-    window.addEventListener("online", handleForegroundRefresh);
-
-    return () => {
-      cancelled = true;
-      if (selectedTimeoutId !== null) {
-        window.clearTimeout(selectedTimeoutId);
-      }
-      if (listTimeoutId !== null) {
-        window.clearTimeout(listTimeoutId);
-      }
-      document.removeEventListener("visibilitychange", handleForegroundRefresh);
-      window.removeEventListener("focus", handleForegroundRefresh);
-      window.removeEventListener("online", handleForegroundRefresh);
-    };
   }, [enqueueRefresh]);
 
   useEffect(() => {
     if (!selectedQuestionnaireId.trim()) {
+      selectedChangeFromRefreshRef.current = false;
       setSelectedResponseDetails((previous) => (previous.length === 0 ? previous : []));
       setSelectedLatestPublishAt((previous) => (previous === null ? previous : null));
       setSelectedLiveState((previous) => (previous === null ? previous : null));
@@ -547,11 +474,23 @@ export default function SimpleAuditorApp() {
       setSelectedResultSummary((previous) => (previous === null ? previous : null));
       return;
     }
-    setVoterSearchQuery((previous) => (previous ? "" : previous));
-    const automatic = !selectedRefreshEffectHasRunRef.current;
-    selectedRefreshEffectHasRunRef.current = true;
-    void enqueueRefresh({ list: false, selected: true, forceWhenHidden: true, automatic });
-  }, [enqueueRefresh, selectedQuestionnaireId]);
+    const selectionCameFromRefresh = selectedChangeFromRefreshRef.current;
+    selectedChangeFromRefreshRef.current = false;
+    if (!selectedRefreshEffectHasRunRef.current) {
+      selectedRefreshEffectHasRunRef.current = true;
+      return;
+    }
+    if (selectionCameFromRefresh) {
+      return;
+    }
+    setSelectedResponseDetails((previous) => (previous.length === 0 ? previous : []));
+    setSelectedLatestPublishAt((previous) => (previous === null ? previous : null));
+    setSelectedLiveState((previous) => (previous === null ? previous : null));
+    setSelectedLiveStateEvent((previous) => (previous === null ? previous : null));
+    setSelectedResultSummary((previous) => (previous === null ? previous : null));
+    setSelectedWorkerDelegationStatus((previous) => (previous === null ? previous : null));
+    setResponseRefreshStatus("Click Refresh to fetch responses for this questionnaire.");
+  }, [selectedQuestionnaireId]);
 
   const coordinatorOptions = useMemo(
     () => [...new Set(
@@ -611,15 +550,6 @@ export default function SimpleAuditorApp() {
     [filteredQuestionnaires, selectedQuestionnaireId],
   );
 
-  const selectedQuestionById = useMemo(
-    () => new Map((selectedQuestionnaire?.questions ?? []).map((question) => [question.questionId, question])),
-    [selectedQuestionnaire?.questions],
-  );
-  const selectedQuestionNumberById = useMemo(
-    () => new Map((selectedQuestionnaire?.questions ?? []).map((question, index) => [question.questionId, index + 1])),
-    [selectedQuestionnaire?.questions],
-  );
-
   const liveQuestionSummaries = useMemo(
     () => buildLiveQuestionSummaries(
       selectedQuestionnaire?.questions ?? [],
@@ -637,78 +567,21 @@ export default function SimpleAuditorApp() {
     () => selectedResponseDetails.filter((entry) => !entry.accepted).length,
     [selectedResponseDetails],
   );
-  const hasInvalidResponses = liveRejectedCount > 0;
-
-  useEffect(() => {
-    if (!hasInvalidResponses && showInvalidVotes) {
-      setShowInvalidVotes(false);
-    }
-  }, [hasInvalidResponses, showInvalidVotes]);
-
-  const unpublishedAcceptedCount = useMemo(
-    () => selectedResponseDetails.filter((entry) => entry.accepted && !entry.includedInLatestPublish).length,
-    [selectedResponseDetails],
-  );
-
-  const unpublishedRejectedCount = useMemo(
-    () => selectedResponseDetails.filter((entry) => !entry.accepted && !entry.includedInLatestPublish).length,
-    [selectedResponseDetails],
-  );
   const displayValidCount = selectedResultSummary?.acceptedResponseCount ?? liveAcceptedCount;
   const displayInvalidCount = selectedResultSummary?.rejectedResponseCount ?? liveRejectedCount;
-  const displayTotalCount = Math.max(0, displayValidCount + displayInvalidCount);
-  const displayValidityPercent = displayTotalCount > 0
-    ? ((displayValidCount / displayTotalCount) * 100).toFixed(1)
-    : "0.0";
-  const displayValidityPercentNumber = Number(displayValidityPercent);
-  const expectedInviteeCount = selectedQuestionnaire?.expectedInviteeCount ?? null;
-  const expectedResponseText = expectedInviteeCount === null
-    ? "Not published"
-    : `${expectedInviteeCount} expected`;
-  const responseCompletionText = expectedInviteeCount === null
-    ? displayValidCount > 0
-      ? `${displayValidCount} accepted; expected count not published`
-      : "Expected count not published"
-    : expectedInviteeCount > 0
-      ? displayValidCount > expectedInviteeCount
-        ? `${displayValidCount} accepted (${expectedInviteeCount} expected)`
-        : `${displayValidCount}/${expectedInviteeCount} accepted (${Math.min(100, Math.max(0, (displayValidCount / expectedInviteeCount) * 100)).toFixed(1)}%)`
-      : "No invitees expected";
   const hasPublishedQuestionSummaries = (selectedResultSummary?.questionSummaries?.length ?? 0) > 0;
   const displayedQuestionSummaries = hasPublishedQuestionSummaries
     ? selectedResultSummary?.questionSummaries ?? []
     : liveQuestionSummaries;
-  const resultSummarySourceLabel = selectedResultSummary ? "Published result summary" : "Live verified submissions";
-  const publishedAtLabel = selectedResultSummary
-    ? "Result summary published at"
-    : "Questionnaire published at";
   const publishedAtTime = selectedResultSummary?.createdAt
     ?? selectedQuestionnaire?.createdAt
     ?? selectedQuestionnaire?.resultPublishedAt
     ?? 0;
-  const selectedRoundPhaseLabel = selectedLiveStateEvent
-    ? formatQuestionnaireStateEventLabel(selectedLiveStateEvent)
-    : formatQuestionnaireStateLabel(selectedLiveState ?? selectedQuestionnaire?.state);
   const canExportResults = Boolean(
     selectedQuestionnaire
     && (selectedLiveState ?? selectedQuestionnaire.state) === "results_published"
     && selectedResultSummary,
   );
-  const filteredResponseDetails = useMemo(() => {
-    const visibilityFiltered = showInvalidVotes
-      ? selectedResponseDetails.filter((entry) => !entry.accepted)
-      : selectedResponseDetails.filter((entry) => entry.accepted);
-    const query = voterSearchQuery.trim().toLowerCase();
-    if (!query) {
-      return visibilityFiltered;
-    }
-    return visibilityFiltered.filter((entry) => (
-      entry.response.authorPubkey.toLowerCase().includes(query)
-      || entry.response.responseId.toLowerCase().includes(query)
-      || entry.response.tokenNullifier.toLowerCase().includes(query)
-    ));
-  }, [selectedResponseDetails, showInvalidVotes, voterSearchQuery]);
-
   async function refreshNow() {
     const nextQuestionnaireStatus = "Refreshing public questionnaires...";
     const nextResponseStatus = "Refreshing questionnaire responses...";
@@ -834,335 +707,48 @@ export default function SimpleAuditorApp() {
           )}
         </section>
 
-        <section className='simple-voter-section simple-auditor-panel simple-auditor-results-dashboard'>
-          {selectedQuestionnaire ? (
-            <>
-              <div className='simple-auditor-results-hero'>
-                <div className='simple-auditor-results-title-block'>
-                  <p className='simple-auditor-breadcrumb'>Questionnaires / {selectedQuestionnaire.questionnaireId}</p>
-                  <h2 className='simple-voter-section-title'>Questionnaire Results</h2>
-                </div>
-                {canExportResults ? (
-                  <button
-                    type='button'
-                    className='simple-voter-secondary simple-auditor-export-button'
-                    onClick={exportResults}
-                  >
-                    Export results
-                  </button>
-                ) : null}
-              </div>
-
-              <div className='simple-auditor-status-grid'>
-                <article className='simple-auditor-status-card'>
-                  <p className='simple-auditor-summary-label'>Validation status</p>
-                  <p className='simple-auditor-status-value'>{displayValidCount}/{displayTotalCount || 0} accepted</p>
-                  <p className='simple-auditor-status-note'>{displayValidityPercent}% success</p>
-                  <div className='simple-auditor-results-progress simple-auditor-results-progress-green' aria-hidden='true'>
-                    <span style={{ width: `${Math.min(100, Math.max(0, displayValidityPercentNumber))}%` }} />
-                  </div>
-                </article>
-                <article className='simple-auditor-status-card'>
-                  <div>
-                    <p className='simple-auditor-summary-label'>Security layer</p>
-                    <p className='simple-auditor-status-value'>Audit proxy: {formatWorkerDelegationStatus(selectedWorkerDelegationStatus)}</p>
-                  </div>
-                </article>
-                <article className='simple-auditor-status-card'>
-                  <div>
-                    <p className='simple-auditor-summary-label'>Campaign progress</p>
-                    <p className='simple-auditor-status-value'>{responseCompletionText}</p>
-                  </div>
-                </article>
-              </div>
-
-              <div className='simple-auditor-summary-grid'>
-                <div className='simple-auditor-summary-card'>
-                  <p className='simple-auditor-summary-label'>Question</p>
-                  <p className='simple-voter-question'>{selectedQuestionnaire.title}</p>
-                </div>
-                <div className='simple-auditor-summary-card'>
-                  <p className='simple-auditor-summary-label'>Questionnaire ID</p>
-                  <p className='simple-voter-question'>{selectedQuestionnaire.questionnaireId}</p>
-                </div>
-                <div className='simple-auditor-summary-card'>
-                  <p className='simple-auditor-summary-label'>{publishedAtLabel}</p>
-                  <p className='simple-voter-question'>
-                    {formatQuestionnaireTime(Number(publishedAtTime))}
-                  </p>
-                </div>
-              </div>
-              {displayedQuestionSummaries.length > 0 ? (
-                <>
-                  <div className='simple-auditor-question-grid'>
-                    {displayedQuestionSummaries.map((summary) => {
-                      const questionNumber = selectedQuestionNumberById.get(summary.questionId);
-                      const questionTitle = selectedQuestionById.get(summary.questionId)?.prompt || `Question ${summary.questionId}`;
-                      return (
-                      <article key={`${summary.questionId}:${summary.answerType}`} className='simple-auditor-question-card'>
-                        <div className='simple-auditor-question-card-head'>
-                          <div>
-                            <h3 className='simple-voter-question'>
-                              {questionNumber ? `Q${questionNumber}. ` : ""}
-                              {questionTitle}
-                            </h3>
-                          </div>
-                        </div>
-                        {summary.answerType === "yes_no" ? (
-                          <div className='simple-auditor-donut-layout'>
-                            {(() => {
-                              const total = summary.yesCount + summary.noCount;
-                              const hasResults = total > 0;
-                              const yesPercent = total > 0 ? (summary.yesCount / total) * 100 : 0;
-                              return (
-                                <>
-                                  <div
-                                    className={`simple-auditor-donut${hasResults ? "" : " is-empty"}`}
-                                    style={{
-                                      background: hasResults
-                                        ? `conic-gradient(from 180deg, var(--simple-green) 0 ${yesPercent}%, var(--simple-coral) ${yesPercent}% 100%)`
-                                        : undefined,
-                                    }}
-                                    aria-hidden='true'
-                                  >
-                                    <div className='simple-auditor-donut-core'>
-                                      <strong>{total}</strong>
-                                      <span>Total</span>
-                                    </div>
-                                  </div>
-                                  <div className='simple-auditor-donut-legend'>
-                                    <span>
-                                      <i className='simple-auditor-dot simple-auditor-dot-yes' />
-                                      Yes
-                                      <strong>{summary.yesCount} ({total > 0 ? ((summary.yesCount / total) * 100).toFixed(0) : "0"}%)</strong>
-                                    </span>
-                                    <span>
-                                      <i className='simple-auditor-dot simple-auditor-dot-no' />
-                                      No
-                                      <strong>{summary.noCount} ({total > 0 ? ((summary.noCount / total) * 100).toFixed(0) : "0"}%)</strong>
-                                    </span>
-                                  </div>
-                                </>
-                              );
-                            })()}
-                          </div>
-                        ) : summary.answerType === "multiple_choice" ? (
-                          <div className='simple-auditor-option-bars'>
-                            {getMultipleChoiceSummaryEntries(summary, selectedQuestionById.get(summary.questionId))
-                              .map(([optionId, count]) => {
-                                const question = selectedQuestionById.get(summary.questionId);
-                                const label = question?.type === "multiple_choice"
-                                  ? question.options.find((option) => option.optionId === optionId)?.label ?? optionId
-                                  : optionId;
-                                const maxCount = Math.max(1, ...Object.values(summary.optionCounts));
-                                const percentOfAccepted = displayValidCount > 0 ? (count / displayValidCount) * 100 : 0;
-                                return (
-                                  <div key={optionId} className='simple-auditor-option-bar-row'>
-                                    <div className='simple-auditor-option-bar-label'>
-                                      <span>{label}</span>
-                                      <strong>{count} ({percentOfAccepted.toFixed(0)}%)</strong>
-                                    </div>
-                                    <div className='simple-auditor-results-progress' aria-hidden='true'>
-                                      <span style={{ width: count > 0 ? `${Math.max(4, (count / maxCount) * 100)}%` : "0%" }} />
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                          </div>
-                        ) : (
-                          <div className='simple-auditor-free-text-cardlet'>
-                            <div>
-                              <p className='simple-voter-question'>{summary.freeTextCount} response{summary.freeTextCount === 1 ? "" : "s"} collected</p>
-                            </div>
-                            <button
-                              type='button'
-                              className='simple-voter-secondary simple-auditor-text-button'
-                              onClick={() => setFreeTextViewerQuestionId(summary.questionId)}
-                            >
-                              View answers
-                            </button>
-                          </div>
-                        )}
-                      </article>
-                      );
-                    })}
-                  </div>
-                  {selectedResultSummary && !hasPublishedQuestionSummaries && liveQuestionSummaries.length > 0 ? (
-                    <p className='simple-voter-note'>Published result summary contains counts only; showing live per-question aggregates from verified submissions.</p>
-                  ) : null}
-                </>
-              ) : (
-                <p className='simple-voter-empty'>
-                  {selectedResultSummary
-                    ? "Published result summary contains no per-question aggregates, and no live answer payloads are available yet."
-                    : "No published result summary or live verified submissions yet for this questionnaire."}
-                </p>
-              )}
-            </>
-          ) : (
-            <p className='simple-voter-empty'>Choose a questionnaire round to inspect results.</p>
-          )}
-        </section>
-
-        <section className='simple-voter-section simple-auditor-submissions-section'>
-          <div className='simple-auditor-submissions-header'>
-            <h2 className='simple-voter-section-title'>Submitted Votes</h2>
-          </div>
-          {selectedQuestionnaire ? (
-            selectedResponseDetails.length > 0 ? (
-              <>
-                <div className='simple-auditor-submitted-toolbar'>
-                  <div className='simple-auditor-submitted-stat'>
-                    <p className='simple-auditor-summary-label'>Total responses</p>
-                    <p className='simple-auditor-score'>{selectedResponseDetails.length}</p>
-                  </div>
-                  <div className='simple-auditor-submitted-filter'>
-                    <label className='simple-voter-label' htmlFor='simple-auditor-submitted-search'>Filter by voter ID</label>
-                    <input
-                      id='simple-auditor-submitted-search'
-                      className='simple-voter-input'
-                      value={voterSearchQuery}
-                      onChange={(event) => setVoterSearchQuery(event.target.value)}
-                      placeholder='Search by voter npub, response ID, or token...'
-                    />
-                    {hasInvalidResponses ? (
-                      <label className='simple-voter-note simple-auditor-invalid-toggle'>
-                        <input
-                          type='checkbox'
-                          checked={showInvalidVotes}
-                          onChange={(event) => setShowInvalidVotes(event.target.checked)}
-                        />
-                        {" "}
-                        Show {liveRejectedCount} invalid {liveRejectedCount === 1 ? "vote" : "votes"} only
-                      </label>
-                    ) : null}
-                  </div>
-                </div>
-                <ul className='simple-voter-list simple-auditor-result-list'>
-                  {filteredResponseDetails.map((entry) => (
-                    <li key={entry.event.id} className='simple-voter-list-item'>
-                      <div className='simple-auditor-result-row'>
-                        <div className='simple-auditor-result-marker'>
-                          <TokenFingerprint tokenId={entry.response.authorPubkey} compact large hideMetadata />
-                          {!entry.accepted ? (
-                            <p className='simple-auditor-status-chip simple-auditor-status-chip-invalid'>
-                              Invalid
-                            </p>
-                          ) : null}
-                        </div>
-                        <div className='simple-auditor-result-body'>
-                          <div className='simple-auditor-result-head'>
-                            <div>
-                              <p className='simple-voter-question' title={entry.response.authorPubkey}>Voter identity: {deriveActorDisplayId(entry.response.authorPubkey)}</p>
-                            </div>
-                            <div className='simple-auditor-submission-time'>
-                              <p className='simple-auditor-table-kicker'>Submission time</p>
-                              <p className='simple-voter-note'>
-                                {formatQuestionnaireTime(Number(entry.response.submittedAt ?? entry.event.created_at ?? 0))}
-                              </p>
-                            </div>
-                          </div>
-                          <p className='simple-voter-note'>Response ID: {entry.response.responseId}</p>
-                          {Array.isArray(entry.response.answers) && entry.response.answers.length > 0 ? (
-                            <ol className='simple-auditor-answer-list'>
-                              {entry.response.answers.map((answer) => {
-                                const question = selectedQuestionById.get(answer.questionId);
-                                const questionNumber = selectedQuestionNumberById.get(answer.questionId);
-                                const prompt = `${questionNumber ? `Q${questionNumber}. ` : ""}${question?.prompt || answer.questionId}`;
-                                if (answer.answerType === "yes_no") {
-                                  return (
-                                    <li key={`${entry.event.id}:${answer.questionId}`}>
-                                      <span className='simple-auditor-answer-prompt'>{prompt}</span>
-                                      <span className='simple-auditor-answer-chip'>{answer.value ? "Yes" : "No"}</span>
-                                    </li>
-                                  );
-                                }
-                                if (answer.answerType === "multiple_choice") {
-                                  const selectedLabels = answer.selectedOptionIds.map((optionId) => (
-                                    question?.type === "multiple_choice"
-                                      ? question.options.find((option) => option.optionId === optionId)?.label ?? optionId
-                                      : optionId
-                                  ));
-                                  return (
-                                    <li key={`${entry.event.id}:${answer.questionId}`}>
-                                      <span className='simple-auditor-answer-prompt'>{prompt}</span>
-                                      {selectedLabels.length > 0 ? selectedLabels.map((label) => (
-                                        <span key={label} className='simple-auditor-answer-chip'>{label}</span>
-                                      )) : (
-                                        <span className='simple-auditor-answer-chip'>No option selected</span>
-                                      )}
-                                    </li>
-                                  );
-                                }
-                                return (
-                                  <li key={`${entry.event.id}:${answer.questionId}`} className='simple-auditor-answer-item-free-text'>
-                                    <span className='simple-auditor-answer-prompt'>{prompt}</span>
-                                    <div className='simple-auditor-answer-free-text'>{answer.text || "(empty)"}</div>
-                                  </li>
-                                );
-                              })}
-                            </ol>
-                          ) : (
-                            <p className='simple-voter-note'>Answer payload is encrypted or unavailable in public events.</p>
-                          )}
-                        </div>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-                {filteredResponseDetails.length === 0 ? (
-                  <p className='simple-voter-empty'>No voter responses match the current filter.</p>
-                ) : null}
-              </>
-            ) : (
-              <p className='simple-voter-empty'>No submitted responses found for this round yet.</p>
-            )
-          ) : (
-            <p className='simple-voter-empty'>Choose a questionnaire round to inspect responses.</p>
-          )}
-        </section>
-
-        {freeTextViewerQuestionId && selectedQuestionnaire ? (
-          <section
-            className='token-fingerprint-overlay'
-            role='dialog'
-            aria-modal='true'
-            aria-label='Free-text responses'
-            onClick={() => setFreeTextViewerQuestionId(null)}
-          >
-            <button type='button' className='token-fingerprint-overlay-close' onClick={() => setFreeTextViewerQuestionId(null)}>Close</button>
-            <div className='token-fingerprint-overlay-card simple-auditor-full-results-card' onClick={(event) => event.stopPropagation()}>
-              <h3 className='simple-voter-question'>
-                {selectedQuestionById.get(freeTextViewerQuestionId)?.prompt || freeTextViewerQuestionId}
-              </h3>
-              <ul className='simple-voter-list'>
-                {selectedResponseDetails
-                  .filter((entry) => Array.isArray(entry.response.answers))
-                  .map((entry) => {
-                    const freeText = entry.response.answers?.find((answer) => (
-                      answer.questionId === freeTextViewerQuestionId && answer.answerType === "free_text"
-                    ));
-                    if (!freeText || freeText.answerType !== "free_text") {
-                      return null;
-                    }
-                    return (
-                      <li key={`${entry.event.id}:free-text`} className='simple-voter-list-item'>
-                        <p className='simple-voter-note'>{entry.response.authorPubkey}</p>
-                        <p className='simple-voter-question'>{freeText.text || "(empty)"}</p>
-                      </li>
-                    );
-                  })
-                  .filter(Boolean)}
-              </ul>
-              {!selectedResponseDetails.some((entry) => (
-                Array.isArray(entry.response.answers)
-                && entry.response.answers.some((answer) => answer.questionId === freeTextViewerQuestionId && answer.answerType === "free_text")
-              )) ? (
-                <p className='simple-voter-empty'>No free-text payloads are publicly available for this question.</p>
-              ) : null}
-            </div>
-          </section>
-        ) : null}
+        <QuestionnaireResultsDashboard
+          questionnaire={selectedQuestionnaire ? {
+            questionnaireId: selectedQuestionnaire.questionnaireId,
+            title: selectedQuestionnaire.title,
+            description: selectedQuestionnaire.description,
+            createdAt: selectedQuestionnaire.createdAt,
+            openAt: selectedQuestionnaire.openAt,
+            closeAt: selectedQuestionnaire.closeAt,
+            closedAt: selectedLiveStateEvent?.createdAt ?? null,
+            resultPublishedAt: selectedQuestionnaire.resultPublishedAt,
+            state: selectedLiveState ?? selectedQuestionnaire.state,
+            questions: selectedQuestionnaire.questions,
+          } : null}
+          questionSummaries={displayedQuestionSummaries}
+          responseDetails={selectedResponseDetails}
+          displayValidCount={displayValidCount}
+          displayInvalidCount={displayInvalidCount}
+          coordinatorText={
+            selectedWorkerDelegationStatus?.state === "active" && selectedWorkerDelegationStatus.workerNpub
+              ? `Proxy: ${normalizeToNpub(selectedWorkerDelegationStatus.workerNpub)}`
+              : selectedQuestionnaire?.coordinatorNpub
+                ? `Coordinator: ${selectedQuestionnaire.coordinatorNpub}`
+                : "Coordinator: Unknown"
+          }
+          publishedAtLabel='Published'
+          publishedAtTime={Number(publishedAtTime)}
+          canExportResults={canExportResults}
+          onExportResults={exportResults}
+          fallbackQuestionSummaryNote={
+            selectedResultSummary && !hasPublishedQuestionSummaries && liveQuestionSummaries.length > 0
+              ? "Published result summary contains counts only; showing live per-question aggregates from verified submissions."
+              : null
+          }
+          emptyQuestionSummaryText={
+            selectedResultSummary
+              ? "Published result summary contains no per-question aggregates, and no live answer payloads are available yet."
+              : "No published result summary or live verified submissions yet for this questionnaire."
+          }
+          emptySelectionText='Choose a questionnaire round to inspect results.'
+          emptyResponsesText='No submitted responses found for this round yet.'
+          emptyResponseSelectionText='Choose a questionnaire round to inspect responses.'
+        />
       </section>
     </main>
   );
@@ -1240,31 +826,6 @@ function areWorkerDelegationStatusesEqual(
   );
 }
 
-function formatWorkerDelegationStatus(status: QuestionnaireWorkerDelegationStatus | null) {
-  if (!status || status.state === "none") {
-    return "None";
-  }
-  const worker = status.workerNpub ? normalizeToNpub(status.workerNpub) : "";
-  const workerSuffix = worker ? ` (${deriveActorDisplayId(worker)})` : "";
-  if (status.state === "active") {
-    return `Active${workerSuffix}`;
-  }
-  if (status.state === "revoked") {
-    return `Revoked${workerSuffix}`;
-  }
-  return `Expired${workerSuffix}`;
-}
-
-function getMultipleChoiceSummaryEntries(
-  summary: Extract<QuestionnaireResultQuestionSummary, { answerType: "multiple_choice" }>,
-  question: QuestionnaireQuestion | undefined,
-) {
-  if (question?.type === "multiple_choice") {
-    return question.options.map((option) => [option.optionId, summary.optionCounts[option.optionId] ?? 0] as const);
-  }
-  return Object.entries(summary.optionCounts);
-}
-
 function buildLiveQuestionSummaries(
   questions: QuestionnaireQuestion[],
   acceptedResponses: AuditorQuestionnaireResponseDetail[],
@@ -1309,6 +870,37 @@ function buildLiveQuestionSummaries(
         questionId: question.questionId,
         answerType: "multiple_choice",
         optionCounts,
+      };
+    }
+
+    if (question.type === "rank") {
+      const optionScores = Object.fromEntries(question.options.map((option) => [option.optionId, 0]));
+      const rankCounts: Record<string, Record<string, number>> = Object.fromEntries(
+        question.options.map((option) => [option.optionId, {}]),
+      );
+      let blankResponseCount = 0;
+      for (const entry of acceptedResponses) {
+        const answer = entry.response.answers?.find((candidate) => candidate.questionId === question.questionId);
+        const rankedOptionIds = answer?.answerType === "rank"
+          ? normaliseRankedOptionIds(question, answer.rankedOptionIds)
+          : [];
+        if (rankedOptionIds.length === 0) {
+          blankResponseCount += 1;
+        }
+        const responseScores = calculateRankQuestionScores(question, rankedOptionIds);
+        for (const [optionId, score] of Object.entries(responseScores)) {
+          optionScores[optionId] = (optionScores[optionId] ?? 0) + score;
+          const scoreKey = String(score);
+          rankCounts[optionId][scoreKey] = (rankCounts[optionId][scoreKey] ?? 0) + 1;
+        }
+      }
+      return {
+        questionId: question.questionId,
+        answerType: "rank",
+        optionScores,
+        rankCounts,
+        responseCount: acceptedResponses.length,
+        blankResponseCount,
       };
     }
 

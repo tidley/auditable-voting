@@ -575,7 +575,7 @@
         <div class="grid-3">
           <article class="role-card">
             <h3>1. Coordinator</h3>
-            <p>Open Coordinator, set up a vote, publish it, then share invite links from Voters.</p>
+            <p>Open Coordinator, set up a questionnaire, publish it, then share invite links from Voters.</p>
           </article>
           <article class="role-card">
             <h3>2. Voter</h3>
@@ -583,10 +583,11 @@
           </article>
           <article class="role-card">
             <h3>3. Observer</h3>
-            <p>Open Observer and search for the questionnaire ID or coordinator identity to verify the public result stream.</p>
+            <p>Open Observer and search for the questionnaire ID or coordinator identity to verify the public result stream. Observer fetches once when opened; use Refresh to update it later.</p>
           </article>
         </div>
-          </section>
+        <p>Questionnaires can mix yes/no, multiple-choice, ranked-choice, and free-text questions. Ranked-choice results are counted as points, with the highest total preferred: first choice gets one point per available option, later choices count down from there, and unranked options get <code>0</code> points.</p>
+      </section>
 
           <section class="section" aria-labelledby="limits">
         <p class="section-kicker">Current status</p>

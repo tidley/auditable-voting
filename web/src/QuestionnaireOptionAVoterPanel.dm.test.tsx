@@ -564,7 +564,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_missing_definition"]} localVoterNpub={localVoterNpub} />);
 
     await screen.findByText("Waiting for questions to be published.");
-    expect((screen.getByRole("button", { name: "Please answer all questions marked 'Required'" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Please answer all required questions" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("shows the submitted responder marker with QR after submission", async () => {
@@ -622,10 +622,13 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_submitted_marker"]} localVoterNpub={localVoterNpub} />);
 
-    await screen.findByRole("region", { name: "Submitted voter ID" });
+    await screen.findByRole("region", { name: "Voter ID used for private submission" });
     expect(screen.getAllByLabelText(/Expand QR for token/i).length).toBeGreaterThan(0);
-    expect(screen.getByText("Submission ID: submission_submitted_marker")).toBeTruthy();
-    expect(screen.getByText("Voter ID: rrrrrrr")).toBeTruthy();
-    expect(screen.getByText("Voter npub: " + ("npub1" + "r".repeat(58)))).toBeTruthy();
+    expect(screen.getByText("Submission ID")).toBeTruthy();
+    expect(screen.getByText("submission_submitted_marker")).toBeTruthy();
+    expect(screen.getAllByText("Voter ID").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("rrrrrrr").length).toBeGreaterThan(0);
+    expect(screen.getByText("Voter npub")).toBeTruthy();
+    expect(screen.getByText("npub1" + "r".repeat(58))).toBeTruthy();
   });
 });

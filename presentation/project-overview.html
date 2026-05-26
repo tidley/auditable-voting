@@ -546,6 +546,7 @@
           <li>Blind-key stalls are now classified as not-attempted vs publish/observe/apply failures with event and relay diagnostics</li>
           <li>Questionnaire protocol scaffolding now exists for private response bundles, state transitions, and public aggregate result events</li>
           <li>The coordinator screen now uses Setup, Voters, and Settings tabs, with live result totals, per-question bars, text responses, and responder rows folded into Voters alongside explicit publish readiness checks</li>
+          <li>Questionnaire drafts now support ranked-choice questions as ordered preferences; result summaries score rankings as points where the highest total is preferred</li>
           <li>Accepted followers now receive active questionnaire ids (`open`/`published`) in coordinator roster DMs so voter questionnaire selection can auto-populate</li>
           <li>Voter Vote now stays disabled until announced questionnaire ids are verified as publicly readable (`definition` + `open`/`published` state)</li>
           <li>Questionnaire reads now use direct live subscriptions with one startup backfill plus one bounded retry, and expose per-voter discovery timing diagnostics for startup failures</li>
@@ -565,14 +566,14 @@
         <h3>Why that matters here</h3>
         <ul>
           <li>Observers can read the same public state as coordinators</li>
-          <li>Observers can now scope rounds by lead coordinator, coordinator npub, and free-text search (npub/round ID/prompt), while non-overlapping refreshes reduce relay REQ bursts</li>
+          <li>Observers can now scope rounds by lead coordinator, coordinator npub, and free-text search (npub/round ID/prompt), while a single automatic fetch per page session plus manual Refresh reduces relay REQ bursts</li>
           <li>Static clients can participate without a proprietary backend</li>
           <li>Coordinator rosters and per-round keys can be announced in public</li>
           <li>The lead coordinator can push share-index assignments to sub-coordinators before issuance starts</li>
           <li>Each coordinator now sends its own ticket share directly to the voter</li>
           <li>Non-lead ticket sends are slightly staggered by share index to reduce same-recipient relay bursts</li>
           <li>Automatic follow, blind-request, ticket, and acknowledgement sends now use random 0-30s human-style pacing with slower retries</li>
-          <li>Questionnaire invite links now default to the current page host, can be shared from the coordinator Voters tab by copy/email/WhatsApp/SMS/native share without a service account, support one-use private links with per-code share controls and automatic ballot requests, support personalised links for pre-whitelisted voter npubs, open the Vote tab after signer login, complete voter login from the public questionnaire id without scanning old encrypted invite DMs, and preserve the same ballot-request id until issuance arrives</li>
+          <li>Questionnaire invite links now default to the current page host, can be shared from the coordinator Voters tab by copy or native share without a service account, support one-use private links with per-code share controls and automatic ballot requests, support personalised links for pre-whitelisted voter npubs, open the Vote tab after signer login, complete voter login from the public questionnaire id without scanning old encrypted invite DMs, and preserve the same ballot-request id until issuance arrives</li>
           <li>Android signer flows now prefer Amber through NIP-46 when available so `get_public_key`, `sign_event`, `nip04`, and `nip44` operations stay on one signer identity, with capability permissions requested up front</li>
           <li>The login gateway now defaults to Observer, orders roles as Observer / Coordinator / Voter, and keeps existing-profile login behind NOS2X-FOX or Amber, nsec, and Advanced Nostr Connect actions</li>
           <li>Blind request, issuance, submission, and acceptance DMs now resolve recipient `kind:10050` NIP-17 relay hints before static fallback relays, keep curated fallback relay redundancy, and treat delivery as successful only when at least one relay accepts the publish</li>
