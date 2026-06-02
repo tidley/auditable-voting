@@ -62,6 +62,7 @@ Observers can independently check:
 
 - which public ballots were accepted
 - whether a credential was spent more than once
+- whether an invalid-token-proof rejection is contradicted by a locally verified blind-token proof
 - whether rejected ballots were rejected for deterministic reasons, with the published reason shown beside invalid rows
 - whether the published tally matches the accepted public ballots
 - encrypted answer details when the matching coordinator `nsec` is deliberately entered in Observer

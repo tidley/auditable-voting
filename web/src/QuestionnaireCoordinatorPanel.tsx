@@ -28,7 +28,7 @@ import { getSharedNostrPool } from "./sharedNostrPool";
 import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import { tryWriteClipboard } from "./clipboard";
 import { fetchQuestionnaireBlindResponses } from "./questionnaireTransport";
-import { evaluateQuestionnaireBlindAdmissions, fetchQuestionnaireSubmissionDecisions } from "./questionnaireTransport";
+import { evaluateQuestionnaireBlindAdmissions, fetchQuestionnaireSubmissionDecisions, verifyQuestionnaireBlindResponseProofs } from "./questionnaireTransport";
 import {
   decryptQuestionnaireBlindResponseAnswers,
   parseQuestionnaireBlindResponseEvent,
@@ -1345,6 +1345,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     responseEvents: NostrEvent[];
     publicResponseEntries?: QuestionnaireBlindResponseEntry[];
     publicDecisionEntries?: QuestionnaireSubmissionDecisionEntry[];
+    verifiedResponseIds?: Iterable<string>;
     resultEvents: NostrEvent[];
     diagnostics?: {
       definition: { mode: "filtered" | "kind_only_fallback"; filteredCount: number; kindOnlyCount: number };
@@ -1418,6 +1419,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       const admissions = evaluateQuestionnaireBlindAdmissions({
         entries: publicResponseEntries,
         decisionEntries: publicDecisionEntries,
+        verifiedResponseIds: input.verifiedResponseIds,
       });
       const acceptedFromSubmissions = admissions.accepted.map((entry) => publicBlindResponseToAcceptedResponse({
         entry,
@@ -1521,12 +1523,22 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           relays: questionnaireRelayPublishHints,
         }),
       ]);
+      const latestDefinitionForVerification = [...definitionFetch.events]
+        .map((event) => ({ event, definition: parseQuestionnaireDefinitionEvent(event) }))
+        .filter((entry) => entry.definition?.questionnaireId === id)
+        .sort((left, right) => Number(right.event.created_at ?? right.definition?.createdAt ?? 0) - Number(left.event.created_at ?? left.definition?.createdAt ?? 0))[0]
+        ?.definition ?? null;
+      const verifiedResponseIds = await verifyQuestionnaireBlindResponseProofs({
+        entries: publicResponseFetch,
+        publicKey: latestDefinitionForVerification?.blindSigningPublicKey ?? null,
+      });
       applyQuestionnaireSnapshot({
         definitionEvents: definitionFetch.events,
         stateEvents: stateFetch.events,
         responseEvents: responseFetch.events,
         publicResponseEntries: publicResponseFetch,
         publicDecisionEntries: publicDecisionFetch,
+        verifiedResponseIds,
         resultEvents: resultFetch.events,
         diagnostics: {
           definition: definitionFetch.diagnostics,
@@ -1699,12 +1711,22 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       for (const event of resultFetch.events) {
         resultById.set(event.id, event);
       }
+      const latestDefinitionForVerification = [...definitionFetch.events]
+        .map((event) => ({ event, definition: parseQuestionnaireDefinitionEvent(event) }))
+        .filter((entry) => entry.definition?.questionnaireId === id)
+        .sort((left, right) => Number(right.event.created_at ?? right.definition?.createdAt ?? 0) - Number(left.event.created_at ?? left.definition?.createdAt ?? 0))[0]
+        ?.definition ?? null;
+      const verifiedResponseIds = await verifyQuestionnaireBlindResponseProofs({
+        entries: publicResponseFetch,
+        publicKey: latestDefinitionForVerification?.blindSigningPublicKey ?? null,
+      });
       applyQuestionnaireSnapshot({
         definitionEvents: definitionFetch.events,
         stateEvents: stateFetch.events,
         responseEvents: responseFetch.events,
         publicResponseEntries: publicResponseFetch,
         publicDecisionEntries: publicDecisionFetch,
+        verifiedResponseIds,
         resultEvents: resultFetch.events,
         diagnostics: {
           definition: definitionFetch.diagnostics,
@@ -2860,9 +2882,14 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             relays: definition.questionnaireRelays ?? questionnaireRelayPublishHints,
           }).catch(() => []),
         ]);
+        const verifiedResponseIds = await verifyQuestionnaireBlindResponseProofs({
+          entries: publicResponses,
+          publicKey: definition.blindSigningPublicKey ?? effectiveBlindSigningPublicKey ?? null,
+        });
         const admissions = evaluateQuestionnaireBlindAdmissions({
           entries: publicResponses,
           decisionEntries,
+          verifiedResponseIds,
         });
         const acceptedResponses = admissions.accepted.map((entry) => publicBlindResponseToAcceptedResponse({
           entry,

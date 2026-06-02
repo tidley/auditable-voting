@@ -19,6 +19,9 @@ import type {
   QuestionnaireResultSummary,
   QuestionnaireStateEvent,
 } from "./questionnaireProtocol";
+import type { QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
+import { verifyQuestionnaireBlindSignature } from "./questionnaireBlindSignature";
+import { buildQuestionnaireBlindTokenSignedMessage } from "./questionnaireBlindToken";
 import {
   parseQuestionnaireSubmissionDecisionEvent,
   parseQuestionnaireBlindResponseEvent,
@@ -281,8 +284,10 @@ function choosePreferredSubmissionDecision(
 export function evaluateQuestionnaireBlindAdmissions(input: {
   entries: QuestionnaireBlindResponseEntry[];
   decisionEntries?: QuestionnaireSubmissionDecisionEntry[];
+  verifiedResponseIds?: Iterable<string>;
 }) {
   const ordered = dedupeBlindResponseEntries(input.entries);
+  const verifiedResponseIds = new Set(Array.from(input.verifiedResponseIds ?? []).map((entry) => entry.trim()).filter(Boolean));
   const latestDecisionBySubmissionId = new Map<string, QuestionnaireSubmissionDecisionEntry>();
   for (const entry of input.decisionEntries ?? []) {
     const submissionId = entry.decision.submissionId.trim();
@@ -301,7 +306,14 @@ export function evaluateQuestionnaireBlindAdmissions(input: {
   for (const entry of ordered) {
     const responseId = entry.response.responseId.trim();
     const explicitDecision = latestDecisionBySubmissionId.get(responseId);
-    if (explicitDecision) {
+    const verifiedResponseOverridesInvalidProof = Boolean(
+      responseId
+      && verifiedResponseIds.has(responseId)
+      && explicitDecision
+      && !explicitDecision.decision.accepted
+      && explicitDecision.decision.reason === "invalid_token_proof",
+    );
+    if (explicitDecision && !verifiedResponseOverridesInvalidProof) {
       decisions.push({
         ...entry,
         accepted: explicitDecision.decision.accepted,
@@ -360,6 +372,34 @@ export function evaluateQuestionnaireBlindAdmissions(input: {
       [...acceptedNullifiers.values()].map((nullifier) => [nullifier, 1]),
     ),
   };
+}
+
+export async function verifyQuestionnaireBlindResponseProofs(input: {
+  entries: QuestionnaireBlindResponseEntry[];
+  publicKey?: QuestionnaireBlindPublicKey | null;
+}) {
+  if (!input.publicKey) {
+    return new Set<string>();
+  }
+  const verifiedResponseIds = new Set<string>();
+  await Promise.all(input.entries.map(async (entry) => {
+    const responseId = entry.response.responseId.trim();
+    if (!responseId) {
+      return;
+    }
+    const valid = await verifyQuestionnaireBlindSignature({
+      publicKey: input.publicKey,
+      message: buildQuestionnaireBlindTokenSignedMessage({
+        questionnaireId: entry.response.questionnaireId,
+        tokenSecretCommitment: entry.response.tokenProof.tokenCommitment,
+      }),
+      signature: entry.response.tokenProof.signature,
+    });
+    if (valid) {
+      verifiedResponseIds.add(responseId);
+    }
+  }));
+  return verifiedResponseIds;
 }
 
 export async function fetchQuestionnaireSubmissionDecisions(input: {

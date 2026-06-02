@@ -21,7 +21,7 @@ The active product is the client in `web/` plus the optional audit proxy in `wor
 - Browser-only invite sharing by copied link, native device share actions, personalised links for pre-whitelisted voter npubs, or one-use private code links with per-code share controls that whitelist the first claimant and automatically request a ballot.
 - Blind credential issuance for allowlisted participants.
 - Public blind-token submissions from ephemeral response keys.
-- Coordinator and Observer results derived from public submissions and decisions, including proxy-accepted responses and rejection reasons.
+- Coordinator and Observer results derived from public submissions and decisions, including proxy-accepted responses, locally verified blind-token proofs, and rejection reasons.
 - Observer-local `nsec` entry for decrypting encrypted response details when the coordinator key is deliberately supplied.
 - Optional audit proxy that can issue credentials, verify submissions, publish decisions, close completed questionnaires, and publish result summaries.
 - Static deployment to GitHub Pages or nsite.

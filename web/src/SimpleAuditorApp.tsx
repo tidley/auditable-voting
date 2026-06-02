@@ -10,6 +10,7 @@ import {
   fetchQuestionnaireSubmissionDecisions,
   fetchQuestionnaireResultSummary,
   fetchQuestionnaireState,
+  verifyQuestionnaireBlindResponseProofs,
   type QuestionnaireWorkerDelegationStatus,
 } from "./questionnaireTransport";
 import {
@@ -22,6 +23,7 @@ import {
   type QuestionnaireStateEvent,
 } from "./questionnaireProtocol";
 import { decryptQuestionnaireBlindResponseAnswers } from "./questionnaireResponsePublish";
+import type { QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
 
 const AUDITOR_QUESTIONNAIRE_DETAIL_LIMIT = 20;
 const AUDITOR_QUESTIONNAIRE_HISTORIC_LIMIT = 2000;
@@ -43,6 +45,7 @@ type AuditorQuestionnaireEntry = {
   resultPublishedAt: number | null;
   questions: QuestionnaireQuestion[];
   questionnaireRelays?: string[];
+  blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
   eventId: string;
 };
 
@@ -245,6 +248,7 @@ export default function SimpleAuditorApp() {
           resultPublishedAt: Number(latestResult?.createdAt ?? 0) || null,
           questions: entry.definition.questions ?? [],
           questionnaireRelays,
+          blindSigningPublicKey: entry.definition.blindSigningPublicKey ?? null,
           eventId: entry.event.id,
         };
         }));
@@ -294,8 +298,16 @@ export default function SimpleAuditorApp() {
       return;
     }
     try {
-      const questionnaireRelays = questionnairesRef.current.find((entry) => entry.questionnaireId === selectedId)?.questionnaireRelays;
-      const [responseEntries, decisionEntries, resultEntries, stateEntries, delegationStatus, participantCountEntries] = await Promise.all([
+      const selectedQuestionnaire = questionnairesRef.current.find((entry) => entry.questionnaireId === selectedId);
+      const questionnaireRelays = selectedQuestionnaire?.questionnaireRelays;
+      const [definitionEntries, responseEntries, decisionEntries, resultEntries, stateEntries, delegationStatus, participantCountEntries] = await Promise.all([
+        fetchQuestionnaireDefinitions({
+          questionnaireId: selectedId,
+          limit: 50,
+          readRelayLimit: 8,
+          preferKindOnly: true,
+          relays: questionnaireRelays,
+        }).catch(() => []),
         fetchQuestionnaireBlindResponses({
           questionnaireId: selectedId,
           limit: AUDITOR_QUESTIONNAIRE_RESPONSE_LIMIT,
@@ -337,9 +349,17 @@ export default function SimpleAuditorApp() {
           relays: questionnaireRelays,
         }).catch(() => []),
       ]);
+      const latestDefinition = [...definitionEntries]
+        .sort((left, right) => Number(right.event.created_at ?? right.definition.createdAt ?? 0) - Number(left.event.created_at ?? left.definition.createdAt ?? 0))[0]
+        ?.definition ?? null;
+      const verifiedResponseIds = await verifyQuestionnaireBlindResponseProofs({
+        entries: responseEntries,
+        publicKey: latestDefinition?.blindSigningPublicKey ?? selectedQuestionnaire?.blindSigningPublicKey ?? null,
+      });
       const admissions = evaluateQuestionnaireBlindAdmissions({
         entries: responseEntries,
         decisionEntries,
+        verifiedResponseIds,
       });
       const latestResult = [...resultEntries]
         .sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0))[0];

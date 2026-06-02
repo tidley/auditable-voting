@@ -201,4 +201,32 @@ describe("questionnaireTransport blind admissions", () => {
     expect(result.accepted[0].decisionEventId).toBe("decision-accepted");
     expect(result.accepted[0].rejectionReason).toBe(null);
   });
+
+  it("ignores an invalid-token-proof decision for a locally verified response", () => {
+    const response = blindResponse({
+      responseId: "resp-1",
+      nullifier: "nullifier-x",
+      createdAt: 1712537200,
+      eventId: "event-aaa",
+    });
+    const invalid = submissionDecision({
+      submissionId: "resp-1",
+      nullifier: "nullifier-x",
+      accepted: false,
+      reason: "invalid_token_proof",
+      createdAt: 1712537300,
+      eventId: "decision-invalid",
+    });
+
+    const result = evaluateQuestionnaireBlindAdmissions({
+      entries: [response],
+      decisionEntries: [invalid],
+      verifiedResponseIds: ["resp-1"],
+    });
+
+    expect(result.accepted).toHaveLength(1);
+    expect(result.rejected).toHaveLength(0);
+    expect(result.accepted[0].decisionEventId).toBe(null);
+    expect(result.accepted[0].rejectionReason).toBe(null);
+  });
 });
