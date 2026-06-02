@@ -1026,6 +1026,10 @@ function mergeAuditorResponseDetails(
       byKey.set(key, detail);
       continue;
     }
+    if (existing.accepted !== detail.accepted) {
+      byKey.set(key, existing.accepted ? existing : mergeAcceptedAuditorResponseDetail(existing, detail));
+      continue;
+    }
     // Prefer real Nostr events over synthetic fallback ids and keep the latest timestamp.
     const existingSynthetic = existing.event.id.startsWith("optiona:");
     const nextSynthetic = detail.event.id.startsWith("optiona:");
@@ -1050,6 +1054,29 @@ function mergeAuditorResponseDetails(
     }
   }
   return [...byKey.values()].sort((left, right) => Number(right.event.created_at ?? 0) - Number(left.event.created_at ?? 0));
+}
+
+function mergeAcceptedAuditorResponseDetail(
+  rejected: AuditorQuestionnaireResponseDetail,
+  accepted: AuditorQuestionnaireResponseDetail,
+) {
+  const rejectedAnswerCount = Array.isArray(rejected.response.answers) ? rejected.response.answers.length : 0;
+  const acceptedAnswerCount = Array.isArray(accepted.response.answers) ? accepted.response.answers.length : 0;
+  const response = rejectedAnswerCount > acceptedAnswerCount
+    ? {
+        ...rejected.response,
+        answers: rejected.response.answers,
+      }
+    : accepted.response;
+  return {
+    ...rejected,
+    accepted: true,
+    rejectionReason: null,
+    includedInLatestPublish: rejected.includedInLatestPublish || accepted.includedInLatestPublish,
+    decidedAt: accepted.decidedAt ?? rejected.decidedAt,
+    decisionEventId: accepted.decisionEventId ?? rejected.decisionEventId,
+    response,
+  };
 }
 
 function optionASummaryRefToAuditorDetail(input: {

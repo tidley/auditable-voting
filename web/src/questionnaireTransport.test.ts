@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { NostrEvent } from "nostr-tools";
 import { evaluateQuestionnaireBlindAdmissions } from "./questionnaireTransport";
-import type { QuestionnaireBlindResponseEvent } from "./questionnaireResponsePublish";
+import type { QuestionnaireBlindResponseEvent, QuestionnaireSubmissionDecisionEvent } from "./questionnaireResponsePublish";
 
 function blindResponse(input: {
   responseId: string;
@@ -37,6 +37,38 @@ function blindResponse(input: {
       answers: input.answerText
         ? [{ questionId: "q1", answerType: "free_text", text: input.answerText }]
         : [],
+    },
+  };
+}
+
+function submissionDecision(input: {
+  submissionId: string;
+  nullifier: string;
+  accepted: boolean;
+  reason?: QuestionnaireSubmissionDecisionEvent["reason"];
+  createdAt: number;
+  eventId: string;
+}): { event: NostrEvent; decision: QuestionnaireSubmissionDecisionEvent } {
+  return {
+    event: {
+      id: input.eventId,
+      kind: 14125,
+      pubkey: "decision-pubkey",
+      created_at: input.createdAt,
+      tags: [],
+      content: "",
+      sig: "sig",
+    },
+    decision: {
+      schemaVersion: 1,
+      eventType: "questionnaire_submission_decision",
+      questionnaireId: "course_feedback_2026_term1",
+      submissionId: input.submissionId,
+      tokenNullifier: input.nullifier,
+      accepted: input.accepted,
+      reason: input.reason ?? (input.accepted ? "accepted" : "invalid_token_proof"),
+      decidedAt: input.createdAt,
+      coordinatorPubkey: "npub1coordinator",
     },
   };
 }
@@ -134,5 +166,39 @@ describe("questionnaireTransport blind admissions", () => {
     expect(result.accepted[0].event.id).toBe("event-aaa");
     expect(result.rejected[0].event.id).toBe("event-bbb");
     expect(result.rejected[0].rejectionReason).toBe("duplicate_response");
+  });
+
+  it("keeps a submission accepted when a later rejection conflicts with an accepted decision", () => {
+    const response = blindResponse({
+      responseId: "resp-1",
+      nullifier: "nullifier-x",
+      createdAt: 1712537200,
+      eventId: "event-aaa",
+    });
+    const accepted = submissionDecision({
+      submissionId: "resp-1",
+      nullifier: "nullifier-x",
+      accepted: true,
+      createdAt: 1712537300,
+      eventId: "decision-accepted",
+    });
+    const laterInvalid = submissionDecision({
+      submissionId: "resp-1",
+      nullifier: "nullifier-x",
+      accepted: false,
+      reason: "invalid_token_proof",
+      createdAt: 1712537400,
+      eventId: "decision-invalid",
+    });
+
+    const result = evaluateQuestionnaireBlindAdmissions({
+      entries: [response],
+      decisionEntries: [accepted, laterInvalid],
+    });
+
+    expect(result.accepted).toHaveLength(1);
+    expect(result.rejected).toHaveLength(0);
+    expect(result.accepted[0].decisionEventId).toBe("decision-accepted");
+    expect(result.accepted[0].rejectionReason).toBe(null);
   });
 });

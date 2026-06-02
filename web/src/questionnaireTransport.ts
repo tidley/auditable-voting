@@ -263,6 +263,21 @@ function fingerprintBlindResponsePayload(response: QuestionnaireBlindResponseEve
   });
 }
 
+function choosePreferredSubmissionDecision(
+  existing: QuestionnaireSubmissionDecisionEntry | undefined,
+  next: QuestionnaireSubmissionDecisionEntry,
+) {
+  if (!existing) {
+    return next;
+  }
+  if (existing.decision.accepted !== next.decision.accepted) {
+    return existing.decision.accepted ? existing : next;
+  }
+  const existingCreatedAt = Number(existing.event.created_at ?? existing.decision.decidedAt ?? 0);
+  const nextCreatedAt = Number(next.event.created_at ?? next.decision.decidedAt ?? 0);
+  return nextCreatedAt >= existingCreatedAt ? next : existing;
+}
+
 export function evaluateQuestionnaireBlindAdmissions(input: {
   entries: QuestionnaireBlindResponseEntry[];
   decisionEntries?: QuestionnaireSubmissionDecisionEntry[];
@@ -270,12 +285,14 @@ export function evaluateQuestionnaireBlindAdmissions(input: {
   const ordered = dedupeBlindResponseEntries(input.entries);
   const latestDecisionBySubmissionId = new Map<string, QuestionnaireSubmissionDecisionEntry>();
   for (const entry of input.decisionEntries ?? []) {
-    const existing = latestDecisionBySubmissionId.get(entry.decision.submissionId);
-    const existingCreatedAt = Number(existing?.event.created_at ?? existing?.decision.decidedAt ?? 0);
-    const createdAt = Number(entry.event.created_at ?? entry.decision.decidedAt ?? 0);
-    if (!existing || createdAt >= existingCreatedAt) {
-      latestDecisionBySubmissionId.set(entry.decision.submissionId, entry);
+    const submissionId = entry.decision.submissionId.trim();
+    if (!submissionId) {
+      continue;
     }
+    latestDecisionBySubmissionId.set(
+      submissionId,
+      choosePreferredSubmissionDecision(latestDecisionBySubmissionId.get(submissionId), entry),
+    );
   }
   const acceptedNullifiers = new Set<string>();
   const acceptedResponseIds = new Set<string>();
@@ -283,7 +300,7 @@ export function evaluateQuestionnaireBlindAdmissions(input: {
 
   for (const entry of ordered) {
     const responseId = entry.response.responseId.trim();
-    const explicitDecision = latestDecisionBySubmissionId.get(entry.response.responseId);
+    const explicitDecision = latestDecisionBySubmissionId.get(responseId);
     if (explicitDecision) {
       decisions.push({
         ...entry,

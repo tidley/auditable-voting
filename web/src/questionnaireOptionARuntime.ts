@@ -3348,7 +3348,15 @@ export class QuestionnaireOptionACoordinatorRuntime {
       }
       const issuedByCommitment = Object.values(next.issuedBlindResponses)
         .find((issuance) => issuance.tokenCommitment === entry.response.tokenProof.tokenCommitment);
-      const blindSigningKeyId = issuedByCommitment?.blindSigningKeyId ?? "";
+      if (!issuedByCommitment) {
+        optionAFlowLog("coordinator", "public_submission_skipped_missing_issuance", {
+          electionId: this.electionId,
+          submissionId: entry.response.responseId,
+          tokenCommitment: entry.response.tokenProof.tokenCommitment,
+        });
+        continue;
+      }
+      const blindSigningKeyId = issuedByCommitment.blindSigningKeyId;
       const syntheticSubmission: BallotSubmission = {
         type: "ballot_submission",
         schemaVersion: 1,
