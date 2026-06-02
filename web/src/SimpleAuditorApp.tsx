@@ -21,6 +21,7 @@ import {
   type QuestionnaireResultSummary,
   type QuestionnaireStateEvent,
 } from "./questionnaireProtocol";
+import { decryptQuestionnaireBlindResponseAnswers } from "./questionnaireResponsePublish";
 
 const AUDITOR_QUESTIONNAIRE_DETAIL_LIMIT = 20;
 const AUDITOR_QUESTIONNAIRE_HISTORIC_LIMIT = 2000;
@@ -108,6 +109,7 @@ export default function SimpleAuditorApp() {
     canUseCachedSelection ? auditorMemoryCache.selectedWorkerDelegationStatus : null
   ));
   const [searchQuery, setSearchQuery] = useState("");
+  const [observerDecryptNsec, setObserverDecryptNsec] = useState("");
   const [questionnaireRefreshStatus, setQuestionnaireRefreshStatus] = useState<string | null>(() => auditorMemoryCache.questionnaireRefreshStatus);
   const [responseRefreshStatus, setResponseRefreshStatus] = useState<string | null>(() => (
     canUseCachedSelection ? auditorMemoryCache.responseRefreshStatus : null
@@ -550,22 +552,31 @@ export default function SimpleAuditorApp() {
     [filteredQuestionnaires, selectedQuestionnaireId],
   );
 
+  const decryptedResponseResult = useMemo(
+    () => decryptAuditorResponseDetails({
+      responseDetails: selectedResponseDetails,
+      coordinatorNsec: observerDecryptNsec,
+    }),
+    [observerDecryptNsec, selectedResponseDetails],
+  );
+  const displayResponseDetails = decryptedResponseResult.responseDetails;
+
   const liveQuestionSummaries = useMemo(
     () => buildLiveQuestionSummaries(
       selectedQuestionnaire?.questions ?? [],
-      selectedResponseDetails.filter((entry) => entry.accepted),
+      displayResponseDetails.filter((entry) => entry.accepted),
     ),
-    [selectedQuestionnaire?.questions, selectedResponseDetails],
+    [displayResponseDetails, selectedQuestionnaire?.questions],
   );
 
   const liveAcceptedCount = useMemo(
-    () => selectedResponseDetails.filter((entry) => entry.accepted).length,
-    [selectedResponseDetails],
+    () => displayResponseDetails.filter((entry) => entry.accepted).length,
+    [displayResponseDetails],
   );
 
   const liveRejectedCount = useMemo(
-    () => selectedResponseDetails.filter((entry) => !entry.accepted).length,
-    [selectedResponseDetails],
+    () => displayResponseDetails.filter((entry) => !entry.accepted).length,
+    [displayResponseDetails],
   );
   const displayValidCount = selectedResultSummary?.acceptedResponseCount ?? liveAcceptedCount;
   const displayInvalidCount = selectedResultSummary?.rejectedResponseCount ?? liveRejectedCount;
@@ -617,7 +628,7 @@ export default function SimpleAuditorApp() {
         state: selectedLiveState ?? selectedQuestionnaire.state,
       },
       summary: selectedResultSummary,
-      responses: selectedResponseDetails.map((entry) => ({
+      responses: displayResponseDetails.map((entry) => ({
         eventId: entry.event.id,
         createdAt: entry.event.created_at,
         accepted: entry.accepted,
@@ -721,7 +732,7 @@ export default function SimpleAuditorApp() {
             questions: selectedQuestionnaire.questions,
           } : null}
           questionSummaries={displayedQuestionSummaries}
-          responseDetails={selectedResponseDetails}
+          responseDetails={displayResponseDetails}
           displayValidCount={displayValidCount}
           displayInvalidCount={displayInvalidCount}
           coordinatorText={
@@ -735,6 +746,22 @@ export default function SimpleAuditorApp() {
           publishedAtTime={Number(publishedAtTime)}
           canExportResults={canExportResults}
           onExportResults={exportResults}
+          responseDecryptControls={(
+            <div className='simple-auditor-decrypt-control'>
+              <label className='simple-voter-label' htmlFor='simple-auditor-decrypt-nsec'>Decrypt answer details</label>
+              <input
+                id='simple-auditor-decrypt-nsec'
+                className='simple-voter-input'
+                type='password'
+                value={observerDecryptNsec}
+                onChange={(event) => setObserverDecryptNsec(event.target.value)}
+                placeholder='Coordinator nsec...'
+                autoComplete='off'
+                spellCheck={false}
+              />
+              <p className='simple-voter-note'>{decryptedResponseResult.statusText}</p>
+            </div>
+          )}
           fallbackQuestionSummaryNote={
             selectedResultSummary && !hasPublishedQuestionSummaries && liveQuestionSummaries.length > 0
               ? "Published result summary contains counts only; showing live per-question aggregates from verified submissions."
@@ -1058,4 +1085,68 @@ function optionASummaryRefToAuditorDetail(input: {
     rejectionReason: input.ref.accepted ? null : "duplicate_nullifier",
     includedInLatestPublish: input.latestPublishAt !== null ? submittedAt <= input.latestPublishAt : true,
   };
+}
+
+function decryptAuditorResponseDetails(input: {
+  responseDetails: AuditorQuestionnaireResponseDetail[];
+  coordinatorNsec: string;
+}) {
+  const nsec = input.coordinatorNsec.trim();
+  const encryptedRows = input.responseDetails.filter(auditorResponseHasEncryptedAnswers);
+  if (encryptedRows.length === 0) {
+    return {
+      responseDetails: input.responseDetails,
+      statusText: "No encrypted answer details detected.",
+    };
+  }
+  if (!nsec) {
+    return {
+      responseDetails: input.responseDetails,
+      statusText: `Enter a coordinator nsec to decrypt ${encryptedRows.length} encrypted response${encryptedRows.length === 1 ? "" : "s"}.`,
+    };
+  }
+
+  let decryptedCount = 0;
+  let failedCount = 0;
+  const responseDetails = input.responseDetails.map((entry) => {
+    if (!auditorResponseHasEncryptedAnswers(entry)) {
+      return entry;
+    }
+    try {
+      const eventPubkey = (entry.event as Partial<NostrEvent>).pubkey || entry.response.authorPubkey;
+      const decrypted = decryptQuestionnaireBlindResponseAnswers({
+        coordinatorNsec: nsec,
+        eventPubkey,
+        response: entry.response,
+      });
+      decryptedCount += 1;
+      return {
+        ...entry,
+        response: {
+          ...entry.response,
+          answers: decrypted.answers,
+        },
+      };
+    } catch {
+      failedCount += 1;
+      return entry;
+    }
+  });
+
+  const statusText = failedCount > 0
+    ? `Decrypted ${decryptedCount}; ${failedCount} failed. Check that the nsec matches the questionnaire coordinator.`
+    : `Decrypted ${decryptedCount} encrypted response${decryptedCount === 1 ? "" : "s"} locally.`;
+
+  return {
+    responseDetails,
+    statusText,
+  };
+}
+
+function auditorResponseHasEncryptedAnswers(entry: AuditorQuestionnaireResponseDetail) {
+  return Boolean(entry.response.encryptedPayload)
+    || (entry.response.answers ?? []).some((answer) => (
+      answer.answerType === "free_text"
+      && answer.text.trim().startsWith("enc:nip44v2:")
+    ));
 }

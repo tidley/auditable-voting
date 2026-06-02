@@ -64,6 +64,7 @@ Observers can independently check:
 - whether a credential was spent more than once
 - whether rejected ballots were rejected for deterministic reasons
 - whether the published tally matches the accepted public ballots
+- encrypted answer details when the matching coordinator `nsec` is deliberately entered in Observer
 
 ## Trust model
 
@@ -81,7 +82,7 @@ The voter must protect their local keys and browser state.
 2. Create a questionnaire and publish it.
 3. Share invite links from **Voters**.
 4. Open the invite as **Voter**, request ballot access if needed, fill in the questionnaire, and submit.
-5. Open **Observer** and search for the questionnaire ID or coordinator identity to verify the public result stream. Observer fetches once when opened; use **Refresh** to update it later.
+5. Open **Observer** and search for the questionnaire ID or coordinator identity to verify the public result stream. Observer fetches once when opened; use **Refresh** to update it later. If encrypted answer details need to be inspected, enter the matching coordinator `nsec` in **Submitted Votes**; decryption happens locally in the browser.
 
 Questionnaires can mix yes/no, multiple-choice, ranked-choice, and free-text questions. Ranked-choice results are counted as points, with the highest total preferred: first choice gets one point per available option, later choices count down from there, and unranked options get `0` points.
 

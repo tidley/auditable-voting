@@ -42,6 +42,21 @@ export type QuestionnaireBlindResponseEvent = {
   payloadHash?: string;
 };
 
+export type QuestionnaireBlindResponseEncryptedPayload = {
+  schemaVersion: 1;
+  eventType: "questionnaire_response_blind_payload";
+  questionnaireId: string;
+  responseId: string;
+  submittedAt: number;
+  answers: QuestionnaireResponseAnswer[];
+};
+
+export type QuestionnaireBlindResponseDecryptionResult = {
+  answers: QuestionnaireResponseAnswer[];
+  encryptedPayloadDecrypted: boolean;
+  encryptedFreeTextDecryptedCount: number;
+};
+
 export type QuestionnaireSubmissionDecisionEvent = QuestionnaireSubmissionDecision;
 
 function buildPublicRelays(relays?: string[]) {
@@ -62,6 +77,14 @@ function decodeNpubHex(npub: string) {
     throw new Error("Expected npub.");
   }
   return decoded.data as string;
+}
+
+function toHexPubkey(value: string) {
+  const trimmed = value.trim();
+  if (trimmed.startsWith("npub1")) {
+    return decodeNpubHex(trimmed);
+  }
+  return trimmed;
 }
 
 async function publishEvent(input: {
@@ -282,6 +305,87 @@ export function parseQuestionnaireBlindResponseEvent(content: string): Questionn
   } catch {
     return null;
   }
+}
+
+export function parseQuestionnaireBlindResponseEncryptedPayload(
+  plaintext: string,
+): QuestionnaireBlindResponseEncryptedPayload | null {
+  try {
+    const parsed = JSON.parse(plaintext) as QuestionnaireBlindResponseEncryptedPayload;
+    if (
+      parsed?.schemaVersion !== 1
+      || parsed?.eventType !== "questionnaire_response_blind_payload"
+      || typeof parsed?.questionnaireId !== "string"
+      || typeof parsed?.responseId !== "string"
+      || typeof parsed?.submittedAt !== "number"
+      || !Array.isArray(parsed?.answers)
+    ) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function decryptQuestionnaireBlindResponseAnswers(input: {
+  coordinatorNsec: string;
+  eventPubkey: string;
+  response: QuestionnaireBlindResponseEvent;
+}): QuestionnaireBlindResponseDecryptionResult {
+  const coordinatorSecretKey = decodeNsecSecretKey(input.coordinatorNsec);
+  const authorHex = toHexPubkey(input.eventPubkey || input.response.authorPubkey);
+  const conversationKey = nip44.v2.utils.getConversationKey(coordinatorSecretKey, authorHex);
+  let answers = input.response.answers ? [...input.response.answers] : null;
+  let encryptedPayloadDecrypted = false;
+
+  if (!answers && input.response.encryptedPayload) {
+    const plaintext = nip44.v2.decrypt(input.response.encryptedPayload, conversationKey);
+    if (input.response.payloadHash && sha256HexRust(plaintext) !== input.response.payloadHash) {
+      throw new Error("Questionnaire blind response payload hash mismatch.");
+    }
+    const payload = parseQuestionnaireBlindResponseEncryptedPayload(plaintext);
+    if (
+      !payload
+      || payload.questionnaireId !== input.response.questionnaireId
+      || payload.responseId !== input.response.responseId
+    ) {
+      throw new Error("Questionnaire blind response payload shape mismatch.");
+    }
+    answers = payload.answers;
+    encryptedPayloadDecrypted = true;
+  }
+
+  if (!answers) {
+    throw new Error("Questionnaire blind response has no decryptable answer payload.");
+  }
+
+  let encryptedFreeTextDecryptedCount = 0;
+  const decryptedAnswers = answers.map((answer) => {
+    if (answer.answerType !== "free_text") {
+      return answer;
+    }
+    const trimmed = answer.text.trim();
+    if (!trimmed.startsWith("enc:nip44v2:")) {
+      return answer;
+    }
+    const ciphertext = trimmed.slice("enc:nip44v2:".length);
+    if (!ciphertext) {
+      throw new Error("Encrypted free-text answer is empty.");
+    }
+    const plaintext = nip44.v2.decrypt(ciphertext, conversationKey);
+    encryptedFreeTextDecryptedCount += 1;
+    return {
+      ...answer,
+      text: plaintext.trim() || "(empty)",
+    };
+  });
+
+  return {
+    answers: decryptedAnswers,
+    encryptedPayloadDecrypted,
+    encryptedFreeTextDecryptedCount,
+  };
 }
 
 export async function publishQuestionnaireSubmissionDecisionPublic(input: {

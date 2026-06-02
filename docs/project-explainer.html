@@ -514,7 +514,7 @@
             <ul>
               <li>Search by questionnaire or coordinator identity.</li>
               <li>Check accepted and rejected public ballots.</li>
-              <li>Recompute the public result stream.</li>
+              <li>Recompute the public result stream, with optional local decryption when a coordinator nsec is deliberately entered.</li>
             </ul>
           </article>
         </div>
@@ -554,6 +554,7 @@
             <li>Whether a credential was spent more than once.</li>
             <li>Whether rejected ballots were rejected for deterministic reasons.</li>
             <li>Whether the published tally matches the accepted public ballots.</li>
+            <li>Encrypted answer details when the matching coordinator nsec is deliberately entered in Observer.</li>
           </ul>
         </div>
           </section>
@@ -583,7 +584,7 @@
           </article>
           <article class="role-card">
             <h3>3. Observer</h3>
-            <p>Open Observer and search for the questionnaire ID or coordinator identity to verify the public result stream. Observer fetches once when opened; use Refresh to update it later.</p>
+            <p>Open Observer and search for the questionnaire ID or coordinator identity to verify the public result stream. Observer fetches once when opened; use Refresh to update it later. Encrypted answer details can be decrypted locally from Submitted Votes when the matching coordinator nsec is supplied.</p>
           </article>
         </div>
         <p>Questionnaires can mix yes/no, multiple-choice, ranked-choice, and free-text questions. Ranked-choice results are counted as points, with the highest total preferred: first choice gets one point per available option, later choices count down from there, and unranked options get <code>0</code> points.</p>

@@ -8,6 +8,7 @@ import {
   normaliseRankedOptionIds,
   validateQuestionnaireDefinition,
   type QuestionnaireDefinition,
+  type QuestionnairePublishedResponseRef,
   type QuestionnaireQuestion,
   type QuestionnaireResponseAnswer,
   type QuestionnaireResultSummary,
@@ -28,7 +29,16 @@ import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition }
 import { tryWriteClipboard } from "./clipboard";
 import { fetchQuestionnaireBlindResponses } from "./questionnaireTransport";
 import { evaluateQuestionnaireBlindAdmissions, fetchQuestionnaireSubmissionDecisions } from "./questionnaireTransport";
-import { publishQuestionnaireBlindResponsePublicByCoordinator } from "./questionnaireResponsePublish";
+import {
+  decryptQuestionnaireBlindResponseAnswers,
+  parseQuestionnaireBlindResponseEvent,
+  parseQuestionnaireSubmissionDecisionEvent,
+  publishQuestionnaireBlindResponsePublicByCoordinator,
+  QUESTIONNAIRE_RESPONSE_BLIND_KIND,
+  QUESTIONNAIRE_SUBMISSION_DECISION_KIND,
+  type QuestionnaireBlindResponseEvent,
+  type QuestionnaireSubmissionDecisionEvent,
+} from "./questionnaireResponsePublish";
 import { decodeNsec } from "./nostrIdentity";
 import { normalizeRelaysRust } from "./wasm/auditableVotingCore";
 import {
@@ -126,6 +136,16 @@ type QuestionnaireCoordinatorPanelProps = {
     rejectedCount: number;
     payloadMode: "Encrypted" | "Public";
   }) => void;
+};
+
+type QuestionnaireBlindResponseEntry = {
+  event: NostrEvent;
+  response: QuestionnaireBlindResponseEvent;
+};
+
+type QuestionnaireSubmissionDecisionEntry = {
+  event: NostrEvent;
+  decision: QuestionnaireSubmissionDecisionEvent;
 };
 
 type QuestionnaireQuestionDraft = QuestionnaireQuestion;
@@ -764,7 +784,7 @@ function buildAutoconfiguredWorkerLauncherHref(input: {
   return `${input.baseUrl}?${params.toString()}`;
 }
 
-function parseQuestionnaireIdFromResponseEvent(event: Pick<NostrEvent, "content" | "tags" | "kind">): string | null {
+function parseQuestionnaireIdFromResponseEvent(event: Pick<NostrEvent, "content" | "kind"> & { tags?: string[][] }): string | null {
   const tagMatch = Array.isArray(event.tags)
     ? event.tags.find((tag) => Array.isArray(tag) && tag[0] === "questionnaire-id" && typeof tag[1] === "string")
     : null;
@@ -831,6 +851,133 @@ function decryptCoordinatorFreeText(input: {
   } catch {
     return "(encrypted text unavailable)";
   }
+}
+
+function hasEncryptedFreeTextAnswer(answers: QuestionnaireResponseAnswer[] | undefined) {
+  return (answers ?? []).some((answer) => (
+    answer.answerType === "free_text"
+    && answer.text.trim().startsWith("enc:nip44v2:")
+  ));
+}
+
+function resolveBlindResponseAnswersForCoordinator(input: {
+  entry: QuestionnaireBlindResponseEntry;
+  coordinatorNsec: string;
+}) {
+  const rawAnswers = input.entry.response.answers;
+  const needsDecrypt = Boolean(input.entry.response.encryptedPayload) || hasEncryptedFreeTextAnswer(rawAnswers);
+  if (input.coordinatorNsec.trim() && needsDecrypt) {
+    try {
+      return decryptQuestionnaireBlindResponseAnswers({
+        coordinatorNsec: input.coordinatorNsec,
+        eventPubkey: input.entry.event.pubkey,
+        response: input.entry.response,
+      }).answers;
+    } catch {
+      return rawAnswers ?? [];
+    }
+  }
+  return rawAnswers ?? [];
+}
+
+function publicBlindResponseToAcceptedResponse(input: {
+  entry: QuestionnaireBlindResponseEntry;
+  coordinatorNsec: string;
+  coordinatorNpub: string;
+}): QuestionnaireAcceptedResponse {
+  const submittedAt = Number.isFinite(input.entry.response.submittedAt)
+    ? input.entry.response.submittedAt
+    : input.entry.event.created_at ?? nowUnix();
+  const answers = resolveBlindResponseAnswersForCoordinator({
+    entry: input.entry,
+    coordinatorNsec: input.coordinatorNsec,
+  });
+  return {
+    eventId: input.entry.event.id,
+    authorPubkey: input.entry.response.authorPubkey,
+    envelope: {
+      schemaVersion: 1,
+      eventType: "questionnaire_response_private",
+      questionnaireId: input.entry.response.questionnaireId,
+      responseId: input.entry.response.responseId,
+      createdAt: submittedAt,
+      authorPubkey: input.entry.response.authorPubkey,
+      ciphertextScheme: "nip44v2",
+      ciphertextRecipient: input.coordinatorNpub.trim() || "public_blind_response",
+      ciphertext: input.entry.response.encryptedPayload ?? "public_blind_response",
+      payloadHash: input.entry.response.payloadHash ?? input.entry.response.tokenProof.tokenCommitment,
+    },
+    payload: {
+      schemaVersion: 1,
+      kind: "questionnaire_response_payload",
+      questionnaireId: input.entry.response.questionnaireId,
+      responseId: input.entry.response.responseId,
+      submittedAt,
+      answers,
+    },
+  };
+}
+
+function publishedResponseRefToAcceptedResponse(input: {
+  questionnaireId: string;
+  ref: QuestionnairePublishedResponseRef;
+  coordinatorNpub: string;
+}): QuestionnaireAcceptedResponse | null {
+  const responseId = input.ref.responseId.trim();
+  if (!input.ref.accepted || !responseId) {
+    return null;
+  }
+  const submittedAt = Number.isFinite(input.ref.submittedAt)
+    ? Number(input.ref.submittedAt)
+    : nowUnix();
+  return {
+    eventId: `summary:${input.questionnaireId}:${responseId}`,
+    authorPubkey: input.ref.authorPubkey,
+    envelope: {
+      schemaVersion: 1,
+      eventType: "questionnaire_response_private",
+      questionnaireId: input.questionnaireId,
+      responseId,
+      createdAt: submittedAt,
+      authorPubkey: input.ref.authorPubkey,
+      ciphertextScheme: "nip44v2",
+      ciphertextRecipient: input.coordinatorNpub.trim() || "summary_reference",
+      ciphertext: "summary_reference",
+      payloadHash: `summary:${responseId}`,
+    },
+    payload: {
+      schemaVersion: 1,
+      kind: "questionnaire_response_payload",
+      questionnaireId: input.questionnaireId,
+      responseId,
+      submittedAt,
+      answers: input.ref.answers ?? [],
+    },
+  };
+}
+
+function mergeAcceptedResponsesForCoordinator(responses: QuestionnaireAcceptedResponse[]) {
+  const byKey = new Map<string, QuestionnaireAcceptedResponse>();
+  for (const response of responses) {
+    const key = response.payload.responseId.trim() || response.eventId;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, response);
+      continue;
+    }
+    const existingAnswerCount = existing.payload.answers.length;
+    const nextAnswerCount = response.payload.answers.length;
+    if (nextAnswerCount > existingAnswerCount) {
+      byKey.set(key, response);
+      continue;
+    }
+    const existingSynthetic = existing.eventId.startsWith("summary:");
+    const nextSynthetic = response.eventId.startsWith("summary:");
+    if (existingSynthetic && !nextSynthetic) {
+      byKey.set(key, response);
+    }
+  }
+  return [...byKey.values()].sort((left, right) => left.payload.submittedAt - right.payload.submittedAt);
 }
 
 function buildDefinition(input: {
@@ -1196,6 +1343,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     definitionEvents: NostrEvent[];
     stateEvents: NostrEvent[];
     responseEvents: NostrEvent[];
+    publicResponseEntries?: QuestionnaireBlindResponseEntry[];
+    publicDecisionEntries?: QuestionnaireSubmissionDecisionEntry[];
     resultEvents: NostrEvent[];
     diagnostics?: {
       definition: { mode: "filtered" | "kind_only_fallback"; filteredCount: number; kindOnlyCount: number };
@@ -1241,11 +1390,18 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     const definition = selectLatestQuestionnaireDefinition(definitionEvents);
     const state = selectLatestQuestionnaireState(stateEvents);
     const resultSummary = selectLatestQuestionnaireResultSummary(resultEvents);
+    const publicResponseEntries = (input.publicResponseEntries ?? [])
+      .filter((entry) => entry.response.questionnaireId === activeQuestionnaireId);
+    const publicDecisionEntries = (input.publicDecisionEntries ?? [])
+      .filter((entry) => entry.decision.questionnaireId === activeQuestionnaireId);
     setDefinitionEventCount(definitionEvents.length);
     setStateEventCount(stateEvents.length);
-    setResponseEventCount(input.responseEvents.length);
+    setResponseEventCount(input.responseEvents.length + publicResponseEntries.length);
     setResultEventCount(resultEvents.length);
-    const latestResponseEvent = [...input.responseEvents]
+    const latestResponseEvent = [
+      ...input.responseEvents,
+      ...publicResponseEntries.map((entry) => entry.event),
+    ]
       .sort((left, right) => right.created_at - left.created_at)[0] ?? null;
     setLastResponseSeenEventId(latestResponseEvent?.id ?? null);
 
@@ -1258,7 +1414,36 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     }));
     setLatestResultAcceptedCount(resultSummary?.acceptedResponseCount ?? null);
 
-    if (definition && coordinatorNsec.trim()) {
+    if (definition?.flowMode === QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1) {
+      const admissions = evaluateQuestionnaireBlindAdmissions({
+        entries: publicResponseEntries,
+        decisionEntries: publicDecisionEntries,
+      });
+      const acceptedFromSubmissions = admissions.accepted.map((entry) => publicBlindResponseToAcceptedResponse({
+        entry,
+        coordinatorNsec,
+        coordinatorNpub,
+      }));
+      const acceptedFromSummary = (resultSummary?.publishedResponseRefs ?? [])
+        .map((ref) => publishedResponseRefToAcceptedResponse({
+          questionnaireId: definition.questionnaireId,
+          ref,
+          coordinatorNpub,
+        }))
+        .filter((entry): entry is QuestionnaireAcceptedResponse => Boolean(entry));
+      const accepted = mergeAcceptedResponsesForCoordinator([...acceptedFromSubmissions, ...acceptedFromSummary]);
+      setLatestAcceptedCount(Math.max(
+        admissions.accepted.length,
+        accepted.length,
+        resultSummary?.acceptedResponseCount ?? 0,
+      ));
+      setLatestRejectedCount(Math.max(
+        admissions.rejected.length,
+        resultSummary?.rejectedResponseCount ?? 0,
+      ));
+      setLatestAcceptedResponses(accepted);
+      setLastResponseRejectReason(admissions.rejected.at(-1)?.rejectionReason ?? null);
+    } else if (definition && coordinatorNsec.trim()) {
       const processed = processQuestionnaireResponses({
         definition,
         responseEvents: input.responseEvents,
@@ -1283,7 +1468,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     }
 
     try {
-      const [definitionFetch, stateFetch, responseFetch, resultFetch] = await Promise.all([
+      const [definitionFetch, stateFetch, responseFetch, publicResponseFetch, publicDecisionFetch, resultFetch] = await Promise.all([
         fetchQuestionnaireEventsWithFallback({
           questionnaireId: id,
           kind: QUESTIONNAIRE_DEFINITION_KIND,
@@ -1308,6 +1493,20 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           relays: questionnaireRelayPublishHints,
           readRelayLimit: 8,
         }),
+        fetchQuestionnaireBlindResponses({
+          questionnaireId: id,
+          limit: 500,
+          readRelayLimit: 8,
+          preferKindOnly: true,
+          relays: questionnaireRelayPublishHints,
+        }).catch(() => []),
+        fetchQuestionnaireSubmissionDecisions({
+          questionnaireId: id,
+          limit: 500,
+          readRelayLimit: 8,
+          preferKindOnly: true,
+          relays: questionnaireRelayPublishHints,
+        }).catch(() => []),
         fetchQuestionnaireEventsWithFallback({
           questionnaireId: id,
           kind: QUESTIONNAIRE_RESULT_SUMMARY_KIND,
@@ -1326,6 +1525,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         definitionEvents: definitionFetch.events,
         stateEvents: stateFetch.events,
         responseEvents: responseFetch.events,
+        publicResponseEntries: publicResponseFetch,
+        publicDecisionEntries: publicDecisionFetch,
         resultEvents: resultFetch.events,
         diagnostics: {
           definition: definitionFetch.diagnostics,
@@ -1400,6 +1601,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     const definitionById = new Map<string, NostrEvent>();
     const stateById = new Map<string, NostrEvent>();
     const responseById = new Map<string, NostrEvent>();
+    const publicResponseById = new Map<string, QuestionnaireBlindResponseEntry>();
+    const publicDecisionById = new Map<string, QuestionnaireSubmissionDecisionEntry>();
     const resultById = new Map<string, NostrEvent>();
     const applyFromMaps = () => {
       if (cancelled) {
@@ -1409,12 +1612,14 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         definitionEvents: [...definitionById.values()],
         stateEvents: [...stateById.values()],
         responseEvents: [...responseById.values()],
+        publicResponseEntries: [...publicResponseById.values()],
+        publicDecisionEntries: [...publicDecisionById.values()],
         resultEvents: [...resultById.values()],
       });
     };
 
     const loadInitialBackfill = async () => {
-      const [definitionFetch, stateFetch, responseFetch, resultFetch] = await Promise.all([
+      const [definitionFetch, stateFetch, responseFetch, publicResponseFetch, publicDecisionFetch, resultFetch] = await Promise.all([
         fetchQuestionnaireEventsWithFallback({
           questionnaireId: id,
           kind: QUESTIONNAIRE_DEFINITION_KIND,
@@ -1439,6 +1644,20 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           relays: questionnaireRelayPublishHints,
           readRelayLimit: 8,
         }),
+        fetchQuestionnaireBlindResponses({
+          questionnaireId: id,
+          limit: 500,
+          readRelayLimit: 8,
+          preferKindOnly: true,
+          relays: questionnaireRelayPublishHints,
+        }).catch(() => []),
+        fetchQuestionnaireSubmissionDecisions({
+          questionnaireId: id,
+          limit: 500,
+          readRelayLimit: 8,
+          preferKindOnly: true,
+          relays: questionnaireRelayPublishHints,
+        }).catch(() => []),
         fetchQuestionnaireEventsWithFallback({
           questionnaireId: id,
           kind: QUESTIONNAIRE_RESULT_SUMMARY_KIND,
@@ -1459,6 +1678,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       definitionById.clear();
       stateById.clear();
       responseById.clear();
+      publicResponseById.clear();
+      publicDecisionById.clear();
       resultById.clear();
       for (const event of definitionFetch.events) {
         definitionById.set(event.id, event);
@@ -1469,6 +1690,12 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       for (const event of responseFetch.events) {
         responseById.set(event.id, event);
       }
+      for (const entry of publicResponseFetch) {
+        publicResponseById.set(entry.event.id, entry);
+      }
+      for (const entry of publicDecisionFetch) {
+        publicDecisionById.set(entry.event.id, entry);
+      }
       for (const event of resultFetch.events) {
         resultById.set(event.id, event);
       }
@@ -1476,6 +1703,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         definitionEvents: definitionFetch.events,
         stateEvents: stateFetch.events,
         responseEvents: responseFetch.events,
+        publicResponseEntries: publicResponseFetch,
+        publicDecisionEntries: publicDecisionFetch,
         resultEvents: resultFetch.events,
         diagnostics: {
           definition: definitionFetch.diagnostics,
@@ -1529,6 +1758,38 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         onEvent: (event) => {
           responseById.set(event.id, event);
           applyFromMaps();
+        },
+        onError: () => undefined,
+      }),
+      subscribeQuestionnaireEvents({
+        questionnaireId: id,
+        kind: QUESTIONNAIRE_RESPONSE_BLIND_KIND,
+        parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireBlindResponseEvent(event.content)?.questionnaireId ?? null,
+        useQuestionnaireIdTagFilter: false,
+        relays: questionnaireRelayPublishHints,
+        readRelayLimit: 8,
+        onEvent: (event) => {
+          const response = parseQuestionnaireBlindResponseEvent(event.content);
+          if (response) {
+            publicResponseById.set(event.id, { event, response });
+            applyFromMaps();
+          }
+        },
+        onError: () => undefined,
+      }),
+      subscribeQuestionnaireEvents({
+        questionnaireId: id,
+        kind: QUESTIONNAIRE_SUBMISSION_DECISION_KIND,
+        parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireSubmissionDecisionEvent(event.content)?.questionnaireId ?? null,
+        useQuestionnaireIdTagFilter: false,
+        relays: questionnaireRelayPublishHints,
+        readRelayLimit: 8,
+        onEvent: (event) => {
+          const decision = parseQuestionnaireSubmissionDecisionEvent(event.content);
+          if (decision) {
+            publicDecisionById.set(event.id, { event, decision });
+            applyFromMaps();
+          }
         },
         onError: () => undefined,
       }),
@@ -2603,30 +2864,14 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           entries: publicResponses,
           decisionEntries,
         });
-        const acceptedResponses = admissions.accepted.map((entry) => ({
-          eventId: entry.event.id,
-          authorPubkey: entry.response.authorPubkey,
-          envelope: {
-            schemaVersion: 1 as const,
-            eventType: "questionnaire_response_private" as const,
-            questionnaireId: entry.response.questionnaireId,
-            responseId: entry.response.responseId,
-            createdAt: entry.response.submittedAt ?? entry.event.created_at ?? nowUnix(),
-            authorPubkey: entry.response.authorPubkey,
-            ciphertextScheme: "nip44v2" as const,
-            ciphertextRecipient: coordinatorNpub,
-            ciphertext: "",
-            payloadHash: entry.response.payloadHash ?? entry.response.tokenProof.tokenCommitment,
-          },
-          payload: {
-            schemaVersion: 1 as const,
-            kind: "questionnaire_response_payload" as const,
-            questionnaireId: entry.response.questionnaireId,
-            responseId: entry.response.responseId,
-            submittedAt: entry.response.submittedAt ?? entry.event.created_at ?? nowUnix(),
-            answers: entry.response.answers ?? ([] as QuestionnaireResponseAnswer[]),
-          },
+        const acceptedResponses = admissions.accepted.map((entry) => publicBlindResponseToAcceptedResponse({
+          entry,
+          coordinatorNsec,
+          coordinatorNpub,
         }));
+        const acceptedResponseById = new Map(
+          acceptedResponses.map((response) => [response.payload.responseId, response]),
+        );
         const rejectedResponses = admissions.rejected.map((entry) => ({
           eventId: entry.event.id,
           authorPubkey: entry.response.authorPubkey,
@@ -2651,7 +2896,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             authorPubkey: entry.response.authorPubkey,
             submittedAt: entry.response.submittedAt ?? entry.event.created_at ?? nowUnix(),
             accepted: entry.accepted,
-            answers: entry.response.answers,
+            answers: entry.accepted
+              ? acceptedResponseById.get(entry.response.responseId)?.payload.answers
+              : entry.response.answers,
           }))
           .filter((entry) => entry.responseId.trim().length > 0);
       } else {

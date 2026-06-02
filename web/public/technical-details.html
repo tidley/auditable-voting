@@ -266,7 +266,7 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 ### 5. Coordinator or proxy processes responses
 
 1. In the coordinator **Participants** tab, use **Process requests** / **Check responses** while running browser-only. The same tab shows live accepted-response totals, per-question result bars, text responses, and responder rows as submissions are processed.
-2. If delegated, leave the helper running and check its heartbeat/reporting in **Audit proxy status**.
+2. If delegated, leave the helper running and check its heartbeat/reporting in **Audit proxy status**. The coordinator results view backfills proxy-accepted public responses and decisions from relay data, so the coordinator can inspect the same accepted set the observer sees after the proxy has processed submissions.
 3. Close the questionnaire and publish final results when collection is complete, if you want a fixed final summary.
 
 ### 6. Observer verifies
@@ -275,6 +275,7 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 2. Search by coordinator `npub` or questionnaire ID.
 3. Confirm submitted votes, accepted responses, expected participant count, and result percentages from the public events.
 4. The observer can show current accepted responses before closure when public response and decision events are available.
+5. If encrypted answer details need to be inspected, enter the matching coordinator `nsec` in **Decrypt answer details**. Decryption happens locally in the browser.
 
 ## Current Flow
 
@@ -327,6 +328,7 @@ Invite payloads and cached questionnaire metadata include the proxy routing hint
 3. Verify accepted/rejected outcomes and per-question totals.
 4. Compare live accepted responses with the public expected-response count when the coordinator has published one.
 5. Use **Submitted Votes** for per-response detail (search/filter), and enable `Show invalid votes` when you need rejected-row diagnostics.
+6. Use **Decrypt answer details** only when the matching coordinator `nsec` has been deliberately supplied for local decryption.
 
 ## Privacy Model
 
@@ -457,7 +459,7 @@ The published summary includes per-response references as a parity backfill, so 
 
 Before a final result summary exists, the observer derives a live provisional summary from verified public submissions and labels it as live relay-derived data. Coordinators also publish a separate parameterised replaceable expected-participant count event, letting the observer show accepted responses against the expected participant total while keeping individual invitees private.
 
-The observer view fetches once when opened and then waits for an explicit Refresh click, keeping relay reads bounded to avoid relay pressure. If an older published questionnaire or result payload is missing from the default list, reopen the direct questionnaire link or refresh from a relay set that still indexes that event.
+The observer view fetches once when opened and then waits for an explicit Refresh click, keeping relay reads bounded to avoid relay pressure. If an older published questionnaire or result payload is missing from the default list, reopen the direct questionnaire link or refresh from a relay set that still indexes that event. Encrypted answer details remain hidden unless a matching coordinator `nsec` is entered for local decryption.
 
 ## Current Limits
 
@@ -466,7 +468,7 @@ The observer view fetches once when opened and then waits for an explicit Refres
 - The questionnaire path is currently single-coordinator.
 - Larger multi-coordinator live runs are still operationally fragile on public relays.
 - Observer detail is near real-time (poll-based), but exact freshness depends on relay propagation and indexing.
-- If a response payload is encrypted/private, the observer can still show metadata/decision status but not plaintext answers; coordinator-side results can decrypt `enc:nip44v2:` text when the key is present locally.
+- If a response payload is encrypted/private, Observer can show metadata/decision status without a key and can decrypt answer details locally only when the matching coordinator `nsec` is entered. Coordinator-side results use the coordinator key already present locally.
 
 ## Short Summary
 

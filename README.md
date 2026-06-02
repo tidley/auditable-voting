@@ -21,7 +21,8 @@ The active product is the client in `web/` plus the optional audit proxy in `wor
 - Browser-only invite sharing by copied link, native device share actions, personalised links for pre-whitelisted voter npubs, or one-use private code links with per-code share controls that whitelist the first claimant and automatically request a ballot.
 - Blind credential issuance for allowlisted participants.
 - Public blind-token submissions from ephemeral response keys.
-- Observer results derived from public submissions and decisions, with one automatic fetch per page session and manual Refresh for updates.
+- Coordinator and Observer results derived from public submissions and decisions, including proxy-accepted responses.
+- Observer-local `nsec` entry for decrypting encrypted response details when the coordinator key is deliberately supplied.
 - Optional audit proxy that can issue credentials, verify submissions, publish decisions, close completed questionnaires, and publish result summaries.
 - Static deployment to GitHub Pages or nsite.
 
@@ -229,6 +230,7 @@ sudo WEB_BASE_PATH=/auditable-voting/ ./launch-auditable-voting-fips.sh
 - Browser-local coordinator state and keys must be protected by the user.
 - The audit proxy improves liveness but is still delegated by the coordinator.
 - Public verification depends on observers fetching the relevant relay events.
+- Decrypting encrypted observer details requires manually entering the matching coordinator `nsec`; the key is not a public audit input.
 - The protocol and implementation need external review before strong production claims.
 
 ## Documentation

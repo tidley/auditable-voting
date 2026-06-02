@@ -3945,19 +3945,31 @@ code {
 }
 
 .simple-auditor-submitted-stat,
-.simple-auditor-submitted-filter {
+.simple-auditor-submitted-filter,
+.simple-auditor-submitted-decrypt {
   border: 1px solid var(--simple-border);
   border-radius: 8px;
   padding: 12px;
   background: var(--simple-surface);
 }
 
-.simple-auditor-submitted-filter .simple-voter-label {
+.simple-auditor-submitted-decrypt {
+  grid-column: 1 / -1;
+}
+
+.simple-auditor-submitted-filter .simple-voter-label,
+.simple-auditor-submitted-decrypt .simple-voter-label {
   margin-bottom: 6px;
 }
 
-.simple-auditor-submitted-filter .simple-voter-input {
+.simple-auditor-submitted-filter .simple-voter-input,
+.simple-auditor-submitted-decrypt .simple-voter-input {
   margin-bottom: 0;
+}
+
+.simple-auditor-decrypt-control {
+  display: grid;
+  gap: 8px;
 }
 
 .simple-auditor-invalid-toggle {

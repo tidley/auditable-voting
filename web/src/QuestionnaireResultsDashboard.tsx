@@ -49,6 +49,7 @@ type QuestionnaireResultsDashboardProps = {
   canExportResults?: boolean;
   onExportResults?: () => void;
   actions?: ReactNode;
+  responseDecryptControls?: ReactNode;
   fallbackQuestionSummaryNote?: string | null;
   emptyQuestionSummaryText?: string;
   emptySelectionText?: string;
@@ -68,6 +69,7 @@ export default function QuestionnaireResultsDashboard({
   canExportResults = false,
   onExportResults,
   actions,
+  responseDecryptControls,
   fallbackQuestionSummaryNote = null,
   emptyQuestionSummaryText = "No published result summary or live verified submissions yet for this questionnaire.",
   emptySelectionText = "Choose a questionnaire round to inspect results.",
@@ -284,6 +286,11 @@ export default function QuestionnaireResultsDashboard({
                     </label>
                   ) : null}
                 </div>
+                {responseDecryptControls ? (
+                  <div className='simple-auditor-submitted-decrypt'>
+                    {responseDecryptControls}
+                  </div>
+                ) : null}
               </div>
               <ul className='simple-voter-list simple-auditor-result-list'>
                 {filteredResponseDetails.map((entry) => (
@@ -384,7 +391,7 @@ export default function QuestionnaireResultsDashboard({
                                   return (
                                     <li key={`${entry.event.id}:${answer.questionId}`} className='simple-auditor-answer-item-free-text'>
                                       <span className='simple-auditor-answer-prompt'>{prompt}</span>
-                                      <div className='simple-auditor-answer-free-text'>{answer.text || "(empty)"}</div>
+                                      <div className='simple-auditor-answer-free-text'>{formatFreeTextAnswer(answer.text)}</div>
                                     </li>
                                   );
                                 })}
@@ -437,7 +444,7 @@ export default function QuestionnaireResultsDashboard({
                   return (
                     <li key={`${entry.event.id}:free-text`} className='simple-voter-list-item'>
                       <p className='simple-voter-note'>{entry.response.authorPubkey}</p>
-                      <p className='simple-voter-question'>{freeText.text || "(empty)"}</p>
+                      <p className='simple-voter-question'>{formatFreeTextAnswer(freeText.text)}</p>
                     </li>
                   );
                 })
@@ -567,6 +574,14 @@ function formatQuestionnaireTime(unix: number | null | undefined) {
     return "Not set";
   }
   return new Date(unix * 1000).toLocaleString();
+}
+
+function formatFreeTextAnswer(text: string) {
+  const trimmed = text.trim();
+  if (trimmed.startsWith("enc:nip44v2:")) {
+    return "(encrypted answer)";
+  }
+  return text || "(empty)";
 }
 
 const QUESTIONNAIRE_TIMER_DISABLED_CLOSE_SECONDS = 5_256_000 * 60;

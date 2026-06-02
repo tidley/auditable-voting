@@ -592,6 +592,7 @@
           <li>Observers now discover recent public questionnaires through kind-only backfill when no questionnaire ID is selected, then show state and published response totals where available</li>
           <li>Published questionnaire summaries now carry canonical per-response refs with slim answer payloads, so Observer can still show detailed responder rows when public response events are fragmented across relays</li>
           <li>Observer now uses `Submitted Votes` as the main per-response panel with search/pagination, and invalid rows are hidden by default behind `Show invalid votes`</li>
+          <li>Coordinator and Observer now both hydrate proxy-accepted public response rows from relay submissions and decisions, while Observer can locally decrypt encrypted answer details when the matching coordinator `nsec` is deliberately supplied</li>
           <li>Submitted voters see their responder marker pattern and expandable QR directly on the Vote page</li>
           <li>Mailbox ticket publishes now keep one deterministic anchor relay, rotate secondary relays by recipient, and temporarily cool down relays that rate-limit</li>
           <li>Coordinator follower rows now expose per-ticket relay publish diagnostics for debugging delivery gaps</li>
@@ -799,6 +800,7 @@
           <li>Per-round blind-key announcements</li>
           <li>Public ballot events</li>
           <li>Final results from coordinators</li>
+          <li>Optional local decrypt input for encrypted answer details</li>
         </ul>
       </div>
       <div class="card">
