@@ -320,7 +320,8 @@ export async function fetchQuestionnaireEventsWithFallback(input: {
     kinds: [input.kind],
     limit: input.limit ?? 200,
   });
-  const locallyMatched = kindOnlyEvents.filter((event) => {
+  const uniqueKindOnlyEvents = [...new Map(kindOnlyEvents.map((event) => [event.id, event])).values()];
+  const locallyMatched = uniqueKindOnlyEvents.filter((event) => {
     if (!questionnaireId) {
       return true;
     }

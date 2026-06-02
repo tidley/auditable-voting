@@ -112,6 +112,7 @@ export default function QuestionnaireResultsDashboard({
       entry.response.authorPubkey.toLowerCase().includes(query)
       || entry.response.responseId.toLowerCase().includes(query)
       || (entry.response.tokenNullifier ?? "").toLowerCase().includes(query)
+      || (entry.rejectionReason ?? "").toLowerCase().includes(query)
     ));
   }, [responseDetails, showInvalidVotes, voterSearchQuery]);
 
@@ -328,6 +329,11 @@ export default function QuestionnaireResultsDashboard({
                             <dd>{entry.response.responseId}</dd>
                           </div>
                         </dl>
+                        {!entry.accepted ? (
+                          <p className='simple-auditor-invalid-reason'>
+                            Invalid reason: {formatInvalidReason(entry.rejectionReason)}
+                          </p>
+                        ) : null}
                         {Array.isArray(entry.response.answers) && entry.response.answers.length > 0 ? (
                           <details className='simple-auditor-response-disclosure'>
                             <summary>
@@ -577,11 +583,22 @@ function formatQuestionnaireTime(unix: number | null | undefined) {
 }
 
 function formatFreeTextAnswer(text: string) {
-  const trimmed = text.trim();
-  if (trimmed.startsWith("enc:nip44v2:")) {
-    return "(encrypted answer)";
-  }
   return text || "(empty)";
+}
+
+function formatInvalidReason(reason: string | null | undefined) {
+  const normalised = reason?.trim() ?? "";
+  if (!normalised) {
+    return "No reason published";
+  }
+  const labels: Record<string, string> = {
+    duplicate_nullifier: "Duplicate token spend",
+    duplicate_response: "Duplicate response",
+    invalid_token_proof: "Invalid token proof",
+    invalid_payload_shape: "Invalid response payload",
+    questionnaire_closed: "Questionnaire closed",
+  };
+  return labels[normalised] ?? normalised.replaceAll("_", " ");
 }
 
 const QUESTIONNAIRE_TIMER_DISABLED_CLOSE_SECONDS = 5_256_000 * 60;

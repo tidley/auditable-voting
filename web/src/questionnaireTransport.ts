@@ -49,7 +49,7 @@ export type QuestionnaireBlindAdmissionDecision = {
   event: NostrEvent;
   response: QuestionnaireBlindResponseEvent;
   accepted: boolean;
-  rejectionReason: "duplicate_nullifier" | "invalid_token_proof" | "invalid_payload_shape" | "questionnaire_closed" | null;
+  rejectionReason: "duplicate_nullifier" | "duplicate_response" | "invalid_token_proof" | "invalid_payload_shape" | "questionnaire_closed" | null;
   decidedAt?: number | null;
   decisionEventId?: string | null;
 };
@@ -222,11 +222,52 @@ function canonicalBlindResponseOrder(
   return String(left.event.id ?? "").localeCompare(String(right.event.id ?? ""));
 }
 
+function dedupeBlindResponseEntries(entries: QuestionnaireBlindResponseEntry[]) {
+  const seenEventIds = new Set<string>();
+  const seenLogicalPayloads = new Set<string>();
+  const deduped: QuestionnaireBlindResponseEntry[] = [];
+  for (const entry of [...entries].sort(canonicalBlindResponseOrder)) {
+    const responseId = entry.response.responseId.trim();
+    const eventId = String(entry.event.id ?? "").trim();
+    if (eventId && seenEventIds.has(eventId)) {
+      continue;
+    }
+    if (eventId) {
+      seenEventIds.add(eventId);
+    }
+    const logicalPayloadKey = responseId
+      ? `${responseId}:${fingerprintBlindResponsePayload(entry.response)}`
+      : "";
+    if (logicalPayloadKey && seenLogicalPayloads.has(logicalPayloadKey)) {
+      continue;
+    }
+    if (logicalPayloadKey) {
+      seenLogicalPayloads.add(logicalPayloadKey);
+    }
+    deduped.push(entry);
+  }
+  return deduped;
+}
+
+function fingerprintBlindResponsePayload(response: QuestionnaireBlindResponseEvent) {
+  return JSON.stringify({
+    schemaVersion: response.schemaVersion,
+    eventType: response.eventType,
+    questionnaireId: response.questionnaireId.trim(),
+    responseId: response.responseId.trim(),
+    submittedAt: response.submittedAt,
+    authorPubkey: response.authorPubkey.trim(),
+    tokenNullifier: response.tokenNullifier.trim(),
+    tokenProof: response.tokenProof,
+    answers: response.answers ?? [],
+  });
+}
+
 export function evaluateQuestionnaireBlindAdmissions(input: {
   entries: QuestionnaireBlindResponseEntry[];
   decisionEntries?: QuestionnaireSubmissionDecisionEntry[];
 }) {
-  const ordered = [...input.entries].sort(canonicalBlindResponseOrder);
+  const ordered = dedupeBlindResponseEntries(input.entries);
   const latestDecisionBySubmissionId = new Map<string, QuestionnaireSubmissionDecisionEntry>();
   for (const entry of input.decisionEntries ?? []) {
     const existing = latestDecisionBySubmissionId.get(entry.decision.submissionId);
@@ -237,9 +278,11 @@ export function evaluateQuestionnaireBlindAdmissions(input: {
     }
   }
   const acceptedNullifiers = new Set<string>();
+  const acceptedResponseIds = new Set<string>();
   const decisions: QuestionnaireBlindAdmissionDecision[] = [];
 
   for (const entry of ordered) {
+    const responseId = entry.response.responseId.trim();
     const explicitDecision = latestDecisionBySubmissionId.get(entry.response.responseId);
     if (explicitDecision) {
       decisions.push({
@@ -251,10 +294,23 @@ export function evaluateQuestionnaireBlindAdmissions(input: {
       });
       if (explicitDecision.decision.accepted) {
         acceptedNullifiers.add(entry.response.tokenNullifier.trim());
+        if (responseId) {
+          acceptedResponseIds.add(responseId);
+        }
       }
       continue;
     }
     const nullifier = entry.response.tokenNullifier.trim();
+    if (responseId && acceptedResponseIds.has(responseId)) {
+      decisions.push({
+        ...entry,
+        accepted: false,
+        rejectionReason: "duplicate_response",
+        decidedAt: null,
+        decisionEventId: null,
+      });
+      continue;
+    }
     if (acceptedNullifiers.has(nullifier)) {
       decisions.push({
         ...entry,
@@ -267,6 +323,9 @@ export function evaluateQuestionnaireBlindAdmissions(input: {
     }
 
     acceptedNullifiers.add(nullifier);
+    if (responseId) {
+      acceptedResponseIds.add(responseId);
+    }
     decisions.push({
       ...entry,
       accepted: true,

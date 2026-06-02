@@ -8,6 +8,8 @@ function blindResponse(input: {
   nullifier: string;
   createdAt: number;
   eventId: string;
+  submittedAt?: number;
+  answerText?: string;
 }): { event: NostrEvent; response: QuestionnaireBlindResponseEvent } {
   return {
     event: {
@@ -24,7 +26,7 @@ function blindResponse(input: {
       eventType: "questionnaire_response_blind",
       questionnaireId: "course_feedback_2026_term1",
       responseId: input.responseId,
-      submittedAt: input.createdAt,
+      submittedAt: input.submittedAt ?? input.createdAt,
       authorPubkey: "npub1author",
       tokenNullifier: input.nullifier,
       tokenProof: {
@@ -32,7 +34,9 @@ function blindResponse(input: {
         questionnaireId: "course_feedback_2026_term1",
         signature: "signature",
       },
-      answers: [],
+      answers: input.answerText
+        ? [{ questionId: "q1", answerType: "free_text", text: input.answerText }]
+        : [],
     },
   };
 }
@@ -62,5 +66,73 @@ describe("questionnaireTransport blind admissions", () => {
     expect(result.rejected[0].response.responseId).toBe("resp-2");
     expect(result.rejected[0].rejectionReason).toBe("duplicate_nullifier");
     expect(result.acceptedCountByNullifier["nullifier-x"]).toBe(1);
+  });
+
+  it("does not reject the same relay event when it is returned more than once", () => {
+    const response = blindResponse({
+      responseId: "resp-1",
+      nullifier: "nullifier-x",
+      createdAt: 1712537200,
+      eventId: "event-aaa",
+    });
+
+    const result = evaluateQuestionnaireBlindAdmissions({
+      entries: [response, response],
+    });
+
+    expect(result.accepted).toHaveLength(1);
+    expect(result.rejected).toHaveLength(0);
+    expect(result.accepted[0].response.responseId).toBe("resp-1");
+  });
+
+  it("treats a republished response id as one logical submission", () => {
+    const first = blindResponse({
+      responseId: "resp-1",
+      nullifier: "nullifier-x",
+      createdAt: 1712537200,
+      eventId: "event-aaa",
+    });
+    const republished = blindResponse({
+      responseId: "resp-1",
+      nullifier: "nullifier-x",
+      createdAt: 1712537300,
+      submittedAt: 1712537200,
+      eventId: "event-bbb",
+    });
+
+    const result = evaluateQuestionnaireBlindAdmissions({
+      entries: [republished, first],
+    });
+
+    expect(result.accepted).toHaveLength(1);
+    expect(result.rejected).toHaveLength(0);
+    expect(result.accepted[0].event.id).toBe("event-aaa");
+  });
+
+  it("rejects a repeated response id with a conflicting payload", () => {
+    const first = blindResponse({
+      responseId: "resp-1",
+      nullifier: "nullifier-x",
+      createdAt: 1712537200,
+      eventId: "event-aaa",
+      answerText: "Original answer",
+    });
+    const conflicting = blindResponse({
+      responseId: "resp-1",
+      nullifier: "nullifier-y",
+      createdAt: 1712537300,
+      eventId: "event-bbb",
+      answerText: "Changed answer",
+    });
+
+    const result = evaluateQuestionnaireBlindAdmissions({
+      entries: [conflicting, first],
+    });
+
+    expect(result.accepted).toHaveLength(1);
+    expect(result.rejected).toHaveLength(1);
+    expect(result.accepted[0].event.id).toBe("event-aaa");
+    expect(result.rejected[0].event.id).toBe("event-bbb");
+    expect(result.rejected[0].rejectionReason).toBe("duplicate_response");
   });
 });

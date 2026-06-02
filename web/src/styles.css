@@ -4022,6 +4022,18 @@ code {
   color: #fecaca;
 }
 
+.simple-auditor-invalid-reason {
+  margin: -2px 0 12px;
+  padding: 8px 10px;
+  border: 1px solid rgba(239, 68, 68, 0.28);
+  border-radius: 8px;
+  background: rgba(239, 68, 68, 0.1);
+  color: #fecaca;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
 .simple-auditor-submission-time {
   text-align: right;
 }

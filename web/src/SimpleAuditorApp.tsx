@@ -759,7 +759,9 @@ export default function SimpleAuditorApp() {
                 autoComplete='off'
                 spellCheck={false}
               />
-              <p className='simple-voter-note'>{decryptedResponseResult.statusText}</p>
+              {decryptedResponseResult.statusText ? (
+                <p className='simple-voter-note'>{decryptedResponseResult.statusText}</p>
+              ) : null}
             </div>
           )}
           fallbackQuestionSummaryNote={
@@ -1102,7 +1104,7 @@ function decryptAuditorResponseDetails(input: {
   if (!nsec) {
     return {
       responseDetails: input.responseDetails,
-      statusText: `Enter a coordinator nsec to decrypt ${encryptedRows.length} encrypted response${encryptedRows.length === 1 ? "" : "s"}.`,
+      statusText: "",
     };
   }
 
