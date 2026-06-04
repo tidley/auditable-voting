@@ -163,16 +163,17 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
       },
     } as Awaited<ReturnType<typeof fetchQuestionnaireDefinitions>>[number]]);
 
-    render(<QuestionnaireOptionAVoterPanel />);
-    await screen.findByText("Public prompt");
+    const { rerender } = render(<QuestionnaireOptionAVoterPanel />);
+    await screen.findByText(/Public prompt/);
+    expect(screen.getByText("Public definition")).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: "Login" }));
 
+    rerender(<QuestionnaireOptionAVoterPanel displayMode='settings' />);
     await waitFor(() => {
       expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Coordinator:")).length).toBeGreaterThan(0);
     });
     expect(screen.queryByText(/No invite DM was readable/i)).toBeNull();
-    expect(screen.getByText("Public definition")).toBeTruthy();
     expect(fetchOptionAInviteDmsMock).not.toHaveBeenCalled();
   });
 
@@ -205,9 +206,10 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
       },
     } as Awaited<ReturnType<typeof fetchQuestionnaireDefinitions>>[number]]);
 
-    render(<QuestionnaireOptionAVoterPanel localVoterNpub={"npub1" + "a".repeat(58)} autoSignerLogin />);
+    const { rerender } = render(<QuestionnaireOptionAVoterPanel localVoterNpub={"npub1" + "a".repeat(58)} autoSignerLogin />);
 
-    await screen.findByText("Gateway prompt");
+    await screen.findByText(/Gateway prompt/);
+    rerender(<QuestionnaireOptionAVoterPanel displayMode='settings' localVoterNpub={"npub1" + "a".repeat(58)} autoSignerLogin />);
     await waitFor(() => {
       expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Coordinator:")).length).toBeGreaterThan(0);
     });
@@ -221,6 +223,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     await waitFor(() => {
       expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Questionnaire ID: q_auto_123")).length).toBeGreaterThan(0);
     });
+    expect(screen.queryByRole("button", { name: "Show ballot status" })).toBeNull();
   });
 
   it("replaces a stale announced questionnaire id when there is no in-flight request", async () => {
@@ -239,13 +242,12 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
   it("refresh status bootstraps a local ephemeral voter without requiring signer login", async () => {
     const user = userEvent.setup();
-    render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_local"]} localVoterNpub={"npub1" + "c".repeat(58)} />);
+    render(<QuestionnaireOptionAVoterPanel displayMode='settings' announcedQuestionnaireIds={["q_local"]} localVoterNpub={"npub1" + "c".repeat(58)} />);
 
     await waitFor(() => {
       expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Questionnaire ID: q_local")).length).toBeGreaterThan(0);
     });
 
-    await user.click(screen.getByRole("button", { name: "Show ballot status" }));
     await user.click(screen.getAllByRole("button", { name: "Refresh status" }).at(-1)!);
 
     await waitFor(() => {
@@ -296,10 +298,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
       />,
     );
 
-    await screen.findByText("Delayed prompt");
-    await waitFor(() => {
-      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Identity confirmed: Yes")).length).toBeGreaterThan(0);
-    });
+    await screen.findByText(/Delayed prompt/);
 
     await waitFor(() => {
       expect(requestSpy).toHaveBeenCalled();
@@ -332,7 +331,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_cached_definition"]} />);
 
-    await screen.findByText("Cached question prompt");
+    await screen.findByText(/Cached question prompt/);
     expect(screen.queryByText("Waiting for questions to be published.")).toBeNull();
   });
 
@@ -427,7 +426,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     });
     storeCachedQuestionnaireDefinition(definition);
 
-    render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_preserve_answers"]} localVoterNpub={localVoterNpub} />);
+    const { rerender } = render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_preserve_answers"]} localVoterNpub={localVoterNpub} />);
 
     const yesButton = await screen.findByRole("button", { name: "Yes" });
     await user.click(yesButton);
@@ -444,12 +443,13 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
       definition,
       issuedAt: "2026-04-18T00:01:00.000Z",
     });
-    await user.click(screen.getByRole("button", { name: "Show ballot status" }));
+    rerender(<QuestionnaireOptionAVoterPanel displayMode='settings' announcedQuestionnaireIds={["q_preserve_answers"]} localVoterNpub={localVoterNpub} />);
     await user.click(screen.getByRole("button", { name: "Refresh status" }));
 
     await waitFor(() => {
       expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Ballot credential: Received")).length).toBeGreaterThan(0);
     });
+    rerender(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_preserve_answers"]} localVoterNpub={localVoterNpub} />);
     expect(screen.getByRole("button", { name: "Yes" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: "No" }).className).toContain("is-dimmed");
   });
@@ -518,7 +518,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_issued_definition"]} localVoterNpub={localVoterNpub} />);
 
-    await screen.findByText("Issued definition prompt");
+    await screen.findByText(/Issued definition prompt/);
     expect(screen.queryByText("Waiting for questions to be published.")).toBeNull();
   });
 
@@ -626,9 +626,9 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     expect(screen.getAllByLabelText(/Expand QR for token/i).length).toBeGreaterThan(0);
     expect(screen.getByText("Submission ID")).toBeTruthy();
     expect(screen.getByText("submission_submitted_marker")).toBeTruthy();
-    expect(screen.getAllByText("Voter ID").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Voter ID used for private submission").length).toBeGreaterThan(0);
     expect(screen.getAllByText("rrrrrrr").length).toBeGreaterThan(0);
-    expect(screen.getByText("Voter npub")).toBeTruthy();
+    expect(screen.getByText("Submittor identity - full")).toBeTruthy();
     expect(screen.getByText("npub1" + "r".repeat(58))).toBeTruthy();
   });
 });

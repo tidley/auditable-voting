@@ -3273,6 +3273,16 @@ export default function SimpleUiApp() {
               localStateProtected={Boolean(storagePassphrase)}
               localStateMessage={storageStatus}
             />
+            {questionnaireModeActive ? (
+              <QuestionnaireVoterPanel
+                displayMode='settings'
+                announcedQuestionnaireIds={readyAnnouncedQuestionnaireIds}
+                optionAAnnouncedQuestionnaireIds={announcedQuestionnaireIds}
+                localVoterNpub={activeVoterNpub}
+                localVoterNsec={questionnaireLocalVoterNsec}
+                autoSignerLogin={questionnaireAutoSignerLogin}
+              />
+            ) : null}
             <section className='simple-settings-card' aria-label='Relay hint settings'>
               <h3 className='simple-voter-question'>Relay hints</h3>
               <label className='simple-settings-toggle'>
