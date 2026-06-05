@@ -81,7 +81,7 @@ The voter must protect their local keys and browser state.
 
 1. Open the app as **Coordinator**.
 2. Create a questionnaire and publish it.
-3. Share invite links from **Voters**. The General QR/link opens **Vote** and requests a ballot automatically.
+3. Share invite links from **Voters**. The General QR/link opens **Vote** directly and requests a ballot automatically; single-use private links also show a QR code.
 4. Open the invite as **Voter**, wait for ballot access if needed, fill in the questionnaire, and submit.
 5. Open **Observer** and search for the questionnaire ID or coordinator identity to verify the public result stream. Observer fetches once when opened; use **Refresh** to update it later. Invalid rows show their rejection reason. Coordinator results decrypt encrypted answer details automatically when the local coordinator key is available; Observer can decrypt them from **Submitted Votes** when the matching coordinator `nsec` is supplied.
 

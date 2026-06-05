@@ -253,6 +253,7 @@ type QuestionnaireOptionAVoterPanelProps = {
   autoSignerLogin?: boolean;
   requestBlindBallotNonce?: number;
   displayMode?: "vote" | "settings";
+  showLoginAction?: boolean;
 };
 
 function getRankRequirementState(optionCount: number, minimumRanked: number, selectedCount: number) {
@@ -1944,13 +1945,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
 
   return (
     <div className='simple-voter-card simple-optiona-voter-page'>
-      <div className='simple-questionnaire-header'>
-        <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
-          {!snapshot?.loginVerified ? (
+      {props.showLoginAction !== false && !snapshot?.loginVerified ? (
+        <div className='simple-questionnaire-header'>
+          <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
             <button type='button' className='simple-voter-secondary' onClick={() => void login()}>Login</button>
-          ) : null}
+          </div>
         </div>
-      </div>
+      ) : null}
 
       {inviteDropdownOptions.length > 0 ? (
         <>
@@ -2227,7 +2228,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                 ? "Submit response"
                 : waitingForCredential
                   ? "Verifying vote request"
-                  : `Waiting for ${decisionActorName}...`}
+                  : "Verifying vote request"}
         </button>
       </div>
       {snapshot?.submission ? (

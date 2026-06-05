@@ -367,16 +367,9 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
   }, [role, showGateway]);
 
   const gatewayRoleTitle = useMemo(() => roleLabel(gatewayRole), [gatewayRole]);
-  const voterSectionLabel = useMemo(() => (
-    VOTER_SECTION_OPTIONS.find((entry) => entry.tab === voterTab)?.label ?? "Join"
-  ), [voterTab]);
   const currentRoleSummary = useMemo(() => (
-    role === "voter"
-      ? `Voter / ${voterSectionLabel} ${accountIdentityLabel}`
-      : isSimpleActorRole(role)
-        ? `${roleLabel(role)} ${accountIdentityLabel}`
-        : roleLabel(role)
-  ), [accountIdentityLabel, role, voterSectionLabel]);
+    isSimpleActorRole(role) ? `${roleLabel(role)} ${accountIdentityLabel}` : roleLabel(role)
+  ), [accountIdentityLabel, role]);
   const gatewayContinueLabel = useMemo(() => {
     const hasSignerIdentity = gatewaySignerNpub.trim().length > 0;
     return `${hasSignerIdentity ? "Login" : "Continue"} as ${gatewayRoleTitle}`;
@@ -729,6 +722,21 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                     <div className='simple-account-menu-identity' role='none'>
                       <div className='simple-account-menu-identity-actions'>
                         <p className='simple-account-menu-kicker'>Identity</p>
+                        {role === "voter" ? (
+                          <button
+                            type='button'
+                            className='simple-account-menu-button'
+                            role='menuitem'
+                            onClick={() => {
+                              setAccountMenuOpen(false);
+                              if (typeof window !== "undefined") {
+                                window.dispatchEvent(new Event("auditable-voting:voter-login"));
+                              }
+                            }}
+                          >
+                            Login
+                          </button>
+                        ) : null}
                         <button
                           type='button'
                           className='simple-account-menu-button'

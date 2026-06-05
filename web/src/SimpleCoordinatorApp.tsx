@@ -755,7 +755,13 @@ function normalizeInviteNpubInput(value: string): string | null {
   return null;
 }
 
-function GeneralInviteQrButton({ value }: { value: string }) {
+type InviteQrButtonProps = {
+  value: string;
+  label: string;
+  title: string;
+};
+
+function InviteQrButton({ value, label, title }: InviteQrButtonProps) {
   const [qrSrc, setQrSrc] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
 
@@ -821,10 +827,10 @@ function GeneralInviteQrButton({ value }: { value: string }) {
           }
         }}
         disabled={!qrSrc}
-        aria-label='Show large QR for general invite link'
+        aria-label={`Show large QR for ${label}`}
       >
         {qrSrc ? (
-          <img src={qrSrc} alt='QR code for general invite link' />
+          <img src={qrSrc} alt={`QR code for ${label}`} />
         ) : (
           <span className='simple-invite-qr-fallback' aria-hidden='true' />
         )}
@@ -834,7 +840,7 @@ function GeneralInviteQrButton({ value }: { value: string }) {
           className='simple-invite-qr-overlay'
           role='dialog'
           aria-modal='true'
-          aria-label='General invite link QR'
+          aria-label={`${title} QR`}
           onClick={() => setExpanded(false)}
         >
           <button
@@ -846,8 +852,8 @@ function GeneralInviteQrButton({ value }: { value: string }) {
             Close
           </button>
           <div className='simple-invite-qr-overlay-card' onClick={(event) => event.stopPropagation()}>
-            <h3 className='simple-voter-question'>General invite link</h3>
-            <img className='simple-invite-qr-overlay-image' src={qrSrc} alt='Large QR code for general invite link' />
+            <h3 className='simple-voter-question'>{title}</h3>
+            <img className='simple-invite-qr-overlay-image' src={qrSrc} alt={`Large QR code for ${label}`} />
             <code className='simple-identity-code'>{value}</code>
           </div>
         </div>
@@ -1226,7 +1232,7 @@ export default function SimpleCoordinatorApp() {
     if (!electionId) {
       return "";
     }
-    return buildQuestionnaireInviteUrl({ electionId, autoRequestBallot: true });
+    return buildQuestionnaireInviteUrl({ electionId, login: false, autoRequestBallot: true });
   }, [optionAElectionId]);
   const publicQuestionnaireInviteCopy = useMemo(() => {
     const electionId = optionAElectionId.trim();
@@ -3754,6 +3760,7 @@ export default function SimpleCoordinatorApp() {
         electionId,
         inviteCode,
         login: false,
+        autoRequestBallot: true,
       });
       setPrivateInviteLinksByHash((current) => ({
         ...current,
@@ -6421,90 +6428,112 @@ export default function SimpleCoordinatorApp() {
             {optionAElectionId ? (
               <div id='coordinator-invite-voters-section'>
                 <SimpleCollapsibleSection title='Invite voters'>
-		                <div className='simple-voter-field-stack'>
-		                  <div className='simple-invite-share-panel simple-invite-share-panel-general' aria-label='Share questionnaire link'>
-	                    <div className='simple-invite-share-heading'>
-	                      <div className='simple-invite-share-copy'>
-	                        <h3 className='simple-voter-question'>General invite link</h3>
-	                        <p className='simple-voter-note'>
-	                          Voters who scan the QR open Vote and request a ballot automatically.
-	                        </p>
-	                      </div>
-	                      <GeneralInviteQrButton value={publicQuestionnaireInviteUrl} />
-	                    </div>
-	                    <p className='simple-invite-link-preview'>{publicQuestionnaireInviteUrl}</p>
-                    <div className='simple-invite-share-actions'>
-                      <button
-                        type='button'
-                        className='simple-voter-secondary'
-                        onClick={() => {
-                          void tryWriteClipboard(publicQuestionnaireInviteUrl);
-                          setKnownVoterInviteStatus("Invite link copied.");
-                        }}
-                        disabled={!publicQuestionnaireInviteUrl}
-                      >
-                        Copy link
-                      </button>
-                      <button
-                        type='button'
-                        className='simple-voter-secondary'
-                        onClick={() => void sharePublicQuestionnaireInvite()}
-                        disabled={!publicQuestionnaireInviteUrl}
-                      >
-                        Share...
-                      </button>
+                  <div className='simple-voter-field-stack'>
+                    <div className='simple-invite-share-panel simple-invite-share-panel-general' aria-label='Share questionnaire link'>
+                      <div className='simple-invite-share-heading'>
+                        <div className='simple-invite-share-copy'>
+                          <h3 className='simple-voter-question'>General invite link</h3>
+                          <p className='simple-voter-note'>
+                            Voters who scan the QR open Vote and request a ballot automatically.
+                          </p>
+                        </div>
+                        <InviteQrButton
+                          value={publicQuestionnaireInviteUrl}
+                          label='general invite link'
+                          title='General invite link'
+                        />
+                      </div>
+                      <p className='simple-invite-link-preview'>{publicQuestionnaireInviteUrl}</p>
+                      <div className='simple-invite-share-actions'>
+                        <button
+                          type='button'
+                          className='simple-voter-secondary'
+                          onClick={() => {
+                            void tryWriteClipboard(publicQuestionnaireInviteUrl);
+                            setKnownVoterInviteStatus("Invite link copied.");
+                          }}
+                          disabled={!publicQuestionnaireInviteUrl}
+                        >
+                          Copy link
+                        </button>
+                        <button
+                          type='button'
+                          className='simple-voter-secondary'
+                          onClick={() => void sharePublicQuestionnaireInvite()}
+                          disabled={!publicQuestionnaireInviteUrl}
+                        >
+                          Share...
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                  <div className='simple-invite-share-panel' aria-label='Create private invite code link'>
-                    <div className='simple-invite-share-copy'>
-                      <h3 className='simple-voter-question'>Private invite link</h3>
-                    </div>
-                    <div className='simple-invite-share-actions'>
-                      <button
-                        type='button'
-                        className='simple-voter-secondary'
-                        onClick={() => void createPrivateInviteCodeLink()}
-                      disabled={!publicQuestionnaireInviteUrl || !optionACoordinatorRuntime}
-                    >
-                        Create single-use invite link
-                      </button>
-                    </div>
-                    {privateInviteCodeEntries.length > 0 ? (
-                      <ul className='simple-vote-status-list simple-private-invite-list'>
-                        {privateInviteCodeEntries.slice(0, 6).map((entry) => {
-                          const privateInviteUrl = privateInviteLinksByHash[entry.codeHash] ?? "";
-                          const canSharePrivateInvite = entry.state === "available" && privateInviteUrl.length > 0;
-                          const statusIndicator = privateInviteStatusIndicator(entry.state);
+                    <div className='simple-invite-share-panel' aria-label='Create private invite code link'>
+                      <div className='simple-invite-share-copy'>
+                        <h3 className='simple-voter-question'>Private invite link</h3>
+                      </div>
+                      <div className='simple-invite-share-actions'>
+                        <button
+                          type='button'
+                          className='simple-voter-secondary'
+                          onClick={() => void createPrivateInviteCodeLink()}
+                          disabled={!publicQuestionnaireInviteUrl || !optionACoordinatorRuntime}
+                        >
+                          Create single-use invite link
+                        </button>
+                      </div>
+                      {privateInviteCodeEntries.length > 0 ? (
+                        <ul className='simple-vote-status-list simple-private-invite-list'>
+                          {privateInviteCodeEntries.slice(0, 6).map((entry) => {
+                            const privateInviteUrl = privateInviteLinksByHash[entry.codeHash] ?? "";
+                            const canSharePrivateInvite = entry.state === "available" && privateInviteUrl.length > 0;
+                            const statusIndicator = privateInviteStatusIndicator(entry.state);
 
-                          return (
-                            <li key={entry.codeHash} className='simple-private-invite-row'>
-                              <div className='simple-private-invite-row-head'>
-                                <span className={statusIndicator.className} aria-label={statusIndicator.label} title={statusIndicator.label}>
-                                  {statusIndicator.icon}
-                                </span>
-                                <span>
-                                  code {entry.codeHash.slice(0, 10)} - {entry.state}
-                                  {entry.redeemedNpub ? ` by ${deriveActorDisplayId(entry.redeemedNpub)}` : ""}
-                                </span>
-                              </div>
-                              {canSharePrivateInvite ? (
-                                <>
-                                  <p className='simple-invite-link-preview'>{privateInviteUrl}</p>
+                            return (
+                              <li key={entry.codeHash} className='simple-private-invite-row'>
+                                <div className='simple-private-invite-row-head'>
+                                  <span className={statusIndicator.className} aria-label={statusIndicator.label} title={statusIndicator.label}>
+                                    {statusIndicator.icon}
+                                  </span>
+                                  <span>
+                                    code {entry.codeHash.slice(0, 10)} - {entry.state}
+                                    {entry.redeemedNpub ? ` by ${deriveActorDisplayId(entry.redeemedNpub)}` : ""}
+                                  </span>
+                                </div>
+                                {canSharePrivateInvite ? (
+                                  <>
+                                    <div className='simple-private-invite-share-line'>
+                                      <p className='simple-invite-link-preview'>{privateInviteUrl}</p>
+                                      <InviteQrButton
+                                        value={privateInviteUrl}
+                                        label='single-use invite link'
+                                        title='Single-use invite link'
+                                      />
+                                    </div>
+                                    <div className='simple-private-invite-actions'>
+                                      <button
+                                        type='button'
+                                        className='simple-voter-secondary'
+                                        onClick={() => void copyPrivateInviteCodeLink(entry.codeHash)}
+                                      >
+                                        Copy link
+                                      </button>
+                                      <button
+                                        type='button'
+                                        className='simple-voter-secondary'
+                                        onClick={() => void sharePrivateInviteCodeLink(entry.codeHash)}
+                                      >
+                                        Share...
+                                      </button>
+                                      <button
+                                        type='button'
+                                        className='simple-voter-secondary'
+                                        onClick={() => revokePrivateInviteCode(entry.codeHash)}
+                                      >
+                                        Revoke
+                                      </button>
+                                    </div>
+                                  </>
+                                ) : entry.state === "available" ? (
                                   <div className='simple-private-invite-actions'>
-                                    <button
-                                      type='button'
-                                      className='simple-voter-secondary'
-                                      onClick={() => void copyPrivateInviteCodeLink(entry.codeHash)}
-                                    >
-                                      Copy link
-                                    </button>
-                                    <button
-                                      type='button'
-                                      className='simple-voter-secondary'
-                                      onClick={() => void sharePrivateInviteCodeLink(entry.codeHash)}
-                                    >
-                                      Share...
-                                    </button>
                                     <button
                                       type='button'
                                       className='simple-voter-secondary'
@@ -6513,24 +6542,13 @@ export default function SimpleCoordinatorApp() {
                                       Revoke
                                     </button>
                                   </div>
-                                </>
-                              ) : entry.state === "available" ? (
-                                <div className='simple-private-invite-actions'>
-                                  <button
-                                    type='button'
-                                    className='simple-voter-secondary'
-                                    onClick={() => revokePrivateInviteCode(entry.codeHash)}
-                                  >
-                                    Revoke
-                                  </button>
-                                </div>
-                              ) : null}
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    ) : null}
-                  </div>
+                                ) : null}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      ) : null}
+                    </div>
                   <div className='simple-invite-share-panel' aria-label='Invite via Nostr'>
                     <div className='simple-invite-share-copy'>
                       <h3 className='simple-voter-question'>Invite via Nostr</h3>

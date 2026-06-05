@@ -227,6 +227,15 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     expect(screen.queryByRole("button", { name: "Show ballot status" })).toBeNull();
   });
 
+  it("can hide the vote-page Login action when login is provided by the app menu", async () => {
+    render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_menu_login"]} showLoginAction={false} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("q_menu_login")).toBeTruthy();
+    });
+    expect(screen.queryByRole("button", { name: "Login" })).toBeNull();
+  });
+
   it("replaces a stale announced questionnaire id when there is no in-flight request", async () => {
     const { rerender } = render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_old"]} />);
 
@@ -370,6 +379,40 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     expect(yesButton.className).toContain("is-active");
     expect(noButton.className).toContain("is-dimmed");
     expect(yesButton.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("uses verifier copy while a completed response is waiting for a ballot credential", async () => {
+    const user = userEvent.setup();
+    storeCachedQuestionnaireDefinition({
+      schemaVersion: 1,
+      eventType: "questionnaire_definition",
+      responseMode: "blind_token",
+      questionnaireId: "q_waiting_button_copy",
+      title: "Cached questionnaire",
+      description: "Cached description",
+      createdAt: 1,
+      openAt: 1,
+      closeAt: 999,
+      coordinatorPubkey: "npub1" + "b".repeat(58),
+      coordinatorEncryptionPubkey: "npub1" + "b".repeat(58),
+      responseVisibility: "private",
+      eligibilityMode: "open",
+      allowMultipleResponsesPerPubkey: false,
+      questions: [{
+        questionId: "q1",
+        type: "yes_no",
+        prompt: "Ready to submit",
+        required: true,
+      }],
+    });
+
+    render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_waiting_button_copy"]} />);
+
+    await user.click(await screen.findByRole("button", { name: "Yes" }));
+
+    const submitButton = screen.getByRole("button", { name: "Verifying vote request" }) as HTMLButtonElement;
+    expect(submitButton.disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: "Waiting for coordinator..." })).toBeNull();
   });
 
   it("keeps drafted answers when the blind ballot credential arrives", async () => {

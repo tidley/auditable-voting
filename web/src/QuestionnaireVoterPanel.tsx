@@ -415,6 +415,7 @@ type QuestionnaireVoterPanelProps = {
   autoSignerLogin?: boolean;
   optionARequestBlindBallotNonce?: number;
   displayMode?: "vote" | "settings";
+  showOptionALoginAction?: boolean;
 };
 
 export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelProps) {
@@ -440,6 +441,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
         autoSignerLogin={props.autoSignerLogin}
         requestBlindBallotNonce={props.optionARequestBlindBallotNonce}
         displayMode={props.displayMode}
+        showLoginAction={props.showOptionALoginAction}
       />
     );
   }

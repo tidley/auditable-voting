@@ -19,14 +19,15 @@ describe("questionnaire invite sharing", () => {
     expect(url).toBe("https://vote.example/?login=1&role=voter&q=q_public_123");
   });
 
-  it("can build a scan-to-request general invite link", () => {
+  it("can build a scan-to-request general invite link that opens Vote directly", () => {
     const url = buildQuestionnaireInviteUrl({
       baseUrl: "https://vote.example/simple-coordinator.html?role=coordinator",
       electionId: "q_public_123",
+      login: false,
       autoRequestBallot: true,
     });
 
-    expect(url).toBe("https://vote.example/?login=1&role=voter&q=q_public_123&request_ballot=1");
+    expect(url).toBe("https://vote.example/?role=voter&q=q_public_123&request_ballot=1");
     expect(shouldAutoRequestBallotFromUrl(new URL(url).search)).toBe(true);
   });
 
@@ -52,14 +53,16 @@ describe("questionnaire invite sharing", () => {
       electionId: "q_public_123",
       inviteCode: "ABC123private",
       login: false,
+      autoRequestBallot: true,
     });
     const parsed = parseInviteFromUrl(new URL(url).search);
 
-    expect(url).toBe("https://vote.example/?role=voter&q=q_public_123&invite_code=abc123private");
+    expect(url).toBe("https://vote.example/?role=voter&q=q_public_123&invite_code=abc123private&request_ballot=1");
     expect(parsed.electionId).toBe("q_public_123");
     expect(parsed.invite).toBeNull();
     expect(parsed.inviteCode).toBe("abc123private");
     expect(parsed.coordinatorNpub).toBeNull();
+    expect(shouldAutoRequestBallotFromUrl(new URL(url).search)).toBe(true);
   });
 
   it("still parses coordinator routing from older private code links", () => {

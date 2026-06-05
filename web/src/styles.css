@@ -2915,6 +2915,19 @@ code {
   gap: 10px;
 }
 
+.simple-private-invite-share-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+}
+
+.simple-private-invite-share-line .simple-invite-qr-trigger {
+  width: 72px;
+  height: 72px;
+  min-height: 0;
+}
+
 .simple-private-invite-note {
   margin: 0;
 }
@@ -5709,6 +5722,14 @@ code {
 }
 
 @media (max-width: 380px) {
+  .simple-private-invite-share-line {
+    grid-template-columns: 1fr;
+  }
+
+  .simple-private-invite-share-line .simple-invite-qr-trigger {
+    justify-self: start;
+  }
+
   .simple-invite-share-panel-general {
     grid-template-columns: 1fr;
   }

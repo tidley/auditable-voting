@@ -3053,6 +3053,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
               localVoterNsec={questionnaireLocalVoterNsec}
               autoSignerLogin={questionnaireAutoSignerLogin}
               optionARequestBlindBallotNonce={optionARequestBlindBallotNonce}
+              showOptionALoginAction={false}
             />
             {isCourseFeedbackMode || hideLegacyLiveVotePanel || questionnaireModeActive ? null : (
             effectiveLiveVoteSession ? (
@@ -3311,6 +3312,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
                 localVoterNpub={activeVoterNpub}
                 localVoterNsec={questionnaireLocalVoterNsec}
                 autoSignerLogin={questionnaireAutoSignerLogin}
+                showOptionALoginAction={false}
               />
             ) : null}
             <section className='simple-settings-card' aria-label='Relay hint settings'>

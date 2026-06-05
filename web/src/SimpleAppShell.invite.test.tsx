@@ -119,30 +119,55 @@ describe("SimpleAppShell invite-link login", () => {
     expect(await screen.findByTestId("simple-voter-app")).toBeTruthy();
   });
 
-  it("keeps voter section navigation in the top menu", async () => {
-    const user = userEvent.setup();
-    window.history.pushState(null, "", "/?role=voter");
+  it("opens direct questionnaire links on the Vote section without the gateway", async () => {
+    window.history.pushState(null, "", "/?role=voter&q=q_public_link&request_ballot=1");
     const { default: SimpleAppShell } = await import("./SimpleAppShell");
 
     render(<SimpleAppShell />);
 
-    expect(screen.getByTestId("simple-voter-app").textContent).toContain("configure");
-    expect(screen.queryByRole("tablist", { name: "Voter sections" })).toBeNull();
-    expect(screen.queryByRole("menuitem", { name: "How it works" })).toBeNull();
-    expect(screen.queryByText("vtest")).toBeNull();
+    expect(screen.getByTestId("simple-voter-app").textContent).toContain("vote");
+    expect(screen.queryByRole("button", { name: "Continue as Voter" })).toBeNull();
+    expect(screen.getByText("Voter pending")).toBeTruthy();
+  });
 
-    await user.click(screen.getByRole("button", { name: "Menu" }));
-    const voterSections = screen.getByRole("tablist", { name: "Voter sections" });
-    expect(voterSections).toBeTruthy();
-    expect(screen.getByText("vtest")).toBeTruthy();
-    expect(screen.getByRole("menuitem", { name: "How it works" }).getAttribute("href")).toBe("project-explainer.html");
+  it("keeps voter section navigation in the top menu", async () => {
+    const user = userEvent.setup();
+    window.history.pushState(null, "", "/?role=voter");
+    const { default: SimpleAppShell } = await import("./SimpleAppShell");
+    let loginEvents = 0;
+    const handleLogin = () => {
+      loginEvents += 1;
+    };
+    window.addEventListener("auditable-voting:voter-login", handleLogin);
 
-    await user.click(screen.getByRole("tab", { name: "Settings" }));
+    try {
+      render(<SimpleAppShell />);
 
-    expect(screen.getByTestId("simple-voter-app").textContent).toContain("settings");
-    expect(screen.queryByRole("tablist", { name: "Voter sections" })).toBeNull();
+      expect(screen.getByTestId("simple-voter-app").textContent).toContain("configure");
+      expect(screen.getByText("Voter pending")).toBeTruthy();
+      expect(screen.queryByText(/Voter \//)).toBeNull();
+      expect(screen.queryByRole("tablist", { name: "Voter sections" })).toBeNull();
+      expect(screen.queryByRole("menuitem", { name: "How it works" })).toBeNull();
+      expect(screen.queryByText("vtest")).toBeNull();
 
-    await user.click(screen.getByRole("button", { name: "Menu" }));
-    expect(screen.getByRole("tab", { name: "Settings" }).getAttribute("aria-selected")).toBe("true");
+      await user.click(screen.getByRole("button", { name: "Menu" }));
+      const voterSections = screen.getByRole("tablist", { name: "Voter sections" });
+      expect(voterSections).toBeTruthy();
+      expect(screen.getByText("vtest")).toBeTruthy();
+      expect(screen.getByRole("menuitem", { name: "How it works" }).getAttribute("href")).toBe("project-explainer.html");
+      await user.click(screen.getByRole("menuitem", { name: "Login" }));
+      expect(loginEvents).toBe(1);
+
+      await user.click(screen.getByRole("button", { name: "Menu" }));
+      await user.click(screen.getByRole("tab", { name: "Settings" }));
+
+      expect(screen.getByTestId("simple-voter-app").textContent).toContain("settings");
+      expect(screen.queryByRole("tablist", { name: "Voter sections" })).toBeNull();
+
+      await user.click(screen.getByRole("button", { name: "Menu" }));
+      expect(screen.getByRole("tab", { name: "Settings" }).getAttribute("aria-selected")).toBe("true");
+    } finally {
+      window.removeEventListener("auditable-voting:voter-login", handleLogin);
+    }
   });
 });
