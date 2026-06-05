@@ -849,11 +849,23 @@ code {
   border-bottom: 1px solid var(--simple-border);
 }
 
+.simple-account-menu-section-nav {
+  padding-top: 4px;
+}
+
 .simple-role-switch-menu-inline {
   position: static;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   width: 100%;
   box-shadow: none;
+}
+
+.simple-voter-menu-switch {
+  padding: 6px;
+}
+
+.simple-voter-menu-switch .simple-role-switch-button {
+  min-height: 42px;
 }
 
 .simple-account-menu-identity {
@@ -874,6 +886,35 @@ code {
 
 .simple-account-menu-signout-section {
   padding: 0 10px 4px;
+}
+
+.simple-account-menu-about-section {
+  padding-bottom: 4px;
+  border-top: 1px solid var(--simple-border);
+  border-bottom: 0;
+}
+
+.simple-account-menu-about-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.simple-account-menu-version {
+  margin: 0;
+  color: var(--simple-muted);
+  font-size: 0.88rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.simple-account-menu-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  text-decoration: none;
+  white-space: nowrap;
 }
 
 .simple-account-menu-kicker {
@@ -3218,19 +3259,6 @@ code {
   line-height: 1.45;
 }
 
-.simple-questionnaire-voter-id-chip {
-  flex: none;
-  margin: 0;
-  padding: 5px 10px;
-  border: 1px solid rgba(45, 212, 191, 0.42);
-  border-radius: 999px;
-  background: rgba(45, 212, 191, 0.1);
-  color: var(--simple-teal);
-  font-size: 0.82rem;
-  font-weight: 800;
-  line-height: 1.2;
-}
-
 .simple-optiona-voter-controls {
   margin-top: 16px;
   padding-top: 14px;
@@ -3350,12 +3378,24 @@ code {
 }
 
 .simple-questionnaire-voter-number {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.45rem;
   margin: 0;
   color: var(--simple-teal);
   font-size: 0.85rem;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+.simple-questionnaire-voter-number-id {
+  min-width: 0;
+  color: var(--simple-muted);
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+  text-transform: none;
 }
 
 .simple-questionnaire-voter-requirement {
@@ -3532,16 +3572,35 @@ code {
     display: grid;
   }
 
+  .simple-submission-identity-body {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+
+  .simple-submission-identity-visuals {
+    width: 100%;
+    box-sizing: border-box;
+    justify-items: center;
+  }
+
+  .simple-submission-identity-visuals .token-fingerprint {
+    align-items: center;
+  }
+
+  .simple-submission-identity-visuals .token-fingerprint-symbols {
+    justify-content: center;
+  }
+
+  .simple-submission-identity-details {
+    width: 100%;
+  }
+
   .simple-submission-identity-chip {
     width: fit-content;
   }
 
   .simple-questionnaire-voter-overview {
     display: grid;
-  }
-
-  .simple-questionnaire-voter-id-chip {
-    width: fit-content;
   }
 
   .simple-questionnaire-rank-settings,

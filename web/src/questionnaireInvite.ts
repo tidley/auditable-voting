@@ -76,6 +76,7 @@ export function buildQuestionnaireInviteUrl(input: {
   invitedNpub?: string | null;
   inviteCode?: string | null;
   login?: boolean;
+  autoRequestBallot?: boolean;
 }) {
   const base = input.baseUrl ?? (typeof window !== "undefined" ? window.location.href : DEFAULT_INVITE_BASE_URL);
   const url = new URL("./", base);
@@ -96,5 +97,14 @@ export function buildQuestionnaireInviteUrl(input: {
   if (inviteCode) {
     url.searchParams.set("invite_code", inviteCode);
   }
+  if (input.autoRequestBallot) {
+    url.searchParams.set("request_ballot", "1");
+  }
   return url.toString();
+}
+
+export function shouldAutoRequestBallotFromUrl(search = typeof window !== "undefined" ? window.location.search : "") {
+  const params = new URLSearchParams(search);
+  const value = (params.get("request_ballot") ?? params.get("auto_request") ?? "").trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
 }

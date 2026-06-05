@@ -1749,7 +1749,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     try {
       const current = ensureLocalSession({ allowInviteMissing: true, allowRelayInviteFetch: true }) ?? runtime.getSnapshot();
       if (!current?.loginVerified) {
-        setStatus("Open the Vote tab and login, then the blind-signature request will send automatically.");
+        setStatus("Open Vote and login, then the blind-signature request will send automatically.");
         return;
       }
       if (current.submission || current.credentialReady || current.blindRequestSent) {
@@ -1781,7 +1781,14 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Could not start blind ballot request.");
     }
-  }, [props.requestBlindBallotNonce, runtime]);
+  }, [
+    props.autoSignerLogin,
+    props.localVoterNpub,
+    props.localVoterNsec,
+    props.requestBlindBallotNonce,
+    runtime,
+    snapshot?.loginVerified,
+  ]);
 
   const canShowInviteForCurrentIdentity = (invite: ElectionInviteMessage) => {
     const signedIn = signedInNpub.trim();
@@ -2004,13 +2011,15 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       ) : null}
       <section className='simple-questionnaire-voter-overview' aria-label='Questionnaire summary'>
         <div className='simple-questionnaire-voter-title-block'>
-          <p className='simple-questionnaire-voter-number'>Questionnaire</p>
+          <p className='simple-questionnaire-voter-number'>
+            Questionnaire
+            <span className='simple-questionnaire-voter-number-id'>{questionnaireDisplayId || "Missing"}</span>
+          </p>
           <h4 className='simple-questionnaire-voter-prompt'>{questionnaireHeadingText}</h4>
           {showQuestionnaireDescription ? (
             <p className='simple-questionnaire-voter-description'>{questionnaireDescriptionText}</p>
           ) : null}
         </div>
-        <p className='simple-questionnaire-voter-id-chip'>Questionnaire ID: {questionnaireDisplayId || "Missing"}</p>
       </section>
 
       {questions.length === 0 ? (

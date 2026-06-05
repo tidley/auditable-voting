@@ -3,7 +3,7 @@ import { nip19 } from "nostr-tools";
 import SimpleAuditorApp from "./SimpleAuditorApp";
 import SimpleCoordinatorApp from "./SimpleCoordinatorApp";
 import SimpleRelayPanel from "./SimpleRelayPanel";
-import SimpleUiApp from "./SimpleUiApp";
+import SimpleUiApp, { type VoterTab } from "./SimpleUiApp";
 import { SIMPLE_APP_VERSION } from "./simpleAppVersion";
 import { createAmberConnectBundle, createSignerService, SignerServiceError } from "./services/signerService";
 import { deriveNpubFromNsec } from "./nostrIdentity";
@@ -21,6 +21,11 @@ const ROLE_OPTIONS: Array<{ role: SimpleRole; label: string }> = [
   { role: "auditor", label: "Observer" },
   { role: "coordinator", label: "Coordinator" },
   { role: "voter", label: "Voter" },
+];
+const VOTER_SECTION_OPTIONS: Array<{ tab: VoterTab; label: string }> = [
+  { tab: "configure", label: "Join" },
+  { tab: "vote", label: "Vote" },
+  { tab: "settings", label: "Settings" },
 ];
 const IDENTITY_UPDATED_EVENT = "auditable-voting:identity-updated";
 
@@ -106,6 +111,7 @@ function isMobileBrowser() {
 
 export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShellProps) {
   const [role, setRole] = useState<SimpleRole>(() => readRoleFromUrl() ?? initialRole);
+  const [voterTab, setVoterTab] = useState<VoterTab>(() => (readLinkedQuestionnaireIdFromUrl() ? "vote" : "configure"));
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [accountIdentityNpub, setAccountIdentityNpub] = useState("");
   const [showGateway, setShowGateway] = useState(() => !hasRoleInUrl() || shouldForceGatewayFromUrl());
@@ -361,9 +367,16 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
   }, [role, showGateway]);
 
   const gatewayRoleTitle = useMemo(() => roleLabel(gatewayRole), [gatewayRole]);
+  const voterSectionLabel = useMemo(() => (
+    VOTER_SECTION_OPTIONS.find((entry) => entry.tab === voterTab)?.label ?? "Join"
+  ), [voterTab]);
   const currentRoleSummary = useMemo(() => (
-    isSimpleActorRole(role) ? `${roleLabel(role)} ${accountIdentityLabel}` : roleLabel(role)
-  ), [accountIdentityLabel, role]);
+    role === "voter"
+      ? `Voter / ${voterSectionLabel} ${accountIdentityLabel}`
+      : isSimpleActorRole(role)
+        ? `${roleLabel(role)} ${accountIdentityLabel}`
+        : roleLabel(role)
+  ), [accountIdentityLabel, role, voterSectionLabel]);
   const gatewayContinueLabel = useMemo(() => {
     const hasSignerIdentity = gatewaySignerNpub.trim().length > 0;
     return `${hasSignerIdentity ? "Login" : "Continue"} as ${gatewayRoleTitle}`;
@@ -684,6 +697,33 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                     ))}
                   </div>
                 </div>
+                {role === "voter" ? (
+                  <div className='simple-account-menu-section simple-account-menu-section-nav' role='none'>
+                    <p className='simple-account-menu-kicker'>Voter</p>
+                    <div
+                      className='simple-role-switch simple-role-switch-menu-inline simple-voter-menu-switch'
+                      role='tablist'
+                      aria-label='Voter sections'
+                    >
+                      {VOTER_SECTION_OPTIONS.map((option) => (
+                        <button
+                          key={option.tab}
+                          type='button'
+                          role='tab'
+                          aria-selected={voterTab === option.tab}
+                          className={`simple-role-switch-button${voterTab === option.tab ? ' is-active' : ''}`}
+                          data-press-feedback-disabled='true'
+                          onClick={() => {
+                            setVoterTab(option.tab);
+                            setAccountMenuOpen(false);
+                          }}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
                 {isSimpleActorRole(role) ? (
                   <>
                     <div className='simple-account-menu-identity' role='none'>
@@ -773,6 +813,20 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                     </div>
                   </>
                 ) : null}
+                <div className='simple-account-menu-section simple-account-menu-about-section' role='none'>
+                  <p className='simple-account-menu-kicker'>About</p>
+                  <div className='simple-account-menu-about-row' role='none'>
+                    <p className='simple-account-menu-version'>v{SIMPLE_APP_VERSION}</p>
+                    <a
+                      className='simple-account-menu-button simple-account-menu-link'
+                      role='menuitem'
+                      href='project-explainer.html'
+                      onClick={() => setAccountMenuOpen(false)}
+                    >
+                      How it works
+                    </a>
+                  </div>
+                </div>
               </div>
             ) : null}
           </div>
@@ -781,17 +835,17 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
       </div>
 
       {role === 'voter' ? (
-        <SimpleUiApp />
+        <SimpleUiApp
+          activeTab={voterTab}
+          onActiveTabChange={setVoterTab}
+          showSectionTabs={false}
+        />
       ) : role === 'coordinator' ? (
         <SimpleCoordinatorApp />
       ) : (
         <SimpleAuditorApp />
       )}
       {role === 'auditor' ? <SimpleRelayPanel /> : null}
-      <footer className='simple-app-version' aria-label='App version'>
-        <span>v{SIMPLE_APP_VERSION}</span>
-        <a href='project-explainer.html'>How it works</a>
-      </footer>
     </div>
   );
 }

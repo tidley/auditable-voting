@@ -51,6 +51,7 @@ import {
   QUESTIONNAIRE_DEFINITION_KIND,
   QUESTIONNAIRE_STATE_KIND,
 } from "./questionnaireNostr";
+import { shouldAutoRequestBallotFromUrl } from "./questionnaireInvite";
 import { fetchOptionAInviteDms, fetchOptionAInviteDmsWithNsec } from "./questionnaireOptionAInviteDm";
 import { publishInviteToMailbox } from "./questionnaireOptionAStorage";
 import {
@@ -85,7 +86,7 @@ import { type MailboxReadQueryDebug } from "./simpleMailbox";
 import { createSignerService, SignerServiceError } from "./services/signerService";
 
 type LiveVoteChoice = "Yes" | "No" | null;
-type VoterTab = "configure" | "vote" | "settings";
+export type VoterTab = "configure" | "vote" | "settings";
 
 type SimpleVoterKeypair = {
   nsec: string;
@@ -332,7 +333,13 @@ async function verifyAnnouncedQuestionnaireIsReady(questionnaireId: string) {
   return latestState === "open" || latestState === "published";
 }
 
-export default function SimpleUiApp() {
+type SimpleUiAppProps = {
+  activeTab?: VoterTab;
+  onActiveTabChange?: (tab: VoterTab) => void;
+  showSectionTabs?: boolean;
+};
+
+export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
   const [voterKeypair, setVoterKeypair] = useState<SimpleVoterKeypair | null>(null);
   const [identityReady, setIdentityReady] = useState(false);
   const [voterId, setVoterId] = useState<string>("pending");
@@ -345,6 +352,7 @@ export default function SimpleUiApp() {
   const [coordinatorScannerActive, setCoordinatorScannerActive] = useState(false);
   const [coordinatorScannerStatus, setCoordinatorScannerStatus] = useState<string | null>(null);
   const linkedQuestionnaireId = useMemo(() => readLinkedQuestionnaireIdFromUrl(), []);
+  const autoRequestBallotFromUrl = useMemo(() => shouldAutoRequestBallotFromUrl(), []);
   const linkedPrivateInviteCode = useMemo(() => readPrivateQuestionnaireInviteCodeFromUrl(), []);
   const [announcedQuestionnaireIds, setAnnouncedQuestionnaireIds] = useState<string[]>(() => (
     linkedQuestionnaireId ? [linkedQuestionnaireId] : []
@@ -386,8 +394,14 @@ export default function SimpleUiApp() {
   const [ballotSubmitted, setBallotSubmitted] = useState(false);
   const [ballotAccepted, setBallotAccepted] = useState(false);
   const [selectedVotingId, setSelectedVotingId] = useState("");
-  const [activeTab, setActiveTab] = useState<VoterTab>(() => (linkedQuestionnaireId ? "vote" : "configure"));
+  const [internalActiveTab, setInternalActiveTab] = useState<VoterTab>(() => (linkedQuestionnaireId ? "vote" : "configure"));
+  const activeTab = props.activeTab ?? internalActiveTab;
+  const setActiveTab = useCallback((nextTab: VoterTab) => {
+    setInternalActiveTab(nextTab);
+    props.onActiveTabChange?.(nextTab);
+  }, [props.onActiveTabChange]);
   const [optionARequestBlindBallotNonce, setOptionARequestBlindBallotNonce] = useState(0);
+  const autoRequestBallotConsumedRef = useRef(false);
   const [showVoteDetails, setShowVoteDetails] = useState(false);
   const [retryUnresponsiveVisibleAt, setRetryUnresponsiveVisibleAt] = useState<number | null>(null);
   const [votePaneUnlocked, setVotePaneUnlocked] = useState(false);
@@ -513,6 +527,20 @@ export default function SimpleUiApp() {
   const voteTabActive = activeTab === "vote";
   const questionnaireModeActive = questionnaireContext.hasDefinition;
   const shouldActivateStartupRelayTraffic = (voteTabActive || hasConfiguredCoordinators) && !questionnaireModeActive;
+  useEffect(() => {
+    if (
+      !linkedQuestionnaireId
+      || !autoRequestBallotFromUrl
+      || !questionnaireModeActive
+      || autoRequestBallotConsumedRef.current
+    ) {
+      return;
+    }
+    autoRequestBallotConsumedRef.current = true;
+    setVotePaneUnlocked(true);
+    setActiveTab("vote");
+    setOptionARequestBlindBallotNonce((value) => value + 1);
+  }, [autoRequestBallotFromUrl, linkedQuestionnaireId, questionnaireModeActive]);
   useEffect(() => {
     ballotTokenIdRef.current = ballotTokenId;
   }, [ballotTokenId]);
@@ -2835,39 +2863,41 @@ export default function SimpleUiApp() {
       <section className='simple-voter-page'>
         {signerNpub ? <p className='simple-voter-note simple-signed-in-note'>Signed in as {signerNpub}</p> : null}
         {signerStatus && signerStatus !== `Signed in as ${signerNpub}.` ? <p className='simple-voter-note'>{signerStatus}</p> : null}
-        <div
-          className='simple-voter-tabs'
-          role='tablist'
-          aria-label='Voter sections'
-        >
-          <button
-            type='button'
-            role='tab'
-            aria-selected={activeTab === 'configure'}
-            className={`simple-voter-tab${activeTab === 'configure' ? ' is-active' : ''}`}
-            onClick={() => selectTab('configure')}
+        {props.showSectionTabs !== false ? (
+          <div
+            className='simple-voter-tabs'
+            role='tablist'
+            aria-label='Voter sections'
           >
-            Join
-          </button>
-          <button
-            type='button'
-            role='tab'
-            aria-selected={activeTab === 'vote'}
-            className={`simple-voter-tab${activeTab === 'vote' ? ' is-active' : ''}`}
-            onClick={() => selectTab('vote')}
-          >
-            Vote
-          </button>
-          <button
-            type='button'
-            role='tab'
-            aria-selected={activeTab === 'settings'}
-            className={`simple-voter-tab${activeTab === 'settings' ? ' is-active' : ''}`}
-            onClick={() => selectTab('settings')}
-          >
-            Settings
-          </button>
-        </div>
+            <button
+              type='button'
+              role='tab'
+              aria-selected={activeTab === 'configure'}
+              className={`simple-voter-tab${activeTab === 'configure' ? ' is-active' : ''}`}
+              onClick={() => selectTab('configure')}
+            >
+              Join
+            </button>
+            <button
+              type='button'
+              role='tab'
+              aria-selected={activeTab === 'vote'}
+              className={`simple-voter-tab${activeTab === 'vote' ? ' is-active' : ''}`}
+              onClick={() => selectTab('vote')}
+            >
+              Vote
+            </button>
+            <button
+              type='button'
+              role='tab'
+              aria-selected={activeTab === 'settings'}
+              className={`simple-voter-tab${activeTab === 'settings' ? ' is-active' : ''}`}
+              onClick={() => selectTab('settings')}
+            >
+              Settings
+            </button>
+          </div>
+        ) : null}
 
         {activeTab === 'configure' ? (
           <section

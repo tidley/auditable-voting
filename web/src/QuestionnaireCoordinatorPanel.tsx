@@ -971,6 +971,15 @@ function mergeAcceptedResponsesForCoordinator(responses: QuestionnaireAcceptedRe
       byKey.set(key, response);
       continue;
     }
+    const existingEncryptedAnswerCount = countEncryptedFreeTextAnswers(existing);
+    const nextEncryptedAnswerCount = countEncryptedFreeTextAnswers(response);
+    if (
+      nextAnswerCount === existingAnswerCount
+      && nextEncryptedAnswerCount < existingEncryptedAnswerCount
+    ) {
+      byKey.set(key, response);
+      continue;
+    }
     const existingSynthetic = existing.eventId.startsWith("summary:");
     const nextSynthetic = response.eventId.startsWith("summary:");
     if (existingSynthetic && !nextSynthetic) {
@@ -978,6 +987,13 @@ function mergeAcceptedResponsesForCoordinator(responses: QuestionnaireAcceptedRe
     }
   }
   return [...byKey.values()].sort((left, right) => left.payload.submittedAt - right.payload.submittedAt);
+}
+
+function countEncryptedFreeTextAnswers(response: QuestionnaireAcceptedResponse) {
+  return response.payload.answers.filter((answer) => (
+    answer.answerType === "free_text"
+    && answer.text.trim().startsWith("enc:nip44v2:")
+  )).length;
 }
 
 function buildDefinition(input: {
@@ -2376,16 +2392,12 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       payloadMode: "Encrypted",
     });
   }, [currentState, latestAcceptedCount, latestRejectedCount, props.onStatusChange, questionnaireId]);
-  const acceptedResponsesForDisplay = useMemo(() => {
-    const byKey = new Map<string, QuestionnaireAcceptedResponse>();
-    for (const response of latestAcceptedResponses) {
-      byKey.set(response.payload.responseId || response.eventId, response);
-    }
-    for (const response of props.optionAAcceptedResponses ?? []) {
-      byKey.set(response.payload.responseId || response.eventId, response);
-    }
-    return [...byKey.values()].sort((left, right) => left.payload.submittedAt - right.payload.submittedAt);
-  }, [latestAcceptedResponses, props.optionAAcceptedResponses]);
+  const acceptedResponsesForDisplay = useMemo(() => (
+    mergeAcceptedResponsesForCoordinator([
+      ...latestAcceptedResponses,
+      ...(props.optionAAcceptedResponses ?? []),
+    ])
+  ), [latestAcceptedResponses, props.optionAAcceptedResponses]);
   const displayAcceptedCount = Math.max(acceptedResponsesForDisplay.length, props.optionAAcceptedCount ?? 0);
   const knownVoterCount = props.knownVoterCount ?? 0;
   const buildStateLabel = !publishedDefinition

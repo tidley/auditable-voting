@@ -4,7 +4,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("./SimpleUiApp", () => ({
-  default: () => <div data-testid='simple-voter-app'>Voter app</div>,
+  default: (props: { activeTab?: string }) => <div data-testid='simple-voter-app'>Voter app {props.activeTab ?? "none"}</div>,
 }));
 
 vi.mock("./SimpleCoordinatorApp", () => ({
@@ -117,5 +117,32 @@ describe("SimpleAppShell invite-link login", () => {
     await user.click(screen.getByRole("button", { name: "NOS2X-FOX" }));
 
     expect(await screen.findByTestId("simple-voter-app")).toBeTruthy();
+  });
+
+  it("keeps voter section navigation in the top menu", async () => {
+    const user = userEvent.setup();
+    window.history.pushState(null, "", "/?role=voter");
+    const { default: SimpleAppShell } = await import("./SimpleAppShell");
+
+    render(<SimpleAppShell />);
+
+    expect(screen.getByTestId("simple-voter-app").textContent).toContain("configure");
+    expect(screen.queryByRole("tablist", { name: "Voter sections" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "How it works" })).toBeNull();
+    expect(screen.queryByText("vtest")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Menu" }));
+    const voterSections = screen.getByRole("tablist", { name: "Voter sections" });
+    expect(voterSections).toBeTruthy();
+    expect(screen.getByText("vtest")).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "How it works" }).getAttribute("href")).toBe("project-explainer.html");
+
+    await user.click(screen.getByRole("tab", { name: "Settings" }));
+
+    expect(screen.getByTestId("simple-voter-app").textContent).toContain("settings");
+    expect(screen.queryByRole("tablist", { name: "Voter sections" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Menu" }));
+    expect(screen.getByRole("tab", { name: "Settings" }).getAttribute("aria-selected")).toBe("true");
   });
 });

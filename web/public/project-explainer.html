@@ -514,7 +514,7 @@
             <ul>
               <li>Search by questionnaire or coordinator identity.</li>
               <li>Check accepted and rejected public ballots, including the published rejection reason.</li>
-              <li>Recompute the public result stream, with optional local decryption when a coordinator nsec is deliberately entered.</li>
+              <li>Recompute the public result stream, with automatic Coordinator decryption when the local key is available and optional Observer decryption when a coordinator nsec is deliberately entered.</li>
             </ul>
           </article>
         </div>
@@ -555,7 +555,7 @@
             <li>Whether an invalid-token-proof rejection is contradicted by a locally verified blind-token proof.</li>
             <li>Whether rejected ballots were rejected for deterministic reasons.</li>
             <li>Whether the published tally matches the accepted public ballots.</li>
-            <li>Encrypted answer details when the matching coordinator nsec is deliberately entered in Observer.</li>
+            <li>Encrypted answer details automatically in Coordinator when the local coordinator key is available, or in Observer when the matching coordinator nsec is deliberately entered.</li>
           </ul>
         </div>
           </section>
@@ -577,15 +577,15 @@
         <div class="grid-3">
           <article class="role-card">
             <h3>1. Coordinator</h3>
-            <p>Open Coordinator, set up a questionnaire, publish it, then share invite links from Voters.</p>
+            <p>Open Coordinator, set up a questionnaire, publish it, then share invite links from Voters. The General QR/link opens Vote and requests a ballot automatically.</p>
           </article>
           <article class="role-card">
             <h3>2. Voter</h3>
-            <p>Open the invite as Voter, request ballot access if needed, fill in the questionnaire, and submit.</p>
+            <p>Open the invite as Voter, wait for ballot access if needed, fill in the questionnaire, and submit.</p>
           </article>
           <article class="role-card">
             <h3>3. Observer</h3>
-            <p>Open Observer and search for the questionnaire ID or coordinator identity to verify the public result stream. Observer fetches once when opened; use Refresh to update it later. Invalid rows show their rejection reason. Encrypted answer details can be decrypted locally from Submitted Votes when the matching coordinator nsec is supplied.</p>
+            <p>Open Observer and search for the questionnaire ID or coordinator identity to verify the public result stream. Observer fetches once when opened; use Refresh to update it later. Invalid rows show their rejection reason. Coordinator results decrypt encrypted answer details automatically when the local coordinator key is available; Observer can decrypt them from Submitted Votes when the matching coordinator nsec is supplied.</p>
           </article>
         </div>
         <p>Questionnaires can mix yes/no, multiple-choice, ranked-choice, and free-text questions. Ranked-choice results are counted as points, with the highest total preferred: first choice gets one point per available option, later choices count down from there, and unranked options get <code>0</code> points.</p>

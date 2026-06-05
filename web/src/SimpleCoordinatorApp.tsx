@@ -137,7 +137,33 @@ type SimpleCoordinatorKeypair = {
   nsec: string;
 };
 
-function optionAAnswerToQuestionnaireAnswer(answer: QuestionnaireAnswer): QuestionnaireResponsePayload["answers"][number] {
+function decryptOptionATextAnswerForCoordinator(input: {
+  text: string;
+  authorPubkey: string;
+  coordinatorNsec?: string | null;
+}) {
+  const trimmed = input.text.trim();
+  if (!trimmed.startsWith("enc:nip44v2:")) {
+    return input.text;
+  }
+  const coordinatorSecretKey = decodeNsec(input.coordinatorNsec ?? "");
+  if (!coordinatorSecretKey) {
+    return input.text;
+  }
+  try {
+    const authorHex = toHexPubkey(input.authorPubkey);
+    const conversationKey = nip44.v2.utils.getConversationKey(coordinatorSecretKey, authorHex);
+    const ciphertext = trimmed.slice("enc:nip44v2:".length);
+    return nip44.v2.decrypt(ciphertext, conversationKey).trim() || "(empty)";
+  } catch {
+    return input.text;
+  }
+}
+
+function optionAAnswerToQuestionnaireAnswer(
+  answer: QuestionnaireAnswer,
+  options?: { authorPubkey?: string; coordinatorNsec?: string | null },
+): QuestionnaireResponsePayload["answers"][number] {
   if (answer.type === "yes_no") {
     return {
       questionId: answer.questionId,
@@ -162,33 +188,44 @@ function optionAAnswerToQuestionnaireAnswer(answer: QuestionnaireAnswer): Questi
   return {
     questionId: answer.questionId,
     answerType: "free_text",
-    text: answer.answer,
+    text: decryptOptionATextAnswerForCoordinator({
+      text: answer.answer,
+      authorPubkey: options?.authorPubkey ?? "",
+      coordinatorNsec: options?.coordinatorNsec,
+    }),
   };
 }
 
-function optionASubmissionToAcceptedResponse(submission: BallotSubmission): QuestionnaireAcceptedResponse {
+function optionASubmissionToAcceptedResponse(
+  submission: BallotSubmission,
+  options?: { coordinatorNsec?: string | null },
+): QuestionnaireAcceptedResponse {
   const parsedSubmittedAt = Date.parse(submission.submittedAt);
   const submittedAt = Number.isFinite(parsedSubmittedAt)
     ? Math.floor(parsedSubmittedAt / 1000)
     : Math.floor(Date.now() / 1000);
+  const authorPubkey = submission.responseNpub?.trim() || submission.invitedNpub;
   const payload: QuestionnaireResponsePayload = {
     schemaVersion: 1,
     kind: "questionnaire_response_payload",
     questionnaireId: submission.electionId,
     responseId: submission.submissionId,
     submittedAt,
-    answers: submission.payload.responses.map(optionAAnswerToQuestionnaireAnswer),
+    answers: submission.payload.responses.map((answer) => optionAAnswerToQuestionnaireAnswer(answer, {
+      authorPubkey,
+      coordinatorNsec: options?.coordinatorNsec,
+    })),
   };
   return {
     eventId: `optiona:${submission.submissionId}`,
-    authorPubkey: submission.invitedNpub,
+    authorPubkey,
     envelope: {
       schemaVersion: 1,
       eventType: "questionnaire_response_private",
       questionnaireId: submission.electionId,
       responseId: submission.submissionId,
       createdAt: submittedAt,
-      authorPubkey: submission.invitedNpub,
+      authorPubkey,
       ciphertextScheme: "nip44v2",
       ciphertextRecipient: "option_a_dm",
       ciphertext: "option_a_dm_submission",
@@ -1171,9 +1208,11 @@ export default function SimpleCoordinatorApp() {
       .filter((result) => result.accepted)
       .map((result) => snapshot.receivedSubmissions[result.submissionId])
       .filter((submission): submission is BallotSubmission => Boolean(submission))
-      .map(optionASubmissionToAcceptedResponse)
+      .map((submission) => optionASubmissionToAcceptedResponse(submission, {
+        coordinatorNsec: keypair?.nsec ?? null,
+      }))
       .sort((left, right) => left.payload.submittedAt - right.payload.submittedAt);
-  }, [optionACoordinatorRuntime, knownVoterInviteRefreshNonce]);
+  }, [optionACoordinatorRuntime, keypair?.nsec, knownVoterInviteRefreshNonce]);
 
   useEffect(() => {
     setKnownVoterInviteStatus(null);
@@ -1187,7 +1226,7 @@ export default function SimpleCoordinatorApp() {
     if (!electionId) {
       return "";
     }
-    return buildQuestionnaireInviteUrl({ electionId });
+    return buildQuestionnaireInviteUrl({ electionId, autoRequestBallot: true });
   }, [optionAElectionId]);
   const publicQuestionnaireInviteCopy = useMemo(() => {
     const electionId = optionAElectionId.trim();
@@ -6387,6 +6426,9 @@ export default function SimpleCoordinatorApp() {
 	                    <div className='simple-invite-share-heading'>
 	                      <div className='simple-invite-share-copy'>
 	                        <h3 className='simple-voter-question'>General invite link</h3>
+	                        <p className='simple-voter-note'>
+	                          Voters who scan the QR open Vote and request a ballot automatically.
+	                        </p>
 	                      </div>
 	                      <GeneralInviteQrButton value={publicQuestionnaireInviteUrl} />
 	                    </div>

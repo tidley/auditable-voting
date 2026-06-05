@@ -65,7 +65,7 @@ Observers can independently check:
 - whether an invalid-token-proof rejection is contradicted by a locally verified blind-token proof
 - whether rejected ballots were rejected for deterministic reasons, with the published reason shown beside invalid rows
 - whether the published tally matches the accepted public ballots
-- encrypted answer details when the matching coordinator `nsec` is deliberately entered in Observer
+- encrypted answer details automatically in Coordinator when the local coordinator key is available, or in Observer when the matching coordinator `nsec` is deliberately entered
 
 ## Trust model
 
@@ -81,9 +81,9 @@ The voter must protect their local keys and browser state.
 
 1. Open the app as **Coordinator**.
 2. Create a questionnaire and publish it.
-3. Share invite links from **Voters**.
-4. Open the invite as **Voter**, request ballot access if needed, fill in the questionnaire, and submit.
-5. Open **Observer** and search for the questionnaire ID or coordinator identity to verify the public result stream. Observer fetches once when opened; use **Refresh** to update it later. Invalid rows show their rejection reason. If encrypted answer details need to be inspected, enter the matching coordinator `nsec` in **Submitted Votes**; decryption happens locally in the browser.
+3. Share invite links from **Voters**. The General QR/link opens **Vote** and requests a ballot automatically.
+4. Open the invite as **Voter**, wait for ballot access if needed, fill in the questionnaire, and submit.
+5. Open **Observer** and search for the questionnaire ID or coordinator identity to verify the public result stream. Observer fetches once when opened; use **Refresh** to update it later. Invalid rows show their rejection reason. Coordinator results decrypt encrypted answer details automatically when the local coordinator key is available; Observer can decrypt them from **Submitted Votes** when the matching coordinator `nsec` is supplied.
 
 Questionnaires can mix yes/no, multiple-choice, ranked-choice, and free-text questions. Ranked-choice results are counted as points, with the highest total preferred: first choice gets one point per available option, later choices count down from there, and unranked options get `0` points.
 

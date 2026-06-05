@@ -221,8 +221,9 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_auto_123"]} />);
 
     await waitFor(() => {
-      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Questionnaire ID: q_auto_123")).length).toBeGreaterThan(0);
+      expect(screen.getByText("q_auto_123")).toBeTruthy();
     });
+    expect(screen.queryByText((_, element) => (element?.textContent ?? "").includes("Questionnaire ID: q_auto_123"))).toBeNull();
     expect(screen.queryByRole("button", { name: "Show ballot status" })).toBeNull();
   });
 
@@ -230,13 +231,13 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     const { rerender } = render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_old"]} />);
 
     await waitFor(() => {
-      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Questionnaire ID: q_old")).length).toBeGreaterThan(0);
+      expect(screen.getByText("q_old")).toBeTruthy();
     });
 
     rerender(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_old", "q_new"]} />);
 
     await waitFor(() => {
-      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Questionnaire ID: q_new")).length).toBeGreaterThan(0);
+      expect(screen.getByText("q_new")).toBeTruthy();
     });
   });
 

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildQuestionnaireInviteUrl, parseInviteFromUrl } from "./questionnaireInvite";
+import {
+  buildQuestionnaireInviteUrl,
+  parseInviteFromUrl,
+  shouldAutoRequestBallotFromUrl,
+} from "./questionnaireInvite";
 import {
   buildQuestionnaireInviteShareSubject,
   buildQuestionnaireInviteShareText,
@@ -13,6 +17,17 @@ describe("questionnaire invite sharing", () => {
     });
 
     expect(url).toBe("https://vote.example/?login=1&role=voter&q=q_public_123");
+  });
+
+  it("can build a scan-to-request general invite link", () => {
+    const url = buildQuestionnaireInviteUrl({
+      baseUrl: "https://vote.example/simple-coordinator.html?role=coordinator",
+      electionId: "q_public_123",
+      autoRequestBallot: true,
+    });
+
+    expect(url).toBe("https://vote.example/?login=1&role=voter&q=q_public_123&request_ballot=1");
+    expect(shouldAutoRequestBallotFromUrl(new URL(url).search)).toBe(true);
   });
 
   it("can build a personalised link for a pre-whitelisted voter npub", () => {
@@ -54,6 +69,12 @@ describe("questionnaire invite sharing", () => {
     expect(parsed.invite).toBeNull();
     expect(parsed.inviteCode).toBe("abc123private");
     expect(parsed.coordinatorNpub).toBe("npub1coordinator");
+  });
+
+  it("recognises legacy auto-request flags without enabling normal invite links", () => {
+    expect(shouldAutoRequestBallotFromUrl("?role=voter&q=q_public_123")).toBe(false);
+    expect(shouldAutoRequestBallotFromUrl("?role=voter&q=q_public_123&auto_request=1")).toBe(true);
+    expect(shouldAutoRequestBallotFromUrl("?role=voter&q=q_public_123&request_ballot=yes")).toBe(true);
   });
 
   it("builds no-account share copy around the public questionnaire link", () => {
