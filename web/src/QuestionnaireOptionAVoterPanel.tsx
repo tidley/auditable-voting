@@ -274,13 +274,14 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const displayMode = props.displayMode ?? "vote";
   const settingsMode = displayMode === "settings";
   const [runtime, setRuntime] = useState<QuestionnaireOptionAVoterRuntime | null>(null);
-  const [, setStatus] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
   const [signedInNpub, setSignedInNpub] = useState<string>("");
   const [pendingInvites, setPendingInvites] = useState<ElectionInviteMessage[]>([]);
   const [activeInvite, setActiveInvite] = useState<ElectionInviteMessage | null>(null);
   const [selectedInviteKey, setSelectedInviteKey] = useState<string>("");
   const [questionnaireTitle, setQuestionnaireTitle] = useState<string>("Questionnaire");
   const [questionnaireDescription, setQuestionnaireDescription] = useState<string>("");
+  const [questionnaireDefinition, setQuestionnaireDefinition] = useState<QuestionnaireDefinition | null>(null);
   const [questions, setQuestions] = useState<Array<{
     questionId: string;
     required: boolean;
@@ -340,6 +341,32 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     alreadySubmitted: false,
     resumeAvailable: false,
   };
+  const linkedContextElectionId = inviteContext.electionId?.trim() ?? "";
+  const currentQuestionnaireId = linkedContextElectionId || snapshot?.electionId?.trim() || electionId.trim() || latestAnnouncedQuestionnaireId.trim();
+  const contextPendingInvites = useMemo(() => (
+    linkedContextElectionId
+      ? pendingInvites.filter((invite) => invite.electionId === linkedContextElectionId)
+      : pendingInvites
+  ), [linkedContextElectionId, pendingInvites]);
+  const autoRequestDefinition = currentQuestionnaireId
+    ? (
+        activeInvite?.electionId === currentQuestionnaireId ? activeInvite.definition : null
+      )
+      ?? (snapshot?.blindIssuance?.definition?.questionnaireId === currentQuestionnaireId ? snapshot.blindIssuance.definition : null)
+      ?? (snapshot?.inviteMessage?.electionId === currentQuestionnaireId ? snapshot.inviteMessage.definition : null)
+      ?? contextPendingInvites.find((invite) => invite.electionId === currentQuestionnaireId)?.definition
+      ?? (inviteContext.invite?.electionId === currentQuestionnaireId ? inviteContext.invite.definition : null)
+      ?? (questionnaireDefinition?.questionnaireId === currentQuestionnaireId ? questionnaireDefinition : null)
+      ?? readCachedQuestionnaireDefinition(currentQuestionnaireId)
+    : null;
+  const autoRequestBlindSigningKeyReady = Boolean(
+    (activeInvite?.electionId === currentQuestionnaireId ? activeInvite.blindSigningPublicKey : null)
+    ?? (snapshot?.inviteMessage?.electionId === currentQuestionnaireId ? snapshot.inviteMessage.blindSigningPublicKey : null)
+    ?? contextPendingInvites.find((invite) => invite.electionId === currentQuestionnaireId)?.blindSigningPublicKey
+    ?? (inviteContext.invite?.electionId === currentQuestionnaireId ? inviteContext.invite.blindSigningPublicKey : null)
+    ?? autoRequestDefinition?.blindSigningPublicKey
+    ?? (currentQuestionnaireId ? loadElectionSummary(currentQuestionnaireId)?.blindSigningPublicKey : null),
+  );
 
   function markSignerWaitRecoveryBaseline() {
     if (props.localVoterNsec?.trim()) {
@@ -802,21 +829,23 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   useEffect(() => {
     setQuestionnaireTitle("Questionnaire");
     setQuestionnaireDescription("");
+    setQuestionnaireDefinition(null);
     setQuestions([]);
     if (!electionId) {
       return;
     }
     const localDefinition =
-      activeInvite?.definition
-      ?? snapshot?.blindIssuance?.definition
-      ?? snapshot?.inviteMessage?.definition
-      ?? pendingInvites.find((invite) => invite.electionId === electionId)?.definition
-      ?? inviteContext.invite?.definition
+      (activeInvite?.electionId === electionId ? activeInvite.definition : null)
+      ?? (snapshot?.blindIssuance?.definition?.questionnaireId === electionId ? snapshot.blindIssuance.definition : null)
+      ?? (snapshot?.inviteMessage?.electionId === electionId ? snapshot.inviteMessage.definition : null)
+      ?? contextPendingInvites.find((invite) => invite.electionId === electionId)?.definition
+      ?? (inviteContext.invite?.electionId === electionId ? inviteContext.invite.definition : null)
       ?? readCachedQuestionnaireDefinition(electionId);
     if (localDefinition) {
       cacheDefinitionForVoting(localDefinition);
       setQuestionnaireTitle(localDefinition.title || "Questionnaire");
       setQuestionnaireDescription(localDefinition.description || "");
+      setQuestionnaireDefinition(localDefinition);
       setQuestions(mapDefinitionQuestions(localDefinition));
     }
     let cancelled = false;
@@ -840,17 +869,18 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         cacheDefinitionForVoting(latest);
         setQuestionnaireTitle(latest.title || "Questionnaire");
         setQuestionnaireDescription(latest.description || "");
+        setQuestionnaireDefinition(latest);
         setQuestions(mapDefinitionQuestions(latest));
       })
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [activeInvite, electionId, inviteContext.invite, pendingInvites, snapshot?.blindIssuance, snapshot?.inviteMessage]);
+  }, [activeInvite, contextPendingInvites, electionId, inviteContext.invite, snapshot?.blindIssuance, snapshot?.inviteMessage]);
 
   useEffect(() => {
     const currentId = electionId.trim();
-    if (latestAnnouncedQuestionnaireId && (!currentId || (!hasInFlightState() && currentId !== latestAnnouncedQuestionnaireId))) {
+    if (!linkedContextElectionId && latestAnnouncedQuestionnaireId && (!currentId || (!hasInFlightState() && currentId !== latestAnnouncedQuestionnaireId))) {
       setElectionId(latestAnnouncedQuestionnaireId);
       return;
     }
@@ -865,22 +895,22 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     if (localInvite?.electionId?.trim()) {
       setElectionId(localInvite.electionId.trim());
     }
-  }, [electionId, latestAnnouncedQuestionnaireId, props.localVoterNpub, snapshot?.blindRequest?.requestId, snapshot?.credentialReady, snapshot?.submission?.submissionId]);
+  }, [electionId, latestAnnouncedQuestionnaireId, linkedContextElectionId, props.localVoterNpub, snapshot?.blindRequest?.requestId, snapshot?.credentialReady, snapshot?.submission?.submissionId]);
 
   useEffect(() => {
-    if (pendingInvites.length === 0 || hasInFlightState()) {
+    if (contextPendingInvites.length === 0 || hasInFlightState()) {
       return;
     }
     const preferredInvite = (latestAnnouncedQuestionnaireId
-      ? pendingInvites.find((invite) => invite.electionId === latestAnnouncedQuestionnaireId)
+      ? contextPendingInvites.find((invite) => invite.electionId === latestAnnouncedQuestionnaireId)
       : null)
-      ?? pendingInvites.at(-1)
+      ?? (linkedContextElectionId ? null : contextPendingInvites.at(-1))
       ?? null;
     const nextElectionId = preferredInvite?.electionId?.trim() ?? "";
     if (nextElectionId && electionId.trim() !== nextElectionId) {
       setElectionId(nextElectionId);
     }
-  }, [electionId, pendingInvites, latestAnnouncedQuestionnaireId, snapshot?.blindRequest?.requestId, snapshot?.credentialReady, snapshot?.submission?.submissionId]);
+  }, [contextPendingInvites, electionId, latestAnnouncedQuestionnaireId, linkedContextElectionId, snapshot?.blindRequest?.requestId, snapshot?.credentialReady, snapshot?.submission?.submissionId]);
 
   useEffect(() => {
     const voterNpub = signedInNpub.trim();
@@ -902,10 +932,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       inviteRefreshAtRef.current = now;
       void loadPendingInvites({ voterNpub, allowRelayFetch: true }).then((invites) => {
         setPendingInvites(invites);
+        const usableInvites = linkedContextElectionId
+          ? invites.filter((invite) => invite.electionId === linkedContextElectionId)
+          : invites;
         const preferredInvite = (latestAnnouncedQuestionnaireId
-          ? invites.find((invite) => invite.electionId === latestAnnouncedQuestionnaireId)
+          ? usableInvites.find((invite) => invite.electionId === latestAnnouncedQuestionnaireId)
           : null)
-          ?? invites.at(-1)
+          ?? (linkedContextElectionId ? null : usableInvites.at(-1))
           ?? null;
         if (preferredInvite && !hasInFlightState()) {
           setActiveInvite(preferredInvite);
@@ -932,7 +965,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       window.removeEventListener("online", triggerRefresh);
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [activeInvite, electionId, inviteContext.invite, latestAnnouncedQuestionnaireId, pendingInvites.length, signedInNpub, snapshot?.blindRequest?.requestId, snapshot?.blindIssuance?.issuanceId, snapshot?.submission?.submissionId]);
+  }, [activeInvite, electionId, inviteContext.invite, latestAnnouncedQuestionnaireId, linkedContextElectionId, pendingInvites.length, signedInNpub, snapshot?.blindRequest?.requestId, snapshot?.blindIssuance?.issuanceId, snapshot?.submission?.submissionId]);
 
   const requiredQuestions = useMemo(
     () => questions.filter((question) => question.required || (question.type === "rank" && (question.minimumRanked ?? 0) > 0)),
@@ -947,13 +980,16 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     return Boolean(state?.blindRequest || state?.blindIssuance || state?.submission);
   }
 
-  function findBestLocalInvite(voterNpub: string, preferredElectionId = electionId) {
+  function findBestLocalInvite(voterNpub: string, preferredElectionId = linkedContextElectionId || electionId) {
     const localInvites = [...listInvitesFromMailbox(voterNpub)];
     const preferredId = preferredElectionId.trim();
-    return (preferredId ? localInvites.find((invite) => invite.electionId === preferredId) : null)
-      ?? (latestAnnouncedQuestionnaireId ? localInvites.find((invite) => invite.electionId === latestAnnouncedQuestionnaireId) : null)
-      ?? localInvites.at(-1)
-      ?? null;
+    if (preferredId) {
+      return localInvites.find((invite) => invite.electionId === preferredId) ?? null;
+    }
+    if (latestAnnouncedQuestionnaireId) {
+      return localInvites.find((invite) => invite.electionId === latestAnnouncedQuestionnaireId) ?? null;
+    }
+    return localInvites.at(-1) ?? null;
   }
 
   function ensureLocalSession(options?: { allowInviteMissing?: boolean; allowRelayInviteFetch?: boolean }) {
@@ -966,19 +1002,31 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       return runtime.getSnapshot();
     }
     const currentSnapshot = runtime.getSnapshot();
+    const fallbackInvite = findBestLocalInvite(localVoterNpub);
+    const targetQuestionnaireId = linkedContextElectionId
+      || fallbackInvite?.electionId?.trim()
+      || electionId.trim()
+      || latestAnnouncedQuestionnaireId.trim();
+    const publicDefinition = targetQuestionnaireId
+      ? (questionnaireDefinition?.questionnaireId === targetQuestionnaireId ? questionnaireDefinition : null)
+        ?? readCachedQuestionnaireDefinition(targetQuestionnaireId)
+      : null;
+    const publicSummary = targetQuestionnaireId ? loadElectionSummary(targetQuestionnaireId) : null;
+    const publicCoordinatorNpub = publicDefinition?.coordinatorPubkey?.trim()
+      || publicSummary?.coordinatorNpub?.trim()
+      || "";
     if (currentSnapshot?.invitedNpub === localVoterNpub) {
       const knownCoordinator = currentSnapshot.coordinatorNpub?.trim() ?? "";
       if (knownCoordinator) {
         return currentSnapshot;
       }
-      const localInvite = findBestLocalInvite(localVoterNpub);
-      if (!localInvite?.coordinatorNpub?.trim() && !inviteContext.coordinatorNpub?.trim()) {
+      if (!fallbackInvite?.coordinatorNpub?.trim() && !inviteContext.coordinatorNpub?.trim() && !publicCoordinatorNpub) {
         return currentSnapshot;
       }
     }
-    const fallbackInvite = findBestLocalInvite(localVoterNpub);
     const fallbackCoordinatorNpub = fallbackInvite?.coordinatorNpub?.trim()
       || inviteContext.coordinatorNpub?.trim()
+      || publicCoordinatorNpub
       || undefined;
     const bootstrapNpub = fallbackInvite?.invitedNpub?.trim() || localVoterNpub;
     const next = runtime.bootstrapWithLocalIdentity({
@@ -986,7 +1034,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       coordinatorNpub: fallbackCoordinatorNpub,
       invite: fallbackInvite,
       allowInviteRecipientMismatch: Boolean(fallbackInvite && bootstrapNpub !== (fallbackInvite.invitedNpub ?? "").trim()),
-      allowInviteMissing: options?.allowInviteMissing ?? Boolean(latestAnnouncedQuestionnaireId || electionId.trim()),
+      allowInviteMissing: options?.allowInviteMissing ?? Boolean(latestAnnouncedQuestionnaireId || electionId.trim() || linkedContextElectionId),
     });
     setSignedInNpub(next.invitedNpub);
     void loadPendingInvites({
@@ -994,9 +1042,12 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       allowRelayFetch: Boolean(options?.allowRelayInviteFetch),
     }).then((invites) => {
       setPendingInvites(invites);
-      const preferredInvite = invites.find((invite) => invite.electionId === next.electionId)
-        ?? (latestAnnouncedQuestionnaireId ? invites.find((invite) => invite.electionId === latestAnnouncedQuestionnaireId) : null)
-        ?? invites.at(-1)
+      const usableInvites = linkedContextElectionId
+        ? invites.filter((invite) => invite.electionId === linkedContextElectionId)
+        : invites;
+      const preferredInvite = usableInvites.find((invite) => invite.electionId === next.electionId)
+        ?? (latestAnnouncedQuestionnaireId ? usableInvites.find((invite) => invite.electionId === latestAnnouncedQuestionnaireId) : null)
+        ?? (linkedContextElectionId ? null : usableInvites.at(-1))
         ?? null;
       setActiveInvite(next.inviteMessage && !next.blindRequestSent && !next.credentialReady
         ? next.inviteMessage
@@ -1056,7 +1107,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   }
 
   async function buildPublicQuestionnaireInvite(voterNpub: string) {
-    const targetElectionId = electionId.trim() || inviteContext.electionId?.trim() || latestAnnouncedQuestionnaireId.trim();
+    const targetElectionId = linkedContextElectionId || electionId.trim() || latestAnnouncedQuestionnaireId.trim();
     if (!targetElectionId) {
       return null;
     }
@@ -1141,7 +1192,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     setSignedInNpub(next.invitedNpub);
     const invites = await loadPendingInvites({ voterNpub: next.invitedNpub, allowRelayFetch: true });
     setPendingInvites(invites);
-    const preferredInvite = invites.find((invite) => invite.electionId === electionId) ?? invites[0] ?? null;
+    const usableInvites = linkedContextElectionId
+      ? invites.filter((invite) => invite.electionId === linkedContextElectionId)
+      : invites;
+    const preferredInvite = usableInvites.find((invite) => invite.electionId === electionId) ?? usableInvites[0] ?? null;
     if (!inviteContext.electionId?.trim() && preferredInvite && electionId.trim() !== preferredInvite.electionId) {
       setElectionId(preferredInvite.electionId);
     }
@@ -1181,7 +1235,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           ? []
           : await loadPendingInvites({ voterNpub: signerNpub, allowRelayFetch: true });
         setPendingInvites(invites);
-        const preferredInvite = publicQuestionnaireInvite ?? invites[0] ?? null;
+        const usableInvites = linkedContextElectionId
+          ? invites.filter((invite) => invite.electionId === linkedContextElectionId)
+          : invites;
+        const preferredInvite = publicQuestionnaireInvite ?? usableInvites[0] ?? null;
         if (!preferredInvite) {
           setSignedInNpub(signerNpub);
           setStatus(
@@ -1241,7 +1298,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         ? []
         : await loadPendingInvites({ voterNpub: next.invitedNpub, allowRelayFetch: true });
       setPendingInvites(invites);
-      const preferredInvite = publicQuestionnaireInvite ?? invites[0] ?? null;
+      const usableInvites = linkedContextElectionId
+        ? invites.filter((invite) => invite.electionId === linkedContextElectionId)
+        : invites;
+      const preferredInvite = publicQuestionnaireInvite ?? usableInvites[0] ?? null;
       if (!inviteContext.electionId?.trim() && preferredInvite && electionId.trim() !== preferredInvite.electionId) {
         setElectionId(preferredInvite.electionId);
       }
@@ -1386,10 +1446,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   }
 
   function getCredentialIssuerDisplayName() {
-    const targetElectionId = snapshot?.electionId?.trim() || electionId.trim();
-    const invite = snapshot?.inviteMessage
-      ?? activeInvite
-      ?? pendingInvites.find((entry) => entry.electionId === targetElectionId)
+    const targetElectionId = currentQuestionnaireId;
+    const invite = (snapshot?.inviteMessage?.electionId === targetElectionId ? snapshot.inviteMessage : null)
+      ?? (activeInvite?.electionId === targetElectionId ? activeInvite : null)
+      ?? contextPendingInvites.find((entry) => entry.electionId === targetElectionId)
       ?? null;
     const summary = targetElectionId ? loadElectionSummary(targetElectionId) : null;
     const issueBlindTokensWorker = invite?.issueBlindTokensWorker ?? summary?.issueBlindTokensWorker ?? null;
@@ -1401,6 +1461,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       return;
     }
     try {
+      if (!autoRequestBlindSigningKeyReady) {
+        setStatus("Loading questionnaire ballot key before requesting a ballot...");
+        return;
+      }
       ensureLocalSession({ allowInviteMissing: true, allowRelayInviteFetch: true });
       const wasAlreadyWaiting = Boolean(runtime.getSnapshot()?.blindRequestSent && !runtime.getSnapshot()?.credentialReady);
       await runtime.requestBlindBallot({ forceResend: true });
@@ -1434,6 +1498,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     if (!targetElectionId || !targetInvitedNpub) {
       return;
     }
+    if (targetElectionId !== currentQuestionnaireId || !autoRequestBlindSigningKeyReady) {
+      return;
+    }
     const hasQuestionnaireContext = Boolean(
       questions.length > 0
       || snapshot.inviteMessage
@@ -1441,7 +1508,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       || inviteContext.inviteCode
       || inviteContext.electionId === targetElectionId
       || latestAnnouncedQuestionnaireId === targetElectionId
-      || pendingInvites.some((invite) => invite.electionId === targetElectionId)
+      || contextPendingInvites.some((invite) => invite.electionId === targetElectionId)
       || readCachedQuestionnaireDefinition(targetElectionId),
     );
     if (!hasQuestionnaireContext) {
@@ -1476,10 +1543,12 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     };
   }, [
     activeInvite,
+    autoRequestBlindSigningKeyReady,
+    contextPendingInvites,
+    currentQuestionnaireId,
     inviteContext.electionId,
     inviteContext.inviteCode,
     latestAnnouncedQuestionnaireId,
-    pendingInvites,
     questions.length,
     runtime,
     snapshot?.blindRequestSent,
@@ -1545,18 +1614,31 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     if (snapshot.blindRequestSent || snapshot.credentialReady || snapshot.submission) {
       return;
     }
+    if (snapshot.electionId !== currentQuestionnaireId || !autoRequestBlindSigningKeyReady) {
+      return;
+    }
+    let requestSnapshot: VoterElectionLocalState;
+    try {
+      requestSnapshot = ensureLocalSession({ allowInviteMissing: true, allowRelayInviteFetch: true }) ?? runtime.getSnapshot() ?? snapshot;
+    } catch {
+      return;
+    }
+    if (!requestSnapshot.loginVerified || requestSnapshot.electionId !== currentQuestionnaireId) {
+      return;
+    }
     const hasInviteContext = Boolean(
-      snapshot.inviteMessage
+      requestSnapshot.inviteMessage
       || activeInvite
       || inviteContext.inviteCode
-      || inviteContext.electionId === snapshot.electionId
-      || latestAnnouncedQuestionnaireId === snapshot.electionId
-      || pendingInvites.some((invite) => invite.electionId === snapshot.electionId),
+      || inviteContext.electionId === requestSnapshot.electionId
+      || latestAnnouncedQuestionnaireId === requestSnapshot.electionId
+      || contextPendingInvites.some((invite) => invite.electionId === requestSnapshot.electionId)
+      || readCachedQuestionnaireDefinition(requestSnapshot.electionId),
     );
     if (!hasInviteContext) {
       return;
     }
-    const key = snapshot.electionId + ":" + snapshot.invitedNpub;
+    const key = requestSnapshot.electionId + ":" + requestSnapshot.invitedNpub;
     if (autoRequestSentForRef.current[key]) {
       return;
     }
@@ -1586,7 +1668,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       delete autoRequestInFlightForRef.current[key];
       // Keep manual request available if automatic send cannot proceed yet.
     }
-  }, [activeInvite, inviteContext.electionId, inviteContext.inviteCode, latestAnnouncedQuestionnaireId, pendingInvites, runtime, settingsMode, snapshot]);
+  }, [activeInvite, autoRequestBlindSigningKeyReady, contextPendingInvites, currentQuestionnaireId, inviteContext.electionId, inviteContext.inviteCode, latestAnnouncedQuestionnaireId, runtime, settingsMode, snapshot]);
 
   useEffect(() => {
     if (!runtime || !snapshot?.loginVerified || !snapshot.blindRequestSent || snapshot.credentialReady || snapshot.submission) {
@@ -1753,6 +1835,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         setStatus("Open Vote and login, then the blind-signature request will send automatically.");
         return;
       }
+      if (current.electionId !== currentQuestionnaireId || !autoRequestBlindSigningKeyReady) {
+        setStatus("Loading questionnaire ballot key before requesting a ballot...");
+        return;
+      }
       if (current.submission || current.credentialReady || current.blindRequestSent) {
         setRefreshNonce((value) => value + 1);
         return;
@@ -1788,6 +1874,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     props.localVoterNsec,
     props.requestBlindBallotNonce,
     runtime,
+    currentQuestionnaireId,
+    autoRequestBlindSigningKeyReady,
     snapshot?.loginVerified,
   ]);
 
@@ -1797,10 +1885,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   };
   const visiblePendingInvites = snapshot?.loginVerified && snapshot.electionId === electionId.trim()
     ? []
-    : pendingInvites.filter(canShowInviteForCurrentIdentity);
+    : contextPendingInvites.filter(canShowInviteForCurrentIdentity);
   const inviteDropdownOptions = useMemo(() => {
     const map = new Map<string, ElectionInviteMessage>();
-    for (const invite of pendingInvites) {
+    for (const invite of contextPendingInvites) {
       if (!canShowInviteForCurrentIdentity(invite)) {
         continue;
       }
@@ -1809,17 +1897,21 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
     const currentInvite = snapshot?.inviteMessage ?? activeInvite ?? null;
     if (currentInvite) {
-      const key = `${currentInvite.electionId}:${currentInvite.coordinatorNpub}`;
-      map.set(key, currentInvite);
+      const currentInviteIsInContext = !linkedContextElectionId || currentInvite.electionId === linkedContextElectionId;
+      if (currentInviteIsInContext) {
+        const key = `${currentInvite.electionId}:${currentInvite.coordinatorNpub}`;
+        map.set(key, currentInvite);
+      }
     }
     return [...map.values()];
-  }, [activeInvite, pendingInvites, signedInNpub, props.localVoterNpub, snapshot?.inviteMessage]);
+  }, [activeInvite, contextPendingInvites, linkedContextElectionId, signedInNpub, props.localVoterNpub, snapshot?.inviteMessage]);
 
   useEffect(() => {
-    if (!snapshot?.electionId?.trim()) {
+    const selectedQuestionnaireId = currentQuestionnaireId;
+    if (!selectedQuestionnaireId) {
       return;
     }
-    const matched = inviteDropdownOptions.find((invite) => invite.electionId === snapshot.electionId);
+    const matched = inviteDropdownOptions.find((invite) => invite.electionId === selectedQuestionnaireId);
     if (matched) {
       const key = `${matched.electionId}:${matched.coordinatorNpub}`;
       if (selectedInviteKey !== key) {
@@ -1831,7 +1923,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       const first = inviteDropdownOptions[0];
       setSelectedInviteKey(`${first.electionId}:${first.coordinatorNpub}`);
     }
-  }, [inviteDropdownOptions, selectedInviteKey, snapshot?.electionId]);
+  }, [currentQuestionnaireId, inviteDropdownOptions, selectedInviteKey]);
   const waitingForCredential = Boolean(snapshot?.blindRequestSent && !snapshot?.credentialReady && !snapshot?.submission);
   const canRequestOrResendBallot = flags.canRequestBallot || waitingForCredential;
 
@@ -1846,16 +1938,113 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     return value !== undefined && value !== null && String(value).trim().length > 0;
   });
   const canSubmitNow = flags.canSubmitVote && requiredQuestionsAnswered;
-  const coordinatorNpub = snapshot?.coordinatorNpub?.trim()
-    || activeInvite?.coordinatorNpub?.trim()
-    || inviteDropdownOptions.find((invite) => invite.electionId === electionId.trim())?.coordinatorNpub?.trim()
+  useEffect(() => {
+    const owner = globalThis as typeof globalThis & {
+      __questionnaireVoterDebug?: unknown;
+    };
+    const targetQuestionnaireId = currentQuestionnaireId || electionId.trim();
+    const snapshotForTarget = snapshot?.electionId === targetQuestionnaireId ? snapshot : null;
+    const questionnaireSeen = questions.length > 0 || Boolean(autoRequestDefinition);
+    owner.__questionnaireVoterDebug = {
+      mode: "option_a",
+      questionnaireId: targetQuestionnaireId,
+      linkedQuestionnaireId: linkedContextElectionId || null,
+      loadedQuestionnaireId: autoRequestDefinition?.questionnaireId ?? null,
+      loadedQuestionCount: questions.length,
+      questionnaireSeen,
+      questionnaireOpen: questionnaireSeen,
+      tokenRequested: Boolean(snapshotForTarget?.blindRequestSent),
+      tokenReceived: Boolean(snapshotForTarget?.credentialReady),
+      responseReady: canSubmitNow,
+      responsePublished: Boolean(snapshotForTarget?.submission),
+      responseSubmittedCount: snapshotForTarget?.submission ? 1 : 0,
+      submitButtonPresent: true,
+      submitButtonVisible: !settingsMode,
+      submitButtonDisabled: !(canSubmitNow || Boolean(snapshotForTarget?.submission)),
+      submitButtonText: snapshotForTarget?.submission
+        ? "View results"
+        : !requiredQuestionsAnswered
+          ? "Please answer all required questions"
+          : canSubmitNow
+            ? "Submit response"
+            : "Verifying vote request",
+      submitButtonReasonBlocked: snapshotForTarget?.submission
+        ? null
+        : !requiredQuestionsAnswered
+          ? "required_questions_unanswered"
+          : !snapshotForTarget?.loginVerified
+            ? "not_logged_in"
+            : !autoRequestBlindSigningKeyReady
+              ? "blind_signing_key_not_ready"
+              : !snapshotForTarget?.coordinatorNpub?.trim()
+                ? "coordinator_missing"
+                : snapshotForTarget?.blindRequestSent && !snapshotForTarget?.credentialReady
+                  ? "waiting_for_credential"
+                  : !snapshotForTarget?.credentialReady
+                    ? "credential_missing"
+                    : !flags.canSubmitVote
+                      ? "runtime_submit_not_ready"
+                      : null,
+      status,
+      signedInNpub: signedInNpub || null,
+      localVoterNpub: props.localVoterNpub?.trim() || null,
+      localVoterNsecPresent: Boolean(props.localVoterNsec?.trim()),
+      autoSignerLogin: Boolean(props.autoSignerLogin),
+      runtimePresent: Boolean(runtime),
+      snapshotElectionId: snapshot?.electionId ?? null,
+      snapshotInvitedNpub: snapshot?.invitedNpub ?? null,
+      snapshotCoordinatorNpub: snapshot?.coordinatorNpub ?? null,
+      snapshotLoginVerified: Boolean(snapshot?.loginVerified),
+      snapshotBlindRequestSent: Boolean(snapshot?.blindRequestSent),
+      snapshotBlindRequestId: snapshot?.blindRequest?.requestId ?? null,
+      snapshotCredentialReady: Boolean(snapshot?.credentialReady),
+      snapshotSubmissionId: snapshot?.submission?.submissionId ?? null,
+      autoRequestBlindSigningKeyReady,
+      autoRequestDefinitionPresent: Boolean(autoRequestDefinition),
+      autoRequestDefinitionHasBlindKey: Boolean(autoRequestDefinition?.blindSigningPublicKey),
+      activeInviteElectionId: activeInvite?.electionId ?? null,
+      pendingInviteCount: contextPendingInvites.length,
+      latestAnnouncedQuestionnaireId: latestAnnouncedQuestionnaireId || null,
+    };
+    return () => {
+      const current = owner.__questionnaireVoterDebug as { mode?: unknown } | null | undefined;
+      if (current?.mode === "option_a") {
+        delete owner.__questionnaireVoterDebug;
+      }
+    };
+  }, [
+    activeInvite?.electionId,
+    autoRequestBlindSigningKeyReady,
+    autoRequestDefinition,
+    canSubmitNow,
+    contextPendingInvites.length,
+    currentQuestionnaireId,
+    electionId,
+    flags.canSubmitVote,
+    latestAnnouncedQuestionnaireId,
+    linkedContextElectionId,
+    props.autoSignerLogin,
+    props.localVoterNpub,
+    props.localVoterNsec,
+    questions.length,
+    requiredQuestionsAnswered,
+    runtime,
+    settingsMode,
+    signedInNpub,
+    snapshot,
+    status,
+  ]);
+  const statusQuestionnaireId = currentQuestionnaireId || electionId.trim();
+  const coordinatorNpub = (snapshot?.electionId === statusQuestionnaireId ? snapshot.coordinatorNpub?.trim() : "")
+    || (activeInvite?.electionId === statusQuestionnaireId ? activeInvite.coordinatorNpub?.trim() : "")
+    || inviteDropdownOptions.find((invite) => invite.electionId === statusQuestionnaireId)?.coordinatorNpub?.trim()
     || "";
-  const selectedInviteForElection = inviteDropdownOptions.find((invite) => invite.electionId === (snapshot?.electionId?.trim() || electionId.trim())) ?? null;
-  const electionSummary = (snapshot?.electionId?.trim() || electionId.trim())
-    ? loadElectionSummary(snapshot?.electionId?.trim() || electionId.trim())
+  const selectedInviteForElection = inviteDropdownOptions.find((invite) => invite.electionId === statusQuestionnaireId) ?? null;
+  const electionSummary = statusQuestionnaireId
+    ? loadElectionSummary(statusQuestionnaireId)
     : null;
-  const issueBlindTokensWorker = snapshot?.inviteMessage?.issueBlindTokensWorker
-    ?? activeInvite?.issueBlindTokensWorker
+  const issueBlindTokensWorker = (snapshot?.inviteMessage?.electionId === statusQuestionnaireId ? snapshot.inviteMessage.issueBlindTokensWorker : null)
+    ?? (activeInvite?.electionId === statusQuestionnaireId ? activeInvite.issueBlindTokensWorker : null)
     ?? selectedInviteForElection?.issueBlindTokensWorker
     ?? electionSummary?.issueBlindTokensWorker
     ?? null;
@@ -1885,7 +2074,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const showQuestionnaireDescription = Boolean(
     questionnaireDescriptionText && questionnaireDescriptionText !== questionnaireHeadingText,
   );
-  const questionnaireDisplayId = snapshot?.electionId?.trim() || electionId.trim();
+  const questionnaireDisplayId = statusQuestionnaireId;
   const ballotStatusSection = (
     <section id='questionnaire-ballot-status' className='simple-settings-card' aria-label='Ballot status'>
       <h4 className='simple-voter-section-title'>Ballot status</h4>

@@ -6,6 +6,8 @@ Auditable Voting lets a coordinator publish a questionnaire, invite known voters
 
 Live site: [npub1hkze8k84da0qm4lu75x32z33qepyzdqc735jnj5a602x8q4cstksnkvl3a.nsite.lol](https://npub1hkze8k84da0qm4lu75x32z33qepyzdqc735jnj5a602x8q4cstksnkvl3a.nsite.lol/)
 
+For a non-technical walkthrough, start with the [plain-English demo guide](docs/demo-guide.md). It avoids protocol terms and gives a short meeting script for explaining the Coordinator, Voter, and Observer screens.
+
 ## Status
 
 Experimental.
@@ -44,6 +46,7 @@ Key web routes:
 - `/dashboard.html` - coordinator and auditor dashboard
 - `/simple.html` - simplified voter flow
 - `/simple-coordinator.html` - simplified coordinator flow
+- `/demo-guide.html` - plain-English meeting guide
 - `/project-explainer.html` - public "How it works" page
 - `/technical-details.html` - technical protocol note
 

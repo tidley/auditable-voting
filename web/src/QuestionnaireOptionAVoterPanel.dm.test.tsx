@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const optionAStorageMocks = vi.hoisted(() => ({
@@ -12,10 +12,17 @@ const optionAStorageMocks = vi.hoisted(() => ({
   readBlindIssuance: vi.fn((): unknown => null),
   readBlindIssuanceAckRecord: vi.fn((): unknown => null),
   readAcceptance: vi.fn((): unknown => null),
+  listInvitesFromMailbox: vi.fn((): unknown[] => []),
 }));
 
 vi.mock("./questionnaireInvite", () => ({
-  parseInviteFromUrl: () => ({ electionId: null, invite: null }),
+  parseInviteFromUrl: () => {
+    const params = new URLSearchParams(window.location.search);
+    const electionId = (params.get("q") ?? params.get("election_id") ?? params.get("questionnaire") ?? "").trim() || null;
+    const inviteCode = (params.get("invite_code") ?? params.get("code") ?? "").trim() || null;
+    const coordinatorNpub = (params.get("coordinator") ?? "").trim() || null;
+    return { electionId, invite: null, inviteCode, coordinatorNpub };
+  },
 }));
 
 vi.mock("./questionnaireTransport", () => ({
@@ -35,7 +42,7 @@ vi.mock("./services/signerService", () => ({
 
 vi.mock("./questionnaireOptionAStorage", () => ({
   enqueueBlindRequest: () => undefined,
-  listInvitesFromMailbox: () => [],
+  listInvitesFromMailbox: optionAStorageMocks.listInvitesFromMailbox,
   listInvitesForElectionFromMailbox: () => [],
   loadElectionSummary: () => null,
   loadVoterState: optionAStorageMocks.loadVoterState,
@@ -113,6 +120,8 @@ afterEach(() => {
   optionAStorageMocks.readBlindIssuanceAckRecord.mockReturnValue(null);
   optionAStorageMocks.readAcceptance.mockReset();
   optionAStorageMocks.readAcceptance.mockReturnValue(null);
+  optionAStorageMocks.listInvitesFromMailbox.mockReset();
+  optionAStorageMocks.listInvitesFromMailbox.mockReturnValue([]);
 });
 
 describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
@@ -268,9 +277,11 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
   it("sends the delayed page-load ballot request for a linked local voter", async () => {
     const localVoterNpub = "npub1" + "h".repeat(58);
+    const coordinatorAtRequest: string[] = [];
     const requestSpy = vi
       .spyOn(QuestionnaireOptionAVoterRuntime.prototype, "requestBlindBallot")
       .mockImplementation(async function mockedRequestBlindBallot(this: QuestionnaireOptionAVoterRuntime) {
+        coordinatorAtRequest.push(this.getSnapshot()?.coordinatorNpub ?? "");
         return this.getSnapshot()!;
       });
     window.history.pushState(null, "", "/?role=voter&q=q_delayed_auto_request");
@@ -313,6 +324,129 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     await waitFor(() => {
       expect(requestSpy).toHaveBeenCalled();
     }, { timeout: 2500 });
+    expect(coordinatorAtRequest).toEqual(["npub1" + "b".repeat(58)]);
+  });
+
+  it("does not surface stale mailbox invites for a linked questionnaire", async () => {
+    const localVoterNpub = "npub1" + "k".repeat(58);
+    optionAStorageMocks.listInvitesFromMailbox.mockReturnValue([{
+      type: "election_invite",
+      schemaVersion: 1,
+      electionId: "q_stale_mailbox",
+      title: "Stale questionnaire",
+      description: "",
+      voteUrl: "https://example.test/vote?q=q_stale_mailbox",
+      invitedNpub: localVoterNpub,
+      coordinatorNpub: "npub1" + "d".repeat(58),
+      expiresAt: null,
+    }]);
+    fetchOptionAInviteDmsMock.mockResolvedValue([]);
+    window.history.pushState(null, "", "/?role=voter&q=q_linked_current");
+    fetchQuestionnaireDefinitionsMock.mockResolvedValue([{
+      event: { created_at: 20 },
+      definition: {
+        schemaVersion: 1,
+        eventType: "questionnaire_definition",
+        responseMode: "blind_token",
+        questionnaireId: "q_linked_current",
+        title: "Current questionnaire",
+        description: "Current description",
+        createdAt: 1,
+        openAt: 1,
+        closeAt: 9999999999,
+        coordinatorPubkey: "npub1" + "b".repeat(58),
+        coordinatorEncryptionPubkey: "npub1" + "b".repeat(58),
+        responseVisibility: "private",
+        eligibilityMode: "open",
+        allowMultipleResponsesPerPubkey: false,
+        blindSigningPublicKey: {
+          scheme: "rsabssa-sha384-pss-deterministic-v1",
+          keyId: "blind_key",
+          jwk: { kty: "RSA", e: "AQAB", n: "test" },
+        },
+        questions: [{
+          questionId: "q1",
+          type: "yes_no",
+          prompt: "Current prompt",
+          required: true,
+        }],
+      },
+    } as Awaited<ReturnType<typeof fetchQuestionnaireDefinitions>>[number]]);
+
+    render(<QuestionnaireOptionAVoterPanel localVoterNpub={localVoterNpub} />);
+
+    await screen.findByText(/Current prompt/);
+    expect(screen.getByText("q_linked_current")).toBeTruthy();
+    expect(screen.queryByText(/Stale questionnaire/)).toBeNull();
+    expect(screen.queryByText(/q_stale_mailbox/)).toBeNull();
+  });
+
+  it("waits for the linked questionnaire blind-signing key before nonce ballot request", async () => {
+    const localVoterNpub = "npub1" + "m".repeat(58);
+    const coordinatorAtRequest: string[] = [];
+    const requestSpy = vi
+      .spyOn(QuestionnaireOptionAVoterRuntime.prototype, "requestBlindBallot")
+      .mockImplementation(async function mockedRequestBlindBallot(this: QuestionnaireOptionAVoterRuntime) {
+        coordinatorAtRequest.push(this.getSnapshot()?.coordinatorNpub ?? "");
+        return this.getSnapshot()!;
+      });
+    let resolveDefinitions: (entries: Awaited<ReturnType<typeof fetchQuestionnaireDefinitions>>) => void = () => undefined;
+    fetchQuestionnaireDefinitionsMock.mockImplementation(() => new Promise((resolve) => {
+      resolveDefinitions = resolve;
+    }));
+    fetchOptionAInviteDmsMock.mockResolvedValue([]);
+    window.history.pushState(null, "", "/?role=voter&q=q_slow_definition&request_ballot=1");
+
+    render(
+      <QuestionnaireOptionAVoterPanel
+        localVoterNpub={localVoterNpub}
+        requestBlindBallotNonce={1}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(fetchQuestionnaireDefinitionsMock).toHaveBeenCalled();
+    });
+    expect(requestSpy).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveDefinitions([{
+        event: { created_at: 20 },
+        definition: {
+          schemaVersion: 1,
+          eventType: "questionnaire_definition",
+          responseMode: "blind_token",
+          questionnaireId: "q_slow_definition",
+          title: "Slow definition questionnaire",
+          description: "Loaded late",
+          createdAt: 1,
+          openAt: 1,
+          closeAt: 9999999999,
+          coordinatorPubkey: "npub1" + "b".repeat(58),
+          coordinatorEncryptionPubkey: "npub1" + "b".repeat(58),
+          responseVisibility: "private",
+          eligibilityMode: "open",
+          allowMultipleResponsesPerPubkey: false,
+          blindSigningPublicKey: {
+            scheme: "rsabssa-sha384-pss-deterministic-v1",
+            keyId: "blind_key",
+            jwk: { kty: "RSA", e: "AQAB", n: "test" },
+          },
+          questions: [{
+            questionId: "q1",
+            type: "yes_no",
+            prompt: "Slow definition prompt",
+            required: true,
+          }],
+        },
+      } as Awaited<ReturnType<typeof fetchQuestionnaireDefinitions>>[number]]);
+    });
+
+    await screen.findByText(/Slow definition prompt/);
+    await waitFor(() => {
+      expect(requestSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(coordinatorAtRequest).toEqual(["npub1" + "b".repeat(58)]);
   });
 
   it("renders questions from cached questionnaire definition when relay fetch is empty", async () => {

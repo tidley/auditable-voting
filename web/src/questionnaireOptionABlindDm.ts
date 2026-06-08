@@ -1,4 +1,4 @@
-import { finalizeEvent, generateSecretKey, getEventHash, getPublicKey, nip17, nip19, nip44, type NostrEvent } from "nostr-tools";
+import { finalizeEvent, generateSecretKey, getEventHash, getPublicKey, nip19, nip44, type NostrEvent } from "nostr-tools";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import type {
   BallotAcceptanceResult,
@@ -1164,6 +1164,32 @@ async function decodeGiftWrapWithSigner(input: {
   }
 }
 
+function decodeGiftWrapWithSecretKey(input: {
+  secretKey: Uint8Array;
+  event: NostrEvent;
+}) {
+  const wrapPubkey = typeof input.event.pubkey === "string" ? input.event.pubkey : "";
+  if (!wrapPubkey || typeof input.event.content !== "string" || !input.event.content.trim()) {
+    return null;
+  }
+  const sealConversationKey = nip44.v2.utils.getConversationKey(input.secretKey, wrapPubkey);
+  const sealPayload = nip44.v2.decrypt(input.event.content, sealConversationKey);
+  const sealEvent = parseGiftWrapPayload(sealPayload);
+  if (!sealEvent) {
+    return null;
+  }
+  const rumorConversationKey = nip44.v2.utils.getConversationKey(input.secretKey, sealEvent.pubkey);
+  const rumorPayload = nip44.v2.decrypt(sealEvent.content, rumorConversationKey);
+  const rumor = JSON.parse(rumorPayload) as { content?: string };
+  if (!rumor || typeof rumor.content !== "string") {
+    return null;
+  }
+  return {
+    rumorContent: rumor.content,
+    sealPubkey: sealEvent.pubkey,
+  };
+}
+
 function createSignerGiftWrapSubscription<T>(input: {
   signer: SignerService;
   electionId?: string;
@@ -1783,12 +1809,12 @@ export async function fetchOptionABlindRequestDmsWithNsec(input: {
   const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
   for (const event of sorted) {
     try {
-      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string };
-      if (!rumor || typeof rumor.content !== "string") {
+      const decoded = decodeGiftWrapWithSecretKey({ secretKey, event });
+      if (!decoded) {
         incrementReason(rejectReasons, "decode_failed");
         continue;
       }
-      const request = parseBlindRequestDmContent(rumor.content);
+      const request = parseBlindRequestDmContent(decoded.rumorContent);
       if (!request) {
         incrementReason(rejectReasons, "parse_failed");
         continue;
@@ -1892,11 +1918,11 @@ export async function fetchOptionABlindIssuanceDmsWithNsec(input: {
   const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
   for (const event of sorted) {
     try {
-      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string };
-      if (!rumor || typeof rumor.content !== "string") {
+      const decoded = decodeGiftWrapWithSecretKey({ secretKey, event });
+      if (!decoded) {
         continue;
       }
-      const issuance = parseBlindIssuanceDmContent(rumor.content);
+      const issuance = parseBlindIssuanceDmContent(decoded.rumorContent);
       if (!issuance) {
         continue;
       }
@@ -2002,16 +2028,16 @@ export async function fetchOptionABallotSubmissionDmsWithNsec(input: {
   const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
   for (const event of sorted) {
     try {
-      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string; pubkey?: string };
-      if (!rumor || typeof rumor.content !== "string") {
+      const decoded = decodeGiftWrapWithSecretKey({ secretKey, event });
+      if (!decoded) {
         continue;
       }
-      const submission = parseBallotSubmissionDmContent(rumor.content);
+      const submission = parseBallotSubmissionDmContent(decoded.rumorContent);
       if (!submission) {
         continue;
       }
       const claimedResponseNpub = submission.responseNpub ?? submission.invitedNpub;
-      if (claimedResponseNpub && typeof rumor.pubkey === "string" && toNpub(rumor.pubkey) !== claimedResponseNpub) {
+      if (claimedResponseNpub && decoded.sealPubkey && toNpub(decoded.sealPubkey) !== claimedResponseNpub) {
         continue;
       }
       if (input.electionId?.trim() && submission.electionId !== input.electionId.trim()) {
@@ -2110,11 +2136,11 @@ export async function fetchOptionABallotAcceptanceDmsWithNsec(input: {
   const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
   for (const event of sorted) {
     try {
-      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string };
-      if (!rumor || typeof rumor.content !== "string") {
+      const decoded = decodeGiftWrapWithSecretKey({ secretKey, event });
+      if (!decoded) {
         continue;
       }
-      const acceptance = parseBallotAcceptanceDmContent(rumor.content);
+      const acceptance = parseBallotAcceptanceDmContent(decoded.rumorContent);
       if (!acceptance) {
         continue;
       }
@@ -2204,11 +2230,11 @@ export async function fetchOptionABlindIssuanceAckDmsWithNsec(input: {
   const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
   for (const event of sorted) {
     try {
-      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string };
-      if (!rumor || typeof rumor.content !== "string") {
+      const decoded = decodeGiftWrapWithSecretKey({ secretKey, event });
+      if (!decoded) {
         continue;
       }
-      const ack = parseBlindIssuanceAckDmContent(rumor.content);
+      const ack = parseBlindIssuanceAckDmContent(decoded.rumorContent);
       if (!ack) {
         continue;
       }
@@ -2296,11 +2322,11 @@ export async function fetchOptionABlindRequestAckDmsWithNsec(input: {
   const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
   for (const event of sorted) {
     try {
-      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string };
-      if (!rumor || typeof rumor.content !== "string") {
+      const decoded = decodeGiftWrapWithSecretKey({ secretKey, event });
+      if (!decoded) {
         continue;
       }
-      const ack = parseBlindRequestAckDmContent(rumor.content);
+      const ack = parseBlindRequestAckDmContent(decoded.rumorContent);
       if (!ack) {
         continue;
       }
@@ -2388,11 +2414,11 @@ export async function fetchOptionABallotSubmissionAckDmsWithNsec(input: {
   const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
   for (const event of sorted) {
     try {
-      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string };
-      if (!rumor || typeof rumor.content !== "string") {
+      const decoded = decodeGiftWrapWithSecretKey({ secretKey, event });
+      if (!decoded) {
         continue;
       }
-      const ack = parseBallotSubmissionAckDmContent(rumor.content);
+      const ack = parseBallotSubmissionAckDmContent(decoded.rumorContent);
       if (!ack) {
         continue;
       }
@@ -2482,11 +2508,11 @@ export async function fetchOptionAVoterStateDmsWithNsec(input: {
   const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
   for (const event of sorted) {
     try {
-      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string };
-      if (!rumor || typeof rumor.content !== "string") {
+      const decoded = decodeGiftWrapWithSecretKey({ secretKey, event });
+      if (!decoded) {
         continue;
       }
-      const snapshot = parseVoterStateDmContent(rumor.content);
+      const snapshot = parseVoterStateDmContent(decoded.rumorContent);
       if (!snapshot) {
         continue;
       }
@@ -2576,11 +2602,11 @@ export async function fetchOptionACoordinatorStateDmsWithNsec(input: {
   const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
   for (const event of sorted) {
     try {
-      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string };
-      if (!rumor || typeof rumor.content !== "string") {
+      const decoded = decodeGiftWrapWithSecretKey({ secretKey, event });
+      if (!decoded) {
         continue;
       }
-      const snapshot = parseCoordinatorStateDmContent(rumor.content);
+      const snapshot = parseCoordinatorStateDmContent(decoded.rumorContent);
       if (!snapshot) {
         continue;
       }
@@ -2676,11 +2702,11 @@ export async function fetchOptionAWorkerStatusDmsWithNsec(input: {
   const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
   for (const event of sorted) {
     try {
-      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string };
-      if (!rumor || typeof rumor.content !== "string") {
+      const decoded = decodeGiftWrapWithSecretKey({ secretKey, event });
+      if (!decoded) {
         continue;
       }
-      const snapshot = parseWorkerStatusDmContent(rumor.content);
+      const snapshot = parseWorkerStatusDmContent(decoded.rumorContent);
       if (!snapshot) {
         continue;
       }
@@ -2721,11 +2747,11 @@ export async function fetchOptionAWorkerDelegationDmsWithNsec(input: {
   const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
   for (const event of sorted) {
     try {
-      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string };
-      if (!rumor || typeof rumor.content !== "string") {
+      const decoded = decodeGiftWrapWithSecretKey({ secretKey, event });
+      if (!decoded) {
         continue;
       }
-      const delegation = parseWorkerDelegationDmContent(rumor.content);
+      const delegation = parseWorkerDelegationDmContent(decoded.rumorContent);
       if (!delegation) {
         continue;
       }
@@ -2763,11 +2789,11 @@ export async function fetchOptionAWorkerDelegationRevocationDmsWithNsec(input: {
   const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
   for (const event of sorted) {
     try {
-      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string };
-      if (!rumor || typeof rumor.content !== "string") {
+      const decoded = decodeGiftWrapWithSecretKey({ secretKey, event });
+      if (!decoded) {
         continue;
       }
-      const revocation = parseWorkerDelegationRevocationDmContent(rumor.content);
+      const revocation = parseWorkerDelegationRevocationDmContent(decoded.rumorContent);
       if (!revocation) {
         continue;
       }
@@ -2805,11 +2831,11 @@ export async function fetchOptionAWorkerElectionConfigDmsWithNsec(input: {
   const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
   for (const event of sorted) {
     try {
-      const rumor = nip17.unwrapEvent(event as never, secretKey) as { content?: string };
-      if (!rumor || typeof rumor.content !== "string") {
+      const decoded = decodeGiftWrapWithSecretKey({ secretKey, event });
+      if (!decoded) {
         continue;
       }
-      const snapshot = parseWorkerElectionConfigDmContent(rumor.content);
+      const snapshot = parseWorkerElectionConfigDmContent(decoded.rumorContent);
       if (!snapshot) {
         continue;
       }

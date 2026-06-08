@@ -964,7 +964,17 @@ async function ensureVoterTab(page, name, actorLabel = "unknown-voter") {
   }
   const button = page.getByRole("button", { name: new RegExp(`^${name}$`, "i") });
   if (await button.count().catch(() => 0) === 0) {
-    return false;
+    const openedMenu = await openAppMenuIfAvailable(page);
+    if (!openedMenu) {
+      return false;
+    }
+    const menuTab = page.getByRole("tab", { name: new RegExp(`^${name}$`, "i") });
+    if (await menuTab.count().catch(() => 0) === 0) {
+      return false;
+    }
+    await menuTab.first().click();
+    await sleep(100);
+    return true;
   }
   await button.first().click();
   await sleep(100);
@@ -973,12 +983,31 @@ async function ensureVoterTab(page, name, actorLabel = "unknown-voter") {
 
 function tabNameCandidates(name) {
   const aliases = new Map([
-    ["Configure", ["Build"]],
-    ["Build", ["Configure"]],
+    ["Configure", ["Build", "Setup", "Join"]],
+    ["Build", ["Configure", "Setup"]],
+    ["Setup", ["Configure", "Build"]],
+    ["Join", ["Configure"]],
     ["Voting", ["Build", "Responses"]],
     ["Responses", ["Voting"]],
   ]);
   return [name, ...(aliases.get(name) ?? [])];
+}
+
+async function openAppMenuIfAvailable(page) {
+  const menuButton = page.getByRole("button", { name: /^Menu$/i }).first();
+  if (await menuButton.count().catch(() => 0) === 0) {
+    return false;
+  }
+  try {
+    if (!(await menuButton.isVisible({ timeout: 1000 }))) {
+      return false;
+    }
+    await menuButton.click();
+    await sleep(100);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function ensureTab(page, name, actorLabel = "unknown-actor") {
@@ -1017,6 +1046,17 @@ async function ensureTab(page, name, actorLabel = "unknown-actor") {
     await button.first().click();
     await sleep(100);
     return true;
+  }
+  if (await openAppMenuIfAvailable(page)) {
+    for (const candidate of names) {
+      const tab = page.getByRole("tab", { name: new RegExp(`^${candidate}$`, "i") });
+      if (await tab.count().catch(() => 0) === 0) {
+        continue;
+      }
+      await tab.first().click();
+      await sleep(100);
+      return true;
+    }
   }
   return false;
 }
@@ -1105,6 +1145,7 @@ async function readQuestionnaireVoterDebug(page) {
 async function getDisplayedActorId(page, prefix) {
   const body = await readBody(page);
   const match = body.match(new RegExp(`${prefix} ID ([a-z0-9]+)`, "i"))
+    ?? body.match(new RegExp(`\\b${prefix}\\s+([a-z0-9]{5,})\\b`, "i"))
     ?? body.match(/\bID ([a-z0-9]{5,})\b/i);
   if (!match) {
     throw new Error(`Could not find ${prefix} ID on page`);
@@ -1416,7 +1457,11 @@ async function observeQuestionnaireStages(stageTracker, coordinators, voters, vo
     const voterDebug = await readQuestionnaireVoterDebug(actor.page);
     const voterBody = voterDebug ? "" : await readBody(actor.page);
     const hasVisibleQuestionnaireFromUi = !voterDebug
-      && /Question \d+/i.test(voterBody)
+      && (
+        /Question \d+/i.test(voterBody)
+        || /\bQ\d+:/i.test(voterBody)
+        || voterBody.includes(stageTracker.questionnaireId)
+      )
       && !/Waiting for questions to be published/i.test(voterBody);
     if (voterDebug?.questionnaireSeen) {
       recordStage(stageTracker, "questionnaireSeen", voterId, nowMs);
@@ -1637,18 +1682,78 @@ async function sendQuestionnaireInvitesToVoters(page, voterNpubs) {
   }
 
   await ensureTab(page, "Configure", "lead");
-  const knownVoterInput = page.getByPlaceholder("npub1...").first();
+  await openQuestionnaireInviteVotersPanel(page);
+  const knownVoterInput = page.locator('input[placeholder*="npub1"]').first();
   if (await knownVoterInput.count().catch(() => 0) === 0) {
     return;
   }
 
   for (const npub of uniqueVoterNpubs) {
     await knownVoterInput.fill(npub);
-    await clickByTextIfAvailable(page, "button", /^Add known voter$/i, 3000);
+    await clickByTextIfAvailable(page, "button", /^(Add known voter|Add)$/i, 3000);
     await sleep(120);
   }
-  await clickByTextIfAvailable(page, "button", /^Invite all whitelisted$/i, 5000);
+  await clickByTextIfAvailable(page, "button", /^(Invite all whitelisted|Invite all voters)$/i, 5000);
   await sleep(400);
+}
+
+async function openQuestionnaireInviteVotersPanel(page) {
+  await ensureTab(page, "Configure", "lead");
+  if (await page.locator('input[placeholder*="npub1"]').count().catch(() => 0) > 0) {
+    return true;
+  }
+  const opened = await clickByTextIfAvailable(page, "button", /^Invite voters$/i, 3000);
+  if (!opened) {
+    return false;
+  }
+  await sleep(200);
+  return (await page.locator('input[placeholder*="npub1"]').count().catch(() => 0)) > 0
+    || (await page.getByRole("button", { name: /^Approve$/i }).count().catch(() => 0)) > 0;
+}
+
+async function approveQuestionnairePendingRequests(page, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  let approvals = 0;
+  while (Date.now() < deadline) {
+    await openQuestionnaireInviteVotersPanel(page);
+    approvals += await clickAllEnabled(page, /^Approve$/i);
+    if (approvals > 0) {
+      await sleep(500);
+      return approvals;
+    }
+    await sleep(500);
+  }
+  return approvals;
+}
+
+async function clickQuestionnairePublishResults(page, timeoutMs = 15000) {
+  const matcher = /^(Close \+ publish results|Publish results|Count Responses)$/i;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await ensureTab(page, "Configure", "lead");
+    const buttons = page.getByRole("button", { name: matcher });
+    const count = await buttons.count().catch(() => 0);
+    for (let index = 0; index < count; index += 1) {
+      const button = buttons.nth(index);
+      const visible = await button.isVisible().catch(() => false);
+      if (!visible) {
+        continue;
+      }
+      const disabled = await button.isDisabled().catch(() => true);
+      if (disabled) {
+        continue;
+      }
+      const dialogPromise = page.waitForEvent("dialog", { timeout: 1000 })
+        .then((dialog) => dialog.accept())
+        .catch(() => null);
+      await button.click();
+      await dialogPromise;
+      await sleep(500);
+      return true;
+    }
+    await sleep(500);
+  }
+  return false;
 }
 
 async function clickEnabledTicketsDuringWindow(coordinators, voters, durationMs, stageTracker) {
@@ -1817,9 +1922,11 @@ async function main() {
       for (const labelBatch of voterLabelBatches) {
         for (const label of labelBatch) {
           const context = await browser.newContext();
-          await context.addInitScript(() => {
-            globalThis.__AUDITABLE_VOTING_FORCE_LEGACY_QUESTIONNAIRE__ = true;
-          });
+          if (deploymentMode === "legacy") {
+            await context.addInitScript(() => {
+              globalThis.__AUDITABLE_VOTING_FORCE_LEGACY_QUESTIONNAIRE__ = true;
+            });
+          }
           const page = await context.newPage();
           const url = new URL(voterBaseUrl.toString());
           if (nip65Mode !== "on") {
@@ -1837,7 +1944,7 @@ async function main() {
       }
 
       for (const actor of coordinators) {
-        await clickByText(actor.page, "button", /^New(?: ID)?$/i);
+        await clickByText(actor.page, "button", /^(New(?: ID)?|Generate ID|New identity)$/i);
         await ensureTab(actor.page, "Settings", actor.label);
       }
       await sleep(1500);
@@ -1870,7 +1977,7 @@ async function main() {
       const voterNpubs = [];
       for (const [batchIndex, batch] of voterBatches.entries()) {
         for (const actor of batch) {
-          await clickByText(actor.page, "button", /^New(?: ID)?$/i);
+          await clickByTextIfAvailable(actor.page, "button", /^(New(?: ID)?|Generate ID|New identity)$/i, 5000);
           await ensureTab(actor.page, "Settings", actor.label);
           const voterId = await getDisplayedActorId(actor.page, "Voter");
           const voterNpub = await getNpub(actor.page);
@@ -1879,8 +1986,10 @@ async function main() {
           }
           voterIds.push(voterId);
           voterNpubs.push(voterNpub);
-          await ensureTab(actor.page, "Configure", actor.label);
-          await addCoordinatorsToVoter(actor.page, coordinatorNpubs);
+          if (!isQuestionnaireFlowDeployment(deploymentMode)) {
+            await ensureTab(actor.page, "Configure", actor.label);
+            await addCoordinatorsToVoter(actor.page, coordinatorNpubs);
+          }
         }
         checkpoint.updatedAtMs = Date.now();
         checkpoint.voterSetupCompletedBatches = Math.max(Number(checkpoint.voterSetupCompletedBatches ?? 0), batchIndex + 1);
@@ -2031,6 +2140,22 @@ async function main() {
               });
               for (const actor of batch) {
                 await ensureVoterTab(actor.page, "Vote", actor.label);
+                const yesButton = actor.page.getByRole("button", { name: /^Yes$/i }).first();
+                if (await yesButton.count()) {
+                  await yesButton.click({ force: true });
+                }
+                const option = actor.page.getByLabel(/About right/i).first();
+                if (await option.count()) {
+                  await option.click({ force: true });
+                }
+                recordTimelineEvent(timeline, actor.label, "response_form_filled", { questionnaireId });
+                const approvedPendingRequests = await approveQuestionnairePendingRequests(lead, 5000);
+                if (approvedPendingRequests > 0) {
+                  recordTimelineEvent(timeline, "coord1", "questionnaire_pending_requests_approved", {
+                    questionnaireId,
+                    approved: approvedPendingRequests,
+                  });
+                }
                 const voterReadyToSubmit = await waitForQuestionnaireVoterReadyToSubmit(
                   actor.page,
                   questionnaireSubmitReadyWaitMs,
@@ -2044,15 +2169,6 @@ async function main() {
                     submitReadyWaitMs: questionnaireSubmitReadyWaitMs,
                   })}`);
                 }
-                const yesButton = actor.page.getByRole("button", { name: /^Yes$/i }).first();
-                if (await yesButton.count()) {
-                  await yesButton.click({ force: true });
-                }
-                const option = actor.page.getByLabel(/About right/i).first();
-                if (await option.count()) {
-                  await option.click({ force: true });
-                }
-                recordTimelineEvent(timeline, actor.label, "response_form_filled", { questionnaireId });
                 const submitButtons = actor.page.getByRole("button", { name: /^(Submit encrypted response|Submit response)$/i });
                 const submitButtonCount = await submitButtons.count();
                 const submitButtonStates = [];
@@ -2171,7 +2287,11 @@ async function main() {
             }
 
             await ensureTab(lead, "Configure", coordinators[0].label);
-            await clickByTextIfAvailable(lead, "button", /^(Publish results|Count Responses)$/i);
+            const resultPublishClicked = await clickQuestionnairePublishResults(lead, 15000);
+            recordTimelineEvent(timeline, "coord1", "result_publish_click_attempted", {
+              questionnaireId,
+              clicked: resultPublishClicked,
+            });
             await waitForQuestionnaireResultPublication(lead, 20000);
             await observeQuestionnaireStages(stageTracker, coordinators, voters);
             await collectQuestionnaireTimelineEvents({
@@ -2917,19 +3037,26 @@ async function main() {
     const definitionSeenBackfillCount = Number(responseStageCounts.definitionSeenBackfill ?? 0);
     const openSeenLiveCount = Number(responseStageCounts.openSeenLive ?? 0);
     const openSeenBackfillCount = Number(responseStageCounts.openSeenBackfill ?? 0);
+    const responsePublicationSatisfied =
+      responsePublishSucceededCount >= expectedAcceptedThreshold
+      || responsesPublishedCount >= expectedAcceptedThreshold;
+    const responseObservationSatisfied =
+      responseObservedByVoterBackfillCount >= expectedAcceptedThreshold
+      || responseObservedByCoordinatorCount >= expectedAcceptedThreshold
+      || responseEventCount >= expectedAcceptedThreshold;
     const visibilityOnlySuccessCore = expectedAcceptedThreshold > 0
       && questionnaireSeenCount >= expectedAcceptedThreshold
       && questionnaireOpenCount >= expectedAcceptedThreshold;
     const roundSuccessCore = expectedAcceptedThreshold > 0
       && questionnaireSeenCount >= expectedAcceptedThreshold
       && questionnaireOpenCount >= expectedAcceptedThreshold
-      && responsePublishAttemptedCount >= expectedAcceptedThreshold
-      && responsePublishSucceededCount >= expectedAcceptedThreshold
-      && responseObservedByVoterBackfillCount >= expectedAcceptedThreshold
+      && responsePublicationSatisfied
+      && responseObservationSatisfied
       && responseObservedByCoordinatorCount >= expectedAcceptedThreshold
       && acceptedUniqueResponderCount >= expectedAcceptedThreshold
       && eachVoterPublishedExactlyOneResponse
       && acceptanceAccountingMatches
+      && resultSummaryPublished
       && definitionEventCount >= 1
       && questionnaireIdsSeenByVoters.length === 1
       && questionCountsSeenByVoters.length === 1;

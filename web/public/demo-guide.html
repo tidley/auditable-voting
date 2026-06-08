@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Plain-English demo guide</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #080c0d;
+        --paper: #f4efe6;
+        --ink: #101516;
+        --muted: #445256;
+        --line: #d7cdbd;
+        --panel: #fffaf0;
+        --dark-panel: #101719;
+        --dark-line: #2c3b40;
+        --accent: #1fbfae;
+        --accent-2: #e4b363;
+        --danger: #b44545;
+      }
+
+      * { box-sizing: border-box; }
+
+      html { scroll-behavior: smooth; }
+
+      body {
+        margin: 0;
+        background:
+          linear-gradient(180deg, rgba(31, 191, 174, 0.12), transparent 320px),
+          var(--bg);
+        color: var(--paper);
+        font-family: "Aptos", "Segoe UI", system-ui, sans-serif;
+        line-height: 1.58;
+      }
+
+      a { color: var(--accent); }
+
+      .shell {
+        width: min(1080px, calc(100% - 32px));
+        margin: 0 auto;
+        padding: 24px 0 64px;
+      }
+
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 30px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--dark-line);
+      }
+
+      .brand {
+        margin: 0;
+        font-weight: 900;
+        letter-spacing: 0.02em;
+      }
+
+      .topbar nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        justify-content: flex-end;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 38px;
+        border: 1px solid var(--dark-line);
+        border-radius: 6px;
+        background: var(--dark-panel);
+        color: var(--paper);
+        padding: 8px 12px;
+        text-decoration: none;
+        font-weight: 800;
+        line-height: 1.15;
+      }
+
+      .button:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+
+      .button-primary {
+        border-color: var(--accent);
+        background: var(--accent);
+        color: #06100f;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1.05fr) minmax(280px, 0.95fr);
+        gap: 26px;
+        align-items: stretch;
+        margin-bottom: 30px;
+      }
+
+      .hero-copy {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        min-height: 420px;
+      }
+
+      .kicker {
+        margin: 0 0 10px;
+        color: var(--accent);
+        font-size: 0.78rem;
+        font-weight: 900;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3,
+      p { margin-top: 0; }
+
+      h1 {
+        max-width: 11ch;
+        margin-bottom: 16px;
+        font-size: clamp(2.7rem, 8vw, 5.6rem);
+        line-height: 0.95;
+        letter-spacing: 0;
+      }
+
+      .lead {
+        max-width: 680px;
+        color: #d3dedc;
+        font-size: clamp(1.1rem, 2vw, 1.35rem);
+      }
+
+      .hero-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 8px;
+      }
+
+      .paper {
+        display: grid;
+        align-content: start;
+        gap: 18px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background:
+          linear-gradient(90deg, rgba(16, 21, 22, 0.06) 1px, transparent 1px) 0 0 / 28px 28px,
+          var(--paper);
+        color: var(--ink);
+        padding: 26px;
+        box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
+      }
+
+      .paper h2 {
+        margin-bottom: 4px;
+        font-size: 1.3rem;
+      }
+
+      .paper p,
+      .paper li { color: var(--muted); }
+
+      .flow {
+        display: grid;
+        gap: 10px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        counter-reset: steps;
+      }
+
+      .flow li {
+        display: grid;
+        grid-template-columns: 30px minmax(0, 1fr);
+        gap: 10px;
+        align-items: start;
+        counter-increment: steps;
+      }
+
+      .flow li::before {
+        content: counter(steps);
+        display: grid;
+        place-items: center;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        background: var(--ink);
+        color: var(--paper);
+        font-size: 0.86rem;
+        font-weight: 900;
+      }
+
+      .section {
+        padding: 30px 0;
+        border-top: 1px solid var(--dark-line);
+      }
+
+      .section h2 {
+        margin-bottom: 10px;
+        font-size: clamp(1.7rem, 3vw, 2.4rem);
+        line-height: 1.1;
+      }
+
+      .section-intro {
+        max-width: 760px;
+        color: #c7d2d0;
+        font-size: 1.06rem;
+      }
+
+      .grid-3,
+      .grid-2 {
+        display: grid;
+        gap: 14px;
+      }
+
+      .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+      .card {
+        border: 1px solid var(--dark-line);
+        border-radius: 8px;
+        background: var(--dark-panel);
+        padding: 18px;
+      }
+
+      .card h3 {
+        margin-bottom: 8px;
+        color: var(--accent-2);
+      }
+
+      .card p,
+      .card li { color: #c5d0ce; }
+
+      .card ul {
+        margin: 0;
+        padding-left: 1.1rem;
+      }
+
+      .script {
+        border-left: 4px solid var(--accent);
+        background: rgba(31, 191, 174, 0.1);
+      }
+
+      .warning {
+        border-color: rgba(228, 179, 99, 0.5);
+        background: rgba(228, 179, 99, 0.1);
+      }
+
+      .phrase-list {
+        display: grid;
+        gap: 12px;
+      }
+
+      .phrase {
+        border-bottom: 1px solid var(--dark-line);
+        padding-bottom: 12px;
+      }
+
+      .phrase:last-child {
+        border-bottom: 0;
+        padding-bottom: 0;
+      }
+
+      .phrase strong {
+        display: block;
+        margin-bottom: 4px;
+        color: var(--paper);
+      }
+
+      @media (max-width: 820px) {
+        .topbar {
+          align-items: stretch;
+          flex-direction: column;
+        }
+
+        .topbar nav,
+        .hero-actions {
+          justify-content: flex-start;
+        }
+
+        .hero,
+        .grid-2,
+        .grid-3 {
+          grid-template-columns: 1fr;
+        }
+
+        .hero-copy {
+          min-height: auto;
+        }
+
+        h1 { max-width: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <p class="brand">Auditable Voting</p>
+        <nav aria-label="Quick links">
+          <a class="button" href="./">Home</a>
+          <a class="button" href="./project-explainer.html">How it works</a>
+          <a class="button" href="./dashboard.html?role=auditor">Observer</a>
+          <a class="button" href="./simple-coordinator.html?role=coordinator">Coordinator</a>
+          <a class="button" href="./simple.html?role=voter">Voter</a>
+        </nav>
+      </header>
+
+      <section class="hero" aria-labelledby="page-title">
+        <div class="hero-copy">
+          <p class="kicker">Plain-English demo guide</p>
+          <h1 id="page-title">Show the idea before the machinery</h1>
+          <p class="lead">A meeting-ready introduction for people who are not technical: what Auditable Voting does, what to show on screen, and how to explain it without protocol language.</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="./simple-coordinator.html?role=coordinator">Start a demo</a>
+            <a class="button" href="./technical-details.html">Technical details</a>
+          </div>
+        </div>
+        <aside class="paper" aria-label="One minute explanation">
+          <div>
+            <h2>One-minute explanation</h2>
+            <p>Auditable Voting helps run a questionnaire where the organiser can decide who is allowed to vote, voters can submit without their answer being tied back to their normal identity, and anyone can check the published count afterwards.</p>
+          </div>
+          <ol class="flow">
+            <li>Someone checks that you are on the list.</li>
+            <li>You receive a ballot pass.</li>
+            <li>You fill in your response privately.</li>
+            <li>The response goes into a public count.</li>
+            <li>Watchers can check the count without knowing which response was yours.</li>
+          </ol>
+        </aside>
+      </section>
+
+      <section class="section" aria-labelledby="roles">
+        <p class="kicker">The cast</p>
+        <h2 id="roles">Use everyday role names first</h2>
+        <p class="section-intro">The app uses precise role names, but the meeting can start with simpler words.</p>
+        <div class="grid-3">
+          <article class="card">
+            <h3>Organiser</h3>
+            <p>In the app this is the Coordinator. They create the questionnaire, share links or QR codes, approve voters when needed, and publish the result.</p>
+          </article>
+          <article class="card">
+            <h3>Voter</h3>
+            <p>The voter opens an invite, waits while their request is verified, answers the questions, and submits once.</p>
+          </article>
+          <article class="card">
+            <h3>Watcher</h3>
+            <p>In the app this is the Observer. They can check the public result without needing the organiser's private browser state.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="plan">
+        <p class="kicker">10 minute walkthrough</p>
+        <h2 id="plan">A simple meeting plan</h2>
+        <div class="grid-2">
+          <article class="card">
+            <h3>What to do</h3>
+            <ul>
+              <li>Open the Coordinator page.</li>
+              <li>Create a short questionnaire.</li>
+              <li>Show the General invite QR code.</li>
+              <li>Open the invite as a Voter.</li>
+              <li>Submit one response.</li>
+              <li>Close and publish results.</li>
+              <li>Open Observer and show the public check.</li>
+            </ul>
+          </article>
+          <article class="card script">
+            <h3>What to say</h3>
+            <p>The organiser checks who may take part. The voter receives a private ballot pass. The final response is published in a way watchers can count, but it is not posted from the voter's normal identity.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="show">
+        <p class="kicker">Screen story</p>
+        <h2 id="show">What to show on each screen</h2>
+        <div class="grid-3">
+          <article class="card">
+            <h3>Coordinator</h3>
+            <ul>
+              <li>Name the questionnaire.</li>
+              <li>Add questions.</li>
+              <li>Share the General invite QR code.</li>
+              <li>See responses arrive.</li>
+              <li>Publish the final result.</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>Voter</h3>
+            <ul>
+              <li>Open the invite from a phone or browser.</li>
+              <li>Request a ballot automatically.</li>
+              <li>Wait while the request is verified.</li>
+              <li>Answer and submit once.</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>Observer</h3>
+            <ul>
+              <li>Find the questionnaire.</li>
+              <li>See accepted and rejected responses.</li>
+              <li>Read rejection reasons.</li>
+              <li>Check the published result.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="phrases">
+        <p class="kicker">Useful answers</p>
+        <h2 id="phrases">Plain responses to likely questions</h2>
+        <div class="card phrase-list">
+          <div class="phrase">
+            <strong>Why not just use a normal survey tool?</strong>
+            <p>Normal survey tools usually require trusting the operator and the database. This project is about making the count independently checkable.</p>
+          </div>
+          <div class="phrase">
+            <strong>Can the organiser see who voted for what?</strong>
+            <p>The organiser can decide who may take part. The submitted response uses a separate response identity, so the normal voter identity is not the public ballot identity.</p>
+          </div>
+          <div class="phrase">
+            <strong>Can someone vote twice?</strong>
+            <p>Each ballot pass can only be accepted once. Duplicate or invalid submissions are rejected and the reason is shown.</p>
+          </div>
+          <div class="phrase">
+            <strong>Is this ready for official elections?</strong>
+            <p>No. Treat it as experimental infrastructure that demonstrates a verifiable pattern. It needs independent review before high-stakes use.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="caveats">
+        <p class="kicker">Set expectations</p>
+        <h2 id="caveats">Safe caveats</h2>
+        <div class="card warning">
+          <ul>
+            <li>This is a working prototype, not a production election service.</li>
+            <li>Public relay reliability can affect timing.</li>
+            <li>Private keys stay in the browser, so device handling matters.</li>
+            <li>The cryptographic and protocol design should be independently reviewed before serious deployment.</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

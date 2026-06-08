@@ -1899,6 +1899,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
   private coordinatorNpub: string | null = null;
   private lastSelfStateSnapshotHash: string | null = null;
   private lastSelfStateSnapshotPublishedAt = 0;
+  private lastBlindRequestSyncDiagnostics: OptionABlindRequestFetchDiagnostics | null = null;
   private pendingAuthorizationsByNpub: Record<string, BlindBallotRequest[]> = {};
   private issuanceDmRepublishRequests = new Map<string, string>();
   private stopBlindRequestSubscription: (() => void) | null = null;
@@ -1941,6 +1942,10 @@ export class QuestionnaireOptionACoordinatorRuntime {
 
   getAcceptedUniqueCount() {
     return this.state ? countAcceptedUniqueVoters(this.state) : 0;
+  }
+
+  getLastBlindRequestSyncDiagnostics() {
+    return this.lastBlindRequestSyncDiagnostics;
   }
 
   getPendingAuthorizations() {
@@ -2863,6 +2868,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
         enqueueBlindRequest(request);
       }
       if (diagnostics) {
+        this.lastBlindRequestSyncDiagnostics = diagnostics;
         optionAFlowLog("coordinator", "blind_requests_sync_diagnostics", {
           electionId: this.electionId,
           ...diagnostics,
@@ -3187,8 +3193,14 @@ export class QuestionnaireOptionACoordinatorRuntime {
       });
       return this.state;
     }
-    const blindSigningPrivateKey = await this.ensureBlindSigningKey();
     const queue = listBlindRequests(this.electionId);
+    if (queue.length === 0) {
+      optionAFlowLog("coordinator", "process_blind_requests_skipped_empty_queue", {
+        electionId: this.electionId,
+      });
+      return this.state;
+    }
+    const blindSigningPrivateKey = await this.ensureBlindSigningKey();
     const pendingAuthorizationsBefore = JSON.stringify(this.pendingAuthorizationsByNpub);
     const originalState = this.state;
     optionAFlowLog("coordinator", "process_blind_requests_started", {
@@ -3627,6 +3639,11 @@ export async function processOptionAQueuesForCoordinatorLive(input: {
       .filter((value, index, values) => values.indexOf(value) === index);
 
   const processedElectionIds: string[] = [];
+  let blindRequestsSynced = 0;
+  let submissionsSynced = 0;
+  let blindIssuancesDelivered = 0;
+  let acceptanceResultsDelivered = 0;
+  const blindRequestDiagnosticsByElectionId: Record<string, OptionABlindRequestFetchDiagnostics | null> = {};
   for (const electionId of orderedElectionIds) {
     const summary = loadElectionSummary(electionId);
     if (!summary || summary.coordinatorNpub !== coordinatorNpub) {
@@ -3644,21 +3661,27 @@ export async function processOptionAQueuesForCoordinatorLive(input: {
       recoverSelfState: false,
       publishSelfState: false,
     });
-    await runtime.syncBlindRequestsFromDm();
+    blindRequestsSynced += await runtime.syncBlindRequestsFromDm();
+    blindRequestDiagnosticsByElectionId[electionId] = runtime.getLastBlindRequestSyncDiagnostics();
     await runtime.processPendingBlindRequests();
     await runtime.syncBlindIssuanceAcksFromDm();
-    await runtime.publishPendingBlindIssuancesToDm({
+    blindIssuancesDelivered += await runtime.publishPendingBlindIssuancesToDm({
       forceAll: input.forceRepublishIssuances,
     });
-    await runtime.syncSubmissionsFromDm();
+    submissionsSynced += await runtime.syncSubmissionsFromDm();
     await runtime.processPendingSubmissions(input.requiredQuestionIdsByElectionId?.[electionId] ?? []);
-    await runtime.publishPendingAcceptanceResultsToDm();
+    acceptanceResultsDelivered += await runtime.publishPendingAcceptanceResultsToDm();
     processedElectionIds.push(electionId);
   }
 
   return {
     processedElectionIds,
     processedElections: processedElectionIds.length,
+    blindRequestsSynced,
+    submissionsSynced,
+    blindIssuancesDelivered,
+    acceptanceResultsDelivered,
+    blindRequestDiagnosticsByElectionId,
   };
   })();
   liveCoordinatorQueueInFlight.set(singleFlightKey, runner);

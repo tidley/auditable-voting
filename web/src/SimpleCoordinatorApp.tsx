@@ -1015,6 +1015,23 @@ function formatCoordinatorList(values: string[]) {
   return `${labels.slice(0, -1).join(", ")}, and ${labels.at(-1)}`;
 }
 
+type OptionAQueueProcessingDebug = {
+  inFlight: boolean;
+  runCount: number;
+  lastStartedAt: string | null;
+  lastFinishedAt: string | null;
+  lastElectionId: string | null;
+  lastLocalNsecMode: boolean | null;
+  lastProcessedElections: number | null;
+  lastBlindRequestsSynced: number | null;
+  lastSubmissionsSynced: number | null;
+  lastBlindIssuancesDelivered: number | null;
+  lastAcceptanceResultsDelivered: number | null;
+  lastBlindRequestDiagnostics: unknown;
+  lastSkippedReason: string | null;
+  lastError: string | null;
+};
+
 export default function SimpleCoordinatorApp() {
   const [keypair, setKeypair] = useState<SimpleCoordinatorKeypair | null>(null);
   const [identityReady, setIdentityReady] = useState(false);
@@ -1092,6 +1109,22 @@ export default function SimpleCoordinatorApp() {
   const [knownVoterDraftNpub, setKnownVoterDraftNpub] = useState("");
   const [knownVoterInviteStatus, setKnownVoterInviteStatus] = useState<string | null>(null);
   const [knownVoterInviteRefreshNonce, setKnownVoterInviteRefreshNonce] = useState(0);
+  const [optionAQueueProcessingDebug, setOptionAQueueProcessingDebug] = useState<OptionAQueueProcessingDebug>({
+    inFlight: false,
+    runCount: 0,
+    lastStartedAt: null,
+    lastFinishedAt: null,
+    lastElectionId: null,
+    lastLocalNsecMode: null,
+    lastProcessedElections: null,
+    lastBlindRequestsSynced: null,
+    lastSubmissionsSynced: null,
+    lastBlindIssuancesDelivered: null,
+    lastAcceptanceResultsDelivered: null,
+    lastBlindRequestDiagnostics: null,
+    lastSkippedReason: null,
+    lastError: null,
+  });
   const [privateInviteLinksByHash, setPrivateInviteLinksByHash] = useState<Record<string, string>>({});
   const [optimisticKnownVoterNpubs, setOptimisticKnownVoterNpubs] = useState<string[]>([]);
   const [knownVoterContactsLoading, setKnownVoterContactsLoading] = useState(false);
@@ -4097,12 +4130,38 @@ export default function SimpleCoordinatorApp() {
 
   async function runOptionABackgroundProcessing() {
     if (!activeCoordinatorNpub.trim() || optionAQueueProcessingInFlightRef.current) {
+      setOptionAQueueProcessingDebug((current) => ({
+        ...current,
+        inFlight: optionAQueueProcessingInFlightRef.current,
+        lastElectionId: optionAElectionId.trim() || current.lastElectionId,
+        lastSkippedReason: !activeCoordinatorNpub.trim() ? "coordinator_missing" : "already_in_flight",
+      }));
       return false;
     }
     const localNsecMode = Boolean(keypair?.nsec?.trim() && !signerNpub.trim());
     if (!localNsecMode && (!optionAElectionId.trim() || !optionACoordinatorRuntime)) {
+      setOptionAQueueProcessingDebug((current) => ({
+        ...current,
+        inFlight: false,
+        lastElectionId: optionAElectionId.trim() || current.lastElectionId,
+        lastLocalNsecMode: localNsecMode,
+        lastSkippedReason: "runtime_missing",
+      }));
       return false;
     }
+    const startedAt = new Date().toISOString();
+    const processingElectionId = optionAElectionId.trim();
+    setOptionAQueueProcessingDebug((current) => ({
+      ...current,
+      inFlight: true,
+      runCount: current.runCount + 1,
+      lastStartedAt: startedAt,
+      lastFinishedAt: null,
+      lastElectionId: processingElectionId || null,
+      lastLocalNsecMode: localNsecMode,
+      lastSkippedReason: null,
+      lastError: null,
+    }));
     optionAQueueProcessingInFlightRef.current = true;
     try {
       const syncStep = localNsecMode
@@ -4120,7 +4179,7 @@ export default function SimpleCoordinatorApp() {
               startDmSubscriptions: false,
             });
           }
-          return result.processedElections;
+          return result;
         })
         : optionACoordinatorRuntime!.syncBlindRequestsFromDm()
           .then(() => optionACoordinatorRuntime!.syncSubmissionsFromDm())
@@ -4128,10 +4187,45 @@ export default function SimpleCoordinatorApp() {
           .then(() => optionACoordinatorRuntime!.publishPendingBlindIssuancesToDm())
           .then(() => optionACoordinatorRuntime!.processPendingSubmissions([]))
           .then(() => optionACoordinatorRuntime!.publishPendingAcceptanceResultsToDm())
-          .then(() => 1);
-      await syncStep;
+          .then(() => ({
+            processedElections: 1,
+            blindRequestsSynced: null,
+            submissionsSynced: null,
+            blindIssuancesDelivered: null,
+            acceptanceResultsDelivered: null,
+            blindRequestDiagnosticsByElectionId: {},
+          }));
+      const processingResult = await syncStep;
+      const blindRequestDiagnostics = processingElectionId
+        ? processingResult.blindRequestDiagnosticsByElectionId?.[processingElectionId] ?? null
+        : null;
+      setOptionAQueueProcessingDebug((current) => ({
+        ...current,
+        inFlight: false,
+        lastFinishedAt: new Date().toISOString(),
+        lastElectionId: processingElectionId || current.lastElectionId,
+        lastLocalNsecMode: localNsecMode,
+        lastProcessedElections: processingResult.processedElections,
+        lastBlindRequestsSynced: processingResult.blindRequestsSynced,
+        lastSubmissionsSynced: processingResult.submissionsSynced,
+        lastBlindIssuancesDelivered: processingResult.blindIssuancesDelivered,
+        lastAcceptanceResultsDelivered: processingResult.acceptanceResultsDelivered,
+        lastBlindRequestDiagnostics: blindRequestDiagnostics,
+        lastSkippedReason: null,
+        lastError: null,
+      }));
       setKnownVoterInviteRefreshNonce((value) => value + 1);
       return true;
+    } catch (error) {
+      setOptionAQueueProcessingDebug((current) => ({
+        ...current,
+        inFlight: false,
+        lastFinishedAt: new Date().toISOString(),
+        lastElectionId: processingElectionId || current.lastElectionId,
+        lastLocalNsecMode: localNsecMode,
+        lastError: error instanceof Error ? error.message : String(error),
+      }));
+      throw error;
     } finally {
       optionAQueueProcessingInFlightRef.current = false;
     }
@@ -4219,6 +4313,28 @@ export default function SimpleCoordinatorApp() {
       document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, [activeCoordinatorNpub, optionACoordinatorRuntime, optionAElectionId, keypair?.nsec, signerNpub]);
+
+  useEffect(() => {
+    if (!activeCoordinatorNpub.trim() || !optionAElectionId.trim()) {
+      return;
+    }
+    const localNsecMode = Boolean(keypair?.nsec?.trim() && !signerNpub.trim());
+    if (!localNsecMode && !optionACoordinatorRuntime) {
+      return;
+    }
+    const delaysMs = [500, 1_000, 2_000, 3_500, 5_000, 7_500, 10_000, 13_000, 16_000, 20_000, 25_000];
+    const timeoutIds = delaysMs.map((delayMs) => window.setTimeout(() => {
+      void runOptionABackgroundProcessing().catch(() => {
+        // Keep the burst best-effort; manual processing still surfaces errors.
+      });
+    }, delayMs));
+    return () => {
+      for (const timeoutId of timeoutIds) {
+        window.clearTimeout(timeoutId);
+      }
+    };
+  }, [activeCoordinatorNpub, optionACoordinatorRuntime, optionAElectionId, keypair?.nsec, signerNpub]);
+
   async function authorizePendingRequester(invitedNpub: string) {
     if (!optionACoordinatorRuntime) {
       return;
@@ -5744,6 +5860,7 @@ export default function SimpleCoordinatorApp() {
       deploymentMode,
       courseFeedbackAcceptanceEnabled: isCourseFeedbackMode,
       legacyRoundGatingBypassed: isCourseFeedbackMode,
+      optionAQueueProcessing: optionAQueueProcessingDebug,
       sendQueueInFlightCount,
       sendQueueUnsentCount,
       roundOpenAt,
@@ -5820,6 +5937,7 @@ export default function SimpleCoordinatorApp() {
     activeAcceptedVotes,
     activeRejectedVotes,
     enhancedCoordinatorFollowerRows,
+    optionAQueueProcessingDebug,
   ]);
   const verifiedVisibleFollowerCount = filteredFollowers.filter(
     (follower) => autoSendFollowers[follower.voterNpub],
