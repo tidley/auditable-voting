@@ -2,7 +2,7 @@
 
 Anonymous voting with public verification, using blind credentials and Nostr relays.
 
-If you are demonstrating the project to a general audience, start with the [plain-English demo guide](./demo-guide.md). It uses everyday language, gives a 10 minute walkthrough, and keeps the technical terms out of the first explanation.
+If you are demonstrating the project to a general audience, start with the [plain-English demo guide](./demo-guide.md). It uses everyday language, gives a 3 minute action-first walkthrough, and keeps the technical terms out of the first explanation.
 
 This is the short, public-facing explanation. For the protocol and implementation detail, see [`docs/technical-protocol-note.md`](./technical-protocol-note.md). For the questionnaire-specific protocol reference, see [`docs/questionnaire-blind-token-protocol.md`](./questionnaire-blind-token-protocol.md).
 

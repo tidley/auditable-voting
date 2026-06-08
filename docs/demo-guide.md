@@ -1,143 +1,149 @@
-# Plain-English demo guide
+# Auditable Voting Demo
 
-Use this when introducing Auditable Voting to people who do not care about the technical protocol.
+This demo takes about **3 minutes**.
 
-## One-minute explanation
+By the end you will:
 
-Auditable Voting is a way to run a questionnaire where:
+- &#10003; Cast a vote
+- &#10003; Verify that your vote was recorded
+- &#10003; Verify that it was included in the final result
+- &#10003; Learn how anyone can audit the election
 
-- the organiser can decide who is allowed to vote;
-- voters can submit without their answer being tied back to their normal identity;
-- anyone can check the published count afterwards.
+## The flow
 
-The easiest analogy is a paper voting room:
+```text
+Create account
+      |
+      v
+Join election
+      |
+      v
+Vote
+      |
+      v
+Verify vote
+      |
+      v
+Verify result
+```
 
-1. Someone checks that you are on the list.
-2. You receive a ballot paper.
-3. You walk away and fill it in privately.
-4. The ballot goes into a public count.
-5. Observers can check the count without knowing which paper was yours.
+## Step 1: Create an account
 
-Auditable Voting brings that pattern to a browser, using public relay data instead of a private database.
+Click **Create Account**.
 
-## The three roles
+The system generates a unique cryptographic identity for you.
 
-### Organiser
+Your identity allows you to vote without revealing your real name.
 
-They create the questionnaire, share invite links or QR codes, approve voters when needed, and publish the final result.
+> Nobody needs your email address, phone number or password.
 
-### Voter
+## Step 2: Join the election
 
-The voter opens an invite, requests a ballot, answers the questions, and submits.
+Open the election invitation.
 
-The voter may see a short wait while the organiser verifies the ballot request. That is the digital version of checking someone is allowed to take part.
+You will see:
 
-### Watcher
+- Election title
+- Description
+- Voting options
+- Opening and closing dates
 
-In the app this is the **Observer**.
+Click **Join Election**.
 
-They can open the public result view and check that the published count matches the public accepted responses.
+## Step 3: Cast your vote
 
-## Meeting demo plan
+Select your preferred option.
 
-This is a simple 10 minute walkthrough.
+Click **Submit Vote**.
 
-1. Open the Organiser page.
-2. Create a short questionnaire with one or two questions.
-3. Show the General invite QR code.
-4. Scan or open the invite as a Voter.
-5. Submit one response.
-6. Return to Organiser and show the accepted response count.
-7. Close and publish results.
-8. Open Observer and show that the public result can be checked separately.
+The system creates a signed voting record.
 
-Keep the language simple:
+You should now see a confirmation message.
 
-- Say **watcher** or **public checker** instead of observer.
-- Say **private ballot pass** instead of blind credential unless someone asks for the technical detail.
-- Say **public noticeboard** instead of Nostr relays.
+&#10003; Your vote has been recorded.
 
-## What to show on screen
+## Step 4: Verify your vote
 
-### Start with Organiser
+Open **My Vote**.
 
-Show that the organiser can:
+You will see a unique Vote ID.
 
-- name the questionnaire;
-- add questions;
-- publish it;
-- share the General invite link or QR code;
-- see when responses arrive;
-- publish the final result.
+Use this to confirm that:
 
-### Then show Voter
+- Your vote exists
+- It has not been modified
+- It appears in the election record
 
-Show that the voter can:
+At this stage you can verify:
 
-- open the link from a phone or browser;
-- request a ballot automatically from the QR link;
-- wait while the request is verified;
-- answer the questionnaire;
-- submit once.
+- &#10003; Your vote was received
+- &#10003; Your vote has not been changed
 
-Do not start by explaining cryptography. Let the screen show the everyday workflow first.
+## Step 5: Verify the election result
 
-### Finish with Observer
+Once voting closes, open **Election Results**.
 
-Show that a separate person can:
+You can see:
 
-- find the questionnaire;
-- see accepted and rejected responses;
-- see why any response was rejected;
-- check the result without needing access to the organiser's private browser state.
+- Total votes
+- Vote breakdown
+- Audit information
 
-## What is private and what is public
+The result is calculated from the published votes.
 
-Private:
+Anyone can independently verify the count.
 
-- the voter's normal identity;
-- the organiser's secret key;
-- the link between a specific voter and their final answer;
-- encrypted answer details unless the right key is deliberately supplied.
+At this stage you can verify:
 
-Public:
+- &#10003; The reported result is correct
+- &#10003; All counted votes are genuine
+- &#10003; No votes were added or removed
 
-- the questionnaire;
-- anonymous submitted responses;
-- accept or reject decisions;
-- the final result summary.
+## How is this different from normal online voting?
 
-## Useful phrases
+Traditional systems require voters to trust the operator.
 
-**Why not just use a normal survey tool?**
+With auditable voting:
 
-Normal survey tools usually require trusting the operator and the database. This project is about making the count independently checkable.
+| Question | Traditional voting | Auditable voting |
+| --- | --- | --- |
+| Was my vote recorded? | Trust required | You can verify it |
+| Was my vote altered? | Trust required | You can verify it |
+| Was the result calculated correctly? | Trust required | Anyone can verify it |
+| Can the organiser secretly change results? | Difficult to detect | Publicly detectable |
 
-**Can the organiser see who voted for what?**
+## Privacy
 
-The organiser can decide who may take part. The submitted response uses a separate response identity, so the normal voter identity is not the public ballot identity.
+Your vote is linked to your cryptographic identity, not your real-world identity.
 
-**Can someone vote twice?**
+The system is designed so that:
 
-Each ballot credential can only be accepted once. Duplicate or invalid submissions are rejected and the reason is shown.
+- Votes can be audited
+- Results can be verified
+- Personal information is not required
 
-**What if the network is slow?**
+## What should I try next?
 
-The app uses public relays, so delivery can sometimes take a few seconds. The screens refresh and retry, but this is still experimental software.
+1. Create an account
+2. Cast a vote
+3. Verify your vote
+4. Compare your verification result with another participant
+5. Explore the audit data
 
-**Is this ready for official elections?**
+If two independent users obtain the same verification result, they can be confident they are seeing the same election outcome.
 
-No. Treat it as experimental infrastructure that demonstrates a verifiable pattern. It needs independent review before high-stakes use.
+## Plain-language explanation
 
-## Safe caveats
+Most people do not care about the phrase "auditable voting". They care about three questions:
 
-Use these when setting expectations:
+- Can I verify my vote was counted?
+- Can anybody see who I voted for?
+- Can somebody change the result?
 
-- This is a working prototype, not a production election service.
-- Public relay reliability can affect timing.
-- Private keys stay in the browser, so device handling matters.
-- The cryptographic and protocol design should be independently reviewed before serious deployment.
+This demo answers those questions directly:
 
-## Short closing line
+- You can independently check that your vote was included in the final count.
+- Your vote is connected to a cryptographic identity, not your real name.
+- The result is calculated from public records, so hidden changes are publicly detectable.
 
-The important idea is simple: eligibility is checked before voting, the vote is submitted privately, and the public can still check the count.
+Technical details about signatures, relays, hashes, and Nostr belong in the separate **How it works** section.

@@ -6,7 +6,7 @@ Auditable Voting lets an organiser publish a questionnaire, invite known voters,
 
 Live site: [npub1hkze8k84da0qm4lu75x32z33qepyzdqc735jnj5a602x8q4cstksnkvl3a.nsite.lol](https://npub1hkze8k84da0qm4lu75x32z33qepyzdqc735jnj5a602x8q4cstksnkvl3a.nsite.lol/)
 
-For a non-technical walkthrough, start with the [plain-English demo guide](docs/demo-guide.md). It avoids protocol terms and gives a short meeting script for explaining the Organiser, Voter, and Observer screens.
+For a non-technical walkthrough, start with the [plain-English demo guide](docs/demo-guide.md). It avoids protocol terms and gives a 3 minute action-first flow for creating an account, voting, and checking the result.
 
 ## Status
 
