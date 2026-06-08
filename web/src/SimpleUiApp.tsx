@@ -249,18 +249,18 @@ function makeRoundBlindKeyId(coordinatorNpub: string, votingId: string) {
 
 function formatMissingCoordinatorKeyText(indices: number[]) {
   if (indices.length === 0) {
-    return 'Waiting for a coordinator key before preparing ticket request.';
+    return 'Waiting for an organiser key before preparing ticket request.';
   }
   if (indices.length === 1) {
-    return `Waiting for Coordinator ${indices[0]}'s key before preparing ticket request.`;
+    return `Waiting for Organiser ${indices[0]}'s key before preparing ticket request.`;
   }
   if (indices.length === 2) {
-    return `Waiting for Coordinators ${indices[0]} and ${indices[1]}' keys before preparing ticket request.`;
+    return `Waiting for Organisers ${indices[0]} and ${indices[1]}' keys before preparing ticket request.`;
   }
 
   const leading = indices.slice(0, -1).join(', ');
   const trailing = indices[indices.length - 1];
-  return `Waiting for Coordinators ${leading}, and ${trailing}' keys before preparing ticket request.`;
+  return `Waiting for Organisers ${leading}, and ${trailing}' keys before preparing ticket request.`;
 }
 
 function readDeploymentModeFromUrl() {
@@ -1661,7 +1661,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
     }
 
     if (!isValidNpub(nextCoordinator)) {
-      setRequestStatus("Coordinator key must be a valid npub.");
+      setRequestStatus("Organiser key must be a valid npub.");
       return;
     }
 
@@ -1669,19 +1669,19 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
     setManualCoordinators((current) => sanitizeCoordinatorNpubs([...current, nextCoordinator]));
     setCoordinatorDraft("");
     if (alreadyAdded) {
-      setRequestStatus("Coordinator already added.");
+      setRequestStatus("Organiser already added.");
       return;
     }
     if (questionnaireModeActive) {
-      setRequestStatus("Coordinator added. Click Vote to request a blind signature.");
+      setRequestStatus("Organiser added. Click Vote to request a blind signature.");
       return;
     }
     void sendFollowRequests([nextCoordinator], {
       pending: "Sending follow request...",
       success: questionnaireModeActive
-        ? "Coordinator notified. Waiting for questionnaire updates."
-        : "Coordinator notified. Waiting for round tickets.",
-      failure: "Coordinator follow request failed.",
+        ? "Organiser notified. Waiting for questionnaire updates."
+        : "Organiser notified. Waiting for round tickets.",
+      failure: "Organiser follow request failed.",
     });
   }
 
@@ -1696,19 +1696,19 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
     setManualCoordinators((current) => sanitizeCoordinatorNpubs([...current, scannedNpub]));
     setCoordinatorDraft("");
     if (alreadyAdded) {
-      setRequestStatus("Coordinator already added.");
+      setRequestStatus("Organiser already added.");
     } else {
       if (questionnaireModeActive) {
-        setRequestStatus("Coordinator added. Click Vote to request a blind signature.");
+        setRequestStatus("Organiser added. Click Vote to request a blind signature.");
         setCoordinatorScannerStatus(`Scanned ${shortenNpub(scannedNpub)}.`);
         return true;
       }
       void sendFollowRequests([scannedNpub], {
         pending: "Sending follow request...",
         success: questionnaireModeActive
-          ? "Coordinator notified. Waiting for questionnaire updates."
-          : "Coordinator notified. Waiting for round tickets.",
-        failure: "Coordinator follow request failed.",
+          ? "Organiser notified. Waiting for questionnaire updates."
+          : "Organiser notified. Waiting for round tickets.",
+        failure: "Organiser follow request failed.",
       });
     }
     setCoordinatorScannerStatus(`Scanned ${shortenNpub(scannedNpub)}.`);
@@ -1882,7 +1882,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
       return;
     }
 
-    setRequestStatus(messages?.pending ?? "Contacting coordinators...");
+    setRequestStatus(messages?.pending ?? "Contacting organisers...");
 
     try {
       const followResults = await Promise.all(targetCoordinatorNpubs.map(async (coordinatorNpub) => {
@@ -1915,14 +1915,14 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
               messages?.success
               ?? (
                 questionnaireModeActive
-                  ? "Coordinators notified. Waiting for questionnaire updates."
-                  : "Coordinators notified. Waiting for round tickets."
+                  ? "Organisers notified. Waiting for questionnaire updates."
+                  : "Organisers notified. Waiting for round tickets."
               )
             )
-          : (messages?.failure ?? "Coordinator notification failed."),
+          : (messages?.failure ?? "Organiser notification failed."),
       );
     } catch {
-      setRequestStatus(messages?.failure ?? "Coordinator notification failed.");
+      setRequestStatus(messages?.failure ?? "Organiser notification failed.");
     }
   }
 
@@ -1936,11 +1936,11 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
       (coordinatorNpub) => coordinatorDiagnosticsByNpub.get(coordinatorNpub)?.follow.tone !== "ok",
     );
     await sendFollowRequests(retryTargets, {
-      pending: "Retrying unresponsive coordinators...",
+      pending: "Retrying unresponsive organisers...",
       success: questionnaireModeActive
         ? "Retry sent. Waiting for questionnaire updates."
         : "Retry sent. Waiting for round tickets.",
-      failure: "Coordinator retry failed.",
+      failure: "Organiser retry failed.",
     });
   }
 
@@ -2270,13 +2270,13 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
           configuredCoordinatorTargets.length === results.length
             ? (
                 questionnaireModeActive
-                  ? 'Coordinators notified. Waiting for questionnaire updates.'
-                  : 'Coordinators notified. Waiting for round tickets.'
+                  ? 'Organisers notified. Waiting for questionnaire updates.'
+                  : 'Organisers notified. Waiting for round tickets.'
               )
             : (
                 questionnaireModeActive
-                  ? 'Additional coordinators received. Waiting for questionnaire updates.'
-                  : 'Additional coordinators received. Waiting for round tickets.'
+                  ? 'Additional organisers received. Waiting for questionnaire updates.'
+                  : 'Additional organisers received. Waiting for round tickets.'
               ),
         );
       }
@@ -2397,7 +2397,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
 
       setRequestStatus(
         results.some((result) => result.successes > 0)
-          ? "Coordinators notified. Waiting for round tickets."
+          ? "Organisers notified. Waiting for round tickets."
           : "Blinded ticket requests failed.",
       );
     })();
@@ -2633,8 +2633,8 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
     && announcedQuestionnaireIds.length > 0
     && readyAnnouncedQuestionnaireIds.length === 0;
   const hiddenRequestStatuses = new Set([
-    "Coordinator notified. Waiting for round tickets.",
-    "Coordinators notified. Waiting for round tickets.",
+    "Organiser notified. Waiting for round tickets.",
+    "Organisers notified. Waiting for round tickets.",
   ]);
   const visibleRequestStatus = requestStatus && !hiddenRequestStatuses.has(requestStatus)
     ? requestStatus
@@ -2906,7 +2906,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
             aria-label='Join'
           >
             <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
-              <h4 className='simple-voter-section-title'>Request invite from coordinator</h4>
+              <h4 className='simple-voter-section-title'>Request invite from organiser</h4>
               <div className='simple-voter-add-row simple-voter-add-row-with-scan'>
                 <input
                   id='simple-coordinator-draft'
@@ -2922,7 +2922,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
                       addCoordinatorInput();
                     }
                   }}
-                  placeholder='Coordinator identity (npub1...)'
+                  placeholder='Organiser identity (npub1...)'
                 />
                 <button
                   type='button'
@@ -2954,7 +2954,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
                 active={coordinatorScannerActive}
                 onDetected={handleCoordinatorScanDetected}
                 onClose={() => setCoordinatorScannerActive(false)}
-                prompt='Point the camera at a coordinator npub QR code.'
+                prompt='Point the camera at an organiser npub QR code.'
               />
               {coordinatorScannerStatus ? (
                 <p className='simple-voter-note'>{coordinatorScannerStatus}</p>
@@ -2966,7 +2966,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
                       <TokenFingerprint tokenId={value} compact showQr={false} hideMetadata />
                       <div className='simple-coordinator-card-copy'>
                         <p className='simple-coordinator-card-title'>
-                          Coordinator {index + 1}
+                          Organiser {index + 1}
                         </p>
                         <p
                           className='simple-coordinator-card-meta'
@@ -2979,7 +2979,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
                         type='button'
                         className='simple-coordinator-card-remove'
                         onClick={() => removeCoordinatorInput(index)}
-                        aria-label={`Remove coordinator ${index + 1}`}
+                        aria-label={`Remove organiser ${index + 1}`}
                       >
                         ×
                       </button>
@@ -3151,7 +3151,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
                       <span>
                         {hasCoordinatorConnection
                           ? 'Connected to voting network'
-                          : 'Waiting to connect to coordinators'}
+                          : 'Waiting to connect to organisers'}
                       </span>
                     </li>
                     <li
@@ -3226,7 +3226,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
                                   {configuredCoordinatorTargets.map(
                                     (coordinatorNpub, index) => (
                                       <th key={coordinatorNpub} scope='col'>
-                                        Coord {index + 1}
+                                        Org {index + 1}
                                       </th>
                                     ),
                                   )}
@@ -3272,7 +3272,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
                 <p className='simple-voter-note'>
                   {coordinatorsHaveBeenNotified
                     ? 'Waiting for the next live round and ticket.'
-                    : 'Add coordinators in Join, then wait for the next live round and ticket.'}
+                    : 'Add organisers in Join, then wait for the next live round and ticket.'}
                 </p>
               </div>
             )

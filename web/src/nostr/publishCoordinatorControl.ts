@@ -32,7 +32,7 @@ export async function publishCoordinatorControl(input: {
 }) {
   const decoded = nip19.decode(input.coordinatorNsec.trim());
   if (decoded.type !== "nsec") {
-    throw new Error("Coordinator key must be an nsec.");
+    throw new Error("Organiser key must be an nsec.");
   }
 
   const secretKey = decoded.data as Uint8Array;
@@ -45,7 +45,7 @@ export async function publishCoordinatorControl(input: {
   }, secretKey);
   const expectedPubkey = getPublicKey(secretKey);
   if (event.pubkey !== expectedPubkey) {
-    throw new Error("Coordinator control publish signer mismatch.");
+    throw new Error("Organiser control publish signer mismatch.");
   }
   input.onPrepared?.({
     eventId: event.id,

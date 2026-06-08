@@ -431,7 +431,7 @@ function toQuestionnaireResponseAnswers(
       const coordinatorNpub = options?.coordinatorNpub?.trim() ?? "";
       const responseSecretKey = options?.responseSecretKey ?? null;
       if (!coordinatorNpub || !responseSecretKey) {
-        throw new OptionARuntimeError("invalid_submission", "Coordinator encryption key is unavailable for free-text encryption.");
+        throw new OptionARuntimeError("invalid_submission", "Organiser encryption key is unavailable for free-text encryption.");
       }
       const coordinatorHex = toHexPubkey(coordinatorNpub);
       const conversationKey = nip44.v2.utils.getConversationKey(responseSecretKey, coordinatorHex);
@@ -1229,7 +1229,7 @@ export class QuestionnaireOptionAVoterRuntime {
         ?? cachedDefinition?.blindSigningPublicKey
         ?? null;
       if (!blindSigningPublicKey) {
-        throw new OptionARuntimeError("issuance_failed", "Coordinator blind-signing key is not available yet.");
+        throw new OptionARuntimeError("issuance_failed", "Organiser blind-signing key is not available yet.");
       }
       const tokenSecret = makeTokenSecret();
       const tokenCommitment = await sha256Hex(tokenSecret);
@@ -1370,7 +1370,7 @@ export class QuestionnaireOptionAVoterRuntime {
     if (!this.state.coordinatorNpub?.trim()) {
       throw new OptionARuntimeError(
         "invite_missing",
-        "Coordinator details are missing. Refresh status or reopen the invite.",
+        "Organiser details are missing. Refresh status or reopen the invite.",
       );
     }
     const sentAt = nowIso();
@@ -2227,7 +2227,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
 
   async recoverCoordinatorStateFromSelfDm() {
     if (!this.state || !this.coordinatorNpub) {
-      throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
+      throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
     }
     const coordinatorNsec = this.fallbackNsec?.trim() ?? "";
     const since = Math.floor(Date.now() / 1000) - OPTION_A_SELF_COPY_RECOVERY_LOOKBACK_SECONDS;
@@ -2489,7 +2489,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
 
   private ensureCoordinatorState(summary?: Partial<ElectionSummary>) {
     if (!this.coordinatorNpub) {
-      throw new OptionARuntimeError("coordinator_missing", "Coordinator npub is missing.");
+      throw new OptionARuntimeError("coordinator_missing", "Organiser npub is missing.");
     }
     const existing = loadCoordinatorState({ coordinatorNpub: this.coordinatorNpub, electionId: this.electionId });
     if (existing) {
@@ -2535,7 +2535,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
 
   private async ensureBlindSigningKey(): Promise<QuestionnaireBlindPrivateKey> {
     if (!this.state || !this.coordinatorNpub) {
-      throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
+      throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
     }
     if (this.state.blindSigningPrivateKey) {
       const existingPrivateKey = this.state.blindSigningPrivateKey;
@@ -2568,7 +2568,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
 
   addWhitelistNpub(invitedNpub: string) {
     if (!this.state || !this.coordinatorNpub) {
-      throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
+      throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
     }
     const normalizedInvitedNpub = toNpub(invitedNpub);
     if (!normalizedInvitedNpub) {
@@ -2594,7 +2594,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
 
   addBearerInviteCode(codeHash: string) {
     if (!this.state || !this.coordinatorNpub) {
-      throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
+      throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
     }
     const normalisedHash = (codeHash ?? "").trim().toLowerCase();
     if (!isQuestionnaireInviteCodeHash(normalisedHash)) {
@@ -2627,7 +2627,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
 
   revokeBearerInviteCode(codeHash: string) {
     if (!this.state || !this.coordinatorNpub) {
-      throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
+      throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
     }
     const normalisedHash = (codeHash ?? "").trim().toLowerCase();
     const existing = this.state.bearerInviteCodes?.[normalisedHash] ?? null;
@@ -2732,7 +2732,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
 
   async sendInvite(invitedNpub: string, meta: { title: string; description: string; voteUrl: string }) {
     if (!this.state || !this.coordinatorNpub) {
-      throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
+      throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
     }
     const normalizedInvitedNpub = toNpub(invitedNpub);
     if (!normalizedInvitedNpub) {
@@ -2825,7 +2825,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
 
   async syncBlindRequestsFromDm() {
     if (!this.state || !this.coordinatorNpub) {
-      throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
+      throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
     }
     if (isDelegatedWorkerCapabilityEnabled({
       electionId: this.electionId,
@@ -2924,7 +2924,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
     minRetryMs?: number;
   }) {
     if (!this.state || !this.coordinatorNpub) {
-      throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
+      throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
     }
     if (isDelegatedWorkerCapabilityEnabled({
       electionId: this.electionId,
@@ -3014,7 +3014,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
 
   async syncBlindIssuanceAcksFromDm() {
     if (!this.state || !this.coordinatorNpub) {
-      throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
+      throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
     }
     try {
       const since = this.getDmReadSince();
@@ -3047,7 +3047,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
 
   async syncSubmissionsFromDm() {
     if (!this.state || !this.coordinatorNpub) {
-      throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
+      throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
     }
     if (isDelegatedWorkerCapabilityEnabled({
       electionId: this.electionId,
@@ -3120,7 +3120,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
 
   private async publishPendingAcceptanceResultsToDmInternal(options?: { forceAll?: boolean }) {
     if (!this.state || !this.coordinatorNpub) {
-      throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
+      throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
     }
 
     let delivered = 0;
@@ -3182,7 +3182,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
 
   private async processPendingBlindRequestsInternal() {
     if (!this.state || !this.coordinatorNpub) {
-      throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
+      throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
     }
     if (isDelegatedWorkerCapabilityEnabled({
       electionId: this.electionId,
@@ -3317,7 +3317,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
 
   private async processPendingSubmissionsInternal(requiredQuestionIds: string[]) {
     if (!this.state || !this.coordinatorNpub) {
-      throw new OptionARuntimeError("not_logged_in", "Coordinator login is required.");
+      throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
     }
     if (isDelegatedWorkerCapabilityEnabled({
       electionId: this.electionId,

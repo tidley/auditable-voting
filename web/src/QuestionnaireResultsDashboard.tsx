@@ -189,7 +189,7 @@ export default function QuestionnaireResultsDashboard({
                 </article>
               ) : null}
               <article className='simple-auditor-status-card simple-auditor-status-card-wide'>
-                <p className='simple-auditor-summary-label'>Coordinator</p>
+                <p className='simple-auditor-summary-label'>Organiser</p>
                 <p className='simple-auditor-status-value'>{coordinatorText}</p>
               </article>
             </div>

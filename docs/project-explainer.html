@@ -410,7 +410,7 @@
         <nav class="topbar-links" aria-label="Quick links">
           <a class="topbar-link" href="./">Home</a>
           <a class="topbar-link" href="./dashboard.html?role=auditor">Observer</a>
-          <a class="topbar-link" href="./simple-coordinator.html?role=coordinator">Coordinator</a>
+          <a class="topbar-link" href="./simple-coordinator.html?role=coordinator">Organiser</a>
           <a class="topbar-link" href="./simple.html?role=voter">Voter</a>
           <a class="topbar-link" href="./technical-details.html">Technical details</a>
         </nav>
@@ -432,15 +432,15 @@
             <div class="short-version">
               <div class="panel panel-accent">
                 <h2 id="short-version">The short version</h2>
-                <p>This system lets a coordinator confirm who is allowed to vote without learning how each person voted. Voters receive a blind credential, submit their response from a fresh identity, and observers can recompute the result from public data.</p>
+                <p>This system lets an organiser confirm who is allowed to vote without learning how each person voted. Voters receive a blind credential, submit their response from a fresh identity, and observers can recompute the result from public data.</p>
                 <div class="hero-actions">
                   <a class="button" href="./technical-details.html">Technical details</a>
                 </div>
               </div>
               <ol class="flow-list panel" aria-label="One minute flow">
-                <li>A coordinator confirms that a voter is eligible.</li>
+                <li>An organiser confirms that a voter is eligible.</li>
                 <li>The voter requests a blind ballot credential.</li>
-                <li>The coordinator signs it without seeing the final credential.</li>
+                <li>The organiser signs it without seeing the final credential.</li>
                 <li>The voter submits a public ballot anonymously.</li>
                 <li>Anyone can verify that accepted ballots are valid, unique, and correctly tallied.</li>
               </ol>
@@ -450,7 +450,7 @@
           <section class="section" aria-labelledby="what-this-is">
         <p class="section-kicker">Purpose</p>
         <h2 id="what-this-is">What this system is trying to do</h2>
-        <p class="section-intro">It separates two things that are usually hard to combine: eligibility and privacy. The coordinator can confirm that a voter is allowed to participate, but should not be able to see how they voted. Observers can independently recompute the result from public data.</p>
+        <p class="section-intro">It separates two things that are usually hard to combine: eligibility and privacy. The organiser can confirm that a voter is allowed to participate, but should not be able to see how they voted. Observers can independently recompute the result from public data.</p>
         <div class="mental-model" aria-label="Role model">
           <div class="mental-column">
             <h3>Voter</h3>
@@ -459,7 +459,7 @@
             <p>Keeps private keys local</p>
           </div>
           <div class="mental-column">
-            <h3>Coordinator</h3>
+            <h3>Organiser</h3>
             <p>Confirms eligibility</p>
             <p>Issues blind credential</p>
             <p>Publishes round metadata</p>
@@ -480,7 +480,7 @@
         <div class="grid-2">
           <article class="info-card">
             <h3>Eligibility</h3>
-            <p>The coordinator decides who may take part and issues a ballot credential only to authorised voters.</p>
+            <p>The organiser decides who may take part and issues a ballot credential only to authorised voters.</p>
           </article>
           <article class="info-card">
             <h3>Privacy</h3>
@@ -502,7 +502,7 @@
             </ul>
           </article>
           <article class="role-card">
-            <h3>For coordinators</h3>
+            <h3>For organisers</h3>
             <ul>
               <li>Create and publish a questionnaire.</li>
               <li>Invite voters or approve requests.</li>
@@ -512,9 +512,9 @@
           <article class="role-card">
             <h3>For observers</h3>
             <ul>
-              <li>Search by questionnaire or coordinator identity.</li>
+              <li>Search by questionnaire or organiser identity.</li>
               <li>Check accepted and rejected public ballots.</li>
-              <li>Recompute the public result stream, with optional local decryption when a coordinator nsec is deliberately entered.</li>
+              <li>Recompute the public result stream, with optional local decryption when an organiser nsec is deliberately entered.</li>
             </ul>
           </article>
         </div>
@@ -529,14 +529,14 @@
             <ul>
               <li>Questionnaire definitions and round state.</li>
               <li>Anonymous public ballot submissions.</li>
-              <li>Coordinator accept/reject decisions.</li>
+              <li>Organiser accept/reject decisions.</li>
               <li>Published result summaries.</li>
             </ul>
           </article>
           <article class="info-card">
             <h3>Private or local</h3>
             <ul>
-              <li>Voter and coordinator signing keys.</li>
+              <li>Voter and organiser signing keys.</li>
               <li>Token secrets and blinding factors.</li>
               <li>Unspent ballot credentials.</li>
               <li>Browser-local recovery state.</li>
@@ -554,7 +554,7 @@
             <li>Whether a credential was spent more than once.</li>
             <li>Whether rejected ballots were rejected for deterministic reasons.</li>
             <li>Whether the published tally matches the accepted public ballots.</li>
-            <li>Encrypted answer details when the matching coordinator nsec is deliberately entered in Observer.</li>
+            <li>Encrypted answer details when the matching organiser nsec is deliberately entered in Observer.</li>
           </ul>
         </div>
           </section>
@@ -563,9 +563,9 @@
         <p class="section-kicker">Trust model</p>
         <h2 id="trust">Who has to be trusted</h2>
         <div class="trust-box panel">
-          <p>The coordinator is trusted to decide who may participate.</p>
-          <p>The coordinator should not learn how an eligible voter voted.</p>
-          <p>The public does not need to trust the coordinator's tally, because observers can recompute the result from public events.</p>
+          <p>The organiser is trusted to decide who may participate.</p>
+          <p>The organiser should not learn how an eligible voter voted.</p>
+          <p>The public does not need to trust the organiser's tally, because observers can recompute the result from public events.</p>
           <p>The voter must protect their local keys and browser state.</p>
         </div>
           </section>
@@ -575,8 +575,8 @@
         <h2 id="test-vote">Run a test vote</h2>
         <div class="grid-3">
           <article class="role-card">
-            <h3>1. Coordinator</h3>
-            <p>Open Coordinator, set up a questionnaire, publish it, then share invite links from Voters.</p>
+            <h3>1. Organiser</h3>
+            <p>Open Organiser, set up a questionnaire, publish it, then share invite links from Voters.</p>
           </article>
           <article class="role-card">
             <h3>2. Voter</h3>
@@ -584,7 +584,7 @@
           </article>
           <article class="role-card">
             <h3>3. Observer</h3>
-            <p>Open Observer and search for the questionnaire ID or coordinator identity to verify the public result stream. Observer fetches once when opened; use Refresh to update it later. Encrypted answer details can be decrypted locally from Submitted Votes when the matching coordinator nsec is supplied.</p>
+            <p>Open Observer and search for the questionnaire ID or organiser identity to verify the public result stream. Observer fetches once when opened; use Refresh to update it later. Encrypted answer details can be decrypted locally from Submitted Votes when the matching organiser nsec is supplied.</p>
           </article>
         </div>
         <p>Questionnaires can mix yes/no, multiple-choice, ranked-choice, and free-text questions. Ranked-choice results are counted as points, with the highest total preferred: first choice gets one point per available option, later choices count down from there, and unranked options get <code>0</code> points.</p>
@@ -598,7 +598,7 @@
           <li>Public relay reliability can affect delivery and discovery.</li>
           <li>Browser-held secret material needs careful handling.</li>
           <li>The cryptographic design needs external review before production use.</li>
-          <li>Large multi-coordinator runs are not yet reliable on the current public relay set.</li>
+          <li>Large multi-organiser runs are not yet reliable on the current public relay set.</li>
         </ul>
           </section>
 

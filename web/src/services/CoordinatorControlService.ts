@@ -117,7 +117,7 @@ export class CoordinatorControlService {
     }
 
     throw new Error(
-      `Coordinator control publish failed across all relays for ${input.message.event_type}. Last result: ${
+      `Organiser control publish failed across all relays for ${input.message.event_type}. Last result: ${
         lastPublish ? JSON.stringify(lastPublish.relayResults) : "no publish result"
       }`,
     );

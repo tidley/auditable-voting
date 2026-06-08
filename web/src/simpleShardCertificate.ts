@@ -199,7 +199,7 @@ async function ensureBlindKeySubscription(input: {
 
   const decoded = nip19.decode(input.coordinatorNpub.trim());
   if (decoded.type !== "npub") {
-    throw new Error("Coordinator value must be an npub.");
+    throw new Error("Organiser value must be an npub.");
   }
 
   const state: BlindKeySubscriptionState = {
@@ -458,7 +458,7 @@ export async function publishSimpleBlindKeyAnnouncement(input: {
 }) {
   const decoded = nip19.decode(input.coordinatorNsec.trim());
   if (decoded.type !== "nsec") {
-    throw new Error("Coordinator key must be an nsec.");
+    throw new Error("Organiser key must be an nsec.");
   }
 
   const secretKey = decoded.data as Uint8Array;
@@ -594,7 +594,7 @@ export async function fetchLatestSimpleBlindKeyAnnouncement(input: {
 }): Promise<SimpleBlindKeyAnnouncement | null> {
   const decoded = nip19.decode(input.coordinatorNpub.trim());
   if (decoded.type !== "npub") {
-    throw new Error("Coordinator value must be an npub.");
+    throw new Error("Organiser value must be an npub.");
   }
 
   const relays = await resolveNip65OutboxRelays({

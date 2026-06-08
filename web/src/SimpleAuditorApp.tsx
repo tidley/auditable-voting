@@ -696,7 +696,7 @@ export default function SimpleAuditorApp() {
                 placeholder='Filter by npub, round/questionnaire ID, or prompt...'
               />
               <label className='simple-voter-label' htmlFor='simple-auditor-coordinator-npub'>
-                Questionnaire Coordinator Identity
+                Questionnaire organiser identity
               </label>
               <select
                 id='simple-auditor-coordinator-npub'
@@ -704,7 +704,7 @@ export default function SimpleAuditorApp() {
                 value={selectedCoordinatorNpub}
                 onChange={(event) => setSelectedCoordinatorNpub(event.target.value)}
               >
-                <option value=''>Any questionnaire coordinator</option>
+                <option value=''>Any questionnaire organiser</option>
                 {coordinatorSelectOptions.map((coordinatorNpub) => (
                   <option key={coordinatorNpub} value={coordinatorNpub}>
                     {coordinatorNpub}
@@ -759,8 +759,8 @@ export default function SimpleAuditorApp() {
             selectedWorkerDelegationStatus?.state === "active" && selectedWorkerDelegationStatus.workerNpub
               ? `Proxy: ${normalizeToNpub(selectedWorkerDelegationStatus.workerNpub)}`
               : selectedQuestionnaire?.coordinatorNpub
-                ? `Coordinator: ${selectedQuestionnaire.coordinatorNpub}`
-                : "Coordinator: Unknown"
+                ? `Organiser: ${selectedQuestionnaire.coordinatorNpub}`
+                : "Organiser: Unknown"
           }
           publishedAtLabel='Published'
           publishedAtTime={Number(publishedAtTime)}
@@ -775,7 +775,7 @@ export default function SimpleAuditorApp() {
                 type='password'
                 value={observerDecryptNsec}
                 onChange={(event) => setObserverDecryptNsec(event.target.value)}
-                placeholder='Coordinator nsec...'
+                placeholder='Organiser nsec...'
                 autoComplete='off'
                 spellCheck={false}
               />
@@ -1183,7 +1183,7 @@ function decryptAuditorResponseDetails(input: {
   });
 
   const statusText = failedCount > 0
-    ? `Decrypted ${decryptedCount}; ${failedCount} failed. Check that the nsec matches the questionnaire coordinator.`
+    ? `Decrypted ${decryptedCount}; ${failedCount} failed. Check that the nsec matches the questionnaire organiser.`
     : `Decrypted ${decryptedCount} encrypted response${decryptedCount === 1 ? "" : "s"} locally.`;
 
   return {

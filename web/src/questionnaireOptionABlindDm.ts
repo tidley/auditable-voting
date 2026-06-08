@@ -1027,7 +1027,7 @@ function optionABlindDmSubject(
     case "optiona_voter_state_dm":
       return "Auditable Voting voter state";
     case "optiona_coordinator_state_dm":
-      return "Auditable Voting coordinator state";
+      return "Auditable Voting organiser state";
     case "optiona_worker_status_dm":
       return "Auditable Voting worker status";
     case "optiona_worker_delegation_dm":

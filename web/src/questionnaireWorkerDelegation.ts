@@ -213,7 +213,7 @@ async function publishWorkerControlEvent(input: {
 }) {
   const secretKey = decodeNsec(input.coordinatorNsec);
   if (!secretKey) {
-    throw new Error("Invalid coordinator nsec.");
+    throw new Error("Invalid organiser nsec.");
   }
   const event = finalizeEvent({
     kind: input.kind,

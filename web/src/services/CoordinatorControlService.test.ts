@@ -297,7 +297,7 @@ describe("CoordinatorControlService", () => {
       thresholdN: 2,
       roster: ["npub-lead", "npub-sub"],
     });
-    const flowRejection = expect(flow).rejects.toThrow(/Coordinator control publish failed across all relays/);
+    const flowRejection = expect(flow).rejects.toThrow(/Organiser control publish failed across all relays/);
 
     await vi.runAllTimersAsync();
     await flowRejection;

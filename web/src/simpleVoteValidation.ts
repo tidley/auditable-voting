@@ -46,7 +46,7 @@ export async function validateSimpleSubmittedVotes(
       allowedCoordinators.size > 0
       && uniqueCoordinators.some((coordinatorNpub) => !allowedCoordinators.has(coordinatorNpub))
     ) {
-      results.push({ vote, valid: false, reason: "Unauthorized coordinator share" });
+      results.push({ vote, valid: false, reason: "Unauthorized organiser share" });
       continue;
     }
 
@@ -67,7 +67,7 @@ export async function validateSimpleSubmittedVotes(
     }
 
     if (uniqueCoordinators.length !== parsedProofs.length) {
-      results.push({ vote, valid: false, reason: "Duplicate coordinator share" });
+      results.push({ vote, valid: false, reason: "Duplicate organiser share" });
       continue;
     }
 

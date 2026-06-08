@@ -143,7 +143,7 @@ describe("simpleVoteValidation", () => {
     ], 1, ["npub1coord"]);
 
     expect(results[0].valid).toBe(false);
-    expect(results[0].reason).toBe("Unauthorized coordinator share");
+    expect(results[0].reason).toBe("Unauthorized organiser share");
   });
 
   it("rejects proofs that bind to a different round", async () => {

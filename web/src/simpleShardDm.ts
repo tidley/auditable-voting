@@ -812,7 +812,7 @@ export async function sendSimpleCoordinatorFollow(input: {
 }): Promise<DmPublishResult> {
   const decoded = nip19.decode(input.coordinatorNpub);
   if (decoded.type !== "npub") {
-    throw new Error("Coordinator value must be an npub.");
+    throw new Error("Organiser value must be an npub.");
   }
 
   const dmRelays = await resolveConversationDmRelays(
@@ -841,7 +841,7 @@ export async function sendSimpleCoordinatorFollow(input: {
       voting_id: input.votingId,
       created_at: new Date().toISOString(),
     }),
-    "Follow coordinator",
+    "Follow organiser",
   );
 
   const pool = getSharedNostrPool();
@@ -997,7 +997,7 @@ export async function sendSimpleCoordinatorRoster(input: {
 
   const coordinatorNpubs = uniqueNonEmpty(input.coordinatorNpubs);
   if (coordinatorNpubs.length === 0) {
-    throw new Error('Coordinator roster must contain at least one npub.');
+    throw new Error('Organiser roster must contain at least one npub.');
   }
 
   const dmRelays = await resolveConversationDmRelays(
@@ -1028,7 +1028,7 @@ export async function sendSimpleCoordinatorRoster(input: {
       questionnaire_state: input.questionnaireState?.trim() || undefined,
       created_at: new Date().toISOString(),
     }),
-    'Coordinator roster',
+    'Organiser roster',
   );
 
   const pool = getSharedNostrPool();
@@ -1077,7 +1077,7 @@ export async function sendSimpleSubCoordinatorJoin(input: {
 }): Promise<DmPublishResult> {
   const decoded = nip19.decode(input.leadCoordinatorNpub);
   if (decoded.type !== "npub") {
-    throw new Error("Lead coordinator value must be an npub.");
+    throw new Error("Lead organiser value must be an npub.");
   }
 
   const dmRelays = await resolveConversationDmRelays(
@@ -1106,7 +1106,7 @@ export async function sendSimpleSubCoordinatorJoin(input: {
       mls_join_package: input.mlsJoinPackage,
       created_at: new Date().toISOString(),
     }),
-    "Join lead coordinator",
+    "Join lead organiser",
   );
 
   const pool = getSharedNostrPool();
@@ -1141,7 +1141,7 @@ export async function sendSimpleCoordinatorMlsWelcome(input: {
 }): Promise<DmPublishResult> {
   const decoded = nip19.decode(input.coordinatorNpub);
   if (decoded.type !== "npub") {
-    throw new Error("Coordinator value must be an npub.");
+    throw new Error("Organiser value must be an npub.");
   }
 
   const dmRelays = await resolveConversationDmRelays(
@@ -1214,7 +1214,7 @@ export async function fetchSimpleShardRequests(input: {
   coordinatorNsec: string;
   relays?: string[];
 }): Promise<SimpleShardRequest[]> {
-  const keys = getNpubFromNsec(input.coordinatorNsec, "Coordinator");
+  const keys = getNpubFromNsec(input.coordinatorNsec, "Organiser");
   const requests = await fetchMailboxShardRequests(input);
   for (const request of requests) {
     recordSimpleTicketLifecycleTrace({
@@ -1236,7 +1236,7 @@ export function subscribeSimpleShardRequests(input: {
   onRequests: (requests: SimpleShardRequest[]) => void;
   onError?: (error: Error) => void;
 }): () => void {
-  const keys = getNpubFromNsec(input.coordinatorNsec, "Coordinator");
+  const keys = getNpubFromNsec(input.coordinatorNsec, "Organiser");
   return subscribeMailboxShardRequests({
     ...input,
     onRequests: (requests) => {
@@ -1262,7 +1262,7 @@ export async function fetchSimpleCoordinatorFollowers(input: {
 }): Promise<SimpleCoordinatorFollower[]> {
   const { secretKey, publicHex: coordinatorHex, npub: coordinatorNpub } = getNpubFromNsec(
     input.coordinatorNsec,
-    "Coordinator",
+    "Organiser",
   );
   const dmRelays = selectDmReadRelays(
     await resolveRecipientInboxRelays(coordinatorNpub, input.relays),
@@ -1634,7 +1634,7 @@ export function subscribeSimpleCoordinatorFollowers(input: {
 }): () => void {
   const { secretKey, publicHex: coordinatorHex, npub: coordinatorNpub } = getNpubFromNsec(
     input.coordinatorNsec,
-    "Coordinator",
+    "Organiser",
   );
   const pool = getSharedNostrPool();
   const followers = new Map<string, SimpleCoordinatorFollower>();
@@ -1711,7 +1711,7 @@ export async function fetchSimpleSubCoordinatorApplications(input: {
 }): Promise<SimpleSubCoordinatorApplication[]> {
   const { secretKey, publicHex: leadCoordinatorHex, npub: leadCoordinatorNpub } = getNpubFromNsec(
     input.leadCoordinatorNsec,
-    "Lead coordinator",
+    "Lead organiser",
   );
   const dmRelays = selectDmReadRelays(await resolveRecipientInboxRelays(leadCoordinatorNpub, input.relays));
   const pool = getSharedNostrPool();
@@ -1741,7 +1741,7 @@ export function subscribeSimpleSubCoordinatorApplications(input: {
 }): () => void {
   const { secretKey, publicHex: leadCoordinatorHex, npub: leadCoordinatorNpub } = getNpubFromNsec(
     input.leadCoordinatorNsec,
-    "Lead coordinator",
+    "Lead organiser",
   );
   const pool = getSharedNostrPool();
   const applications = new Map<string, SimpleSubCoordinatorApplication>();
@@ -1817,7 +1817,7 @@ export async function fetchSimpleCoordinatorMlsWelcomes(input: {
 }): Promise<SimpleCoordinatorMlsWelcome[]> {
   const { secretKey, publicHex, npub } = getNpubFromNsec(
     input.coordinatorNsec,
-    "Coordinator",
+    "Organiser",
   );
   const dmRelays = selectDmReadRelays(await resolveRecipientInboxRelays(npub, input.relays));
   const pool = getSharedNostrPool();
@@ -1847,7 +1847,7 @@ export function subscribeSimpleCoordinatorMlsWelcomes(input: {
 }): () => void {
   const { secretKey, publicHex, npub } = getNpubFromNsec(
     input.coordinatorNsec,
-    "Coordinator",
+    "Organiser",
   );
   const pool = getSharedNostrPool();
   const welcomes = new Map<string, SimpleCoordinatorMlsWelcome>();
@@ -2134,7 +2134,7 @@ export async function sendSimpleShareAssignment(input: {
 }): Promise<DmPublishResult> {
   const decoded = nip19.decode(input.coordinatorNpub);
   if (decoded.type !== "npub") {
-    throw new Error("Coordinator value must be an npub.");
+    throw new Error("Organiser value must be an npub.");
   }
 
   const dmRelays = await resolveConversationDmRelays(
@@ -2254,7 +2254,7 @@ export async function fetchSimpleCoordinatorShareAssignments(input: {
 }): Promise<SimpleShareAssignment[]> {
   const { secretKey, publicHex: coordinatorHex, npub: coordinatorNpub } = getNpubFromNsec(
     input.coordinatorNsec,
-    "Coordinator",
+    "Organiser",
   );
   const dmRelays = selectDmReadRelays(await resolveRecipientInboxRelays(coordinatorNpub, input.relays));
   const pool = getSharedNostrPool();
@@ -2284,7 +2284,7 @@ export function subscribeSimpleCoordinatorShareAssignments(input: {
 }): () => void {
   const { secretKey, publicHex: coordinatorHex, npub: coordinatorNpub } = getNpubFromNsec(
     input.coordinatorNsec,
-    "Coordinator",
+    "Organiser",
   );
   const pool = getSharedNostrPool();
   const assignments = new Map<string, SimpleShareAssignment>();

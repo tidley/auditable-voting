@@ -1849,14 +1849,14 @@ describe("Simple round flow", () => {
 
     await user.click(firstUi.getByRole("button", { name: /New/i }));
     const coordinatorInput = await firstUi.findByPlaceholderText(
-      'Coordinator identity (npub1...)',
+      'Organiser identity (npub1...)',
     );
     await user.type(coordinatorInput, "npub1examplecoordinatorxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
     await user.click(firstUi.getByRole("button", { name: /Add coordinator/i }));
 
     await waitFor(() => {
       expect(
-        firstUi.getByText("Coordinator 1", {
+        firstUi.getByText("Organiser 1", {
           selector: ".simple-coordinator-card-title",
         }),
       ).toBeTruthy();
@@ -1866,7 +1866,7 @@ describe("Simple round flow", () => {
 
     await waitFor(() => {
       expect(
-        firstUi.queryByText("Coordinator 1", {
+        firstUi.queryByText("Organiser 1", {
           selector: ".simple-coordinator-card-title",
         }),
       ).toBeNull();
@@ -1880,7 +1880,7 @@ describe("Simple round flow", () => {
 
     await waitFor(() => {
       expect(secondUi.getByText(/No coordinators added yet\./i)).toBeTruthy();
-      expect(secondUi.queryByText(/Coordinator 1/i)).toBeNull();
+      expect(secondUi.queryByText(/Organiser 1/i)).toBeNull();
     });
   });
 
@@ -1936,7 +1936,7 @@ describe("Simple round flow", () => {
       expect(coordinatorMlsWelcomes).toHaveLength(1);
       expect(coordinatorControlPublishAttempts).toHaveLength(0);
       expect(
-        leadUi.getByText(/Waiting for MLS welcome acknowledgements from Coordinator /i),
+        leadUi.getByText(/Waiting for MLS welcome acknowledgements from Organiser /i),
       ).toBeTruthy();
     });
 
@@ -2006,12 +2006,12 @@ describe("Simple round flow", () => {
     await user.click(voterOneUi.getByRole("tab", { name: /^Configure$/i }));
     await user.click(voterTwoUi.getByRole("tab", { name: /^Configure$/i }));
     await user.type(
-      voterOneUi.getByPlaceholderText('Coordinator identity (npub1...)'),
+      voterOneUi.getByPlaceholderText('Organiser identity (npub1...)'),
       coordinatorOneNpub,
     );
     await user.click(voterOneUi.getByRole("button", { name: /Add coordinator/i }));
     await user.type(
-      voterTwoUi.getByPlaceholderText('Coordinator identity (npub1...)'),
+      voterTwoUi.getByPlaceholderText('Organiser identity (npub1...)'),
       coordinatorOneNpub,
     );
     await user.click(voterTwoUi.getByRole("button", { name: /Add coordinator/i }));
@@ -2019,12 +2019,12 @@ describe("Simple round flow", () => {
     await waitFor(() => {
       expect(
         voterOneUi.getByText(
-          /(?:Coordinators notified|Additional coordinators received)\..*Waiting for round tickets\./i,
+          /(?:Organisers notified|Additional organisers received)\..*Waiting for round tickets\./i,
         ),
       ).toBeTruthy();
       expect(
         voterTwoUi.getByText(
-          /(?:Coordinators notified|Additional coordinators received)\..*Waiting for round tickets\./i,
+          /(?:Organisers notified|Additional organisers received)\..*Waiting for round tickets\./i,
         ),
       ).toBeTruthy();
       expect(coordinatorOneUi.getByText(/submitted as sub-coordinator/i)).toBeTruthy();
@@ -2086,8 +2086,8 @@ describe("Simple round flow", () => {
       expect(voterTwoUi.getByText(/Vote ticket received/i)).toBeTruthy();
       expect(coordinatorOneUi.getAllByText(/Voter acknowledged ticket receipt\./i).length).toBeGreaterThanOrEqual(2);
       expect(coordinatorTwoUi.getAllByText(/Voter acknowledged ticket receipt\./i).length).toBeGreaterThanOrEqual(2);
-      expect(voterOneUi.queryByText(/Coordinator 2[\s\S]*Waiting for live round\./i)).toBeNull();
-      expect(voterTwoUi.queryByText(/Coordinator 2[\s\S]*Waiting for live round\./i)).toBeNull();
+      expect(voterOneUi.queryByText(/Organiser 2[\s\S]*Waiting for live round\./i)).toBeNull();
+      expect(voterTwoUi.queryByText(/Organiser 2[\s\S]*Waiting for live round\./i)).toBeNull();
     });
 
     await user.click(coordinatorOneUi.getByRole("tab", { name: /^Voting$/i }));
@@ -2168,7 +2168,7 @@ describe("Simple round flow", () => {
 
     await user.click(voterUi.getByRole("tab", { name: /^Configure$/i }));
     await user.type(
-      voterUi.getByPlaceholderText('Coordinator identity (npub1...)'),
+      voterUi.getByPlaceholderText('Organiser identity (npub1...)'),
       coordinatorOneNpub,
     );
     await user.click(voterUi.getByRole("button", { name: /Add coordinator/i }));
@@ -2176,7 +2176,7 @@ describe("Simple round flow", () => {
     await waitFor(() => {
       expect(
         voterUi.getByText(
-          /(?:Coordinators notified|Additional coordinators received)\..*Waiting for round tickets\./i,
+          /(?:Organisers notified|Additional organisers received)\..*Waiting for round tickets\./i,
         ),
       ).toBeTruthy();
     });
@@ -2269,12 +2269,12 @@ describe("Simple round flow", () => {
 
     await user.click(voterUi.getByRole("tab", { name: /^Configure$/i }));
     await user.type(
-      voterUi.getByPlaceholderText('Coordinator identity (npub1...)'),
+      voterUi.getByPlaceholderText('Organiser identity (npub1...)'),
       coordinatorOneNpub,
     );
     await user.click(voterUi.getByRole("button", { name: /Add coordinator/i }));
     await user.type(
-      voterUi.getByPlaceholderText('Coordinator identity (npub1...)'),
+      voterUi.getByPlaceholderText('Organiser identity (npub1...)'),
       coordinatorTwoNpub,
     );
     await user.click(voterUi.getByRole("button", { name: /Add coordinator/i }));
@@ -2351,7 +2351,7 @@ describe("Simple round flow", () => {
 
     await user.click(voterUi.getByRole("tab", { name: /^Configure$/i }));
     await user.type(
-      voterUi.getByPlaceholderText('Coordinator identity (npub1...)'),
+      voterUi.getByPlaceholderText('Organiser identity (npub1...)'),
       coordinatorNpub,
     );
     await user.click(voterUi.getByRole("button", { name: /Add coordinator/i }));
@@ -2500,7 +2500,7 @@ describe("Simple round flow", () => {
     });
 
     expect(observerUi.getByLabelText(/Search/i)).toBeTruthy();
-    expect(observerUi.getByLabelText(/Questionnaire Coordinator Identity/i)).toBeTruthy();
+    expect(observerUi.getByLabelText(/Questionnaire organiser identity/i)).toBeTruthy();
     expect(observerUi.queryByText(/Search historic data/i)).toBeNull();
   });
 });

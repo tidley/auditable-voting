@@ -2,11 +2,11 @@
 
 Static, browser-first questionnaire voting over Nostr relays.
 
-Auditable Voting lets a coordinator publish a questionnaire, invite known voters, issue blind ballot credentials, accept public blind-token responses, and let observers verify the public result stream. It runs as a static web app, with an optional outbound-only Rust audit proxy for coordinator-offline issuance, verification, closing, and result publication.
+Auditable Voting lets an organiser publish a questionnaire, invite known voters, issue blind ballot credentials, accept public blind-token responses, and let observers verify the public result stream. It runs as a static web app, with an optional outbound-only Rust audit proxy for organiser-offline issuance, verification, closing, and result publication.
 
 Live site: [npub1hkze8k84da0qm4lu75x32z33qepyzdqc735jnj5a602x8q4cstksnkvl3a.nsite.lol](https://npub1hkze8k84da0qm4lu75x32z33qepyzdqc735jnj5a602x8q4cstksnkvl3a.nsite.lol/)
 
-For a non-technical walkthrough, start with the [plain-English demo guide](docs/demo-guide.md). It avoids protocol terms and gives a short meeting script for explaining the Coordinator, Voter, and Observer screens.
+For a non-technical walkthrough, start with the [plain-English demo guide](docs/demo-guide.md). It avoids protocol terms and gives a short meeting script for explaining the Organiser, Voter, and Observer screens.
 
 ## Status
 
@@ -16,15 +16,15 @@ The active product is the client in `web/` plus the optional audit proxy in `wor
 
 ## Features
 
-- Browser voter, coordinator, and observer flows.
+- Browser voter, organiser, and observer flows.
 - Nostr-first transport using public events and NIP-17 private control traffic.
-- Per-questionnaire relay hints published in questionnaire metadata when the coordinator uses a non-default relay set.
+- Per-questionnaire relay hints published in questionnaire metadata when the organiser uses a non-default relay set.
 - Yes/no, multiple-choice, ranked-choice, and free-text questionnaire questions.
 - Browser-only invite sharing by copied link, native device share actions, General QR links that open Vote directly and request a ballot automatically, personalised links for pre-whitelisted voter npubs, or one-use private code links with per-code share controls and QR codes that whitelist the first claimant and automatically request a ballot.
 - Blind credential issuance for allowlisted participants.
 - Public blind-token submissions from ephemeral response keys.
-- Coordinator and Observer results derived from public submissions and decisions, including proxy-accepted responses, locally verified blind-token proofs, rejection reasons, and coordinator-side automatic decryption of encrypted answer details when the local coordinator key is available.
-- Observer-local `nsec` entry for decrypting encrypted response details when the coordinator key is deliberately supplied.
+- Organiser and Observer results derived from public submissions and decisions, including proxy-accepted responses, locally verified blind-token proofs, rejection reasons, and organiser-side automatic decryption of encrypted answer details when the local organiser key is available.
+- Observer-local `nsec` entry for decrypting encrypted response details when the organiser key is deliberately supplied.
 - Optional audit proxy that can issue credentials, verify submissions, publish decisions, close completed questionnaires, and publish result summaries.
 - Static deployment to GitHub Pages or nsite.
 
@@ -43,9 +43,9 @@ Key web routes:
 
 - `/` - main app shell, defaulting to Observer
 - `/vote.html` - voter entry point
-- `/dashboard.html` - coordinator and auditor dashboard
+- `/dashboard.html` - organiser and auditor dashboard
 - `/simple.html` - simplified voter flow
-- `/simple-coordinator.html` - simplified coordinator flow
+- `/simple-coordinator.html` - simplified organiser flow
 - `/demo-guide.html` - plain-English meeting guide
 - `/project-explainer.html` - public "How it works" page
 - `/technical-details.html` - technical protocol note
@@ -106,7 +106,7 @@ These use public relays and can fail because of relay availability, rate limits,
 
 ## Audit Proxy
 
-The audit proxy is an optional Rust helper. It uses the delegated coordinator role to keep a questionnaire moving when the browser coordinator is offline.
+The audit proxy is an optional Rust helper. It uses the delegated organiser role to keep a questionnaire moving when the browser organiser is offline.
 
 It can:
 
@@ -139,11 +139,11 @@ The proxy is outbound-only. It does not require inbound ports or a public server
 
 ## Protocol Summary
 
-1. The coordinator publishes a questionnaire definition, optional non-default relay hints, and public expected-voter count.
+1. The organiser publishes a questionnaire definition, optional non-default relay hints, and public expected-voter count.
 2. Voters request blind credentials over private NIP-17 messages.
-3. The coordinator or audit proxy blind-signs requests from eligible voters.
+3. The organiser or audit proxy blind-signs requests from eligible voters.
 4. Voters submit public blind-token responses from ephemeral response keys.
-5. The coordinator or audit proxy publishes verification decisions and result summaries.
+5. The organiser or audit proxy publishes verification decisions and result summaries.
 6. Observers can verify public submissions, decisions, counts, and summaries from relay data.
 
 ## Deployment
@@ -230,10 +230,10 @@ sudo WEB_BASE_PATH=/auditable-voting/ ./launch-auditable-voting-fips.sh
 ## Limitations
 
 - Relay support for filters, retention, and rate limits varies.
-- Browser-local coordinator state and keys must be protected by the user.
-- The audit proxy improves liveness but is still delegated by the coordinator.
+- Browser-local organiser state and keys must be protected by the user.
+- The audit proxy improves liveness but is still delegated by the organiser.
 - Public verification depends on observers fetching the relevant relay events.
-- Decrypting encrypted observer details requires manually entering the matching coordinator `nsec`; the key is not a public audit input.
+- Decrypting encrypted observer details requires manually entering the matching organiser `nsec`; the key is not a public audit input.
 - The protocol and implementation need external review before strong production claims.
 
 ## Documentation

@@ -954,15 +954,15 @@ function formatCoordinatorControlStateLabel(
   }
 
   if (latestRound.phase === "open") {
-    return `Coordinator round open agreed for ${shortVotingId(latestRound.round_id)}.`;
+    return `Organiser round open agreed for ${shortVotingId(latestRound.round_id)}.`;
   }
 
   if (latestRound.phase === "open_proposed") {
     if (latestRound.missing_open_committers.length === 0) {
-      return `Coordinator approvals received for ${shortVotingId(latestRound.round_id)}.`;
+      return `Organiser approvals received for ${shortVotingId(latestRound.round_id)}.`;
     }
 
-    return `Waiting for coordinator approvals for ${shortVotingId(latestRound.round_id)}.`;
+    return `Waiting for organiser approvals for ${shortVotingId(latestRound.round_id)}.`;
   }
 
   if (latestRound.phase === "draft") {
@@ -970,10 +970,10 @@ function formatCoordinatorControlStateLabel(
   }
 
   if (latestRound.phase === "published") {
-    return `Coordinator result approval completed for ${shortVotingId(latestRound.round_id)}.`;
+    return `Organiser result approval completed for ${shortVotingId(latestRound.round_id)}.`;
   }
 
-  return `Coordinator control state: ${latestRound.phase.replace(/_/g, " ")}.`;
+  return `Organiser control state: ${latestRound.phase.replace(/_/g, " ")}.`;
 }
 
 function findLatestRoundRequest(
@@ -1005,9 +1005,9 @@ function buildShareAssignmentSignature(
 }
 
 function formatCoordinatorList(values: string[]) {
-  const labels = values.map((npub) => `Coordinator ${deriveActorDisplayId(npub)}`);
+  const labels = values.map((npub) => `Organiser ${deriveActorDisplayId(npub)}`);
   if (labels.length <= 1) {
-    return labels[0] ?? "Coordinator";
+    return labels[0] ?? "Organiser";
   }
   if (labels.length === 2) {
     return `${labels[0]} and ${labels[1]}`;
@@ -2086,7 +2086,7 @@ export default function SimpleCoordinatorApp() {
 
       if (error instanceof SimpleActorStateLockedError || await isSimpleActorStateLocked("coordinator")) {
         setStorageLocked(true);
-        setStorageStatus("Local coordinator state is locked.");
+        setStorageStatus("Local organiser state is locked.");
         return;
       }
 
@@ -2277,7 +2277,7 @@ export default function SimpleCoordinatorApp() {
 
       const syncStateWithReplayWarning = () => {
         syncState();
-        setCoordinatorControlStateLabel("Waiting for coordinator-control replay.");
+        setCoordinatorControlStateLabel("Waiting for organiser-control replay.");
       };
 
       if (singleCoordinatorMode) {
@@ -2456,10 +2456,10 @@ export default function SimpleCoordinatorApp() {
           });
           if (approval) {
             syncState();
-            setPublishStatus("Coordinator round-open approval sent.");
+            setPublishStatus("Organiser round-open approval sent.");
           }
         } catch {
-          setPublishStatus("Coordinator round-open approval failed.");
+          setPublishStatus("Organiser round-open approval failed.");
         } finally {
           setAutoApprovalComplete(true);
         }
@@ -2642,7 +2642,7 @@ export default function SimpleCoordinatorApp() {
               setCoordinatorControlStateLabel(
                 formatCoordinatorControlStateLabel(service.getState(), service.getEngineStatus()),
               );
-              setRegistrationStatus("Coordinator MLS join completed.");
+              setRegistrationStatus("Organiser MLS join completed.");
 
               void (async () => {
                 try {
@@ -2718,7 +2718,7 @@ export default function SimpleCoordinatorApp() {
                     formatCoordinatorControlStateLabel(service.getState(), service.getEngineStatus()),
                   );
                   if (approval) {
-                    setPublishStatus("Coordinator round-open approval sent.");
+                    setPublishStatus("Organiser round-open approval sent.");
                   }
 
                   const coordinatorSecretKey = decodeNsec(keypair?.nsec ?? "");
@@ -2747,7 +2747,7 @@ export default function SimpleCoordinatorApp() {
                     controlCarrierFetchLastCount: 0,
                     controlCarrierFetchLastError: "post_join_control_backfill_failed",
                   });
-                  setCoordinatorControlStateLabel("Waiting for coordinator-control replay.");
+                  setCoordinatorControlStateLabel("Waiting for organiser-control replay.");
                 }
               })();
             } else {
@@ -2886,7 +2886,7 @@ export default function SimpleCoordinatorApp() {
             ),
           );
           if (approval) {
-            setPublishStatus("Coordinator round-open approval sent.");
+            setPublishStatus("Organiser round-open approval sent.");
           } else {
             setPublishStatus("Round-open commit retry had nothing to send.");
           }
@@ -2918,8 +2918,8 @@ export default function SimpleCoordinatorApp() {
         );
         setPublishStatus(
           result.state.latest_round?.phase === "open"
-            ? "Coordinator round open agreed. Broadcasting vote..."
-            : "Round-open proposal resent. Waiting for coordinator approvals.",
+            ? "Organiser round open agreed. Broadcasting vote..."
+            : "Round-open proposal resent. Waiting for organiser approvals.",
         );
       }).catch(() => {
         setPublishStatus("Round-open retry failed.");
@@ -3027,7 +3027,7 @@ export default function SimpleCoordinatorApp() {
     }
 
     roundBroadcastInFlightRef.current = latestRound.round_id;
-    setPublishStatus("Coordinator round open agreed. Broadcasting vote...");
+    setPublishStatus("Organiser round open agreed. Broadcasting vote...");
 
     void publishSimpleLiveVote({
       coordinatorNsec: keypair.nsec,
@@ -3125,7 +3125,7 @@ export default function SimpleCoordinatorApp() {
           setQuestionThresholdN(String(latestAssignment.thresholdN));
         }
         setRegistrationStatus(null);
-        setAssignmentStatus(`Assigned share index ${latestAssignment.shareIndex} by the lead coordinator.`);
+        setAssignmentStatus(`Assigned share index ${latestAssignment.shareIndex} by the lead organiser.`);
 
         if (!latestAssignment.dmEventId || sentAssignmentAckIdsRef.current.has(latestAssignment.dmEventId)) {
           return;
@@ -3860,7 +3860,7 @@ export default function SimpleCoordinatorApp() {
     }
     const sourceHex = npubsToHexRoster([sourceNpub])[0];
     if (!sourceHex) {
-      setKnownVoterInviteStatus("Could not resolve coordinator public key.");
+      setKnownVoterInviteStatus("Could not resolve organiser public key.");
       return;
     }
     setKnownVoterContactsLoading(true);
@@ -3876,7 +3876,7 @@ export default function SimpleCoordinatorApp() {
         .sort((left, right) => right.created_at - left.created_at)
         .find((event) => event.pubkey === sourceHex);
       if (!latest) {
-        setKnownVoterInviteStatus("No contacts list found for this coordinator.");
+        setKnownVoterInviteStatus("No contacts list found for this organiser.");
         return;
       }
       const contactEntries = (Array.isArray(latest.tags) ? latest.tags : [])
@@ -4248,7 +4248,7 @@ export default function SimpleCoordinatorApp() {
               ? "Processed incoming requests/submissions for the current questionnaire."
               : "Processed incoming requests/submissions."
           )
-          : "No matching questionnaires found for this coordinator.",
+          : "No matching questionnaires found for this organiser.",
       );
     } catch (error) {
       setKnownVoterInviteStatus(error instanceof Error ? error.message : "Processing failed.");
@@ -4484,7 +4484,7 @@ export default function SimpleCoordinatorApp() {
       selectedSubmittedVotingId,
       submittedVotes,
     } satisfies SimpleCoordinatorCache, { passphrase });
-    setBackupStatus(passphrase?.trim() ? "Encrypted coordinator backup downloaded." : "Coordinator backup downloaded.");
+    setBackupStatus(passphrase?.trim() ? "Encrypted organiser backup downloaded." : "Organiser backup downloaded.");
   }
 
   async function restoreBackup(file: File, passphrase?: string) {
@@ -4493,7 +4493,7 @@ export default function SimpleCoordinatorApp() {
       const bundle = parseSimpleActorBackupBundle(text)
         ?? (passphrase?.trim() ? await parseEncryptedSimpleActorBackupBundle(text, passphrase.trim()) : null);
       if (!bundle || bundle.role !== "coordinator") {
-        setBackupStatus("Backup file is not a coordinator backup.");
+        setBackupStatus("Backup file is not an organiser backup.");
         return;
       }
 
@@ -4588,7 +4588,7 @@ export default function SimpleCoordinatorApp() {
     try {
       const storedState = await loadSimpleActorStateWithOptions("coordinator", { passphrase: trimmed });
       if (!storedState?.keypair) {
-        setStorageStatus("No coordinator state was found.");
+        setStorageStatus("No organiser state was found.");
         return;
       }
 
@@ -4641,7 +4641,7 @@ export default function SimpleCoordinatorApp() {
       setSubmittedVotes(Array.isArray(cache?.submittedVotes) ? cache.submittedVotes : []);
       setActiveTab("configure");
       setStorageLocked(false);
-      setStorageStatus("Local coordinator state unlocked.");
+      setStorageStatus("Local organiser state unlocked.");
       setIdentityReady(true);
     } catch {
       setStorageStatus("Unlock failed.");
@@ -4654,7 +4654,7 @@ export default function SimpleCoordinatorApp() {
       return;
     }
     setStoragePassphrase(passphrase.trim());
-    setStorageStatus("Local coordinator state will be stored encrypted.");
+    setStorageStatus("Local organiser state will be stored encrypted.");
   }
 
   async function disableLocalStateProtection(currentPassphrase?: string) {
@@ -4666,7 +4666,7 @@ export default function SimpleCoordinatorApp() {
       return;
     }
     setStoragePassphrase("");
-    setStorageStatus("Local coordinator state protection removed.");
+    setStorageStatus("Local organiser state protection removed.");
   }
 
   function getThresholdLabel() {
@@ -5035,7 +5035,7 @@ export default function SimpleCoordinatorApp() {
 
     const service = coordinatorControlServiceRef.current;
     if (!service) {
-      setPublishStatus("Coordinator control engine is not ready.");
+      setPublishStatus("Organiser control engine is not ready.");
       return;
     }
 
@@ -5069,8 +5069,8 @@ export default function SimpleCoordinatorApp() {
       setSelectedSubmittedVotingId(roundId);
       setPublishStatus(
         result.state.latest_round?.phase === "open"
-          ? "Coordinator round open agreed. Broadcasting vote..."
-          : "Round-open proposal sent. Waiting for coordinator approvals.",
+          ? "Organiser round open agreed. Broadcasting vote..."
+          : "Round-open proposal sent. Waiting for organiser approvals.",
       );
     } catch {
       setCoordinatorControlCache(service.snapshot());
@@ -5145,7 +5145,7 @@ export default function SimpleCoordinatorApp() {
       return;
     }
 
-    setRegistrationStatus("Notifying lead coordinator...");
+    setRegistrationStatus("Notifying lead organiser...");
 
     try {
       const service = coordinatorControlServiceRef.current ?? (
@@ -5194,21 +5194,21 @@ export default function SimpleCoordinatorApp() {
 
       setRegistrationStatus(
         result.successes > 0
-          ? "Lead coordinator notified. Waiting for share index assignment."
-          : "Lead coordinator notification failed.",
+          ? "Lead organiser notified. Waiting for share index assignment."
+          : "Lead organiser notification failed.",
       );
     } catch {
       updateStartupDiagnostics((current) => ({
         mlsJoinPackagePublishFailureCount: current.mlsJoinPackagePublishFailureCount + 1,
       }));
-      setRegistrationStatus("Lead coordinator notification failed.");
+      setRegistrationStatus("Lead organiser notification failed.");
     }
   }
 
   async function ensureCoordinatorControlGroupReady() {
     const service = coordinatorControlServiceRef.current;
     if (!service) {
-      setPublishStatus("Coordinator control engine is not ready.");
+      setPublishStatus("Organiser control engine is not ready.");
       return false;
     }
 
@@ -5222,17 +5222,17 @@ export default function SimpleCoordinatorApp() {
     }
 
     if (!isLeadCoordinator) {
-      setPublishStatus("Waiting for MLS welcome from the lead coordinator.");
+      setPublishStatus("Waiting for MLS welcome from the lead organiser.");
       return false;
     }
 
     if (mlsBootstrapInFlightRef.current) {
-      setPublishStatus("Preparing coordinator MLS group...");
+      setPublishStatus("Preparing organiser MLS group...");
       return false;
     }
 
     mlsBootstrapInFlightRef.current = true;
-    setPublishStatus("Preparing coordinator MLS group...");
+    setPublishStatus("Preparing organiser MLS group...");
     updateStartupDiagnostics((current) => ({
       mlsWelcomePublishAttemptCount: current.mlsWelcomePublishAttemptCount + 1,
       mlsWelcomeLastPublishAt: new Date().toISOString(),
@@ -5252,7 +5252,7 @@ export default function SimpleCoordinatorApp() {
         const leadCoordinatorSecretKey = decodeNsec(keypair?.nsec ?? "");
         const leadCoordinatorNpub = keypair?.npub ?? "";
         if (!leadCoordinatorSecretKey || !leadCoordinatorNpub) {
-          setPublishStatus("Coordinator MLS bootstrap failed.");
+          setPublishStatus("Organiser MLS bootstrap failed.");
           return false;
         }
 
@@ -5311,7 +5311,7 @@ export default function SimpleCoordinatorApp() {
       updateStartupDiagnostics((current) => ({
         mlsWelcomePublishFailureCount: current.mlsWelcomePublishFailureCount + 1,
       }));
-      setPublishStatus("Coordinator MLS bootstrap failed.");
+      setPublishStatus("Organiser MLS bootstrap failed.");
       return false;
     } finally {
       mlsBootstrapInFlightRef.current = false;
@@ -6259,7 +6259,7 @@ export default function SimpleCoordinatorApp() {
   if (storageLocked && !identityReady) {
     return (
       <SimpleUnlockGate
-        roleLabel="Coordinator"
+        roleLabel="Organiser"
         status={storageStatus}
         onUnlock={unlockLocalState}
         onReset={async () => {
@@ -6274,7 +6274,7 @@ export default function SimpleCoordinatorApp() {
           });
           setKeypair(nextKeypair);
           setIdentityReady(true);
-          setStorageStatus("Locked local coordinator state reset.");
+          setStorageStatus("Locked local organiser state reset.");
         }}
       />
     );
@@ -6288,7 +6288,7 @@ export default function SimpleCoordinatorApp() {
         <div
           className='simple-voter-tabs'
           role='tablist'
-          aria-label='Coordinator sections'
+          aria-label='Organiser sections'
         >
           <button
             type='button'
@@ -6538,7 +6538,7 @@ export default function SimpleCoordinatorApp() {
                 <p className='simple-voter-empty'>No matching voters found.</p>
               ) : (
                 <p className='simple-voter-empty'>
-                  No voters are following this coordinator yet.
+                  No voters are following this organiser yet.
                 </p>
               )}
             </SimpleCollapsibleSection>

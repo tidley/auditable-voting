@@ -24,15 +24,13 @@ Auditable Voting brings that pattern to a browser, using public relay data inste
 
 ### Organiser
 
-In the app this is the **Coordinator**.
-
 They create the questionnaire, share invite links or QR codes, approve voters when needed, and publish the final result.
 
 ### Voter
 
 The voter opens an invite, requests a ballot, answers the questions, and submits.
 
-The voter may see a short wait while the coordinator verifies the ballot request. That is the digital version of checking someone is allowed to take part.
+The voter may see a short wait while the organiser verifies the ballot request. That is the digital version of checking someone is allowed to take part.
 
 ### Watcher
 
@@ -44,25 +42,24 @@ They can open the public result view and check that the published count matches 
 
 This is a simple 10 minute walkthrough.
 
-1. Open the Coordinator page.
+1. Open the Organiser page.
 2. Create a short questionnaire with one or two questions.
 3. Show the General invite QR code.
 4. Scan or open the invite as a Voter.
 5. Submit one response.
-6. Return to Coordinator and show the accepted response count.
+6. Return to Organiser and show the accepted response count.
 7. Close and publish results.
 8. Open Observer and show that the public result can be checked separately.
 
 Keep the language simple:
 
-- Say **organiser** instead of coordinator.
 - Say **watcher** or **public checker** instead of observer.
 - Say **private ballot pass** instead of blind credential unless someone asks for the technical detail.
 - Say **public noticeboard** instead of Nostr relays.
 
 ## What to show on screen
 
-### Start with Coordinator
+### Start with Organiser
 
 Show that the organiser can:
 

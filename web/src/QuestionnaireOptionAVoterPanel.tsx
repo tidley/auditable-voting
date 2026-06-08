@@ -1453,7 +1453,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       ?? null;
     const summary = targetElectionId ? loadElectionSummary(targetElectionId) : null;
     const issueBlindTokensWorker = invite?.issueBlindTokensWorker ?? summary?.issueBlindTokensWorker ?? null;
-    return issueBlindTokensWorker?.workerNpub?.trim() ? "audit proxy" : "coordinator";
+    return issueBlindTokensWorker?.workerNpub?.trim() ? "audit proxy" : "organiser";
   }
 
   async function requestBallot() {
@@ -2050,9 +2050,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     ?? null;
   const credentialIssuerNpub = issueBlindTokensWorker?.workerNpub?.trim() || coordinatorNpub;
   const credentialIssuerIsProxy = Boolean(issueBlindTokensWorker?.workerNpub?.trim());
-  const credentialIssuerName = credentialIssuerIsProxy ? "audit proxy" : "coordinator";
+  const credentialIssuerName = credentialIssuerIsProxy ? "audit proxy" : "organiser";
   const credentialIssuerLabel = credentialIssuerNpub ? deriveActorDisplayId(credentialIssuerNpub) : "Unknown";
-  const decisionActorName = credentialIssuerIsProxy ? "audit proxy" : "coordinator";
+  const decisionActorName = credentialIssuerIsProxy ? "audit proxy" : "organiser";
   const coordinatorLabel = coordinatorNpub ? deriveActorDisplayId(coordinatorNpub) : "Unknown";
   const requestStateText = snapshot?.blindRequestSent ? "Sent" : "Not sent";
   const credentialStateText = snapshot?.credentialReady
@@ -2084,14 +2084,14 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         </button>
         <button type='button' className='simple-voter-secondary' onClick={refreshStatus}>Refresh status</button>
       </div>
-      <p className='simple-voter-note'>Coordinator: {coordinatorLabel}</p>
+      <p className='simple-voter-note'>Organiser: {coordinatorLabel}</p>
       {credentialIssuerIsProxy ? (
         <p className='simple-voter-note'>Ballot credential issuer: audit proxy {credentialIssuerLabel}</p>
       ) : null}
       {coordinatorNpub ? (
         <TokenFingerprint
           tokenId={coordinatorNpub}
-          label='Coordinator marker'
+          label='Organiser marker'
           showQr
           compact
           hideMetadata
@@ -2116,8 +2116,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       {waitingForCredential ? (
         <p className='simple-voter-note'>
           {credentialIssuerIsProxy
-            ? "Waiting for the audit proxy to issue your ballot credential. This page checks automatically; the coordinator does not need to stay online once the proxy has received its delegation."
-            : "Waiting for the coordinator to issue your ballot credential. This page checks automatically; the coordinator must be online and can press Process requests."}
+            ? "Waiting for the audit proxy to issue your ballot credential. This page checks automatically; the organiser does not need to stay online once the proxy has received its delegation."
+            : "Waiting for the organiser to issue your ballot credential. This page checks automatically; the organiser must be online and can press Process requests."}
         </p>
       ) : null}
     </section>
@@ -2386,7 +2386,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                         }));
                       }}
                     />
-                    <span>Encrypt for coordinator</span>
+                    <span>Encrypt for organiser</span>
                   </label>
                 </>
               ) : null}

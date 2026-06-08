@@ -601,7 +601,7 @@ function buildWorkerLauncherContents(input: {
     return [
       "$ErrorActionPreference = 'Stop'",
       "",
-      "# Generated from the coordinator Build page.",
+      "# Generated from the organiser Build page.",
       "# Treat this file as sensitive if WORKER_NSEC is populated with a real secret.",
       npubLine.trimEnd(),
       "$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path",
@@ -649,7 +649,7 @@ function buildWorkerLauncherContents(input: {
     "#!/usr/bin/env bash",
     "set -euo pipefail",
     "",
-    "# Generated from the coordinator Build page.",
+    "# Generated from the organiser Build page.",
     "# Treat this file as sensitive if WORKER_NSEC is populated with a real secret.",
     expectedNpubComment.trimEnd(),
     'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
@@ -2187,8 +2187,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       }
     }
     return coordinatorNpub.trim()
-      ? `Coordinator: ${coordinatorNpub.trim()}`
-      : "Coordinator: Unknown";
+      ? `Organiser: ${coordinatorNpub.trim()}`
+      : "Organiser: Unknown";
   }, [activeWorkerDelegation, coordinatorNpub, lastWorkerRevocationState, selectedWorkerStatus]);
   const workerReleaseBaseUrl = "https://github.com/tidley/auditable-voting/releases/latest/download";
   const workerHelperDownloadUrl = `${workerReleaseBaseUrl}/auditable-voting-worker-linux-x64.tar.gz`;
@@ -2664,7 +2664,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   async function publishDefinition() {
     let definitionToPublish = builtDefinition;
     if (!coordinatorNsec.trim() || !definitionToPublish) {
-      setStatus("Coordinator key or vote setup is missing.");
+      setStatus("Organiser key or vote setup is missing.");
       return;
     }
 
@@ -2801,7 +2801,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   async function publishState(state: QuestionnaireStateValue) {
     const id = questionnaireId.trim();
     if (!coordinatorNsec.trim() || !coordinatorNpub.trim() || !id) {
-      setStatus("Coordinator key or vote ID is missing.");
+      setStatus("Organiser key or vote ID is missing.");
       return false;
     }
 
@@ -3110,7 +3110,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       ? Number.parseInt(delegatedWorkerExpiryMinutes, 10)
       : Number.NaN;
     if (!electionId || !coordinatorNsecTrimmed || !coordinatorNpubTrimmed) {
-      setStatus("Coordinator identity and questionnaire ID are required before delegation.");
+      setStatus("Organiser identity and questionnaire ID are required before delegation.");
       return;
     }
     if (!workerNpub) {
@@ -3873,7 +3873,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         </button>
       </div>
       {!coordinatorNsec.trim() ? (
-        <p className='simple-voter-note'>Coordinator key is not loaded yet.</p>
+        <p className='simple-voter-note'>Organiser key is not loaded yet.</p>
       ) : null}
       {publishValidation && !publishValidation.valid ? (
         <p className='simple-voter-note'>Validation: {publishValidation.errors[0] ?? "unknown_error"}.</p>
@@ -3983,7 +3983,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                 <section className='simple-delegate-section'>
                   <h4 className='simple-delegate-title'>Audit proxy downloads</h4>
                   <p className='simple-voter-note'>
-                    Autoconfigured saves a platform-specific launcher script with the current coordinator `npub`, effective relay list, and generated audit proxy `nsec` when one is present.
+                    Autoconfigured saves a platform-specific launcher script with the current organiser `npub`, effective relay list, and generated audit proxy `nsec` when one is present.
                   </p>
                   <p className='simple-voter-note'>
                     Right-click copy link is supported. Shared Autoconfigured links intentionally omit `WORKER_NSEC`, so the receiving operator must supply their own audit proxy secret.

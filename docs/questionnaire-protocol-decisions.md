@@ -39,14 +39,14 @@ This record freezes the implementation decisions for the questionnaire-first bli
 - Spec target kinds documented but not yet migrated:
   - `34500..34503`
 
-## 6. Coordinator model
+## 6. Organiser model
 
 - Single-signer questionnaire token model in current repo version.
 
 ## 7. Encrypted payload boundary
 
 - Publicly verifiable: admission-level checks (shape/nullifier/event consistency).
-- Coordinator-only verifiable: decrypted answer validation.
+- Organiser-only verifiable: decrypted answer validation.
 
 ## 8. Result hash
 

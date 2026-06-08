@@ -16,9 +16,9 @@ Usage (Linux x86_64):
 
    WORKER_RELAYS is optional. If not set, the audit proxy uses the default client relay set.
 
-Coordinator Build page launcher downloads:
+Organiser Build page launcher downloads:
 - The Autoconfigured action on each platform row now saves a single launcher script.
-- That launcher script includes the current coordinator npub, the effective relay list, and the generated audit proxy nsec when present.
+- That launcher script includes the current organiser npub, the effective relay list, and the generated audit proxy nsec when present.
 - It also starts the audit proxy with `RUST_LOG=debug` so blind-request processing shows up in the helper logs by default.
 - On first run it downloads the matching raw binary asset automatically, then starts the audit proxy.
 - Right-click copy link works on the Autoconfigured action. The copied shareable URL intentionally omits WORKER_NSEC, so set your own audit proxy secret before running it.
@@ -40,7 +40,7 @@ Other platforms:
   cargo build --release
 
 Audit proxy responsibilities:
-- announce audit proxy status to coordinator
+- announce audit proxy status to organiser
 - receive audit proxy election-config state including the blind-signing key and questionnaire definition
 - process delegated blind-token requests
 - issue blind-signature responses for delegated elections, including the questionnaire definition when available

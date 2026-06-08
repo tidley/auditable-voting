@@ -928,7 +928,7 @@ export async function fetchMailboxShardRequests(input: {
   coordinatorNsec: string;
   relays?: string[];
 }) {
-  const keys = getKeysFromNsec(input.coordinatorNsec, "Coordinator");
+  const keys = getKeysFromNsec(input.coordinatorNsec, "Organiser");
   const events = await fetchMailboxEvents({
     kinds: [SIMPLE_MAILBOX_REQUEST_KIND],
     recipientNpubs: [keys.npub],
@@ -1012,7 +1012,7 @@ export function subscribeMailboxShardRequests(input: {
   onRequests: (requests: SimpleShardRequest[]) => void;
   onError?: (error: Error) => void;
 }) {
-  const keys = getKeysFromNsec(input.coordinatorNsec, "Coordinator");
+  const keys = getKeysFromNsec(input.coordinatorNsec, "Organiser");
   const requests = new Map<string, SimpleShardRequest>();
   let closed = false;
   let subscription: { close: (reason?: string) => Promise<void> | void } | null = null;

@@ -8,7 +8,7 @@ vi.mock("./SimpleUiApp", () => ({
 }));
 
 vi.mock("./SimpleCoordinatorApp", () => ({
-  default: () => <div>Coordinator app</div>,
+  default: () => <div>Organiser app</div>,
 }));
 
 vi.mock("./SimpleAuditorApp", () => ({
@@ -50,7 +50,7 @@ describe("SimpleAppShell invite-link login", () => {
     expect(screen.getByRole("button", { name: "Continue as Observer" })).toBeTruthy();
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
       "Observer",
-      "Coordinator",
+      "Organiser",
       "Voter",
     ]);
   });
@@ -61,17 +61,17 @@ describe("SimpleAppShell invite-link login", () => {
 
     render(<SimpleAppShell />);
 
-    const coordinatorTab = screen.getByRole("tab", { name: "Coordinator" });
+    const coordinatorTab = screen.getByRole("tab", { name: "Organiser" });
     await user.click(coordinatorTab);
     expect(coordinatorTab.getAttribute("aria-disabled")).toBeNull();
 
-    await user.click(screen.getByRole("button", { name: "Continue as Coordinator" }));
+    await user.click(screen.getByRole("button", { name: "Continue as Organiser" }));
     expect(screen.queryByRole("button", { name: "Login" })).toBeNull();
 
     const menuButton = screen.getByRole("button", { name: "Menu" });
     await user.click(menuButton);
     expect(menuButton.getAttribute("aria-disabled")).toBeNull();
-    expect(screen.getByRole("tab", { name: "Coordinator" }).getAttribute("aria-disabled")).toBeNull();
+    expect(screen.getByRole("tab", { name: "Organiser" }).getAttribute("aria-disabled")).toBeNull();
   });
 
   it("closes the role switcher when clicking outside of it", async () => {

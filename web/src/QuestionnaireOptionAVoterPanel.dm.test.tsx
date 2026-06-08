@@ -180,7 +180,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     rerender(<QuestionnaireOptionAVoterPanel displayMode='settings' />);
     await waitFor(() => {
-      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Coordinator:")).length).toBeGreaterThan(0);
+      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Organiser:")).length).toBeGreaterThan(0);
     });
     expect(screen.queryByText(/No invite DM was readable/i)).toBeNull();
     expect(fetchOptionAInviteDmsMock).not.toHaveBeenCalled();
@@ -220,7 +220,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     await screen.findByText(/Gateway prompt/);
     rerender(<QuestionnaireOptionAVoterPanel displayMode='settings' localVoterNpub={"npub1" + "a".repeat(58)} autoSignerLogin />);
     await waitFor(() => {
-      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Coordinator:")).length).toBeGreaterThan(0);
+      expect(screen.getAllByText((_, element) => (element?.textContent ?? "").includes("Organiser:")).length).toBeGreaterThan(0);
     });
     expect(screen.queryByText(/No invite DM was readable/i)).toBeNull();
     expect(fetchOptionAInviteDmsMock).not.toHaveBeenCalled();

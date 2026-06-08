@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Autoconfigured Delegate Coordinator Launcher</title>
+    <title>Autoconfigured Delegate Organiser Launcher</title>
     <style>
       :root {
         color-scheme: dark;
@@ -202,7 +202,7 @@
           return [
             "$ErrorActionPreference = 'Stop'",
             "",
-            "# Generated from the coordinator Build page shareable Autoconfigured link.",
+            "# Generated from the organiser Build page shareable Autoconfigured link.",
             "# WORKER_NSEC is intentionally not embedded in shareable links.",
             expectedNpub.trimEnd(),
             "$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path",
@@ -245,7 +245,7 @@
           "#!/usr/bin/env bash",
           "set -euo pipefail",
           "",
-          "# Generated from the coordinator Build page shareable Autoconfigured link.",
+          "# Generated from the organiser Build page shareable Autoconfigured link.",
           "# WORKER_NSEC is intentionally not embedded in shareable links.",
           expectedNpub.trimEnd(),
           'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',

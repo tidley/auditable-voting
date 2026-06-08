@@ -56,7 +56,7 @@ export default function QuestionnaireOptionACoordinatorPanel(props: Props) {
         },
       });
       setSignedInNpub(next.election.coordinatorNpub);
-      setStatus(`Using coordinator identity ${deriveActorDisplayId(next.election.coordinatorNpub)}.`);
+      setStatus(`Using organiser identity ${deriveActorDisplayId(next.election.coordinatorNpub)}.`);
       setRefreshNonce((value) => value + 1);
     } catch {
       // Keep manual signer login fallback.
@@ -81,13 +81,13 @@ export default function QuestionnaireOptionACoordinatorPanel(props: Props) {
         setStatus(error.message);
         return;
       }
-      setStatus("Coordinator login failed.");
+      setStatus("Organiser login failed.");
     }
   }
 
   function createNewId() {
     setSignedInNpub("");
-    setStatus("Use Login to authenticate a coordinator signer.");
+    setStatus("Use Login to authenticate an organiser signer.");
   }
 
   function addWhitelist() {
@@ -188,7 +188,7 @@ export default function QuestionnaireOptionACoordinatorPanel(props: Props) {
     <div className='simple-voter-card simple-questionnaire-panel'>
       <div className='simple-questionnaire-header'>
         <div>
-          <h3 className='simple-voter-question'>Coordinator</h3>
+          <h3 className='simple-voter-question'>Organiser</h3>
           <p className='simple-voter-note'>Blind credential flow</p>
         </div>
         <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>

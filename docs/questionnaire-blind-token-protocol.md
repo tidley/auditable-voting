@@ -35,8 +35,8 @@ Shape (camelCase in the shipped client):
 - `title`
 - `description?`
 - `createdAt`, `openAt`, `closeAt`
-- `coordinatorPubkey`
-- `coordinatorEncryptionPubkey`
+- `coordinatorPubkey` (current schema field for the organiser public key)
+- `coordinatorEncryptionPubkey` (current schema field for the organiser encryption key)
 - `responseVisibility: "public" | "private"`
 - `eligibilityMode: "open" | "allowlist"`
 - `allowMultipleResponsesPerPubkey: boolean`
@@ -55,7 +55,7 @@ Validation rules include:
 - unique `questionId`
 - unique `optionId` within each multiple-choice and rank question
 - ranked-choice questions use internal type `rank` and may set `minimumRanked` from `0` up to the option count
-- required coordinator keys present
+- required organiser keys present
 
 ## 4. Questionnaire state
 
@@ -66,7 +66,7 @@ Shape:
 - `questionnaireId`
 - `state: "draft" | "open" | "closed" | "results_published"`
 - `createdAt`
-- `coordinatorPubkey`
+- `coordinatorPubkey` (current schema field for the organiser public key)
 - optional delegated close provenance:
   - `closedBy: "audit_proxy"`
   - `delegationId`
@@ -78,7 +78,7 @@ Tags:
 - `["questionnaire-id", "<id>"]`
 - `["state", "<state>"]`
 
-Latest valid state for a questionnaire is authoritative. A delegated audit proxy may publish `state: "closed"` only when its coordinator-signed delegation includes close authority and the accepted valid response count has reached the expected invitee count.
+Latest valid state for a questionnaire is authoritative. A delegated audit proxy may publish `state: "closed"` only when its organiser-signed delegation includes close authority and the accepted valid response count has reached the expected invitee count.
 
 ## 5. Response submission modes
 
@@ -121,7 +121,7 @@ Shape:
 - `eventType: "questionnaire_result_summary"`
 - `questionnaireId`
 - `createdAt`
-- `coordinatorPubkey`
+- `coordinatorPubkey` (current schema field for the organiser public key)
 - `acceptedResponseCount`
 - `rejectedResponseCount`
 - `questionSummaries[]`
@@ -156,7 +156,7 @@ Public verifier should be able to check:
 - deterministic duplicate-nullifier rejection
 - summary/accounting consistency
 
-Coordinator-side verification (especially in encrypted mode) additionally checks:
+Organiser-side verification (especially in encrypted mode) additionally checks:
 
 - payload decryption
 - answer schema validity

@@ -173,7 +173,7 @@ export async function publishSimpleLiveVote(input: {
 }) {
   const decoded = nip19.decode(input.coordinatorNsec.trim());
   if (decoded.type !== "nsec") {
-    throw new Error("Coordinator key must be an nsec.");
+    throw new Error("Organiser key must be an nsec.");
   }
 
   const secretKey = decoded.data as Uint8Array;
@@ -260,7 +260,7 @@ export async function fetchLatestSimpleLiveVote(input: {
 }): Promise<SimpleLiveVoteSession | null> {
   const decoded = nip19.decode(input.coordinatorNpub.trim());
   if (decoded.type !== "npub") {
-    throw new Error("Coordinator value must be an npub.");
+    throw new Error("Organiser value must be an npub.");
   }
 
   const coordinatorHex = decoded.data as string;
@@ -291,7 +291,7 @@ export function subscribeLatestSimpleLiveVote(input: {
 }): () => void {
   const decoded = nip19.decode(input.coordinatorNpub.trim());
   if (decoded.type !== "npub") {
-    throw new Error("Coordinator value must be an npub.");
+    throw new Error("Organiser value must be an npub.");
   }
 
   const coordinatorHex = decoded.data as string;
@@ -390,7 +390,7 @@ export function subscribeSimpleLiveVotes(input: {
 }): () => void {
   const decoded = nip19.decode(input.coordinatorNpub.trim());
   if (decoded.type !== "npub") {
-    throw new Error("Coordinator value must be an npub.");
+    throw new Error("Organiser value must be an npub.");
   }
 
   const coordinatorHex = decoded.data as string;

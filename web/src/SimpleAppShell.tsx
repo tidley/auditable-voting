@@ -19,7 +19,7 @@ const GATEWAY_SIGNER_NPUB_STORAGE_KEY = "app:auditable-voting:gateway:signer_npu
 const AMBER_FULLY_TRUST_HINT = "Change from `Approve basic actions` to `I fully trust this application` when Amber opens. This allows the application to fully coordinate.";
 const ROLE_OPTIONS: Array<{ role: SimpleRole; label: string }> = [
   { role: "auditor", label: "Observer" },
-  { role: "coordinator", label: "Coordinator" },
+  { role: "coordinator", label: "Organiser" },
   { role: "voter", label: "Voter" },
 ];
 const VOTER_SECTION_OPTIONS: Array<{ tab: VoterTab; label: string }> = [
@@ -832,6 +832,14 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                       onClick={() => setAccountMenuOpen(false)}
                     >
                       How it works
+                    </a>
+                    <a
+                      className='simple-account-menu-button simple-account-menu-link'
+                      role='menuitem'
+                      href='demo-guide.html'
+                      onClick={() => setAccountMenuOpen(false)}
+                    >
+                      Demo guide
                     </a>
                   </div>
                 </div>
