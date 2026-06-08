@@ -824,7 +824,6 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                 <div className='simple-account-menu-section simple-account-menu-about-section' role='none'>
                   <p className='simple-account-menu-kicker'>About</p>
                   <div className='simple-account-menu-about-row' role='none'>
-                    <p className='simple-account-menu-version'>v{SIMPLE_APP_VERSION}</p>
                     <a
                       className='simple-account-menu-button simple-account-menu-link'
                       role='menuitem'
@@ -845,6 +844,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                     >
                       Demo guide
                     </a>
+                    <p className='simple-account-menu-version'>v{SIMPLE_APP_VERSION}</p>
                   </div>
                 </div>
               </div>
