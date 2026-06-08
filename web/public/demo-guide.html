@@ -481,7 +481,7 @@
         <div class="hero-copy">
           <p class="kicker">Plain-English demo guide</p>
           <h1 id="page-title">Auditable Voting Demo</h1>
-          <p class="lead">This demo takes about <strong>3 minutes</strong>. By the end, you will have cast a vote, checked that it was recorded, and seen how anyone can audit the election.</p>
+          <p class="lead">This demo takes about <strong>3 minutes</strong>. By the end, you will have requested a ballot from a real questionnaire invite, submitted a response, and checked it in Observer.</p>
           <p class="time-pill">3 minute walkthrough</p>
           <div class="hero-actions">
             <a class="button button-primary" href="./simple.html?role=voter">Open voter page</a>
@@ -491,10 +491,11 @@
         <aside class="summary-card" aria-label="Demo outcomes">
           <h2>By the end you will</h2>
           <ul class="check-list">
-            <li>Cast a vote</li>
-            <li>Verify that your vote was recorded</li>
-            <li>Verify that it was included in the final result</li>
-            <li>Learn how anyone can audit the election</li>
+            <li>Open the real Voter flow</li>
+            <li>Request a ballot from a questionnaire invite</li>
+            <li>Submit a response</li>
+            <li>Check the submission in Observer</li>
+            <li>Learn how anyone can audit the questionnaire result</li>
           </ul>
         </aside>
       </section>
@@ -503,11 +504,11 @@
         <p class="kicker">The mental model</p>
         <h2 id="flow">Five simple steps</h2>
         <div class="flow-strip" aria-label="Demo progression">
-          <div class="flow-step"><span>1</span>Create account</div>
-          <div class="flow-step"><span>2</span>Join election</div>
-          <div class="flow-step"><span>3</span>Vote</div>
-          <div class="flow-step"><span>4</span>Verify vote</div>
-          <div class="flow-step"><span>5</span>Verify result</div>
+          <div class="flow-step"><span>1</span>Open Voter</div>
+          <div class="flow-step"><span>2</span>Login or New identity</div>
+          <div class="flow-step"><span>3</span>Open + request ballot</div>
+          <div class="flow-step"><span>4</span>Submit response</div>
+          <div class="flow-step"><span>5</span>Check Observer</div>
         </div>
       </section>
 
@@ -519,18 +520,20 @@
             <div class="step-copy">
               <div class="step-head">
                 <span class="step-number">1</span>
-                <h2>Create an account</h2>
+                <h2>Open Voter and choose an identity</h2>
               </div>
-              <p>Click <strong>Create Account</strong>.</p>
-              <p>The system generates a unique cryptographic identity for you. Your identity allows you to vote without revealing your real name.</p>
+              <p>Open <strong>Voter</strong>, then open <strong>Menu</strong>.</p>
+              <p>Use <strong>Login</strong> if you already have a voter identity, or use <strong>New identity</strong> for a fresh local demo identity.</p>
+              <p>The top-right label should show something like <strong>Voter dv0lu66</strong>.</p>
               <blockquote>Nobody needs your email address, phone number or password.</blockquote>
             </div>
-            <div class="screen-card" aria-label="Create account screen preview">
+            <div class="screen-card" aria-label="Voter identity menu preview">
               <div class="screen-bar"><span class="screen-dot"></span><span class="screen-dot"></span><span class="screen-dot"></span></div>
               <div class="screen-body">
-                <p class="mock-title">Create account</p>
-                <div class="mock-line">A new private voting identity will be created on this device.</div>
-                <div class="mock-button">Create Account</div>
+                <p class="mock-title">Menu</p>
+                <div class="mock-line">Identity</div>
+                <div class="mock-button">Login</div>
+                <div class="mock-button">New identity</div>
               </div>
             </div>
           </article>
@@ -539,18 +542,19 @@
             <div class="step-copy">
               <div class="step-head">
                 <span class="step-number">2</span>
-                <h2>Join the election</h2>
+                <h2>Open the questionnaire invite</h2>
               </div>
-              <p>Open the election invitation.</p>
-              <p>You will see the election title, description, voting options, and opening and closing dates.</p>
-              <p>Click <strong>Join Election</strong>.</p>
+              <p>Open the organiser's questionnaire invite link or scan the General invite QR code.</p>
+              <p>If the page shows <strong>Pending invites</strong>, click <strong>Open + request ballot</strong>.</p>
+              <p>You should see <strong>Questionnaire</strong>, its ID, the title, description, and questions.</p>
             </div>
-            <div class="screen-card" aria-label="Join election screen preview">
+            <div class="screen-card" aria-label="Questionnaire invite screen preview">
               <div class="screen-bar"><span class="screen-dot"></span><span class="screen-dot"></span><span class="screen-dot"></span></div>
               <div class="screen-body">
-                <p class="mock-title">Election invitation</p>
-                <div class="mock-line">Title, description, dates and voting options</div>
-                <div class="mock-button">Join Election</div>
+                <p class="mock-title">Pending invites</p>
+                <div class="mock-line">Questionnaire title - q_abc123</div>
+                <div class="mock-button">Open</div>
+                <div class="mock-button">Open + request ballot</div>
               </div>
             </div>
           </article>
@@ -559,19 +563,20 @@
             <div class="step-copy">
               <div class="step-head">
                 <span class="step-number">3</span>
-                <h2>Cast your vote</h2>
+                <h2>Submit your response</h2>
               </div>
-              <p>Select your preferred option.</p>
-              <p>Click <strong>Submit Vote</strong>. The system creates a signed voting record.</p>
-              <blockquote>Your vote has been recorded.</blockquote>
+              <p>Answer the questions. For free-text questions, use <strong>Encrypt for organiser</strong> if the answer should not be public.</p>
+              <p>When the button is ready, click <strong>Submit response</strong>.</p>
+              <p>If it is not ready, the button explains why, for example <strong>Please answer all required questions</strong> or <strong>Verifying vote request</strong>.</p>
+              <blockquote>After submission, the page shows Private submission identity and a Submission ID.</blockquote>
             </div>
-            <div class="screen-card" aria-label="Vote screen preview">
+            <div class="screen-card" aria-label="Submit response screen preview">
               <div class="screen-bar"><span class="screen-dot"></span><span class="screen-dot"></span><span class="screen-dot"></span></div>
               <div class="screen-body">
-                <p class="mock-title">Vote</p>
-                <div class="mock-line">Option A</div>
-                <div class="mock-line">Option B</div>
-                <div class="mock-button">Submit Vote</div>
+                <p class="mock-title">Questionnaire</p>
+                <div class="mock-line">Q1: Yes / No</div>
+                <div class="mock-line">Encrypt for organiser</div>
+                <div class="mock-button">Submit response</div>
               </div>
             </div>
           </article>
@@ -580,22 +585,24 @@
             <div class="step-copy">
               <div class="step-head">
                 <span class="step-number">4</span>
-                <h2>Verify your vote</h2>
+                <h2>Check the submitted vote</h2>
               </div>
-              <p>Open <strong>My Vote</strong>. You will see a unique Vote ID.</p>
-              <p>Use this to confirm that your vote exists, has not been modified, and appears in the election record.</p>
+              <p>Open <strong>Observer</strong>.</p>
+              <p>Use <strong>Find Published Questionnaires</strong> to choose the questionnaire, then open <strong>Submitted Votes</strong>.</p>
+              <p>Use the voter page's <strong>Submission ID</strong> and private submission identity to compare against the public submitted-vote row.</p>
               <ul class="check-list">
-                <li>Your vote was received</li>
-                <li>Your vote has not been changed</li>
+                <li>The submission exists</li>
+                <li>It has an accepted or invalid status</li>
+                <li>Any invalid submission shows a reason</li>
               </ul>
             </div>
-            <div class="screen-card" aria-label="My vote screen preview">
+            <div class="screen-card" aria-label="Submitted Votes screen preview">
               <div class="screen-bar"><span class="screen-dot"></span><span class="screen-dot"></span><span class="screen-dot"></span></div>
               <div class="screen-body">
-                <p class="mock-title">My Vote</p>
-                <div class="mock-id">Vote ID: vote_8f4a2c</div>
-                <div class="mock-result"><span>Recorded</span><strong>Yes</strong></div>
-                <div class="mock-result"><span>Changed</span><strong>No</strong></div>
+                <p class="mock-title">Submitted Votes</p>
+                <div class="mock-id">Submission ID: submission_8f4a2c</div>
+                <div class="mock-result"><span>Status</span><strong>Accepted</strong></div>
+                <div class="mock-result"><span>Submittor identity</span><strong>dv0lu66</strong></div>
               </div>
             </div>
           </article>
@@ -604,23 +611,23 @@
             <div class="step-copy">
               <div class="step-head">
                 <span class="step-number">5</span>
-                <h2>Verify the election result</h2>
+                <h2>Check the questionnaire result</h2>
               </div>
-              <p>Once voting closes, open <strong>Election Results</strong>.</p>
-              <p>You can see total votes, vote breakdown, and audit information. The result is calculated from the published votes.</p>
+              <p>After the organiser clicks <strong>Close + publish results</strong> or <strong>Publish results</strong>, open <strong>Observer</strong> again and click <strong>Refresh</strong>.</p>
+              <p>You can see <strong>Questionnaire Results</strong>, accepted and invalid response counts, per-question result breakdowns, and <strong>Submitted Votes</strong>.</p>
               <ul class="check-list">
                 <li>The reported result is correct</li>
-                <li>All counted votes are genuine</li>
-                <li>No votes were added or removed</li>
+                <li>Counted submissions are genuine</li>
+                <li>Invalid submissions explain why they were rejected</li>
               </ul>
             </div>
-            <div class="screen-card" aria-label="Election results screen preview">
+            <div class="screen-card" aria-label="Questionnaire Results screen preview">
               <div class="screen-bar"><span class="screen-dot"></span><span class="screen-dot"></span><span class="screen-dot"></span></div>
               <div class="screen-body">
-                <p class="mock-title">Election Results</p>
-                <div class="mock-result"><span>Total votes</span><strong>42</strong></div>
-                <div class="mock-result"><span>Published count</span><strong>Verified</strong></div>
-                <div class="mock-button">View audit data</div>
+                <p class="mock-title">Questionnaire Results</p>
+                <div class="mock-result"><span>Accepted</span><strong>42</strong></div>
+                <div class="mock-result"><span>Invalid</span><strong>0</strong></div>
+                <div class="mock-button">Refresh</div>
               </div>
             </div>
           </article>
@@ -629,27 +636,27 @@
 
       <section class="section" aria-labelledby="difference">
         <p class="kicker">Why it matters</p>
-        <h2 id="difference">How is this different from normal online voting?</h2>
-        <p class="section-intro">Traditional systems require voters to trust the operator. With auditable voting, the important checks can be repeated independently.</p>
+        <h2 id="difference">How is this different from a normal online questionnaire?</h2>
+        <p class="section-intro">Traditional systems require voters to trust the operator and database. With auditable voting, the important checks can be repeated independently.</p>
         <div class="comparison-wrap">
           <table>
             <thead>
               <tr>
                 <th>Question</th>
-                <th>Traditional voting</th>
+                <th>Traditional online voting</th>
                 <th>Auditable voting</th>
               </tr>
             </thead>
             <tbody>
               <tr>
-                <td>Was my vote recorded?</td>
+                <td>Was my response recorded?</td>
                 <td>Trust required</td>
-                <td>You can verify it</td>
+                <td>You can check the public submission</td>
               </tr>
               <tr>
-                <td>Was my vote altered?</td>
+                <td>Was my response altered?</td>
                 <td>Trust required</td>
-                <td>You can verify it</td>
+                <td>You can compare the published record</td>
               </tr>
               <tr>
                 <td>Was the result calculated correctly?</td>
@@ -672,11 +679,11 @@
         <div class="grid-2">
           <article class="info-card">
             <h3>Your identity</h3>
-            <p>Your vote is linked to your cryptographic identity, not your real-world identity.</p>
+            <p>Your submitted response is linked to a private submission identity, not your normal voter identity or real-world identity.</p>
           </article>
           <article class="info-card">
             <h3>The public record</h3>
-            <p>Votes can be audited, results can be verified, and personal information is not required.</p>
+            <p>Responses can be audited, results can be verified, and personal information is not required. Free-text answers can be encrypted for the organiser when configured that way.</p>
           </article>
         </div>
       </section>
@@ -686,13 +693,14 @@
         <h2 id="next">What should I try next?</h2>
         <div class="try-card">
           <ol>
-            <li>Create an account</li>
-            <li>Cast a vote</li>
-            <li>Verify your vote</li>
-            <li>Compare your verification result with another participant</li>
-            <li>Explore the audit data</li>
+            <li>Open Voter</li>
+            <li>Use Login or New identity</li>
+            <li>Open a questionnaire invite with Open + request ballot</li>
+            <li>Submit a response with Submit response</li>
+            <li>Check Submitted Votes in Observer</li>
+            <li>Compare your result with another participant</li>
           </ol>
-          <p>If two independent users obtain the same verification result, they can be confident they are seeing the same election outcome.</p>
+          <p>If two independent users obtain the same Observer result after refreshing from the same public data, they can be confident they are seeing the same questionnaire outcome.</p>
         </div>
       </section>
     </main>
