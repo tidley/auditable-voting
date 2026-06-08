@@ -18,6 +18,7 @@ import {
   normaliseRankedOptionIds,
   type QuestionnairePublishedResponseRef,
   type QuestionnaireQuestion,
+  type QuestionnaireResponseAnswer,
   type QuestionnaireResultQuestionSummary,
   type QuestionnaireResultSummary,
   type QuestionnaireStateEvent,
@@ -1145,7 +1146,7 @@ function decryptAuditorResponseDetails(input: {
   if (encryptedRows.length === 0) {
     return {
       responseDetails: input.responseDetails,
-      statusText: "No encrypted answer details detected.",
+      statusText: "",
     };
   }
   if (!nsec) {
@@ -1155,7 +1156,6 @@ function decryptAuditorResponseDetails(input: {
     };
   }
 
-  let decryptedCount = 0;
   let failedCount = 0;
   const responseDetails = input.responseDetails.map((entry) => {
     if (!auditorResponseHasEncryptedAnswers(entry)) {
@@ -1168,9 +1168,14 @@ function decryptAuditorResponseDetails(input: {
         eventPubkey,
         response: entry.response,
       });
-      decryptedCount += 1;
+      const decryptedAnswerQuestionIds = deriveDecryptedAnswerQuestionIds({
+        encryptedPayloadDecrypted: decrypted.encryptedPayloadDecrypted,
+        decryptedAnswers: decrypted.answers,
+        originalAnswers: entry.response.answers,
+      });
       return {
         ...entry,
+        decryptedAnswerQuestionIds,
         response: {
           ...entry.response,
           answers: decrypted.answers,
@@ -1183,13 +1188,35 @@ function decryptAuditorResponseDetails(input: {
   });
 
   const statusText = failedCount > 0
-    ? `Decrypted ${decryptedCount}; ${failedCount} failed. Check that the nsec matches the questionnaire organiser.`
-    : `Decrypted ${decryptedCount} encrypted response${decryptedCount === 1 ? "" : "s"} locally.`;
+    ? `${failedCount} encrypted response${failedCount === 1 ? "" : "s"} could not be decrypted. Check that the nsec matches the questionnaire organiser.`
+    : "";
 
   return {
     responseDetails,
     statusText,
   };
+}
+
+function deriveDecryptedAnswerQuestionIds(input: {
+  encryptedPayloadDecrypted: boolean;
+  decryptedAnswers: QuestionnaireResponseAnswer[];
+  originalAnswers: QuestionnaireResponseAnswer[] | undefined;
+}) {
+  const questionIds = new Set<string>();
+  if (input.encryptedPayloadDecrypted) {
+    for (const answer of input.decryptedAnswers) {
+      questionIds.add(answer.questionId);
+    }
+  }
+  for (const answer of input.originalAnswers ?? []) {
+    if (
+      answer.answerType === "free_text"
+      && answer.text.trim().startsWith("enc:nip44v2:")
+    ) {
+      questionIds.add(answer.questionId);
+    }
+  }
+  return [...questionIds];
 }
 
 function auditorResponseHasEncryptedAnswers(entry: AuditorQuestionnaireResponseDetail) {

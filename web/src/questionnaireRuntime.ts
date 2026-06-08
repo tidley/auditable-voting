@@ -69,6 +69,7 @@ export type QuestionnaireAcceptedResponse = {
   authorPubkey: string;
   envelope: QuestionnaireResponsePrivateEnvelope;
   payload: QuestionnaireResponsePayload;
+  decryptedAnswerQuestionIds?: string[];
 };
 
 export type QuestionnaireRejectedResponse = {

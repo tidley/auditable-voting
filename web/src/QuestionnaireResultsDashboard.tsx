@@ -28,6 +28,7 @@ export type QuestionnaireResultsDashboardResponseDetail = {
   accepted: boolean;
   rejectionReason?: string | null;
   includedInLatestPublish?: boolean;
+  decryptedAnswerQuestionIds?: string[];
   response: {
     responseId: string;
     authorPubkey: string;
@@ -346,12 +347,14 @@ export default function QuestionnaireResultsDashboard({
                                   const question = selectedQuestionById.get(answer.questionId);
                                   const questionNumber = selectedQuestionNumberById.get(answer.questionId);
                                   const prompt = `${questionNumber ? `Q${questionNumber}. ` : ""}${question?.prompt || answer.questionId}`;
+                                  const answerWasDecrypted = isAnswerDecrypted(entry, answer);
                                   if (answer.answerType === "yes_no") {
                                     return (
                                       <li key={`${entry.event.id}:${answer.questionId}`}>
                                         <span className='simple-auditor-answer-prompt'>{prompt}</span>
                                         <div className='simple-auditor-answer-values'>
                                           <span className='simple-auditor-answer-chip'>{answer.value ? "Yes" : "No"}</span>
+                                          {answerWasDecrypted ? <DecryptedAnswerBadge /> : null}
                                         </div>
                                       </li>
                                     );
@@ -371,6 +374,7 @@ export default function QuestionnaireResultsDashboard({
                                           )) : (
                                             <span className='simple-auditor-answer-chip'>No option selected</span>
                                           )}
+                                          {answerWasDecrypted ? <DecryptedAnswerBadge /> : null}
                                         </div>
                                       </li>
                                     );
@@ -390,6 +394,7 @@ export default function QuestionnaireResultsDashboard({
                                           )) : (
                                             <span className='simple-auditor-answer-chip'>No ranked choices selected</span>
                                           )}
+                                          {answerWasDecrypted ? <DecryptedAnswerBadge /> : null}
                                         </div>
                                       </li>
                                     );
@@ -397,7 +402,10 @@ export default function QuestionnaireResultsDashboard({
                                   return (
                                     <li key={`${entry.event.id}:${answer.questionId}`} className='simple-auditor-answer-item-free-text'>
                                       <span className='simple-auditor-answer-prompt'>{prompt}</span>
-                                      <div className='simple-auditor-answer-free-text'>{formatFreeTextAnswer(answer.text)}</div>
+                                      <div className='simple-auditor-answer-free-text-row'>
+                                        <div className='simple-auditor-answer-free-text'>{formatFreeTextAnswer(answer.text)}</div>
+                                        {answerWasDecrypted ? <DecryptedAnswerBadge /> : null}
+                                      </div>
                                     </li>
                                   );
                                 })}
@@ -450,7 +458,10 @@ export default function QuestionnaireResultsDashboard({
                   return (
                     <li key={`${entry.event.id}:free-text`} className='simple-voter-list-item'>
                       <p className='simple-voter-note'>{entry.response.authorPubkey}</p>
-                      <p className='simple-voter-question'>{formatFreeTextAnswer(freeText.text)}</p>
+                      <div className='simple-auditor-answer-free-text-row'>
+                        <p className='simple-voter-question'>{formatFreeTextAnswer(freeText.text)}</p>
+                        {isAnswerDecrypted(entry, freeText) ? <DecryptedAnswerBadge /> : null}
+                      </div>
                     </li>
                   );
                 })
@@ -466,6 +477,24 @@ export default function QuestionnaireResultsDashboard({
         </section>
       ) : null}
     </>
+  );
+}
+
+function isAnswerDecrypted(
+  entry: QuestionnaireResultsDashboardResponseDetail,
+  answer: QuestionnaireResponseAnswer,
+) {
+  return (entry.decryptedAnswerQuestionIds ?? []).includes(answer.questionId);
+}
+
+function DecryptedAnswerBadge() {
+  return (
+    <span
+      className='simple-auditor-answer-decrypted-badge'
+      title='This answer was decrypted locally in this browser.'
+    >
+      Decrypted
+    </span>
   );
 }
 

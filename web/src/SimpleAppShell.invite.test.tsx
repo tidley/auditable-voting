@@ -154,7 +154,14 @@ describe("SimpleAppShell invite-link login", () => {
       const voterSections = screen.getByRole("tablist", { name: "Voter sections" });
       expect(voterSections).toBeTruthy();
       expect(screen.getByText("vtest")).toBeTruthy();
-      expect(screen.getByRole("menuitem", { name: "How it works" }).getAttribute("href")).toBe("project-explainer.html");
+      const howItWorksLink = screen.getByRole("menuitem", { name: "How it works" });
+      expect(howItWorksLink.getAttribute("href")).toBe("project-explainer.html");
+      expect(howItWorksLink.getAttribute("target")).toBe("_blank");
+      expect(howItWorksLink.getAttribute("rel")).toBe("noopener noreferrer");
+      const demoGuideLink = screen.getByRole("menuitem", { name: "Demo guide" });
+      expect(demoGuideLink.getAttribute("href")).toBe("demo-guide.html");
+      expect(demoGuideLink.getAttribute("target")).toBe("_blank");
+      expect(demoGuideLink.getAttribute("rel")).toBe("noopener noreferrer");
       await user.click(screen.getByRole("menuitem", { name: "Login" }));
       expect(loginEvents).toBe(1);
 

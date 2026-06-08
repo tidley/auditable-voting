@@ -868,16 +868,52 @@ function resolveBlindResponseAnswersForCoordinator(input: {
   const needsDecrypt = Boolean(input.entry.response.encryptedPayload) || hasEncryptedFreeTextAnswer(rawAnswers);
   if (input.coordinatorNsec.trim() && needsDecrypt) {
     try {
-      return decryptQuestionnaireBlindResponseAnswers({
+      const decrypted = decryptQuestionnaireBlindResponseAnswers({
         coordinatorNsec: input.coordinatorNsec,
         eventPubkey: input.entry.event.pubkey,
         response: input.entry.response,
-      }).answers;
+      });
+      return {
+        answers: decrypted.answers,
+        decryptedAnswerQuestionIds: deriveCoordinatorDecryptedAnswerQuestionIds({
+          encryptedPayloadDecrypted: decrypted.encryptedPayloadDecrypted,
+          decryptedAnswers: decrypted.answers,
+          originalAnswers: rawAnswers,
+        }),
+      };
     } catch {
-      return rawAnswers ?? [];
+      return {
+        answers: rawAnswers ?? [],
+        decryptedAnswerQuestionIds: [],
+      };
     }
   }
-  return rawAnswers ?? [];
+  return {
+    answers: rawAnswers ?? [],
+    decryptedAnswerQuestionIds: [],
+  };
+}
+
+function deriveCoordinatorDecryptedAnswerQuestionIds(input: {
+  encryptedPayloadDecrypted: boolean;
+  decryptedAnswers: QuestionnaireResponseAnswer[];
+  originalAnswers: QuestionnaireResponseAnswer[] | undefined;
+}) {
+  const questionIds = new Set<string>();
+  if (input.encryptedPayloadDecrypted) {
+    for (const answer of input.decryptedAnswers) {
+      questionIds.add(answer.questionId);
+    }
+  }
+  for (const answer of input.originalAnswers ?? []) {
+    if (
+      answer.answerType === "free_text"
+      && answer.text.trim().startsWith("enc:nip44v2:")
+    ) {
+      questionIds.add(answer.questionId);
+    }
+  }
+  return [...questionIds];
 }
 
 function publicBlindResponseToAcceptedResponse(input: {
@@ -888,7 +924,7 @@ function publicBlindResponseToAcceptedResponse(input: {
   const submittedAt = Number.isFinite(input.entry.response.submittedAt)
     ? input.entry.response.submittedAt
     : input.entry.event.created_at ?? nowUnix();
-  const answers = resolveBlindResponseAnswersForCoordinator({
+  const resolvedAnswers = resolveBlindResponseAnswersForCoordinator({
     entry: input.entry,
     coordinatorNsec: input.coordinatorNsec,
   });
@@ -913,8 +949,9 @@ function publicBlindResponseToAcceptedResponse(input: {
       questionnaireId: input.entry.response.questionnaireId,
       responseId: input.entry.response.responseId,
       submittedAt,
-      answers,
+      answers: resolvedAnswers.answers,
     },
+    decryptedAnswerQuestionIds: resolvedAnswers.decryptedAnswerQuestionIds,
   };
 }
 
@@ -994,6 +1031,18 @@ function countEncryptedFreeTextAnswers(response: QuestionnaireAcceptedResponse) 
     answer.answerType === "free_text"
     && answer.text.trim().startsWith("enc:nip44v2:")
   )).length;
+}
+
+function deriveAcceptedResponseDecryptedAnswerQuestionIds(response: QuestionnaireAcceptedResponse) {
+  if (response.decryptedAnswerQuestionIds?.length) {
+    return response.decryptedAnswerQuestionIds;
+  }
+  const ciphertext = response.envelope.ciphertext.trim();
+  const isSyntheticPublicReference = ciphertext === "public_blind_response" || ciphertext === "summary_reference";
+  if (!isSyntheticPublicReference && response.payload.answers.length > 0) {
+    return response.payload.answers.map((answer) => answer.questionId);
+  }
+  return [];
 }
 
 function buildDefinition(input: {
@@ -2443,6 +2492,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       },
       accepted: true,
       includedInLatestPublish: currentState === "results_published",
+      decryptedAnswerQuestionIds: deriveAcceptedResponseDecryptedAnswerQuestionIds(response),
       response: {
         responseId: response.payload.responseId,
         authorPubkey: response.authorPubkey,

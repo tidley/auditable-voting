@@ -195,8 +195,8 @@
       <header class="topbar">
         <p class="topbar-title">Technical details</p>
         <nav class="topbar-links" aria-label="Quick links">
-          <a class="topbar-link" href="./project-explainer.html">How it works</a>
-          <a class="topbar-link" href="./demo-guide.html">Demo guide</a>
+          <a class="topbar-link" href="./project-explainer.html" target="_blank" rel="noopener noreferrer">How it works</a>
+          <a class="topbar-link" href="./demo-guide.html" target="_blank" rel="noopener noreferrer">Demo guide</a>
           <a class="topbar-link" href="./">Home</a>
           <a class="topbar-link" href="./dashboard.html?role=auditor">Observer</a>
           <a class="topbar-link" href="./simple-coordinator.html?role=coordinator">Organiser</a>
@@ -489,6 +489,10 @@ The observer view fetches once when opened and then waits for an explicit Refres
 
       marked.setOptions({ gfm: true, breaks: false });
       content.innerHTML = marked.parse(source);
+      for (const link of content.querySelectorAll('a[href$="demo-guide.html"], a[href$="project-explainer.html"]')) {
+        link.setAttribute("target", "_blank");
+        link.setAttribute("rel", "noopener noreferrer");
+      }
 
       const usedHeadingIds = new Set();
       const slugify = (value) => value.toLowerCase().trim().replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-").replace(/-+/g, "-");

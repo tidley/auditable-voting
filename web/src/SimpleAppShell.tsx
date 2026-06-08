@@ -635,7 +635,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
         </section>
         <footer className='simple-app-version' aria-label='App version'>
           <span>v{SIMPLE_APP_VERSION}</span>
-          <a href='project-explainer.html'>How it works</a>
+          <a href='project-explainer.html' target='_blank' rel='noopener noreferrer'>How it works</a>
         </footer>
       </div>
     );
@@ -829,6 +829,8 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                       className='simple-account-menu-button simple-account-menu-link'
                       role='menuitem'
                       href='project-explainer.html'
+                      target='_blank'
+                      rel='noopener noreferrer'
                       onClick={() => setAccountMenuOpen(false)}
                     >
                       How it works
@@ -837,6 +839,8 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                       className='simple-account-menu-button simple-account-menu-link'
                       role='menuitem'
                       href='demo-guide.html'
+                      target='_blank'
+                      rel='noopener noreferrer'
                       onClick={() => setAccountMenuOpen(false)}
                     >
                       Demo guide
