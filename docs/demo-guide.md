@@ -1,36 +1,86 @@
 # Auditable Voting Demo
 
-This demo takes about **3 minutes**.
+This demo takes about **5 minutes**.
 
 By the end you will:
 
-- &#10003; Open the real Voter flow
-- &#10003; Request a ballot from a questionnaire invite
+- &#10003; Publish a questionnaire as Organiser
+- &#10003; Share the General invite link or QR code
+- &#10003; Request a ballot from the real Voter flow
 - &#10003; Submit a response
-- &#10003; Check the submission in Observer
-- &#10003; Learn how anyone can audit the questionnaire result
+- &#10003; Check the live submission and final result in Observer
 
 ## The flow
 
 ```text
-Open Voter
+Open Organiser
       |
       v
-Login or New identity
+Publish questionnaire
       |
       v
-Open + request ballot
+Share General invite
       |
       v
 Submit response
       |
       v
 Check Observer
+      |
+      v
+Publish and verify results
 ```
 
-## Step 1: Open Voter and choose an identity
+## Run the demo
 
-Open **Voter**.
+Use these pages:
+
+- [Open Organiser](../web/public/simple-coordinator.html?role=coordinator)
+- [Open Voter](../web/public/simple.html?role=voter)
+- [Open Observer](../web/public/dashboard.html?role=auditor)
+
+For the cleanest demo, open each role in a separate browser profile, private window, or device.
+
+## Step 1: Open Organiser and publish a questionnaire
+
+Open **Organiser**.
+
+Use **Login** if you already have an organiser identity, or use **New identity** for a fresh local demo identity.
+
+Fill in:
+
+- **Name**
+- **Description**
+- At least one **Question prompt**
+
+The **Readiness checklist** should show:
+
+- **Title added**
+- **Description added**
+- **At least one question added**
+- **All question prompts and options complete**
+
+Click **Publish questionnaire**.
+
+When it appears, click **Open vote**.
+
+## Step 2: Share the General invite
+
+In **Organiser**, open **Invite voters**.
+
+Use **General invite link**.
+
+The General invite QR/link opens **Vote** and requests a ballot automatically.
+
+You can:
+
+- scan the QR code on a phone
+- click **Copy link**
+- click **Share...**
+
+## Step 3: Open Voter and choose an identity
+
+After scanning the QR or opening the invite, you should be on **Voter**.
 
 Open **Menu**.
 
@@ -40,11 +90,13 @@ The top-right label should show something like **Voter dv0lu66**.
 
 > Nobody needs your email address, phone number or password.
 
-## Step 2: Open the questionnaire invite
+## Step 4: Open the questionnaire invite
 
 Open the organiser's questionnaire invite link or scan the General invite QR code.
 
-If the page shows **Pending invites**, click **Open + request ballot**.
+The General invite should open the questionnaire and request a ballot automatically.
+
+If the page instead shows **Pending invites**, click **Open + request ballot**.
 
 You should see:
 
@@ -55,7 +107,7 @@ You should see:
 
 The submit button may say **Verifying vote request** while the organiser or audit proxy issues your ballot credential.
 
-## Step 3: Submit your response
+## Step 5: Submit your response
 
 Answer the questions.
 
@@ -76,24 +128,30 @@ After submission, the page shows **Private submission identity** with:
 
 This is the identity used for the public submission. It is not your normal voter identity.
 
-## Step 4: Check the submitted vote
+## Step 6: Check the submitted vote in Observer
 
 Open **Observer**.
 
 Use **Find Published Questionnaires** to choose the questionnaire, then open **Submitted Votes**.
 
-Use the voter page's **Submission ID** and private submission identity to compare against the public submitted-vote row.
+Match the voter page's **Submission ID** to Observer's **Response ID**.
+
+Compare the private submission identity against the public **Submittor identity** row.
 
 At this stage you can check:
 
 - &#10003; The submission exists
-- &#10003; It has an accepted or invalid status
+- &#10003; Accepted submissions have no **Invalid** marker
 - &#10003; Any invalid submission shows a reason
 - &#10003; The public row matches the private submission identity shown to the voter
 
-## Step 5: Check the questionnaire result
+## Step 7: Publish and verify the questionnaire result
 
-After the organiser clicks **Close + publish results** or **Publish results**, open **Observer** again and click **Refresh**.
+Observer can show live verified submissions before the final result is published.
+
+For the final published result, return to **Organiser** and click **Close + publish results** or **Publish results**.
+
+Open **Observer** again and click **Refresh**.
 
 The Observer page shows:
 
@@ -139,12 +197,14 @@ The system is designed so that:
 
 ## What should I try next?
 
-1. Open **Voter**
-2. Use **Login** or **New identity**
-3. Open a questionnaire invite with **Open + request ballot**
-4. Submit a response with **Submit response**
-5. Check **Submitted Votes** in Observer
-6. Compare your result with another participant
+1. Open **Organiser**
+2. Publish a questionnaire
+3. Share the **General invite link**
+4. Open **Voter** from the invite
+5. Submit a response with **Submit response**
+6. Check **Submitted Votes** in Observer
+7. Publish and verify the final result
+8. Compare your result with another participant
 
 If two independent users obtain the same Observer result after refreshing from the same public data, they can be confident they are seeing the same questionnaire outcome.
 

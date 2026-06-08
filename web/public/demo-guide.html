@@ -481,48 +481,103 @@
         <div class="hero-copy">
           <p class="kicker">Plain-English demo guide</p>
           <h1 id="page-title">Auditable Voting Demo</h1>
-          <p class="lead">This demo takes about <strong>3 minutes</strong>. By the end, you will have requested a ballot from a real questionnaire invite, submitted a response, and checked it in Observer.</p>
-          <p class="time-pill">3 minute walkthrough</p>
+          <p class="lead">This demo takes about <strong>5 minutes</strong>. By the end, you will have published a questionnaire, shared an invite, submitted a response, and checked the public result in Observer.</p>
+          <p class="time-pill">5 minute walkthrough</p>
           <div class="hero-actions">
-            <a class="button button-primary" href="./simple.html?role=voter">Open voter page</a>
-            <a class="button" href="./simple-coordinator.html?role=coordinator">Open organiser page</a>
+            <a class="button button-primary" href="./simple-coordinator.html?role=coordinator">Open organiser page</a>
+            <a class="button" href="./simple.html?role=voter">Open voter page</a>
+            <a class="button" href="./dashboard.html?role=auditor">Open observer page</a>
           </div>
         </div>
         <aside class="summary-card" aria-label="Demo outcomes">
           <h2>By the end you will</h2>
           <ul class="check-list">
-            <li>Open the real Voter flow</li>
-            <li>Request a ballot from a questionnaire invite</li>
+            <li>Publish a questionnaire as Organiser</li>
+            <li>Share the General invite link or QR code</li>
+            <li>Request a ballot from the real Voter flow</li>
             <li>Submit a response</li>
-            <li>Check the submission in Observer</li>
-            <li>Learn how anyone can audit the questionnaire result</li>
+            <li>Check the live submission and final result in Observer</li>
           </ul>
         </aside>
       </section>
 
       <section class="section" aria-labelledby="flow">
         <p class="kicker">The mental model</p>
-        <h2 id="flow">Five simple steps</h2>
+        <h2 id="flow">End-to-end flow</h2>
         <div class="flow-strip" aria-label="Demo progression">
-          <div class="flow-step"><span>1</span>Open Voter</div>
-          <div class="flow-step"><span>2</span>Login or New identity</div>
-          <div class="flow-step"><span>3</span>Open + request ballot</div>
+          <div class="flow-step"><span>1</span>Open Organiser</div>
+          <div class="flow-step"><span>2</span>Publish questionnaire</div>
+          <div class="flow-step"><span>3</span>Share General invite</div>
           <div class="flow-step"><span>4</span>Submit response</div>
           <div class="flow-step"><span>5</span>Check Observer</div>
+          <div class="flow-step"><span>6</span>Publish + verify results</div>
         </div>
       </section>
 
       <section class="section" aria-labelledby="steps">
         <p class="kicker">Do this first</p>
         <h2 id="steps">Run the demo</h2>
+        <p class="section-intro">
+          Use <a href="./simple-coordinator.html?role=coordinator" target="_blank" rel="noopener noreferrer">Organiser</a>,
+          <a href="./simple.html?role=voter" target="_blank" rel="noopener noreferrer">Voter</a>, and
+          <a href="./dashboard.html?role=auditor" target="_blank" rel="noopener noreferrer">Observer</a>.
+          For the cleanest demo, open each role in a separate browser profile, private window, or device.
+        </p>
         <div class="timeline">
           <article class="timeline-card">
             <div class="step-copy">
               <div class="step-head">
                 <span class="step-number">1</span>
+                <h2>Open Organiser and publish a questionnaire</h2>
+              </div>
+              <p>Open <a href="./simple-coordinator.html?role=coordinator" target="_blank" rel="noopener noreferrer"><strong>Organiser</strong></a>.</p>
+              <p>Use <strong>Login</strong> if you already have an organiser identity, or use <strong>New identity</strong> for a fresh local demo identity.</p>
+              <p>Fill in <strong>Name</strong>, <strong>Description</strong>, and at least one <strong>Question prompt</strong>.</p>
+              <p>When the <strong>Readiness checklist</strong> is complete, click <strong>Publish questionnaire</strong>, then click <strong>Open vote</strong>.</p>
+            </div>
+            <div class="screen-card" aria-label="Organiser questionnaire setup preview">
+              <div class="screen-bar"><span class="screen-dot"></span><span class="screen-dot"></span><span class="screen-dot"></span></div>
+              <div class="screen-body">
+                <p class="mock-title">Questionnaire setup</p>
+                <div class="mock-line">Name</div>
+                <div class="mock-line">Description</div>
+                <div class="mock-line">Question prompt</div>
+                <div class="mock-button">Publish questionnaire</div>
+                <div class="mock-button">Open vote</div>
+              </div>
+            </div>
+          </article>
+
+          <article class="timeline-card">
+            <div class="step-copy">
+              <div class="step-head">
+                <span class="step-number">2</span>
+                <h2>Share the General invite</h2>
+              </div>
+              <p>In <strong>Organiser</strong>, open <strong>Invite voters</strong>.</p>
+              <p>Use <strong>General invite link</strong>. Voters who scan the QR open Vote and request a ballot automatically.</p>
+              <p>You can scan the QR code on a phone, click <strong>Copy link</strong>, or click <strong>Share...</strong>.</p>
+            </div>
+            <div class="screen-card" aria-label="General invite link preview">
+              <div class="screen-bar"><span class="screen-dot"></span><span class="screen-dot"></span><span class="screen-dot"></span></div>
+              <div class="screen-body">
+                <p class="mock-title">Invite voters</p>
+                <div class="mock-line">General invite link</div>
+                <div class="mock-line">QR code</div>
+                <div class="mock-button">Copy link</div>
+                <div class="mock-button">Share...</div>
+              </div>
+            </div>
+          </article>
+
+          <article class="timeline-card">
+            <div class="step-copy">
+              <div class="step-head">
+                <span class="step-number">3</span>
                 <h2>Open Voter and choose an identity</h2>
               </div>
-              <p>Open <strong>Voter</strong>, then open <strong>Menu</strong>.</p>
+              <p>After scanning the QR or opening the invite, you should be on <a href="./simple.html?role=voter" target="_blank" rel="noopener noreferrer"><strong>Voter</strong></a>.</p>
+              <p>Open <strong>Menu</strong>.</p>
               <p>Use <strong>Login</strong> if you already have a voter identity, or use <strong>New identity</strong> for a fresh local demo identity.</p>
               <p>The top-right label should show something like <strong>Voter dv0lu66</strong>.</p>
               <blockquote>Nobody needs your email address, phone number or password.</blockquote>
@@ -541,30 +596,11 @@
           <article class="timeline-card">
             <div class="step-copy">
               <div class="step-head">
-                <span class="step-number">2</span>
-                <h2>Open the questionnaire invite</h2>
+                <span class="step-number">4</span>
+                <h2>Open the invite and submit your response</h2>
               </div>
-              <p>Open the organiser's questionnaire invite link or scan the General invite QR code.</p>
-              <p>If the page shows <strong>Pending invites</strong>, click <strong>Open + request ballot</strong>.</p>
-              <p>You should see <strong>Questionnaire</strong>, its ID, the title, description, and questions.</p>
-            </div>
-            <div class="screen-card" aria-label="Questionnaire invite screen preview">
-              <div class="screen-bar"><span class="screen-dot"></span><span class="screen-dot"></span><span class="screen-dot"></span></div>
-              <div class="screen-body">
-                <p class="mock-title">Pending invites</p>
-                <div class="mock-line">Questionnaire title - q_abc123</div>
-                <div class="mock-button">Open</div>
-                <div class="mock-button">Open + request ballot</div>
-              </div>
-            </div>
-          </article>
-
-          <article class="timeline-card">
-            <div class="step-copy">
-              <div class="step-head">
-                <span class="step-number">3</span>
-                <h2>Submit your response</h2>
-              </div>
+              <p>The General invite should open the questionnaire and request a ballot automatically.</p>
+              <p>If the page instead shows <strong>Pending invites</strong>, click <strong>Open + request ballot</strong>.</p>
               <p>Answer the questions. For free-text questions, use <strong>Encrypt for organiser</strong> if the answer should not be public.</p>
               <p>When the button is ready, click <strong>Submit response</strong>.</p>
               <p>If it is not ready, the button explains why, for example <strong>Please answer all required questions</strong> or <strong>Verifying vote request</strong>.</p>
@@ -584,15 +620,16 @@
           <article class="timeline-card">
             <div class="step-copy">
               <div class="step-head">
-                <span class="step-number">4</span>
-                <h2>Check the submitted vote</h2>
+                <span class="step-number">5</span>
+                <h2>Check the submitted vote in Observer</h2>
               </div>
-              <p>Open <strong>Observer</strong>.</p>
+              <p>Open <a href="./dashboard.html?role=auditor" target="_blank" rel="noopener noreferrer"><strong>Observer</strong></a>.</p>
               <p>Use <strong>Find Published Questionnaires</strong> to choose the questionnaire, then open <strong>Submitted Votes</strong>.</p>
-              <p>Use the voter page's <strong>Submission ID</strong> and private submission identity to compare against the public submitted-vote row.</p>
+              <p>Match the voter page's <strong>Submission ID</strong> to Observer's <strong>Response ID</strong>.</p>
+              <p>Compare the private submission identity against the public <strong>Submittor identity</strong> row.</p>
               <ul class="check-list">
                 <li>The submission exists</li>
-                <li>It has an accepted or invalid status</li>
+                <li>Accepted submissions have no Invalid marker</li>
                 <li>Any invalid submission shows a reason</li>
               </ul>
             </div>
@@ -600,9 +637,9 @@
               <div class="screen-bar"><span class="screen-dot"></span><span class="screen-dot"></span><span class="screen-dot"></span></div>
               <div class="screen-body">
                 <p class="mock-title">Submitted Votes</p>
-                <div class="mock-id">Submission ID: submission_8f4a2c</div>
-                <div class="mock-result"><span>Status</span><strong>Accepted</strong></div>
+                <div class="mock-id">Response ID: submission_8f4a2c</div>
                 <div class="mock-result"><span>Submittor identity</span><strong>dv0lu66</strong></div>
+                <div class="mock-result"><span>Invalid reason</span><strong>Only if rejected</strong></div>
               </div>
             </div>
           </article>
@@ -610,10 +647,12 @@
           <article class="timeline-card">
             <div class="step-copy">
               <div class="step-head">
-                <span class="step-number">5</span>
-                <h2>Check the questionnaire result</h2>
+                <span class="step-number">6</span>
+                <h2>Publish and verify the questionnaire result</h2>
               </div>
-              <p>After the organiser clicks <strong>Close + publish results</strong> or <strong>Publish results</strong>, open <strong>Observer</strong> again and click <strong>Refresh</strong>.</p>
+              <p>Observer can show live verified submissions before the final result is published.</p>
+              <p>For the final published result, return to <strong>Organiser</strong> and click <strong>Close + publish results</strong> or <strong>Publish results</strong>.</p>
+              <p>Open <strong>Observer</strong> again and click <strong>Refresh</strong>.</p>
               <p>You can see <strong>Questionnaire Results</strong>, accepted and invalid response counts, per-question result breakdowns, and <strong>Submitted Votes</strong>.</p>
               <ul class="check-list">
                 <li>The reported result is correct</li>
@@ -693,11 +732,13 @@
         <h2 id="next">What should I try next?</h2>
         <div class="try-card">
           <ol>
-            <li>Open Voter</li>
-            <li>Use Login or New identity</li>
-            <li>Open a questionnaire invite with Open + request ballot</li>
+            <li>Open Organiser</li>
+            <li>Publish a questionnaire</li>
+            <li>Share the General invite link</li>
+            <li>Open Voter from the invite</li>
             <li>Submit a response with Submit response</li>
             <li>Check Submitted Votes in Observer</li>
+            <li>Publish and verify the final result</li>
             <li>Compare your result with another participant</li>
           </ol>
           <p>If two independent users obtain the same Observer result after refreshing from the same public data, they can be confident they are seeing the same questionnaire outcome.</p>
