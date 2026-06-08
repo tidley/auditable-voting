@@ -24,8 +24,8 @@
   --simple-text: #f3f7fa;
   --simple-muted: #b8c4cc;
   --simple-soft: #d5dee5;
-  --simple-blue: #088f8d;
-  --simple-blue-hover: #0aa6a4;
+  --simple-blue: #07827f;
+  --simple-blue-hover: #067674;
   --simple-teal: #2dd4bf;
   --simple-amber: #f59e0b;
   --simple-coral: #ef4444;
@@ -1855,7 +1855,7 @@ code {
   border: 1px solid transparent;
   border-radius: 6px;
   background: var(--simple-blue);
-  color: #06100f;
+  color: #ffffff;
   text-decoration: none;
   font: inherit;
   font-weight: 700;
@@ -4497,7 +4497,7 @@ code {
 .simple-voter-choice.is-active {
   background: var(--simple-blue);
   border-color: var(--simple-blue);
-  color: #06100f;
+  color: #ffffff;
 }
 
 .simple-voter-choice-yes {
@@ -4685,7 +4685,7 @@ code {
 }
 
 .simple-status-indicator.is-voter-issued {
-  color: #06100f;
+  color: #ffffff;
   background: var(--simple-blue);
   border-color: var(--simple-blue);
 }
@@ -6091,9 +6091,9 @@ body.demo-page .ghost-button {
 }
 
 body.demo-page .primary-button {
-  background: #088f8d;
-  color: #0f1115;
-  border: 1px solid #088f8d;
+  background: #07827f;
+  color: #ffffff;
+  border: 1px solid #07827f;
 }
 
 body.demo-page .link-button {
@@ -6333,9 +6333,9 @@ body.app-page .page-nav-link {
 
 body.demo-page .page-nav-link.is-active,
 body.app-page .page-nav-link.is-active {
-  background: #088f8d;
-  border-color: #088f8d;
-  color: #0f1115;
+  background: #07827f;
+  border-color: #07827f;
+  color: #ffffff;
 }
 
 body.app-page .hero-card,
@@ -6399,9 +6399,9 @@ body.app-page .signer-mode-option {
 }
 
 body.app-page .primary-button {
-  background: #088f8d;
-  color: #0f1115;
-  border: 1px solid #088f8d;
+  background: #07827f;
+  color: #ffffff;
+  border: 1px solid #07827f;
 }
 
 body.app-page .link-button {
