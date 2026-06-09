@@ -283,7 +283,7 @@
 
     .step {
       display: grid;
-      grid-template-columns: 54px minmax(0, 1fr);
+      grid-template-columns: 62px minmax(0, 1fr);
       gap: 16px;
       align-items: start;
     }
@@ -291,15 +291,17 @@
     .step::before {
       counter-increment: step;
       content: counter(step);
-      width: 40px;
-      height: 40px;
+      width: 48px;
+      height: 48px;
       border-radius: 8px;
       display: grid;
       place-items: center;
       background: rgba(53, 215, 197, 0.14);
       color: var(--accent);
       border: 1px solid rgba(53, 215, 197, 0.45);
+      font-size: 2rem;
       font-weight: 900;
+      line-height: 1;
     }
 
     .step p:last-child,

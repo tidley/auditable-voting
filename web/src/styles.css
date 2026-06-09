@@ -1860,8 +1860,8 @@ code {
   font: inherit;
   font-weight: 700;
   cursor: pointer;
-  box-shadow: 0 10px 22px rgba(8, 143, 141, 0.28);
-  transition: background 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+  box-shadow: none;
+  transition: background 160ms ease, transform 160ms ease;
 }
 
 .simple-voter-primary-wide {
@@ -1884,7 +1884,12 @@ code {
 
 .simple-voter-primary:hover {
   background: var(--simple-blue-hover);
-  box-shadow: 0 12px 26px rgba(8, 143, 141, 0.38);
+  box-shadow: none;
+}
+
+.simple-voter-primary:focus-visible {
+  outline: 2px solid var(--simple-teal);
+  outline-offset: 3px;
 }
 
 .simple-voter-primary:disabled {
