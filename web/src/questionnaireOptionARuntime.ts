@@ -2715,9 +2715,21 @@ export class QuestionnaireOptionACoordinatorRuntime {
     if (!existing) {
       return null;
     }
+    const updatedAt = nowIso();
+    const nextState = existing.state === "redeemed"
+      ? existing.state
+      : markedUsed
+        ? "revoked"
+        : "available";
     const next: BearerInviteCodeEntry = {
       ...existing,
-      markedUsedAt: markedUsed ? existing.markedUsedAt ?? nowIso() : null,
+      state: nextState,
+      markedUsedAt: markedUsed ? existing.markedUsedAt ?? updatedAt : null,
+      revokedAt: nextState === "revoked"
+        ? existing.revokedAt ?? updatedAt
+        : nextState === "available"
+          ? null
+          : existing.revokedAt ?? null,
     };
     this.state = {
       ...this.state,
@@ -2725,7 +2737,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
         ...(this.state.bearerInviteCodes ?? {}),
         [normalisedHash]: next,
       },
-      lastUpdatedAt: nowIso(),
+      lastUpdatedAt: updatedAt,
     };
     this.persistCoordinatorState("bearer_invite_code_marked_used");
     return next;

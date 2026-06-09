@@ -241,21 +241,6 @@ type StatusIndicatorView = {
   label: string;
 };
 
-function privateInviteStatusIndicator(state: BearerInviteCodeState): StatusIndicatorView {
-  if (state !== "available") {
-    return {
-      className: "simple-status-indicator is-private-invite-revoked",
-      icon: "",
-      label: "Unavailable",
-    };
-  }
-  return {
-    className: "simple-status-indicator is-private-invite-available",
-    icon: "",
-    label: "Available",
-  };
-}
-
 function whitelistStatusIndicator(state: WhitelistClaimState): StatusIndicatorView {
   switch (state) {
     case "vote_accepted":
@@ -3874,25 +3859,6 @@ export default function SimpleCoordinatorApp() {
     }
   }
 
-  function togglePrivateInviteCodeAvailability(codeHash: string) {
-    try {
-      const updated = optionACoordinatorRuntime?.toggleBearerInviteCodeAvailability(codeHash);
-      if (!updated) {
-        setKnownVoterInviteStatus("Claimed private links cannot be made available again.");
-        return;
-      }
-      void syncActiveWorkerElectionConfig().catch(() => false);
-      setKnownVoterInviteRefreshNonce((value) => value + 1);
-      setKnownVoterInviteStatus(
-        updated.state === "available"
-          ? "Private invite code made available."
-          : "Private invite code made unavailable.",
-      );
-    } catch (error) {
-      setKnownVoterInviteStatus(error instanceof Error ? error.message : "Could not update private invite code.");
-    }
-  }
-
   function updatePrivateInviteCodeNote(codeHash: string, note: string) {
     try {
       optionACoordinatorRuntime?.updateBearerInviteCodeNote(codeHash, note);
@@ -3904,9 +3870,20 @@ export default function SimpleCoordinatorApp() {
 
   function setPrivateInviteCodeMarkedUsed(codeHash: string, markedUsed: boolean) {
     try {
-      optionACoordinatorRuntime?.setBearerInviteCodeMarkedUsed(codeHash, markedUsed);
+      const updated = optionACoordinatorRuntime?.setBearerInviteCodeMarkedUsed(codeHash, markedUsed);
+      if (!updated) {
+        setKnownVoterInviteStatus("Could not find that private invite code.");
+        return;
+      }
+      void syncActiveWorkerElectionConfig().catch(() => false);
       setKnownVoterInviteRefreshNonce((value) => value + 1);
-      setKnownVoterInviteStatus(markedUsed ? "Private invite marked as used." : "Private invite usage mark cleared.");
+      setKnownVoterInviteStatus(markedUsed
+        ? updated.state === "revoked"
+          ? "Private invite marked as used and made unavailable."
+          : "Private invite marked as used."
+        : updated.state === "available"
+          ? "Private invite usage mark cleared and made available."
+          : "Private invite usage mark cleared.");
     } catch (error) {
       setKnownVoterInviteStatus(error instanceof Error ? error.message : "Could not update private invite status.");
     }
@@ -6691,12 +6668,12 @@ export default function SimpleCoordinatorApp() {
                       </div>
                       {privateInviteCodeEntries.length > 0 ? (
                         <ul className='simple-vote-status-list simple-private-invite-list'>
-                          {privateInviteCodeEntries.slice(0, 6).map((entry) => {
+                          {privateInviteCodeEntries.slice(0, 6).map((entry, inviteIndex) => {
                             const privateInviteUrl = privateInviteLinksByHash[entry.codeHash] ?? "";
                             const inviteActive = entry.state === "available";
                             const canSharePrivateInvite = inviteActive && privateInviteUrl.length > 0;
-                            const availabilityIndicator = privateInviteStatusIndicator(entry.state);
                             const redeemedNpub = entry.redeemedNpub?.trim() ?? "";
+                            const redeemedDisplayId = redeemedNpub ? deriveActorDisplayId(redeemedNpub) : "";
                             const redeemedVoter = redeemedNpub ? optionAKnownVoterByNpub.get(redeemedNpub) ?? null : null;
                             const markedUsed = Boolean(entry.markedUsedAt?.trim());
                             const voterStatusIndicator = privateInviteVoterStatusIndicator({
@@ -6705,7 +6682,9 @@ export default function SimpleCoordinatorApp() {
                               claimState: redeemedVoter?.claimState ?? null,
                               markedUsedAt: entry.markedUsedAt ?? null,
                             });
-                            const canToggleAvailability = entry.state !== "redeemed";
+                            const voterStatusLabel = redeemedDisplayId && voterStatusIndicator.label === "Used"
+                              ? `Used ${redeemedDisplayId}`
+                              : voterStatusIndicator.label;
                             const inviteInputId = `private-invite-url-${entry.codeHash}`;
                             const noteInputId = `private-invite-note-${entry.codeHash}`;
 
@@ -6713,34 +6692,21 @@ export default function SimpleCoordinatorApp() {
                               <li key={entry.codeHash} className='simple-private-invite-card'>
                                 <div className='simple-private-invite-card-header'>
                                   <div className='simple-private-invite-title'>
-                                    <span className='simple-private-invite-plus' aria-hidden='true'>+</span>
-                                    <span className='simple-private-invite-code'>code {entry.codeHash.slice(0, 10)}</span>
+                                    <span className='simple-private-invite-code'>#{inviteIndex + 1}</span>
                                   </div>
                                   <div className='simple-private-invite-header-status'>
-                                    {redeemedNpub ? (
-                                      <span className='simple-private-invite-redeemed'>
-                                        by {deriveActorDisplayId(redeemedNpub)}
-                                      </span>
-                                    ) : null}
                                     <div className='simple-private-invite-status-field simple-private-invite-status-field-inline'>
-                                      <span className='simple-private-invite-field-label'>Voter status</span>
                                       <span
                                         className={`simple-private-invite-status-badge ${voterStatusIndicator.className}`}
-                                        aria-label={voterStatusIndicator.label}
-                                        title={voterStatusIndicator.label}
+                                        aria-label={voterStatusLabel}
+                                        title={redeemedNpub && voterStatusIndicator.label === "Used"
+                                          ? `Used by ${redeemedNpub}`
+                                          : voterStatusLabel}
                                       >
                                         <span aria-hidden='true'>{voterStatusIndicator.icon}</span>
-                                        {voterStatusIndicator.label}
+                                        {voterStatusLabel}
                                       </span>
                                     </div>
-                                    <label className='simple-private-invite-used-toggle'>
-                                      <input
-                                        type='checkbox'
-                                        checked={markedUsed}
-                                        onChange={(event) => setPrivateInviteCodeMarkedUsed(entry.codeHash, event.target.checked)}
-                                      />
-                                      <span>Mark as used</span>
-                                    </label>
                                   </div>
                                 </div>
                                 <div className='simple-private-invite-card-body'>
@@ -6784,21 +6750,15 @@ export default function SimpleCoordinatorApp() {
                                           onChange={(event) => updatePrivateInviteCodeNote(entry.codeHash, event.target.value)}
                                         />
                                       </label>
-                                      <div className='simple-private-invite-availability-field'>
-                                        <span className='simple-private-invite-field-label'>Link availability</span>
-                                        <button
-                                          type='button'
-                                          className={`simple-private-invite-availability-pill ${availabilityIndicator.className}`}
-                                          onClick={() => togglePrivateInviteCodeAvailability(entry.codeHash)}
-                                          disabled={!canToggleAvailability}
-                                          title={
-                                            canToggleAvailability
-                                              ? `Click to ${entry.state === "available" ? "make unavailable" : "make available"}`
-                                              : "Claimed private links cannot be toggled"
-                                          }
-                                        >
-                                          {availabilityIndicator.label}
-                                        </button>
+                                      <div className='simple-private-invite-used-field'>
+                                        <label className='simple-private-invite-used-toggle'>
+                                          <input
+                                            type='checkbox'
+                                            checked={markedUsed}
+                                            onChange={(event) => setPrivateInviteCodeMarkedUsed(entry.codeHash, event.target.checked)}
+                                          />
+                                          <span>Mark as used</span>
+                                        </label>
                                       </div>
                                     </div>
                                   </div>

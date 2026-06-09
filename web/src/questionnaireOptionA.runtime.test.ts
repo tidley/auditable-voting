@@ -818,7 +818,7 @@ describe("questionnaireOptionARuntime", () => {
     expect(coordinator.getPendingAuthorizations().some((entry) => entry.invitedNpub === secondNpub)).toBe(true);
   });
 
-  it("stores organiser-only private invite metadata without changing availability", async () => {
+  it("uses organiser private invite metadata to control availability", async () => {
     const inviteCodeHash = await hashQuestionnaireInviteCode("private-invite-code-metadata");
     const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
     await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
@@ -828,23 +828,22 @@ describe("questionnaireOptionARuntime", () => {
     coordinator.setBearerInviteCodeMarkedUsed(inviteCodeHash, true);
     expect(coordinator.getSnapshot()?.bearerInviteCodes[inviteCodeHash]).toEqual(
       expect.objectContaining({
-        state: "available",
-        note: "Alice",
-        markedUsedAt: expect.any(String),
-      }),
-    );
-
-    coordinator.toggleBearerInviteCodeAvailability(inviteCodeHash);
-    expect(coordinator.getSnapshot()?.bearerInviteCodes[inviteCodeHash]).toEqual(
-      expect.objectContaining({
         state: "revoked",
         note: "Alice",
         markedUsedAt: expect.any(String),
+        revokedAt: expect.any(String),
       }),
     );
 
     coordinator.setBearerInviteCodeMarkedUsed(inviteCodeHash, false);
-    expect(coordinator.getSnapshot()?.bearerInviteCodes[inviteCodeHash]?.markedUsedAt).toBeNull();
+    expect(coordinator.getSnapshot()?.bearerInviteCodes[inviteCodeHash]).toEqual(
+      expect.objectContaining({
+        state: "available",
+        note: "Alice",
+        markedUsedAt: null,
+        revokedAt: null,
+      }),
+    );
   });
 
   it("recovers coordinator routing from the public summary for a private invite code request", async () => {

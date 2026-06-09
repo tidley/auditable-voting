@@ -2943,34 +2943,14 @@ code {
 .simple-private-invite-title {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
   min-width: 0;
-}
-
-.simple-private-invite-plus {
-  display: inline-grid;
-  width: 28px;
-  height: 28px;
-  place-items: center;
-  border-radius: 999px;
-  background: var(--simple-teal);
-  color: #06201c;
-  font-size: 1.22rem;
-  font-weight: 900;
-  line-height: 1;
-  flex: 0 0 auto;
 }
 
 .simple-private-invite-code {
   color: var(--simple-text);
-  font-size: 1rem;
-  font-weight: 800;
-}
-
-.simple-private-invite-redeemed {
-  color: var(--simple-muted);
-  font-size: 0.92rem;
-  font-weight: 700;
+  font-size: 1.12rem;
+  font-weight: 900;
+  line-height: 1;
 }
 
 .simple-private-invite-header-status {
@@ -2984,27 +2964,6 @@ code {
 
 .simple-private-invite-status-field-inline {
   justify-items: end;
-}
-
-.simple-private-invite-availability-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 102px;
-  min-height: 32px;
-  padding: 0 12px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  font: inherit;
-  font-size: 0.9rem;
-  font-weight: 800;
-  line-height: 1;
-  text-transform: none;
-  cursor: pointer;
-}
-
-.simple-private-invite-availability-pill:disabled {
-  cursor: not-allowed;
 }
 
 .simple-private-invite-card-body {
@@ -3121,7 +3080,7 @@ code {
 }
 
 .simple-private-invite-note-field,
-.simple-private-invite-availability-field,
+.simple-private-invite-used-field,
 .simple-private-invite-status-field {
   display: grid;
   gap: 6px;
@@ -3135,7 +3094,7 @@ code {
   align-items: end;
 }
 
-.simple-private-invite-availability-field {
+.simple-private-invite-used-field {
   justify-items: start;
 }
 
@@ -4945,11 +4904,6 @@ code {
   text-transform: uppercase;
 }
 
-.simple-private-invite-availability-pill.simple-status-indicator {
-  font-size: 0.9rem;
-  text-transform: none;
-}
-
 .simple-status-indicator.is-private-invite-available,
 .simple-status-indicator.is-voter-invited {
   color: #06201c;
@@ -6017,7 +5971,7 @@ code {
 
   .simple-private-invite-link-field,
   .simple-private-invite-note-field,
-  .simple-private-invite-availability-field,
+  .simple-private-invite-used-field,
   .simple-private-invite-status-field,
   .simple-private-invite-qr-cell {
     grid-column: 1 / -1;
