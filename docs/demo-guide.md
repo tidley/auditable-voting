@@ -1,4 +1,12 @@
-# Auditable Voting Demo
+# Demo guide
+
+Run through a voting loop.
+
+Use this guide to:
+
+1. Organise a questionnaire
+2. Admit a voter
+3. Submit a response and verify it
 
 This demo takes about **5 minutes**.
 
@@ -39,13 +47,17 @@ Use these pages:
 - [Open Voter](../web/public/simple.html?role=voter)
 - [Open Observer](../web/public/dashboard.html?role=auditor)
 
-For the cleanest demo, open each role in a separate browser profile, private window, or device.
+## Roles
+
+| Role | What they do |
+| --- | --- |
+| Organiser | Creates the questions and settings, controls who can request a ballot, opens and closes the questionnaire, and publishes the result. |
+| Voter | Opens an invite, receives a ballot credential, submits one response through a private identity, and keeps the Submission ID for checking. |
+| Observer | Finds published questionnaires, checks accepted and invalid submissions, sees invalid reasons, and recomputes the final count from public data. |
 
 ## Step 1: Open Organiser and publish a questionnaire
 
 Open **Organiser**.
-
-Use **Login** if you already have an organiser identity, or use **New identity** for a fresh local demo identity.
 
 Fill in:
 
@@ -96,8 +108,6 @@ Open the organiser's questionnaire invite link or scan the General invite QR cod
 
 The General invite should open the questionnaire and request a ballot automatically.
 
-If the page instead shows **Pending invites**, click **Open + request ballot**.
-
 You should see:
 
 - **Questionnaire** and its ID
@@ -135,9 +145,11 @@ Open **Observer**.
 
 Use **Find Published Questionnaires** to choose the questionnaire, then open **Submitted Votes**.
 
+The Observer **Search** box can find a questionnaire by questionnaire ID, organiser identity, **Submission ID**, **Submittor identity - short**, or **Submittor identity - full**.
+
 Match the voter page's **Submission ID** to Observer's **Response ID**.
 
-You can use the Submitted Votes filter with the **Submission ID**, **Submittor identity - short**, or **Submittor identity - full**.
+You can also use the Submitted Votes filter with the **Submission ID**, **Submittor identity - short**, or **Submittor identity - full**.
 
 Compare the private submission identity against the public **Submittor identity** row.
 

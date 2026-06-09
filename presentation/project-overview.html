@@ -615,7 +615,7 @@
           <li>Observers can run an explicit historic questionnaire search when older published rounds or public response payloads are outside the default recent scan window</li>
           <li>Observers now discover recent public questionnaires through kind-only backfill when no questionnaire ID is selected, then show state and published response totals where available</li>
           <li>Published questionnaire summaries now carry canonical per-response refs with slim answer payloads, so Observer can still show detailed responder rows when public response events are fragmented across relays</li>
-          <li>Observer now uses `Submitted Votes` as the main per-response panel with search by Submission/Response ID or Submittor identity, invalid rows are hidden by default behind `Show invalid votes`, and visible invalid rows show their rejection reason</li>
+          <li>Observer round search and `Submitted Votes` filtering now support Submission/Response ID or Submittor identity, invalid rows are hidden by default behind `Show invalid votes`, and visible invalid rows show their rejection reason</li>
           <li>Organiser and Observer now both hydrate proxy-accepted public response rows from relay submissions and decisions; Organiser decrypts encrypted answer details automatically when its local key is available, while Observer can locally decrypt when the matching organiser `nsec` is deliberately supplied</li>
           <li>Organiser and Observer locally re-check public blind-token proofs and ignore stale invalid-token-proof decisions when the proof verifies against the questionnaire definition</li>
           <li>Submitted voters see their responder marker pattern and expandable QR directly on the Vote page</li>

@@ -25,6 +25,7 @@ import {
 } from "./questionnaireProtocol";
 import { decryptQuestionnaireBlindResponseAnswers } from "./questionnaireResponsePublish";
 import type { QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
+import { deriveActorDisplayId } from "./actorDisplay";
 
 const AUDITOR_QUESTIONNAIRE_DETAIL_LIMIT = 20;
 const AUDITOR_QUESTIONNAIRE_HISTORIC_LIMIT = 2000;
@@ -47,6 +48,7 @@ type AuditorQuestionnaireEntry = {
   questions: QuestionnaireQuestion[];
   questionnaireRelays?: string[];
   blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
+  responseSearchValues?: string[];
   eventId: string;
 };
 
@@ -250,6 +252,7 @@ export default function SimpleAuditorApp() {
           questions: entry.definition.questions ?? [],
           questionnaireRelays,
           blindSigningPublicKey: entry.definition.blindSigningPublicKey ?? null,
+          responseSearchValues: buildAuditorResponseRefSearchValues(latestResult?.publishedResponseRefs ?? []),
           eventId: entry.event.id,
         };
         }));
@@ -410,9 +413,11 @@ export default function SimpleAuditorApp() {
           return entry;
         }
         const latestParticipantCount = selectLatestParticipantCount(participantCountEntries, selectedId, entry.coordinatorNpub);
-        return latestParticipantCount
-          ? { ...entry, expectedInviteeCount: latestParticipantCount.expectedInviteeCount }
-          : entry;
+        return {
+          ...entry,
+          ...(latestParticipantCount ? { expectedInviteeCount: latestParticipantCount.expectedInviteeCount } : {}),
+          responseSearchValues: buildAuditorResponseDetailSearchValues(details),
+        };
       }));
       const nextStatus = "Questionnaire responses refreshed from Nostr.";
       setResponseRefreshStatus((previous) => (previous === nextStatus ? previous : nextStatus));
@@ -537,18 +542,8 @@ export default function SimpleAuditorApp() {
       if (selectedCoordinatorNpub && questionnaire.coordinatorNpub !== selectedCoordinatorNpub) {
         return false;
       }
-      const query = searchQuery.trim().toLowerCase();
-      if (query.length > 0) {
-        const matchesQuery = (
-          questionnaire.questionnaireId.toLowerCase().includes(query)
-          || questionnaire.title.toLowerCase().includes(query)
-          || questionnaire.description.toLowerCase().includes(query)
-          || questionnaire.coordinatorNpub.toLowerCase().includes(query)
-          || questionnaire.eventId.toLowerCase().includes(query)
-        );
-        if (!matchesQuery) {
-          return false;
-        }
+      if (!matchesAuditorQuestionnaireSearch(questionnaire, searchQuery)) {
+        return false;
       }
       return true;
     }),
@@ -694,7 +689,7 @@ export default function SimpleAuditorApp() {
                 className='simple-voter-input'
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder='Filter by npub, round/questionnaire ID, or prompt...'
+                placeholder='Filter by questionnaire, organiser, Submission ID, or Submittor identity...'
               />
               <label className='simple-voter-label' htmlFor='simple-auditor-coordinator-npub'>
                 Questionnaire organiser identity
@@ -831,6 +826,7 @@ function areQuestionnaireEntriesEqual(
       || a.publishedRejectedResponseCount !== b.publishedRejectedResponseCount
       || a.resultPublishedAt !== b.resultPublishedAt
       || a.eventId !== b.eventId
+      || JSON.stringify(a.responseSearchValues ?? []) !== JSON.stringify(b.responseSearchValues ?? [])
       || JSON.stringify(a.questionnaireRelays ?? []) !== JSON.stringify(b.questionnaireRelays ?? [])
       || !areQuestionsEqual(a.questions, b.questions)
     ) {
@@ -997,6 +993,75 @@ function areAuditorResponseDetailsEqual(
     }
   }
   return true;
+}
+
+export function matchesAuditorQuestionnaireSearch(
+  questionnaire: {
+    questionnaireId: string;
+    title: string;
+    description: string;
+    coordinatorNpub: string;
+    eventId: string;
+    responseSearchValues?: string[];
+  },
+  searchQuery: string,
+) {
+  const query = searchQuery.trim().toLowerCase();
+  if (!query) {
+    return true;
+  }
+  return [
+    questionnaire.questionnaireId,
+    questionnaire.title,
+    questionnaire.description,
+    questionnaire.coordinatorNpub,
+    questionnaire.eventId,
+    ...(questionnaire.responseSearchValues ?? []),
+  ].some((value) => value.toLowerCase().includes(query));
+}
+
+function buildAuditorResponseRefSearchValues(refs: QuestionnairePublishedResponseRef[]) {
+  return collectAuditorSubmissionSearchValues(refs.map((ref) => ({
+    responseId: ref.responseId,
+    authorPubkey: ref.authorPubkey,
+  })));
+}
+
+function buildAuditorResponseDetailSearchValues(details: AuditorQuestionnaireResponseDetail[]) {
+  return collectAuditorSubmissionSearchValues(details.map((detail) => ({
+    responseId: detail.response.responseId,
+    authorPubkey: detail.response.authorPubkey,
+    tokenNullifier: detail.response.tokenNullifier,
+    rejectionReason: detail.rejectionReason,
+  })));
+}
+
+export function collectAuditorSubmissionSearchValues(entries: Array<{
+  responseId?: string | null;
+  authorPubkey?: string | null;
+  tokenNullifier?: string | null;
+  rejectionReason?: string | null;
+}>) {
+  const values = new Set<string>();
+  const add = (value: string | null | undefined) => {
+    const trimmed = value?.trim() ?? "";
+    if (trimmed) {
+      values.add(trimmed);
+    }
+  };
+  for (const entry of entries) {
+    add(entry.responseId);
+    add(entry.tokenNullifier);
+    add(entry.rejectionReason);
+    const authorPubkey = entry.authorPubkey?.trim() ?? "";
+    if (authorPubkey) {
+      const normalizedAuthor = normalizeToNpub(authorPubkey);
+      add(authorPubkey);
+      add(normalizedAuthor);
+      add(deriveActorDisplayId(normalizedAuthor || authorPubkey));
+    }
+  }
+  return [...values];
 }
 
 function normalizeToNpub(value: string) {

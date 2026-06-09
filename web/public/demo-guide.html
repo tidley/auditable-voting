@@ -167,6 +167,17 @@
       margin-top: 18px;
     }
 
+    .hero-list {
+      max-width: 42ch;
+      margin-top: 8px;
+      font-size: 1.08rem;
+      font-weight: 700;
+    }
+
+    .hero-list li {
+      color: var(--text);
+    }
+
     .actions {
       display: flex;
       flex-wrap: wrap;
@@ -237,6 +248,14 @@
     ul.clean li {
       margin: 8px 0;
       color: var(--muted);
+    }
+
+    ol.hero-list {
+      margin: 8px 0 0;
+    }
+
+    ol.hero-list li {
+      color: var(--text);
     }
 
     .summary-card ol.clean li,
@@ -446,9 +465,14 @@
     <main>
       <div class="hero" id="overview">
         <div>
-          <p class="eyebrow">Plain-English demo guide</p>
-          <h1>Show the voting loop.</h1>
-          <p class="lead">Use this guide to demonstrate one complete flow: create a questionnaire, invite a voter, submit a response, publish the result, and verify it in Observer.</p>
+          <p class="eyebrow">Demo guide</p>
+          <h1>Run through a voting loop.</h1>
+          <p class="lead">Use this guide to:</p>
+          <ol class="clean hero-list">
+            <li>Organise a questionnaire</li>
+            <li>Admit a voter</li>
+            <li>Submit a response and verify it</li>
+          </ol>
           <div class="actions">
             <a class="button primary" href="#demo">Run the demo</a>
             <a class="button" href="#questions">Answer likely questions</a>
@@ -471,55 +495,37 @@
         </aside>
       </div>
 
-      <section id="setup">
-        <h2>Before you start</h2>
-        <div class="grid-3">
-          <div class="card">
-            <h3>Use separate sessions</h3>
-            <p>Open Organiser, Voter, and Observer in separate browser profiles, private windows, or devices.</p>
-          </div>
-          <div class="card">
-            <h3>Use one short question</h3>
-            <p>A single yes/no question is enough to show the full workflow without distracting the audience.</p>
-          </div>
-          <div class="card">
-            <h3>Keep Observer visible</h3>
-            <p>Observer is the proof point. It shows that the result can be read and checked from public data.</p>
-          </div>
-        </div>
-      </section>
-
       <section id="roles">
         <h2>Roles</h2>
         <div class="grid-3">
           <article class="card">
             <span class="role-tag">Organiser</span>
-            <h3>Creates and publishes the questionnaire</h3>
+            <h3>Controls the questionnaire</h3>
             <ul class="clean">
-              <li>Creates questions</li>
-              <li>Shares the General invite link or QR code</li>
-              <li>Keeps the questionnaire open</li>
-              <li>Publishes the final result</li>
+              <li>Creates the questions and settings</li>
+              <li>Controls who can request a ballot</li>
+              <li>Opens and closes the questionnaire</li>
+              <li>Publishes the result for everyone to check</li>
             </ul>
           </article>
           <article class="card">
             <span class="role-tag">Voter</span>
-            <h3>Submits one response</h3>
+            <h3>Responds privately</h3>
             <ul class="clean">
-              <li>Opens the invite</li>
-              <li>Requests a ballot automatically</li>
-              <li>Answers the questions</li>
-              <li>Keeps the Submission ID for checking</li>
+              <li>Opens an invite link or QR code</li>
+              <li>Receives a ballot credential</li>
+              <li>Submits one response through a private identity</li>
+              <li>Keeps the Submission ID for later checking</li>
             </ul>
           </article>
           <article class="card">
             <span class="role-tag">Observer</span>
-            <h3>Checks the public result</h3>
+            <h3>Checks public evidence</h3>
             <ul class="clean">
-              <li>Finds the questionnaire</li>
-              <li>Shows accepted and invalid submissions</li>
-              <li>Shows invalid reasons</li>
-              <li>Verifies the final count</li>
+              <li>Finds published questionnaires</li>
+              <li>Checks accepted and invalid submissions</li>
+              <li>Sees why invalid submissions were rejected</li>
+              <li>Recomputes the final count from public data</li>
             </ul>
           </article>
         </div>
@@ -531,7 +537,7 @@
           <article class="step">
             <div>
               <h3>Open Organiser and publish a questionnaire</h3>
-              <p>Open <a href="./simple-coordinator.html?role=coordinator" target="_blank" rel="noopener noreferrer"><strong>Organiser</strong></a>. Use <strong>Login</strong> if you already have an organiser identity, or use <strong>New identity</strong> for a fresh local demo identity.</p>
+              <p>Open <a href="./simple-coordinator.html?role=coordinator" target="_blank" rel="noopener noreferrer"><strong>Organiser</strong></a>.</p>
               <p>Fill in <strong>Name</strong>, <strong>Description</strong>, and at least one <strong>Question prompt</strong>. When the readiness checklist is complete, click <strong>Publish questionnaire</strong>, then <strong>Open vote</strong>.</p>
             </div>
           </article>
@@ -549,14 +555,14 @@
               <h3>Open Voter and choose an identity</h3>
               <p>Open the invite in the Voter session, or open <a href="./simple.html?role=voter" target="_blank" rel="noopener noreferrer"><strong>Voter</strong></a> directly. Open <strong>Menu</strong>.</p>
               <p>Use <strong>Login</strong> if you already have a voter identity, or use <strong>New identity</strong> for a fresh local demo identity.</p>
-              <p>The top-right label should show the Voter identity, for example <code>Voter dv0lu66</code>. No email address, phone number, or password is needed for this demo.</p>
+              <p>The top-right label should show the Voter identity, for example <code>Voter dv0lu66</code>. No email address, phone number, or password is needed.</p>
             </div>
           </article>
 
           <article class="step">
             <div>
               <h3>Submit a response</h3>
-              <p>The invite should open the questionnaire and request a ballot. If it shows <strong>Pending invites</strong>, click <strong>Open + request ballot</strong>.</p>
+              <p>The invite should open the questionnaire and request a ballot.</p>
               <p>Answer the question and click <strong>Submit response</strong>. For free-text questions, use <strong>Encrypt for organiser</strong> if the answer should not be public.</p>
               <p>If the button is disabled, it will explain why, for example <strong>Please answer all required questions</strong> or <strong>Verifying vote request</strong>.</p>
               <p>After submission, keep the <strong>Submission ID</strong>. You will use it in Observer.</p>
@@ -566,7 +572,7 @@
           <article class="step">
             <div>
               <h3>Check the vote in Observer</h3>
-              <p>Open <a href="./dashboard.html?role=auditor" target="_blank" rel="noopener noreferrer"><strong>Observer</strong></a>. Use <strong>Find Published Questionnaires</strong>, choose the questionnaire, then open <strong>Submitted Votes</strong>.</p>
+              <p>Open <a href="./dashboard.html?role=auditor" target="_blank" rel="noopener noreferrer"><strong>Observer</strong></a>. Use <strong>Find Published Questionnaires</strong>, choose the questionnaire, then open <strong>Submitted Votes</strong>. Observer Search can find a questionnaire by questionnaire ID, organiser identity, Submission ID, or Submittor identity.</p>
               <p>Match the voter's <strong>Submission ID</strong> to Observer's <strong>Response ID</strong>. Accepted submissions have no <strong>Invalid</strong> marker. Invalid submissions show a reason.</p>
             </div>
           </article>
@@ -634,7 +640,7 @@
         </article>
         <article class="qa">
           <h3>What should the voter check?</h3>
-          <p>The voter keeps the Questionnaire ID, Submission ID, and private submission identity. Observer shows the same submission value as Response ID, alongside the public <strong>Submittor identity</strong> and any invalid reason. The Submitted Votes filter accepts the Submission ID, <strong>Submittor identity - short</strong>, or <strong>Submittor identity - full</strong>.</p>
+          <p>The voter keeps the Questionnaire ID, Submission ID, and private submission identity. Observer shows the same submission value as Response ID, alongside the public <strong>Submittor identity</strong> and any invalid reason. Observer Search and the Submitted Votes filter both accept the Submission ID, <strong>Submittor identity - short</strong>, or <strong>Submittor identity - full</strong>.</p>
         </article>
         <article class="qa">
           <h3>Is this ready for official elections?</h3>
