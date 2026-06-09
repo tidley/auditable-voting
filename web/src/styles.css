@@ -2896,41 +2896,74 @@ code {
   gap: 10px;
 }
 
+.simple-private-invite-panel {
+  gap: 16px;
+}
+
+.simple-private-invite-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px 18px;
+}
+
+.simple-private-invite-create-button {
+  flex: 0 0 auto;
+}
+
 .simple-private-invite-list {
-  gap: 0;
-}
-
-.simple-vote-status-list li.simple-private-invite-row {
   display: grid;
-  align-items: start;
   gap: 12px;
-  padding: 16px 0 18px;
-  border-top: 1px solid var(--simple-border);
+  margin-top: 2px;
 }
 
-.simple-private-invite-list li.simple-private-invite-row:first-child {
-  padding-top: 4px;
-  border-top: 0;
+.simple-vote-status-list li.simple-private-invite-card {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--simple-border-strong);
+  border-radius: 8px;
+  background: rgba(10, 19, 25, 0.78);
 }
 
-.simple-private-invite-list li.simple-private-invite-row:last-child {
-  padding-bottom: 4px;
-}
-
-.simple-private-invite-row-head,
-.simple-private-invite-actions {
+.simple-private-invite-card-header,
+.simple-private-invite-card-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
 }
 
-.simple-private-invite-row-head {
-  gap: 8px 12px;
+.simple-private-invite-card-header {
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.simple-private-invite-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.simple-private-invite-plus {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--simple-teal);
+  color: #06201c;
+  font-size: 1.22rem;
+  font-weight: 900;
+  line-height: 1;
+  flex: 0 0 auto;
 }
 
 .simple-private-invite-code {
   color: var(--simple-text);
+  font-size: 1rem;
   font-weight: 800;
 }
 
@@ -2940,56 +2973,170 @@ code {
   font-weight: 700;
 }
 
-.simple-private-invite-availability {
+.simple-private-invite-header-status {
+  display: flex;
+  align-items: end;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  margin-left: auto;
+}
+
+.simple-private-invite-status-field-inline {
+  justify-items: end;
+}
+
+.simple-private-invite-availability-pill {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  min-height: 30px;
-  padding: 0 10px;
-  border: 1px solid currentColor;
+  min-width: 102px;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid transparent;
   border-radius: 6px;
   font: inherit;
-  font-size: 0.86rem;
+  font-size: 0.9rem;
   font-weight: 800;
   line-height: 1;
   text-transform: none;
   cursor: pointer;
 }
 
-.simple-private-invite-availability:disabled {
+.simple-private-invite-availability-pill:disabled {
   cursor: not-allowed;
 }
 
-.simple-private-invite-grid {
+.simple-private-invite-card-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.45fr) auto;
-  gap: 12px 16px;
-  align-items: end;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: start;
+}
+
+.simple-private-invite-link-island {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--simple-border);
+  border-radius: 8px;
+  background: rgba(6, 12, 18, 0.42);
 }
 
 .simple-private-invite-link-field {
   display: grid;
-  grid-column: 1 / 3;
-  gap: 5px;
+  grid-column: 1 / -1;
+  gap: 6px;
   min-width: 0;
 }
 
-.simple-private-invite-link-field .simple-invite-link-preview {
-  margin: 0;
+.simple-private-invite-url-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 38px;
+  min-width: 0;
+}
+
+.simple-private-invite-url-control.is-readonly {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.simple-private-invite-url-input {
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--simple-border-strong);
+  border-right: 0;
+  border-radius: 6px 0 0 6px;
+  background: rgba(6, 12, 18, 0.78);
+  color: var(--simple-soft);
+  font: inherit;
+  font-size: 0.86rem;
+  line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.simple-private-invite-url-control.is-readonly .simple-private-invite-url-input {
+  border-right: 1px solid var(--simple-border-strong);
+  border-radius: 6px;
+}
+
+.simple-private-invite-copy-icon-button {
+  display: inline-grid;
+  height: 38px;
+  place-items: center;
+  border: 1px solid var(--simple-border-strong);
+  border-radius: 0 6px 6px 0;
+  background: var(--simple-surface-2);
+  color: var(--simple-soft);
+  cursor: pointer;
+}
+
+.simple-private-invite-copy-icon-button:hover {
+  border-color: var(--simple-teal);
+  color: var(--simple-text);
+}
+
+.simple-private-invite-copy-icon-button:disabled {
+  color: rgba(184, 196, 204, 0.46);
+  cursor: not-allowed;
+}
+
+.simple-copy-icon {
+  position: relative;
+  width: 16px;
+  height: 16px;
+}
+
+.simple-copy-icon::before,
+.simple-copy-icon::after {
+  content: "";
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border: 2px solid currentColor;
+  border-radius: 2px;
+}
+
+.simple-copy-icon::before {
+  left: 1px;
+  top: 5px;
+}
+
+.simple-copy-icon::after {
+  left: 5px;
+  top: 1px;
 }
 
 .simple-private-invite-qr-cell {
-  grid-column: 3;
-  grid-row: 1 / 3;
   align-self: start;
 }
 
-.simple-private-invite-comment-field,
+.simple-private-invite-qr-cell .simple-invite-qr-trigger {
+  width: 82px;
+  height: 82px;
+  min-height: 0;
+}
+
+.simple-private-invite-note-field,
+.simple-private-invite-availability-field,
 .simple-private-invite-status-field {
   display: grid;
   gap: 6px;
   min-width: 0;
+}
+
+.simple-private-invite-note-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.simple-private-invite-availability-field {
+  justify-items: start;
 }
 
 .simple-private-invite-field-label {
@@ -2997,6 +3144,24 @@ code {
   font-size: 0.88rem;
   font-weight: 800;
   line-height: 1.2;
+}
+
+.simple-private-invite-used-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  color: var(--simple-soft);
+  font-size: 0.92rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.simple-private-invite-used-toggle input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--simple-teal);
 }
 
 .simple-private-invite-status-badge.simple-vote-status-icon {
@@ -3016,6 +3181,27 @@ code {
 
 .simple-private-invite-status-badge span[aria-hidden="true"] {
   font-size: 0.85rem;
+}
+
+.simple-private-invite-card-actions {
+  justify-content: flex-start;
+  padding-top: 2px;
+}
+
+.simple-private-invite-revoke-button {
+  border-color: rgba(248, 113, 113, 0.58);
+  color: #f87171;
+}
+
+.simple-private-invite-revoke-button:hover {
+  border-color: #f87171;
+  color: #fecaca;
+}
+
+.simple-private-invite-revoke-button:disabled,
+.simple-private-invite-revoke-button:disabled:hover {
+  border-color: rgba(248, 113, 113, 0.22);
+  color: rgba(248, 113, 113, 0.48);
 }
 
 .simple-private-invite-share-line {
@@ -4759,6 +4945,11 @@ code {
   text-transform: uppercase;
 }
 
+.simple-private-invite-availability-pill.simple-status-indicator {
+  font-size: 0.9rem;
+  text-transform: none;
+}
+
 .simple-status-indicator.is-private-invite-available,
 .simple-status-indicator.is-voter-invited {
   color: #06201c;
@@ -4771,6 +4962,12 @@ code {
   color: #052e16;
   background: var(--simple-green);
   border-color: var(--simple-green);
+}
+
+.simple-status-indicator.is-voter-used {
+  color: #06201c;
+  background: var(--simple-teal);
+  border-color: var(--simple-teal);
 }
 
 .simple-status-indicator.is-private-invite-revoked,
@@ -5797,12 +5994,30 @@ code {
     min-height: 0;
   }
 
-  .simple-private-invite-grid {
+  .simple-private-invite-panel-head,
+  .simple-private-invite-card-header,
+  .simple-private-invite-card-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .simple-private-invite-header-status {
+    justify-content: flex-start;
+    margin-left: 0;
+  }
+
+  .simple-private-invite-create-button {
+    width: 100%;
+  }
+
+  .simple-private-invite-card-body,
+  .simple-private-invite-note-row {
     grid-template-columns: 1fr;
   }
 
   .simple-private-invite-link-field,
-  .simple-private-invite-comment-field,
+  .simple-private-invite-note-field,
+  .simple-private-invite-availability-field,
   .simple-private-invite-status-field,
   .simple-private-invite-qr-cell {
     grid-column: 1 / -1;
@@ -5887,7 +6102,8 @@ code {
     justify-self: start;
   }
 
-  .simple-private-invite-grid {
+  .simple-private-invite-card-body,
+  .simple-private-invite-note-row {
     grid-template-columns: 1fr;
   }
 

@@ -2610,6 +2610,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       createdAt: existing?.createdAt ?? nowIso(),
       state: existing?.state === "revoked" ? "revoked" : "available",
       note: existing?.note ?? null,
+      markedUsedAt: existing?.markedUsedAt ?? null,
       redeemedAt: existing?.redeemedAt ?? null,
       redeemedNpub: existing?.redeemedNpub ?? null,
       revokedAt: existing?.revokedAt ?? null,
@@ -2702,6 +2703,31 @@ export class QuestionnaireOptionACoordinatorRuntime {
       lastUpdatedAt: nowIso(),
     };
     this.persistCoordinatorState("bearer_invite_code_note_updated");
+    return next;
+  }
+
+  setBearerInviteCodeMarkedUsed(codeHash: string, markedUsed: boolean) {
+    if (!this.state || !this.coordinatorNpub) {
+      throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
+    }
+    const normalisedHash = (codeHash ?? "").trim().toLowerCase();
+    const existing = this.state.bearerInviteCodes?.[normalisedHash] ?? null;
+    if (!existing) {
+      return null;
+    }
+    const next: BearerInviteCodeEntry = {
+      ...existing,
+      markedUsedAt: markedUsed ? existing.markedUsedAt ?? nowIso() : null,
+    };
+    this.state = {
+      ...this.state,
+      bearerInviteCodes: {
+        ...(this.state.bearerInviteCodes ?? {}),
+        [normalisedHash]: next,
+      },
+      lastUpdatedAt: nowIso(),
+    };
+    this.persistCoordinatorState("bearer_invite_code_marked_used");
     return next;
   }
 
