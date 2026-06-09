@@ -1249,6 +1249,14 @@ export default function SimpleCoordinatorApp() {
     }
     return [...byNpub.values()];
   }, [optimisticKnownVoterNpubs, optionAElectionId, optionAKnownVoters]);
+  const visibleNostrInviteKnownVoters = useMemo(
+    () => visibleOptionAKnownVoters.filter((entry) => !entry.inviteCodeHash?.trim()),
+    [visibleOptionAKnownVoters],
+  );
+  const privateInviteClaimedVoterCount = Math.max(
+    0,
+    visibleOptionAKnownVoters.length - visibleNostrInviteKnownVoters.length,
+  );
   const optionAKnownVoterByNpub = useMemo(
     () => new Map(
       visibleOptionAKnownVoters
@@ -4144,11 +4152,11 @@ export default function SimpleCoordinatorApp() {
     if (!optionACoordinatorRuntime || !optionAElectionId || !activeCoordinatorNpub) {
       return;
     }
-    const targets = visibleOptionAKnownVoters
+    const targets = visibleNostrInviteKnownVoters
       .map((entry) => entry.invitedNpub)
       .filter((npub, index, values) => values.indexOf(npub) === index);
     if (targets.length === 0) {
-      setKnownVoterInviteStatus("No whitelisted voters to invite.");
+      setKnownVoterInviteStatus("No Nostr invite voters to invite.");
       return;
     }
 
@@ -4188,7 +4196,7 @@ export default function SimpleCoordinatorApp() {
     void syncActiveWorkerElectionConfig().catch(() => false);
     setKnownVoterInviteStatus(
       sentCount > 0
-        ? `Bulk invited ${sentCount}/${targets.length} whitelisted voters for ${optionAElectionId || "this questionnaire"}.`
+        ? `Bulk invited ${sentCount}/${targets.length} Nostr invite voters for ${optionAElectionId || "this questionnaire"}.`
         : "Bulk invite could not send any invitations.",
     );
   }
@@ -6841,6 +6849,13 @@ export default function SimpleCoordinatorApp() {
                         Check requests
                       </button>
                     </div>
+                    {privateInviteClaimedVoterCount > 0 ? (
+                      <p className='simple-voter-note'>
+                        {privateInviteClaimedVoterCount === 1
+                          ? "1 private-link voter is tracked in Private invite links above."
+                          : `${privateInviteClaimedVoterCount} private-link voters are tracked in Private invite links above.`}
+                      </p>
+                    ) : null}
                   </div>
                   {importedKnownVoterContacts.length > 0 ? (
                     <div className='simple-voter-field-stack'>
@@ -6903,10 +6918,10 @@ export default function SimpleCoordinatorApp() {
                       </div>
                     </div>
                   ) : null}
-                  {visibleOptionAKnownVoters.length > 0 ? (
+                  {visibleNostrInviteKnownVoters.length > 0 ? (
                     <>
                       <ul className='simple-vote-status-list'>
-                        {visibleOptionAKnownVoters.map((entry) => {
+                        {visibleNostrInviteKnownVoters.map((entry) => {
                           const statusIndicator = whitelistStatusIndicator(entry.claimState);
                           return (
                             <li key={entry.invitedNpub}>
@@ -6938,9 +6953,9 @@ export default function SimpleCoordinatorApp() {
                           type='button'
                           className='simple-voter-secondary'
                           onClick={sendInvitesToAllWhitelistedVoters}
-                          disabled={visibleOptionAKnownVoters.length === 0}
+                          disabled={visibleNostrInviteKnownVoters.length === 0}
                         >
-                          Invite all voters
+                          Invite all Nostr voters
                         </button>
                         <button
                           type='button'
