@@ -517,8 +517,9 @@ export default function SimpleAuditorApp() {
     setSelectedLiveStateEvent((previous) => (previous === null ? previous : null));
     setSelectedResultSummary((previous) => (previous === null ? previous : null));
     setSelectedWorkerDelegationStatus((previous) => (previous === null ? previous : null));
-    setResponseRefreshStatus("Click Refresh to fetch responses for this questionnaire.");
-  }, [selectedQuestionnaireId]);
+    setResponseRefreshStatus("Refreshing questionnaire responses...");
+    void enqueueRefresh({ list: false, selected: true, forceWhenHidden: true });
+  }, [enqueueRefresh, selectedQuestionnaireId]);
 
   const coordinatorOptions = useMemo(
     () => [...new Set(

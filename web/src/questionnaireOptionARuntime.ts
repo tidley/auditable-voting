@@ -2609,6 +2609,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       codeHash: normalisedHash,
       createdAt: existing?.createdAt ?? nowIso(),
       state: existing?.state === "revoked" ? "revoked" : "available",
+      note: existing?.note ?? null,
       redeemedAt: existing?.redeemedAt ?? null,
       redeemedNpub: existing?.redeemedNpub ?? null,
       revokedAt: existing?.revokedAt ?? null,
@@ -2649,6 +2650,59 @@ export class QuestionnaireOptionACoordinatorRuntime {
     };
     this.persistCoordinatorState("bearer_invite_code_revoked", { force: true });
     return revoked;
+  }
+
+  toggleBearerInviteCodeAvailability(codeHash: string) {
+    if (!this.state || !this.coordinatorNpub) {
+      throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
+    }
+    const normalisedHash = (codeHash ?? "").trim().toLowerCase();
+    const existing = this.state.bearerInviteCodes?.[normalisedHash] ?? null;
+    if (!existing || existing.state === "redeemed") {
+      return existing;
+    }
+    const now = nowIso();
+    const next: BearerInviteCodeEntry = {
+      ...existing,
+      state: existing.state === "available" ? "revoked" : "available",
+      revokedAt: existing.state === "available" ? now : null,
+    };
+    this.state = {
+      ...this.state,
+      bearerInviteCodes: {
+        ...(this.state.bearerInviteCodes ?? {}),
+        [normalisedHash]: next,
+      },
+      lastUpdatedAt: now,
+    };
+    this.persistCoordinatorState("bearer_invite_code_availability_toggled", { force: true });
+    return next;
+  }
+
+  updateBearerInviteCodeNote(codeHash: string, note: string) {
+    if (!this.state || !this.coordinatorNpub) {
+      throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
+    }
+    const normalisedHash = (codeHash ?? "").trim().toLowerCase();
+    const existing = this.state.bearerInviteCodes?.[normalisedHash] ?? null;
+    if (!existing) {
+      return null;
+    }
+    const trimmedNote = note.trim();
+    const next: BearerInviteCodeEntry = {
+      ...existing,
+      note: trimmedNote || null,
+    };
+    this.state = {
+      ...this.state,
+      bearerInviteCodes: {
+        ...(this.state.bearerInviteCodes ?? {}),
+        [normalisedHash]: next,
+      },
+      lastUpdatedAt: nowIso(),
+    };
+    this.persistCoordinatorState("bearer_invite_code_note_updated");
+    return next;
   }
 
   private redeemBearerInviteCodeForRequest(

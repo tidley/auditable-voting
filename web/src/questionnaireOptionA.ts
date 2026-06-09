@@ -75,6 +75,7 @@ export interface BearerInviteCodeEntry {
   codeHash: Hex;
   createdAt: IsoTime;
   state: BearerInviteCodeState;
+  note?: string | null;
   redeemedAt?: IsoTime | null;
   redeemedNpub?: Npub | null;
   revokedAt?: IsoTime | null;
