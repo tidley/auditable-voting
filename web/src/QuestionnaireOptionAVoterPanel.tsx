@@ -270,6 +270,17 @@ function getRankRequirementState(optionCount: number, minimumRanked: number, sel
   };
 }
 
+function formatBallotDetailValue(value: string | number | boolean | null | undefined, fallback = "Not available") {
+  if (typeof value === "boolean") {
+    return value ? "Yes" : "No";
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? String(value) : fallback;
+  }
+  const trimmed = value?.trim() ?? "";
+  return trimmed || fallback;
+}
+
 export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptionAVoterPanelProps) {
   const displayMode = props.displayMode ?? "vote";
   const settingsMode = displayMode === "settings";
@@ -2072,6 +2083,54 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         : "Not submitted";
   const submittedMarkerNpub = snapshot?.responseNpub ?? snapshot?.submission?.responseNpub ?? snapshot?.submission?.invitedNpub ?? "";
   const submittedMarkerLabel = submittedMarkerNpub ? deriveActorDisplayId(submittedMarkerNpub) : "Unknown";
+  const voterIdentityForDetails = snapshot?.invitedNpub?.trim()
+    || signedInNpub.trim()
+    || props.localVoterNpub?.trim()
+    || "";
+  const hasBallotDetailsContext = Boolean(statusQuestionnaireId || snapshot || activeInvite || selectedInviteForElection);
+  const ballotDetailRows = [
+    { label: "Questionnaire ID", value: statusQuestionnaireId || "Missing" },
+    { label: "Questionnaire title", value: questionnaireTitle.trim() || null },
+    {
+      label: "Organiser identity",
+      value: coordinatorNpub ? `${coordinatorLabel} (${coordinatorNpub})` : "Unknown",
+    },
+    {
+      label: "Ballot credential issuer",
+      value: credentialIssuerNpub ? `${credentialIssuerName} ${credentialIssuerLabel} (${credentialIssuerNpub})` : "Unknown",
+    },
+    {
+      label: "Voter identity",
+      value: voterIdentityForDetails ? `${deriveActorDisplayId(voterIdentityForDetails)} (${voterIdentityForDetails})` : "Not confirmed",
+    },
+    { label: "Identity confirmed", value: Boolean(snapshot?.loginVerified) },
+    { label: "Ballot request", value: requestStateText },
+    { label: "Request ID", value: snapshot?.blindRequest?.requestId ?? "Not created" },
+    { label: "Request created", value: snapshot?.blindRequest?.createdAt ?? "Not recorded" },
+    { label: "Request sent", value: snapshot?.blindRequestSentAt ?? snapshot?.blindRequest?.lastSentAt ?? "Not sent" },
+    { label: "Ballot credential", value: credentialStateText },
+    { label: "Credential ID", value: snapshot?.blindIssuance?.issuanceId ?? "Not received" },
+    { label: "Credential issued", value: snapshot?.blindIssuance?.issuedAt ?? "Not recorded" },
+    {
+      label: "Blind signing key",
+      value: snapshot?.blindIssuance?.blindSigningKeyId ?? snapshot?.blindRequest?.blindSigningKeyId ?? "Unknown",
+    },
+    {
+      label: "Token commitment",
+      value: snapshot?.blindIssuance?.tokenCommitment ?? snapshot?.blindRequest?.tokenCommitment ?? snapshot?.submission?.tokenCommitment ?? "Not created",
+    },
+    { label: "Response", value: submissionStateText },
+    { label: "Submission ID", value: snapshot?.submission?.submissionId ?? "Not submitted" },
+    { label: "Submission time", value: snapshot?.submission?.submittedAt ?? "Not submitted" },
+    {
+      label: "Private submission identity",
+      value: submittedMarkerNpub ? `${submittedMarkerLabel} (${submittedMarkerNpub})` : "Not created",
+    },
+    { label: "Response nullifier", value: snapshot?.submission?.nullifier ?? "Not created" },
+    { label: "Decision time", value: snapshot?.submissionAcceptedAt ?? "Not recorded" },
+    { label: "Last local update", value: snapshot?.lastUpdatedAt ?? "Not recorded" },
+    { label: "Current message", value: status ?? "No status message" },
+  ];
   const questionnaireHeadingText = questionnaireTitle.trim() || questionnaireDescription.trim() || "Questionnaire";
   const questionnaireDescriptionText = questionnaireDescription.trim();
   const showQuestionnaireDescription = Boolean(
@@ -2125,11 +2184,28 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       ) : null}
     </section>
   );
+  const ballotDetailsSection = hasBallotDetailsContext ? (
+    <section className='simple-settings-card simple-ballot-details-card' aria-label='Ballot details'>
+      <div>
+        <h4 className='simple-voter-section-title'>Ballot details</h4>
+        <p className='simple-voter-note'>Debug information for this questionnaire. It avoids private keys and token secrets.</p>
+      </div>
+      <dl className='simple-submission-identity-details simple-ballot-details-grid'>
+        {ballotDetailRows.map((row) => (
+          <div key={row.label}>
+            <dt>{row.label}</dt>
+            <dd>{formatBallotDetailValue(row.value)}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  ) : null;
 
   if (settingsMode) {
     return (
       <div className='simple-optiona-voter-settings'>
         {ballotStatusSection}
+        {ballotDetailsSection}
         <span style={{ display: "none" }} aria-hidden='true'>{refreshNonce}</span>
       </div>
     );

@@ -3375,6 +3375,15 @@ code {
   overflow-wrap: anywhere;
 }
 
+.simple-ballot-details-card {
+  gap: 14px;
+}
+
+.simple-ballot-details-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 18px;
+}
+
 .simple-questionnaire-voter-card {
   display: grid;
   gap: 12px;
@@ -3612,6 +3621,10 @@ code {
 
   .simple-submission-identity-details {
     width: 100%;
+  }
+
+  .simple-ballot-details-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .simple-submission-identity-chip {

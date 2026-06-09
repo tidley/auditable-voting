@@ -275,6 +275,73 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     expect(screen.queryByText("Login is required.")).toBeNull();
   });
 
+  it("hides ballot details in settings when no vote context is active", () => {
+    render(<QuestionnaireOptionAVoterPanel displayMode='settings' />);
+
+    expect(screen.queryByRole("region", { name: "Ballot details" })).toBeNull();
+  });
+
+  it("shows ballot details in settings while taking part in a vote", async () => {
+    const localVoterNpub = "npub1" + "d".repeat(58);
+    optionAStorageMocks.loadVoterState.mockReturnValue({
+      electionId: "q_ballot_debug",
+      invitedNpub: localVoterNpub,
+      coordinatorNpub: "npub1" + "b".repeat(58),
+      loginVerified: true,
+      loginVerifiedAt: "2026-04-18T00:00:00.000Z",
+      inviteMessage: null,
+      blindRequest: {
+        type: "blind_ballot_request",
+        schemaVersion: 1,
+        electionId: "q_ballot_debug",
+        requestId: "request_ballot_debug",
+        invitedNpub: localVoterNpub,
+        blindedMessage: "blinded_debug",
+        tokenCommitment: "commitment_ballot_debug",
+        blindSigningKeyId: "blind_key_debug",
+        clientNonce: "nonce_debug",
+        createdAt: "2026-04-18T00:00:01.000Z",
+      },
+      blindRequestSent: true,
+      blindRequestSentAt: "2026-04-18T00:00:02.000Z",
+      blindIssuance: {
+        type: "blind_ballot_response",
+        schemaVersion: 1,
+        electionId: "q_ballot_debug",
+        requestId: "request_ballot_debug",
+        issuanceId: "issuance_ballot_debug",
+        invitedNpub: localVoterNpub,
+        tokenCommitment: "commitment_ballot_debug",
+        blindSigningKeyId: "blind_key_debug",
+        blindSignature: "sig_ballot_debug",
+        issuedAt: "2026-04-18T00:00:03.000Z",
+      },
+      credentialReady: true,
+      draftResponses: [],
+      submission: null,
+      submissionAccepted: null,
+      submissionAcceptedAt: null,
+      lastUpdatedAt: "2026-04-18T00:00:04.000Z",
+    });
+
+    render(
+      <QuestionnaireOptionAVoterPanel
+        displayMode='settings'
+        announcedQuestionnaireIds={["q_ballot_debug"]}
+        localVoterNpub={localVoterNpub}
+      />,
+    );
+
+    const details = await screen.findByRole("region", { name: "Ballot details" });
+    expect(within(details).getByText("Request ID")).toBeTruthy();
+    expect(within(details).getByText("request_ballot_debug")).toBeTruthy();
+    expect(within(details).getByText("Credential ID")).toBeTruthy();
+    expect(within(details).getByText("issuance_ballot_debug")).toBeTruthy();
+    expect(within(details).getByText("Token commitment")).toBeTruthy();
+    expect(within(details).getByText("commitment_ballot_debug")).toBeTruthy();
+    expect(within(details).queryByText("sig_ballot_debug")).toBeNull();
+  });
+
   it("sends the delayed page-load ballot request for a linked local voter", async () => {
     const localVoterNpub = "npub1" + "h".repeat(58);
     const coordinatorAtRequest: string[] = [];

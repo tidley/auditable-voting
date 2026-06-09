@@ -117,6 +117,8 @@ You should see:
 
 The submit button may say **Verifying vote request** while the organiser or audit proxy issues your ballot credential.
 
+If ballot access gets stuck, open **Menu** then **Settings**. **Ballot details** shows the request, credential, submission, and timing fields needed for debugging.
+
 ## Step 5: Submit your response
 
 Answer the questions.

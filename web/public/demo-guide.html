@@ -209,6 +209,33 @@
       border-color: var(--accent);
     }
 
+    .demo-inline-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 32px;
+      margin: 0 2px;
+      padding: 3px 11px;
+      border: 1px solid rgba(53, 215, 197, 0.58);
+      border-radius: 8px;
+      background: var(--accent-2);
+      color: #ffffff;
+      font-weight: 800;
+      line-height: 1.1;
+      text-decoration: none;
+      vertical-align: middle;
+    }
+
+    .demo-inline-button:hover {
+      border-color: var(--accent);
+      background: var(--accent-3);
+    }
+
+    .demo-inline-button:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 3px;
+    }
+
     .card,
     .step,
     .qa,
@@ -548,7 +575,7 @@
           <article class="step">
             <div>
               <h3>Open Organiser and publish a questionnaire</h3>
-              <p>Open <a href="./simple-coordinator.html?role=coordinator" target="_blank" rel="noopener noreferrer"><strong>Organiser</strong></a>.</p>
+              <p>Open <a class="demo-inline-button" href="./simple-coordinator.html?role=coordinator" target="_blank" rel="noopener noreferrer">Organiser</a>.</p>
               <p>Fill in <strong>Name</strong>, <strong>Description</strong>, and at least one <strong>Question prompt</strong>. When the readiness checklist is complete, click <strong>Publish questionnaire</strong>, then <strong>Open vote</strong>.</p>
             </div>
           </article>
@@ -564,7 +591,7 @@
           <article class="step">
             <div>
               <h3>Open Voter and choose an identity</h3>
-              <p>Open the invite in the Voter session, or open <a href="./simple.html?role=voter" target="_blank" rel="noopener noreferrer"><strong>Voter</strong></a> directly. Open <strong>Menu</strong>.</p>
+              <p>Open the invite in the Voter session, or open <a class="demo-inline-button" href="./simple.html?role=voter" target="_blank" rel="noopener noreferrer">Voter</a> directly. Open <strong>Menu</strong>.</p>
               <p>Use <strong>Login</strong> if you already have a voter identity, or use <strong>New identity</strong> for a fresh local demo identity.</p>
               <p>The top-right label should show the Voter identity, for example <code>Voter dv0lu66</code>. No email address, phone number, or password is needed.</p>
             </div>
@@ -574,6 +601,7 @@
             <div>
               <h3>Submit a response</h3>
               <p>The invite should open the questionnaire and request a ballot.</p>
+              <p>If ballot access gets stuck, open <strong>Menu</strong> then <strong>Settings</strong>. <strong>Ballot details</strong> shows the request, credential, submission, and timing fields needed for debugging.</p>
               <p>Answer the question and click <strong>Submit response</strong>. For free-text questions, use <strong>Encrypt for organiser</strong> if the answer should not be public.</p>
               <p>If the button is disabled, it will explain why, for example <strong>Please answer all required questions</strong> or <strong>Verifying vote request</strong>.</p>
               <p>After submission, keep the <strong>Submission ID</strong>. You will use it in Observer.</p>
@@ -583,7 +611,7 @@
           <article class="step">
             <div>
               <h3>Check the vote in Observer</h3>
-              <p>Open <a href="./dashboard.html?role=auditor" target="_blank" rel="noopener noreferrer"><strong>Observer</strong></a>. Use <strong>Find Published Questionnaires</strong>, choose the questionnaire, then open <strong>Submitted Votes</strong>. Observer Search can find a questionnaire by questionnaire ID, organiser identity, Submission ID, or Submittor identity.</p>
+              <p>Open <a class="demo-inline-button" href="./dashboard.html?role=auditor" target="_blank" rel="noopener noreferrer">Observer</a>. Use <strong>Find Published Questionnaires</strong>, choose the questionnaire, then open <strong>Submitted Votes</strong>. Observer Search can find a questionnaire by questionnaire ID, organiser identity, Submission ID, or Submittor identity.</p>
               <p>Match the voter's <strong>Submission ID</strong> to Observer's <strong>Response ID</strong>. Accepted submissions have no <strong>Invalid</strong> marker. Invalid submissions show a reason.</p>
             </div>
           </article>

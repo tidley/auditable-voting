@@ -84,7 +84,7 @@ The voter must protect their local keys and browser state.
 1. Open the app as **Organiser**.
 2. Create a questionnaire and publish it.
 3. Share invite links from **Voters**. The General QR/link opens **Vote** directly and requests a ballot automatically; single-use private links also show a QR code.
-4. Open the invite as **Voter**, wait for ballot access if needed, fill in the questionnaire, and submit.
+4. Open the invite as **Voter**, wait for ballot access if needed, fill in the questionnaire, and submit. Voter **Settings** shows **Ballot details** while taking part, so request, credential, submission, and timing fields can be checked if something stalls.
 5. Open **Observer** and search for the questionnaire ID, organiser identity, Submission/Response ID, or **Submittor identity** short/full to verify the public result stream. Observer fetches once when opened; use **Refresh** to update it later. In **Submitted Votes**, use the same submission filters to find a specific public submission. Invalid rows show their rejection reason. Organiser results decrypt encrypted answer details automatically when the local organiser key is available; Observer can decrypt them from **Submitted Votes** when the matching organiser `nsec` is supplied.
 
 Questionnaires can mix yes/no, multiple-choice, ranked-choice, and free-text questions. Ranked-choice results are counted as points, with the highest total preferred: first choice gets one point per available option, later choices count down from there, and unranked options get `0` points.
