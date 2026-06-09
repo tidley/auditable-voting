@@ -1,820 +1,687 @@
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Auditable Voting Demo</title>
-    <style>
-      :root {
-        color-scheme: dark;
-        --bg: #080c0d;
-        --panel: #101719;
-        --panel-2: #141e21;
-        --line: #2c3b40;
-        --line-strong: #4b6066;
-        --paper: #f4efe6;
-        --muted: #b9c8c5;
-        --soft: #d9e3e0;
-        --ink: #071110;
-        --accent: #088f8d;
-        --accent-hover: #0aa6a4;
-        --accent-soft: rgba(8, 143, 141, 0.16);
-        --gold: #e4b363;
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Auditable Voting Demo Guide</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #081112;
+      --panel: #101b1f;
+      --panel-2: #0c171a;
+      --text: #eef4f2;
+      --muted: #b5c2c0;
+      --line: #25383b;
+      --accent: #35d7c5;
+      --accent-2: #07827f;
+      --accent-3: #067674;
+      --warn: #e0b253;
+      --radius: 8px;
+      --max: 1080px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at top left, rgba(53, 215, 197, 0.12), transparent 34rem),
+        linear-gradient(180deg, #061011 0%, var(--bg) 50%, #050a0b 100%);
+      color: var(--text);
+      font-family: "Aptos", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      line-height: 1.55;
+    }
+
+    a { color: inherit; }
+
+    a:focus-visible,
+    button:focus-visible {
+      outline: 3px solid var(--warn);
+      outline-offset: 3px;
+    }
+
+    .wrap {
+      max-width: var(--max);
+      margin: 0 auto;
+      padding: 28px 20px 72px;
+    }
+
+    header.site {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding-bottom: 28px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .brand {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+
+    .logo {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      background: #f1eee6;
+      border: 1px solid #30464a;
+      display: grid;
+      place-items: center;
+    }
+
+    .dots {
+      width: 22px;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 3px;
+    }
+
+    .dots i {
+      display: block;
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: var(--accent-2);
+    }
+
+    .dots i:nth-child(2n) { background: #d99a55; }
+    .dots i:nth-child(3n) { background: #6575ba; }
+
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
+    nav a {
+      text-decoration: none;
+      color: var(--muted);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 7px 11px;
+      font-size: 0.88rem;
+      font-weight: 700;
+    }
+
+    nav a:hover {
+      border-color: var(--accent);
+      color: var(--text);
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.25fr) minmax(300px, 0.75fr);
+      gap: 28px;
+      padding: 54px 0 36px;
+      align-items: start;
+    }
+
+    .eyebrow {
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      font-size: 0.78rem;
+      font-weight: 800;
+      margin: 0 0 14px;
+    }
+
+    h1,
+    h2,
+    h3 {
+      line-height: 1.1;
+      letter-spacing: 0;
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 4.8rem;
+      max-width: 9ch;
+    }
+
+    h2 {
+      font-size: 2.15rem;
+      margin-bottom: 16px;
+    }
+
+    h3 {
+      font-size: 1.1rem;
+      margin-bottom: 8px;
+    }
+
+    p {
+      margin: 0 0 14px;
+      color: var(--muted);
+    }
+
+    .lead {
+      font-size: 1.18rem;
+      max-width: 58ch;
+      margin-top: 18px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 26px;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 42px;
+      padding: 0 16px;
+      border-radius: 8px;
+      text-decoration: none;
+      font-weight: 750;
+      border: 1px solid var(--line);
+      color: var(--text);
+      background: var(--panel);
+    }
+
+    .button.primary {
+      background: linear-gradient(180deg, var(--accent-2), var(--accent-3));
+      color: #ffffff;
+      border-color: transparent;
+    }
+
+    .button:hover {
+      border-color: var(--accent);
+    }
+
+    .card,
+    .step,
+    .qa,
+    .note {
+      background: rgba(16, 27, 31, 0.86);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 20px;
+      box-shadow: 0 20px 80px rgba(0, 0, 0, 0.14);
+    }
+
+    .summary-card {
+      background: #f6f2e8;
+      color: #0c1516;
+      border-radius: var(--radius);
+      padding: 22px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    .summary-card h2 {
+      color: #0c1516;
+      font-size: 1.45rem;
+    }
+
+    .summary-card p,
+    .summary-card li {
+      color: #2f3c3c;
+    }
+
+    ol.clean,
+    ul.clean {
+      margin: 0;
+      padding-left: 1.15rem;
+    }
+
+    ol.clean li,
+    ul.clean li {
+      margin: 8px 0;
+      color: var(--muted);
+    }
+
+    .summary-card li {
+      margin: 9px 0;
+    }
+
+    section {
+      padding: 32px 0;
+      border-top: 1px solid var(--line);
+    }
+
+    .hero + section {
+      border-top: 0;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .role-tag {
+      display: inline-block;
+      color: #062926;
+      background: var(--accent);
+      border-radius: 999px;
+      padding: 4px 9px;
+      font-size: 0.78rem;
+      font-weight: 800;
+      margin-bottom: 12px;
+    }
+
+    .timeline {
+      display: grid;
+      gap: 14px;
+      counter-reset: step;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 54px minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+
+    .step::before {
+      counter-increment: step;
+      content: counter(step);
+      width: 40px;
+      height: 40px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      background: rgba(53, 215, 197, 0.14);
+      color: var(--accent);
+      border: 1px solid rgba(53, 215, 197, 0.45);
+      font-weight: 900;
+    }
+
+    .step p:last-child,
+    .card p:last-child,
+    .qa p:last-child {
+      margin-bottom: 0;
+    }
+
+    .screen-list {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .qa { margin-bottom: 10px; }
+
+    .qa h3 { color: var(--text); }
+
+    .compare {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: var(--radius);
+      border: 1px solid var(--line);
+      background: var(--panel);
+    }
+
+    .compare th,
+    .compare td {
+      padding: 13px 14px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .compare th {
+      color: var(--text);
+      background: var(--panel-2);
+    }
+
+    .compare td { color: var(--muted); }
+
+    .compare tr:last-child td { border-bottom: 0; }
+
+    .note {
+      border-color: rgba(224, 178, 83, 0.45);
+      background: rgba(224, 178, 83, 0.08);
+    }
+
+    .note h2,
+    .note h3 {
+      color: #f1d28a;
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 6px;
+      padding: 1px 5px;
+    }
+
+    footer {
+      padding-top: 28px;
+      color: var(--muted);
+      border-top: 1px solid var(--line);
+      font-size: 0.92rem;
+    }
+
+    @media (max-width: 840px) {
+      header.site {
+        align-items: flex-start;
+        flex-direction: column;
       }
 
-      * { box-sizing: border-box; }
-
-      html { scroll-behavior: smooth; }
-
-      body {
-        margin: 0;
-        background:
-          linear-gradient(180deg, rgba(8, 143, 141, 0.16), transparent 360px),
-          radial-gradient(circle at top right, rgba(228, 179, 99, 0.11), transparent 320px),
-          var(--bg);
-        color: var(--paper);
-        font-family: "Aptos", "Segoe UI", system-ui, sans-serif;
-        line-height: 1.56;
+      nav {
+        justify-content: flex-start;
       }
 
-      a { color: var(--accent-hover); }
-
-      a:focus-visible {
-        outline: 3px solid var(--gold);
-        outline-offset: 3px;
+      .hero,
+      .grid-2,
+      .grid-3,
+      .screen-list {
+        grid-template-columns: 1fr;
       }
 
-      .shell {
-        width: min(1120px, calc(100% - 32px));
-        margin: 0 auto;
-        padding: 24px 0 64px;
+      .step {
+        grid-template-columns: 44px minmax(0, 1fr);
       }
 
-      .topbar {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 16px;
-        margin-bottom: 28px;
-        padding-bottom: 16px;
-        border-bottom: 1px solid var(--line);
+      .compare {
+        display: block;
+        overflow-x: auto;
       }
-
-      .brand {
-        margin: 0;
-        font-size: 1rem;
-        font-weight: 900;
-        letter-spacing: 0.02em;
-      }
-
-      .topbar nav,
-      .hero-actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        justify-content: flex-end;
-      }
-
-      .button {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        min-height: 38px;
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        background: var(--panel);
-        color: var(--paper);
-        padding: 8px 12px;
-        text-decoration: none;
-        font-weight: 800;
-        line-height: 1.15;
-      }
-
-      .button:hover {
-        border-color: var(--accent);
-        color: var(--accent-hover);
-      }
-
-      .button-primary {
-        border-color: #07827f;
-        background: #07827f;
-        color: #ffffff;
-      }
-
-      .button-primary:hover {
-        border-color: #067674;
-        background: #067674;
-        color: #ffffff;
-      }
-
-      .hero {
-        display: grid;
-        grid-template-columns: minmax(0, 1.08fr) minmax(300px, 0.92fr);
-        gap: 28px;
-        align-items: stretch;
-        padding: 28px 0 34px;
-      }
-
-      .hero-copy {
-        display: grid;
-        align-content: center;
-        gap: 16px;
-      }
-
-      .kicker {
-        margin: 0;
-        color: var(--accent-hover);
-        font-size: 0.78rem;
-        font-weight: 900;
-        letter-spacing: 0.16em;
-        text-transform: uppercase;
-      }
-
-      h1,
-      h2,
-      h3,
-      p { margin-top: 0; }
 
       h1 {
-        max-width: 12ch;
-        margin: 0;
-        font-size: clamp(3rem, 8vw, 6rem);
-        line-height: 0.94;
-        letter-spacing: 0;
+        max-width: none;
+        font-size: 3rem;
       }
 
-      .lead {
-        max-width: 680px;
-        margin: 0;
-        color: var(--soft);
-        font-size: clamp(1.14rem, 2vw, 1.36rem);
+      h2 {
+        font-size: 1.75rem;
       }
-
-      .time-pill {
-        display: inline-flex;
-        width: fit-content;
-        align-items: center;
-        gap: 8px;
-        border: 1px solid rgba(8, 143, 141, 0.52);
-        border-radius: 999px;
-        background: var(--accent-soft);
-        color: var(--paper);
-        padding: 7px 11px;
-        font-weight: 900;
-      }
-
-      .jump-nav {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        margin: 0 0 26px;
-        padding: 12px;
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        background: rgba(16, 23, 25, 0.82);
-      }
-
-      .jump-nav a {
-        display: inline-flex;
-        align-items: center;
-        min-height: 34px;
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        padding: 7px 10px;
-        color: var(--paper);
-        text-decoration: none;
-        font-size: 0.9rem;
-        font-weight: 800;
-      }
-
-      .jump-nav a:hover {
-        border-color: var(--accent);
-        color: var(--accent-hover);
-      }
-
-      .summary-card,
-      .timeline-card,
-      .info-card,
-      .context-card,
-      .try-card {
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        background: var(--panel);
-      }
-
-      .summary-card {
-        display: grid;
-        align-content: start;
-        gap: 18px;
-        padding: 24px;
-      }
-
-      .summary-card h2,
-      .section h2 {
-        margin-bottom: 8px;
-        font-size: clamp(1.55rem, 3vw, 2.25rem);
-        line-height: 1.08;
-      }
-
-      .check-list,
-      .plain-list {
-        display: grid;
-        gap: 10px;
-        margin: 0;
-        padding: 0;
-        list-style: none;
-      }
-
-      .check-list li,
-      .plain-list li {
-        display: grid;
-        grid-template-columns: 26px minmax(0, 1fr);
-        gap: 10px;
-        align-items: start;
-        color: var(--muted);
-      }
-
-      .check-list li::before {
-        content: "\2713";
-        display: grid;
-        place-items: center;
-        width: 24px;
-        height: 24px;
-        border-radius: 999px;
-        background: var(--accent);
-        color: var(--ink);
-        font-size: 0.78rem;
-        font-weight: 900;
-      }
-
-      .plain-list li::before {
-        content: "";
-        width: 8px;
-        height: 8px;
-        margin-top: 9px;
-        border-radius: 999px;
-        background: var(--gold);
-      }
-
-      .flow-strip {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-        gap: 10px;
-        margin: 8px 0 0;
-      }
-
-      .flow-step {
-        position: relative;
-        min-height: 82px;
-        padding: 13px;
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        background: rgba(20, 30, 33, 0.72);
-        color: var(--paper);
-        font-weight: 900;
-      }
-
-      .flow-step span {
-        display: block;
-        margin-bottom: 6px;
-        color: var(--accent-hover);
-        font-size: 0.78rem;
-      }
-
-      .section {
-        padding: 34px 0;
-        border-top: 1px solid var(--line);
-      }
-
-      .section-intro {
-        max-width: 760px;
-        color: var(--muted);
-        font-size: 1.05rem;
-      }
-
-      .timeline {
-        display: grid;
-        gap: 18px;
-        margin-top: 22px;
-      }
-
-      .timeline-card {
-        display: grid;
-        grid-template-columns: minmax(0, 1.02fr) minmax(300px, 0.98fr);
-        gap: 20px;
-        padding: 20px;
-      }
-
-      .step-copy {
-        display: grid;
-        align-content: start;
-        gap: 12px;
-      }
-
-      .step-head {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-      }
-
-      .step-number {
-        display: grid;
-        place-items: center;
-        flex: 0 0 auto;
-        width: 42px;
-        height: 42px;
-        border-radius: 999px;
-        background: var(--accent);
-        color: var(--ink);
-        font-weight: 900;
-      }
-
-      .step-copy h2 {
-        margin: 0;
-        font-size: clamp(1.45rem, 2.4vw, 2rem);
-      }
-
-      .step-copy p,
-      .step-copy li,
-      .info-card p,
-      .info-card li,
-      .try-card p,
-      .try-card li {
-        color: var(--muted);
-      }
-
-      blockquote {
-        margin: 0;
-        border-left: 4px solid var(--accent);
-        background: var(--accent-soft);
-        padding: 12px 14px;
-        color: var(--soft);
-        font-weight: 700;
-      }
-
-      .screen-card {
-        align-self: stretch;
-        overflow: hidden;
-        border: 1px solid var(--line-strong);
-        border-radius: 8px;
-        background: #071110;
-        box-shadow: 0 18px 50px rgba(0, 0, 0, 0.22);
-      }
-
-      .screen-bar {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        height: 34px;
-        border-bottom: 1px solid var(--line);
-        padding: 0 12px;
-        background: #101719;
-      }
-
-      .screen-dot {
-        width: 8px;
-        height: 8px;
-        border-radius: 999px;
-        background: var(--line-strong);
-      }
-
-      .screen-body {
-        display: grid;
-        gap: 10px;
-        padding: 16px;
-      }
-
-      .mock-title {
-        margin: 0;
-        color: var(--paper);
-        font-size: 1rem;
-        font-weight: 900;
-      }
-
-      .mock-line,
-      .mock-button,
-      .mock-id,
-      .mock-result {
-        border-radius: 6px;
-        padding: 10px 12px;
-      }
-
-      .mock-line {
-        border: 1px solid var(--line);
-        color: var(--muted);
-      }
-
-      .mock-button {
-        width: fit-content;
-        background: #07827f;
-        color: #ffffff;
-        font-weight: 900;
-      }
-
-      .mock-id {
-        border: 1px dashed rgba(8, 143, 141, 0.62);
-        background: var(--accent-soft);
-        color: var(--paper);
-        font-family: "SFMono-Regular", Consolas, monospace;
-      }
-
-      .mock-result {
-        display: flex;
-        justify-content: space-between;
-        gap: 12px;
-        border: 1px solid var(--line);
-        color: var(--soft);
-      }
-
-      .comparison-wrap {
-        overflow-x: auto;
-        border: 1px solid var(--line);
-        border-radius: 8px;
-      }
-
-      table {
-        width: 100%;
-        min-width: 720px;
-        border-collapse: collapse;
-        background: var(--panel);
-      }
-
-      th,
-      td {
-        padding: 14px 16px;
-        border-bottom: 1px solid var(--line);
-        text-align: left;
-        vertical-align: top;
-      }
-
-      th {
-        color: var(--paper);
-        font-size: 0.82rem;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-      }
-
-      td { color: var(--muted); }
-
-      tr:last-child td { border-bottom: 0; }
-
-      .grid-2,
-      .grid-3 {
-        display: grid;
-        gap: 16px;
-      }
-
-      .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-
-      .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-
-      .context-card {
-        padding: 20px;
-      }
-
-      .context-card h3 {
-        margin-bottom: 8px;
-        color: var(--gold);
-      }
-
-      .context-card p,
-      .context-card li {
-        color: var(--muted);
-      }
-
-      .context-card ul,
-      .context-card ol {
-        margin: 0;
-        padding-left: 1.2rem;
-      }
-
-      .one-minute {
-        display: grid;
-        grid-template-columns: minmax(0, 0.9fr) minmax(280px, 1.1fr);
-        gap: 18px;
-        align-items: start;
-      }
-
-      .presenter-strip {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 12px;
-        margin-top: 18px;
-      }
-
-      .presenter-note {
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        background: rgba(20, 30, 33, 0.72);
-        padding: 14px;
-      }
-
-      .presenter-note strong {
-        display: block;
-        margin-bottom: 4px;
-        color: var(--paper);
-      }
-
-      .presenter-note span {
-        color: var(--muted);
-      }
-
-      .number-flow {
-        display: grid;
-        gap: 10px;
-        margin: 0;
-        padding: 0;
-        list-style: none;
-        counter-reset: meeting-flow;
-      }
-
-      .number-flow li {
-        display: grid;
-        grid-template-columns: 30px minmax(0, 1fr);
-        gap: 10px;
-        align-items: start;
-        color: var(--muted);
-        counter-increment: meeting-flow;
-      }
-
-      .number-flow li::before {
-        content: counter(meeting-flow);
-        display: grid;
-        place-items: center;
-        width: 28px;
-        height: 28px;
-        border-radius: 999px;
-        background: var(--paper);
-        color: var(--ink);
-        font-size: 0.86rem;
-        font-weight: 900;
-      }
-
-      .script-card {
-        border-left: 4px solid var(--accent);
-        background: var(--accent-soft);
-      }
-
-      .warning-card {
-        border-color: rgba(228, 179, 99, 0.5);
-        background: rgba(228, 179, 99, 0.1);
-      }
-
-      .phrase-list {
-        display: grid;
-        gap: 14px;
-      }
-
-      .phrase {
-        border-bottom: 1px solid var(--line);
-        padding-bottom: 14px;
-      }
-
-      .phrase:last-child {
-        border-bottom: 0;
-        padding-bottom: 0;
-      }
-
-      .phrase strong {
-        display: block;
-        margin-bottom: 4px;
-        color: var(--paper);
-      }
-
-      .info-card,
-      .try-card {
-        padding: 20px;
-      }
-
-      .try-card {
-        border-color: rgba(8, 143, 141, 0.5);
-        background: var(--accent-soft);
-      }
-
-      @media (max-width: 860px) {
-        .topbar {
-          align-items: stretch;
-          flex-direction: column;
-        }
-
-        .topbar nav,
-        .hero-actions {
-          justify-content: flex-start;
-        }
-
-        .hero,
-        .one-minute,
-        .presenter-strip,
-        .timeline-card,
-        .grid-2,
-        .grid-3 {
-          grid-template-columns: 1fr;
-        }
-
-        .flow-strip {
-          grid-template-columns: 1fr;
-        }
-
-        h1 { max-width: none; }
-      }
-    </style>
-  </head>
-  <body>
-    <main class="shell">
-      <header class="topbar">
-        <p class="brand">Auditable Voting</p>
-        <nav aria-label="Quick links">
-          <a class="button" href="./">Home</a>
-          <a class="button" href="./project-explainer.html" target="_blank" rel="noopener noreferrer">How it works</a>
-          <a class="button" href="./dashboard.html?role=auditor" target="_blank" rel="noopener noreferrer">Observer</a>
-          <a class="button" href="./simple-coordinator.html?role=coordinator" target="_blank" rel="noopener noreferrer">Organiser</a>
-          <a class="button" href="./simple.html?role=voter" target="_blank" rel="noopener noreferrer">Voter</a>
-        </nav>
-      </header>
-
-      <section class="hero" aria-labelledby="page-title">
-        <div class="hero-copy">
-          <p class="kicker">Plain-English demo guide</p>
-          <h1 id="page-title">Auditable Voting Demo</h1>
-          <p class="lead">The hands-on run takes about <strong>5 minutes</strong>. Start with the plain-language framing, then publish a questionnaire, share an invite, submit a response, and check the public result in Observer.</p>
-          <p class="time-pill">5 minute hands-on walkthrough</p>
-          <div class="hero-actions">
-            <a class="button button-primary" href="#steps">Run the demo</a>
-            <a class="button" href="./simple-coordinator.html?role=coordinator" target="_blank" rel="noopener noreferrer">Open organiser page</a>
-            <a class="button" href="./simple.html?role=voter" target="_blank" rel="noopener noreferrer">Open voter page</a>
-            <a class="button" href="./dashboard.html?role=auditor" target="_blank" rel="noopener noreferrer">Open observer page</a>
-          </div>
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="site">
+      <div class="brand">
+        <div class="logo" aria-hidden="true">
+          <span class="dots">
+            <i></i><i></i><i></i><i></i>
+            <i></i><i></i><i></i><i></i>
+            <i></i><i></i><i></i><i></i>
+          </span>
         </div>
-        <aside class="summary-card" aria-label="Demo outcomes">
-          <h2>By the end you will</h2>
-          <ul class="check-list">
-            <li>Publish a questionnaire as Organiser</li>
-            <li>Share the General invite link or QR code</li>
-            <li>Request a ballot from the real Voter flow</li>
-            <li>Submit a response</li>
-            <li>Check the live submission and final result in Observer</li>
-          </ul>
-        </aside>
-      </section>
-
-      <nav class="jump-nav" aria-label="Demo guide sections">
-        <a href="#one-minute">One-minute explanation</a>
+        <span>Auditable Voting</span>
+      </div>
+      <nav aria-label="Demo guide sections">
+        <a href="#overview">Overview</a>
         <a href="#roles">Roles</a>
-        <a href="#meeting-plan">Meeting plan</a>
-        <a href="#screen-story">Screen story</a>
-        <a href="#phrases">Likely questions</a>
-        <a href="#caveats">Caveats</a>
-        <a href="#steps">Run the demo</a>
+        <a href="#demo">Demo steps</a>
+        <a href="#screens">Screens</a>
+        <a href="#questions">Questions</a>
+        <a href="#limits">Limits</a>
       </nav>
+    </header>
 
-      <section class="section" aria-labelledby="one-minute">
-        <p class="kicker">Before the walkthrough</p>
-        <h2 id="one-minute">One-minute explanation</h2>
-        <div class="one-minute">
-          <article class="context-card">
-            <h3>What this demonstrates</h3>
-            <p>Auditable Voting helps run a questionnaire where the organiser can decide who is allowed to vote, voters can submit without their answer being tied back to their normal identity, and anyone can check the published count afterwards.</p>
-            <p>For a non-technical audience, describe it as a public count with private ballot identities, not as a blockchain or cryptography demo.</p>
-          </article>
-          <article class="context-card">
-            <ol class="number-flow">
-              <li>Someone checks that you are allowed to take part.</li>
-              <li>You receive a ballot credential.</li>
-              <li>You fill in your response privately.</li>
-              <li>The response goes into a public count.</li>
-              <li>Observers can check the count without knowing which response was yours.</li>
-            </ol>
-          </article>
-        </div>
-        <div class="presenter-strip" aria-label="Presenter setup notes">
-          <div class="presenter-note">
-            <strong>Use separate sessions</strong>
-            <span>Open Organiser, Voter, and Observer in separate profiles, private windows, or devices.</span>
-          </div>
-          <div class="presenter-note">
-            <strong>Use a short question</strong>
-            <span>A one-question yes/no questionnaire is enough to show the complete loop.</span>
-          </div>
-          <div class="presenter-note">
-            <strong>Keep Observer visible</strong>
-            <span>It is the clearest proof that the result is read from public data.</span>
+    <main>
+      <div class="hero" id="overview">
+        <div>
+          <p class="eyebrow">Plain-English demo guide</p>
+          <h1>Show the voting loop.</h1>
+          <p class="lead">Use this guide to demonstrate one complete flow: create a questionnaire, invite a voter, submit a response, publish the result, and verify it in Observer.</p>
+          <div class="actions">
+            <a class="button primary" href="#demo">Run the demo</a>
+            <a class="button" href="#questions">Answer likely questions</a>
+            <a class="button" href="./simple-coordinator.html?role=coordinator" target="_blank" rel="noopener noreferrer">Open Organiser</a>
+            <a class="button" href="./simple.html?role=voter" target="_blank" rel="noopener noreferrer">Open Voter</a>
+            <a class="button" href="./dashboard.html?role=auditor" target="_blank" rel="noopener noreferrer">Open Observer</a>
           </div>
         </div>
-      </section>
 
-      <section class="section" aria-labelledby="roles">
-        <p class="kicker">The cast</p>
-        <h2 id="roles">Use everyday role names first</h2>
-        <p class="section-intro">The app uses precise role names, but the meeting can start with simpler words.</p>
+        <aside class="summary-card" aria-labelledby="one-minute">
+          <h2 id="one-minute">One-minute explanation</h2>
+          <p>Auditable Voting is a questionnaire system where the organiser controls who can vote, voters submit through private submission identities, and observers can check the public count.</p>
+          <ol class="clean">
+            <li>The organiser creates a questionnaire.</li>
+            <li>A voter opens the invite and receives a ballot credential.</li>
+            <li>The voter submits a response once.</li>
+            <li>The organiser publishes the result.</li>
+            <li>Observer checks accepted submissions, invalid submissions, and the final count.</li>
+          </ol>
+        </aside>
+      </div>
+
+      <section id="setup">
+        <h2>Before you start</h2>
         <div class="grid-3">
-          <article class="context-card">
-            <h3>Organiser</h3>
-            <p>They create the questionnaire, share links or QR codes, keep the questionnaire open, and publish the result.</p>
-          </article>
-          <article class="context-card">
-            <h3>Voter</h3>
-            <p>The voter opens an invite, waits while their request is verified, answers the questions, and submits once.</p>
-          </article>
-          <article class="context-card">
-            <h3>Watcher</h3>
-            <p>In the app this is the Observer. They can check the public result without needing the organiser's private browser state.</p>
-          </article>
+          <div class="card">
+            <h3>Use separate sessions</h3>
+            <p>Open Organiser, Voter, and Observer in separate browser profiles, private windows, or devices.</p>
+          </div>
+          <div class="card">
+            <h3>Use one short question</h3>
+            <p>A single yes/no question is enough to show the full workflow without distracting the audience.</p>
+          </div>
+          <div class="card">
+            <h3>Keep Observer visible</h3>
+            <p>Observer is the proof point. It shows that the result can be read and checked from public data.</p>
+          </div>
         </div>
       </section>
 
-      <section class="section" aria-labelledby="meeting-plan">
-        <p class="kicker">Meeting plan</p>
-        <h2 id="meeting-plan">A simple screen story</h2>
-        <div class="grid-2">
-          <article class="context-card">
-            <h3>What to do</h3>
-            <ul>
-              <li>Open the Organiser page.</li>
-              <li>Create a short questionnaire.</li>
-              <li>Show the General invite QR code.</li>
-              <li>Open the invite as a Voter.</li>
-              <li>Submit one response.</li>
-              <li>Check the response in Observer.</li>
-              <li>Close and publish results.</li>
-              <li>Refresh Observer and show the public check.</li>
-            </ul>
-          </article>
-          <article class="context-card script-card">
-            <h3>What to say</h3>
-            <p>The organiser controls who can get a ballot credential. The voter submits through a separate response identity. Observer reads the public records and recomputes what happened, so the final count is not just a number from the organiser's browser.</p>
-          </article>
-        </div>
-      </section>
-
-      <section class="section" aria-labelledby="screen-story">
-        <p class="kicker">Screen story</p>
-        <h2 id="screen-story">What to show on each screen</h2>
+      <section id="roles">
+        <h2>Roles</h2>
         <div class="grid-3">
-          <article class="context-card">
+          <article class="card">
+            <span class="role-tag">Organiser</span>
+            <h3>Creates and publishes the questionnaire</h3>
+            <ul class="clean">
+              <li>Creates questions</li>
+              <li>Shares the General invite link or QR code</li>
+              <li>Keeps the questionnaire open</li>
+              <li>Publishes the final result</li>
+            </ul>
+          </article>
+          <article class="card">
+            <span class="role-tag">Voter</span>
+            <h3>Submits one response</h3>
+            <ul class="clean">
+              <li>Opens the invite</li>
+              <li>Requests a ballot automatically</li>
+              <li>Answers the questions</li>
+              <li>Keeps the Submission ID for checking</li>
+            </ul>
+          </article>
+          <article class="card">
+            <span class="role-tag">Observer</span>
+            <h3>Checks the public result</h3>
+            <ul class="clean">
+              <li>Finds the questionnaire</li>
+              <li>Shows accepted and invalid submissions</li>
+              <li>Shows invalid reasons</li>
+              <li>Verifies the final count</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section id="demo">
+        <h2>Five-minute demo</h2>
+        <div class="timeline">
+          <article class="step">
+            <div>
+              <h3>Open Organiser and publish a questionnaire</h3>
+              <p>Open <a href="./simple-coordinator.html?role=coordinator" target="_blank" rel="noopener noreferrer"><strong>Organiser</strong></a>. Use <strong>Login</strong> if you already have an organiser identity, or use <strong>New identity</strong> for a fresh local demo identity.</p>
+              <p>Fill in <strong>Name</strong>, <strong>Description</strong>, and at least one <strong>Question prompt</strong>. When the readiness checklist is complete, click <strong>Publish questionnaire</strong>, then <strong>Open vote</strong>.</p>
+            </div>
+          </article>
+
+          <article class="step">
+            <div>
+              <h3>Share the General invite</h3>
+              <p>In Organiser, open <strong>Invite voters</strong>. Use the <strong>General invite link</strong> or QR code.</p>
+              <p>Voters who open this link are sent to Voter and request a ballot automatically.</p>
+            </div>
+          </article>
+
+          <article class="step">
+            <div>
+              <h3>Open Voter and choose an identity</h3>
+              <p>Open the invite in the Voter session, or open <a href="./simple.html?role=voter" target="_blank" rel="noopener noreferrer"><strong>Voter</strong></a> directly. Open <strong>Menu</strong>.</p>
+              <p>Use <strong>Login</strong> if you already have a voter identity, or use <strong>New identity</strong> for a fresh local demo identity.</p>
+              <p>The top-right label should show the Voter identity, for example <code>Voter dv0lu66</code>. No email address, phone number, or password is needed for this demo.</p>
+            </div>
+          </article>
+
+          <article class="step">
+            <div>
+              <h3>Submit a response</h3>
+              <p>The invite should open the questionnaire and request a ballot. If it shows <strong>Pending invites</strong>, click <strong>Open + request ballot</strong>.</p>
+              <p>Answer the question and click <strong>Submit response</strong>. For free-text questions, use <strong>Encrypt for organiser</strong> if the answer should not be public.</p>
+              <p>If the button is disabled, it will explain why, for example <strong>Please answer all required questions</strong> or <strong>Verifying vote request</strong>.</p>
+              <p>After submission, keep the <strong>Submission ID</strong>. You will use it in Observer.</p>
+            </div>
+          </article>
+
+          <article class="step">
+            <div>
+              <h3>Check the vote in Observer</h3>
+              <p>Open <a href="./dashboard.html?role=auditor" target="_blank" rel="noopener noreferrer"><strong>Observer</strong></a>. Use <strong>Find Published Questionnaires</strong>, choose the questionnaire, then open <strong>Submitted Votes</strong>.</p>
+              <p>Match the voter's <strong>Submission ID</strong> to Observer's <strong>Response ID</strong>. Accepted submissions have no <strong>Invalid</strong> marker. Invalid submissions show a reason.</p>
+            </div>
+          </article>
+
+          <article class="step">
+            <div>
+              <h3>Publish and verify the result</h3>
+              <p>Return to Organiser and click <strong>Close + publish results</strong> or <strong>Publish results</strong>.</p>
+              <p>Refresh Observer. Show <strong>Questionnaire Results</strong>, accepted count, invalid count, per-question results, and <strong>Submitted Votes</strong>.</p>
+              <p>Observer can also show live verified submissions before the final result is published.</p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="screens">
+        <h2>What to show on each screen</h2>
+        <div class="screen-list">
+          <article class="card">
             <h3>Organiser</h3>
-            <ul>
-              <li>Name the questionnaire.</li>
-              <li>Add questions.</li>
-              <li>Share the General invite QR code.</li>
-              <li>See responses arrive.</li>
-              <li>Publish the final result.</li>
+            <ul class="clean">
+              <li>Name the questionnaire</li>
+              <li>Add questions</li>
+              <li>Share the General invite QR code</li>
+              <li>See responses arrive</li>
+              <li>Publish the final result</li>
             </ul>
           </article>
-          <article class="context-card">
+          <article class="card">
             <h3>Voter</h3>
-            <ul>
-              <li>Open the invite from a phone or browser.</li>
-              <li>Request a ballot automatically.</li>
-              <li>Wait while the request is verified.</li>
-              <li>Answer and submit once.</li>
-              <li>Keep the Submission ID for checking.</li>
+            <ul class="clean">
+              <li>Open the invite</li>
+              <li>Request a ballot</li>
+              <li>Wait for verification</li>
+              <li>Submit once</li>
+              <li>Keep the Submission ID</li>
             </ul>
           </article>
-          <article class="context-card">
+          <article class="card">
             <h3>Observer</h3>
-            <ul>
-              <li>Find the questionnaire.</li>
-              <li>See accepted and rejected responses.</li>
-              <li>Read rejection reasons.</li>
-              <li>Match Submission ID to Response ID.</li>
-              <li>Check the published result.</li>
+            <ul class="clean">
+              <li>Find the questionnaire</li>
+              <li>See accepted submissions</li>
+              <li>See invalid submissions and reasons</li>
+              <li>Match Submission ID to Response ID</li>
+              <li>Check the published result</li>
             </ul>
           </article>
         </div>
       </section>
 
-      <section class="section" aria-labelledby="phrases">
-        <p class="kicker">Useful answers</p>
-        <h2 id="phrases">Plain responses to likely questions</h2>
-        <div class="context-card phrase-list">
-          <div class="phrase">
-            <strong>Why not just use a normal survey tool?</strong>
-            <p>Normal survey tools usually require trusting the operator and the database. This project is about making the count independently checkable.</p>
+      <section id="questions">
+        <h2>Likely questions</h2>
+        <article class="qa">
+          <h3>Why not use a normal survey tool?</h3>
+          <p>Normal survey tools require trust in the operator and database. Here, the important checks can be repeated independently.</p>
+        </article>
+        <article class="qa">
+          <h3>Can the organiser see who voted for what?</h3>
+          <p>The organiser controls who can take part. The submitted response uses a separate response identity, so the normal voter identity is not the public ballot identity. Free-text answers may still reveal personal information if the voter writes it.</p>
+        </article>
+        <article class="qa">
+          <h3>Can someone vote twice?</h3>
+          <p>Each ballot credential can be accepted once. Duplicate or invalid submissions are rejected and the reason is shown.</p>
+        </article>
+        <article class="qa">
+          <h3>What should the voter check?</h3>
+          <p>The voter keeps the Submission ID. Observer shows the same value as Response ID, alongside the public <strong>Submittor identity</strong> and any invalid reason.</p>
+        </article>
+        <article class="qa">
+          <h3>Is this ready for official elections?</h3>
+          <p>No. Treat it as experimental infrastructure. It needs independent review before high-stakes use.</p>
+        </article>
+      </section>
+
+      <section id="comparison">
+        <h2>How it differs from a normal questionnaire</h2>
+        <table class="compare">
+          <thead>
+            <tr>
+              <th>Question</th>
+              <th>Traditional online questionnaire</th>
+              <th>Auditable Voting</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Was my response recorded?</td>
+              <td>Trust required</td>
+              <td>Check the public submission</td>
+            </tr>
+            <tr>
+              <td>Was my response altered?</td>
+              <td>Trust required</td>
+              <td>Compare the published record</td>
+            </tr>
+            <tr>
+              <td>Was the result calculated correctly?</td>
+              <td>Trust required</td>
+              <td>Anyone can verify it</td>
+            </tr>
+            <tr>
+              <td>Can the organiser secretly change results?</td>
+              <td>Difficult to detect</td>
+              <td>Publicly detectable</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="privacy">
+        <h2>Privacy model</h2>
+        <div class="grid-2">
+          <div class="card">
+            <h3>Identity</h3>
+            <p>The submitted response is linked to a private submission identity, not the voter's normal identity or real-world identity.</p>
           </div>
-          <div class="phrase">
-            <strong>Can the organiser see who voted for what?</strong>
-            <p>The organiser can decide who may take part. The submitted response uses a separate response identity, so the normal voter identity is not the public ballot identity. Free-text answers may still reveal personal information if the voter writes it.</p>
-          </div>
-          <div class="phrase">
-            <strong>Can someone vote twice?</strong>
-            <p>Each ballot credential can only be accepted once. Duplicate or invalid submissions are rejected and the reason is shown.</p>
-          </div>
-          <div class="phrase">
-            <strong>Is this ready for official elections?</strong>
-            <p>No. Treat it as experimental infrastructure that demonstrates a verifiable pattern. It needs independent review before high-stakes use.</p>
-          </div>
-          <div class="phrase">
-            <strong>What should people compare after voting?</strong>
-            <p>The voter keeps the Submission ID. Observer shows the same value as Response ID, alongside the public Submittor identity and any invalid reason.</p>
+          <div class="card">
+            <h3>Public record</h3>
+            <p>Responses can be audited and results can be verified. Personal information is not required. Free-text answers can be encrypted for the organiser when configured.</p>
           </div>
         </div>
       </section>
 
-      <section class="section" aria-labelledby="caveats">
-        <p class="kicker">Set expectations</p>
-        <h2 id="caveats">Safe caveats</h2>
-        <div class="context-card warning-card">
-          <ul>
+      <section id="limits">
+        <div class="note">
+          <h2>Limits to state clearly</h2>
+          <ul class="clean">
             <li>This is a working prototype, not a production election service.</li>
             <li>Public relay reliability can affect timing.</li>
             <li>Private keys stay in the browser, so device handling matters.</li>
@@ -823,249 +690,24 @@
         </div>
       </section>
 
-      <section class="section" aria-labelledby="flow">
-        <p class="kicker">The mental model</p>
-        <h2 id="flow">End-to-end flow</h2>
-        <div class="flow-strip" aria-label="Demo progression">
-          <div class="flow-step"><span>1</span>Open Organiser</div>
-          <div class="flow-step"><span>2</span>Publish questionnaire</div>
-          <div class="flow-step"><span>3</span>Share General invite</div>
-          <div class="flow-step"><span>4</span>Submit response</div>
-          <div class="flow-step"><span>5</span>Check Observer</div>
-          <div class="flow-step"><span>6</span>Publish + verify results</div>
-        </div>
-      </section>
-
-      <section class="section" aria-labelledby="steps">
-        <p class="kicker">Hands-on walkthrough</p>
-        <h2 id="steps">Run the demo</h2>
-        <p class="section-intro">
-          Use <a href="./simple-coordinator.html?role=coordinator" target="_blank" rel="noopener noreferrer">Organiser</a>,
-          <a href="./simple.html?role=voter" target="_blank" rel="noopener noreferrer">Voter</a>, and
-          <a href="./dashboard.html?role=auditor" target="_blank" rel="noopener noreferrer">Observer</a>.
-          For the cleanest demo, open each role in a separate browser profile, private window, or device.
-        </p>
-        <div class="timeline">
-          <article class="timeline-card">
-            <div class="step-copy">
-              <div class="step-head">
-                <span class="step-number">1</span>
-                <h2>Open Organiser and publish a questionnaire</h2>
-              </div>
-              <p>Open <a href="./simple-coordinator.html?role=coordinator" target="_blank" rel="noopener noreferrer"><strong>Organiser</strong></a>.</p>
-              <p>Use <strong>Login</strong> if you already have an organiser identity, or use <strong>New identity</strong> for a fresh local demo identity.</p>
-              <p>Fill in <strong>Name</strong>, <strong>Description</strong>, and at least one <strong>Question prompt</strong>.</p>
-              <p>When the <strong>Readiness checklist</strong> is complete, click <strong>Publish questionnaire</strong>, then click <strong>Open vote</strong>.</p>
-            </div>
-            <div class="screen-card" aria-label="Organiser questionnaire setup preview">
-              <div class="screen-bar"><span class="screen-dot"></span><span class="screen-dot"></span><span class="screen-dot"></span></div>
-              <div class="screen-body">
-                <p class="mock-title">Questionnaire setup</p>
-                <div class="mock-line">Name</div>
-                <div class="mock-line">Description</div>
-                <div class="mock-line">Question prompt</div>
-                <div class="mock-button">Publish questionnaire</div>
-                <div class="mock-button">Open vote</div>
-              </div>
-            </div>
-          </article>
-
-          <article class="timeline-card">
-            <div class="step-copy">
-              <div class="step-head">
-                <span class="step-number">2</span>
-                <h2>Share the General invite</h2>
-              </div>
-              <p>In <strong>Organiser</strong>, open <strong>Invite voters</strong>.</p>
-              <p>Use <strong>General invite link</strong>. Voters who scan the QR open Vote and request a ballot automatically.</p>
-              <p>You can scan the QR code on a phone, click <strong>Copy link</strong>, or click <strong>Share...</strong>.</p>
-            </div>
-            <div class="screen-card" aria-label="General invite link preview">
-              <div class="screen-bar"><span class="screen-dot"></span><span class="screen-dot"></span><span class="screen-dot"></span></div>
-              <div class="screen-body">
-                <p class="mock-title">Invite voters</p>
-                <div class="mock-line">General invite link</div>
-                <div class="mock-line">QR code</div>
-                <div class="mock-button">Copy link</div>
-                <div class="mock-button">Share...</div>
-              </div>
-            </div>
-          </article>
-
-          <article class="timeline-card">
-            <div class="step-copy">
-              <div class="step-head">
-                <span class="step-number">3</span>
-                <h2>Open Voter and choose an identity</h2>
-              </div>
-              <p>After scanning the QR or opening the invite, you should be on <a href="./simple.html?role=voter" target="_blank" rel="noopener noreferrer"><strong>Voter</strong></a>.</p>
-              <p>Open <strong>Menu</strong>.</p>
-              <p>Use <strong>Login</strong> if you already have a voter identity, or use <strong>New identity</strong> for a fresh local demo identity.</p>
-              <p>The top-right label should show something like <strong>Voter dv0lu66</strong>.</p>
-              <blockquote>Nobody needs your email address, phone number or password.</blockquote>
-            </div>
-            <div class="screen-card" aria-label="Voter identity menu preview">
-              <div class="screen-bar"><span class="screen-dot"></span><span class="screen-dot"></span><span class="screen-dot"></span></div>
-              <div class="screen-body">
-                <p class="mock-title">Menu</p>
-                <div class="mock-line">Identity</div>
-                <div class="mock-button">Login</div>
-                <div class="mock-button">New identity</div>
-              </div>
-            </div>
-          </article>
-
-          <article class="timeline-card">
-            <div class="step-copy">
-              <div class="step-head">
-                <span class="step-number">4</span>
-                <h2>Open the invite and submit your response</h2>
-              </div>
-              <p>The General invite should open the questionnaire and request a ballot automatically.</p>
-              <p>If the page instead shows <strong>Pending invites</strong>, click <strong>Open + request ballot</strong>.</p>
-              <p>Answer the questions. For free-text questions, use <strong>Encrypt for organiser</strong> if the answer should not be public.</p>
-              <p>When the button is ready, click <strong>Submit response</strong>.</p>
-              <p>If it is not ready, the button explains why, for example <strong>Please answer all required questions</strong> or <strong>Verifying vote request</strong>.</p>
-              <blockquote>After submission, the page shows Private submission identity and a Submission ID.</blockquote>
-            </div>
-            <div class="screen-card" aria-label="Submit response screen preview">
-              <div class="screen-bar"><span class="screen-dot"></span><span class="screen-dot"></span><span class="screen-dot"></span></div>
-              <div class="screen-body">
-                <p class="mock-title">Questionnaire</p>
-                <div class="mock-line">Q1: Yes / No</div>
-                <div class="mock-line">Encrypt for organiser</div>
-                <div class="mock-button">Submit response</div>
-              </div>
-            </div>
-          </article>
-
-          <article class="timeline-card">
-            <div class="step-copy">
-              <div class="step-head">
-                <span class="step-number">5</span>
-                <h2>Check the submitted vote in Observer</h2>
-              </div>
-              <p>Open <a href="./dashboard.html?role=auditor" target="_blank" rel="noopener noreferrer"><strong>Observer</strong></a>.</p>
-              <p>Use <strong>Find Published Questionnaires</strong> to choose the questionnaire, then open <strong>Submitted Votes</strong>.</p>
-              <p>Match the voter page's <strong>Submission ID</strong> to Observer's <strong>Response ID</strong>.</p>
-              <p>Compare the private submission identity against the public <strong>Submittor identity</strong> row.</p>
-              <ul class="check-list">
-                <li>The submission exists</li>
-                <li>Accepted submissions have no Invalid marker</li>
-                <li>Any invalid submission shows a reason</li>
-              </ul>
-            </div>
-            <div class="screen-card" aria-label="Submitted Votes screen preview">
-              <div class="screen-bar"><span class="screen-dot"></span><span class="screen-dot"></span><span class="screen-dot"></span></div>
-              <div class="screen-body">
-                <p class="mock-title">Submitted Votes</p>
-                <div class="mock-id">Response ID: submission_8f4a2c</div>
-                <div class="mock-result"><span>Submittor identity</span><strong>dv0lu66</strong></div>
-                <div class="mock-result"><span>Invalid reason</span><strong>Only if rejected</strong></div>
-              </div>
-            </div>
-          </article>
-
-          <article class="timeline-card">
-            <div class="step-copy">
-              <div class="step-head">
-                <span class="step-number">6</span>
-                <h2>Publish and verify the questionnaire result</h2>
-              </div>
-              <p>Observer can show live verified submissions before the final result is published.</p>
-              <p>For the final published result, return to <strong>Organiser</strong> and click <strong>Close + publish results</strong> or <strong>Publish results</strong>.</p>
-              <p>Open <strong>Observer</strong> again and click <strong>Refresh</strong>.</p>
-              <p>You can see <strong>Questionnaire Results</strong>, accepted and invalid response counts, per-question result breakdowns, and <strong>Submitted Votes</strong>.</p>
-              <ul class="check-list">
-                <li>The reported result is correct</li>
-                <li>Counted submissions are genuine</li>
-                <li>Invalid submissions explain why they were rejected</li>
-              </ul>
-            </div>
-            <div class="screen-card" aria-label="Questionnaire Results screen preview">
-              <div class="screen-bar"><span class="screen-dot"></span><span class="screen-dot"></span><span class="screen-dot"></span></div>
-              <div class="screen-body">
-                <p class="mock-title">Questionnaire Results</p>
-                <div class="mock-result"><span>Accepted</span><strong>42</strong></div>
-                <div class="mock-result"><span>Invalid</span><strong>0</strong></div>
-                <div class="mock-button">Refresh</div>
-              </div>
-            </div>
-          </article>
-        </div>
-      </section>
-
-      <section class="section" aria-labelledby="difference">
-        <p class="kicker">Why it matters</p>
-        <h2 id="difference">How is this different from a normal online questionnaire?</h2>
-        <p class="section-intro">Traditional systems require voters to trust the operator and database. With auditable voting, the important checks can be repeated independently.</p>
-        <div class="comparison-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Question</th>
-                <th>Traditional online voting</th>
-                <th>Auditable voting</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>Was my response recorded?</td>
-                <td>Trust required</td>
-                <td>You can check the public submission</td>
-              </tr>
-              <tr>
-                <td>Was my response altered?</td>
-                <td>Trust required</td>
-                <td>You can compare the published record</td>
-              </tr>
-              <tr>
-                <td>Was the result calculated correctly?</td>
-                <td>Trust required</td>
-                <td>Anyone can verify it</td>
-              </tr>
-              <tr>
-                <td>Can the organiser secretly change results?</td>
-                <td>Difficult to detect</td>
-                <td>Publicly detectable</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section class="section" aria-labelledby="privacy">
-        <p class="kicker">Privacy</p>
-        <h2 id="privacy">What other people can see</h2>
-        <div class="grid-2">
-          <article class="info-card">
-            <h3>Your identity</h3>
-            <p>Your submitted response is linked to a private submission identity, not your normal voter identity or real-world identity.</p>
-          </article>
-          <article class="info-card">
-            <h3>The public record</h3>
-            <p>Responses can be audited, results can be verified, and personal information is not required. Free-text answers can be encrypted for the organiser when configured that way.</p>
-          </article>
-        </div>
-      </section>
-
-      <section class="section" aria-labelledby="next">
-        <p class="kicker">Try next</p>
-        <h2 id="next">What should I try next?</h2>
-        <div class="try-card">
-          <ol>
-            <li>Open Organiser</li>
-            <li>Publish a questionnaire</li>
-            <li>Share the General invite link</li>
-            <li>Open Voter from the invite</li>
-            <li>Submit a response with Submit response</li>
-            <li>Check Submitted Votes in Observer</li>
-            <li>Publish and verify the final result</li>
-            <li>Compare your result with another participant</li>
-          </ol>
-          <p>If two independent users obtain the same Observer result after refreshing from the same public data, they can be confident they are seeing the same questionnaire outcome.</p>
-        </div>
+      <section id="try-next">
+        <h2>Try next</h2>
+        <ol class="clean">
+          <li>Open Organiser.</li>
+          <li>Publish a questionnaire.</li>
+          <li>Share the General invite link.</li>
+          <li>Open Voter from the invite.</li>
+          <li>Submit a response.</li>
+          <li>Check Submitted Votes in Observer.</li>
+          <li>Publish and verify the final result.</li>
+          <li>Compare Observer results across two independent users.</li>
+        </ol>
       </section>
     </main>
-  </body>
+
+    <footer>
+      <p>If two independent users refresh Observer from the same public data and see the same result, they are checking the same questionnaire outcome.</p>
+    </footer>
+  </div>
+</body>
 </html>
