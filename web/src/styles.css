@@ -2023,6 +2023,8 @@ code {
   font-family: "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 0.86rem;
   line-height: 1.45;
+  overflow-x: auto;
+  word-break: break-all;
 }
 
 .simple-delegate-warning-note {
