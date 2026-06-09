@@ -209,29 +209,46 @@
       border-color: var(--accent);
     }
 
-    .demo-inline-button {
+    .demo-inline-button,
+    #demo .step a[href*="simple-coordinator.html"],
+    #demo .step a[href*="simple.html"],
+    #demo .step a[href*="dashboard.html"] {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      min-height: 32px;
-      margin: 0 2px;
-      padding: 3px 11px;
-      border: 1px solid rgba(53, 215, 197, 0.58);
+      min-height: 36px;
+      margin: 0 4px;
+      padding: 5px 14px;
+      border: 1px solid rgba(53, 215, 197, 0.75);
       border-radius: 8px;
       background: var(--accent-2);
-      color: #ffffff;
+      color: #ffffff !important;
       font-weight: 800;
       line-height: 1.1;
-      text-decoration: none;
+      text-decoration: none !important;
       vertical-align: middle;
     }
 
-    .demo-inline-button:hover {
+    .demo-inline-button strong,
+    #demo .step a[href*="simple-coordinator.html"] strong,
+    #demo .step a[href*="simple.html"] strong,
+    #demo .step a[href*="dashboard.html"] strong {
+      color: inherit;
+      font-weight: 800;
+    }
+
+    .demo-inline-button:hover,
+    #demo .step a[href*="simple-coordinator.html"]:hover,
+    #demo .step a[href*="simple.html"]:hover,
+    #demo .step a[href*="dashboard.html"]:hover {
       border-color: var(--accent);
       background: var(--accent-3);
     }
 
-    .demo-inline-button:focus-visible {
+    .demo-inline-button:focus-visible,
+    #demo .step a[href*="simple-coordinator.html"]:focus-visible,
+    #demo .step a[href*="simple.html"]:focus-visible,
+    #demo .step a[href*="dashboard.html"]:focus-visible {
       outline: 2px solid var(--accent);
       outline-offset: 3px;
     }
