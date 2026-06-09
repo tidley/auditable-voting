@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const optionAStorageMocks = vi.hoisted(() => ({
@@ -800,8 +800,10 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_submitted_marker"]} localVoterNpub={localVoterNpub} />);
 
-    await screen.findByRole("region", { name: "Voter ID used for private submission" });
+    const identityRegion = await screen.findByRole("region", { name: "Voter ID used for private submission" });
     expect(screen.getAllByLabelText(/Expand QR for token/i).length).toBeGreaterThan(0);
+    expect(within(identityRegion).getByText("Questionnaire ID")).toBeTruthy();
+    expect(within(identityRegion).getByText("q_submitted_marker")).toBeTruthy();
     expect(screen.getByText("Submission ID")).toBeTruthy();
     expect(screen.getByText("submission_submitted_marker")).toBeTruthy();
     expect(screen.getAllByText("Voter ID used for private submission").length).toBeGreaterThan(0);

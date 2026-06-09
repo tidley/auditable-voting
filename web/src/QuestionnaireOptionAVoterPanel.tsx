@@ -2054,6 +2054,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const credentialIssuerLabel = credentialIssuerNpub ? deriveActorDisplayId(credentialIssuerNpub) : "Unknown";
   const decisionActorName = credentialIssuerIsProxy ? "audit proxy" : "organiser";
   const coordinatorLabel = coordinatorNpub ? deriveActorDisplayId(coordinatorNpub) : "Unknown";
+  const submittedQuestionnaireId = snapshot?.submission?.payload?.electionId
+    || snapshot?.submission?.electionId
+    || statusQuestionnaireId;
   const requestStateText = snapshot?.blindRequestSent ? "Sent" : "Not sent";
   const credentialStateText = snapshot?.credentialReady
     ? "Received"
@@ -2445,6 +2448,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               </div>
             </div>
             <dl className='simple-submission-identity-details'>
+              <div>
+                <dt>Questionnaire ID</dt>
+                <dd>{submittedQuestionnaireId}</dd>
+              </div>
               <div>
                 <dt>Submission ID</dt>
                 <dd>{snapshot.submission.submissionId}</dd>

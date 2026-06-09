@@ -109,12 +109,17 @@ export default function QuestionnaireResultsDashboard({
     if (!query) {
       return visibilityFiltered;
     }
-    return visibilityFiltered.filter((entry) => (
-      entry.response.authorPubkey.toLowerCase().includes(query)
-      || entry.response.responseId.toLowerCase().includes(query)
-      || (entry.response.tokenNullifier ?? "").toLowerCase().includes(query)
-      || (entry.rejectionReason ?? "").toLowerCase().includes(query)
-    ));
+    return visibilityFiltered.filter((entry) => {
+      const submitterIdentityFull = entry.response.authorPubkey.trim();
+      const submitterIdentityShort = deriveActorDisplayId(submitterIdentityFull);
+      return (
+        entry.response.responseId.toLowerCase().includes(query)
+        || submitterIdentityShort.toLowerCase().includes(query)
+        || submitterIdentityFull.toLowerCase().includes(query)
+        || (entry.response.tokenNullifier ?? "").toLowerCase().includes(query)
+        || (entry.rejectionReason ?? "").toLowerCase().includes(query)
+      );
+    });
   }, [responseDetails, showInvalidVotes, voterSearchQuery]);
 
   const displayTotalCount = Math.max(0, displayValidCount + displayInvalidCount);
@@ -268,13 +273,13 @@ export default function QuestionnaireResultsDashboard({
                   <p className='simple-auditor-score'>{responseDetails.length}</p>
                 </div>
                 <div className='simple-auditor-submitted-filter'>
-                  <label className='simple-voter-label' htmlFor='simple-auditor-submitted-search'>Filter by voter ID</label>
+                  <label className='simple-voter-label' htmlFor='simple-auditor-submitted-search'>Filter submitted votes</label>
                   <input
                     id='simple-auditor-submitted-search'
                     className='simple-voter-input'
                     value={voterSearchQuery}
                     onChange={(event) => setVoterSearchQuery(event.target.value)}
-                    placeholder='Search by voter npub, response ID, or token...'
+                    placeholder='Search by Submission ID, Submittor identity - short/full, or token...'
                   />
                   {hasInvalidResponses ? (
                     <label className='simple-voter-note simple-auditor-invalid-toggle'>

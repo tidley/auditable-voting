@@ -122,6 +122,7 @@ If it is not ready, the button explains why. For example:
 
 After submission, the page shows **Private submission identity** with:
 
+- **Questionnaire ID**
 - **Submission ID**
 - **Submittor identity - short**
 - **Submittor identity - full**
@@ -135,6 +136,8 @@ Open **Observer**.
 Use **Find Published Questionnaires** to choose the questionnaire, then open **Submitted Votes**.
 
 Match the voter page's **Submission ID** to Observer's **Response ID**.
+
+You can use the Submitted Votes filter with the **Submission ID**, **Submittor identity - short**, or **Submittor identity - full**.
 
 Compare the private submission identity against the public **Submittor identity** row.
 
