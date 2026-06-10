@@ -3423,7 +3423,11 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     generateWorkerCredentials();
   }, [delegatedWorkerNpub, generatedWorkerNpub, generatedWorkerNsec, generateWorkerCredentials, view]);
 
+  const hasParticipantsNotice = Boolean((publishValidation && !publishValidation.valid) || statusNotice);
   if (view === "participants") {
+    if (!hasParticipantsNotice) {
+      return null;
+    }
     return (
       <div className='simple-voter-card simple-questionnaire-panel'>
         {publishValidation && !publishValidation.valid ? (

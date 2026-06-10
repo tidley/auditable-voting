@@ -935,10 +935,6 @@ function shortVotingId(votingId: string) {
   return votingId.slice(0, 12);
 }
 
-function formatRelayHost(relay: string) {
-  return relay.replace(/^wss?:\/\//, '').replace(/\/$/, '');
-}
-
 function uniqueRelays(values: string[]) {
   return [...new Set(values.filter((value) => value.trim().length > 0))];
 }
@@ -958,14 +954,6 @@ function reconcileStartupRelayDiagnostics(current: CoordinatorStartupDiagnostics
     startupRelayNoOverlap: writeSuccessRelays.length > 0 && overlap.length === 0,
     startupWriteRelayQueriedByBackfill: backfillOverlap,
   } satisfies Partial<CoordinatorStartupDiagnostics>;
-}
-
-function deliveryToneClass(tone: string) {
-  return tone === "error"
-    ? "simple-delivery-error"
-    : tone === "ok"
-      ? "simple-delivery-ok"
-      : "simple-delivery-waiting";
 }
 
 function formatCoordinatorControlStateLabel(
@@ -1085,7 +1073,6 @@ export default function SimpleCoordinatorApp() {
   const [subCoordinators, setSubCoordinators] = useState<SimpleSubCoordinatorApplication[]>([]);
   const [ticketDeliveries, setTicketDeliveries] = useState<Record<string, TicketDeliveryState>>({});
   const [autoSendFollowers, setAutoSendFollowers] = useState<Record<string, boolean>>({});
-  const [followerSearch, setFollowerSearch] = useState("");
   const [pendingRequests, setPendingRequests] = useState<SimpleShardRequest[]>([]);
   const [dmAcknowledgements, setDmAcknowledgements] = useState<SimpleDmAcknowledgement[]>([]);
   const [registrationStatus, setRegistrationStatus] = useState<string | null>(null);
@@ -1146,7 +1133,6 @@ export default function SimpleCoordinatorApp() {
   const [admittedVoterApplyInFlight, setAdmittedVoterApplyInFlight] = useState(false);
   const [knownVoterDraftNpub, setKnownVoterDraftNpub] = useState("");
   const [knownVoterInviteStatus, setKnownVoterInviteStatus] = useState<string | null>(null);
-  const [voterRequestStatus, setVoterRequestStatus] = useState<string | null>(null);
   const [privateInviteLinksCollapsed, setPrivateInviteLinksCollapsed] = useState(false);
   const [knownVoterInviteRefreshNonce, setKnownVoterInviteRefreshNonce] = useState(0);
   const [optionAQueueProcessingDebug, setOptionAQueueProcessingDebug] = useState<OptionAQueueProcessingDebug>({
@@ -1292,19 +1278,86 @@ export default function SimpleCoordinatorApp() {
     ),
     [visibleOptionAKnownVoters],
   );
-  const invitedKnownVoterSet = useMemo(
-    () => new Set(
-      visibleOptionAKnownVoters
-        .filter((entry) => entry.claimState === "invited")
-        .map((entry) => entry.invitedNpub.trim())
-        .filter((value) => value.length > 0),
-    ),
-    [visibleOptionAKnownVoters],
-  );
   const optionAPendingAuthorizations = useMemo(
     () => optionACoordinatorRuntime?.getPendingAuthorizations() ?? [],
     [optionACoordinatorRuntime, knownVoterInviteRefreshNonce],
   );
+  const admittedVoterDisplayRows = useMemo(() => {
+    const byNpub = new Map<string, {
+      npub: string;
+      admittedEntry: (typeof admittedVoterEntries)[number] | null;
+      currentQuestionnaireEntry: (typeof visibleOptionAKnownVoters)[number] | null;
+      pendingAuthorization: (typeof optionAPendingAuthorizations)[number] | null;
+      order: number;
+    }>();
+    let nextOrder = 0;
+    const ensureRow = (npubValue: string) => {
+      const npub = npubValue.trim();
+      if (!npub) {
+        return null;
+      }
+      const existing = byNpub.get(npub);
+      if (existing) {
+        return existing;
+      }
+      const row = {
+        npub,
+        admittedEntry: null,
+        currentQuestionnaireEntry: null,
+        pendingAuthorization: null,
+        order: nextOrder,
+      };
+      nextOrder += 1;
+      byNpub.set(npub, row);
+      return row;
+    };
+
+    for (const entry of admittedVoterEntries) {
+      const row = ensureRow(entry.npub);
+      if (row) {
+        row.admittedEntry = entry;
+      }
+    }
+    for (const entry of visibleOptionAKnownVoters) {
+      const row = ensureRow(entry.invitedNpub);
+      if (row) {
+        row.currentQuestionnaireEntry = entry;
+      }
+    }
+    for (const entry of optionAPendingAuthorizations) {
+      const row = ensureRow(entry.invitedNpub);
+      if (row) {
+        row.pendingAuthorization = entry;
+      }
+    }
+
+    return [...byNpub.values()].sort((left, right) => {
+      const priority = (row: typeof left) => {
+        if (row.pendingAuthorization) {
+          return 0;
+        }
+        if (row.currentQuestionnaireEntry) {
+          return 1;
+        }
+        return 2;
+      };
+      const priorityDelta = priority(left) - priority(right);
+      return priorityDelta || left.order - right.order;
+    });
+  }, [admittedVoterEntries, optionAPendingAuthorizations, visibleOptionAKnownVoters]);
+  const admittedVoterSummaryLabel = useMemo(() => {
+    const currentOnlyCount = admittedVoterDisplayRows
+      .filter((row) => !row.admittedEntry && !row.pendingAuthorization && row.currentQuestionnaireEntry)
+      .length;
+    const parts = [`${admittedVoterEntries.length} admitted`];
+    if (optionAPendingAuthorizations.length > 0) {
+      parts.push(`${optionAPendingAuthorizations.length} pending`);
+    }
+    if (currentOnlyCount > 0) {
+      parts.push(`${currentOnlyCount} active`);
+    }
+    return parts.join(" · ");
+  }, [admittedVoterDisplayRows, admittedVoterEntries.length, optionAPendingAuthorizations.length]);
   const optionAHasInviteQueue = optionAPendingAuthorizations.length > 0;
   const optionABlindSigningPublicKey = optionACoordinatorRuntime?.getSnapshot()?.election.blindSigningPublicKey ?? null;
   const optionAAcceptedResponses = useMemo(() => {
@@ -1324,7 +1377,6 @@ export default function SimpleCoordinatorApp() {
 
   useEffect(() => {
     setKnownVoterInviteStatus(null);
-    setVoterRequestStatus(null);
     setOptimisticKnownVoterNpubs([]);
     setPrivateInviteLinksByHash({});
   }, [optionAElectionId]);
@@ -1479,7 +1531,6 @@ export default function SimpleCoordinatorApp() {
   const identityHydrationEpochRef = useRef(0);
   const sentMlsWelcomeEventIdsRef = useRef<Record<string, string>>({});
   const sentMlsWelcomeAckIdsRef = useRef<Set<string>>(new Set());
-  const verifyAllVisibleRef = useRef<HTMLInputElement | null>(null);
   const isLeadCoordinator = !leadCoordinatorNpub.trim() || leadCoordinatorNpub.trim() === (keypair?.npub ?? "");
   const canShowNotifyLeadButton = Boolean(
     leadCoordinatorNpub.trim()
@@ -4489,30 +4540,6 @@ export default function SimpleCoordinatorApp() {
     }
   }
 
-  async function processKnownVoterRequests() {
-    if (!activeCoordinatorNpub.trim()) {
-      return;
-    }
-    if (optionAQueueProcessingInFlightRef.current) {
-      setVoterRequestStatus("Already checking questionnaire requests.");
-      return;
-    }
-    try {
-      const ran = await runOptionABackgroundProcessing();
-      setVoterRequestStatus(
-        ran
-          ? (
-            optionAElectionId.trim()
-              ? "Processed incoming requests/submissions for the current questionnaire."
-              : "Processed incoming requests/submissions."
-          )
-          : "No matching questionnaires found for this organiser.",
-      );
-    } catch (error) {
-      setVoterRequestStatus(error instanceof Error ? error.message : "Processing failed.");
-    }
-  }
-
   useEffect(() => {
     if (!activeCoordinatorNpub.trim()) {
       return;
@@ -4593,7 +4620,7 @@ export default function SimpleCoordinatorApp() {
     };
   }, [activeCoordinatorNpub, optionACoordinatorRuntime, optionAElectionId, keypair?.nsec, signerNpub]);
 
-  async function authorizePendingRequester(invitedNpub: string) {
+  async function authorizePendingRequester(invitedNpub: string, options?: { statusTarget?: "known" | "admitted" }) {
     if (!optionACoordinatorRuntime) {
       return;
     }
@@ -4601,10 +4628,10 @@ export default function SimpleCoordinatorApp() {
       admitVotersToRoster([invitedNpub], "manual", { silent: true });
       await optionACoordinatorRuntime.authorizeRequester(invitedNpub);
       setKnownVoterInviteRefreshNonce((value) => value + 1);
-      setKnownVoterInviteStatus(`Authorised and admitted ${deriveActorDisplayId(invitedNpub)}. Sending invite...`);
-      await sendInviteToKnownVoter(invitedNpub);
+      setInviteFeedbackStatus(`Authorised and admitted ${deriveActorDisplayId(invitedNpub)}. Sending invite...`, options?.statusTarget);
+      await sendInviteToKnownVoter(invitedNpub, { statusTarget: options?.statusTarget });
     } catch (error) {
-      setKnownVoterInviteStatus(error instanceof Error ? error.message : "Authorisation failed.");
+      setInviteFeedbackStatus(error instanceof Error ? error.message : "Authorisation failed.", options?.statusTarget);
     }
   }
 
@@ -4632,7 +4659,7 @@ export default function SimpleCoordinatorApp() {
         continue;
       }
       optionAAutoAuthorizeInFlightRef.current.add(key);
-      void authorizePendingRequester(invitedNpub).finally(() => {
+      void authorizePendingRequester(invitedNpub, { statusTarget: "admitted" }).finally(() => {
         optionAAutoAuthorizeInFlightRef.current.delete(key);
       });
     }
@@ -6000,31 +6027,6 @@ export default function SimpleCoordinatorApp() {
     ticketRetryMinAgeMs,
     ticketDeliveries,
   ]);
-  const visibleFollowersById = useMemo(
-    () => new Map(visibleFollowers.map((follower) => [follower.id, follower])),
-    [visibleFollowers],
-  );
-  const normalizedFollowerSearch = followerSearch.trim().toLowerCase();
-  const filteredCoordinatorFollowerRows = useMemo(() => (
-    enhancedCoordinatorFollowerRows
-      .filter((row) => !invitedKnownVoterSet.has(row.voterNpub))
-      .filter((row) => (
-        !normalizedFollowerSearch
-        || row.voterId.toLowerCase().includes(normalizedFollowerSearch)
-      ))
-  ), [
-    enhancedCoordinatorFollowerRows,
-    invitedKnownVoterSet,
-    normalizedFollowerSearch,
-    visibleFollowersById,
-  ]);
-  const filteredFollowers = useMemo(
-    () =>
-      filteredCoordinatorFollowerRows
-        .map((row) => visibleFollowersById.get(row.id))
-        .filter((follower): follower is SimpleCoordinatorFollower => Boolean(follower)),
-    [filteredCoordinatorFollowerRows, visibleFollowersById],
-  );
   useEffect(() => {
     const waitingForAcknowledgements = enhancedCoordinatorFollowerRows.filter(
       (row) => row.ticketSent && !row.ackSeen,
@@ -6198,15 +6200,6 @@ export default function SimpleCoordinatorApp() {
     enhancedCoordinatorFollowerRows,
     optionAQueueProcessingDebug,
   ]);
-  const verifiedVisibleFollowerCount = filteredFollowers.filter(
-    (follower) => autoSendFollowers[follower.voterNpub],
-  ).length;
-  const allVisibleFollowersVerified =
-    filteredFollowers.length > 0
-    && verifiedVisibleFollowerCount === filteredFollowers.length;
-  const someVisibleFollowersVerified =
-    verifiedVisibleFollowerCount > 0
-    && verifiedVisibleFollowerCount < filteredFollowers.length;
   const expectedSubCoordinatorCount = Math.max(0, (Number.parseInt(questionThresholdN, 10) || 1) - 1);
   const voteBroadcasted = publishStatus?.startsWith("Vote broadcast.") ?? false;
   const desiredShareAssignmentSignature = useMemo(
@@ -6233,12 +6226,6 @@ export default function SimpleCoordinatorApp() {
             assignmentStatus?.toLowerCase().includes('some')
           ? 'Retry share indexes'
           : 'Send share indexes';
-
-  useEffect(() => {
-    if (verifyAllVisibleRef.current) {
-      verifyAllVisibleRef.current.indeterminate = someVisibleFollowersVerified;
-    }
-  }, [someVisibleFollowersVerified]);
 
   useEffect(() => {
     if (!desiredShareAssignmentSignature) {
@@ -6565,7 +6552,7 @@ export default function SimpleCoordinatorApp() {
             className={`simple-voter-tab${activeTab === 'participants' ? ' is-active' : ''}`}
             onClick={() => selectTab('participants')}
           >
-            Voters
+            Voting
           </button>
           <button
             type='button'
@@ -6617,8 +6604,30 @@ export default function SimpleCoordinatorApp() {
           <section
             className='simple-voter-tab-panel'
             role='tabpanel'
-            aria-label='Voters'
+            aria-label='Voting'
           >
+            <QuestionnaireCoordinatorPanel
+              coordinatorNsec={keypair?.nsec ?? null}
+              coordinatorNpub={keypair?.npub ?? null}
+              knownVoterCount={optionAKnownVoterCount}
+              optionAAcceptedCount={optionAAcceptedCount}
+              optionAAcceptedResponses={optionAAcceptedResponses}
+              blindSigningPublicKey={optionABlindSigningPublicKey}
+              view='responses'
+              questionnaireRelaysInput={questionnaireRelaysInput}
+              onStatusChange={updateQuestionnaireRosterAnnouncement}
+            />
+            <QuestionnaireCoordinatorPanel
+              coordinatorNsec={keypair?.nsec ?? null}
+              coordinatorNpub={keypair?.npub ?? null}
+              knownVoterCount={optionAKnownVoterCount}
+              optionAAcceptedCount={optionAAcceptedCount}
+              optionAAcceptedResponses={optionAAcceptedResponses}
+              blindSigningPublicKey={optionABlindSigningPublicKey}
+              view='participants'
+              questionnaireRelaysInput={questionnaireRelaysInput}
+              onStatusChange={updateQuestionnaireRosterAnnouncement}
+            />
             <SimpleCollapsibleSection title='Admitted voters'>
               <div className='simple-invite-share-panel simple-admitted-voters-panel' aria-label='Admitted voters'>
                 <div className='simple-invite-share-heading simple-admitted-voters-heading'>
@@ -6629,7 +6638,7 @@ export default function SimpleCoordinatorApp() {
                     </p>
                   </div>
                   <span className='simple-admitted-voter-count'>
-                    {admittedVoterEntries.length} admitted
+                    {admittedVoterSummaryLabel}
                   </span>
                 </div>
                 <div className='simple-voter-add-row simple-voter-add-row-with-scan simple-admitted-voters-add-row'>
@@ -6663,13 +6672,19 @@ export default function SimpleCoordinatorApp() {
                   </button>
                 </div>
                 {admittedVoterStatus ? <p className='simple-voter-note'>{admittedVoterStatus}</p> : null}
-                {admittedVoterEntries.length > 0 ? (
+                {admittedVoterDisplayRows.length > 0 ? (
                   <ul className='simple-admitted-voter-list' aria-label='Admitted voter roster'>
-                    {admittedVoterEntries.map((entry) => {
-                      const currentQuestionnaireEntry = optionAKnownVoterByNpub.get(entry.npub) ?? null;
-                      const statusIndicator = currentQuestionnaireEntry
-                        ? whitelistStatusIndicator(currentQuestionnaireEntry.claimState)
-                        : null;
+                    {admittedVoterDisplayRows.map((row) => {
+                      const currentQuestionnaireEntry = row.currentQuestionnaireEntry;
+                      const pendingAuthorization = row.pendingAuthorization;
+                      const statusIndicator = pendingAuthorization
+                        ? pendingAuthorisationStatusIndicator()
+                        : currentQuestionnaireEntry
+                          ? whitelistStatusIndicator(currentQuestionnaireEntry.claimState)
+                          : null;
+                      const statusLabel = pendingAuthorization
+                        ? `Wants access (${pendingAuthorization.requestCount})`
+                        : statusIndicator?.label ?? null;
                       const isPrivateInviteClaimant = Boolean(currentQuestionnaireEntry?.inviteCodeHash?.trim());
                       const canUseCurrentInviteActions = Boolean(
                         optionAElectionId.trim() &&
@@ -6678,26 +6693,34 @@ export default function SimpleCoordinatorApp() {
                       );
                       const inviteButtonLabel = currentQuestionnaireEntry ? "Resend invite" : "Send invite";
                       return (
-                        <li key={entry.npub} className='simple-admitted-voter-row'>
+                        <li key={row.npub} className='simple-admitted-voter-row'>
                           <div className='simple-admitted-voter-main'>
-                            <span className='simple-admitted-voter-id'>{deriveActorDisplayId(entry.npub)}</span>
-                            <span className='simple-admitted-voter-npub'>{entry.npub}</span>
+                            <span className='simple-admitted-voter-id'>{deriveActorDisplayId(row.npub)}</span>
+                            <span className='simple-admitted-voter-npub'>{row.npub}</span>
                           </div>
                           <div className='simple-admitted-voter-meta'>
                             {statusIndicator ? (
-                              <span className={`simple-admitted-voter-status ${statusIndicator.className}`} aria-label={statusIndicator.label} title={statusIndicator.label}>
-                                {statusIndicator.icon} {statusIndicator.label}
+                              <span className={`simple-admitted-voter-status ${statusIndicator.className}`} aria-label={statusLabel ?? statusIndicator.label} title={statusLabel ?? statusIndicator.label}>
+                                {statusIndicator.icon} {statusLabel ?? statusIndicator.label}
                               </span>
                             ) : (
                               <span className='simple-admitted-voter-pending'>Future questionnaires</span>
                             )}
                             <div className='simple-admitted-voter-actions'>
-                              {canUseCurrentInviteActions ? (
+                              {pendingAuthorization ? (
+                                <button
+                                  type='button'
+                                  className='simple-voter-secondary'
+                                  onClick={() => authorizePendingRequester(row.npub, { statusTarget: "admitted" })}
+                                >
+                                  Approve
+                                </button>
+                              ) : canUseCurrentInviteActions ? (
                                 <>
                                   <button
                                     type='button'
                                     className='simple-voter-secondary'
-                                    onClick={() => void sendInviteToKnownVoter(entry.npub, { statusTarget: "admitted" })}
+                                    onClick={() => void sendInviteToKnownVoter(row.npub, { statusTarget: "admitted" })}
                                     disabled={!optionACoordinatorRuntime}
                                   >
                                     {inviteButtonLabel}
@@ -6705,19 +6728,21 @@ export default function SimpleCoordinatorApp() {
                                   <button
                                     type='button'
                                     className='simple-voter-secondary'
-                                    onClick={() => void copyKnownVoterInviteLink(entry.npub, { statusTarget: "admitted" })}
+                                    onClick={() => void copyKnownVoterInviteLink(row.npub, { statusTarget: "admitted" })}
                                   >
                                     Copy invite link
                                   </button>
                                 </>
                               ) : null}
-                              <button
-                                type='button'
-                                className='simple-voter-secondary simple-admitted-voter-remove'
-                                onClick={() => removeVoterAdmission(entry.npub)}
-                              >
-                                Remove
-                              </button>
+                              {row.admittedEntry ? (
+                                <button
+                                  type='button'
+                                  className='simple-voter-secondary simple-admitted-voter-remove'
+                                  onClick={() => removeVoterAdmission(row.npub)}
+                                >
+                                  Remove
+                                </button>
+                              ) : null}
                             </div>
                           </div>
                         </li>
@@ -6730,200 +6755,6 @@ export default function SimpleCoordinatorApp() {
                   </p>
                 )}
               </div>
-            </SimpleCollapsibleSection>
-
-            <SimpleCollapsibleSection title='Voter requests' defaultCollapsed>
-              <div className='simple-voter-action-row simple-voter-action-row-inline'>
-                <button
-                  type='button'
-                  className='simple-voter-secondary'
-                  onClick={processKnownVoterRequests}
-                  disabled={!activeCoordinatorNpub.trim()}
-                >
-                  Check requests
-                </button>
-                {voterRequestStatus ? <p className='simple-voter-note'>{voterRequestStatus}</p> : null}
-              </div>
-              {coordinatorFollowerRows.length > 0 ? (
-                <div className='simple-follower-toolbar'>
-                  <input
-                    id='simple-follower-search'
-                    className='simple-voter-input'
-                    value={followerSearch}
-                    onChange={(event) => setFollowerSearch(event.target.value)}
-                    placeholder='Search by voter ID...'
-                  />
-                  <label className='simple-follower-auto-send simple-follower-auto-send-bulk'>
-                    <input
-                      ref={verifyAllVisibleRef}
-                      type='checkbox'
-                      checked={allVisibleFollowersVerified}
-                      onChange={(event) => {
-                        const checked = event.target.checked;
-                        setAutoSendFollowers((current) => ({
-                          ...current,
-                          ...Object.fromEntries(
-                            filteredFollowers.map((follower) => [follower.voterNpub, checked]),
-                          ),
-                        }));
-                      }}
-                    />
-                    <span>Verify all</span>
-                  </label>
-                </div>
-              ) : null}
-              {filteredCoordinatorFollowerRows.length > 0 ? (
-                <ul className='simple-voter-list'>
-                  {filteredCoordinatorFollowerRows.map((row) => {
-                    const follower = visibleFollowersById.get(row.id);
-                    if (!follower) {
-                      return null;
-                    }
-
-                    const waitingForBlindedRequest = Boolean(
-                      !isCourseFeedbackMode &&
-                      selectedPublishedVote &&
-                      !findLatestRoundRequest(
-                        pendingRequests,
-                        follower.voterNpub,
-                        selectedPublishedVote.votingId,
-                      ),
-                    );
-                    const ticketStatusKey = selectedPublishedVote
-                      ? `${follower.voterNpub}:${selectedPublishedVote.votingId}`
-                      : '';
-                    const ticketDelivery = ticketStatusKey
-                      ? ticketDeliveries[ticketStatusKey]
-                      : undefined;
-                    const isTicketSending =
-                      ticketDelivery?.status === 'Sending ticket...';
-                    const ticketDeliveryConfirmed = row.ticketDeliveryConfirmed;
-                    const lastAttemptAtMs = ticketDelivery?.lastAttemptAt
-                      ? Date.parse(ticketDelivery.lastAttemptAt)
-                      : Number.NaN;
-                    const showResendTicket = Boolean(
-                      selectedPublishedVote &&
-                      ticketDelivery &&
-                      !ticketDeliveryConfirmed &&
-                      Number.isFinite(lastAttemptAtMs) &&
-                      nowMs - lastAttemptAtMs >= ticketRetryMinAgeMs,
-                    );
-
-                    return (
-                      <li key={row.id} className='simple-voter-list-item'>
-                        <div className='simple-follower-row'>
-                          <label className='simple-follower-auto-send simple-follower-auto-send-inline'>
-                            <input
-                              type='checkbox'
-                              checked={Boolean(
-                                autoSendFollowers[follower.voterNpub],
-                              )}
-                              onChange={(event) => {
-                                setAutoSendFollowers((current) => ({
-                                  ...current,
-                                  [follower.voterNpub]: event.target.checked,
-                                }));
-                              }}
-                            />
-                            <span>Verified</span>
-                          </label>
-                          <div className='simple-follower-row-main'>
-                            <p className='simple-voter-question'>
-                              {row.followingText}
-                            </p>
-                            <ul className='simple-delivery-diagnostics'>
-                              <li
-                                className={deliveryToneClass(row.follow.tone)}
-                              >
-                                {row.follow.text}
-                              </li>
-                              {questionnaireFlowActive ? (
-                                <li className='simple-delivery-ok'>
-                                  Blind ballot requests and responses are synced below.
-                                </li>
-                              ) : (
-                                <>
-                                  <li
-                                    className={deliveryToneClass(
-                                      row.pendingRequest.tone,
-                                    )}
-                                  >
-                                    {row.pendingRequest.text}
-                                  </li>
-                                  <li
-                                    className={deliveryToneClass(row.ticket.tone)}
-                                  >
-                                    {row.ticket.text}
-                                  </li>
-                                </>
-                              )}
-                              {row.receipt && !questionnaireFlowActive ? (
-                                <li
-                                  className={deliveryToneClass(
-                                    row.receipt.tone,
-                                  )}
-                                >
-                                  {row.receipt.text}
-                                </li>
-                              ) : null}
-                            </ul>
-                            {ticketDelivery?.relayResults?.length ? (
-                              <div className='simple-ticket-relay-results'>
-                                <p className='simple-ticket-relay-results-title'>
-                                  Ticket relay publish results
-                                </p>
-                                <ul className='simple-ticket-relay-results-list'>
-                                  {ticketDelivery.relayResults.map((result) => (
-                                    <li
-                                      key={`${ticketStatusKey}:${result.relay}`}
-                                      className={result.success ? 'simple-ticket-relay-result-ok' : 'simple-ticket-relay-result-error'}
-                                    >
-                                      <span className='simple-ticket-relay-result-host'>
-                                        {formatRelayHost(result.relay)}
-                                      </span>
-                                      <span className='simple-ticket-relay-result-status'>
-                                        {result.success ? 'sent' : (result.error ?? 'failed')}
-                                      </span>
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
-                            ) : null}
-                          </div>
-                          <div className='simple-follower-row-controls'>
-                            {showResendTicket ? (
-                              <button
-                                type='button'
-                                className='simple-voter-secondary'
-                                onClick={() => void sendTicket(follower)}
-                                disabled={!row.canSendTicket || isTicketSending}
-                              >
-                                Resend ticket
-                              </button>
-                            ) : null}
-                            {waitingForBlindedRequest ? (
-                              <button
-                                type='button'
-                                className='simple-voter-secondary'
-                                onClick={() => void resendRoundInfo(follower)}
-                                disabled={!activeBlindPrivateKey || isCourseFeedbackMode}
-                              >
-                                Resend round info
-                              </button>
-                            ) : null}
-                          </div>
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              ) : coordinatorFollowerRows.length > 0 ? (
-                <p className='simple-voter-empty'>No matching voters found.</p>
-              ) : (
-                <p className='simple-voter-empty'>
-                  No voters are following this organiser yet.
-                </p>
-              )}
             </SimpleCollapsibleSection>
 
             {optionAElectionId ? (
@@ -7223,60 +7054,12 @@ export default function SimpleCoordinatorApp() {
                       </div>
                     </div>
                   ) : null}
-                  {optionAPendingAuthorizations.length > 0 ? (
-                    <>
-                      <p className='simple-voter-note'>Pending requests</p>
-                      <ul className='simple-vote-status-list'>
-                        {optionAPendingAuthorizations.map((entry) => {
-                          const statusIndicator = pendingAuthorisationStatusIndicator();
-                          return (
-                            <li key={entry.invitedNpub}>
-                              <span className={statusIndicator.className} aria-label={statusIndicator.label} title={statusIndicator.label}>
-                                {statusIndicator.icon}
-                              </span>
-                              {deriveActorDisplayId(entry.invitedNpub)} wants access ({entry.requestCount})
-                              <button
-                                type='button'
-                                className='simple-voter-secondary'
-                                style={{ marginLeft: 8 }}
-                                onClick={() => authorizePendingRequester(entry.invitedNpub)}
-                              >
-                                Approve
-                              </button>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </>
-                  ) : null}
                   {knownVoterInviteStatus ? <p className='simple-voter-note'>{knownVoterInviteStatus}</p> : null}
                   </div>
                 </div>
                 </SimpleCollapsibleSection>
               </div>
             ) : null}
-            <QuestionnaireCoordinatorPanel
-              coordinatorNsec={keypair?.nsec ?? null}
-              coordinatorNpub={keypair?.npub ?? null}
-              knownVoterCount={optionAKnownVoterCount}
-              optionAAcceptedCount={optionAAcceptedCount}
-              optionAAcceptedResponses={optionAAcceptedResponses}
-              blindSigningPublicKey={optionABlindSigningPublicKey}
-              view='participants'
-              questionnaireRelaysInput={questionnaireRelaysInput}
-              onStatusChange={updateQuestionnaireRosterAnnouncement}
-            />
-            <QuestionnaireCoordinatorPanel
-              coordinatorNsec={keypair?.nsec ?? null}
-              coordinatorNpub={keypair?.npub ?? null}
-              knownVoterCount={optionAKnownVoterCount}
-              optionAAcceptedCount={optionAAcceptedCount}
-              optionAAcceptedResponses={optionAAcceptedResponses}
-              blindSigningPublicKey={optionABlindSigningPublicKey}
-              view='responses'
-              questionnaireRelaysInput={questionnaireRelaysInput}
-              onStatusChange={updateQuestionnaireRosterAnnouncement}
-            />
           </section>
         ) : null}
 

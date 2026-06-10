@@ -65,12 +65,12 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 
 ### 3. Organiser invites voters
 
-1. Share the questionnaire link from **Participants** with **Copy link** or **Share**. These actions use the browser/device apps already available; no provider API key or service registration is needed.
+1. Share the questionnaire link from **Voting** with **Copy link** or **Share**. These actions use the browser/device apps already available; no provider API key or service registration is needed.
 2. Use **Create single-use invite link** when the organiser wants a one-use bearer invite. Each invite appears as a card with an internal note, voter status, QR code, and actions. **Mark as used** records manual use and makes an unclaimed link unavailable; clearing it makes the unclaimed link available again. Voter status shows whether the link has been claimed, a ballot has been sent, a vote has been submitted, or the organiser has manually marked it as used. The raw invite URL is available only until the current page is left. The voter looks up organiser and audit-proxy routing from the public questionnaire metadata on Nostr, then automatically requests a ballot.
 3. Add or import voter `npub`s in **Admitted voters** when you want to admit voters once and reuse that eligibility for later questionnaires from the same organiser. Click **Apply to current questionnaire** to project the roster into the active questionnaire whitelist and publish one public admitted-questionnaire announcement. The roster is organiser-local; it is not a reusable ballot credential.
 4. Use **Copy personalised link** beside an admitted/whitelisted voter when the link should carry that admitted voter `npub`. The voter must still sign in as that `npub`; the personalised URL reveals the invitee `npub` to whoever sees the link.
 5. Send Nostr invite DMs with **Invite** beside each Nostr invite voter. Voters who claimed a private link stay in the private invite cards and are not repeated in the Nostr invite action list.
-6. Voters who arrive from a shared link without being whitelisted can still request a ballot, then appear under requester authorisation for the organiser.
+6. Voters who arrive from a shared link without being whitelisted can still request a ballot. Pending requests appear in the **Admitted voters** island on **Voting**, where the organiser can approve and admit them.
 
 ### 4. Voter requests and submits
 
@@ -83,7 +83,7 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 
 ### 5. Organiser or proxy processes responses
 
-1. In the organiser **Participants** tab, use **Check requests** in **Voter requests** while running browser-only. The same tab shows live accepted-response totals, per-question result bars, text responses, and responder rows as submissions are processed.
+1. In the organiser **Voting** tab, **Live Status** and the results dashboard show live accepted-response totals, per-question result bars, text responses, and responder rows as submissions are processed. Pending voter requests appear in **Admitted voters**.
 2. If delegated, leave the helper running and check its heartbeat/reporting in **Audit proxy status**.
 3. Close the questionnaire and publish final results when collection is complete, if you want a fixed final summary.
 

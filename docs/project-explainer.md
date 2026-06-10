@@ -82,9 +82,9 @@ The voter must protect their local keys and browser state.
 ## Run a test vote
 
 1. Open the app as **Organiser**.
-2. Admit voters in **Voters** if the same people will answer later questionnaires.
+2. Admit voters in **Voting** if the same people will answer later questionnaires.
 3. Create a questionnaire and publish it.
-4. Share invite links from **Voters**. The General QR/link opens **Vote** directly and requests a ballot automatically; single-use private links also show a QR code. For already admitted voters, **Apply to current questionnaire** publishes one public questionnaire announcement that their Vote page can discover.
+4. Share invite links from **Voting**. The General QR/link opens **Vote** directly and requests a ballot automatically; single-use private links also show a QR code. For already admitted voters, **Apply to current questionnaire** publishes one public questionnaire announcement that their Vote page can discover.
 5. Open the invite as **Voter**, wait for ballot access if needed, fill in the questionnaire, and submit. Voter **Settings** shows **Ballot details** while taking part, so request, credential, submission, and timing fields can be checked if something stalls.
 6. Open **Observer** and search for the questionnaire ID, organiser identity, Submission/Response ID, or **Submittor identity** short/full to verify the public result stream. Observer refreshes the selected questionnaire automatically while the page is visible; use **Refresh** for an immediate reload. In **Submitted Votes**, use the same submission filters to find a specific public submission. Invalid rows show their rejection reason. Organiser results decrypt encrypted answer details automatically when the local organiser key is available; Observer can decrypt them from **Submitted Votes** when the matching organiser `nsec` is supplied.
 

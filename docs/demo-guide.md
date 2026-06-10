@@ -62,7 +62,7 @@ Use these pages:
 
 Open **Organiser**.
 
-If the same people will answer several questionnaires, open **Voters** and use **Admitted voters** to add their voter identities first. After each later questionnaire is published, **Apply to current questionnaire** sends those voters the new invite. They will still receive a fresh blind ballot credential for each questionnaire.
+If the same people will answer several questionnaires, open **Voting** and use **Admitted voters** to add their voter identities first. After each later questionnaire is published, **Apply to current questionnaire** publishes one public questionnaire announcement that their Vote page can discover. They will still receive a fresh blind ballot credential for each questionnaire.
 
 Fill in:
 
