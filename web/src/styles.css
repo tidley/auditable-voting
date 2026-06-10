@@ -2934,10 +2934,10 @@ code {
 
 .simple-admitted-voter-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: center;
-  padding: 10px 11px;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, auto);
+  gap: 14px;
+  align-items: start;
+  padding: 12px;
   border: 1px solid var(--simple-border);
   border-radius: 8px;
   background: rgba(6, 12, 18, 0.58);
@@ -2964,24 +2964,52 @@ code {
 }
 
 .simple-admitted-voter-meta {
+  display: grid;
+  justify-items: end;
+  gap: 10px;
+  min-width: 0;
+}
+
+.simple-admitted-voter-status.simple-vote-status-icon {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 9px;
+  justify-content: center;
+  width: auto;
+  height: 34px;
   min-width: 0;
+  gap: 7px;
+  padding: 0 11px;
+  border-width: 1px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  line-height: 1;
+  text-transform: none;
+  white-space: nowrap;
 }
 
 .simple-admitted-voter-pending {
   display: inline-flex;
   align-items: center;
-  min-height: 30px;
-  padding: 0 9px;
+  min-height: 34px;
+  padding: 0 11px;
   border: 1px solid var(--simple-border);
-  border-radius: 999px;
+  border-radius: 8px;
   color: var(--simple-soft);
-  font-size: 0.82rem;
+  font-size: 0.9rem;
   font-weight: 750;
   white-space: nowrap;
+}
+
+.simple-admitted-voter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.simple-admitted-voter-actions .simple-voter-secondary {
+  min-height: 34px;
+  padding: 0 10px;
 }
 
 .simple-admitted-voter-remove {
@@ -6069,7 +6097,11 @@ code {
   }
 
   .simple-admitted-voter-meta {
-    flex-direction: column;
+    justify-items: start;
+  }
+
+  .simple-admitted-voter-actions {
+    justify-content: flex-start;
   }
 
   .simple-admitted-voters-add-row {
@@ -6086,6 +6118,7 @@ code {
 
   .simple-admitted-voter-count,
   .simple-admitted-voter-meta,
+  .simple-admitted-voter-actions,
   .simple-admitted-voter-remove {
     justify-self: start;
   }

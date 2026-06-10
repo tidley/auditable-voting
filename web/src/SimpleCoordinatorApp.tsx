@@ -1283,10 +1283,6 @@ export default function SimpleCoordinatorApp() {
     }
     return [...byNpub.values()];
   }, [optimisticKnownVoterNpubs, optionAElectionId, optionAKnownVoters]);
-  const visibleNostrInviteKnownVoters = useMemo(
-    () => visibleOptionAKnownVoters.filter((entry) => !entry.inviteCodeHash?.trim()),
-    [visibleOptionAKnownVoters],
-  );
   const optionAKnownVoterByNpub = useMemo(
     () => new Map(
       visibleOptionAKnownVoters
@@ -4128,14 +4124,22 @@ export default function SimpleCoordinatorApp() {
     });
   }
 
-  async function copyKnownVoterInviteLink(invitedNpub: string) {
+  function setInviteFeedbackStatus(message: string, target: "known" | "admitted" = "known") {
+    if (target === "admitted") {
+      setAdmittedVoterStatus(message);
+      return;
+    }
+    setKnownVoterInviteStatus(message);
+  }
+
+  async function copyKnownVoterInviteLink(invitedNpub: string, options?: { statusTarget?: "known" | "admitted" }) {
     const inviteUrl = buildKnownVoterInviteLink(invitedNpub);
     if (!inviteUrl) {
-      setKnownVoterInviteStatus("Publish or open a questionnaire first.");
+      setInviteFeedbackStatus("Publish or open a questionnaire first.", options?.statusTarget);
       return;
     }
     await tryWriteClipboard(inviteUrl);
-    setKnownVoterInviteStatus(`Personalised invite link copied for ${deriveActorDisplayId(invitedNpub)}.`);
+    setInviteFeedbackStatus(`Personalised invite link copied for ${deriveActorDisplayId(invitedNpub)}.`, options?.statusTarget);
   }
 
   async function importKnownVotersFromContacts() {
@@ -4313,7 +4317,7 @@ export default function SimpleCoordinatorApp() {
     }
   }
 
-  async function sendInviteToKnownVoter(invitedNpub: string, options?: { silent?: boolean; syncWorkerConfig?: boolean }) {
+  async function sendInviteToKnownVoter(invitedNpub: string, options?: { silent?: boolean; syncWorkerConfig?: boolean; statusTarget?: "known" | "admitted" }) {
     if (!optionACoordinatorRuntime || !optionAElectionId || !activeCoordinatorNpub) {
       return null;
     }
@@ -4340,10 +4344,11 @@ export default function SimpleCoordinatorApp() {
       });
       setOptimisticKnownVoterNpubs((current) => (current.includes(invitedNpub) ? current : [...current, invitedNpub]));
       if (!options?.silent) {
-        setKnownVoterInviteStatus(
+        setInviteFeedbackStatus(
           sent.dmDelivered
             ? `Invite DM sent to ${deriveActorDisplayId(invitedNpub)}.`
             : `Invite saved locally for ${deriveActorDisplayId(invitedNpub)}; DM delivery failed (${sent.dmFailureReason ?? "unknown error"}).`,
+          options?.statusTarget,
         );
       }
       setAutoSendFollowers((current) => ({
@@ -4357,7 +4362,7 @@ export default function SimpleCoordinatorApp() {
       return sent;
     } catch (error) {
       if (!options?.silent) {
-        setKnownVoterInviteStatus(error instanceof Error ? error.message : "Invite failed.");
+        setInviteFeedbackStatus(error instanceof Error ? error.message : "Invite failed.", options?.statusTarget);
       }
       return null;
     }
@@ -6647,6 +6652,13 @@ export default function SimpleCoordinatorApp() {
                       const statusIndicator = currentQuestionnaireEntry
                         ? whitelistStatusIndicator(currentQuestionnaireEntry.claimState)
                         : null;
+                      const isPrivateInviteClaimant = Boolean(currentQuestionnaireEntry?.inviteCodeHash?.trim());
+                      const canUseCurrentInviteActions = Boolean(
+                        optionAElectionId.trim() &&
+                        activeCoordinatorNpub.trim() &&
+                        !isPrivateInviteClaimant,
+                      );
+                      const inviteButtonLabel = currentQuestionnaireEntry ? "Resend invite" : "Send invite";
                       return (
                         <li key={entry.npub} className='simple-admitted-voter-row'>
                           <div className='simple-admitted-voter-main'>
@@ -6655,19 +6667,40 @@ export default function SimpleCoordinatorApp() {
                           </div>
                           <div className='simple-admitted-voter-meta'>
                             {statusIndicator ? (
-                              <span className={statusIndicator.className} aria-label={statusIndicator.label} title={statusIndicator.label}>
+                              <span className={`simple-admitted-voter-status ${statusIndicator.className}`} aria-label={statusIndicator.label} title={statusIndicator.label}>
                                 {statusIndicator.icon} {statusIndicator.label}
                               </span>
                             ) : (
                               <span className='simple-admitted-voter-pending'>Future questionnaires</span>
                             )}
-                            <button
-                              type='button'
-                              className='simple-voter-secondary simple-admitted-voter-remove'
-                              onClick={() => removeVoterAdmission(entry.npub)}
-                            >
-                              Remove
-                            </button>
+                            <div className='simple-admitted-voter-actions'>
+                              {canUseCurrentInviteActions ? (
+                                <>
+                                  <button
+                                    type='button'
+                                    className='simple-voter-secondary'
+                                    onClick={() => void sendInviteToKnownVoter(entry.npub, { statusTarget: "admitted" })}
+                                    disabled={!optionACoordinatorRuntime}
+                                  >
+                                    {inviteButtonLabel}
+                                  </button>
+                                  <button
+                                    type='button'
+                                    className='simple-voter-secondary'
+                                    onClick={() => void copyKnownVoterInviteLink(entry.npub, { statusTarget: "admitted" })}
+                                  >
+                                    Copy invite link
+                                  </button>
+                                </>
+                              ) : null}
+                              <button
+                                type='button'
+                                className='simple-voter-secondary simple-admitted-voter-remove'
+                                onClick={() => removeVoterAdmission(entry.npub)}
+                              >
+                                Remove
+                              </button>
+                            </div>
                           </div>
                         </li>
                       );
@@ -7171,38 +7204,6 @@ export default function SimpleCoordinatorApp() {
                         </button>
                       </div>
                     </div>
-                  ) : null}
-                  {visibleNostrInviteKnownVoters.length > 0 ? (
-                    <>
-                      <ul className='simple-vote-status-list'>
-                        {visibleNostrInviteKnownVoters.map((entry) => {
-                          const statusIndicator = whitelistStatusIndicator(entry.claimState);
-                          return (
-                            <li key={entry.invitedNpub}>
-                              <span className={statusIndicator.className} aria-label={statusIndicator.label} title={statusIndicator.label}>
-                                {statusIndicator.icon}
-                              </span>
-                              {deriveActorDisplayId(entry.invitedNpub)} - {statusIndicator.label}
-                              <button
-                                type='button'
-                                className='simple-voter-secondary'
-                                style={{ marginLeft: 8 }}
-                                onClick={() => sendInviteToKnownVoter(entry.invitedNpub)}
-                              >
-                                {entry.claimState === "invited" ? "Resend invite" : "Send invite"}
-                              </button>
-                              <button
-                                type='button'
-                                className='simple-voter-secondary'
-                                onClick={() => void copyKnownVoterInviteLink(entry.invitedNpub)}
-                              >
-                                Copy invite link
-                              </button>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </>
                   ) : null}
                   {optionAPendingAuthorizations.length > 0 ? (
                     <>
