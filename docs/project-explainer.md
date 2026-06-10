@@ -19,8 +19,8 @@ Observers can independently recompute the result from public data.
 
 ## The short version
 
-1. An organiser confirms that a voter is eligible.
-2. The voter requests a blind ballot credential.
+1. An organiser admits a voter or confirms that a voter is eligible.
+2. The voter requests a fresh blind ballot credential for this questionnaire.
 3. The organiser signs it without seeing the final credential.
 4. The voter submits a public ballot anonymously.
 5. Anyone can verify that accepted ballots are valid, unique, and correctly tallied.
@@ -40,7 +40,7 @@ Most online voting systems force an uncomfortable tradeoff:
 - either the operator can link voters to votes
 - or the public cannot independently verify the result
 
-Auditable Voting tries to avoid both failures by separating issuance from submission. The organiser handles eligibility. The voter spends a blind credential through a fresh response identity. Observers read the public event stream and recompute the count.
+Auditable Voting tries to avoid both failures by separating issuance from submission. The organiser handles eligibility, including an admitted voter roster that can be reused for later questionnaires. The voter still spends a fresh blind credential for each questionnaire through a fresh response identity. Observers read the public event stream and recompute the count.
 
 ## What is public vs private
 
@@ -82,10 +82,11 @@ The voter must protect their local keys and browser state.
 ## Run a test vote
 
 1. Open the app as **Organiser**.
-2. Create a questionnaire and publish it.
-3. Share invite links from **Voters**. The General QR/link opens **Vote** directly and requests a ballot automatically; single-use private links also show a QR code.
-4. Open the invite as **Voter**, wait for ballot access if needed, fill in the questionnaire, and submit. Voter **Settings** shows **Ballot details** while taking part, so request, credential, submission, and timing fields can be checked if something stalls.
-5. Open **Observer** and search for the questionnaire ID, organiser identity, Submission/Response ID, or **Submittor identity** short/full to verify the public result stream. Observer refreshes the selected questionnaire automatically while the page is visible; use **Refresh** for an immediate reload. In **Submitted Votes**, use the same submission filters to find a specific public submission. Invalid rows show their rejection reason. Organiser results decrypt encrypted answer details automatically when the local organiser key is available; Observer can decrypt them from **Submitted Votes** when the matching organiser `nsec` is supplied.
+2. Admit voters in **Voters** if the same people will answer later questionnaires.
+3. Create a questionnaire and publish it.
+4. Share invite links from **Voters**. The General QR/link opens **Vote** directly and requests a ballot automatically; single-use private links also show a QR code.
+5. Open the invite as **Voter**, wait for ballot access if needed, fill in the questionnaire, and submit. Voter **Settings** shows **Ballot details** while taking part, so request, credential, submission, and timing fields can be checked if something stalls.
+6. Open **Observer** and search for the questionnaire ID, organiser identity, Submission/Response ID, or **Submittor identity** short/full to verify the public result stream. Observer refreshes the selected questionnaire automatically while the page is visible; use **Refresh** for an immediate reload. In **Submitted Votes**, use the same submission filters to find a specific public submission. Invalid rows show their rejection reason. Organiser results decrypt encrypted answer details automatically when the local organiser key is available; Observer can decrypt them from **Submitted Votes** when the matching organiser `nsec` is supplied.
 
 Questionnaires can mix yes/no, multiple-choice, ranked-choice, and free-text questions. Ranked-choice results are counted as points, with the highest total preferred: first choice gets one point per available option, later choices count down from there, and unranked options get `0` points.
 

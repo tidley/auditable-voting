@@ -2574,6 +2574,9 @@ export class QuestionnaireOptionACoordinatorRuntime {
     if (!normalizedInvitedNpub) {
       throw new OptionARuntimeError("invalid_submission", "Invite target npub is invalid.");
     }
+    if (this.state.whitelist[normalizedInvitedNpub]) {
+      return this.state;
+    }
     const entry: WhitelistEntry = {
       electionId: this.electionId,
       invitedNpub: normalizedInvitedNpub,
@@ -2590,6 +2593,55 @@ export class QuestionnaireOptionACoordinatorRuntime {
     this.state = reduced.state;
     this.persistCoordinatorState("whitelist_added", { force: true });
     return this.state;
+  }
+
+  addWhitelistNpubs(invitedNpubs: string[]) {
+    if (!this.state || !this.coordinatorNpub) {
+      throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
+    }
+    const uniqueNpubs = [...new Set(
+      invitedNpubs
+        .map((entry) => toNpub(entry))
+        .filter((entry): entry is string => Boolean(entry)),
+    )];
+    if (uniqueNpubs.length === 0) {
+      return {
+        state: this.state,
+        addedCount: 0,
+      };
+    }
+
+    let nextState = this.state;
+    let addedCount = 0;
+    const addedAt = nowIso();
+    for (const normalizedInvitedNpub of uniqueNpubs) {
+      if (nextState.whitelist[normalizedInvitedNpub]) {
+        continue;
+      }
+      const entry: WhitelistEntry = {
+        electionId: this.electionId,
+        invitedNpub: normalizedInvitedNpub,
+        addedAt,
+        claimState: "whitelisted",
+      };
+      const reduced = reduceCoordinatorEvent(nextState, {
+        type: "WHITELIST_ADDED",
+        entry,
+      });
+      if (!reduced.ok) {
+        continue;
+      }
+      nextState = reduced.state;
+      addedCount += 1;
+    }
+    if (addedCount > 0) {
+      this.state = nextState;
+      this.persistCoordinatorState("whitelist_added_batch", { force: true });
+    }
+    return {
+      state: this.state,
+      addedCount,
+    };
   }
 
   addBearerInviteCode(codeHash: string) {

@@ -117,7 +117,14 @@ import type {
 } from "./questionnaireOptionA";
 import type { QuestionnaireResponsePayload } from "./questionnaireProtocol";
 import type { QuestionnaireAcceptedResponse } from "./questionnaireRuntime";
-import { loadCoordinatorState, loadElectionSummary } from "./questionnaireOptionAStorage";
+import {
+  loadAdmittedVoters,
+  loadCoordinatorState,
+  loadElectionSummary,
+  removeAdmittedVoter,
+  upsertAdmittedVoters,
+  type AdmittedVoterRecord,
+} from "./questionnaireOptionAStorage";
 import {
   publishOptionAWorkerElectionConfigDm,
   type WorkerElectionConfigSnapshot,
@@ -1132,6 +1139,9 @@ export default function SimpleCoordinatorApp() {
       };
     });
   }, []);
+  const [admittedVoters, setAdmittedVoters] = useState<Record<string, AdmittedVoterRecord>>({});
+  const [admittedVoterDraftNpub, setAdmittedVoterDraftNpub] = useState("");
+  const [admittedVoterStatus, setAdmittedVoterStatus] = useState<string | null>(null);
   const [knownVoterDraftNpub, setKnownVoterDraftNpub] = useState("");
   const [knownVoterInviteStatus, setKnownVoterInviteStatus] = useState<string | null>(null);
   const [voterRequestStatus, setVoterRequestStatus] = useState<string | null>(null);
@@ -1201,6 +1211,27 @@ export default function SimpleCoordinatorApp() {
       optionACoordinatorRuntime?.dispose();
     };
   }, [optionACoordinatorRuntime]);
+  useEffect(() => {
+    if (!activeCoordinatorNpub.trim()) {
+      setAdmittedVoters({});
+      return;
+    }
+    setAdmittedVoters(loadAdmittedVoters({ coordinatorNpub: activeCoordinatorNpub }));
+  }, [activeCoordinatorNpub]);
+  const admittedVoterEntries = useMemo(
+    () => Object.values(admittedVoters)
+      .filter((entry) => entry.npub.trim().length > 0)
+      .sort((left, right) => left.admittedAt.localeCompare(right.admittedAt)),
+    [admittedVoters],
+  );
+  const admittedVoterNpubs = useMemo(
+    () => admittedVoterEntries.map((entry) => entry.npub.trim()).filter((entry) => entry.length > 0),
+    [admittedVoterEntries],
+  );
+  const admittedVoterNpubKey = useMemo(
+    () => admittedVoterNpubs.join("|"),
+    [admittedVoterNpubs],
+  );
   const optionAKnownVoters = useMemo(() => {
     const runtimeWhitelist = Object.values(optionACoordinatorRuntime?.getSnapshot()?.whitelist ?? {});
     if (!activeCoordinatorNpub.trim() || !optionAElectionId.trim()) {
@@ -1300,7 +1331,7 @@ export default function SimpleCoordinatorApp() {
     setPrivateInviteLinksByHash({});
   }, [optionAElectionId]);
   const optionAAcceptedCount = Math.max(optionACoordinatorRuntime?.getAcceptedUniqueCount() ?? 0, optionAAcceptedResponses.length);
-  const optionAKnownVoterCount = Math.max(followers.length, visibleOptionAKnownVoters.length);
+  const optionAKnownVoterCount = Math.max(followers.length, visibleOptionAKnownVoters.length, admittedVoterNpubs.length);
   const publicQuestionnaireInviteUrl = useMemo(() => {
     const electionId = optionAElectionId.trim();
     if (!electionId) {
@@ -1420,6 +1451,20 @@ export default function SimpleCoordinatorApp() {
       cancelled = true;
     };
   }, [activeCoordinatorNpub, optionACoordinatorRuntime, optionAElectionId, questionPrompt]);
+  useEffect(() => {
+    if (!optionACoordinatorRuntime || !activeCoordinatorNpub.trim() || !optionAElectionId.trim() || admittedVoterNpubs.length === 0) {
+      return;
+    }
+    try {
+      const result = optionACoordinatorRuntime.addWhitelistNpubs(admittedVoterNpubs);
+      if (result.addedCount > 0) {
+        setKnownVoterInviteRefreshNonce((value) => value + 1);
+        void syncActiveWorkerElectionConfig().catch(() => false);
+      }
+    } catch {
+      // Runtime bootstrap/login will retry this projection on the next identity/questionnaire change.
+    }
+  }, [activeCoordinatorNpub, optionACoordinatorRuntime, optionAElectionId, admittedVoterNpubKey]);
   const ticketObserveRecoveryAgeMs = useMemo(
     () => readRuntimeIntOverride("SIMPLE_TICKET_OBSERVE_RECOVERY_AGE_MS", SIMPLE_TICKET_OBSERVE_RECOVERY_AGE_MS),
     [],
@@ -3739,6 +3784,149 @@ export default function SimpleCoordinatorApp() {
     setKnownVoterInviteStatus("Private link copied.");
   }
 
+  function normaliseInviteNpubList(values: string[]) {
+    return [...new Set(
+      values
+        .map((value) => normalizeInviteNpubInput(value) ?? "")
+        .filter((value) => value.length > 0),
+    )];
+  }
+
+  function refreshAdmittedVoterRoster(next?: Record<string, AdmittedVoterRecord>) {
+    if (!activeCoordinatorNpub.trim()) {
+      setAdmittedVoters({});
+      return {};
+    }
+    const roster = next ?? loadAdmittedVoters({ coordinatorNpub: activeCoordinatorNpub });
+    setAdmittedVoters(roster);
+    return roster;
+  }
+
+  function projectNpubsToActiveQuestionnaire(npubs: string[]) {
+    if (!optionACoordinatorRuntime || !optionAElectionId.trim() || npubs.length === 0) {
+      return 0;
+    }
+    const result = optionACoordinatorRuntime.addWhitelistNpubs(npubs);
+    if (result.addedCount > 0) {
+      setKnownVoterInviteRefreshNonce((value) => value + 1);
+      void syncActiveWorkerElectionConfig().catch(() => false);
+    }
+    return result.addedCount;
+  }
+
+  function admitVotersToRoster(values: string[], source: AdmittedVoterRecord["source"], options?: { silent?: boolean }) {
+    const coordinatorNpub = activeCoordinatorNpub.trim();
+    if (!coordinatorNpub) {
+      if (!options?.silent) {
+        setAdmittedVoterStatus("Login as organiser before admitting voters.");
+      }
+      return {
+        npubs: [] as string[],
+        addedCount: 0,
+        projectedCount: 0,
+      };
+    }
+    const npubs = normaliseInviteNpubList(values);
+    if (npubs.length === 0) {
+      if (!options?.silent) {
+        setAdmittedVoterStatus("Enter a valid voter npub or nostr:nprofile.");
+      }
+      return {
+        npubs,
+        addedCount: 0,
+        projectedCount: 0,
+      };
+    }
+    const result = upsertAdmittedVoters({
+      coordinatorNpub,
+      npubs,
+      source,
+    });
+    refreshAdmittedVoterRoster(result.voters);
+    let projectedCount = 0;
+    try {
+      projectedCount = projectNpubsToActiveQuestionnaire(npubs);
+    } catch {
+      projectedCount = 0;
+    }
+    if (!options?.silent) {
+      const admittedCopy = result.addedCount > 0
+        ? `Admitted ${result.addedCount} voter${result.addedCount === 1 ? "" : "s"}`
+        : "Those voters were already admitted";
+      const questionnaireCopy = optionAElectionId.trim()
+        ? projectedCount > 0
+          ? `; ${projectedCount} added to this questionnaire.`
+          : "; they were already eligible for this questionnaire."
+        : ".";
+      setAdmittedVoterStatus(`${admittedCopy}${questionnaireCopy}`);
+    }
+    return {
+      npubs,
+      addedCount: result.addedCount,
+      projectedCount,
+    };
+  }
+
+  function admitDraftVoter() {
+    const result = admitVotersToRoster([admittedVoterDraftNpub], "manual");
+    if (result.npubs.length > 0) {
+      setAdmittedVoterDraftNpub("");
+    }
+  }
+
+  function removeVoterAdmission(npub: string) {
+    if (!activeCoordinatorNpub.trim()) {
+      return;
+    }
+    const next = removeAdmittedVoter({
+      coordinatorNpub: activeCoordinatorNpub,
+      npub,
+    });
+    refreshAdmittedVoterRoster(next);
+    setAdmittedVoterStatus(`Removed ${deriveActorDisplayId(npub)} from future questionnaire admission. Existing questionnaire state is unchanged.`);
+  }
+
+  function applyAdmissionRosterToCurrentQuestionnaire() {
+    if (!optionAElectionId.trim()) {
+      setAdmittedVoterStatus("Publish or open a questionnaire before applying admissions.");
+      return;
+    }
+    try {
+      const addedCount = projectNpubsToActiveQuestionnaire(admittedVoterNpubs);
+      setAdmittedVoterStatus(
+        addedCount > 0
+          ? `Added ${addedCount} admitted voter${addedCount === 1 ? "" : "s"} to this questionnaire.`
+          : "All admitted voters are already eligible for this questionnaire.",
+      );
+    } catch (error) {
+      setAdmittedVoterStatus(error instanceof Error ? error.message : "Could not apply admitted voters.");
+    }
+  }
+
+  useEffect(() => {
+    if (!activeCoordinatorNpub.trim() || !optionACoordinatorRuntime) {
+      return;
+    }
+    const privateInviteClaimants = Object.values(optionACoordinatorRuntime.getSnapshot()?.whitelist ?? {})
+      .filter((entry) => entry.inviteCodeHash?.trim())
+      .map((entry) => entry.invitedNpub.trim())
+      .filter((npub) => npub.length > 0 && !admittedVoters[npub]);
+    if (privateInviteClaimants.length === 0) {
+      return;
+    }
+    const result = upsertAdmittedVoters({
+      coordinatorNpub: activeCoordinatorNpub,
+      npubs: privateInviteClaimants,
+      source: "private_invite",
+    });
+    refreshAdmittedVoterRoster(result.voters);
+    if (result.addedCount > 0) {
+      setAdmittedVoterStatus(
+        `Admitted ${result.addedCount} private-link voter${result.addedCount === 1 ? "" : "s"} for future questionnaires.`,
+      );
+    }
+  }, [activeCoordinatorNpub, optionACoordinatorRuntime, knownVoterInviteRefreshNonce, admittedVoterNpubKey]);
+
   function buildActiveWorkerElectionConfigSnapshot(): { snapshot: WorkerElectionConfigSnapshot; workerNpub: string; relays: string[] } | null {
     const electionId = optionAElectionId.trim();
     const coordinatorNpub = activeCoordinatorNpub.trim();
@@ -4032,27 +4220,15 @@ export default function SimpleCoordinatorApp() {
   }
 
   function addSelectedImportedContactsToWhitelist() {
-    if (!optionACoordinatorRuntime || selectedImportedKnownVoterNpubs.length === 0) {
+    if (selectedImportedKnownVoterNpubs.length === 0) {
       return;
     }
-    let addedCount = 0;
-    for (const npub of selectedImportedKnownVoterNpubs) {
-      try {
-        optionACoordinatorRuntime.addWhitelistNpub(npub);
-        addedCount += 1;
-      } catch {
-        // Continue adding other selections.
-      }
-    }
-    setKnownVoterInviteRefreshNonce((value) => value + 1);
+    const result = admitVotersToRoster(selectedImportedKnownVoterNpubs, "contact", { silent: true });
     setKnownVoterInviteStatus(
-      addedCount > 0
-        ? `Added ${addedCount}/${selectedImportedKnownVoterNpubs.length} selected contact${selectedImportedKnownVoterNpubs.length === 1 ? "" : "s"} to known voters.`
+      result.npubs.length > 0
+        ? `Admitted ${result.addedCount || result.npubs.length}/${selectedImportedKnownVoterNpubs.length} selected contact${selectedImportedKnownVoterNpubs.length === 1 ? "" : "s"}${optionAElectionId.trim() ? `; ${result.projectedCount} added to this questionnaire.` : "."}`
         : "Could not add selected contacts.",
     );
-    if (addedCount > 0) {
-      void syncActiveWorkerElectionConfig().catch(() => false);
-    }
   }
 
   function toggleImportedKnownVoterSelection(npub: string) {
@@ -4095,6 +4271,7 @@ export default function SimpleCoordinatorApp() {
       return;
     }
     try {
+      admitVotersToRoster([npub], "manual", { silent: true });
       optionACoordinatorRuntime.addWhitelistNpub(npub);
       setOptimisticKnownVoterNpubs((current) => (current.includes(npub) ? current : [...current, npub]));
       setKnownVoterDraftNpub("");
@@ -4102,7 +4279,7 @@ export default function SimpleCoordinatorApp() {
       setKnownVoterInviteRefreshNonce((value) => value + 1);
       await sendInviteToKnownVoter(npub);
     } catch (error) {
-      setKnownVoterInviteStatus(error instanceof Error ? error.message : "Could not add known voter.");
+      setKnownVoterInviteStatus(error instanceof Error ? error.message : "Could not admit voter.");
     }
   }
 
@@ -4111,6 +4288,7 @@ export default function SimpleCoordinatorApp() {
       return;
     }
     try {
+      admitVotersToRoster([invitedNpub], "manual", { silent: true });
       optionACoordinatorRuntime.addWhitelistNpub(invitedNpub);
       const sent = await optionACoordinatorRuntime.sendInvite(invitedNpub, {
         title: questionPrompt.trim() || "Vote",
@@ -4359,9 +4537,10 @@ export default function SimpleCoordinatorApp() {
       return;
     }
     try {
+      admitVotersToRoster([invitedNpub], "manual", { silent: true });
       await optionACoordinatorRuntime.authorizeRequester(invitedNpub);
       setKnownVoterInviteRefreshNonce((value) => value + 1);
-      setKnownVoterInviteStatus(`Authorised ${deriveActorDisplayId(invitedNpub)}. Sending invite...`);
+      setKnownVoterInviteStatus(`Authorised and admitted ${deriveActorDisplayId(invitedNpub)}. Sending invite...`);
       await sendInviteToKnownVoter(invitedNpub);
     } catch (error) {
       setKnownVoterInviteStatus(error instanceof Error ? error.message : "Authorisation failed.");
@@ -6379,6 +6558,91 @@ export default function SimpleCoordinatorApp() {
             role='tabpanel'
             aria-label='Voters'
           >
+            <SimpleCollapsibleSection title='Admitted voters'>
+              <div className='simple-invite-share-panel simple-admitted-voters-panel' aria-label='Admitted voters'>
+                <div className='simple-invite-share-heading simple-admitted-voters-heading'>
+                  <div className='simple-invite-share-copy'>
+                    <h3 className='simple-voter-question'>Admitted voters</h3>
+                    <p className='simple-voter-note'>
+                      Admit voters once for this organiser. Each questionnaire still issues a fresh blind ballot credential per response.
+                    </p>
+                  </div>
+                  <span className='simple-admitted-voter-count'>
+                    {admittedVoterEntries.length} admitted
+                  </span>
+                </div>
+                <div className='simple-voter-add-row simple-voter-add-row-with-scan simple-admitted-voters-add-row'>
+                  <input
+                    className='simple-voter-input simple-voter-input-inline'
+                    value={admittedVoterDraftNpub}
+                    placeholder='npub1... or nostr:nprofile1...'
+                    onChange={(event) => setAdmittedVoterDraftNpub(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        admitDraftVoter();
+                      }
+                    }}
+                  />
+                  <button
+                    type='button'
+                    className='simple-voter-secondary'
+                    disabled={!admittedVoterDraftNpub.trim() || !activeCoordinatorNpub.trim()}
+                    onClick={admitDraftVoter}
+                  >
+                    Admit
+                  </button>
+                  <button
+                    type='button'
+                    className='simple-voter-secondary'
+                    disabled={admittedVoterEntries.length === 0 || !optionAElectionId.trim() || !optionACoordinatorRuntime}
+                    onClick={applyAdmissionRosterToCurrentQuestionnaire}
+                  >
+                    Apply to current questionnaire
+                  </button>
+                </div>
+                {admittedVoterStatus ? <p className='simple-voter-note'>{admittedVoterStatus}</p> : null}
+                {admittedVoterEntries.length > 0 ? (
+                  <ul className='simple-admitted-voter-list' aria-label='Admitted voter roster'>
+                    {admittedVoterEntries.map((entry) => {
+                      const currentQuestionnaireEntry = optionAKnownVoterByNpub.get(entry.npub) ?? null;
+                      const statusIndicator = currentQuestionnaireEntry
+                        ? whitelistStatusIndicator(currentQuestionnaireEntry.claimState)
+                        : null;
+                      return (
+                        <li key={entry.npub} className='simple-admitted-voter-row'>
+                          <div className='simple-admitted-voter-main'>
+                            <span className='simple-admitted-voter-id'>{deriveActorDisplayId(entry.npub)}</span>
+                            <span className='simple-admitted-voter-npub'>{entry.npub}</span>
+                          </div>
+                          <div className='simple-admitted-voter-meta'>
+                            {statusIndicator ? (
+                              <span className={statusIndicator.className} aria-label={statusIndicator.label} title={statusIndicator.label}>
+                                {statusIndicator.icon} {statusIndicator.label}
+                              </span>
+                            ) : (
+                              <span className='simple-admitted-voter-pending'>Future questionnaires</span>
+                            )}
+                            <button
+                              type='button'
+                              className='simple-voter-secondary simple-admitted-voter-remove'
+                              onClick={() => removeVoterAdmission(entry.npub)}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : (
+                  <p className='simple-voter-empty'>
+                    No voters admitted yet.
+                  </p>
+                )}
+              </div>
+            </SimpleCollapsibleSection>
+
             <SimpleCollapsibleSection title='Voter requests' defaultCollapsed>
               <div className='simple-voter-action-row simple-voter-action-row-inline'>
                 <button

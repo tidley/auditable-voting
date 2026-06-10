@@ -24,6 +24,9 @@ By the end you will:
 Open Organiser
       |
       v
+Admit voters
+      |
+      v
 Publish questionnaire
       |
       v
@@ -58,6 +61,8 @@ Use these pages:
 ## Step 1: Open Organiser and publish a questionnaire
 
 Open **Organiser**.
+
+If the same people will answer several questionnaires, open **Voters** and use **Admitted voters** to add their voter identities first. They will still receive a fresh blind ballot credential for each questionnaire.
 
 Fill in:
 

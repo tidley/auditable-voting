@@ -250,8 +250,8 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 
 1. Share the questionnaire link from **Participants** with **Copy link** or **Share**. These actions use the browser/device apps already available; no provider API key or service registration is needed.
 2. Use **Create single-use invite link** when the organiser wants a one-use bearer invite. Each invite appears as a card with an internal note, voter status, QR code, and actions. **Mark as used** records manual use and makes an unclaimed link unavailable; clearing it makes the unclaimed link available again. Voter status shows whether the link has been claimed, a ballot has been sent, a vote has been submitted, or the organiser has manually marked it as used. The raw invite URL is available only until the current page is left. The voter looks up organiser and audit-proxy routing from the public questionnaire metadata on Nostr, then automatically requests a ballot.
-3. Add or import voter `npub`s in **Participants** when you want to pre-authorise known voters.
-4. Use **Copy personalised link** beside a whitelisted voter when the link should carry that pre-authorised voter `npub`. The voter must still sign in as that `npub`; the personalised URL reveals the invitee `npub` to whoever sees the link.
+3. Add or import voter `npub`s in **Admitted voters** when you want to admit voters once and reuse that eligibility for later questionnaires from the same organiser. The roster is organiser-local and is projected into each active questionnaire whitelist; it is not a reusable ballot credential.
+4. Use **Copy personalised link** beside an admitted/whitelisted voter when the link should carry that admitted voter `npub`. The voter must still sign in as that `npub`; the personalised URL reveals the invitee `npub` to whoever sees the link.
 5. Send Nostr invite DMs with **Invite** beside each Nostr invite voter. Voters who claimed a private link stay in the private invite cards and are not repeated in the Nostr invite action list.
 6. Voters who arrive from a shared link without being whitelisted can still request a ballot, then appear under requester authorisation for the organiser.
 
@@ -283,7 +283,7 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 ### Organiser
 
 1. Build and publish a questionnaire definition (public event), including non-default relay hints when configured.
-2. Share the public questionnaire link by copy or native device sharing, optionally using personalised links for pre-authorised voter npubs.
+2. Share the public questionnaire link by copy or native device sharing, optionally using personalised links for admitted voter npubs.
 3. Optional: in the separate **Questionnaire** tab `Audit proxy` section, use Set up audit proxy after publication to open the section and generate an audit proxy account, then use the quick start command or helper downloads or save an autoconfigured platform launcher that already includes the current organiser `npub`; right-click copy-link uses a shareable launcher URL that omits the audit proxy secret, generated launchers refresh the helper binary from GitHub Releases on each run, raw binary and direct CLI options sit under `Helper download and launch command`, and delegation still leaves the organiser as root authority.
 4. Receive blind-token requests over private DMs (or delegate handling to an audit proxy).
 5. Issue blind signatures to authorised voters over private DMs (or let the audit proxy blind-sign on behalf of the organiser for that delegated round). Invite payloads and cached election metadata now carry the audit proxy routing hint so voters can keep targeting the audit proxy if the organiser browser goes offline, and audit proxy election-config DMs also carry the questionnaire definition so audit-proxy-issued blind credentials can still render the ballot if the organiser browser is offline.
@@ -299,7 +299,7 @@ The audit proxy is an optional Rust helper for keeping delegated questionnaire w
 The proxy receives two private control messages from the organiser:
 
 1. a signed worker delegation that names the questionnaire, proxy `npub`, capabilities, control relays, and expiry
-2. an election config message containing the questionnaire metadata, blind-signing material needed for delegated issuance, whitelisted voter npubs, private invite-code hashes, and the routing hints voters should use
+2. an election config message containing the questionnaire metadata, blind-signing material needed for delegated issuance, per-questionnaire whitelisted voter npubs projected from the organiser's admitted roster, private invite-code hashes, and the routing hints voters should use
 
 After activation, the proxy polls only its own NIP-17 mailbox over outbound relay connections. It can issue blind ballot credentials, including first-claim private code invites, publish submission decisions, verify public submissions, close the questionnaire once the accepted valid response count reaches the expected invitee count, and publish result summaries when those capabilities are delegated. It sends heartbeats and operation reports back to the organiser so the Questionnaire tab can show whether the proxy is active, then exits cleanly once completed delegated close and summary work has been published.
 

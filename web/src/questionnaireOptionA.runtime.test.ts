@@ -1010,6 +1010,52 @@ describe("questionnaireOptionARuntime", () => {
     expect(voterTwo.getSnapshot()?.credentialReady).toBe(true);
   });
 
+  it("can project an admitted voter into later questionnaires while issuing fresh blind credentials", async () => {
+    const electionIdOne = "election_runtime_admitted_1";
+    const electionIdTwo = "election_runtime_admitted_2";
+    const coordinator = signer(coordinatorNpub);
+
+    const coordinatorOne = new QuestionnaireOptionACoordinatorRuntime(coordinator, electionIdOne);
+    await coordinatorOne.loginWithSigner({ title: "Runtime 1", description: "Test", state: "open" });
+    expect(coordinatorOne.addWhitelistNpubs([voterNpub, voterNpub]).addedCount).toBe(1);
+    const sentOne = await coordinatorOne.sendInvite(voterNpub, {
+      title: "Runtime 1",
+      description: "Test",
+      voteUrl: "https://example.org/vote/1",
+    });
+
+    const coordinatorTwo = new QuestionnaireOptionACoordinatorRuntime(coordinator, electionIdTwo);
+    await coordinatorTwo.loginWithSigner({ title: "Runtime 2", description: "Test", state: "open" });
+    expect(coordinatorTwo.addWhitelistNpubs([voterNpub]).addedCount).toBe(1);
+    const sentTwo = await coordinatorTwo.sendInvite(voterNpub, {
+      title: "Runtime 2",
+      description: "Test",
+      voteUrl: "https://example.org/vote/2",
+    });
+
+    const voterOne = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionIdOne);
+    await voterOne.loginWithSigner(sentOne.invite);
+    await voterOne.requestBlindBallot();
+    await coordinatorOne.processPendingBlindRequests();
+    voterOne.refreshIssuanceAndAcceptance();
+
+    const voterTwo = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionIdTwo);
+    await voterTwo.loginWithSigner(sentTwo.invite);
+    await voterTwo.requestBlindBallot();
+    await coordinatorTwo.processPendingBlindRequests();
+    voterTwo.refreshIssuanceAndAcceptance();
+
+    const issuanceOne = voterOne.getSnapshot()?.blindIssuance;
+    const issuanceTwo = voterTwo.getSnapshot()?.blindIssuance;
+    expect(issuanceOne?.electionId).toBe(electionIdOne);
+    expect(issuanceTwo?.electionId).toBe(electionIdTwo);
+    expect(issuanceOne?.tokenCommitment).toBeTruthy();
+    expect(issuanceTwo?.tokenCommitment).toBeTruthy();
+    expect(issuanceOne?.tokenCommitment).not.toBe(issuanceTwo?.tokenCommitment);
+    expect(coordinatorOne.getSnapshot()?.whitelist[voterNpub]?.issuanceId).toBe(issuanceOne?.issuanceId);
+    expect(coordinatorTwo.getSnapshot()?.whitelist[voterNpub]?.issuanceId).toBe(issuanceTwo?.issuanceId);
+  });
+
   it("runs delegated request -> issuance -> submission -> summary end to end", async () => {
     const workerNpub = "npub1delegatecoordinatorruntime00000000000000000000000";
     const definition = buildDefinition({

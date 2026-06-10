@@ -2896,6 +2896,99 @@ code {
   gap: 10px;
 }
 
+.simple-admitted-voters-panel {
+  gap: 14px;
+}
+
+.simple-admitted-voters-heading {
+  align-items: center;
+}
+
+.simple-admitted-voter-count {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid rgba(45, 212, 191, 0.38);
+  border-radius: 8px;
+  background: rgba(45, 212, 191, 0.12);
+  color: var(--simple-teal);
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.simple-admitted-voters-add-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.simple-admitted-voter-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.simple-admitted-voter-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 11px;
+  border: 1px solid var(--simple-border);
+  border-radius: 8px;
+  background: rgba(6, 12, 18, 0.58);
+}
+
+.simple-admitted-voter-main {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.simple-admitted-voter-id {
+  color: var(--simple-text);
+  font-weight: 850;
+}
+
+.simple-admitted-voter-npub {
+  color: var(--simple-muted);
+  font-family: "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.simple-admitted-voter-meta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+  min-width: 0;
+}
+
+.simple-admitted-voter-pending {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--simple-border);
+  border-radius: 999px;
+  color: var(--simple-soft);
+  font-size: 0.82rem;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.simple-admitted-voter-remove {
+  min-height: 34px;
+  padding: 0 10px;
+}
+
 .simple-private-invite-panel {
   gap: 16px;
 }
@@ -5946,6 +6039,31 @@ code {
     width: 72px;
     height: 72px;
     min-height: 0;
+  }
+
+  .simple-admitted-voters-heading,
+  .simple-admitted-voter-row,
+  .simple-admitted-voter-meta {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+  }
+
+  .simple-admitted-voters-heading {
+    flex-direction: column;
+  }
+
+  .simple-admitted-voter-meta {
+    flex-direction: column;
+  }
+
+  .simple-admitted-voters-add-row {
+    grid-template-columns: 1fr;
+  }
+
+  .simple-admitted-voter-count,
+  .simple-admitted-voter-meta,
+  .simple-admitted-voter-remove {
+    justify-self: start;
   }
 
   .simple-private-invite-panel-head,

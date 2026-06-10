@@ -432,14 +432,14 @@
             <div class="short-version">
               <div class="panel panel-accent">
                 <h2 id="short-version">The short version</h2>
-                <p>This system lets an organiser confirm who is allowed to vote without learning how each person voted. Voters receive a blind credential, submit their response from a fresh identity, and observers can recompute the result from public data.</p>
+                <p>This system lets an organiser confirm who is allowed to vote without learning how each person voted. Admitted voters receive a fresh blind credential for each questionnaire, submit their response from a fresh identity, and observers can recompute the result from public data.</p>
                 <div class="hero-actions">
                   <a class="button" href="./technical-details.html">Technical details</a>
                 </div>
               </div>
               <ol class="flow-list panel" aria-label="One minute flow">
-                <li>An organiser confirms that a voter is eligible.</li>
-                <li>The voter requests a blind ballot credential.</li>
+                <li>An organiser admits a voter or confirms that a voter is eligible.</li>
+                <li>The voter requests a fresh blind ballot credential for this questionnaire.</li>
                 <li>The organiser signs it without seeing the final credential.</li>
                 <li>The voter submits a public ballot anonymously.</li>
                 <li>Anyone can verify that accepted ballots are valid, unique, and correctly tallied.</li>
@@ -498,13 +498,14 @@
             <ul>
               <li>Open an invite or request ballot access.</li>
               <li>Wait for a ballot credential.</li>
-              <li>Submit the questionnaire without exposing the normal voter identity as the ballot identity.</li>
+              <li>Submit each questionnaire with a fresh blind credential, without exposing the normal voter identity as the ballot identity.</li>
             </ul>
           </article>
           <article class="role-card">
             <h3>For organisers</h3>
             <ul>
               <li>Create and publish a questionnaire.</li>
+              <li>Admit voters once, then reuse that eligibility for later questionnaires.</li>
               <li>Invite voters or approve requests.</li>
               <li>Issue blind credentials and watch results arrive.</li>
             </ul>
@@ -576,7 +577,7 @@
         <div class="grid-3">
           <article class="role-card">
             <h3>1. Organiser</h3>
-            <p>Open Organiser, set up a questionnaire, publish it, then share invite links from Voters.</p>
+            <p>Open Organiser, admit voters if the same group will answer later questionnaires, set up a questionnaire, publish it, then share invite links from Voters.</p>
           </article>
           <article class="role-card">
             <h3>2. Voter</h3>

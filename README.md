@@ -2,7 +2,7 @@
 
 Static, browser-first questionnaire voting over Nostr relays.
 
-Auditable Voting lets an organiser publish a questionnaire, invite known voters, issue blind ballot credentials, accept public blind-token responses, and let observers verify the public result stream. It runs as a static web app, with an optional outbound-only Rust audit proxy for organiser-offline issuance, verification, closing, and result publication.
+Auditable Voting lets an organiser publish a questionnaire, admit voters for repeated questionnaire rounds, issue fresh blind ballot credentials per response, accept public blind-token responses, and let observers verify the public result stream. It runs as a static web app, with an optional outbound-only Rust audit proxy for organiser-offline issuance, verification, closing, and result publication.
 
 Live site: [npub1hkze8k84da0qm4lu75x32z33qepyzdqc735jnj5a602x8q4cstksnkvl3a.nsite.lol](https://npub1hkze8k84da0qm4lu75x32z33qepyzdqc735jnj5a602x8q4cstksnkvl3a.nsite.lol/)
 
@@ -20,8 +20,9 @@ The active product is the client in `web/` plus the optional audit proxy in `wor
 - Nostr-first transport using public events and NIP-17 private control traffic.
 - Per-questionnaire relay hints published in questionnaire metadata when the organiser uses a non-default relay set.
 - Yes/no, multiple-choice, ranked-choice, and free-text questionnaire questions.
-- Browser-only invite sharing by copied link, native device share actions, General QR links that open Vote directly and request a ballot automatically, personalised links for pre-whitelisted voter npubs, or one-use private code links with per-code share controls and QR codes that whitelist the first claimant and automatically request a ballot.
-- Blind credential issuance for allowlisted participants.
+- Browser-only invite sharing by copied link, native device share actions, General QR links that open Vote directly and request a ballot automatically, personalised links for admitted voter npubs, or one-use private code links with per-code share controls and QR codes that admit the first claimant and automatically request a ballot.
+- Organiser-local admitted voter rosters can be reused across later questionnaires; each questionnaire still receives its own eligibility snapshot and each response still requires a fresh blind credential.
+- Blind credential issuance for admitted participants.
 - Public blind-token submissions from ephemeral response keys.
 - Organiser and Observer results derived from public submissions and decisions, including proxy-accepted responses, locally verified blind-token proofs, rejection reasons, and organiser-side automatic decryption of encrypted answer details when the local organiser key is available.
 - Observer-local `nsec` entry for decrypting encrypted response details when the organiser key is deliberately supplied.

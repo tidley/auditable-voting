@@ -55,6 +55,7 @@ const SUBMISSION_ACK_KEY = "optiona:mailbox:submissionAck";
 const ACCEPTANCE_DELIVERY_KEY = "optiona:mailbox:acceptanceDelivery";
 const ACCEPTANCE_MAILBOX_KEY = "optiona:mailbox:acceptance";
 const PRIVATE_RELAY_PREFS_KEY = "optiona:dm:relayPrefs";
+const ADMITTED_VOTERS_KEY = "optiona:admitted-voters:v1";
 
 export type BlindIssuanceDeliveryRecord = {
   requestId: string;
@@ -122,6 +123,106 @@ export type BallotSubmissionAckRecord = {
   ackedAt: string;
   storedAt: string;
 };
+
+export type AdmittedVoterRecord = {
+  npub: Npub;
+  admittedAt: string;
+  source?: "manual" | "contact" | "private_invite" | "import" | null;
+  lastUpdatedAt: string;
+};
+
+function admittedVotersStorageKey(coordinatorNpub: string) {
+  return `${ADMITTED_VOTERS_KEY}:${coordinatorNpub.trim()}`;
+}
+
+function normaliseAdmittedVoterRecord(record: AdmittedVoterRecord): AdmittedVoterRecord | null {
+  const npub = record.npub?.trim() ?? "";
+  if (!npub) {
+    return null;
+  }
+  const now = new Date().toISOString();
+  return {
+    npub,
+    admittedAt: record.admittedAt?.trim() || now,
+    source: record.source ?? null,
+    lastUpdatedAt: record.lastUpdatedAt?.trim() || record.admittedAt?.trim() || now,
+  };
+}
+
+export function loadAdmittedVoters(input: {
+  coordinatorNpub: Npub;
+}): Record<Npub, AdmittedVoterRecord> {
+  const coordinatorNpub = input.coordinatorNpub.trim();
+  if (!coordinatorNpub) {
+    return {};
+  }
+  const raw = readJson<Record<Npub, AdmittedVoterRecord>>(admittedVotersStorageKey(coordinatorNpub), {});
+  const normalised: Record<Npub, AdmittedVoterRecord> = {};
+  for (const record of Object.values(raw)) {
+    const entry = normaliseAdmittedVoterRecord(record);
+    if (entry) {
+      normalised[entry.npub] = entry;
+    }
+  }
+  return normalised;
+}
+
+export function saveAdmittedVoters(input: {
+  coordinatorNpub: Npub;
+  voters: Record<Npub, AdmittedVoterRecord>;
+}) {
+  const coordinatorNpub = input.coordinatorNpub.trim();
+  if (!coordinatorNpub) {
+    return;
+  }
+  writeJson(admittedVotersStorageKey(coordinatorNpub), input.voters);
+}
+
+export function upsertAdmittedVoters(input: {
+  coordinatorNpub: Npub;
+  npubs: Npub[];
+  source?: AdmittedVoterRecord["source"];
+}) {
+  const current = loadAdmittedVoters({ coordinatorNpub: input.coordinatorNpub });
+  const now = new Date().toISOString();
+  let addedCount = 0;
+  for (const rawNpub of input.npubs) {
+    const npub = rawNpub.trim();
+    if (!npub) {
+      continue;
+    }
+    const existing = current[npub] ?? null;
+    if (!existing) {
+      addedCount += 1;
+    }
+    current[npub] = {
+      npub,
+      admittedAt: existing?.admittedAt ?? now,
+      source: existing?.source ?? input.source ?? null,
+      lastUpdatedAt: now,
+    };
+  }
+  saveAdmittedVoters({ coordinatorNpub: input.coordinatorNpub, voters: current });
+  return {
+    voters: current,
+    addedCount,
+  };
+}
+
+export function removeAdmittedVoter(input: {
+  coordinatorNpub: Npub;
+  npub: Npub;
+}) {
+  const current = loadAdmittedVoters({ coordinatorNpub: input.coordinatorNpub });
+  const npub = input.npub.trim();
+  if (!npub || !current[npub]) {
+    return current;
+  }
+  const next = { ...current };
+  delete next[npub];
+  saveAdmittedVoters({ coordinatorNpub: input.coordinatorNpub, voters: next });
+  return next;
+}
 
 export function loadElectionRegistry() {
   return readJson<string[]>(REGISTRY_KEY, []);
