@@ -270,7 +270,7 @@ The present web client is built with:
 - **course-feedback organiser bypass** so legacy live-round / blind-key / ticket queue gating is disabled for questionnaire acceptance paths, with explicit debug assertions for bypass state
 - **course-feedback batch orchestration** in the live harness (`LIVE_BATCH_SIZE`, default `5`) so enrolment and submission advance in checkpointed waves instead of all-voter cold-start concurrency
 - **questionnaire response observation fallback** that prefers bounded kind-only reads plus local questionnaire-id filtering (and relay probes) when custom tag-indexed reads are unreliable on public relays
-- **observer organiser filtering + search** so public round review can be scoped by lead organiser, organiser npub, and free-text query (npub/round ID/prompt), with one automatic fetch per page session and explicit manual Refresh for later updates
+- **observer organiser filtering + search** so public round review can be scoped by lead organiser, organiser npub, and free-text query (npub/round ID/prompt), with visible-page polling for selected-round updates plus explicit manual Refresh for immediate reloads
 - **observer historic search** so the normal view stays bounded to recent questionnaire data, but observers can explicitly scan a wider historical window when an older published questionnaire or public result payload is missing
 - **observer questionnaire discovery** so recent public questionnaire definitions are read by kind-only backfill when no questionnaire ID is selected, with state, replaceable expected-participant count events, live verified response totals, and published response totals shown when available
 - **ticket scheduler diagnostics and tunable transport knobs** for first-send prioritisation, resend eligibility reasons, bounded concurrency, and retry-age experimentation during live relay reliability testing
@@ -585,7 +585,7 @@ The current client also distinguishes between:
 - **read/subscription fanout**, which is intentionally kept to a smaller primary subset
 
 That split reduces relay-side `too many concurrent REQs` failures while keeping the write path reasonably redundant.
-Automatic voter and organiser actions are also paced with a random `0-30s` delay, slower retry windows, and a sender-scoped ticket publish queue so many browser actors do not all publish into the same public relays at once. The audit proxy defaults and generated helper commands now use a nostrwat.ch-checked control relay set (relay.nostr.net, nos.lol, relay.nostr.info, relay.nos.social, relay.momostr.pink, and relay.azzamo.net), and older persisted delegated relay hints are retained but retried with per-relay exponential backoff when they fail; browser-side NIP-17 reads still prefer relays that accept `#p` gift-wrap filters before falling back to endpoints known to reject those filters as unindexed. When delegated, the proxy can close the questionnaire only after the accepted valid response count reaches the expected invitee count; rejected or duplicate submissions do not count. After delegated closure and summary publication complete, the proxy exits cleanly. Mailbox publishes keep one deterministic anchor relay, rotate secondary relays by recipient, and apply temporary cooldowns when relays return rate-limit/pow/spam/policy failures.
+Automatic voter and organiser actions are also paced with a random `0-30s` delay, slower retry windows, a shorter organiser startup recovery burst, serialized blind-DM history reads, and a sender-scoped ticket publish queue so many browser actors do not all publish or query into the same public relays at once. The audit proxy defaults and generated helper commands now use a nostrwat.ch-checked control relay set (relay.nostr.net, nos.lol, relay.nostr.info, relay.nos.social, relay.momostr.pink, and relay.azzamo.net), and older persisted delegated relay hints are retained but retried with per-relay exponential backoff when they fail; browser-side NIP-17 reads still prefer relays that accept `#p` gift-wrap filters before falling back to endpoints known to reject those filters as unindexed. When delegated, the proxy can close the questionnaire only after the accepted valid response count reaches the expected invitee count; rejected or duplicate submissions do not count. After delegated closure and summary publication complete, the proxy exits cleanly. Mailbox publishes keep one deterministic anchor relay, rotate secondary relays by recipient, and apply temporary cooldowns when relays return rate-limit/pow/spam/policy failures.
 
 ---
 
@@ -665,7 +665,7 @@ The repository now focuses on the client-side web app only:
 - Nostr is the shared state layer
 - blind-share issuance is in the simple flow
 - NIP-65 relay hints are optional and disabled by default
-- live reads and subscriptions are capped to a small primary relay subset, while publishes can still fan out more broadly
+- live reads and subscriptions are capped to a small primary relay subset, blind-DM history reads are serialized, and publishes can still fan out more broadly
 - local browser state is used for active session data
 - voter questionnaire participation history is kept in local browser state and carried inside voter backup/restore bundles
 

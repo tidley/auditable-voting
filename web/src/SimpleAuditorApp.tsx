@@ -31,6 +31,8 @@ const AUDITOR_QUESTIONNAIRE_DETAIL_LIMIT = 20;
 const AUDITOR_QUESTIONNAIRE_HISTORIC_LIMIT = 2000;
 const AUDITOR_QUESTIONNAIRE_HISTORIC_BATCH_SIZE = 8;
 const AUDITOR_QUESTIONNAIRE_RESPONSE_LIMIT = 400;
+const AUDITOR_RESPONSE_AUTO_REFRESH_MS = 8_000;
+const AUDITOR_LIST_AUTO_REFRESH_MS = 30_000;
 
 type AuditorQuestionnaireEntry = {
   questionnaireId: string;
@@ -490,6 +492,40 @@ export default function SimpleAuditorApp() {
 
   useEffect(() => {
     void enqueueRefresh({ list: true, selected: true, forceWhenHidden: true, automatic: true });
+  }, [enqueueRefresh]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const visible = () => typeof document === "undefined" || document.visibilityState === "visible";
+    const refreshSelected = () => {
+      if (!visible() || !selectedQuestionnaireIdRef.current.trim()) {
+        return;
+      }
+      void enqueueRefresh({ list: false, selected: true });
+    };
+    const refreshList = () => {
+      if (!visible()) {
+        return;
+      }
+      void enqueueRefresh({ list: true, selected: false });
+    };
+    const refreshOnVisible = () => {
+      if (visible()) {
+        void enqueueRefresh({ list: true, selected: true });
+      }
+    };
+    const responseIntervalId = window.setInterval(refreshSelected, AUDITOR_RESPONSE_AUTO_REFRESH_MS);
+    const listIntervalId = window.setInterval(refreshList, AUDITOR_LIST_AUTO_REFRESH_MS);
+    window.addEventListener("focus", refreshOnVisible);
+    document.addEventListener("visibilitychange", refreshOnVisible);
+    return () => {
+      window.clearInterval(responseIntervalId);
+      window.clearInterval(listIntervalId);
+      window.removeEventListener("focus", refreshOnVisible);
+      document.removeEventListener("visibilitychange", refreshOnVisible);
+    };
   }, [enqueueRefresh]);
 
   useEffect(() => {

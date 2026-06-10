@@ -1135,6 +1135,7 @@ export default function SimpleCoordinatorApp() {
   const [knownVoterDraftNpub, setKnownVoterDraftNpub] = useState("");
   const [knownVoterInviteStatus, setKnownVoterInviteStatus] = useState<string | null>(null);
   const [voterRequestStatus, setVoterRequestStatus] = useState<string | null>(null);
+  const [privateInviteLinksCollapsed, setPrivateInviteLinksCollapsed] = useState(false);
   const [knownVoterInviteRefreshNonce, setKnownVoterInviteRefreshNonce] = useState(0);
   const [optionAQueueProcessingDebug, setOptionAQueueProcessingDebug] = useState<OptionAQueueProcessingDebug>({
     inFlight: false,
@@ -4340,7 +4341,7 @@ export default function SimpleCoordinatorApp() {
     if (!localNsecMode && !optionACoordinatorRuntime) {
       return;
     }
-    const delaysMs = [500, 1_000, 2_000, 3_500, 5_000, 7_500, 10_000, 13_000, 16_000, 20_000, 25_000];
+    const delaysMs = [1_500, 5_000, 12_000, 25_000];
     const timeoutIds = delaysMs.map((delayMs) => window.setTimeout(() => {
       void runOptionABackgroundProcessing().catch(() => {
         // Keep the burst best-effort; manual processing still surfaces errors.
@@ -6613,7 +6614,7 @@ export default function SimpleCoordinatorApp() {
                         </button>
                       </div>
                     </div>
-                    <div className='simple-invite-share-panel simple-private-invite-panel' aria-label='Create private invite code link'>
+                    <div className={`simple-invite-share-panel simple-private-invite-panel${privateInviteLinksCollapsed ? " is-collapsed" : ""}`} aria-label='Create private invite code link'>
                       <div className='simple-private-invite-panel-head'>
                         <div className='simple-invite-share-copy'>
                           <h3 className='simple-voter-question'>Private invite links</h3>
@@ -6621,16 +6622,28 @@ export default function SimpleCoordinatorApp() {
                             Create single-use links for voters. Each link can be labelled, shared, revoked, and marked as used.
                           </p>
                         </div>
-                        <button
-                          type='button'
-                          className='simple-voter-primary simple-private-invite-create-button'
-                          onClick={() => void createPrivateInviteCodeLink()}
-                          disabled={!publicQuestionnaireInviteUrl || !optionACoordinatorRuntime}
-                        >
-                          Create single-use invite link
-                        </button>
+                        <div className='simple-private-invite-panel-actions'>
+                          <button
+                            type='button'
+                            className='simple-voter-secondary'
+                            onClick={() => setPrivateInviteLinksCollapsed((current) => !current)}
+                            aria-expanded={!privateInviteLinksCollapsed}
+                          >
+                            {privateInviteLinksCollapsed ? "Show" : "Hide"}
+                          </button>
+                          {!privateInviteLinksCollapsed ? (
+                            <button
+                              type='button'
+                              className='simple-voter-primary simple-private-invite-create-button'
+                              onClick={() => void createPrivateInviteCodeLink()}
+                              disabled={!publicQuestionnaireInviteUrl || !optionACoordinatorRuntime}
+                            >
+                              Create single-use invite link
+                            </button>
+                          ) : null}
+                        </div>
                       </div>
-                      {privateInviteCodeEntries.length > 0 ? (
+                      {!privateInviteLinksCollapsed && privateInviteCodeEntries.length > 0 ? (
                         <ul className='simple-vote-status-list simple-private-invite-list'>
                           {privateInviteCodeEntries.slice(0, 6).map((entry, inviteIndex) => {
                             const privateInviteUrl = privateInviteLinksByHash[entry.codeHash] ?? "";

@@ -2908,6 +2908,13 @@ code {
   gap: 12px 18px;
 }
 
+.simple-private-invite-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .simple-private-invite-create-button {
   flex: 0 0 auto;
 }
@@ -5955,6 +5962,15 @@ code {
 
   .simple-private-invite-create-button {
     width: 100%;
+  }
+
+  .simple-private-invite-panel-actions {
+    justify-content: stretch;
+    width: 100%;
+  }
+
+  .simple-private-invite-panel-actions > button {
+    flex: 1 1 160px;
   }
 
   .simple-private-invite-card-body,

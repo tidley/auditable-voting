@@ -590,7 +590,7 @@
         <h3>Why that matters here</h3>
         <ul>
           <li>Observers can read the same public state as organisers</li>
-          <li>Observers can now scope rounds by lead organiser, organiser npub, and free-text search (npub/round ID/prompt), while a single automatic fetch per page session plus manual Refresh reduces relay REQ bursts</li>
+          <li>Observers can now scope rounds by lead organiser, organiser npub, and free-text search (npub/round ID/prompt), while visible-page polling keeps selected-round submissions current and manual Refresh remains available for immediate reloads</li>
           <li>Static clients can participate without a proprietary backend</li>
           <li>Organiser rosters and per-round keys can be announced in public</li>
           <li>The lead organiser can push share-index assignments to sub-organisers before issuance starts</li>
@@ -623,7 +623,7 @@
           <li>Mailbox ticket publishes now keep one deterministic anchor relay, rotate secondary relays by recipient, and temporarily cool down relays that rate-limit</li>
           <li>Organiser follower rows now expose per-ticket relay publish diagnostics for debugging delivery gaps</li>
           <li>The default path currently prefers a tight curated relay set over broad hint expansion</li>
-          <li>Reads and live subscriptions are kept to a smaller primary subset to reduce relay-side `too many concurrent REQs` pressure</li>
+          <li>Reads and live subscriptions are kept to a smaller primary subset, with serialized blind-DM history reads and a shorter organiser startup burst, to reduce relay-side `too many concurrent REQs` pressure</li>
           <li>Small live runs are now much stronger than large public-relay committee runs</li>
           <li>The protocol remains inspectable by any third party</li>
         </ul>
