@@ -6799,17 +6799,6 @@ export default function SimpleCoordinatorApp() {
               questionnaireRelaysInput={questionnaireRelaysInput}
               onStatusChange={updateQuestionnaireRosterAnnouncement}
             />
-            <QuestionnaireCoordinatorPanel
-              coordinatorNsec={keypair?.nsec ?? null}
-              coordinatorNpub={keypair?.npub ?? null}
-              knownVoterCount={optionAKnownVoterCount}
-              optionAAcceptedCount={optionAAcceptedCount}
-              optionAAcceptedResponses={optionAAcceptedResponses}
-              blindSigningPublicKey={optionABlindSigningPublicKey}
-              view='participants'
-              questionnaireRelaysInput={questionnaireRelaysInput}
-              onStatusChange={updateQuestionnaireRosterAnnouncement}
-            />
             <div id='coordinator-invite-voters-section'>
               <SimpleCollapsibleSection title='Invited voters'>
                 <div className='simple-invite-share-panel simple-admitted-voters-panel' aria-label='Invited voters'>

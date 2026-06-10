@@ -379,7 +379,7 @@ export function selectQuestionnaireVoterIdentity(input: {
   };
 }
 
-async function verifyAnnouncedQuestionnaireIsReady(questionnaireId: string) {
+async function verifyAnnouncedQuestionnaireReadiness(questionnaireId: string) {
   const [definitionFetch, stateFetch] = await Promise.all([
     fetchQuestionnaireEventsWithFallback({
       questionnaireId,
@@ -397,9 +397,12 @@ async function verifyAnnouncedQuestionnaireIsReady(questionnaireId: string) {
   const latestDefinition = selectLatestQuestionnaireDefinition(definitionFetch.events);
   const latestState = String(selectLatestQuestionnaireState(stateFetch.events)?.state ?? "");
   if (!latestDefinition) {
-    return false;
+    return { ready: false, coordinatorNpub: "" };
   }
-  return latestState === "open" || latestState === "published";
+  return {
+    ready: latestState === "open" || latestState === "published",
+    coordinatorNpub: latestDefinition.coordinatorPubkey?.trim() ?? "",
+  };
 }
 
 type SimpleUiAppProps = {
@@ -1087,14 +1090,27 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
     const runVerification = async () => {
       const checks = await Promise.all(announcedIds.map(async (questionnaireId) => {
         try {
-          const ready = await verifyAnnouncedQuestionnaireIsReady(questionnaireId);
-          return { questionnaireId, ready };
+          const result = await verifyAnnouncedQuestionnaireReadiness(questionnaireId);
+          return { questionnaireId, ...result };
         } catch {
-          return { questionnaireId, ready: null as boolean | null };
+          return { questionnaireId, ready: null as boolean | null, coordinatorNpub: "" };
         }
       }));
       if (cancelled) {
         return;
+      }
+
+      const discoveredCoordinatorNpubs = sanitizeCoordinatorNpubs(
+        checks.map((entry) => entry.coordinatorNpub),
+      );
+      if (discoveredCoordinatorNpubs.length > 0) {
+        setManualCoordinators((current) => {
+          const next = sanitizeCoordinatorNpubs([...current, ...discoveredCoordinatorNpubs]);
+          return next.length === current.length
+            && next.every((value, index) => value === current[index])
+            ? current
+            : next;
+        });
       }
 
       setReadyAnnouncedQuestionnaireIds((current) => {

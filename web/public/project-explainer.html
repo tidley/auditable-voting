@@ -599,7 +599,7 @@
         <h2 id="limits">Current limitations</h2>
         <p class="section-intro">This is experimental software. The design is intended to be auditable, but it should not be treated as production election infrastructure without independent protocol and implementation review.</p>
         <ul class="limitation-list">
-          <li>Public relay reliability can affect delivery and discovery.</li>
+          <li>Public relay reliability can affect delivery and discovery. The client bounds public relay reads and consolidates organiser live subscriptions, but relay rate limits can still affect busy demonstrations.</li>
           <li>Browser-held secret material needs careful handling.</li>
           <li>The cryptographic design needs external review before production use.</li>
           <li>Large multi-organiser runs are not yet reliable on the current public relay set.</li>

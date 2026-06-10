@@ -1,4 +1,4 @@
-import { finalizeEvent, getPublicKey, nip19, nip44, type NostrEvent } from "nostr-tools";
+import { finalizeEvent, getPublicKey, nip19, nip44, type Filter, type NostrEvent } from "nostr-tools";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import { getSharedNostrPool } from "./sharedNostrPool";
 import { recordRelayCloseReasons, recordRelayOutcome, rankRelaysByBackoff, selectRelaysWithBackoff } from "./relayBackoff";
@@ -34,12 +34,17 @@ export const QUESTIONNAIRE_STATE_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_STATE;
 export const QUESTIONNAIRE_RESPONSE_PRIVATE_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_PRIVATE;
 export const QUESTIONNAIRE_RESULT_SUMMARY_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_RESULT_SUMMARY;
 const QUESTIONNAIRE_PUBLIC_READ_RELAYS_MAX = 5;
+const QUESTIONNAIRE_PUBLIC_QUERY_MAX_CONCURRENCY = 2;
 const QUESTIONNAIRE_PUBLIC_READ_UNINDEXED_TAG_RELAYS = new Set([
   "wss://relay.damus.io",
   "wss://relay.primal.net",
   "wss://nostr.wine",
   "wss://nostr.mom",
 ]);
+
+let activeQuestionnairePublicQueries = 0;
+const questionnairePublicQueryWaiters: Array<() => void> = [];
+const questionnairePublicInFlightQueries = new Map<string, Promise<NostrEvent[]>>();
 
 export type QuestionnaireAdmissionAnnouncementEvent = {
   schemaVersion: 1;
@@ -67,6 +72,40 @@ function selectPublicReadRelays(relays: string[], maxRelays = QUESTIONNAIRE_PUBL
 
 export function getQuestionnaireReadRelays(relays?: string[], maxRelays = QUESTIONNAIRE_PUBLIC_READ_RELAYS_MAX) {
   return selectPublicReadRelays(buildPublicRelays(relays), maxRelays);
+}
+
+async function withQuestionnairePublicQuerySlot<T>(task: () => Promise<T>): Promise<T> {
+  if (activeQuestionnairePublicQueries >= QUESTIONNAIRE_PUBLIC_QUERY_MAX_CONCURRENCY) {
+    await new Promise<void>((resolve) => {
+      questionnairePublicQueryWaiters.push(resolve);
+    });
+  }
+  activeQuestionnairePublicQueries += 1;
+  try {
+    return await task();
+  } finally {
+    activeQuestionnairePublicQueries = Math.max(0, activeQuestionnairePublicQueries - 1);
+    const next = questionnairePublicQueryWaiters.shift();
+    next?.();
+  }
+}
+
+export async function queryQuestionnaireEvents(relays: string[], filter: Filter) {
+  const key = JSON.stringify({ relays, filter });
+  const existing = questionnairePublicInFlightQueries.get(key);
+  if (existing) {
+    return existing;
+  }
+  const run = withQuestionnairePublicQuerySlot(async () => {
+    const pool = getSharedNostrPool();
+    return pool.querySync(relays, filter);
+  });
+  questionnairePublicInFlightQueries.set(key, run);
+  try {
+    return await run;
+  } finally {
+    questionnairePublicInFlightQueries.delete(key);
+  }
 }
 
 function eventHasQuestionnaireIdTag(event: Pick<NostrEvent, "tags">, questionnaireId: string) {
@@ -327,8 +366,7 @@ export async function fetchQuestionnaireEvents(input: {
   readRelayLimit?: number;
 }) {
   const relays = getQuestionnaireReadRelays(input.relays, input.readRelayLimit);
-  const pool = getSharedNostrPool();
-  const events = await pool.querySync(relays, {
+  const events = await queryQuestionnaireEvents(relays, {
     kinds: [input.kind],
     limit: input.limit ?? 200,
   });
@@ -351,9 +389,8 @@ export async function fetchQuestionnaireEventsWithFallback(input: {
   parseQuestionnaireIdFromEvent: (event: Pick<NostrEvent, "kind" | "content">) => string | null;
 }) {
   const relays = getQuestionnaireReadRelays(input.relays, input.readRelayLimit);
-  const pool = getSharedNostrPool();
   const questionnaireId = input.questionnaireId?.trim() ?? "";
-  const kindOnlyEvents = await pool.querySync(relays, {
+  const kindOnlyEvents = await queryQuestionnaireEvents(relays, {
     kinds: [input.kind],
     limit: input.limit ?? 200,
   });
@@ -375,9 +412,9 @@ export async function fetchQuestionnaireEventsWithFallback(input: {
   };
 }
 
-export function subscribeQuestionnaireEvents(input: {
+export function subscribeQuestionnaireEventKinds(input: {
   questionnaireId: string;
-  kind: number;
+  kinds: number[];
   relays?: string[];
   limit?: number;
   readRelayLimit?: number;
@@ -402,11 +439,12 @@ export function subscribeQuestionnaireEvents(input: {
       scheduleReconnect();
       return;
     }
+    const eventKinds = [...new Set(input.kinds)];
     const baseFilter: {
       kinds: number[];
       limit: number;
     } = {
-      kinds: [input.kind],
+      kinds: eventKinds,
       limit: input.limit ?? 200,
     };
     subscription = pool.subscribeMany(relays, baseFilter, {
@@ -460,6 +498,23 @@ export function subscribeQuestionnaireEvents(input: {
       subscription = null;
     }
   };
+}
+
+export function subscribeQuestionnaireEvents(input: {
+  questionnaireId: string;
+  kind: number;
+  relays?: string[];
+  limit?: number;
+  readRelayLimit?: number;
+  useQuestionnaireIdTagFilter?: boolean;
+  parseQuestionnaireIdFromEvent: (event: Pick<NostrEvent, "kind" | "content">) => string | null;
+  onEvent: (event: NostrEvent) => void;
+  onError?: (error: Error) => void;
+}) {
+  return subscribeQuestionnaireEventKinds({
+    ...input,
+    kinds: [input.kind],
+  });
 }
 
 export function parseQuestionnaireDefinitionEvent(

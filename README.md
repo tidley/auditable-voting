@@ -19,6 +19,7 @@ The active product is the client in `web/` plus the optional audit proxy in `wor
 - Browser voter, organiser, and observer flows.
 - Nostr-first transport using public events and NIP-17 private control traffic.
 - Per-questionnaire relay hints published in questionnaire metadata when the organiser uses a non-default relay set.
+- Public questionnaire reads are queued and organiser live-result subscriptions are consolidated to reduce relay-side concurrent `REQ` pressure.
 - Yes/no, multiple-choice, ranked-choice, and free-text questionnaire questions.
 - Browser-only invite sharing by copied link, native device share actions, General QR links that open Vote directly and request a ballot automatically, personalised links for invited voter npubs, public questionnaire announcements for invited voters, or one-use private code links managed from Invited voters with notes, share controls, and QR codes.
 - Organiser-local invited voter rosters can be reused across later questionnaires; each row can carry an internal note and an auto-ballot checkbox. Applying the roster to a questionnaire green-lights checked voters and publishes one public questionnaire announcement, while each response still requires a fresh blind credential requested by the voter.

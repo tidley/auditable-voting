@@ -811,7 +811,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     expect(yesButton.getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("uses verifier copy while a completed response is waiting for a ballot credential", async () => {
+  it("shows staged ballot progress copy before a response can be submitted", async () => {
     const user = userEvent.setup();
     storeCachedQuestionnaireDefinition({
       schemaVersion: 1,
@@ -840,8 +840,9 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     await user.click(await screen.findByRole("button", { name: "Yes" }));
 
-    const submitButton = screen.getByRole("button", { name: "Verifying vote request" }) as HTMLButtonElement;
+    const submitButton = screen.getByRole("button", { name: "1/3 Confirming identity" }) as HTMLButtonElement;
     expect(submitButton.disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: "Verifying vote request" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Waiting for coordinator..." })).toBeNull();
   });
 

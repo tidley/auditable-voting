@@ -246,6 +246,41 @@ function resolveInviteDisplayTitle(invite: ElectionInviteMessage) {
   return invite.electionId;
 }
 
+function formatVoteActionButtonText(input: {
+  snapshot: VoterElectionLocalState | null;
+  requiredQuestionsAnswered: boolean;
+  canSubmitNow: boolean;
+  blindSigningKeyReady: boolean;
+  coordinatorNpub: string;
+}) {
+  const snapshot = input.snapshot;
+  if (snapshot?.submission) {
+    return "View results";
+  }
+  if (!input.requiredQuestionsAnswered) {
+    return "Please answer all required questions";
+  }
+  if (input.canSubmitNow) {
+    return "Submit response";
+  }
+  if (!snapshot?.loginVerified) {
+    return "1/3 Confirming identity";
+  }
+  if (!input.coordinatorNpub.trim()) {
+    return "1/3 Finding organiser";
+  }
+  if (!input.blindSigningKeyReady) {
+    return "1/3 Loading ballot key";
+  }
+  if (!snapshot.blindRequestSent) {
+    return "1/3 Requesting ballot";
+  }
+  if (!snapshot.credentialReady) {
+    return "2/3 Awaiting ballot";
+  }
+  return "3/3 Preparing response";
+}
+
 function inviteMessageKey(invite: ElectionInviteMessage) {
   return `${invite.electionId}:${invite.coordinatorNpub}`;
 }
@@ -1063,7 +1098,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     return Boolean(state?.blindRequest || state?.blindIssuance || state?.submission);
   }
 
-  function findBestLocalInvite(voterNpub: string, preferredElectionId = linkedContextElectionId || electionId) {
+  function findBestLocalInvite(voterNpub: string, preferredElectionId = electionId || linkedContextElectionId) {
     const localInvites = [...listInvitesFromMailbox(voterNpub)];
     const preferredId = preferredElectionId.trim();
     if (preferredId) {
@@ -1085,11 +1120,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       return runtime.getSnapshot();
     }
     const currentSnapshot = runtime.getSnapshot();
-    const fallbackInvite = findBestLocalInvite(localVoterNpub);
-    const targetQuestionnaireId = linkedContextElectionId
-      || fallbackInvite?.electionId?.trim()
-      || electionId.trim()
+    const activeQuestionnaireId = electionId.trim()
+      || currentSnapshot?.electionId?.trim()
+      || linkedContextElectionId
       || latestAnnouncedQuestionnaireId.trim();
+    const fallbackInvite = findBestLocalInvite(localVoterNpub, activeQuestionnaireId);
+    const targetQuestionnaireId = activeQuestionnaireId
+      || fallbackInvite?.electionId?.trim();
     const publicDefinition = targetQuestionnaireId
       ? (questionnaireDefinition?.questionnaireId === targetQuestionnaireId ? questionnaireDefinition : null)
         ?? readCachedQuestionnaireDefinition(targetQuestionnaireId)
@@ -2128,12 +2165,33 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     return value !== undefined && value !== null && String(value).trim().length > 0;
   });
   const canSubmitNow = flags.canSubmitVote && requiredQuestionsAnswered;
+  const actionQuestionnaireId = currentQuestionnaireId || electionId.trim();
+  const snapshotForAction = snapshot?.electionId === actionQuestionnaireId ? snapshot : null;
+  const actionCoordinatorNpub = snapshotForAction?.coordinatorNpub?.trim()
+    || (activeInvite?.electionId === actionQuestionnaireId ? activeInvite.coordinatorNpub?.trim() : "")
+    || inviteDropdownOptions.find((invite) => invite.electionId === actionQuestionnaireId)?.coordinatorNpub?.trim()
+    || loadElectionSummary(actionQuestionnaireId)?.coordinatorNpub?.trim()
+    || "";
+  const voteActionButtonText = formatVoteActionButtonText({
+    snapshot: snapshotForAction,
+    requiredQuestionsAnswered,
+    canSubmitNow,
+    blindSigningKeyReady: autoRequestBlindSigningKeyReady,
+    coordinatorNpub: actionCoordinatorNpub,
+  });
   useEffect(() => {
     const owner = globalThis as typeof globalThis & {
       __questionnaireVoterDebug?: unknown;
     };
     const targetQuestionnaireId = currentQuestionnaireId || electionId.trim();
     const snapshotForTarget = snapshot?.electionId === targetQuestionnaireId ? snapshot : null;
+    const debugSubmitButtonText = formatVoteActionButtonText({
+      snapshot: snapshotForTarget,
+      requiredQuestionsAnswered,
+      canSubmitNow,
+      blindSigningKeyReady: autoRequestBlindSigningKeyReady,
+      coordinatorNpub: (snapshotForTarget?.coordinatorNpub?.trim() ?? "") || actionCoordinatorNpub,
+    });
     const questionnaireSeen = questions.length > 0 || Boolean(autoRequestDefinition);
     owner.__questionnaireVoterDebug = {
       mode: "option_a",
@@ -2151,13 +2209,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       submitButtonPresent: true,
       submitButtonVisible: !settingsMode,
       submitButtonDisabled: !(canSubmitNow || Boolean(snapshotForTarget?.submission)),
-      submitButtonText: snapshotForTarget?.submission
-        ? "View results"
-        : !requiredQuestionsAnswered
-          ? "Please answer all required questions"
-          : canSubmitNow
-            ? "Submit response"
-            : "Verifying vote request",
+      submitButtonText: debugSubmitButtonText,
       submitButtonReasonBlocked: snapshotForTarget?.submission
         ? null
         : !requiredQuestionsAnswered
@@ -2204,6 +2256,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     };
   }, [
     activeInvite?.electionId,
+    actionCoordinatorNpub,
     autoRequestBlindSigningKeyReady,
     autoRequestDefinition,
     canSubmitNow,
@@ -2678,15 +2731,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
             void submit();
           }}
         >
-          {snapshot?.submission
-            ? "View results"
-            : !requiredQuestionsAnswered
-              ? "Please answer all required questions"
-              : canSubmitNow
-                ? "Submit response"
-                : waitingForCredential
-                  ? "Verifying vote request"
-                  : "Verifying vote request"}
+          {voteActionButtonText}
         </button>
       </div>
       {snapshot?.submission ? (

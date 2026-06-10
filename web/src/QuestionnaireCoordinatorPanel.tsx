@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getPublicKey, generateSecretKey, nip19, nip44, type NostrEvent } from "nostr-tools";
-import { fetchQuestionnaireEventsWithFallback, getQuestionnaireReadRelays, parseQuestionnaireDefinitionEvent, parseQuestionnaireStateEvent, publishQuestionnaireDefinition, publishQuestionnaireParticipantCount, publishQuestionnaireResultSummary, publishQuestionnaireState, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESPONSE_PRIVATE_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND, subscribeQuestionnaireEvents } from "./questionnaireNostr";
+import { fetchQuestionnaireEventsWithFallback, getQuestionnaireReadRelays, parseQuestionnaireDefinitionEvent, parseQuestionnaireStateEvent, publishQuestionnaireDefinition, publishQuestionnaireParticipantCount, publishQuestionnaireResultSummary, publishQuestionnaireState, queryQuestionnaireEvents, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESPONSE_PRIVATE_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND, subscribeQuestionnaireEventKinds } from "./questionnaireNostr";
 import { buildQuestionnaireResultSummary, deriveEffectiveQuestionnaireState, parseQuestionnaireResultSummaryEvent, processQuestionnaireResponses, selectLatestQuestionnaireDefinition, selectLatestQuestionnaireResultSummary, selectLatestQuestionnaireState, type QuestionnaireAcceptedResponse } from "./questionnaireRuntime";
 import { buildSimpleNamespacedLocalStorageKey, loadSimpleActorState } from "./simpleLocalState";
 import {
@@ -24,7 +24,6 @@ import {
 import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 import { deriveActorDisplayId } from "./actorDisplay";
 import QuestionnaireResultsDashboard, { type QuestionnaireResultsDashboardResponseDetail } from "./QuestionnaireResultsDashboard";
-import { getSharedNostrPool } from "./sharedNostrPool";
 import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import { tryWriteClipboard } from "./clipboard";
 import { fetchQuestionnaireBlindResponses } from "./questionnaireTransport";
@@ -1624,8 +1623,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     const loadQuestionnaireOptions = async () => {
       try {
         const relays = getQuestionnaireReadRelays(questionnaireRelayPublishHints);
-        const pool = getSharedNostrPool();
-        const events = await pool.querySync(relays, {
+        const events = await queryQuestionnaireEvents(relays, {
           kinds: [QUESTIONNAIRE_DEFINITION_KIND],
           limit: 400,
         });
@@ -1853,103 +1851,88 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       }
     });
 
-    const unsubscribers = [
-      subscribeQuestionnaireEvents({
-        questionnaireId: id,
-        kind: QUESTIONNAIRE_DEFINITION_KIND,
-        parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireDefinitionEvent(event)?.questionnaireId ?? null,
-        useQuestionnaireIdTagFilter: false,
-        relays: questionnaireRelayPublishHints,
-        readRelayLimit: 8,
-        onEvent: (event) => {
-          definitionById.set(event.id, event);
-          applyFromMaps();
-        },
-        onError: () => undefined,
-      }),
-      subscribeQuestionnaireEvents({
-        questionnaireId: id,
-        kind: QUESTIONNAIRE_STATE_KIND,
-        parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireStateEvent(event)?.questionnaireId ?? null,
-        useQuestionnaireIdTagFilter: false,
-        relays: questionnaireRelayPublishHints,
-        readRelayLimit: 8,
-        onEvent: (event) => {
-          stateById.set(event.id, event);
-          applyFromMaps();
-        },
-        onError: () => undefined,
-      }),
-      subscribeQuestionnaireEvents({
-        questionnaireId: id,
-        kind: QUESTIONNAIRE_RESPONSE_PRIVATE_KIND,
-        parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireIdFromResponseEvent(event),
-        useQuestionnaireIdTagFilter: false,
-        relays: questionnaireRelayPublishHints,
-        readRelayLimit: 8,
-        onEvent: (event) => {
-          responseById.set(event.id, event);
-          applyFromMaps();
-        },
-        onError: () => undefined,
-      }),
-      subscribeQuestionnaireEvents({
-        questionnaireId: id,
-        kind: QUESTIONNAIRE_RESPONSE_BLIND_KIND,
-        parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireBlindResponseEvent(event.content)?.questionnaireId ?? null,
-        useQuestionnaireIdTagFilter: false,
-        relays: questionnaireRelayPublishHints,
-        readRelayLimit: 8,
-        onEvent: (event) => {
-          const response = parseQuestionnaireBlindResponseEvent(event.content);
-          if (response) {
-            publicResponseById.set(event.id, { event, response });
-            applyFromMaps();
-          }
-        },
-        onError: () => undefined,
-      }),
-      subscribeQuestionnaireEvents({
-        questionnaireId: id,
-        kind: QUESTIONNAIRE_SUBMISSION_DECISION_KIND,
-        parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireSubmissionDecisionEvent(event.content)?.questionnaireId ?? null,
-        useQuestionnaireIdTagFilter: false,
-        relays: questionnaireRelayPublishHints,
-        readRelayLimit: 8,
-        onEvent: (event) => {
-          const decision = parseQuestionnaireSubmissionDecisionEvent(event.content);
-          if (decision) {
-            publicDecisionById.set(event.id, { event, decision });
-            applyFromMaps();
-          }
-        },
-        onError: () => undefined,
-      }),
-      subscribeQuestionnaireEvents({
-        questionnaireId: id,
-        kind: QUESTIONNAIRE_RESULT_SUMMARY_KIND,
-        relays: questionnaireRelayPublishHints,
-        parseQuestionnaireIdFromEvent: (event) => {
+    const unsubscribe = subscribeQuestionnaireEventKinds({
+      questionnaireId: id,
+      kinds: [
+        QUESTIONNAIRE_DEFINITION_KIND,
+        QUESTIONNAIRE_STATE_KIND,
+        QUESTIONNAIRE_RESPONSE_PRIVATE_KIND,
+        QUESTIONNAIRE_RESPONSE_BLIND_KIND,
+        QUESTIONNAIRE_SUBMISSION_DECISION_KIND,
+        QUESTIONNAIRE_RESULT_SUMMARY_KIND,
+      ],
+      parseQuestionnaireIdFromEvent: (event) => {
+        if (event.kind === QUESTIONNAIRE_DEFINITION_KIND) {
+          return parseQuestionnaireDefinitionEvent(event)?.questionnaireId ?? null;
+        }
+        if (event.kind === QUESTIONNAIRE_STATE_KIND) {
+          return parseQuestionnaireStateEvent(event)?.questionnaireId ?? null;
+        }
+        if (event.kind === QUESTIONNAIRE_RESPONSE_PRIVATE_KIND) {
+          return parseQuestionnaireIdFromResponseEvent(event);
+        }
+        if (event.kind === QUESTIONNAIRE_RESPONSE_BLIND_KIND) {
+          return parseQuestionnaireBlindResponseEvent(event.content)?.questionnaireId ?? null;
+        }
+        if (event.kind === QUESTIONNAIRE_SUBMISSION_DECISION_KIND) {
+          return parseQuestionnaireSubmissionDecisionEvent(event.content)?.questionnaireId ?? null;
+        }
+        if (event.kind === QUESTIONNAIRE_RESULT_SUMMARY_KIND) {
           try {
             const parsed = JSON.parse(event.content) as { questionnaireId?: string };
             return typeof parsed.questionnaireId === "string" ? parsed.questionnaireId : null;
           } catch {
             return null;
           }
-        },
-        onEvent: (event) => {
+        }
+        return null;
+      },
+      relays: questionnaireRelayPublishHints,
+      readRelayLimit: 8,
+      limit: 500,
+      onEvent: (event) => {
+        if (event.kind === QUESTIONNAIRE_DEFINITION_KIND) {
+          definitionById.set(event.id, event);
+          applyFromMaps();
+          return;
+        }
+        if (event.kind === QUESTIONNAIRE_STATE_KIND) {
+          stateById.set(event.id, event);
+          applyFromMaps();
+          return;
+        }
+        if (event.kind === QUESTIONNAIRE_RESPONSE_PRIVATE_KIND) {
+          responseById.set(event.id, event);
+          applyFromMaps();
+          return;
+        }
+        if (event.kind === QUESTIONNAIRE_RESPONSE_BLIND_KIND) {
+          const response = parseQuestionnaireBlindResponseEvent(event.content);
+          if (response) {
+            publicResponseById.set(event.id, { event, response });
+            applyFromMaps();
+          }
+          return;
+        }
+        if (event.kind === QUESTIONNAIRE_SUBMISSION_DECISION_KIND) {
+          const decision = parseQuestionnaireSubmissionDecisionEvent(event.content);
+          if (decision) {
+            publicDecisionById.set(event.id, { event, decision });
+            applyFromMaps();
+          }
+          return;
+        }
+        if (event.kind === QUESTIONNAIRE_RESULT_SUMMARY_KIND) {
           resultById.set(event.id, event);
           applyFromMaps();
-        },
-        onError: () => undefined,
-      }),
-    ];
+        }
+      },
+      onError: () => undefined,
+    });
 
     return () => {
       cancelled = true;
-      for (const unsubscribe of unsubscribers) {
-        unsubscribe();
-      }
+      unsubscribe();
     };
   }, [applyQuestionnaireSnapshot, questionnaireId, questionnaireRelayPublishHints]);
 

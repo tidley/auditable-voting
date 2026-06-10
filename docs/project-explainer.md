@@ -97,6 +97,7 @@ This is experimental software.
 Known weak points:
 
 - Public relay reliability can affect delivery and discovery.
+- The client bounds public relay reads and uses consolidated organiser live subscriptions, but relay rate limits can still affect busy demonstrations.
 - Browser-held secret material needs careful handling.
 - The cryptographic design needs external review before production use.
 - Large multi-organiser runs are not yet reliable on the current public relay set.
