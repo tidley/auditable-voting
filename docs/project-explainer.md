@@ -40,7 +40,7 @@ Most online voting systems force an uncomfortable tradeoff:
 - either the operator can link voters to votes
 - or the public cannot independently verify the result
 
-Auditable Voting tries to avoid both failures by separating issuance from submission. The organiser handles eligibility, including an admitted voter roster that can be reused for later questionnaires and applied to send voters the next questionnaire invite. The voter still spends a fresh blind credential for each questionnaire through a fresh response identity. Observers read the public event stream and recompute the count.
+Auditable Voting tries to avoid both failures by separating issuance from submission. The organiser handles eligibility, including an admitted voter roster that can be reused for later questionnaires. Applying that roster publishes one public announcement for the next questionnaire instead of sending the same questionnaire details to every voter. The voter still requests and spends a fresh blind credential for each questionnaire through a fresh response identity. Observers read the public event stream and recompute the count.
 
 ## What is public vs private
 
@@ -84,7 +84,7 @@ The voter must protect their local keys and browser state.
 1. Open the app as **Organiser**.
 2. Admit voters in **Voters** if the same people will answer later questionnaires.
 3. Create a questionnaire and publish it.
-4. Share invite links from **Voters**. The General QR/link opens **Vote** directly and requests a ballot automatically; single-use private links also show a QR code.
+4. Share invite links from **Voters**. The General QR/link opens **Vote** directly and requests a ballot automatically; single-use private links also show a QR code. For already admitted voters, **Apply to current questionnaire** publishes one public questionnaire announcement that their Vote page can discover.
 5. Open the invite as **Voter**, wait for ballot access if needed, fill in the questionnaire, and submit. Voter **Settings** shows **Ballot details** while taking part, so request, credential, submission, and timing fields can be checked if something stalls.
 6. Open **Observer** and search for the questionnaire ID, organiser identity, Submission/Response ID, or **Submittor identity** short/full to verify the public result stream. Observer refreshes the selected questionnaire automatically while the page is visible; use **Refresh** for an immediate reload. In **Submitted Votes**, use the same submission filters to find a specific public submission. Invalid rows show their rejection reason. Organiser results decrypt encrypted answer details automatically when the local organiser key is available; Observer can decrypt them from **Submitted Votes** when the matching organiser `nsec` is supplied.
 

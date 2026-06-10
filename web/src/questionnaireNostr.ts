@@ -20,6 +20,7 @@ import type {
 import { normalizeQuestionnaireDefinition } from "./questionnaireProtocol";
 import {
   IMPLEMENTATION_KIND_QUESTIONNAIRE_DEFINITION,
+  IMPLEMENTATION_KIND_QUESTIONNAIRE_ADMISSION_ANNOUNCEMENT,
   IMPLEMENTATION_KIND_QUESTIONNAIRE_PARTICIPANT_COUNT,
   IMPLEMENTATION_KIND_QUESTIONNAIRE_RESULT_SUMMARY,
   IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_PRIVATE,
@@ -27,6 +28,7 @@ import {
 } from "./questionnaireProtocolConstants";
 
 export const QUESTIONNAIRE_DEFINITION_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_DEFINITION;
+export const QUESTIONNAIRE_ADMISSION_ANNOUNCEMENT_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_ADMISSION_ANNOUNCEMENT;
 export const QUESTIONNAIRE_PARTICIPANT_COUNT_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_PARTICIPANT_COUNT;
 export const QUESTIONNAIRE_STATE_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_STATE;
 export const QUESTIONNAIRE_RESPONSE_PRIVATE_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_PRIVATE;
@@ -38,6 +40,21 @@ const QUESTIONNAIRE_PUBLIC_READ_UNINDEXED_TAG_RELAYS = new Set([
   "wss://nostr.wine",
   "wss://nostr.mom",
 ]);
+
+export type QuestionnaireAdmissionAnnouncementEvent = {
+  schemaVersion: 1;
+  eventType: "questionnaire_admission_announcement";
+  questionnaireId: string;
+  coordinatorPubkey: string;
+  title: string;
+  description?: string;
+  state: "published" | "open";
+  createdAt: number;
+  openAt?: number | null;
+  closeAt?: number | null;
+  blindSigningPublicKey?: QuestionnaireDefinition["blindSigningPublicKey"] | null;
+  questionnaireRelays?: string[];
+};
 
 function buildPublicRelays(relays?: string[]) {
   return rankRelaysByBackoff(normalizeRelaysRust([...(relays ?? []), ...SIMPLE_PUBLIC_RELAYS]));
@@ -137,6 +154,26 @@ export async function publishQuestionnaireDefinition(input: {
     content: JSON.stringify(input.definition),
     relays: input.relays,
     channel: "questionnaire-definition",
+  });
+}
+
+export async function publishQuestionnaireAdmissionAnnouncement(input: {
+  coordinatorNsec: string;
+  announcement: QuestionnaireAdmissionAnnouncementEvent;
+  relays?: string[];
+}) {
+  return publishEvent({
+    nsec: input.coordinatorNsec,
+    kind: QUESTIONNAIRE_ADMISSION_ANNOUNCEMENT_KIND,
+    tags: [
+      ["d", input.announcement.questionnaireId],
+      ["t", "questionnaire_admission_announcement"],
+      ["questionnaire-id", input.announcement.questionnaireId],
+      ["state", input.announcement.state],
+    ],
+    content: JSON.stringify(input.announcement),
+    relays: input.relays,
+    channel: "questionnaire-admission-announcement",
   });
 }
 
@@ -442,6 +479,40 @@ export function parseQuestionnaireDefinitionEvent(
       return null;
     }
     return normalizeQuestionnaireDefinition(parsed);
+  } catch {
+    return null;
+  }
+}
+
+export function parseQuestionnaireAdmissionAnnouncementEvent(
+  event: Pick<NostrEvent, "kind" | "content">,
+): QuestionnaireAdmissionAnnouncementEvent | null {
+  if (event.kind !== QUESTIONNAIRE_ADMISSION_ANNOUNCEMENT_KIND) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(event.content) as QuestionnaireAdmissionAnnouncementEvent;
+    if (
+      parsed?.eventType !== "questionnaire_admission_announcement"
+      || parsed?.schemaVersion !== 1
+      || typeof parsed.questionnaireId !== "string"
+      || typeof parsed.coordinatorPubkey !== "string"
+      || typeof parsed.title !== "string"
+      || (parsed.state !== "published" && parsed.state !== "open")
+      || !Number.isFinite(parsed.createdAt)
+    ) {
+      return null;
+    }
+    return {
+      ...parsed,
+      questionnaireId: parsed.questionnaireId.trim(),
+      coordinatorPubkey: parsed.coordinatorPubkey.trim(),
+      title: parsed.title.trim() || parsed.questionnaireId.trim(),
+      description: typeof parsed.description === "string" ? parsed.description : "",
+      questionnaireRelays: Array.isArray(parsed.questionnaireRelays)
+        ? normalizeRelaysRust(parsed.questionnaireRelays)
+        : undefined,
+    };
   } catch {
     return null;
   }

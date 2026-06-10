@@ -67,6 +67,7 @@ import {
   processOptionAQueuesForCoordinatorLive,
   QuestionnaireOptionACoordinatorRuntime,
 } from "./questionnaireOptionARuntime";
+import { publishQuestionnaireAdmissionAnnouncement } from "./questionnaireNostr";
 import { buildInviteUrl, buildQuestionnaireInviteUrl } from "./questionnaireInvite";
 import {
   buildQuestionnaireInviteShareSubject,
@@ -3884,7 +3885,8 @@ export default function SimpleCoordinatorApp() {
   }
 
   async function applyAdmissionRosterToCurrentQuestionnaire() {
-    if (!optionAElectionId.trim()) {
+    const questionnaireId = optionAElectionId.trim();
+    if (!questionnaireId) {
       setAdmittedVoterStatus("Publish or open a questionnaire before applying admissions.");
       return;
     }
@@ -3897,30 +3899,46 @@ export default function SimpleCoordinatorApp() {
     }
     setAdmittedVoterApplyInFlight(true);
     try {
+      setAdmittedVoterStatus("Applying admitted voters to this questionnaire...");
       const addedCount = projectNpubsToActiveQuestionnaire(admittedVoterNpubs);
-      let deliveredCount = 0;
-      let failedCount = 0;
-      const total = admittedVoterNpubs.length;
-      for (const [index, npub] of admittedVoterNpubs.entries()) {
-        setAdmittedVoterStatus(
-          `Applied roster to this questionnaire. Sending invite links ${index + 1}/${total}...`,
-        );
-        const sent = await sendInviteToKnownVoter(npub, { silent: true, syncWorkerConfig: false });
-        if (sent?.dmDelivered) {
-          deliveredCount += 1;
-        } else {
-          failedCount += 1;
-        }
+      const cachedDefinition = readCachedQuestionnaireDefinition(questionnaireId);
+      const summary = loadElectionSummary(questionnaireId);
+      const coordinatorNsec = keypair?.nsec?.trim() ?? "";
+      const coordinatorNpub = activeCoordinatorNpub.trim();
+      const announcementState = questionnaireRosterAnnouncement.state === "published" ? "published" : "open";
+      let announcementText = "Public questionnaire metadata is already available for voters to discover.";
+      if (coordinatorNsec && coordinatorNpub) {
+        const announcement = {
+          schemaVersion: 1 as const,
+          eventType: "questionnaire_admission_announcement" as const,
+          questionnaireId,
+          coordinatorPubkey: coordinatorNpub,
+          title: cachedDefinition?.title?.trim() || summary?.title?.trim() || questionnaireId,
+          description: cachedDefinition?.description ?? summary?.description ?? "",
+          state: announcementState,
+          createdAt: Math.floor(Date.now() / 1000),
+          openAt: cachedDefinition?.openAt ?? (summary?.openedAt ? Math.floor(Date.parse(summary.openedAt) / 1000) : null),
+          closeAt: cachedDefinition?.closeAt ?? (summary?.closedAt ? Math.floor(Date.parse(summary.closedAt) / 1000) : null),
+          blindSigningPublicKey: cachedDefinition?.blindSigningPublicKey ?? summary?.blindSigningPublicKey ?? null,
+          questionnaireRelays: cachedDefinition?.questionnaireRelays ?? summary?.questionnaireRelays,
+        };
+        const result = await publishQuestionnaireAdmissionAnnouncement({
+          coordinatorNsec,
+          announcement,
+          relays: announcement.questionnaireRelays,
+        });
+        announcementText = result.successes > 0
+          ? `published one public questionnaire announcement (${result.successes}/${result.relayResults.length} relays)`
+          : "public questionnaire announcement publish failed";
+      } else {
+        announcementText = "could not republish the public questionnaire announcement because the local organiser nsec is unavailable";
       }
       const projectionText = addedCount > 0
         ? `Added ${addedCount} admitted voter${addedCount === 1 ? "" : "s"} to this questionnaire`
         : "All admitted voters are eligible for this questionnaire";
       await syncActiveWorkerElectionConfig().catch(() => false);
-      const inviteText = failedCount > 0
-        ? `sent invite links to ${deliveredCount}/${total}; ${failedCount} could not be delivered by relay`
-        : `sent invite links to ${deliveredCount}/${total}`;
       setAdmittedVoterStatus(
-        `${projectionText} and ${inviteText}.`,
+        `${projectionText}; ${announcementText}. Voters discover it publicly and request blind ballots when they answer.`,
       );
     } catch (error) {
       setAdmittedVoterStatus(error instanceof Error ? error.message : "Could not apply admitted voters.");
@@ -6641,7 +6659,7 @@ export default function SimpleCoordinatorApp() {
                     disabled={admittedVoterApplyInFlight || admittedVoterEntries.length === 0 || !optionAElectionId.trim() || !optionACoordinatorRuntime}
                     onClick={() => void applyAdmissionRosterToCurrentQuestionnaire()}
                   >
-                    {admittedVoterApplyInFlight ? "Sending invites..." : "Apply to current questionnaire"}
+                    {admittedVoterApplyInFlight ? "Applying..." : "Apply to current questionnaire"}
                   </button>
                 </div>
                 {admittedVoterStatus ? <p className='simple-voter-note'>{admittedVoterStatus}</p> : null}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
+import { generateSecretKey, getPublicKey, nip19, type NostrEvent } from "nostr-tools";
 import { decodeNsec, deriveNpubFromNsec, isValidNpub } from "./nostrIdentity";
 import { deriveActorDisplayId } from "./actorDisplay";
 import QuestionnaireVoterPanel from "./QuestionnaireVoterPanel";
@@ -46,8 +46,11 @@ import {
 } from "./simpleVotingSession";
 import {
   fetchQuestionnaireEventsWithFallback,
+  getQuestionnaireReadRelays,
+  parseQuestionnaireAdmissionAnnouncementEvent,
   parseQuestionnaireDefinitionEvent,
   parseQuestionnaireStateEvent,
+  QUESTIONNAIRE_ADMISSION_ANNOUNCEMENT_KIND,
   QUESTIONNAIRE_DEFINITION_KIND,
   QUESTIONNAIRE_STATE_KIND,
 } from "./questionnaireNostr";
@@ -84,6 +87,7 @@ import {
 } from "./services/ProtocolStateService";
 import { type MailboxReadQueryDebug } from "./simpleMailbox";
 import { createSignerService, SignerServiceError } from "./services/signerService";
+import { getSharedNostrPool } from "./sharedNostrPool";
 
 type LiveVoteChoice = "Yes" | "No" | null;
 export type VoterTab = "configure" | "vote" | "settings";
@@ -158,6 +162,69 @@ function sanitizeCoordinatorNpubs(values: string[]) {
   return normalizeCoordinatorNpubsRust(values).filter((value) => isValidNpub(value));
 }
 
+function decodeCoordinatorAuthorHex(npub: string) {
+  try {
+    const decoded = nip19.decode(npub.trim());
+    return decoded.type === "npub" ? String(decoded.data) : "";
+  } catch {
+    return "";
+  }
+}
+
+function mergeQuestionnaireIds(current: string[], incoming: string[], limit = 12) {
+  const next = [...new Set([
+    ...current,
+    ...incoming.map((value) => value.trim()).filter((value) => value.length > 0),
+  ])].slice(-limit);
+  return next.length === current.length
+    && next.every((value, index) => value === current[index])
+    ? current
+    : next;
+}
+
+export function selectPublicQuestionnaireAnnouncementIds(input: {
+  events: Array<Pick<NostrEvent, "kind" | "content" | "created_at" | "id" | "pubkey">>;
+  coordinatorNpubs: string[];
+}) {
+  const coordinatorNpubs = sanitizeCoordinatorNpubs(input.coordinatorNpubs);
+  const coordinatorSet = new Set(coordinatorNpubs);
+  if (coordinatorSet.size === 0) {
+    return [] as string[];
+  }
+  const coordinatorAuthorByNpub = new Map(
+    coordinatorNpubs
+      .map((npub) => [npub, decodeCoordinatorAuthorHex(npub)] as const)
+      .filter(([, hex]) => hex.length > 0),
+  );
+  const byQuestionnaireId = new Map<string, { questionnaireId: string; createdAt: number; eventId: string }>();
+  for (const event of input.events) {
+    const announcement = parseQuestionnaireAdmissionAnnouncementEvent(event);
+    if (!announcement || !coordinatorSet.has(announcement.coordinatorPubkey)) {
+      continue;
+    }
+    const expectedAuthorHex = coordinatorAuthorByNpub.get(announcement.coordinatorPubkey) ?? "";
+    if (expectedAuthorHex && event.pubkey !== expectedAuthorHex) {
+      continue;
+    }
+    const questionnaireId = announcement.questionnaireId.trim();
+    if (!questionnaireId || (announcement.state !== "open" && announcement.state !== "published")) {
+      continue;
+    }
+    const createdAt = Number(event.created_at ?? announcement.createdAt ?? 0);
+    const current = byQuestionnaireId.get(questionnaireId);
+    if (!current || createdAt > current.createdAt) {
+      byQuestionnaireId.set(questionnaireId, {
+        questionnaireId,
+        createdAt,
+        eventId: String(event.id ?? ""),
+      });
+    }
+  }
+  return [...byQuestionnaireId.values()]
+    .sort((left, right) => left.createdAt - right.createdAt || left.eventId.localeCompare(right.eventId))
+    .map((entry) => entry.questionnaireId);
+}
+
 const SIMPLE_PUBLIC_ROUND_BACKFILL_INTERVAL_MS = 4000;
 const SIMPLE_HUMAN_ACTION_JITTER_MAX_MS = 30000;
 const SIMPLE_FOLLOW_RETRY_MIN_AGE_MS = 30000;
@@ -166,6 +233,8 @@ const SIMPLE_REQUEST_RETRY_MIN_AGE_MS = 30000;
 const SIMPLE_REQUEST_RETRY_INTERVAL_MS = 10000;
 const SIMPLE_CONFIGURE_RETRY_REVEAL_MS = 30000;
 const QUESTIONNAIRE_ANNOUNCEMENT_VERIFY_INTERVAL_MS = 7000;
+const QUESTIONNAIRE_PUBLIC_ANNOUNCEMENT_POLL_MS = 20_000;
+const QUESTIONNAIRE_ENCRYPTED_INVITE_POLL_MS = 45_000;
 
 function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -912,6 +981,94 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
       },
     });
   }, [shouldActivateStartupRelayTraffic, voterKeypair?.nsec]);
+
+  useEffect(() => {
+    const coordinatorNpubs = configuredCoordinatorTargets;
+    if (coordinatorNpubs.length === 0) {
+      return;
+    }
+    const authorHexes = [...new Set(
+      coordinatorNpubs
+        .map(decodeCoordinatorAuthorHex)
+        .filter((value) => value.length > 0),
+    )];
+    if (authorHexes.length === 0) {
+      return;
+    }
+
+    const relays = getQuestionnaireReadRelays(undefined, 5);
+    const pool = getSharedNostrPool();
+    let cancelled = false;
+    let inFlight = false;
+    let lastForegroundFetchAt = 0;
+
+    const applyAnnouncementEvents = (
+      events: Array<Pick<NostrEvent, "kind" | "content" | "created_at" | "id" | "pubkey">>,
+    ) => {
+      if (cancelled || events.length === 0) {
+        return;
+      }
+      const questionnaireIds = selectPublicQuestionnaireAnnouncementIds({
+        events,
+        coordinatorNpubs,
+      });
+      if (questionnaireIds.length === 0) {
+        return;
+      }
+      setAnnouncedQuestionnaireIds((current) => mergeQuestionnaireIds(current, questionnaireIds));
+    };
+
+    const fetchPublicAnnouncements = async () => {
+      if (inFlight || cancelled) {
+        return;
+      }
+      inFlight = true;
+      try {
+        const events = await pool.querySync(relays, {
+          kinds: [QUESTIONNAIRE_ADMISSION_ANNOUNCEMENT_KIND],
+          authors: authorHexes,
+          limit: 120,
+        });
+        applyAnnouncementEvents(events);
+      } catch {
+        // Public announcement discovery is best-effort; encrypted invite recovery remains available.
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    void fetchPublicAnnouncements();
+    const intervalId = window.setInterval(() => {
+      void fetchPublicAnnouncements();
+    }, QUESTIONNAIRE_PUBLIC_ANNOUNCEMENT_POLL_MS);
+    const subscription = pool.subscribeMany(relays, {
+      kinds: [QUESTIONNAIRE_ADMISSION_ANNOUNCEMENT_KIND],
+      authors: authorHexes,
+      limit: 40,
+    }, {
+      onevent: (event) => applyAnnouncementEvents([event]),
+    });
+    const triggerForegroundFetch = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+      const now = Date.now();
+      if (now - lastForegroundFetchAt < 5000) {
+        return;
+      }
+      lastForegroundFetchAt = now;
+      void fetchPublicAnnouncements();
+    };
+    window.addEventListener("focus", triggerForegroundFetch);
+    window.addEventListener("online", triggerForegroundFetch);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", triggerForegroundFetch);
+      window.removeEventListener("online", triggerForegroundFetch);
+      void subscription.close("closed by caller");
+    };
+  }, [configuredCoordinatorTargets]);
 
   useEffect(() => {
     const announcedIds = [...new Set(
@@ -1843,7 +2000,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
     const aggressiveInvitePoll = configuredCoordinatorTargets.length > 0
       && !questionnaireContext.hasDefinition
       && announcedQuestionnaireIds.length === 0;
-    const pollIntervalMs = aggressiveInvitePoll ? 2500 : 7000;
+    const pollIntervalMs = aggressiveInvitePoll ? QUESTIONNAIRE_PUBLIC_ANNOUNCEMENT_POLL_MS : QUESTIONNAIRE_ENCRYPTED_INVITE_POLL_MS;
 
     void checkQuestionnaireInvites({ silent: true });
     const intervalId = window.setInterval(() => {
