@@ -492,26 +492,24 @@ export async function fetchQuestionnaireWorkerDelegationStatus(input: {
   relays?: string[];
   readRelayLimit?: number;
 }) {
-  const [delegationEvents, revocationEvents] = await Promise.all([
-    fetchQuestionnaireEventsWithFallback({
-      questionnaireId: input.questionnaireId,
-      kind: OPTIONA_WORKER_DELEGATION_KIND,
-      relays: input.relays,
-      readRelayLimit: input.readRelayLimit,
-      preferKindOnly: true,
-      limit: 200,
-      parseQuestionnaireIdFromEvent: (event) => parseWorkerDelegationEvent(event)?.electionId ?? null,
-    }),
-    fetchQuestionnaireEventsWithFallback({
-      questionnaireId: input.questionnaireId,
-      kind: OPTIONA_WORKER_DELEGATION_REVOCATION_KIND,
-      relays: input.relays,
-      readRelayLimit: input.readRelayLimit,
-      preferKindOnly: true,
-      limit: 200,
-      parseQuestionnaireIdFromEvent: (event) => parseWorkerDelegationRevocationEvent(event)?.electionId ?? null,
-    }),
-  ]);
+  const delegationEvents = await fetchQuestionnaireEventsWithFallback({
+    questionnaireId: input.questionnaireId,
+    kind: OPTIONA_WORKER_DELEGATION_KIND,
+    relays: input.relays,
+    readRelayLimit: input.readRelayLimit,
+    preferKindOnly: true,
+    limit: 200,
+    parseQuestionnaireIdFromEvent: (event) => parseWorkerDelegationEvent(event)?.electionId ?? null,
+  });
+  const revocationEvents = await fetchQuestionnaireEventsWithFallback({
+    questionnaireId: input.questionnaireId,
+    kind: OPTIONA_WORKER_DELEGATION_REVOCATION_KIND,
+    relays: input.relays,
+    readRelayLimit: input.readRelayLimit,
+    preferKindOnly: true,
+    limit: 200,
+    parseQuestionnaireIdFromEvent: (event) => parseWorkerDelegationRevocationEvent(event)?.electionId ?? null,
+  });
 
   const delegations = delegationEvents.events
     .map((event) => ({ event, delegation: parseWorkerDelegationEvent(event) }))
@@ -570,26 +568,24 @@ export async function fetchQuestionnaireActiveWorkerDelegationForCapability(inpu
   relays?: string[];
   readRelayLimit?: number;
 }) {
-  const [delegationEvents, revocationEvents] = await Promise.all([
-    fetchQuestionnaireEventsWithFallback({
-      questionnaireId: input.questionnaireId,
-      kind: OPTIONA_WORKER_DELEGATION_KIND,
-      relays: input.relays,
-      readRelayLimit: input.readRelayLimit,
-      preferKindOnly: true,
-      limit: 200,
-      parseQuestionnaireIdFromEvent: (event) => parseWorkerDelegationEvent(event)?.electionId ?? null,
-    }),
-    fetchQuestionnaireEventsWithFallback({
-      questionnaireId: input.questionnaireId,
-      kind: OPTIONA_WORKER_DELEGATION_REVOCATION_KIND,
-      relays: input.relays,
-      readRelayLimit: input.readRelayLimit,
-      preferKindOnly: true,
-      limit: 200,
-      parseQuestionnaireIdFromEvent: (event) => parseWorkerDelegationRevocationEvent(event)?.electionId ?? null,
-    }),
-  ]);
+  const delegationEvents = await fetchQuestionnaireEventsWithFallback({
+    questionnaireId: input.questionnaireId,
+    kind: OPTIONA_WORKER_DELEGATION_KIND,
+    relays: input.relays,
+    readRelayLimit: input.readRelayLimit,
+    preferKindOnly: true,
+    limit: 200,
+    parseQuestionnaireIdFromEvent: (event) => parseWorkerDelegationEvent(event)?.electionId ?? null,
+  });
+  const revocationEvents = await fetchQuestionnaireEventsWithFallback({
+    questionnaireId: input.questionnaireId,
+    kind: OPTIONA_WORKER_DELEGATION_REVOCATION_KIND,
+    relays: input.relays,
+    readRelayLimit: input.readRelayLimit,
+    preferKindOnly: true,
+    limit: 200,
+    parseQuestionnaireIdFromEvent: (event) => parseWorkerDelegationRevocationEvent(event)?.electionId ?? null,
+  });
   const revocationIds = new Set(
     revocationEvents.events
       .map((event) => parseWorkerDelegationRevocationEvent(event))

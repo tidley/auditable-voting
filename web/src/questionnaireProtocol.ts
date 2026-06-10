@@ -43,6 +43,7 @@ export type QuestionnaireRankQuestion = QuestionnaireQuestionBase & {
 export type QuestionnaireFreeTextQuestion = QuestionnaireQuestionBase & {
   type: "free_text";
   maxLength: number;
+  encryptResponses?: boolean;
 };
 
 export type QuestionnaireQuestion =
@@ -333,6 +334,9 @@ export function validateQuestionnaireDefinition(input: QuestionnaireDefinition):
       if (question.type === "free_text") {
         if (!Number.isFinite(question.maxLength) || question.maxLength <= 0) {
           errors.push(`invalid_free_text_max_length:${question.questionId}`);
+        }
+        if (question.encryptResponses !== undefined && typeof question.encryptResponses !== "boolean") {
+          errors.push(`invalid_free_text_encrypt_responses:${question.questionId}`);
         }
       }
     }

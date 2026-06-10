@@ -62,6 +62,38 @@ describe("questionnaireProtocol", () => {
     expect(result.errors).toHaveLength(0);
   });
 
+  it("accepts organiser-required free-text encryption", () => {
+    const definition: QuestionnaireDefinition = {
+      ...buildDefinition(),
+      questions: buildDefinition().questions.map((question) => (
+        question.type === "free_text"
+          ? { ...question, encryptResponses: true }
+          : question
+      )),
+    };
+
+    const result = validateQuestionnaireDefinition(definition);
+
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("rejects malformed free-text encryption settings", () => {
+    const definition = {
+      ...buildDefinition(),
+      questions: buildDefinition().questions.map((question) => (
+        question.type === "free_text"
+          ? { ...question, encryptResponses: "yes" }
+          : question
+      )),
+    } as QuestionnaireDefinition;
+
+    const result = validateQuestionnaireDefinition(definition);
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain("invalid_free_text_encrypt_responses:q3");
+  });
+
   it("normalizes missing response mode to legacy compatibility mode", () => {
     const normalized = normalizeQuestionnaireDefinition({
       ...buildDefinition(),

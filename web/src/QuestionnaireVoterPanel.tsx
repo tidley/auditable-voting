@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { generateSecretKey, nip19 } from "nostr-tools";
-import { fetchQuestionnaireEvents, fetchQuestionnaireEventsWithFallback, getQuestionnaireReadRelays, parseQuestionnaireDefinitionEvent, parseQuestionnaireResponseEnvelope, parseQuestionnaireStateEvent, publishEncryptedQuestionnaireResponse, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESPONSE_PRIVATE_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND, subscribeQuestionnaireEvents } from "./questionnaireNostr";
+import { generateSecretKey, nip19, type NostrEvent } from "nostr-tools";
+import { fetchQuestionnaireEvents, fetchQuestionnaireEventsWithFallback, getQuestionnaireReadRelays, parseQuestionnaireDefinitionEvent, parseQuestionnaireResponseEnvelope, parseQuestionnaireStateEvent, publishEncryptedQuestionnaireResponse, queryQuestionnaireEvents, QUESTIONNAIRE_DEFINITION_KIND, QUESTIONNAIRE_RESPONSE_PRIVATE_KIND, QUESTIONNAIRE_RESULT_SUMMARY_KIND, QUESTIONNAIRE_STATE_KIND, subscribeQuestionnaireEventKinds } from "./questionnaireNostr";
 import { formatQuestionnaireStateLabel, formatQuestionnaireTokenStatusLabel, parseQuestionnaireResultSummaryEvent, selectLatestQuestionnaireDefinition, selectLatestQuestionnaireState } from "./questionnaireRuntime";
 import { buildSimpleNamespacedLocalStorageKey, loadSimpleActorState } from "./simpleLocalState";
 import { validateQuestionnaireResponsePayload, type QuestionnaireDefinition, type QuestionnaireResponseAnswer, type QuestionnaireResponsePayload, type QuestionnaireResultSummary } from "./questionnaireProtocol";
-import { getSharedNostrPool } from "./sharedNostrPool";
 import TokenFingerprint from "./TokenFingerprint";
 import { deriveActorDisplayId } from "./actorDisplay";
 import { resolveQuestionnaireResponderNpub } from "./questionnaireResponderIdentity";
@@ -664,19 +663,18 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
     const loadQuestionnaireOptions = async () => {
       try {
         const relays = getQuestionnaireReadRelays();
-        const pool = getSharedNostrPool();
         const authorScope = coordinatorContextNpubs.length > 0
           ? [...coordinatorContextNpubs]
           : undefined;
-        let events: Awaited<ReturnType<typeof pool.querySync>> = [];
-        let stateEvents: Awaited<ReturnType<typeof pool.querySync>> = [];
+        let events: NostrEvent[] = [];
+        let stateEvents: NostrEvent[] = [];
         for (let attempt = 0; attempt <= QUESTIONNAIRE_DISCOVERY_BACKFILL_RETRY_MAX; attempt += 1) {
-          events = await pool.querySync(relays, {
+          events = await queryQuestionnaireEvents(relays, {
             kinds: [QUESTIONNAIRE_DEFINITION_KIND],
             ...(authorScope ? { authors: authorScope } : {}),
             limit: 400,
           });
-          stateEvents = await pool.querySync(relays, {
+          stateEvents = await queryQuestionnaireEvents(relays, {
             kinds: [QUESTIONNAIRE_STATE_KIND],
             ...(authorScope ? { authors: authorScope } : {}),
             limit: 400,
@@ -845,35 +843,33 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
         kinds: [QUESTIONNAIRE_RESULT_SUMMARY_KIND],
         "#questionnaire-id": [id],
       });
-      const [definitionFetch, stateFetch, responseFetch, resultFetch] = await Promise.all([
-        fetchQuestionnaireEventsWithFallback({
-          questionnaireId: id,
-          kind: QUESTIONNAIRE_DEFINITION_KIND,
-          parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireDefinitionEvent(event)?.questionnaireId ?? null,
-        }),
-        fetchQuestionnaireEventsWithFallback({
-          questionnaireId: id,
-          kind: QUESTIONNAIRE_STATE_KIND,
-          parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireStateEvent(event)?.questionnaireId ?? null,
-        }),
-        fetchQuestionnaireEventsWithFallback({
-          questionnaireId: id,
-          kind: QUESTIONNAIRE_RESPONSE_PRIVATE_KIND,
-          parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireResponseEnvelope(event)?.questionnaireId ?? null,
-        }),
-        fetchQuestionnaireEventsWithFallback({
-          questionnaireId: id,
-          kind: QUESTIONNAIRE_RESULT_SUMMARY_KIND,
-          parseQuestionnaireIdFromEvent: (event) => {
-            try {
-              const parsed = JSON.parse(event.content) as { questionnaireId?: string };
-              return typeof parsed.questionnaireId === "string" ? parsed.questionnaireId : null;
-            } catch {
-              return null;
-            }
-          },
-        }),
-      ]);
+      const definitionFetch = await fetchQuestionnaireEventsWithFallback({
+        questionnaireId: id,
+        kind: QUESTIONNAIRE_DEFINITION_KIND,
+        parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireDefinitionEvent(event)?.questionnaireId ?? null,
+      });
+      const stateFetch = await fetchQuestionnaireEventsWithFallback({
+        questionnaireId: id,
+        kind: QUESTIONNAIRE_STATE_KIND,
+        parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireStateEvent(event)?.questionnaireId ?? null,
+      });
+      const responseFetch = await fetchQuestionnaireEventsWithFallback({
+        questionnaireId: id,
+        kind: QUESTIONNAIRE_RESPONSE_PRIVATE_KIND,
+        parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireResponseEnvelope(event)?.questionnaireId ?? null,
+      });
+      const resultFetch = await fetchQuestionnaireEventsWithFallback({
+        questionnaireId: id,
+        kind: QUESTIONNAIRE_RESULT_SUMMARY_KIND,
+        parseQuestionnaireIdFromEvent: (event) => {
+          try {
+            const parsed = JSON.parse(event.content) as { questionnaireId?: string };
+            return typeof parsed.questionnaireId === "string" ? parsed.questionnaireId : null;
+          } catch {
+            return null;
+          }
+        },
+      });
       const definitionEvents = definitionFetch.events;
       const stateEvents = stateFetch.events;
       const responseEvents = responseFetch.events;
@@ -1036,57 +1032,61 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
     };
     void runBackfillWithRetry();
 
-    const unsubscribers = [
-      subscribeQuestionnaireEvents({
-        questionnaireId: id,
-        kind: QUESTIONNAIRE_DEFINITION_KIND,
-        parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireDefinitionEvent(event)?.questionnaireId ?? null,
-        onEvent: () => {
-          void refresh("live");
-        },
-        onError: () => setStatus("Questionnaire live stream disconnected."),
-      }),
-      subscribeQuestionnaireEvents({
-        questionnaireId: id,
-        kind: QUESTIONNAIRE_STATE_KIND,
-        parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireStateEvent(event)?.questionnaireId ?? null,
-        onEvent: () => {
-          void refresh("live");
-        },
-        onError: () => setStatus("Questionnaire live stream disconnected."),
-      }),
-      subscribeQuestionnaireEvents({
-        questionnaireId: id,
-        kind: QUESTIONNAIRE_RESULT_SUMMARY_KIND,
-        parseQuestionnaireIdFromEvent: (event) => {
+    let liveRefreshInFlight: Promise<void> | null = null;
+    let liveRefreshQueued = false;
+    const queueLiveRefresh = () => {
+      if (cancelled) {
+        return;
+      }
+      liveRefreshQueued = true;
+      if (liveRefreshInFlight) {
+        return;
+      }
+      liveRefreshInFlight = (async () => {
+        while (liveRefreshQueued && !cancelled) {
+          liveRefreshQueued = false;
+          await refresh("live");
+        }
+      })().finally(() => {
+        liveRefreshInFlight = null;
+      });
+    };
+
+    const unsubscribe = subscribeQuestionnaireEventKinds({
+      questionnaireId: id,
+      kinds: [
+        QUESTIONNAIRE_DEFINITION_KIND,
+        QUESTIONNAIRE_STATE_KIND,
+        QUESTIONNAIRE_RESULT_SUMMARY_KIND,
+        QUESTIONNAIRE_RESPONSE_PRIVATE_KIND,
+      ],
+      parseQuestionnaireIdFromEvent: (event) => {
+        if (event.kind === QUESTIONNAIRE_DEFINITION_KIND) {
+          return parseQuestionnaireDefinitionEvent(event)?.questionnaireId ?? null;
+        }
+        if (event.kind === QUESTIONNAIRE_STATE_KIND) {
+          return parseQuestionnaireStateEvent(event)?.questionnaireId ?? null;
+        }
+        if (event.kind === QUESTIONNAIRE_RESPONSE_PRIVATE_KIND) {
+          return parseQuestionnaireResponseEnvelope(event)?.questionnaireId ?? null;
+        }
+        if (event.kind === QUESTIONNAIRE_RESULT_SUMMARY_KIND) {
           try {
             const parsed = JSON.parse(event.content) as { questionnaireId?: string };
             return typeof parsed.questionnaireId === "string" ? parsed.questionnaireId : null;
           } catch {
             return null;
           }
-        },
-        onEvent: () => {
-          void refresh("live");
-        },
-        onError: () => setStatus("Questionnaire live stream disconnected."),
-      }),
-      subscribeQuestionnaireEvents({
-        questionnaireId: id,
-        kind: QUESTIONNAIRE_RESPONSE_PRIVATE_KIND,
-        parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireResponseEnvelope(event)?.questionnaireId ?? null,
-        onEvent: () => {
-          void refresh("live");
-        },
-        onError: () => setStatus("Questionnaire live stream disconnected."),
-      }),
-    ];
+        }
+        return null;
+      },
+      onEvent: queueLiveRefresh,
+      onError: () => setStatus("Questionnaire live stream disconnected."),
+    });
 
     return () => {
       cancelled = true;
-      for (const unsubscribe of unsubscribers) {
-        unsubscribe();
-      }
+      unsubscribe();
     };
   }, [refresh]);
 

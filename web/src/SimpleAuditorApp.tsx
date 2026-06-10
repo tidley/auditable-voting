@@ -24,12 +24,27 @@ import {
   type QuestionnaireStateEvent,
 } from "./questionnaireProtocol";
 import { decryptQuestionnaireBlindResponseAnswers } from "./questionnaireResponsePublish";
+import {
+  parseQuestionnaireBlindResponseEvent,
+  parseQuestionnaireSubmissionDecisionEvent,
+  QUESTIONNAIRE_RESPONSE_BLIND_KIND,
+  QUESTIONNAIRE_SUBMISSION_DECISION_KIND,
+} from "./questionnaireResponsePublish";
+import {
+  parseQuestionnaireDefinitionEvent,
+  parseQuestionnaireParticipantCountEvent,
+  parseQuestionnaireStateEvent,
+  QUESTIONNAIRE_DEFINITION_KIND,
+  QUESTIONNAIRE_PARTICIPANT_COUNT_KIND,
+  QUESTIONNAIRE_RESULT_SUMMARY_KIND,
+  QUESTIONNAIRE_STATE_KIND,
+  subscribeQuestionnaireEventKinds,
+} from "./questionnaireNostr";
 import type { QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
 import { deriveActorDisplayId } from "./actorDisplay";
 
 const AUDITOR_QUESTIONNAIRE_DETAIL_LIMIT = 20;
 const AUDITOR_QUESTIONNAIRE_HISTORIC_LIMIT = 2000;
-const AUDITOR_QUESTIONNAIRE_HISTORIC_BATCH_SIZE = 8;
 const AUDITOR_QUESTIONNAIRE_RESPONSE_LIMIT = 400;
 const AUDITOR_RESPONSE_AUTO_REFRESH_MS = 8_000;
 const AUDITOR_LIST_AUTO_REFRESH_MS = 30_000;
@@ -202,34 +217,30 @@ export default function SimpleAuditorApp() {
         ? latestDefinitions
         : latestDefinitions.slice(0, AUDITOR_QUESTIONNAIRE_DETAIL_LIMIT);
       const entries: AuditorQuestionnaireEntry[] = [];
-      for (let index = 0; index < candidates.length; index += AUDITOR_QUESTIONNAIRE_HISTORIC_BATCH_SIZE) {
-        const batch = candidates.slice(index, index + AUDITOR_QUESTIONNAIRE_HISTORIC_BATCH_SIZE);
-        const batchEntries = await Promise.all(batch.map(async (entry): Promise<AuditorQuestionnaireEntry> => {
-          const id = entry.definition.questionnaireId;
-          const questionnaireRelays = entry.definition.questionnaireRelays;
-          const [stateEntries, resultEntries, participantCountEntries] = await Promise.all([
-            fetchQuestionnaireState({
-              questionnaireId: id,
-              limit: 50,
-              readRelayLimit: 2,
-              preferKindOnly: true,
-              relays: questionnaireRelays,
-            }).catch(() => []),
-            fetchQuestionnaireResultSummary({
-              questionnaireId: id,
-              limit: 50,
-              readRelayLimit: 2,
-              preferKindOnly: true,
-              relays: questionnaireRelays,
-            }).catch(() => []),
-            fetchQuestionnaireParticipantCount({
-              questionnaireId: id,
-              limit: 50,
-              readRelayLimit: 2,
-              preferKindOnly: true,
-              relays: questionnaireRelays,
-            }).catch(() => []),
-          ]);
+      for (const entry of candidates) {
+        const id = entry.definition.questionnaireId;
+        const questionnaireRelays = entry.definition.questionnaireRelays;
+        const stateEntries = await fetchQuestionnaireState({
+          questionnaireId: id,
+          limit: 50,
+          readRelayLimit: 2,
+          preferKindOnly: true,
+          relays: questionnaireRelays,
+        }).catch(() => []);
+        const resultEntries = await fetchQuestionnaireResultSummary({
+          questionnaireId: id,
+          limit: 50,
+          readRelayLimit: 2,
+          preferKindOnly: true,
+          relays: questionnaireRelays,
+        }).catch(() => []);
+        const participantCountEntries = await fetchQuestionnaireParticipantCount({
+          questionnaireId: id,
+          limit: 50,
+          readRelayLimit: 2,
+          preferKindOnly: true,
+          relays: questionnaireRelays,
+        }).catch(() => []);
         const latestState = [...stateEntries]
           .sort((left, right) => Number(right.event.created_at ?? right.state.createdAt ?? 0) - Number(left.event.created_at ?? left.state.createdAt ?? 0))[0]
           ?.state.state ?? null;
@@ -238,7 +249,7 @@ export default function SimpleAuditorApp() {
           ?.summary ?? null;
         const coordinatorNpub = normalizeToNpub(entry.definition.coordinatorPubkey);
         const latestParticipantCount = selectLatestParticipantCount(participantCountEntries, id, coordinatorNpub);
-        return {
+        entries.push({
           questionnaireId: id,
           title: entry.definition.title || "Untitled questionnaire",
           description: entry.definition.description || "",
@@ -256,9 +267,7 @@ export default function SimpleAuditorApp() {
           blindSigningPublicKey: entry.definition.blindSigningPublicKey ?? null,
           responseSearchValues: buildAuditorResponseRefSearchValues(latestResult?.publishedResponseRefs ?? []),
           eventId: entry.event.id,
-        };
-        }));
-        entries.push(...batchEntries);
+        });
       }
       return entries;
   }, []);
@@ -306,55 +315,53 @@ export default function SimpleAuditorApp() {
     try {
       const selectedQuestionnaire = questionnairesRef.current.find((entry) => entry.questionnaireId === selectedId);
       const questionnaireRelays = selectedQuestionnaire?.questionnaireRelays;
-      const [definitionEntries, responseEntries, decisionEntries, resultEntries, stateEntries, delegationStatus, participantCountEntries] = await Promise.all([
-        fetchQuestionnaireDefinitions({
-          questionnaireId: selectedId,
-          limit: 50,
-          readRelayLimit: 8,
-          preferKindOnly: true,
-          relays: questionnaireRelays,
-        }).catch(() => []),
-        fetchQuestionnaireBlindResponses({
-          questionnaireId: selectedId,
-          limit: AUDITOR_QUESTIONNAIRE_RESPONSE_LIMIT,
-          readRelayLimit: 2,
-          preferKindOnly: true,
-          relays: questionnaireRelays,
-        }),
-        fetchQuestionnaireSubmissionDecisions({
-          questionnaireId: selectedId,
-          limit: AUDITOR_QUESTIONNAIRE_RESPONSE_LIMIT,
-          readRelayLimit: 2,
-          preferKindOnly: true,
-          relays: questionnaireRelays,
-        }).catch(() => []),
-        fetchQuestionnaireResultSummary({
-          questionnaireId: selectedId,
-          limit: 50,
-          readRelayLimit: 2,
-          preferKindOnly: true,
-          relays: questionnaireRelays,
-        }).catch(() => []),
-        fetchQuestionnaireState({
-          questionnaireId: selectedId,
-          limit: 50,
-          readRelayLimit: 2,
-          preferKindOnly: true,
-          relays: questionnaireRelays,
-        }).catch(() => []),
-        fetchQuestionnaireWorkerDelegationStatus({
-          questionnaireId: selectedId,
-          readRelayLimit: 2,
-          relays: questionnaireRelays,
-        }).catch(() => null),
-        fetchQuestionnaireParticipantCount({
-          questionnaireId: selectedId,
-          limit: 50,
-          readRelayLimit: 2,
-          preferKindOnly: true,
-          relays: questionnaireRelays,
-        }).catch(() => []),
-      ]);
+      const definitionEntries = await fetchQuestionnaireDefinitions({
+        questionnaireId: selectedId,
+        limit: 50,
+        readRelayLimit: 8,
+        preferKindOnly: true,
+        relays: questionnaireRelays,
+      }).catch(() => []);
+      const responseEntries = await fetchQuestionnaireBlindResponses({
+        questionnaireId: selectedId,
+        limit: AUDITOR_QUESTIONNAIRE_RESPONSE_LIMIT,
+        readRelayLimit: 2,
+        preferKindOnly: true,
+        relays: questionnaireRelays,
+      });
+      const decisionEntries = await fetchQuestionnaireSubmissionDecisions({
+        questionnaireId: selectedId,
+        limit: AUDITOR_QUESTIONNAIRE_RESPONSE_LIMIT,
+        readRelayLimit: 2,
+        preferKindOnly: true,
+        relays: questionnaireRelays,
+      }).catch(() => []);
+      const resultEntries = await fetchQuestionnaireResultSummary({
+        questionnaireId: selectedId,
+        limit: 50,
+        readRelayLimit: 2,
+        preferKindOnly: true,
+        relays: questionnaireRelays,
+      }).catch(() => []);
+      const stateEntries = await fetchQuestionnaireState({
+        questionnaireId: selectedId,
+        limit: 50,
+        readRelayLimit: 2,
+        preferKindOnly: true,
+        relays: questionnaireRelays,
+      }).catch(() => []);
+      const delegationStatus = await fetchQuestionnaireWorkerDelegationStatus({
+        questionnaireId: selectedId,
+        readRelayLimit: 2,
+        relays: questionnaireRelays,
+      }).catch(() => null);
+      const participantCountEntries = await fetchQuestionnaireParticipantCount({
+        questionnaireId: selectedId,
+        limit: 50,
+        readRelayLimit: 2,
+        preferKindOnly: true,
+        relays: questionnaireRelays,
+      }).catch(() => []);
       const latestDefinition = [...definitionEntries]
         .sort((left, right) => Number(right.event.created_at ?? right.definition.createdAt ?? 0) - Number(left.event.created_at ?? left.definition.createdAt ?? 0))[0]
         ?.definition ?? null;
@@ -527,6 +534,59 @@ export default function SimpleAuditorApp() {
       document.removeEventListener("visibilitychange", refreshOnVisible);
     };
   }, [enqueueRefresh]);
+
+  useEffect(() => {
+    const selectedId = selectedQuestionnaireId.trim();
+    if (!selectedId) {
+      return;
+    }
+    const selectedQuestionnaire = questionnairesRef.current.find((entry) => entry.questionnaireId === selectedId);
+    const unsubscribe = subscribeQuestionnaireEventKinds({
+      questionnaireId: selectedId,
+      kinds: [
+        QUESTIONNAIRE_DEFINITION_KIND,
+        QUESTIONNAIRE_STATE_KIND,
+        QUESTIONNAIRE_PARTICIPANT_COUNT_KIND,
+        QUESTIONNAIRE_RESPONSE_BLIND_KIND,
+        QUESTIONNAIRE_SUBMISSION_DECISION_KIND,
+        QUESTIONNAIRE_RESULT_SUMMARY_KIND,
+      ],
+      relays: selectedQuestionnaire?.questionnaireRelays,
+      readRelayLimit: 8,
+      limit: AUDITOR_QUESTIONNAIRE_RESPONSE_LIMIT,
+      parseQuestionnaireIdFromEvent: (event) => {
+        if (event.kind === QUESTIONNAIRE_DEFINITION_KIND) {
+          return parseQuestionnaireDefinitionEvent(event)?.questionnaireId ?? null;
+        }
+        if (event.kind === QUESTIONNAIRE_STATE_KIND) {
+          return parseQuestionnaireStateEvent(event)?.questionnaireId ?? null;
+        }
+        if (event.kind === QUESTIONNAIRE_PARTICIPANT_COUNT_KIND) {
+          return parseQuestionnaireParticipantCountEvent(event)?.questionnaireId ?? null;
+        }
+        if (event.kind === QUESTIONNAIRE_RESPONSE_BLIND_KIND) {
+          return parseQuestionnaireBlindResponseEvent(event.content)?.questionnaireId ?? null;
+        }
+        if (event.kind === QUESTIONNAIRE_SUBMISSION_DECISION_KIND) {
+          return parseQuestionnaireSubmissionDecisionEvent(event.content)?.questionnaireId ?? null;
+        }
+        if (event.kind === QUESTIONNAIRE_RESULT_SUMMARY_KIND) {
+          try {
+            const parsed = JSON.parse(event.content) as { questionnaireId?: string };
+            return typeof parsed.questionnaireId === "string" ? parsed.questionnaireId : null;
+          } catch {
+            return null;
+          }
+        }
+        return null;
+      },
+      onEvent: () => {
+        void enqueueRefresh({ list: false, selected: true });
+      },
+      onError: () => undefined,
+    });
+    return unsubscribe;
+  }, [enqueueRefresh, questionnaires, selectedQuestionnaireId]);
 
   useEffect(() => {
     if (!selectedQuestionnaireId.trim()) {

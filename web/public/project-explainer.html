@@ -588,10 +588,10 @@
           </article>
           <article class="role-card">
             <h3>3. Observer</h3>
-            <p>Open Observer and search for the questionnaire ID, organiser identity, Submission/Response ID, or Submittor identity short/full to verify the public result stream. Observer refreshes the selected questionnaire automatically while the page is visible; use Refresh for an immediate reload. In Submitted Votes, use the same submission filters to find a specific public submission. Invalid rows show their rejection reason. Organiser results decrypt encrypted answer details automatically when the local organiser key is available; Observer can decrypt them from Submitted Votes when the matching organiser nsec is supplied.</p>
+            <p>Open Observer and search for the questionnaire ID, organiser identity, Submission/Response ID, or Submittor identity short/full to verify the public result stream. Observer keeps one live subscription for the selected questionnaire and uses Refresh for an immediate serial backfill. In Submitted Votes, use the same submission filters to find a specific public submission. Invalid rows show their rejection reason. Organiser results decrypt encrypted answer details automatically when the local organiser key is available; Observer can decrypt them from Submitted Votes when the matching organiser nsec is supplied.</p>
           </article>
         </div>
-        <p>Questionnaires can mix yes/no, multiple-choice, ranked-choice, and free-text questions. Ranked-choice results are counted as points, with the highest total preferred: first choice gets one point per available option, later choices count down from there, and unranked options get <code>0</code> points.</p>
+        <p>Questionnaires can mix yes/no, multiple-choice, ranked-choice, and free-text questions. Free-text questions can allow optional voter encryption or require organiser-encrypted responses. Ranked-choice results are counted as points, with the highest total preferred: first choice gets one point per available option, later choices count down from there, and unranked options get <code>0</code> points.</p>
       </section>
 
           <section class="section" aria-labelledby="limits">
@@ -599,7 +599,7 @@
         <h2 id="limits">Current limitations</h2>
         <p class="section-intro">This is experimental software. The design is intended to be auditable, but it should not be treated as production election infrastructure without independent protocol and implementation review.</p>
         <ul class="limitation-list">
-          <li>Public relay reliability can affect delivery and discovery. The client bounds public relay reads and consolidates organiser live subscriptions, but relay rate limits can still affect busy demonstrations.</li>
+          <li>Public relay reliability can affect delivery and discovery. The client serialises public questionnaire reads and consolidates organiser, voter, and observer live questionnaire subscriptions, but relay rate limits can still affect busy demonstrations.</li>
           <li>Browser-held secret material needs careful handling.</li>
           <li>The cryptographic design needs external review before production use.</li>
           <li>Large multi-organiser runs are not yet reliable on the current public relay set.</li>

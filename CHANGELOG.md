@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.71] - 2026-06-10
+
+### Added
+- Added an organiser free-text setting to require encrypted responses.
+
+### Changed
+- Voter free-text responses now stay encrypted when the organiser requires encryption.
+- Serialised public questionnaire refresh reads and consolidated organiser, voter, and observer live questionnaire subscriptions to reduce relay-side concurrent `REQ` pressure.
+- Updated public documentation, demo guide, technical notes, and presentation copy for required free-text encryption and the reduced relay-load model.
+
 ## [0.1.16] - 2026-04-22
 
 ### Changed

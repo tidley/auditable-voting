@@ -232,7 +232,7 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 
 1. Open the app as **Organiser**.
 2. Create or load an organiser identity.
-3. In **Setup**, enter the questionnaire name, description, and questions. Supported question types are yes/no, multiple choice, ranked-choice, and free text. Ranked-choice answers are totalled as points, with the highest score preferred: first choice gets one point per available option, later choices count down from there, and unranked options get `0` points.
+3. In **Setup**, enter the questionnaire name, description, and questions. Supported question types are yes/no, multiple choice, ranked-choice, and free text; free-text questions can also require organiser-encrypted responses. Ranked-choice answers are totalled as points, with the highest score preferred: first choice gets one point per available option, later choices count down from there, and unranked options get `0` points.
 4. Use **Generate ID** only when you want a fresh questionnaire ID. Use **Copy ID** beside the Questionnaire ID when sharing the public identifier with observers.
 5. Use **Show questionnaire link** if you want a QR/link for the questionnaire.
 6. Optionally open **Settings → Relays** to add or remove questionnaire metadata relays before publishing if this round should prefer a non-default relay set.
@@ -460,12 +460,12 @@ The published summary includes per-response references as a parity backfill, so 
 
 Before a final result summary exists, the observer derives a live provisional summary from verified public submissions and labels it as live relay-derived data. Organisers also publish a separate parameterised replaceable expected-participant count event, letting the observer show accepted responses against the expected participant total while keeping individual invitees private.
 
-The observer view refreshes the selected questionnaire automatically while the page is visible, with a slower questionnaire-list refresh and an explicit Refresh button for immediate reloads. If an older published questionnaire or result payload is missing from the default list, reopen the direct questionnaire link or refresh from a relay set that still indexes that event. Encrypted answer details remain hidden unless a matching organiser `nsec` is entered for local decryption.
+The observer view uses one live subscription for the selected questionnaire and serial public refresh reads, with a slower questionnaire-list refresh and an explicit Refresh button for immediate reloads. If an older published questionnaire or result payload is missing from the default list, reopen the direct questionnaire link or refresh from a relay set that still indexes that event. Encrypted answer details remain hidden unless a matching organiser `nsec` is entered for local decryption.
 
 ## Current Limits
 
 - Public relays can delay, drop, or rate-limit traffic.
-- Organiser blind-DM history reads are serialized and scoped to a smaller primary relay subset, but relay-side limits can still affect freshness during busy runs.
+- Public questionnaire refresh reads and organiser blind-DM history reads are serialized and scoped to a smaller primary relay subset, but relay-side limits can still affect freshness during busy runs.
 - Organiser private keys and blind-signing keys are browser-local.
 - The questionnaire path is currently single-organiser.
 - Larger multi-organiser live runs are still operationally fragile on public relays.

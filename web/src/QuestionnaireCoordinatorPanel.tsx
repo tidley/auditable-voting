@@ -195,6 +195,7 @@ function createFreeTextQuestion(questionId: string, prompt = "", required = fals
     prompt,
     required,
     maxLength: 500,
+    encryptResponses: false,
   };
 }
 
@@ -337,6 +338,15 @@ function normaliseStoredQuestions(input: unknown): QuestionnaireQuestionDraft[] 
       && typeof (entry as { prompt?: unknown }).prompt === "string"
     ))
     .map((entry) => {
+      if (entry.type === "free_text") {
+        return {
+          ...entry,
+          maxLength: Number.isFinite(entry.maxLength) && entry.maxLength > 0
+            ? Math.floor(entry.maxLength)
+            : 500,
+          encryptResponses: Boolean(entry.encryptResponses),
+        };
+      }
       if (entry.type !== "rank") {
         return entry;
       }
@@ -3883,6 +3893,26 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                       ));
                     }}
                   />
+                  <label className={`simple-questionnaire-required-toggle${question.encryptResponses ? " is-on" : ""}`}>
+                    <span>Require encrypted responses</span>
+                    <input
+                      type='checkbox'
+                      role='switch'
+                      aria-checked={Boolean(question.encryptResponses)}
+                      checked={Boolean(question.encryptResponses)}
+                      onChange={(event) => {
+                        const checked = event.target.checked;
+                        updateQuestion(index, (entry) => (
+                          entry.type === "free_text"
+                            ? { ...entry, encryptResponses: checked }
+                            : entry
+                        ));
+                      }}
+                    />
+                    <span className='simple-questionnaire-switch' aria-hidden='true'>
+                      <span className='simple-questionnaire-switch-knob' />
+                    </span>
+                  </label>
                 </div>
               ) : null}
               <div className='simple-questionnaire-question-actions'>

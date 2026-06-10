@@ -87,7 +87,7 @@ function deriveElectionId() {
 }
 
 function answerToOptionA(
-  question: { questionId: string; type: "yes_no" | "multiple_choice" | "rank" | "free_text" },
+  question: { questionId: string; type: "yes_no" | "multiple_choice" | "rank" | "free_text"; encryptResponses?: boolean },
   value: unknown,
   encryptForCoordinator = false,
 ): QuestionnaireAnswer | null {
@@ -119,7 +119,12 @@ function answerToOptionA(
   if (!text) {
     return null;
   }
-  return { questionId: question.questionId, type: "text", answer: text, encryptForCoordinator };
+  return {
+    questionId: question.questionId,
+    type: "text",
+    answer: text,
+    encryptForCoordinator: Boolean(encryptForCoordinator || question.encryptResponses),
+  };
 }
 
 function mapDefinitionQuestions(definition: QuestionnaireDefinition) {
@@ -132,6 +137,7 @@ function mapDefinitionQuestions(definition: QuestionnaireDefinition) {
     multiSelect: question.type === "multiple_choice" ? question.multiSelect : undefined,
     minimumRanked: question.type === "rank" ? question.minimumRanked : undefined,
     maxLength: question.type === "free_text" ? question.maxLength : undefined,
+    encryptResponses: question.type === "free_text" ? Boolean(question.encryptResponses) : undefined,
   }));
 }
 
@@ -351,6 +357,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     multiSelect?: boolean;
     minimumRanked?: number;
     maxLength?: number;
+    encryptResponses?: boolean;
   }>>([]);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [encryptFreeTextByQuestionId, setEncryptFreeTextByQuestionId] = useState<Record<string, boolean>>({});
@@ -1512,7 +1519,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       .map((question) => answerToOptionA(
         question,
         answers[question.questionId],
-        question.type === "free_text" ? Boolean(encryptFreeTextByQuestionId[question.questionId]) : false,
+        question.type === "free_text"
+          ? Boolean(question.encryptResponses || encryptFreeTextByQuestionId[question.questionId])
+          : false,
       ))
       .filter((value): value is QuestionnaireAnswer => Boolean(value));
     runtime.updateDraftResponses(next);
@@ -2688,29 +2697,39 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                 </div>
               ) : null}
               {question.type === "free_text" ? (
-                <>
-                  <textarea
-                    className='simple-voter-input simple-questionnaire-free-text'
-                    rows={3}
-                    maxLength={question.maxLength ?? 500}
-                    value={typeof answers[question.questionId] === "string" ? (answers[question.questionId] as string) : ""}
-                    onChange={(event) => setAnswers((current) => ({ ...current, [question.questionId]: event.target.value }))}
-                  />
-                  <label className='simple-questionnaire-choice-row'>
-                    <input
-                      type='checkbox'
-                      checked={Boolean(encryptFreeTextByQuestionId[question.questionId])}
-                      onChange={(event) => {
-                        const checked = event.target.checked;
-                        setEncryptFreeTextByQuestionId((current) => ({
-                          ...current,
-                          [question.questionId]: checked,
-                        }));
-                      }}
-                    />
-                    <span>Encrypt for organiser</span>
-                  </label>
-                </>
+                (() => {
+                  const encryptionRequired = Boolean(question.encryptResponses);
+                  const encryptionEnabled = encryptionRequired || Boolean(encryptFreeTextByQuestionId[question.questionId]);
+                  return (
+                    <>
+                      <textarea
+                        className='simple-voter-input simple-questionnaire-free-text'
+                        rows={3}
+                        maxLength={question.maxLength ?? 500}
+                        value={typeof answers[question.questionId] === "string" ? (answers[question.questionId] as string) : ""}
+                        onChange={(event) => setAnswers((current) => ({ ...current, [question.questionId]: event.target.value }))}
+                      />
+                      <label className='simple-questionnaire-choice-row'>
+                        <input
+                          type='checkbox'
+                          checked={encryptionEnabled}
+                          disabled={encryptionRequired}
+                          onChange={(event) => {
+                            if (encryptionRequired) {
+                              return;
+                            }
+                            const checked = event.target.checked;
+                            setEncryptFreeTextByQuestionId((current) => ({
+                              ...current,
+                              [question.questionId]: checked,
+                            }));
+                          }}
+                        />
+                        <span>{encryptionRequired ? "Encryption required by organiser" : "Encrypt for organiser"}</span>
+                      </label>
+                    </>
+                  );
+                })()
               ) : null}
             </article>
             );

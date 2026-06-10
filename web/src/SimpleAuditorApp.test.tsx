@@ -29,6 +29,14 @@ vi.mock("./questionnaireTransport", async (importOriginal) => {
   };
 });
 
+vi.mock("./questionnaireNostr", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./questionnaireNostr")>();
+  return {
+    ...actual,
+    subscribeQuestionnaireEventKinds: vi.fn(() => () => undefined),
+  };
+});
+
 const definitions = [
   makeDefinitionEntry("q_first", "First questionnaire", 1_777_000_200),
   makeDefinitionEntry("q_second", "Second questionnaire", 1_777_000_100),

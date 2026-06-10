@@ -86,9 +86,9 @@ The voter must protect their local keys and browser state.
 3. Create a questionnaire and publish it.
 4. Share invite links from **Voting**. The General QR/link opens **Vote** directly and requests a ballot automatically; single-use private links are created and labelled in **Invited voters**. For already invited voters, **Apply to current questionnaire** green-lights rows with **Auto-ballot** ticked and publishes one public questionnaire announcement that their Vote page can discover.
 5. Open the invite as **Voter**, wait for ballot access if needed, fill in the questionnaire, and submit. Voter **Settings** shows **Ballot details** while taking part, so request, credential, submission, and timing fields can be checked if something stalls.
-6. Open **Observer** and search for the questionnaire ID, organiser identity, Submission/Response ID, or **Submittor identity** short/full to verify the public result stream. Observer refreshes the selected questionnaire automatically while the page is visible; use **Refresh** for an immediate reload. In **Submitted Votes**, use the same submission filters to find a specific public submission. Invalid rows show their rejection reason. Organiser results decrypt encrypted answer details automatically when the local organiser key is available; Observer can decrypt them from **Submitted Votes** when the matching organiser `nsec` is supplied.
+6. Open **Observer** and search for the questionnaire ID, organiser identity, Submission/Response ID, or **Submittor identity** short/full to verify the public result stream. Observer keeps one live subscription for the selected questionnaire and uses **Refresh** for an immediate serial backfill. In **Submitted Votes**, use the same submission filters to find a specific public submission. Invalid rows show their rejection reason. Organiser results decrypt encrypted answer details automatically when the local organiser key is available; Observer can decrypt them from **Submitted Votes** when the matching organiser `nsec` is supplied.
 
-Questionnaires can mix yes/no, multiple-choice, ranked-choice, and free-text questions. Ranked-choice results are counted as points, with the highest total preferred: first choice gets one point per available option, later choices count down from there, and unranked options get `0` points.
+Questionnaires can mix yes/no, multiple-choice, ranked-choice, and free-text questions. Free-text questions can allow optional voter encryption or require organiser-encrypted responses. Ranked-choice results are counted as points, with the highest total preferred: first choice gets one point per available option, later choices count down from there, and unranked options get `0` points.
 
 ## Current limitations
 
@@ -97,7 +97,7 @@ This is experimental software.
 Known weak points:
 
 - Public relay reliability can affect delivery and discovery.
-- The client bounds public relay reads and uses consolidated organiser live subscriptions, but relay rate limits can still affect busy demonstrations.
+- The client serialises public questionnaire reads and consolidates organiser, voter, and observer live questionnaire subscriptions, but relay rate limits can still affect busy demonstrations.
 - Browser-held secret material needs careful handling.
 - The cryptographic design needs external review before production use.
 - Large multi-organiser runs are not yet reliable on the current public relay set.

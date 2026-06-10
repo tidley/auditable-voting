@@ -585,10 +585,10 @@
           </article>
           <article class="role-card">
             <h3>3. Observer</h3>
-            <p>Open Observer and search for the questionnaire ID or organiser identity to verify the public result stream. Observer refreshes the selected questionnaire automatically while the page is visible; use Refresh for an immediate reload. Encrypted answer details can be decrypted locally from Submitted Votes when the matching organiser nsec is supplied.</p>
+            <p>Open Observer and search for the questionnaire ID or organiser identity to verify the public result stream. Observer keeps one live subscription for the selected questionnaire and uses Refresh for an immediate serial backfill. Encrypted answer details can be decrypted locally from Submitted Votes when the matching organiser nsec is supplied.</p>
           </article>
         </div>
-        <p>Questionnaires can mix yes/no, multiple-choice, ranked-choice, and free-text questions. Ranked-choice results are counted as points, with the highest total preferred: first choice gets one point per available option, later choices count down from there, and unranked options get <code>0</code> points.</p>
+        <p>Questionnaires can mix yes/no, multiple-choice, ranked-choice, and free-text questions. Free-text questions can allow optional voter encryption or require organiser-encrypted responses. Ranked-choice results are counted as points, with the highest total preferred: first choice gets one point per available option, later choices count down from there, and unranked options get <code>0</code> points.</p>
       </section>
 
           <section class="section" aria-labelledby="limits">

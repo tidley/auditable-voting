@@ -40,7 +40,7 @@ Shape (camelCase in the shipped client):
 - `responseVisibility: "public" | "private"`
 - `eligibilityMode: "open" | "allowlist"`
 - `allowMultipleResponsesPerPubkey: boolean`
-- `questions[]` (`yes_no`, `multiple_choice`, `rank`, `free_text`)
+- `questions[]` (`yes_no`, `multiple_choice`, `rank`, `free_text`; free text may set `encryptResponses: true`)
 
 Tags:
 

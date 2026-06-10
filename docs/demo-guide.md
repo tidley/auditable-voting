@@ -128,7 +128,7 @@ If ballot access gets stuck, open **Menu** then **Settings**. **Ballot details**
 
 Answer the questions.
 
-For free-text questions, use **Encrypt for organiser** if the answer should not be public.
+For free-text questions, use **Encrypt for organiser** if the answer should not be public. If the organiser requires encryption, Vote keeps that option switched on.
 
 When the button is ready, click **Submit response**.
 

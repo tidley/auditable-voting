@@ -50,6 +50,7 @@ import {
   parseQuestionnaireAdmissionAnnouncementEvent,
   parseQuestionnaireDefinitionEvent,
   parseQuestionnaireStateEvent,
+  queryQuestionnaireEvents,
   QUESTIONNAIRE_ADMISSION_ANNOUNCEMENT_KIND,
   QUESTIONNAIRE_DEFINITION_KIND,
   QUESTIONNAIRE_STATE_KIND,
@@ -380,20 +381,18 @@ export function selectQuestionnaireVoterIdentity(input: {
 }
 
 async function verifyAnnouncedQuestionnaireReadiness(questionnaireId: string) {
-  const [definitionFetch, stateFetch] = await Promise.all([
-    fetchQuestionnaireEventsWithFallback({
-      questionnaireId,
-      kind: QUESTIONNAIRE_DEFINITION_KIND,
-      parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireDefinitionEvent(event)?.questionnaireId ?? null,
-      limit: 50,
-    }),
-    fetchQuestionnaireEventsWithFallback({
-      questionnaireId,
-      kind: QUESTIONNAIRE_STATE_KIND,
-      parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireStateEvent(event)?.questionnaireId ?? null,
-      limit: 50,
-    }),
-  ]);
+  const definitionFetch = await fetchQuestionnaireEventsWithFallback({
+    questionnaireId,
+    kind: QUESTIONNAIRE_DEFINITION_KIND,
+    parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireDefinitionEvent(event)?.questionnaireId ?? null,
+    limit: 50,
+  });
+  const stateFetch = await fetchQuestionnaireEventsWithFallback({
+    questionnaireId,
+    kind: QUESTIONNAIRE_STATE_KIND,
+    parseQuestionnaireIdFromEvent: (event) => parseQuestionnaireStateEvent(event)?.questionnaireId ?? null,
+    limit: 50,
+  });
   const latestDefinition = selectLatestQuestionnaireDefinition(definitionFetch.events);
   const latestState = String(selectLatestQuestionnaireState(stateFetch.events)?.state ?? "");
   if (!latestDefinition) {
@@ -1002,7 +1001,6 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
     }
 
     const relays = getQuestionnaireReadRelays(undefined, 5);
-    const pool = getSharedNostrPool();
     let cancelled = false;
     let inFlight = false;
     let lastForegroundFetchAt = 0;
@@ -1029,7 +1027,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
       }
       inFlight = true;
       try {
-        const events = await pool.querySync(relays, {
+        const events = await queryQuestionnaireEvents(relays, {
           kinds: [QUESTIONNAIRE_ADMISSION_ANNOUNCEMENT_KIND],
           authors: authorHexes,
           limit: 120,
@@ -1046,6 +1044,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
     const intervalId = window.setInterval(() => {
       void fetchPublicAnnouncements();
     }, QUESTIONNAIRE_PUBLIC_ANNOUNCEMENT_POLL_MS);
+    const pool = getSharedNostrPool();
     const subscription = pool.subscribeMany(relays, {
       kinds: [QUESTIONNAIRE_ADMISSION_ANNOUNCEMENT_KIND],
       authors: authorHexes,
@@ -1088,14 +1087,22 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
 
     let cancelled = false;
     const runVerification = async () => {
-      const checks = await Promise.all(announcedIds.map(async (questionnaireId) => {
+      const checks: Array<{
+        questionnaireId: string;
+        ready: boolean | null;
+        coordinatorNpub: string;
+      }> = [];
+      for (const questionnaireId of announcedIds) {
+        if (cancelled) {
+          return;
+        }
         try {
           const result = await verifyAnnouncedQuestionnaireReadiness(questionnaireId);
-          return { questionnaireId, ...result };
+          checks.push({ questionnaireId, ...result });
         } catch {
-          return { questionnaireId, ready: null as boolean | null, coordinatorNpub: "" };
+          checks.push({ questionnaireId, ready: null, coordinatorNpub: "" });
         }
-      }));
+      }
       if (cancelled) {
         return;
       }

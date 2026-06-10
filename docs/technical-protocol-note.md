@@ -49,7 +49,7 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 
 1. Open the app as **Organiser**.
 2. Create or load an organiser identity.
-3. In **Setup**, enter the questionnaire name, description, and questions. Supported question types are yes/no, multiple choice, ranked-choice, and free text. Ranked-choice answers are totalled as points, with the highest score preferred: first choice gets one point per available option, later choices count down from there, and unranked options get `0` points.
+3. In **Setup**, enter the questionnaire name, description, and questions. Supported question types are yes/no, multiple choice, ranked-choice, and free text; free-text questions can also require organiser-encrypted responses. Ranked-choice answers are totalled as points, with the highest score preferred: first choice gets one point per available option, later choices count down from there, and unranked options get `0` points.
 4. Use **Generate ID** only when you want a fresh questionnaire ID. Use **Copy ID** beside the Questionnaire ID when sharing the public identifier with observers.
 5. Use **Show questionnaire link** if you want a QR/link for the questionnaire.
 6. Optionally open **Settings → Relays** to add or remove questionnaire metadata relays before publishing if this round should prefer a non-default relay set.
@@ -105,7 +105,7 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 - Blind issuance discovery now also performs one broader relay fallback scan when the narrow recipient relay subset is empty, reducing cases where a ballot is visible in another Nostr client before the vote UI notices it.
 - In organiser results, free-text values stored as `enc:nip44v2:` can now be decrypted locally when the organiser key is available.
 - Organiser `Closing / Closed` metadata now reflects actual close-state timing and marks overdue open rounds as `Past due` to avoid misleading historical timestamps.
-- Observer organiser filters are now retained across refresh/fetch churn, and selected-round refreshes use lighter kind-only relay reads to reduce relay notice spam.
+- Observer organiser filters are now retained across refresh/fetch churn, and selected-round refreshes use lighter serial kind-only relay reads plus one consolidated live questionnaire subscription to reduce relay notice spam.
 
 ---
 
@@ -585,7 +585,7 @@ The current client also distinguishes between:
 - **read/subscription fanout**, which is intentionally kept to a smaller primary subset
 
 That split reduces relay-side `too many concurrent REQs` failures while keeping the write path reasonably redundant.
-Automatic voter and organiser actions are also paced with a random `0-30s` delay, slower retry windows, a shorter organiser startup recovery burst, serialized blind-DM history reads, and a sender-scoped ticket publish queue so many browser actors do not all publish or query into the same public relays at once. The audit proxy defaults and generated helper commands now use a nostrwat.ch-checked control relay set (relay.nostr.net, nos.lol, relay.nostr.info, relay.nos.social, relay.momostr.pink, and relay.azzamo.net), and older persisted delegated relay hints are retained but retried with per-relay exponential backoff when they fail; browser-side NIP-17 reads still prefer relays that accept `#p` gift-wrap filters before falling back to endpoints known to reject those filters as unindexed. When delegated, the proxy can close the questionnaire only after the accepted valid response count reaches the expected invitee count; rejected or duplicate submissions do not count. After delegated closure and summary publication complete, the proxy exits cleanly. Mailbox publishes keep one deterministic anchor relay, rotate secondary relays by recipient, and apply temporary cooldowns when relays return rate-limit/pow/spam/policy failures.
+Automatic voter and organiser actions are also paced with a random `0-30s` delay, slower retry windows, a shorter organiser startup recovery burst, serialized public questionnaire refresh reads, serialized blind-DM history reads, consolidated organiser/voter/observer questionnaire subscriptions, and a sender-scoped ticket publish queue so many browser actors do not all publish or query into the same public relays at once. The audit proxy defaults and generated helper commands now use a nostrwat.ch-checked control relay set (relay.nostr.net, nos.lol, relay.nostr.info, relay.nos.social, relay.momostr.pink, and relay.azzamo.net), and older persisted delegated relay hints are retained but retried with per-relay exponential backoff when they fail; browser-side NIP-17 reads still prefer relays that accept `#p` gift-wrap filters before falling back to endpoints known to reject those filters as unindexed. When delegated, the proxy can close the questionnaire only after the accepted valid response count reaches the expected invitee count; rejected or duplicate submissions do not count. After delegated closure and summary publication complete, the proxy exits cleanly. Mailbox publishes keep one deterministic anchor relay, rotate secondary relays by recipient, and apply temporary cooldowns when relays return rate-limit/pow/spam/policy failures.
 
 ---
 
@@ -665,7 +665,7 @@ The repository now focuses on the client-side web app only:
 - Nostr is the shared state layer
 - blind-share issuance is in the simple flow
 - NIP-65 relay hints are optional and disabled by default
-- live reads and subscriptions are capped to a small primary relay subset, blind-DM history reads are serialized, and publishes can still fan out more broadly
+- live reads and subscriptions are capped to a small primary relay subset, public questionnaire refresh reads and blind-DM history reads are serialized, organiser/voter/observer questionnaire subscriptions are consolidated, and publishes can still fan out more broadly
 - local browser state is used for active session data
 - voter questionnaire participation history is kept in local browser state and carried inside voter backup/restore bundles
 
