@@ -7047,16 +7047,6 @@ export default function SimpleCoordinatorApp() {
                               <span className='simple-admitted-voter-pending'>Future questionnaires</span>
                             )}
                             <div className='simple-admitted-voter-actions'>
-                              {row.admittedEntry ? (
-                                <label className='simple-admitted-voter-auto-toggle'>
-                                  <input
-                                    type='checkbox'
-                                    checked={row.admittedEntry.autoApply !== false}
-                                    onChange={(event) => updateAdmittedVoterDetails(row.npub, { autoApply: event.target.checked })}
-                                  />
-                                  <span>Auto-ballot</span>
-                                </label>
-                              ) : null}
                               {pendingAuthorization ? (
                                 <button
                                   type='button'
@@ -7094,6 +7084,16 @@ export default function SimpleCoordinatorApp() {
                                 </button>
                               ) : null}
                             </div>
+                            {row.admittedEntry ? (
+                              <label className='simple-admitted-voter-auto-toggle'>
+                                <input
+                                  type='checkbox'
+                                  checked={row.admittedEntry.autoApply !== false}
+                                  onChange={(event) => updateAdmittedVoterDetails(row.npub, { autoApply: event.target.checked })}
+                                />
+                                <span>Auto-ballot</span>
+                              </label>
+                            ) : null}
                           </div>
                         </li>
                       );
@@ -7186,14 +7186,6 @@ export default function SimpleCoordinatorApp() {
                               <label className='simple-admitted-voter-auto-toggle'>
                                 <input
                                   type='checkbox'
-                                  checked={autoRequestBallot}
-                                  onChange={(event) => setPrivateInviteCodeAutoRequestBallot(entry.codeHash, event.target.checked)}
-                                />
-                                <span>Auto-ballot</span>
-                              </label>
-                              <label className='simple-admitted-voter-auto-toggle'>
-                                <input
-                                  type='checkbox'
                                   checked={markedUsed}
                                   onChange={(event) => setPrivateInviteCodeMarkedUsed(entry.codeHash, event.target.checked)}
                                 />
@@ -7233,6 +7225,14 @@ export default function SimpleCoordinatorApp() {
                                 title='Single-use invite link'
                               />
                             ) : null}
+                            <label className='simple-admitted-voter-auto-toggle'>
+                              <input
+                                type='checkbox'
+                                checked={autoRequestBallot}
+                                onChange={(event) => setPrivateInviteCodeAutoRequestBallot(entry.codeHash, event.target.checked)}
+                              />
+                              <span>Auto-ballot</span>
+                            </label>
                           </div>
                         </li>
                       );
