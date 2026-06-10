@@ -69,7 +69,7 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 2. Use **Create single-use invite link** when the organiser wants a one-use bearer invite. Each invite appears as a card with an internal note, voter status, QR code, and actions. **Mark as used** records manual use and makes an unclaimed link unavailable; clearing it makes the unclaimed link available again. Voter status shows whether the link has been claimed, a ballot has been sent, a vote has been submitted, or the organiser has manually marked it as used. The raw invite URL is available only until the current page is left. The voter looks up organiser and audit-proxy routing from the public questionnaire metadata on Nostr, then automatically requests a ballot.
 3. Add or import voter `npub`s in **Participants** when you want to pre-authorise known voters.
 4. Use **Copy personalised link** beside a whitelisted voter when the link should carry that pre-authorised voter `npub`. The voter must still sign in as that `npub`; the personalised URL reveals the invitee `npub` to whoever sees the link.
-5. Send Nostr invite DMs with **Invite** or **Invite all Nostr voters**. Voters who claimed a private link stay in the private invite cards and are not repeated in the Nostr invite action list.
+5. Send Nostr invite DMs with **Invite** beside each Nostr invite voter. Voters who claimed a private link stay in the private invite cards and are not repeated in the Nostr invite action list.
 6. Voters who arrive from a shared link without being whitelisted can still request a ballot, then appear under requester authorisation for the organiser.
 
 ### 4. Voter requests and submits
@@ -83,7 +83,7 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 
 ### 5. Organiser or proxy processes responses
 
-1. In the organiser **Participants** tab, use **Process requests** / **Check responses** while running browser-only. The same tab shows live accepted-response totals, per-question result bars, text responses, and responder rows as submissions are processed.
+1. In the organiser **Participants** tab, use **Check requests** in **Voter requests** while running browser-only. The same tab shows live accepted-response totals, per-question result bars, text responses, and responder rows as submissions are processed.
 2. If delegated, leave the helper running and check its heartbeat/reporting in **Audit proxy status**.
 3. Close the questionnaire and publish final results when collection is complete, if you want a fixed final summary.
 

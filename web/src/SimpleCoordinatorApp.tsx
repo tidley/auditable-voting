@@ -1134,6 +1134,7 @@ export default function SimpleCoordinatorApp() {
   }, []);
   const [knownVoterDraftNpub, setKnownVoterDraftNpub] = useState("");
   const [knownVoterInviteStatus, setKnownVoterInviteStatus] = useState<string | null>(null);
+  const [voterRequestStatus, setVoterRequestStatus] = useState<string | null>(null);
   const [knownVoterInviteRefreshNonce, setKnownVoterInviteRefreshNonce] = useState(0);
   const [optionAQueueProcessingDebug, setOptionAQueueProcessingDebug] = useState<OptionAQueueProcessingDebug>({
     inFlight: false,
@@ -1253,10 +1254,6 @@ export default function SimpleCoordinatorApp() {
     () => visibleOptionAKnownVoters.filter((entry) => !entry.inviteCodeHash?.trim()),
     [visibleOptionAKnownVoters],
   );
-  const privateInviteClaimedVoterCount = Math.max(
-    0,
-    visibleOptionAKnownVoters.length - visibleNostrInviteKnownVoters.length,
-  );
   const optionAKnownVoterByNpub = useMemo(
     () => new Map(
       visibleOptionAKnownVoters
@@ -1297,6 +1294,7 @@ export default function SimpleCoordinatorApp() {
 
   useEffect(() => {
     setKnownVoterInviteStatus(null);
+    setVoterRequestStatus(null);
     setOptimisticKnownVoterNpubs([]);
     setPrivateInviteLinksByHash({});
   }, [optionAElectionId]);
@@ -4148,59 +4146,6 @@ export default function SimpleCoordinatorApp() {
     }
   }
 
-  async function sendInvitesToAllWhitelistedVoters() {
-    if (!optionACoordinatorRuntime || !optionAElectionId || !activeCoordinatorNpub) {
-      return;
-    }
-    const targets = visibleNostrInviteKnownVoters
-      .map((entry) => entry.invitedNpub)
-      .filter((npub, index, values) => values.indexOf(npub) === index);
-    if (targets.length === 0) {
-      setKnownVoterInviteStatus("No Nostr invite voters to invite.");
-      return;
-    }
-
-    let sentCount = 0;
-    for (const invitedNpub of targets) {
-      try {
-        optionACoordinatorRuntime.addWhitelistNpub(invitedNpub);
-        const sent = await optionACoordinatorRuntime.sendInvite(invitedNpub, {
-          title: questionPrompt.trim() || "Vote",
-          description: "",
-          voteUrl: buildKnownVoterInviteLink(invitedNpub) || buildInviteUrl({
-            invite: {
-              type: "election_invite",
-              schemaVersion: 1,
-              electionId: optionAElectionId,
-              title: questionPrompt.trim() || "Vote",
-              description: "",
-              voteUrl: "",
-              invitedNpub,
-              coordinatorNpub: activeCoordinatorNpub,
-              definition: null,
-              expiresAt: null,
-            },
-          }),
-        });
-        setAutoSendFollowers((current) => ({
-          ...current,
-          [invitedNpub]: true,
-        }));
-        sentCount += 1;
-      } catch {
-        // Continue inviting remaining whitelist entries.
-      }
-    }
-
-    setKnownVoterInviteRefreshNonce((value) => value + 1);
-    void syncActiveWorkerElectionConfig().catch(() => false);
-    setKnownVoterInviteStatus(
-      sentCount > 0
-        ? `Bulk invited ${sentCount}/${targets.length} Nostr invite voters for ${optionAElectionId || "this questionnaire"}.`
-        : "Bulk invite could not send any invitations.",
-    );
-  }
-
   async function runOptionABackgroundProcessing() {
     if (!activeCoordinatorNpub.trim() || optionAQueueProcessingInFlightRef.current) {
       setOptionAQueueProcessingDebug((current) => ({
@@ -4309,12 +4254,12 @@ export default function SimpleCoordinatorApp() {
       return;
     }
     if (optionAQueueProcessingInFlightRef.current) {
-      setKnownVoterInviteStatus("Already checking questionnaire requests.");
+      setVoterRequestStatus("Already checking questionnaire requests.");
       return;
     }
     try {
       const ran = await runOptionABackgroundProcessing();
-      setKnownVoterInviteStatus(
+      setVoterRequestStatus(
         ran
           ? (
             optionAElectionId.trim()
@@ -4324,7 +4269,7 @@ export default function SimpleCoordinatorApp() {
           : "No matching questionnaires found for this organiser.",
       );
     } catch (error) {
-      setKnownVoterInviteStatus(error instanceof Error ? error.message : "Processing failed.");
+      setVoterRequestStatus(error instanceof Error ? error.message : "Processing failed.");
     }
   }
 
@@ -6434,6 +6379,17 @@ export default function SimpleCoordinatorApp() {
             aria-label='Voters'
           >
             <SimpleCollapsibleSection title='Voter requests' defaultCollapsed>
+              <div className='simple-voter-action-row simple-voter-action-row-inline'>
+                <button
+                  type='button'
+                  className='simple-voter-secondary'
+                  onClick={processKnownVoterRequests}
+                  disabled={!activeCoordinatorNpub.trim()}
+                >
+                  Check requests
+                </button>
+                {voterRequestStatus ? <p className='simple-voter-note'>{voterRequestStatus}</p> : null}
+              </div>
               {coordinatorFollowerRows.length > 0 ? (
                 <div className='simple-follower-toolbar'>
                   <input
@@ -6831,7 +6787,7 @@ export default function SimpleCoordinatorApp() {
                         disabled={!knownVoterDraftNpub.trim()}
                         onClick={() => void inviteKnownVoterNpub()}
                       >
-                        Add
+                        Invite
                       </button>
                       <button
                         type='button'
@@ -6841,22 +6797,7 @@ export default function SimpleCoordinatorApp() {
                       >
                         {knownVoterContactsLoading ? 'Importing...' : 'Import contacts'}
                       </button>
-                      <button
-                        type='button'
-                        className='simple-voter-secondary'
-                        onClick={processKnownVoterRequests}
-                      >
-                        Check requests
-                      </button>
                     </div>
-                    {privateInviteClaimedVoterCount > 0 ? (
-                      <p className='simple-voter-note'>
-                        {privateInviteClaimedVoterCount === 1
-                          ? "1 private-link voter is tracked in Private invite links above."
-                          : `${privateInviteClaimedVoterCount} private-link voters are tracked in Private invite links above.`}
-                      </p>
-                    ) : null}
-                  </div>
                   {importedKnownVoterContacts.length > 0 ? (
                     <div className='simple-voter-field-stack'>
                       <label className='simple-voter-label' htmlFor='known-voter-contact-search'>
@@ -6948,23 +6889,6 @@ export default function SimpleCoordinatorApp() {
                           );
                         })}
                       </ul>
-                      <div className='simple-voter-action-row simple-voter-action-row-inline'>
-                        <button
-                          type='button'
-                          className='simple-voter-secondary'
-                          onClick={sendInvitesToAllWhitelistedVoters}
-                          disabled={visibleNostrInviteKnownVoters.length === 0}
-                        >
-                          Invite all Nostr voters
-                        </button>
-                        <button
-                          type='button'
-                          className='simple-voter-secondary'
-                          onClick={processKnownVoterRequests}
-                        >
-                          Check responses
-                        </button>
-                      </div>
                     </>
                   ) : null}
                   {optionAPendingAuthorizations.length > 0 ? (
@@ -6994,6 +6918,7 @@ export default function SimpleCoordinatorApp() {
                     </>
                   ) : null}
                   {knownVoterInviteStatus ? <p className='simple-voter-note'>{knownVoterInviteStatus}</p> : null}
+                  </div>
                 </div>
                 </SimpleCollapsibleSection>
               </div>
