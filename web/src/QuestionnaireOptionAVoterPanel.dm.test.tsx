@@ -1096,13 +1096,13 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_submitted_marker"]} localVoterNpub={localVoterNpub} />);
 
-    const identityRegion = await screen.findByRole("region", { name: "Voter ID used for private submission" });
+    const identityRegion = await screen.findByRole("region", { name: "Anonymous ID used to vote" });
     expect(screen.getAllByLabelText(/Expand QR for token/i).length).toBeGreaterThan(0);
     expect(within(identityRegion).getByText("Questionnaire ID")).toBeTruthy();
     expect(within(identityRegion).getByText("q_submitted_marker")).toBeTruthy();
     expect(screen.getByText("Submission ID")).toBeTruthy();
     expect(screen.getByText("submission_submitted_marker")).toBeTruthy();
-    expect(screen.getAllByText("Voter ID used for private submission").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Anonymous ID used to vote").length).toBeGreaterThan(0);
     expect(screen.getAllByText("rrrrrrr").length).toBeGreaterThan(0);
     expect(screen.getByText("Submittor identity - full")).toBeTruthy();
     expect(screen.getByText("npub1" + "r".repeat(58))).toBeTruthy();

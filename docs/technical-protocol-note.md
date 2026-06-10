@@ -66,11 +66,11 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 ### 3. Organiser invites voters
 
 1. Share the questionnaire link from **Voting** with **Copy link** or **Share**. These actions use the browser/device apps already available; no provider API key or service registration is needed.
-2. Use **Create single-use invite link** in **Admitted voters** when the organiser wants a one-use bearer invite. Each invite appears in the admitted-voter list with an internal note, voter status, QR code, and actions. **Mark as used** records manual use and makes an unclaimed link unavailable; clearing it makes the unclaimed link available again. Voter status shows whether the link has been claimed, a ballot has been sent, a vote has been submitted, or the organiser has manually marked it as used. The raw invite URL is available only until the current page is left. The voter looks up organiser and audit-proxy routing from the public questionnaire metadata on Nostr, then automatically requests a ballot.
-3. Add or import voter `npub`s in **Admitted voters** when you want to admit voters once and reuse that eligibility for later questionnaires from the same organiser. Each admitted voter can have an internal note and an **Auto-ballot** checkbox. Click **Apply to current questionnaire** to project checked voters into the active questionnaire whitelist and publish one public admitted-questionnaire announcement. The roster is organiser-local; it is not a reusable ballot credential.
-4. Use **Copy personalised link** beside an admitted/whitelisted voter when the link should carry that admitted voter `npub`. The voter must still sign in as that `npub`; the personalised URL reveals the invitee `npub` to whoever sees the link.
+2. Use **Create single-use invite link** in **Invited voters** when the organiser wants a one-use bearer invite. Each invite appears in the invited-voter list with an internal note, voter status, QR code, and actions. **Mark as used** records manual use and makes an unclaimed link unavailable; clearing it makes the unclaimed link available again. Voter status shows whether the link has been claimed, a ballot has been sent, a vote has been submitted, or the organiser has manually marked it as used. The voter looks up organiser and audit-proxy routing from the public questionnaire metadata on Nostr, then automatically requests a ballot.
+3. Add or import voter `npub`s in **Invited voters** when you want to invite voters once and reuse that eligibility for later questionnaires from the same organiser. Each invited voter can have an internal note and an **Auto-ballot** checkbox. Click **Apply to current questionnaire** to project checked voters into the active questionnaire whitelist and publish one public questionnaire announcement. The roster is organiser-local; it is not a reusable ballot credential.
+4. Use **Copy personalised link** beside an invited/whitelisted voter when the link should carry that invited voter `npub`. The voter must still sign in as that `npub`; the personalised URL reveals the invitee `npub` to whoever sees the link.
 5. Send Nostr invite DMs with **Invite** beside each Nostr invite voter. Voters who claimed a private link stay in the private invite cards and are not repeated in the Nostr invite action list.
-6. Voters who arrive from a shared link without being whitelisted can still request a ballot. Pending requests appear in the **Admitted voters** island on **Voting**, where the organiser can approve and admit them.
+6. Voters who arrive from a shared link without being whitelisted can still request a ballot. Pending requests appear in the **Invited voters** island on **Voting**, where the organiser can approve and invite them.
 
 ### 4. Voter requests and submits
 
@@ -83,7 +83,7 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 
 ### 5. Organiser or proxy processes responses
 
-1. In the organiser **Voting** tab, **Live Status** and the results dashboard show live accepted-response totals, per-question result bars, text responses, and responder rows as submissions are processed. Pending voter requests appear in **Admitted voters**.
+1. In the organiser **Voting** tab, **Live Status** and the results dashboard show live accepted-response totals, per-question result bars, text responses, and responder rows as submissions are processed. Pending voter requests appear in **Invited voters**.
 2. If delegated, leave the helper running and check its heartbeat/reporting in **Audit proxy status**.
 3. Close the questionnaire and publish final results when collection is complete, if you want a fixed final summary.
 
@@ -659,7 +659,7 @@ The repository now focuses on the client-side web app only:
 - each organiser sends its own ticket share directly to the voter
 - non-lead ticket sends are slightly staggered by share index to reduce same-recipient relay bursts
 - automatic follow, blind-request, ticket, and acknowledgement sends are randomly delayed by up to `30s` to better match real participants and reduce relay rate limiting
-- admitted voters now receive active questionnaire ids (`open`/`published`) through one public organiser announcement, so voter questionnaire selection can auto-populate without per-voter metadata DMs
+- invited voters now receive active questionnaire ids (`open`/`published`) through one public organiser announcement, so voter questionnaire selection can auto-populate without per-voter metadata DMs
 - voter questionnaire submissions now spend a blind-signed credential from a fresh ephemeral response npub, with one accepted spend per questionnaire credential
 - organiser follower rows expose per-ticket relay publish diagnostics
 - Nostr is the shared state layer
@@ -781,7 +781,7 @@ The questionnaire runtime currently provides:
 
 - signer-based login entry points in voter/organiser questionnaire headers
 - organiser admission roster, per-questionnaire whitelist projection, public admitted-questionnaire announcements, and invite actions
-- organiser public-link sharing through copy and the native browser share sheet without API keys or external service accounts, plus one-use private code links with per-code share controls, per-admitted-voter personalised links carrying legacy `coordinator` and `invited` URL parameters, and roster-applied public announcements for repeated questionnaire sessions
+- organiser public-link sharing through copy and the native browser share sheet without API keys or external service accounts, plus one-use private code links with per-code share controls, per-invited-voter personalised links carrying legacy `coordinator` and `invited` URL parameters, and roster-applied public announcements for repeated questionnaire sessions
 - invite delivery over NIP-17 gift-wrapped DMs (`kind 1059` with `kind 13` seal / `kind 14` rumor), with bounded recent relay-history invite discovery on manual voter checks
 - published questionnaire definitions that include the blind-signing public key and any non-default questionnaire relay hints, plus caching and invite-attached definitions, so voters can render linked questionnaires, prefer the organiser-selected relay set, and request ballots even when the signer cannot read historical invite DMs
 - credential-attached definition refreshes that do not clear drafted response fields
@@ -792,7 +792,7 @@ The questionnaire runtime currently provides:
 - single accepted submission accounting with duplicate protection
 - local resume keyed by election id and signer `npub`
 - invite-link signer login opens the voter Vote tab directly, completes the signer-backed voter login, and can auto-prepare/send the first blind request once login is verified
-- admitted voters are stored in an organiser-local roster for repeated questionnaire sessions; when a questionnaire is active, the roster can be copied into that questionnaire's whitelist, the organiser publishes one public admitted-questionnaire announcement, the voter page discovers it and shows multiple questionnaires in a top selector with **Answer next**, and active audit proxies receive the per-questionnaire whitelist in their election-config DM
+- invited voters are stored in an organiser-local roster for repeated questionnaire sessions; when a questionnaire is active, the roster can be copied into that questionnaire's whitelist, the organiser publishes one public questionnaire announcement, the voter page discovers it and shows multiple questionnaires in a top selector with **Answer next**, and active audit proxies receive the per-questionnaire whitelist in their election-config DM
 - private code links open the questionnaire directly, keep all `npub`s out of the URL, resolve organiser and audit-proxy routing from public questionnaire metadata, automatically request a ballot, store only a code hash in organiser state, redeem the first matching blind request into a normal whitelist entry, and admit that claimant for future questionnaires once the organiser sees the claim; active audit proxies receive the same hash registry in their election-config DM
 - Android Amber NIP-46 sessions now request `sign_event`, `nip04_encrypt/decrypt`, and `nip44_encrypt/decrypt` up front during connect so later flow steps do not trigger capability escalation prompts
 - invite/login npubs and local voter/responder npubs may differ; the invite can be opened against the current local voter identity, then the organiser either auto-issues for whitelisted voters or manually authorises unexpected requesters

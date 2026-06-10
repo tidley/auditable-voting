@@ -825,21 +825,30 @@ describe("questionnaireOptionARuntime", () => {
 
     coordinator.addBearerInviteCode(inviteCodeHash);
     coordinator.updateBearerInviteCodeNote(inviteCodeHash, "Alice");
+    expect(coordinator.getSnapshot()?.bearerInviteCodes[inviteCodeHash]).toEqual(
+      expect.objectContaining({
+        autoRequestBallot: true,
+      }),
+    );
+    coordinator.setBearerInviteCodeAutoRequestBallot(inviteCodeHash, false);
     coordinator.setBearerInviteCodeMarkedUsed(inviteCodeHash, true);
     expect(coordinator.getSnapshot()?.bearerInviteCodes[inviteCodeHash]).toEqual(
       expect.objectContaining({
         state: "revoked",
         note: "Alice",
+        autoRequestBallot: false,
         markedUsedAt: expect.any(String),
         revokedAt: expect.any(String),
       }),
     );
 
+    coordinator.setBearerInviteCodeAutoRequestBallot(inviteCodeHash, true);
     coordinator.setBearerInviteCodeMarkedUsed(inviteCodeHash, false);
     expect(coordinator.getSnapshot()?.bearerInviteCodes[inviteCodeHash]).toEqual(
       expect.objectContaining({
         state: "available",
         note: "Alice",
+        autoRequestBallot: true,
         markedUsedAt: null,
         revokedAt: null,
       }),

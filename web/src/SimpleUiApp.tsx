@@ -405,6 +405,7 @@ async function verifyAnnouncedQuestionnaireIsReady(questionnaireId: string) {
 type SimpleUiAppProps = {
   activeTab?: VoterTab;
   onActiveTabChange?: (tab: VoterTab) => void;
+  onIdentityChange?: (npub: string) => void;
   showSectionTabs?: boolean;
 };
 
@@ -464,6 +465,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
   const [ballotAccepted, setBallotAccepted] = useState(false);
   const [selectedVotingId, setSelectedVotingId] = useState("");
   const [internalActiveTab, setInternalActiveTab] = useState<VoterTab>(() => (linkedQuestionnaireId ? "vote" : "configure"));
+  const onIdentityChange = props.onIdentityChange;
   const activeTab = props.activeTab ?? internalActiveTab;
   const setActiveTab = useCallback((nextTab: VoterTab) => {
     setInternalActiveTab(nextTab);
@@ -1484,6 +1486,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
     const npub = activeVoterNpub;
     if (!npub) {
       setVoterId("pending");
+      onIdentityChange?.("");
       if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent(SIMPLE_IDENTITY_UPDATED_EVENT, {
           detail: { role: "voter", npub: "" },
@@ -1493,12 +1496,13 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
     }
 
     setVoterId(deriveActorDisplayId(npub));
+    onIdentityChange?.(npub);
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent(SIMPLE_IDENTITY_UPDATED_EVENT, {
         detail: { role: "voter", npub },
       }));
     }
-  }, [activeVoterNpub]);
+  }, [activeVoterNpub, onIdentityChange]);
 
   useEffect(() => {
     setLiveVoteChoice(null);

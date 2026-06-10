@@ -2,7 +2,7 @@
 
 Static, browser-first questionnaire voting over Nostr relays.
 
-Auditable Voting lets an organiser publish a questionnaire, admit voters for repeated questionnaire rounds, issue fresh blind ballot credentials per response, accept public blind-token responses, and let observers verify the public result stream. It runs as a static web app, with an optional outbound-only Rust audit proxy for organiser-offline issuance, verification, closing, and result publication.
+Auditable Voting lets an organiser publish a questionnaire, invite voters for repeated questionnaire rounds, issue fresh blind ballot credentials per response, accept public blind-token responses, and let observers verify the public result stream. It runs as a static web app, with an optional outbound-only Rust audit proxy for organiser-offline issuance, verification, closing, and result publication.
 
 Live site: [npub1hkze8k84da0qm4lu75x32z33qepyzdqc735jnj5a602x8q4cstksnkvl3a.nsite.lol](https://npub1hkze8k84da0qm4lu75x32z33qepyzdqc735jnj5a602x8q4cstksnkvl3a.nsite.lol/)
 
@@ -20,9 +20,9 @@ The active product is the client in `web/` plus the optional audit proxy in `wor
 - Nostr-first transport using public events and NIP-17 private control traffic.
 - Per-questionnaire relay hints published in questionnaire metadata when the organiser uses a non-default relay set.
 - Yes/no, multiple-choice, ranked-choice, and free-text questionnaire questions.
-- Browser-only invite sharing by copied link, native device share actions, General QR links that open Vote directly and request a ballot automatically, personalised links for admitted voter npubs, public admitted-questionnaire announcements, or one-use private code links managed from Admitted voters with notes, share controls, and QR codes.
-- Organiser-local admitted voter rosters can be reused across later questionnaires; each row can carry an internal note and an auto-ballot checkbox. Applying the roster to a questionnaire green-lights checked voters and publishes one public questionnaire announcement, while each response still requires a fresh blind credential requested by the voter.
-- Blind credential issuance for admitted participants.
+- Browser-only invite sharing by copied link, native device share actions, General QR links that open Vote directly and request a ballot automatically, personalised links for invited voter npubs, public questionnaire announcements for invited voters, or one-use private code links managed from Invited voters with notes, share controls, and QR codes.
+- Organiser-local invited voter rosters can be reused across later questionnaires; each row can carry an internal note and an auto-ballot checkbox. Applying the roster to a questionnaire green-lights checked voters and publishes one public questionnaire announcement, while each response still requires a fresh blind credential requested by the voter.
+- Blind credential issuance for invited participants.
 - Public blind-token submissions from ephemeral response keys.
 - Organiser and Observer results derived from public submissions and decisions, including proxy-accepted responses, locally verified blind-token proofs, rejection reasons, and organiser-side automatic decryption of encrypted answer details when the local organiser key is available.
 - Observer-local `nsec` entry for decrypting encrypted response details when the organiser key is deliberately supplied.
@@ -141,7 +141,7 @@ The proxy is outbound-only. It does not require inbound ports or a public server
 ## Protocol Summary
 
 1. The organiser publishes a questionnaire definition, optional non-default relay hints, and public expected-voter count.
-2. When an admitted roster is applied, the organiser green-lights checked admitted voters and publishes one public admitted-questionnaire announcement rather than sending the same questionnaire metadata to every voter.
+2. When an invited-voter roster is applied, the organiser green-lights checked invited voters and publishes one public questionnaire announcement rather than sending the same questionnaire metadata to every voter.
 3. Voters discover the public announcement and request blind credentials over private NIP-17 messages when they answer.
 4. The organiser or audit proxy blind-signs requests from eligible voters.
 5. Voters submit public blind-token responses from ephemeral response keys.

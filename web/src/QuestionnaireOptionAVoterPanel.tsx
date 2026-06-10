@@ -2400,7 +2400,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         </div>
       ) : null}
 
-      {inviteDropdownOptions.length > 0 ? (
+      {inviteDropdownOptions.length > 1 ? (
         <div className='simple-questionnaire-invite-switcher'>
           <select
             id='questionnaire-invite-select'
@@ -2425,20 +2425,18 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               );
             })}
           </select>
-          {inviteDropdownOptions.length > 1 ? (
-            <button
-              type='button'
-              className='simple-voter-primary simple-questionnaire-answer-next'
-              disabled={!nextInviteDropdownOption}
-              onClick={() => {
-                if (nextInviteDropdownOption) {
-                  void openInvite(nextInviteDropdownOption, true);
-                }
-              }}
-            >
-              Answer next
-            </button>
-          ) : null}
+          <button
+            type='button'
+            className='simple-voter-primary simple-questionnaire-answer-next'
+            disabled={!nextInviteDropdownOption}
+            onClick={() => {
+              if (nextInviteDropdownOption) {
+                void openInvite(nextInviteDropdownOption, true);
+              }
+            }}
+          >
+            Answer next
+          </button>
         </div>
       ) : null}
       {visiblePendingInvites.length > 0 ? (
@@ -2692,18 +2690,18 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         </button>
       </div>
       {snapshot?.submission ? (
-        <section className='simple-settings-card simple-submission-identity-card' aria-label='Voter ID used for private submission'>
+        <section className='simple-settings-card simple-submission-identity-card' aria-label='Anonymous ID used to vote'>
           <div className='simple-submission-identity-header'>
             <div>
               <p className='simple-questionnaire-voter-number'>Private submission identity</p>
-              <h4 className='simple-voter-section-title'>Voter ID used for private submission</h4>
+              <h4 className='simple-voter-section-title'>Anonymous ID used to vote</h4>
             </div>
           </div>
           <div className='simple-submission-identity-body'>
             <div className='simple-submission-identity-visuals'>
               <TokenFingerprint
                 tokenId={submittedMarkerNpub}
-                label='Voter ID used for private submission'
+                label='Anonymous ID used to vote'
                 large
                 showQr
                 hideMetadata

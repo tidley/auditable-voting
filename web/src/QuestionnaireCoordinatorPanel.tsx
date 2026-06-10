@@ -2843,7 +2843,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             await props.onAfterPublishQuestionnaire?.(definitionToPublish.questionnaireId);
           } catch (error) {
             setStatus(
-              `Vote published, but admitted voters could not be applied: ${error instanceof Error ? error.message : "unknown error"}.`,
+              `Vote published, but invited voters could not be applied: ${error instanceof Error ? error.message : "unknown error"}.`,
             );
           }
         }
@@ -3956,7 +3956,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                 disabled={!canPublishDraft || !props.canApplyAdmissionsOnPublish}
                 onClick={() => void publishDefinition({ applyAdmissions: true })}
               >
-                Publish + apply admitted voters
+                Publish + apply invited voters
               </button>
             ) : null}
           </>

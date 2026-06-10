@@ -2919,8 +2919,16 @@ code {
 }
 
 .simple-admitted-voter-id {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
   color: var(--simple-text);
   font-weight: 850;
+}
+
+.simple-admitted-voter-ordinal {
+  color: var(--simple-teal);
+  font-variant-numeric: tabular-nums;
 }
 
 .simple-admitted-voter-npub {

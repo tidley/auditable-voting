@@ -76,6 +76,7 @@ export interface BearerInviteCodeEntry {
   createdAt: IsoTime;
   state: BearerInviteCodeState;
   note?: string | null;
+  autoRequestBallot?: boolean;
   markedUsedAt?: IsoTime | null;
   redeemedAt?: IsoTime | null;
   redeemedNpub?: Npub | null;

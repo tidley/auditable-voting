@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { nip19 } from "nostr-tools";
 import SimpleAuditorApp from "./SimpleAuditorApp";
 import SimpleCoordinatorApp from "./SimpleCoordinatorApp";
@@ -146,11 +146,12 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
         if (cancelled) {
           return;
         }
-        setAccountIdentityNpub(state?.keypair?.npub?.trim() || persistedSignerNpub);
+        const loadedNpub = state?.keypair?.npub?.trim() || persistedSignerNpub;
+        setAccountIdentityNpub((current) => loadedNpub || current);
       })
       .catch(() => {
         if (!cancelled) {
-          setAccountIdentityNpub(persistedSignerNpub);
+          setAccountIdentityNpub((current) => persistedSignerNpub || current);
         }
       });
 
@@ -358,6 +359,10 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
     await preserveLocalIdentityForRoleSwitch(nextRole);
     setRole(nextRole);
   };
+
+  const handleVoterIdentityChange = useCallback((npub: string) => {
+    setAccountIdentityNpub(npub.trim());
+  }, []);
 
   useEffect(() => {
     if (showGateway) {
@@ -858,6 +863,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
         <SimpleUiApp
           activeTab={voterTab}
           onActiveTabChange={setVoterTab}
+          onIdentityChange={handleVoterIdentityChange}
           showSectionTabs={false}
         />
       ) : role === 'coordinator' ? (
