@@ -1,12 +1,22 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 vi.mock("./questionnaireFlowMode", () => ({
   getQuestionnaireFlowMode: () => "option_a",
 }));
 
+vi.mock("./sharedNostrPool", () => ({
+  getSharedNostrPool: () => ({
+    querySync: vi.fn().mockResolvedValue([]),
+    subscribeMany: vi.fn(() => ({
+      close: vi.fn(),
+    })),
+  }),
+}));
+
 import QuestionnaireCoordinatorPanel from "./QuestionnaireCoordinatorPanel";
+import { upsertElectionSummary } from "./questionnaireOptionAStorage";
 
 afterEach(() => {
   cleanup();
@@ -59,5 +69,46 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
 
     expect(idInput.value).toMatch(/^q_[a-f0-9]+$/);
     expect(idInput.value).not.toBe(previousId);
+  });
+
+  it("shows locally known organiser questionnaires in the live status selector", async () => {
+    const coordinatorNpub = "npub1organiser";
+    upsertElectionSummary({
+      electionId: "q_first_local",
+      title: "First local questionnaire",
+      description: "",
+      state: "open",
+      openedAt: "2026-06-01T10:00:00.000Z",
+      closedAt: null,
+      coordinatorNpub,
+    });
+    upsertElectionSummary({
+      electionId: "q_second_local",
+      title: "Second local questionnaire",
+      description: "",
+      state: "open",
+      openedAt: "2026-06-02T10:00:00.000Z",
+      closedAt: null,
+      coordinatorNpub,
+    });
+    upsertElectionSummary({
+      electionId: "q_other_organiser",
+      title: "Other organiser questionnaire",
+      description: "",
+      state: "open",
+      openedAt: "2026-06-03T10:00:00.000Z",
+      closedAt: null,
+      coordinatorNpub: "npub1other",
+    });
+
+    render(<QuestionnaireCoordinatorPanel view='responses' coordinatorNpub={coordinatorNpub} />);
+
+    const selector = await screen.findByRole("combobox", { name: "Questionnaire" }) as HTMLSelectElement;
+    await waitFor(() => {
+      const optionText = [...selector.options].map((option) => option.textContent ?? "");
+      expect(optionText.some((text) => text.includes("First local questionnaire - q_first_local"))).toBe(true);
+      expect(optionText.some((text) => text.includes("Second local questionnaire - q_second_local"))).toBe(true);
+      expect(optionText.some((text) => text.includes("Other organiser questionnaire"))).toBe(false);
+    });
   });
 });

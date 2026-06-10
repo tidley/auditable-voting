@@ -46,7 +46,7 @@ import {
   questionnaireRelaysForMetadata,
 } from "./questionnaireRelays";
 import { createSignerService } from "./services/signerService";
-import { loadCoordinatorState, loadElectionSummary, upsertElectionSummary } from "./questionnaireOptionAStorage";
+import { listElectionSummaries, loadCoordinatorState, loadElectionSummary, upsertElectionSummary } from "./questionnaireOptionAStorage";
 import {
   type WorkerElectionConfigSnapshot,
   fetchOptionAWorkerStatusDmsWithNsec,
@@ -1631,9 +1631,24 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           return;
         }
 
-        const coordinatorFilter = coordinatorNpub.trim();
         const ids = new Set<string>();
         const titlesById: Record<string, string> = {};
+        const coordinatorFilter = coordinatorNpub.trim();
+        for (const summary of listElectionSummaries()) {
+          if (coordinatorFilter && summary.coordinatorNpub !== coordinatorFilter) {
+            continue;
+          }
+          const summaryId = summary.electionId.trim();
+          if (!summaryId) {
+            continue;
+          }
+          ids.add(summaryId);
+          const cachedDefinition = readCachedQuestionnaireDefinition(summaryId);
+          const summaryTitle = cachedDefinition?.title?.trim() || summary.title?.trim() || "";
+          if (summaryTitle) {
+            titlesById[summaryId] = summaryTitle;
+          }
+        }
         for (const event of events) {
           const parsed = parseQuestionnaireDefinitionEvent(event);
           if (!parsed) {
@@ -1654,12 +1669,40 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         if (selectedId) {
           ids.add(selectedId);
         }
-        setAvailableQuestionnaireIds([...ids].sort((left, right) => left.localeCompare(right)));
+        setAvailableQuestionnaireIds([...ids].sort((left, right) => {
+          const leftSummary = loadElectionSummary(left);
+          const rightSummary = loadElectionSummary(right);
+          const leftTime = Date.parse(leftSummary?.openedAt ?? leftSummary?.closedAt ?? "");
+          const rightTime = Date.parse(rightSummary?.openedAt ?? rightSummary?.closedAt ?? "");
+          if (Number.isFinite(leftTime) || Number.isFinite(rightTime)) {
+            return (Number.isFinite(rightTime) ? rightTime : 0) - (Number.isFinite(leftTime) ? leftTime : 0);
+          }
+          return left.localeCompare(right);
+        }));
         setAvailableQuestionnaireTitles(titlesById);
       } catch {
         const selectedId = questionnaireId.trim();
-        setAvailableQuestionnaireIds(selectedId ? [selectedId] : []);
-        setAvailableQuestionnaireTitles({});
+        const ids = new Set<string>();
+        const titlesById: Record<string, string> = {};
+        const coordinatorFilter = coordinatorNpub.trim();
+        for (const summary of listElectionSummaries()) {
+          if (coordinatorFilter && summary.coordinatorNpub !== coordinatorFilter) {
+            continue;
+          }
+          const summaryId = summary.electionId.trim();
+          if (!summaryId) {
+            continue;
+          }
+          ids.add(summaryId);
+          if (summary.title?.trim()) {
+            titlesById[summaryId] = summary.title.trim();
+          }
+        }
+        if (selectedId) {
+          ids.add(selectedId);
+        }
+        setAvailableQuestionnaireIds([...ids]);
+        setAvailableQuestionnaireTitles(titlesById);
       }
     };
     void loadQuestionnaireOptions();

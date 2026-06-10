@@ -351,18 +351,17 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const inviteContext = useMemo(() => parseInviteFromUrl(), []);
   const [electionId, setElectionId] = useState(inviteContext.electionId ?? deriveElectionId());
   const previousElectionIdRef = useRef(electionId);
-  const latestAnnouncedQuestionnaireId = useMemo(() => {
-    const ids = (props.announcedQuestionnaireIds ?? [])
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0);
-    return ids.at(-1) ?? "";
-  }, [props.announcedQuestionnaireIds]);
-  const announcedQuestionnaireIdKey = useMemo(() => {
-    return (props.announcedQuestionnaireIds ?? [])
+  const announcedQuestionnaireIds = useMemo(() => (
+    (props.announcedQuestionnaireIds ?? [])
       .map((value) => value.trim())
       .filter((value) => value.length > 0)
-      .join("|");
-  }, [props.announcedQuestionnaireIds]);
+  ), [props.announcedQuestionnaireIds]);
+  const latestAnnouncedQuestionnaireId = useMemo(() => {
+    return announcedQuestionnaireIds.at(-1) ?? "";
+  }, [announcedQuestionnaireIds]);
+  const announcedQuestionnaireIdKey = useMemo(() => {
+    return announcedQuestionnaireIds.join("|");
+  }, [announcedQuestionnaireIds]);
   const announcedQuestionnaireIdSet = useMemo(() => {
     return new Set(announcedQuestionnaireIdKey ? announcedQuestionnaireIdKey.split("|") : []);
   }, [announcedQuestionnaireIdKey]);
@@ -914,7 +913,16 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
 
   useEffect(() => {
     const currentId = electionId.trim();
-    if (!linkedContextElectionId && latestAnnouncedQuestionnaireId && (!currentId || (!hasInFlightState() && currentId !== latestAnnouncedQuestionnaireId))) {
+    const multipleChoicesKnown = announcedQuestionnaireIds.length > 1 || contextPendingInvites.length > 1;
+    const preserveCurrentSelection = multipleChoicesKnown && Boolean(props.localVoterNpub?.trim() || signedInNpub.trim());
+    if (
+      !linkedContextElectionId
+      && latestAnnouncedQuestionnaireId
+      && (
+        !currentId
+        || (!preserveCurrentSelection && !hasInFlightState() && currentId !== latestAnnouncedQuestionnaireId)
+      )
+    ) {
       setElectionId(latestAnnouncedQuestionnaireId);
       return;
     }
@@ -929,22 +937,24 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     if (localInvite?.electionId?.trim()) {
       setElectionId(localInvite.electionId.trim());
     }
-  }, [electionId, latestAnnouncedQuestionnaireId, linkedContextElectionId, props.localVoterNpub, snapshot?.blindRequest?.requestId, snapshot?.credentialReady, snapshot?.submission?.submissionId]);
+  }, [announcedQuestionnaireIds.length, contextPendingInvites.length, electionId, latestAnnouncedQuestionnaireId, linkedContextElectionId, props.localVoterNpub, signedInNpub, snapshot?.blindRequest?.requestId, snapshot?.credentialReady, snapshot?.submission?.submissionId]);
 
   useEffect(() => {
     if (contextPendingInvites.length === 0 || hasInFlightState()) {
       return;
     }
+    const multipleChoicesKnown = announcedQuestionnaireIds.length > 1 || contextPendingInvites.length > 1;
+    const preserveCurrentSelection = multipleChoicesKnown && Boolean(props.localVoterNpub?.trim() || signedInNpub.trim());
     const preferredInvite = (latestAnnouncedQuestionnaireId
       ? contextPendingInvites.find((invite) => invite.electionId === latestAnnouncedQuestionnaireId)
       : null)
       ?? (linkedContextElectionId ? null : contextPendingInvites.at(-1))
       ?? null;
     const nextElectionId = preferredInvite?.electionId?.trim() ?? "";
-    if (nextElectionId && electionId.trim() !== nextElectionId) {
+    if (nextElectionId && electionId.trim() !== nextElectionId && (!electionId.trim() || !preserveCurrentSelection)) {
       setElectionId(nextElectionId);
     }
-  }, [contextPendingInvites, electionId, latestAnnouncedQuestionnaireId, linkedContextElectionId, snapshot?.blindRequest?.requestId, snapshot?.credentialReady, snapshot?.submission?.submissionId]);
+  }, [announcedQuestionnaireIds.length, contextPendingInvites, electionId, latestAnnouncedQuestionnaireId, linkedContextElectionId, props.localVoterNpub, signedInNpub, snapshot?.blindRequest?.requestId, snapshot?.credentialReady, snapshot?.submission?.submissionId]);
 
   useEffect(() => {
     const voterNpub = signedInNpub.trim();
@@ -1980,8 +1990,72 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     linkedDropdownCoordinatorNpub,
     pendingInvites,
   ]);
+  const syntheticInviteQuestionnaireIds = useMemo(() => {
+    const ids = [...announcedQuestionnaireIds];
+    const currentId = currentQuestionnaireId.trim();
+    if (currentId && !ids.includes(currentId)) {
+      ids.unshift(currentId);
+    }
+    const loadedId = electionId.trim();
+    if (loadedId && !ids.includes(loadedId)) {
+      ids.unshift(loadedId);
+    }
+    return ids;
+  }, [announcedQuestionnaireIds, currentQuestionnaireId, electionId]);
+  const buildSyntheticInviteForQuestionnaireId = (questionnaireId: string): ElectionInviteMessage | null => {
+    const id = questionnaireId.trim();
+    if (!id) {
+      return null;
+    }
+    const definition = (questionnaireDefinition?.questionnaireId === id ? questionnaireDefinition : null)
+      ?? (activeInvite?.definition?.questionnaireId === id ? activeInvite.definition : null)
+      ?? (snapshot?.blindIssuance?.definition?.questionnaireId === id ? snapshot.blindIssuance.definition : null)
+      ?? (snapshot?.inviteMessage?.definition?.questionnaireId === id ? snapshot.inviteMessage.definition : null)
+      ?? (inviteContext.invite?.definition?.questionnaireId === id ? inviteContext.invite.definition : null)
+      ?? readCachedQuestionnaireDefinition(id);
+    const summary = loadElectionSummary(id);
+    const coordinatorNpub = definition?.coordinatorPubkey?.trim()
+      || (snapshot?.electionId === id ? snapshot.coordinatorNpub?.trim() : "")
+      || (activeInvite?.electionId === id ? activeInvite.coordinatorNpub?.trim() : "")
+      || (snapshot?.inviteMessage?.electionId === id ? snapshot.inviteMessage.coordinatorNpub?.trim() : "")
+      || (inviteContext.invite?.electionId === id ? inviteContext.invite.coordinatorNpub?.trim() : "")
+      || summary?.coordinatorNpub?.trim()
+      || linkedDropdownCoordinatorNpub
+      || "";
+    if (!coordinatorNpub) {
+      return null;
+    }
+    if (linkedDropdownCoordinatorNpub && coordinatorNpub !== linkedDropdownCoordinatorNpub) {
+      return null;
+    }
+    const invitedNpub = props.localVoterNpub?.trim()
+      || signedInNpub.trim()
+      || (snapshot?.electionId === id ? snapshot.invitedNpub?.trim() : "")
+      || "";
+    const title = definition?.title?.trim() || summary?.title?.trim() || id;
+    return {
+      type: "election_invite",
+      schemaVersion: 1,
+      electionId: id,
+      title,
+      description: definition?.description ?? summary?.description ?? "",
+      voteUrl: typeof window === "undefined" ? "" : window.location.href,
+      invitedNpub,
+      coordinatorNpub,
+      blindSigningPublicKey: definition?.blindSigningPublicKey ?? summary?.blindSigningPublicKey ?? null,
+      issueBlindTokensWorker: summary?.issueBlindTokensWorker ?? null,
+      definition,
+      expiresAt: null,
+    };
+  };
   const inviteDropdownOptions = useMemo(() => {
     const map = new Map<string, ElectionInviteMessage>();
+    for (const questionnaireId of syntheticInviteQuestionnaireIds) {
+      const syntheticInvite = buildSyntheticInviteForQuestionnaireId(questionnaireId);
+      if (syntheticInvite && canShowInviteForCurrentIdentity(syntheticInvite)) {
+        map.set(inviteMessageKey(syntheticInvite), syntheticInvite);
+      }
+    }
     for (const invite of inviteDropdownSourceInvites) {
       if (!canShowInviteForCurrentIdentity(invite)) {
         continue;
@@ -1996,7 +2070,17 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       }
     }
     return [...map.values()];
-  }, [activeInvite, inviteDropdownSourceInvites, linkedContextElectionId, signedInNpub, props.localVoterNpub, snapshot?.inviteMessage]);
+  }, [
+    activeInvite,
+    inviteDropdownSourceInvites,
+    linkedContextElectionId,
+    linkedDropdownCoordinatorNpub,
+    props.localVoterNpub,
+    questionnaireDefinition,
+    signedInNpub,
+    snapshot,
+    syntheticInviteQuestionnaireIds,
+  ]);
   const nextInviteDropdownOption = useMemo(() => {
     if (inviteDropdownOptions.length <= 1) {
       return null;

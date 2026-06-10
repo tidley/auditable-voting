@@ -326,6 +326,87 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     });
   });
 
+  it("keeps the current public questionnaire in the selector when a new admitted invite arrives", async () => {
+    const user = userEvent.setup();
+    const localVoterNpub = "npub1" + "s".repeat(58);
+    const coordinatorNpub = "npub1" + "b".repeat(58);
+    const makeDefinition = (questionnaireId: string, title: string, prompt: string) => ({
+      schemaVersion: 1 as const,
+      eventType: "questionnaire_definition" as const,
+      responseMode: "blind_token" as const,
+      questionnaireId,
+      title,
+      description: "",
+      createdAt: 1,
+      openAt: 1,
+      closeAt: 9999999999,
+      coordinatorPubkey: coordinatorNpub,
+      coordinatorEncryptionPubkey: coordinatorNpub,
+      responseVisibility: "private" as const,
+      eligibilityMode: "open" as const,
+      allowMultipleResponsesPerPubkey: false,
+      blindSigningPublicKey: {
+        scheme: "rsabssa-sha384-pss-deterministic-v1" as const,
+        keyId: "blind_key",
+        jwk: { kty: "RSA", e: "AQAB", n: "test" },
+      },
+      questions: [{
+        questionId: `${questionnaireId}_q1`,
+        type: "yes_no" as const,
+        prompt,
+        required: true,
+      }],
+    });
+    const initialDefinition = makeDefinition("q_public_initial", "Public initial", "Initial public prompt");
+    const nextDefinition = makeDefinition("q_public_next", "Public next", "Next public prompt");
+    storeCachedQuestionnaireDefinition(initialDefinition);
+    storeCachedQuestionnaireDefinition(nextDefinition);
+    optionAStorageMocks.listInvitesFromMailbox.mockReturnValue([
+      {
+        type: "election_invite",
+        schemaVersion: 1,
+        electionId: "q_public_next",
+        title: "Public next",
+        description: "",
+        voteUrl: "https://example.test/vote?q=q_public_next",
+        invitedNpub: localVoterNpub,
+        coordinatorNpub,
+        blindSigningPublicKey: nextDefinition.blindSigningPublicKey,
+        definition: nextDefinition,
+        expiresAt: null,
+      },
+    ]);
+    const requestedElectionIds: string[] = [];
+    vi.spyOn(QuestionnaireOptionAVoterRuntime.prototype, "requestBlindBallot")
+      .mockImplementation(async function mockedRequestBlindBallot(this: QuestionnaireOptionAVoterRuntime) {
+        requestedElectionIds.push(this.getSnapshot()?.electionId ?? "");
+        return this.getSnapshot()!;
+      });
+    window.history.pushState(null, "", `/?role=voter&q=q_public_initial&coordinator=${coordinatorNpub}`);
+
+    render(
+      <QuestionnaireOptionAVoterPanel
+        announcedQuestionnaireIds={["q_public_initial", "q_public_next"]}
+        localVoterNpub={localVoterNpub}
+      />,
+    );
+
+    const selector = await screen.findByRole("combobox", { name: "Questionnaire" }) as HTMLSelectElement;
+    await waitFor(() => {
+      expect([...selector.options].map((option) => option.textContent)).toEqual([
+        expect.stringContaining("Public initial"),
+        expect.stringContaining("Public next"),
+      ]);
+    });
+    expect(screen.getByText(/Initial public prompt/)).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Answer next" }));
+
+    await waitFor(() => {
+      expect(requestedElectionIds).toContain("q_public_next");
+    });
+  });
+
   it("can hide the vote-page Login action when login is provided by the app menu", async () => {
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_menu_login"]} showLoginAction={false} />);
 

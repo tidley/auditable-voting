@@ -244,6 +244,24 @@ export function loadElectionSummary(electionId: string): ElectionSummary | null 
   return all[electionId] ?? null;
 }
 
+export function listElectionSummaries() {
+  const all = readJson<Record<string, ElectionSummary>>("optiona:elections:summaries", {});
+  const registry = loadElectionRegistry();
+  const byId = new Map<string, ElectionSummary>();
+  for (const id of registry) {
+    const summary = all[id];
+    if (summary) {
+      byId.set(id, summary);
+    }
+  }
+  for (const summary of Object.values(all)) {
+    if (summary?.electionId?.trim()) {
+      byId.set(summary.electionId, summary);
+    }
+  }
+  return [...byId.values()];
+}
+
 export function saveCoordinatorState(input: {
   coordinatorNpub: Npub;
   state: CoordinatorElectionState;
