@@ -6674,56 +6674,54 @@ export default function SimpleCoordinatorApp() {
                                   </div>
                                 </div>
                                 <div className='simple-private-invite-card-body'>
-                                  <div className='simple-private-invite-link-island'>
-                                    <div className='simple-private-invite-link-field'>
-                                      <label className='simple-private-invite-field-label' htmlFor={inviteInputId}>Invite link</label>
-                                      {privateInviteUrl ? (
-                                        <div className={`simple-private-invite-url-control${canSharePrivateInvite ? "" : " is-readonly"}`}>
-                                          <input
-                                            id={inviteInputId}
-                                            className='simple-private-invite-url-input'
-                                            value={privateInviteUrl}
-                                            readOnly
-                                            aria-label='Invite link'
-                                          />
-                                          {canSharePrivateInvite ? (
-                                            <button
-                                              type='button'
-                                              className='simple-private-invite-copy-icon-button'
-                                              onClick={() => void copyPrivateInviteCodeLink(entry.codeHash)}
-                                              aria-label='Copy invite link'
-                                              title='Copy invite link'
-                                            >
-                                              <span className='simple-copy-icon' aria-hidden='true' />
-                                            </button>
-                                          ) : null}
-                                        </div>
-                                      ) : null}
-                                      <p className='simple-voter-note simple-private-invite-note'>
-                                        Link is only available until this page is left.
-                                      </p>
-                                    </div>
-                                    <div className='simple-private-invite-note-row'>
-                                      <label className='simple-private-invite-note-field' htmlFor={noteInputId}>
-                                        <span className='simple-private-invite-field-label'>Internal note</span>
+                                  <div className='simple-private-invite-link-field'>
+                                    <label className='simple-private-invite-field-label' htmlFor={inviteInputId}>Invite link</label>
+                                    {privateInviteUrl ? (
+                                      <div className={`simple-private-invite-url-control${canSharePrivateInvite ? "" : " is-readonly"}`}>
                                         <input
-                                          id={noteInputId}
-                                          className='simple-voter-input simple-voter-input-inline'
-                                          value={entry.note ?? ""}
-                                          placeholder="e.g. Alice, Bob's phone, test voter 3"
-                                          onChange={(event) => updatePrivateInviteCodeNote(entry.codeHash, event.target.value)}
+                                          id={inviteInputId}
+                                          className='simple-private-invite-url-input'
+                                          value={privateInviteUrl}
+                                          readOnly
+                                          aria-label='Invite link'
                                         />
-                                      </label>
-                                      <div className='simple-private-invite-used-field'>
-                                        <label className='simple-private-invite-used-toggle'>
-                                          <input
-                                            type='checkbox'
-                                            checked={markedUsed}
-                                            onChange={(event) => setPrivateInviteCodeMarkedUsed(entry.codeHash, event.target.checked)}
-                                          />
-                                          <span>Mark as used</span>
-                                        </label>
+                                        {canSharePrivateInvite ? (
+                                          <button
+                                            type='button'
+                                            className='simple-private-invite-copy-icon-button'
+                                            onClick={() => void copyPrivateInviteCodeLink(entry.codeHash)}
+                                            aria-label='Copy invite link'
+                                            title='Copy invite link'
+                                          >
+                                            <span className='simple-copy-icon' aria-hidden='true' />
+                                          </button>
+                                        ) : null}
                                       </div>
+                                    ) : null}
+                                    <p className='simple-voter-note simple-private-invite-note'>
+                                      Link is only available until this page is left.
+                                    </p>
+                                  </div>
+                                  <div className='simple-private-invite-note-row'>
+                                    <label className='simple-private-invite-note-field' htmlFor={noteInputId}>
+                                      <span className='simple-private-invite-field-label'>Internal note</span>
+                                      <input
+                                        id={noteInputId}
+                                        className='simple-voter-input simple-voter-input-inline'
+                                        value={entry.note ?? ""}
+                                        placeholder="e.g. Alice, Bob's phone, test voter 3"
+                                        onChange={(event) => updatePrivateInviteCodeNote(entry.codeHash, event.target.value)}
+                                      />
+                                    </label>
+                                    <div className='simple-private-invite-used-field'>
+                                      <label className='simple-private-invite-used-toggle'>
+                                        <input
+                                          type='checkbox'
+                                          checked={markedUsed}
+                                          onChange={(event) => setPrivateInviteCodeMarkedUsed(entry.codeHash, event.target.checked)}
+                                        />
+                                        <span>Mark as used</span>
+                                      </label>
                                     </div>
                                   </div>
                                   {canSharePrivateInvite ? (

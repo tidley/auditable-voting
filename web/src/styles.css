@@ -2969,23 +2969,13 @@ code {
 .simple-private-invite-card-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 14px;
+  gap: 10px 14px;
   align-items: start;
-}
-
-.simple-private-invite-link-island {
-  display: grid;
-  gap: 12px;
-  min-width: 0;
-  padding: 12px;
-  border: 1px solid var(--simple-border);
-  border-radius: 8px;
-  background: rgba(6, 12, 18, 0.42);
 }
 
 .simple-private-invite-link-field {
   display: grid;
-  grid-column: 1 / -1;
+  grid-column: 1;
   gap: 6px;
   min-width: 0;
 }
@@ -3070,6 +3060,8 @@ code {
 }
 
 .simple-private-invite-qr-cell {
+  grid-column: 2;
+  grid-row: 1 / span 2;
   align-self: start;
 }
 
@@ -3089,6 +3081,7 @@ code {
 
 .simple-private-invite-note-row {
   display: grid;
+  grid-column: 1;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   align-items: end;
