@@ -128,6 +128,8 @@ export type AdmittedVoterRecord = {
   npub: Npub;
   admittedAt: string;
   source?: "manual" | "contact" | "private_invite" | "import" | null;
+  note?: string | null;
+  autoApply?: boolean;
   lastUpdatedAt: string;
 };
 
@@ -145,6 +147,8 @@ function normaliseAdmittedVoterRecord(record: AdmittedVoterRecord): AdmittedVote
     npub,
     admittedAt: record.admittedAt?.trim() || now,
     source: record.source ?? null,
+    note: typeof record.note === "string" ? record.note : null,
+    autoApply: record.autoApply !== false,
     lastUpdatedAt: record.lastUpdatedAt?.trim() || record.admittedAt?.trim() || now,
   };
 }
@@ -199,6 +203,8 @@ export function upsertAdmittedVoters(input: {
       npub,
       admittedAt: existing?.admittedAt ?? now,
       source: existing?.source ?? input.source ?? null,
+      note: existing?.note ?? null,
+      autoApply: existing?.autoApply !== false,
       lastUpdatedAt: now,
     };
   }
@@ -207,6 +213,30 @@ export function upsertAdmittedVoters(input: {
     voters: current,
     addedCount,
   };
+}
+
+export function updateAdmittedVoter(input: {
+  coordinatorNpub: Npub;
+  npub: Npub;
+  patch: Pick<Partial<AdmittedVoterRecord>, "note" | "autoApply">;
+}) {
+  const current = loadAdmittedVoters({ coordinatorNpub: input.coordinatorNpub });
+  const npub = input.npub.trim();
+  const existing = npub ? current[npub] : null;
+  if (!existing) {
+    return current;
+  }
+  const next: Record<Npub, AdmittedVoterRecord> = {
+    ...current,
+    [npub]: {
+      ...existing,
+      note: typeof input.patch.note === "string" ? input.patch.note : existing.note ?? null,
+      autoApply: typeof input.patch.autoApply === "boolean" ? input.patch.autoApply : existing.autoApply !== false,
+      lastUpdatedAt: new Date().toISOString(),
+    },
+  };
+  saveAdmittedVoters({ coordinatorNpub: input.coordinatorNpub, voters: next });
+  return next;
 }
 
 export function removeAdmittedVoter(input: {

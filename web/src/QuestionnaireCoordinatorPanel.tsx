@@ -129,6 +129,8 @@ type QuestionnaireCoordinatorPanelProps = {
   onQuestionnaireRelaysInputChange?: (value: string) => void;
   onConfigureQuestionnaireRelays?: () => void;
   onConfigureWorker?: () => void;
+  canApplyAdmissionsOnPublish?: boolean;
+  onAfterPublishQuestionnaire?: (questionnaireId: string) => void | Promise<void>;
   onStatusChange?: (status: {
     questionnaireId: string;
     state: QuestionnaireStateValue | null;
@@ -2754,7 +2756,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     setStatus(`Exported results for ${id}.`);
   }
 
-  async function publishDefinition() {
+  async function publishDefinition(options?: { applyAdmissions?: boolean }) {
     let definitionToPublish = builtDefinition;
     if (!coordinatorNsec.trim() || !definitionToPublish) {
       setStatus("Organiser key or vote setup is missing.");
@@ -2836,6 +2838,15 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         setStatus(`Vote published (${result.successes}/${result.relayResults.length} relays).`);
         await publishParticipantCountSnapshot({ silent: true });
         await publishState("open");
+        if (options?.applyAdmissions) {
+          try {
+            await props.onAfterPublishQuestionnaire?.(definitionToPublish.questionnaireId);
+          } catch (error) {
+            setStatus(
+              `Vote published, but admitted voters could not be applied: ${error instanceof Error ? error.message : "unknown error"}.`,
+            );
+          }
+        }
       } else {
         setStatus("Vote publish failed.");
         await refresh();
@@ -3934,9 +3945,21 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
 
       <div className='simple-voter-action-row simple-voter-action-row-inline'>
         {!publishedDefinition ? (
-          <button type='button' className='simple-voter-primary' disabled={!canPublishDraft} onClick={() => void publishDefinition()}>
-            Publish questionnaire
-          </button>
+          <>
+            <button type='button' className='simple-voter-primary' disabled={!canPublishDraft} onClick={() => void publishDefinition()}>
+              Publish questionnaire
+            </button>
+            {props.onAfterPublishQuestionnaire ? (
+              <button
+                type='button'
+                className='simple-voter-secondary'
+                disabled={!canPublishDraft || !props.canApplyAdmissionsOnPublish}
+                onClick={() => void publishDefinition({ applyAdmissions: true })}
+              >
+                Publish + apply admitted voters
+              </button>
+            ) : null}
+          </>
         ) : currentState === "open" || currentState === "closed" ? (
           <button type='button' className='simple-voter-primary' disabled={closeAndPublishButtonDisabled} onClick={() => void closeAndPublishResults()}>
             {currentState === "open" ? "Close + publish results" : "Publish results"}

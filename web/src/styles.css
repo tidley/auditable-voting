@@ -2919,9 +2919,13 @@ code {
 
 .simple-admitted-voters-add-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
+}
+
+.simple-admitted-voters-action-row {
+  margin-top: -2px;
 }
 
 .simple-admitted-voter-list {
@@ -2943,10 +2947,19 @@ code {
   background: rgba(6, 12, 18, 0.58);
 }
 
+.simple-admitted-private-invite-list {
+  padding-top: 4px;
+}
+
+.simple-admitted-private-invite-row {
+  border-style: dashed;
+  background: rgba(10, 19, 25, 0.66);
+}
+
 .simple-admitted-voter-main {
   display: grid;
   min-width: 0;
-  gap: 3px;
+  gap: 6px;
 }
 
 .simple-admitted-voter-id {
@@ -3004,6 +3017,7 @@ code {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
+  align-items: center;
   gap: 8px;
 }
 
@@ -3015,6 +3029,38 @@ code {
 .simple-admitted-voter-remove {
   min-height: 34px;
   padding: 0 10px;
+}
+
+.simple-admitted-voter-note-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding-top: 4px;
+}
+
+.simple-admitted-voter-auto-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  color: var(--simple-soft);
+  font-size: 0.9rem;
+  font-weight: 750;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.simple-admitted-voter-auto-toggle input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--simple-teal);
+}
+
+.simple-admitted-private-invite-row .simple-invite-qr-trigger {
+  width: 82px;
+  height: 82px;
+  min-height: 0;
 }
 
 .simple-private-invite-panel {
