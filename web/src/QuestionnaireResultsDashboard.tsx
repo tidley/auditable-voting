@@ -89,6 +89,22 @@ export default function QuestionnaireResultsDashboard({
     () => new Map((questionnaire?.questions ?? []).map((question, index) => [question.questionId, index + 1])),
     [questionnaire?.questions],
   );
+  const acceptedQuestionResponseCountById = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const entry of responseDetails) {
+      if (!entry.accepted || !Array.isArray(entry.response.answers)) {
+        continue;
+      }
+      const answeredQuestionIds = new Set<string>();
+      for (const answer of entry.response.answers) {
+        answeredQuestionIds.add(answer.questionId);
+      }
+      for (const questionId of answeredQuestionIds) {
+        counts.set(questionId, (counts.get(questionId) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }, [responseDetails]);
   const invalidResponseCount = useMemo(
     () => responseDetails.filter((entry) => !entry.accepted).length,
     [responseDetails],
@@ -206,6 +222,8 @@ export default function QuestionnaireResultsDashboard({
                   {questionSummaries.map((summary) => {
                     const questionNumber = selectedQuestionNumberById.get(summary.questionId);
                     const questionTitle = selectedQuestionById.get(summary.questionId)?.prompt || `Question ${summary.questionId}`;
+                    const questionResponseCount = acceptedQuestionResponseCountById.get(summary.questionId)
+                      ?? getSummaryResponseCount(summary, displayValidCount);
                     return (
                       <article key={`${summary.questionId}:${summary.answerType}`} className='simple-auditor-question-card'>
                         <div className='simple-auditor-question-card-head'>
@@ -214,6 +232,10 @@ export default function QuestionnaireResultsDashboard({
                               {questionNumber ? `Q${questionNumber}. ` : ""}
                               {questionTitle}
                             </h3>
+                            <p className='simple-auditor-question-response-count'>
+                              <PeopleIcon />
+                              <span>{formatResponseCount(questionResponseCount)}</span>
+                            </p>
                           </div>
                         </div>
                         {summary.answerType === "yes_no" ? (
@@ -222,7 +244,7 @@ export default function QuestionnaireResultsDashboard({
                           <MultipleChoiceSummaryCard
                             summary={summary}
                             question={selectedQuestionById.get(summary.questionId)}
-                            displayValidCount={displayValidCount}
+                            responseCount={questionResponseCount}
                           />
                         ) : summary.answerType === "rank" ? (
                           <RankSummaryCard
@@ -503,40 +525,54 @@ function DecryptedAnswerBadge() {
   );
 }
 
+function PeopleIcon() {
+  return (
+    <svg
+      className='simple-auditor-question-response-icon'
+      viewBox='0 0 24 24'
+      aria-hidden='true'
+      focusable='false'
+    >
+      <path
+        d='M8.5 11.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Zm7 0a3 3 0 1 1 0-6 3 3 0 0 1 0 6ZM2.75 19c.55-3.08 2.66-5 5.75-5s5.2 1.92 5.75 5H2.75Zm10.85 0a7.33 7.33 0 0 0-1.32-2.95A5.2 5.2 0 0 1 15.5 15c2.65 0 4.46 1.52 4.95 4H13.6Z'
+        fill='currentColor'
+      />
+    </svg>
+  );
+}
+
 function YesNoSummaryCard({ summary }: {
   summary: Extract<QuestionnaireResultQuestionSummary, { answerType: "yes_no" }>;
 }) {
   const total = summary.yesCount + summary.noCount;
-  const hasResults = total > 0;
-  const yesPercent = total > 0 ? (summary.yesCount / total) * 100 : 0;
+  const rows = [
+    {
+      label: "No",
+      count: summary.noCount,
+      className: "is-no",
+    },
+    {
+      label: "Yes",
+      count: summary.yesCount,
+      className: "is-yes",
+    },
+  ];
   return (
-    <div className='simple-auditor-donut-layout'>
-      <div
-        className={`simple-auditor-donut${hasResults ? "" : " is-empty"}`}
-        style={{
-          background: hasResults
-            ? `conic-gradient(from 180deg, var(--simple-green) 0 ${yesPercent}%, var(--simple-coral) ${yesPercent}% 100%)`
-            : undefined,
-        }}
-        aria-hidden='true'
-      >
-        <div className='simple-auditor-donut-core'>
-          <strong>{total}</strong>
-          <span>Total</span>
-        </div>
-      </div>
-      <div className='simple-auditor-donut-legend'>
-        <span>
-          <i className='simple-auditor-dot simple-auditor-dot-yes' />
-          Yes
-          <strong>{summary.yesCount} ({total > 0 ? ((summary.yesCount / total) * 100).toFixed(0) : "0"}%)</strong>
-        </span>
-        <span>
-          <i className='simple-auditor-dot simple-auditor-dot-no' />
-          No
-          <strong>{summary.noCount} ({total > 0 ? ((summary.noCount / total) * 100).toFixed(0) : "0"}%)</strong>
-        </span>
-      </div>
+    <div className='simple-auditor-option-bars simple-auditor-boolean-bars'>
+      {rows.map((row) => {
+        const percent = total > 0 ? (row.count / total) * 100 : 0;
+        return (
+          <div key={row.label} className={`simple-auditor-option-bar-row simple-auditor-boolean-bar-row ${row.className}`}>
+            <div className='simple-auditor-option-bar-label'>
+              <span>{row.label}</span>
+              <strong>{formatBooleanVoteShare(row.count, percent)}</strong>
+            </div>
+            <div className='simple-auditor-results-progress' aria-hidden='true'>
+              <span style={{ width: row.count > 0 ? `${Math.max(4, percent)}%` : "0%" }} />
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -544,11 +580,11 @@ function YesNoSummaryCard({ summary }: {
 function MultipleChoiceSummaryCard({
   summary,
   question,
-  displayValidCount,
+  responseCount,
 }: {
   summary: Extract<QuestionnaireResultQuestionSummary, { answerType: "multiple_choice" }>;
   question: QuestionnaireQuestion | undefined;
-  displayValidCount: number;
+  responseCount: number;
 }) {
   return (
     <div className='simple-auditor-option-bars'>
@@ -558,12 +594,12 @@ function MultipleChoiceSummaryCard({
             ? question.options.find((option) => option.optionId === optionId)?.label ?? optionId
             : optionId;
           const maxCount = Math.max(1, ...Object.values(summary.optionCounts));
-          const percentOfAccepted = displayValidCount > 0 ? (count / displayValidCount) * 100 : 0;
+          const percentOfResponses = responseCount > 0 ? (count / responseCount) * 100 : 0;
           return (
             <div key={optionId} className='simple-auditor-option-bar-row'>
               <div className='simple-auditor-option-bar-label'>
                 <span>{label}</span>
-                <strong>{count} ({percentOfAccepted.toFixed(0)}%)</strong>
+                <strong>{formatVoteShare(count, percentOfResponses)}</strong>
               </div>
               <div className='simple-auditor-results-progress' aria-hidden='true'>
                 <span style={{ width: count > 0 ? `${Math.max(4, (count / maxCount) * 100)}%` : "0%" }} />
@@ -618,6 +654,31 @@ function formatQuestionnaireTime(unix: number | null | undefined) {
 
 function formatFreeTextAnswer(text: string) {
   return text || "(empty)";
+}
+
+function formatVoteShare(count: number, percent: number) {
+  return `${percent.toFixed(0)}% | ${count} vote${count === 1 ? "" : "s"}`;
+}
+
+function formatBooleanVoteShare(count: number, percent: number) {
+  return `${percent.toFixed(0)}% · ${count} vote${count === 1 ? "" : "s"}`;
+}
+
+function formatResponseCount(count: number) {
+  return `${count} response${count === 1 ? "" : "s"}`;
+}
+
+function getSummaryResponseCount(summary: QuestionnaireResultQuestionSummary, displayValidCount: number) {
+  if (summary.answerType === "yes_no") {
+    return summary.yesCount + summary.noCount;
+  }
+  if (summary.answerType === "multiple_choice") {
+    return displayValidCount;
+  }
+  if (summary.answerType === "rank") {
+    return summary.responseCount;
+  }
+  return summary.freeTextCount;
 }
 
 function formatInvalidReason(reason: string | null | undefined) {

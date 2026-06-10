@@ -2586,90 +2586,46 @@ code {
   margin-bottom: 2px;
 }
 
-.simple-auditor-donut-layout {
-  display: grid;
-  grid-template-columns: 132px minmax(0, 1fr);
+.simple-auditor-question-response-count {
+  display: inline-flex;
   align-items: center;
-  gap: 16px;
+  gap: 6px;
+  margin: 0;
+  color: var(--simple-muted);
+  font-size: 0.92rem;
+  font-weight: 700;
+  line-height: 1.35;
 }
 
-.simple-auditor-donut {
-  display: grid;
-  place-items: center;
-  width: 132px;
-  height: 132px;
-  border-radius: 999px;
-}
-
-.simple-auditor-donut.is-empty {
-  background: conic-gradient(var(--simple-surface-3) 0 100%);
-  box-shadow: inset 0 0 0 1px var(--simple-border-strong);
-}
-
-.simple-auditor-donut-core {
-  display: grid;
-  place-items: center;
-  width: 84px;
-  height: 84px;
-  border-radius: 999px;
-  background: #102238;
-  box-shadow: inset 0 0 0 1px rgba(140, 153, 187, 0.24);
-}
-
-.simple-auditor-donut-core strong {
-  color: #ffffff;
-  font-size: 1.8rem;
-  line-height: 1;
-}
-
-.simple-auditor-donut-core span {
-  color: #8fa2c7;
-  font-size: 0.62rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.simple-auditor-donut-legend {
-  display: grid;
-  gap: 10px;
-  justify-self: start;
-  min-width: 0;
-  width: max-content;
-  max-width: 100%;
-}
-
-.simple-auditor-donut-legend span {
-  display: grid;
-  grid-template-columns: auto auto auto;
-  align-items: center;
-  gap: 8px;
-  color: var(--simple-soft);
-  font-size: 0.9rem;
-}
-
-.simple-auditor-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-}
-
-.simple-auditor-dot-yes {
-  background: var(--simple-green);
-}
-
-.simple-auditor-dot-no {
-  background: var(--simple-coral);
+.simple-auditor-question-response-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--simple-teal);
+  opacity: 0.82;
 }
 
 .simple-auditor-option-bars {
   display: grid;
-  gap: 14px;
+  gap: 0;
 }
 
 .simple-auditor-option-bar-row {
   display: grid;
   gap: 7px;
+}
+
+.simple-auditor-option-bar-row + .simple-auditor-option-bar-row {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.simple-auditor-boolean-bar-row.is-no .simple-auditor-results-progress span {
+  background: var(--simple-coral);
+}
+
+.simple-auditor-boolean-bar-row.is-yes .simple-auditor-results-progress span {
+  background: var(--simple-green);
 }
 
 .simple-auditor-option-bar-label {
@@ -4622,11 +4578,6 @@ code {
 
   .simple-auditor-submission-time {
     text-align: left;
-  }
-
-  .simple-auditor-donut-layout {
-    grid-template-columns: minmax(0, 1fr);
-    justify-items: center;
   }
 
   .simple-auditor-result-marker {
