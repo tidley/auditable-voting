@@ -236,6 +236,96 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     expect(screen.queryByRole("button", { name: "Show ballot status" })).toBeNull();
   });
 
+  it("lets an admitted voter answer the next questionnaire from the top selector", async () => {
+    const user = userEvent.setup();
+    const localVoterNpub = "npub1" + "q".repeat(58);
+    const coordinatorNpub = "npub1" + "b".repeat(58);
+    const makeDefinition = (questionnaireId: string, title: string, prompt: string) => ({
+      schemaVersion: 1 as const,
+      eventType: "questionnaire_definition" as const,
+      responseMode: "blind_token" as const,
+      questionnaireId,
+      title,
+      description: "",
+      createdAt: 1,
+      openAt: 1,
+      closeAt: 9999999999,
+      coordinatorPubkey: coordinatorNpub,
+      coordinatorEncryptionPubkey: coordinatorNpub,
+      responseVisibility: "private" as const,
+      eligibilityMode: "open" as const,
+      allowMultipleResponsesPerPubkey: false,
+      blindSigningPublicKey: {
+        scheme: "rsabssa-sha384-pss-deterministic-v1" as const,
+        keyId: "blind_key",
+        jwk: { kty: "RSA", e: "AQAB", n: "test" },
+      },
+      questions: [{
+        questionId: `${questionnaireId}_q1`,
+        type: "yes_no" as const,
+        prompt,
+        required: true,
+      }],
+    });
+    const initialDefinition = makeDefinition("q_initial_question", "Initial question", "Initial prompt");
+    const nextDefinition = makeDefinition("q_next_question", "Next question", "Next prompt");
+    optionAStorageMocks.listInvitesFromMailbox.mockReturnValue([
+      {
+        type: "election_invite",
+        schemaVersion: 1,
+        electionId: "q_initial_question",
+        title: "Initial question",
+        description: "",
+        voteUrl: "https://example.test/vote?q=q_initial_question",
+        invitedNpub: localVoterNpub,
+        coordinatorNpub,
+        blindSigningPublicKey: initialDefinition.blindSigningPublicKey,
+        definition: initialDefinition,
+        expiresAt: null,
+      },
+      {
+        type: "election_invite",
+        schemaVersion: 1,
+        electionId: "q_next_question",
+        title: "Next question",
+        description: "",
+        voteUrl: "https://example.test/vote?q=q_next_question",
+        invitedNpub: localVoterNpub,
+        coordinatorNpub,
+        blindSigningPublicKey: nextDefinition.blindSigningPublicKey,
+        definition: nextDefinition,
+        expiresAt: null,
+      },
+    ]);
+    const requestedElectionIds: string[] = [];
+    vi.spyOn(QuestionnaireOptionAVoterRuntime.prototype, "requestBlindBallot")
+      .mockImplementation(async function mockedRequestBlindBallot(this: QuestionnaireOptionAVoterRuntime) {
+        requestedElectionIds.push(this.getSnapshot()?.electionId ?? "");
+        return this.getSnapshot()!;
+      });
+
+    render(
+      <QuestionnaireOptionAVoterPanel
+        announcedQuestionnaireIds={["q_initial_question"]}
+        localVoterNpub={localVoterNpub}
+      />,
+    );
+
+    const selector = await screen.findByRole("combobox", { name: "Questionnaire" }) as HTMLSelectElement;
+    await waitFor(() => {
+      expect([...selector.options].map((option) => option.textContent)).toEqual([
+        expect.stringContaining("Initial question"),
+        expect.stringContaining("Next question"),
+      ]);
+    });
+
+    await user.click(screen.getByRole("button", { name: "Answer next" }));
+
+    await waitFor(() => {
+      expect(requestedElectionIds).toContain("q_next_question");
+    });
+  });
+
   it("can hide the vote-page Login action when login is provided by the app menu", async () => {
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_menu_login"]} showLoginAction={false} />);
 
@@ -446,6 +536,64 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     expect(screen.getByText("q_linked_current")).toBeTruthy();
     expect(screen.queryByText(/Stale questionnaire/)).toBeNull();
     expect(screen.queryByText(/q_stale_mailbox/)).toBeNull();
+  });
+
+  it("shows an announced next admitted invite on a linked questionnaire without showing unrelated stale invites", async () => {
+    const localVoterNpub = "npub1" + "n".repeat(58);
+    const coordinatorNpub = "npub1" + "b".repeat(58);
+    window.history.pushState(null, "", `/?role=voter&q=q_linked_initial&coordinator=${coordinatorNpub}`);
+    optionAStorageMocks.listInvitesFromMailbox.mockReturnValue([
+      {
+        type: "election_invite",
+        schemaVersion: 1,
+        electionId: "q_linked_initial",
+        title: "Initial admitted questionnaire",
+        description: "",
+        voteUrl: "https://example.test/vote?q=q_linked_initial",
+        invitedNpub: localVoterNpub,
+        coordinatorNpub,
+        expiresAt: null,
+      },
+      {
+        type: "election_invite",
+        schemaVersion: 1,
+        electionId: "q_linked_next",
+        title: "Next admitted questionnaire",
+        description: "",
+        voteUrl: "https://example.test/vote?q=q_linked_next",
+        invitedNpub: localVoterNpub,
+        coordinatorNpub,
+        expiresAt: null,
+      },
+      {
+        type: "election_invite",
+        schemaVersion: 1,
+        electionId: "q_unrelated_stale",
+        title: "Unrelated stale questionnaire",
+        description: "",
+        voteUrl: "https://example.test/vote?q=q_unrelated_stale",
+        invitedNpub: localVoterNpub,
+        coordinatorNpub: "npub1" + "d".repeat(58),
+        expiresAt: null,
+      },
+    ]);
+
+    render(
+      <QuestionnaireOptionAVoterPanel
+        announcedQuestionnaireIds={["q_linked_initial", "q_linked_next"]}
+        localVoterNpub={localVoterNpub}
+      />,
+    );
+
+    const selector = await screen.findByRole("combobox", { name: "Questionnaire" }) as HTMLSelectElement;
+    await waitFor(() => {
+      expect([...selector.options].map((option) => option.textContent)).toEqual([
+        expect.stringContaining("Initial admitted questionnaire"),
+        expect.stringContaining("Next admitted questionnaire"),
+      ]);
+    });
+    expect(screen.queryByText(/Unrelated stale questionnaire/)).toBeNull();
+    expect(screen.queryByText(/q_unrelated_stale/)).toBeNull();
   });
 
   it("waits for the linked questionnaire blind-signing key before nonce ballot request", async () => {

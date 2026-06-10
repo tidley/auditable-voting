@@ -20,8 +20,8 @@ The active product is the client in `web/` plus the optional audit proxy in `wor
 - Nostr-first transport using public events and NIP-17 private control traffic.
 - Per-questionnaire relay hints published in questionnaire metadata when the organiser uses a non-default relay set.
 - Yes/no, multiple-choice, ranked-choice, and free-text questionnaire questions.
-- Browser-only invite sharing by copied link, native device share actions, General QR links that open Vote directly and request a ballot automatically, personalised links for admitted voter npubs, or one-use private code links with per-code share controls and QR codes that admit the first claimant and automatically request a ballot.
-- Organiser-local admitted voter rosters can be reused across later questionnaires; each questionnaire still receives its own eligibility snapshot and each response still requires a fresh blind credential.
+- Browser-only invite sharing by copied link, native device share actions, General QR links that open Vote directly and request a ballot automatically, personalised links for admitted voter npubs, roster-applied Nostr invite DMs, or one-use private code links with per-code share controls and QR codes that admit the first claimant and automatically request a ballot.
+- Organiser-local admitted voter rosters can be reused across later questionnaires; applying the roster to a questionnaire projects eligibility and sends current-questionnaire invite links, while each response still requires a fresh blind credential.
 - Blind credential issuance for admitted participants.
 - Public blind-token submissions from ephemeral response keys.
 - Organiser and Observer results derived from public submissions and decisions, including proxy-accepted responses, locally verified blind-token proofs, rejection reasons, and organiser-side automatic decryption of encrypted answer details when the local organiser key is available.

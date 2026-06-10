@@ -1142,6 +1142,7 @@ export default function SimpleCoordinatorApp() {
   const [admittedVoters, setAdmittedVoters] = useState<Record<string, AdmittedVoterRecord>>({});
   const [admittedVoterDraftNpub, setAdmittedVoterDraftNpub] = useState("");
   const [admittedVoterStatus, setAdmittedVoterStatus] = useState<string | null>(null);
+  const [admittedVoterApplyInFlight, setAdmittedVoterApplyInFlight] = useState(false);
   const [knownVoterDraftNpub, setKnownVoterDraftNpub] = useState("");
   const [knownVoterInviteStatus, setKnownVoterInviteStatus] = useState<string | null>(null);
   const [voterRequestStatus, setVoterRequestStatus] = useState<string | null>(null);
@@ -3886,20 +3887,49 @@ export default function SimpleCoordinatorApp() {
     setAdmittedVoterStatus(`Removed ${deriveActorDisplayId(npub)} from future questionnaire admission. Existing questionnaire state is unchanged.`);
   }
 
-  function applyAdmissionRosterToCurrentQuestionnaire() {
+  async function applyAdmissionRosterToCurrentQuestionnaire() {
     if (!optionAElectionId.trim()) {
       setAdmittedVoterStatus("Publish or open a questionnaire before applying admissions.");
       return;
     }
+    if (admittedVoterNpubs.length === 0) {
+      setAdmittedVoterStatus("Admit at least one voter before applying admissions.");
+      return;
+    }
+    if (admittedVoterApplyInFlight) {
+      return;
+    }
+    setAdmittedVoterApplyInFlight(true);
     try {
       const addedCount = projectNpubsToActiveQuestionnaire(admittedVoterNpubs);
+      let deliveredCount = 0;
+      let failedCount = 0;
+      const total = admittedVoterNpubs.length;
+      for (const [index, npub] of admittedVoterNpubs.entries()) {
+        setAdmittedVoterStatus(
+          `Applied roster to this questionnaire. Sending invite links ${index + 1}/${total}...`,
+        );
+        const sent = await sendInviteToKnownVoter(npub, { silent: true, syncWorkerConfig: false });
+        if (sent?.dmDelivered) {
+          deliveredCount += 1;
+        } else {
+          failedCount += 1;
+        }
+      }
+      const projectionText = addedCount > 0
+        ? `Added ${addedCount} admitted voter${addedCount === 1 ? "" : "s"} to this questionnaire`
+        : "All admitted voters are eligible for this questionnaire";
+      await syncActiveWorkerElectionConfig().catch(() => false);
+      const inviteText = failedCount > 0
+        ? `sent invite links to ${deliveredCount}/${total}; ${failedCount} could not be delivered by relay`
+        : `sent invite links to ${deliveredCount}/${total}`;
       setAdmittedVoterStatus(
-        addedCount > 0
-          ? `Added ${addedCount} admitted voter${addedCount === 1 ? "" : "s"} to this questionnaire.`
-          : "All admitted voters are already eligible for this questionnaire.",
+        `${projectionText} and ${inviteText}.`,
       );
     } catch (error) {
       setAdmittedVoterStatus(error instanceof Error ? error.message : "Could not apply admitted voters.");
+    } finally {
+      setAdmittedVoterApplyInFlight(false);
     }
   }
 
@@ -4283,9 +4313,9 @@ export default function SimpleCoordinatorApp() {
     }
   }
 
-  async function sendInviteToKnownVoter(invitedNpub: string) {
+  async function sendInviteToKnownVoter(invitedNpub: string, options?: { silent?: boolean; syncWorkerConfig?: boolean }) {
     if (!optionACoordinatorRuntime || !optionAElectionId || !activeCoordinatorNpub) {
-      return;
+      return null;
     }
     try {
       admitVotersToRoster([invitedNpub], "manual", { silent: true });
@@ -4309,19 +4339,27 @@ export default function SimpleCoordinatorApp() {
         }),
       });
       setOptimisticKnownVoterNpubs((current) => (current.includes(invitedNpub) ? current : [...current, invitedNpub]));
-      setKnownVoterInviteStatus(
-        sent.dmDelivered
-          ? `Invite DM sent to ${deriveActorDisplayId(invitedNpub)}.`
-          : `Invite saved locally for ${deriveActorDisplayId(invitedNpub)}; DM delivery failed (${sent.dmFailureReason ?? "unknown error"}).`,
-      );
+      if (!options?.silent) {
+        setKnownVoterInviteStatus(
+          sent.dmDelivered
+            ? `Invite DM sent to ${deriveActorDisplayId(invitedNpub)}.`
+            : `Invite saved locally for ${deriveActorDisplayId(invitedNpub)}; DM delivery failed (${sent.dmFailureReason ?? "unknown error"}).`,
+        );
+      }
       setAutoSendFollowers((current) => ({
         ...current,
         [invitedNpub]: true,
       }));
       setKnownVoterInviteRefreshNonce((value) => value + 1);
-      void syncActiveWorkerElectionConfig().catch(() => false);
+      if (options?.syncWorkerConfig !== false) {
+        void syncActiveWorkerElectionConfig().catch(() => false);
+      }
+      return sent;
     } catch (error) {
-      setKnownVoterInviteStatus(error instanceof Error ? error.message : "Invite failed.");
+      if (!options?.silent) {
+        setKnownVoterInviteStatus(error instanceof Error ? error.message : "Invite failed.");
+      }
+      return null;
     }
   }
 
@@ -6595,10 +6633,10 @@ export default function SimpleCoordinatorApp() {
                   <button
                     type='button'
                     className='simple-voter-secondary'
-                    disabled={admittedVoterEntries.length === 0 || !optionAElectionId.trim() || !optionACoordinatorRuntime}
-                    onClick={applyAdmissionRosterToCurrentQuestionnaire}
+                    disabled={admittedVoterApplyInFlight || admittedVoterEntries.length === 0 || !optionAElectionId.trim() || !optionACoordinatorRuntime}
+                    onClick={() => void applyAdmissionRosterToCurrentQuestionnaire()}
                   >
-                    Apply to current questionnaire
+                    {admittedVoterApplyInFlight ? "Sending invites..." : "Apply to current questionnaire"}
                   </button>
                 </div>
                 {admittedVoterStatus ? <p className='simple-voter-note'>{admittedVoterStatus}</p> : null}

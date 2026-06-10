@@ -3587,6 +3587,22 @@ code {
   gap: 22px;
 }
 
+.simple-questionnaire-invite-switcher {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.simple-questionnaire-invite-switcher .simple-voter-input {
+  min-width: 0;
+}
+
+.simple-questionnaire-answer-next {
+  min-height: 42px;
+  white-space: nowrap;
+}
+
 .simple-optiona-voter-page .simple-settings-card {
   margin-top: 2px;
 }
@@ -6058,6 +6074,14 @@ code {
 
   .simple-admitted-voters-add-row {
     grid-template-columns: 1fr;
+  }
+
+  .simple-questionnaire-invite-switcher {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .simple-questionnaire-answer-next {
+    width: 100%;
   }
 
   .simple-admitted-voter-count,

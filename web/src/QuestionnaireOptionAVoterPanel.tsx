@@ -246,6 +246,20 @@ function resolveInviteDisplayTitle(invite: ElectionInviteMessage) {
   return invite.electionId;
 }
 
+function inviteMessageKey(invite: ElectionInviteMessage) {
+  return `${invite.electionId}:${invite.coordinatorNpub}`;
+}
+
+function mergeInvitesByKey(...groups: ElectionInviteMessage[][]) {
+  const byKey = new Map<string, ElectionInviteMessage>();
+  for (const group of groups) {
+    for (const invite of group) {
+      byKey.set(inviteMessageKey(invite), invite);
+    }
+  }
+  return [...byKey.values()];
+}
+
 type QuestionnaireOptionAVoterPanelProps = {
   announcedQuestionnaireIds?: string[];
   localVoterNpub?: string;
@@ -343,6 +357,15 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       .filter((value) => value.length > 0);
     return ids.at(-1) ?? "";
   }, [props.announcedQuestionnaireIds]);
+  const announcedQuestionnaireIdKey = useMemo(() => {
+    return (props.announcedQuestionnaireIds ?? [])
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0)
+      .join("|");
+  }, [props.announcedQuestionnaireIds]);
+  const announcedQuestionnaireIdSet = useMemo(() => {
+    return new Set(announcedQuestionnaireIdKey ? announcedQuestionnaireIdKey.split("|") : []);
+  }, [announcedQuestionnaireIdKey]);
 
   const snapshot = runtime?.getSnapshot() ?? null;
   const flags = runtime?.getFlags() ?? {
@@ -353,7 +376,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     resumeAvailable: false,
   };
   const linkedContextElectionId = inviteContext.electionId?.trim() ?? "";
-  const currentQuestionnaireId = linkedContextElectionId || snapshot?.electionId?.trim() || electionId.trim() || latestAnnouncedQuestionnaireId.trim();
+  const currentQuestionnaireId = snapshot?.electionId?.trim() || electionId.trim() || linkedContextElectionId || latestAnnouncedQuestionnaireId.trim();
   const contextPendingInvites = useMemo(() => (
     linkedContextElectionId
       ? pendingInvites.filter((invite) => invite.electionId === linkedContextElectionId)
@@ -978,6 +1001,45 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     };
   }, [activeInvite, electionId, inviteContext.invite, latestAnnouncedQuestionnaireId, linkedContextElectionId, pendingInvites.length, signedInNpub, snapshot?.blindRequest?.requestId, snapshot?.blindIssuance?.issuanceId, snapshot?.submission?.submissionId]);
 
+  useEffect(() => {
+    const voterNpub = signedInNpub.trim()
+      || snapshot?.invitedNpub?.trim()
+      || props.localVoterNpub?.trim()
+      || "";
+    if (!voterNpub || !announcedQuestionnaireIdKey) {
+      return;
+    }
+    const localInvites = listInvitesFromMailbox(voterNpub)
+      .filter((invite) => (
+        !linkedContextElectionId
+        || invite.electionId === linkedContextElectionId
+        || announcedQuestionnaireIdSet.has(invite.electionId)
+      ))
+      .filter((invite) => {
+        if (props.localVoterNpub?.trim()) {
+          return true;
+        }
+        const invitee = invite.invitedNpub?.trim() ?? "";
+        return !invitee || invitee === voterNpub;
+      });
+    if (localInvites.length === 0) {
+      return;
+    }
+    setPendingInvites((current) => {
+      const next = mergeInvitesByKey(current, localInvites);
+      const changed = next.length !== current.length
+        || next.some((invite, index) => current[index] !== invite);
+      return changed ? next : current;
+    });
+  }, [
+    announcedQuestionnaireIdKey,
+    announcedQuestionnaireIdSet,
+    linkedContextElectionId,
+    props.localVoterNpub,
+    signedInNpub,
+    snapshot?.invitedNpub,
+  ]);
+
   const requiredQuestions = useMemo(
     () => questions.filter((question) => question.required || (question.type === "rank" && (question.minimumRanked ?? 0) > 0)),
     [questions],
@@ -1076,16 +1138,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
 
     const fromMailbox = [...listInvitesFromMailbox(voterNpub)];
 
-    const mergeByKey = (invites: ElectionInviteMessage[]) => {
-      const byKey = new Map<string, ElectionInviteMessage>();
-      for (const invite of invites) {
-        byKey.set(invite.electionId + ":" + invite.coordinatorNpub, invite);
-      }
-      return [...byKey.values()];
-    };
-
     if (!input.allowRelayFetch) {
-      return mergeByKey(fromMailbox);
+      return mergeInvitesByKey(fromMailbox);
     }
 
     const localVoterNpub = props.localVoterNpub?.trim() ?? "";
@@ -1099,9 +1153,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         for (const invite of dmInvites) {
           publishInviteToMailbox(invite);
         }
-        return mergeByKey([...dmInvites, ...fromMailbox]);
+        return mergeInvitesByKey(dmInvites, fromMailbox);
       } catch {
-        return mergeByKey(fromMailbox);
+        return mergeInvitesByKey(fromMailbox);
       }
     }
 
@@ -1111,9 +1165,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       for (const invite of dmInvites) {
         publishInviteToMailbox(invite);
       }
-      return mergeByKey([...dmInvites, ...fromMailbox]);
+      return mergeInvitesByKey(dmInvites, fromMailbox);
     } catch {
-      return mergeByKey(fromMailbox);
+      return mergeInvitesByKey(fromMailbox);
     }
   }
 
@@ -1897,25 +1951,66 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const visiblePendingInvites = snapshot?.loginVerified && snapshot.electionId === electionId.trim()
     ? []
     : contextPendingInvites.filter(canShowInviteForCurrentIdentity);
+  const linkedDropdownCoordinatorNpub = linkedContextElectionId
+    ? inviteContext.coordinatorNpub?.trim()
+      || snapshot?.coordinatorNpub?.trim()
+      || activeInvite?.coordinatorNpub?.trim()
+      || pendingInvites.find((invite) => invite.electionId === linkedContextElectionId)?.coordinatorNpub?.trim()
+      || readCachedQuestionnaireDefinition(linkedContextElectionId)?.coordinatorPubkey?.trim()
+      || loadElectionSummary(linkedContextElectionId)?.coordinatorNpub?.trim()
+      || ""
+    : "";
+  const inviteDropdownSourceInvites = useMemo(() => {
+    if (!linkedContextElectionId) {
+      return contextPendingInvites;
+    }
+    return pendingInvites.filter((invite) => {
+      if (invite.electionId === linkedContextElectionId) {
+        return true;
+      }
+      if (!announcedQuestionnaireIdSet.has(invite.electionId)) {
+        return false;
+      }
+      return Boolean(linkedDropdownCoordinatorNpub) && invite.coordinatorNpub === linkedDropdownCoordinatorNpub;
+    });
+  }, [
+    announcedQuestionnaireIdSet,
+    contextPendingInvites,
+    linkedContextElectionId,
+    linkedDropdownCoordinatorNpub,
+    pendingInvites,
+  ]);
   const inviteDropdownOptions = useMemo(() => {
     const map = new Map<string, ElectionInviteMessage>();
-    for (const invite of contextPendingInvites) {
+    for (const invite of inviteDropdownSourceInvites) {
       if (!canShowInviteForCurrentIdentity(invite)) {
         continue;
       }
-      const key = `${invite.electionId}:${invite.coordinatorNpub}`;
-      map.set(key, invite);
+      map.set(inviteMessageKey(invite), invite);
     }
     const currentInvite = snapshot?.inviteMessage ?? activeInvite ?? null;
     if (currentInvite) {
       const currentInviteIsInContext = !linkedContextElectionId || currentInvite.electionId === linkedContextElectionId;
       if (currentInviteIsInContext) {
-        const key = `${currentInvite.electionId}:${currentInvite.coordinatorNpub}`;
-        map.set(key, currentInvite);
+        map.set(inviteMessageKey(currentInvite), currentInvite);
       }
     }
     return [...map.values()];
-  }, [activeInvite, contextPendingInvites, linkedContextElectionId, signedInNpub, props.localVoterNpub, snapshot?.inviteMessage]);
+  }, [activeInvite, inviteDropdownSourceInvites, linkedContextElectionId, signedInNpub, props.localVoterNpub, snapshot?.inviteMessage]);
+  const nextInviteDropdownOption = useMemo(() => {
+    if (inviteDropdownOptions.length <= 1) {
+      return null;
+    }
+    const currentInvite = currentQuestionnaireId
+      ? inviteDropdownOptions.find((invite) => invite.electionId === currentQuestionnaireId) ?? inviteDropdownOptions[0]
+      : inviteDropdownOptions[0];
+    const currentKey = selectedInviteKey || (currentInvite ? inviteMessageKey(currentInvite) : "");
+    const currentIndex = inviteDropdownOptions.findIndex((invite) => inviteMessageKey(invite) === currentKey);
+    const startIndex = currentIndex >= 0 ? currentIndex + 1 : 0;
+    return inviteDropdownOptions.slice(startIndex).find((invite) => inviteMessageKey(invite) !== currentKey)
+      ?? inviteDropdownOptions.find((invite) => inviteMessageKey(invite) !== currentKey)
+      ?? null;
+  }, [currentQuestionnaireId, inviteDropdownOptions, selectedInviteKey]);
 
   useEffect(() => {
     const selectedQuestionnaireId = currentQuestionnaireId;
@@ -1924,7 +2019,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
     const matched = inviteDropdownOptions.find((invite) => invite.electionId === selectedQuestionnaireId);
     if (matched) {
-      const key = `${matched.electionId}:${matched.coordinatorNpub}`;
+      const key = inviteMessageKey(matched);
       if (selectedInviteKey !== key) {
         setSelectedInviteKey(key);
       }
@@ -1932,7 +2027,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
     if (!selectedInviteKey && inviteDropdownOptions.length > 0) {
       const first = inviteDropdownOptions[0];
-      setSelectedInviteKey(`${first.electionId}:${first.coordinatorNpub}`);
+      setSelectedInviteKey(inviteMessageKey(first));
     }
   }, [currentQuestionnaireId, inviteDropdownOptions, selectedInviteKey]);
   const waitingForCredential = Boolean(snapshot?.blindRequestSent && !snapshot?.credentialReady && !snapshot?.submission);
@@ -2222,32 +2317,45 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       ) : null}
 
       {inviteDropdownOptions.length > 0 ? (
-        <>
-          <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
-            <select
-              id='questionnaire-invite-select'
-              className='simple-voter-input'
-              value={selectedInviteKey}
-              onChange={(event) => {
-                const key = event.target.value;
-                setSelectedInviteKey(key);
-                const selected = inviteDropdownOptions.find((invite) => `${invite.electionId}:${invite.coordinatorNpub}` === key);
-                if (selected) {
-                  void openInvite(selected);
+        <div className='simple-questionnaire-invite-switcher'>
+          <select
+            id='questionnaire-invite-select'
+            className='simple-voter-input'
+            aria-label='Questionnaire'
+            value={selectedInviteKey}
+            onChange={(event) => {
+              const key = event.target.value;
+              setSelectedInviteKey(key);
+              const selected = inviteDropdownOptions.find((invite) => inviteMessageKey(invite) === key);
+              if (selected) {
+                void openInvite(selected);
+              }
+            }}
+          >
+            {inviteDropdownOptions.map((invite) => {
+              const key = inviteMessageKey(invite);
+              return (
+                <option key={key} value={key}>
+                  {resolveInviteDisplayTitle(invite) + " · " + invite.electionId}
+                </option>
+              );
+            })}
+          </select>
+          {inviteDropdownOptions.length > 1 ? (
+            <button
+              type='button'
+              className='simple-voter-primary simple-questionnaire-answer-next'
+              disabled={!nextInviteDropdownOption}
+              onClick={() => {
+                if (nextInviteDropdownOption) {
+                  void openInvite(nextInviteDropdownOption, true);
                 }
               }}
             >
-              {inviteDropdownOptions.map((invite) => {
-                const key = `${invite.electionId}:${invite.coordinatorNpub}`;
-                return (
-                  <option key={key} value={key}>
-                    {resolveInviteDisplayTitle(invite) + " · " + invite.electionId}
-                  </option>
-                );
-              })}
-            </select>
-          </div>
-        </>
+              Answer next
+            </button>
+          ) : null}
+        </div>
       ) : null}
       {visiblePendingInvites.length > 0 ? (
         <section className='simple-settings-card' aria-label='Pending questionnaire invites'>

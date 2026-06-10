@@ -40,7 +40,7 @@ Most online voting systems force an uncomfortable tradeoff:
 - either the operator can link voters to votes
 - or the public cannot independently verify the result
 
-Auditable Voting tries to avoid both failures by separating issuance from submission. The organiser handles eligibility, including an admitted voter roster that can be reused for later questionnaires. The voter still spends a fresh blind credential for each questionnaire through a fresh response identity. Observers read the public event stream and recompute the count.
+Auditable Voting tries to avoid both failures by separating issuance from submission. The organiser handles eligibility, including an admitted voter roster that can be reused for later questionnaires and applied to send voters the next questionnaire invite. The voter still spends a fresh blind credential for each questionnaire through a fresh response identity. Observers read the public event stream and recompute the count.
 
 ## What is public vs private
 
