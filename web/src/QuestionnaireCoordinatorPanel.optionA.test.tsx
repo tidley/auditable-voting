@@ -1,26 +1,88 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { nip19 } from "nostr-tools";
+import { QUESTIONNAIRE_DEFINITION_KIND } from "./questionnaireNostr";
 
 vi.mock("./questionnaireFlowMode", () => ({
   getQuestionnaireFlowMode: () => "option_a",
 }));
 
+const sharedNostrPoolMocks = vi.hoisted(() => ({
+  querySync: vi.fn(),
+  subscribeMany: vi.fn(),
+}));
+
 vi.mock("./sharedNostrPool", () => ({
   getSharedNostrPool: () => ({
-    querySync: vi.fn().mockResolvedValue([]),
-    subscribeMany: vi.fn(() => ({
-      close: vi.fn(),
-    })),
+    querySync: sharedNostrPoolMocks.querySync,
+    subscribeMany: sharedNostrPoolMocks.subscribeMany,
   }),
 }));
 
 import QuestionnaireCoordinatorPanel from "./QuestionnaireCoordinatorPanel";
 import { upsertElectionSummary } from "./questionnaireOptionAStorage";
+import { storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
+
+function makeDefinition(input: {
+  questionnaireId: string;
+  title: string;
+  coordinatorNpub: string;
+}) {
+  return {
+    schemaVersion: 1 as const,
+    eventType: "questionnaire_definition" as const,
+    responseMode: "blind_token" as const,
+    questionnaireId: input.questionnaireId,
+    title: input.title,
+    description: "",
+    createdAt: 1781200000,
+    openAt: 1781200000,
+    closeAt: 1781203600,
+    coordinatorPubkey: input.coordinatorNpub,
+    coordinatorEncryptionPubkey: input.coordinatorNpub,
+    responseVisibility: "public" as const,
+    eligibilityMode: "allowlist" as const,
+    allowMultipleResponsesPerPubkey: false,
+    questions: [{
+      questionId: "q1",
+      prompt: "Proceed?",
+      required: true,
+      type: "yes_no" as const,
+    }],
+  };
+}
+
+function makeDefinitionEvent(input: {
+  id: string;
+  pubkey: string;
+  questionnaireId: string;
+  title: string;
+  coordinatorNpub: string;
+  createdAt?: number;
+}) {
+  return {
+    id: input.id,
+    pubkey: input.pubkey,
+    created_at: input.createdAt ?? 1781200000,
+    kind: QUESTIONNAIRE_DEFINITION_KIND,
+    tags: [["q", input.questionnaireId], ["questionnaire-id", input.questionnaireId]],
+    content: JSON.stringify(makeDefinition(input)),
+    sig: "0".repeat(128),
+  };
+}
+
+beforeEach(() => {
+  sharedNostrPoolMocks.querySync.mockResolvedValue([]);
+  sharedNostrPoolMocks.subscribeMany.mockReturnValue({
+    close: vi.fn(),
+  });
+});
 
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
+  vi.clearAllMocks();
 });
 
 describe("QuestionnaireCoordinatorPanel option_a mode", () => {
@@ -99,6 +161,71 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       expect(optionText.some((text) => text.includes("First local questionnaire - q_first_local"))).toBe(true);
       expect(optionText.some((text) => text.includes("Second local questionnaire - q_second_local"))).toBe(true);
       expect(optionText.some((text) => text.includes("Other organiser questionnaire"))).toBe(false);
+    });
+  });
+
+  it("prefers the published summary title over a cached draft title in the live status selector", async () => {
+    const coordinatorNpub = "npub1organiser";
+    storeCachedQuestionnaireDefinition(makeDefinition({
+      questionnaireId: "q_cached_title",
+      title: "Copied draft title",
+      coordinatorNpub,
+    }));
+    upsertElectionSummary({
+      electionId: "q_cached_title",
+      title: "Published questionnaire title",
+      description: "",
+      state: "open",
+      openedAt: "2026-06-02T10:00:00.000Z",
+      closedAt: null,
+      coordinatorNpub,
+    });
+
+    render(<QuestionnaireCoordinatorPanel view='responses' coordinatorNpub={coordinatorNpub} />);
+
+    const selector = await screen.findByRole("combobox", { name: "Questionnaire" }) as HTMLSelectElement;
+    await waitFor(() => {
+      const optionText = [...selector.options].map((option) => option.textContent ?? "");
+      expect(optionText.some((text) => text.includes("Published questionnaire title - q_cached_title"))).toBe(true);
+      expect(optionText.some((text) => text.includes("Copied draft title"))).toBe(false);
+    });
+  });
+
+  it("ignores public questionnaire definitions that were not signed by the organiser", async () => {
+    const coordinatorHex = "a".repeat(64);
+    const otherHex = "b".repeat(64);
+    const coordinatorNpub = nip19.npubEncode(coordinatorHex);
+    sharedNostrPoolMocks.querySync.mockImplementation(async (_relays, filter) => {
+      if (Array.isArray(filter?.kinds) && filter.kinds.includes(QUESTIONNAIRE_DEFINITION_KIND)) {
+        return [
+          makeDefinitionEvent({
+            id: "spoofed-definition",
+            pubkey: otherHex,
+            questionnaireId: "q_spoofed",
+            title: "Spoofed questionnaire",
+            coordinatorNpub,
+            createdAt: 1781201000,
+          }),
+          makeDefinitionEvent({
+            id: "own-definition",
+            pubkey: coordinatorHex,
+            questionnaireId: "q_own_public",
+            title: "Owned public questionnaire",
+            coordinatorNpub,
+            createdAt: 1781202000,
+          }),
+        ];
+      }
+      return [];
+    });
+
+    render(<QuestionnaireCoordinatorPanel view='responses' coordinatorNpub={coordinatorNpub} />);
+
+    const selector = await screen.findByRole("combobox", { name: "Questionnaire" }) as HTMLSelectElement;
+    await waitFor(() => {
+      const optionText = [...selector.options].map((option) => option.textContent ?? "");
+      expect(optionText.some((text) => text.includes("Owned public questionnaire - q_own_public"))).toBe(true);
+      expect(optionText.some((text) => text.includes("Spoofed questionnaire"))).toBe(false);
     });
   });
 });

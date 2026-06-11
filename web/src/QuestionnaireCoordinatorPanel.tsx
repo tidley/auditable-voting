@@ -273,6 +273,38 @@ function nowUnix() {
   return Math.floor(Date.now() / 1000);
 }
 
+function normaliseCoordinatorIdentifier(value: string | null | undefined) {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) {
+    return "";
+  }
+  if (trimmed.startsWith("npub1")) {
+    return trimmed;
+  }
+  if (/^[0-9a-f]{64}$/i.test(trimmed)) {
+    try {
+      return nip19.npubEncode(trimmed.toLowerCase());
+    } catch {
+      return "";
+    }
+  }
+  return trimmed;
+}
+
+function questionnaireDefinitionEventIsSignedByCoordinator(
+  event: Pick<NostrEvent, "pubkey">,
+  definition: QuestionnaireDefinition,
+  coordinatorNpub: string,
+) {
+  const authorNpub = normaliseCoordinatorIdentifier(event.pubkey);
+  const declaredCoordinatorNpub = normaliseCoordinatorIdentifier(definition.coordinatorPubkey);
+  const expectedCoordinatorNpub = normaliseCoordinatorIdentifier(coordinatorNpub);
+  if (!authorNpub || !declaredCoordinatorNpub || authorNpub !== declaredCoordinatorNpub) {
+    return false;
+  }
+  return !expectedCoordinatorNpub || authorNpub === expectedCoordinatorNpub;
+}
+
 function generateQuestionnaireId() {
   const randomPart = (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}${Math.random().toString(16).slice(2)}`)
     .replace(/-/g, "")
@@ -1152,6 +1184,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const deploymentMode = useMemo(() => readDeploymentModeFromUrl(), []);
   const isCourseFeedbackMode = deploymentMode === "course_feedback";
   const isNewRoundMode = props.newRoundMode === true;
+  const view = props.view ?? "build";
   const storedDraft = useMemo(() => readStoredQuestionnaireDraft(), []);
   const [questionnaireId, setQuestionnaireId] = useState(storedDraft.questionnaireId);
   const [title, setTitle] = useState(storedDraft.title);
@@ -1657,9 +1690,15 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
 
         const ids = new Set<string>();
         const titlesById: Record<string, string> = {};
-        const coordinatorFilter = coordinatorNpub.trim();
+        const coordinatorFilter = normaliseCoordinatorIdentifier(coordinatorNpub);
+        if (!coordinatorFilter) {
+          setAvailableQuestionnaireIds([]);
+          setAvailableQuestionnaireTitles({});
+          return;
+        }
         for (const summary of listElectionSummaries()) {
-          if (coordinatorFilter && summary.coordinatorNpub !== coordinatorFilter) {
+          const summaryCoordinatorNpub = normaliseCoordinatorIdentifier(summary.coordinatorNpub);
+          if (summaryCoordinatorNpub !== coordinatorFilter) {
             continue;
           }
           const summaryId = summary.electionId.trim();
@@ -1668,29 +1707,45 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           }
           ids.add(summaryId);
           const cachedDefinition = readCachedQuestionnaireDefinition(summaryId);
-          const summaryTitle = cachedDefinition?.title?.trim() || summary.title?.trim() || "";
+          const cachedDefinitionTitle = cachedDefinition
+            && normaliseCoordinatorIdentifier(cachedDefinition.coordinatorPubkey) === summaryCoordinatorNpub
+            ? cachedDefinition.title?.trim() ?? ""
+            : "";
+          const summaryTitle = summary.title?.trim() || cachedDefinitionTitle;
           if (summaryTitle) {
             titlesById[summaryId] = summaryTitle;
           }
         }
+        const eventTitleCandidatesById = new Map<string, { title: string; createdAt: number }>();
         for (const event of events) {
           const parsed = parseQuestionnaireDefinitionEvent(event);
           if (!parsed) {
             continue;
           }
-          if (coordinatorFilter && parsed.coordinatorPubkey !== coordinatorFilter) {
+          if (!questionnaireDefinitionEventIsSignedByCoordinator(event, parsed, coordinatorFilter)) {
             continue;
           }
           if (parsed.questionnaireId.trim()) {
             const parsedId = parsed.questionnaireId.trim();
             ids.add(parsedId);
-            if (parsed.title.trim()) {
-              titlesById[parsedId] = parsed.title.trim();
+            const eventTitle = parsed.title.trim();
+            if (eventTitle) {
+              const createdAt = Number(event.created_at ?? parsed.createdAt ?? 0);
+              const existing = eventTitleCandidatesById.get(parsedId);
+              if (!existing || createdAt >= existing.createdAt) {
+                eventTitleCandidatesById.set(parsedId, {
+                  title: eventTitle,
+                  createdAt,
+                });
+              }
             }
           }
         }
+        for (const [id, candidate] of eventTitleCandidatesById) {
+          titlesById[id] = candidate.title;
+        }
         const selectedId = questionnaireId.trim();
-        if (selectedId) {
+        if (selectedId && view !== "responses" && ids.size === 0) {
           ids.add(selectedId);
         }
         setAvailableQuestionnaireIds([...ids].sort((left, right) => {
@@ -1708,9 +1763,15 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         const selectedId = questionnaireId.trim();
         const ids = new Set<string>();
         const titlesById: Record<string, string> = {};
-        const coordinatorFilter = coordinatorNpub.trim();
+        const coordinatorFilter = normaliseCoordinatorIdentifier(coordinatorNpub);
+        if (!coordinatorFilter) {
+          setAvailableQuestionnaireIds([]);
+          setAvailableQuestionnaireTitles({});
+          return;
+        }
         for (const summary of listElectionSummaries()) {
-          if (coordinatorFilter && summary.coordinatorNpub !== coordinatorFilter) {
+          const summaryCoordinatorNpub = normaliseCoordinatorIdentifier(summary.coordinatorNpub);
+          if (summaryCoordinatorNpub !== coordinatorFilter) {
             continue;
           }
           const summaryId = summary.electionId.trim();
@@ -1722,7 +1783,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             titlesById[summaryId] = summary.title.trim();
           }
         }
-        if (selectedId) {
+        if (selectedId && view !== "responses" && ids.size === 0) {
           ids.add(selectedId);
         }
         setAvailableQuestionnaireIds([...ids]);
@@ -1733,7 +1794,18 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     return () => {
       cancelled = true;
     };
-  }, [coordinatorNpub, questionnaireId, questionnaireRelayPublishHints]);
+  }, [coordinatorNpub, questionnaireId, questionnaireRelayPublishHints, view]);
+
+  useEffect(() => {
+    if (view !== "responses" || availableQuestionnaireIds.length === 0) {
+      return;
+    }
+    const selectedId = questionnaireId.trim();
+    if (selectedId && availableQuestionnaireIds.includes(selectedId)) {
+      return;
+    }
+    setQuestionnaireId(availableQuestionnaireIds[0]);
+  }, [availableQuestionnaireIds, questionnaireId, view]);
 
   useEffect(() => {
     const id = questionnaireId.trim();
@@ -2082,6 +2154,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     if (typeof window === "undefined") {
       return;
     }
+    if (view !== "build") {
+      return;
+    }
     const nextId = questionnaireId.trim();
     if (!nextId) {
       return;
@@ -2122,6 +2197,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     questionnaireId,
     questions,
     title,
+    view,
   ]);
 
   function updateQuestion(index: number, updater: (question: QuestionnaireQuestionDraft) => QuestionnaireQuestionDraft) {
@@ -2463,10 +2539,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     [builtDefinition],
   );
   useEffect(() => {
-    if (builtDefinition && publishValidation?.valid) {
+    if (view === "build" && builtDefinition && publishValidation?.valid) {
       storeCachedQuestionnaireDefinition(builtDefinition);
     }
-  }, [builtDefinition, publishValidation?.valid]);
+  }, [builtDefinition, publishValidation?.valid, view]);
   const canPublishDraft = Boolean(
     builtDefinition
     && coordinatorNsec.trim()
@@ -2529,10 +2605,14 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     : (questionnaireId.trim() ? [questionnaireId.trim()] : []);
   const questionnaireOptionLabel = (id: string) => {
     const selectedId = questionnaireId.trim();
-    const selectedTitle = activePublishedDefinition?.questionnaireId === selectedId
+    const selectedPublishedTitle = activePublishedDefinition?.questionnaireId === selectedId
       ? activePublishedDefinition.title.trim()
-      : title.trim();
-    const labelTitle = availableQuestionnaireTitles[id]?.trim() || (id === selectedId ? selectedTitle : "");
+      : "";
+    const selectedDraftTitle = view === "build" && id === selectedId
+      ? title.trim()
+      : "";
+    const labelTitle = availableQuestionnaireTitles[id]?.trim()
+      || (id === selectedId ? selectedPublishedTitle || selectedDraftTitle : "");
     return labelTitle ? `${labelTitle} - ${id}` : id;
   };
   const coordinatorQuestionSummaries = useMemo(() => {
@@ -3448,7 +3528,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     props.onConfigureWorker?.();
   }
 
-  const view = props.view ?? "build";
   const hasAutoGeneratedWorkerCredentials = useRef(false);
 
   useEffect(() => {
