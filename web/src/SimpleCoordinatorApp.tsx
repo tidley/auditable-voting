@@ -6897,14 +6897,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                   <button
                     type='button'
                     className='simple-voter-secondary'
-                    onClick={() => void createPrivateInviteCodeLink()}
-                    disabled={!publicQuestionnaireInviteUrl || !optionACoordinatorRuntime}
-                  >
-                    Create single-use invite link
-                  </button>
-                  <button
-                    type='button'
-                    className='simple-voter-secondary'
                     disabled={admittedVoterApplyInFlight || admittedVoterAutoApplyNpubs.length === 0 || !optionAElectionId.trim() || !optionACoordinatorRuntime}
                     onClick={() => void applyAdmissionRosterToCurrentQuestionnaire()}
                   >
@@ -7032,6 +7024,16 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                         </div>
                       ) : null}
                       {knownVoterInviteStatus ? <p className='simple-voter-note'>{knownVoterInviteStatus}</p> : null}
+                    </div>
+                    <div className='simple-voter-action-row simple-voter-action-row-inline simple-private-invite-create-row'>
+                      <button
+                        type='button'
+                        className='simple-voter-secondary'
+                        onClick={() => void createPrivateInviteCodeLink()}
+                        disabled={!publicQuestionnaireInviteUrl || !optionACoordinatorRuntime}
+                      >
+                        Create single-use invite link
+                      </button>
                     </div>
                   </div>
                 ) : null}

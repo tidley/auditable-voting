@@ -3911,6 +3911,11 @@ code {
   background: #08111b;
 }
 
+.simple-session-invites .simple-private-invite-create-row {
+  justify-content: flex-end;
+  margin: 0;
+}
+
 .simple-session-invites .simple-admitted-voter-note-field {
   padding-top: 0;
 }
