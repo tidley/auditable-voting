@@ -44,6 +44,8 @@ type QuestionnaireResultsDashboardProps = {
   responseDetails: QuestionnaireResultsDashboardResponseDetail[];
   displayValidCount: number;
   displayInvalidCount?: number;
+  variant?: "default" | "session";
+  topControls?: ReactNode;
   coordinatorLabel?: string;
   coordinatorText: string;
   publishedAtLabel: string;
@@ -65,6 +67,8 @@ export default function QuestionnaireResultsDashboard({
   responseDetails,
   displayValidCount,
   displayInvalidCount = responseDetails.filter((entry) => !entry.accepted).length,
+  variant = "default",
+  topControls,
   coordinatorLabel = "Organiser",
   coordinatorText,
   publishedAtLabel,
@@ -150,13 +154,107 @@ export default function QuestionnaireResultsDashboard({
     : "0%";
   const closingStatus = getClosingStatus(questionnaire);
   const questionnaireDescription = questionnaire?.description?.trim() ?? "";
+  const isSessionVariant = variant === "session";
+
+  const renderAnswerList = (entry: QuestionnaireResultsDashboardResponseDetail) => (
+    <ol className='simple-auditor-answer-list'>
+      {entry.response.answers?.map((answer) => {
+        const question = selectedQuestionById.get(answer.questionId);
+        const questionNumber = selectedQuestionNumberById.get(answer.questionId);
+        const prompt = `${questionNumber ? `Q${questionNumber}. ` : ""}${question?.prompt || answer.questionId}`;
+        const answerWasDecrypted = isAnswerDecrypted(entry, answer);
+        if (answer.answerType === "yes_no") {
+          return (
+            <li key={`${entry.event.id}:${answer.questionId}`}>
+              <span className='simple-auditor-answer-prompt'>{prompt}</span>
+              <div className='simple-auditor-answer-values'>
+                <span className='simple-auditor-answer-chip'>{answer.value ? "Yes" : "No"}</span>
+                {answerWasDecrypted ? <DecryptedAnswerBadge /> : null}
+              </div>
+            </li>
+          );
+        }
+        if (answer.answerType === "multiple_choice") {
+          const selectedLabels = answer.selectedOptionIds.map((optionId) => (
+            question?.type === "multiple_choice"
+              ? question.options.find((option) => option.optionId === optionId)?.label ?? optionId
+              : optionId
+          ));
+          return (
+            <li key={`${entry.event.id}:${answer.questionId}`}>
+              <span className='simple-auditor-answer-prompt'>{prompt}</span>
+              <div className='simple-auditor-answer-values'>
+                {selectedLabels.length > 0 ? selectedLabels.map((label) => (
+                  <span key={label} className='simple-auditor-answer-chip'>{label}</span>
+                )) : (
+                  <span className='simple-auditor-answer-chip'>No option selected</span>
+                )}
+                {answerWasDecrypted ? <DecryptedAnswerBadge /> : null}
+              </div>
+            </li>
+          );
+        }
+        if (answer.answerType === "rank") {
+          const rankedLabels = answer.rankedOptionIds.map((optionId) => (
+            question?.type === "rank"
+              ? question.options.find((option) => option.optionId === optionId)?.label ?? optionId
+              : optionId
+          ));
+          return (
+            <li key={`${entry.event.id}:${answer.questionId}`}>
+              <span className='simple-auditor-answer-prompt'>{prompt}</span>
+              <div className='simple-auditor-answer-values'>
+                {rankedLabels.length > 0 ? rankedLabels.map((label, labelIndex) => (
+                  <span key={`${label}:${labelIndex}`} className='simple-auditor-answer-chip'>{labelIndex + 1}. {label}</span>
+                )) : (
+                  <span className='simple-auditor-answer-chip'>No ranked choices selected</span>
+                )}
+                {answerWasDecrypted ? <DecryptedAnswerBadge /> : null}
+              </div>
+            </li>
+          );
+        }
+        return (
+          <li key={`${entry.event.id}:${answer.questionId}`} className='simple-auditor-answer-item-free-text'>
+            <span className='simple-auditor-answer-prompt'>{prompt}</span>
+            <div className='simple-auditor-answer-free-text-row'>
+              <div className='simple-auditor-answer-free-text'>{formatFreeTextAnswer(answer.text)}</div>
+              {answerWasDecrypted ? <DecryptedAnswerBadge /> : null}
+            </div>
+          </li>
+        );
+      })}
+    </ol>
+  );
+
+  const renderResponseDisclosure = (entry: QuestionnaireResultsDashboardResponseDetail) => (
+    Array.isArray(entry.response.answers) && entry.response.answers.length > 0 ? (
+      <details className='simple-auditor-response-disclosure'>
+        <summary>
+          <span>Responses</span>
+          <span>{entry.response.answers.length}</span>
+        </summary>
+        <div className='simple-auditor-response-set'>
+          {renderAnswerList(entry)}
+        </div>
+      </details>
+    ) : (
+      <p className='simple-voter-note'>Answer payload is encrypted or unavailable in public events.</p>
+    )
+  );
 
   return (
     <>
-      <section className='simple-voter-section simple-auditor-panel simple-auditor-results-dashboard'>
+      <section className={`simple-voter-section simple-auditor-panel simple-auditor-results-dashboard${isSessionVariant ? " simple-session-results-dashboard" : ""}`}>
+        {isSessionVariant && topControls ? (
+          <div className='simple-session-toolbar'>
+            {topControls}
+          </div>
+        ) : null}
         {questionnaire ? (
           <>
-            <div className='simple-auditor-results-hero'>
+            {!isSessionVariant ? (
+              <div className='simple-auditor-results-hero'>
               <div className='simple-auditor-results-title-block'>
                 <p className='simple-auditor-breadcrumb'>Questionnaires / {questionnaire.questionnaireId}</p>
                 <h2 className='simple-voter-section-title'>Questionnaire Results</h2>
@@ -170,9 +268,11 @@ export default function QuestionnaireResultsDashboard({
                   Export results
                 </button>
               ) : null)}
-            </div>
+              </div>
+            ) : null}
 
-            <div className='simple-auditor-status-grid'>
+            {!isSessionVariant ? (
+              <div className='simple-auditor-status-grid'>
               <article className='simple-auditor-status-card'>
                 <p className='simple-auditor-summary-label'>Questionnaire</p>
                 <dl className='simple-auditor-status-details'>
@@ -216,11 +316,22 @@ export default function QuestionnaireResultsDashboard({
                 <p className='simple-auditor-summary-label'>{coordinatorLabel}</p>
                 <p className='simple-auditor-status-value'>{coordinatorText}</p>
               </article>
-            </div>
+              </div>
+            ) : null}
 
             {questionSummaries.length > 0 ? (
               <>
-                <div className='simple-auditor-question-grid'>
+                <div className={`simple-auditor-question-grid${isSessionVariant ? " simple-session-question-grid" : ""}`}>
+                  {isSessionVariant ? (
+                    <article className='simple-auditor-question-card simple-session-live-card'>
+                      <p className='simple-auditor-summary-label'>Live status</p>
+                      <p className='simple-auditor-score'>{displayValidCount}/{displayTotalCount || 0}</p>
+                      <p className='simple-voter-note'>accepted ({displayValidityPercentLabel})</p>
+                      <div className='simple-auditor-results-progress' aria-hidden='true'>
+                        <span style={{ width: `${Math.min(100, Math.max(0, displayValidityPercentNumber))}%` }} />
+                      </div>
+                    </article>
+                  ) : null}
                   {questionSummaries.map((summary) => {
                     const questionNumber = selectedQuestionNumberById.get(summary.questionId);
                     const questionTitle = selectedQuestionById.get(summary.questionId)?.prompt || `Question ${summary.questionId}`;
@@ -281,18 +392,20 @@ export default function QuestionnaireResultsDashboard({
         )}
       </section>
 
-      <section className='simple-voter-section simple-auditor-submissions-section'>
+      <section className={`simple-voter-section simple-auditor-submissions-section${isSessionVariant ? " simple-session-submissions-section" : ""}`}>
         <div className='simple-auditor-submissions-header'>
           <h2 className='simple-voter-section-title'>Submitted Votes</h2>
         </div>
         {questionnaire ? (
           responseDetails.length > 0 ? (
             <>
-              <div className='simple-auditor-submitted-toolbar'>
+              <div className={`simple-auditor-submitted-toolbar${isSessionVariant ? " simple-session-submitted-toolbar" : ""}`}>
+                {!isSessionVariant ? (
                 <div className='simple-auditor-submitted-stat'>
                   <p className='simple-auditor-summary-label'>Total responses</p>
                   <p className='simple-auditor-score'>{responseDetails.length}</p>
                 </div>
+                ) : null}
                 <div className='simple-auditor-submitted-filter'>
                   <label className='simple-voter-label' htmlFor='simple-auditor-submitted-search'>Filter submitted votes</label>
                   <input
@@ -320,7 +433,51 @@ export default function QuestionnaireResultsDashboard({
                   </div>
                 ) : null}
               </div>
-              <ul className='simple-voter-list simple-auditor-result-list'>
+              {isSessionVariant ? (
+                <div className='simple-session-table-wrap'>
+                  <table className='simple-session-submissions-table'>
+                    <thead>
+                      <tr>
+                        <th>Colour ID</th>
+                        <th>Submittor identity</th>
+                        <th>Submission time</th>
+                        <th>Response ID</th>
+                        <th>Answers</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredResponseDetails.map((entry) => (
+                        <tr key={entry.event.id}>
+                          <td>
+                            <TokenFingerprint
+                              tokenId={entry.response.authorPubkey}
+                              compact
+                              hideMetadata
+                              fingerprintTitle='Colour ID: a visual fingerprint for checking this submission identity at a glance.'
+                            />
+                          </td>
+                          <td title={entry.response.authorPubkey}>{deriveActorDisplayId(entry.response.authorPubkey)}</td>
+                          <td>{formatQuestionnaireTime(entry.response.submittedAt ?? entry.event.created_at ?? 0)}</td>
+                          <td className='simple-session-response-id'>{entry.response.responseId}</td>
+                          <td>{renderResponseDisclosure(entry)}</td>
+                          <td>
+                            <span className={`simple-auditor-status-chip${entry.accepted ? " simple-auditor-status-chip-accepted" : " simple-auditor-status-chip-invalid"}`}>
+                              {entry.accepted ? "Accepted" : "Invalid"}
+                            </span>
+                            {!entry.accepted ? (
+                              <p className='simple-auditor-invalid-reason'>
+                                Invalid reason: {formatInvalidReason(entry.rejectionReason)}
+                              </p>
+                            ) : null}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <ul className='simple-voter-list simple-auditor-result-list'>
                 {filteredResponseDetails.map((entry) => (
                   <li key={entry.event.id} className='simple-voter-list-item'>
                     <div className='simple-auditor-result-row'>
@@ -361,91 +518,13 @@ export default function QuestionnaireResultsDashboard({
                             Invalid reason: {formatInvalidReason(entry.rejectionReason)}
                           </p>
                         ) : null}
-                        {Array.isArray(entry.response.answers) && entry.response.answers.length > 0 ? (
-                          <details className='simple-auditor-response-disclosure'>
-                            <summary>
-                              <span>Responses</span>
-                              <span>{entry.response.answers.length}</span>
-                            </summary>
-                            <div className='simple-auditor-response-set'>
-                              <ol className='simple-auditor-answer-list'>
-                                {entry.response.answers.map((answer) => {
-                                  const question = selectedQuestionById.get(answer.questionId);
-                                  const questionNumber = selectedQuestionNumberById.get(answer.questionId);
-                                  const prompt = `${questionNumber ? `Q${questionNumber}. ` : ""}${question?.prompt || answer.questionId}`;
-                                  const answerWasDecrypted = isAnswerDecrypted(entry, answer);
-                                  if (answer.answerType === "yes_no") {
-                                    return (
-                                      <li key={`${entry.event.id}:${answer.questionId}`}>
-                                        <span className='simple-auditor-answer-prompt'>{prompt}</span>
-                                        <div className='simple-auditor-answer-values'>
-                                          <span className='simple-auditor-answer-chip'>{answer.value ? "Yes" : "No"}</span>
-                                          {answerWasDecrypted ? <DecryptedAnswerBadge /> : null}
-                                        </div>
-                                      </li>
-                                    );
-                                  }
-                                  if (answer.answerType === "multiple_choice") {
-                                    const selectedLabels = answer.selectedOptionIds.map((optionId) => (
-                                      question?.type === "multiple_choice"
-                                        ? question.options.find((option) => option.optionId === optionId)?.label ?? optionId
-                                        : optionId
-                                    ));
-                                    return (
-                                      <li key={`${entry.event.id}:${answer.questionId}`}>
-                                        <span className='simple-auditor-answer-prompt'>{prompt}</span>
-                                        <div className='simple-auditor-answer-values'>
-                                          {selectedLabels.length > 0 ? selectedLabels.map((label) => (
-                                            <span key={label} className='simple-auditor-answer-chip'>{label}</span>
-                                          )) : (
-                                            <span className='simple-auditor-answer-chip'>No option selected</span>
-                                          )}
-                                          {answerWasDecrypted ? <DecryptedAnswerBadge /> : null}
-                                        </div>
-                                      </li>
-                                    );
-                                  }
-                                  if (answer.answerType === "rank") {
-                                    const rankedLabels = answer.rankedOptionIds.map((optionId) => (
-                                      question?.type === "rank"
-                                        ? question.options.find((option) => option.optionId === optionId)?.label ?? optionId
-                                        : optionId
-                                    ));
-                                    return (
-                                      <li key={`${entry.event.id}:${answer.questionId}`}>
-                                        <span className='simple-auditor-answer-prompt'>{prompt}</span>
-                                        <div className='simple-auditor-answer-values'>
-                                          {rankedLabels.length > 0 ? rankedLabels.map((label, labelIndex) => (
-                                            <span key={`${label}:${labelIndex}`} className='simple-auditor-answer-chip'>{labelIndex + 1}. {label}</span>
-                                          )) : (
-                                            <span className='simple-auditor-answer-chip'>No ranked choices selected</span>
-                                          )}
-                                          {answerWasDecrypted ? <DecryptedAnswerBadge /> : null}
-                                        </div>
-                                      </li>
-                                    );
-                                  }
-                                  return (
-                                    <li key={`${entry.event.id}:${answer.questionId}`} className='simple-auditor-answer-item-free-text'>
-                                      <span className='simple-auditor-answer-prompt'>{prompt}</span>
-                                      <div className='simple-auditor-answer-free-text-row'>
-                                        <div className='simple-auditor-answer-free-text'>{formatFreeTextAnswer(answer.text)}</div>
-                                        {answerWasDecrypted ? <DecryptedAnswerBadge /> : null}
-                                      </div>
-                                    </li>
-                                  );
-                                })}
-                              </ol>
-                            </div>
-                          </details>
-                        ) : (
-                          <p className='simple-voter-note'>Answer payload is encrypted or unavailable in public events.</p>
-                        )}
+                        {renderResponseDisclosure(entry)}
                       </div>
                     </div>
                   </li>
                 ))}
               </ul>
+              )}
               {filteredResponseDetails.length === 0 ? (
                 <p className='simple-voter-empty'>No voter responses match the current filter.</p>
               ) : null}

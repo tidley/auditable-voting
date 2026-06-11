@@ -589,6 +589,11 @@ code {
   flex-direction: column;
 }
 
+.simple-app-shell-coordinator {
+  width: 100%;
+  padding: 0;
+}
+
 .simple-login-gateway {
   width: min(640px, calc(100% - 32px));
   margin: 32px auto 12px;
@@ -1048,6 +1053,173 @@ code {
   color: var(--simple-text);
 }
 
+.simple-coordinator-shell {
+  width: 100%;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr);
+  background: #070d10;
+}
+
+.simple-coordinator-sidebar {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  gap: 18px;
+  min-height: 100vh;
+  padding: 18px 14px;
+  border-right: 1px solid var(--simple-border);
+  background: #0d1622;
+}
+
+.simple-coordinator-sidebar-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.simple-coordinator-sidebar .simple-account-menu {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.simple-coordinator-sidebar-collapse {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--simple-border-strong);
+  border-radius: 8px;
+  background: var(--simple-surface-2);
+  color: var(--simple-soft);
+  font: inherit;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.simple-coordinator-sidebar-identity {
+  display: grid;
+  gap: 4px;
+  padding: 12px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 10px;
+  background: rgba(6, 12, 18, 0.42);
+}
+
+.simple-coordinator-sidebar-short {
+  margin: 0;
+  color: var(--simple-text);
+  font-size: 1.15rem;
+  font-weight: 850;
+  line-height: 1.1;
+}
+
+.simple-coordinator-sidebar-npub {
+  margin: 0;
+  color: var(--simple-muted);
+  font-family: "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.simple-coordinator-sidebar-nav {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.simple-coordinator-nav-button {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--simple-muted);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+}
+
+.simple-coordinator-nav-button:hover,
+.simple-coordinator-nav-button:focus-visible {
+  border-color: var(--simple-border-strong);
+  background: rgba(45, 212, 191, 0.08);
+  color: var(--simple-text);
+}
+
+.simple-coordinator-nav-button.is-active {
+  border-color: rgba(45, 212, 191, 0.24);
+  background: rgba(8, 130, 127, 0.26);
+  color: var(--simple-text);
+}
+
+.simple-coordinator-nav-symbol {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  color: var(--simple-teal);
+  font-weight: 900;
+}
+
+.simple-coordinator-nav-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.simple-coordinator-page {
+  min-width: 0;
+  min-height: 100vh;
+  border: 0;
+  border-radius: 0;
+  padding: 18px 22px 36px;
+  background: #07101a;
+  box-shadow: none;
+}
+
+.simple-coordinator-page::before {
+  display: none;
+}
+
+.simple-coordinator-shell.is-sidebar-collapsed {
+  grid-template-columns: 76px minmax(0, 1fr);
+}
+
+.simple-coordinator-shell.is-sidebar-collapsed .simple-coordinator-sidebar {
+  padding-inline: 10px;
+}
+
+.simple-coordinator-shell.is-sidebar-collapsed .simple-coordinator-sidebar-top {
+  flex-direction: column;
+}
+
+.simple-coordinator-shell.is-sidebar-collapsed .simple-coordinator-sidebar-identity,
+.simple-coordinator-shell.is-sidebar-collapsed .simple-coordinator-nav-label {
+  display: none;
+}
+
+.simple-coordinator-shell.is-sidebar-collapsed .simple-coordinator-nav-button {
+  grid-template-columns: 1fr;
+  justify-items: center;
+  padding: 0;
+}
+
 .simple-app-version {
   margin: auto 0 0 auto;
   width: min(960px, calc(100% - 32px));
@@ -1489,13 +1661,13 @@ code {
 
 .simple-questionnaire-question-list {
   display: grid;
-  gap: 28px;
+  gap: 12px;
 }
 
 .simple-questionnaire-question-card {
   display: grid;
-  gap: 12px;
-  padding: 22px;
+  gap: 10px;
+  padding: 16px;
   border: 1px solid var(--simple-border);
   border-radius: 8px;
   background: var(--simple-surface-2);
@@ -1589,6 +1761,153 @@ code {
 
 .simple-questionnaire-remove-button {
   margin-left: auto;
+}
+
+.simple-questionnaire-build-section > .simple-voter-section-title {
+  margin-bottom: 14px;
+}
+
+.simple-questionnaire-build-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
+  gap: 18px;
+  align-items: start;
+}
+
+.simple-questionnaire-build-main {
+  min-width: 0;
+}
+
+.simple-questionnaire-build-card {
+  gap: 14px;
+}
+
+.simple-questionnaire-build-cardlet,
+.simple-questionnaire-build-side-card {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--simple-border);
+  border-radius: 8px;
+  background: rgba(12, 19, 25, 0.82);
+}
+
+.simple-questionnaire-cardlet-title {
+  margin: 0;
+  color: var(--simple-soft);
+  font-size: 0.98rem;
+  font-weight: 850;
+  letter-spacing: 0;
+}
+
+.simple-questionnaire-questions-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.simple-questionnaire-questions-head .simple-questionnaire-questions-title {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.simple-questionnaire-questions-head span {
+  color: var(--simple-muted);
+  font-size: 0.86rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.simple-questionnaire-type-select {
+  display: grid;
+  grid-template-columns: max-content minmax(180px, 260px);
+  align-items: center;
+  gap: 10px;
+}
+
+.simple-questionnaire-type-dropdown {
+  margin-bottom: 0;
+}
+
+.simple-questionnaire-question-card > .simple-voter-input {
+  margin-bottom: 0;
+}
+
+.simple-questionnaire-add-question-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 52px;
+  width: 100%;
+  border: 1px dashed var(--simple-border-strong);
+  border-radius: 8px;
+  background: rgba(12, 19, 25, 0.42);
+  color: var(--simple-soft);
+  font: inherit;
+  font-weight: 850;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
+}
+
+.simple-questionnaire-add-question-button:hover,
+.simple-questionnaire-add-question-button:focus-visible {
+  border-color: var(--simple-teal);
+  background: rgba(45, 212, 191, 0.08);
+  color: var(--simple-text);
+}
+
+.simple-questionnaire-build-aside {
+  position: sticky;
+  top: 18px;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.simple-questionnaire-build-side-card .simple-voter-section-title {
+  font-size: 1.05rem;
+}
+
+.simple-questionnaire-readiness-list {
+  gap: 9px;
+}
+
+.simple-questionnaire-readiness-list li {
+  gap: 8px;
+  font-size: 0.88rem;
+}
+
+.simple-questionnaire-readiness-list .simple-vote-status-icon {
+  width: 20px;
+  height: 20px;
+  border-width: 1px;
+  font-size: 0.72rem;
+}
+
+.simple-questionnaire-build-actions {
+  align-items: stretch;
+}
+
+.simple-questionnaire-build-actions > .simple-voter-primary,
+.simple-questionnaire-build-actions > .simple-voter-secondary {
+  width: 100%;
+  align-self: stretch;
+}
+
+.simple-questionnaire-build-actions .simple-voter-note {
+  margin: 0;
+  font-size: 0.86rem;
+}
+
+.simple-questionnaire-build-actions .simple-questionnaire-preview {
+  padding: 12px;
+}
+
+.simple-questionnaire-build-actions .simple-questionnaire-preview pre {
+  max-height: 320px;
 }
 
 .simple-questionnaire-responses-section {
@@ -2403,6 +2722,38 @@ code {
   box-shadow: var(--simple-shadow);
 }
 
+.simple-session-results-dashboard,
+.simple-session-submissions-section {
+  padding: 16px 18px;
+  border: 1px solid var(--simple-border);
+  border-radius: 8px;
+  background: #0b1420;
+  box-shadow: none;
+}
+
+.simple-session-toolbar {
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--simple-border);
+}
+
+.simple-session-controlbar {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.simple-session-questionnaire-select {
+  min-height: 40px;
+  margin: 0;
+}
+
+.simple-session-control-actions {
+  justify-content: flex-end;
+  margin: 0;
+}
+
 .simple-auditor-results-hero {
   display: flex;
   align-items: flex-start;
@@ -2565,6 +2916,12 @@ code {
   margin-bottom: 14px;
 }
 
+.simple-session-question-grid {
+  grid-template-columns: minmax(180px, 0.75fr) repeat(auto-fit, minmax(220px, 1fr));
+  align-items: stretch;
+  margin-bottom: 0;
+}
+
 .simple-auditor-question-card {
   min-width: 0;
   padding: 18px;
@@ -2573,6 +2930,33 @@ code {
   background: var(--simple-surface);
   display: grid;
   gap: 16px;
+}
+
+.simple-session-results-dashboard .simple-auditor-question-card {
+  padding: 14px 16px;
+  gap: 12px;
+  background: #0c1621;
+}
+
+.simple-session-live-card {
+  align-content: center;
+}
+
+.simple-session-live-card .simple-auditor-score {
+  font-size: clamp(1.8rem, 3vw, 2.35rem);
+}
+
+.simple-session-live-card .simple-voter-note {
+  color: var(--simple-muted);
+  font-size: 0.82rem;
+}
+
+.simple-session-results-dashboard .simple-auditor-question-card-head .simple-voter-question {
+  font-size: 0.96rem;
+}
+
+.simple-session-results-dashboard .simple-auditor-question-response-count {
+  font-size: 0.78rem;
 }
 
 .simple-auditor-question-card-head {
@@ -3030,6 +3414,94 @@ code {
   width: 82px;
   height: 82px;
   min-height: 0;
+}
+
+.simple-session-invites {
+  margin-top: 16px;
+}
+
+.simple-session-invites .simple-collapsible-section {
+  margin-top: 0;
+  padding: 16px 18px;
+  border: 1px solid var(--simple-border);
+  border-radius: 8px;
+  background: #0b1420;
+}
+
+.simple-session-invites .simple-collapsible-header {
+  margin-bottom: 0;
+}
+
+.simple-session-invites .simple-collapsible-body {
+  margin-top: 12px;
+}
+
+.simple-session-invites .simple-invite-share-panel {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.simple-session-invites .simple-admitted-voters-heading {
+  align-items: center;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--simple-border);
+}
+
+.simple-session-invites .simple-invite-share-copy .simple-voter-question {
+  font-size: 1rem;
+}
+
+.simple-session-invites .simple-voter-note {
+  color: var(--simple-muted);
+  font-size: 0.82rem;
+}
+
+.simple-session-invites .simple-admitted-voters-action-row {
+  justify-content: flex-end;
+  margin: 0 0 12px;
+}
+
+.simple-session-invites .simple-admitted-voters-add-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin-bottom: 12px;
+}
+
+.simple-session-invites .simple-voter-field-stack {
+  gap: 12px;
+}
+
+.simple-session-invites .simple-invite-share-panel-general,
+.simple-session-invites .simple-invite-share-panel[aria-label='Invite via Nostr'] {
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  background: #08111b;
+}
+
+.simple-session-invites .simple-admitted-voter-list {
+  gap: 6px;
+}
+
+.simple-session-invites .simple-admitted-voter-row {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, auto);
+  padding: 10px 12px;
+  background: #08111b;
+}
+
+.simple-session-invites .simple-admitted-voter-note-field {
+  padding-top: 2px;
+}
+
+.simple-session-invites .simple-admitted-voter-note-field .simple-voter-input {
+  min-height: 38px;
+}
+
+.simple-session-invites .simple-admitted-voter-status.simple-vote-status-icon,
+.simple-session-invites .simple-admitted-voter-actions .simple-voter-secondary,
+.simple-session-invites .simple-admitted-voter-auto-toggle {
+  min-height: 30px;
+  font-size: 0.78rem;
 }
 
 .simple-private-invite-panel {
@@ -4530,6 +5002,11 @@ code {
   text-transform: uppercase;
 }
 
+.simple-auditor-status-chip-accepted {
+  background: rgba(20, 184, 166, 0.16);
+  color: #99f6e4;
+}
+
 .simple-auditor-status-chip-invalid {
   background: rgba(239, 68, 68, 0.16);
   color: #fecaca;
@@ -4551,7 +5028,128 @@ code {
   text-align: right;
 }
 
+.simple-session-submitted-toolbar {
+  grid-template-columns: minmax(0, 1fr);
+  margin: 0 0 12px;
+}
+
+.simple-session-submitted-toolbar .simple-auditor-submitted-filter {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.simple-session-submitted-toolbar .simple-voter-label {
+  display: none;
+}
+
+.simple-session-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--simple-border);
+  border-radius: 8px;
+  background: #08111b;
+}
+
+.simple-session-submissions-table {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: collapse;
+  color: var(--simple-soft);
+  font-size: 0.82rem;
+}
+
+.simple-session-submissions-table th,
+.simple-session-submissions-table td {
+  padding: 11px 12px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.13);
+  text-align: left;
+  vertical-align: top;
+}
+
+.simple-session-submissions-table th {
+  background: #111b29;
+  color: var(--simple-muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.simple-session-submissions-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.simple-session-submissions-table .token-fingerprint-compact .token-fingerprint-grid {
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+}
+
+.simple-session-response-id {
+  max-width: 220px;
+  color: var(--simple-muted);
+  font-family: "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  overflow-wrap: anywhere;
+}
+
+.simple-session-submissions-table .simple-auditor-response-disclosure {
+  min-width: 130px;
+  border-radius: 8px;
+  background: transparent;
+}
+
+.simple-session-submissions-table .simple-auditor-response-disclosure summary {
+  min-height: 32px;
+  padding: 6px 8px;
+  font-size: 0.72rem;
+}
+
+.simple-session-submissions-table .simple-auditor-invalid-reason {
+  margin: 8px 0 0;
+  font-size: 0.72rem;
+}
+
 @media (max-width: 900px) {
+  .simple-coordinator-shell,
+  .simple-coordinator-shell.is-sidebar-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .simple-coordinator-sidebar {
+    position: static;
+    min-height: 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--simple-border);
+  }
+
+  .simple-coordinator-sidebar-nav {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .simple-coordinator-shell.is-sidebar-collapsed .simple-coordinator-sidebar-identity,
+  .simple-coordinator-shell.is-sidebar-collapsed .simple-coordinator-nav-label {
+    display: block;
+  }
+
+  .simple-coordinator-shell.is-sidebar-collapsed .simple-coordinator-nav-button {
+    grid-template-columns: 28px minmax(0, 1fr);
+    justify-items: start;
+    padding: 0 10px;
+  }
+
+  .simple-session-controlbar,
+  .simple-session-invites .simple-admitted-voters-add-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .simple-session-control-actions {
+    justify-content: flex-start;
+  }
+
+  .simple-session-question-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .simple-auditor-status-grid {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -5957,6 +6555,14 @@ code {
   .simple-questionnaire-tabs {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+
+  .simple-questionnaire-build-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .simple-questionnaire-build-aside {
+    position: static;
+  }
 }
 
 @media (max-width: 640px) {
@@ -6066,6 +6672,15 @@ code {
 
   .simple-questionnaire-identity-grid {
     grid-template-columns: 1fr;
+  }
+
+  .simple-questionnaire-type-select {
+    grid-template-columns: 1fr;
+  }
+
+  .simple-questionnaire-questions-head {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .simple-invite-share-panel-general {

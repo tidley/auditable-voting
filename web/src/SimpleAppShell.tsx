@@ -646,218 +646,224 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
     );
   }
 
-  return (
-    <div className='simple-app-shell'>
-      <div className='simple-role-switch-wrap' ref={roleSwitchWrapRef}>
-        <div className='simple-role-switch-topbar'>
-          <div className='simple-account-menu-wrap'>
-            <button
-              type='button'
-              className='simple-role-switch-toggle simple-account-menu-toggle'
-              onClick={() => {
-                setAccountMenuOpen((current) => !current);
-              }}
-              aria-haspopup='menu'
-              aria-expanded={accountMenuOpen}
-              aria-controls='simple-app-menu'
-              data-press-feedback-disabled='true'
+  const accountMenuControl = (
+    <div className='simple-account-menu-wrap' ref={roleSwitchWrapRef}>
+      <button
+        type='button'
+        className='simple-role-switch-toggle simple-account-menu-toggle'
+        onClick={() => {
+          setAccountMenuOpen((current) => !current);
+        }}
+        aria-haspopup='menu'
+        aria-expanded={accountMenuOpen}
+        aria-controls='simple-app-menu'
+        data-press-feedback-disabled='true'
+      >
+        Menu
+      </button>
+      {accountMenuOpen ? (
+        <div
+          id='simple-app-menu'
+          className='simple-account-menu simple-main-menu'
+          role='menu'
+          aria-label='App menu'
+        >
+          <div className='simple-account-menu-section' role='none'>
+            <p className='simple-account-menu-kicker'>Role</p>
+            <div
+              className='simple-role-switch simple-role-switch-menu-inline'
+              role='tablist'
+              aria-label='Simple role switch'
             >
-              Menu
-            </button>
-            {accountMenuOpen ? (
+              {ROLE_OPTIONS.map((option) => (
+                <button
+                  key={option.role}
+                  type='button'
+                  role='tab'
+                  aria-selected={role === option.role}
+                  className={`simple-role-switch-button${role === option.role ? ' is-active' : ''}`}
+                  data-press-feedback-disabled='true'
+                  onClick={() => {
+                    void handleRoleSelect(option.role);
+                  }}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {role === "voter" ? (
+            <div className='simple-account-menu-section simple-account-menu-section-nav' role='none'>
+              <p className='simple-account-menu-kicker'>Voter</p>
               <div
-                id='simple-app-menu'
-                className='simple-account-menu simple-main-menu'
-                role='menu'
-                aria-label='App menu'
+                className='simple-role-switch simple-role-switch-menu-inline simple-voter-menu-switch'
+                role='tablist'
+                aria-label='Voter sections'
               >
-                <div className='simple-account-menu-section' role='none'>
-                  <p className='simple-account-menu-kicker'>Role</p>
-                  <div
-                    className='simple-role-switch simple-role-switch-menu-inline'
-                    role='tablist'
-                    aria-label='Simple role switch'
+                {VOTER_SECTION_OPTIONS.map((option) => (
+                  <button
+                    key={option.tab}
+                    type='button'
+                    role='tab'
+                    aria-selected={voterTab === option.tab}
+                    className={`simple-role-switch-button${voterTab === option.tab ? ' is-active' : ''}`}
+                    data-press-feedback-disabled='true'
+                    onClick={() => {
+                      setVoterTab(option.tab);
+                      setAccountMenuOpen(false);
+                    }}
                   >
-                    {ROLE_OPTIONS.map((option) => (
-                      <button
-                        key={option.role}
-                        type='button'
-                        role='tab'
-                        aria-selected={role === option.role}
-                        className={`simple-role-switch-button${role === option.role ? ' is-active' : ''}`}
-                        data-press-feedback-disabled='true'
-                        onClick={() => {
-                          void handleRoleSelect(option.role);
-                        }}
-                      >
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {isSimpleActorRole(role) ? (
+            <>
+              <div className='simple-account-menu-identity' role='none'>
+                <div className='simple-account-menu-identity-actions'>
+                  <p className='simple-account-menu-kicker'>Identity</p>
+                  {role === "voter" ? (
+                    <button
+                      type='button'
+                      className='simple-account-menu-button'
+                      role='menuitem'
+                      onClick={() => {
+                        setAccountMenuOpen(false);
+                        if (typeof window !== "undefined") {
+                          window.dispatchEvent(new Event("auditable-voting:voter-login"));
+                        }
+                      }}
+                    >
+                      Login
+                    </button>
+                  ) : null}
+                  <button
+                    type='button'
+                    className='simple-account-menu-button'
+                    role='menuitem'
+                    disabled={!accountIdentityNpub}
+                    onClick={() => {
+                      setAccountMenuOpen(false);
+                      void tryWriteClipboard(accountIdentityNpub);
+                    }}
+                  >
+                    Copy identity
+                  </button>
+                  <button
+                    type='button'
+                    className='simple-account-menu-button'
+                    role='menuitem'
+                    onClick={() => {
+                      if (
+                        typeof window !== "undefined"
+                        && !window.confirm("Create a new identity for this role? Your current identity stays in this browser only if you have backed it up.")
+                      ) {
+                        return;
+                      }
+                      setAccountMenuOpen(false);
+                      if (typeof window !== "undefined") {
+                        window.dispatchEvent(new Event(`auditable-voting:${role}-new`));
+                      }
+                    }}
+                  >
+                    New identity
+                  </button>
                 </div>
-                {role === "voter" ? (
-                  <div className='simple-account-menu-section simple-account-menu-section-nav' role='none'>
-                    <p className='simple-account-menu-kicker'>Voter</p>
-                    <div
-                      className='simple-role-switch simple-role-switch-menu-inline simple-voter-menu-switch'
-                      role='tablist'
-                      aria-label='Voter sections'
-                    >
-                      {VOTER_SECTION_OPTIONS.map((option) => (
-                        <button
-                          key={option.tab}
-                          type='button'
-                          role='tab'
-                          aria-selected={voterTab === option.tab}
-                          className={`simple-role-switch-button${voterTab === option.tab ? ' is-active' : ''}`}
-                          data-press-feedback-disabled='true'
-                          onClick={() => {
-                            setVoterTab(option.tab);
-                            setAccountMenuOpen(false);
-                          }}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-                {isSimpleActorRole(role) ? (
-                  <>
-                    <div className='simple-account-menu-identity' role='none'>
-                      <div className='simple-account-menu-identity-actions'>
-                        <p className='simple-account-menu-kicker'>Identity</p>
-                        {role === "voter" ? (
-                          <button
-                            type='button'
-                            className='simple-account-menu-button'
-                            role='menuitem'
-                            onClick={() => {
-                              setAccountMenuOpen(false);
-                              if (typeof window !== "undefined") {
-                                window.dispatchEvent(new Event("auditable-voting:voter-login"));
-                              }
-                            }}
-                          >
-                            Login
-                          </button>
-                        ) : null}
-                        <button
-                          type='button'
-                          className='simple-account-menu-button'
-                          role='menuitem'
-                          disabled={!accountIdentityNpub}
-                          onClick={() => {
-                            setAccountMenuOpen(false);
-                            void tryWriteClipboard(accountIdentityNpub);
-                          }}
-                        >
-                          Copy identity
-                        </button>
-                        <button
-                          type='button'
-                          className='simple-account-menu-button'
-                          role='menuitem'
-                          onClick={() => {
-                            if (
-                              typeof window !== "undefined"
-                              && !window.confirm("Create a new identity for this role? Your current identity stays in this browser only if you have backed it up.")
-                            ) {
-                              return;
-                            }
-                            setAccountMenuOpen(false);
-                            if (typeof window !== "undefined") {
-                              window.dispatchEvent(new Event(`auditable-voting:${role}-new`));
-                            }
-                          }}
-                        >
-                          New identity
-                        </button>
-                      </div>
-                      <div className='simple-account-menu-identity-detail'>
-                        <p
-                          className='simple-account-menu-title'
-                          data-tooltip={accountIdentityNpub ? `Short identity shown here. Full identity: ${accountIdentityNpub}` : undefined}
-                        >
-                          {accountIdentityLabel}
-                        </p>
-                        {accountIdentityNpub ? (
-                          <div className='simple-account-identity-visuals'>
-                            <TokenFingerprint
-                              tokenId={accountIdentityNpub}
-                              compact
-                              showQr
-                              hideMetadata
-                              qrValue={accountIdentityNpub}
-                              fingerprintTitle='Colour ID: a visual fingerprint for checking this identity at a glance.'
-                              qrTitle='QR code: scan this to copy the full identity.'
-                            />
-                            <div className='simple-account-identity-visual-labels' aria-hidden='true'>
-                              <span data-tooltip='Colour ID: a visual fingerprint for checking this identity at a glance.'>Colour ID</span>
-                              <span data-tooltip='QR code: scan this to copy the full identity.'>QR code</span>
-                            </div>
-                          </div>
-                        ) : (
-                          <p className='simple-voter-note simple-account-menu-note'>Identity is loading.</p>
-                        )}
+                <div className='simple-account-menu-identity-detail'>
+                  <p
+                    className='simple-account-menu-title'
+                    data-tooltip={accountIdentityNpub ? `Short identity shown here. Full identity: ${accountIdentityNpub}` : undefined}
+                  >
+                    {accountIdentityLabel}
+                  </p>
+                  {accountIdentityNpub ? (
+                    <div className='simple-account-identity-visuals'>
+                      <TokenFingerprint
+                        tokenId={accountIdentityNpub}
+                        compact
+                        showQr
+                        hideMetadata
+                        qrValue={accountIdentityNpub}
+                        fingerprintTitle='Colour ID: a visual fingerprint for checking this identity at a glance.'
+                        qrTitle='QR code: scan this to copy the full identity.'
+                      />
+                      <div className='simple-account-identity-visual-labels' aria-hidden='true'>
+                        <span data-tooltip='Colour ID: a visual fingerprint for checking this identity at a glance.'>Colour ID</span>
+                        <span data-tooltip='QR code: scan this to copy the full identity.'>QR code</span>
                       </div>
                     </div>
-                    <div className='simple-account-menu-signout-section' role='none'>
-                      <button
-                        type='button'
-                        className='simple-account-menu-button'
-                        role='menuitem'
-                        onClick={() => {
-                          if (
-                            typeof window !== "undefined"
-                            && !window.confirm("Sign out and return to the landing page?")
-                          ) {
-                            return;
-                          }
-                          setAccountMenuOpen(false);
-                          if (typeof window !== "undefined") {
-                            window.dispatchEvent(new Event(`auditable-voting:${role}-signout`));
-                            returnToLandingPage();
-                          }
-                        }}
-                      >
-                        Sign out
-                      </button>
-                    </div>
-                  </>
-                ) : null}
-                <div className='simple-account-menu-section simple-account-menu-about-section' role='none'>
-                  <p className='simple-account-menu-kicker'>About</p>
-                  <div className='simple-account-menu-about-row' role='none'>
-                    <a
-                      className='simple-account-menu-button simple-account-menu-link'
-                      role='menuitem'
-                      href='project-explainer.html'
-                      target='_blank'
-                      rel='noopener noreferrer'
-                      onClick={() => setAccountMenuOpen(false)}
-                    >
-                      How it works
-                    </a>
-                    <a
-                      className='simple-account-menu-button simple-account-menu-link'
-                      role='menuitem'
-                      href='demo-guide.html'
-                      target='_blank'
-                      rel='noopener noreferrer'
-                      onClick={() => setAccountMenuOpen(false)}
-                    >
-                      Demo guide
-                    </a>
-                    <p className='simple-account-menu-version'>v{SIMPLE_APP_VERSION}</p>
-                  </div>
+                  ) : (
+                    <p className='simple-voter-note simple-account-menu-note'>Identity is loading.</p>
+                  )}
                 </div>
               </div>
-            ) : null}
+              <div className='simple-account-menu-signout-section' role='none'>
+                <button
+                  type='button'
+                  className='simple-account-menu-button'
+                  role='menuitem'
+                  onClick={() => {
+                    if (
+                      typeof window !== "undefined"
+                      && !window.confirm("Sign out and return to the landing page?")
+                    ) {
+                      return;
+                    }
+                    setAccountMenuOpen(false);
+                    if (typeof window !== "undefined") {
+                      window.dispatchEvent(new Event(`auditable-voting:${role}-signout`));
+                      returnToLandingPage();
+                    }
+                  }}
+                >
+                  Sign out
+                </button>
+              </div>
+            </>
+          ) : null}
+          <div className='simple-account-menu-section simple-account-menu-about-section' role='none'>
+            <p className='simple-account-menu-kicker'>About</p>
+            <div className='simple-account-menu-about-row' role='none'>
+              <a
+                className='simple-account-menu-button simple-account-menu-link'
+                role='menuitem'
+                href='project-explainer.html'
+                target='_blank'
+                rel='noopener noreferrer'
+                onClick={() => setAccountMenuOpen(false)}
+              >
+                How it works
+              </a>
+              <a
+                className='simple-account-menu-button simple-account-menu-link'
+                role='menuitem'
+                href='demo-guide.html'
+                target='_blank'
+                rel='noopener noreferrer'
+                onClick={() => setAccountMenuOpen(false)}
+              >
+                Demo guide
+              </a>
+              <p className='simple-account-menu-version'>v{SIMPLE_APP_VERSION}</p>
+            </div>
           </div>
-          <p className='simple-current-role-summary'>{currentRoleSummary}</p>
         </div>
-      </div>
+      ) : null}
+    </div>
+  );
+
+  return (
+    <div className={`simple-app-shell${role === "coordinator" ? " simple-app-shell-coordinator" : ""}`}>
+      {role === "coordinator" ? null : (
+        <div className='simple-role-switch-wrap'>
+          <div className='simple-role-switch-topbar'>
+            {accountMenuControl}
+            <p className='simple-current-role-summary'>{currentRoleSummary}</p>
+          </div>
+        </div>
+      )}
 
       {role === 'voter' ? (
         <SimpleUiApp
@@ -867,7 +873,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
           showSectionTabs={false}
         />
       ) : role === 'coordinator' ? (
-        <SimpleCoordinatorApp />
+        <SimpleCoordinatorApp accountMenu={accountMenuControl} />
       ) : (
         <SimpleAuditorApp />
       )}

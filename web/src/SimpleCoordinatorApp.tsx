@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { finalizeEvent, generateSecretKey, getPublicKey, nip19, nip44 } from "nostr-tools";
 import QRCode from "qrcode";
 import { decodeNsec, deriveNpubFromNsec, isValidNpub } from "./nostrIdentity";
@@ -142,6 +142,10 @@ import {
 } from "./questionnaireProtocolConstants";
 
 type CoordinatorTab = "configure" | "participants" | "settings";
+
+type SimpleCoordinatorAppProps = {
+  accountMenu?: ReactNode;
+};
 
 type SimpleCoordinatorKeypair = {
   npub: string;
@@ -1075,7 +1079,7 @@ type OptionAQueueProcessingDebug = {
   lastError: string | null;
 };
 
-export default function SimpleCoordinatorApp() {
+export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorAppProps = {}) {
   const [keypair, setKeypair] = useState<SimpleCoordinatorKeypair | null>(null);
   const [identityReady, setIdentityReady] = useState(false);
   const [coordinatorId, setCoordinatorId] = useState("pending");
@@ -1121,6 +1125,7 @@ export default function SimpleCoordinatorApp() {
     useState('');
   const [submittedVotes, setSubmittedVotes] = useState<SimpleSubmittedVote[]>([]);
   const [activeTab, setActiveTab] = useState<CoordinatorTab>("configure");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [relaySettingsExpandSignal, setRelaySettingsExpandSignal] = useState(0);
   const [questionnaireRelaysInput, setQuestionnaireRelaysInputState] = useState(() => readStoredQuestionnaireRelayInput());
   const [questionnaireRosterAnnouncement, setQuestionnaireRosterAnnouncement] = useState<{
@@ -1185,6 +1190,7 @@ export default function SimpleCoordinatorApp() {
   ] = useState('');
   const [nowMs, setNowMs] = useState(() => Date.now());
   const activeCoordinatorNpub = signerNpub.trim() || keypair?.npub?.trim() || "";
+  const activeCoordinatorShortId = activeCoordinatorNpub ? deriveActorDisplayId(activeCoordinatorNpub) : "pending";
   const deploymentMode = useMemo(() => readDeploymentModeFromUrl(), []);
   const isCourseFeedbackMode = deploymentMode === "course_feedback";
   const optionASigner = useMemo(() => {
@@ -6717,12 +6723,34 @@ export default function SimpleCoordinatorApp() {
   }
 
   return (
-    <main className='simple-voter-shell'>
-      <section className='simple-voter-page'>
-        {signerNpub ? <p className='simple-voter-note simple-signed-in-note'>Signed in as {signerNpub}</p> : null}
-        {signerStatus && signerStatus !== `Signed in as ${signerNpub}.` ? <p className='simple-voter-note'>{signerStatus}</p> : null}
+    <main className={`simple-voter-shell simple-coordinator-shell${sidebarCollapsed ? " is-sidebar-collapsed" : ""}`}>
+      <aside className='simple-coordinator-sidebar' aria-label='Organiser navigation'>
+        <div className='simple-coordinator-sidebar-top'>
+          {accountMenu ?? (
+            <button type='button' className='simple-role-switch-toggle' disabled>
+              Menu
+            </button>
+          )}
+          <button
+            type='button'
+            className='simple-coordinator-sidebar-collapse'
+            aria-label={sidebarCollapsed ? "Expand organiser menu" : "Collapse organiser menu"}
+            aria-pressed={sidebarCollapsed}
+            onClick={() => setSidebarCollapsed((current) => !current)}
+            data-press-feedback-disabled='true'
+          >
+            {sidebarCollapsed ? ">" : "<"}
+          </button>
+        </div>
+        <div className='simple-coordinator-sidebar-identity'>
+          <p className='simple-account-menu-kicker'>Organiser</p>
+          <p className='simple-coordinator-sidebar-short'>{activeCoordinatorShortId}</p>
+          <p className='simple-coordinator-sidebar-npub' title={activeCoordinatorNpub || undefined}>
+            {activeCoordinatorNpub || "Identity loading"}
+          </p>
+        </div>
         <div
-          className='simple-voter-tabs'
+          className='simple-coordinator-sidebar-nav'
           role='tablist'
           aria-label='Organiser sections'
         >
@@ -6730,30 +6758,37 @@ export default function SimpleCoordinatorApp() {
             type='button'
             role='tab'
             aria-selected={activeTab === 'configure'}
-            className={`simple-voter-tab${activeTab === 'configure' ? ' is-active' : ''}`}
+            className={`simple-coordinator-nav-button${activeTab === 'configure' ? ' is-active' : ''}`}
             onClick={() => selectTab('configure')}
           >
-            Setup
+            <span className='simple-coordinator-nav-symbol' aria-hidden='true'>+</span>
+            <span className='simple-coordinator-nav-label'>New Questionnaire</span>
           </button>
           <button
             type='button'
             role='tab'
             aria-selected={activeTab === 'participants'}
-            className={`simple-voter-tab${activeTab === 'participants' ? ' is-active' : ''}`}
+            className={`simple-coordinator-nav-button${activeTab === 'participants' ? ' is-active' : ''}`}
             onClick={() => selectTab('participants')}
           >
-            Voting
+            <span className='simple-coordinator-nav-symbol' aria-hidden='true'>●</span>
+            <span className='simple-coordinator-nav-label'>Session</span>
           </button>
           <button
             type='button'
             role='tab'
             aria-selected={activeTab === 'settings'}
-            className={`simple-voter-tab${activeTab === 'settings' ? ' is-active' : ''}`}
+            className={`simple-coordinator-nav-button${activeTab === 'settings' ? ' is-active' : ''}`}
             onClick={() => selectTab('settings')}
           >
-            Settings
+            <span className='simple-coordinator-nav-symbol' aria-hidden='true'>⚙</span>
+            <span className='simple-coordinator-nav-label'>Settings</span>
           </button>
         </div>
+      </aside>
+      <section className='simple-voter-page simple-coordinator-page'>
+        {signerNpub ? <p className='simple-voter-note simple-signed-in-note'>Signed in as {signerNpub}</p> : null}
+        {signerStatus && signerStatus !== `Signed in as ${signerNpub}.` ? <p className='simple-voter-note'>{signerStatus}</p> : null}
 
         {activeTab === 'configure' ? (
           <section
@@ -6812,7 +6847,7 @@ export default function SimpleCoordinatorApp() {
               questionnaireRelaysInput={questionnaireRelaysInput}
               onStatusChange={updateQuestionnaireRosterAnnouncement}
             />
-            <div id='coordinator-invite-voters-section'>
+            <div id='coordinator-invite-voters-section' className='simple-session-invites'>
               <SimpleCollapsibleSection title='Invited voters'>
                 <div className='simple-invite-share-panel simple-admitted-voters-panel' aria-label='Invited voters'>
                   <div className='simple-invite-share-heading simple-admitted-voters-heading'>

@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -8,7 +9,12 @@ vi.mock("./SimpleUiApp", () => ({
 }));
 
 vi.mock("./SimpleCoordinatorApp", () => ({
-  default: () => <div>Organiser app</div>,
+  default: (props: { accountMenu?: ReactNode }) => (
+    <div>
+      {props.accountMenu}
+      Organiser app
+    </div>
+  ),
 }));
 
 vi.mock("./SimpleAuditorApp", () => ({
