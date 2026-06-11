@@ -848,13 +848,10 @@ export default function SimpleAuditorApp() {
           responseDetails={displayResponseDetails}
           displayValidCount={displayValidCount}
           displayInvalidCount={displayInvalidCount}
-          coordinatorText={
-            selectedWorkerDelegationStatus?.state === "active" && selectedWorkerDelegationStatus.workerNpub
-              ? `Proxy: ${normalizeToNpub(selectedWorkerDelegationStatus.workerNpub)}`
-              : selectedQuestionnaire?.coordinatorNpub
-                ? `Organiser: ${selectedQuestionnaire.coordinatorNpub}`
-                : "Organiser: Unknown"
-          }
+          coordinatorLabel={selectedWorkerDelegationStatus?.state === "active" && selectedWorkerDelegationStatus.workerNpub ? "Proxy" : "Organiser"}
+          coordinatorText={selectedWorkerDelegationStatus?.state === "active" && selectedWorkerDelegationStatus.workerNpub
+            ? normalizeToNpub(selectedWorkerDelegationStatus.workerNpub)
+            : selectedQuestionnaire?.coordinatorNpub || "Unknown"}
           publishedAtLabel='Published'
           publishedAtTime={Number(publishedAtTime)}
           canExportResults={canExportResults}

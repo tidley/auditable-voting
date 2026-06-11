@@ -3004,6 +3004,12 @@ code {
   padding-top: 4px;
 }
 
+.simple-admitted-private-link-details {
+  display: grid;
+  min-width: 0;
+  padding-top: 2px;
+}
+
 .simple-admitted-voter-auto-toggle {
   display: inline-flex;
   align-items: center;
@@ -3633,15 +3639,18 @@ code {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
-  align-items: center;
+  align-items: stretch;
 }
 
 .simple-questionnaire-invite-switcher .simple-voter-input {
   min-width: 0;
+  min-height: 44px;
+  margin-bottom: 0;
 }
 
 .simple-questionnaire-answer-next {
-  min-height: 42px;
+  min-height: 44px;
+  height: 100%;
   white-space: nowrap;
 }
 

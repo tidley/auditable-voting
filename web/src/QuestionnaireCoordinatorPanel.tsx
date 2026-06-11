@@ -2261,7 +2261,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     }
     return "Pending activation";
   }, [activeWorkerDelegation, lastWorkerRevocationState, selectedWorkerStatus]);
-  const dashboardCoordinatorText = useMemo(() => {
+  const dashboardCoordinatorIdentity = useMemo(() => {
     const active = activeWorkerDelegation;
     if (active && lastWorkerRevocationState !== "revoked") {
       const expiresAtMs = Date.parse(active.expiresAt);
@@ -2270,12 +2270,16 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         const workerNpub = selectedWorkerStatus?.delegationId === active.delegationId
           ? selectedWorkerStatus.workerNpub
           : active.workerNpub;
-        return `Proxy: ${normaliseWorkerNpub(workerNpub)}`;
+        return {
+          label: "Proxy",
+          text: normaliseWorkerNpub(workerNpub),
+        };
       }
     }
-    return coordinatorNpub.trim()
-      ? `Organiser: ${coordinatorNpub.trim()}`
-      : "Organiser: Unknown";
+    return {
+      label: "Organiser",
+      text: coordinatorNpub.trim() || "Unknown",
+    };
   }, [activeWorkerDelegation, coordinatorNpub, lastWorkerRevocationState, selectedWorkerStatus]);
   const workerReleaseBaseUrl = "https://github.com/tidley/auditable-voting/releases/latest/download";
   const workerHelperDownloadUrl = `${workerReleaseBaseUrl}/auditable-voting-worker-linux-x64.tar.gz`;
@@ -3478,7 +3482,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           responseDetails={coordinatorResponseDetails}
           displayValidCount={displayAcceptedCount}
           displayInvalidCount={latestRejectedCount}
-          coordinatorText={dashboardCoordinatorText}
+          coordinatorLabel={dashboardCoordinatorIdentity.label}
+          coordinatorText={dashboardCoordinatorIdentity.text}
           publishedAtLabel='Published'
           publishedAtTime={activePublishedDefinition?.createdAt ?? null}
           actions={(
@@ -3995,6 +4000,15 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             Set up proxy
           </button>
         ) : null}
+        {props.onInviteParticipants ? (
+          <button
+            type='button'
+            className='simple-voter-secondary'
+            onClick={props.onInviteParticipants}
+          >
+            Invite voters
+          </button>
+        ) : null}
         <button
           type='button'
           className='simple-voter-secondary'
@@ -4369,18 +4383,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           </div>
         </SimpleCollapsibleSection>
       </div>
-      {publishedDefinition ? (
-        <div className='simple-voter-action-row simple-voter-action-row-inline'>
-          <button
-            type='button'
-            className='simple-voter-secondary'
-            onClick={props.onInviteParticipants}
-            disabled={!props.onInviteParticipants}
-          >
-            Invite voters
-          </button>
-        </div>
-      ) : null}
     </>
   );
 }

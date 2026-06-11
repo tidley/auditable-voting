@@ -345,6 +345,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const [pendingInvites, setPendingInvites] = useState<ElectionInviteMessage[]>([]);
   const [activeInvite, setActiveInvite] = useState<ElectionInviteMessage | null>(null);
   const [selectedInviteKey, setSelectedInviteKey] = useState<string>("");
+  const [answerNextPendingKey, setAnswerNextPendingKey] = useState<string>("");
   const [questionnaireTitle, setQuestionnaireTitle] = useState<string>("Questionnaire");
   const [questionnaireDescription, setQuestionnaireDescription] = useState<string>("");
   const [questionnaireDefinition, setQuestionnaireDefinition] = useState<QuestionnaireDefinition | null>(null);
@@ -2141,6 +2142,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       ?? inviteDropdownOptions.find((invite) => inviteMessageKey(invite) !== currentKey)
       ?? null;
   }, [currentQuestionnaireId, inviteDropdownOptions, selectedInviteKey]);
+  const nextInviteDropdownKey = nextInviteDropdownOption ? inviteMessageKey(nextInviteDropdownOption) : "";
+  const answerNextDisabled = !nextInviteDropdownOption || (Boolean(answerNextPendingKey) && answerNextPendingKey === nextInviteDropdownKey);
 
   useEffect(() => {
     const selectedQuestionnaireId = currentQuestionnaireId;
@@ -2153,13 +2156,16 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       if (selectedInviteKey !== key) {
         setSelectedInviteKey(key);
       }
+      if (answerNextPendingKey && answerNextPendingKey === key) {
+        setAnswerNextPendingKey("");
+      }
       return;
     }
     if (!selectedInviteKey && inviteDropdownOptions.length > 0) {
       const first = inviteDropdownOptions[0];
       setSelectedInviteKey(inviteMessageKey(first));
     }
-  }, [currentQuestionnaireId, inviteDropdownOptions, selectedInviteKey]);
+  }, [answerNextPendingKey, currentQuestionnaireId, inviteDropdownOptions, selectedInviteKey]);
   const waitingForCredential = Boolean(snapshot?.blindRequestSent && !snapshot?.credentialReady && !snapshot?.submission);
   const canRequestOrResendBallot = flags.canRequestBallot || waitingForCredential;
 
@@ -2490,10 +2496,15 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           <button
             type='button'
             className='simple-voter-primary simple-questionnaire-answer-next'
-            disabled={!nextInviteDropdownOption}
+            disabled={answerNextDisabled}
             onClick={() => {
-              if (nextInviteDropdownOption) {
-                void openInvite(nextInviteDropdownOption, true);
+              if (nextInviteDropdownOption && !answerNextDisabled) {
+                const key = inviteMessageKey(nextInviteDropdownOption);
+                setAnswerNextPendingKey(key);
+                void openInvite(nextInviteDropdownOption, true)
+                  .finally(() => {
+                    setAnswerNextPendingKey((current) => current === key ? "" : current);
+                  });
               }
             }}
           >

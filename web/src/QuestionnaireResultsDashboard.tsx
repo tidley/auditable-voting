@@ -44,6 +44,7 @@ type QuestionnaireResultsDashboardProps = {
   responseDetails: QuestionnaireResultsDashboardResponseDetail[];
   displayValidCount: number;
   displayInvalidCount?: number;
+  coordinatorLabel?: string;
   coordinatorText: string;
   publishedAtLabel: string;
   publishedAtTime?: number | null;
@@ -64,6 +65,7 @@ export default function QuestionnaireResultsDashboard({
   responseDetails,
   displayValidCount,
   displayInvalidCount = responseDetails.filter((entry) => !entry.accepted).length,
+  coordinatorLabel = "Organiser",
   coordinatorText,
   publishedAtLabel,
   publishedAtTime,
@@ -211,7 +213,7 @@ export default function QuestionnaireResultsDashboard({
                 </article>
               ) : null}
               <article className='simple-auditor-status-card simple-auditor-status-card-wide'>
-                <p className='simple-auditor-summary-label'>Organiser</p>
+                <p className='simple-auditor-summary-label'>{coordinatorLabel}</p>
                 <p className='simple-auditor-status-value'>{coordinatorText}</p>
               </article>
             </div>
@@ -547,16 +549,21 @@ function YesNoSummaryCard({ summary }: {
   const total = summary.yesCount + summary.noCount;
   const rows = [
     {
-      label: "No",
-      count: summary.noCount,
-      className: "is-no",
-    },
-    {
       label: "Yes",
       count: summary.yesCount,
       className: "is-yes",
     },
-  ];
+    {
+      label: "No",
+      count: summary.noCount,
+      className: "is-no",
+    },
+  ].sort((left, right) => {
+    if (right.count !== left.count) {
+      return right.count - left.count;
+    }
+    return left.label === "Yes" ? -1 : 1;
+  });
   return (
     <div className='simple-auditor-option-bars simple-auditor-boolean-bars'>
       {rows.map((row) => {
@@ -661,7 +668,7 @@ function formatVoteShare(count: number, percent: number) {
 }
 
 function formatBooleanVoteShare(count: number, percent: number) {
-  return `${percent.toFixed(0)}% · ${count} vote${count === 1 ? "" : "s"}`;
+  return formatVoteShare(count, percent);
 }
 
 function formatResponseCount(count: number) {

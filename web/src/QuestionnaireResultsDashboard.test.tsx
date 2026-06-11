@@ -81,4 +81,61 @@ describe("QuestionnaireResultsDashboard", () => {
     expect(screen.getByText("submission_alpha")).toBeTruthy();
     expect(screen.queryByText("submission_beta")).toBeNull();
   });
+
+  it("uses consistent vote-share labels and puts yes first for tied yes/no results", () => {
+    render(
+      <QuestionnaireResultsDashboard
+        questionnaire={{
+          questionnaireId: "q_result_format",
+          title: "Result format",
+          questions: [
+            {
+              questionId: "q1",
+              type: "yes_no",
+              prompt: "What do you think?",
+              required: true,
+            },
+            {
+              questionId: "q2",
+              type: "multiple_choice",
+              prompt: "Choose some",
+              required: true,
+              multiSelect: false,
+              options: [
+                { optionId: "a", label: "Option 1" },
+                { optionId: "b", label: "Option 2" },
+              ],
+            },
+          ],
+        }}
+        questionSummaries={[
+          {
+            questionId: "q1",
+            answerType: "yes_no",
+            yesCount: 0,
+            noCount: 0,
+          },
+          {
+            questionId: "q2",
+            answerType: "multiple_choice",
+            optionCounts: {
+              a: 0,
+              b: 0,
+            },
+          },
+        ]}
+        responseDetails={[]}
+        displayValidCount={0}
+        coordinatorText="Organiser test"
+        publishedAtLabel="Not published"
+      />,
+    );
+
+    expect(screen.queryByText("0% · 0 votes")).toBeNull();
+    expect(screen.getAllByText("0% | 0 votes")).toHaveLength(4);
+
+    const yesLabel = screen.getByText("Yes");
+    const noLabel = screen.getByText("No");
+    expect(Boolean(yesLabel.compareDocumentPosition(noLabel) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+  });
 });

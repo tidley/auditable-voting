@@ -112,6 +112,7 @@ import { createSignerService, SignerServiceError } from "./services/signerServic
 import { getSharedNostrPool } from "./sharedNostrPool";
 import type {
   BallotSubmission,
+  BearerInviteCodeEntry,
   BearerInviteCodeState,
   QuestionnaireAnswer,
   WhitelistClaimState,
@@ -1309,12 +1310,17 @@ export default function SimpleCoordinatorApp() {
     () => optionACoordinatorRuntime?.getPendingAuthorizations() ?? [],
     [optionACoordinatorRuntime, knownVoterInviteRefreshNonce],
   );
+  const privateInviteCodeEntries = useMemo(() => {
+    const entries = Object.values(optionACoordinatorRuntime?.getSnapshot()?.bearerInviteCodes ?? {});
+    return entries.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }, [optionACoordinatorRuntime, knownVoterInviteRefreshNonce]);
   const admittedVoterDisplayRows = useMemo(() => {
     const byNpub = new Map<string, {
       npub: string;
       admittedEntry: (typeof admittedVoterEntries)[number] | null;
       currentQuestionnaireEntry: (typeof visibleOptionAKnownVoters)[number] | null;
       pendingAuthorization: (typeof optionAPendingAuthorizations)[number] | null;
+      privateInviteEntry: BearerInviteCodeEntry | null;
       order: number;
     }>();
     let nextOrder = 0;
@@ -1332,6 +1338,7 @@ export default function SimpleCoordinatorApp() {
         admittedEntry: null,
         currentQuestionnaireEntry: null,
         pendingAuthorization: null,
+        privateInviteEntry: null,
         order: nextOrder,
       };
       nextOrder += 1;
@@ -1357,13 +1364,19 @@ export default function SimpleCoordinatorApp() {
         row.pendingAuthorization = entry;
       }
     }
+    for (const entry of privateInviteCodeEntries) {
+      const row = ensureRow(entry.redeemedNpub ?? "");
+      if (row && !row.privateInviteEntry) {
+        row.privateInviteEntry = entry;
+      }
+    }
 
     return [...byNpub.values()].sort((left, right) => {
       const priority = (row: typeof left) => {
         if (row.pendingAuthorization) {
           return 0;
         }
-        if (row.currentQuestionnaireEntry) {
+        if (row.currentQuestionnaireEntry || row.privateInviteEntry) {
           return 1;
         }
         return 2;
@@ -1371,7 +1384,7 @@ export default function SimpleCoordinatorApp() {
       const priorityDelta = priority(left) - priority(right);
       return priorityDelta || left.order - right.order;
     });
-  }, [admittedVoterEntries, optionAPendingAuthorizations, visibleOptionAKnownVoters]);
+  }, [admittedVoterEntries, optionAPendingAuthorizations, privateInviteCodeEntries, visibleOptionAKnownVoters]);
   const admittedVoterSummaryLabel = useMemo(() => {
     const currentOnlyCount = admittedVoterDisplayRows
       .filter((row) => !row.admittedEntry && !row.pendingAuthorization && row.currentQuestionnaireEntry)
@@ -1446,10 +1459,10 @@ export default function SimpleCoordinatorApp() {
       })
       : ""
   ), [publicQuestionnaireInviteCopy.description, publicQuestionnaireInviteCopy.title, publicQuestionnaireInviteUrl]);
-  const privateInviteCodeEntries = useMemo(() => {
-    const entries = Object.values(optionACoordinatorRuntime?.getSnapshot()?.bearerInviteCodes ?? {});
-    return entries.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-  }, [optionACoordinatorRuntime, knownVoterInviteRefreshNonce]);
+  const standalonePrivateInviteCodeEntries = useMemo(
+    () => privateInviteCodeEntries.filter((entry) => !(entry.redeemedNpub?.trim())),
+    [privateInviteCodeEntries],
+  );
   const filteredImportedKnownVoterContacts = useMemo(() => {
     const query = knownVoterContactSearch.trim().toLowerCase();
     if (!query) {
@@ -6991,21 +7004,39 @@ export default function SimpleCoordinatorApp() {
                     {admittedVoterDisplayRows.map((row, rowIndex) => {
                       const currentQuestionnaireEntry = row.currentQuestionnaireEntry;
                       const pendingAuthorization = row.pendingAuthorization;
+                      const privateInviteEntry = row.privateInviteEntry;
+                      const privateInviteRedeemedNpub = privateInviteEntry?.redeemedNpub?.trim() ?? "";
+                      const privateInviteUrl = privateInviteEntry ? getPrivateInviteCodeLink(privateInviteEntry.codeHash) : "";
+                      const privateInviteActive = privateInviteEntry?.state === "available";
+                      const canSharePrivateInvite = privateInviteActive && privateInviteUrl.length > 0;
+                      const privateInviteStatusIndicator = privateInviteEntry
+                        ? privateInviteVoterStatusIndicator({
+                          state: privateInviteEntry.state,
+                          redeemedNpub: privateInviteRedeemedNpub,
+                          claimState: currentQuestionnaireEntry?.claimState ?? null,
+                          markedUsedAt: privateInviteEntry.markedUsedAt ?? null,
+                        })
+                        : null;
                       const statusIndicator = pendingAuthorization
                         ? pendingAuthorisationStatusIndicator()
                         : currentQuestionnaireEntry
                           ? whitelistStatusIndicator(currentQuestionnaireEntry.claimState)
+                          : privateInviteStatusIndicator
+                            ? privateInviteStatusIndicator
                           : null;
                       const statusLabel = pendingAuthorization
                         ? `Wants access (${pendingAuthorization.requestCount})`
                         : statusIndicator?.label ?? null;
-                      const isPrivateInviteClaimant = Boolean(currentQuestionnaireEntry?.inviteCodeHash?.trim());
+                      const isPrivateInviteClaimant = Boolean(currentQuestionnaireEntry?.inviteCodeHash?.trim() || privateInviteEntry);
                       const canUseCurrentInviteActions = Boolean(
                         optionAElectionId.trim() &&
                         activeCoordinatorNpub.trim() &&
                         !isPrivateInviteClaimant,
                       );
                       const inviteButtonLabel = currentQuestionnaireEntry ? "Resend invite" : "Send invite";
+                      const inviteInputId = privateInviteEntry ? `admitted-voter-private-invite-url-${privateInviteEntry.codeHash}` : "";
+                      const noteInputId = `admitted-voter-note-${row.npub}`;
+                      const noteValue = row.admittedEntry?.note ?? privateInviteEntry?.note ?? "";
                       return (
                         <li key={row.npub} className='simple-admitted-voter-row'>
                           <div className='simple-admitted-voter-main'>
@@ -7014,15 +7045,51 @@ export default function SimpleCoordinatorApp() {
                               <span>{deriveActorDisplayId(row.npub)}</span>
                             </span>
                             <span className='simple-admitted-voter-npub'>{row.npub}</span>
-                            {row.admittedEntry ? (
-                              <label className='simple-admitted-voter-note-field'>
+                            {privateInviteEntry && privateInviteUrl ? (
+                              <div className='simple-admitted-private-link-details'>
+                                <div className='simple-private-invite-link-field'>
+                                  <label className='simple-private-invite-field-label' htmlFor={inviteInputId}>Invite link</label>
+                                  <div className={`simple-private-invite-url-control${canSharePrivateInvite ? "" : " is-readonly"}`}>
+                                    <input
+                                      id={inviteInputId}
+                                      className='simple-private-invite-url-input'
+                                      value={privateInviteUrl}
+                                      readOnly
+                                      aria-label='Invite link'
+                                    />
+                                    {canSharePrivateInvite ? (
+                                      <button
+                                        type='button'
+                                        className='simple-private-invite-copy-icon-button'
+                                        onClick={() => void copyPrivateInviteCodeLink(privateInviteEntry.codeHash)}
+                                        aria-label='Copy invite link'
+                                        title='Copy invite link'
+                                      >
+                                        <span className='simple-copy-icon' aria-hidden='true' />
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              </div>
+                            ) : null}
+                            {row.admittedEntry || privateInviteEntry ? (
+                              <label className='simple-admitted-voter-note-field' htmlFor={noteInputId}>
                                 <input
+                                  id={noteInputId}
                                   className='simple-voter-input simple-voter-input-inline'
-                                  value={row.admittedEntry.note ?? ""}
+                                  value={noteValue}
                                   placeholder='Internal note'
                                   aria-label='Internal note'
                                   title='Internal note'
-                                  onChange={(event) => updateAdmittedVoterDetails(row.npub, { note: event.target.value })}
+                                  onChange={(event) => {
+                                    const note = event.target.value;
+                                    if (row.admittedEntry) {
+                                      updateAdmittedVoterDetails(row.npub, { note });
+                                    }
+                                    if (privateInviteEntry) {
+                                      updatePrivateInviteCodeNote(privateInviteEntry.codeHash, note);
+                                    }
+                                  }}
                                 />
                               </label>
                             ) : null}
@@ -7063,6 +7130,33 @@ export default function SimpleCoordinatorApp() {
                                   </button>
                                 </>
                               ) : null}
+                              {privateInviteEntry && canSharePrivateInvite ? (
+                                <>
+                                  <button
+                                    type='button'
+                                    className='simple-voter-secondary'
+                                    onClick={() => void copyPrivateInviteCodeLink(privateInviteEntry.codeHash)}
+                                  >
+                                    Copy link
+                                  </button>
+                                  <button
+                                    type='button'
+                                    className='simple-voter-secondary'
+                                    onClick={() => void sharePrivateInviteCodeLink(privateInviteEntry.codeHash)}
+                                  >
+                                    Share
+                                  </button>
+                                </>
+                              ) : null}
+                              {privateInviteEntry && privateInviteActive ? (
+                                <button
+                                  type='button'
+                                  className='simple-voter-secondary simple-private-invite-revoke-button'
+                                  onClick={() => revokePrivateInviteCode(privateInviteEntry.codeHash)}
+                                >
+                                  Revoke
+                                </button>
+                              ) : null}
                               {row.admittedEntry ? (
                                 <button
                                   type='button'
@@ -7088,14 +7182,14 @@ export default function SimpleCoordinatorApp() {
                       );
                     })}
                   </ul>
-                ) : privateInviteCodeEntries.length === 0 ? (
+                ) : standalonePrivateInviteCodeEntries.length === 0 ? (
                   <p className='simple-voter-empty'>
                     No voters invited yet.
                   </p>
                 ) : null}
-                {privateInviteCodeEntries.length > 0 ? (
+                {standalonePrivateInviteCodeEntries.length > 0 ? (
                   <ul className='simple-admitted-voter-list simple-admitted-private-invite-list' aria-label='Single-use private invite links'>
-                    {privateInviteCodeEntries.map((entry, inviteIndex) => {
+                    {standalonePrivateInviteCodeEntries.map((entry, inviteIndex) => {
                       const rosterIndex = admittedVoterDisplayRows.length + inviteIndex;
                       const autoRequestBallot = entry.autoRequestBallot !== false;
                       const privateInviteUrl = getPrivateInviteCodeLink(entry.codeHash);
