@@ -230,7 +230,7 @@ The present web client is built with:
 - **Vite 5** for local development and static-site bundling
 - **`nostr-tools` 2.x** for Nostr keys, event signing, subscriptions, and relay publishing
 - **a dedicated organiser-control carrier over Nostr** for round proposals, commits, tally coordination, and recovery checkpoints
-- **regular custom Nostr event kinds** for organiser control, live rounds, and ballots, so relays preserve the full transcript instead of replacing events in the `30000`-range
+- **regular custom Nostr event kinds** for organiser control, live rounds, ballots, and questionnaire transcript events, so relays preserve the full transcript instead of replacing events in Nostr's replaceable ranges
 - **NIP-17 gift-wrapped DMs** for follow, roster, MLS welcome, and share-assignment traffic
 - **NIP-17 gift-wrapped DMs** for blind ballot requests, blind issuance delivery, ballot submissions, and acceptance results (with local mailbox fallback for same-browser recovery), plus encrypted mailbox objects for legacy ticket delivery, acknowledgement traffic, and history-based recovery, with stable `request_id`, `ticket_id`, and `ack_id` lineages
 - **optional NIP-65 relay hints**, disabled by default, for relay discovery experiments

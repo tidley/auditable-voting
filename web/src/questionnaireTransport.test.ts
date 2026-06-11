@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { NostrEvent } from "nostr-tools";
 import { evaluateQuestionnaireBlindAdmissions } from "./questionnaireTransport";
-import type { QuestionnaireBlindResponseEvent, QuestionnaireSubmissionDecisionEvent } from "./questionnaireResponsePublish";
+import {
+  QUESTIONNAIRE_RESPONSE_BLIND_KIND,
+  QUESTIONNAIRE_SUBMISSION_DECISION_KIND,
+  type QuestionnaireBlindResponseEvent,
+  type QuestionnaireSubmissionDecisionEvent,
+} from "./questionnaireResponsePublish";
 
 function blindResponse(input: {
   responseId: string;
@@ -14,7 +19,7 @@ function blindResponse(input: {
   return {
     event: {
       id: input.eventId,
-      kind: 14124,
+      kind: QUESTIONNAIRE_RESPONSE_BLIND_KIND,
       pubkey: "pubkey",
       created_at: input.createdAt,
       tags: [],
@@ -52,7 +57,7 @@ function submissionDecision(input: {
   return {
     event: {
       id: input.eventId,
-      kind: 14125,
+      kind: QUESTIONNAIRE_SUBMISSION_DECISION_KIND,
       pubkey: "decision-pubkey",
       created_at: input.createdAt,
       tags: [],

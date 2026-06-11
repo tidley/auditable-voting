@@ -4,8 +4,8 @@ import type {
   CoordinatorTransportEvent,
 } from "./coordinatorCoreAdapter";
 
-// Use a regular custom event kind, not the parameterised-replaceable 30000-39999 range.
-export const SIMPLE_COORDINATOR_CONTROL_KIND = 14092;
+// Use a regular custom event kind, not the replaceable or parameterised-replaceable ranges.
+export const SIMPLE_COORDINATOR_CONTROL_KIND = 6432;
 
 export function buildCoordinatorControlTags(message: CoordinatorOutboundTransportMessage) {
   return [

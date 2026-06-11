@@ -103,9 +103,10 @@ Optional live relay smoke tests:
 cd web
 npm run test:live-delegate-coordinator
 npm run test:live-rust-helper
+npm run test:live-questionnaire-scale
 ```
 
-These use public relays and can fail because of relay availability, rate limits, or propagation delays.
+These use public relays and can fail because of relay availability, rate limits, proof-of-work requirements, or propagation delays. `test:live-questionnaire-scale` publishes a 30-round/100-voter synthetic questionnaire transcript by default, so run it only when you intentionally want a live public-relay load probe.
 
 ## Audit Proxy
 

@@ -19,11 +19,12 @@ The response payload mode can be:
 
 ## 2. Canonical event kinds (current implementation)
 
-- `14120` - questionnaire definition (`questionnaire_definition`)
-- `14121` - questionnaire state (`questionnaire_state`)
-- `14122` - encrypted private response envelope (`questionnaire_response_private`)
-- `14123` - questionnaire result summary (`questionnaire_result_summary`)
-- `14124` - blind-token response submission (`questionnaire_response_blind`)
+- `6420` - questionnaire definition (`questionnaire_definition`)
+- `6421` - questionnaire state (`questionnaire_state`)
+- `6422` - encrypted private response envelope (`questionnaire_response_private`)
+- `6423` - questionnaire result summary (`questionnaire_result_summary`)
+- `6424` - blind-token response submission (`questionnaire_response_blind`)
+- `6425` - public submission decision (`questionnaire_submission_decision`)
 
 ## 3. Questionnaire definition
 
@@ -82,7 +83,7 @@ Latest valid state for a questionnaire is authoritative. A delegated audit proxy
 
 ## 5. Response submission modes
 
-### 5.1 Private encrypted envelope (`14122`)
+### 5.1 Private encrypted envelope (`6422`)
 
 Used in the currently shipped questionnaire panel:
 
@@ -90,7 +91,7 @@ Used in the currently shipped questionnaire panel:
 - encrypted payload (`nip44v2`)
 - `payloadHash` integrity check
 
-### 5.2 Blind-token response (`14124`)
+### 5.2 Blind-token response (`6424`)
 
 Blind-token admission object:
 
@@ -169,6 +170,7 @@ For reliability on public relays:
 
 - do not rely only on tag-index filters
 - use broad kind fetch with local `questionnaireId` reconciliation fallback where required
+- keep transcript-carrying questionnaire kinds outside Nostr replaceable and parameterised-replaceable ranges; current implementation kinds are regular custom events so repeated rounds and submissions are not displaced by newer events from the same organiser or voter key
 
 ## 10. Normative summary
 

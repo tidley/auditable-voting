@@ -34,8 +34,8 @@ This record freezes the implementation decisions for the questionnaire-first bli
 
 ## 5. Event kind policy
 
-- Implementation kinds remain:
-  - `14120..14124`
+- Implementation kinds remain regular custom events:
+  - `6420..6425`
 - Spec target kinds documented but not yet migrated:
   - `34500..34503`
 
