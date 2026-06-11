@@ -2012,24 +2012,27 @@ code {
   content: "";
   position: absolute;
   left: 4px;
-  top: 6px;
+  top: 7px;
   width: 8px;
-  height: 8px;
+  height: 7px;
   border: 2px solid currentColor;
-  border-top: 0;
-  border-radius: 0 0 2px 2px;
+  border-top-width: 1.8px;
+  border-radius: 2px 2px 3px 3px;
+  background:
+    linear-gradient(currentColor, currentColor) 3px 2px / 1.5px 5px no-repeat,
+    linear-gradient(currentColor, currentColor) 6px 2px / 1.5px 5px no-repeat;
 }
 
 .simple-questionnaire-button-icon-trash::after {
   content: "";
   position: absolute;
-  left: 3px;
+  left: 2px;
   top: 3px;
-  width: 10px;
+  width: 12px;
   height: 2px;
   border-radius: 999px;
   background: currentColor;
-  box-shadow: 3px -2px 0 -1px currentColor;
+  box-shadow: 4px -2px 0 -0.5px currentColor;
 }
 
 .simple-questionnaire-remove-button {
