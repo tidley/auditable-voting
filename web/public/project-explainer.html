@@ -542,6 +542,7 @@
             <ul>
               <li>Voter and organiser signing keys.</li>
               <li>The admitted voter roster and internal voter notes.</li>
+              <li>Helpline message contents, sent as NIP-17 gift-wrapped direct messages between voter and organiser identities.</li>
               <li>Token secrets and blinding factors.</li>
               <li>Unspent ballot credentials.</li>
               <li>Browser-local recovery state.</li>
@@ -586,7 +587,7 @@
           </article>
           <article class="role-card">
             <h3>2. Voter</h3>
-            <p>Open the invite as Voter, wait for ballot access if needed, fill in the questionnaire, and submit. Voter Settings shows Ballot details while taking part, so request, credential, submission, and timing fields can be checked if something stalls.</p>
+            <p>Open the invite as Voter, wait for ballot access if needed, fill in the questionnaire, and submit. Voter Messages can send a private helpline DM to the organiser, and Voter Settings shows Ballot details while taking part, so request, credential, submission, and timing fields can be checked if something stalls.</p>
           </article>
           <article class="role-card">
             <h3>3. Observer</h3>
@@ -604,6 +605,7 @@
           <li>Public relay reliability can affect delivery and discovery. The client uses tag-filtered, paginated public reads, adaptive NIP-17 mailbox recovery, and consolidated organiser, voter, and observer live questionnaire subscriptions, but relay rate limits can still affect busy demonstrations.</li>
           <li>For larger live sessions, such as many rounds or around 100 voters, use the audit proxy/worker for blind issuance and decision publication rather than relying on a single organiser browser tab.</li>
           <li>Browser-held secret material needs careful handling.</li>
+          <li>The built-in Messages view needs a local nsec identity to unwrap and send helpline DMs; signer-only sessions should use their external signer or restore a local identity until signer-side NIP-17 wrapping is supported in-app.</li>
           <li>The cryptographic design needs external review before production use.</li>
           <li>Large multi-organiser runs are not yet reliable on the current public relay set.</li>
         </ul>

@@ -56,6 +56,7 @@ Private or local:
 
 - voter and organiser signing keys
 - the admitted voter roster and internal voter notes
+- helpline message contents, sent as NIP-17 gift-wrapped direct messages between voter and organiser identities
 - token secrets and blinding factors
 - unspent ballot credentials
 - browser-local recovery state
@@ -87,7 +88,7 @@ The voter must protect their local keys and browser state.
 2. Invite voters in **Session** if the same people will answer later questionnaires.
 3. Create a questionnaire and publish it.
 4. Share invite links from **Session**. The General QR/link opens **Vote** directly and requests a ballot automatically; single-use private links are created and labelled in **Voters**. For follow-up questionnaires, use **New round** in the side panel; it generates a fresh Questionnaire ID, publishes to rows with **Auto-ballot** ticked, and publishes one public questionnaire announcement that their Vote page can discover.
-5. Open the invite as **Voter**, wait for ballot access if needed, fill in the questionnaire, and submit. Voter **Settings** shows **Ballot details** while taking part, so request, credential, submission, and timing fields can be checked if something stalls.
+5. Open the invite as **Voter**, wait for ballot access if needed, fill in the questionnaire, and submit. Voter **Messages** can send a private helpline DM to the organiser, and Voter **Settings** shows **Ballot details** while taking part, so request, credential, submission, and timing fields can be checked if something stalls.
 6. Open **Observer** and search for the questionnaire ID, organiser identity, Submission/Response ID, or **Submittor identity** short/full to verify the public result stream. Observer keeps one live subscription for the selected questionnaire and uses **Refresh** for an immediate serial backfill. In **Submitted Votes**, use the same submission filters to find a specific public submission. Invalid rows show their rejection reason. Organiser results decrypt encrypted answer details automatically when the local organiser key is available; Observer can decrypt them from **Submitted Votes** when the matching organiser `nsec` is supplied.
 
 Questionnaires can mix yes/no, multiple-choice, ranked-choice, and free-text questions. Free-text questions can allow optional voter encryption or require organiser-encrypted responses. Ranked-choice results are counted as points, with the highest total preferred: first choice gets one point per available option, later choices count down from there, and unranked options get `0` points.
@@ -102,6 +103,7 @@ Known weak points:
 - The client uses tag-filtered, paginated public reads, adaptive NIP-17 mailbox recovery, and consolidated organiser, voter, and observer live questionnaire subscriptions, but relay rate limits can still affect busy demonstrations.
 - For larger live sessions, such as many rounds or around 100 voters, use the audit proxy/worker for blind issuance and decision publication rather than relying on a single organiser browser tab.
 - Browser-held secret material needs careful handling.
+- The built-in **Messages** view needs a local `nsec` identity to unwrap and send helpline DMs; signer-only sessions should use their external signer or restore a local identity until signer-side NIP-17 wrapping is supported in-app.
 - The cryptographic design needs external review before production use.
 - Large multi-organiser runs are not yet reliable on the current public relay set.
 

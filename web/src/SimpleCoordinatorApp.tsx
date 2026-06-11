@@ -54,6 +54,7 @@ import {
 } from "./nostr/subscribeCoordinatorControl";
 import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
+import SimpleMessagesPanel from "./SimpleMessagesPanel";
 import SimpleRelayPanel from "./SimpleRelayPanel";
 import SimpleUnlockGate from "./SimpleUnlockGate";
 import QuestionnaireCoordinatorPanel, {
@@ -141,7 +142,7 @@ import {
   QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN,
 } from "./questionnaireProtocolConstants";
 
-type CoordinatorTab = "configure" | "participants" | "settings";
+type CoordinatorTab = "configure" | "participants" | "messages" | "settings";
 
 type SimpleCoordinatorAppProps = {
   accountMenu?: ReactNode;
@@ -6851,6 +6852,16 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
             <button
               type='button'
               role='tab'
+              aria-selected={activeTab === 'messages'}
+              className={`simple-coordinator-nav-button${activeTab === 'messages' ? ' is-active' : ''}`}
+              onClick={() => selectTab('messages')}
+            >
+              <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-messages' aria-hidden='true'>M</span>
+              <span className='simple-coordinator-nav-label'>Messages</span>
+            </button>
+            <button
+              type='button'
+              role='tab'
               aria-selected={activeTab === 'settings'}
               className={`simple-coordinator-nav-button${activeTab === 'settings' ? ' is-active' : ''}`}
               onClick={() => selectTab('settings')}
@@ -7500,6 +7511,20 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                 </div>
               </SimpleCollapsibleSection>
             </div>
+          </section>
+        ) : null}
+
+        {activeTab === 'messages' ? (
+          <section
+            className='simple-voter-tab-panel'
+            role='tabpanel'
+            aria-label='Messages'
+          >
+            <SimpleMessagesPanel
+              role='coordinator'
+              actorNpub={activeCoordinatorNpub}
+              actorNsec={signerNpub ? "" : (keypair?.nsec ?? "")}
+            />
           </section>
         ) : null}
 

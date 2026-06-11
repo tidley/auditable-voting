@@ -6014,6 +6014,208 @@ code {
   accent-color: var(--simple-blue);
 }
 
+.simple-messages-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.simple-messages-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px;
+  border: 1px solid var(--simple-border);
+  border-radius: 8px;
+  background: var(--simple-surface-2);
+}
+
+.simple-messages-head .simple-voter-question,
+.simple-messages-head .simple-voter-note {
+  margin: 0;
+}
+
+.simple-messages-actor {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  border: 1px solid var(--simple-border-strong);
+  border-radius: 6px;
+  color: var(--simple-soft);
+  font-size: 0.84rem;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.simple-messages-empty-state {
+  padding: 20px;
+  border: 1px solid var(--simple-border);
+  border-radius: 8px;
+  background: var(--simple-surface-2);
+}
+
+.simple-messages-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.34fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.simple-messages-thread-list,
+.simple-messages-chat {
+  min-width: 0;
+  border: 1px solid var(--simple-border);
+  border-radius: 8px;
+  background: var(--simple-surface-2);
+}
+
+.simple-messages-thread-list {
+  display: grid;
+  align-content: start;
+  max-height: 620px;
+  overflow: auto;
+  padding: 8px;
+  gap: 6px;
+}
+
+.simple-messages-thread-button {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--simple-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.simple-messages-thread-button:hover,
+.simple-messages-thread-button:focus-visible {
+  border-color: var(--simple-border-strong);
+  background: rgba(255, 255, 255, 0.04);
+  outline: none;
+}
+
+.simple-messages-thread-button.is-active {
+  border-color: rgba(45, 212, 191, 0.46);
+  background: rgba(45, 212, 191, 0.1);
+}
+
+.simple-messages-thread-id {
+  color: var(--simple-soft);
+  font-weight: 800;
+}
+
+.simple-messages-thread-preview,
+.simple-messages-thread-time {
+  min-width: 0;
+  color: var(--simple-muted);
+  font-size: 0.84rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.simple-messages-chat {
+  display: grid;
+  grid-template-rows: auto minmax(280px, 1fr) auto;
+  overflow: hidden;
+}
+
+.simple-messages-chat-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--simple-border);
+}
+
+.simple-messages-chat-title .simple-voter-section-title,
+.simple-messages-chat-title .simple-account-menu-kicker {
+  margin: 0;
+}
+
+.simple-messages-bubbles {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  overflow: auto;
+}
+
+.simple-messages-bubble {
+  max-width: min(72ch, 82%);
+  padding: 10px 12px;
+  border: 1px solid var(--simple-border);
+  border-radius: 8px;
+  background: var(--simple-surface);
+}
+
+.simple-messages-bubble.is-sent {
+  align-self: flex-end;
+  border-color: rgba(45, 212, 191, 0.44);
+  background: rgba(7, 130, 127, 0.28);
+}
+
+.simple-messages-bubble.is-received {
+  align-self: flex-start;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.simple-messages-bubble p {
+  margin: 0;
+  color: var(--simple-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.simple-messages-bubble span {
+  display: block;
+  margin-top: 6px;
+  color: var(--simple-muted);
+  font-size: 0.78rem;
+}
+
+.simple-messages-empty-thread {
+  margin: auto;
+}
+
+.simple-messages-composer {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-top: 1px solid var(--simple-border);
+}
+
+.simple-messages-textarea {
+  min-height: 108px;
+  margin-bottom: 0;
+  resize: vertical;
+}
+
+.simple-messages-composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.simple-messages-composer-actions .simple-voter-note {
+  margin: 0;
+}
+
+@media (max-width: 900px) {
+  .simple-messages-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .simple-messages-thread-list {
+    max-height: 260px;
+  }
+}
+
 .simple-qr-panel {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 240px;

@@ -26,6 +26,7 @@ const ROLE_OPTIONS: Array<{ role: SimpleRole; label: string }> = [
 const VOTER_SECTION_OPTIONS: Array<{ tab: VoterTab; label: string }> = [
   { tab: "configure", label: "Join" },
   { tab: "vote", label: "Vote" },
+  { tab: "messages", label: "Messages" },
   { tab: "settings", label: "Settings" },
 ];
 const IDENTITY_UPDATED_EVENT = "auditable-voting:identity-updated";

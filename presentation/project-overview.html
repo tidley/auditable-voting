@@ -561,6 +561,7 @@
           <li>Public, signed event publication for rounds, ballots, and results</li>
           <li>Organiser-control carrier events for round proposals, commits, tally coordination, and recovery checkpoints</li>
           <li>Private encrypted mailbox objects for issuance requests, ticket delivery, and ticket acknowledgements, with stable ids and relay-history backfill</li>
+          <li>Normal NIP-17 gift-wrapped direct messages now provide a voter-to-organiser helpline and organiser replies from Messages</li>
           <li>In initial course-feedback mode, acknowledgements are diagnostic and valid ballot acceptance is the completion signal</li>
           <li>Ballot events now carry stable `request_id` / `ticket_id` lineage so organiser mapping and harness acceptance counts follow Rust truth</li>
           <li>Ticket scheduler now surfaces first-send vs resend queue diagnostics with env-tunable concurrency and retry age for live reliability tuning</li>
@@ -602,7 +603,7 @@
           <li>The login gateway now defaults to Observer, orders roles as Observer / Organiser / Voter, and keeps existing-profile login behind NOS2X-FOX or Amber, nsec, and Advanced Nostr Connect actions</li>
           <li>Blind request and issuance DMs now resolve recipient `kind:10050` NIP-17 relay hints before a small static fallback relay set, while public submission decisions are the normal acceptance signal</li>
           <li>Voter ballot progress now separates signer account from voting identity, and organiser automatic queue checks are single-flight to reduce overlapping relay work</li>
-          <li>Voter Join, Vote, and Settings now live in the top Menu alongside the app version and How it works link; the Vote section remains available for browsing current and older invited questionnaires, and silent invite polling no longer forces users out of the current section</li>
+          <li>Voter Join, Vote, Messages, and Settings now live in the top Menu alongside the app version and How it works link; the Vote section remains available for browsing current and older invited questionnaires, and silent invite polling no longer forces users out of the current section</li>
           <li>Voter Settings now shows ballot details while taking part, exposing request, credential, submission, and timing fields for debugging without exposing private keys or token secrets</li>
           <li>Voter ballot resend now keeps the same blind-request id while prompting the organiser to republish the existing credential DM, and blind-request/submission sends are only marked sent after confirmed relay acceptance</li>
           <li>Questionnaire request, issuance, and submission phases now use explicit acknowledgements, shared recipient-scoped websocket inboxes, sticky successful relay subsets, and bounded foreground recovery instead of unbounded resend churn</li>
@@ -686,7 +687,7 @@
           <tr>
             <td><strong>Private issuance</strong></td>
             <td>NIP-17 gift-wrapped DMs with local fallback</td>
-            <td>Blind requests, blind responses, ballot submissions, and acceptance results move privately over relay DMs across browser/device contexts, with mailbox fallback retained for same-browser recovery.</td>
+            <td>Blind requests, blind responses, ballot submissions, acceptance results, and voter-organiser helpline messages move privately over relay DMs across browser/device contexts, with mailbox fallback retained for same-browser recovery.</td>
           </tr>
           <tr>
             <td><strong>Credential privacy</strong></td>

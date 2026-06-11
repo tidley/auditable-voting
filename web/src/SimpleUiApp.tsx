@@ -4,6 +4,7 @@ import { decodeNsec, deriveNpubFromNsec, isValidNpub } from "./nostrIdentity";
 import { deriveActorDisplayId } from "./actorDisplay";
 import QuestionnaireVoterPanel from "./QuestionnaireVoterPanel";
 import SimpleIdentityPanel from "./SimpleIdentityPanel";
+import SimpleMessagesPanel from "./SimpleMessagesPanel";
 import SimpleQrScanner from "./SimpleQrScanner";
 import SimpleRelayPanel from "./SimpleRelayPanel";
 import SimpleUnlockGate from "./SimpleUnlockGate";
@@ -91,7 +92,7 @@ import { createSignerService, SignerServiceError } from "./services/signerServic
 import { getSharedNostrPool } from "./sharedNostrPool";
 
 type LiveVoteChoice = "Yes" | "No" | null;
-export type VoterTab = "configure" | "vote" | "settings";
+export type VoterTab = "configure" | "vote" | "messages" | "settings";
 
 type SimpleVoterKeypair = {
   nsec: string;
@@ -445,6 +446,8 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
   const activeVoterNpub = questionnaireVoterIdentity.activeVoterNpub;
   const questionnaireLocalVoterNsec = questionnaireVoterIdentity.localVoterNsec;
   const questionnaireAutoSignerLogin = questionnaireVoterIdentity.autoSignerLogin;
+  const messagesVoterNsec = questionnaireLocalVoterNsec || (signerNpub ? "" : voterKeypair?.nsec ?? "");
+  const messagesVoterNpub = messagesVoterNsec ? deriveNpubFromNsec(messagesVoterNsec) ?? activeVoterNpub : activeVoterNpub;
   const [backupStatus, setBackupStatus] = useState<string | null>(null);
   const [storagePassphrase, setStoragePassphrase] = useState("");
   const [storageLocked, setStorageLocked] = useState(false);
@@ -3074,6 +3077,15 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
             <button
               type='button'
               role='tab'
+              aria-selected={activeTab === 'messages'}
+              className={`simple-voter-tab${activeTab === 'messages' ? ' is-active' : ''}`}
+              onClick={() => selectTab('messages')}
+            >
+              Messages
+            </button>
+            <button
+              type='button'
+              role='tab'
               aria-selected={activeTab === 'settings'}
               className={`simple-voter-tab${activeTab === 'settings' ? ' is-active' : ''}`}
               onClick={() => selectTab('settings')}
@@ -3461,6 +3473,21 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
               </div>
             )
             )}
+          </section>
+        ) : null}
+
+        {activeTab === 'messages' ? (
+          <section
+            className='simple-voter-tab-panel'
+            role='tabpanel'
+            aria-label='Messages'
+          >
+            <SimpleMessagesPanel
+              role='voter'
+              actorNpub={messagesVoterNpub}
+              actorNsec={messagesVoterNsec}
+              targetNpubs={configuredCoordinatorTargets}
+            />
           </section>
         ) : null}
 
