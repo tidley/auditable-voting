@@ -56,7 +56,7 @@ import {
   QUESTIONNAIRE_DEFINITION_KIND,
   QUESTIONNAIRE_STATE_KIND,
 } from "./questionnaireNostr";
-import { shouldAutoRequestBallotFromUrl } from "./questionnaireInvite";
+import { hasVoterInviteContextInUrl, shouldAutoRequestBallotFromUrl } from "./questionnaireInvite";
 import { fetchOptionAInviteDms, fetchOptionAInviteDmsWithNsec } from "./questionnaireOptionAInviteDm";
 import { publishInviteToMailbox } from "./questionnaireOptionAStorage";
 import {
@@ -427,6 +427,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
   const linkedQuestionnaireId = useMemo(() => readLinkedQuestionnaireIdFromUrl(), []);
   const autoRequestBallotFromUrl = useMemo(() => shouldAutoRequestBallotFromUrl(), []);
   const linkedPrivateInviteCode = useMemo(() => readPrivateQuestionnaireInviteCodeFromUrl(), []);
+  const shouldHydrateSavedManualCoordinators = useMemo(() => hasVoterInviteContextInUrl(), []);
   const [announcedQuestionnaireIds, setAnnouncedQuestionnaireIds] = useState<string[]>(() => (
     linkedQuestionnaireId ? [linkedQuestionnaireId] : []
   ));
@@ -745,7 +746,11 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
       if (storedState?.keypair) {
         setVoterKeypair(storedState.keypair);
         const cache = (storedState.cache ?? null) as Partial<SimpleVoterCache> | null;
-        setManualCoordinators(Array.isArray(cache?.manualCoordinators) ? sanitizeCoordinatorNpubs(cache.manualCoordinators) : []);
+        setManualCoordinators(
+          shouldHydrateSavedManualCoordinators && Array.isArray(cache?.manualCoordinators)
+            ? sanitizeCoordinatorNpubs(cache.manualCoordinators)
+            : [],
+        );
         setNip65Enabled(cache?.nip65Enabled === true);
         setQuestionnaireParticipationHistory(
           Array.isArray(cache?.questionnaireParticipationHistory)
@@ -824,7 +829,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [shouldHydrateSavedManualCoordinators]);
 
   useEffect(() => {
     setNip65EnabledForSession(nip65Enabled);

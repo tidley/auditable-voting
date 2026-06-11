@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildQuestionnaireInviteUrl,
+  hasVoterInviteContextInUrl,
   parseInviteFromUrl,
   shouldAutoRequestBallotFromUrl,
 } from "./questionnaireInvite";
@@ -78,6 +79,14 @@ describe("questionnaire invite sharing", () => {
     expect(shouldAutoRequestBallotFromUrl("?role=voter&q=q_public_123")).toBe(false);
     expect(shouldAutoRequestBallotFromUrl("?role=voter&q=q_public_123&auto_request=1")).toBe(true);
     expect(shouldAutoRequestBallotFromUrl("?role=voter&q=q_public_123&request_ballot=yes")).toBe(true);
+  });
+
+  it("does not treat a bare voter role URL as an invite context", () => {
+    expect(hasVoterInviteContextInUrl("?role=voter")).toBe(false);
+    expect(hasVoterInviteContextInUrl("?role=voter&request_ballot=1")).toBe(false);
+    expect(hasVoterInviteContextInUrl("?role=voter&q=q_public_123")).toBe(true);
+    expect(hasVoterInviteContextInUrl("?role=voter&coordinator=npub1coordinator")).toBe(true);
+    expect(hasVoterInviteContextInUrl("?role=voter&invite_code=abc123private")).toBe(true);
   });
 
   it("builds no-account share copy around the public questionnaire link", () => {

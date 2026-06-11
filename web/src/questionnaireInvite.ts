@@ -108,3 +108,17 @@ export function shouldAutoRequestBallotFromUrl(search = typeof window !== "undef
   const value = (params.get("request_ballot") ?? params.get("auto_request") ?? "").trim().toLowerCase();
   return value === "1" || value === "true" || value === "yes";
 }
+
+export function hasVoterInviteContextInUrl(search = typeof window !== "undefined" ? window.location.search : "") {
+  const params = new URLSearchParams(search);
+  return Boolean(
+    (params.get("q") ?? "").trim()
+    || (params.get("election_id") ?? "").trim()
+    || (params.get("questionnaire") ?? "").trim()
+    || (params.get("coordinator") ?? "").trim()
+    || (params.get("invited") ?? "").trim()
+    || (params.get("invite") ?? "").trim()
+    || (params.get("invite_code") ?? "").trim()
+    || (params.get("code") ?? "").trim(),
+  );
+}

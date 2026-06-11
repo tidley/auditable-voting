@@ -8,6 +8,7 @@ import TokenFingerprint from "./TokenFingerprint";
 import { deriveActorDisplayId } from "./actorDisplay";
 import { resolveQuestionnaireResponderNpub } from "./questionnaireResponderIdentity";
 import QuestionnaireOptionAVoterPanel from "./QuestionnaireOptionAVoterPanel";
+import { hasVoterInviteContextInUrl } from "./questionnaireInvite";
 
 const RESTORED_QUESTIONNAIRE_IDS_STORAGE_KEY = "voter.restored-questionnaire-ids.v1";
 const PARTICIPATION_HISTORY_STORAGE_KEY = "voter.questionnaire-participation-history.v1";
@@ -451,6 +452,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
   const [questionnaireId, setQuestionnaireId] = useState("");
   const [selectorEntries, setSelectorEntries] = useState<QuestionnaireSelectorEntry[]>([]);
   const [coordinatorContextNpubs, setCoordinatorContextNpubs] = useState<string[]>([]);
+  const shouldHydrateSavedCoordinatorContext = useMemo(() => hasVoterInviteContextInUrl(), []);
   const [restoredQuestionnaireIds, setRestoredQuestionnaireIds] = useState<string[]>([]);
   const [participationHistory, setParticipationHistory] = useState<QuestionnaireParticipationHistoryEntry[]>([]);
   const [voterNpub, setVoterNpub] = useState("");
@@ -569,12 +571,12 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
     void loadSimpleActorState("voter").then((stored) => {
       setVoterNpub(stored?.keypair?.npub ?? "");
       const cached = (stored?.cache ?? null) as { manualCoordinators?: unknown } | null;
-      const manualCoordinators = Array.isArray(cached?.manualCoordinators)
+      const manualCoordinators = shouldHydrateSavedCoordinatorContext && Array.isArray(cached?.manualCoordinators)
         ? cached.manualCoordinators.filter((value): value is string => typeof value === "string" && value.trim().startsWith("npub"))
         : [];
       setCoordinatorContextNpubs([...new Set(manualCoordinators.map((value) => value.trim()))].sort());
     }).catch(() => undefined);
-  }, []);
+  }, [shouldHydrateSavedCoordinatorContext]);
 
   useEffect(() => {
     setRestoredQuestionnaireIds(readRestoredQuestionnaireIds(restoredStorageKey));
