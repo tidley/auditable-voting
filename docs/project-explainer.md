@@ -102,6 +102,7 @@ Known weak points:
 - Public relay reliability can affect delivery and discovery.
 - The client uses tag-filtered, paginated public reads, adaptive NIP-17 mailbox recovery, and consolidated organiser, voter, and observer live questionnaire subscriptions, but relay rate limits can still affect busy demonstrations.
 - For larger live sessions, such as many rounds or around 100 voters, use the audit proxy/worker for blind issuance and decision publication rather than relying on a single organiser browser tab.
+- The audit proxy still follows organiser eligibility: it waits for the organiser's whitelist/private-code config before issuing, and general-link requests are also copied to the organiser so approval can update the proxy without a second voter request.
 - Browser-held secret material needs careful handling.
 - The built-in **Messages** view needs a local `nsec` identity to unwrap and send helpline DMs; signer-only sessions should use their external signer or restore a local identity until signer-side NIP-17 wrapping is supported in-app.
 - The cryptographic design needs external review before production use.

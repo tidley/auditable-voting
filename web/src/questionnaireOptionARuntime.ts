@@ -1539,12 +1539,14 @@ export class QuestionnaireOptionAVoterRuntime {
     const routing = await this.resolveIssueBlindTokensWorkerRouting();
     const recipientNpub = routing?.workerNpub?.trim() || this.state.coordinatorNpub;
     const relays = mergeBlindRequestRoutingRelays(this.getPreferredDmRelays(), routing);
+    const shouldCopyOrganizer = Boolean(routing?.workerNpub?.trim() && this.state.coordinatorNpub.trim() !== recipientNpub);
     optionAFlowLog("voter", "blind_request_publish_attempt", {
       electionId: this.state.electionId,
       requestId: request.requestId,
       coordinatorNpub: this.state.coordinatorNpub,
       recipientNpub,
       delegationId: routing?.delegationId ?? null,
+      organizerCopy: shouldCopyOrganizer,
     });
     try {
       const result = await publishOptionABlindRequestDm({
@@ -1555,6 +1557,36 @@ export class QuestionnaireOptionAVoterRuntime {
         relays,
       });
       this.rememberPrivateRelaySuccesses(result);
+      if (shouldCopyOrganizer) {
+        try {
+          const organizerCopy = await publishOptionABlindRequestDm({
+            signer: this.signer,
+            recipientNpub: this.state.coordinatorNpub,
+            request,
+            fallbackNsec: this.fallbackNsec,
+            relays: this.getPreferredDmRelays(),
+          });
+          this.rememberPrivateRelaySuccesses(organizerCopy);
+          optionAFlowLog("voter", "blind_request_organizer_copy_result", {
+            electionId: this.state.electionId,
+            requestId: request.requestId,
+            successes: organizerCopy.successes,
+            failures: organizerCopy.failures,
+          });
+          return {
+            ...result,
+            successes: result.successes + organizerCopy.successes,
+            failures: result.failures + organizerCopy.failures,
+            relayResults: [...result.relayResults, ...organizerCopy.relayResults],
+          };
+        } catch (error) {
+          optionAFlowLog("voter", "blind_request_organizer_copy_failed", {
+            electionId: this.state.electionId,
+            requestId: request.requestId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
       return result;
     } catch {
       return null;
@@ -3175,16 +3207,6 @@ export class QuestionnaireOptionACoordinatorRuntime {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
     }
-    if (isDelegatedWorkerCapabilityEnabled({
-      electionId: this.electionId,
-      capability: "issue_blind_tokens",
-    })) {
-      optionAFlowLog("coordinator", "blind_requests_sync_skipped_delegated_worker", {
-        electionId: this.electionId,
-      });
-      return 0;
-    }
-
     try {
       const since = this.getDmReadSince();
       let diagnostics: OptionABlindRequestFetchDiagnostics | null = null;
@@ -3554,14 +3576,14 @@ export class QuestionnaireOptionACoordinatorRuntime {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
     }
-    if (isDelegatedWorkerCapabilityEnabled({
+    const delegatedIssuance = isDelegatedWorkerCapabilityEnabled({
       electionId: this.electionId,
       capability: "issue_blind_tokens",
-    })) {
-      optionAFlowLog("coordinator", "process_blind_requests_delegated_worker_enabled", {
+    });
+    if (delegatedIssuance) {
+      optionAFlowLog("coordinator", "process_blind_requests_delegated_worker_observe_only", {
         electionId: this.electionId,
       });
-      return this.state;
     }
     const queue = listBlindRequests(this.electionId);
     if (queue.length === 0) {
@@ -3570,7 +3592,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       });
       return this.state;
     }
-    const blindSigningPrivateKey = await this.ensureBlindSigningKey();
+    const blindSigningPrivateKey = delegatedIssuance ? null : await this.ensureBlindSigningKey();
     const pendingAuthorizationsBefore = JSON.stringify(this.pendingAuthorizationsByNpub);
     const originalState = this.state;
     optionAFlowLog("coordinator", "process_blind_requests_started", {
@@ -3593,6 +3615,16 @@ export class QuestionnaireOptionACoordinatorRuntime {
         request,
       });
       if (!received.ok) {
+        if (delegatedIssuance) {
+          if (received.error === "not_whitelisted") {
+            const existing = this.pendingAuthorizationsByNpub[request.invitedNpub] ?? [];
+            const alreadySeen = existing.some((entry) => entry.requestId === request.requestId);
+            this.pendingAuthorizationsByNpub[request.invitedNpub] = alreadySeen
+              ? existing
+              : [...existing, request];
+          }
+          continue;
+        }
         const existingIssuance = findIssuedBlindResponse(next, request);
         if (received.error === "already_issued" && existingIssuance) {
           const enriched = this.enrichIssuanceWithDefinition(existingIssuance);
@@ -3618,6 +3650,12 @@ export class QuestionnaireOptionACoordinatorRuntime {
         continue;
       }
       next = received.state;
+      if (delegatedIssuance) {
+        continue;
+      }
+      if (!blindSigningPrivateKey) {
+        continue;
+      }
       await this.publishBlindRequestAckDm(request);
       const existingIssuance = findIssuedBlindResponse(next, request);
       if (existingIssuance) {

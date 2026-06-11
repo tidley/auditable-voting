@@ -1110,11 +1110,19 @@ describe("questionnaireOptionARuntime", () => {
     const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionId);
     await voter.loginWithSigner(sentInvite.invite);
     voter.updateDraftResponses([{ questionId: "q1", type: "yes_no", answer: "yes" }]);
+    vi.mocked(publishOptionABlindRequestDm).mockClear();
     await voter.requestBlindBallot({ forceResend: true });
 
     const requestId = voter.getSnapshot()?.blindRequest?.requestId;
     expect(requestId).toBeTruthy();
+    expect(publishOptionABlindRequestDm).toHaveBeenCalledWith(expect.objectContaining({
+      recipientNpub: workerNpub,
+    }));
+    expect(publishOptionABlindRequestDm).toHaveBeenCalledWith(expect.objectContaining({
+      recipientNpub: coordinatorNpub,
+    }));
     await coordinator.processPendingBlindRequests();
+    expect(coordinator.getSnapshot()?.whitelist[voterNpub]?.claimState).toBe("blind_request_received");
     expect(readBlindIssuance(requestId ?? "")).toBe(null);
 
     await processDelegatedCoordinatorQueues({
@@ -1180,6 +1188,61 @@ describe("questionnaireOptionARuntime", () => {
           }),
         ],
       }),
+    }));
+  });
+
+  it("observes delegated private invite requests without local issuance", async () => {
+    const workerNpub = "npub1delegateprivatecoderuntime000000000000000000000";
+    const privateCodeNpub = "npub1privatecodedelegated000000000000000000000000";
+    const inviteCode = "private-invite-code-delegated";
+    const inviteCodeHash = await hashQuestionnaireInviteCode(inviteCode);
+    const definition = buildDefinition({
+      electionId,
+      coordinatorNpub,
+    });
+    storeCachedQuestionnaireDefinition(definition);
+    const delegation = createWorkerDelegationCertificate({
+      electionId,
+      coordinatorNpub,
+      workerNpub,
+      capabilities: ["issue_blind_tokens"],
+      controlRelays: ["wss://worker-relay.example"],
+      expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+    });
+
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+    coordinator.addBearerInviteCode(inviteCodeHash);
+    upsertStoredWorkerDelegation({
+      electionId,
+      mode: "delegated_worker",
+      activeDelegation: delegation,
+      lastRevocation: null,
+      lastUpdatedAt: new Date().toISOString(),
+    });
+
+    vi.mocked(fetchQuestionnaireActiveWorkerDelegationForCapability).mockResolvedValueOnce(delegation);
+    vi.mocked(publishOptionABlindRequestDm).mockClear();
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(privateCodeNpub), electionId);
+    voter.setBearerInviteCode(inviteCode);
+    voter.bootstrapWithLocalIdentity({
+      invitedNpub: privateCodeNpub,
+      allowInviteMissing: true,
+    });
+    await voter.requestBlindBallot({ forceResend: true });
+
+    const requestId = voter.getSnapshot()?.blindRequest?.requestId ?? "";
+    await coordinator.processPendingBlindRequests();
+    const redeemed = coordinator.getSnapshot()?.bearerInviteCodes[inviteCodeHash];
+    expect(redeemed?.state).toBe("redeemed");
+    expect(redeemed?.redeemedNpub).toBe(privateCodeNpub);
+    expect(coordinator.getSnapshot()?.whitelist[privateCodeNpub]?.claimState).toBe("blind_request_received");
+    expect(readBlindIssuance(requestId)).toBe(null);
+    expect(publishOptionABlindRequestDm).toHaveBeenCalledWith(expect.objectContaining({
+      recipientNpub: workerNpub,
+    }));
+    expect(publishOptionABlindRequestDm).toHaveBeenCalledWith(expect.objectContaining({
+      recipientNpub: coordinatorNpub,
     }));
   });
 });

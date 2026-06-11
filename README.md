@@ -115,6 +115,8 @@ The audit proxy is an optional Rust helper. It uses the delegated organiser role
 
 For larger live sessions, such as dozens of rounds or around 100 voters, treat the audit proxy/worker as the default issuance and verification path. The browser organiser remains the root authority, but the proxy avoids relying on one open browser tab to process every blind request and public submission.
 
+The proxy only issues blind credentials after it has received the organiser's election config for the active delegation. That config carries the current whitelist and private invite-code hashes. General invite-link requests are copied to the organiser as well as the proxy; when the organiser approves a requester, the updated whitelist is synced back to the proxy so the already-sent request can be issued without asking the voter to send a second proxy message.
+
 It can:
 
 - receive delegation and questionnaire config over NIP-17 gift-wraps;

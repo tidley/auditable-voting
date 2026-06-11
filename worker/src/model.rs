@@ -270,6 +270,8 @@ pub struct ElectionRuntimeState {
     #[serde(default)]
     pub bearer_invite_codes: HashMap<String, BearerInviteCodeEntry>,
     #[serde(default)]
+    pub eligibility_configured: bool,
+    #[serde(default)]
     pub eligibility_required: bool,
     #[serde(default)]
     pub accepted_response_authors: HashSet<String>,

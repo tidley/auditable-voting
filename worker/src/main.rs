@@ -123,6 +123,7 @@ fn apply_worker_election_config(
         || snapshot.bearer_invite_codes.is_some()
         || snapshot.eligibility_required.is_some()
     {
+        election.eligibility_configured = true;
         election.eligibility_required = snapshot.eligibility_required.unwrap_or(true);
     }
     if let Some(whitelist_npubs) = &snapshot.whitelist_npubs {
@@ -170,6 +171,13 @@ fn merge_bearer_invite_codes(election: &mut ElectionRuntimeState, codes: &[Beare
         };
         election.bearer_invite_codes.insert(code_hash, next);
     }
+}
+
+fn has_effective_eligibility_config(election: &ElectionRuntimeState) -> bool {
+    election.eligibility_configured
+        || election.eligibility_required
+        || !election.whitelist_npubs.is_empty()
+        || !election.bearer_invite_codes.is_empty()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -223,7 +231,7 @@ fn authorize_blind_request(
     }
 
     if election.eligibility_required {
-        BlindRequestAuthorization::Rejected
+        BlindRequestAuthorization::Deferred
     } else {
         BlindRequestAuthorization::Authorized {
             state_changed: false,
@@ -1337,6 +1345,13 @@ impl WorkerRuntime {
                 );
                 return Ok(false);
             }
+            if !has_effective_eligibility_config(election) {
+                warn!(
+                    "blind request deferred for election {} because delegated eligibility config is not loaded yet",
+                    request.election_id
+                );
+                return Ok(false);
+            }
             if !election
                 .seen_blind_request_ids
                 .contains(&request.request_id)
@@ -1354,7 +1369,7 @@ impl WorkerRuntime {
                 BlindRequestAuthorization::Authorized { state_changed } => state_changed,
                 BlindRequestAuthorization::Deferred => {
                     info!(
-                        "blind request deferred for election {} because invite-code eligibility is not loaded yet",
+                        "blind request deferred for election {} because delegated eligibility is not satisfied yet",
                         request.election_id
                     );
                     return Ok(false);
@@ -1460,6 +1475,7 @@ impl WorkerRuntime {
             existing.issued_invited_npubs.clear();
             existing.whitelist_npubs.clear();
             existing.bearer_invite_codes.clear();
+            existing.eligibility_configured = false;
             existing.eligibility_required = false;
             existing.accepted_response_authors.clear();
             existing.accepted_response_count = 0;
@@ -1658,6 +1674,7 @@ mod tests {
         apply_worker_election_config(&mut election, &snapshot);
 
         assert_eq!(election.expected_invitee_count, Some(3));
+        assert!(election.eligibility_configured);
         assert!(election.eligibility_required);
         assert!(election.whitelist_npubs.contains("npub1knownvoter"));
         assert!(election
@@ -1726,12 +1743,29 @@ mod tests {
     fn unknown_private_invite_code_defers_for_later_config() {
         let mut election = ElectionRuntimeState {
             election_id: "q_worker_definition".to_string(),
+            eligibility_configured: true,
             eligibility_required: true,
             ..ElectionRuntimeState::default()
         };
         let mut request = sample_request();
         request.invite_code_hash =
             Some("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_string());
+
+        assert_eq!(
+            authorize_blind_request(&mut election, &request),
+            BlindRequestAuthorization::Deferred
+        );
+    }
+
+    #[test]
+    fn unlisted_general_invite_request_defers_for_later_authorisation() {
+        let mut election = ElectionRuntimeState {
+            election_id: "q_worker_definition".to_string(),
+            eligibility_configured: true,
+            eligibility_required: true,
+            ..ElectionRuntimeState::default()
+        };
+        let request = sample_request();
 
         assert_eq!(
             authorize_blind_request(&mut election, &request),
