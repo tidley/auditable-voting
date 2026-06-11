@@ -23,6 +23,7 @@ vi.mock("./sharedNostrPool", () => ({
 import QuestionnaireCoordinatorPanel from "./QuestionnaireCoordinatorPanel";
 import { upsertElectionSummary } from "./questionnaireOptionAStorage";
 import { storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
+import { buildSimpleNamespacedLocalStorageKey } from "./simpleLocalState";
 
 function makeDefinition(input: {
   questionnaireId: string;
@@ -227,5 +228,80 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       expect(optionText.some((text) => text.includes("Owned public questionnaire - q_own_public"))).toBe(true);
       expect(optionText.some((text) => text.includes("Spoofed questionnaire"))).toBe(false);
     });
+  });
+
+  it("keeps the selector on the build page and locks published questionnaire fields", async () => {
+    const coordinatorNpub = "npub1organiser";
+    storeCachedQuestionnaireDefinition(makeDefinition({
+      questionnaireId: "q_published_readonly",
+      title: "Published readonly questionnaire",
+      coordinatorNpub,
+    }));
+    upsertElectionSummary({
+      electionId: "q_published_readonly",
+      title: "Published readonly questionnaire",
+      description: "",
+      state: "open",
+      openedAt: "2026-06-02T10:00:00.000Z",
+      closedAt: null,
+      coordinatorNpub,
+    });
+
+    render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub={coordinatorNpub} />);
+
+    const selector = await screen.findByRole("combobox", { name: "Questionnaire" }) as HTMLSelectElement;
+    await waitFor(() => {
+      expect([...selector.options].some((option) => option.value === "q_published_readonly")).toBe(true);
+    });
+
+    fireEvent.change(selector, { target: { value: "q_published_readonly" } });
+
+    const titleInput = screen.getByLabelText("Name") as HTMLInputElement;
+    const questionnaireIdInput = screen.getByLabelText("Questionnaire ID") as HTMLInputElement;
+    await waitFor(() => {
+      expect(titleInput.value).toBe("Published readonly questionnaire");
+      expect(questionnaireIdInput.value).toBe("q_published_readonly");
+    });
+    expect(titleInput.matches(":disabled")).toBe(true);
+    expect(questionnaireIdInput.matches(":disabled")).toBe(true);
+    expect((screen.getByDisplayValue("Proceed?") as HTMLInputElement).matches(":disabled")).toBe(true);
+    expect(screen.queryByRole("button", { name: "Publish questionnaire" })).toBeNull();
+  });
+
+  it("keeps locally cached drafts editable until they have a published signal", async () => {
+    const coordinatorNpub = "npub1organiser";
+    window.localStorage.setItem(
+      buildSimpleNamespacedLocalStorageKey("coordinator.questionnaire-draft-data.v1"),
+      JSON.stringify({
+        questionnaireId: "q_cached_draft",
+        title: "Cached local draft",
+        description: "",
+        closeTimerEnabled: false,
+        closeAfterMinutes: "60",
+        questions: [{
+          questionId: "q1",
+          prompt: "Proceed?",
+          required: true,
+          type: "yes_no",
+        }],
+      }),
+    );
+    storeCachedQuestionnaireDefinition(makeDefinition({
+      questionnaireId: "q_cached_draft",
+      title: "Cached local draft",
+      coordinatorNpub,
+    }));
+
+    render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub={coordinatorNpub} />);
+
+    const titleInput = screen.getByLabelText("Name") as HTMLInputElement;
+    const questionnaireIdInput = screen.getByLabelText("Questionnaire ID") as HTMLInputElement;
+    await waitFor(() => {
+      expect(titleInput.value).toBe("Cached local draft");
+      expect(questionnaireIdInput.value).toBe("q_cached_draft");
+    });
+    expect(titleInput.matches(":disabled")).toBe(false);
+    expect(questionnaireIdInput.matches(":disabled")).toBe(false);
+    expect(screen.getByRole("button", { name: "Publish questionnaire" })).toBeTruthy();
   });
 });

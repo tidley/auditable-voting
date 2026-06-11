@@ -2088,6 +2088,15 @@ code {
   gap: 14px;
 }
 
+.simple-questionnaire-editor-fieldset {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
 .simple-questionnaire-build-cardlet,
 .simple-questionnaire-build-side-card {
   display: grid;
@@ -2160,6 +2169,14 @@ code {
   border-color: var(--simple-teal);
   background: rgba(45, 212, 191, 0.08);
   color: var(--simple-text);
+}
+
+.simple-questionnaire-add-question-button:disabled,
+.simple-questionnaire-add-question-button:disabled:hover {
+  border-color: var(--simple-border);
+  background: rgba(12, 19, 25, 0.42);
+  color: var(--simple-muted);
+  cursor: not-allowed;
 }
 
 .simple-questionnaire-build-aside {

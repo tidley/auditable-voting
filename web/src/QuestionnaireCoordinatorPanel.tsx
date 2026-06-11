@@ -539,6 +539,34 @@ function formatQuestionnaireMetadataState(state: QuestionnaireStateValue | null,
   return "Published";
 }
 
+function questionnaireStateFromElectionSummaryState(state: string | null | undefined): QuestionnaireStateValue | null {
+  if (state === "open" || state === "published") {
+    return "open";
+  }
+  if (state === "closed") {
+    return "closed";
+  }
+  if (state === "counted") {
+    return "results_published";
+  }
+  return null;
+}
+
+function definitionBelongsToCoordinator(definition: QuestionnaireDefinition | null, coordinatorNpub: string) {
+  if (!definition) {
+    return false;
+  }
+  const expectedCoordinator = normaliseCoordinatorIdentifier(coordinatorNpub);
+  if (!expectedCoordinator) {
+    return true;
+  }
+  return normaliseCoordinatorIdentifier(definition.coordinatorPubkey) === expectedCoordinator;
+}
+
+function formatQuestionnaireRelayInputFromDefinition(definition: QuestionnaireDefinition) {
+  return normalizeQuestionnaireRelays(definition.questionnaireRelays ?? []).join(", ");
+}
+
 function formatClosingClosedLabel(input: {
   latestDefinition: QuestionnaireDefinition | null;
   latestState: QuestionnaireStateValue | null;
@@ -1169,17 +1197,6 @@ function comparableDefinitionDraftShape(definition: QuestionnaireDefinition) {
   };
 }
 
-function publishedDefinitionMatchesDraft(
-  publishedDefinition: QuestionnaireDefinition | null,
-  draftDefinition: QuestionnaireDefinition | null,
-) {
-  if (!publishedDefinition || !draftDefinition) {
-    return false;
-  }
-  return JSON.stringify(comparableDefinitionDraftShape(publishedDefinition))
-    === JSON.stringify(comparableDefinitionDraftShape(draftDefinition));
-}
-
 export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordinatorPanelProps) {
   const deploymentMode = useMemo(() => readDeploymentModeFromUrl(), []);
   const isCourseFeedbackMode = deploymentMode === "course_feedback";
@@ -1235,6 +1252,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [latestResultAcceptedCount, setLatestResultAcceptedCount] = useState<number | null>(null);
   const [availableQuestionnaireIds, setAvailableQuestionnaireIds] = useState<string[]>([]);
   const [availableQuestionnaireTitles, setAvailableQuestionnaireTitles] = useState<Record<string, string>>({});
+  const [availablePublishedQuestionnaireIds, setAvailablePublishedQuestionnaireIds] = useState<string[]>([]);
   const [definitionEventCount, setDefinitionEventCount] = useState(0);
   const [stateEventCount, setStateEventCount] = useState(0);
   const [responseEventCount, setResponseEventCount] = useState(0);
@@ -1321,6 +1339,34 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const questionnaireRelayStatus = setupRelaySettingsEnabled && questionnaireRelayMetadata.length > 0
     ? `${questionnaireRelayMetadata.length} custom relay${questionnaireRelayMetadata.length === 1 ? "" : "s"} set.`
     : "";
+  const selectedQuestionnaireId = questionnaireId.trim();
+  const selectedQuestionnaireSummary = selectedQuestionnaireId ? loadElectionSummary(selectedQuestionnaireId) : null;
+  const selectedQuestionnaireSummaryState = selectedQuestionnaireSummary?.state ?? null;
+  const selectedSummaryQuestionnaireState = questionnaireStateFromElectionSummaryState(selectedQuestionnaireSummaryState);
+  const selectedLatestDefinition = latestDefinition?.questionnaireId === selectedQuestionnaireId
+    && definitionBelongsToCoordinator(latestDefinition, coordinatorNpub)
+    ? latestDefinition
+    : null;
+  const selectedQuestionnaireHasPublishedSignal = Boolean(
+    selectedQuestionnaireId
+    && (
+      selectedLatestDefinition
+      || (selectedQuestionnaireSummaryState && selectedQuestionnaireSummaryState !== "draft")
+      || availablePublishedQuestionnaireIds.includes(selectedQuestionnaireId)
+    ),
+  );
+  const selectedCachedDefinition = useMemo(() => {
+    if (!selectedQuestionnaireHasPublishedSignal) {
+      return null;
+    }
+    const cached = readCachedQuestionnaireDefinition(selectedQuestionnaireId);
+    return definitionBelongsToCoordinator(cached, coordinatorNpub) ? cached : null;
+  }, [coordinatorNpub, selectedQuestionnaireHasPublishedSignal, selectedQuestionnaireId]);
+  const activePublishedDefinition = selectedLatestDefinition ?? selectedCachedDefinition;
+  const selectedQuestionnaireIsKnownPublished = selectedQuestionnaireHasPublishedSignal;
+  const publishedDefinition = selectedQuestionnaireIsKnownPublished;
+  const questionnaireEditorLocked = publishedDefinition;
+  const appliedPublishedDefinitionKeyRef = useRef("");
 
   useEffect(() => {
     const nextNsec = typeof props.coordinatorNsec === "string" ? props.coordinatorNsec.trim() : "";
@@ -1689,11 +1735,13 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         }
 
         const ids = new Set<string>();
+        const publishedIds = new Set<string>();
         const titlesById: Record<string, string> = {};
         const coordinatorFilter = normaliseCoordinatorIdentifier(coordinatorNpub);
         if (!coordinatorFilter) {
           setAvailableQuestionnaireIds([]);
           setAvailableQuestionnaireTitles({});
+          setAvailablePublishedQuestionnaireIds([]);
           return;
         }
         for (const summary of listElectionSummaries()) {
@@ -1706,6 +1754,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             continue;
           }
           ids.add(summaryId);
+          if (summary.state !== "draft") {
+            publishedIds.add(summaryId);
+          }
           const cachedDefinition = readCachedQuestionnaireDefinition(summaryId);
           const cachedDefinitionTitle = cachedDefinition
             && normaliseCoordinatorIdentifier(cachedDefinition.coordinatorPubkey) === summaryCoordinatorNpub
@@ -1717,6 +1768,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           }
         }
         const eventTitleCandidatesById = new Map<string, { title: string; createdAt: number }>();
+        const eventDefinitionCandidatesById = new Map<string, { definition: QuestionnaireDefinition; createdAt: number }>();
         for (const event of events) {
           const parsed = parseQuestionnaireDefinitionEvent(event);
           if (!parsed) {
@@ -1728,9 +1780,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           if (parsed.questionnaireId.trim()) {
             const parsedId = parsed.questionnaireId.trim();
             ids.add(parsedId);
+            publishedIds.add(parsedId);
             const eventTitle = parsed.title.trim();
+            const createdAt = Number(event.created_at ?? parsed.createdAt ?? 0);
             if (eventTitle) {
-              const createdAt = Number(event.created_at ?? parsed.createdAt ?? 0);
               const existing = eventTitleCandidatesById.get(parsedId);
               if (!existing || createdAt >= existing.createdAt) {
                 eventTitleCandidatesById.set(parsedId, {
@@ -1739,13 +1792,23 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                 });
               }
             }
+            const existingDefinition = eventDefinitionCandidatesById.get(parsedId);
+            if (!existingDefinition || createdAt >= existingDefinition.createdAt) {
+              eventDefinitionCandidatesById.set(parsedId, {
+                definition: parsed,
+                createdAt,
+              });
+            }
           }
         }
         for (const [id, candidate] of eventTitleCandidatesById) {
           titlesById[id] = candidate.title;
         }
+        for (const candidate of eventDefinitionCandidatesById.values()) {
+          storeCachedQuestionnaireDefinition(candidate.definition);
+        }
         const selectedId = questionnaireId.trim();
-        if (selectedId && view !== "responses" && ids.size === 0) {
+        if (selectedId && view !== "responses") {
           ids.add(selectedId);
         }
         setAvailableQuestionnaireIds([...ids].sort((left, right) => {
@@ -1759,14 +1822,17 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           return left.localeCompare(right);
         }));
         setAvailableQuestionnaireTitles(titlesById);
+        setAvailablePublishedQuestionnaireIds([...publishedIds]);
       } catch {
         const selectedId = questionnaireId.trim();
         const ids = new Set<string>();
+        const publishedIds = new Set<string>();
         const titlesById: Record<string, string> = {};
         const coordinatorFilter = normaliseCoordinatorIdentifier(coordinatorNpub);
         if (!coordinatorFilter) {
           setAvailableQuestionnaireIds([]);
           setAvailableQuestionnaireTitles({});
+          setAvailablePublishedQuestionnaireIds([]);
           return;
         }
         for (const summary of listElectionSummaries()) {
@@ -1779,15 +1845,19 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             continue;
           }
           ids.add(summaryId);
+          if (summary.state !== "draft") {
+            publishedIds.add(summaryId);
+          }
           if (summary.title?.trim()) {
             titlesById[summaryId] = summary.title.trim();
           }
         }
-        if (selectedId && view !== "responses" && ids.size === 0) {
+        if (selectedId && view !== "responses") {
           ids.add(selectedId);
         }
         setAvailableQuestionnaireIds([...ids]);
         setAvailableQuestionnaireTitles(titlesById);
+        setAvailablePublishedQuestionnaireIds([...publishedIds]);
       }
     };
     void loadQuestionnaireOptions();
@@ -2157,6 +2227,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     if (view !== "build") {
       return;
     }
+    if (selectedQuestionnaireIsKnownPublished) {
+      return;
+    }
     const nextId = questionnaireId.trim();
     if (!nextId) {
       return;
@@ -2196,9 +2269,34 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     questionnaireRelaysInput,
     questionnaireId,
     questions,
+    selectedQuestionnaireIsKnownPublished,
     title,
     view,
   ]);
+
+  useEffect(() => {
+    if (view !== "build" || !activePublishedDefinition) {
+      appliedPublishedDefinitionKeyRef.current = "";
+      return;
+    }
+    const definitionKey = JSON.stringify(comparableDefinitionDraftShape(activePublishedDefinition));
+    if (appliedPublishedDefinitionKeyRef.current === definitionKey) {
+      return;
+    }
+    appliedPublishedDefinitionKeyRef.current = definitionKey;
+
+    const closeDurationSeconds = definitionCloseDurationSeconds(activePublishedDefinition);
+    const hasCloseTimer = closeDurationSeconds > 0 && closeDurationSeconds < QUESTIONNAIRE_TIMER_DISABLED_CLOSE_SECONDS;
+    setTitle(activePublishedDefinition.title);
+    setDescription(activePublishedDefinition.description ?? "");
+    setCloseTimerEnabled(hasCloseTimer);
+    setCloseAfterMinutes(hasCloseTimer ? String(Math.max(1, Math.round(closeDurationSeconds / 60))) : QUESTIONNAIRE_TIMER_FALLBACK_MINUTES);
+    setCloseTimerUnit("minutes");
+    setQuestions(normaliseStoredQuestions(activePublishedDefinition.questions));
+    const relayInput = formatQuestionnaireRelayInputFromDefinition(activePublishedDefinition);
+    props.onQuestionnaireRelaysInputChange?.(relayInput);
+    setUseDefaultSetupRelays(relayInput.length === 0);
+  }, [activePublishedDefinition, props.onQuestionnaireRelaysInputChange, view]);
 
   function updateQuestion(index: number, updater: (question: QuestionnaireQuestionDraft) => QuestionnaireQuestionDraft) {
     setQuestions((current) => current.map((entry, entryIndex) => (
@@ -2539,22 +2637,21 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     [builtDefinition],
   );
   useEffect(() => {
-    if (view === "build" && builtDefinition && publishValidation?.valid) {
+    if (view === "build" && builtDefinition && publishValidation?.valid && !publishedDefinition) {
       storeCachedQuestionnaireDefinition(builtDefinition);
     }
-  }, [builtDefinition, publishValidation?.valid, view]);
+  }, [builtDefinition, publishValidation?.valid, publishedDefinition, view]);
   const canPublishDraft = Boolean(
     builtDefinition
+    && !publishedDefinition
     && coordinatorNsec.trim()
     && publishValidation?.valid
     && publishPreconditionsReady,
   );
-  const latestDefinitionMatchesDraft = publishedDefinitionMatchesDraft(latestDefinition, builtDefinition);
-  const publishedDefinition = latestDefinitionMatchesDraft;
-  const activePublishedDefinition = publishedDefinition ? latestDefinition : null;
-  const currentState: QuestionnaireStateValue = activePublishedDefinition ? (latestState ?? "draft") : "draft";
-  const activeStateEvent = activePublishedDefinition ? latestStateEvent : null;
-  const canOpenQuestionnaire = currentState !== "open" && Boolean(activePublishedDefinition) && coordinatorNsec.trim() && coordinatorNpub.trim();
+  const currentState: QuestionnaireStateValue = publishedDefinition
+    ? (latestState ?? selectedSummaryQuestionnaireState ?? "open")
+    : "draft";
+  const activeStateEvent = publishedDefinition ? latestStateEvent : null;
   const canCloseQuestionnaire = currentState === "open" && Boolean(activePublishedDefinition) && coordinatorNsec.trim() && coordinatorNpub.trim();
   const canPublishResults = Boolean(
     activePublishedDefinition
@@ -2611,8 +2708,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     const selectedDraftTitle = view === "build" && id === selectedId
       ? title.trim()
       : "";
-    const labelTitle = availableQuestionnaireTitles[id]?.trim()
-      || (id === selectedId ? selectedPublishedTitle || selectedDraftTitle : "");
+    const availableTitle = availableQuestionnaireTitles[id]?.trim() ?? "";
+    const labelTitle = id === selectedId
+      ? availableTitle || selectedPublishedTitle || selectedDraftTitle
+      : availableTitle;
     return labelTitle ? `${labelTitle} - ${id}` : id;
   };
   const coordinatorQuestionSummaries = useMemo(() => {
@@ -2855,6 +2954,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
 
   async function publishDefinition(options?: { applyAdmissions?: boolean }) {
     let definitionToPublish = builtDefinition;
+    if (publishedDefinition) {
+      setStatus("Published questionnaires are read-only. Start a new round to make changes.");
+      return;
+    }
     if (!coordinatorNsec.trim() || !definitionToPublish) {
       setStatus("Organiser key or vote setup is missing.");
       return;
@@ -3543,6 +3646,96 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
 
   const hasParticipantsNotice = Boolean((publishValidation && !publishValidation.valid) || statusNotice);
   const showNewRoundPublishOnly = isNewRoundMode && !publishedDefinition;
+  const questionnaireTopControls = (
+    <div className='simple-session-controlbar simple-questionnaire-top-controlbar'>
+      <select
+        id='questionnaire-select'
+        className='simple-voter-input simple-session-questionnaire-select'
+        value={questionnaireId}
+        aria-label='Questionnaire'
+        onChange={(event) => {
+          setStatus(null);
+          setQuestionnaireId(event.target.value);
+        }}
+      >
+        {selectedQuestionnaireOptions.map((id) => (
+          <option key={id} value={id}>{questionnaireOptionLabel(id)}</option>
+        ))}
+      </select>
+      <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight simple-session-control-actions'>
+        {view === "build" ? (
+          showNewRoundPublishOnly ? (
+            <button
+              type='button'
+              className='simple-voter-primary'
+              disabled={!canPublishDraft || !props.canApplyAdmissionsOnPublish}
+              onClick={() => void publishDefinition({ applyAdmissions: true })}
+            >
+              Publish to invited voters
+            </button>
+          ) : !publishedDefinition ? (
+            <>
+              <button type='button' className='simple-voter-primary' disabled={!canPublishDraft} onClick={() => void publishDefinition()}>
+                Publish questionnaire
+              </button>
+              {props.onAfterPublishQuestionnaire && canPublishDraft && props.canApplyAdmissionsOnPublish ? (
+                <button
+                  type='button'
+                  className='simple-voter-secondary'
+                  onClick={() => void publishDefinition({ applyAdmissions: true })}
+                >
+                  Publish + apply invited voters
+                </button>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <button
+                type='button'
+                className='simple-voter-primary'
+                disabled={closeAndPublishButtonDisabled}
+                onClick={() => void closeAndPublishResults()}
+              >
+                {currentState === "open" ? "Close + publish results" : "Publish results"}
+              </button>
+              {canExportResults ? (
+                <button
+                  type='button'
+                  className='simple-voter-secondary'
+                  onClick={exportResults}
+                >
+                  Export results
+                </button>
+              ) : null}
+            </>
+          )
+        ) : (
+          <>
+            <button
+              type='button'
+              className='simple-voter-primary'
+              disabled={closeAndPublishButtonDisabled}
+              onClick={() => void closeAndPublishResults()}
+            >
+              {currentState === "open" ? "Close + publish results" : "Publish results"}
+            </button>
+            {canExportResults ? (
+              <button
+                type='button'
+                className='simple-voter-secondary'
+                onClick={exportResults}
+              >
+                Export results
+              </button>
+            ) : null}
+          </>
+        )}
+        <button type='button' className='simple-voter-secondary' onClick={() => void refresh()}>
+          Refresh
+        </button>
+      </div>
+    </div>
+  );
   if (view === "participants") {
     if (!hasParticipantsNotice) {
       return null;
@@ -3558,48 +3751,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   }
 
   if (view === "responses") {
-    const sessionTopControls = (
-      <div className='simple-session-controlbar'>
-        <select
-          id='questionnaire-select'
-          className='simple-voter-input simple-session-questionnaire-select'
-          value={questionnaireId}
-          aria-label='Questionnaire'
-          onChange={(event) => setQuestionnaireId(event.target.value)}
-        >
-          {selectedQuestionnaireOptions.map((id) => (
-            <option key={id} value={id}>{questionnaireOptionLabel(id)}</option>
-          ))}
-        </select>
-        <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight simple-session-control-actions'>
-          <button
-            type='button'
-            className='simple-voter-primary'
-            disabled={closeAndPublishButtonDisabled}
-            onClick={() => void closeAndPublishResults()}
-          >
-            {currentState === "open" ? "Close + publish results" : "Publish results"}
-          </button>
-          {canExportResults ? (
-            <button
-              type='button'
-              className='simple-voter-secondary'
-              onClick={exportResults}
-            >
-              Export results
-            </button>
-          ) : null}
-          <button type='button' className='simple-voter-secondary' onClick={() => void refresh()}>
-            Refresh
-          </button>
-        </div>
-      </div>
-    );
-
     return (
       <>
         <div className='simple-session-page-toolbar'>
-          {sessionTopControls}
+          {questionnaireTopControls}
         </div>
         <QuestionnaireResultsDashboard
           variant='session'
@@ -3637,12 +3792,16 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   return (
     <>
       <section className='simple-voter-section simple-questionnaire-build-section'>
+        <div className='simple-session-page-toolbar simple-questionnaire-build-toolbar'>
+          {questionnaireTopControls}
+        </div>
         <h2 className='simple-voter-section-title'>
           {setupHeadingStateLabel}{title.trim() ? `: ${title.trim()}` : ""}
         </h2>
         <div className='simple-questionnaire-build-grid'>
           <div className='simple-questionnaire-build-main'>
             <div className='simple-voter-card simple-questionnaire-panel simple-questionnaire-build-card'>
+              <fieldset className='simple-questionnaire-editor-fieldset' disabled={questionnaireEditorLocked}>
       <section className='simple-questionnaire-build-cardlet'>
         <h3 className='simple-questionnaire-cardlet-title'>Basic information</h3>
       <div className='simple-questionnaire-identity-grid'>
@@ -4138,6 +4297,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         <span className='simple-questionnaire-button-icon simple-questionnaire-button-icon-plus' aria-hidden='true' />
         <span>Add Question</span>
       </button>
+              </fieldset>
 
             </div>
           </div>
@@ -4154,48 +4314,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             </section>
 
             <section className='simple-questionnaire-build-side-card simple-questionnaire-build-actions'>
-              {showNewRoundPublishOnly ? (
-                <>
-                  <button
-                    type='button'
-                    className='simple-voter-primary'
-                    disabled={!canPublishDraft || !props.canApplyAdmissionsOnPublish}
-                    onClick={() => void publishDefinition({ applyAdmissions: true })}
-                  >
-                    Publish to invited voters
-                  </button>
-                  {!props.canApplyAdmissionsOnPublish ? (
-                    <p className='simple-voter-note'>Enable Auto-ballot for at least one voter before publishing this round.</p>
-                  ) : null}
-                </>
-              ) : !publishedDefinition ? (
-                <>
-                  <button type='button' className='simple-voter-primary' disabled={!canPublishDraft} onClick={() => void publishDefinition()}>
-                    Publish questionnaire
-                  </button>
-                  {props.onAfterPublishQuestionnaire && canPublishDraft && props.canApplyAdmissionsOnPublish ? (
-                    <button
-                      type='button'
-                      className='simple-voter-secondary'
-                      onClick={() => void publishDefinition({ applyAdmissions: true })}
-                    >
-                      Publish + apply invited voters
-                    </button>
-                  ) : null}
-                </>
-              ) : currentState === "open" || currentState === "closed" ? (
-                <button type='button' className='simple-voter-primary' disabled={closeAndPublishButtonDisabled} onClick={() => void closeAndPublishResults()}>
-                  {currentState === "open" ? "Close + publish results" : "Publish results"}
-                </button>
-              ) : currentState === "results_published" ? (
-                <button type='button' className='simple-voter-primary' disabled>
-                  Counted
-                </button>
-              ) : (
-                <button type='button' className='simple-voter-primary' disabled={!canOpenQuestionnaire} onClick={() => void publishState("open")}>
-                  Open vote
-                </button>
-              )}
+              {showNewRoundPublishOnly && !props.canApplyAdmissionsOnPublish ? (
+                <p className='simple-voter-note'>Enable Auto-ballot for at least one voter before publishing this round.</p>
+              ) : null}
               {!showNewRoundPublishOnly && publishedDefinition ? (
                 <button
                   type='button'
