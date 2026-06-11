@@ -40,7 +40,7 @@ Most online voting systems force an uncomfortable tradeoff:
 - either the operator can link voters to votes
 - or the public cannot independently verify the result
 
-Auditable Voting tries to avoid both failures by separating issuance from submission. The organiser handles eligibility, including an invited-voter roster that can be reused for later questionnaires. Applying that roster publishes one roster-free public announcement for the next questionnaire instead of sending the same questionnaire details to every voter. The voter still requests and spends a fresh blind credential for each questionnaire through a fresh response identity. Observers read the public event stream and recompute the count.
+Auditable Voting tries to avoid both failures by separating issuance from submission. The organiser handles eligibility, including an invited-voter roster that can be reused for later questionnaires. Applying that roster publishes one roster-free public announcement for the next questionnaire instead of sending the same questionnaire details to every voter. The voter still requests and spends a fresh blind credential for each questionnaire through a fresh response identity. Observers read the public event stream and recompute the count; they cannot admit voters or start the next questionnaire from the private organiser roster.
 
 ## What is public vs private
 
@@ -87,7 +87,7 @@ The voter must protect their local keys and browser state.
 1. Open the app as **Organiser**.
 2. Invite voters in **Session** if the same people will answer later questionnaires.
 3. Create a questionnaire and publish it.
-4. Share invite links from **Session**. The General QR/link opens **Vote** directly and requests a ballot automatically; single-use private links are created and labelled in **Voters**. For follow-up questionnaires, use **New round** in the side panel; it generates a fresh Questionnaire ID, publishes to rows with **Auto-ballot** ticked, and publishes one public questionnaire announcement that their Vote page can discover.
+4. Share invite links from **Session**. The General QR/link opens **Vote** directly and requests a ballot automatically; single-use private links are created and labelled in **Voters**. For follow-up questionnaires, use **New round** in the side panel after at least one voter has **Auto-ballot** ticked; it generates a fresh Questionnaire ID, publishes to those rows, and publishes one public questionnaire announcement that their Vote page can discover.
 5. Open the invite as **Voter**, wait for ballot access if needed, fill in the questionnaire, and submit. Voter **Messages** can send a private helpline DM to the organiser, and Voter **Settings** shows **Ballot details** while taking part, so request, credential, submission, and timing fields can be checked if something stalls.
 6. Open **Observer** and search for the questionnaire ID, organiser identity, Submission/Response ID, or **Submittor identity** short/full to verify the public result stream. Observer keeps one live subscription for the selected questionnaire and uses **Refresh** for an immediate serial backfill. In **Submitted Votes**, use the same submission filters to find a specific public submission. Invalid rows show their rejection reason. Organiser results decrypt encrypted answer details automatically when the local organiser key is available; Observer can decrypt them from **Submitted Votes** when the matching organiser `nsec` is supplied.
 
@@ -102,7 +102,7 @@ Known weak points:
 - Public relay reliability can affect delivery and discovery.
 - The client uses tag-filtered, paginated public reads, adaptive NIP-17 mailbox recovery, and consolidated organiser, voter, and observer live questionnaire subscriptions, but relay rate limits can still affect busy demonstrations.
 - For larger live sessions, such as many rounds or around 100 voters, use the audit proxy/worker for blind issuance and decision publication rather than relying on a single organiser browser tab.
-- The audit proxy still follows organiser eligibility: it waits for the organiser's whitelist/private-code config before issuing, and general-link requests are also copied to the organiser so approval can update the proxy without a second voter request.
+- The audit proxy still follows organiser eligibility: it waits for the organiser's whitelist/private-code config before issuing, and general-link requests are also copied to the organiser so approval can update the proxy without a second voter request. It does not create follow-up questionnaires; that remains an organiser action because it depends on the private admitted-voter roster.
 - Browser-held secret material needs careful handling.
 - The built-in **Messages** view needs a local `nsec` identity to unwrap and send helpline DMs; signer-only sessions should use their external signer or restore a local identity until signer-side NIP-17 wrapping is supported in-app.
 - The cryptographic design needs external review before production use.

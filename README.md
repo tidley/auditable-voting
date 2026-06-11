@@ -23,7 +23,7 @@ The active product is the client in `web/` plus the optional audit proxy in `wor
 - NIP-17 mailbox recovery pages backwards until the active request, credential, or submission decision is found, or until a short time budget is reached.
 - Yes/no, multiple-choice, ranked-choice, and free-text questionnaire questions, including organiser-required encryption for free-text responses.
 - Browser-only invite sharing by copied link, native device share actions, General QR links that open Vote directly and request a ballot automatically, personalised links for invited voter npubs, public questionnaire announcements for invited voters, or one-use private code links managed from Voters with notes, share controls, and QR codes.
-- Organiser-local invited voter rosters can be reused across later questionnaires; each row can carry an internal note and an auto-ballot checkbox. Applying the roster to a questionnaire green-lights checked voters and publishes one roster-free public questionnaire announcement, while each response still requires a fresh blind credential requested by the voter. After a questionnaire is published, **New round** generates a fresh questionnaire ID from the current setup and publishes directly to invited voters.
+- Organiser-local invited voter rosters can be reused across later questionnaires; each row can carry an internal note and an auto-ballot checkbox. Applying the roster to a questionnaire green-lights checked voters and publishes one roster-free public questionnaire announcement, while each response still requires a fresh blind credential requested by the voter. After a questionnaire is published, **New round** appears only when the organiser has at least one Auto-ballot voter to carry forward; it generates a fresh questionnaire ID from the current setup and publishes directly to invited voters.
 - Voter and organiser **Messages** sections for normal NIP-17 gift-wrapped direct messages, so voters can ask for help and organisers can reply without exposing the conversation publicly.
 - Blind credential issuance for invited participants.
 - Public blind-token submissions from ephemeral response keys.
@@ -113,7 +113,7 @@ These use public relays and can fail because of relay availability, rate limits,
 
 The audit proxy is an optional Rust helper. It uses the delegated organiser role to keep a questionnaire moving when the browser organiser is offline.
 
-For larger live sessions, such as dozens of rounds or around 100 voters, treat the audit proxy/worker as the default issuance and verification path. The browser organiser remains the root authority, but the proxy avoids relying on one open browser tab to process every blind request and public submission.
+For larger live sessions, such as dozens of rounds or around 100 voters, treat the audit proxy/worker as the default issuance and verification path. The browser organiser remains the root authority for admitting voters and starting follow-up questionnaires, but the proxy avoids relying on one open browser tab to process every blind request and public submission for a configured questionnaire.
 
 The proxy only issues blind credentials after it has received the organiser's election config for the active delegation. That config carries the current whitelist and private invite-code hashes. General invite-link requests are copied to the organiser as well as the proxy; when the organiser approves a requester, the updated whitelist is synced back to the proxy so the already-sent request can be issued without asking the voter to send a second proxy message.
 
@@ -243,6 +243,7 @@ sudo WEB_BASE_PATH=/auditable-voting/ ./launch-auditable-voting-fips.sh
 - The default relay set is intentionally small: four public questionnaire relays and three NIP-17 inbox relays, with per-questionnaire overrides available when needed.
 - Browser-local organiser state and keys must be protected by the user.
 - The audit proxy improves liveness but is still delegated by the organiser.
+- Observer verifies public state; it cannot admit voters or start follow-up questionnaires from the private organiser roster.
 - The built-in **Messages** view needs a local `nsec` identity to unwrap and send helpline DMs; signer-only sessions should use their external signer or restore a local identity until signer-side NIP-17 wrapping is supported in-app.
 - Public verification depends on observers fetching the relevant relay events.
 - Decrypting encrypted observer details requires manually entering the matching organiser `nsec`; the key is not a public audit input.

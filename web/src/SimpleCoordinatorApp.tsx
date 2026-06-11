@@ -141,6 +141,7 @@ import {
   QUESTIONNAIRE_PROTOCOL_VERSION_V2,
   QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN,
 } from "./questionnaireProtocolConstants";
+import { canStartInvitedQuestionnaireRound } from "./coordinatorNewRound";
 
 type CoordinatorTab = "configure" | "participants" | "messages" | "settings";
 
@@ -1234,11 +1235,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     const params = new URLSearchParams(window.location.search);
     return (params.get("election_id") ?? params.get("questionnaire") ?? "").trim();
   }, [questionnaireRosterAnnouncement.questionnaireId]);
-  const canStartNewRound = Boolean(
-    questionnaireRosterAnnouncement.questionnaireId.trim()
-    && questionnaireRosterAnnouncement.state
-    && questionnaireRosterAnnouncement.state !== "draft",
-  );
   const questionnaireFlowActive = isCourseFeedbackMode || optionAElectionId.length > 0;
   const optionACoordinatorRuntime = useMemo(() => (
     optionAElectionId
@@ -1279,6 +1275,12 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     () => admittedVoterAutoApplyEntries.map((entry) => entry.npub.trim()).filter((entry) => entry.length > 0),
     [admittedVoterAutoApplyEntries],
   );
+  const canApplyAdmissionsOnPublish = admittedVoterAutoApplyNpubs.length > 0;
+  const canStartNewRound = canStartInvitedQuestionnaireRound({
+    questionnaireId: questionnaireRosterAnnouncement.questionnaireId,
+    state: questionnaireRosterAnnouncement.state,
+    autoApplyVoterCount: admittedVoterAutoApplyNpubs.length,
+  });
   const admittedVoterNpubKey = useMemo(
     () => admittedVoterNpubs.join("|"),
     [admittedVoterNpubs],
@@ -5618,6 +5620,11 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   }
 
   function startNewRound() {
+    if (!canStartNewRound) {
+      setAdmittedVoterStatus("Enable Auto-ballot for at least one invited voter before starting a new round.");
+      selectTab("participants");
+      return;
+    }
     let nextQuestionnaireId = "";
     if (typeof window !== "undefined") {
       nextQuestionnaireId = resetStoredQuestionnaireDraftId();
@@ -6916,7 +6923,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                 }
               }}
               newRoundMode={newRoundMode}
-              canApplyAdmissionsOnPublish={admittedVoterAutoApplyNpubs.length > 0}
+              canApplyAdmissionsOnPublish={canApplyAdmissionsOnPublish}
               onAfterPublishQuestionnaire={handlePublishedQuestionnaire}
               onStatusChange={updateQuestionnaireRosterAnnouncement}
             />
