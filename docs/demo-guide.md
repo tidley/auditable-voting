@@ -62,7 +62,7 @@ Use these pages:
 
 Open **Organiser**.
 
-If the same people will answer several questionnaires, open **Voting** and use **Invited voters** to add their voter identities first. Use **Invite voters** in that section for the General invite link, Nostr invites, private invite links, and imported contacts. Add internal notes if useful, and leave **Auto-ballot** ticked for voters who should be green-lit when the roster is applied. After each later questionnaire is published, **Apply to current questionnaire** publishes one public questionnaire announcement that their Vote page can discover. They will still receive a fresh blind ballot credential for each questionnaire.
+If the same people will answer several questionnaires, open **Voting** and use **Voters** to add their voter identities first. Use **Invite voters** in that section for the General invite link, Nostr invites, private invite links, and imported contacts. Add internal notes if useful, and leave **Auto-ballot** ticked for voters who should be green-lit when the roster is applied. After each later questionnaire is published, **Apply to current questionnaire** publishes one public questionnaire announcement that their Vote page can discover. They will still receive a fresh blind ballot credential for each questionnaire.
 
 Fill in:
 

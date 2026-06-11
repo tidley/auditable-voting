@@ -6858,8 +6858,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               onStatusChange={updateQuestionnaireRosterAnnouncement}
             />
             <div id='coordinator-invite-voters-section' className='simple-session-invites'>
-              <SimpleCollapsibleSection title='Invited Voters' hideToggle>
-                <div className='simple-invite-share-panel simple-admitted-voters-panel' aria-label='Invited Voters'>
+              <SimpleCollapsibleSection title='Voters' hideToggle>
+                <div className='simple-invite-share-panel simple-admitted-voters-panel' aria-label='Voters'>
                   <div className='simple-invite-share-heading simple-admitted-voters-heading'>
                     <div className='simple-invite-share-copy'>
                       <h3 className='simple-voter-question'>Invite voters</h3>
