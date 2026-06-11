@@ -3838,7 +3838,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     }
 
     await tryWriteClipboard(publicQuestionnaireInviteUrl);
-    setKnownVoterInviteStatus("Invite link copied.");
+    setKnownVoterInviteStatus("");
   }
 
   async function copyPrivateInviteCodeLink(codeHash: string) {
@@ -4368,7 +4368,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       });
       setKnownVoterInviteRefreshNonce((value) => value + 1);
       setAdmittedVoterStatus(autoRequestBallot
-        ? "Private invite auto-ballot enabled."
+        ? ""
         : "Private invite auto-ballot disabled.");
     } catch (error) {
       setAdmittedVoterStatus(error instanceof Error ? error.message : "Could not update private invite auto-ballot.");
@@ -6739,9 +6739,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               <span />
               <span />
             </span>
-            <span className='simple-coordinator-sidebar-collapse-label'>
-              {sidebarCollapsed ? "Open menu" : "Collapse menu"}
-            </span>
           </button>
         </div>
         <div className='simple-coordinator-sidebar-identity'>
@@ -6861,8 +6858,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               onStatusChange={updateQuestionnaireRosterAnnouncement}
             />
             <div id='coordinator-invite-voters-section' className='simple-session-invites'>
-              <SimpleCollapsibleSection title='Invited voters' hideToggle>
-                <div className='simple-invite-share-panel simple-admitted-voters-panel' aria-label='Invited voters'>
+              <SimpleCollapsibleSection title='Invited Voters' hideToggle>
+                <div className='simple-invite-share-panel simple-admitted-voters-panel' aria-label='Invited Voters'>
                   <div className='simple-invite-share-heading simple-admitted-voters-heading'>
                     <div className='simple-invite-share-copy'>
                       <h3 className='simple-voter-question'>Invite voters</h3>
@@ -6921,7 +6918,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                         <div className='simple-invite-share-copy'>
                           <h3 className='simple-voter-question'>General invite link</h3>
                           <p className='simple-voter-note'>
-                            Voters who scan the QR open Vote and request a ballot automatically.
+                            Open link or scan QR code to request invite.
                           </p>
                         </div>
                         <InviteQrButton
@@ -6937,19 +6934,11 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                           className='simple-voter-secondary'
                           onClick={() => {
                             void tryWriteClipboard(publicQuestionnaireInviteUrl);
-                            setKnownVoterInviteStatus("Invite link copied.");
+                            setKnownVoterInviteStatus("");
                           }}
                           disabled={!publicQuestionnaireInviteUrl}
                         >
                           Copy link
-                        </button>
-                        <button
-                          type='button'
-                          className='simple-voter-secondary'
-                          onClick={() => void sharePublicQuestionnaireInvite()}
-                          disabled={!publicQuestionnaireInviteUrl}
-                        >
-                          Share...
                         </button>
                       </div>
                     </div>
@@ -7170,7 +7159,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                             <div className='simple-admitted-voter-cell simple-admitted-voter-state-cell' data-label='State' role='cell'>
                               {statusIndicator ? (
                                 <span className={`simple-admitted-voter-status ${statusIndicator.className}`} aria-label={statusLabel ?? statusIndicator.label} title={statusLabel ?? statusIndicator.label}>
-                                  {statusIndicator.icon} {statusLabel ?? statusIndicator.label}
+                                  <span className='simple-admitted-voter-status-symbol' aria-hidden='true'>{statusIndicator.icon}</span>
+                                  <span>{statusLabel ?? statusIndicator.label}</span>
                                 </span>
                               ) : (
                                 <span className='simple-admitted-voter-pending'>Future questionnaires</span>
@@ -7356,7 +7346,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                                   ? `Used by ${redeemedNpub}`
                                   : voterStatusLabel}
                               >
-                                {voterStatusIndicator.icon} {voterStatusLabel}
+                                <span className='simple-admitted-voter-status-symbol' aria-hidden='true'>{voterStatusIndicator.icon}</span>
+                                <span>{voterStatusLabel}</span>
                               </span>
                               <label className='simple-admitted-voter-used-toggle'>
                                 <input

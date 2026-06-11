@@ -195,6 +195,15 @@ function createRankQuestion(questionId: string, prompt = "", minimumRanked = 0):
   };
 }
 
+function createNextOption(options: Array<{ optionId: string }>) {
+  const usedOptionIds = new Set(options.map((option) => option.optionId));
+  let nextIndex = options.length + 1;
+  while (usedOptionIds.has(`option_${nextIndex}`)) {
+    nextIndex += 1;
+  }
+  return { optionId: `option_${nextIndex}`, label: `Option ${nextIndex}` };
+}
+
 function createFreeTextQuestion(questionId: string, prompt = "", required = false): QuestionnaireQuestionDraft {
   return {
     questionId,
@@ -3747,48 +3756,68 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                 }}
               />
               {question.type === "multiple_choice" ? (
-                <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
-                  <p className='simple-voter-note'>Options</p>
-                  {question.options.map((option, optionIndex) => (
-                    <input
-                      key={`${question.questionId}-option-${optionIndex}`}
-                      className='simple-voter-input'
-                      value={option.label}
-                      onChange={(event) => {
-                        const nextLabel = event.target.value;
+                <div className='simple-voter-field-stack simple-voter-field-stack-tight simple-questionnaire-option-stack'>
+                  <div className='simple-questionnaire-options-editor'>
+                    <div className='simple-questionnaire-options-list'>
+                      {question.options.map((option, optionIndex) => (
+                        <div key={option.optionId} className='simple-questionnaire-option-row'>
+                          <input
+                            className='simple-voter-input'
+                            value={option.label}
+                            aria-label={`Option ${optionIndex + 1}`}
+                            onChange={(event) => {
+                              const nextLabel = event.target.value;
+                              updateQuestion(index, (entry) => {
+                                if (entry.type !== "multiple_choice") {
+                                  return entry;
+                                }
+                                return {
+                                  ...entry,
+                                  options: entry.options.map((entryOption, entryOptionIndex) => (
+                                    entryOptionIndex === optionIndex ? { ...entryOption, label: nextLabel } : entryOption
+                                  )),
+                                };
+                              });
+                            }}
+                          />
+                          <button
+                            type='button'
+                            className='simple-voter-secondary simple-questionnaire-option-delete-button'
+                            aria-label={`Delete option ${optionIndex + 1}`}
+                            title={`Delete option ${optionIndex + 1}`}
+                            onClick={() => {
+                              updateQuestion(index, (entry) => (
+                                entry.type === "multiple_choice"
+                                  ? { ...entry, options: entry.options.filter((_, entryOptionIndex) => entryOptionIndex !== optionIndex) }
+                                  : entry
+                              ));
+                            }}
+                          >
+                            <span className='simple-questionnaire-button-icon simple-questionnaire-button-icon-trash' aria-hidden='true' />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      type='button'
+                      className='simple-voter-secondary simple-questionnaire-action-button simple-questionnaire-add-option-button'
+                      data-press-feedback-disabled='true'
+                      onClick={() => {
                         updateQuestion(index, (entry) => {
                           if (entry.type !== "multiple_choice") {
                             return entry;
                           }
                           return {
                             ...entry,
-                            options: entry.options.map((entryOption, entryOptionIndex) => (
-                              entryOptionIndex === optionIndex ? { ...entryOption, label: nextLabel } : entryOption
-                            )),
+                            options: [...entry.options, createNextOption(entry.options)],
                           };
                         });
                       }}
-                    />
-                  ))}
-                  <button
-                    type='button'
-                    className='simple-voter-secondary simple-questionnaire-action-button'
-                    onClick={() => {
-                      updateQuestion(index, (entry) => {
-                        if (entry.type !== "multiple_choice") {
-                          return entry;
-                        }
-                        const nextIndex = entry.options.length + 1;
-                        return {
-                          ...entry,
-                          options: [...entry.options, { optionId: `option_${nextIndex}`, label: `Option ${nextIndex}` }],
-                        };
-                      });
-                    }}
-                  >
-                    <span className='simple-questionnaire-button-icon simple-questionnaire-button-icon-plus' aria-hidden='true' />
-                    <span>Add option</span>
-                  </button>
+                    >
+                      <span className='simple-questionnaire-button-icon simple-questionnaire-button-icon-plus' aria-hidden='true' />
+                      <span>Add option</span>
+                    </button>
+                  </div>
                   <label className={`simple-questionnaire-required-toggle${question.multiSelect ? " is-on" : ""}`}>
                     <span>Allow multiple selections</span>
                     <input
@@ -3813,28 +3842,78 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
               ) : null}
               {question.type === "rank" ? (
                 <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
-                  <p className='simple-voter-label simple-voter-label-tight'>Options</p>
-                  {question.options.map((option, optionIndex) => (
-                    <input
-                      key={`${question.questionId}-rank-option-${optionIndex}`}
-                      className='simple-voter-input'
-                      value={option.label}
-                      onChange={(event) => {
-                        const nextLabel = event.target.value;
+                  <div className='simple-questionnaire-options-editor'>
+                    <div className='simple-questionnaire-options-list'>
+                      {question.options.map((option, optionIndex) => (
+                        <div key={option.optionId} className='simple-questionnaire-option-row'>
+                          <input
+                            className='simple-voter-input'
+                            value={option.label}
+                            aria-label={`Rank option ${optionIndex + 1}`}
+                            onChange={(event) => {
+                              const nextLabel = event.target.value;
+                              updateQuestion(index, (entry) => {
+                                if (entry.type !== "rank") {
+                                  return entry;
+                                }
+                                return {
+                                  ...entry,
+                                  options: entry.options.map((entryOption, entryOptionIndex) => (
+                                    entryOptionIndex === optionIndex ? { ...entryOption, label: nextLabel } : entryOption
+                                  )),
+                                };
+                              });
+                            }}
+                          />
+                          <button
+                            type='button'
+                            className='simple-voter-secondary simple-questionnaire-option-delete-button'
+                            aria-label={`Delete rank option ${optionIndex + 1}`}
+                            title={`Delete rank option ${optionIndex + 1}`}
+                            onClick={() => {
+                              updateQuestion(index, (entry) => {
+                                if (entry.type !== "rank") {
+                                  return entry;
+                                }
+                                const options = entry.options.filter((_, entryOptionIndex) => entryOptionIndex !== optionIndex);
+                                const minimumRanked = Math.min(
+                                  options.length,
+                                  Math.max(0, Math.floor(Number.isFinite(entry.minimumRanked) ? entry.minimumRanked : 0)),
+                                );
+                                return {
+                                  ...entry,
+                                  options,
+                                  minimumRanked,
+                                  required: minimumRanked > 0,
+                                };
+                              });
+                            }}
+                          >
+                            <span className='simple-questionnaire-button-icon simple-questionnaire-button-icon-trash' aria-hidden='true' />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      type='button'
+                      className='simple-voter-secondary simple-questionnaire-action-button simple-questionnaire-add-option-button'
+                      data-press-feedback-disabled='true'
+                      onClick={() => {
                         updateQuestion(index, (entry) => {
                           if (entry.type !== "rank") {
                             return entry;
                           }
                           return {
                             ...entry,
-                            options: entry.options.map((entryOption, entryOptionIndex) => (
-                              entryOptionIndex === optionIndex ? { ...entryOption, label: nextLabel } : entryOption
-                            )),
+                            options: [...entry.options, createNextOption(entry.options)],
                           };
                         });
                       }}
-                    />
-                  ))}
+                    >
+                      <span className='simple-questionnaire-button-icon simple-questionnaire-button-icon-plus' aria-hidden='true' />
+                      <span>Add option</span>
+                    </button>
+                  </div>
                   <div className='simple-questionnaire-rank-settings'>
                     <label className='simple-voter-label simple-voter-label-tight' htmlFor={`question-rank-minimum-${index}`}>
                       Minimum ranked choices
@@ -3864,43 +3943,27 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                       ))}
                     </select>
                   </div>
-                  <button
-                    type='button'
-                    className='simple-voter-secondary simple-questionnaire-action-button'
-                    onClick={() => {
-                      updateQuestion(index, (entry) => {
-                        if (entry.type !== "rank") {
-                          return entry;
-                        }
-                        const nextIndex = entry.options.length + 1;
-                        return {
-                          ...entry,
-                          options: [...entry.options, { optionId: `option_${nextIndex}`, label: `Option ${nextIndex}` }],
-                        };
-                      });
-                    }}
-                  >
-                    <span className='simple-questionnaire-button-icon simple-questionnaire-button-icon-plus' aria-hidden='true' />
-                    <span>Add option</span>
-                  </button>
                 </div>
               ) : null}
               {question.type === "free_text" ? (
-                <div className='simple-voter-field-stack simple-voter-field-stack-tight'>
-                  <label className='simple-voter-label' htmlFor={`question-max-${index}`}>Maximum length</label>
-                  <input
-                    id={`question-max-${index}`}
-                    className='simple-voter-input'
-                    value={String(question.maxLength)}
-                    onChange={(event) => {
-                      const parsed = Number.parseInt(event.target.value, 10);
-                      updateQuestion(index, (entry) => (
-                        entry.type === "free_text"
-                          ? { ...entry, maxLength: Number.isFinite(parsed) && parsed > 0 ? parsed : entry.maxLength }
-                          : entry
-                      ));
-                    }}
-                  />
+                <div className='simple-voter-field-stack simple-voter-field-stack-tight simple-questionnaire-free-text-stack'>
+                  <div className='simple-questionnaire-max-length-row'>
+                    <label className='simple-voter-label' htmlFor={`question-max-${index}`}>Maximum length</label>
+                    <input
+                      id={`question-max-${index}`}
+                      className='simple-voter-input simple-questionnaire-max-length-input'
+                      inputMode='numeric'
+                      value={String(question.maxLength)}
+                      onChange={(event) => {
+                        const parsed = Number.parseInt(event.target.value, 10);
+                        updateQuestion(index, (entry) => (
+                          entry.type === "free_text"
+                            ? { ...entry, maxLength: Number.isFinite(parsed) && parsed > 0 ? parsed : entry.maxLength }
+                            : entry
+                        ));
+                      }}
+                    />
+                  </div>
                   <label className={`simple-questionnaire-required-toggle${question.encryptResponses ? " is-on" : ""}`}>
                     <span>Require encrypted responses</span>
                     <input
@@ -3933,24 +3996,32 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                     <span className='simple-copy-icon simple-questionnaire-button-copy-icon' aria-hidden='true' />
                     <span>Duplicate</span>
                   </button>
-                  <button
-                    type='button'
-                    className='simple-voter-secondary simple-questionnaire-action-button'
-                    onClick={() => moveQuestion(index, -1)}
-                    disabled={!canMoveUp}
-                  >
-                    <span className='simple-questionnaire-button-icon simple-questionnaire-button-icon-up' aria-hidden='true' />
-                    <span>Move up</span>
-                  </button>
-                  <button
-                    type='button'
-                    className='simple-voter-secondary simple-questionnaire-action-button'
-                    onClick={() => moveQuestion(index, 1)}
-                    disabled={!canMoveDown}
-                  >
-                    <span className='simple-questionnaire-button-icon simple-questionnaire-button-icon-down' aria-hidden='true' />
-                    <span>Move down</span>
-                  </button>
+                  {canMoveUp ? (
+                    <button
+                      type='button'
+                      className='simple-voter-secondary simple-questionnaire-action-button'
+                      onClick={() => moveQuestion(index, -1)}
+                    >
+                      <svg className='simple-questionnaire-svg-icon' viewBox='0 0 24 24' aria-hidden='true' focusable='false'>
+                        <path d='M12 19V5' />
+                        <path d='M5 12l7-7 7 7' />
+                      </svg>
+                      <span>Move up</span>
+                    </button>
+                  ) : null}
+                  {canMoveDown ? (
+                    <button
+                      type='button'
+                      className='simple-voter-secondary simple-questionnaire-action-button'
+                      onClick={() => moveQuestion(index, 1)}
+                    >
+                      <svg className='simple-questionnaire-svg-icon' viewBox='0 0 24 24' aria-hidden='true' focusable='false'>
+                        <path d='M12 5v14' />
+                        <path d='M19 12l-7 7-7-7' />
+                      </svg>
+                      <span>Move down</span>
+                    </button>
+                  ) : null}
                 </div>
                 <button
                   type='button'
