@@ -6871,40 +6871,45 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                       {admittedVoterSummaryLabel}
                     </span>
                   </div>
-                  <div className='simple-voter-add-row simple-voter-add-row-with-scan simple-admitted-voters-add-row'>
-                  <input
-                    className='simple-voter-input simple-voter-input-inline'
-                    value={admittedVoterDraftNpub}
-                    placeholder='npub1... or nostr:nprofile1...'
-                    onChange={(event) => setAdmittedVoterDraftNpub(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        admitDraftVoter();
-                      }
-                    }}
-                  />
-                  <button
-                    type='button'
-                    className='simple-voter-secondary'
-                    disabled={!admittedVoterDraftNpub.trim() || !activeCoordinatorNpub.trim()}
-                    onClick={admitDraftVoter}
-                  >
-                    Invite
-                  </button>
-                </div>
-                <div className='simple-voter-action-row simple-voter-action-row-inline simple-admitted-voters-action-row'>
-                  <button
-                    type='button'
-                    className='simple-voter-secondary'
-                    disabled={admittedVoterApplyInFlight || admittedVoterAutoApplyNpubs.length === 0 || !optionAElectionId.trim() || !optionACoordinatorRuntime}
-                    onClick={() => void applyAdmissionRosterToCurrentQuestionnaire()}
-                  >
-                    {admittedVoterApplyInFlight ? "Applying..." : "Apply to current questionnaire"}
-                  </button>
-                </div>
-                {optionAElectionId ? (
-                  <div className='simple-voter-field-stack'>
+                  <div className='simple-invite-share-panel simple-invite-share-panel-add-voter' aria-label='Add voter identities'>
+                    <div className='simple-invite-share-copy'>
+                      <h3 className='simple-voter-question'>Add voter identities</h3>
+                    </div>
+                    <div className='simple-voter-add-row simple-voter-add-row-with-scan simple-admitted-voters-add-row'>
+                      <input
+                        className='simple-voter-input simple-voter-input-inline'
+                        value={admittedVoterDraftNpub}
+                        placeholder='npub1... or nostr:nprofile1...'
+                        onChange={(event) => setAdmittedVoterDraftNpub(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            admitDraftVoter();
+                          }
+                        }}
+                      />
+                      <button
+                        type='button'
+                        className='simple-voter-secondary'
+                        disabled={!admittedVoterDraftNpub.trim() || !activeCoordinatorNpub.trim()}
+                        onClick={admitDraftVoter}
+                      >
+                        Invite
+                      </button>
+                    </div>
+                  </div>
+                  <div className='simple-voter-action-row simple-voter-action-row-inline simple-admitted-voters-action-row'>
+                    <button
+                      type='button'
+                      className='simple-voter-secondary'
+                      disabled={admittedVoterApplyInFlight || admittedVoterAutoApplyNpubs.length === 0 || !optionAElectionId.trim() || !optionACoordinatorRuntime}
+                      onClick={() => void applyAdmissionRosterToCurrentQuestionnaire()}
+                    >
+                      {admittedVoterApplyInFlight ? "Applying..." : "Apply to current questionnaire"}
+                    </button>
+                  </div>
+                  {optionAElectionId ? (
+                    <div className='simple-voter-field-stack'>
                     <div className='simple-invite-share-panel simple-invite-share-panel-general' aria-label='Share questionnaire link'>
                       <div className='simple-invite-share-heading'>
                         <div className='simple-invite-share-copy'>
@@ -6937,6 +6942,9 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                     <div className='simple-invite-share-panel' aria-label='Invite via Nostr'>
                       <div className='simple-invite-share-copy'>
                         <h3 className='simple-voter-question'>Invite via Nostr</h3>
+                        <p className='simple-voter-note'>
+                          Send invites using direct messages.
+                        </p>
                       </div>
                       <input
                         className='simple-voter-input simple-voter-input-inline'

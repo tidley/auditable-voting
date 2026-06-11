@@ -3903,6 +3903,7 @@ code {
   gap: 12px;
 }
 
+.simple-session-invites .simple-invite-share-panel-add-voter,
 .simple-session-invites .simple-invite-share-panel-general,
 .simple-session-invites .simple-invite-share-panel[aria-label='Invite via Nostr'] {
   padding: 12px;
