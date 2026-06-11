@@ -3711,22 +3711,26 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           )
         ) : (
           <>
-            <button
-              type='button'
-              className='simple-voter-primary'
-              disabled={closeAndPublishButtonDisabled}
-              onClick={() => void closeAndPublishResults()}
-            >
-              {currentState === "open" ? "Close + publish results" : "Publish results"}
-            </button>
-            {canExportResults ? (
-              <button
-                type='button'
-                className='simple-voter-secondary'
-                onClick={exportResults}
-              >
-                Export results
-              </button>
+            {publishedDefinition ? (
+              <>
+                <button
+                  type='button'
+                  className='simple-voter-primary'
+                  disabled={closeAndPublishButtonDisabled}
+                  onClick={() => void closeAndPublishResults()}
+                >
+                  {currentState === "open" ? "Close + publish results" : "Publish results"}
+                </button>
+                {canExportResults ? (
+                  <button
+                    type='button'
+                    className='simple-voter-secondary'
+                    onClick={exportResults}
+                  >
+                    Export results
+                  </button>
+                ) : null}
+              </>
             ) : null}
           </>
         )}

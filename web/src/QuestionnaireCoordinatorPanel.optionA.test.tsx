@@ -165,6 +165,16 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     });
   });
 
+  it("hides result publishing actions on Session when the selected questionnaire is still a draft", async () => {
+    render(<QuestionnaireCoordinatorPanel view='responses' coordinatorNpub='npub1organiser' />);
+
+    expect(await screen.findByRole("combobox", { name: "Questionnaire" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Publish results" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Close + publish results" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeTruthy();
+    expect(screen.getByText("Publish a questionnaire to inspect results.")).toBeTruthy();
+  });
+
   it("prefers the published summary title over a cached draft title in the live status selector", async () => {
     const coordinatorNpub = "npub1organiser";
     storeCachedQuestionnaireDefinition(makeDefinition({
