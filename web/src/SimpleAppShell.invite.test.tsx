@@ -29,6 +29,12 @@ vi.mock("./simpleAppVersion", () => ({
   SIMPLE_APP_VERSION: "test",
 }));
 
+vi.mock("qrcode", () => ({
+  default: {
+    toDataURL: vi.fn().mockResolvedValue("data:image/png;base64,mock-qr"),
+  },
+}));
+
 vi.mock("./services/signerService", () => ({
   createAmberConnectBundle: async () => ({
     nostrConnectUri: "nostrconnect://mock",
@@ -134,6 +140,27 @@ describe("SimpleAppShell invite-link login", () => {
     expect(screen.getByTestId("simple-voter-app").textContent).toContain("vote");
     expect(screen.queryByRole("button", { name: "Continue as Voter" })).toBeNull();
     expect(screen.getByText("Voter pending")).toBeTruthy();
+  });
+
+  it("opens the full voter npub QR from the topbar identity button", async () => {
+    const user = userEvent.setup();
+    const voterNpub = "npub1" + "b".repeat(58);
+    window.history.pushState(null, "", "/?role=voter");
+    const { default: SimpleAppShell } = await import("./SimpleAppShell");
+
+    render(<SimpleAppShell />);
+    window.dispatchEvent(new CustomEvent("auditable-voting:identity-updated", {
+      detail: { role: "voter", npub: voterNpub },
+    }));
+
+    const identityButton = await screen.findByRole("button", { name: "Show full voter npub QR" });
+    expect(identityButton.textContent).toMatch(/^Voter /);
+
+    await user.click(identityButton);
+
+    expect(await screen.findByRole("dialog", { name: "Voter npub QR code" })).toBeTruthy();
+    expect(screen.getByText(voterNpub)).toBeTruthy();
+    expect(screen.getByAltText("QR code for Voter npub").getAttribute("src")).toBe("data:image/png;base64,mock-qr");
   });
 
   it("keeps voter section navigation in the top menu", async () => {

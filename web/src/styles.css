@@ -753,6 +753,19 @@ code {
   white-space: nowrap;
 }
 
+.simple-current-role-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 38px;
+  text-align: right;
+}
+
+.simple-current-role-button:focus-visible {
+  outline: 2px solid var(--simple-teal);
+  outline-offset: 2px;
+}
+
 .simple-role-switch-actions {
   margin-left: auto;
   display: flex;
@@ -5924,6 +5937,57 @@ code {
   font: inherit;
   font-weight: 700;
   cursor: pointer;
+}
+
+.simple-account-identity-overlay-card {
+  width: min(92vw, 760px);
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 420px);
+  align-items: center;
+  gap: 18px;
+  padding: 18px;
+}
+
+.simple-account-identity-overlay-copy {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  align-content: center;
+}
+
+.simple-account-identity-overlay-copy .simple-voter-section-title {
+  margin: 0;
+}
+
+.simple-account-identity-full-npub {
+  display: block;
+  max-width: 100%;
+  padding: 12px;
+  border: 1px solid var(--simple-border);
+  border-radius: 10px;
+  background: var(--simple-surface-2);
+  color: var(--simple-soft);
+  font-size: 0.94rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.simple-account-identity-overlay-image {
+  width: min(62vw, 420px);
+  height: min(62vw, 420px);
+  justify-self: center;
+}
+
+@media (max-width: 720px) {
+  .simple-account-identity-overlay-card {
+    grid-template-columns: minmax(0, 1fr);
+    width: min(92vw, 440px);
+  }
+
+  .simple-account-identity-overlay-image {
+    width: min(76vw, 360px);
+    height: min(76vw, 360px);
+  }
 }
 
 .simple-settings-card {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { nip19 } from "nostr-tools";
+import QRCode from "qrcode";
 import SimpleAuditorApp from "./SimpleAuditorApp";
 import SimpleCoordinatorApp from "./SimpleCoordinatorApp";
 import SimpleRelayPanel from "./SimpleRelayPanel";
@@ -114,6 +115,8 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
   const [voterTab, setVoterTab] = useState<VoterTab>(() => (readLinkedQuestionnaireIdFromUrl() ? "vote" : "configure"));
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [accountIdentityNpub, setAccountIdentityNpub] = useState("");
+  const [accountIdentityDialogOpen, setAccountIdentityDialogOpen] = useState(false);
+  const [accountIdentityQrSrc, setAccountIdentityQrSrc] = useState<string | null>(null);
   const [showGateway, setShowGateway] = useState(() => !hasRoleInUrl() || shouldForceGatewayFromUrl());
   const [gatewayRole, setGatewayRole] = useState<SimpleRole>(() => readRoleFromUrl() ?? initialRole);
   const [gatewayNsec, setGatewayNsec] = useState("");
@@ -132,6 +135,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
   useEffect(() => {
     if (role !== "voter" && role !== "coordinator") {
       setAccountIdentityNpub("");
+      setAccountIdentityDialogOpen(false);
       return;
     }
 
@@ -159,6 +163,49 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
       cancelled = true;
     };
   }, [role]);
+
+  useEffect(() => {
+    if (!accountIdentityDialogOpen || !accountIdentityNpub.trim()) {
+      setAccountIdentityQrSrc(null);
+      return;
+    }
+
+    let cancelled = false;
+    void QRCode.toDataURL(accountIdentityNpub, {
+      errorCorrectionLevel: "M",
+      margin: 1,
+      width: 432,
+      color: {
+        dark: "#0b0c0c",
+        light: "#ffffff",
+      },
+    }).then((value: string) => {
+      if (!cancelled) {
+        setAccountIdentityQrSrc(value);
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setAccountIdentityQrSrc(null);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accountIdentityDialogOpen, accountIdentityNpub]);
+
+  useEffect(() => {
+    if (!accountIdentityDialogOpen) {
+      return;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setAccountIdentityDialogOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [accountIdentityDialogOpen]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -860,7 +907,20 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
         <div className='simple-role-switch-wrap'>
           <div className='simple-role-switch-topbar'>
             {accountMenuControl}
-            <p className='simple-current-role-summary'>{currentRoleSummary}</p>
+            {isSimpleActorRole(role) && accountIdentityNpub ? (
+              <button
+                type='button'
+                className='simple-role-switch-toggle simple-current-role-summary simple-current-role-button'
+                onClick={() => setAccountIdentityDialogOpen(true)}
+                aria-haspopup='dialog'
+                aria-label={`Show full ${roleLabel(role).toLowerCase()} npub QR`}
+                data-press-feedback-disabled='true'
+              >
+                {currentRoleSummary}
+              </button>
+            ) : (
+              <p className='simple-current-role-summary'>{currentRoleSummary}</p>
+            )}
           </div>
         </div>
       )}
@@ -878,6 +938,46 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
         <SimpleAuditorApp />
       )}
       {role === 'auditor' ? <SimpleRelayPanel /> : null}
+      {accountIdentityDialogOpen && accountIdentityNpub ? (
+        <div
+          className='simple-identity-qr-overlay simple-account-identity-overlay'
+          role='dialog'
+          aria-modal='true'
+          aria-label={`${roleLabel(role)} npub QR code`}
+          onClick={() => setAccountIdentityDialogOpen(false)}
+        >
+          <button
+            type='button'
+            className='simple-identity-qr-overlay-close'
+            onClick={() => setAccountIdentityDialogOpen(false)}
+            aria-label='Close npub QR preview'
+          >
+            Close
+          </button>
+          <div
+            className='simple-identity-qr-overlay-card simple-account-identity-overlay-card'
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className='simple-account-identity-overlay-copy'>
+              <p className='simple-account-menu-kicker'>{roleLabel(role)} identity</p>
+              <h2 className='simple-voter-section-title'>{currentRoleSummary}</h2>
+              <code className='simple-account-identity-full-npub'>{accountIdentityNpub}</code>
+            </div>
+            {accountIdentityQrSrc ? (
+              <img
+                className='simple-identity-qr-overlay-image simple-account-identity-overlay-image'
+                src={accountIdentityQrSrc}
+                alt={`QR code for ${roleLabel(role)} npub`}
+              />
+            ) : (
+              <div
+                className='simple-identity-qr-overlay-image simple-account-identity-overlay-image simple-identity-qr-fallback'
+                aria-hidden='true'
+              />
+            )}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
