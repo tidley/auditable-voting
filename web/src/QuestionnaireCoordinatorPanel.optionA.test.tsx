@@ -42,20 +42,10 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(onConfigureWorker).not.toHaveBeenCalled();
   });
 
-  it("marks the JSON preview button as an expandable toggle", () => {
+  it("does not show the JSON preview controls in the build actions", () => {
     render(<QuestionnaireCoordinatorPanel />);
 
-    const previewButton = screen.getByRole("button", { name: "Preview JSON" });
-    expect(previewButton.getAttribute("aria-expanded")).toBe("false");
-
-    fireEvent.click(previewButton);
-
-    expect(previewButton.getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getByText("Draft preview")).toBeTruthy();
-
-    fireEvent.click(previewButton);
-
-    expect(previewButton.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByRole("button", { name: "Preview JSON" })).toBeNull();
     expect(screen.queryByText("Draft preview")).toBeNull();
   });
 

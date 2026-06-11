@@ -513,6 +513,161 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     expect(within(details).queryByText("sig_ballot_debug")).toBeNull();
   });
 
+  it("shows a main-page resend action while waiting for a signer-backed ballot credential", async () => {
+    const user = userEvent.setup();
+    const localVoterNpub = "npub1" + "w".repeat(58);
+    const coordinatorNpub = "npub1" + "b".repeat(58);
+    optionAStorageMocks.loadVoterState.mockReturnValue({
+      electionId: "q_waiting_resend",
+      invitedNpub: localVoterNpub,
+      coordinatorNpub,
+      loginVerified: true,
+      loginVerifiedAt: "2026-04-18T00:00:00.000Z",
+      inviteMessage: null,
+      blindRequest: {
+        type: "blind_ballot_request",
+        schemaVersion: 1,
+        electionId: "q_waiting_resend",
+        requestId: "request_waiting_resend",
+        invitedNpub: localVoterNpub,
+        blindedMessage: "blinded_waiting_resend",
+        tokenCommitment: "commitment_waiting_resend",
+        blindSigningKeyId: "blind_key",
+        clientNonce: "nonce_waiting_resend",
+        createdAt: "2026-04-18T00:00:00.000Z",
+      },
+      blindRequestSent: true,
+      blindRequestSentAt: "2026-04-18T00:00:00.000Z",
+      blindIssuance: null,
+      credentialReady: false,
+      draftResponses: [],
+      submission: null,
+      submissionAccepted: null,
+      submissionAcceptedAt: null,
+      lastUpdatedAt: "2026-04-18T00:00:00.000Z",
+    });
+    storeCachedQuestionnaireDefinition({
+      schemaVersion: 1,
+      eventType: "questionnaire_definition",
+      responseMode: "blind_token",
+      questionnaireId: "q_waiting_resend",
+      title: "Waiting resend",
+      description: "",
+      createdAt: 1,
+      openAt: 1,
+      closeAt: 9999999999,
+      coordinatorPubkey: coordinatorNpub,
+      coordinatorEncryptionPubkey: coordinatorNpub,
+      responseVisibility: "private",
+      eligibilityMode: "open",
+      allowMultipleResponsesPerPubkey: false,
+      blindSigningPublicKey: {
+        scheme: "rsabssa-sha384-pss-deterministic-v1",
+        keyId: "blind_key",
+        jwk: { kty: "RSA", e: "AQAB", n: "test" },
+      },
+      questions: [{
+        questionId: "q1",
+        type: "yes_no",
+        prompt: "Waiting resend prompt",
+        required: true,
+      }],
+    });
+    const requestSpy = vi
+      .spyOn(QuestionnaireOptionAVoterRuntime.prototype, "requestBlindBallot")
+      .mockImplementation(async function mockedRequestBlindBallot(this: QuestionnaireOptionAVoterRuntime) {
+        return this.getSnapshot()!;
+      });
+
+    render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_waiting_resend"]} localVoterNpub={localVoterNpub} />);
+
+    await screen.findByText(/Waiting resend prompt/);
+    await user.click(screen.getByRole("button", { name: "Resend request" }));
+
+    await waitFor(() => {
+      expect(requestSpy).toHaveBeenCalledWith({ forceResend: true });
+    });
+  });
+
+  it("automatically retries signer-backed blind requests after the resend cooldown", async () => {
+    const localVoterNpub = "npub1" + "x".repeat(58);
+    const coordinatorNpub = "npub1" + "b".repeat(58);
+    optionAStorageMocks.loadVoterState.mockReturnValue({
+      electionId: "q_waiting_auto_retry",
+      invitedNpub: localVoterNpub,
+      coordinatorNpub,
+      loginVerified: true,
+      loginVerifiedAt: "2026-04-18T00:00:00.000Z",
+      inviteMessage: null,
+      blindRequest: {
+        type: "blind_ballot_request",
+        schemaVersion: 1,
+        electionId: "q_waiting_auto_retry",
+        requestId: "request_waiting_auto_retry",
+        invitedNpub: localVoterNpub,
+        blindedMessage: "blinded_waiting_auto_retry",
+        tokenCommitment: "commitment_waiting_auto_retry",
+        blindSigningKeyId: "blind_key",
+        clientNonce: "nonce_waiting_auto_retry",
+        createdAt: "2026-04-18T00:00:00.000Z",
+      },
+      blindRequestSent: true,
+      blindRequestSentAt: "2026-04-18T00:00:00.000Z",
+      blindIssuance: null,
+      credentialReady: false,
+      draftResponses: [],
+      submission: null,
+      submissionAccepted: null,
+      submissionAcceptedAt: null,
+      lastUpdatedAt: "2026-04-18T00:00:00.000Z",
+    });
+    storeCachedQuestionnaireDefinition({
+      schemaVersion: 1,
+      eventType: "questionnaire_definition",
+      responseMode: "blind_token",
+      questionnaireId: "q_waiting_auto_retry",
+      title: "Waiting auto retry",
+      description: "",
+      createdAt: 1,
+      openAt: 1,
+      closeAt: 9999999999,
+      coordinatorPubkey: coordinatorNpub,
+      coordinatorEncryptionPubkey: coordinatorNpub,
+      responseVisibility: "private",
+      eligibilityMode: "open",
+      allowMultipleResponsesPerPubkey: false,
+      blindSigningPublicKey: {
+        scheme: "rsabssa-sha384-pss-deterministic-v1",
+        keyId: "blind_key",
+        jwk: { kty: "RSA", e: "AQAB", n: "test" },
+      },
+      questions: [{
+        questionId: "q1",
+        type: "yes_no",
+        prompt: "Waiting auto retry prompt",
+        required: true,
+      }],
+    });
+    const requestSpy = vi
+      .spyOn(QuestionnaireOptionAVoterRuntime.prototype, "requestBlindBallot")
+      .mockImplementation(async function mockedRequestBlindBallot(this: QuestionnaireOptionAVoterRuntime) {
+        return this.getSnapshot()!;
+      });
+
+    render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_waiting_auto_retry"]} localVoterNpub={localVoterNpub} />);
+
+    await screen.findByText(/Waiting auto retry prompt/);
+    expect(requestSpy).not.toHaveBeenCalled();
+    await act(async () => {
+      window.dispatchEvent(new Event("focus"));
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(requestSpy).toHaveBeenCalledWith({ minRetryMs: 8 * 60_000 });
+    });
+  });
+
   it("sends the delayed page-load ballot request for a linked local voter", async () => {
     const localVoterNpub = "npub1" + "h".repeat(58);
     const coordinatorAtRequest: string[] = [];

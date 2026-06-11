@@ -1979,8 +1979,49 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     const pollMs = isLikelyMobileClient()
       ? AUTO_BALLOT_MOBILE_RECOVERY_PULL_MS
       : AUTO_BALLOT_SIGNER_KEEPALIVE_REFRESH_MS;
+    const resendMs = AUTO_BALLOT_RETRY_RESEND_MS;
+    const key = snapshot.electionId + ":" + snapshot.invitedNpub;
     let cancelled = false;
+    let retryInFlight = false;
     let timeoutId: number | null = null;
+    const refreshAndMaybeResend = async (mode: BallotWaitRefreshMode) => {
+      if (!isPageVisible()) {
+        return;
+      }
+      queueBallotWaitRefresh({ mode });
+      if (retryInFlight) {
+        return;
+      }
+      const now = Date.now();
+      const current = runtime.getSnapshot();
+      if (!current?.blindRequestSent || current.credentialReady || current.submission) {
+        return;
+      }
+      const lastSentMs = current.blindRequestSentAt ? Date.parse(current.blindRequestSentAt) : Number.NaN;
+      if (Number.isFinite(lastSentMs) && now - lastSentMs < resendMs) {
+        return;
+      }
+      const lastAttemptAt = requestRetryAtRef.current[key] ?? 0;
+      if (now - lastAttemptAt < resendMs) {
+        return;
+      }
+      requestRetryAtRef.current[key] = now;
+      retryInFlight = true;
+      try {
+        await runtime.requestBlindBallot({ minRetryMs: resendMs });
+        markSignerWaitRecoveryBaseline();
+        scheduleSignerInitialPull();
+        queueBallotWaitRefresh({
+          restartSubscriptions: true,
+          mode: "manual",
+          forceWhenHidden: true,
+        });
+      } catch {
+        // Retry is best-effort; the visible resend button still surfaces errors.
+      } finally {
+        retryInFlight = false;
+      }
+    };
     const triggerForegroundRefresh = (mode: BallotWaitRefreshMode) => {
       if (!isPageVisible()) {
         return;
@@ -1990,16 +2031,16 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         return;
       }
       ballotWaitLifecycleTriggerAtRef.current = now;
-      queueBallotWaitRefresh({ mode });
+      void refreshAndMaybeResend(mode);
     };
     const loop = () => {
-      timeoutId = window.setTimeout(() => {
+      timeoutId = window.setTimeout(async () => {
         if (cancelled) {
           return;
         }
         if (isPageVisible()) {
           const mode: BallotWaitRefreshMode = isLikelyMobileClient() ? "background" : "lifecycle";
-          queueBallotWaitRefresh({ mode });
+          await refreshAndMaybeResend(mode);
         }
         if (!cancelled) {
           loop();
@@ -2022,7 +2063,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       window.removeEventListener("online", onVisible);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [runtime, props.localVoterNsec, snapshot?.loginVerified, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission]);
+  }, [runtime, props.localVoterNsec, snapshot?.electionId, snapshot?.invitedNpub, snapshot?.loginVerified, snapshot?.blindRequestSent, snapshot?.credentialReady, snapshot?.submission]);
 
   useEffect(() => {
     if (!runtime || !snapshot?.loginVerified || !snapshot.blindRequestSent || snapshot.credentialReady || snapshot.submission) {
@@ -2954,6 +2995,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         >
           {voteActionButtonText}
         </button>
+        {waitingForCredential ? (
+          <button type='button' className='simple-voter-secondary' onClick={requestBallot}>
+            Resend request
+          </button>
+        ) : null}
       </div>
       {snapshot?.submission ? (
         <section className='simple-settings-card simple-submission-identity-card' aria-label='Anonymous ID used to vote'>

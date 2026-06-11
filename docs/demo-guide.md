@@ -77,7 +77,7 @@ The **Readiness checklist** should show:
 - **At least one question added**
 - **Questions complete**
 
-Click **Publish questionnaire**, or use **Publish + apply invited voters** when the invited-voter roster should be green-lit immediately for this questionnaire.
+Click **Publish questionnaire**. When the draft is ready and Auto-ballot voters are selected, **Publish + apply invited voters** appears so the invited-voter roster can be green-lit immediately for this questionnaire.
 
 When it appears, click **Open vote**.
 

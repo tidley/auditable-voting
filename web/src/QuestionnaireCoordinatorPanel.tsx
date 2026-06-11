@@ -1182,7 +1182,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   const [activeWorkerDelegation, setActiveWorkerDelegation] = useState<WorkerDelegationCertificate | null>(null);
   const [lastWorkerRevocationState, setLastWorkerRevocationState] = useState<WorkerDelegationState | null>(null);
   const [availableWorkerStatuses, setAvailableWorkerStatuses] = useState<WorkerStatusSnapshot[]>([]);
-  const [showPreview, setShowPreview] = useState(false);
   const [coordinatorNsec, setCoordinatorNsec] = useState("");
   const [coordinatorNpub, setCoordinatorNpub] = useState("");
   const [status, setStatus] = useState<string | null>(null);
@@ -4095,11 +4094,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                   <button type='button' className='simple-voter-primary' disabled={!canPublishDraft} onClick={() => void publishDefinition()}>
                     Publish questionnaire
                   </button>
-                  {props.onAfterPublishQuestionnaire ? (
+                  {props.onAfterPublishQuestionnaire && canPublishDraft && props.canApplyAdmissionsOnPublish ? (
                     <button
                       type='button'
                       className='simple-voter-secondary'
-                      disabled={!canPublishDraft || !props.canApplyAdmissionsOnPublish}
                       onClick={() => void publishDefinition({ applyAdmissions: true })}
                     >
                       Publish + apply invited voters
@@ -4137,28 +4135,11 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                   Invite voters
                 </button>
               ) : null}
-              {!showNewRoundPublishOnly ? (
-                <button
-                  type='button'
-                  className='simple-voter-secondary'
-                  aria-expanded={showPreview}
-                  aria-controls='questionnaire-draft-preview'
-                  onClick={() => setShowPreview((current) => !current)}
-                >
-                  Preview JSON
-                </button>
-              ) : null}
               {!coordinatorNsec.trim() ? (
                 <p className='simple-voter-note'>Organiser key is not loaded yet.</p>
               ) : null}
               {publishValidation && !publishValidation.valid ? (
                 <p className='simple-voter-note'>Validation: {publishValidation.errors[0] ?? "unknown_error"}.</p>
-              ) : null}
-              {!showNewRoundPublishOnly && showPreview ? (
-                <div id='questionnaire-draft-preview' className='simple-questionnaire-preview'>
-                  <h4 className='simple-voter-section-title'>Draft preview</h4>
-                  <pre>{JSON.stringify(builtDefinition, null, 2)}</pre>
-                </div>
               ) : null}
               {statusNotice}
             </section>
