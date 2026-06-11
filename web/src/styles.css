@@ -1683,7 +1683,7 @@ code {
 
 .simple-questionnaire-question-head {
   display: grid;
-  grid-template-columns: max-content minmax(170px, 260px) max-content;
+  grid-template-columns: max-content minmax(170px, 260px) minmax(0, 1fr) max-content;
   align-items: center;
   gap: 12px;
 }
@@ -1742,6 +1742,7 @@ code {
   font-size: 0.96rem;
   font-weight: 800;
   cursor: pointer;
+  grid-column: 4;
   justify-self: end;
 }
 
@@ -3283,32 +3284,84 @@ code {
   margin-top: -2px;
 }
 
-.simple-admitted-voter-list {
+.simple-admitted-voter-table {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--simple-border);
+  border-radius: 8px;
+  background: #08111b;
+}
+
+.simple-admitted-voter-table-head,
+.simple-admitted-voter-row {
   display: grid;
-  gap: 8px;
+  grid-template-columns:
+    36px
+    minmax(88px, 0.62fr)
+    minmax(135px, 0.94fr)
+    minmax(150px, 0.88fr)
+    minmax(116px, 0.72fr)
+    minmax(104px, 0.62fr)
+    minmax(130px, 0.8fr);
+  min-width: 780px;
+  align-items: center;
+}
+
+.simple-admitted-voter-table-head {
+  border-bottom: 1px solid var(--simple-border);
+  background: #111b29;
+}
+
+.simple-admitted-voter-table-head span {
+  padding: 9px 10px;
+  color: var(--simple-muted);
+  font-size: 0.7rem;
+  font-weight: 850;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.simple-admitted-voter-list {
+  display: block;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
 .simple-admitted-voter-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, auto);
-  gap: 14px;
-  align-items: stretch;
-  padding: 12px;
-  border: 1px solid var(--simple-border);
-  border-radius: 8px;
-  background: rgba(6, 12, 18, 0.58);
+  border-top: 1px solid rgba(148, 163, 184, 0.13);
+  background: transparent;
 }
 
-.simple-admitted-private-invite-list {
-  padding-top: 4px;
+.simple-admitted-voter-row:first-child {
+  border-top: 0;
 }
 
 .simple-admitted-private-invite-row {
-  border-style: dashed;
-  background: rgba(10, 19, 25, 0.66);
+  background: rgba(45, 212, 191, 0.025);
+}
+
+.simple-admitted-voter-cell {
+  min-width: 0;
+  padding: 10px;
+}
+
+.simple-admitted-voter-number {
+  color: var(--simple-soft);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.simple-admitted-voter-id-cell,
+.simple-admitted-voter-state-cell,
+.simple-admitted-voter-auto-cell {
+  display: grid;
+  gap: 6px;
+}
+
+.simple-admitted-voter-actions-cell {
+  min-width: 0;
 }
 
 .simple-admitted-voter-main {
@@ -3409,13 +3462,12 @@ code {
   padding-top: 2px;
 }
 
-.simple-admitted-voter-auto-toggle {
+.simple-admitted-voter-auto-toggle,
+.simple-admitted-voter-used-toggle {
   display: inline-flex;
   align-items: center;
-  align-self: flex-end;
   gap: 8px;
   min-height: 34px;
-  margin-top: auto;
   color: var(--simple-soft);
   font-size: 0.9rem;
   font-weight: 750;
@@ -3423,17 +3475,36 @@ code {
   cursor: pointer;
 }
 
-.simple-admitted-voter-auto-toggle input {
+.simple-admitted-voter-auto-toggle input,
+.simple-admitted-voter-used-toggle input {
   width: 18px;
   height: 18px;
   margin: 0;
   accent-color: var(--simple-teal);
 }
 
+.simple-admitted-voter-used-toggle {
+  min-height: 0;
+  color: var(--simple-muted);
+  font-size: 0.76rem;
+}
+
+.simple-admitted-voter-empty-cell {
+  color: var(--simple-muted);
+  font-size: 0.82rem;
+}
+
 .simple-admitted-private-invite-row .simple-invite-qr-trigger {
   width: 82px;
   height: 82px;
   min-height: 0;
+}
+
+.simple-admitted-voter-table .simple-invite-qr-trigger {
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 3px;
 }
 
 .simple-session-invites {
@@ -3499,18 +3570,8 @@ code {
   background: #08111b;
 }
 
-.simple-session-invites .simple-admitted-voter-list {
-  gap: 6px;
-}
-
-.simple-session-invites .simple-admitted-voter-row {
-  grid-template-columns: minmax(0, 1fr) minmax(280px, auto);
-  padding: 10px 12px;
-  background: #08111b;
-}
-
 .simple-session-invites .simple-admitted-voter-note-field {
-  padding-top: 2px;
+  padding-top: 0;
 }
 
 .simple-session-invites .simple-admitted-voter-note-field .simple-voter-input {
@@ -5129,6 +5190,16 @@ code {
   font-size: 0.72rem;
 }
 
+.simple-session-results-dashboard.simple-auditor-results-dashboard,
+.simple-session-submissions-section.simple-auditor-submissions-section,
+.simple-session-invites .simple-collapsible-section {
+  border: 1px solid var(--simple-border);
+  border-top: 1px solid var(--simple-border);
+  border-radius: 8px;
+  background: #0b1420;
+  box-shadow: none;
+}
+
 @media (max-width: 900px) {
   .simple-coordinator-shell,
   .simple-coordinator-shell.is-sidebar-collapsed {
@@ -6721,6 +6792,7 @@ code {
   }
 
   .simple-questionnaire-question-head .simple-questionnaire-required-toggle {
+    grid-column: 2;
     margin-left: 0;
   }
 
@@ -6754,19 +6826,59 @@ code {
     min-height: 0;
   }
 
-  .simple-admitted-voters-heading,
-  .simple-admitted-voter-row,
-  .simple-admitted-voter-meta {
+  .simple-admitted-voters-heading {
     align-items: stretch;
-    grid-template-columns: 1fr;
   }
 
   .simple-admitted-voters-heading {
     flex-direction: column;
   }
 
-  .simple-admitted-voter-meta {
+  .simple-admitted-voter-table {
+    overflow: visible;
+    border: 0;
+    background: transparent;
+  }
+
+  .simple-admitted-voter-table-head {
+    display: none;
+  }
+
+  .simple-admitted-voter-row {
+    min-width: 0;
+    grid-template-columns: 1fr;
     align-items: stretch;
+    margin-bottom: 8px;
+    border: 1px solid var(--simple-border);
+    border-radius: 8px;
+    background: #08111b;
+    overflow: hidden;
+  }
+
+  .simple-admitted-voter-row:first-child {
+    border-top: 1px solid var(--simple-border);
+  }
+
+  .simple-admitted-voter-cell {
+    display: grid;
+    grid-template-columns: 108px minmax(0, 1fr);
+    gap: 10px;
+    align-items: center;
+    padding: 9px 10px;
+    border-top: 1px solid rgba(148, 163, 184, 0.13);
+  }
+
+  .simple-admitted-voter-cell:first-child {
+    border-top: 0;
+  }
+
+  .simple-admitted-voter-cell::before {
+    content: attr(data-label);
+    color: var(--simple-muted);
+    font-size: 0.68rem;
+    font-weight: 850;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
   }
 
   .simple-admitted-voter-actions {
@@ -6774,7 +6886,7 @@ code {
   }
 
   .simple-admitted-voter-auto-toggle {
-    align-self: flex-end;
+    justify-self: start;
   }
 
   .simple-admitted-voters-add-row {
@@ -6790,19 +6902,9 @@ code {
   }
 
   .simple-admitted-voter-count,
-  .simple-admitted-voter-meta,
   .simple-admitted-voter-actions,
   .simple-admitted-voter-remove {
     justify-self: start;
-  }
-
-  .simple-admitted-voter-meta {
-    justify-self: stretch;
-    width: 100%;
-  }
-
-  .simple-admitted-voter-auto-toggle {
-    justify-self: end;
   }
 
   .simple-private-invite-panel-head,

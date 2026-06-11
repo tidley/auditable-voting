@@ -7,6 +7,7 @@ export default function SimpleCollapsibleSection({
   defaultCollapsed = false,
   renderWhenExpanded = false,
   expandSignal,
+  hideToggle = false,
 }: {
   title: ReactNode;
   titleToggleLabel?: string;
@@ -14,8 +15,10 @@ export default function SimpleCollapsibleSection({
   defaultCollapsed?: boolean;
   renderWhenExpanded?: boolean;
   expandSignal?: number;
+  hideToggle?: boolean;
 }) {
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
+  const isCollapsed = hideToggle ? false : collapsed;
   const titleId = useId();
   const bodyId = `${titleId}-body`;
 
@@ -28,20 +31,22 @@ export default function SimpleCollapsibleSection({
 
   return (
     <section
-      className={`simple-voter-section simple-collapsible-section${collapsed ? " is-collapsed" : ""}`}
+      className={`simple-voter-section simple-collapsible-section${isCollapsed ? " is-collapsed" : ""}`}
       aria-labelledby={titleId}
     >
       <div className="simple-collapsible-header">
-        {titleToggleLabel ? (
+        {hideToggle ? (
+          <h2 id={titleId} className="simple-voter-section-title simple-collapsible-title">{title}</h2>
+        ) : titleToggleLabel ? (
           <h2 id={titleId} className="simple-voter-section-title simple-collapsible-title">
             <button
               type="button"
               className="simple-collapsible-title-toggle"
-              aria-expanded={!collapsed}
+              aria-expanded={!isCollapsed}
               aria-controls={bodyId}
               onClick={() => setCollapsed((current) => !current)}
             >
-              {collapsed ? `Show ${titleToggleLabel}` : `Hide ${titleToggleLabel}`}
+              {isCollapsed ? `Show ${titleToggleLabel}` : `Hide ${titleToggleLabel}`}
             </button>
           </h2>
         ) : (
@@ -50,18 +55,18 @@ export default function SimpleCollapsibleSection({
             <button
               type="button"
               className="simple-collapsible-toggle"
-              aria-expanded={!collapsed}
+              aria-expanded={!isCollapsed}
               aria-controls={bodyId}
               onClick={() => setCollapsed((current) => !current)}
             >
-              {collapsed ? "Show" : "Hide"}
+              {isCollapsed ? "Show" : "Hide"}
             </button>
           </>
         )}
       </div>
       <div id={bodyId} className="simple-collapsible-body">
         <div className="simple-collapsible-body-inner">
-          {!renderWhenExpanded || !collapsed ? children : null}
+          {!renderWhenExpanded || !isCollapsed ? children : null}
         </div>
       </div>
     </section>

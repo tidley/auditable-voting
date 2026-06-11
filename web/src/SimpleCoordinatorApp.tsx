@@ -6848,7 +6848,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               onStatusChange={updateQuestionnaireRosterAnnouncement}
             />
             <div id='coordinator-invite-voters-section' className='simple-session-invites'>
-              <SimpleCollapsibleSection title='Invited voters'>
+              <SimpleCollapsibleSection title='Invited voters' hideToggle>
                 <div className='simple-invite-share-panel simple-admitted-voters-panel' aria-label='Invited voters'>
                   <div className='simple-invite-share-heading simple-admitted-voters-heading'>
                     <div className='simple-invite-share-copy'>
@@ -7034,56 +7034,254 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                   </div>
                 ) : null}
                 {admittedVoterStatus ? <p className='simple-voter-note'>{admittedVoterStatus}</p> : null}
-                {admittedVoterDisplayRows.length > 0 ? (
-                  <ul className='simple-admitted-voter-list' aria-label='Invited voter roster'>
-                    {admittedVoterDisplayRows.map((row, rowIndex) => {
-                      const currentQuestionnaireEntry = row.currentQuestionnaireEntry;
-                      const pendingAuthorization = row.pendingAuthorization;
-                      const privateInviteEntry = row.privateInviteEntry;
-                      const privateInviteRedeemedNpub = privateInviteEntry?.redeemedNpub?.trim() ?? "";
-                      const privateInviteUrl = privateInviteEntry ? getPrivateInviteCodeLink(privateInviteEntry.codeHash) : "";
-                      const privateInviteActive = privateInviteEntry?.state === "available";
-                      const canSharePrivateInvite = privateInviteActive && privateInviteUrl.length > 0;
-                      const privateInviteStatusIndicator = privateInviteEntry
-                        ? privateInviteVoterStatusIndicator({
-                          state: privateInviteEntry.state,
-                          redeemedNpub: privateInviteRedeemedNpub,
-                          claimState: currentQuestionnaireEntry?.claimState ?? null,
-                          markedUsedAt: privateInviteEntry.markedUsedAt ?? null,
-                        })
-                        : null;
-                      const statusIndicator = pendingAuthorization
-                        ? pendingAuthorisationStatusIndicator()
-                        : currentQuestionnaireEntry
-                          ? whitelistStatusIndicator(currentQuestionnaireEntry.claimState)
-                          : privateInviteStatusIndicator
-                            ? privateInviteStatusIndicator
+                {admittedVoterDisplayRows.length > 0 || standalonePrivateInviteCodeEntries.length > 0 ? (
+                  <div className='simple-admitted-voter-table' role='table' aria-label='Invited voter roster'>
+                    <div className='simple-admitted-voter-table-head' role='row'>
+                      <span role='columnheader'>#</span>
+                      <span role='columnheader'>Voter ID</span>
+                      <span role='columnheader'>Voter npub</span>
+                      <span role='columnheader'>Internal note</span>
+                      <span role='columnheader'>State</span>
+                      <span role='columnheader'>Auto-ballot</span>
+                      <span role='columnheader'>Actions</span>
+                    </div>
+                    <ul className='simple-admitted-voter-list simple-admitted-voter-table-body' role='rowgroup'>
+                      {admittedVoterDisplayRows.map((row, rowIndex) => {
+                        const currentQuestionnaireEntry = row.currentQuestionnaireEntry;
+                        const pendingAuthorization = row.pendingAuthorization;
+                        const privateInviteEntry = row.privateInviteEntry;
+                        const privateInviteRedeemedNpub = privateInviteEntry?.redeemedNpub?.trim() ?? "";
+                        const privateInviteUrl = privateInviteEntry ? getPrivateInviteCodeLink(privateInviteEntry.codeHash) : "";
+                        const privateInviteActive = privateInviteEntry?.state === "available";
+                        const canSharePrivateInvite = privateInviteActive && privateInviteUrl.length > 0;
+                        const privateInviteStatusIndicator = privateInviteEntry
+                          ? privateInviteVoterStatusIndicator({
+                            state: privateInviteEntry.state,
+                            redeemedNpub: privateInviteRedeemedNpub,
+                            claimState: currentQuestionnaireEntry?.claimState ?? null,
+                            markedUsedAt: privateInviteEntry.markedUsedAt ?? null,
+                          })
                           : null;
-                      const statusLabel = pendingAuthorization
-                        ? `Wants access (${pendingAuthorization.requestCount})`
-                        : statusIndicator?.label ?? null;
-                      const isPrivateInviteClaimant = Boolean(currentQuestionnaireEntry?.inviteCodeHash?.trim() || privateInviteEntry);
-                      const canUseCurrentInviteActions = Boolean(
-                        optionAElectionId.trim() &&
-                        activeCoordinatorNpub.trim() &&
-                        !isPrivateInviteClaimant,
-                      );
-                      const inviteButtonLabel = currentQuestionnaireEntry ? "Resend invite" : "Send invite";
-                      const inviteInputId = privateInviteEntry ? `admitted-voter-private-invite-url-${privateInviteEntry.codeHash}` : "";
-                      const noteInputId = `admitted-voter-note-${row.npub}`;
-                      const noteValue = row.admittedEntry?.note ?? privateInviteEntry?.note ?? "";
-                      return (
-                        <li key={row.npub} className='simple-admitted-voter-row'>
-                          <div className='simple-admitted-voter-main'>
-                            <span className='simple-admitted-voter-id'>
-                              <span className='simple-admitted-voter-ordinal'>#{rowIndex + 1}</span>
-                              <span>{deriveActorDisplayId(row.npub)}</span>
-                            </span>
-                            <span className='simple-admitted-voter-npub'>{row.npub}</span>
-                            {privateInviteEntry && privateInviteUrl ? (
-                              <div className='simple-admitted-private-link-details'>
-                                <div className='simple-private-invite-link-field'>
-                                  <label className='simple-private-invite-field-label' htmlFor={inviteInputId}>Invite link</label>
+                        const statusIndicator = pendingAuthorization
+                          ? pendingAuthorisationStatusIndicator()
+                          : currentQuestionnaireEntry
+                            ? whitelistStatusIndicator(currentQuestionnaireEntry.claimState)
+                            : privateInviteStatusIndicator
+                              ? privateInviteStatusIndicator
+                              : null;
+                        const statusLabel = pendingAuthorization
+                          ? `Wants access (${pendingAuthorization.requestCount})`
+                          : statusIndicator?.label ?? null;
+                        const isPrivateInviteClaimant = Boolean(currentQuestionnaireEntry?.inviteCodeHash?.trim() || privateInviteEntry);
+                        const canUseCurrentInviteActions = Boolean(
+                          optionAElectionId.trim() &&
+                          activeCoordinatorNpub.trim() &&
+                          !isPrivateInviteClaimant,
+                        );
+                        const inviteButtonLabel = currentQuestionnaireEntry ? "Resend invite" : "Send invite";
+                        const inviteInputId = privateInviteEntry ? `admitted-voter-private-invite-url-${privateInviteEntry.codeHash}` : "";
+                        const noteInputId = `admitted-voter-note-${row.npub}`;
+                        const noteValue = row.admittedEntry?.note ?? privateInviteEntry?.note ?? "";
+                        return (
+                          <li key={row.npub} className='simple-admitted-voter-row' role='row'>
+                            <span className='simple-admitted-voter-cell simple-admitted-voter-number' data-label='#' role='cell'>{rowIndex + 1}</span>
+                            <div className='simple-admitted-voter-cell simple-admitted-voter-id-cell' data-label='Voter ID' role='cell'>
+                              <span className='simple-admitted-voter-id'>{deriveActorDisplayId(row.npub)}</span>
+                            </div>
+                            <div className='simple-admitted-voter-cell simple-admitted-voter-npub-cell' data-label='Voter npub' role='cell'>
+                              <span className='simple-admitted-voter-npub'>{row.npub}</span>
+                              {privateInviteEntry && privateInviteUrl ? (
+                                <div className='simple-admitted-private-link-details'>
+                                  <div className='simple-private-invite-link-field'>
+                                    <label className='simple-private-invite-field-label' htmlFor={inviteInputId}>Invite link</label>
+                                    <div className={`simple-private-invite-url-control${canSharePrivateInvite ? "" : " is-readonly"}`}>
+                                      <input
+                                        id={inviteInputId}
+                                        className='simple-private-invite-url-input'
+                                        value={privateInviteUrl}
+                                        readOnly
+                                        aria-label='Invite link'
+                                      />
+                                      {canSharePrivateInvite ? (
+                                        <button
+                                          type='button'
+                                          className='simple-private-invite-copy-icon-button'
+                                          onClick={() => void copyPrivateInviteCodeLink(privateInviteEntry.codeHash)}
+                                          aria-label='Copy invite link'
+                                          title='Copy invite link'
+                                        >
+                                          <span className='simple-copy-icon' aria-hidden='true' />
+                                        </button>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
+                            <div className='simple-admitted-voter-cell simple-admitted-voter-note-cell' data-label='Internal note' role='cell'>
+                              {row.admittedEntry || privateInviteEntry ? (
+                                <label className='simple-admitted-voter-note-field' htmlFor={noteInputId}>
+                                  <input
+                                    id={noteInputId}
+                                    className='simple-voter-input simple-voter-input-inline'
+                                    value={noteValue}
+                                    placeholder='Internal note'
+                                    aria-label='Internal note'
+                                    title='Internal note'
+                                    onChange={(event) => {
+                                      const note = event.target.value;
+                                      if (row.admittedEntry) {
+                                        updateAdmittedVoterDetails(row.npub, { note });
+                                      }
+                                      if (privateInviteEntry) {
+                                        updatePrivateInviteCodeNote(privateInviteEntry.codeHash, note);
+                                      }
+                                    }}
+                                  />
+                                </label>
+                              ) : (
+                                <span className='simple-admitted-voter-empty-cell'>-</span>
+                              )}
+                            </div>
+                            <div className='simple-admitted-voter-cell simple-admitted-voter-state-cell' data-label='State' role='cell'>
+                              {statusIndicator ? (
+                                <span className={`simple-admitted-voter-status ${statusIndicator.className}`} aria-label={statusLabel ?? statusIndicator.label} title={statusLabel ?? statusIndicator.label}>
+                                  {statusIndicator.icon} {statusLabel ?? statusIndicator.label}
+                                </span>
+                              ) : (
+                                <span className='simple-admitted-voter-pending'>Future questionnaires</span>
+                              )}
+                            </div>
+                            <div className='simple-admitted-voter-cell simple-admitted-voter-auto-cell' data-label='Auto-ballot' role='cell'>
+                              {row.admittedEntry ? (
+                                <label className='simple-admitted-voter-auto-toggle'>
+                                  <input
+                                    type='checkbox'
+                                    checked={row.admittedEntry.autoApply !== false}
+                                    onChange={(event) => updateAdmittedVoterDetails(row.npub, { autoApply: event.target.checked })}
+                                  />
+                                  <span>Auto-ballot</span>
+                                </label>
+                              ) : privateInviteEntry ? (
+                                <label className='simple-admitted-voter-auto-toggle'>
+                                  <input
+                                    type='checkbox'
+                                    checked={privateInviteEntry.autoRequestBallot !== false}
+                                    onChange={(event) => setPrivateInviteCodeAutoRequestBallot(privateInviteEntry.codeHash, event.target.checked)}
+                                  />
+                                  <span>Auto-ballot</span>
+                                </label>
+                              ) : (
+                                <span className='simple-admitted-voter-empty-cell'>-</span>
+                              )}
+                            </div>
+                            <div className='simple-admitted-voter-cell simple-admitted-voter-actions-cell' data-label='Actions' role='cell'>
+                              <div className='simple-admitted-voter-actions'>
+                                {pendingAuthorization ? (
+                                  <button
+                                    type='button'
+                                    className='simple-voter-secondary'
+                                    onClick={() => authorizePendingRequester(row.npub, { statusTarget: "admitted" })}
+                                  >
+                                    Approve
+                                  </button>
+                                ) : canUseCurrentInviteActions ? (
+                                  <>
+                                    <button
+                                      type='button'
+                                      className='simple-voter-secondary'
+                                      onClick={() => void sendInviteToKnownVoter(row.npub, { statusTarget: "admitted" })}
+                                      disabled={!optionACoordinatorRuntime}
+                                    >
+                                      {inviteButtonLabel}
+                                    </button>
+                                    <button
+                                      type='button'
+                                      className='simple-voter-secondary'
+                                      onClick={() => void copyKnownVoterInviteLink(row.npub, { statusTarget: "admitted" })}
+                                    >
+                                      Copy invite link
+                                    </button>
+                                  </>
+                                ) : null}
+                                {privateInviteEntry && canSharePrivateInvite ? (
+                                  <>
+                                    <button
+                                      type='button'
+                                      className='simple-voter-secondary'
+                                      onClick={() => void copyPrivateInviteCodeLink(privateInviteEntry.codeHash)}
+                                    >
+                                      Copy link
+                                    </button>
+                                    <button
+                                      type='button'
+                                      className='simple-voter-secondary'
+                                      onClick={() => void sharePrivateInviteCodeLink(privateInviteEntry.codeHash)}
+                                    >
+                                      Share
+                                    </button>
+                                  </>
+                                ) : null}
+                                {privateInviteEntry && privateInviteActive ? (
+                                  <button
+                                    type='button'
+                                    className='simple-voter-secondary simple-private-invite-revoke-button'
+                                    onClick={() => revokePrivateInviteCode(privateInviteEntry.codeHash)}
+                                  >
+                                    Revoke
+                                  </button>
+                                ) : null}
+                                {row.admittedEntry ? (
+                                  <button
+                                    type='button'
+                                    className='simple-voter-secondary simple-admitted-voter-remove'
+                                    onClick={() => removeVoterAdmission(row.npub)}
+                                  >
+                                    Remove
+                                  </button>
+                                ) : null}
+                              </div>
+                            </div>
+                          </li>
+                        );
+                      })}
+                      {standalonePrivateInviteCodeEntries.map((entry, inviteIndex) => {
+                        const rosterIndex = admittedVoterDisplayRows.length + inviteIndex;
+                        const autoRequestBallot = entry.autoRequestBallot !== false;
+                        const privateInviteUrl = getPrivateInviteCodeLink(entry.codeHash);
+                        const inviteActive = entry.state === "available";
+                        const canSharePrivateInvite = inviteActive && privateInviteUrl.length > 0;
+                        const redeemedNpub = entry.redeemedNpub?.trim() ?? "";
+                        const redeemedDisplayId = redeemedNpub ? deriveActorDisplayId(redeemedNpub) : "";
+                        const redeemedVoter = redeemedNpub ? optionAKnownVoterByNpub.get(redeemedNpub) ?? null : null;
+                        const markedUsed = Boolean(entry.markedUsedAt?.trim());
+                        const voterStatusIndicator = privateInviteVoterStatusIndicator({
+                          state: entry.state,
+                          redeemedNpub,
+                          claimState: redeemedVoter?.claimState ?? null,
+                          markedUsedAt: entry.markedUsedAt ?? null,
+                        });
+                        const voterStatusLabel = redeemedDisplayId && voterStatusIndicator.label === "Used"
+                          ? `Used ${redeemedDisplayId}`
+                          : voterStatusIndicator.label;
+                        const inviteInputId = `admitted-private-invite-url-${entry.codeHash}`;
+                        const noteInputId = `admitted-private-invite-note-${entry.codeHash}`;
+
+                        return (
+                          <li key={entry.codeHash} className='simple-admitted-voter-row simple-admitted-private-invite-row' role='row'>
+                            <span className='simple-admitted-voter-cell simple-admitted-voter-number' data-label='#' role='cell'>{rosterIndex + 1}</span>
+                            <div className='simple-admitted-voter-cell simple-admitted-voter-id-cell' data-label='Voter ID' role='cell'>
+                              <span className='simple-admitted-voter-id'>{redeemedDisplayId || "Private invite"}</span>
+                            </div>
+                            <div className='simple-admitted-voter-cell simple-admitted-voter-npub-cell' data-label='Voter npub' role='cell'>
+                              {redeemedNpub ? (
+                                <span className='simple-admitted-voter-npub'>{redeemedNpub}</span>
+                              ) : (
+                                <span className='simple-admitted-voter-empty-cell'>Unclaimed private link</span>
+                              )}
+                              <div className='simple-private-invite-link-field'>
+                                <label className='simple-private-invite-field-label' htmlFor={inviteInputId}>Invite link</label>
+                                {privateInviteUrl ? (
                                   <div className={`simple-private-invite-url-control${canSharePrivateInvite ? "" : " is-readonly"}`}>
                                     <input
                                       id={inviteInputId}
@@ -7096,7 +7294,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                                       <button
                                         type='button'
                                         className='simple-private-invite-copy-icon-button'
-                                        onClick={() => void copyPrivateInviteCodeLink(privateInviteEntry.codeHash)}
+                                        onClick={() => void copyPrivateInviteCodeLink(entry.codeHash)}
                                         aria-label='Copy invite link'
                                         title='Copy invite link'
                                       >
@@ -7104,204 +7302,33 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                                       </button>
                                     ) : null}
                                   </div>
-                                </div>
+                                ) : null}
                               </div>
-                            ) : null}
-                            {row.admittedEntry || privateInviteEntry ? (
+                            </div>
+                            <div className='simple-admitted-voter-cell simple-admitted-voter-note-cell' data-label='Internal note' role='cell'>
                               <label className='simple-admitted-voter-note-field' htmlFor={noteInputId}>
                                 <input
                                   id={noteInputId}
                                   className='simple-voter-input simple-voter-input-inline'
-                                  value={noteValue}
+                                  value={entry.note ?? ""}
                                   placeholder='Internal note'
                                   aria-label='Internal note'
                                   title='Internal note'
-                                  onChange={(event) => {
-                                    const note = event.target.value;
-                                    if (row.admittedEntry) {
-                                      updateAdmittedVoterDetails(row.npub, { note });
-                                    }
-                                    if (privateInviteEntry) {
-                                      updatePrivateInviteCodeNote(privateInviteEntry.codeHash, note);
-                                    }
-                                  }}
+                                  onChange={(event) => updatePrivateInviteCodeNote(entry.codeHash, event.target.value)}
                                 />
                               </label>
-                            ) : null}
-                          </div>
-                          <div className='simple-admitted-voter-meta'>
-                            {statusIndicator ? (
-                              <span className={`simple-admitted-voter-status ${statusIndicator.className}`} aria-label={statusLabel ?? statusIndicator.label} title={statusLabel ?? statusIndicator.label}>
-                                {statusIndicator.icon} {statusLabel ?? statusIndicator.label}
+                            </div>
+                            <div className='simple-admitted-voter-cell simple-admitted-voter-state-cell' data-label='State' role='cell'>
+                              <span
+                                className={`simple-admitted-voter-status ${voterStatusIndicator.className}`}
+                                aria-label={voterStatusLabel}
+                                title={redeemedNpub && voterStatusIndicator.label === "Used"
+                                  ? `Used by ${redeemedNpub}`
+                                  : voterStatusLabel}
+                              >
+                                {voterStatusIndicator.icon} {voterStatusLabel}
                               </span>
-                            ) : (
-                              <span className='simple-admitted-voter-pending'>Future questionnaires</span>
-                            )}
-                            <div className='simple-admitted-voter-actions'>
-                              {pendingAuthorization ? (
-                                <button
-                                  type='button'
-                                  className='simple-voter-secondary'
-                                  onClick={() => authorizePendingRequester(row.npub, { statusTarget: "admitted" })}
-                                >
-                                  Approve
-                                </button>
-                              ) : canUseCurrentInviteActions ? (
-                                <>
-                                  <button
-                                    type='button'
-                                    className='simple-voter-secondary'
-                                    onClick={() => void sendInviteToKnownVoter(row.npub, { statusTarget: "admitted" })}
-                                    disabled={!optionACoordinatorRuntime}
-                                  >
-                                    {inviteButtonLabel}
-                                  </button>
-                                  <button
-                                    type='button'
-                                    className='simple-voter-secondary'
-                                    onClick={() => void copyKnownVoterInviteLink(row.npub, { statusTarget: "admitted" })}
-                                  >
-                                    Copy invite link
-                                  </button>
-                                </>
-                              ) : null}
-                              {privateInviteEntry && canSharePrivateInvite ? (
-                                <>
-                                  <button
-                                    type='button'
-                                    className='simple-voter-secondary'
-                                    onClick={() => void copyPrivateInviteCodeLink(privateInviteEntry.codeHash)}
-                                  >
-                                    Copy link
-                                  </button>
-                                  <button
-                                    type='button'
-                                    className='simple-voter-secondary'
-                                    onClick={() => void sharePrivateInviteCodeLink(privateInviteEntry.codeHash)}
-                                  >
-                                    Share
-                                  </button>
-                                </>
-                              ) : null}
-                              {privateInviteEntry && privateInviteActive ? (
-                                <button
-                                  type='button'
-                                  className='simple-voter-secondary simple-private-invite-revoke-button'
-                                  onClick={() => revokePrivateInviteCode(privateInviteEntry.codeHash)}
-                                >
-                                  Revoke
-                                </button>
-                              ) : null}
-                              {row.admittedEntry ? (
-                                <button
-                                  type='button'
-                                  className='simple-voter-secondary simple-admitted-voter-remove'
-                                  onClick={() => removeVoterAdmission(row.npub)}
-                                >
-                                  Remove
-                                </button>
-                              ) : null}
-                            </div>
-                            {row.admittedEntry ? (
-                              <label className='simple-admitted-voter-auto-toggle'>
-                                <input
-                                  type='checkbox'
-                                  checked={row.admittedEntry.autoApply !== false}
-                                  onChange={(event) => updateAdmittedVoterDetails(row.npub, { autoApply: event.target.checked })}
-                                />
-                                <span>Auto-ballot</span>
-                              </label>
-                            ) : null}
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                ) : standalonePrivateInviteCodeEntries.length === 0 ? (
-                  <p className='simple-voter-empty'>
-                    No voters invited yet.
-                  </p>
-                ) : null}
-                {standalonePrivateInviteCodeEntries.length > 0 ? (
-                  <ul className='simple-admitted-voter-list simple-admitted-private-invite-list' aria-label='Single-use private invite links'>
-                    {standalonePrivateInviteCodeEntries.map((entry, inviteIndex) => {
-                      const rosterIndex = admittedVoterDisplayRows.length + inviteIndex;
-                      const autoRequestBallot = entry.autoRequestBallot !== false;
-                      const privateInviteUrl = getPrivateInviteCodeLink(entry.codeHash);
-                      const inviteActive = entry.state === "available";
-                      const canSharePrivateInvite = inviteActive && privateInviteUrl.length > 0;
-                      const redeemedNpub = entry.redeemedNpub?.trim() ?? "";
-                      const redeemedDisplayId = redeemedNpub ? deriveActorDisplayId(redeemedNpub) : "";
-                      const redeemedVoter = redeemedNpub ? optionAKnownVoterByNpub.get(redeemedNpub) ?? null : null;
-                      const markedUsed = Boolean(entry.markedUsedAt?.trim());
-                      const voterStatusIndicator = privateInviteVoterStatusIndicator({
-                        state: entry.state,
-                        redeemedNpub,
-                        claimState: redeemedVoter?.claimState ?? null,
-                        markedUsedAt: entry.markedUsedAt ?? null,
-                      });
-                      const voterStatusLabel = redeemedDisplayId && voterStatusIndicator.label === "Used"
-                        ? `Used ${redeemedDisplayId}`
-                        : voterStatusIndicator.label;
-                      const inviteInputId = `admitted-private-invite-url-${entry.codeHash}`;
-                      const noteInputId = `admitted-private-invite-note-${entry.codeHash}`;
-
-                      return (
-                        <li key={entry.codeHash} className='simple-admitted-voter-row simple-admitted-private-invite-row'>
-                          <div className='simple-admitted-voter-main'>
-                            <span className='simple-admitted-voter-id'>
-                              <span className='simple-admitted-voter-ordinal'>#{rosterIndex + 1}</span>
-                              <span>Private invite</span>
-                            </span>
-                            <div className='simple-private-invite-link-field'>
-                              <label className='simple-private-invite-field-label' htmlFor={inviteInputId}>Invite link</label>
-                              {privateInviteUrl ? (
-                                <div className={`simple-private-invite-url-control${canSharePrivateInvite ? "" : " is-readonly"}`}>
-                                  <input
-                                    id={inviteInputId}
-                                    className='simple-private-invite-url-input'
-                                    value={privateInviteUrl}
-                                    readOnly
-                                    aria-label='Invite link'
-                                  />
-                                  {canSharePrivateInvite ? (
-                                    <button
-                                      type='button'
-                                      className='simple-private-invite-copy-icon-button'
-                                      onClick={() => void copyPrivateInviteCodeLink(entry.codeHash)}
-                                      aria-label='Copy invite link'
-                                      title='Copy invite link'
-                                    >
-                                      <span className='simple-copy-icon' aria-hidden='true' />
-                                    </button>
-                                  ) : null}
-                                </div>
-                              ) : null}
-                            </div>
-                            <label className='simple-admitted-voter-note-field' htmlFor={noteInputId}>
-                              <input
-                                id={noteInputId}
-                                className='simple-voter-input simple-voter-input-inline'
-                                value={entry.note ?? ""}
-                                placeholder='Internal note'
-                                aria-label='Internal note'
-                                title='Internal note'
-                                onChange={(event) => updatePrivateInviteCodeNote(entry.codeHash, event.target.value)}
-                              />
-                            </label>
-                          </div>
-                          <div className='simple-admitted-voter-meta'>
-                            <span
-                              className={`simple-admitted-voter-status ${voterStatusIndicator.className}`}
-                              aria-label={voterStatusLabel}
-                              title={redeemedNpub && voterStatusIndicator.label === "Used"
-                                ? `Used by ${redeemedNpub}`
-                                : voterStatusLabel}
-                            >
-                              {voterStatusIndicator.icon} {voterStatusLabel}
-                            </span>
-                            <div className='simple-admitted-voter-actions'>
-                              <label className='simple-admitted-voter-auto-toggle'>
+                              <label className='simple-admitted-voter-used-toggle'>
                                 <input
                                   type='checkbox'
                                   checked={markedUsed}
@@ -7309,54 +7336,62 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                                 />
                                 <span>Mark as used</span>
                               </label>
-                              {canSharePrivateInvite ? (
-                                <>
-                                  <button
-                                    type='button'
-                                    className='simple-voter-secondary'
-                                    onClick={() => void copyPrivateInviteCodeLink(entry.codeHash)}
-                                  >
-                                    Copy link
-                                  </button>
-                                  <button
-                                    type='button'
-                                    className='simple-voter-secondary'
-                                    onClick={() => void sharePrivateInviteCodeLink(entry.codeHash)}
-                                  >
-                                    Share
-                                  </button>
-                                </>
-                              ) : null}
-                              <button
-                                type='button'
-                                className='simple-voter-secondary simple-private-invite-revoke-button'
-                                onClick={() => revokePrivateInviteCode(entry.codeHash)}
-                                disabled={!inviteActive}
-                              >
-                                Revoke
-                              </button>
                             </div>
-                            {canSharePrivateInvite ? (
-                              <InviteQrButton
-                                value={privateInviteUrl}
-                                label='single-use invite link'
-                                title='Single-use invite link'
-                              />
-                            ) : null}
-                            <label className='simple-admitted-voter-auto-toggle'>
-                              <input
-                                type='checkbox'
-                                checked={autoRequestBallot}
-                                onChange={(event) => setPrivateInviteCodeAutoRequestBallot(entry.codeHash, event.target.checked)}
-                              />
-                              <span>Auto-ballot</span>
-                            </label>
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                ) : null}
+                            <div className='simple-admitted-voter-cell simple-admitted-voter-auto-cell' data-label='Auto-ballot' role='cell'>
+                              <label className='simple-admitted-voter-auto-toggle'>
+                                <input
+                                  type='checkbox'
+                                  checked={autoRequestBallot}
+                                  onChange={(event) => setPrivateInviteCodeAutoRequestBallot(entry.codeHash, event.target.checked)}
+                                />
+                                <span>Auto-ballot</span>
+                              </label>
+                            </div>
+                            <div className='simple-admitted-voter-cell simple-admitted-voter-actions-cell' data-label='Actions' role='cell'>
+                              <div className='simple-admitted-voter-actions'>
+                                {canSharePrivateInvite ? (
+                                  <>
+                                    <button
+                                      type='button'
+                                      className='simple-voter-secondary'
+                                      onClick={() => void copyPrivateInviteCodeLink(entry.codeHash)}
+                                    >
+                                      Copy link
+                                    </button>
+                                    <button
+                                      type='button'
+                                      className='simple-voter-secondary'
+                                      onClick={() => void sharePrivateInviteCodeLink(entry.codeHash)}
+                                    >
+                                      Share
+                                    </button>
+                                    <InviteQrButton
+                                      value={privateInviteUrl}
+                                      label='single-use invite link'
+                                      title='Single-use invite link'
+                                    />
+                                  </>
+                                ) : null}
+                                <button
+                                  type='button'
+                                  className='simple-voter-secondary simple-private-invite-revoke-button'
+                                  onClick={() => revokePrivateInviteCode(entry.codeHash)}
+                                  disabled={!inviteActive}
+                                >
+                                  Revoke
+                                </button>
+                              </div>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                ) : (
+                  <p className='simple-voter-empty'>
+                    No voters invited yet.
+                  </p>
+                )}
                 </div>
               </SimpleCollapsibleSection>
             </div>
