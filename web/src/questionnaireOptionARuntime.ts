@@ -127,8 +127,9 @@ import {
 import {
   fetchQuestionnaireActiveWorkerDelegationForCapability,
   fetchQuestionnaireBlindResponses,
+  fetchQuestionnaireSubmissionDecisions,
 } from "./questionnaireTransport";
-import type { QuestionnaireDefinition, QuestionnaireResponseAnswer } from "./questionnaireProtocol";
+import type { QuestionnaireDefinition, QuestionnaireResponseAnswer, QuestionnaireSubmissionDecision } from "./questionnaireProtocol";
 import type { QuestionnaireSubmissionDecisionReason } from "./questionnaireProtocol";
 import { mergeQuestionnaireRelayHints } from "./questionnaireRelays";
 import { QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1, type QuestionnaireFlowMode } from "./questionnaireProtocolConstants";
@@ -144,8 +145,11 @@ import {
 } from "./questionnaireInviteCode";
 
 const OPTION_A_COORDINATOR_DM_LOOKBACK_SECONDS = 24 * 60 * 60;
-const OPTION_A_COORDINATOR_SIGNER_DM_LIMIT = 60;
-const OPTION_A_COORDINATOR_NSEC_DM_LIMIT = 120;
+const OPTION_A_COORDINATOR_SIGNER_DM_LIMIT = 320;
+const OPTION_A_COORDINATOR_NSEC_DM_LIMIT = 320;
+const OPTION_A_COORDINATOR_DM_PAGE_LIMIT = 40;
+const OPTION_A_COORDINATOR_DM_MAX_PAGES = 8;
+const OPTION_A_COORDINATOR_DM_TIME_BUDGET_MS = 6_000;
 const OPTION_A_ISSUANCE_DM_RETRY_MS = 5 * 60 * 1000;
 const OPTION_A_BLIND_REQUEST_RETRY_MS = 45 * 1000;
 const OPTION_A_BLIND_REQUEST_ACK_RETRY_MS = 10 * 60 * 1000;
@@ -155,8 +159,11 @@ const OPTION_A_SUBMISSION_ACK_RETRY_MS = 2 * 60 * 1000;
 const OPTION_A_SELF_COPY_RECOVERY_LOOKBACK_SECONDS = Math.round(36 * 60 * 60);
 const OPTION_A_STATE_SELF_COPY_PUBLISH_MIN_INTERVAL_MS = 15 * 1000;
 const OPTION_A_VOTER_DM_LOOKBACK_SECONDS = Math.round(36 * 60 * 60);
-const OPTION_A_VOTER_REFRESH_DM_LIMIT = 8;
-const OPTION_A_VOTER_ISSUANCE_REFRESH_DM_LIMIT = 24;
+const OPTION_A_ADAPTIVE_VOTER_DM_LIMIT = 240;
+const OPTION_A_ADAPTIVE_VOTER_DM_PAGE_LIMIT = 40;
+const OPTION_A_ADAPTIVE_VOTER_DM_MAX_PAGES = 6;
+const OPTION_A_ADAPTIVE_VOTER_DM_TIME_BUDGET_MS = 6_000;
+const OPTION_A_PUBLIC_DECISION_REFRESH_LIMIT = 300;
 const OPTION_A_STATE_SELF_COPY_MIN_RELAY_COPIES = 2;
 
 export type OptionARuntimeErrorCode =
@@ -293,9 +300,30 @@ function stableStringify(value: unknown): string {
   return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${stableStringify(entry)}`).join(",")}}`;
 }
 
+function optionADebugLoggingEnabled() {
+  const globalDebug = (globalThis as typeof globalThis & { __AUDITABLE_VOTING_DEBUG_OPTION_A?: unknown })
+    .__AUDITABLE_VOTING_DEBUG_OPTION_A;
+  if (globalDebug === true) {
+    return true;
+  }
+  if (typeof window === "undefined") {
+    return false;
+  }
+  try {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("debug_option_a") === "1"
+      || window.localStorage.getItem("auditable-voting:debug:option-a") === "1";
+  } catch {
+    return false;
+  }
+}
+
 function optionAFlowLog(role: "voter" | "coordinator", stage: string, details?: Record<string, unknown>) {
+  if (!optionADebugLoggingEnabled()) {
+    return;
+  }
   const payload = details ? ` ${JSON.stringify(details)}` : "";
-  console.log(`[OptionA][${role}] ${stage}${payload}`);
+  console.debug(`[OptionA][${role}] ${stage}${payload}`);
 }
 
 function extractSuccessfulRelays(result: { relayResults?: Array<{ relay: string; success: boolean }> } | null | undefined) {
@@ -400,6 +428,34 @@ function toSubmissionDecisionReason(input: {
   return "invalid_payload_shape";
 }
 
+function fromSubmissionDecisionReason(reason: QuestionnaireSubmissionDecisionReason): BallotRejectReason | undefined {
+  if (reason === "accepted") {
+    return undefined;
+  }
+  if (reason === "duplicate_nullifier") {
+    return "duplicate_nullifier";
+  }
+  if (reason === "invalid_token_proof") {
+    return "invalid_credential";
+  }
+  if (reason === "questionnaire_closed") {
+    return "election_closed";
+  }
+  return "schema_invalid";
+}
+
+function publicDecisionToAcceptance(decision: QuestionnaireSubmissionDecision): BallotAcceptanceResult {
+  return {
+    type: "ballot_acceptance_result",
+    schemaVersion: 1,
+    electionId: decision.questionnaireId,
+    submissionId: decision.submissionId,
+    accepted: decision.accepted,
+    reason: fromSubmissionDecisionReason(decision.reason),
+    decidedAt: new Date(decision.decidedAt * 1000).toISOString(),
+  };
+}
+
 function toQuestionnaireResponseAnswers(
   responses: QuestionnaireAnswer[],
   options?: { coordinatorNpub?: string; responseSecretKey?: Uint8Array | null },
@@ -487,6 +543,7 @@ function shouldUsePublicSubmissionFlow(input: {
 
 export class QuestionnaireOptionAVoterRuntime {
   private state: VoterElectionLocalState | null = null;
+  private stateListeners = new Set<() => void>();
   private requestBlindBallotInflight: Promise<VoterElectionLocalState> | null = null;
   private submitVoteInflight: Promise<VoterElectionLocalState> | null = null;
   private lastSelfStateSnapshotHash: string | null = null;
@@ -510,6 +567,19 @@ export class QuestionnaireOptionAVoterRuntime {
     return this.state;
   }
 
+  subscribeStateChanges(listener: () => void) {
+    this.stateListeners.add(listener);
+    return () => {
+      this.stateListeners.delete(listener);
+    };
+  }
+
+  private notifyStateChanged() {
+    for (const listener of this.stateListeners) {
+      listener();
+    }
+  }
+
   setBearerInviteCode(code: string | null | undefined) {
     this.bearerInviteCode = normaliseQuestionnaireInviteCode(code) || null;
   }
@@ -529,6 +599,7 @@ export class QuestionnaireOptionAVoterRuntime {
 
   dispose() {
     this.stopVoterDmSubscriptions();
+    this.stateListeners.clear();
   }
 
   private stopVoterDmSubscriptions() {
@@ -729,6 +800,7 @@ export class QuestionnaireOptionAVoterRuntime {
       if (next.blindIssuance.definition) {
         cacheQuestionnaireDefinitionForRuntime(next.blindIssuance.definition);
       }
+      void this.ensureBlindIssuanceAck(next.blindIssuance).catch(() => undefined);
     }
     if (next.submission) {
       enqueueSubmission(next.submission);
@@ -743,6 +815,8 @@ export class QuestionnaireOptionAVoterRuntime {
       hasSubmission: Boolean(this.state.submission),
       submissionAccepted: this.state.submissionAccepted,
     });
+    this.startVoterDmSubscriptions();
+    this.notifyStateChanged();
     return true;
   }
 
@@ -778,6 +852,58 @@ export class QuestionnaireOptionAVoterRuntime {
   restartVoterDmSubscriptions() {
     this.stopVoterDmSubscriptions();
     this.startVoterDmSubscriptions();
+  }
+
+  private applyBlindIssuanceToState(issuance: BlindBallotIssuance, reason: string) {
+    storeBlindIssuance(issuance);
+    if (issuance.definition) {
+      cacheQuestionnaireDefinitionForRuntime(issuance.definition);
+    }
+    if (!this.state) {
+      return false;
+    }
+    const received = reduceVoterEvent(this.state, {
+      type: "BLIND_ISSUANCE_RECEIVED",
+      issuance,
+    });
+    void this.ensureBlindIssuanceAck(issuance).catch(() => undefined);
+    if (!received.ok) {
+      return false;
+    }
+    this.state = received.state;
+    saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
+    this.startVoterDmSubscriptions();
+    void this.publishVoterStateSelfDm({ reason });
+    this.notifyStateChanged();
+    return true;
+  }
+
+  private applyAcceptanceToState(acceptance: BallotAcceptanceResult, reason: string) {
+    storeAcceptance(acceptance);
+    if (!this.state?.submission || this.state.submission.submissionId !== acceptance.submissionId) {
+      return false;
+    }
+    const next = acceptance.accepted
+      ? reduceVoterEvent(this.state, {
+        type: "BALLOT_SUBMISSION_ACCEPTED",
+        submissionId: this.state.submission.submissionId,
+        decidedAt: acceptance.decidedAt,
+      })
+      : reduceVoterEvent(this.state, {
+        type: "BALLOT_SUBMISSION_REJECTED",
+        submissionId: this.state.submission.submissionId,
+        reason: acceptance.reason ?? "rejected",
+        decidedAt: acceptance.decidedAt,
+      });
+    if (!next.ok) {
+      return false;
+    }
+    this.state = next.state;
+    saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
+    this.startVoterDmSubscriptions();
+    void this.publishVoterStateSelfDm({ reason });
+    this.notifyStateChanged();
+    return true;
   }
 
   private startVoterDmSubscriptions() {
@@ -830,11 +956,7 @@ export class QuestionnaireOptionAVoterRuntime {
         relays,
         since: issuanceSince,
         onIssuance: (issuance) => {
-          storeBlindIssuance(issuance);
-          if (issuance.definition) {
-            cacheQuestionnaireDefinitionForRuntime(issuance.definition);
-          }
-          void this.ensureBlindIssuanceAck(issuance).catch(() => undefined);
+          this.applyBlindIssuanceToState(issuance, "blind_issuance_received");
         },
       });
     }
@@ -871,7 +993,7 @@ export class QuestionnaireOptionAVoterRuntime {
         relays,
         since: acceptanceSince,
         onAcceptance: (acceptance) => {
-          storeAcceptance(acceptance);
+          this.applyAcceptanceToState(acceptance, "acceptance_received");
         },
       });
     }
@@ -1457,33 +1579,50 @@ export class QuestionnaireOptionAVoterRuntime {
     if (!this.refreshFetchInFlight) {
       const fetchTasks: Array<Promise<void>> = [];
       if (needsIssuanceFetch) {
+        const activeRequestId = this.state.blindRequest?.requestId ?? "";
         const requestAckFetch = this.fallbackNsec?.trim()
           ? fetchOptionABlindRequestAckDmsWithNsec({
             nsec: this.fallbackNsec,
             electionId,
-            limit: 100,
+            limit: OPTION_A_ADAPTIVE_VOTER_DM_LIMIT,
+            pageLimit: OPTION_A_ADAPTIVE_VOTER_DM_PAGE_LIMIT,
+            maxPages: OPTION_A_ADAPTIVE_VOTER_DM_MAX_PAGES,
+            timeBudgetMs: OPTION_A_ADAPTIVE_VOTER_DM_TIME_BUDGET_MS,
+            targetRequestId: activeRequestId,
           })
           : fetchOptionABlindRequestAckDms({
             signer: this.signer,
             electionId,
             relays: this.getPreferredDmRelays(),
-            limit: OPTION_A_VOTER_REFRESH_DM_LIMIT,
-            maxDecryptAttempts: OPTION_A_VOTER_REFRESH_DM_LIMIT,
+            limit: OPTION_A_ADAPTIVE_VOTER_DM_LIMIT,
+            maxDecryptAttempts: OPTION_A_ADAPTIVE_VOTER_DM_LIMIT,
+            pageLimit: OPTION_A_ADAPTIVE_VOTER_DM_PAGE_LIMIT,
+            maxPages: OPTION_A_ADAPTIVE_VOTER_DM_MAX_PAGES,
+            timeBudgetMs: OPTION_A_ADAPTIVE_VOTER_DM_TIME_BUDGET_MS,
             since: requestSince,
+            targetRequestId: activeRequestId,
           });
         const blindIssuanceFetch = this.fallbackNsec?.trim()
           ? fetchOptionABlindIssuanceDmsWithNsec({
             nsec: this.fallbackNsec,
             electionId,
-            limit: OPTION_A_VOTER_ISSUANCE_REFRESH_DM_LIMIT,
+            limit: OPTION_A_ADAPTIVE_VOTER_DM_LIMIT,
+            pageLimit: OPTION_A_ADAPTIVE_VOTER_DM_PAGE_LIMIT,
+            maxPages: OPTION_A_ADAPTIVE_VOTER_DM_MAX_PAGES,
+            timeBudgetMs: OPTION_A_ADAPTIVE_VOTER_DM_TIME_BUDGET_MS,
+            targetRequestId: activeRequestId,
           })
           : fetchOptionABlindIssuanceDms({
             signer: this.signer,
             electionId,
             relays: this.getPreferredDmRelays(),
-            limit: OPTION_A_VOTER_ISSUANCE_REFRESH_DM_LIMIT,
-            maxDecryptAttempts: OPTION_A_VOTER_ISSUANCE_REFRESH_DM_LIMIT,
+            limit: OPTION_A_ADAPTIVE_VOTER_DM_LIMIT,
+            maxDecryptAttempts: OPTION_A_ADAPTIVE_VOTER_DM_LIMIT,
+            pageLimit: OPTION_A_ADAPTIVE_VOTER_DM_PAGE_LIMIT,
+            maxPages: OPTION_A_ADAPTIVE_VOTER_DM_MAX_PAGES,
+            timeBudgetMs: OPTION_A_ADAPTIVE_VOTER_DM_TIME_BUDGET_MS,
             since: requestSince,
+            targetRequestId: activeRequestId,
           });
         fetchTasks.push(
           requestAckFetch.then((ackMessages) => {
@@ -1500,43 +1639,71 @@ export class QuestionnaireOptionAVoterRuntime {
         fetchTasks.push(
           blindIssuanceFetch.then((issuanceMessages) => {
             for (const issuance of issuanceMessages) {
-              storeBlindIssuance(issuance);
-              if (issuance.definition) {
-                cacheQuestionnaireDefinitionForRuntime(issuance.definition);
-              }
+              this.applyBlindIssuanceToState(issuance, "blind_issuance_backfill");
             }
           }).catch(() => null).then(() => undefined),
         );
       }
       if (needsAcceptanceFetch) {
         const acceptanceReadNsec = this.state.responseNsec?.trim() || this.fallbackNsec?.trim() || "";
+        const submissionId = this.state.submission?.submissionId ?? "";
+        const publicDecisionRelays = readCachedQuestionnaireDefinition(electionId)?.questionnaireRelays
+          ?? this.state.election?.questionnaireRelays
+          ?? this.getPreferredDmRelays();
+        const publicDecisionFetch = submissionId
+          ? fetchQuestionnaireSubmissionDecisions({
+            questionnaireId: electionId,
+            relays: publicDecisionRelays,
+            limit: OPTION_A_PUBLIC_DECISION_REFRESH_LIMIT,
+            readRelayLimit: 3,
+            preferKindOnly: true,
+            maxPages: 12,
+            timeBudgetMs: 5_000,
+          })
+          : Promise.resolve([]);
         const submissionAckFetch = acceptanceReadNsec
           ? fetchOptionABallotSubmissionAckDmsWithNsec({
             nsec: acceptanceReadNsec,
             electionId,
-            limit: 100,
+            limit: OPTION_A_ADAPTIVE_VOTER_DM_LIMIT,
+            pageLimit: OPTION_A_ADAPTIVE_VOTER_DM_PAGE_LIMIT,
+            maxPages: OPTION_A_ADAPTIVE_VOTER_DM_MAX_PAGES,
+            timeBudgetMs: OPTION_A_ADAPTIVE_VOTER_DM_TIME_BUDGET_MS,
+            targetSubmissionId: submissionId,
           })
           : fetchOptionABallotSubmissionAckDms({
             signer: this.signer,
             electionId,
             relays: this.getPreferredDmRelays(),
-            limit: OPTION_A_VOTER_REFRESH_DM_LIMIT,
-            maxDecryptAttempts: OPTION_A_VOTER_REFRESH_DM_LIMIT,
+            limit: OPTION_A_ADAPTIVE_VOTER_DM_LIMIT,
+            maxDecryptAttempts: OPTION_A_ADAPTIVE_VOTER_DM_LIMIT,
+            pageLimit: OPTION_A_ADAPTIVE_VOTER_DM_PAGE_LIMIT,
+            maxPages: OPTION_A_ADAPTIVE_VOTER_DM_MAX_PAGES,
+            timeBudgetMs: OPTION_A_ADAPTIVE_VOTER_DM_TIME_BUDGET_MS,
             since: acceptanceSince,
+            targetSubmissionId: submissionId,
           });
         const acceptanceFetch = acceptanceReadNsec
           ? fetchOptionABallotAcceptanceDmsWithNsec({
             nsec: acceptanceReadNsec,
             electionId,
-            limit: 100,
+            limit: OPTION_A_ADAPTIVE_VOTER_DM_LIMIT,
+            pageLimit: OPTION_A_ADAPTIVE_VOTER_DM_PAGE_LIMIT,
+            maxPages: OPTION_A_ADAPTIVE_VOTER_DM_MAX_PAGES,
+            timeBudgetMs: OPTION_A_ADAPTIVE_VOTER_DM_TIME_BUDGET_MS,
+            targetSubmissionId: submissionId,
           })
           : fetchOptionABallotAcceptanceDms({
             signer: this.signer,
             electionId,
             relays: this.getPreferredDmRelays(),
-            limit: OPTION_A_VOTER_REFRESH_DM_LIMIT,
-            maxDecryptAttempts: OPTION_A_VOTER_REFRESH_DM_LIMIT,
+            limit: OPTION_A_ADAPTIVE_VOTER_DM_LIMIT,
+            maxDecryptAttempts: OPTION_A_ADAPTIVE_VOTER_DM_LIMIT,
+            pageLimit: OPTION_A_ADAPTIVE_VOTER_DM_PAGE_LIMIT,
+            maxPages: OPTION_A_ADAPTIVE_VOTER_DM_MAX_PAGES,
+            timeBudgetMs: OPTION_A_ADAPTIVE_VOTER_DM_TIME_BUDGET_MS,
             since: acceptanceSince,
+            targetSubmissionId: submissionId,
           });
         fetchTasks.push(
           submissionAckFetch.then((ackMessages) => {
@@ -1553,7 +1720,18 @@ export class QuestionnaireOptionAVoterRuntime {
         fetchTasks.push(
           acceptanceFetch.then((acceptanceMessages) => {
             for (const acceptance of acceptanceMessages) {
-              storeAcceptance(acceptance);
+              this.applyAcceptanceToState(acceptance, "acceptance_backfill");
+            }
+          }).catch(() => null).then(() => undefined),
+        );
+        fetchTasks.push(
+          publicDecisionFetch.then((decisionEntries) => {
+            const latestDecision = decisionEntries
+              .filter((entry) => entry.decision.submissionId === submissionId)
+              .sort((left, right) => Number(right.event.created_at ?? right.decision.decidedAt ?? 0) - Number(left.event.created_at ?? left.decision.decidedAt ?? 0))[0]
+              ?.decision ?? null;
+            if (latestDecision) {
+              this.applyAcceptanceToState(publicDecisionToAcceptance(latestDecision), "public_decision_backfill");
             }
           }).catch(() => null).then(() => undefined),
         );
@@ -3016,6 +3194,9 @@ export class QuestionnaireOptionACoordinatorRuntime {
           electionId: this.electionId,
           limit: OPTION_A_COORDINATOR_NSEC_DM_LIMIT,
           since,
+          pageLimit: OPTION_A_COORDINATOR_DM_PAGE_LIMIT,
+          maxPages: OPTION_A_COORDINATOR_DM_MAX_PAGES,
+          timeBudgetMs: OPTION_A_COORDINATOR_DM_TIME_BUDGET_MS,
           diagnosticsSink: (next) => {
             diagnostics = next;
           },
@@ -3026,6 +3207,9 @@ export class QuestionnaireOptionACoordinatorRuntime {
           relays: this.getPreferredDmRelays(),
           limit: OPTION_A_COORDINATOR_SIGNER_DM_LIMIT,
           since,
+          pageLimit: OPTION_A_COORDINATOR_DM_PAGE_LIMIT,
+          maxPages: OPTION_A_COORDINATOR_DM_MAX_PAGES,
+          timeBudgetMs: OPTION_A_COORDINATOR_DM_TIME_BUDGET_MS,
           diagnosticsSink: (next) => {
             diagnostics = next;
           },
@@ -3193,6 +3377,9 @@ export class QuestionnaireOptionACoordinatorRuntime {
           nsec: this.fallbackNsec,
           electionId: this.electionId,
           limit: OPTION_A_COORDINATOR_NSEC_DM_LIMIT,
+          pageLimit: OPTION_A_COORDINATOR_DM_PAGE_LIMIT,
+          maxPages: OPTION_A_COORDINATOR_DM_MAX_PAGES,
+          timeBudgetMs: OPTION_A_COORDINATOR_DM_TIME_BUDGET_MS,
         })
         : await fetchOptionABlindIssuanceAckDms({
           signer: this.signer,
@@ -3201,6 +3388,9 @@ export class QuestionnaireOptionACoordinatorRuntime {
           limit: OPTION_A_COORDINATOR_SIGNER_DM_LIMIT,
           since,
           maxDecryptAttempts: OPTION_A_COORDINATOR_SIGNER_DM_LIMIT,
+          pageLimit: OPTION_A_COORDINATOR_DM_PAGE_LIMIT,
+          maxPages: OPTION_A_COORDINATOR_DM_MAX_PAGES,
+          timeBudgetMs: OPTION_A_COORDINATOR_DM_TIME_BUDGET_MS,
         });
       for (const ack of acks) {
         this.recordBlindIssuanceAck(ack);
@@ -3291,6 +3481,16 @@ export class QuestionnaireOptionACoordinatorRuntime {
   private async publishPendingAcceptanceResultsToDmInternal(options?: { forceAll?: boolean }) {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
+    }
+    const publicSubmissionFlow = shouldUsePublicSubmissionFlow({
+      summaryFlowMode: this.state.election.flowMode ?? null,
+      cachedDefinitionFlowMode: readCachedQuestionnaireDefinition(this.electionId)?.flowMode ?? null,
+    });
+    if (publicSubmissionFlow && !options?.forceAll) {
+      optionAFlowLog("coordinator", "acceptance_dm_publish_skipped_public_decisions", {
+        electionId: this.electionId,
+      });
+      return 0;
     }
 
     let delivered = 0;

@@ -319,7 +319,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
       ]);
     });
 
-    await user.click(screen.getByRole("button", { name: "Answer next" }));
+    await user.click(screen.getByRole("button", { name: /Answer next/ }));
 
     await waitFor(() => {
       expect(requestedElectionIds).toContain("q_next_question");
@@ -400,7 +400,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     });
     expect(screen.getByText(/Initial public prompt/)).toBeTruthy();
 
-    await user.click(screen.getByRole("button", { name: "Answer next" }));
+    await user.click(screen.getByRole("button", { name: /Answer next/ }));
 
     await waitFor(() => {
       expect(requestedElectionIds).toContain("q_public_next");

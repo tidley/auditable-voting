@@ -21,7 +21,7 @@ import { SIMPLE_DM_RELAYS } from "./simpleShardDm";
 import { normalizeRelaysRust } from "./wasm/auditableVotingCore";
 import { mapRelayPublishResult } from "./nostrPublishResult";
 
-const OPTION_A_BLIND_DM_RELAYS_MAX = 8;
+const OPTION_A_BLIND_DM_RELAYS_MAX = 3;
 const OPTION_A_BLIND_DM_READ_RELAYS_MAX = 4;
 const OPTION_A_BLIND_DM_READ_RELAYS_FALLBACK_MAX = 5;
 const OPTION_A_BLIND_DM_HINT_RELAYS_MAX = 8;
@@ -40,14 +40,14 @@ const OPTION_A_BLIND_DM_QUERY_MAX_CONCURRENCY = 1;
 const OPTION_A_BLIND_DM_QUERY_TIMEOUT_MS = 8_000;
 const OPTION_A_BLIND_DM_RELAY_BACKOFF_MS = 60 * 1000;
 const OPTION_A_BLIND_DM_SIGNER_DECODE_CACHE_LIMIT = 512;
+const OPTION_A_BLIND_DM_BACKFILL_PAGE_LIMIT = 40;
+const OPTION_A_BLIND_DM_BACKFILL_MAX_PAGES = 8;
+const OPTION_A_BLIND_DM_BACKFILL_TIME_BUDGET_MS = 6_000;
 const OPTION_A_DM_EXISTENCE_CHECK_MAX_RELAYS = 6;
 const OPTION_A_BLIND_DM_READ_PRIORITY_RELAYS = [
   "wss://relay.nostr.net",
   "wss://nos.lol",
   "wss://relay.nostr.info",
-  "wss://relay.nos.social",
-  "wss://relay.momostr.pink",
-  "wss://relay.azzamo.net",
 ];
 const OPTION_A_BLIND_DM_READ_UNINDEXED_TAG_RELAYS = new Set([
   "wss://relay.damus.io",
@@ -229,9 +229,30 @@ type WorkerElectionConfigDmEnvelope = {
   sentAt: string;
 };
 
+function optionABlindDmDebugLoggingEnabled() {
+  const globalDebug = (globalThis as typeof globalThis & { __AUDITABLE_VOTING_DEBUG_OPTION_A?: unknown })
+    .__AUDITABLE_VOTING_DEBUG_OPTION_A;
+  if (globalDebug === true) {
+    return true;
+  }
+  if (typeof window === "undefined") {
+    return false;
+  }
+  try {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("debug_option_a") === "1"
+      || window.localStorage.getItem("auditable-voting:debug:option-a") === "1";
+  } catch {
+    return false;
+  }
+}
+
 function optionABlindDmLog(stage: string, details?: Record<string, unknown>) {
+  if (!optionABlindDmDebugLoggingEnabled()) {
+    return;
+  }
   const payload = details ? ` ${JSON.stringify(details)}` : "";
-  console.log(`[OptionA][DM] ${stage}${payload}`);
+  console.debug(`[OptionA][DM] ${stage}${payload}`);
 }
 
 function incrementReason(target: Record<string, number>, key: string) {
@@ -340,6 +361,13 @@ export type OptionABlindRequestFetchDiagnostics = {
   dedupedCount: number;
   rejectReasons: Record<string, number>;
   since?: number;
+};
+
+type BlindDmBackfillOptions = {
+  pageLimit?: number;
+  maxPages?: number;
+  timeBudgetMs?: number;
+  stopAfterPage?: (pageEvents: NostrEvent[], collectedEvents: NostrEvent[]) => boolean | Promise<boolean>;
 };
 
 export type OptionADmEventCopyCheckResult = {
@@ -662,6 +690,69 @@ async function resolveRecipientReadRelays(recipientHex: string, fallbackRelays: 
   return selectReadRelays(relayCandidates);
 }
 
+function sortGiftWrapEventsNewestFirst(events: NostrEvent[]) {
+  return [...events].sort((left, right) => {
+    const createdDelta = Number(right.created_at ?? 0) - Number(left.created_at ?? 0);
+    if (createdDelta !== 0) {
+      return createdDelta;
+    }
+    return String(right.id ?? "").localeCompare(String(left.id ?? ""));
+  });
+}
+
+async function queryBlindDmSyncPaginated(
+  relays: string[],
+  filter: Record<string, unknown>,
+  options?: BlindDmBackfillOptions,
+) {
+  const rawLimit = Number(filter.limit ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
+  const requestedLimit = Math.max(1, Number.isFinite(rawLimit) ? rawLimit : OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
+  const pageLimit = Math.max(1, Math.min(
+    options?.pageLimit ?? OPTION_A_BLIND_DM_BACKFILL_PAGE_LIMIT,
+    requestedLimit,
+  ));
+  const maxPages = Math.max(1, options?.maxPages ?? Math.ceil(requestedLimit / pageLimit));
+  const timeBudgetMs = Math.max(250, options?.timeBudgetMs ?? OPTION_A_BLIND_DM_BACKFILL_TIME_BUDGET_MS);
+  const startedAt = Date.now();
+  const eventsById = new Map<string, NostrEvent>();
+  let until = typeof filter.until === "number" ? filter.until : undefined;
+
+  for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
+    if (Date.now() - startedAt > timeBudgetMs) {
+      break;
+    }
+    const pageEvents = await queryBlindDmSync(relays, {
+      ...filter,
+      ...(until ? { until } : {}),
+      limit: pageLimit,
+    });
+    const sortedPage = sortGiftWrapEventsNewestFirst(pageEvents);
+    let added = 0;
+    for (const event of sortedPage) {
+      if (!eventsById.has(event.id)) {
+        added += 1;
+      }
+      eventsById.set(event.id, event);
+    }
+    if (options?.stopAfterPage) {
+      const shouldStop = await options.stopAfterPage(sortedPage, sortGiftWrapEventsNewestFirst([...eventsById.values()]));
+      if (shouldStop) {
+        break;
+      }
+    }
+    if (sortedPage.length < pageLimit || added === 0) {
+      break;
+    }
+    const oldestCreatedAt = Math.min(...sortedPage.map((event) => Number(event.created_at ?? 0)).filter((value) => value > 0));
+    if (!Number.isFinite(oldestCreatedAt) || oldestCreatedAt <= 0) {
+      break;
+    }
+    until = Math.min(until ?? oldestCreatedAt, oldestCreatedAt) - 1;
+  }
+
+  return sortGiftWrapEventsNewestFirst([...eventsById.values()]).slice(0, requestedLimit);
+}
+
 async function queryBlindDmSyncWithFallback(relayCandidates: string[], filter: Record<string, unknown>) {
   const primaryRelays = selectReadRelays(relayCandidates, OPTION_A_BLIND_DM_READ_RELAYS_MAX);
   const primaryEvents = await queryBlindDmSync(primaryRelays, filter);
@@ -676,6 +767,27 @@ async function queryBlindDmSyncWithFallback(relayCandidates: string[], filter: R
   return {
     relays: shouldFallbackRead ? fallbackRelays : primaryRelays,
     events: [...primaryEvents, ...fallbackEvents],
+  };
+}
+
+async function queryBlindDmSyncWithFallbackPaginated(
+  relayCandidates: string[],
+  filter: Record<string, unknown>,
+  options?: BlindDmBackfillOptions,
+) {
+  const primaryRelays = selectReadRelays(relayCandidates, OPTION_A_BLIND_DM_READ_RELAYS_MAX);
+  const primaryEvents = await queryBlindDmSyncPaginated(primaryRelays, filter, options);
+  const shouldFallbackRead = primaryEvents.length === 0
+    && relayCandidates.length > primaryRelays.length;
+  const fallbackRelays = shouldFallbackRead
+    ? selectReadRelays(relayCandidates, OPTION_A_BLIND_DM_READ_RELAYS_FALLBACK_MAX)
+    : [];
+  const fallbackEvents = shouldFallbackRead
+    ? await queryBlindDmSyncPaginated(fallbackRelays, filter, options).catch(() => [] as NostrEvent[])
+    : [];
+  return {
+    relays: shouldFallbackRead ? fallbackRelays : primaryRelays,
+    events: sortGiftWrapEventsNewestFirst([...primaryEvents, ...fallbackEvents]),
   };
 }
 
@@ -1188,6 +1300,58 @@ function decodeGiftWrapWithSecretKey(input: {
     rumorContent: rumor.content,
     sealPubkey: sealEvent.pubkey,
   };
+}
+
+async function pageContainsSignerDm<T>(input: {
+  pageEvents: NostrEvent[];
+  signer: SignerService;
+  parse: (content: string) => T | null;
+  matches: (entry: T) => boolean;
+}) {
+  for (const event of input.pageEvents) {
+    try {
+      const decoded = await decodeGiftWrapWithSigner({
+        signer: input.signer,
+        event,
+      });
+      if (!decoded) {
+        continue;
+      }
+      const parsed = input.parse(decoded.rumorContent);
+      if (parsed && input.matches(parsed)) {
+        return true;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return false;
+}
+
+function pageContainsSecretKeyDm<T>(input: {
+  pageEvents: NostrEvent[];
+  secretKey: Uint8Array;
+  parse: (content: string) => T | null;
+  matches: (entry: T) => boolean;
+}) {
+  for (const event of input.pageEvents) {
+    try {
+      const decoded = decodeGiftWrapWithSecretKey({
+        secretKey: input.secretKey,
+        event,
+      });
+      if (!decoded) {
+        continue;
+      }
+      const parsed = input.parse(decoded.rumorContent);
+      if (parsed && input.matches(parsed)) {
+        return true;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return false;
 }
 
 function createSignerGiftWrapSubscription<T>(input: {
@@ -1713,6 +1877,9 @@ export async function fetchOptionABlindRequestDms(input: {
   limit?: number;
   since?: number;
   maxDecryptAttempts?: number;
+  pageLimit?: number;
+  maxPages?: number;
+  timeBudgetMs?: number;
   diagnosticsSink?: (diagnostics: OptionABlindRequestFetchDiagnostics) => void;
 }) {
   if (!input.signer.nip44Decrypt) {
@@ -1728,11 +1895,15 @@ export async function fetchOptionABlindRequestDms(input: {
   });
   const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? input.limit ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
   const since = input.since ?? Math.round(Date.now() / 1000) - OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS;
-  const events = await queryBlindDmSync(relays, {
+  const events = await queryBlindDmSyncPaginated(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     since,
     limit: Math.max(1, Math.min(input.limit ?? maxDecryptAttempts, maxDecryptAttempts)),
+  }, {
+    pageLimit: input.pageLimit,
+    maxPages: input.maxPages,
+    timeBudgetMs: input.timeBudgetMs,
   });
 
   const rejectReasons: Record<string, number> = {};
@@ -1792,16 +1963,23 @@ export async function fetchOptionABlindRequestDmsWithNsec(input: {
   relays?: string[];
   limit?: number;
   since?: number;
+  pageLimit?: number;
+  maxPages?: number;
+  timeBudgetMs?: number;
   diagnosticsSink?: (diagnostics: OptionABlindRequestFetchDiagnostics) => void;
 }) {
   const secretKey = decodeNsecSecretKey(input.nsec);
   const recipientHex = getPublicKey(secretKey);
   const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
-  const events = await queryBlindDmSync(relays, {
+  const events = await queryBlindDmSyncPaginated(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     since: input.since,
     limit: Math.max(1, input.limit ?? 100),
+  }, {
+    pageLimit: input.pageLimit,
+    maxPages: input.maxPages,
+    timeBudgetMs: input.timeBudgetMs,
   });
 
   const rejectReasons: Record<string, number> = {};
@@ -1853,6 +2031,10 @@ export async function fetchOptionABlindIssuanceDms(input: {
   limit?: number;
   since?: number;
   maxDecryptAttempts?: number;
+  pageLimit?: number;
+  maxPages?: number;
+  timeBudgetMs?: number;
+  targetRequestId?: string;
 }) {
   if (!input.signer.nip44Decrypt) {
     return [] as BlindBallotIssuance[];
@@ -1861,11 +2043,27 @@ export async function fetchOptionABlindIssuanceDms(input: {
   const recipientHex = toHexPubkey(recipientRaw);
   const relayCandidates = await resolveRecipientReadRelayCandidates(recipientHex, buildRelays(input.relays));
   const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
-  const { events } = await queryBlindDmSyncWithFallback(relayCandidates, {
+  const targetRequestId = input.targetRequestId?.trim() ?? "";
+  const { events } = await queryBlindDmSyncWithFallbackPaginated(relayCandidates, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     since: input.since ?? Math.round(Date.now() / 1000) - OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS,
     limit: Math.max(1, Math.min(input.limit ?? maxDecryptAttempts, maxDecryptAttempts)),
+  }, {
+    pageLimit: input.pageLimit,
+    maxPages: input.maxPages,
+    timeBudgetMs: input.timeBudgetMs,
+    stopAfterPage: targetRequestId
+      ? (pageEvents) => pageContainsSignerDm({
+        pageEvents,
+        signer: input.signer,
+        parse: parseBlindIssuanceDmContent,
+        matches: (issuance) => (
+          issuance.requestId === targetRequestId
+          && (!input.electionId?.trim() || issuance.electionId === input.electionId.trim())
+        ),
+      })
+      : undefined,
   });
 
   const unique = new Map<string, BlindBallotIssuance>();
@@ -1904,14 +2102,34 @@ export async function fetchOptionABlindIssuanceDmsWithNsec(input: {
   electionId?: string;
   relays?: string[];
   limit?: number;
+  pageLimit?: number;
+  maxPages?: number;
+  timeBudgetMs?: number;
+  targetRequestId?: string;
 }) {
   const secretKey = decodeNsecSecretKey(input.nsec);
   const recipientHex = getPublicKey(secretKey);
   const relayCandidates = await resolveRecipientReadRelayCandidates(recipientHex, buildRelays(input.relays));
-  const { events } = await queryBlindDmSyncWithFallback(relayCandidates, {
+  const targetRequestId = input.targetRequestId?.trim() ?? "";
+  const { events } = await queryBlindDmSyncWithFallbackPaginated(relayCandidates, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     limit: Math.max(1, input.limit ?? 100),
+  }, {
+    pageLimit: input.pageLimit,
+    maxPages: input.maxPages,
+    timeBudgetMs: input.timeBudgetMs,
+    stopAfterPage: targetRequestId
+      ? (pageEvents) => pageContainsSecretKeyDm({
+        pageEvents,
+        secretKey,
+        parse: parseBlindIssuanceDmContent,
+        matches: (issuance) => (
+          issuance.requestId === targetRequestId
+          && (!input.electionId?.trim() || issuance.electionId === input.electionId.trim())
+        ),
+      })
+      : undefined,
   });
 
   const unique = new Map<string, BlindBallotIssuance>();
@@ -2061,6 +2279,10 @@ export async function fetchOptionABallotAcceptanceDms(input: {
   limit?: number;
   since?: number;
   maxDecryptAttempts?: number;
+  pageLimit?: number;
+  maxPages?: number;
+  timeBudgetMs?: number;
+  targetSubmissionId?: string;
 }) {
   if (!input.signer.nip44Decrypt) {
     return [] as BallotAcceptanceResult[];
@@ -2074,11 +2296,27 @@ export async function fetchOptionABallotAcceptanceDms(input: {
     relayCount: relays.length,
   });
   const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
-  const events = await queryBlindDmSync(relays, {
+  const targetSubmissionId = input.targetSubmissionId?.trim() ?? "";
+  const events = await queryBlindDmSyncPaginated(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     since: input.since ?? Math.round(Date.now() / 1000) - OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS,
     limit: Math.max(1, Math.min(input.limit ?? maxDecryptAttempts, maxDecryptAttempts)),
+  }, {
+    pageLimit: input.pageLimit,
+    maxPages: input.maxPages,
+    timeBudgetMs: input.timeBudgetMs,
+    stopAfterPage: targetSubmissionId
+      ? (pageEvents) => pageContainsSignerDm({
+        pageEvents,
+        signer: input.signer,
+        parse: parseBallotAcceptanceDmContent,
+        matches: (acceptance) => (
+          acceptance.submissionId === targetSubmissionId
+          && (!input.electionId?.trim() || acceptance.electionId === input.electionId.trim())
+        ),
+      })
+      : undefined,
   });
 
   const unique = new Map<string, BallotAcceptanceResult>();
@@ -2122,14 +2360,34 @@ export async function fetchOptionABallotAcceptanceDmsWithNsec(input: {
   electionId?: string;
   relays?: string[];
   limit?: number;
+  pageLimit?: number;
+  maxPages?: number;
+  timeBudgetMs?: number;
+  targetSubmissionId?: string;
 }) {
   const secretKey = decodeNsecSecretKey(input.nsec);
   const recipientHex = getPublicKey(secretKey);
   const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
-  const events = await queryBlindDmSync(relays, {
+  const targetSubmissionId = input.targetSubmissionId?.trim() ?? "";
+  const events = await queryBlindDmSyncPaginated(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     limit: Math.max(1, input.limit ?? 100),
+  }, {
+    pageLimit: input.pageLimit,
+    maxPages: input.maxPages,
+    timeBudgetMs: input.timeBudgetMs,
+    stopAfterPage: targetSubmissionId
+      ? (pageEvents) => pageContainsSecretKeyDm({
+        pageEvents,
+        secretKey,
+        parse: parseBallotAcceptanceDmContent,
+        matches: (acceptance) => (
+          acceptance.submissionId === targetSubmissionId
+          && (!input.electionId?.trim() || acceptance.electionId === input.electionId.trim())
+        ),
+      })
+      : undefined,
   });
 
   const unique = new Map<string, BallotAcceptanceResult>();
@@ -2165,6 +2423,9 @@ export async function fetchOptionABlindIssuanceAckDms(input: {
   limit?: number;
   since?: number;
   maxDecryptAttempts?: number;
+  pageLimit?: number;
+  maxPages?: number;
+  timeBudgetMs?: number;
 }) {
   if (!input.signer.nip44Decrypt) {
     return [] as BlindIssuanceAck[];
@@ -2173,11 +2434,15 @@ export async function fetchOptionABlindIssuanceAckDms(input: {
   const recipientHex = toHexPubkey(recipientRaw);
   const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
   const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
-  const events = await queryBlindDmSync(relays, {
+  const events = await queryBlindDmSyncPaginated(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     since: input.since ?? Math.round(Date.now() / 1000) - OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS,
     limit: Math.max(1, Math.min(input.limit ?? maxDecryptAttempts, maxDecryptAttempts)),
+  }, {
+    pageLimit: input.pageLimit,
+    maxPages: input.maxPages,
+    timeBudgetMs: input.timeBudgetMs,
   });
 
   const unique = new Map<string, BlindIssuanceAck>();
@@ -2216,14 +2481,21 @@ export async function fetchOptionABlindIssuanceAckDmsWithNsec(input: {
   electionId?: string;
   relays?: string[];
   limit?: number;
+  pageLimit?: number;
+  maxPages?: number;
+  timeBudgetMs?: number;
 }) {
   const secretKey = decodeNsecSecretKey(input.nsec);
   const recipientHex = getPublicKey(secretKey);
   const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
-  const events = await queryBlindDmSync(relays, {
+  const events = await queryBlindDmSyncPaginated(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     limit: Math.max(1, input.limit ?? 100),
+  }, {
+    pageLimit: input.pageLimit,
+    maxPages: input.maxPages,
+    timeBudgetMs: input.timeBudgetMs,
   });
 
   const unique = new Map<string, BlindIssuanceAck>();
@@ -2259,6 +2531,10 @@ export async function fetchOptionABlindRequestAckDms(input: {
   limit?: number;
   since?: number;
   maxDecryptAttempts?: number;
+  pageLimit?: number;
+  maxPages?: number;
+  timeBudgetMs?: number;
+  targetRequestId?: string;
 }) {
   if (!input.signer.nip44Decrypt) {
     return [] as BlindRequestAck[];
@@ -2267,11 +2543,27 @@ export async function fetchOptionABlindRequestAckDms(input: {
   const recipientHex = toHexPubkey(recipientRaw);
   const relayCandidates = await resolveRecipientReadRelayCandidates(recipientHex, buildRelays(input.relays));
   const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
-  const { events } = await queryBlindDmSyncWithFallback(relayCandidates, {
+  const targetRequestId = input.targetRequestId?.trim() ?? "";
+  const { events } = await queryBlindDmSyncWithFallbackPaginated(relayCandidates, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     since: input.since ?? Math.round(Date.now() / 1000) - OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS,
     limit: Math.max(1, Math.min(input.limit ?? maxDecryptAttempts, maxDecryptAttempts)),
+  }, {
+    pageLimit: input.pageLimit,
+    maxPages: input.maxPages,
+    timeBudgetMs: input.timeBudgetMs,
+    stopAfterPage: targetRequestId
+      ? (pageEvents) => pageContainsSignerDm({
+        pageEvents,
+        signer: input.signer,
+        parse: parseBlindRequestAckDmContent,
+        matches: (ack) => (
+          ack.requestId === targetRequestId
+          && (!input.electionId?.trim() || ack.electionId === input.electionId.trim())
+        ),
+      })
+      : undefined,
   });
   const unique = new Map<string, BlindRequestAck>();
   const sorted = [...events]
@@ -2309,14 +2601,34 @@ export async function fetchOptionABlindRequestAckDmsWithNsec(input: {
   electionId?: string;
   relays?: string[];
   limit?: number;
+  pageLimit?: number;
+  maxPages?: number;
+  timeBudgetMs?: number;
+  targetRequestId?: string;
 }) {
   const secretKey = decodeNsecSecretKey(input.nsec);
   const recipientHex = getPublicKey(secretKey);
   const relayCandidates = await resolveRecipientReadRelayCandidates(recipientHex, buildRelays(input.relays));
-  const { events } = await queryBlindDmSyncWithFallback(relayCandidates, {
+  const targetRequestId = input.targetRequestId?.trim() ?? "";
+  const { events } = await queryBlindDmSyncWithFallbackPaginated(relayCandidates, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     limit: Math.max(1, input.limit ?? 100),
+  }, {
+    pageLimit: input.pageLimit,
+    maxPages: input.maxPages,
+    timeBudgetMs: input.timeBudgetMs,
+    stopAfterPage: targetRequestId
+      ? (pageEvents) => pageContainsSecretKeyDm({
+        pageEvents,
+        secretKey,
+        parse: parseBlindRequestAckDmContent,
+        matches: (ack) => (
+          ack.requestId === targetRequestId
+          && (!input.electionId?.trim() || ack.electionId === input.electionId.trim())
+        ),
+      })
+      : undefined,
   });
   const unique = new Map<string, BlindRequestAck>();
   const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));
@@ -2351,6 +2663,10 @@ export async function fetchOptionABallotSubmissionAckDms(input: {
   limit?: number;
   since?: number;
   maxDecryptAttempts?: number;
+  pageLimit?: number;
+  maxPages?: number;
+  timeBudgetMs?: number;
+  targetSubmissionId?: string;
 }) {
   if (!input.signer.nip44Decrypt) {
     return [] as BallotSubmissionAck[];
@@ -2359,11 +2675,27 @@ export async function fetchOptionABallotSubmissionAckDms(input: {
   const recipientHex = toHexPubkey(recipientRaw);
   const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
   const maxDecryptAttempts = Math.max(1, input.maxDecryptAttempts ?? OPTION_A_BLIND_DM_SIGNER_DECRYPT_LIMIT);
-  const events = await queryBlindDmSync(relays, {
+  const targetSubmissionId = input.targetSubmissionId?.trim() ?? "";
+  const events = await queryBlindDmSyncPaginated(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     since: input.since ?? Math.round(Date.now() / 1000) - OPTION_A_BLIND_DM_SIGNER_LOOKBACK_SECONDS,
     limit: Math.max(1, Math.min(input.limit ?? maxDecryptAttempts, maxDecryptAttempts)),
+  }, {
+    pageLimit: input.pageLimit,
+    maxPages: input.maxPages,
+    timeBudgetMs: input.timeBudgetMs,
+    stopAfterPage: targetSubmissionId
+      ? (pageEvents) => pageContainsSignerDm({
+        pageEvents,
+        signer: input.signer,
+        parse: parseBallotSubmissionAckDmContent,
+        matches: (ack) => (
+          ack.submissionId === targetSubmissionId
+          && (!input.electionId?.trim() || ack.electionId === input.electionId.trim())
+        ),
+      })
+      : undefined,
   });
   const unique = new Map<string, BallotSubmissionAck>();
   const sorted = [...events]
@@ -2401,14 +2733,34 @@ export async function fetchOptionABallotSubmissionAckDmsWithNsec(input: {
   electionId?: string;
   relays?: string[];
   limit?: number;
+  pageLimit?: number;
+  maxPages?: number;
+  timeBudgetMs?: number;
+  targetSubmissionId?: string;
 }) {
   const secretKey = decodeNsecSecretKey(input.nsec);
   const recipientHex = getPublicKey(secretKey);
   const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
-  const events = await queryBlindDmSync(relays, {
+  const targetSubmissionId = input.targetSubmissionId?.trim() ?? "";
+  const events = await queryBlindDmSyncPaginated(relays, {
     kinds: [KIND_GIFT_WRAP],
     "#p": [recipientHex],
     limit: Math.max(1, input.limit ?? 100),
+  }, {
+    pageLimit: input.pageLimit,
+    maxPages: input.maxPages,
+    timeBudgetMs: input.timeBudgetMs,
+    stopAfterPage: targetSubmissionId
+      ? (pageEvents) => pageContainsSecretKeyDm({
+        pageEvents,
+        secretKey,
+        parse: parseBallotSubmissionAckDmContent,
+        matches: (ack) => (
+          ack.submissionId === targetSubmissionId
+          && (!input.electionId?.trim() || ack.electionId === input.electionId.trim())
+        ),
+      })
+      : undefined,
   });
   const unique = new Map<string, BallotSubmissionAck>();
   const sorted = [...events].sort((left, right) => (right.created_at ?? 0) - (left.created_at ?? 0));

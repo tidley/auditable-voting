@@ -250,7 +250,7 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 
 1. Share the questionnaire link from **Voting** with **Copy link** or **Share**. These actions use the browser/device apps already available; no provider API key or service registration is needed.
 2. Use **Create single-use invite link** in **Voters** when the organiser wants a one-use bearer invite. Each invite appears in the invited-voter list with an internal note, voter status, QR code, and actions. **Mark as used** records manual use and makes an unclaimed link unavailable; clearing it makes the unclaimed link available again. Voter status shows whether the link has been claimed, a ballot has been sent, a vote has been submitted, or the organiser has manually marked it as used. The voter looks up organiser and audit-proxy routing from the public questionnaire metadata on Nostr, then automatically requests a ballot.
-3. Add or import voter `npub`s in **Voters** when you want to invite voters once and reuse that eligibility for later questionnaires from the same organiser. Each invited voter can have an internal note and an **Auto-ballot** checkbox. Click **Apply to current questionnaire** to project checked voters into the active questionnaire whitelist and publish one public questionnaire announcement. The roster is organiser-local; it is not a reusable ballot credential.
+3. Add or import voter `npub`s in **Voters** when you want to invite voters once and reuse that eligibility for later questionnaires from the same organiser. Each invited voter can have an internal note and an **Auto-ballot** checkbox. Click **Apply to current questionnaire** to project checked voters into the active questionnaire whitelist and publish one roster-free public questionnaire announcement. After one questionnaire is published, **New round** creates a fresh questionnaire ID from the current setup and offers only **Publish to invited voters**, which publishes and projects checked voters in one flow. The roster is organiser-local; it is not published and is not a reusable ballot credential.
 4. Use **Copy personalised link** beside an invited/whitelisted voter when the link should carry that invited voter `npub`. The voter must still sign in as that `npub`; the personalised URL reveals the invitee `npub` to whoever sees the link.
 5. Send Nostr invite DMs with **Invite** beside each Nostr invite voter. Voters who claimed a private link stay in the private invite cards and are not repeated in the Nostr invite action list.
 6. Voters who arrive from a shared link without being whitelisted can still request a ballot. Pending requests appear in the **Voters** island on **Voting**, where the organiser can approve and invite them.
@@ -262,7 +262,9 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 3. Click **Request ballot** if the blind credential request does not start automatically.
 4. Wait for the ballot credential to be ready.
 5. Complete the questionnaire and click **Submit response**.
-6. If no proxy is selected, the organiser browser must stay online long enough to process requests and responses. If a proxy is selected and active, the voter can wait for the proxy instead.
+6. After submission, Vote keeps the submitted answers visible and locks the question controls for that questionnaire.
+7. When several questionnaires from the organiser are available, Vote labels the selector by round and local status, and **Answer next** opens the next unanswered questionnaire.
+8. If no proxy is selected, the organiser browser must stay online long enough to process requests and responses. If a proxy is selected and active, the voter can wait for the proxy instead.
 
 ### 5. Organiser or proxy processes responses
 
@@ -296,6 +298,8 @@ If the Questionnaire tab reports that the blind-signing key is still initialisin
 
 The audit proxy is an optional Rust helper for keeping delegated questionnaire work running when the organiser browser is not open. It does not become the root authority for the questionnaire: the organiser still creates the questionnaire, owns the organiser identity, signs the delegation, and can revoke or replace the proxy.
 
+For larger live sessions, such as dozens of rounds or around 100 voters, the audit proxy is the recommended default for blind issuance, submission verification, public decision publication, and delegated close/summary work. That keeps the organiser browser as root authority while moving the high-volume request processing into a dedicated worker.
+
 The proxy receives two private control messages from the organiser:
 
 1. a signed worker delegation that names the questionnaire, proxy `npub`, capabilities, control relays, and expiry
@@ -310,7 +314,7 @@ For voters, the important distinction is who is expected to answer the blind req
 - without a proxy, `Waiting for organiser` means the organiser browser must come online and process the request
 - with a proxy, `Waiting for audit proxy` means the delegated helper should issue the credential, even if the organiser browser has gone offline
 
-Invite payloads and cached questionnaire metadata include the proxy routing hint, and public questionnaire metadata can include non-default questionnaire relay hints. Voters keep targeting the proxy after reloads and prefer the questionnaire relay hints for the round's public events and NIP-17 traffic. The helper currently defaults to a nostrwat.ch-checked control relay set (relay.nostr.net, nos.lol, relay.nostr.info, relay.nos.social, relay.momostr.pink, and relay.azzamo.net), and retains older persisted relay hints while retrying known unreliable endpoints with per-relay exponential backoff.
+Invite payloads and cached questionnaire metadata include the proxy routing hint, and public questionnaire metadata can include non-default questionnaire relay hints. Voters keep targeting the proxy after reloads and prefer the questionnaire relay hints for the round's public events and NIP-17 traffic. The helper and browser defaults now use a smaller relay set: relay.nostr.net, nos.lol, and relay.nostr.info for NIP-17 inbox/control traffic, plus relay.nos.social as an extra public questionnaire relay. Older persisted relay hints are retained but retried with per-relay exponential backoff.
 
 ### Voter
 
@@ -404,7 +408,8 @@ The client uses:
 - `@cloudflare/blindrsa-ts` for RSABSSA blind signatures
 - Rust/Wasm for deterministic replay and protocol validation in the public round path
 - an optional Rust audit proxy runtime (`worker/`) for delegated election operations over outbound-only relay connections
-- seven-day fixed-lookback audit proxy DM polling with event-id dedupe so relay-randomised gift-wrap timestamps do not cause missed delegated blind requests, plus status heartbeats back to the organiser, active delegation control-relay reads, delegated close + auto-summary after all expected invitees have accepted valid responses, clean exit after completed delegated work, and a nostrwat.ch-checked helper relay set (relay.nostr.net, nos.lol, relay.nostr.info, relay.nos.social, relay.momostr.pink, and relay.azzamo.net); older persisted relay hints are retained but known unreliable endpoints are retried with per-relay exponential backoff
+- adaptive browser NIP-17 mailbox recovery that pages backwards until the active request, issuance, or submission acknowledgement is found, or until a short time budget is reached; public submission decisions are recovered through the public questionnaire event backfill
+- audit proxy DM polling with event-id dedupe so relay-randomised gift-wrap timestamps do not cause missed delegated blind requests, plus status heartbeats back to the organiser, active delegation control-relay reads, delegated close + auto-summary after all expected invitees have accepted valid responses, clean exit after completed delegated work, and the smaller default helper relay set (relay.nostr.net, nos.lol, relay.nostr.info); older persisted relay hints are retained but known unreliable endpoints are retried with per-relay exponential backoff
 - an optional FIPS host launcher (`web/public/fips-host/launch-auditable-voting-fips.sh`) that builds the upstream FIPS Rust daemon, enables `fips-overlay-v1` Nostr endpoint adverts, installs the complete Vite static build on the host's `fips0` address, opens the chosen mesh web port through the FIPS firewall, and can install the audit proxy as a disabled systemd service
 - browser storage for private active state and recovery
 
@@ -460,7 +465,7 @@ The published summary includes per-response references as a parity backfill, so 
 
 Before a final result summary exists, the observer derives a live provisional summary from verified public submissions and labels it as live relay-derived data. Organisers also publish a separate parameterised replaceable expected-participant count event, letting the observer show accepted responses against the expected participant total while keeping individual invitees private.
 
-The observer view uses one live subscription for the selected questionnaire and serial public refresh reads, with a slower questionnaire-list refresh and an explicit Refresh button for immediate reloads. If an older published questionnaire or result payload is missing from the default list, reopen the direct questionnaire link or refresh from a relay set that still indexes that event. Encrypted answer details remain hidden unless a matching organiser `nsec` is entered for local decryption.
+The observer view uses one live subscription for the selected questionnaire and tag-filtered, paginated public refresh reads, with a slower questionnaire-list refresh and an explicit Refresh button for immediate reloads. If an older published questionnaire or result payload is missing from the default list, reopen the direct questionnaire link or refresh from a relay set that still indexes that event. Encrypted answer details remain hidden unless a matching organiser `nsec` is entered for local decryption.
 
 ## Current Limits
 

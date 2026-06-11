@@ -245,22 +245,22 @@ describe("questionnaireOptionAInviteDm", () => {
         return [];
       }
       if (Array.isArray(filter?.kinds) && filter.kinds.includes(1059)) {
-        return relays.length <= 3
+        return relays.some((relay) => relay.includes("fallback-only"))
           ? [{
-            id: "primary-dm",
-            kind: 1059,
-            pubkey: primaryWrapPubkey,
-            content: "ciphertext-primary",
-            created_at: 123,
-            tags: [["p", recipientHex]],
-            sig: "sig",
-          }]
-          : [{
             id: "fallback-dm",
             kind: 1059,
             pubkey: fallbackWrapPubkey,
             content: "ciphertext-fallback",
             created_at: 124,
+            tags: [["p", recipientHex]],
+            sig: "sig",
+          }]
+          : [{
+            id: "primary-dm",
+            kind: 1059,
+            pubkey: primaryWrapPubkey,
+            content: "ciphertext-primary",
+            created_at: 123,
             tags: [["p", recipientHex]],
             sig: "sig",
           }];
@@ -313,6 +313,14 @@ describe("questionnaireOptionAInviteDm", () => {
     const invites = await fetchOptionAInviteDms({
       signer,
       electionId: "e-fallback",
+      relays: [
+        "wss://relay.primary-one.example",
+        "wss://relay.primary-two.example",
+        "wss://relay.primary-three.example",
+        "wss://relay.primary-four.example",
+        "wss://relay.primary-five.example",
+        "wss://relay.fallback-only.example",
+      ],
       limit: 20,
     });
 
@@ -492,7 +500,7 @@ describe("questionnaireOptionAInviteDm", () => {
         return [];
       }
       if (Array.isArray(filter?.kinds) && filter.kinds.includes(1059)) {
-        return relays.length <= 3 ? [primaryWrapped] : [fallbackWrapped];
+        return relays.some((relay) => relay.includes("fallback-only")) ? [fallbackWrapped] : [primaryWrapped];
       }
       return [];
     });
@@ -500,6 +508,14 @@ describe("questionnaireOptionAInviteDm", () => {
     const invites = await fetchOptionAInviteDmsWithNsec({
       nsec: recipientNsec,
       electionId: "e3-fallback",
+      relays: [
+        "wss://relay.primary-one.example",
+        "wss://relay.primary-two.example",
+        "wss://relay.primary-three.example",
+        "wss://relay.primary-four.example",
+        "wss://relay.primary-five.example",
+        "wss://relay.fallback-only.example",
+      ],
       limit: 20,
     });
 

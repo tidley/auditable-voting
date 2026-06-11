@@ -14,6 +14,7 @@ import type { ElectionInviteMessage, QuestionnaireAnswer, VoterElectionLocalStat
 import { deriveActorDisplayId } from "./actorDisplay";
 import {
   loadElectionSummary,
+  loadVoterState,
   listInvitesFromMailbox,
   publishInviteToMailbox,
   upsertElectionSummary,
@@ -125,6 +126,51 @@ function answerToOptionA(
     answer: text,
     encryptForCoordinator: Boolean(encryptForCoordinator || question.encryptResponses),
   };
+}
+
+function answersFromOptionADraft(responses: QuestionnaireAnswer[]) {
+  const next: Record<string, unknown> = {};
+  for (const response of responses) {
+    if (response.type === "yes_no") {
+      next[response.questionId] = response.answer;
+      continue;
+    }
+    if (response.type === "multiple_choice" || response.type === "rank") {
+      next[response.questionId] = [...response.answer];
+      continue;
+    }
+    next[response.questionId] = response.answer;
+  }
+  return next;
+}
+
+function encryptionFlagsFromOptionADraft(responses: QuestionnaireAnswer[]) {
+  const next: Record<string, boolean> = {};
+  for (const response of responses) {
+    if (response.type === "text" && response.encryptForCoordinator) {
+      next[response.questionId] = true;
+    }
+  }
+  return next;
+}
+
+function answerRecordEquals(left: Record<string, unknown>, right: Record<string, unknown>) {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  if (leftKeys.length !== rightKeys.length) {
+    return false;
+  }
+  return leftKeys.every((key) => {
+    const leftValue = left[key];
+    const rightValue = right[key];
+    if (Array.isArray(leftValue) || Array.isArray(rightValue)) {
+      if (!Array.isArray(leftValue) || !Array.isArray(rightValue) || leftValue.length !== rightValue.length) {
+        return false;
+      }
+      return leftValue.every((entry, index) => entry === rightValue[index]);
+    }
+    return leftValue === rightValue;
+  });
 }
 
 function mapDefinitionQuestions(definition: QuestionnaireDefinition) {
@@ -250,6 +296,39 @@ function resolveInviteDisplayTitle(invite: ElectionInviteMessage) {
     return fromInvite;
   }
   return invite.electionId;
+}
+
+type QuestionnaireRoundProgress = {
+  label: string;
+  submitted: boolean;
+};
+
+function getQuestionnaireRoundProgress(state: VoterElectionLocalState | null | undefined): QuestionnaireRoundProgress {
+  if (state?.submissionAccepted === true) {
+    return { label: "accepted", submitted: true };
+  }
+  if (state?.submissionAccepted === false) {
+    return { label: "rejected", submitted: true };
+  }
+  if (state?.submission) {
+    return { label: "submitted", submitted: true };
+  }
+  if (state?.credentialReady) {
+    return { label: "ready", submitted: false };
+  }
+  if (state?.blindRequestSent) {
+    return { label: "awaiting ballot", submitted: false };
+  }
+  return { label: "not started", submitted: false };
+}
+
+function formatQuestionnaireRoundOptionLabel(input: {
+  invite: ElectionInviteMessage;
+  index: number;
+  total: number;
+  progress: QuestionnaireRoundProgress;
+}) {
+  return `${input.index + 1}/${input.total} ${resolveInviteDisplayTitle(input.invite)} · ${input.progress.label}`;
 }
 
 function formatVoteActionButtonText(input: {
@@ -419,6 +498,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   };
   const linkedContextElectionId = inviteContext.electionId?.trim() ?? "";
   const currentQuestionnaireId = snapshot?.electionId?.trim() || electionId.trim() || linkedContextElectionId || latestAnnouncedQuestionnaireId.trim();
+  const responseSubmittedForCurrentQuestionnaire = Boolean(
+    snapshot?.submission
+    && snapshot.electionId === currentQuestionnaireId,
+  );
   const contextPendingInvites = useMemo(() => (
     linkedContextElectionId
       ? pendingInvites.filter((invite) => invite.electionId === linkedContextElectionId)
@@ -591,6 +674,15 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     return () => {
       runtime?.dispose();
     };
+  }, [runtime]);
+
+  useEffect(() => {
+    if (!runtime) {
+      return undefined;
+    }
+    return runtime.subscribeStateChanges(() => {
+      setRefreshNonce((value) => value + 1);
+    });
   }, [runtime]);
 
   useEffect(() => {
@@ -1513,7 +1605,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   }
 
   function pushAnswers() {
-    if (!runtime) {
+    if (!runtime || responseSubmittedForCurrentQuestionnaire) {
       return;
     }
     const next = questions
@@ -1530,6 +1622,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   }
 
   function addRankedAnswer(questionId: string, optionId: string) {
+    if (responseSubmittedForCurrentQuestionnaire) {
+      return;
+    }
     setAnswers((current) => {
       const existing = Array.isArray(current[questionId])
         ? (current[questionId] as string[])
@@ -1542,6 +1637,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   }
 
   function moveRankedAnswer(questionId: string, optionId: string, direction: -1 | 1) {
+    if (responseSubmittedForCurrentQuestionnaire) {
+      return;
+    }
     setAnswers((current) => {
       const existing = Array.isArray(current[questionId])
         ? [...(current[questionId] as string[])]
@@ -1559,6 +1657,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   }
 
   function removeRankedAnswer(questionId: string, optionId: string) {
+    if (responseSubmittedForCurrentQuestionnaire) {
+      return;
+    }
     setAnswers((current) => {
       const existing = Array.isArray(current[questionId])
         ? (current[questionId] as string[])
@@ -2128,22 +2229,72 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     snapshot,
     syntheticInviteQuestionnaireIds,
   ]);
+  const inviteDropdownProgressByKey = useMemo(() => {
+    const fallbackVoterNpub = props.localVoterNpub?.trim()
+      || signedInNpub.trim()
+      || snapshot?.invitedNpub?.trim()
+      || "";
+    const map = new Map<string, QuestionnaireRoundProgress>();
+    for (const invite of inviteDropdownOptions) {
+      const key = inviteMessageKey(invite);
+      const voterNpub = invite.invitedNpub?.trim() || fallbackVoterNpub;
+      const localState = snapshot?.electionId === invite.electionId
+        ? snapshot
+        : voterNpub
+          ? loadVoterState({
+            voterNpub,
+            electionId: invite.electionId,
+            coordinatorNpub: invite.coordinatorNpub,
+          })
+          : null;
+      map.set(key, getQuestionnaireRoundProgress(localState));
+    }
+    return map;
+  }, [
+    inviteDropdownOptions,
+    props.localVoterNpub,
+    refreshNonce,
+    signedInNpub,
+    snapshot,
+  ]);
+  const currentInviteForDropdown = currentQuestionnaireId
+    ? inviteDropdownOptions.find((invite) => invite.electionId === currentQuestionnaireId) ?? inviteDropdownOptions[0] ?? null
+    : inviteDropdownOptions[0] ?? null;
+  const currentInviteDropdownKey = selectedInviteKey || (currentInviteForDropdown ? inviteMessageKey(currentInviteForDropdown) : "");
+  const currentInviteDropdownIndex = inviteDropdownOptions.findIndex((invite) => inviteMessageKey(invite) === currentInviteDropdownKey);
+  const currentRoundProgress = currentInviteDropdownKey
+    ? inviteDropdownProgressByKey.get(currentInviteDropdownKey) ?? getQuestionnaireRoundProgress(null)
+    : getQuestionnaireRoundProgress(null);
   const nextInviteDropdownOption = useMemo(() => {
     if (inviteDropdownOptions.length <= 1) {
       return null;
     }
-    const currentInvite = currentQuestionnaireId
-      ? inviteDropdownOptions.find((invite) => invite.electionId === currentQuestionnaireId) ?? inviteDropdownOptions[0]
-      : inviteDropdownOptions[0];
-    const currentKey = selectedInviteKey || (currentInvite ? inviteMessageKey(currentInvite) : "");
-    const currentIndex = inviteDropdownOptions.findIndex((invite) => inviteMessageKey(invite) === currentKey);
-    const startIndex = currentIndex >= 0 ? currentIndex + 1 : 0;
-    return inviteDropdownOptions.slice(startIndex).find((invite) => inviteMessageKey(invite) !== currentKey)
-      ?? inviteDropdownOptions.find((invite) => inviteMessageKey(invite) !== currentKey)
+    const startIndex = currentInviteDropdownIndex >= 0 ? currentInviteDropdownIndex + 1 : 0;
+    const isUnanswered = (invite: ElectionInviteMessage) => {
+      const key = inviteMessageKey(invite);
+      return key !== currentInviteDropdownKey && !(inviteDropdownProgressByKey.get(key)?.submitted ?? false);
+    };
+    return inviteDropdownOptions.slice(startIndex).find(isUnanswered)
+      ?? inviteDropdownOptions.find(isUnanswered)
       ?? null;
-  }, [currentQuestionnaireId, inviteDropdownOptions, selectedInviteKey]);
+  }, [
+    currentInviteDropdownIndex,
+    currentInviteDropdownKey,
+    inviteDropdownOptions,
+    inviteDropdownProgressByKey,
+  ]);
   const nextInviteDropdownKey = nextInviteDropdownOption ? inviteMessageKey(nextInviteDropdownOption) : "";
+  const nextInviteDropdownIndex = nextInviteDropdownOption
+    ? inviteDropdownOptions.findIndex((invite) => inviteMessageKey(invite) === nextInviteDropdownKey)
+    : -1;
   const answerNextDisabled = !nextInviteDropdownOption || (Boolean(answerNextPendingKey) && answerNextPendingKey === nextInviteDropdownKey);
+  const answerNextButtonText = answerNextPendingKey
+    ? "Opening..."
+    : nextInviteDropdownOption
+      ? `Answer next (${nextInviteDropdownIndex + 1}/${inviteDropdownOptions.length})`
+      : inviteDropdownOptions.length > 1 && currentRoundProgress.submitted
+        ? "All answered"
+        : "Answer next";
 
   useEffect(() => {
     const selectedQuestionnaireId = currentQuestionnaireId;
@@ -2179,7 +2330,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
     return value !== undefined && value !== null && String(value).trim().length > 0;
   });
-  const canSubmitNow = flags.canSubmitVote && requiredQuestionsAnswered;
+  const canSubmitNow = flags.canSubmitVote && requiredQuestionsAnswered && !responseSubmittedForCurrentQuestionnaire;
   const actionQuestionnaireId = currentQuestionnaireId || electionId.trim();
   const snapshotForAction = snapshot?.electionId === actionQuestionnaireId ? snapshot : null;
   const actionCoordinatorNpub = snapshotForAction?.coordinatorNpub?.trim()
@@ -2194,6 +2345,16 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     blindSigningKeyReady: autoRequestBlindSigningKeyReady,
     coordinatorNpub: actionCoordinatorNpub,
   });
+  useEffect(() => {
+    if (!responseSubmittedForCurrentQuestionnaire || !snapshot?.draftResponses?.length) {
+      return;
+    }
+    const nextAnswers = answersFromOptionADraft(snapshot.draftResponses);
+    setAnswers((current) => answerRecordEquals(current, nextAnswers) ? current : nextAnswers);
+    const nextEncryptionFlags = encryptionFlagsFromOptionADraft(snapshot.draftResponses);
+    setEncryptFreeTextByQuestionId((current) => answerRecordEquals(current, nextEncryptionFlags) ? current : nextEncryptionFlags);
+  }, [responseSubmittedForCurrentQuestionnaire, snapshot?.draftResponses, snapshot?.submission?.submissionId]);
+
   useEffect(() => {
     const owner = globalThis as typeof globalThis & {
       __questionnaireVoterDebug?: unknown;
@@ -2484,11 +2645,17 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               }
             }}
           >
-            {inviteDropdownOptions.map((invite) => {
+            {inviteDropdownOptions.map((invite, index) => {
               const key = inviteMessageKey(invite);
+              const progress = inviteDropdownProgressByKey.get(key) ?? getQuestionnaireRoundProgress(null);
               return (
                 <option key={key} value={key}>
-                  {resolveInviteDisplayTitle(invite) + " · " + invite.electionId}
+                  {formatQuestionnaireRoundOptionLabel({
+                    invite,
+                    index,
+                    total: inviteDropdownOptions.length,
+                    progress,
+                  })}
                 </option>
               );
             })}
@@ -2508,7 +2675,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               }
             }}
           >
-            Answer next
+            {answerNextButtonText}
           </button>
         </div>
       ) : null}
@@ -2577,7 +2744,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                   : " is-optional"
               : question.required ? "" : " is-optional";
             return (
-            <article key={question.questionId} className='simple-questionnaire-voter-card'>
+            <article key={question.questionId} className={`simple-questionnaire-voter-card${responseSubmittedForCurrentQuestionnaire ? " is-response-locked" : ""}`}>
               <div className='simple-questionnaire-voter-heading'>
                 <h4 className='simple-questionnaire-voter-prompt'>Q{index + 1}: {question.prompt || "Untitled question"}</h4>
                 <p className={`simple-questionnaire-voter-requirement${requirementClass}`}>
@@ -2595,7 +2762,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                     type='button'
                     className={`simple-voter-choice simple-voter-choice-yes${answers[question.questionId] === "yes" ? " is-active" : answers[question.questionId] === "no" ? " is-dimmed" : ""}`}
                     aria-pressed={answers[question.questionId] === "yes"}
-                    onClick={() => setAnswers((current) => ({ ...current, [question.questionId]: "yes" }))}
+                    disabled={responseSubmittedForCurrentQuestionnaire}
+                    onClick={() => {
+                      if (responseSubmittedForCurrentQuestionnaire) {
+                        return;
+                      }
+                      setAnswers((current) => ({ ...current, [question.questionId]: "yes" }));
+                    }}
                   >
                     Yes
                   </button>
@@ -2603,7 +2776,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                     type='button'
                     className={`simple-voter-choice simple-voter-choice-no${answers[question.questionId] === "no" ? " is-active" : answers[question.questionId] === "yes" ? " is-dimmed" : ""}`}
                     aria-pressed={answers[question.questionId] === "no"}
-                    onClick={() => setAnswers((current) => ({ ...current, [question.questionId]: "no" }))}
+                    disabled={responseSubmittedForCurrentQuestionnaire}
+                    onClick={() => {
+                      if (responseSubmittedForCurrentQuestionnaire) {
+                        return;
+                      }
+                      setAnswers((current) => ({ ...current, [question.questionId]: "no" }));
+                    }}
                   >
                     No
                   </button>
@@ -2621,7 +2800,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                         <input
                           type={question.multiSelect ? "checkbox" : "radio"}
                           checked={checked}
+                          disabled={responseSubmittedForCurrentQuestionnaire}
                           onChange={() => {
+                            if (responseSubmittedForCurrentQuestionnaire) {
+                              return;
+                            }
                             setAnswers((current) => {
                               const existing = Array.isArray(current[question.questionId])
                                 ? (current[question.questionId] as string[])
@@ -2663,7 +2846,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                                     type='button'
                                     className='simple-voter-secondary simple-questionnaire-rank-action'
                                     onClick={() => moveRankedAnswer(question.questionId, option.optionId, -1)}
-                                    disabled={rankedIndex === 0}
+                                    disabled={responseSubmittedForCurrentQuestionnaire || rankedIndex === 0}
                                   >
                                     Up
                                   </button>
@@ -2671,7 +2854,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                                     type='button'
                                     className='simple-voter-secondary simple-questionnaire-rank-action'
                                     onClick={() => moveRankedAnswer(question.questionId, option.optionId, 1)}
-                                    disabled={rankedIndex === ranked.length - 1}
+                                    disabled={responseSubmittedForCurrentQuestionnaire || rankedIndex === ranked.length - 1}
                                   >
                                     Down
                                   </button>
@@ -2679,6 +2862,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                                     type='button'
                                     className='simple-voter-secondary simple-questionnaire-rank-action'
                                     onClick={() => removeRankedAnswer(question.questionId, option.optionId)}
+                                    disabled={responseSubmittedForCurrentQuestionnaire}
                                   >
                                     Remove
                                   </button>
@@ -2695,6 +2879,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                                 type='button'
                                 className='simple-voter-secondary simple-questionnaire-rank-add'
                                 onClick={() => addRankedAnswer(question.questionId, option.optionId)}
+                                disabled={responseSubmittedForCurrentQuestionnaire}
                               >
                                 <span className='simple-questionnaire-rank-add-option'>{option.label}</span>
                                 <span className='simple-questionnaire-rank-add-prefix'>Add as #{ranked.length + 1}</span>
@@ -2718,15 +2903,21 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                         rows={3}
                         maxLength={question.maxLength ?? 500}
                         value={typeof answers[question.questionId] === "string" ? (answers[question.questionId] as string) : ""}
-                        onChange={(event) => setAnswers((current) => ({ ...current, [question.questionId]: event.target.value }))}
+                        readOnly={responseSubmittedForCurrentQuestionnaire}
+                        onChange={(event) => {
+                          if (responseSubmittedForCurrentQuestionnaire) {
+                            return;
+                          }
+                          setAnswers((current) => ({ ...current, [question.questionId]: event.target.value }));
+                        }}
                       />
                       <label className='simple-questionnaire-choice-row'>
                         <input
                           type='checkbox'
                           checked={encryptionEnabled}
-                          disabled={encryptionRequired}
+                          disabled={encryptionRequired || responseSubmittedForCurrentQuestionnaire}
                           onChange={(event) => {
-                            if (encryptionRequired) {
+                            if (encryptionRequired || responseSubmittedForCurrentQuestionnaire) {
                               return;
                             }
                             const checked = event.target.checked;

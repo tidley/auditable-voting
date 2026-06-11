@@ -128,6 +128,7 @@ type QuestionnaireCoordinatorPanelProps = {
   onQuestionnaireRelaysInputChange?: (value: string) => void;
   onConfigureQuestionnaireRelays?: () => void;
   onConfigureWorker?: () => void;
+  newRoundMode?: boolean;
   canApplyAdmissionsOnPublish?: boolean;
   onAfterPublishQuestionnaire?: (questionnaireId: string) => void | Promise<void>;
   onStatusChange?: (status: {
@@ -310,26 +311,23 @@ const DEFAULT_WORKER_CONTROL_RELAYS = normalizeRelaysRust([
   "wss://relay.nostr.net",
   "wss://nos.lol",
   "wss://relay.nostr.info",
-  "wss://relay.nos.social",
-  "wss://relay.momostr.pink",
-  "wss://relay.azzamo.net",
 ]);
 const DEPRECATED_WORKER_RELAY_REPLACEMENTS = new Map<string, string>([
   [`wss://strfry.${"bitsbytom.com"}`, "wss://relay.nostr.net"],
   [`wss://nip17.${"tomdwyer.uk"}`, "wss://nos.lol"],
-  [`wss://offchain.${"pub"}`, "wss://relay.nos.social"],
+  [`wss://offchain.${"pub"}`, "wss://relay.nostr.net"],
   ["wss://relay.nostr.band", "wss://relay.nostr.info"],
   ["wss://relay.damus.io", "wss://relay.nostr.net"],
   ["wss://relay.primal.net", "wss://nos.lol"],
-  ["wss://nostr.mom", "wss://relay.momostr.pink"],
-  ["wss://nostr.wine", "wss://relay.azzamo.net"],
-  ["wss://eden.nostr.land", "wss://relay.nos.social"],
+  ["wss://nostr.mom", "wss://relay.nostr.net"],
+  ["wss://nostr.wine", "wss://nos.lol"],
+  ["wss://eden.nostr.land", "wss://relay.nostr.net"],
   ["wss://purplepag.es", "wss://relay.nostr.info"],
-  ["wss://nip17.com", "wss://relay.momostr.pink"],
-  ["wss://relay.layer.systems", "wss://relay.nos.social"],
-  ["wss://nostr.bond", "wss://relay.azzamo.net"],
+  ["wss://nip17.com", "wss://relay.nostr.info"],
+  ["wss://relay.layer.systems", "wss://relay.nostr.net"],
+  ["wss://nostr.bond", "wss://nos.lol"],
   ["wss://auth.nostr1.com", "wss://relay.nostr.info"],
-  ["wss://inbox.nostr.wine", "wss://relay.momostr.pink"],
+  ["wss://inbox.nostr.wine", "wss://relay.nostr.info"],
   ["wss://nostr-pub.wellorder.net", "wss://relay.nostr.net"],
   ["wss://relay.0xchat.com", "wss://nos.lol"],
 ]);
@@ -1153,6 +1151,7 @@ function publishedDefinitionMatchesDraft(
 export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordinatorPanelProps) {
   const deploymentMode = useMemo(() => readDeploymentModeFromUrl(), []);
   const isCourseFeedbackMode = deploymentMode === "course_feedback";
+  const isNewRoundMode = props.newRoundMode === true;
   const storedDraft = useMemo(() => readStoredQuestionnaireDraft(), []);
   const [questionnaireId, setQuestionnaireId] = useState(storedDraft.questionnaireId);
   const [title, setTitle] = useState(storedDraft.title);
@@ -2520,9 +2519,11 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         : currentState === "closed"
           ? "Ended"
           : currentState === "open"
-            ? "Open"
-            : "Draft";
-  const setupHeadingStateLabel = buildStateLabel === "Open" ? "Active" : buildStateLabel;
+          ? "Open"
+          : "Draft";
+  const setupHeadingStateLabel = isNewRoundMode && !publishedDefinition
+    ? "New round"
+    : buildStateLabel === "Open" ? "Active" : buildStateLabel;
   const checklistDescriptionAdded = description.trim().length > 0;
   const selectedQuestionnaireOptions = availableQuestionnaireIds.length > 0
     ? availableQuestionnaireIds
@@ -2855,14 +2856,25 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         setStatus(`Vote published (${result.successes}/${result.relayResults.length} relays).`);
         await publishParticipantCountSnapshot({ silent: true });
         await publishState("open");
+        const shouldConfigureWorker = delegationMode === "delegated_worker"
+          && Boolean(normaliseWorkerNpub(delegatedWorkerNpub));
+        if (shouldConfigureWorker) {
+          setStatus("Vote published. Configuring audit proxy...");
+          await delegateToWorker({ statusPrefix: "Vote published." });
+        }
+        let admissionsApplied = true;
         if (options?.applyAdmissions) {
           try {
             await props.onAfterPublishQuestionnaire?.(definitionToPublish.questionnaireId);
           } catch (error) {
+            admissionsApplied = false;
             setStatus(
               `Vote published, but invited voters could not be applied: ${error instanceof Error ? error.message : "unknown error"}.`,
             );
           }
+        }
+        if (!admissionsApplied) {
+          return;
         }
       } else {
         setStatus("Vote publish failed.");
@@ -3222,7 +3234,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     }
   }
 
-  async function delegateToWorker() {
+  async function delegateToWorker(options?: { statusPrefix?: string }) {
     const electionId = questionnaireId.trim();
     const coordinatorNsecTrimmed = coordinatorNsec.trim();
     const coordinatorNpubTrimmed = coordinatorNpub.trim();
@@ -3231,24 +3243,24 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       ? Number.parseInt(delegatedWorkerExpiryMinutes, 10)
       : Number.NaN;
     if (!electionId || !coordinatorNsecTrimmed || !coordinatorNpubTrimmed) {
-      setStatus("Organiser identity and questionnaire ID are required before delegation.");
+      setStatus(`${options?.statusPrefix ? `${options.statusPrefix} ` : ""}Organiser identity and questionnaire ID are required before delegation.`);
       return;
     }
     if (!workerNpub) {
-      setStatus("Enter a valid audit proxy npub.");
+      setStatus(`${options?.statusPrefix ? `${options.statusPrefix} ` : ""}Enter a valid audit proxy npub.`);
       return;
     }
     if (delegatedWorkerExpiryEnabled && (!Number.isFinite(expiryMinutes) || expiryMinutes <= 0)) {
-      setStatus("Delegation expiry must be a positive number of minutes.");
+      setStatus(`${options?.statusPrefix ? `${options.statusPrefix} ` : ""}Delegation expiry must be a positive number of minutes.`);
       return;
     }
     if (delegatedWorkerCapabilities.length === 0) {
-      setStatus("Select at least one audit proxy capability.");
+      setStatus(`${options?.statusPrefix ? `${options.statusPrefix} ` : ""}Select at least one audit proxy capability.`);
       return;
     }
     const controlRelays = parseDelegatedControlRelays(delegatedWorkerControlRelays);
     if (controlRelays.length === 0) {
-      setStatus("Enter at least one audit proxy control relay.");
+      setStatus(`${options?.statusPrefix ? `${options.statusPrefix} ` : ""}Enter at least one audit proxy control relay.`);
       return;
     }
     const delegation = createWorkerDelegationCertificate({
@@ -3275,7 +3287,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       })
       : null;
     if (delegatedWorkerCapabilities.includes("issue_blind_tokens") && !coordinatorState?.blindSigningPrivateKey) {
-      setStatus("Blind-signing private key is not available yet. Publish the vote and try again.");
+      setStatus(`${options?.statusPrefix ? `${options.statusPrefix} ` : ""}Blind-signing private key is not available yet. Publish the vote and try again.`);
       return;
     }
     const whitelistNpubs = Object.keys(coordinatorState?.whitelist ?? {})
@@ -3357,10 +3369,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         });
       }
       setStatus(
-        `Audit proxy configured (${publicResult.successes} public relay successes, ${dmResult.successes} delegation DM relay successes${configResultSummary}).`,
+        `${options?.statusPrefix ? `${options.statusPrefix} ` : ""}Audit proxy configured (${publicResult.successes} public relay successes, ${dmResult.successes} delegation DM relay successes${configResultSummary}).`,
       );
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Audit proxy configuration failed.");
+      setStatus(`${options?.statusPrefix ? `${options.statusPrefix} ` : ""}${error instanceof Error ? error.message : "Audit proxy configuration failed."}`);
     }
   }
 
@@ -3452,6 +3464,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   }, [delegatedWorkerNpub, generatedWorkerNpub, generatedWorkerNsec, generateWorkerCredentials, view]);
 
   const hasParticipantsNotice = Boolean((publishValidation && !publishValidation.valid) || statusNotice);
+  const showNewRoundPublishOnly = isNewRoundMode && !publishedDefinition;
   if (view === "participants") {
     if (!hasParticipantsNotice) {
       return null;
@@ -3576,16 +3589,19 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
               id='questionnaire-id'
               className='simple-voter-input simple-voter-input-inline'
               value={questionnaireId}
+              readOnly={isNewRoundMode}
               onChange={(event) => setQuestionnaireId(event.target.value)}
             />
-            <div className='simple-questionnaire-id-actions'>
-              <button type='button' className='simple-voter-secondary simple-questionnaire-copy-id-button' onClick={() => void tryWriteClipboard(questionnaireId)}>
-                Copy ID
-              </button>
-              <button type='button' className='simple-voter-secondary simple-questionnaire-generate-id-button' onClick={regenerateQuestionnaireId}>
-                Generate ID
-              </button>
-            </div>
+            {!isNewRoundMode ? (
+              <div className='simple-questionnaire-id-actions'>
+                <button type='button' className='simple-voter-secondary simple-questionnaire-copy-id-button' onClick={() => void tryWriteClipboard(questionnaireId)}>
+                  Copy ID
+                </button>
+                <button type='button' className='simple-voter-secondary simple-questionnaire-generate-id-button' onClick={regenerateQuestionnaireId}>
+                  Generate ID
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
@@ -4060,7 +4076,21 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             </section>
 
             <section className='simple-questionnaire-build-side-card simple-questionnaire-build-actions'>
-              {!publishedDefinition ? (
+              {showNewRoundPublishOnly ? (
+                <>
+                  <button
+                    type='button'
+                    className='simple-voter-primary'
+                    disabled={!canPublishDraft || !props.canApplyAdmissionsOnPublish}
+                    onClick={() => void publishDefinition({ applyAdmissions: true })}
+                  >
+                    Publish to invited voters
+                  </button>
+                  {!props.canApplyAdmissionsOnPublish ? (
+                    <p className='simple-voter-note'>Enable Auto-ballot for at least one voter before publishing this round.</p>
+                  ) : null}
+                </>
+              ) : !publishedDefinition ? (
                 <>
                   <button type='button' className='simple-voter-primary' disabled={!canPublishDraft} onClick={() => void publishDefinition()}>
                     Publish questionnaire
@@ -4089,7 +4119,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                   Open vote
                 </button>
               )}
-              {publishedDefinition ? (
+              {!showNewRoundPublishOnly && publishedDefinition ? (
                 <button
                   type='button'
                   className='simple-voter-primary'
@@ -4098,7 +4128,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                   Set up proxy
                 </button>
               ) : null}
-              {props.onInviteParticipants ? (
+              {!showNewRoundPublishOnly && props.onInviteParticipants ? (
                 <button
                   type='button'
                   className='simple-voter-secondary'
@@ -4107,22 +4137,24 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                   Invite voters
                 </button>
               ) : null}
-              <button
-                type='button'
-                className='simple-voter-secondary'
-                aria-expanded={showPreview}
-                aria-controls='questionnaire-draft-preview'
-                onClick={() => setShowPreview((current) => !current)}
-              >
-                Preview JSON
-              </button>
+              {!showNewRoundPublishOnly ? (
+                <button
+                  type='button'
+                  className='simple-voter-secondary'
+                  aria-expanded={showPreview}
+                  aria-controls='questionnaire-draft-preview'
+                  onClick={() => setShowPreview((current) => !current)}
+                >
+                  Preview JSON
+                </button>
+              ) : null}
               {!coordinatorNsec.trim() ? (
                 <p className='simple-voter-note'>Organiser key is not loaded yet.</p>
               ) : null}
               {publishValidation && !publishValidation.valid ? (
                 <p className='simple-voter-note'>Validation: {publishValidation.errors[0] ?? "unknown_error"}.</p>
               ) : null}
-              {showPreview ? (
+              {!showNewRoundPublishOnly && showPreview ? (
                 <div id='questionnaire-draft-preview' className='simple-questionnaire-preview'>
                   <h4 className='simple-voter-section-title'>Draft preview</h4>
                   <pre>{JSON.stringify(builtDefinition, null, 2)}</pre>
@@ -4146,6 +4178,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
               <option value='browser_only'>Browser only</option>
               <option value='delegated_worker'>Audit proxy</option>
             </select>
+            <p className='simple-voter-note'>
+              Use Audit proxy for larger live sessions or repeated rounds. When selected, publishing with a valid audit proxy npub configures delegation for that questionnaire.
+            </p>
 
             {delegationMode === "delegated_worker" ? (
               <>

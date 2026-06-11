@@ -275,8 +275,8 @@ describe("simpleShardDm", () => {
     });
 
     expect(resolveNip65ConversationRelays).toHaveBeenCalled();
-    expect(result.relayResults.length).toBe(4);
-    expect(recordRelayOutcome).toHaveBeenCalledTimes(4);
+    expect(result.relayResults.length).toBe(5);
+    expect(recordRelayOutcome).toHaveBeenCalledTimes(5);
     expect(result.successes).toBeGreaterThan(0);
   });
 

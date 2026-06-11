@@ -23,9 +23,6 @@ export const SIMPLE_MAILBOX_RELAYS = [
   "wss://relay.nostr.net",
   "wss://nos.lol",
   "wss://relay.nostr.info",
-  "wss://relay.nos.social",
-  "wss://relay.momostr.pink",
-  "wss://relay.azzamo.net",
 ];
 
 export const SIMPLE_MAILBOX_REQUEST_KIND = 31100;
@@ -37,10 +34,10 @@ const SIMPLE_MAILBOX_PUBLISH_MAX_WAIT_MS = 1500;
 const SIMPLE_MAILBOX_SUBSCRIPTION_MAX_WAIT_MS = 3000;
 const SIMPLE_MAILBOX_PUBLISH_STAGGER_MS = 1000;
 const SIMPLE_MAILBOX_MIN_PUBLISH_INTERVAL_MS = 5000;
-const SIMPLE_MAILBOX_REQUEST_RELAYS_MAX = 5;
-const SIMPLE_MAILBOX_TICKET_RELAYS_MAX = 5;
-const SIMPLE_MAILBOX_ACK_RELAYS_MAX = 5;
-const SIMPLE_MAILBOX_READ_RELAYS_MAX = 5;
+const SIMPLE_MAILBOX_REQUEST_RELAYS_MAX = 3;
+const SIMPLE_MAILBOX_TICKET_RELAYS_MAX = 3;
+const SIMPLE_MAILBOX_ACK_RELAYS_MAX = 3;
+const SIMPLE_MAILBOX_READ_RELAYS_MAX = 3;
 const SIMPLE_MAILBOX_ANCHOR_RELAYS = [
   "wss://relay.nostr.net",
   "wss://nos.lol",

@@ -227,6 +227,7 @@ vi.mock("./questionnaireTransport", () => ({
   fetchQuestionnaireActiveWorkerDelegationForCapability: vi.fn().mockResolvedValue(null),
   fetchQuestionnaireBlindResponses: vi.fn(async (input: { questionnaireId: string }) =>
     publicBlindResponseStore.entries.filter((entry) => entry.response.questionnaireId === input.questionnaireId)),
+  fetchQuestionnaireSubmissionDecisions: vi.fn().mockResolvedValue([]),
 }));
 
 function signer(npub: string): SignerService {

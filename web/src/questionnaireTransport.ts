@@ -161,6 +161,8 @@ export async function fetchQuestionnaireBlindResponses(input: {
   limit?: number;
   readRelayLimit?: number;
   preferKindOnly?: boolean;
+  maxPages?: number;
+  timeBudgetMs?: number;
 }) {
   const events = (await fetchQuestionnaireEventsWithFallback({
     questionnaireId: input.questionnaireId,
@@ -169,6 +171,8 @@ export async function fetchQuestionnaireBlindResponses(input: {
     readRelayLimit: input.readRelayLimit ?? 8,
     preferKindOnly: input.preferKindOnly,
     limit: input.limit ?? 200,
+    maxPages: input.maxPages,
+    timeBudgetMs: input.timeBudgetMs,
     parseQuestionnaireIdFromEvent: (event) => {
       const parsed = parseQuestionnaireBlindResponseEvent(event.content);
       return parsed?.questionnaireId ?? null;
@@ -408,6 +412,8 @@ export async function fetchQuestionnaireSubmissionDecisions(input: {
   limit?: number;
   readRelayLimit?: number;
   preferKindOnly?: boolean;
+  maxPages?: number;
+  timeBudgetMs?: number;
 }) {
   const events = (await fetchQuestionnaireEventsWithFallback({
     questionnaireId: input.questionnaireId,
@@ -416,6 +422,8 @@ export async function fetchQuestionnaireSubmissionDecisions(input: {
     readRelayLimit: input.readRelayLimit ?? 8,
     preferKindOnly: input.preferKindOnly,
     limit: input.limit ?? 400,
+    maxPages: input.maxPages,
+    timeBudgetMs: input.timeBudgetMs,
     parseQuestionnaireIdFromEvent: (event) => {
       const parsed = parseQuestionnaireSubmissionDecisionEvent(event.content);
       return parsed?.questionnaireId ?? null;
@@ -455,6 +463,8 @@ export async function fetchQuestionnaireResultSummary(input: {
   limit?: number;
   readRelayLimit?: number;
   preferKindOnly?: boolean;
+  maxPages?: number;
+  timeBudgetMs?: number;
 }) {
   const events = (await fetchQuestionnaireEventsWithFallback({
     questionnaireId: input.questionnaireId,
@@ -463,6 +473,8 @@ export async function fetchQuestionnaireResultSummary(input: {
     limit: input.limit,
     readRelayLimit: input.readRelayLimit,
     preferKindOnly: input.preferKindOnly,
+    maxPages: input.maxPages,
+    timeBudgetMs: input.timeBudgetMs,
     parseQuestionnaireIdFromEvent: (event) => {
       try {
         const parsed = JSON.parse(event.content) as { questionnaireId?: string };

@@ -40,13 +40,14 @@ Most online voting systems force an uncomfortable tradeoff:
 - either the operator can link voters to votes
 - or the public cannot independently verify the result
 
-Auditable Voting tries to avoid both failures by separating issuance from submission. The organiser handles eligibility, including an invited-voter roster that can be reused for later questionnaires. Applying that roster publishes one public announcement for the next questionnaire instead of sending the same questionnaire details to every voter. The voter still requests and spends a fresh blind credential for each questionnaire through a fresh response identity. Observers read the public event stream and recompute the count.
+Auditable Voting tries to avoid both failures by separating issuance from submission. The organiser handles eligibility, including an invited-voter roster that can be reused for later questionnaires. Applying that roster publishes one roster-free public announcement for the next questionnaire instead of sending the same questionnaire details to every voter. The voter still requests and spends a fresh blind credential for each questionnaire through a fresh response identity. Observers read the public event stream and recompute the count.
 
 ## What is public vs private
 
 Public:
 
 - questionnaire definitions and round state
+- roster-free public questionnaire announcements
 - anonymous public ballot submissions
 - organiser accept/reject decisions
 - published result summaries
@@ -54,6 +55,7 @@ Public:
 Private or local:
 
 - voter and organiser signing keys
+- the admitted voter roster and internal voter notes
 - token secrets and blinding factors
 - unspent ballot credentials
 - browser-local recovery state
@@ -82,9 +84,9 @@ The voter must protect their local keys and browser state.
 ## Run a test vote
 
 1. Open the app as **Organiser**.
-2. Invite voters in **Voting** if the same people will answer later questionnaires.
+2. Invite voters in **Session** if the same people will answer later questionnaires.
 3. Create a questionnaire and publish it.
-4. Share invite links from **Voting**. The General QR/link opens **Vote** directly and requests a ballot automatically; single-use private links are created and labelled in **Voters**. For already invited voters, **Apply to current questionnaire** green-lights rows with **Auto-ballot** ticked and publishes one public questionnaire announcement that their Vote page can discover.
+4. Share invite links from **Session**. The General QR/link opens **Vote** directly and requests a ballot automatically; single-use private links are created and labelled in **Voters**. For follow-up questionnaires, use **New round** in the side panel; it generates a fresh Questionnaire ID, publishes to rows with **Auto-ballot** ticked, and publishes one public questionnaire announcement that their Vote page can discover.
 5. Open the invite as **Voter**, wait for ballot access if needed, fill in the questionnaire, and submit. Voter **Settings** shows **Ballot details** while taking part, so request, credential, submission, and timing fields can be checked if something stalls.
 6. Open **Observer** and search for the questionnaire ID, organiser identity, Submission/Response ID, or **Submittor identity** short/full to verify the public result stream. Observer keeps one live subscription for the selected questionnaire and uses **Refresh** for an immediate serial backfill. In **Submitted Votes**, use the same submission filters to find a specific public submission. Invalid rows show their rejection reason. Organiser results decrypt encrypted answer details automatically when the local organiser key is available; Observer can decrypt them from **Submitted Votes** when the matching organiser `nsec` is supplied.
 
@@ -97,7 +99,8 @@ This is experimental software.
 Known weak points:
 
 - Public relay reliability can affect delivery and discovery.
-- The client serialises public questionnaire reads and consolidates organiser, voter, and observer live questionnaire subscriptions, but relay rate limits can still affect busy demonstrations.
+- The client uses tag-filtered, paginated public reads, adaptive NIP-17 mailbox recovery, and consolidated organiser, voter, and observer live questionnaire subscriptions, but relay rate limits can still affect busy demonstrations.
+- For larger live sessions, such as many rounds or around 100 voters, use the audit proxy/worker for blind issuance and decision publication rather than relying on a single organiser browser tab.
 - Browser-held secret material needs careful handling.
 - The cryptographic design needs external review before production use.
 - Large multi-organiser runs are not yet reliable on the current public relay set.

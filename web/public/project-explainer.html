@@ -507,7 +507,7 @@
             <h3>For organisers</h3>
             <ul>
               <li>Create and publish a questionnaire.</li>
-              <li>Invite voters once, then apply that roster to later questionnaires and publish one public announcement.</li>
+              <li>Invite voters once, then apply that roster to later questionnaires and publish one roster-free public announcement.</li>
               <li>Invite voters or approve requests.</li>
               <li>Issue blind credentials and watch results arrive.</li>
             </ul>
@@ -531,6 +531,7 @@
             <h3>Public</h3>
             <ul>
               <li>Questionnaire definitions and round state.</li>
+              <li>Roster-free public questionnaire announcements.</li>
               <li>Anonymous public ballot submissions.</li>
               <li>Organiser accept/reject decisions.</li>
               <li>Published result summaries.</li>
@@ -540,6 +541,7 @@
             <h3>Private or local</h3>
             <ul>
               <li>Voter and organiser signing keys.</li>
+              <li>The admitted voter roster and internal voter notes.</li>
               <li>Token secrets and blinding factors.</li>
               <li>Unspent ballot credentials.</li>
               <li>Browser-local recovery state.</li>
@@ -580,7 +582,7 @@
         <div class="grid-3">
           <article class="role-card">
             <h3>1. Organiser</h3>
-            <p>Open Organiser, invite voters if the same group will answer later questionnaires, set up a questionnaire, publish it, then share invite links from Voting. Applying the invited-voter roster green-lights rows with Auto-ballot ticked and publishes one public questionnaire announcement for invited voters to discover. The General QR/link opens Vote directly and requests a ballot automatically; single-use private links are created and labelled in Voters.</p>
+            <p>Open Organiser, invite voters if the same group will answer later questionnaires, set up a questionnaire, publish it, then share invite links from Session. For follow-up questionnaires, use New round in the side panel; it generates a fresh Questionnaire ID, publishes to rows with Auto-ballot ticked, and publishes one public questionnaire announcement for invited voters to discover. The General QR/link opens Vote directly and requests a ballot automatically; single-use private links are created and labelled in Voters.</p>
           </article>
           <article class="role-card">
             <h3>2. Voter</h3>
@@ -599,7 +601,8 @@
         <h2 id="limits">Current limitations</h2>
         <p class="section-intro">This is experimental software. The design is intended to be auditable, but it should not be treated as production election infrastructure without independent protocol and implementation review.</p>
         <ul class="limitation-list">
-          <li>Public relay reliability can affect delivery and discovery. The client serialises public questionnaire reads and consolidates organiser, voter, and observer live questionnaire subscriptions, but relay rate limits can still affect busy demonstrations.</li>
+          <li>Public relay reliability can affect delivery and discovery. The client uses tag-filtered, paginated public reads, adaptive NIP-17 mailbox recovery, and consolidated organiser, voter, and observer live questionnaire subscriptions, but relay rate limits can still affect busy demonstrations.</li>
+          <li>For larger live sessions, such as many rounds or around 100 voters, use the audit proxy/worker for blind issuance and decision publication rather than relying on a single organiser browser tab.</li>
           <li>Browser-held secret material needs careful handling.</li>
           <li>The cryptographic design needs external review before production use.</li>
           <li>Large multi-organiser runs are not yet reliable on the current public relay set.</li>

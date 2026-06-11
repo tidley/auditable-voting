@@ -57,8 +57,6 @@ const AMBER_CONNECT_RELAYS = [
   "wss://relay.nostr.net",
   "wss://nos.lol",
   "wss://relay.nostr.info",
-  "wss://relay.nos.social",
-  "wss://relay.momostr.pink",
 ];
 
 const AMBER_CONNECT_PERMISSIONS = [

@@ -62,7 +62,7 @@ Use these pages:
 
 Open **Organiser**.
 
-If the same people will answer several questionnaires, open **Voting** and use **Voters** to add their voter identities first. Use **Invite voters** in that section for the General invite link, Nostr invites, private invite links, and imported contacts. Add internal notes if useful, and leave **Auto-ballot** ticked for voters who should be green-lit when the roster is applied. After each later questionnaire is published, **Apply to current questionnaire** publishes one public questionnaire announcement that their Vote page can discover. They will still receive a fresh blind ballot credential for each questionnaire.
+If the same people will answer several questionnaires, open **Session** and use **Voters** to add their voter identities first. Use **Invite voters** in that section for the General invite link, Nostr invites, private invite links, and imported contacts. Add internal notes if useful, and leave **Auto-ballot** ticked for voters who should receive the next round. After the first questionnaire is published, use **New round** in the side panel for follow-up questionnaires. It keeps the current setup, generates a fresh Questionnaire ID, shows one action, **Publish to invited voters**, and returns Organiser to **Session** after publishing. Voters still receive a fresh blind ballot credential for each questionnaire.
 
 Fill in:
 
@@ -136,6 +136,10 @@ If it is not ready, the button explains why. For example:
 
 - **Please answer all required questions**
 - **Verifying vote request**
+
+After submission, Vote keeps the submitted answers visible and locks the questions so they cannot be changed on that page.
+
+If several questionnaires are available, Vote shows a selector such as **1/3** with each round's status, and **Answer next** opens the next unanswered questionnaire.
 
 After submission, the page shows **Private submission identity** with:
 

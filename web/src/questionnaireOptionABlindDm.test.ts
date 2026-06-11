@@ -113,13 +113,10 @@ describe("questionnaireOptionABlindDm", () => {
     });
 
     const relays = publishToRelaysStaggered.mock.calls[0]?.[1] as string[];
-    expect(relays.slice(0, 6)).toEqual([
+    expect(relays.slice(0, 3)).toEqual([
       "wss://recipient.one",
       "wss://recipient.two",
       "wss://relay.nostr.net",
-      "wss://nos.lol",
-      "wss://recipient.three",
-      "wss://recipient.four",
     ]);
   });
 
@@ -262,9 +259,6 @@ describe("questionnaireOptionABlindDm", () => {
       "wss://relay.nostr.net",
       "wss://nos.lol",
       "wss://relay.nostr.info",
-      "wss://relay.nos.social",
-      "wss://relay.momostr.pink",
-      "wss://relay.azzamo.net",
     ]);
     expect(relays).not.toContain("wss://relay.damus.io");
     expect(relays).not.toContain("wss://relay.primal.net");
@@ -404,5 +398,82 @@ describe("questionnaireOptionABlindDm", () => {
     expect(fetchedSubmissions[0]?.submissionId).toBe("submission_3");
     expect(fetchedAcceptances).toHaveLength(1);
     expect(fetchedAcceptances[0]?.submissionId).toBe("submission_3");
+  });
+
+  it("paginates local issuance recovery until an older target message is found", async () => {
+    const recipientSecret = generateSecretKey();
+    const recipientHex = getPublicKey(recipientSecret);
+    const recipientNpub = nip19.npubEncode(recipientHex);
+    const recipientNsec = nip19.nsecEncode(recipientSecret);
+    const senderSecret = generateSecretKey();
+    const events = Array.from({ length: 55 }, (_, index) => {
+      const isTarget = index === 48;
+      const wrapped = nip17.wrapEvent(
+        senderSecret,
+        { publicKey: recipientHex, relayUrl: "wss://relay.example" },
+        JSON.stringify(isTarget
+          ? {
+              type: "optiona_blind_issuance_dm",
+              schemaVersion: 1,
+              issuance: {
+                type: "blind_ballot_response",
+                schemaVersion: 1,
+                electionId: "q_paginated",
+                requestId: "request_paginated",
+                issuanceId: "issuance_paginated",
+                invitedNpub: recipientNpub,
+                blindSignature: "sig_paginated",
+                issuedAt: new Date().toISOString(),
+              },
+              sentAt: new Date().toISOString(),
+            }
+          : {
+              type: "unrelated_dm",
+              schemaVersion: 1,
+              sentAt: new Date().toISOString(),
+            }),
+        "Option A blind issuance",
+      );
+      return {
+        ...wrapped,
+        id: `gift_wrap_${index}`,
+        created_at: 10_000 - index,
+      };
+    });
+
+    querySync.mockImplementation(async (_relays: string[], filter: { kinds?: number[]; limit?: number; until?: number }) => {
+      if (filter.kinds?.[0] !== 1059) {
+        return [];
+      }
+      const until = typeof filter.until === "number" ? filter.until : Number.POSITIVE_INFINITY;
+      return events
+        .filter((event) => event.created_at <= until)
+        .sort((left, right) => right.created_at - left.created_at)
+        .slice(0, Math.max(1, filter.limit ?? 20));
+    });
+
+    const fetchedIssuances = await fetchOptionABlindIssuanceDmsWithNsec({
+      nsec: recipientNsec,
+      electionId: "q_paginated",
+      limit: 60,
+      pageLimit: 20,
+      maxPages: 10,
+      targetRequestId: "request_paginated",
+    });
+
+    expect(fetchedIssuances).toHaveLength(1);
+    expect(fetchedIssuances[0]?.issuanceId).toBe("issuance_paginated");
+    const giftWrapQueries = querySync.mock.calls.filter(([, filter]) => (
+      (filter as { kinds?: number[] }).kinds?.[0] === 1059
+    ));
+    expect(giftWrapQueries).toHaveLength(3);
+    expect(querySync).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ kinds: [1059], limit: 20 }),
+    );
+    expect(querySync).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ kinds: [1059], limit: 20, until: 9_980 }),
+    );
   });
 });

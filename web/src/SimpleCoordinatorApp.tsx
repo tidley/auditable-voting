@@ -1126,6 +1126,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   const [submittedVotes, setSubmittedVotes] = useState<SimpleSubmittedVote[]>([]);
   const [activeTab, setActiveTab] = useState<CoordinatorTab>("configure");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [newRoundMode, setNewRoundMode] = useState(false);
   const [relaySettingsExpandSignal, setRelaySettingsExpandSignal] = useState(0);
   const [questionnaireRelaysInput, setQuestionnaireRelaysInputState] = useState(() => readStoredQuestionnaireRelayInput());
   const [questionnaireRosterAnnouncement, setQuestionnaireRosterAnnouncement] = useState<{
@@ -1210,6 +1211,11 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     const params = new URLSearchParams(window.location.search);
     return (params.get("election_id") ?? params.get("questionnaire") ?? "").trim();
   }, [questionnaireRosterAnnouncement.questionnaireId]);
+  const canStartNewRound = Boolean(
+    questionnaireRosterAnnouncement.questionnaireId.trim()
+    && questionnaireRosterAnnouncement.state
+    && questionnaireRosterAnnouncement.state !== "draft",
+  );
   const questionnaireFlowActive = isCourseFeedbackMode || optionAElectionId.length > 0;
   const optionACoordinatorRuntime = useMemo(() => (
     optionAElectionId
@@ -3748,6 +3754,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     setSelectedVotingId("");
     setSelectedSubmittedVotingId('');
     setSubmittedVotes([]);
+    setNewRoundMode(false);
     setActiveTab("configure");
     sentFollowAckStateRef.current = {};
     sentRosterStateRef.current = {};
@@ -4909,6 +4916,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     setSelectedVotingId("");
     setSelectedSubmittedVotingId('');
     setSubmittedVotes([]);
+    setNewRoundMode(false);
     setActiveTab("configure");
     sentFollowAckStateRef.current = {};
     sentRosterStateRef.current = {};
@@ -5049,6 +5057,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
           : '',
       );
       setSubmittedVotes(Array.isArray(cache?.submittedVotes) ? cache.submittedVotes : []);
+      setNewRoundMode(false);
       setActiveTab("configure");
       sentFollowAckStateRef.current = {};
       sentRosterStateRef.current = {};
@@ -5121,6 +5130,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       setSelectedVotingId(typeof cache?.selectedVotingId === "string" ? cache.selectedVotingId : "");
       setSelectedSubmittedVotingId(typeof cache?.selectedSubmittedVotingId === "string" ? cache.selectedSubmittedVotingId : "");
       setSubmittedVotes(Array.isArray(cache?.submittedVotes) ? cache.submittedVotes : []);
+      setNewRoundMode(false);
       setActiveTab("configure");
       setStorageLocked(false);
       setStorageStatus("Local organiser state unlocked.");
@@ -5574,6 +5584,34 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
 
   function selectTab(nextTab: CoordinatorTab) {
     setActiveTab(nextTab);
+  }
+
+  function openNewQuestionnaireSetup() {
+    setNewRoundMode(false);
+    selectTab("configure");
+  }
+
+  function startNewRound() {
+    let nextQuestionnaireId = "";
+    if (typeof window !== "undefined") {
+      nextQuestionnaireId = resetStoredQuestionnaireDraftId();
+      window.dispatchEvent(new CustomEvent(QUESTIONNAIRE_ID_RESET_EVENT, {
+        detail: { questionnaireId: nextQuestionnaireId },
+      }));
+    }
+    setNewRoundMode(true);
+    selectTab("configure");
+  }
+
+  async function handlePublishedQuestionnaire(questionnaireId: string) {
+    await applyAdmissionRosterToCurrentQuestionnaire({
+      questionnaireId,
+      statusPrefix: "Questionnaire published.",
+    });
+    if (newRoundMode) {
+      setNewRoundMode(false);
+      selectTab("participants");
+    }
   }
 
   function openInviteVotersSection() {
@@ -6755,45 +6793,57 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
             </button>
           )}
         </div>
-        <div
-          className='simple-coordinator-sidebar-nav'
-          role='tablist'
-          aria-label='Organiser sections'
-        >
-          <button
-            type='button'
-            role='tab'
-            aria-selected={activeTab === 'configure'}
-            className={`simple-coordinator-nav-button${activeTab === 'configure' ? ' is-active' : ''}`}
-            onClick={() => selectTab('configure')}
+        <div className='simple-coordinator-sidebar-nav'>
+          <div
+            className='simple-coordinator-sidebar-tabs'
+            role='tablist'
+            aria-label='Organiser sections'
           >
-            <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-plus' aria-hidden='true'>+</span>
-            <span className='simple-coordinator-nav-label'>New Questionnaire</span>
-          </button>
-          <button
-            type='button'
-            role='tab'
-            aria-selected={activeTab === 'participants'}
-            className={`simple-coordinator-nav-button${activeTab === 'participants' ? ' is-active' : ''}`}
-            onClick={() => selectTab('participants')}
-          >
-            <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-session' aria-hidden='true'>
-              <span className='simple-coordinator-nav-bar simple-coordinator-nav-bar-short' />
-              <span className='simple-coordinator-nav-bar simple-coordinator-nav-bar-mid' />
-              <span className='simple-coordinator-nav-bar simple-coordinator-nav-bar-tall' />
-            </span>
-            <span className='simple-coordinator-nav-label'>Session</span>
-          </button>
-          <button
-            type='button'
-            role='tab'
-            aria-selected={activeTab === 'settings'}
-            className={`simple-coordinator-nav-button${activeTab === 'settings' ? ' is-active' : ''}`}
-            onClick={() => selectTab('settings')}
-          >
-            <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-settings' aria-hidden='true'>⚙</span>
-            <span className='simple-coordinator-nav-label'>Settings</span>
-          </button>
+            <button
+              type='button'
+              role='tab'
+              aria-selected={activeTab === 'configure'}
+              className={`simple-coordinator-nav-button${activeTab === 'configure' ? ' is-active' : ''}`}
+              onClick={openNewQuestionnaireSetup}
+            >
+              <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-plus' aria-hidden='true'>+</span>
+              <span className='simple-coordinator-nav-label'>New Questionnaire</span>
+            </button>
+            <button
+              type='button'
+              role='tab'
+              aria-selected={activeTab === 'participants'}
+              className={`simple-coordinator-nav-button${activeTab === 'participants' ? ' is-active' : ''}`}
+              onClick={() => selectTab('participants')}
+            >
+              <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-session' aria-hidden='true'>
+                <span className='simple-coordinator-nav-bar simple-coordinator-nav-bar-short' />
+                <span className='simple-coordinator-nav-bar simple-coordinator-nav-bar-mid' />
+                <span className='simple-coordinator-nav-bar simple-coordinator-nav-bar-tall' />
+              </span>
+              <span className='simple-coordinator-nav-label'>Session</span>
+            </button>
+            <button
+              type='button'
+              role='tab'
+              aria-selected={activeTab === 'settings'}
+              className={`simple-coordinator-nav-button${activeTab === 'settings' ? ' is-active' : ''}`}
+              onClick={() => selectTab('settings')}
+            >
+              <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-settings' aria-hidden='true'>⚙</span>
+              <span className='simple-coordinator-nav-label'>Settings</span>
+            </button>
+          </div>
+          {canStartNewRound ? (
+            <button
+              type='button'
+              className='simple-coordinator-nav-button simple-coordinator-new-round-button'
+              onClick={startNewRound}
+            >
+              <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-plus' aria-hidden='true'>+</span>
+              <span className='simple-coordinator-nav-label'>New round</span>
+            </button>
+          ) : null}
         </div>
       </aside>
       <section className='simple-voter-page simple-coordinator-page'>
@@ -6829,11 +6879,9 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                   });
                 }
               }}
+              newRoundMode={newRoundMode}
               canApplyAdmissionsOnPublish={admittedVoterAutoApplyNpubs.length > 0}
-              onAfterPublishQuestionnaire={(questionnaireId) => applyAdmissionRosterToCurrentQuestionnaire({
-                questionnaireId,
-                statusPrefix: "Questionnaire published.",
-              })}
+              onAfterPublishQuestionnaire={handlePublishedQuestionnaire}
               onStatusChange={updateQuestionnaireRosterAnnouncement}
             />
           </section>

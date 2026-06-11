@@ -35,6 +35,9 @@ export const QUESTIONNAIRE_RESPONSE_PRIVATE_KIND = IMPLEMENTATION_KIND_QUESTIONN
 export const QUESTIONNAIRE_RESULT_SUMMARY_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_RESULT_SUMMARY;
 const QUESTIONNAIRE_PUBLIC_READ_RELAYS_MAX = 5;
 const QUESTIONNAIRE_PUBLIC_QUERY_MAX_CONCURRENCY = 1;
+const QUESTIONNAIRE_PUBLIC_QUERY_PAGE_LIMIT = 500;
+const QUESTIONNAIRE_PUBLIC_QUERY_MAX_PAGES = 16;
+const QUESTIONNAIRE_PUBLIC_QUERY_TIME_BUDGET_MS = 6_000;
 const QUESTIONNAIRE_PUBLIC_READ_UNINDEXED_TAG_RELAYS = new Set([
   "wss://relay.damus.io",
   "wss://relay.primal.net",
@@ -43,7 +46,7 @@ const QUESTIONNAIRE_PUBLIC_READ_UNINDEXED_TAG_RELAYS = new Set([
 ]);
 
 let activeQuestionnairePublicQueries = 0;
-const questionnairePublicQueryWaiters: Array<() => void> = [];
+let questionnairePublicQueryTail = Promise.resolve();
 const questionnairePublicInFlightQueries = new Map<string, Promise<NostrEvent[]>>();
 
 export type QuestionnaireAdmissionAnnouncementEvent = {
@@ -75,18 +78,22 @@ export function getQuestionnaireReadRelays(relays?: string[], maxRelays = QUESTI
 }
 
 async function withQuestionnairePublicQuerySlot<T>(task: () => Promise<T>): Promise<T> {
-  if (activeQuestionnairePublicQueries >= QUESTIONNAIRE_PUBLIC_QUERY_MAX_CONCURRENCY) {
-    await new Promise<void>((resolve) => {
-      questionnairePublicQueryWaiters.push(resolve);
-    });
+  if (QUESTIONNAIRE_PUBLIC_QUERY_MAX_CONCURRENCY !== 1) {
+    throw new Error("Questionnaire public query limiter currently expects max concurrency 1.");
   }
+  const previous = questionnairePublicQueryTail.catch(() => undefined);
+  let releaseCurrent: () => void = () => undefined;
+  const currentGate = new Promise<void>((resolve) => {
+    releaseCurrent = resolve;
+  });
+  questionnairePublicQueryTail = previous.then(() => currentGate);
+  await previous;
   activeQuestionnairePublicQueries += 1;
   try {
     return await task();
   } finally {
     activeQuestionnairePublicQueries = Math.max(0, activeQuestionnairePublicQueries - 1);
-    const next = questionnairePublicQueryWaiters.shift();
-    next?.();
+    releaseCurrent();
   }
 }
 
@@ -108,9 +115,66 @@ export async function queryQuestionnaireEvents(relays: string[], filter: Filter)
   }
 }
 
+function uniqueEvents(events: NostrEvent[]) {
+  return [...new Map(events.map((event) => [event.id, event])).values()];
+}
+
+function sortEventsNewestFirst(events: NostrEvent[]) {
+  return [...events].sort((left, right) => {
+    const createdDelta = Number(right.created_at ?? 0) - Number(left.created_at ?? 0);
+    if (createdDelta !== 0) {
+      return createdDelta;
+    }
+    return String(right.id ?? "").localeCompare(String(left.id ?? ""));
+  });
+}
+
+async function queryQuestionnaireEventsPaginated(input: {
+  relays: string[];
+  filter: Filter;
+  limit?: number;
+  maxPages?: number;
+  timeBudgetMs?: number;
+  truncateToLimit?: boolean;
+}) {
+  const requestedLimit = Math.max(1, input.limit ?? 200);
+  const pageLimit = Math.max(1, Math.min(QUESTIONNAIRE_PUBLIC_QUERY_PAGE_LIMIT, requestedLimit));
+  const maxPages = Math.max(1, input.maxPages ?? Math.ceil(requestedLimit / pageLimit));
+  const timeBudgetMs = Math.max(250, input.timeBudgetMs ?? QUESTIONNAIRE_PUBLIC_QUERY_TIME_BUDGET_MS);
+  const startedAt = Date.now();
+  const eventsById = new Map<string, NostrEvent>();
+  let until = typeof input.filter.until === "number" ? input.filter.until : undefined;
+
+  for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
+    if (Date.now() - startedAt > timeBudgetMs) {
+      break;
+    }
+    const pageEvents = await queryQuestionnaireEvents(input.relays, {
+      ...input.filter,
+      ...(until ? { until } : {}),
+      limit: pageLimit,
+    });
+    const sortedPage = sortEventsNewestFirst(uniqueEvents(pageEvents));
+    for (const event of sortedPage) {
+      eventsById.set(event.id, event);
+    }
+    if (sortedPage.length < pageLimit) {
+      break;
+    }
+    const oldestCreatedAt = Math.min(...sortedPage.map((event) => Number(event.created_at ?? 0)).filter((value) => value > 0));
+    if (!Number.isFinite(oldestCreatedAt) || oldestCreatedAt <= 0) {
+      break;
+    }
+    until = Math.min(until ?? oldestCreatedAt, oldestCreatedAt) - 1;
+  }
+
+  const sortedEvents = sortEventsNewestFirst([...eventsById.values()]);
+  return input.truncateToLimit === false ? sortedEvents : sortedEvents.slice(0, requestedLimit);
+}
+
 function eventHasQuestionnaireIdTag(event: Pick<NostrEvent, "tags">, questionnaireId: string) {
   return event.tags.some((tag) => (
-    tag[0] === "questionnaire-id"
+    (tag[0] === "q" || tag[0] === "questionnaire" || tag[0] === "questionnaire-id")
     && tag[1] === questionnaireId
   ));
 }
@@ -187,6 +251,7 @@ export async function publishQuestionnaireDefinition(input: {
     kind: QUESTIONNAIRE_DEFINITION_KIND,
     tags: [
       ["t", "questionnaire_definition"],
+      ["q", input.definition.questionnaireId],
       ["questionnaire-id", input.definition.questionnaireId],
       ["state", "draft"],
     ],
@@ -207,6 +272,7 @@ export async function publishQuestionnaireAdmissionAnnouncement(input: {
     tags: [
       ["d", input.announcement.questionnaireId],
       ["t", "questionnaire_admission_announcement"],
+      ["q", input.announcement.questionnaireId],
       ["questionnaire-id", input.announcement.questionnaireId],
       ["state", input.announcement.state],
     ],
@@ -227,6 +293,7 @@ export async function publishQuestionnaireParticipantCount(input: {
     tags: [
       ["d", input.participantCount.questionnaireId],
       ["t", "questionnaire_participant_count"],
+      ["q", input.participantCount.questionnaireId],
       ["questionnaire-id", input.participantCount.questionnaireId],
     ],
     content: JSON.stringify(input.participantCount),
@@ -245,6 +312,7 @@ export async function publishQuestionnaireState(input: {
     kind: QUESTIONNAIRE_STATE_KIND,
     tags: [
       ["t", "questionnaire_state"],
+      ["q", input.stateEvent.questionnaireId],
       ["questionnaire-id", input.stateEvent.questionnaireId],
       ["state", input.stateEvent.state],
     ],
@@ -264,6 +332,7 @@ export async function publishQuestionnaireResultSummary(input: {
     kind: QUESTIONNAIRE_RESULT_SUMMARY_KIND,
     tags: [
       ["t", "questionnaire_result_summary"],
+      ["q", input.resultSummary.questionnaireId],
       ["questionnaire-id", input.resultSummary.questionnaireId],
     ],
     content: JSON.stringify(input.resultSummary),
@@ -304,6 +373,7 @@ export async function publishEncryptedQuestionnaireResponse(input: {
     kind: QUESTIONNAIRE_RESPONSE_PRIVATE_KIND,
     tags: [
       ["t", "questionnaire_response_private"],
+      ["q", input.questionnaireId],
       ["questionnaire-id", input.questionnaireId],
       ["response-id", input.responseId],
       ["recipient", input.coordinatorNpub],
@@ -366,11 +436,31 @@ export async function fetchQuestionnaireEvents(input: {
   readRelayLimit?: number;
 }) {
   const relays = getQuestionnaireReadRelays(input.relays, input.readRelayLimit);
-  const events = await queryQuestionnaireEvents(relays, {
-    kinds: [input.kind],
+  const events = await queryQuestionnaireEventsPaginated({
+    relays,
+    filter: {
+      kinds: [input.kind],
+      "#q": [input.questionnaireId],
+    },
     limit: input.limit ?? 200,
   });
-  return events.filter((event) => eventHasQuestionnaireIdTag(event, input.questionnaireId));
+  if (events.length > 0) {
+    return events
+      .filter((event) => eventHasQuestionnaireIdTag(event, input.questionnaireId))
+      .slice(0, input.limit ?? 200);
+  }
+  const fallbackEvents = await queryQuestionnaireEventsPaginated({
+    relays,
+    filter: {
+      kinds: [input.kind],
+    },
+    limit: input.limit ?? 200,
+    maxPages: QUESTIONNAIRE_PUBLIC_QUERY_MAX_PAGES,
+    truncateToLimit: false,
+  });
+  return fallbackEvents
+    .filter((event) => eventHasQuestionnaireIdTag(event, input.questionnaireId))
+    .slice(0, input.limit ?? 200);
 }
 
 export type QuestionnaireFetchDiagnostics = {
@@ -386,15 +476,59 @@ export async function fetchQuestionnaireEventsWithFallback(input: {
   limit?: number;
   readRelayLimit?: number;
   preferKindOnly?: boolean;
+  maxPages?: number;
+  timeBudgetMs?: number;
   parseQuestionnaireIdFromEvent: (event: Pick<NostrEvent, "kind" | "content">) => string | null;
 }) {
   const relays = getQuestionnaireReadRelays(input.relays, input.readRelayLimit);
   const questionnaireId = input.questionnaireId?.trim() ?? "";
-  const kindOnlyEvents = await queryQuestionnaireEvents(relays, {
-    kinds: [input.kind],
-    limit: input.limit ?? 200,
+  const requestedLimit = input.limit ?? 200;
+  const maxPages = input.maxPages ?? (questionnaireId
+    ? QUESTIONNAIRE_PUBLIC_QUERY_MAX_PAGES
+    : Math.max(1, Math.ceil(requestedLimit / QUESTIONNAIRE_PUBLIC_QUERY_PAGE_LIMIT)));
+  const timeBudgetMs = input.timeBudgetMs ?? QUESTIONNAIRE_PUBLIC_QUERY_TIME_BUDGET_MS;
+
+  const filteredEvents = questionnaireId
+    ? await queryQuestionnaireEventsPaginated({
+      relays,
+      filter: {
+        kinds: [input.kind],
+        "#q": [questionnaireId],
+      },
+      limit: requestedLimit,
+      maxPages,
+      timeBudgetMs,
+    }).catch(() => [] as NostrEvent[])
+    : [];
+  const locallyMatchedFiltered = filteredEvents.filter((event) => {
+    if (!questionnaireId) {
+      return true;
+    }
+    const matchedQuestionnaireId = input.parseQuestionnaireIdFromEvent(event);
+    return matchedQuestionnaireId === questionnaireId;
   });
-  const uniqueKindOnlyEvents = [...new Map(kindOnlyEvents.map((event) => [event.id, event])).values()];
+  if (locallyMatchedFiltered.length > 0) {
+    return {
+      events: locallyMatchedFiltered,
+      diagnostics: {
+        mode: "filtered" as const,
+        filteredCount: filteredEvents.length,
+        kindOnlyCount: 0,
+      },
+    };
+  }
+
+  const kindOnlyEvents = await queryQuestionnaireEventsPaginated({
+    relays,
+    filter: {
+      kinds: [input.kind],
+    },
+    limit: requestedLimit,
+    maxPages,
+    timeBudgetMs,
+    truncateToLimit: false,
+  });
+  const uniqueKindOnlyEvents = uniqueEvents(kindOnlyEvents);
   const locallyMatched = uniqueKindOnlyEvents.filter((event) => {
     if (!questionnaireId) {
       return true;
@@ -403,10 +537,10 @@ export async function fetchQuestionnaireEventsWithFallback(input: {
     return matchedQuestionnaireId === questionnaireId;
   });
   return {
-    events: locallyMatched,
+    events: locallyMatched.slice(0, requestedLimit),
     diagnostics: {
       mode: "kind_only_fallback" as const,
-      filteredCount: 0,
+      filteredCount: filteredEvents.length,
       kindOnlyCount: kindOnlyEvents.length,
     },
   };
@@ -443,10 +577,14 @@ export function subscribeQuestionnaireEventKinds(input: {
     const baseFilter: {
       kinds: number[];
       limit: number;
+      "#q"?: string[];
     } = {
       kinds: eventKinds,
       limit: input.limit ?? 200,
     };
+    if (input.useQuestionnaireIdTagFilter !== false && input.questionnaireId.trim()) {
+      baseFilter["#q"] = [input.questionnaireId.trim()];
+    }
     subscription = pool.subscribeMany(relays, baseFilter, {
       onevent: (event) => {
         reconnectAttempt = 0;

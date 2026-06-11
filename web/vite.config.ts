@@ -23,6 +23,15 @@ export default defineConfig({
         vote: resolve(__dirname, "vote.html"),
         simple: resolve(__dirname, "simple.html"),
         simpleCoordinator: resolve(__dirname, "simple-coordinator.html")
+      },
+      output: {
+        assetFileNames: (assetInfo) => {
+          const name = assetInfo.name ?? "";
+          if (name.endsWith(".css")) {
+            return "assets/[name][extname]";
+          }
+          return "assets/[name]-[hash][extname]";
+        },
       }
     }
   }

@@ -1102,9 +1102,13 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
     }
   }, [firstOpenSeenAt, state]);
 
+  const responseLocked = tokenStatus === "submitted" || (
+    Boolean(questionnaireId.trim())
+    && submittedQuestionnaireIds.includes(questionnaireId.trim())
+  );
   const canSubmit = useMemo(() => {
-    return Boolean(definition && state === "open" && tokenStatus === "ready");
-  }, [definition, state, tokenStatus]);
+    return Boolean(definition && state === "open" && tokenStatus === "ready" && !responseLocked);
+  }, [definition, responseLocked, state, tokenStatus]);
   const selectedQuestionnaireOptions = selectorEntries.map((entry) => entry.questionnaireId);
   const selectedQuestionnaireEntry = selectorEntries.find((entry) => entry.questionnaireId === questionnaireId) ?? null;
 
@@ -1181,10 +1185,16 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
   }
 
   function setYesNoAnswer(questionId: string, value: boolean) {
+    if (responseLocked) {
+      return;
+    }
     setAnswerState((current) => ({ ...current, [questionId]: value }));
   }
 
   function setMultipleChoiceAnswer(questionId: string, optionId: string, multiSelect: boolean) {
+    if (responseLocked) {
+      return;
+    }
     setAnswerState((current) => {
       const existing = Array.isArray(current[questionId])
         ? (current[questionId] as string[])
@@ -1200,6 +1210,9 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
   }
 
   function addRankedAnswer(questionId: string, optionId: string) {
+    if (responseLocked) {
+      return;
+    }
     setAnswerState((current) => {
       const existing = Array.isArray(current[questionId])
         ? (current[questionId] as string[])
@@ -1212,6 +1225,9 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
   }
 
   function moveRankedAnswer(questionId: string, optionId: string, direction: -1 | 1) {
+    if (responseLocked) {
+      return;
+    }
     setAnswerState((current) => {
       const existing = Array.isArray(current[questionId])
         ? [...(current[questionId] as string[])]
@@ -1229,6 +1245,9 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
   }
 
   function removeRankedAnswer(questionId: string, optionId: string) {
+    if (responseLocked) {
+      return;
+    }
     setAnswerState((current) => {
       const existing = Array.isArray(current[questionId])
         ? (current[questionId] as string[])
@@ -1615,7 +1634,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
             if (question.type === "yes_no") {
               const selected = answerState[question.questionId];
               return (
-                <article key={question.questionId} className='simple-questionnaire-voter-card'>
+                <article key={question.questionId} className={`simple-questionnaire-voter-card${responseLocked ? " is-response-locked" : ""}`}>
                   <div className='simple-questionnaire-voter-heading'>
                     <h4 className='simple-questionnaire-voter-prompt'>Q{index + 1}: {questionPrompt}</h4>
                     <p className={`simple-questionnaire-voter-requirement${question.required ? "" : " is-optional"}`}>
@@ -1627,6 +1646,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
                       type='button'
                       className={`simple-voter-choice simple-questionnaire-yes-no-choice simple-voter-choice-yes${selected === true ? " is-active" : ""}`}
                       onClick={() => setYesNoAnswer(question.questionId, true)}
+                      disabled={responseLocked}
                     >
                       Yes
                     </button>
@@ -1634,6 +1654,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
                       type='button'
                       className={`simple-voter-choice simple-questionnaire-yes-no-choice simple-voter-choice-no${selected === false ? " is-active" : ""}`}
                       onClick={() => setYesNoAnswer(question.questionId, false)}
+                      disabled={responseLocked}
                     >
                       No
                     </button>
@@ -1647,7 +1668,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
                 ? (answerState[question.questionId] as string[])
                 : [];
               return (
-                <article key={question.questionId} className='simple-questionnaire-voter-card'>
+                <article key={question.questionId} className={`simple-questionnaire-voter-card${responseLocked ? " is-response-locked" : ""}`}>
                   <div className='simple-questionnaire-voter-heading'>
                     <h4 className='simple-questionnaire-voter-prompt'>Q{index + 1}: {questionPrompt}</h4>
                     <p className={`simple-questionnaire-voter-requirement${question.required ? "" : " is-optional"}`}>
@@ -1661,6 +1682,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
                           type={question.multiSelect ? "checkbox" : "radio"}
                           name={question.questionId}
                           checked={selected.includes(option.optionId)}
+                          disabled={responseLocked}
                           onChange={() => setMultipleChoiceAnswer(question.questionId, option.optionId, question.multiSelect)}
                         />
                         <span>{option.label}</span>
@@ -1680,7 +1702,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
               const minimumRanked = Math.max(0, Math.min(question.options.length, Math.floor(question.minimumRanked)));
               const rankRequirement = getRankRequirementState(question.options.length, minimumRanked, ranked.length);
               return (
-                <article key={question.questionId} className='simple-questionnaire-voter-card'>
+                <article key={question.questionId} className={`simple-questionnaire-voter-card${responseLocked ? " is-response-locked" : ""}`}>
                   <div className='simple-questionnaire-voter-heading'>
                     <h4 className='simple-questionnaire-voter-prompt'>Q{index + 1}: {questionPrompt}</h4>
                     <p className={`simple-questionnaire-voter-requirement${rankRequirement.missing > 0 ? " is-needed" : question.required ? "" : " is-optional"}`}>
@@ -1708,7 +1730,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
                                 type='button'
                                 className='simple-voter-secondary simple-questionnaire-rank-action'
                                 onClick={() => moveRankedAnswer(question.questionId, option.optionId, -1)}
-                                disabled={rankedIndex === 0}
+                                disabled={responseLocked || rankedIndex === 0}
                               >
                                 Up
                               </button>
@@ -1716,7 +1738,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
                                 type='button'
                                 className='simple-voter-secondary simple-questionnaire-rank-action'
                                 onClick={() => moveRankedAnswer(question.questionId, option.optionId, 1)}
-                                disabled={rankedIndex === ranked.length - 1}
+                                disabled={responseLocked || rankedIndex === ranked.length - 1}
                               >
                                 Down
                               </button>
@@ -1724,6 +1746,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
                                 type='button'
                                 className='simple-voter-secondary simple-questionnaire-rank-action'
                                 onClick={() => removeRankedAnswer(question.questionId, option.optionId)}
+                                disabled={responseLocked}
                               >
                                 Remove
                               </button>
@@ -1740,6 +1763,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
                             type='button'
                             className='simple-voter-secondary simple-questionnaire-rank-add'
                             onClick={() => addRankedAnswer(question.questionId, option.optionId)}
+                            disabled={responseLocked}
                           >
                             <span className='simple-questionnaire-rank-add-option'>{option.label}</span>
                             <span className='simple-questionnaire-rank-add-prefix'>Add as #{ranked.length + 1}</span>
@@ -1756,7 +1780,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
               ? (answerState[question.questionId] as string)
               : "";
             return (
-              <article key={question.questionId} className='simple-questionnaire-voter-card'>
+              <article key={question.questionId} className={`simple-questionnaire-voter-card${responseLocked ? " is-response-locked" : ""}`}>
                 <div className='simple-questionnaire-voter-heading'>
                   <h4 className='simple-questionnaire-voter-prompt'>Q{index + 1}: {questionPrompt}</h4>
                   <p className={`simple-questionnaire-voter-requirement${question.required ? "" : " is-optional"}`}>
@@ -1773,7 +1797,11 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
                   maxLength={question.maxLength}
                   placeholder='Type your response here...'
                   value={text}
+                  readOnly={responseLocked}
                   onChange={(event) => {
+                    if (responseLocked) {
+                      return;
+                    }
                     const nextValue = event.target.value;
                     setAnswerState((current) => ({
                       ...current,

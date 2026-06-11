@@ -1177,6 +1177,11 @@ code {
   margin-top: 6px;
 }
 
+.simple-coordinator-sidebar-tabs {
+  display: grid;
+  gap: 8px;
+}
+
 .simple-coordinator-nav-button {
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr);
@@ -1205,6 +1210,12 @@ code {
 .simple-coordinator-nav-button.is-active {
   border-color: rgba(45, 212, 191, 0.24);
   background: rgba(8, 130, 127, 0.26);
+  color: var(--simple-text);
+}
+
+.simple-coordinator-new-round-button {
+  border-color: rgba(45, 212, 191, 0.18);
+  background: rgba(8, 143, 141, 0.12);
   color: var(--simple-text);
 }
 
@@ -4706,6 +4717,10 @@ code {
   background: var(--simple-surface-2);
 }
 
+.simple-questionnaire-voter-card.is-response-locked {
+  border-color: rgba(45, 212, 191, 0.28);
+}
+
 .simple-questionnaire-voter-heading {
   display: flex;
   align-items: flex-start;
@@ -4819,6 +4834,30 @@ code {
   height: 18px;
   margin: 0;
   accent-color: var(--simple-blue);
+}
+
+.simple-questionnaire-voter-card.is-response-locked .simple-questionnaire-choice-row,
+.simple-questionnaire-voter-card.is-response-locked .simple-voter-choice,
+.simple-questionnaire-voter-card.is-response-locked .simple-questionnaire-rank-row {
+  cursor: default;
+}
+
+.simple-questionnaire-voter-card.is-response-locked .simple-voter-choice:disabled {
+  opacity: 1;
+}
+
+.simple-questionnaire-voter-card.is-response-locked .simple-questionnaire-choice-row:has(input:disabled) {
+  color: var(--simple-text);
+}
+
+.simple-questionnaire-voter-card.is-response-locked .simple-questionnaire-choice-row input:disabled {
+  cursor: default;
+}
+
+.simple-questionnaire-voter-card.is-response-locked .simple-questionnaire-free-text[readonly] {
+  border-color: rgba(45, 212, 191, 0.28);
+  color: var(--simple-text);
+  cursor: text;
 }
 
 .simple-questionnaire-rank-settings {

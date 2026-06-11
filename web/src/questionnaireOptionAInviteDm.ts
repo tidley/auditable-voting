@@ -38,9 +38,30 @@ type InviteDmEnvelope = {
   sentAt: string;
 };
 
+function optionAInviteDmDebugLoggingEnabled() {
+  const globalDebug = (globalThis as typeof globalThis & { __AUDITABLE_VOTING_DEBUG_OPTION_A?: unknown })
+    .__AUDITABLE_VOTING_DEBUG_OPTION_A;
+  if (globalDebug === true) {
+    return true;
+  }
+  if (typeof window === "undefined") {
+    return false;
+  }
+  try {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("debug_option_a") === "1"
+      || window.localStorage.getItem("auditable-voting:debug:option-a") === "1";
+  } catch {
+    return false;
+  }
+}
+
 function optionAInviteDmLog(stage: string, details?: Record<string, unknown>) {
+  if (!optionAInviteDmDebugLoggingEnabled()) {
+    return;
+  }
   const payload = details ? ` ${JSON.stringify(details)}` : "";
-  console.log(`[OptionA][InviteDM] ${stage}${payload}`);
+  console.debug(`[OptionA][InviteDM] ${stage}${payload}`);
 }
 
 function shouldBackoffInviteRelay(message: string) {

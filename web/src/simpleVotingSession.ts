@@ -19,9 +19,6 @@ export const SIMPLE_PUBLIC_RELAYS = [
   "wss://nos.lol",
   "wss://relay.nostr.info",
   "wss://relay.nos.social",
-  "wss://nostr.oxtr.dev",
-  "wss://relay.copylaradio.com",
-  "wss://relay.cypherflow.ai",
 ];
 
 export const SIMPLE_PUBLIC_PUBLISH_MAX_WAIT_MS = 1500;

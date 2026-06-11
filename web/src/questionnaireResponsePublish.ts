@@ -163,6 +163,7 @@ export async function publishQuestionnaireBlindResponsePublic(input: {
     eventPayload,
     tags: [
       ["t", "questionnaire_response_blind"],
+      ["q", input.questionnaireId],
       ["questionnaire", input.questionnaireId],
       ["schema", "1"],
       ["etype", "questionnaire_response_blind"],
@@ -220,6 +221,7 @@ export async function publishQuestionnaireBlindResponseEncrypted(input: {
     eventPayload,
     tags: [
       ["t", "questionnaire_response_blind"],
+      ["q", input.questionnaireId],
       ["questionnaire", input.questionnaireId],
       ["schema", "1"],
       ["etype", "questionnaire_response_blind"],
@@ -261,6 +263,7 @@ export async function publishQuestionnaireBlindResponsePublicByCoordinator(input
 
   const tags: string[][] = [
     ["t", "questionnaire_response_blind"],
+    ["q", input.questionnaireId],
     ["questionnaire", input.questionnaireId],
     ["schema", "1"],
     ["etype", "questionnaire_response_blind"],
@@ -416,6 +419,7 @@ export async function publishQuestionnaireSubmissionDecisionPublic(input: {
     created_at: eventPayload.decidedAt,
     tags: [
       ["t", "questionnaire_submission_decision"],
+      ["q", input.questionnaireId],
       ["questionnaire", input.questionnaireId],
       ["schema", "1"],
       ["etype", "questionnaire_submission_decision"],
