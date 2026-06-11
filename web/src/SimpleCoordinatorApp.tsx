@@ -6761,7 +6761,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
             className={`simple-coordinator-nav-button${activeTab === 'configure' ? ' is-active' : ''}`}
             onClick={() => selectTab('configure')}
           >
-            <span className='simple-coordinator-nav-symbol' aria-hidden='true'>+</span>
+            <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-plus' aria-hidden='true'>+</span>
             <span className='simple-coordinator-nav-label'>New Questionnaire</span>
           </button>
           <button
@@ -6771,7 +6771,11 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
             className={`simple-coordinator-nav-button${activeTab === 'participants' ? ' is-active' : ''}`}
             onClick={() => selectTab('participants')}
           >
-            <span className='simple-coordinator-nav-symbol' aria-hidden='true'>●</span>
+            <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-session' aria-hidden='true'>
+              <span className='simple-coordinator-nav-bar simple-coordinator-nav-bar-short' />
+              <span className='simple-coordinator-nav-bar simple-coordinator-nav-bar-mid' />
+              <span className='simple-coordinator-nav-bar simple-coordinator-nav-bar-tall' />
+            </span>
             <span className='simple-coordinator-nav-label'>Session</span>
           </button>
           <button
@@ -6781,7 +6785,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
             className={`simple-coordinator-nav-button${activeTab === 'settings' ? ' is-active' : ''}`}
             onClick={() => selectTab('settings')}
           >
-            <span className='simple-coordinator-nav-symbol' aria-hidden='true'>⚙</span>
+            <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-settings' aria-hidden='true'>⚙</span>
             <span className='simple-coordinator-nav-label'>Settings</span>
           </button>
         </div>
@@ -7089,7 +7093,18 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                               <span className='simple-admitted-voter-id'>{deriveActorDisplayId(row.npub)}</span>
                             </div>
                             <div className='simple-admitted-voter-cell simple-admitted-voter-npub-cell' data-label='Voter npub' role='cell'>
-                              <span className='simple-admitted-voter-npub'>{row.npub}</span>
+                              <div className='simple-admitted-voter-npub-line'>
+                                <span className='simple-admitted-voter-npub' title={row.npub}>{row.npub}</span>
+                                <button
+                                  type='button'
+                                  className='simple-admitted-voter-copy-npub'
+                                  onClick={() => void tryWriteClipboard(row.npub)}
+                                  aria-label='Copy voter npub'
+                                  title='Copy voter npub'
+                                >
+                                  <span className='simple-copy-icon' aria-hidden='true' />
+                                </button>
+                              </div>
                               {privateInviteEntry && privateInviteUrl ? (
                                 <div className='simple-admitted-private-link-details'>
                                   <div className='simple-private-invite-link-field'>
@@ -7107,8 +7122,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                                           type='button'
                                           className='simple-private-invite-copy-icon-button'
                                           onClick={() => void copyPrivateInviteCodeLink(privateInviteEntry.codeHash)}
-                                          aria-label='Copy invite link'
-                                          title='Copy invite link'
+                                          aria-label='Copy private link'
+                                          title='Copy private link'
                                         >
                                           <span className='simple-copy-icon' aria-hidden='true' />
                                         </button>
@@ -7158,18 +7173,20 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                                   <input
                                     type='checkbox'
                                     checked={row.admittedEntry.autoApply !== false}
+                                    aria-label='Auto-ballot'
+                                    title='Auto-ballot'
                                     onChange={(event) => updateAdmittedVoterDetails(row.npub, { autoApply: event.target.checked })}
                                   />
-                                  <span>Auto-ballot</span>
                                 </label>
                               ) : privateInviteEntry ? (
                                 <label className='simple-admitted-voter-auto-toggle'>
                                   <input
                                     type='checkbox'
                                     checked={privateInviteEntry.autoRequestBallot !== false}
+                                    aria-label='Auto-ballot'
+                                    title='Auto-ballot'
                                     onChange={(event) => setPrivateInviteCodeAutoRequestBallot(privateInviteEntry.codeHash, event.target.checked)}
                                   />
-                                  <span>Auto-ballot</span>
                                 </label>
                               ) : (
                                 <span className='simple-admitted-voter-empty-cell'>-</span>
@@ -7194,13 +7211,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                                       disabled={!optionACoordinatorRuntime}
                                     >
                                       {inviteButtonLabel}
-                                    </button>
-                                    <button
-                                      type='button'
-                                      className='simple-voter-secondary'
-                                      onClick={() => void copyKnownVoterInviteLink(row.npub, { statusTarget: "admitted" })}
-                                    >
-                                      Copy invite link
                                     </button>
                                   </>
                                 ) : null}
@@ -7275,7 +7285,18 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                             </div>
                             <div className='simple-admitted-voter-cell simple-admitted-voter-npub-cell' data-label='Voter npub' role='cell'>
                               {redeemedNpub ? (
-                                <span className='simple-admitted-voter-npub'>{redeemedNpub}</span>
+                                <div className='simple-admitted-voter-npub-line'>
+                                  <span className='simple-admitted-voter-npub' title={redeemedNpub}>{redeemedNpub}</span>
+                                  <button
+                                    type='button'
+                                    className='simple-admitted-voter-copy-npub'
+                                    onClick={() => void tryWriteClipboard(redeemedNpub)}
+                                    aria-label='Copy voter npub'
+                                    title='Copy voter npub'
+                                  >
+                                    <span className='simple-copy-icon' aria-hidden='true' />
+                                  </button>
+                                </div>
                               ) : (
                                 <span className='simple-admitted-voter-empty-cell'>Unclaimed private link</span>
                               )}
@@ -7295,8 +7316,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                                         type='button'
                                         className='simple-private-invite-copy-icon-button'
                                         onClick={() => void copyPrivateInviteCodeLink(entry.codeHash)}
-                                        aria-label='Copy invite link'
-                                        title='Copy invite link'
+                                        aria-label='Copy private link'
+                                        title='Copy private link'
                                       >
                                         <span className='simple-copy-icon' aria-hidden='true' />
                                       </button>
@@ -7342,9 +7363,10 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                                 <input
                                   type='checkbox'
                                   checked={autoRequestBallot}
+                                  aria-label='Auto-ballot'
+                                  title='Auto-ballot'
                                   onChange={(event) => setPrivateInviteCodeAutoRequestBallot(entry.codeHash, event.target.checked)}
                                 />
-                                <span>Auto-ballot</span>
                               </label>
                             </div>
                             <div className='simple-admitted-voter-cell simple-admitted-voter-actions-cell' data-label='Actions' role='cell'>

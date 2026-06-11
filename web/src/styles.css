@@ -1138,10 +1138,10 @@ code {
 
 .simple-coordinator-nav-button {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr);
+  grid-template-columns: 30px minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
-  min-height: 44px;
+  gap: 10px;
+  min-height: 48px;
   padding: 0 10px;
   border: 1px solid transparent;
   border-radius: 8px;
@@ -1171,9 +1171,46 @@ code {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
+  width: 30px;
+  height: 30px;
   color: var(--simple-teal);
   font-weight: 900;
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.simple-coordinator-nav-symbol-plus {
+  font-size: 1.55rem;
+}
+
+.simple-coordinator-nav-symbol-settings {
+  font-size: 1.28rem;
+}
+
+.simple-coordinator-nav-symbol-session {
+  align-items: flex-end;
+  gap: 3px;
+  padding: 5px;
+  border: 2px solid currentColor;
+  border-radius: 4px;
+}
+
+.simple-coordinator-nav-bar {
+  width: 4px;
+  border-radius: 999px 999px 0 0;
+  background: currentColor;
+}
+
+.simple-coordinator-nav-bar-short {
+  height: 7px;
+}
+
+.simple-coordinator-nav-bar-mid {
+  height: 12px;
+}
+
+.simple-coordinator-nav-bar-tall {
+  height: 17px;
 }
 
 .simple-coordinator-nav-label {
@@ -1782,6 +1819,112 @@ code {
 
 .simple-questionnaire-question-actions .simple-voter-action-row {
   margin: 0;
+}
+
+.simple-questionnaire-action-button,
+.simple-questionnaire-add-question-button {
+  gap: 8px;
+}
+
+.simple-questionnaire-button-icon {
+  position: relative;
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  color: currentColor;
+}
+
+.simple-questionnaire-button-copy-icon {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+}
+
+.simple-questionnaire-button-icon-plus::before,
+.simple-questionnaire-button-icon-plus::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border-radius: 999px;
+  background: currentColor;
+  transform: translate(-50%, -50%);
+}
+
+.simple-questionnaire-button-icon-plus::before {
+  width: 11px;
+  height: 2px;
+}
+
+.simple-questionnaire-button-icon-plus::after {
+  width: 2px;
+  height: 11px;
+}
+
+.simple-questionnaire-button-icon-up::before,
+.simple-questionnaire-button-icon-down::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  width: 8px;
+  height: 8px;
+  border-left: 2px solid currentColor;
+  border-top: 2px solid currentColor;
+  border-radius: 1px;
+}
+
+.simple-questionnaire-button-icon-up::before {
+  top: 3px;
+  transform: rotate(45deg);
+}
+
+.simple-questionnaire-button-icon-down::before {
+  top: 5px;
+  transform: rotate(225deg);
+}
+
+.simple-questionnaire-button-icon-up::after,
+.simple-questionnaire-button-icon-down::after {
+  content: "";
+  position: absolute;
+  left: 7px;
+  width: 2px;
+  height: 9px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.simple-questionnaire-button-icon-up::after {
+  top: 5px;
+}
+
+.simple-questionnaire-button-icon-down::after {
+  top: 2px;
+}
+
+.simple-questionnaire-button-icon-trash::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 6px;
+  width: 8px;
+  height: 8px;
+  border: 2px solid currentColor;
+  border-top: 0;
+  border-radius: 0 0 2px 2px;
+}
+
+.simple-questionnaire-button-icon-trash::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  width: 10px;
+  height: 2px;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 3px -2px 0 -1px currentColor;
 }
 
 .simple-questionnaire-remove-button {
@@ -3392,6 +3535,38 @@ code {
   white-space: nowrap;
 }
 
+.simple-admitted-voter-npub-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.simple-admitted-voter-copy-npub {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--simple-muted);
+  cursor: pointer;
+}
+
+.simple-admitted-voter-copy-npub:hover,
+.simple-admitted-voter-copy-npub:focus-visible {
+  border-color: var(--simple-border-strong);
+  color: var(--simple-teal);
+}
+
+.simple-admitted-voter-copy-npub .simple-copy-icon {
+  width: 14px;
+  height: 14px;
+}
+
 .simple-admitted-voter-meta {
   display: flex;
   flex-direction: column;
@@ -3404,30 +3579,63 @@ code {
 .simple-admitted-voter-status.simple-vote-status-icon {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   width: auto;
-  height: 34px;
+  height: auto;
   min-width: 0;
-  gap: 7px;
-  padding: 0 11px;
-  border-width: 1px;
-  border-radius: 8px;
-  font-size: 0.9rem;
+  min-height: 0;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 0.72rem;
+  font-weight: 850;
   line-height: 1;
   text-transform: none;
   white-space: nowrap;
 }
 
+.simple-admitted-voter-status.simple-status-indicator.is-voter-accepted,
+.simple-admitted-voter-status.simple-status-indicator.is-voter-used,
+.simple-admitted-voter-status.simple-status-indicator.is-voter-claimed,
+.simple-admitted-voter-status.simple-status-indicator.is-voter-invited {
+  color: var(--simple-green);
+  background: transparent;
+  border-color: transparent;
+}
+
+.simple-admitted-voter-status.simple-status-indicator.is-voter-rejected {
+  color: #f87171;
+  background: transparent;
+  border-color: transparent;
+}
+
+.simple-admitted-voter-status.simple-status-indicator.is-voter-requested,
+.simple-admitted-voter-status.simple-status-indicator.is-voter-pending,
+.simple-admitted-voter-status.simple-status-indicator.is-voter-received {
+  color: var(--simple-amber);
+  background: transparent;
+  border-color: transparent;
+}
+
+.simple-admitted-voter-status.simple-status-indicator.is-voter-issued,
+.simple-admitted-voter-status.simple-status-indicator.is-voter-whitelisted {
+  color: var(--simple-teal);
+  background: transparent;
+  border-color: transparent;
+}
+
 .simple-admitted-voter-pending {
   display: inline-flex;
   align-items: center;
-  min-height: 34px;
-  padding: 0 11px;
-  border: 1px solid var(--simple-border);
-  border-radius: 8px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
   color: var(--simple-soft);
-  font-size: 0.9rem;
-  font-weight: 750;
+  font-size: 0.72rem;
+  font-weight: 850;
   white-space: nowrap;
 }
 
@@ -3578,7 +3786,6 @@ code {
   min-height: 38px;
 }
 
-.simple-session-invites .simple-admitted-voter-status.simple-vote-status-icon,
 .simple-session-invites .simple-admitted-voter-actions .simple-voter-secondary,
 .simple-session-invites .simple-admitted-voter-auto-toggle {
   min-height: 30px;
@@ -5223,7 +5430,7 @@ code {
   }
 
   .simple-coordinator-shell.is-sidebar-collapsed .simple-coordinator-nav-button {
-    grid-template-columns: 28px minmax(0, 1fr);
+    grid-template-columns: 30px minmax(0, 1fr);
     justify-items: start;
     padding: 0 10px;
   }

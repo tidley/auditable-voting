@@ -3770,7 +3770,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                   ))}
                   <button
                     type='button'
-                    className='simple-voter-secondary'
+                    className='simple-voter-secondary simple-questionnaire-action-button'
                     onClick={() => {
                       updateQuestion(index, (entry) => {
                         if (entry.type !== "multiple_choice") {
@@ -3784,7 +3784,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                       });
                     }}
                   >
-                    Add option
+                    <span className='simple-questionnaire-button-icon simple-questionnaire-button-icon-plus' aria-hidden='true' />
+                    <span>Add option</span>
                   </button>
                   <label className={`simple-questionnaire-required-toggle${question.multiSelect ? " is-on" : ""}`}>
                     <span>Allow multiple selections</span>
@@ -3863,7 +3864,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                   </div>
                   <button
                     type='button'
-                    className='simple-voter-secondary'
+                    className='simple-voter-secondary simple-questionnaire-action-button'
                     onClick={() => {
                       updateQuestion(index, (entry) => {
                         if (entry.type !== "rank") {
@@ -3877,7 +3878,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                       });
                     }}
                   >
-                    Add option
+                    <span className='simple-questionnaire-button-icon simple-questionnaire-button-icon-plus' aria-hidden='true' />
+                    <span>Add option</span>
                   </button>
                 </div>
               ) : null}
@@ -3921,30 +3923,40 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
               ) : null}
               <div className='simple-questionnaire-question-actions'>
                 <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
-                  <button type='button' className='simple-voter-secondary' onClick={() => duplicateQuestion(index)}>Duplicate</button>
                   <button
                     type='button'
-                    className='simple-voter-secondary'
-                    onClick={() => moveQuestion(index, -1)}
-                    disabled={!canMoveUp}
+                    className='simple-voter-secondary simple-questionnaire-action-button'
+                    onClick={() => duplicateQuestion(index)}
                   >
-                    Move up
+                    <span className='simple-copy-icon simple-questionnaire-button-copy-icon' aria-hidden='true' />
+                    <span>Duplicate</span>
                   </button>
                   <button
                     type='button'
-                    className='simple-voter-secondary'
+                    className='simple-voter-secondary simple-questionnaire-action-button'
+                    onClick={() => moveQuestion(index, -1)}
+                    disabled={!canMoveUp}
+                  >
+                    <span className='simple-questionnaire-button-icon simple-questionnaire-button-icon-up' aria-hidden='true' />
+                    <span>Move up</span>
+                  </button>
+                  <button
+                    type='button'
+                    className='simple-voter-secondary simple-questionnaire-action-button'
                     onClick={() => moveQuestion(index, 1)}
                     disabled={!canMoveDown}
                   >
-                    Move down
+                    <span className='simple-questionnaire-button-icon simple-questionnaire-button-icon-down' aria-hidden='true' />
+                    <span>Move down</span>
                   </button>
                 </div>
                 <button
                   type='button'
-                  className='simple-voter-secondary simple-questionnaire-remove-button'
+                  className='simple-voter-secondary simple-questionnaire-action-button simple-questionnaire-remove-button'
                   onClick={() => deleteQuestion(index)}
                 >
-                  Remove
+                  <span className='simple-questionnaire-button-icon simple-questionnaire-button-icon-trash' aria-hidden='true' />
+                  <span>Remove</span>
                 </button>
               </div>
             </div>
@@ -3956,7 +3968,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         className='simple-questionnaire-add-question-button'
         onClick={addQuestion}
       >
-        + Add Question
+        <span className='simple-questionnaire-button-icon simple-questionnaire-button-icon-plus' aria-hidden='true' />
+        <span>Add Question</span>
       </button>
 
             </div>
@@ -3968,7 +3981,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                 <li className={titleReady ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>{titleReady ? "✓" : "•"}</span> Title added</li>
                 <li className={checklistDescriptionAdded ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>{checklistDescriptionAdded ? "✓" : "•"}</span> Description added</li>
                 <li className={hasQuestion ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>{hasQuestion ? "✓" : "•"}</span> At least one question added</li>
-                <li className={questionsValid ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>{questionsValid ? "✓" : "•"}</span> All question prompts and options complete</li>
+                <li className={questionsValid ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>{questionsValid ? "✓" : "•"}</span> Questions complete</li>
                 <li className={publishedDefinition ? "is-complete" : "is-pending"}><span className='simple-vote-status-icon' aria-hidden='true'>{publishedDefinition ? "✓" : "•"}</span> {publishedDefinition ? "Questionnaire published" : "Questionnaire not yet published"}</li>
               </ul>
             </section>

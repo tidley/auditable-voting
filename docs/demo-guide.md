@@ -75,7 +75,7 @@ The **Readiness checklist** should show:
 - **Title added**
 - **Description added**
 - **At least one question added**
-- **All question prompts and options complete**
+- **Questions complete**
 
 Click **Publish questionnaire**, or use **Publish + apply invited voters** when the invited-voter roster should be green-lit immediately for this questionnaire.
 
