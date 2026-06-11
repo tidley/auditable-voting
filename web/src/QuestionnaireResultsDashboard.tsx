@@ -255,9 +255,6 @@ export default function QuestionnaireResultsDashboard({
                           />
                         ) : (
                           <div className='simple-auditor-free-text-cardlet'>
-                            <div>
-                              <p className='simple-voter-question'>{summary.freeTextCount} response{summary.freeTextCount === 1 ? "" : "s"} collected</p>
-                            </div>
                             <button
                               type='button'
                               className='simple-voter-secondary simple-auditor-text-button'

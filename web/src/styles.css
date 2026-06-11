@@ -2648,18 +2648,13 @@ code {
 }
 
 .simple-auditor-free-text-cardlet {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
-  gap: 14px;
-  padding: 14px;
-  border: 1px solid rgba(104, 119, 152, 0.5);
-  border-radius: 12px;
-  background: #152942;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding-top: 10px;
 }
 
 .simple-auditor-text-button {
-  grid-column: 1 / -1;
   justify-self: start;
 }
 
