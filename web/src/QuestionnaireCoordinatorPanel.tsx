@@ -3696,7 +3696,19 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           return (
             <div key={`${question.questionId}-${index}`} className='simple-questionnaire-question-card'>
               <div className='simple-questionnaire-question-head'>
-                <p className='simple-voter-question'>Question {index + 1}</p>
+                <div className='simple-questionnaire-question-title-row'>
+                  <p className='simple-voter-question simple-questionnaire-question-title'>Question {index + 1}</p>
+                  <select
+                    className='simple-voter-input simple-questionnaire-type-dropdown'
+                    aria-label={`Question ${index + 1} type`}
+                    value={question.type}
+                    onChange={(event) => setQuestionType(index, event.target.value as QuestionnaireQuestionDraft["type"])}
+                  >
+                    {QUESTION_TYPE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </div>
                 <label className={`simple-questionnaire-required-toggle${question.required ? " is-on" : ""}`}>
                   <span>Required</span>
                   <input
@@ -3722,18 +3734,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                   </span>
                 </label>
               </div>
-              <label className='simple-questionnaire-type-select'>
-                <span className='simple-voter-label simple-voter-label-tight'>Question type</span>
-                <select
-                  className='simple-voter-input simple-questionnaire-type-dropdown'
-                  value={question.type}
-                  onChange={(event) => setQuestionType(index, event.target.value as QuestionnaireQuestionDraft["type"])}
-                >
-                  {QUESTION_TYPE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-              </label>
               <input
                 id={`question-prompt-${index}`}
                 className='simple-voter-input'

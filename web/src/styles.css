@@ -1374,6 +1374,14 @@ code {
   background: var(--simple-teal);
 }
 
+.simple-voter-page.simple-coordinator-page::before {
+  content: none;
+  display: none;
+  height: 0;
+  margin: 0;
+  background: transparent;
+}
+
 .simple-voter-tabs {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1674,10 +1682,25 @@ code {
 }
 
 .simple-questionnaire-question-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: max-content minmax(170px, 260px) max-content;
+  align-items: center;
   gap: 12px;
+}
+
+.simple-questionnaire-question-title-row {
+  display: contents;
+}
+
+.simple-questionnaire-question-title-row .simple-voter-question {
+  display: flex;
+  align-items: center;
+  min-height: 46px;
+}
+
+.simple-questionnaire-question-title {
+  color: var(--simple-text);
+  font-weight: 800;
 }
 
 .simple-questionnaire-question-type {
@@ -1719,6 +1742,7 @@ code {
   font-size: 0.96rem;
   font-weight: 800;
   cursor: pointer;
+  justify-self: end;
 }
 
 .simple-questionnaire-required-toggle input[type="checkbox"] {
@@ -1821,14 +1845,10 @@ code {
   letter-spacing: 0.04em;
 }
 
-.simple-questionnaire-type-select {
-  display: grid;
-  grid-template-columns: max-content minmax(180px, 260px);
-  align-items: center;
-  gap: 10px;
-}
-
 .simple-questionnaire-type-dropdown {
+  width: auto;
+  min-width: 170px;
+  max-width: 260px;
   margin-bottom: 0;
 }
 
@@ -6674,13 +6694,34 @@ code {
     grid-template-columns: 1fr;
   }
 
-  .simple-questionnaire-type-select {
-    grid-template-columns: 1fr;
-  }
-
   .simple-questionnaire-questions-head {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .simple-questionnaire-question-head {
+    grid-template-columns: minmax(0, 1fr) max-content;
+    align-items: flex-start;
+  }
+
+  .simple-questionnaire-question-title-row {
+    display: grid;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .simple-questionnaire-question-title-row .simple-voter-question {
+    min-height: 0;
+  }
+
+  .simple-questionnaire-question-title-row .simple-questionnaire-type-dropdown {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .simple-questionnaire-question-head .simple-questionnaire-required-toggle {
+    margin-left: 0;
   }
 
   .simple-invite-share-panel-general {
