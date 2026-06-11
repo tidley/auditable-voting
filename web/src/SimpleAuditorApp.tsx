@@ -108,6 +108,21 @@ function readInitialQuestionnaireIdFromUrl() {
   return (params.get("questionnaire") ?? params.get("q") ?? params.get("election_id") ?? "").trim();
 }
 
+function writeSelectedQuestionnaireIdToUrl(questionnaireId: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const url = new URL(window.location.href);
+  if (questionnaireId.trim()) {
+    url.searchParams.set("q", questionnaireId.trim());
+  } else {
+    url.searchParams.delete("q");
+    url.searchParams.delete("questionnaire");
+    url.searchParams.delete("election_id");
+  }
+  window.history.replaceState({}, "", url.toString());
+}
+
 export default function SimpleAuditorApp() {
   const initialQuestionnaireId = useMemo(() => readInitialQuestionnaireIdFromUrl() || auditorMemoryCache.selectedQuestionnaireId, []);
   const canUseCachedSelection = initialQuestionnaireId === auditorMemoryCache.selectedQuestionnaireId;
@@ -138,6 +153,8 @@ export default function SimpleAuditorApp() {
     canUseCachedSelection ? auditorMemoryCache.responseRefreshStatus : null
   ));
   const [refreshInFlight, setRefreshInFlight] = useState(false);
+  const initialListLoadDoneRef = useRef(auditorMemoryCache.questionnaires.length > 0);
+  const initialSelectedLoadDoneRef = useRef(canUseCachedSelection && auditorMemoryCache.selectedResponseDetails.length >= 0);
   const selectedQuestionnaireIdRef = useRef("");
   const selectedRefreshEffectHasRunRef = useRef(false);
   const selectedChangeFromRefreshRef = useRef(false);
@@ -275,6 +292,7 @@ export default function SimpleAuditorApp() {
   const refreshQuestionnaires = useCallback(async () => {
     try {
       const entries = await loadQuestionnairesFromNostr();
+      initialListLoadDoneRef.current = true;
       setQuestionnaires((previous) => (
         areQuestionnaireEntriesEqual(previous, entries) ? previous : entries
       ));
@@ -294,6 +312,7 @@ export default function SimpleAuditorApp() {
       );
       setQuestionnaireRefreshStatus((previous) => (previous === nextStatus ? previous : nextStatus));
     } catch {
+      initialListLoadDoneRef.current = true;
       const nextStatus = "Failed to refresh public questionnaires.";
       setQuestionnaireRefreshStatus((previous) => (previous === nextStatus ? previous : nextStatus));
     }
@@ -429,8 +448,10 @@ export default function SimpleAuditorApp() {
         };
       }));
       const nextStatus = "Questionnaire responses refreshed from Nostr.";
+      initialSelectedLoadDoneRef.current = true;
       setResponseRefreshStatus((previous) => (previous === nextStatus ? previous : nextStatus));
     } catch {
+      initialSelectedLoadDoneRef.current = true;
       setSelectedResponseDetails((previous) => (previous.length === 0 ? previous : []));
       setSelectedLatestPublishAt((previous) => (previous === null ? previous : null));
       setSelectedLiveState((previous) => (previous === null ? previous : null));
@@ -659,6 +680,10 @@ export default function SimpleAuditorApp() {
     }
   }, [filteredQuestionnaires, selectedQuestionnaireId]);
 
+  useEffect(() => {
+    writeSelectedQuestionnaireIdToUrl(selectedQuestionnaireId);
+  }, [selectedQuestionnaireId]);
+
   const selectedQuestionnaire = useMemo(
     () => filteredQuestionnaires.find((entry) => entry.questionnaireId === selectedQuestionnaireId)
       ?? null,
@@ -826,6 +851,8 @@ export default function SimpleAuditorApp() {
                 <p className='simple-voter-note'>No questionnaire rounds found for the selected filters.</p>
               )}
             </>
+          ) : !initialListLoadDoneRef.current && refreshInFlight ? (
+            <p className='simple-voter-note'>Loading questionnaires from Nostr relays...</p>
           ) : (
             <p className='simple-voter-empty'>No public questionnaire rounds discovered yet.</p>
           )}
@@ -882,10 +909,16 @@ export default function SimpleAuditorApp() {
           emptyQuestionSummaryText={
             selectedResultSummary
               ? "Published result summary contains no per-question aggregates, and no live answer payloads are available yet."
-              : "No published result summary or live verified submissions yet for this questionnaire."
+              : selectedQuestionnaire && !initialSelectedLoadDoneRef.current && refreshInFlight
+                ? "Loading questionnaire results from Nostr relays..."
+                : "No published result summary or live verified submissions yet for this questionnaire."
           }
           emptySelectionText='Choose a questionnaire round to inspect results.'
-          emptyResponsesText='No submitted responses found for this round yet.'
+          emptyResponsesText={
+            selectedQuestionnaire && !initialSelectedLoadDoneRef.current && refreshInFlight
+              ? "Loading submitted responses from Nostr relays..."
+              : "No submitted responses found for this round yet."
+          }
           emptyResponseSelectionText='Choose a questionnaire round to inspect responses.'
         />
       </section>
