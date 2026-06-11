@@ -3498,9 +3498,11 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
 
     return (
       <>
+        <div className='simple-session-page-toolbar'>
+          {sessionTopControls}
+        </div>
         <QuestionnaireResultsDashboard
           variant='session'
-          topControls={sessionTopControls}
           questionnaire={activePublishedDefinition ? {
             questionnaireId: activePublishedDefinition.questionnaireId,
             title: activePublishedDefinition.title || "Untitled questionnaire",

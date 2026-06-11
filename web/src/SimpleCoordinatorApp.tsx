@@ -6726,11 +6726,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     <main className={`simple-voter-shell simple-coordinator-shell${sidebarCollapsed ? " is-sidebar-collapsed" : ""}`}>
       <aside className='simple-coordinator-sidebar' aria-label='Organiser navigation'>
         <div className='simple-coordinator-sidebar-top'>
-          {accountMenu ?? (
-            <button type='button' className='simple-role-switch-toggle' disabled>
-              Menu
-            </button>
-          )}
           <button
             type='button'
             className='simple-coordinator-sidebar-collapse'
@@ -6739,7 +6734,14 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
             onClick={() => setSidebarCollapsed((current) => !current)}
             data-press-feedback-disabled='true'
           >
-            {sidebarCollapsed ? ">" : "<"}
+            <span className='simple-coordinator-sidebar-burger' aria-hidden='true'>
+              <span />
+              <span />
+              <span />
+            </span>
+            <span className='simple-coordinator-sidebar-collapse-label'>
+              {sidebarCollapsed ? "Open menu" : "Collapse menu"}
+            </span>
           </button>
         </div>
         <div className='simple-coordinator-sidebar-identity'>
@@ -6748,6 +6750,13 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
           <p className='simple-coordinator-sidebar-npub' title={activeCoordinatorNpub || undefined}>
             {activeCoordinatorNpub || "Identity loading"}
           </p>
+        </div>
+        <div className='simple-coordinator-sidebar-menu-slot'>
+          {accountMenu ?? (
+            <button type='button' className='simple-role-switch-toggle' disabled>
+              Menu
+            </button>
+          )}
         </div>
         <div
           className='simple-coordinator-sidebar-nav'

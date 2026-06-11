@@ -251,6 +251,11 @@ export default function QuestionnaireResultsDashboard({
             {topControls}
           </div>
         ) : null}
+        {isSessionVariant ? (
+          <div className='simple-session-results-heading'>
+            <h2 className='simple-voter-section-title'>Live Results</h2>
+          </div>
+        ) : null}
         {questionnaire ? (
           <>
             {!isSessionVariant ? (
