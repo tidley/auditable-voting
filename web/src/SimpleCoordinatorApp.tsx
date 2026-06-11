@@ -152,6 +152,8 @@ type SimpleCoordinatorKeypair = {
   nsec: string;
 };
 
+const PRIVATE_INVITE_CREATE_COPIED_MS = 1500;
+
 function decryptOptionATextAnswerForCoordinator(input: {
   text: string;
   authorPubkey: string;
@@ -1178,6 +1180,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     lastError: null,
   });
   const [privateInviteLinksByHash, setPrivateInviteLinksByHash] = useState<Record<string, string>>({});
+  const [privateInviteCreateCopied, setPrivateInviteCreateCopied] = useState(false);
+  const privateInviteCreateCopiedTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const [optimisticKnownVoterNpubs, setOptimisticKnownVoterNpubs] = useState<string[]>([]);
   const [knownVoterContactsLoading, setKnownVoterContactsLoading] = useState(false);
   const [importedKnownVoterContacts, setImportedKnownVoterContacts] = useState<ImportedKnownVoterContact[]>([]);
@@ -1200,6 +1204,24 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     }
     return createSignerService();
   }, [signerNpub, keypair?.nsec]);
+
+  useEffect(() => () => {
+    if (privateInviteCreateCopiedTimerRef.current !== null) {
+      window.clearTimeout(privateInviteCreateCopiedTimerRef.current);
+    }
+  }, []);
+
+  function showPrivateInviteCreateCopied() {
+    if (privateInviteCreateCopiedTimerRef.current !== null) {
+      window.clearTimeout(privateInviteCreateCopiedTimerRef.current);
+    }
+    setPrivateInviteCreateCopied(true);
+    privateInviteCreateCopiedTimerRef.current = window.setTimeout(() => {
+      setPrivateInviteCreateCopied(false);
+      privateInviteCreateCopiedTimerRef.current = null;
+    }, PRIVATE_INVITE_CREATE_COPIED_MS);
+  }
+
   const optionAElectionId = useMemo(() => {
     const announced = questionnaireRosterAnnouncement.questionnaireId.trim();
     if (announced) {
@@ -4301,9 +4323,12 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         ...current,
         [inviteCodeHash]: inviteUrl,
       }));
-      await tryWriteClipboard(inviteUrl);
+      const copied = await tryWriteClipboard(inviteUrl);
       await syncActiveWorkerElectionConfig().catch(() => false);
       setKnownVoterInviteRefreshNonce((value) => value + 1);
+      if (copied) {
+        showPrivateInviteCreateCopied();
+      }
       setAdmittedVoterStatus("Private link copied.");
     } catch (error) {
       setAdmittedVoterStatus(error instanceof Error ? error.message : "Could not create private link.");
@@ -7088,7 +7113,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                         onClick={() => void createPrivateInviteCodeLink()}
                         disabled={!publicQuestionnaireInviteUrl || !optionACoordinatorRuntime}
                       >
-                        Create single-use invite link
+                        {privateInviteCreateCopied ? "Copied" : "Create single-use invite link"}
                       </button>
                     </div>
                   </div>
