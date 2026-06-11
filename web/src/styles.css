@@ -3041,11 +3041,20 @@ code {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 10px;
 }
 
 .simple-session-results-heading .simple-voter-section-title {
   margin: 0;
+}
+
+.simple-session-questionnaire-description {
+  margin: 0 0 16px;
+  max-width: 82ch;
+  color: var(--simple-muted);
+  font-size: 0.95rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .simple-auditor-results-hero {
@@ -3212,7 +3221,7 @@ code {
 
 .simple-session-question-grid {
   grid-template-columns: minmax(180px, 0.75fr) repeat(auto-fit, minmax(220px, 1fr));
-  align-items: stretch;
+  align-items: start;
   margin-bottom: 0;
 }
 
@@ -3227,13 +3236,15 @@ code {
 }
 
 .simple-session-results-dashboard .simple-auditor-question-card {
+  align-self: start;
+  align-content: start;
   padding: 14px 16px;
   gap: 12px;
   background: #0c1621;
 }
 
 .simple-session-live-card {
-  align-content: center;
+  align-content: start;
 }
 
 .simple-session-live-card .simple-auditor-score {

@@ -258,6 +258,9 @@ export default function QuestionnaireResultsDashboard({
         ) : null}
         {questionnaire ? (
           <>
+            {isSessionVariant && questionnaireDescription ? (
+              <p className='simple-session-questionnaire-description'>{questionnaireDescription}</p>
+            ) : null}
             {!isSessionVariant ? (
               <div className='simple-auditor-results-hero'>
               <div className='simple-auditor-results-title-block'>
