@@ -253,6 +253,7 @@ const AUTO_BALLOT_REQUEST_MIN_INTERVAL_MS = 15_000;
 const AUTO_BALLOT_PAGE_LOAD_REQUEST_DELAY_MS = 1_000;
 const AUTO_BALLOT_RETRY_POLL_MS = 20_000;
 const AUTO_BALLOT_RETRY_RESEND_MS = 8 * 60_000;
+const MANUAL_BALLOT_RESEND_DELAY_MS = 20_000;
 const AUTO_BALLOT_SIGNER_REFRESH_SCHEDULE_MS = [15_000, 45_000, 120_000] as const;
 const AUTO_BALLOT_SIGNER_KEEPALIVE_REFRESH_MS = 75_000;
 const AUTO_BALLOT_MOBILE_RECOVERY_PULL_MS = 45_000;
@@ -262,6 +263,15 @@ const AUTO_BALLOT_SIGNER_BACKGROUND_FETCH_MIN_INTERVAL_MS = 90_000;
 const AUTO_BALLOT_SIGNER_LIFECYCLE_FETCH_MIN_INTERVAL_MS = 45_000;
 const AUTO_BALLOT_SIGNER_INITIAL_PULL_DELAY_MS = 8_000;
 type BallotWaitRefreshMode = "manual" | "lifecycle" | "background" | "restart_only";
+
+function getManualBallotResendAvailableAtMs(snapshot: VoterElectionLocalState | null | undefined) {
+  if (!snapshot?.blindRequestSent || snapshot.credentialReady || snapshot.submission) {
+    return null;
+  }
+  const sentAt = snapshot.blindRequestSentAt ?? snapshot.blindRequest?.lastSentAt ?? "";
+  const sentAtMs = Date.parse(sentAt);
+  return Number.isFinite(sentAtMs) ? sentAtMs + MANUAL_BALLOT_RESEND_DELAY_MS : 0;
+}
 
 function isLikelyMobileClient() {
   if (typeof window === "undefined" || typeof navigator === "undefined") {
@@ -442,6 +452,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [encryptFreeTextByQuestionId, setEncryptFreeTextByQuestionId] = useState<Record<string, boolean>>({});
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const [manualResendClockMs, setManualResendClockMs] = useState(() => Date.now());
   const [privateInviteBootstrapRetryNonce, setPrivateInviteBootstrapRetryNonce] = useState(0);
   const autoRequestSentForRef = useRef<Record<string, true>>({});
   const autoRequestInFlightForRef = useRef<Record<string, true>>({});
@@ -2359,7 +2370,34 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
   }, [answerNextPendingKey, currentQuestionnaireId, inviteDropdownOptions, selectedInviteKey]);
   const waitingForCredential = Boolean(snapshot?.blindRequestSent && !snapshot?.credentialReady && !snapshot?.submission);
-  const canRequestOrResendBallot = flags.canRequestBallot || waitingForCredential;
+  const manualResendAvailableAtMs = useMemo(
+    () => getManualBallotResendAvailableAtMs(snapshot),
+    [
+      snapshot?.blindRequest?.lastSentAt,
+      snapshot?.blindRequestSent,
+      snapshot?.blindRequestSentAt,
+      snapshot?.credentialReady,
+      snapshot?.submission,
+    ],
+  );
+  useEffect(() => {
+    if (!waitingForCredential || manualResendAvailableAtMs === null) {
+      return;
+    }
+    const now = Date.now();
+    setManualResendClockMs(now);
+    if (manualResendAvailableAtMs <= now) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      setManualResendClockMs(Date.now());
+    }, manualResendAvailableAtMs - now);
+    return () => window.clearTimeout(timeoutId);
+  }, [manualResendAvailableAtMs, waitingForCredential]);
+  const manualResendRequestVisible = waitingForCredential
+    && manualResendAvailableAtMs !== null
+    && manualResendClockMs >= manualResendAvailableAtMs;
+  const canRequestOrResendBallot = flags.canRequestBallot || manualResendRequestVisible;
 
   const requiredQuestionsAnswered = questions.length > 0 && requiredQuestions.every((question) => {
     const value = answers[question.questionId];
@@ -2590,9 +2628,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     <section id='questionnaire-ballot-status' className='simple-settings-card' aria-label='Ballot status'>
       <h4 className='simple-voter-section-title'>Ballot status</h4>
       <div className='simple-voter-action-row simple-voter-action-row-inline simple-optiona-voter-controls'>
-        <button type='button' className='simple-voter-secondary' disabled={!canRequestOrResendBallot} onClick={requestBallot}>
-          {waitingForCredential ? "Resend request" : "Request ballot"}
-        </button>
+        {!waitingForCredential || manualResendRequestVisible ? (
+          <button type='button' className='simple-voter-secondary' disabled={!canRequestOrResendBallot} onClick={requestBallot}>
+            {waitingForCredential ? "Resend request" : "Request ballot"}
+          </button>
+        ) : null}
         <button type='button' className='simple-voter-secondary' onClick={refreshStatus}>Refresh status</button>
       </div>
       <p className='simple-voter-note'>Organiser: {coordinatorLabel}</p>
@@ -2995,7 +3035,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         >
           {voteActionButtonText}
         </button>
-        {waitingForCredential ? (
+        {manualResendRequestVisible ? (
           <button type='button' className='simple-voter-secondary' onClick={requestBallot}>
             Resend request
           </button>

@@ -86,6 +86,7 @@ const fetchOptionAInviteDmsMock = vi.mocked(fetchOptionAInviteDms);
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   window.localStorage.clear();
   window.history.pushState(null, "", "/");
@@ -587,6 +588,84 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     await waitFor(() => {
       expect(requestSpy).toHaveBeenCalledWith({ forceResend: true });
     });
+  });
+
+  it("shows the manual resend action 20 seconds after the blind request was sent", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-18T00:00:10.000Z"));
+    const localVoterNpub = "npub1" + "w".repeat(58);
+    const coordinatorNpub = "npub1" + "b".repeat(58);
+    optionAStorageMocks.loadVoterState.mockReturnValue({
+      electionId: "q_waiting_resend_delay",
+      invitedNpub: localVoterNpub,
+      coordinatorNpub,
+      loginVerified: true,
+      loginVerifiedAt: "2026-04-18T00:00:00.000Z",
+      inviteMessage: null,
+      blindRequest: {
+        type: "blind_ballot_request",
+        schemaVersion: 1,
+        electionId: "q_waiting_resend_delay",
+        requestId: "request_waiting_resend_delay",
+        invitedNpub: localVoterNpub,
+        blindedMessage: "blinded_waiting_resend_delay",
+        tokenCommitment: "commitment_waiting_resend_delay",
+        blindSigningKeyId: "blind_key",
+        clientNonce: "nonce_waiting_resend_delay",
+        createdAt: "2026-04-18T00:00:00.000Z",
+      },
+      blindRequestSent: true,
+      blindRequestSentAt: "2026-04-18T00:00:00.000Z",
+      blindIssuance: null,
+      credentialReady: false,
+      draftResponses: [],
+      submission: null,
+      submissionAccepted: null,
+      submissionAcceptedAt: null,
+      lastUpdatedAt: "2026-04-18T00:00:00.000Z",
+    });
+    storeCachedQuestionnaireDefinition({
+      schemaVersion: 1,
+      eventType: "questionnaire_definition",
+      responseMode: "blind_token",
+      questionnaireId: "q_waiting_resend_delay",
+      title: "Waiting resend delay",
+      description: "",
+      createdAt: 1,
+      openAt: 1,
+      closeAt: 9999999999,
+      coordinatorPubkey: coordinatorNpub,
+      coordinatorEncryptionPubkey: coordinatorNpub,
+      responseVisibility: "private",
+      eligibilityMode: "open",
+      allowMultipleResponsesPerPubkey: false,
+      blindSigningPublicKey: {
+        scheme: "rsabssa-sha384-pss-deterministic-v1",
+        keyId: "blind_key",
+        jwk: { kty: "RSA", e: "AQAB", n: "test" },
+      },
+      questions: [{
+        questionId: "q1",
+        type: "yes_no",
+        prompt: "Waiting resend delay prompt",
+        required: true,
+      }],
+    });
+
+    render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_waiting_resend_delay"]} localVoterNpub={localVoterNpub} />);
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByText(/Waiting resend delay prompt/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Resend request" })).toBeNull();
+
+    await act(async () => {
+      vi.advanceTimersByTime(10_000);
+    });
+
+    expect(screen.getByRole("button", { name: "Resend request" })).toBeTruthy();
   });
 
   it("automatically retries signer-backed blind requests after the resend cooldown", async () => {
