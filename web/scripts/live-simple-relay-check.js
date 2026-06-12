@@ -984,14 +984,34 @@ async function ensureVoterTab(page, name, actorLabel = "unknown-voter") {
 
 function tabNameCandidates(name) {
   const aliases = new Map([
-    ["Configure", ["Build", "Setup", "Join"]],
-    ["Build", ["Configure", "Setup"]],
-    ["Setup", ["Configure", "Build"]],
+    ["Configure", ["Questionnaire", "Build", "Setup", "Join"]],
+    ["Build", ["Questionnaire", "Configure", "Setup"]],
+    ["Setup", ["Questionnaire", "Configure", "Build"]],
     ["Join", ["Configure"]],
     ["Voting", ["Build", "Responses"]],
     ["Responses", ["Voting"]],
   ]);
   return [name, ...(aliases.get(name) ?? [])];
+}
+
+async function closeAppMenuIfOpen(page) {
+  const menuButton = page.getByRole("button", { name: /^Menu$/i }).first();
+  if (await menuButton.count().catch(() => 0) === 0) {
+    return false;
+  }
+  try {
+    if (!(await menuButton.isVisible({ timeout: 1000 }))) {
+      return false;
+    }
+    if ((await menuButton.getAttribute("aria-expanded")) !== "true") {
+      return false;
+    }
+    await menuButton.click();
+    await sleep(100);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function openAppMenuIfAvailable(page) {
@@ -1015,6 +1035,7 @@ async function ensureTab(page, name, actorLabel = "unknown-actor") {
   if (!(await isPageAlive(page))) {
     throw new Error(`Page is closed before ensureTab(${name}) for ${actorLabel}`);
   }
+  await closeAppMenuIfOpen(page);
   const names = tabNameCandidates(name);
   try {
     for (const candidate of names) {
@@ -1058,6 +1079,7 @@ async function ensureTab(page, name, actorLabel = "unknown-actor") {
       await sleep(100);
       return true;
     }
+    await closeAppMenuIfOpen(page);
   }
   return false;
 }

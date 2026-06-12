@@ -2738,6 +2738,12 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       ? title.trim()
       : "";
     const availableTitle = availableQuestionnaireTitles[id]?.trim() ?? "";
+    if (view === "build" && id === selectedId) {
+      const liveBuildTitle = selectedQuestionnaireIsKnownPublished
+        ? selectedPublishedTitle || availableTitle || selectedDraftTitle
+        : selectedDraftTitle;
+      return liveBuildTitle ? `${liveBuildTitle} - ${id}` : id;
+    }
     const labelTitle = id === selectedId
       ? availableTitle || selectedPublishedTitle || selectedDraftTitle
       : availableTitle;

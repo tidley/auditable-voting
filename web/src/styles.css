@@ -2378,6 +2378,7 @@ code {
 }
 
 .simple-questionnaire-build-section > .simple-voter-section-title {
+  margin-top: 8px;
   margin-bottom: 14px;
 }
 

@@ -287,6 +287,56 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect([...selector.options].map((option) => option.value)).toEqual(["q_current_draft"]);
   });
 
+  it("uses live build draft values for the selected questionnaire label", async () => {
+    const coordinatorNpub = "npub1organiser";
+    window.localStorage.setItem(
+      buildSimpleNamespacedLocalStorageKey("coordinator.questionnaire-draft-data.v1"),
+      JSON.stringify({
+        questionnaireId: "q_live_draft",
+        title: "Live draft",
+        description: "",
+        closeTimerEnabled: false,
+        closeAfterMinutes: "60",
+        questions: [{
+          questionId: "q1",
+          prompt: "Proceed?",
+          required: true,
+          type: "yes_no",
+        }],
+      }),
+    );
+    upsertElectionSummary({
+      electionId: "q_live_draft",
+      title: "Old draft summary",
+      description: "",
+      state: "draft",
+      openedAt: null,
+      closedAt: null,
+      coordinatorNpub,
+    });
+
+    render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub={coordinatorNpub} />);
+
+    const selector = await screen.findByRole("combobox", { name: "Questionnaire" }) as HTMLSelectElement;
+    const titleInput = screen.getByLabelText("Name") as HTMLInputElement;
+    const questionnaireIdInput = screen.getByLabelText("Questionnaire ID") as HTMLInputElement;
+
+    await waitFor(() => {
+      expect(selector.options[0]?.textContent).toBe("Live draft - q_live_draft");
+    });
+
+    fireEvent.change(titleInput, { target: { value: "Edited live draft" } });
+    await waitFor(() => {
+      expect(selector.options[0]?.textContent).toBe("Edited live draft - q_live_draft");
+    });
+
+    fireEvent.change(questionnaireIdInput, { target: { value: "q_edited_live" } });
+    await waitFor(() => {
+      expect([...selector.options].map((option) => option.value)).toEqual(["q_edited_live"]);
+      expect(selector.options[0]?.textContent).toBe("Edited live draft - q_edited_live");
+    });
+  });
+
   it("keeps the selector on the build page and locks published questionnaire fields", async () => {
     const coordinatorNpub = "npub1organiser";
     window.localStorage.setItem(
