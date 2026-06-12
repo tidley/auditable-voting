@@ -1,4 +1,4 @@
-import { getPublicKey, nip17, nip19, type NostrEvent } from "nostr-tools";
+import { getEventHash, getPublicKey, nip17, nip19, nip59, type NostrEvent } from "nostr-tools";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
 import { mapRelayPublishResult, type RelayPublishResult } from "./nostrPublishResult";
 import {
@@ -36,6 +36,7 @@ export type HelplineDmMessage = {
 
 export type HelplineDmPublishResult = {
   eventIds: string[];
+  message: HelplineDmMessage;
   successes: number;
   failures: number;
   relayResults: Array<RelayPublishResult & { eventId: string }>;
@@ -204,6 +205,14 @@ function sortMessagesChronologically(messages: HelplineDmMessage[]) {
   });
 }
 
+export function mergeHelplineDmMessages(messages: HelplineDmMessage[]) {
+  const byId = new Map<string, HelplineDmMessage>();
+  for (const message of messages) {
+    byId.set(message.id, message);
+  }
+  return sortMessagesChronologically([...byId.values()]);
+}
+
 export async function sendHelplineDmMessage(input: {
   senderNsec: string;
   recipientNpub: string;
@@ -225,11 +234,28 @@ export async function sendHelplineDmMessage(input: {
     publishRelays: dmRelays,
     channel: `nip65:${sender.npub}`,
   });
-  const events = nip17.wrapManyEvents(
+  const createdAtSeconds = Math.ceil(Date.now() / 1000);
+  const subject = input.subject?.trim() || HELPLINE_DM_SUBJECT;
+  const rumorEvent = {
+    kind: 14,
+    content: body,
+    created_at: createdAtSeconds,
+    tags: [
+      dmRelays[0] ? ["p", recipientHex, dmRelays[0]] : ["p", recipientHex],
+      ["subject", subject],
+    ],
+    pubkey: sender.publicHex,
+  };
+  const rumorId = getEventHash(rumorEvent);
+  const events = nip59.wrapManyEvents(
+    {
+      kind: rumorEvent.kind,
+      content: rumorEvent.content,
+      created_at: rumorEvent.created_at,
+      tags: rumorEvent.tags,
+    },
     sender.secretKey,
-    [{ publicKey: recipientHex, relayUrl: dmRelays[0] }],
-    body,
-    input.subject?.trim() || HELPLINE_DM_SUBJECT,
+    [recipientHex],
   );
   const pool = getSharedNostrPool();
   const relayResults = await queueNostrPublish(async () => {
@@ -252,6 +278,19 @@ export async function sendHelplineDmMessage(input: {
 
   return {
     eventIds: events.map((event) => event.id),
+    message: {
+      id: rumorId,
+      dmEventId: events.find((event) => event.tags.some((tag) => tag[0] === "p" && tag[1] === sender.publicHex))?.id
+        ?? events[0]?.id
+        ?? rumorId,
+      senderNpub: sender.npub,
+      recipientNpubs: [input.recipientNpub],
+      peerNpub: input.recipientNpub,
+      direction: "sent",
+      body,
+      subject,
+      createdAt: new Date(createdAtSeconds * 1000).toISOString(),
+    },
     successes: relayResults.filter((entry) => entry.success).length,
     failures: relayResults.filter((entry) => !entry.success).length,
     relayResults,
@@ -285,7 +324,7 @@ export async function fetchHelplineDmMessages(input: {
     }
     byLogicalId.set(message.id, message);
   }
-  return sortMessagesChronologically([...byLogicalId.values()]);
+  return mergeHelplineDmMessages([...byLogicalId.values()]);
 }
 
 export function subscribeHelplineDmMessages(input: {
@@ -303,7 +342,7 @@ export function subscribeHelplineDmMessages(input: {
   let subscription: { close: () => void } | null = null;
 
   const publishMessages = () => {
-    input.onMessages(sortMessagesChronologically([...messages.values()]));
+    input.onMessages(mergeHelplineDmMessages([...messages.values()]));
   };
 
   void fetchHelplineDmMessages(input).then((fetched) => {

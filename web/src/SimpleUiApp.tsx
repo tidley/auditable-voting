@@ -56,7 +56,7 @@ import {
   QUESTIONNAIRE_DEFINITION_KIND,
   QUESTIONNAIRE_STATE_KIND,
 } from "./questionnaireNostr";
-import { hasVoterInviteContextInUrl, shouldAutoRequestBallotFromUrl } from "./questionnaireInvite";
+import { hasVoterInviteContextInUrl, parseInviteFromUrl, shouldAutoRequestBallotFromUrl } from "./questionnaireInvite";
 import { fetchOptionAInviteDms, fetchOptionAInviteDmsWithNsec } from "./questionnaireOptionAInviteDm";
 import { publishInviteToMailbox } from "./questionnaireOptionAStorage";
 import {
@@ -358,6 +358,13 @@ function readPrivateQuestionnaireInviteCodeFromUrl() {
   return (new URLSearchParams(window.location.search).get("invite_code") ?? "").trim();
 }
 
+function readLinkedCoordinatorNpubFromUrl() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  return parseInviteFromUrl(window.location.search).coordinatorNpub?.trim() ?? "";
+}
+
 export function selectQuestionnaireVoterIdentity(input: {
   privateInviteCode?: string;
   signerNpub?: string;
@@ -427,7 +434,12 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
   const linkedQuestionnaireId = useMemo(() => readLinkedQuestionnaireIdFromUrl(), []);
   const autoRequestBallotFromUrl = useMemo(() => shouldAutoRequestBallotFromUrl(), []);
   const linkedPrivateInviteCode = useMemo(() => readPrivateQuestionnaireInviteCodeFromUrl(), []);
-  const shouldHydrateSavedManualCoordinators = useMemo(() => hasVoterInviteContextInUrl(), []);
+  const linkedCoordinatorNpub = useMemo(() => readLinkedCoordinatorNpubFromUrl(), []);
+  const urlCoordinatorTargets = useMemo(() => sanitizeCoordinatorNpubs([linkedCoordinatorNpub]), [linkedCoordinatorNpub]);
+  const shouldHydrateSavedManualCoordinators = useMemo(
+    () => hasVoterInviteContextInUrl() && urlCoordinatorTargets.length === 0 && !linkedQuestionnaireId && !linkedPrivateInviteCode,
+    [linkedPrivateInviteCode, linkedQuestionnaireId, urlCoordinatorTargets.length],
+  );
   const [announcedQuestionnaireIds, setAnnouncedQuestionnaireIds] = useState<string[]>(() => (
     linkedQuestionnaireId ? [linkedQuestionnaireId] : []
   ));
@@ -746,10 +758,13 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
       if (storedState?.keypair) {
         setVoterKeypair(storedState.keypair);
         const cache = (storedState.cache ?? null) as Partial<SimpleVoterCache> | null;
+        const storedManualCoordinators = shouldHydrateSavedManualCoordinators && Array.isArray(cache?.manualCoordinators)
+          ? sanitizeCoordinatorNpubs(cache.manualCoordinators)
+          : [];
         setManualCoordinators(
-          shouldHydrateSavedManualCoordinators && Array.isArray(cache?.manualCoordinators)
-            ? sanitizeCoordinatorNpubs(cache.manualCoordinators)
-            : [],
+          urlCoordinatorTargets.length > 0
+            ? urlCoordinatorTargets
+            : storedManualCoordinators,
         );
         setNip65Enabled(cache?.nip65Enabled === true);
         setQuestionnaireParticipationHistory(
@@ -829,7 +844,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
     return () => {
       cancelled = true;
     };
-  }, [shouldHydrateSavedManualCoordinators]);
+  }, [shouldHydrateSavedManualCoordinators, urlCoordinatorTargets]);
 
   useEffect(() => {
     setNip65EnabledForSession(nip65Enabled);
@@ -1714,7 +1729,13 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
       setBackupStatus(`Backup restored from ${bundle.exportedAt}.`);
       const cache = (bundle.cache ?? null) as Partial<SimpleVoterCache> | null;
       protocolStateServiceRef.current = null;
-      setManualCoordinators(Array.isArray(cache?.manualCoordinators) ? sanitizeCoordinatorNpubs(cache.manualCoordinators) : []);
+      setManualCoordinators(
+        urlCoordinatorTargets.length > 0
+          ? urlCoordinatorTargets
+          : (linkedQuestionnaireId || linkedPrivateInviteCode)
+            ? []
+          : (Array.isArray(cache?.manualCoordinators) ? sanitizeCoordinatorNpubs(cache.manualCoordinators) : []),
+      );
       setNip65Enabled(cache?.nip65Enabled === true);
       setQuestionnaireParticipationHistory(
         Array.isArray(cache?.questionnaireParticipationHistory)
@@ -1787,7 +1808,13 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
       identityHydrationEpochRef.current += 1;
       setVoterKeypair(storedState.keypair);
       protocolStateServiceRef.current = null;
-      setManualCoordinators(Array.isArray(cache?.manualCoordinators) ? sanitizeCoordinatorNpubs(cache.manualCoordinators) : []);
+      setManualCoordinators(
+        urlCoordinatorTargets.length > 0
+          ? urlCoordinatorTargets
+          : (linkedQuestionnaireId || linkedPrivateInviteCode)
+            ? []
+          : (Array.isArray(cache?.manualCoordinators) ? sanitizeCoordinatorNpubs(cache.manualCoordinators) : []),
+      );
       setQuestionnaireParticipationHistory(
         Array.isArray(cache?.questionnaireParticipationHistory)
           ? cache.questionnaireParticipationHistory.filter((entry): entry is SimpleVoterCache["questionnaireParticipationHistory"][number] => (

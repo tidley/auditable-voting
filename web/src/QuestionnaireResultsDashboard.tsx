@@ -44,6 +44,7 @@ type QuestionnaireResultsDashboardProps = {
   responseDetails: QuestionnaireResultsDashboardResponseDetail[];
   displayValidCount: number;
   displayInvalidCount?: number;
+  showSubmittedVotes?: boolean;
   variant?: "default" | "session";
   topControls?: ReactNode;
   coordinatorLabel?: string;
@@ -61,12 +62,32 @@ type QuestionnaireResultsDashboardProps = {
   emptyResponseSelectionText?: string;
 };
 
+export function questionnaireResponseDetailMatchesSearch(
+  entry: QuestionnaireResultsDashboardResponseDetail,
+  searchQuery: string,
+) {
+  const query = searchQuery.trim().toLowerCase();
+  if (!query) {
+    return true;
+  }
+  const submitterIdentityFull = entry.response.authorPubkey.trim();
+  const submitterIdentityShort = deriveActorDisplayId(submitterIdentityFull);
+  return (
+    entry.response.responseId.toLowerCase().includes(query)
+    || submitterIdentityShort.toLowerCase().includes(query)
+    || submitterIdentityFull.toLowerCase().includes(query)
+    || (entry.response.tokenNullifier ?? "").toLowerCase().includes(query)
+    || (entry.rejectionReason ?? "").toLowerCase().includes(query)
+  );
+}
+
 export default function QuestionnaireResultsDashboard({
   questionnaire,
   questionSummaries,
   responseDetails,
   displayValidCount,
   displayInvalidCount = responseDetails.filter((entry) => !entry.accepted).length,
+  showSubmittedVotes = true,
   variant = "default",
   topControls,
   coordinatorLabel = "Organiser",
@@ -127,21 +148,7 @@ export default function QuestionnaireResultsDashboard({
     const visibilityFiltered = showInvalidVotes
       ? responseDetails.filter((entry) => !entry.accepted)
       : responseDetails.filter((entry) => entry.accepted);
-    const query = voterSearchQuery.trim().toLowerCase();
-    if (!query) {
-      return visibilityFiltered;
-    }
-    return visibilityFiltered.filter((entry) => {
-      const submitterIdentityFull = entry.response.authorPubkey.trim();
-      const submitterIdentityShort = deriveActorDisplayId(submitterIdentityFull);
-      return (
-        entry.response.responseId.toLowerCase().includes(query)
-        || submitterIdentityShort.toLowerCase().includes(query)
-        || submitterIdentityFull.toLowerCase().includes(query)
-        || (entry.response.tokenNullifier ?? "").toLowerCase().includes(query)
-        || (entry.rejectionReason ?? "").toLowerCase().includes(query)
-      );
-    });
+    return visibilityFiltered.filter((entry) => questionnaireResponseDetailMatchesSearch(entry, voterSearchQuery));
   }, [responseDetails, showInvalidVotes, voterSearchQuery]);
 
   const displayTotalCount = Math.max(0, displayValidCount + displayInvalidCount);
@@ -400,6 +407,7 @@ export default function QuestionnaireResultsDashboard({
         )}
       </section>
 
+      {showSubmittedVotes ? (
       <section className={`simple-voter-section simple-auditor-submissions-section${isSessionVariant ? " simple-session-submissions-section" : ""}`}>
         <div className='simple-auditor-submissions-header'>
           <h2 className='simple-voter-section-title'>Submitted Votes</h2>
@@ -544,6 +552,7 @@ export default function QuestionnaireResultsDashboard({
           <p className='simple-voter-empty'>{emptyResponseSelectionText}</p>
         )}
       </section>
+      ) : null}
 
       {freeTextViewerQuestionId && questionnaire ? (
         <section

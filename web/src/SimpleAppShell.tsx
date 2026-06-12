@@ -23,11 +23,11 @@ const ROLE_OPTIONS: Array<{ role: SimpleRole; label: string }> = [
   { role: "coordinator", label: "Organiser" },
   { role: "voter", label: "Voter" },
 ];
-const VOTER_SECTION_OPTIONS: Array<{ tab: VoterTab; label: string }> = [
-  { tab: "configure", label: "Join" },
-  { tab: "vote", label: "Vote" },
-  { tab: "messages", label: "Messages" },
-  { tab: "settings", label: "Settings" },
+const VOTER_SECTION_OPTIONS: Array<{ tab: VoterTab; label: string; icon: string }> = [
+  { tab: "configure", label: "Join", icon: "join" },
+  { tab: "vote", label: "Vote", icon: "vote" },
+  { tab: "messages", label: "Messages", icon: "messages" },
+  { tab: "settings", label: "Settings", icon: "settings" },
 ];
 const IDENTITY_UPDATED_EVENT = "auditable-voting:identity-updated";
 
@@ -761,7 +761,8 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                       setAccountMenuOpen(false);
                     }}
                   >
-                    {option.label}
+                    <span className={`simple-menu-tab-icon simple-menu-tab-icon-${option.icon}`} aria-hidden='true' />
+                    <span>{option.label}</span>
                   </button>
                 ))}
               </div>
@@ -775,7 +776,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                   {role === "voter" ? (
                     <button
                       type='button'
-                      className='simple-account-menu-button'
+                      className='simple-account-menu-button simple-account-menu-action'
                       role='menuitem'
                       onClick={() => {
                         setAccountMenuOpen(false);
@@ -784,12 +785,13 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                         }
                       }}
                     >
-                      Login
+                      <span className='simple-menu-action-icon simple-menu-action-icon-login' aria-hidden='true' />
+                      <span>Login</span>
                     </button>
                   ) : null}
                   <button
                     type='button'
-                    className='simple-account-menu-button'
+                    className='simple-account-menu-button simple-account-menu-action'
                     role='menuitem'
                     disabled={!accountIdentityNpub}
                     onClick={() => {
@@ -797,11 +799,12 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                       void tryWriteClipboard(accountIdentityNpub);
                     }}
                   >
-                    Copy identity
+                    <span className='simple-menu-action-icon simple-menu-action-icon-copy' aria-hidden='true' />
+                    <span>Copy identity</span>
                   </button>
                   <button
                     type='button'
-                    className='simple-account-menu-button'
+                    className='simple-account-menu-button simple-account-menu-action'
                     role='menuitem'
                     onClick={() => {
                       if (
@@ -816,41 +819,15 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                       }
                     }}
                   >
-                    New identity
+                    <span className='simple-menu-action-icon simple-menu-action-icon-new' aria-hidden='true' />
+                    <span>New identity</span>
                   </button>
-                </div>
-                <div className='simple-account-menu-identity-detail'>
-                  <p
-                    className='simple-account-menu-title'
-                    data-tooltip={accountIdentityNpub ? `Short identity shown here. Full identity: ${accountIdentityNpub}` : undefined}
-                  >
-                    {accountIdentityLabel}
-                  </p>
-                  {accountIdentityNpub ? (
-                    <div className='simple-account-identity-visuals'>
-                      <TokenFingerprint
-                        tokenId={accountIdentityNpub}
-                        compact
-                        showQr
-                        hideMetadata
-                        qrValue={accountIdentityNpub}
-                        fingerprintTitle='Colour ID: a visual fingerprint for checking this identity at a glance.'
-                        qrTitle='QR code: scan this to copy the full identity.'
-                      />
-                      <div className='simple-account-identity-visual-labels' aria-hidden='true'>
-                        <span data-tooltip='Colour ID: a visual fingerprint for checking this identity at a glance.'>Colour ID</span>
-                        <span data-tooltip='QR code: scan this to copy the full identity.'>QR code</span>
-                      </div>
-                    </div>
-                  ) : (
-                    <p className='simple-voter-note simple-account-menu-note'>Identity is loading.</p>
-                  )}
                 </div>
               </div>
               <div className='simple-account-menu-signout-section' role='none'>
                 <button
                   type='button'
-                  className='simple-account-menu-button'
+                  className='simple-account-menu-button simple-account-menu-action simple-account-menu-signout-button'
                   role='menuitem'
                   onClick={() => {
                     if (
@@ -866,7 +843,8 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                     }
                   }}
                 >
-                  Sign out
+                  <span className='simple-menu-action-icon simple-menu-action-icon-signout' aria-hidden='true' />
+                  <span>Sign out</span>
                 </button>
               </div>
             </>

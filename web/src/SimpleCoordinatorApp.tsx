@@ -63,6 +63,10 @@ import QuestionnaireCoordinatorPanel, {
   resetStoredQuestionnaireDraftId,
   writeStoredQuestionnaireRelayInput,
 } from "./QuestionnaireCoordinatorPanel";
+import {
+  questionnaireResponseDetailMatchesSearch,
+  type QuestionnaireResultsDashboardResponseDetail,
+} from "./QuestionnaireResultsDashboard";
 import { extractNpubFromScan } from "./npubScan";
 import {
   processOptionAQueuesForCoordinatorLive,
@@ -112,13 +116,18 @@ import {
 import { createSignerService, SignerServiceError } from "./services/signerService";
 import { getSharedNostrPool } from "./sharedNostrPool";
 import type {
+  BallotAcceptanceResult,
   BallotSubmission,
   BearerInviteCodeEntry,
   BearerInviteCodeState,
   QuestionnaireAnswer,
   WhitelistClaimState,
 } from "./questionnaireOptionA";
-import type { QuestionnaireResponsePayload } from "./questionnaireProtocol";
+import type {
+  QuestionnaireQuestion,
+  QuestionnaireResponseAnswer,
+  QuestionnaireResponsePayload,
+} from "./questionnaireProtocol";
 import type { QuestionnaireAcceptedResponse } from "./questionnaireRuntime";
 import {
   loadAdmittedVoters,
@@ -322,6 +331,19 @@ function pendingAuthorisationStatusIndicator(): StatusIndicatorView {
   };
 }
 
+function participantVoteStatusIndicator(acceptance: BallotAcceptanceResult | null | undefined): StatusIndicatorView {
+  if (!acceptance) {
+    return {
+      className: "simple-vote-status-icon simple-status-indicator is-voter-received",
+      icon: "V",
+      label: "Vote received",
+    };
+  }
+  return acceptance.accepted
+    ? whitelistStatusIndicator("vote_accepted")
+    : whitelistStatusIndicator("vote_rejected");
+}
+
 function privateInviteVoterStatusIndicator(input: {
   state: BearerInviteCodeState;
   redeemedNpub?: string | null;
@@ -368,6 +390,43 @@ function privateInviteVoterStatusIndicator(input: {
     icon: "-",
     label: "Not claimed",
   };
+}
+
+function formatParticipantSubmissionTime(submittedAt: number | null | undefined, submission: BallotSubmission | null) {
+  const unix = submittedAt ?? (
+    submission
+      ? Math.floor(Date.parse(submission.submittedAt) / 1000)
+      : null
+  );
+  if (!unix || !Number.isFinite(unix)) {
+    return "Time unknown";
+  }
+  return new Date(unix * 1000).toLocaleString();
+}
+
+function getQuestionOptionLabels(question: QuestionnaireQuestion | undefined, optionIds: string[]) {
+  if (!question || (question.type !== "multiple_choice" && question.type !== "rank")) {
+    return optionIds;
+  }
+  const labelById = new Map(question.options.map((option) => [option.optionId, option.label]));
+  return optionIds.map((optionId) => labelById.get(optionId) ?? optionId);
+}
+
+function formatParticipantAnswerValue(
+  answer: QuestionnaireResponseAnswer,
+  question: QuestionnaireQuestion | undefined,
+) {
+  if (answer.answerType === "yes_no") {
+    return answer.value ? "Yes" : "No";
+  }
+  if (answer.answerType === "multiple_choice") {
+    return getQuestionOptionLabels(question, answer.selectedOptionIds).join(", ") || "-";
+  }
+  if (answer.answerType === "rank") {
+    const labels = getQuestionOptionLabels(question, answer.rankedOptionIds);
+    return labels.map((label, index) => `${index + 1}. ${label}`).join("; ") || "-";
+  }
+  return answer.text || "(empty)";
 }
 
 function setPrivateInviteUrlAutoBallot(inviteUrl: string, autoRequestBallot: boolean) {
@@ -1188,6 +1247,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   const [knownVoterContactsLoading, setKnownVoterContactsLoading] = useState(false);
   const [importedKnownVoterContacts, setImportedKnownVoterContacts] = useState<ImportedKnownVoterContact[]>([]);
   const [knownVoterContactSearch, setKnownVoterContactSearch] = useState("");
+  const [participantSearchQuery, setParticipantSearchQuery] = useState("");
+  const [coordinatorParticipantResponseDetails, setCoordinatorParticipantResponseDetails] = useState<QuestionnaireResultsDashboardResponseDetail[]>([]);
   const [selectedImportedKnownVoterNpubs, setSelectedImportedKnownVoterNpubs] = useState<string[]>([]);
   const [shareAssignmentsInFlight, setShareAssignmentsInFlight] =
     useState(false);
@@ -1206,6 +1267,9 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     }
     return createSignerService();
   }, [signerNpub, keypair?.nsec]);
+  const handleCoordinatorResponseDetailsChange = useCallback((responseDetails: QuestionnaireResultsDashboardResponseDetail[]) => {
+    setCoordinatorParticipantResponseDetails(responseDetails);
+  }, []);
 
   useEffect(() => () => {
     if (privateInviteCreateCopiedTimerRef.current !== null) {
@@ -1351,6 +1415,46 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     const entries = Object.values(optionACoordinatorRuntime?.getSnapshot()?.bearerInviteCodes ?? {});
     return entries.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }, [optionACoordinatorRuntime, knownVoterInviteRefreshNonce]);
+  const activeParticipantQuestionnaireDefinition = useMemo(
+    () => optionAElectionId.trim() ? readCachedQuestionnaireDefinition(optionAElectionId.trim()) : null,
+    [knownVoterInviteRefreshNonce, optionAElectionId],
+  );
+  const participantQuestionById = useMemo(
+    () => new Map((activeParticipantQuestionnaireDefinition?.questions ?? []).map((question) => [question.questionId, question])),
+    [activeParticipantQuestionnaireDefinition?.questions],
+  );
+  const optionAParticipantSubmissionEntries = useMemo(() => {
+    const snapshot = optionACoordinatorRuntime?.getSnapshot();
+    if (!snapshot) {
+      return [];
+    }
+    const responseDetailBySubmissionId = new Map(
+      coordinatorParticipantResponseDetails.map((entry) => [entry.response.responseId, entry]),
+    );
+    const issuedResponses = Object.values(snapshot.issuedBlindResponses);
+    return Object.values(snapshot.receivedSubmissions)
+      .filter((submission) => submission.electionId === snapshot.election.electionId)
+      .map((submission) => {
+        const issuedForSubmission = issuedResponses
+          .find((issuance) => issuance.tokenCommitment === submission.tokenCommitment) ?? null;
+        const invitedNpub =
+          issuedForSubmission?.invitedNpub?.trim()
+          || submission.invitedNpub?.trim()
+          || submission.responseNpub?.trim()
+          || submission.submissionId;
+        return {
+          submission,
+          acceptance: snapshot.acceptanceResults[submission.submissionId] ?? null,
+          responseDetail: responseDetailBySubmissionId.get(submission.submissionId) ?? null,
+          invitedNpub,
+        };
+      })
+      .sort((left, right) => {
+        const leftSubmittedAt = Date.parse(left.submission.submittedAt);
+        const rightSubmittedAt = Date.parse(right.submission.submittedAt);
+        return (Number.isFinite(rightSubmittedAt) ? rightSubmittedAt : 0) - (Number.isFinite(leftSubmittedAt) ? leftSubmittedAt : 0);
+      });
+  }, [coordinatorParticipantResponseDetails, knownVoterInviteRefreshNonce, optionACoordinatorRuntime]);
   const admittedVoterDisplayRows = useMemo(() => {
     const byNpub = new Map<string, {
       npub: string;
@@ -1358,9 +1462,30 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       currentQuestionnaireEntry: (typeof visibleOptionAKnownVoters)[number] | null;
       pendingAuthorization: (typeof optionAPendingAuthorizations)[number] | null;
       privateInviteEntry: BearerInviteCodeEntry | null;
+      submissionEntry: (typeof optionAParticipantSubmissionEntries)[number] | null;
+      responseDetail: QuestionnaireResultsDashboardResponseDetail | null;
       order: number;
     }>();
     let nextOrder = 0;
+    const chooseSubmissionEntry = (
+      current: (typeof optionAParticipantSubmissionEntries)[number] | null,
+      next: (typeof optionAParticipantSubmissionEntries)[number],
+    ) => {
+      if (!current) {
+        return next;
+      }
+      if (next.acceptance?.accepted && current.acceptance?.accepted !== true) {
+        return next;
+      }
+      if (current.acceptance?.accepted && next.acceptance?.accepted !== true) {
+        return current;
+      }
+      const currentSubmittedAt = Date.parse(current.submission.submittedAt);
+      const nextSubmittedAt = Date.parse(next.submission.submittedAt);
+      return (Number.isFinite(nextSubmittedAt) ? nextSubmittedAt : 0) > (Number.isFinite(currentSubmittedAt) ? currentSubmittedAt : 0)
+        ? next
+        : current;
+    };
     const ensureRow = (npubValue: string) => {
       const npub = npubValue.trim();
       if (!npub) {
@@ -1376,6 +1501,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         currentQuestionnaireEntry: null,
         pendingAuthorization: null,
         privateInviteEntry: null,
+        submissionEntry: null,
+        responseDetail: null,
         order: nextOrder,
       };
       nextOrder += 1;
@@ -1407,6 +1534,22 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         row.privateInviteEntry = entry;
       }
     }
+    for (const entry of optionAParticipantSubmissionEntries) {
+      const row = ensureRow(entry.invitedNpub);
+      if (row) {
+        row.submissionEntry = chooseSubmissionEntry(row.submissionEntry, entry);
+      }
+    }
+    const knownSubmissionIds = new Set(optionAParticipantSubmissionEntries.map((entry) => entry.submission.submissionId));
+    for (const detail of coordinatorParticipantResponseDetails) {
+      if (knownSubmissionIds.has(detail.response.responseId)) {
+        continue;
+      }
+      const row = ensureRow(detail.response.authorPubkey || detail.response.responseId);
+      if (row) {
+        row.responseDetail = detail;
+      }
+    }
 
     return [...byNpub.values()].sort((left, right) => {
       const priority = (row: typeof left) => {
@@ -1416,12 +1559,22 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         if (row.currentQuestionnaireEntry || row.privateInviteEntry) {
           return 1;
         }
-        return 2;
+        if (row.submissionEntry || row.responseDetail) {
+          return 2;
+        }
+        return 3;
       };
       const priorityDelta = priority(left) - priority(right);
       return priorityDelta || left.order - right.order;
     });
-  }, [admittedVoterEntries, optionAPendingAuthorizations, privateInviteCodeEntries, visibleOptionAKnownVoters]);
+  }, [admittedVoterEntries, coordinatorParticipantResponseDetails, optionAParticipantSubmissionEntries, optionAPendingAuthorizations, privateInviteCodeEntries, visibleOptionAKnownVoters]);
+  const participantReceivedVoteCount = useMemo(() => {
+    const responseIds = new Set(optionAParticipantSubmissionEntries.map((entry) => entry.submission.submissionId));
+    for (const detail of coordinatorParticipantResponseDetails) {
+      responseIds.add(detail.response.responseId);
+    }
+    return responseIds.size;
+  }, [coordinatorParticipantResponseDetails, optionAParticipantSubmissionEntries]);
   const admittedVoterSummaryLabel = useMemo(() => {
     const currentOnlyCount = admittedVoterDisplayRows
       .filter((row) => !row.admittedEntry && !row.pendingAuthorization && row.currentQuestionnaireEntry)
@@ -1436,8 +1589,11 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     if (currentOnlyCount > 0) {
       parts.push(`${currentOnlyCount} active`);
     }
+    if (participantReceivedVoteCount > 0) {
+      parts.push(`${participantReceivedVoteCount} vote${participantReceivedVoteCount === 1 ? "" : "s"}`);
+    }
     return parts.join(" · ");
-  }, [admittedVoterAutoApplyEntries.length, admittedVoterDisplayRows, admittedVoterEntries.length, optionAPendingAuthorizations.length]);
+  }, [admittedVoterAutoApplyEntries.length, admittedVoterDisplayRows, admittedVoterEntries.length, optionAPendingAuthorizations.length, participantReceivedVoteCount]);
   const optionAHasInviteQueue = optionAPendingAuthorizations.length > 0;
   const optionABlindSigningPublicKey = optionACoordinatorRuntime?.getSnapshot()?.election.blindSigningPublicKey ?? null;
   const optionAAcceptedResponses = useMemo(() => {
@@ -1500,6 +1656,57 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     () => privateInviteCodeEntries.filter((entry) => !(entry.redeemedNpub?.trim())),
     [privateInviteCodeEntries],
   );
+  const filteredAdmittedVoterDisplayRows = useMemo(() => {
+    const query = participantSearchQuery.trim().toLowerCase();
+    if (!query) {
+      return admittedVoterDisplayRows;
+    }
+    return admittedVoterDisplayRows.filter((row) => {
+      const submissionEntry = row.submissionEntry;
+      const submission = submissionEntry?.submission ?? null;
+      const responseDetail = submissionEntry?.responseDetail ?? row.responseDetail;
+      const searchableValues = [
+        row.npub,
+        deriveActorDisplayId(row.npub),
+        row.admittedEntry?.note ?? "",
+        row.currentQuestionnaireEntry?.claimState ?? "",
+        row.pendingAuthorization ? `wants access ${row.pendingAuthorization.requestCount}` : "",
+        row.privateInviteEntry?.codeHash ?? "",
+        row.privateInviteEntry?.note ?? "",
+        row.privateInviteEntry?.state ?? "",
+        submission?.submissionId ?? "",
+        submission?.invitedNpub ?? "",
+        submission?.responseNpub ?? "",
+        submission?.tokenCommitment ?? "",
+        submission?.nullifier ?? "",
+        submissionEntry?.acceptance?.reason ?? "",
+        submissionEntry?.acceptance?.accepted === true ? "accepted vote accepted" : "",
+        submissionEntry?.acceptance?.accepted === false ? "rejected invalid vote rejected" : "",
+      ];
+      return (
+        searchableValues.some((value) => value.toLowerCase().includes(query))
+        || (responseDetail ? questionnaireResponseDetailMatchesSearch(responseDetail, query) : false)
+      );
+    });
+  }, [admittedVoterDisplayRows, participantSearchQuery]);
+  const filteredStandalonePrivateInviteCodeEntries = useMemo(() => {
+    const query = participantSearchQuery.trim().toLowerCase();
+    if (!query) {
+      return standalonePrivateInviteCodeEntries;
+    }
+    return standalonePrivateInviteCodeEntries.filter((entry) => {
+      const redeemedNpub = entry.redeemedNpub?.trim() ?? "";
+      return [
+        entry.codeHash,
+        entry.note ?? "",
+        entry.state,
+        redeemedNpub,
+        redeemedNpub ? deriveActorDisplayId(redeemedNpub) : "",
+      ].some((value) => value.toLowerCase().includes(query));
+    });
+  }, [participantSearchQuery, standalonePrivateInviteCodeEntries]);
+  const participantRosterTotalCount = admittedVoterDisplayRows.length + standalonePrivateInviteCodeEntries.length;
+  const participantRosterVisibleCount = filteredAdmittedVoterDisplayRows.length + filteredStandalonePrivateInviteCodeEntries.length;
   const filteredImportedKnownVoterContacts = useMemo(() => {
     const query = knownVoterContactSearch.trim().toLowerCase();
     if (!query) {
@@ -6821,8 +7028,16 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         </div>
         <div className='simple-coordinator-sidebar-menu-slot'>
           {accountMenu ?? (
-            <button type='button' className='simple-role-switch-toggle' disabled>
-              Menu
+            <button
+              type='button'
+              className='simple-role-switch-toggle'
+              onClick={() => {
+                if (typeof window !== "undefined") {
+                  window.dispatchEvent(new Event("auditable-voting:coordinator-new"));
+                }
+              }}
+            >
+              New identity
             </button>
           )}
         </div>
@@ -6839,9 +7054,21 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               className={`simple-coordinator-nav-button${activeTab === 'configure' ? ' is-active' : ''}`}
               onClick={openNewQuestionnaireSetup}
             >
-              <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-plus' aria-hidden='true'>+</span>
-              <span className='simple-coordinator-nav-label'>New Questionnaire</span>
+              <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-questionnaire' aria-hidden='true' />
+              <span className='simple-coordinator-nav-label'>Questionnaire</span>
             </button>
+            {canStartNewRound ? (
+              <button
+                type='button'
+                role='tab'
+                aria-selected={false}
+                className='simple-coordinator-nav-button simple-coordinator-new-round-button'
+                onClick={startNewRound}
+              >
+                <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-new-round' aria-hidden='true' />
+                <span className='simple-coordinator-nav-label'>New round</span>
+              </button>
+            ) : null}
             <button
               type='button'
               role='tab'
@@ -6863,7 +7090,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               className={`simple-coordinator-nav-button${activeTab === 'messages' ? ' is-active' : ''}`}
               onClick={() => selectTab('messages')}
             >
-              <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-messages' aria-hidden='true'>M</span>
+              <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-messages' aria-hidden='true' />
               <span className='simple-coordinator-nav-label'>Messages</span>
             </button>
             <button
@@ -6873,20 +7100,10 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               className={`simple-coordinator-nav-button${activeTab === 'settings' ? ' is-active' : ''}`}
               onClick={() => selectTab('settings')}
             >
-              <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-settings' aria-hidden='true'>⚙</span>
+              <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-settings' aria-hidden='true' />
               <span className='simple-coordinator-nav-label'>Settings</span>
             </button>
           </div>
-          {canStartNewRound ? (
-            <button
-              type='button'
-              className='simple-coordinator-nav-button simple-coordinator-new-round-button'
-              onClick={startNewRound}
-            >
-              <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-plus' aria-hidden='true'>+</span>
-              <span className='simple-coordinator-nav-label'>New round</span>
-            </button>
-          ) : null}
         </div>
       </aside>
       <section className='simple-voter-page simple-coordinator-page'>
@@ -6946,6 +7163,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               blindSigningPublicKey={optionABlindSigningPublicKey}
               view='responses'
               questionnaireRelaysInput={questionnaireRelaysInput}
+              onResponseDetailsChange={handleCoordinatorResponseDetailsChange}
               onStatusChange={updateQuestionnaireRosterAnnouncement}
             />
             <div id='coordinator-invite-voters-section' className='simple-session-invites'>
@@ -7137,22 +7355,70 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                   </div>
                 ) : null}
                 {admittedVoterStatus ? <p className='simple-voter-note'>{admittedVoterStatus}</p> : null}
-                {admittedVoterDisplayRows.length > 0 || standalonePrivateInviteCodeEntries.length > 0 ? (
-                  <div className='simple-admitted-voter-table' role='table' aria-label='Invited voter roster'>
+                <div className='simple-participants-subsection' aria-label='Participants'>
+                  <div className='simple-participants-header'>
+                    <div className='simple-invite-share-copy'>
+                      <h3 className='simple-voter-question'>Participants</h3>
+                      <p className='simple-voter-note'>
+                        Private invites, access requests, and received votes for the current questionnaire.
+                      </p>
+                    </div>
+                    <span className='simple-admitted-voter-count'>
+                      {participantRosterVisibleCount}/{participantRosterTotalCount} shown
+                    </span>
+                  </div>
+                  <label className='simple-voter-label' htmlFor='coordinator-participant-search'>
+                    Search participants
+                  </label>
+                  <input
+                    id='coordinator-participant-search'
+                    className='simple-voter-input'
+                    value={participantSearchQuery}
+                    onChange={(event) => setParticipantSearchQuery(event.target.value)}
+                    placeholder='Search by voter, private invite, request, response ID, or token...'
+                  />
+                  {participantRosterTotalCount === 0 ? (
+                    <p className='simple-voter-empty'>
+                      No participants yet.
+                    </p>
+                  ) : participantRosterVisibleCount === 0 ? (
+                    <p className='simple-voter-empty'>
+                      No participants match the current filter.
+                    </p>
+                  ) : (
+                  <div className='simple-admitted-voter-table' role='table' aria-label='Participants'>
                     <div className='simple-admitted-voter-table-head' role='row'>
                       <span role='columnheader'>#</span>
                       <span role='columnheader'>Voter ID</span>
                       <span role='columnheader'>Voter npub</span>
                       <span role='columnheader'>Internal note</span>
                       <span role='columnheader'>State</span>
+                      <span role='columnheader'>Vote</span>
                       <span role='columnheader'>Auto-ballot</span>
                       <span role='columnheader'>Actions</span>
                     </div>
                     <ul className='simple-admitted-voter-list simple-admitted-voter-table-body' role='rowgroup'>
-                      {admittedVoterDisplayRows.map((row, rowIndex) => {
+                      {filteredAdmittedVoterDisplayRows.map((row, rowIndex) => {
                         const currentQuestionnaireEntry = row.currentQuestionnaireEntry;
                         const pendingAuthorization = row.pendingAuthorization;
                         const privateInviteEntry = row.privateInviteEntry;
+                        const submissionEntry = row.submissionEntry;
+                        const submission = submissionEntry?.submission ?? null;
+                        const responseDetail = submissionEntry?.responseDetail ?? row.responseDetail;
+                        const voteStatusIndicator = submissionEntry
+                          ? participantVoteStatusIndicator(submissionEntry.acceptance)
+                          : responseDetail
+                            ? (responseDetail.accepted ? whitelistStatusIndicator("vote_accepted") : whitelistStatusIndicator("vote_rejected"))
+                            : null;
+                        const participantResultId = submission?.submissionId ?? responseDetail?.response.responseId ?? row.npub;
+                        const participantAnswers = responseDetail?.response.answers ?? (
+                          submission
+                            ? submission.payload.responses.map((answer) => optionAAnswerToQuestionnaireAnswer(answer, {
+                              authorPubkey: submission.responseNpub?.trim() || submission.invitedNpub,
+                              coordinatorNsec: keypair?.nsec ?? null,
+                            }))
+                            : []
+                        );
                         const privateInviteRedeemedNpub = privateInviteEntry?.redeemedNpub?.trim() ?? "";
                         const privateInviteUrl = privateInviteEntry ? getPrivateInviteCodeLink(privateInviteEntry.codeHash) : "";
                         const privateInviteActive = privateInviteEntry?.state === "available";
@@ -7176,10 +7442,18 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                           ? `Wants access (${pendingAuthorization.requestCount})`
                           : statusIndicator?.label ?? null;
                         const isPrivateInviteClaimant = Boolean(currentQuestionnaireEntry?.inviteCodeHash?.trim() || privateInviteEntry);
+                        const isResultOnlyParticipant = Boolean(
+                          (submissionEntry || row.responseDetail)
+                          && !row.admittedEntry
+                          && !currentQuestionnaireEntry
+                          && !pendingAuthorization
+                          && !privateInviteEntry,
+                        );
                         const canUseCurrentInviteActions = Boolean(
                           optionAElectionId.trim() &&
                           activeCoordinatorNpub.trim() &&
-                          !isPrivateInviteClaimant,
+                          !isPrivateInviteClaimant &&
+                          !isResultOnlyParticipant,
                         );
                         const inviteButtonLabel = currentQuestionnaireEntry ? "Resend invite" : "Send invite";
                         const inviteInputId = privateInviteEntry ? `admitted-voter-private-invite-url-${privateInviteEntry.codeHash}` : "";
@@ -7189,7 +7463,9 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                           <li key={row.npub} className='simple-admitted-voter-row' role='row'>
                             <span className='simple-admitted-voter-cell simple-admitted-voter-number' data-label='#' role='cell'>{rowIndex + 1}</span>
                             <div className='simple-admitted-voter-cell simple-admitted-voter-id-cell' data-label='Voter ID' role='cell'>
-                              <span className='simple-admitted-voter-id'>{deriveActorDisplayId(row.npub)}</span>
+                              <span className='simple-admitted-voter-id'>
+                                {isResultOnlyParticipant ? "Result only" : deriveActorDisplayId(row.npub)}
+                              </span>
                             </div>
                             <div className='simple-admitted-voter-cell simple-admitted-voter-npub-cell' data-label='Voter npub' role='cell'>
                               <div className='simple-admitted-voter-npub-line'>
@@ -7265,6 +7541,41 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                                 </span>
                               ) : (
                                 <span className='simple-admitted-voter-pending'>Future questionnaires</span>
+                              )}
+                            </div>
+                            <div className='simple-admitted-voter-cell simple-admitted-voter-vote-cell' data-label='Vote' role='cell'>
+                              {submissionEntry && voteStatusIndicator ? (
+                                <div className='simple-participant-result'>
+                                  <span className={`simple-admitted-voter-status ${voteStatusIndicator.className}`} title={participantResultId}>
+                                    <span className='simple-admitted-voter-status-symbol' aria-hidden='true'>{voteStatusIndicator.icon}</span>
+                                    <span>{voteStatusIndicator.label}</span>
+                                  </span>
+                                  <span className='simple-participant-result-time'>
+                                    {formatParticipantSubmissionTime(responseDetail?.response.submittedAt ?? responseDetail?.event.created_at, submission)}
+                                  </span>
+                                  {participantAnswers.length > 0 ? (
+                                    <details className='simple-participant-result-disclosure'>
+                                      <summary>{submissionEntry?.acceptance?.accepted === false || responseDetail?.accepted === false ? "View response" : "View result"}</summary>
+                                      <ol className='simple-participant-result-answer-list'>
+                                        {participantAnswers.map((answer) => {
+                                          const question = participantQuestionById.get(answer.questionId);
+                                          return (
+                                            <li key={`${participantResultId}:${answer.questionId}`}>
+                                              <span className='simple-participant-result-question'>
+                                                {question?.prompt || answer.questionId}
+                                              </span>
+                                              <span className='simple-participant-result-answer'>
+                                                {formatParticipantAnswerValue(answer, question)}
+                                              </span>
+                                            </li>
+                                          );
+                                        })}
+                                      </ol>
+                                    </details>
+                                  ) : null}
+                                </div>
+                              ) : (
+                                <span className='simple-admitted-voter-empty-cell'>No vote yet</span>
                               )}
                             </div>
                             <div className='simple-admitted-voter-cell simple-admitted-voter-auto-cell' data-label='Auto-ballot' role='cell'>
@@ -7355,8 +7666,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                           </li>
                         );
                       })}
-                      {standalonePrivateInviteCodeEntries.map((entry, inviteIndex) => {
-                        const rosterIndex = admittedVoterDisplayRows.length + inviteIndex;
+                      {filteredStandalonePrivateInviteCodeEntries.map((entry, inviteIndex) => {
+                        const rosterIndex = filteredAdmittedVoterDisplayRows.length + inviteIndex;
                         const autoRequestBallot = entry.autoRequestBallot !== false;
                         const privateInviteUrl = getPrivateInviteCodeLink(entry.codeHash);
                         const inviteActive = entry.state === "available";
@@ -7459,6 +7770,9 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                                 <span>Mark as used</span>
                               </label>
                             </div>
+                            <div className='simple-admitted-voter-cell simple-admitted-voter-vote-cell' data-label='Vote' role='cell'>
+                              <span className='simple-admitted-voter-empty-cell'>No vote yet</span>
+                            </div>
                             <div className='simple-admitted-voter-cell simple-admitted-voter-auto-cell' data-label='Auto-ballot' role='cell'>
                               <label className='simple-admitted-voter-auto-toggle'>
                                 <input
@@ -7510,11 +7824,8 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                       })}
                     </ul>
                   </div>
-                ) : (
-                  <p className='simple-voter-empty'>
-                    No voters invited yet.
-                  </p>
-                )}
+                  )}
+                </div>
                 </div>
               </SimpleCollapsibleSection>
             </div>

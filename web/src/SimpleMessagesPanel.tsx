@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { deriveActorDisplayId } from "./actorDisplay";
 import {
   latestHelplineMessageByPeer,
+  mergeHelplineDmMessages,
   sendHelplineDmMessage,
   subscribeHelplineDmMessages,
   type HelplineDmMessage,
@@ -46,16 +47,18 @@ export default function SimpleMessagesPanel(props: SimpleMessagesPanelProps) {
   const actorNpub = props.actorNpub.trim();
   const actorNsec = props.actorNsec.trim();
   const targetNpubs = useMemo(() => uniqueNonEmpty(props.targetNpubs ?? []), [props.targetNpubs]);
+  const voterTargetRequired = props.role === "voter";
 
   useEffect(() => {
-    if (!actorNsec) {
+    if (!actorNsec || (voterTargetRequired && targetNpubs.length === 0)) {
       setMessages([]);
+      setStatus(null);
       return undefined;
     }
     setStatus("Loading messages...");
     const unsubscribe = subscribeHelplineDmMessages({
       actorNsec,
-      allowedPeerNpubs: props.role === "voter" ? targetNpubs : undefined,
+      allowedPeerNpubs: voterTargetRequired ? targetNpubs : undefined,
       onMessages: (nextMessages) => {
         setMessages(nextMessages);
         setStatus((current) => (current === "Loading messages..." ? null : current));
@@ -65,13 +68,18 @@ export default function SimpleMessagesPanel(props: SimpleMessagesPanelProps) {
       },
     });
     return unsubscribe;
-  }, [actorNsec, props.role, targetNpubs]);
+  }, [actorNsec, targetNpubs, voterTargetRequired]);
 
   const latestByPeer = useMemo(() => latestHelplineMessageByPeer(messages), [messages]);
   const peerNpubs = useMemo(() => {
-    const fromMessages = messages.map((message) => message.peerNpub);
+    if (props.role === "voter") {
+      return targetNpubs;
+    }
+    const fromMessages = messages
+      .map((message) => message.peerNpub)
+      .filter((peerNpub) => peerNpub !== actorNpub);
     return uniqueNonEmpty([...targetNpubs, ...fromMessages]);
-  }, [messages, targetNpubs]);
+  }, [actorNpub, messages, props.role, targetNpubs]);
 
   useEffect(() => {
     if (peerNpubs.length === 0) {
@@ -91,10 +99,14 @@ export default function SimpleMessagesPanel(props: SimpleMessagesPanelProps) {
   );
 
   useEffect(() => {
-    threadEndRef.current?.scrollIntoView({ block: "end" });
+    const threadEnd = threadEndRef.current;
+    if (typeof threadEnd?.scrollIntoView === "function") {
+      threadEnd.scrollIntoView({ block: "end" });
+    }
   }, [threadMessages.length, selectedPeerNpub]);
 
   const canSend = Boolean(actorNsec && selectedPeerNpub && draft.trim() && !sending);
+  const showThreadList = !(props.role === "voter" && peerNpubs.length === 1);
   const lockedText = props.role === "voter"
     ? "Use the local voter identity to send and read helpline messages. Signer-only voter sessions cannot unwrap NIP-17 messages here yet."
     : "Use the local organiser identity to send and read helpline messages. Signer-only organiser sessions cannot unwrap NIP-17 messages here yet.";
@@ -112,6 +124,7 @@ export default function SimpleMessagesPanel(props: SimpleMessagesPanelProps) {
         recipientNpub: selectedPeerNpub,
         message: body,
       });
+      setMessages((current) => mergeHelplineDmMessages([...current, result.message]));
       setDraft("");
       setStatus(
         result.successes > 0
@@ -131,7 +144,7 @@ export default function SimpleMessagesPanel(props: SimpleMessagesPanelProps) {
         <div>
           <h3 className='simple-voter-question'>Messages</h3>
           <p className='simple-voter-note'>
-            Giftwrapped direct messages between voter and organiser identities.
+            Gift-wrapped direct messages between voter and organiser identities.
           </p>
         </div>
         {actorNpub ? (
@@ -154,29 +167,31 @@ export default function SimpleMessagesPanel(props: SimpleMessagesPanelProps) {
           </p>
         </div>
       ) : (
-        <div className='simple-messages-grid'>
-          <aside className='simple-messages-thread-list' aria-label='Conversations'>
-            {peerNpubs.map((peerNpub) => {
-              const latest = latestByPeer.get(peerNpub);
-              const selected = selectedPeerNpub === peerNpub;
-              return (
-                <button
-                  key={peerNpub}
-                  type='button'
-                  className={`simple-messages-thread-button${selected ? " is-active" : ""}`}
-                  onClick={() => setSelectedPeerNpub(peerNpub)}
-                >
-                  <span className='simple-messages-thread-id'>{deriveActorDisplayId(peerNpub)}</span>
-                  <span className='simple-messages-thread-preview'>
-                    {latest ? previewText(latest.body) : "No messages yet"}
-                  </span>
-                  {latest ? (
-                    <span className='simple-messages-thread-time'>{formatMessageTime(latest.createdAt)}</span>
-                  ) : null}
-                </button>
-              );
-            })}
-          </aside>
+        <div className={`simple-messages-grid${showThreadList ? "" : " is-single-thread"}`}>
+          {showThreadList ? (
+            <aside className='simple-messages-thread-list' aria-label='Conversations'>
+              {peerNpubs.map((peerNpub) => {
+                const latest = latestByPeer.get(peerNpub);
+                const selected = selectedPeerNpub === peerNpub;
+                return (
+                  <button
+                    key={peerNpub}
+                    type='button'
+                    className={`simple-messages-thread-button${selected ? " is-active" : ""}`}
+                    onClick={() => setSelectedPeerNpub(peerNpub)}
+                  >
+                    <span className='simple-messages-thread-id'>{deriveActorDisplayId(peerNpub)}</span>
+                    <span className='simple-messages-thread-preview'>
+                      {latest ? previewText(latest.body) : "No messages yet"}
+                    </span>
+                    {latest ? (
+                      <span className='simple-messages-thread-time'>{formatMessageTime(latest.createdAt)}</span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </aside>
+          ) : null}
 
           <section className='simple-messages-chat' aria-label='Message thread'>
             <div className='simple-messages-chat-title'>
@@ -215,7 +230,7 @@ export default function SimpleMessagesPanel(props: SimpleMessagesPanelProps) {
                 placeholder={props.role === "voter" ? "Type a message to the organiser..." : "Type a reply..."}
                 onChange={(event) => setDraft(event.target.value)}
                 onKeyDown={(event) => {
-                  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                  if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
                     void sendMessage();
                   }

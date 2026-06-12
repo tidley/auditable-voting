@@ -131,6 +131,7 @@ type QuestionnaireCoordinatorPanelProps = {
   newRoundMode?: boolean;
   canApplyAdmissionsOnPublish?: boolean;
   onAfterPublishQuestionnaire?: (questionnaireId: string) => void | Promise<void>;
+  onResponseDetailsChange?: (responseDetails: QuestionnaireResultsDashboardResponseDetail[]) => void;
   onStatusChange?: (status: {
     questionnaireId: string;
     state: QuestionnaireStateValue | null;
@@ -2742,6 +2743,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       },
     }))
   ), [acceptedResponsesForDisplay, currentState]);
+  useEffect(() => {
+    props.onResponseDetailsChange?.(coordinatorResponseDetails);
+  }, [coordinatorResponseDetails, props.onResponseDetailsChange]);
   const questionResultCards = useMemo(() => {
     if (!activePublishedDefinition) {
       return [];
@@ -3777,6 +3781,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           responseDetails={coordinatorResponseDetails}
           displayValidCount={displayAcceptedCount}
           displayInvalidCount={latestRejectedCount}
+          showSubmittedVotes={false}
           coordinatorLabel={dashboardCoordinatorIdentity.label}
           coordinatorText={dashboardCoordinatorIdentity.text}
           publishedAtLabel='Published'
