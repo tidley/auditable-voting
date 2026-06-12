@@ -416,6 +416,8 @@ type QuestionnaireVoterPanelProps = {
   optionARequestBlindBallotNonce?: number;
   displayMode?: "vote" | "settings";
   showOptionALoginAction?: boolean;
+  onMessageOrganiser?: () => void;
+  onBackToJoin?: () => void;
 };
 
 export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelProps) {
@@ -442,6 +444,8 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
         requestBlindBallotNonce={props.optionARequestBlindBallotNonce}
         displayMode={props.displayMode}
         showLoginAction={props.showOptionALoginAction}
+        onMessageOrganiser={props.onMessageOrganiser}
+        onBackToJoin={props.onBackToJoin}
       />
     );
   }

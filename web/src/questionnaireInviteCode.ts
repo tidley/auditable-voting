@@ -27,3 +27,17 @@ export async function hashQuestionnaireInviteCode(code: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(normalised));
   return bytesToHex(new Uint8Array(digest));
 }
+
+export async function hashQuestionnairePrivateInviteClaim(input: {
+  codeHash: string;
+  npub: string;
+}) {
+  const codeHash = input.codeHash.trim().toLowerCase();
+  const npub = input.npub.trim();
+  if (!isQuestionnaireInviteCodeHash(codeHash) || !npub) {
+    return "";
+  }
+  const payload = `questionnaire-private-invite-claim:v1:${codeHash}:${npub}`;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(payload));
+  return bytesToHex(new Uint8Array(digest));
+}

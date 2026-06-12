@@ -1538,17 +1538,26 @@ code {
 }
 
 .simple-coordinator-nav-symbol-settings::before {
-  width: 20px;
-  height: 20px;
-  border: 2px solid currentColor;
-  border-radius: 999px;
+  width: 18px;
+  height: 18px;
+  background:
+    linear-gradient(currentColor, currentColor) center / 3px 18px no-repeat,
+    linear-gradient(currentColor, currentColor) center / 18px 3px no-repeat;
+  transform: rotate(45deg);
 }
 
 .simple-coordinator-nav-symbol-settings::after {
-  width: 7px;
-  height: 7px;
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
   border-radius: 999px;
-  background: currentColor;
+  background: #101922;
+}
+
+.simple-coordinator-nav-symbol-settings {
+  background:
+    linear-gradient(currentColor, currentColor) center / 3px 18px no-repeat,
+    linear-gradient(currentColor, currentColor) center / 18px 3px no-repeat;
 }
 
 .simple-coordinator-nav-symbol-session {

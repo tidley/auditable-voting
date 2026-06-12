@@ -4,9 +4,11 @@ import {
   fetchQuestionnaireEventsWithFallback,
   parseQuestionnaireDefinitionEvent,
   parseQuestionnaireParticipantCountEvent,
+  parseQuestionnairePrivateInviteStatusEvent,
   parseQuestionnaireStateEvent,
   QUESTIONNAIRE_DEFINITION_KIND,
   QUESTIONNAIRE_PARTICIPANT_COUNT_KIND,
+  QUESTIONNAIRE_PRIVATE_INVITE_STATUS_KIND,
   QUESTIONNAIRE_RESULT_SUMMARY_KIND,
   QUESTIONNAIRE_STATE_KIND,
 } from "./questionnaireNostr";
@@ -16,6 +18,7 @@ import { normalizeRelaysRust } from "./wasm/auditableVotingCore";
 import type {
   QuestionnaireDefinition,
   QuestionnaireParticipantCountEvent,
+  QuestionnairePrivateInviteStatusEvent,
   QuestionnaireResultSummary,
   QuestionnaireStateEvent,
 } from "./questionnaireProtocol";
@@ -120,6 +123,44 @@ export async function fetchQuestionnaireParticipantCount(input: {
   return events
     .map((event) => ({ event, participantCount: parseQuestionnaireParticipantCountEvent(event) }))
     .filter((entry): entry is { event: NostrEvent; participantCount: QuestionnaireParticipantCountEvent } => Boolean(entry.participantCount));
+}
+
+export async function fetchQuestionnairePrivateInviteStatus(input: {
+  questionnaireId: string;
+  codeHash: string;
+  relays?: string[];
+  limit?: number;
+  readRelayLimit?: number;
+  preferKindOnly?: boolean;
+}) {
+  const normalizedCodeHash = input.codeHash.trim().toLowerCase();
+  if (!normalizedCodeHash) {
+    return null;
+  }
+  const events = (await fetchQuestionnaireEventsWithFallback({
+    questionnaireId: input.questionnaireId,
+    kind: QUESTIONNAIRE_PRIVATE_INVITE_STATUS_KIND,
+    relays: input.relays,
+    limit: input.limit ?? 40,
+    readRelayLimit: input.readRelayLimit,
+    preferKindOnly: input.preferKindOnly,
+    parseQuestionnaireIdFromEvent: (event) => parseQuestionnairePrivateInviteStatusEvent(event)?.questionnaireId ?? null,
+  })).events;
+
+  const statuses = events
+    .map((event) => ({ event, status: parseQuestionnairePrivateInviteStatusEvent(event) }))
+    .filter((entry): entry is { event: NostrEvent; status: QuestionnairePrivateInviteStatusEvent } => (
+      Boolean(entry.status) && entry.status.codeHash === normalizedCodeHash
+    ))
+    .sort((left, right) => {
+      const createdDelta = Number(right.status.createdAt ?? 0) - Number(left.status.createdAt ?? 0);
+      if (createdDelta !== 0) {
+        return createdDelta;
+      }
+      return String(right.event.id ?? "").localeCompare(String(left.event.id ?? ""));
+    });
+
+  return statuses[0] ?? null;
 }
 
 export function subscribeQuestionnaireDefinitions(input: {

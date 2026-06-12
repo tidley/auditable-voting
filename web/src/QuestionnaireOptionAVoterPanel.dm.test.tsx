@@ -16,6 +16,27 @@ const optionAStorageMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("./questionnaireInvite", () => ({
+  buildQuestionnaireInviteUrl: (input: {
+    baseUrl?: string;
+    electionId: string;
+    coordinatorNpub?: string | null;
+    inviteCode?: string | null;
+    autoRequestBallot?: boolean;
+  }) => {
+    const url = new URL(input.baseUrl ?? "https://example.test/");
+    url.searchParams.set("role", "voter");
+    url.searchParams.set("q", input.electionId);
+    if (input.coordinatorNpub?.trim()) {
+      url.searchParams.set("coordinator", input.coordinatorNpub.trim());
+    }
+    if (input.inviteCode?.trim()) {
+      url.searchParams.set("invite_code", input.inviteCode.trim());
+    }
+    if (input.autoRequestBallot) {
+      url.searchParams.set("request_ballot", "1");
+    }
+    return url.toString();
+  },
   parseInviteFromUrl: () => {
     const params = new URLSearchParams(window.location.search);
     const electionId = (params.get("q") ?? params.get("election_id") ?? params.get("questionnaire") ?? "").trim() || null;
@@ -28,6 +49,7 @@ vi.mock("./questionnaireInvite", () => ({
 vi.mock("./questionnaireTransport", () => ({
   fetchQuestionnaireActiveWorkerDelegationForCapability: vi.fn().mockResolvedValue(null),
   fetchQuestionnaireDefinitions: vi.fn().mockResolvedValue([]),
+  fetchQuestionnairePrivateInviteStatus: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("./services/signerService", () => ({
@@ -78,10 +100,15 @@ vi.mock("./questionnaireOptionAInviteDm", () => ({
 import QuestionnaireOptionAVoterPanel from "./QuestionnaireOptionAVoterPanel";
 import { QuestionnaireOptionAVoterRuntime } from "./questionnaireOptionARuntime";
 import { storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
-import { fetchQuestionnaireDefinitions } from "./questionnaireTransport";
+import { fetchQuestionnaireDefinitions, fetchQuestionnairePrivateInviteStatus } from "./questionnaireTransport";
 import { fetchOptionAInviteDms } from "./questionnaireOptionAInviteDm";
+import {
+  hashQuestionnaireInviteCode,
+  hashQuestionnairePrivateInviteClaim,
+} from "./questionnaireInviteCode";
 
 const fetchQuestionnaireDefinitionsMock = vi.mocked(fetchQuestionnaireDefinitions);
+const fetchQuestionnairePrivateInviteStatusMock = vi.mocked(fetchQuestionnairePrivateInviteStatus);
 const fetchOptionAInviteDmsMock = vi.mocked(fetchOptionAInviteDms);
 
 afterEach(() => {
@@ -92,6 +119,8 @@ afterEach(() => {
   window.history.pushState(null, "", "/");
   fetchQuestionnaireDefinitionsMock.mockReset();
   fetchQuestionnaireDefinitionsMock.mockResolvedValue([]);
+  fetchQuestionnairePrivateInviteStatusMock.mockReset();
+  fetchQuestionnairePrivateInviteStatusMock.mockResolvedValue(null);
   fetchOptionAInviteDmsMock.mockReset();
   fetchOptionAInviteDmsMock.mockResolvedValue([
     {
@@ -405,6 +434,146 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     await waitFor(() => {
       expect(requestedElectionIds).toContain("q_public_next");
+    });
+  });
+
+  it("blocks a private invite link already redeemed by another identity before requesting a ballot", async () => {
+    const user = userEvent.setup();
+    const localVoterNpub = "npub1" + "u".repeat(58);
+    const otherVoterNpub = "npub1" + "v".repeat(58);
+    const coordinatorNpub = "npub1" + "b".repeat(58);
+    const inviteCode = "already-used-private-code";
+    const codeHash = await hashQuestionnaireInviteCode(inviteCode);
+    const otherClaimHash = await hashQuestionnairePrivateInviteClaim({ codeHash, npub: otherVoterNpub });
+    const onMessageOrganiser = vi.fn();
+    const onBackToJoin = vi.fn();
+    storeCachedQuestionnaireDefinition({
+      schemaVersion: 1,
+      eventType: "questionnaire_definition",
+      responseMode: "blind_token",
+      questionnaireId: "q_private_used",
+      title: "Used private questionnaire",
+      description: "Private description",
+      createdAt: 1,
+      openAt: 1,
+      closeAt: 9999999999,
+      coordinatorPubkey: coordinatorNpub,
+      coordinatorEncryptionPubkey: coordinatorNpub,
+      responseVisibility: "private",
+      eligibilityMode: "open",
+      allowMultipleResponsesPerPubkey: false,
+      blindSigningPublicKey: {
+        scheme: "rsabssa-sha384-pss-deterministic-v1",
+        keyId: "blind_key",
+        jwk: { kty: "RSA", e: "AQAB", n: "test" },
+      },
+      questions: [{
+        questionId: "q1",
+        type: "yes_no",
+        prompt: "Private prompt",
+        required: true,
+      }],
+    });
+    fetchQuestionnairePrivateInviteStatusMock.mockResolvedValue({
+      event: { id: "status-used", created_at: 20 },
+      status: {
+        schemaVersion: 1,
+        eventType: "questionnaire_private_invite_status",
+        questionnaireId: "q_private_used",
+        codeHash,
+        state: "redeemed",
+        createdAt: 20,
+        coordinatorPubkey: coordinatorNpub,
+        redeemedNpubHash: otherClaimHash,
+        redeemedAt: "2026-06-12T12:00:00.000Z",
+        revokedAt: null,
+      },
+    } as Awaited<ReturnType<typeof fetchQuestionnairePrivateInviteStatus>>);
+    const requestBlindBallot = vi.spyOn(QuestionnaireOptionAVoterRuntime.prototype, "requestBlindBallot")
+      .mockImplementation(async function mockedRequestBlindBallot(this: QuestionnaireOptionAVoterRuntime) {
+        return this.getSnapshot()!;
+      });
+    window.history.pushState(null, "", `/?role=voter&q=q_private_used&coordinator=${coordinatorNpub}&invite_code=${inviteCode}&request_ballot=1`);
+
+    render(
+      <QuestionnaireOptionAVoterPanel
+        localVoterNpub={localVoterNpub}
+        onMessageOrganiser={onMessageOrganiser}
+        onBackToJoin={onBackToJoin}
+      />,
+    );
+
+    expect(await screen.findByText("Private invite already used")).toBeTruthy();
+    expect(screen.getByText(/This private invite can only be used once/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open general invite" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Message organiser" }));
+    await user.click(screen.getByRole("button", { name: "Back to Join" }));
+
+    expect(onMessageOrganiser).toHaveBeenCalledTimes(1);
+    expect(onBackToJoin).toHaveBeenCalledTimes(1);
+    expect(requestBlindBallot).not.toHaveBeenCalled();
+  });
+
+  it("continues a private invite link already claimed by the same local identity", async () => {
+    const localVoterNpub = "npub1" + "w".repeat(58);
+    const coordinatorNpub = "npub1" + "b".repeat(58);
+    const inviteCode = "same-device-private-code";
+    const codeHash = await hashQuestionnaireInviteCode(inviteCode);
+    const localClaimHash = await hashQuestionnairePrivateInviteClaim({ codeHash, npub: localVoterNpub });
+    storeCachedQuestionnaireDefinition({
+      schemaVersion: 1,
+      eventType: "questionnaire_definition",
+      responseMode: "blind_token",
+      questionnaireId: "q_private_same",
+      title: "Same private questionnaire",
+      description: "Private description",
+      createdAt: 1,
+      openAt: 1,
+      closeAt: 9999999999,
+      coordinatorPubkey: coordinatorNpub,
+      coordinatorEncryptionPubkey: coordinatorNpub,
+      responseVisibility: "private",
+      eligibilityMode: "open",
+      allowMultipleResponsesPerPubkey: false,
+      blindSigningPublicKey: {
+        scheme: "rsabssa-sha384-pss-deterministic-v1",
+        keyId: "blind_key",
+        jwk: { kty: "RSA", e: "AQAB", n: "test" },
+      },
+      questions: [{
+        questionId: "q1",
+        type: "yes_no",
+        prompt: "Private prompt",
+        required: true,
+      }],
+    });
+    fetchQuestionnairePrivateInviteStatusMock.mockResolvedValue({
+      event: { id: "status-same", created_at: 20 },
+      status: {
+        schemaVersion: 1,
+        eventType: "questionnaire_private_invite_status",
+        questionnaireId: "q_private_same",
+        codeHash,
+        state: "redeemed",
+        createdAt: 20,
+        coordinatorPubkey: coordinatorNpub,
+        redeemedNpubHash: localClaimHash,
+        redeemedAt: "2026-06-12T12:00:00.000Z",
+        revokedAt: null,
+      },
+    } as Awaited<ReturnType<typeof fetchQuestionnairePrivateInviteStatus>>);
+    const requestBlindBallot = vi.spyOn(QuestionnaireOptionAVoterRuntime.prototype, "requestBlindBallot")
+      .mockImplementation(async function mockedRequestBlindBallot(this: QuestionnaireOptionAVoterRuntime) {
+        return this.getSnapshot()!;
+      });
+    window.history.pushState(null, "", `/?role=voter&q=q_private_same&coordinator=${coordinatorNpub}&invite_code=${inviteCode}&request_ballot=1`);
+
+    render(<QuestionnaireOptionAVoterPanel localVoterNpub={localVoterNpub} />);
+
+    expect(await screen.findByText("Invite already claimed by this device/account.")).toBeTruthy();
+    expect(screen.queryByText("Private invite already used")).toBeNull();
+    await waitFor(() => {
+      expect(requestBlindBallot).toHaveBeenCalled();
     });
   });
 

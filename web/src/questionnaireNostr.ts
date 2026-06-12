@@ -12,6 +12,7 @@ import { normalizeRelaysRust, sha256HexRust } from "./wasm/auditableVotingCore";
 import type {
   QuestionnaireDefinition,
   QuestionnaireParticipantCountEvent,
+  QuestionnairePrivateInviteStatusEvent,
   QuestionnaireResponsePayload,
   QuestionnaireResponsePrivateEnvelope,
   QuestionnaireResultSummary,
@@ -22,6 +23,7 @@ import {
   IMPLEMENTATION_KIND_QUESTIONNAIRE_DEFINITION,
   IMPLEMENTATION_KIND_QUESTIONNAIRE_ADMISSION_ANNOUNCEMENT,
   IMPLEMENTATION_KIND_QUESTIONNAIRE_PARTICIPANT_COUNT,
+  IMPLEMENTATION_KIND_QUESTIONNAIRE_PRIVATE_INVITE_STATUS,
   IMPLEMENTATION_KIND_QUESTIONNAIRE_RESULT_SUMMARY,
   IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_PRIVATE,
   IMPLEMENTATION_KIND_QUESTIONNAIRE_STATE,
@@ -31,6 +33,7 @@ export const QUESTIONNAIRE_DEFINITION_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_D
 export const QUESTIONNAIRE_ADMISSION_ANNOUNCEMENT_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_ADMISSION_ANNOUNCEMENT;
 export const QUESTIONNAIRE_PARTICIPANT_COUNT_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_PARTICIPANT_COUNT;
 export const QUESTIONNAIRE_STATE_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_STATE;
+export const QUESTIONNAIRE_PRIVATE_INVITE_STATUS_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_PRIVATE_INVITE_STATUS;
 export const QUESTIONNAIRE_RESPONSE_PRIVATE_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_PRIVATE;
 export const QUESTIONNAIRE_RESULT_SUMMARY_KIND = IMPLEMENTATION_KIND_QUESTIONNAIRE_RESULT_SUMMARY;
 const QUESTIONNAIRE_PUBLIC_READ_RELAYS_MAX = 5;
@@ -319,6 +322,27 @@ export async function publishQuestionnaireState(input: {
     content: JSON.stringify(input.stateEvent),
     relays: input.relays,
     channel: "questionnaire-state",
+  });
+}
+
+export async function publishQuestionnairePrivateInviteStatus(input: {
+  coordinatorNsec: string;
+  statusEvent: QuestionnairePrivateInviteStatusEvent;
+  relays?: string[];
+}) {
+  return publishEvent({
+    nsec: input.coordinatorNsec,
+    kind: QUESTIONNAIRE_PRIVATE_INVITE_STATUS_KIND,
+    tags: [
+      ["t", "questionnaire_private_invite_status"],
+      ["q", input.statusEvent.questionnaireId],
+      ["questionnaire-id", input.statusEvent.questionnaireId],
+      ["invite-code-hash", input.statusEvent.codeHash],
+      ["state", input.statusEvent.state],
+    ],
+    content: JSON.stringify(input.statusEvent),
+    relays: input.relays,
+    channel: "questionnaire-private-invite-status",
   });
 }
 
@@ -756,6 +780,43 @@ export function parseQuestionnaireStateEvent(
       return null;
     }
     return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function parseQuestionnairePrivateInviteStatusEvent(
+  event: Pick<NostrEvent, "kind" | "content">,
+): QuestionnairePrivateInviteStatusEvent | null {
+  if (event.kind !== QUESTIONNAIRE_PRIVATE_INVITE_STATUS_KIND) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(event.content) as QuestionnairePrivateInviteStatusEvent;
+    const state = parsed?.state;
+    const codeHash = parsed?.codeHash?.trim().toLowerCase() ?? "";
+    if (
+      parsed?.eventType !== "questionnaire_private_invite_status"
+      || parsed?.schemaVersion !== 1
+      || typeof parsed.questionnaireId !== "string"
+      || typeof parsed.coordinatorPubkey !== "string"
+      || !/^[0-9a-f]{64}$/.test(codeHash)
+      || (state !== "available" && state !== "redeemed" && state !== "revoked")
+      || !Number.isFinite(parsed.createdAt)
+    ) {
+      return null;
+    }
+    return {
+      ...parsed,
+      questionnaireId: parsed.questionnaireId.trim(),
+      coordinatorPubkey: parsed.coordinatorPubkey.trim(),
+      codeHash,
+      redeemedNpubHash: typeof parsed.redeemedNpubHash === "string"
+        ? parsed.redeemedNpubHash.trim().toLowerCase() || null
+        : null,
+      redeemedAt: typeof parsed.redeemedAt === "string" ? parsed.redeemedAt : null,
+      revokedAt: typeof parsed.revokedAt === "string" ? parsed.revokedAt : null,
+    };
   } catch {
     return null;
   }

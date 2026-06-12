@@ -72,7 +72,10 @@ import {
   processOptionAQueuesForCoordinatorLive,
   QuestionnaireOptionACoordinatorRuntime,
 } from "./questionnaireOptionARuntime";
-import { publishQuestionnaireAdmissionAnnouncement } from "./questionnaireNostr";
+import {
+  publishQuestionnaireAdmissionAnnouncement,
+  publishQuestionnairePrivateInviteStatus,
+} from "./questionnaireNostr";
 import { buildInviteUrl, buildQuestionnaireInviteUrl } from "./questionnaireInvite";
 import {
   buildQuestionnaireInviteShareSubject,
@@ -81,6 +84,7 @@ import {
 import {
   generateQuestionnaireInviteCode,
   hashQuestionnaireInviteCode,
+  hashQuestionnairePrivateInviteClaim,
 } from "./questionnaireInviteCode";
 import { readCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import {
@@ -1407,10 +1411,17 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     () => optionACoordinatorRuntime?.getPendingAuthorizations() ?? [],
     [optionACoordinatorRuntime, knownVoterInviteRefreshNonce],
   );
+  const privateInviteStatusPublishedRef = useRef<Record<string, string>>({});
   const privateInviteCodeEntries = useMemo(() => {
     const entries = Object.values(optionACoordinatorRuntime?.getSnapshot()?.bearerInviteCodes ?? {});
     return entries.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }, [optionACoordinatorRuntime, knownVoterInviteRefreshNonce]);
+  const privateInviteStatusPublishKey = useMemo(() => (
+    privateInviteCodeEntries
+      .map((entry) => `${entry.electionId}:${entry.codeHash}:${entry.state}:${entry.redeemedNpub ?? ""}:${entry.redeemedAt ?? ""}:${entry.revokedAt ?? ""}`)
+      .sort()
+      .join("|")
+  ), [privateInviteCodeEntries]);
   const activeQuestionnaireWorkerConfigKey = useMemo(() => {
     const electionId = optionAElectionId.trim();
     if (!electionId) {
@@ -1432,6 +1443,66 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       .join("|");
     return `${electionId}:${delegation.delegationId}:${whitelistKey}:${privateInviteKey}`;
   }, [optionAElectionId, privateInviteCodeEntries, visibleOptionAKnownVoters]);
+  useEffect(() => {
+    const coordinatorNsec = keypair?.nsec?.trim() ?? "";
+    const coordinatorNpub = activeCoordinatorNpub.trim();
+    if (!coordinatorNsec || !coordinatorNpub || privateInviteCodeEntries.length === 0) {
+      return;
+    }
+    let cancelled = false;
+    for (const entry of privateInviteCodeEntries) {
+      const codeHash = entry.codeHash.trim().toLowerCase();
+      const questionnaireId = entry.electionId.trim();
+      if (!codeHash || !questionnaireId) {
+        continue;
+      }
+      const publishKey = `${questionnaireId}:${codeHash}`;
+      const publishSignature = [
+        entry.state,
+        entry.redeemedNpub?.trim() ?? "",
+        entry.redeemedAt ?? "",
+        entry.revokedAt ?? "",
+      ].join(":");
+      if (privateInviteStatusPublishedRef.current[publishKey] === publishSignature) {
+        continue;
+      }
+      privateInviteStatusPublishedRef.current[publishKey] = publishSignature;
+      void (async () => {
+        const redeemedNpub = entry.redeemedNpub?.trim() ?? "";
+        const redeemedNpubHash = entry.state === "redeemed" && redeemedNpub
+          ? await hashQuestionnairePrivateInviteClaim({ codeHash, npub: redeemedNpub })
+          : null;
+        if (cancelled) {
+          return;
+        }
+        const definition = readCachedQuestionnaireDefinition(questionnaireId);
+        const summary = loadElectionSummary(questionnaireId);
+        await publishQuestionnairePrivateInviteStatus({
+          coordinatorNsec,
+          relays: definition?.questionnaireRelays ?? summary?.questionnaireRelays,
+          statusEvent: {
+            schemaVersion: 1,
+            eventType: "questionnaire_private_invite_status",
+            questionnaireId,
+            codeHash,
+            state: entry.state,
+            coordinatorPubkey: coordinatorNpub,
+            createdAt: Math.floor(Date.now() / 1000),
+            redeemedNpubHash,
+            redeemedAt: entry.redeemedAt ?? null,
+            revokedAt: entry.revokedAt ?? null,
+          },
+        });
+      })().catch(() => {
+        if (privateInviteStatusPublishedRef.current[publishKey] === publishSignature) {
+          delete privateInviteStatusPublishedRef.current[publishKey];
+        }
+      });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [activeCoordinatorNpub, keypair?.nsec, privateInviteCodeEntries, privateInviteStatusPublishKey]);
   const currentQuestionnaireBlindRequestKey = useMemo(() => (
     visibleOptionAKnownVoters
       .filter((entry) => entry.claimState === "blind_request_received")

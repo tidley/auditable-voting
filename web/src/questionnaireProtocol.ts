@@ -97,6 +97,19 @@ export type QuestionnaireStateEvent = {
   workerPubkey?: string;
 };
 
+export type QuestionnairePrivateInviteStatusEvent = {
+  schemaVersion: 1;
+  eventType: "questionnaire_private_invite_status";
+  questionnaireId: string;
+  codeHash: string;
+  state: "available" | "redeemed" | "revoked";
+  createdAt: number;
+  coordinatorPubkey: string;
+  redeemedNpubHash?: string | null;
+  redeemedAt?: string | null;
+  revokedAt?: string | null;
+};
+
 export type QuestionnaireResponseAnswer =
   | {
       questionId: string;

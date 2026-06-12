@@ -3,8 +3,9 @@ import { finalizeEvent, getPublicKey, nip19, nip44 } from "nostr-tools";
 import {
   fetchQuestionnaireActiveWorkerDelegationForCapability,
   fetchQuestionnaireDefinitions,
+  fetchQuestionnairePrivateInviteStatus,
 } from "./questionnaireTransport";
-import { parseInviteFromUrl } from "./questionnaireInvite";
+import { buildQuestionnaireInviteUrl, parseInviteFromUrl } from "./questionnaireInvite";
 import { createSignerService, SignerServiceError, type SignerService } from "./services/signerService";
 import {
   QuestionnaireOptionAVoterRuntime,
@@ -26,6 +27,10 @@ import { mergeQuestionnaireRelayHints } from "./questionnaireRelays";
 import TokenFingerprint from "./TokenFingerprint";
 import { decodeNsec } from "./nostrIdentity";
 import { buildIssueBlindTokensWorkerRouting } from "./questionnaireWorkerRouting";
+import {
+  hashQuestionnaireInviteCode,
+  hashQuestionnairePrivateInviteClaim,
+} from "./questionnaireInviteCode";
 
 function toHexPubkey(value: string) {
   const trimmed = value.trim();
@@ -398,6 +403,15 @@ type QuestionnaireOptionAVoterPanelProps = {
   requestBlindBallotNonce?: number;
   displayMode?: "vote" | "settings";
   showLoginAction?: boolean;
+  onMessageOrganiser?: () => void;
+  onBackToJoin?: () => void;
+};
+
+type PrivateInviteBlockState = {
+  questionnaireId: string;
+  coordinatorNpub: string | null;
+  generalInviteUrl: string | null;
+  reason: "redeemed" | "revoked";
 };
 
 function getRankRequirementState(optionCount: number, minimumRanked: number, selectedCount: number) {
@@ -430,6 +444,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const settingsMode = displayMode === "settings";
   const [runtime, setRuntime] = useState<QuestionnaireOptionAVoterRuntime | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  const [privateInviteBlock, setPrivateInviteBlock] = useState<PrivateInviteBlockState | null>(null);
   const [signedInNpub, setSignedInNpub] = useState<string>("");
   const [pendingInvites, setPendingInvites] = useState<ElectionInviteMessage[]>([]);
   const [activeInvite, setActiveInvite] = useState<ElectionInviteMessage | null>(null);
@@ -666,6 +681,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   }, [electionId]);
 
   useEffect(() => {
+    setPrivateInviteBlock(null);
+  }, [electionId, inviteContext.inviteCode, props.localVoterNpub]);
+
+  useEffect(() => {
     if (!electionId) {
       setRuntime(null);
       return;
@@ -804,8 +823,19 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         setActiveInvite(!next.blindRequestSent && !next.credentialReady ? publicInvite : null);
         setPendingInvites(publicInvite ? [publicInvite] : []);
         const title = publicInvite?.title || targetElectionId;
+        const inviteStatus = await checkPrivateInviteBeforeBallot({
+          questionnaireId: next.electionId,
+          voterNpub: next.invitedNpub,
+          coordinatorNpub: next.coordinatorNpub || coordinatorNpub,
+        });
+        if (!inviteStatus.ok) {
+          setRefreshNonce((value) => value + 1);
+          return;
+        }
         if (next.blindRequestSent || next.credentialReady || next.submission) {
-          setStatus("Opened " + title + " from private invite code.");
+          setStatus(inviteStatus.claimedByThisDevice
+            ? "Invite already claimed by this device/account."
+            : "Opened " + title + " from private invite code.");
           setRefreshNonce((value) => value + 1);
           return;
         }
@@ -826,7 +856,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           markSignerWaitRecoveryBaseline();
           scheduleSignerInitialPull();
           setActiveInvite(null);
-          setStatus(`Blind ballot request sent. Waiting for ${getCredentialIssuerDisplayName()} issuance.`);
+          setStatus(inviteStatus.claimedByThisDevice
+            ? "Invite already claimed by this device/account."
+            : `Blind ballot request sent. Waiting for ${getCredentialIssuerDisplayName()} issuance.`);
           setRefreshNonce((value) => value + 1);
         } finally {
           delete autoRequestInFlightForRef.current[requestKey];
@@ -1690,6 +1722,86 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     return issueBlindTokensWorker?.workerNpub?.trim() ? "audit proxy" : "organiser";
   }
 
+  function buildGeneralPrivateInviteFallbackUrl(questionnaireId: string, coordinatorNpub?: string | null) {
+    const id = questionnaireId.trim();
+    if (!id || typeof window === "undefined") {
+      return null;
+    }
+    return buildQuestionnaireInviteUrl({
+      baseUrl: window.location.href,
+      electionId: id,
+      coordinatorNpub: coordinatorNpub?.trim() || undefined,
+      login: false,
+      autoRequestBallot: true,
+    });
+  }
+
+  async function checkPrivateInviteBeforeBallot(input: {
+    questionnaireId: string;
+    voterNpub: string;
+    coordinatorNpub?: string | null;
+  }): Promise<{ ok: boolean; claimedByThisDevice: boolean }> {
+    const inviteCode = inviteContext.inviteCode?.trim() ?? "";
+    if (!inviteCode) {
+      setPrivateInviteBlock(null);
+      return { ok: true, claimedByThisDevice: false };
+    }
+    const questionnaireId = input.questionnaireId.trim();
+    const voterNpub = input.voterNpub.trim();
+    if (!questionnaireId || !voterNpub) {
+      return { ok: true, claimedByThisDevice: false };
+    }
+    const codeHash = await hashQuestionnaireInviteCode(inviteCode);
+    if (!codeHash) {
+      return { ok: true, claimedByThisDevice: false };
+    }
+    const definition = readCachedQuestionnaireDefinition(questionnaireId);
+    const summary = loadElectionSummary(questionnaireId);
+    const relays = mergeQuestionnaireRelayHints(definition?.questionnaireRelays, summary?.questionnaireRelays);
+    const latestStatus = await fetchQuestionnairePrivateInviteStatus({
+      questionnaireId,
+      codeHash,
+      relays: relays.length > 0 ? relays : undefined,
+      limit: 40,
+    }).catch(() => null);
+    const statusEvent = latestStatus?.status ?? null;
+    if (!statusEvent || statusEvent.state === "available") {
+      setPrivateInviteBlock(null);
+      return { ok: true, claimedByThisDevice: false };
+    }
+    const coordinatorNpub = statusEvent.coordinatorPubkey?.trim()
+      || input.coordinatorNpub?.trim()
+      || summary?.coordinatorNpub?.trim()
+      || definition?.coordinatorPubkey?.trim()
+      || inviteContext.coordinatorNpub?.trim()
+      || null;
+    const generalInviteUrl = buildGeneralPrivateInviteFallbackUrl(questionnaireId, coordinatorNpub);
+    if (statusEvent.state === "redeemed") {
+      const ownClaimHash = await hashQuestionnairePrivateInviteClaim({ codeHash, npub: voterNpub });
+      if (ownClaimHash && statusEvent.redeemedNpubHash === ownClaimHash) {
+        setPrivateInviteBlock(null);
+        setStatus("Invite already claimed by this device/account.");
+        return { ok: true, claimedByThisDevice: true };
+      }
+      setPrivateInviteBlock({
+        questionnaireId,
+        coordinatorNpub,
+        generalInviteUrl,
+        reason: "redeemed",
+      });
+      setStatus("Private invite already used.");
+      return { ok: false, claimedByThisDevice: false };
+    }
+    setPrivateInviteBlock({
+      questionnaireId,
+      coordinatorNpub,
+      generalInviteUrl,
+      reason: "revoked",
+    });
+    setStatus("Private invite is no longer available.");
+    return { ok: false, claimedByThisDevice: false };
+  }
+
   async function requestBallot() {
     if (!runtime) {
       return;
@@ -1699,7 +1811,19 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         setStatus("Loading questionnaire ballot key before requesting a ballot...");
         return;
       }
-      ensureLocalSession({ allowInviteMissing: true, allowRelayInviteFetch: true });
+      const requestSnapshot = ensureLocalSession({ allowInviteMissing: true, allowRelayInviteFetch: true }) ?? runtime.getSnapshot();
+      let claimedByThisDevice = false;
+      if (requestSnapshot?.electionId && requestSnapshot.invitedNpub) {
+        const inviteStatus = await checkPrivateInviteBeforeBallot({
+          questionnaireId: requestSnapshot.electionId,
+          voterNpub: requestSnapshot.invitedNpub,
+          coordinatorNpub: requestSnapshot.coordinatorNpub,
+        });
+        if (!inviteStatus.ok) {
+          return;
+        }
+        claimedByThisDevice = inviteStatus.claimedByThisDevice;
+      }
       const wasAlreadyWaiting = Boolean(runtime.getSnapshot()?.blindRequestSent && !runtime.getSnapshot()?.credentialReady);
       await runtime.requestBlindBallot({ forceResend: true });
       markSignerWaitRecoveryBaseline();
@@ -1712,7 +1836,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       const credentialIssuerName = getCredentialIssuerDisplayName();
       setStatus(wasAlreadyWaiting
         ? `Blind ballot request resent. Waiting for ${credentialIssuerName} issuance.`
-        : `Blind ballot request sent. Waiting for ${credentialIssuerName} issuance.`
+        : claimedByThisDevice
+          ? "Invite already claimed by this device/account."
+          : `Blind ballot request sent. Waiting for ${credentialIssuerName} issuance.`
       );
       setRefreshNonce((value) => value + 1);
     } catch (error) {
@@ -1891,7 +2017,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         markSignerWaitRecoveryBaseline();
         scheduleSignerInitialPull();
         setActiveInvite(null);
-        setStatus(`Blind ballot request sent. Waiting for ${getCredentialIssuerDisplayName()} issuance.`);
+        setStatus(inviteStatus.claimedByThisDevice
+          ? "Invite already claimed by this device/account."
+          : `Blind ballot request sent. Waiting for ${getCredentialIssuerDisplayName()} issuance.`);
         setRefreshNonce((value) => value + 1);
       }).catch((error) => {
         setStatus(error instanceof Error ? error.message : "Request failed.");
@@ -2128,14 +2256,23 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       }
       autoRequestInFlightForRef.current[requestKey] = true;
       autoRequestLastAttemptAtRef.current[requestKey] = Date.now();
-      void runtime.requestBlindBallot().then(() => {
+      void (async () => {
+        const inviteStatus = await checkPrivateInviteBeforeBallot({
+          questionnaireId: current.electionId,
+          voterNpub: current.invitedNpub,
+          coordinatorNpub: current.coordinatorNpub,
+        });
+        if (!inviteStatus.ok) {
+          return;
+        }
+        await runtime.requestBlindBallot();
         autoRequestSentForRef.current[requestKey] = true;
         markSignerWaitRecoveryBaseline();
         scheduleSignerInitialPull();
         setActiveInvite(null);
         setStatus(`Blind ballot request sent. Waiting for ${getCredentialIssuerDisplayName()} issuance.`);
         setRefreshNonce((value) => value + 1);
-      }).catch((error) => {
+      })().catch((error) => {
         setStatus(error instanceof Error ? error.message : "Could not send blind ballot request.");
       }).finally(() => {
         delete autoRequestInFlightForRef.current[requestKey];
@@ -2397,7 +2534,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const manualResendRequestVisible = waitingForCredential
     && manualResendAvailableAtMs !== null
     && manualResendClockMs >= manualResendAvailableAtMs;
-  const canRequestOrResendBallot = flags.canRequestBallot || manualResendRequestVisible;
+  const canRequestOrResendBallot = !privateInviteBlock && (flags.canRequestBallot || manualResendRequestVisible);
 
   const requiredQuestionsAnswered = questions.length > 0 && requiredQuestions.every((question) => {
     const value = answers[question.questionId];
@@ -2689,6 +2826,48 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       </dl>
     </section>
   ) : null;
+  const privateInviteBlockCard = privateInviteBlock ? (
+    <section className='simple-settings-card simple-private-invite-block' aria-label='Private invite unavailable'>
+      <h4 className='simple-voter-section-title'>
+        {privateInviteBlock.reason === "redeemed" ? "Private invite already used" : "Private invite unavailable"}
+      </h4>
+      <p className='simple-voter-note'>
+        {privateInviteBlock.reason === "redeemed"
+          ? "This private invite can only be used once. Ask the organiser for a new invite, or use the general questionnaire link if you were meant to join publicly."
+          : "This private invite is no longer available. Ask the organiser for a new invite, or use the general questionnaire link if you were meant to join publicly."}
+      </p>
+      <div className='simple-voter-action-row simple-voter-action-row-inline'>
+        {privateInviteBlock.coordinatorNpub && props.onMessageOrganiser ? (
+          <button type='button' className='simple-voter-secondary' onClick={props.onMessageOrganiser}>
+            Message organiser
+          </button>
+        ) : null}
+        {privateInviteBlock.generalInviteUrl ? (
+          <button
+            type='button'
+            className='simple-voter-secondary'
+            onClick={() => {
+              if (privateInviteBlock.generalInviteUrl && typeof window !== "undefined") {
+                window.location.assign(privateInviteBlock.generalInviteUrl);
+              }
+            }}
+          >
+            Open general invite
+          </button>
+        ) : null}
+        <button
+          type='button'
+          className='simple-voter-secondary'
+          onClick={() => {
+            setPrivateInviteBlock(null);
+            props.onBackToJoin?.();
+          }}
+        >
+          Back to Join
+        </button>
+      </div>
+    </section>
+  ) : null;
 
   if (settingsMode) {
     return (
@@ -2789,6 +2968,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           </ul>
         </section>
       ) : null}
+      {status ? <p className='simple-voter-note'>{status}</p> : null}
+      {privateInviteBlockCard}
       <section className='simple-questionnaire-voter-overview' aria-label='Questionnaire summary'>
         <div className='simple-questionnaire-voter-title-block'>
           <p className='simple-questionnaire-voter-number'>
@@ -3035,7 +3216,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         >
           {voteActionButtonText}
         </button>
-        {manualResendRequestVisible ? (
+        {manualResendRequestVisible && !privateInviteBlock ? (
           <button type='button' className='simple-voter-secondary' onClick={requestBallot}>
             Resend request
           </button>
