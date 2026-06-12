@@ -234,8 +234,15 @@ export interface VoterElectionLocalState {
   responseNpub?: string | null;
   draftResponses: QuestionnaireAnswer[];
   submission?: BallotSubmission | null;
+  submissions?: Record<string, BallotSubmission>;
   submissionAccepted?: boolean | null;
   submissionAcceptedAt?: IsoTime | null;
+  submissionDecisions?: Record<string, {
+    submissionId: SubmissionId;
+    accepted: boolean;
+    decidedAt: IsoTime;
+    reason?: string | null;
+  }>;
   lastUpdatedAt: IsoTime;
 }
 
@@ -337,6 +344,8 @@ function cloneVoterState(state: VoterElectionLocalState): VoterElectionLocalStat
     blindRequests: { ...(state.blindRequests ?? {}) },
     blindIssuances: { ...(state.blindIssuances ?? {}) },
     blindTokenSecrets: { ...(state.blindTokenSecrets ?? {}) },
+    submissions: { ...(state.submissions ?? {}) },
+    submissionDecisions: { ...(state.submissionDecisions ?? {}) },
     draftResponses: [...state.draftResponses],
   };
 }
@@ -442,6 +451,20 @@ function submissionCredentialBundle(submission: BallotSubmission): BallotCredent
   }];
 }
 
+function ballotCredentialProofQuestionId(proof: BallotCredentialProof) {
+  return proof.questionId?.trim() || proof.ballotScope?.questionId?.trim() || "";
+}
+
+function ballotSubmissionQuestionKey(submission: BallotSubmission): string {
+  const proofQuestionId = submission.credentialBundle?.[0]
+    ? ballotCredentialProofQuestionId(submission.credentialBundle[0])
+    : "";
+  if (proofQuestionId && submission.payload.responses.length === 1) {
+    return proofQuestionId;
+  }
+  return "";
+}
+
 function reduceCoordinatorError(
   state: CoordinatorElectionState,
   error: CoordinatorReduceError,
@@ -512,8 +535,10 @@ export function createEmptyVoterElectionLocalState(input: {
     responseNpub: null,
     draftResponses: [],
     submission: null,
+    submissions: {},
     submissionAccepted: null,
     submissionAcceptedAt: null,
+    submissionDecisions: {},
     lastUpdatedAt: input.now,
   };
 }
@@ -676,33 +701,69 @@ export function reduceVoterEvent(
     if (!next.credentialReady) {
       return reduceVoterError(state, "credential_not_ready");
     }
-    if (next.submissionAccepted === true) {
+    const questionKey = ballotSubmissionQuestionKey(event.submission);
+    const existingQuestionDecision = questionKey ? next.submissionDecisions?.[questionKey] : null;
+    if ((!questionKey && next.submissionAccepted === true) || existingQuestionDecision?.accepted === true) {
       return reduceVoterError(state, "already_submitted");
     }
     if (!validateResponsesSchema(event.submission.payload.responses)) {
       return reduceVoterError(state, "schema_invalid");
     }
     next.submission = event.submission;
+    if (questionKey) {
+      next.submissions = {
+        ...(next.submissions ?? {}),
+        [questionKey]: event.submission,
+      };
+    }
     next.responseNpub = event.submission.responseNpub ?? event.submission.invitedNpub;
     next.lastUpdatedAt = event.submission.submittedAt;
     return { state: next, ok: true };
   }
 
   if (event.type === "BALLOT_SUBMISSION_ACCEPTED") {
-    if (next.submission?.submissionId !== event.submissionId) {
+    const questionEntry = Object.entries(next.submissions ?? {})
+      .find(([, submission]) => submission.submissionId === event.submissionId) ?? null;
+    if (next.submission?.submissionId !== event.submissionId && !questionEntry) {
       return reduceVoterError(state, "schema_invalid");
     }
-    next.submissionAccepted = true;
-    next.submissionAcceptedAt = event.decidedAt;
+    if (questionEntry) {
+      next.submissionDecisions = {
+        ...(next.submissionDecisions ?? {}),
+        [questionEntry[0]]: {
+          submissionId: event.submissionId,
+          accepted: true,
+          decidedAt: event.decidedAt,
+          reason: null,
+        },
+      };
+    } else {
+      next.submissionAccepted = true;
+      next.submissionAcceptedAt = event.decidedAt;
+    }
     next.lastUpdatedAt = event.decidedAt;
     return { state: next, ok: true };
   }
 
-  if (next.submission?.submissionId !== event.submissionId) {
+  const questionEntry = Object.entries(next.submissions ?? {})
+    .find(([, submission]) => submission.submissionId === event.submissionId) ?? null;
+  if (next.submission?.submissionId !== event.submissionId && !questionEntry) {
     return reduceVoterError(state, "schema_invalid");
   }
-  next.submissionAccepted = false;
-  next.submissionAcceptedAt = event.decidedAt;
+  if (questionEntry) {
+    next.submissionDecisions = {
+      ...(next.submissionDecisions ?? {}),
+      [questionEntry[0]]: {
+        submissionId: event.submissionId,
+        accepted: false,
+        decidedAt: event.decidedAt,
+        reason: event.reason,
+      },
+    };
+  } else {
+    next.submissionAccepted = false;
+    next.submissionAcceptedAt = event.decidedAt;
+  }
   next.lastUpdatedAt = event.decidedAt;
   return { state: next, ok: true };
 }
@@ -905,10 +966,11 @@ export function reduceCoordinatorEvent(
       if (!existingSubmission) {
         return false;
       }
-      const existingCommitments = new Set(
-        submissionCredentialBundle(existingSubmission).map((proof) => proof.tokenCommitment),
-      );
-      return submissionCredentialBundle(submission).some((proof) => existingCommitments.has(proof.tokenCommitment));
+      const existingProofs = submissionCredentialBundle(existingSubmission);
+      return submissionCredentialBundle(submission).some((proof) => existingProofs.some((existingProof) => (
+        existingProof.tokenCommitment === proof.tokenCommitment
+        && sameBallotScope(existingProof.ballotScope, proof.ballotScope)
+      )));
     });
     if (acceptedForToken) {
       return reduceCoordinatorError(state, "already_voted");
@@ -1191,9 +1253,18 @@ export function validateBallotSubmission(input: {
   if (Array.isArray(input.submission.credentialBundle) && input.submission.credentialBundle.length > 0) {
     const proofQuestionIds = new Set(
       input.submission.credentialBundle
-        .map((proof) => proof.questionId?.trim() || proof.ballotScope?.questionId?.trim() || "")
+        .map((proof) => ballotCredentialProofQuestionId(proof))
         .filter(Boolean),
     );
+    if (
+      proofQuestionIds.size > 0
+      && (
+        [...answered].some((questionId) => !proofQuestionIds.has(questionId))
+        || [...proofQuestionIds].some((questionId) => !answered.has(questionId))
+      )
+    ) {
+      return false;
+    }
     if (!input.requiredQuestionIds.every((questionId) => proofQuestionIds.has(questionId))) {
       return false;
     }

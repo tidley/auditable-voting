@@ -386,12 +386,14 @@ export function saveVoterState(input: {
   writeJson(keys.draftResponses, input.state.draftResponses);
   writeJson(keys.submission, {
     submission: input.state.submission,
+    submissions: input.state.submissions ?? {},
     responseNsec: input.state.responseNsec ?? null,
     responseNpub: input.state.responseNpub ?? null,
   });
   writeJson(keys.acceptance, {
     submissionAccepted: input.state.submissionAccepted,
     submissionAcceptedAt: input.state.submissionAcceptedAt,
+    submissionDecisions: input.state.submissionDecisions ?? {},
     lastUpdatedAt: input.state.lastUpdatedAt,
   });
 }
@@ -442,19 +444,25 @@ export function loadVoterState(input: {
   const draftResponses = readJson<VoterElectionLocalState["draftResponses"]>(keys.draftResponses, []);
   const submissionPart = readJson<{
     submission?: BallotSubmission | null;
+    submissions?: Record<string, BallotSubmission>;
     responseNsec?: string | null;
     responseNpub?: string | null;
   } | BallotSubmission | null>(keys.submission, null);
   const submission = submissionPart && "type" in submissionPart
     ? submissionPart
     : (submissionPart?.submission ?? null);
+  const submissions = submissionPart && !("type" in submissionPart)
+    ? submissionPart.submissions ?? {}
+    : {};
   const acceptance = readJson<{
     submissionAccepted?: boolean | null;
     submissionAcceptedAt?: string | null;
+    submissionDecisions?: VoterElectionLocalState["submissionDecisions"];
     lastUpdatedAt?: string;
   }>(keys.acceptance, {
     submissionAccepted: null,
     submissionAcceptedAt: null,
+    submissionDecisions: {},
     lastUpdatedAt: new Date().toISOString(),
   });
 
@@ -466,6 +474,7 @@ export function loadVoterState(input: {
     || blindIssuance
     || Object.keys(blindIssuances).length > 0
     || submission
+    || Object.keys(submissions).length > 0
     || draftResponses.length > 0
   );
   if (!anyState && !summary) {
@@ -492,8 +501,10 @@ export function loadVoterState(input: {
     responseNpub: submissionPart && !("type" in submissionPart) ? submissionPart.responseNpub ?? null : submission?.responseNpub ?? null,
     draftResponses,
     submission,
+    submissions,
     submissionAccepted: acceptance.submissionAccepted ?? null,
     submissionAcceptedAt: acceptance.submissionAcceptedAt ?? null,
+    submissionDecisions: acceptance.submissionDecisions ?? {},
     lastUpdatedAt: acceptance.lastUpdatedAt ?? new Date().toISOString(),
   };
 }

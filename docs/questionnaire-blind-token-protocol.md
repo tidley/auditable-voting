@@ -8,9 +8,9 @@ This protocol defines the questionnaire-first path used by the client:
 
 - public questionnaire definition and state
 - private eligibility and blind issuance transport
-- one blind-token response bundle per voter
+- one blind-token response per answered question in per-question mode
 - optional per-question blind credentials for current question slots
-- deterministic duplicate handling by token nullifier, including all nullifiers in a per-question bundle
+- deterministic duplicate handling by token nullifier, including scoped per-question nullifiers
 - public result summary publication
 
 The response payload mode can be:
@@ -108,8 +108,8 @@ Blind-token admission object:
 - `authorPubkey` (ephemeral response key expected)
 - `tokenNullifier`
 - `tokenProof` (`tokenCommitment`, `questionnaireId`, `signature`)
-- optional `tokenNullifiers[]` for per-question bundles, each carrying `questionId?`, `tokenNullifier`, and `ballotScope?`
-- optional `tokenProofs[]` for per-question bundles, each carrying `tokenCommitment`, `questionnaireId`, `signature`, `questionId?`, and `ballotScope?`
+- optional `tokenNullifiers[]` for scoped responses, each carrying `questionId?`, `tokenNullifier`, and `ballotScope?`; current per-question submissions carry one scoped entry
+- optional `tokenProofs[]` for scoped responses, each carrying `tokenCommitment`, `questionnaireId`, `signature`, `questionId?`, and `ballotScope?`; current per-question submissions carry one scoped entry
 - `answers` (public mode) or `encryptedPayload` + `payloadHash` (encrypted mode)
 
 `ballotScope` canonical fields are `questionId`, `slotId`, `slotIndex`, and `version`. The signed blind-token message includes the canonical scope when present:

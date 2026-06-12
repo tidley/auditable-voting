@@ -156,8 +156,15 @@ export type OptionAVoterStateSnapshot = {
   responseNpub?: string | null;
   draftResponses?: BallotSubmission["payload"]["responses"];
   submission?: BallotSubmission | null;
+  submissions?: Record<string, BallotSubmission>;
   submissionAccepted?: boolean | null;
   submissionAcceptedAt?: string | null;
+  submissionDecisions?: Record<string, {
+    submissionId: string;
+    accepted: boolean;
+    decidedAt: string;
+    reason?: string | null;
+  }>;
   lastUpdatedAt: string;
 };
 

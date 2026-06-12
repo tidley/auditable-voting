@@ -517,6 +517,35 @@ function submissionCredentialBundle(submission: BallotSubmission): BallotCredent
   }];
 }
 
+function ballotCredentialProofQuestionId(proof: BallotCredentialProof) {
+  return proof.questionId?.trim() || proof.ballotScope?.questionId?.trim() || "";
+}
+
+function scopedRequiredQuestionIdsForSubmission(submission: BallotSubmission, requiredQuestionIds: string[]) {
+  const proofs = Array.isArray(submission.credentialBundle) && submission.credentialBundle.length > 0
+    ? submission.credentialBundle
+    : [];
+  if (proofs.length === 0) {
+    return requiredQuestionIds;
+  }
+  const coveredQuestionIds = new Set<string>();
+  for (const answer of submission.payload.responses) {
+    if (answer.questionId.trim()) {
+      coveredQuestionIds.add(answer.questionId.trim());
+    }
+  }
+  for (const proof of proofs) {
+    const questionId = ballotCredentialProofQuestionId(proof);
+    if (questionId) {
+      coveredQuestionIds.add(questionId);
+    }
+  }
+  if (coveredQuestionIds.size === 0) {
+    return requiredQuestionIds;
+  }
+  return requiredQuestionIds.filter((questionId) => coveredQuestionIds.has(questionId));
+}
+
 function inferRejectReason(error?: string): BallotRejectReason {
   if (error === "duplicate_nullifier") {
     return "duplicate_nullifier";
@@ -863,8 +892,10 @@ export class QuestionnaireOptionAVoterRuntime {
       responseNpub: state.responseNpub ?? null,
       draftResponses: state.draftResponses,
       submission: state.submission ?? null,
+      submissions: state.submissions ?? {},
       submissionAccepted: state.submissionAccepted ?? null,
       submissionAcceptedAt: state.submissionAcceptedAt ?? null,
+      submissionDecisions: state.submissionDecisions ?? {},
       lastUpdatedAt: state.lastUpdatedAt,
     };
   }
@@ -948,6 +979,7 @@ export class QuestionnaireOptionAVoterRuntime {
       (!this.state.blindRequestSent && snapshot.blindRequestSent)
       || (!this.state.credentialReady && snapshot.credentialReady)
       || (!this.state.submission && Boolean(snapshot.submission))
+      || (Object.keys(this.state.submissions ?? {}).length === 0 && Object.keys(snapshot.submissions ?? {}).length > 0)
       || (this.state.submissionAccepted == null && snapshot.submissionAccepted != null)
     );
     if (!snapshotLooksNewer && !fillsMissingProgress) {
@@ -969,8 +1001,16 @@ export class QuestionnaireOptionAVoterRuntime {
         ? this.state.draftResponses
         : (snapshot.draftResponses ?? []),
       submission: this.state.submission ?? snapshot.submission ?? null,
+      submissions: {
+        ...(snapshot.submissions ?? {}),
+        ...(this.state.submissions ?? {}),
+      },
       submissionAccepted: this.state.submissionAccepted ?? snapshot.submissionAccepted ?? null,
       submissionAcceptedAt: this.state.submissionAcceptedAt ?? snapshot.submissionAcceptedAt ?? null,
+      submissionDecisions: {
+        ...(snapshot.submissionDecisions ?? {}),
+        ...(this.state.submissionDecisions ?? {}),
+      },
       lastUpdatedAt: snapshotLooksNewer ? snapshot.lastUpdatedAt : this.state.lastUpdatedAt,
     };
     if (next.blindIssuance) {
@@ -982,6 +1022,9 @@ export class QuestionnaireOptionAVoterRuntime {
     }
     if (next.submission) {
       enqueueSubmission(next.submission);
+    }
+    for (const submission of Object.values(next.submissions ?? {})) {
+      enqueueSubmission(submission);
     }
     this.state = next;
     saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
@@ -2200,6 +2243,29 @@ export class QuestionnaireOptionAVoterRuntime {
         }
       }
     }
+    for (const submission of Object.values(next.submissions ?? {})) {
+      const acceptance = readAcceptance(submission.submissionId);
+      if (acceptance?.accepted) {
+        const accepted = reduceVoterEvent(next, {
+          type: "BALLOT_SUBMISSION_ACCEPTED",
+          submissionId: submission.submissionId,
+          decidedAt: acceptance.decidedAt,
+        });
+        if (accepted.ok) {
+          next = accepted.state;
+        }
+      } else if (acceptance && !acceptance.accepted) {
+        const rejected = reduceVoterEvent(next, {
+          type: "BALLOT_SUBMISSION_REJECTED",
+          submissionId: submission.submissionId,
+          reason: acceptance.reason ?? "rejected",
+          decidedAt: acceptance.decidedAt,
+        });
+        if (rejected.ok) {
+          next = rejected.state;
+        }
+      }
+    }
     if (next !== previousState) {
       this.state = next;
       saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
@@ -2208,12 +2274,12 @@ export class QuestionnaireOptionAVoterRuntime {
     return this.state;
   }
 
-  async submitVote(requiredQuestionIds: string[]) {
+  async submitVote(requiredQuestionIds: string[], options?: { questionId?: string }) {
     if (this.submitVoteInflight) {
       optionAFlowLog("voter", "submit_vote_inflight_reused", { electionId: this.electionId });
       return this.submitVoteInflight;
     }
-    this.submitVoteInflight = this.submitVoteInternal(requiredQuestionIds);
+    this.submitVoteInflight = this.submitVoteInternal(requiredQuestionIds, options);
     try {
       return await this.submitVoteInflight;
     } finally {
@@ -2221,7 +2287,10 @@ export class QuestionnaireOptionAVoterRuntime {
     }
   }
 
-  private async buildSubmissionCredentialBundle(definition: QuestionnaireDefinition | null): Promise<BallotCredentialProof[]> {
+  private async buildSubmissionCredentialBundle(
+    definition: QuestionnaireDefinition | null,
+    responses = this.state?.draftResponses ?? [],
+  ): Promise<BallotCredentialProof[]> {
     if (!this.state) {
       throw new OptionARuntimeError("not_logged_in", "Login is required.");
     }
@@ -2267,7 +2336,7 @@ export class QuestionnaireOptionAVoterRuntime {
     }
 
     const proofs: BallotCredentialProof[] = [];
-    for (const answer of this.state.draftResponses) {
+    for (const answer of responses) {
       const scope = scopeForQuestion(definition, answer.questionId);
       const scopeKey = ballotScopeKey(scope);
       const issuance = this.state.blindIssuances?.[scopeKey] ?? null;
@@ -2313,7 +2382,7 @@ export class QuestionnaireOptionAVoterRuntime {
     return proofs;
   }
 
-  private async submitVoteInternal(requiredQuestionIds: string[]) {
+  private async submitVoteInternal(requiredQuestionIds: string[], options?: { questionId?: string }) {
     if (!this.state) {
       throw new OptionARuntimeError("not_logged_in", "Login is required.");
     }
@@ -2324,8 +2393,22 @@ export class QuestionnaireOptionAVoterRuntime {
     const definition = readCachedQuestionnaireDefinition(this.state.electionId)
       ?? this.state.blindIssuance?.definition
       ?? null;
+    const targetQuestionId = options?.questionId?.trim() ?? "";
+    const submissionResponses = targetQuestionId
+      ? this.state.draftResponses.filter((answer) => answer.questionId === targetQuestionId)
+      : this.state.draftResponses;
+    const existingQuestionSubmission = targetQuestionId ? this.state.submissions?.[targetQuestionId] ?? null : null;
 
-    if (this.state.submission && this.state.responseNsec && this.state.responseNpub) {
+    if (existingQuestionSubmission) {
+      optionAFlowLog("voter", "submit_vote_question_already_submitted", {
+        electionId: this.state.electionId,
+        questionId: targetQuestionId,
+        submissionId: existingQuestionSubmission.submissionId,
+      });
+      return this.state;
+    }
+
+    if (!targetQuestionId && this.state.submission && this.state.responseNsec && this.state.responseNpub) {
       if (this.state.submissionAccepted === true || this.state.submissionAccepted === false) {
         optionAFlowLog("voter", "submit_vote_republish_skipped_decided", {
           electionId: this.state.electionId,
@@ -2406,7 +2489,7 @@ export class QuestionnaireOptionAVoterRuntime {
       return this.state;
     }
 
-    const credentialBundle = await this.buildSubmissionCredentialBundle(definition);
+    const credentialBundle = await this.buildSubmissionCredentialBundle(definition, submissionResponses);
     const primaryCredential = credentialBundle[0];
     if (!primaryCredential) {
       throw new OptionARuntimeError("invalid_submission", "No answers are ready to submit.");
@@ -2414,7 +2497,7 @@ export class QuestionnaireOptionAVoterRuntime {
     const includeCredentialBundle = questionnaireUsesPerQuestionCredentials(definition);
     const responseSecretKey = await deriveDeterministicResponseSecretKey({
       electionId: this.state.electionId,
-      answers: this.state.draftResponses,
+      answers: submissionResponses,
       tokenSecret: credentialBundle.map((proof) => proof.tokenCommitment).join(":"),
       blindSignature: credentialBundle.map((proof) => proof.credential).join(":"),
     });
@@ -2423,7 +2506,7 @@ export class QuestionnaireOptionAVoterRuntime {
     optionAFlowLog("voter", "submit_vote_responder_marker_derived", {
       electionId: this.state.electionId,
       responseNpub,
-      responseCount: this.state.draftResponses.length,
+      responseCount: submissionResponses.length,
     });
 
     const submission: BallotSubmission = {
@@ -2439,7 +2522,7 @@ export class QuestionnaireOptionAVoterRuntime {
       ...(includeCredentialBundle ? { credentialBundle } : {}),
       payload: {
         electionId: this.state.electionId,
-        responses: this.state.draftResponses,
+        responses: submissionResponses,
       },
       submittedAt: nowIso(),
       credential: primaryCredential.credential,
@@ -4407,7 +4490,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
         submission,
         electionId: this.electionId,
         electionState: validationElectionState,
-        requiredQuestionIds,
+        requiredQuestionIds: scopedRequiredQuestionIdsForSubmission(submission, requiredQuestionIds),
       });
       if (!valid) {
         const rejected: BallotAcceptanceResult = {

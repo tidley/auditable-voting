@@ -875,24 +875,42 @@ describe("questionnaireOptionARuntime", () => {
     expect(issuedScopes).toEqual(["director-alice", "director-bob"]);
     expect(voter.getSnapshot()?.credentialReady).toBe(true);
 
-    await voter.submitVote(["q1", "q2"]);
-    const submission = voter.getSnapshot()?.submission;
-    expect(submission?.credentialBundle).toHaveLength(2);
-    expect(submission?.credentialBundle?.map((proof) => proof.ballotScope?.slotId).sort()).toEqual([
-      "director-alice",
-      "director-bob",
-    ]);
-    const publicResponse = publicBlindResponseStore.entries.find((entry) => (
+    await voter.submitVote(["q1"], { questionId: "q1" });
+    const firstSubmission = voter.getSnapshot()?.submissions?.q1;
+    expect(firstSubmission?.credentialBundle).toHaveLength(1);
+    expect(firstSubmission?.payload.responses).toHaveLength(1);
+    expect(firstSubmission?.payload.responses[0]?.questionId).toBe("q1");
+    expect(firstSubmission?.credentialBundle?.[0]?.ballotScope?.slotId).toBe("director-alice");
+
+    await coordinator.processPendingSubmissions(["q1", "q2"]);
+    voter.refreshIssuanceAndAcceptance();
+    expect(voter.getSnapshot()?.submissionDecisions?.q1?.accepted).toBe(true);
+    expect(coordinator.getAcceptedUniqueCount()).toBe(1);
+    expect(Object.keys(coordinator.getSnapshot()?.acceptedNullifiers ?? {})).toHaveLength(1);
+
+    await voter.submitVote(["q2"], { questionId: "q2" });
+    const secondSubmission = voter.getSnapshot()?.submissions?.q2;
+    expect(secondSubmission?.credentialBundle).toHaveLength(1);
+    expect(secondSubmission?.payload.responses).toHaveLength(1);
+    expect(secondSubmission?.payload.responses[0]?.questionId).toBe("q2");
+    expect(secondSubmission?.credentialBundle?.[0]?.ballotScope?.slotId).toBe("director-bob");
+
+    const publicResponses = publicBlindResponseStore.entries.filter((entry) => (
       entry.response.questionnaireId === bundleElectionId
-    ))?.response;
-    expect(publicResponse?.tokenProofs).toHaveLength(2);
-    expect(publicResponse?.tokenNullifiers).toHaveLength(2);
+    )).map((entry) => entry.response);
+    expect(publicResponses).toHaveLength(2);
+    expect(publicResponses.map((response) => response.answers.map((answer) => answer.questionId)).flat().sort()).toEqual(["q1", "q2"]);
+    for (const response of publicResponses) {
+      expect(response.tokenProofs).toHaveLength(1);
+      expect(response.tokenNullifiers).toHaveLength(1);
+    }
 
     await coordinator.processPendingSubmissions(["q1", "q2"]);
     voter.refreshIssuanceAndAcceptance();
 
-    expect(voter.getSnapshot()?.submissionAccepted).toBe(true);
-    expect(coordinator.getAcceptedUniqueCount()).toBe(1);
+    expect(voter.getSnapshot()?.submissionAccepted).toBe(null);
+    expect(voter.getSnapshot()?.submissionDecisions?.q2?.accepted).toBe(true);
+    expect(coordinator.getAcceptedUniqueCount()).toBe(2);
     expect(Object.keys(coordinator.getSnapshot()?.acceptedNullifiers ?? {})).toHaveLength(2);
   });
 

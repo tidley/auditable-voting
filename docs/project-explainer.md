@@ -22,7 +22,7 @@ Observers can independently recompute the result from public data.
 1. An organiser admits a voter or confirms that a voter is eligible.
 2. The voter requests fresh blind ballot credentials for this questionnaire. New questionnaires can request a bundle with one credential bound to each current question slot.
 3. The organiser signs it without seeing the final credential.
-4. The voter submits a public ballot anonymously.
+4. The voter submits each question as a public anonymous ballot.
 5. Anyone can verify that accepted ballots are valid, unique, and correctly tallied.
 
 ## Roles
@@ -40,7 +40,7 @@ Most online voting systems force an uncomfortable tradeoff:
 - either the operator can link voters to votes
 - or the public cannot independently verify the result
 
-Auditable Voting tries to avoid both failures by separating issuance from submission. The organiser handles eligibility, including an invited-voter roster that can be reused for later questionnaires. Applying that roster publishes one roster-free public announcement for the next questionnaire instead of sending the same questionnaire details to every voter. The voter still requests and spends fresh blind credentials through a fresh response identity; current questionnaire builds use one scoped credential per answered question, bundled into one submission. Observers read the public event stream and recompute the count; they cannot admit voters or start the next questionnaire from the private organiser roster.
+Auditable Voting tries to avoid both failures by separating issuance from submission. The organiser handles eligibility, including an invited-voter roster that can be reused for later questionnaires. Applying that roster publishes one roster-free public announcement for the next questionnaire instead of sending the same questionnaire details to every voter. The voter still requests and spends fresh blind credentials through a fresh response identity; current questionnaire builds request one scoped credential per current question slot and spend one credential when each question is answered. Observers read the public event stream and recompute the count; they cannot admit voters or start the next questionnaire from the private organiser roster.
 
 ## What is public vs private
 

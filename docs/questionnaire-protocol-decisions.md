@@ -31,7 +31,7 @@ This record freezes the implementation decisions for the questionnaire-first bli
 ## 4. Mode authority
 
 - `responseMode = blind_token` is authoritative for new questionnaire definitions.
-- `ballotCredentialMode = per_question` means the voter requests one credential per current question slot and submits them as a bundled proof.
+- `ballotCredentialMode = per_question` means the voter requests one credential per current question slot, sees one question at a time, and submits one scoped proof with the answer for that question.
 - Changing answer-bearing question semantics bumps that question slot `version`; old scoped credentials are not reinterpreted for the edited question.
 - Legacy objects default to compatibility mode:
   - `responseMode = legacy_private_envelope` when field is missing.

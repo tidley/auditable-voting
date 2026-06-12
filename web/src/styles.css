@@ -5025,6 +5025,30 @@ code {
   gap: 20px;
 }
 
+.simple-questionnaire-question-stepper {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--simple-border);
+  border-radius: 12px;
+  background: var(--simple-surface);
+}
+
+.simple-questionnaire-question-progress {
+  margin: 0;
+  color: var(--simple-muted);
+  font-size: 0.94rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.simple-questionnaire-stepper-button {
+  min-height: 38px;
+  min-width: 98px;
+}
+
 .simple-optiona-voter-page {
   display: grid;
   gap: 22px;

@@ -22,7 +22,10 @@ import {
 } from "./questionnaireOptionAStorage";
 import { fetchOptionAInviteDms, fetchOptionAInviteDmsWithNsec } from "./questionnaireOptionAInviteDm";
 import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
-import type { QuestionnaireDefinition } from "./questionnaireProtocol";
+import {
+  questionnaireUsesPerQuestionCredentials,
+  type QuestionnaireDefinition,
+} from "./questionnaireProtocol";
 import { mergeQuestionnaireRelayHints } from "./questionnaireRelays";
 import TokenFingerprint from "./TokenFingerprint";
 import { decodeNsec } from "./nostrIdentity";
@@ -354,9 +357,15 @@ function formatVoteActionButtonText(input: {
   canSubmitNow: boolean;
   blindSigningKeyReady: boolean;
   coordinatorNpub: string;
+  responseSubmitted: boolean;
+  perQuestionMode: boolean;
+  allQuestionResponsesSubmitted: boolean;
 }) {
   const snapshot = input.snapshot;
-  if (snapshot?.submission) {
+  if (input.responseSubmitted && input.perQuestionMode && !input.allQuestionResponsesSubmitted) {
+    return "Next question";
+  }
+  if (input.responseSubmitted || (input.perQuestionMode && input.allQuestionResponsesSubmitted)) {
     return "View results";
   }
   if (!input.requiredQuestionsAnswered) {
@@ -466,6 +475,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     maxLength?: number;
     encryptResponses?: boolean;
   }>>([]);
+  const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [encryptFreeTextByQuestionId, setEncryptFreeTextByQuestionId] = useState<Record<string, boolean>>({});
   const [refreshNonce, setRefreshNonce] = useState(0);
@@ -526,10 +536,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   };
   const linkedContextElectionId = inviteContext.electionId?.trim() ?? "";
   const currentQuestionnaireId = snapshot?.electionId?.trim() || electionId.trim() || linkedContextElectionId || latestAnnouncedQuestionnaireId.trim();
-  const responseSubmittedForCurrentQuestionnaire = Boolean(
-    snapshot?.submission
-    && snapshot.electionId === currentQuestionnaireId,
-  );
   const contextPendingInvites = useMemo(() => (
     linkedContextElectionId
       ? pendingInvites.filter((invite) => invite.electionId === linkedContextElectionId)
@@ -554,6 +560,34 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     ?? autoRequestDefinition?.blindSigningPublicKey
     ?? (currentQuestionnaireId ? loadElectionSummary(currentQuestionnaireId)?.blindSigningPublicKey : null),
   );
+  const currentDefinition = autoRequestDefinition
+    ?? (questionnaireDefinition?.questionnaireId === currentQuestionnaireId ? questionnaireDefinition : null)
+    ?? (currentQuestionnaireId ? readCachedQuestionnaireDefinition(currentQuestionnaireId) : null);
+  const perQuestionMode = questionnaireUsesPerQuestionCredentials(currentDefinition);
+  const submittedQuestionKey = Object.keys(
+    snapshot?.electionId === currentQuestionnaireId ? snapshot.submissions ?? {} : {},
+  ).sort().join("|");
+  const submittedQuestionIds = useMemo(() => new Set(
+    submittedQuestionKey ? submittedQuestionKey.split("|") : [],
+  ), [submittedQuestionKey]);
+  const acceptedQuestionKey = Object.entries(
+    snapshot?.electionId === currentQuestionnaireId ? snapshot.submissionDecisions ?? {} : {},
+  )
+    .filter(([, decision]) => decision.accepted)
+    .map(([questionId]) => questionId)
+    .sort()
+    .join("|");
+  const acceptedQuestionIds = useMemo(() => new Set(
+    acceptedQuestionKey ? acceptedQuestionKey.split("|") : [],
+  ), [acceptedQuestionKey]);
+  const activeQuestion = perQuestionMode ? questions[activeQuestionIndex] ?? null : null;
+  const activeQuestionSubmitted = Boolean(activeQuestion && submittedQuestionIds.has(activeQuestion.questionId));
+  const allQuestionResponsesSubmitted = perQuestionMode
+    && questions.length > 0
+    && questions.every((question) => submittedQuestionIds.has(question.questionId));
+  const responseSubmittedForCurrentQuestionnaire = perQuestionMode
+    ? activeQuestionSubmitted
+    : Boolean(snapshot?.submission && snapshot.electionId === currentQuestionnaireId);
 
   function markSignerWaitRecoveryBaseline() {
     if (props.localVoterNsec?.trim()) {
@@ -680,7 +714,38 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     previousElectionIdRef.current = electionId;
     setAnswers({});
     setEncryptFreeTextByQuestionId({});
+    setActiveQuestionIndex(0);
   }, [electionId]);
+
+  useEffect(() => {
+    if (!perQuestionMode) {
+      setActiveQuestionIndex(0);
+      return;
+    }
+    setActiveQuestionIndex((current) => {
+      if (questions.length === 0) {
+        return 0;
+      }
+      return Math.min(Math.max(current, 0), questions.length - 1);
+    });
+  }, [perQuestionMode, questions.length]);
+
+  useEffect(() => {
+    if (!perQuestionMode || questions.length === 0) {
+      return;
+    }
+    setActiveQuestionIndex((current) => {
+      const currentQuestion = questions[current] ?? null;
+      if (currentQuestion && !submittedQuestionIds.has(currentQuestion.questionId)) {
+        return current;
+      }
+      const firstUnsubmittedIndex = questions.findIndex((question) => !submittedQuestionIds.has(question.questionId));
+      if (firstUnsubmittedIndex >= 0) {
+        return firstUnsubmittedIndex;
+      }
+      return Math.min(Math.max(current, 0), questions.length - 1);
+    });
+  }, [perQuestionMode, questions, submittedQuestionIds, submittedQuestionKey]);
 
   useEffect(() => {
     setPrivateInviteBlock(null);
@@ -1228,9 +1293,21 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     snapshot?.invitedNpub,
   ]);
 
+  const answerableQuestions = useMemo(
+    () => (perQuestionMode ? (activeQuestion ? [activeQuestion] : []) : questions),
+    [activeQuestion, perQuestionMode, questions],
+  );
+  const visibleQuestionEntries = useMemo(
+    () => (
+      perQuestionMode && activeQuestion
+        ? [{ question: activeQuestion, index: activeQuestionIndex }]
+        : questions.map((question, index) => ({ question, index }))
+    ),
+    [activeQuestion, activeQuestionIndex, perQuestionMode, questions],
+  );
   const requiredQuestions = useMemo(
-    () => questions.filter((question) => question.required || (question.type === "rank" && (question.minimumRanked ?? 0) > 0)),
-    [questions],
+    () => answerableQuestions.filter((question) => question.required || (question.type === "rank" && (question.minimumRanked ?? 0) > 0)),
+    [answerableQuestions],
   );
   const requiredQuestionIds = useMemo(
     () => requiredQuestions.map((question) => question.questionId),
@@ -1942,14 +2019,42 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
   }
 
+  function findNextUnsubmittedQuestionIndex(fromIndex: number, justSubmittedQuestionId = "") {
+    if (!perQuestionMode || questions.length === 0) {
+      return -1;
+    }
+    const isSubmitted = (questionId: string) => (
+      submittedQuestionIds.has(questionId)
+      || (justSubmittedQuestionId.trim().length > 0 && questionId === justSubmittedQuestionId)
+    );
+    for (let offset = 1; offset <= questions.length; offset += 1) {
+      const index = (fromIndex + offset) % questions.length;
+      if (!isSubmitted(questions[index].questionId)) {
+        return index;
+      }
+    }
+    return -1;
+  }
+
   async function submit() {
     if (!runtime) {
       return;
     }
     try {
       pushAnswers();
-      await runtime.submitVote(requiredQuestionIds);
-      setStatus(null);
+      const activeQuestionId = perQuestionMode ? activeQuestion?.questionId?.trim() ?? "" : "";
+      await runtime.submitVote(requiredQuestionIds, activeQuestionId ? { questionId: activeQuestionId } : undefined);
+      if (perQuestionMode) {
+        const nextQuestionIndex = findNextUnsubmittedQuestionIndex(activeQuestionIndex, activeQuestionId);
+        if (nextQuestionIndex >= 0) {
+          setActiveQuestionIndex(nextQuestionIndex);
+          setStatus(null);
+        } else {
+          setStatus("All question responses submitted.");
+        }
+      } else {
+        setStatus(null);
+      }
       setRefreshNonce((value) => value + 1);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Submit failed.");
@@ -2539,7 +2644,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     && manualResendClockMs >= manualResendAvailableAtMs;
   const canRequestOrResendBallot = !privateInviteBlock && (flags.canRequestBallot || manualResendRequestVisible);
 
-  const requiredQuestionsAnswered = questions.length > 0 && requiredQuestions.every((question) => {
+  const questionHasResponse = (question: (typeof questions)[number]) => {
     const value = answers[question.questionId];
     if (Array.isArray(value)) {
       if (question.type === "rank") {
@@ -2548,8 +2653,17 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       return value.length > 0;
     }
     return value !== undefined && value !== null && String(value).trim().length > 0;
-  });
-  const canSubmitNow = flags.canSubmitVote && requiredQuestionsAnswered && !responseSubmittedForCurrentQuestionnaire;
+  };
+  const requiredQuestionsAnswered = questions.length > 0 && requiredQuestions.every(questionHasResponse);
+  const answerableQuestionsHaveResponse = answerableQuestions.some(questionHasResponse);
+  const canSubmitNow = flags.canSubmitVote
+    && requiredQuestionsAnswered
+    && answerableQuestionsHaveResponse
+    && !responseSubmittedForCurrentQuestionnaire;
+  const canAdvanceQuestion = perQuestionMode && responseSubmittedForCurrentQuestionnaire && !allQuestionResponsesSubmitted;
+  const canViewResults = perQuestionMode
+    ? allQuestionResponsesSubmitted
+    : Boolean(snapshot?.submission);
   const actionQuestionnaireId = currentQuestionnaireId || electionId.trim();
   const snapshotForAction = snapshot?.electionId === actionQuestionnaireId ? snapshot : null;
   const actionCoordinatorNpub = snapshotForAction?.coordinatorNpub?.trim()
@@ -2563,6 +2677,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     canSubmitNow,
     blindSigningKeyReady: autoRequestBlindSigningKeyReady,
     coordinatorNpub: actionCoordinatorNpub,
+    responseSubmitted: responseSubmittedForCurrentQuestionnaire,
+    perQuestionMode,
+    allQuestionResponsesSubmitted,
   });
   useEffect(() => {
     if (!responseSubmittedForCurrentQuestionnaire || !snapshot?.draftResponses?.length) {
@@ -2586,6 +2703,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       canSubmitNow,
       blindSigningKeyReady: autoRequestBlindSigningKeyReady,
       coordinatorNpub: (snapshotForTarget?.coordinatorNpub?.trim() ?? "") || actionCoordinatorNpub,
+      responseSubmitted: responseSubmittedForCurrentQuestionnaire,
+      perQuestionMode,
+      allQuestionResponsesSubmitted,
     });
     const questionnaireSeen = questions.length > 0 || Boolean(autoRequestDefinition);
     owner.__questionnaireVoterDebug = {
@@ -2599,16 +2719,27 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       tokenRequested: Boolean(snapshotForTarget?.blindRequestSent),
       tokenReceived: Boolean(snapshotForTarget?.credentialReady),
       responseReady: canSubmitNow,
-      responsePublished: Boolean(snapshotForTarget?.submission),
-      responseSubmittedCount: snapshotForTarget?.submission ? 1 : 0,
+      responsePublished: perQuestionMode
+        ? allQuestionResponsesSubmitted
+        : Boolean(snapshotForTarget?.submission),
+      responseSubmittedCount: perQuestionMode
+        ? Object.keys(snapshotForTarget?.submissions ?? {}).length
+        : snapshotForTarget?.submission ? 1 : 0,
       submitButtonPresent: true,
       submitButtonVisible: !settingsMode,
-      submitButtonDisabled: !(canSubmitNow || Boolean(snapshotForTarget?.submission)),
+      submitButtonDisabled: !(canSubmitNow || responseSubmittedForCurrentQuestionnaire || allQuestionResponsesSubmitted),
       submitButtonText: debugSubmitButtonText,
-      submitButtonReasonBlocked: snapshotForTarget?.submission
+      perQuestionMode,
+      activeQuestionIndex,
+      activeQuestionId: activeQuestion?.questionId ?? null,
+      submittedQuestionIds: [...submittedQuestionIds],
+      acceptedQuestionIds: [...acceptedQuestionIds],
+      submitButtonReasonBlocked: responseSubmittedForCurrentQuestionnaire || allQuestionResponsesSubmitted
         ? null
         : !requiredQuestionsAnswered
           ? "required_questions_unanswered"
+          : !answerableQuestionsHaveResponse
+            ? "question_unanswered"
           : !snapshotForTarget?.loginVerified
             ? "not_logged_in"
             : !autoRequestBlindSigningKeyReady
@@ -2651,7 +2782,12 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     };
   }, [
     activeInvite?.electionId,
+    activeQuestion?.questionId,
+    activeQuestionIndex,
     actionCoordinatorNpub,
+    answerableQuestionsHaveResponse,
+    acceptedQuestionIds,
+    allQuestionResponsesSubmitted,
     autoRequestBlindSigningKeyReady,
     autoRequestDefinition,
     canSubmitNow,
@@ -2671,6 +2807,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     signedInNpub,
     snapshot,
     status,
+    perQuestionMode,
+    responseSubmittedForCurrentQuestionnaire,
+    submittedQuestionIds,
   ]);
   const statusQuestionnaireId = currentQuestionnaireId || electionId.trim();
   const coordinatorNpub = (snapshot?.electionId === statusQuestionnaireId ? snapshot.coordinatorNpub?.trim() : "")
@@ -2994,10 +3133,37 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         </p>
       ) : (
         <div className='simple-questionnaire-voter-list'>
-          {questions.map((question, index) => {
+          {perQuestionMode ? (
+            <div className='simple-questionnaire-question-stepper' aria-label='Question progress'>
+              <button
+                type='button'
+                className='simple-voter-secondary simple-questionnaire-stepper-button'
+                disabled={activeQuestionIndex <= 0}
+                onClick={() => setActiveQuestionIndex((current) => Math.max(0, current - 1))}
+              >
+                Previous
+              </button>
+              <p className='simple-questionnaire-question-progress'>
+                Question {Math.min(activeQuestionIndex + 1, questions.length)}/{questions.length}
+              </p>
+              <button
+                type='button'
+                className='simple-voter-secondary simple-questionnaire-stepper-button'
+                disabled={activeQuestionIndex >= questions.length - 1}
+                onClick={() => setActiveQuestionIndex((current) => Math.min(questions.length - 1, current + 1))}
+              >
+                Next
+              </button>
+            </div>
+          ) : null}
+          {visibleQuestionEntries.map(({ question, index }) => {
             const ranked = question.type === "rank" && Array.isArray(answers[question.questionId])
               ? (answers[question.questionId] as string[])
               : [];
+            const questionSubmitted = perQuestionMode
+              ? submittedQuestionIds.has(question.questionId)
+              : responseSubmittedForCurrentQuestionnaire;
+            const questionAccepted = acceptedQuestionIds.has(question.questionId);
             const rankRequirement = question.type === "rank"
               ? getRankRequirementState(question.options?.length ?? 0, question.minimumRanked ?? 0, ranked.length)
               : null;
@@ -3009,11 +3175,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                   : " is-optional"
               : question.required ? "" : " is-optional";
             return (
-            <article key={question.questionId} className={`simple-questionnaire-voter-card${responseSubmittedForCurrentQuestionnaire ? " is-response-locked" : ""}`}>
+            <article key={question.questionId} className={`simple-questionnaire-voter-card${questionSubmitted ? " is-response-locked" : ""}`}>
               <div className='simple-questionnaire-voter-heading'>
                 <h4 className='simple-questionnaire-voter-prompt'>Q{index + 1}: {question.prompt || "Untitled question"}</h4>
                 <p className={`simple-questionnaire-voter-requirement${requirementClass}`}>
-                  {rankRequirement?.label ?? (question.required ? "Required" : "Optional")}
+                  {questionAccepted ? "Accepted" : questionSubmitted ? "Submitted" : rankRequirement?.label ?? (question.required ? "Required" : "Optional")}
                 </p>
               </div>
               {rankRequirement && rankRequirement.missing > 0 ? (
@@ -3027,9 +3193,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                     type='button'
                     className={`simple-voter-choice simple-voter-choice-yes${answers[question.questionId] === "yes" ? " is-active" : answers[question.questionId] === "no" ? " is-dimmed" : ""}`}
                     aria-pressed={answers[question.questionId] === "yes"}
-                    disabled={responseSubmittedForCurrentQuestionnaire}
+                    disabled={questionSubmitted}
                     onClick={() => {
-                      if (responseSubmittedForCurrentQuestionnaire) {
+                      if (questionSubmitted) {
                         return;
                       }
                       setAnswers((current) => ({ ...current, [question.questionId]: "yes" }));
@@ -3041,9 +3207,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                     type='button'
                     className={`simple-voter-choice simple-voter-choice-no${answers[question.questionId] === "no" ? " is-active" : answers[question.questionId] === "yes" ? " is-dimmed" : ""}`}
                     aria-pressed={answers[question.questionId] === "no"}
-                    disabled={responseSubmittedForCurrentQuestionnaire}
+                    disabled={questionSubmitted}
                     onClick={() => {
-                      if (responseSubmittedForCurrentQuestionnaire) {
+                      if (questionSubmitted) {
                         return;
                       }
                       setAnswers((current) => ({ ...current, [question.questionId]: "no" }));
@@ -3065,9 +3231,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                         <input
                           type={question.multiSelect ? "checkbox" : "radio"}
                           checked={checked}
-                          disabled={responseSubmittedForCurrentQuestionnaire}
+                          disabled={questionSubmitted}
                           onChange={() => {
-                            if (responseSubmittedForCurrentQuestionnaire) {
+                            if (questionSubmitted) {
                               return;
                             }
                             setAnswers((current) => {
@@ -3111,7 +3277,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                                     type='button'
                                     className='simple-voter-secondary simple-questionnaire-rank-action'
                                     onClick={() => moveRankedAnswer(question.questionId, option.optionId, -1)}
-                                    disabled={responseSubmittedForCurrentQuestionnaire || rankedIndex === 0}
+                                    disabled={questionSubmitted || rankedIndex === 0}
                                   >
                                     Up
                                   </button>
@@ -3119,7 +3285,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                                     type='button'
                                     className='simple-voter-secondary simple-questionnaire-rank-action'
                                     onClick={() => moveRankedAnswer(question.questionId, option.optionId, 1)}
-                                    disabled={responseSubmittedForCurrentQuestionnaire || rankedIndex === ranked.length - 1}
+                                    disabled={questionSubmitted || rankedIndex === ranked.length - 1}
                                   >
                                     Down
                                   </button>
@@ -3127,7 +3293,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                                     type='button'
                                     className='simple-voter-secondary simple-questionnaire-rank-action'
                                     onClick={() => removeRankedAnswer(question.questionId, option.optionId)}
-                                    disabled={responseSubmittedForCurrentQuestionnaire}
+                                    disabled={questionSubmitted}
                                   >
                                     Remove
                                   </button>
@@ -3144,7 +3310,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                                 type='button'
                                 className='simple-voter-secondary simple-questionnaire-rank-add'
                                 onClick={() => addRankedAnswer(question.questionId, option.optionId)}
-                                disabled={responseSubmittedForCurrentQuestionnaire}
+                                disabled={questionSubmitted}
                               >
                                 <span className='simple-questionnaire-rank-add-option'>{option.label}</span>
                                 <span className='simple-questionnaire-rank-add-prefix'>Add as #{ranked.length + 1}</span>
@@ -3168,9 +3334,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                         rows={3}
                         maxLength={question.maxLength ?? 500}
                         value={typeof answers[question.questionId] === "string" ? (answers[question.questionId] as string) : ""}
-                        readOnly={responseSubmittedForCurrentQuestionnaire}
+                        readOnly={questionSubmitted}
                         onChange={(event) => {
-                          if (responseSubmittedForCurrentQuestionnaire) {
+                          if (questionSubmitted) {
                             return;
                           }
                           setAnswers((current) => ({ ...current, [question.questionId]: event.target.value }));
@@ -3180,9 +3346,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                         <input
                           type='checkbox'
                           checked={encryptionEnabled}
-                          disabled={encryptionRequired || responseSubmittedForCurrentQuestionnaire}
+                          disabled={encryptionRequired || questionSubmitted}
                           onChange={(event) => {
-                            if (encryptionRequired || responseSubmittedForCurrentQuestionnaire) {
+                            if (encryptionRequired || questionSubmitted) {
                               return;
                             }
                             const checked = event.target.checked;
@@ -3208,9 +3374,16 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         <button
           type='button'
           className='simple-voter-primary'
-          disabled={!(canSubmitNow || Boolean(snapshot?.submission))}
+          disabled={!(canSubmitNow || canAdvanceQuestion || canViewResults)}
           onClick={() => {
-            if (snapshot?.submission) {
+            if (canAdvanceQuestion) {
+              const nextQuestionIndex = findNextUnsubmittedQuestionIndex(activeQuestionIndex);
+              if (nextQuestionIndex >= 0) {
+                setActiveQuestionIndex(nextQuestionIndex);
+              }
+              return;
+            }
+            if (canViewResults) {
               viewResults();
               return;
             }
