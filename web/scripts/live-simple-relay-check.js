@@ -913,8 +913,9 @@ async function clickByTextIfAvailable(page, role, name, timeoutMs = 5000) {
 }
 
 async function continueFromRoleLandingIfPresent(page, role) {
+  const roleLabel = /^coord/i.test(role) ? "Organiser" : role;
   const continueButton = page.getByRole("button", {
-    name: new RegExp(`^Continue as ${role}$`, "i"),
+    name: new RegExp(`^Continue as ${roleLabel}$`, "i"),
   }).first();
   if (await continueButton.count().catch(() => 0) === 0) {
     return false;
@@ -1619,7 +1620,7 @@ async function waitForQuestionnaireCoordinatorReady(page, timeoutMs = 30000) {
   return false;
 }
 
-async function waitForQuestionnaireVoterReadyToSubmit(page, timeoutMs = 30000) {
+async function waitForQuestionnaireVoterReadyToSubmit(page, timeoutMs = 30000, onPoll = null) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const submitButtons = page.getByRole("button", { name: /^(Submit encrypted response|Submit response)$/i });
@@ -1637,6 +1638,9 @@ async function waitForQuestionnaireVoterReadyToSubmit(page, timeoutMs = 30000) {
     const voterDebug = await readQuestionnaireVoterDebug(page);
     if (hasEnabledVisible && (voterDebug?.responseReady === true || !voterDebug)) {
       return true;
+    }
+    if (typeof onPoll === "function") {
+      await onPoll();
     }
     await sleep(500);
   }
@@ -1944,7 +1948,8 @@ async function main() {
       }
 
       for (const actor of coordinators) {
-        await clickByText(actor.page, "button", /^(New(?: ID)?|Generate ID|New identity)$/i);
+        await continueFromRoleLandingIfPresent(actor.page, "coordinator");
+        await clickByTextIfAvailable(actor.page, "button", /^(New(?: ID)?|Generate ID|New identity)$/i, 5000);
         await ensureTab(actor.page, "Settings", actor.label);
       }
       await sleep(1500);
@@ -2009,20 +2014,38 @@ async function main() {
       for (let roundIndex = 0; roundIndex < roundCount; roundIndex += 1) {
         const lead = coordinators[0].page;
         if (isQuestionnaireFlowDeployment(deploymentMode)) {
-          const questionnaireId = `course_feedback_${Date.now()}_${roundIndex + 1}`;
+          if (roundIndex > 0) {
+            await clickByTextIfAvailable(lead, "button", /^New round$/i, 5000);
+            await sleep(300);
+          }
+          if (!(await ensureTab(lead, "Questionnaire", coordinators[0].label))) {
+            await ensureTab(lead, "Configure", coordinators[0].label);
+          }
+          const coordinatorReady = await waitForQuestionnaireCoordinatorReady(lead, 45000);
+          if (!coordinatorReady) {
+            throw new Error("questionnaire_coordinator_not_ready: coordinator identity/debug not loaded in time");
+          }
+          let questionnaireId = `course_feedback_${Date.now()}_${roundIndex + 1}`;
+          const coordinatorQuestionnaireIdInput = lead.locator("#questionnaire-id").first();
+          const canEditQuestionnaireId = !(await coordinatorQuestionnaireIdInput.isDisabled().catch(() => true))
+            && !(await coordinatorQuestionnaireIdInput.evaluate((node) => (
+              node instanceof HTMLInputElement ? node.readOnly : false
+            )).catch(() => true));
+          if (canEditQuestionnaireId) {
+            await coordinatorQuestionnaireIdInput.fill(questionnaireId);
+            await coordinatorQuestionnaireIdInput.blur();
+          } else {
+            const generatedQuestionnaireId = (await coordinatorQuestionnaireIdInput.inputValue().catch(() => "")).trim();
+            if (!generatedQuestionnaireId) {
+              throw new Error("questionnaire_id_unavailable: generated questionnaire ID field is empty");
+            }
+            questionnaireId = generatedQuestionnaireId;
+          }
           const stageTracker = createQuestionnaireStageTracker({
             round: roundIndex + 1,
             questionnaireId,
             voterIds,
           });
-          await ensureTab(lead, "Configure", coordinators[0].label);
-          const coordinatorReady = await waitForQuestionnaireCoordinatorReady(lead, 45000);
-          if (!coordinatorReady) {
-            throw new Error("questionnaire_coordinator_not_ready: coordinator identity/debug not loaded in time");
-          }
-          const coordinatorQuestionnaireIdInput = lead.locator("#questionnaire-id").first();
-          await coordinatorQuestionnaireIdInput.fill(questionnaireId);
-          await coordinatorQuestionnaireIdInput.blur();
           await ensureQuestionnaireDraftReady(lead, roundIndex + 1);
           await sleep(300);
           await clickByText(lead, "button", /^(Publish definition|Publish Questionnaire)$/i);
@@ -2159,6 +2182,15 @@ async function main() {
                 const voterReadyToSubmit = await waitForQuestionnaireVoterReadyToSubmit(
                   actor.page,
                   questionnaireSubmitReadyWaitMs,
+                  async () => {
+                    const approvedDuringWait = await approveQuestionnairePendingRequests(lead, 1000);
+                    if (approvedDuringWait > 0) {
+                      recordTimelineEvent(timeline, "coord1", "questionnaire_pending_requests_approved", {
+                        questionnaireId,
+                        approved: approvedDuringWait,
+                      });
+                    }
+                  },
                 );
                 if (!voterReadyToSubmit) {
                   throw new Error(`questionnaire_submit_not_ready:${JSON.stringify({

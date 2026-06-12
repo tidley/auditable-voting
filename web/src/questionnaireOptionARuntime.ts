@@ -381,6 +381,34 @@ function emptyCoordinatorState(summary: ElectionSummary): CoordinatorElectionSta
   };
 }
 
+function mergeElectionSummaryIntoCoordinatorElection(
+  existing: ElectionSummary,
+  summary?: Partial<ElectionSummary>,
+): ElectionSummary {
+  const summaryState = summary?.state;
+  const shouldApplySummaryState = Boolean(summaryState) && (
+    existing.state === "draft"
+    || existing.state === "published"
+    || existing.state === "open"
+    || summaryState === "closed"
+    || summaryState === "counted"
+  );
+  return {
+    ...existing,
+    title: summary?.title ?? existing.title,
+    description: summary?.description ?? existing.description,
+    state: shouldApplySummaryState ? summaryState as ElectionSummary["state"] : existing.state,
+    openedAt: summary?.openedAt ?? existing.openedAt,
+    closedAt: summary?.closedAt ?? existing.closedAt,
+    protocolVersion: summary?.protocolVersion ?? existing.protocolVersion,
+    flowMode: summary?.flowMode ?? existing.flowMode,
+    responseMode: summary?.responseMode ?? existing.responseMode,
+    blindSigningPublicKey: summary?.blindSigningPublicKey ?? existing.blindSigningPublicKey,
+    questionnaireRelays: summary?.questionnaireRelays ?? existing.questionnaireRelays,
+    issueBlindTokensWorker: summary?.issueBlindTokensWorker ?? existing.issueBlindTokensWorker ?? null,
+  };
+}
+
 function findIssuedBlindResponse(
   state: CoordinatorElectionState,
   request: BlindBallotRequest,
@@ -2706,15 +2734,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       this.state = restoreCoordinatorElectionState({
         persisted: {
           ...existing,
-          election: {
-            ...existing.election,
-            protocolVersion: summary?.protocolVersion ?? existing.election.protocolVersion,
-            flowMode: summary?.flowMode ?? existing.election.flowMode,
-            responseMode: summary?.responseMode ?? existing.election.responseMode,
-            blindSigningPublicKey: summary?.blindSigningPublicKey ?? existing.election.blindSigningPublicKey,
-            questionnaireRelays: summary?.questionnaireRelays ?? existing.election.questionnaireRelays,
-            issueBlindTokensWorker: summary?.issueBlindTokensWorker ?? existing.election.issueBlindTokensWorker ?? null,
-          },
+          election: mergeElectionSummaryIntoCoordinatorElection(existing.election, summary),
         },
       });
       upsertElectionSummary(this.state.election);

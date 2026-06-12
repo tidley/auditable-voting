@@ -67,6 +67,7 @@ export function formatQuestionnaireTokenStatusLabel(status: string) {
 export type QuestionnaireAcceptedResponse = {
   eventId: string;
   authorPubkey: string;
+  tokenCommitment?: string | null;
   envelope: QuestionnaireResponsePrivateEnvelope;
   payload: QuestionnaireResponsePayload;
   decryptedAnswerQuestionIds?: string[];

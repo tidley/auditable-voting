@@ -593,6 +593,36 @@ describe("questionnaireOptionARuntime", () => {
     expect(resumed.loginVerified).toBe(true);
   });
 
+  it("updates a persisted draft coordinator state when the questionnaire is published", async () => {
+    const publishedElectionId = `${electionId}_published`;
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), publishedElectionId);
+    await coordinator.loginWithSigner({ title: "Draft runtime", description: "Draft", state: "draft" });
+    expect(coordinator.getSnapshot()?.election.state).toBe("draft");
+
+    const restoredCoordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), publishedElectionId);
+    restoredCoordinator.bootstrapCoordinatorNpub({
+      coordinatorNpub,
+      summary: {
+        title: "Published runtime",
+        description: "Published",
+        state: "open",
+        openedAt: "2026-06-12T12:00:00.000Z",
+        closedAt: "2036-06-12T12:00:00.000Z",
+      },
+      startDmSubscriptions: false,
+      recoverSelfState: false,
+      publishSelfState: false,
+    });
+
+    expect(restoredCoordinator.getSnapshot()?.election).toEqual(expect.objectContaining({
+      title: "Published runtime",
+      description: "Published",
+      state: "open",
+      openedAt: "2026-06-12T12:00:00.000Z",
+      closedAt: "2036-06-12T12:00:00.000Z",
+    }));
+  });
+
   it("routes blind requests to the delegated worker from invite metadata when available", async () => {
     const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
     await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });

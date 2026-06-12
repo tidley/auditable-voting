@@ -34,6 +34,7 @@ export type QuestionnaireResultsDashboardResponseDetail = {
     authorPubkey: string;
     submittedAt?: number | null;
     tokenNullifier?: string | null;
+    tokenCommitment?: string | null;
     answers?: QuestionnaireResponseAnswer[];
   };
 };

@@ -120,6 +120,7 @@ import type {
   BallotSubmission,
   BearerInviteCodeEntry,
   BearerInviteCodeState,
+  ElectionSummary,
   QuestionnaireAnswer,
   WhitelistClaimState,
 } from "./questionnaireOptionA";
@@ -249,6 +250,7 @@ function optionASubmissionToAcceptedResponse(
   return {
     eventId: `optiona:${submission.submissionId}`,
     authorPubkey,
+    tokenCommitment: submission.tokenCommitment,
     envelope: {
       schemaVersion: 1,
       eventType: "questionnaire_response_private",
@@ -1494,6 +1496,12 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       responseDetail: QuestionnaireResultsDashboardResponseDetail | null;
       order: number;
     }>();
+    const snapshot = optionACoordinatorRuntime?.getSnapshot() ?? null;
+    const invitedNpubByTokenCommitment = new Map(
+      Object.values(snapshot?.issuedBlindResponses ?? {})
+        .map((issuance) => [issuance.tokenCommitment.trim(), issuance.invitedNpub.trim()] as const)
+        .filter(([tokenCommitment, invitedNpub]) => tokenCommitment.length > 0 && invitedNpub.length > 0),
+    );
     let nextOrder = 0;
     const chooseSubmissionEntry = (
       current: (typeof optionAParticipantSubmissionEntries)[number] | null,
@@ -1577,7 +1585,10 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       if (knownSubmissionIds.has(detail.response.responseId)) {
         continue;
       }
-      const row = ensureRow(detail.response.authorPubkey || detail.response.responseId);
+      const invitedNpub = detail.response.tokenCommitment
+        ? invitedNpubByTokenCommitment.get(detail.response.tokenCommitment.trim()) ?? ""
+        : "";
+      const row = ensureRow(invitedNpub || detail.response.authorPubkey || detail.response.responseId);
       if (row) {
         attachAdmittedEntry(row);
         row.responseDetail = detail;
@@ -1600,7 +1611,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       const priorityDelta = priority(left) - priority(right);
       return priorityDelta || left.order - right.order;
     });
-  }, [admittedVoterEntries, coordinatorParticipantResponseDetails, optionAParticipantSubmissionEntries, optionAPendingAuthorizations, privateInviteCodeEntries, visibleOptionAKnownVoters]);
+  }, [admittedVoterEntries, coordinatorParticipantResponseDetails, optionACoordinatorRuntime, optionAParticipantSubmissionEntries, optionAPendingAuthorizations, privateInviteCodeEntries, visibleOptionAKnownVoters]);
   const participantReceivedVoteCount = useMemo(() => {
     const responseIds = new Set(optionAParticipantSubmissionEntries.map((entry) => entry.submission.submissionId));
     for (const detail of coordinatorParticipantResponseDetails) {
@@ -1774,7 +1785,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       const cachedDefinition = readCachedQuestionnaireDefinition(optionAElectionId);
       const existingSummary = loadElectionSummary(optionAElectionId);
       const bootstrapState =
-        existingSummary?.state && existingSummary.state !== "draft" && cachedDefinition
+        existingSummary?.state && existingSummary.state !== "draft"
           ? existingSummary.state
           : "draft";
       optionACoordinatorRuntime.bootstrapCoordinatorNpub({
@@ -1784,6 +1795,9 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
           title: existingSummary?.title?.trim() || cachedDefinition?.title?.trim() || questionPrompt,
           description: existingSummary?.description ?? cachedDefinition?.description ?? "",
           state: bootstrapState,
+          openedAt: existingSummary?.openedAt ?? (cachedDefinition?.openAt ? new Date(cachedDefinition.openAt * 1000).toISOString() : undefined),
+          closedAt: existingSummary?.closedAt ?? (cachedDefinition?.closeAt ? new Date(cachedDefinition.closeAt * 1000).toISOString() : undefined),
+          blindSigningPublicKey: cachedDefinition?.blindSigningPublicKey ?? existingSummary?.blindSigningPublicKey,
           questionnaireRelays: cachedDefinition?.questionnaireRelays ?? existingSummary?.questionnaireRelays,
           protocolVersion: QUESTIONNAIRE_PROTOCOL_VERSION_V2,
           flowMode: QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1,
@@ -4170,7 +4184,29 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     if (!electionId || !activeCoordinatorNpub.trim()) {
       return null;
     }
+    const cachedDefinition = readCachedQuestionnaireDefinition(electionId);
+    const summary = loadElectionSummary(electionId);
+    const runtimeSummary: Partial<ElectionSummary> = {
+      title: cachedDefinition?.title ?? summary?.title,
+      description: cachedDefinition?.description ?? summary?.description,
+      state: summary?.state ?? "open",
+      openedAt: summary?.openedAt ?? (cachedDefinition?.openAt ? new Date(cachedDefinition.openAt * 1000).toISOString() : undefined),
+      closedAt: summary?.closedAt ?? (cachedDefinition?.closeAt ? new Date(cachedDefinition.closeAt * 1000).toISOString() : undefined),
+      blindSigningPublicKey: cachedDefinition?.blindSigningPublicKey ?? summary?.blindSigningPublicKey,
+      questionnaireRelays: cachedDefinition?.questionnaireRelays ?? summary?.questionnaireRelays,
+      issueBlindTokensWorker: summary?.issueBlindTokensWorker ?? null,
+      protocolVersion: cachedDefinition?.protocolVersion ?? summary?.protocolVersion,
+      flowMode: cachedDefinition?.flowMode ?? summary?.flowMode,
+      responseMode: cachedDefinition?.responseMode ?? summary?.responseMode,
+    };
     if (optionACoordinatorRuntime && electionId === optionAElectionId.trim()) {
+      optionACoordinatorRuntime.bootstrapCoordinatorNpub({
+        coordinatorNpub: activeCoordinatorNpub,
+        summary: runtimeSummary,
+        startDmSubscriptions: false,
+        recoverSelfState: false,
+        publishSelfState: false,
+      });
       return {
         runtime: optionACoordinatorRuntime,
         dispose: () => undefined,
@@ -4181,23 +4217,9 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       electionId,
       signerNpub.trim() ? undefined : keypair?.nsec,
     );
-    const cachedDefinition = readCachedQuestionnaireDefinition(electionId);
-    const summary = loadElectionSummary(electionId);
     runtime.bootstrapCoordinatorNpub({
       coordinatorNpub: activeCoordinatorNpub,
-      summary: {
-        title: cachedDefinition?.title ?? summary?.title,
-        description: cachedDefinition?.description ?? summary?.description,
-        state: summary?.state ?? "open",
-        openedAt: summary?.openedAt ?? (cachedDefinition?.openAt ? new Date(cachedDefinition.openAt * 1000).toISOString() : undefined),
-        closedAt: summary?.closedAt ?? (cachedDefinition?.closeAt ? new Date(cachedDefinition.closeAt * 1000).toISOString() : undefined),
-        blindSigningPublicKey: cachedDefinition?.blindSigningPublicKey ?? summary?.blindSigningPublicKey,
-        questionnaireRelays: cachedDefinition?.questionnaireRelays ?? summary?.questionnaireRelays,
-        issueBlindTokensWorker: summary?.issueBlindTokensWorker ?? null,
-        protocolVersion: cachedDefinition?.protocolVersion ?? summary?.protocolVersion,
-        flowMode: cachedDefinition?.flowMode ?? summary?.flowMode,
-        responseMode: cachedDefinition?.responseMode ?? summary?.responseMode,
-      },
+      summary: runtimeSummary,
       startDmSubscriptions: false,
       recoverSelfState: false,
       publishSelfState: false,
@@ -4338,7 +4360,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       if (questionnaireId !== optionAElectionId.trim()) {
         setQuestionnaireRosterAnnouncement((current) => ({
           questionnaireId,
-          state: current.questionnaireId === questionnaireId ? current.state : "open",
+          state: current.questionnaireId === questionnaireId && current.state !== "draft" ? current.state : "open",
         }));
       }
       const addedCount = projectNpubsToQuestionnaire(admittedVoterAutoApplyNpubs, questionnaireId);

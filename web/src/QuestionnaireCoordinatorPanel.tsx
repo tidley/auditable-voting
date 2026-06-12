@@ -1017,6 +1017,7 @@ function publicBlindResponseToAcceptedResponse(input: {
   return {
     eventId: input.entry.event.id,
     authorPubkey: input.entry.response.authorPubkey,
+    tokenCommitment: input.entry.response.tokenProof.tokenCommitment,
     envelope: {
       schemaVersion: 1,
       eventType: "questionnaire_response_private",
@@ -2766,6 +2767,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         responseId: response.payload.responseId,
         authorPubkey: response.authorPubkey,
         submittedAt: response.payload.submittedAt,
+        tokenCommitment: response.tokenCommitment ?? response.envelope.payloadHash ?? null,
         answers: response.payload.answers,
       },
     }))
