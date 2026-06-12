@@ -20,7 +20,7 @@ Observers can independently recompute the result from public data.
 ## The short version
 
 1. An organiser admits a voter or confirms that a voter is eligible.
-2. The voter requests a fresh blind ballot credential for this questionnaire.
+2. The voter requests fresh blind ballot credentials for this questionnaire. New questionnaires can request a bundle with one credential bound to each current question slot.
 3. The organiser signs it without seeing the final credential.
 4. The voter submits a public ballot anonymously.
 5. Anyone can verify that accepted ballots are valid, unique, and correctly tallied.
@@ -40,7 +40,7 @@ Most online voting systems force an uncomfortable tradeoff:
 - either the operator can link voters to votes
 - or the public cannot independently verify the result
 
-Auditable Voting tries to avoid both failures by separating issuance from submission. The organiser handles eligibility, including an invited-voter roster that can be reused for later questionnaires. Applying that roster publishes one roster-free public announcement for the next questionnaire instead of sending the same questionnaire details to every voter. The voter still requests and spends a fresh blind credential for each questionnaire through a fresh response identity. Observers read the public event stream and recompute the count; they cannot admit voters or start the next questionnaire from the private organiser roster.
+Auditable Voting tries to avoid both failures by separating issuance from submission. The organiser handles eligibility, including an invited-voter roster that can be reused for later questionnaires. Applying that roster publishes one roster-free public announcement for the next questionnaire instead of sending the same questionnaire details to every voter. The voter still requests and spends fresh blind credentials through a fresh response identity; current questionnaire builds use one scoped credential per answered question, bundled into one submission. Observers read the public event stream and recompute the count; they cannot admit voters or start the next questionnaire from the private organiser roster.
 
 ## What is public vs private
 
@@ -104,7 +104,9 @@ Known weak points:
 - For larger live sessions, such as many rounds or around 100 voters, use the audit proxy/worker for blind issuance and decision publication rather than relying on a single organiser browser tab.
 - The audit proxy still follows organiser eligibility: it waits for the organiser's whitelist/private-code config before issuing, and general-link requests are also copied to the organiser so approval can update the proxy without a second voter request. It does not create follow-up questionnaires; that remains an organiser action because it depends on the private admitted-voter roster.
 - Browser-held secret material needs careful handling.
+- **Backup** creates an encrypted full-state snapshot for the current app namespace. It includes local questionnaire definitions/drafts, invite and roster state, blind-issuance state, responses, relay/proxy settings, and actor state; restoring replaces the current namespace state on the device.
 - Private invite status is published as an invite-code hash plus a per-code claimed-identity hash, so link holders can detect reuse without publishing the private invite code itself.
+- If the organiser changes an answer-bearing question after credentials exist, the app bumps that question's ballot-slot version and voters need a fresh scoped credential for that slot.
 - The built-in **Messages** view needs a local `nsec` identity to unwrap and send helpline DMs; signer-only sessions should use their external signer or restore a local identity until signer-side NIP-17 wrapping is supported in-app.
 - The cryptographic design needs external review before production use.
 - Large multi-organiser runs are not yet reliable on the current public relay set.

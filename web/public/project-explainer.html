@@ -433,7 +433,7 @@
             <div class="short-version">
               <div class="panel panel-accent">
                 <h2 id="short-version">The short version</h2>
-                <p>This system lets an organiser confirm who is allowed to vote without learning how each person voted. Invited voters can discover the next questionnaire from one public organiser announcement, receive a fresh blind credential for each questionnaire, submit their response from a fresh identity, and observers can recompute the result from public data.</p>
+                <p>This system lets an organiser confirm who is allowed to vote without learning how each person voted. Invited voters can discover the next questionnaire from one public organiser announcement, receive fresh blind credentials for the current questionnaire slots, submit their response from a fresh identity, and observers can recompute the result from public data.</p>
                 <div class="hero-actions">
                   <a class="button button-primary" href="./demo-guide.html" target="_blank" rel="noopener noreferrer">Plain-English demo guide</a>
                   <a class="button" href="./technical-details.html">Technical details</a>
@@ -441,7 +441,7 @@
               </div>
               <ol class="flow-list panel" aria-label="One minute flow">
                 <li>An organiser admits a voter or confirms that a voter is eligible.</li>
-                <li>The voter requests a fresh blind ballot credential for this questionnaire.</li>
+                <li>The voter requests fresh blind ballot credentials for this questionnaire; current builds bundle one credential per question slot.</li>
                 <li>The organiser signs it without seeing the final credential.</li>
                 <li>The voter submits a public ballot anonymously.</li>
                 <li>Anyone can verify that accepted ballots are valid, unique, and correctly tallied.</li>
@@ -499,8 +499,8 @@
             <h3>For voters</h3>
             <ul>
               <li>Open an invite or request ballot access.</li>
-              <li>Wait for a ballot credential.</li>
-              <li>Submit each questionnaire with a fresh blind credential, using the top questionnaire selector and Answer next when several invited questionnaires are waiting.</li>
+              <li>Wait for ballot credentials.</li>
+              <li>Submit each questionnaire with fresh scoped blind credentials, using the top questionnaire selector and Answer next when several invited questionnaires are waiting.</li>
             </ul>
           </article>
           <article class="role-card">
@@ -509,7 +509,7 @@
               <li>Create and publish a questionnaire.</li>
               <li>Invite voters once, then apply that roster to later questionnaires and publish one roster-free public announcement.</li>
               <li>Invite voters or approve requests.</li>
-              <li>Issue blind credentials and watch results arrive.</li>
+              <li>Issue scoped blind credentials and watch results arrive.</li>
             </ul>
           </article>
           <article class="role-card">
@@ -544,7 +544,7 @@
               <li>The admitted voter roster and internal voter notes.</li>
               <li>Helpline message contents, sent as NIP-17 gift-wrapped direct messages between voter and organiser identities.</li>
               <li>Token secrets and blinding factors.</li>
-              <li>Unspent ballot credentials.</li>
+          <li>Unspent ballot credentials and question-slot token secrets.</li>
               <li>Browser-local recovery state.</li>
             </ul>
           </article>
@@ -605,8 +605,10 @@
           <li>Public relay reliability can affect delivery and discovery. The client uses tag-filtered, paginated public reads, adaptive NIP-17 mailbox recovery, and consolidated organiser, voter, and observer live questionnaire subscriptions, but relay rate limits can still affect busy demonstrations.</li>
           <li>For larger live sessions, such as many rounds or around 100 voters, use the audit proxy/worker for blind issuance and decision publication rather than relying on a single organiser browser tab.</li>
           <li>The audit proxy still follows organiser eligibility: it waits for the organiser's whitelist/private-code config before issuing, and general-link requests are also copied to the organiser so approval can update the proxy without a second voter request. It does not create follow-up questionnaires; that remains an organiser action because it depends on the private admitted-voter roster.</li>
+          <li>If an answer-bearing question changes after credentials have been issued, the app bumps that question's ballot-slot version and voters need a fresh scoped credential for that slot.</li>
           <li>Private invite status is published as an invite-code hash plus a per-code claimed-identity hash, so link holders can detect reuse without publishing the private invite code itself.</li>
           <li>Browser-held secret material needs careful handling.</li>
+          <li>Backup creates an encrypted full-state snapshot for the current app namespace, including local questionnaire, invite, response, relay, proxy, and actor-state records. Restoring it replaces the current namespace state on the device.</li>
           <li>The built-in Messages view needs a local nsec identity to unwrap and send helpline DMs; signer-only sessions should use their external signer or restore a local identity until signer-side NIP-17 wrapping is supported in-app.</li>
           <li>The cryptographic design needs external review before production use.</li>
           <li>Large multi-organiser runs are not yet reliable on the current public relay set.</li>

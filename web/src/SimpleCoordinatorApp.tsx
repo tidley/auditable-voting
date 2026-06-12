@@ -100,13 +100,16 @@ import {
   type SimpleBlindPrivateKey,
 } from "./simpleShardCertificate";
 import {
-  downloadSimpleActorBackup,
   clearSimpleActorState,
+  downloadSimpleFullStateBackup,
   isSimpleActorStateLocked,
   loadSimpleActorState,
   loadSimpleActorStateWithOptions,
   parseEncryptedSimpleActorBackupBundle,
+  parseEncryptedSimpleFullStateBackupBundle,
   parseSimpleActorBackupBundle,
+  parseSimpleFullStateBackupBundle,
+  restoreSimpleFullStateBackupBundle,
   saveSimpleActorState,
   SimpleActorStateLockedError,
   type SimpleActorKeypair,
@@ -1676,7 +1679,12 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       }
     }
 
-    return [...byNpub.values()].sort((left, right) => {
+    return [...byNpub.values()].filter((row) => (
+      row.admittedEntry
+      || row.currentQuestionnaireEntry
+      || row.pendingAuthorization
+      || row.privateInviteEntry
+    )).sort((left, right) => {
       const priority = (row: typeof left) => {
         if (row.pendingAuthorization) {
           return 0;
@@ -5314,12 +5322,18 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     return true;
   }
 
-  function downloadBackup(passphrase?: string) {
+  async function downloadBackup(passphrase?: string) {
     if (!keypair) {
       return;
     }
 
-    void downloadSimpleActorBackup('coordinator', keypair as SimpleActorKeypair, {
+    const trimmedPassphrase = passphrase?.trim() ?? "";
+    if (!trimmedPassphrase) {
+      setBackupStatus("Enter a backup passphrase for the full local state backup.");
+      return;
+    }
+
+    const cache = {
       leadCoordinatorNpub,
       nip65Enabled,
       followers,
@@ -5337,19 +5351,43 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       roundBlindKeyAnnouncements,
       publishStatus,
       coordinatorControlCache,
+      protocolStateCache,
       publishedVotes,
       selectedVotingId,
       selectedSubmittedVotingId,
       submittedVotes,
-    } satisfies SimpleCoordinatorCache, { passphrase });
-    setBackupStatus(passphrase?.trim() ? "Encrypted organiser backup downloaded." : "Organiser backup downloaded.");
+    } satisfies SimpleCoordinatorCache;
+
+    await saveSimpleActorState({
+      role: "coordinator",
+      keypair: keypair as SimpleActorKeypair,
+      updatedAt: new Date().toISOString(),
+      cache,
+    }, storagePassphrase ? { passphrase: storagePassphrase } : undefined);
+    await downloadSimpleFullStateBackup({ passphrase: trimmedPassphrase });
+    setBackupStatus("Encrypted full local state backup downloaded.");
   }
 
   async function restoreBackup(file: File, passphrase?: string) {
     try {
       const text = await file.text();
+      const trimmedPassphrase = passphrase?.trim() ?? "";
+      const fullBundle = parseSimpleFullStateBackupBundle(text)
+        ?? (trimmedPassphrase ? await parseEncryptedSimpleFullStateBackupBundle(text, trimmedPassphrase) : null);
+      if (fullBundle) {
+        await restoreSimpleFullStateBackupBundle(fullBundle);
+        setIdentityStatus("Full local state restored from backup.");
+        setBackupStatus(`Full local state restored from ${fullBundle.exportedAt}. Reloading...`);
+        window.setTimeout(() => window.location.reload(), 80);
+        return;
+      }
+      if (!trimmedPassphrase && text.includes('"auditable-voting.full-state-backup.encrypted"')) {
+        setBackupStatus("Enter the full local state backup passphrase.");
+        return;
+      }
+
       const bundle = parseSimpleActorBackupBundle(text)
-        ?? (passphrase?.trim() ? await parseEncryptedSimpleActorBackupBundle(text, passphrase.trim()) : null);
+        ?? (trimmedPassphrase ? await parseEncryptedSimpleActorBackupBundle(text, trimmedPassphrase) : null);
       if (!bundle || bundle.role !== "coordinator") {
         setBackupStatus("Backup file is not an organiser backup.");
         return;
@@ -7215,16 +7253,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-questionnaire' aria-hidden='true' />
               <span className='simple-coordinator-nav-label'>Questionnaire</span>
             </button>
-            {canStartNewRound ? (
-              <button
-                type='button'
-                className='simple-coordinator-nav-button simple-coordinator-new-round-button'
-                onClick={startNewRound}
-              >
-                <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-new-round' aria-hidden='true' />
-                <span className='simple-coordinator-nav-label'>New round</span>
-              </button>
-            ) : null}
             <button
               type='button'
               role='tab'
@@ -7239,6 +7267,16 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               </span>
               <span className='simple-coordinator-nav-label'>Session</span>
             </button>
+            {canStartNewRound ? (
+              <button
+                type='button'
+                className='simple-coordinator-nav-button simple-coordinator-new-round-button'
+                onClick={startNewRound}
+              >
+                <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-new-round' aria-hidden='true' />
+                <span className='simple-coordinator-nav-label'>New round</span>
+              </button>
+            ) : null}
             <button
               type='button'
               role='tab'
@@ -7804,6 +7842,11 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                                 ) : null}
                                 {privateInviteEntry && canSharePrivateInvite ? (
                                   <>
+                                    <InviteQrButton
+                                      value={privateInviteUrl}
+                                      label='private invite link'
+                                      title='Private invite link'
+                                    />
                                     <button
                                       type='button'
                                       className='simple-voter-secondary'
@@ -7882,6 +7925,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               onDownloadBackup={identityReady ? downloadBackup : undefined}
               onRestoreBackupFile={restoreBackup}
               backupMessage={backupStatus}
+              backupPassphraseRequired={true}
               onProtectLocalState={
                 identityReady ? protectLocalState : undefined
               }

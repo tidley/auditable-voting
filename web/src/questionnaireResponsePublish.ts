@@ -26,6 +26,19 @@ export type BlindTokenProof = {
   tokenCommitment: string;
   questionnaireId: string;
   signature: string;
+  questionId?: string | null;
+  ballotScope?: {
+    questionId?: string | null;
+    slotId?: string | null;
+    slotIndex?: number | null;
+    version?: number | null;
+  } | null;
+};
+
+export type BlindTokenNullifier = {
+  questionId?: string | null;
+  tokenNullifier: string;
+  ballotScope?: BlindTokenProof["ballotScope"];
 };
 
 export type QuestionnaireBlindResponseEvent = {
@@ -36,7 +49,9 @@ export type QuestionnaireBlindResponseEvent = {
   submittedAt: number;
   authorPubkey: string;
   tokenNullifier: string;
+  tokenNullifiers?: BlindTokenNullifier[];
   tokenProof: BlindTokenProof;
+  tokenProofs?: BlindTokenProof[];
   answers?: QuestionnaireResponseAnswer[];
   encryptedPayload?: string;
   payloadHash?: string;
@@ -141,7 +156,9 @@ export async function publishQuestionnaireBlindResponsePublic(input: {
   responseId: string;
   submittedAt?: number;
   tokenNullifier: string;
+  tokenNullifiers?: BlindTokenNullifier[];
   tokenProof: BlindTokenProof;
+  tokenProofs?: BlindTokenProof[];
   answers: QuestionnaireResponseAnswer[];
   relays?: string[];
 }) {
@@ -154,7 +171,9 @@ export async function publishQuestionnaireBlindResponsePublic(input: {
     submittedAt: input.submittedAt ?? Math.floor(Date.now() / 1000),
     authorPubkey,
     tokenNullifier: input.tokenNullifier,
+    ...(input.tokenNullifiers?.length ? { tokenNullifiers: input.tokenNullifiers } : {}),
     tokenProof: input.tokenProof,
+    ...(input.tokenProofs?.length ? { tokenProofs: input.tokenProofs } : {}),
     answers: input.answers,
   };
 
@@ -184,7 +203,9 @@ export async function publishQuestionnaireBlindResponseEncrypted(input: {
   responseId: string;
   submittedAt?: number;
   tokenNullifier: string;
+  tokenNullifiers?: BlindTokenNullifier[];
   tokenProof: BlindTokenProof;
+  tokenProofs?: BlindTokenProof[];
   answers: QuestionnaireResponseAnswer[];
   relays?: string[];
 }) {
@@ -211,7 +232,9 @@ export async function publishQuestionnaireBlindResponseEncrypted(input: {
     submittedAt: input.submittedAt ?? Math.floor(Date.now() / 1000),
     authorPubkey,
     tokenNullifier: input.tokenNullifier,
+    ...(input.tokenNullifiers?.length ? { tokenNullifiers: input.tokenNullifiers } : {}),
     tokenProof: input.tokenProof,
+    ...(input.tokenProofs?.length ? { tokenProofs: input.tokenProofs } : {}),
     encryptedPayload,
     payloadHash,
   };
@@ -240,6 +263,7 @@ export async function publishQuestionnaireBlindResponsePublicByCoordinator(input
   submittedAt?: number;
   authorPubkey: string;
   tokenNullifier: string;
+  tokenNullifiers?: BlindTokenNullifier[];
   tokenCommitment: string;
   answers: QuestionnaireResponseAnswer[];
   questionnaireDefinitionEventId?: string | null;
@@ -253,6 +277,7 @@ export async function publishQuestionnaireBlindResponsePublicByCoordinator(input
     submittedAt: input.submittedAt ?? Math.floor(Date.now() / 1000),
     authorPubkey: input.authorPubkey,
     tokenNullifier: input.tokenNullifier,
+    ...(input.tokenNullifiers?.length ? { tokenNullifiers: input.tokenNullifiers } : {}),
     tokenProof: {
       tokenCommitment: input.tokenCommitment,
       questionnaireId: input.questionnaireId,
@@ -297,6 +322,22 @@ export function parseQuestionnaireBlindResponseEvent(content: string): Questionn
       || typeof parsed?.tokenProof?.signature !== "string"
     ) {
       return null;
+    }
+    if (parsed.tokenProofs !== undefined) {
+      if (!Array.isArray(parsed.tokenProofs) || parsed.tokenProofs.some((proof) => (
+        typeof proof?.tokenCommitment !== "string"
+        || typeof proof?.questionnaireId !== "string"
+        || typeof proof?.signature !== "string"
+      ))) {
+        return null;
+      }
+    }
+    if (parsed.tokenNullifiers !== undefined) {
+      if (!Array.isArray(parsed.tokenNullifiers) || parsed.tokenNullifiers.some((entry) => (
+        typeof entry?.tokenNullifier !== "string"
+      ))) {
+        return null;
+      }
     }
     if (parsed.answers && parsed.encryptedPayload) {
       return null;

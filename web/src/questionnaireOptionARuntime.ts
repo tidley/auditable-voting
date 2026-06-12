@@ -10,7 +10,9 @@ import {
   restoreVoterElectionLocalState,
   validateBallotSubmission,
   type BallotAcceptanceResult,
+  type BallotCredentialProof,
   type BallotRejectReason,
+  type BallotScope,
   type BallotSubmission,
   type BearerInviteCodeEntry,
   type BlindBallotIssuance,
@@ -130,7 +132,13 @@ import {
   fetchQuestionnaireBlindResponses,
   fetchQuestionnaireSubmissionDecisions,
 } from "./questionnaireTransport";
-import type { QuestionnaireDefinition, QuestionnaireResponseAnswer, QuestionnaireSubmissionDecision } from "./questionnaireProtocol";
+import {
+  normaliseQuestionBallotSlot,
+  questionnaireUsesPerQuestionCredentials,
+  type QuestionnaireDefinition,
+  type QuestionnaireResponseAnswer,
+  type QuestionnaireSubmissionDecision,
+} from "./questionnaireProtocol";
 import type { QuestionnaireSubmissionDecisionReason } from "./questionnaireProtocol";
 import { mergeQuestionnaireRelayHints } from "./questionnaireRelays";
 import { QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1, type QuestionnaireFlowMode } from "./questionnaireProtocolConstants";
@@ -441,8 +449,72 @@ function findIssuedBlindResponse(
   request: BlindBallotRequest,
 ): BlindBallotIssuance | null {
   return state.issuedBlindResponses[request.requestId]
-    ?? Object.values(state.issuedBlindResponses).find((issuance) => issuance.invitedNpub === request.invitedNpub)
+    ?? Object.values(state.issuedBlindResponses).find((issuance) => (
+      issuance.invitedNpub === request.invitedNpub
+      && ballotScopeKey(issuance.ballotScope) === ballotScopeKey(request.ballotScope)
+    ))
     ?? null;
+}
+
+function ballotScopeKey(scope: BallotScope | null | undefined) {
+  const questionId = scope?.questionId?.trim() ?? "";
+  const slotId = scope?.slotId?.trim() ?? "";
+  const slotIndex = Number.isFinite(scope?.slotIndex) ? Math.max(1, Math.floor(scope?.slotIndex as number)) : 0;
+  const version = Number.isFinite(scope?.version) ? Math.max(1, Math.floor(scope?.version as number)) : 1;
+  if (!questionId && !slotId && !slotIndex && version === 1) {
+    return "__questionnaire__";
+  }
+  return `${questionId || slotId}:${slotId}:${slotIndex}:v${version}`;
+}
+
+function sameBallotScope(left: BallotScope | null | undefined, right: BallotScope | null | undefined) {
+  return ballotScopeKey(left) === ballotScopeKey(right);
+}
+
+function buildQuestionnaireCredentialScopes(definition: QuestionnaireDefinition | null | undefined): Array<BallotScope | null> {
+  if (!definition || !questionnaireUsesPerQuestionCredentials(definition)) {
+    return [null];
+  }
+  return definition.questions.map((question, index) => {
+    const slot = normaliseQuestionBallotSlot(question, index);
+    return {
+      questionId: question.questionId,
+      slotId: slot.slotId,
+      slotIndex: slot.slotIndex,
+      version: slot.version,
+    };
+  });
+}
+
+function scopeForQuestion(definition: QuestionnaireDefinition | null | undefined, questionId: string): BallotScope | null {
+  if (!definition || !questionnaireUsesPerQuestionCredentials(definition)) {
+    return null;
+  }
+  const index = definition.questions.findIndex((question) => question.questionId === questionId);
+  const question = index >= 0 ? definition.questions[index] : null;
+  if (!question) {
+    return null;
+  }
+  const slot = normaliseQuestionBallotSlot(question, index);
+  return {
+    questionId: question.questionId,
+    slotId: slot.slotId,
+    slotIndex: slot.slotIndex,
+    version: slot.version,
+  };
+}
+
+function submissionCredentialBundle(submission: BallotSubmission): BallotCredentialProof[] {
+  if (Array.isArray(submission.credentialBundle) && submission.credentialBundle.length > 0) {
+    return submission.credentialBundle;
+  }
+  return [{
+    tokenCommitment: submission.tokenCommitment,
+    blindSigningKeyId: submission.blindSigningKeyId,
+    credential: submission.credential,
+    nullifier: submission.nullifier,
+    ballotScope: null,
+  }];
 }
 
 function inferRejectReason(error?: string): BallotRejectReason {
@@ -976,7 +1048,16 @@ export class QuestionnaireOptionAVoterRuntime {
     if (!received.ok) {
       return false;
     }
-    this.state = received.state;
+    const definition = issuance.definition ?? readCachedQuestionnaireDefinition(issuance.electionId);
+    let nextState = received.state;
+    if (questionnaireUsesPerQuestionCredentials(definition)) {
+      const scopes = buildQuestionnaireCredentialScopes(definition);
+      nextState = {
+        ...nextState,
+        credentialReady: scopes.every((scope) => Boolean(nextState.blindIssuances?.[ballotScopeKey(scope)])),
+      };
+    }
+    this.state = nextState;
     saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
     this.startVoterDmSubscriptions();
     void this.publishVoterStateSelfDm({ reason });
@@ -1434,11 +1515,26 @@ export class QuestionnaireOptionAVoterRuntime {
       alreadyHasRequest: Boolean(this.state.blindRequest),
       alreadyHasIssuance: Boolean(this.state.blindIssuance),
     });
-    if (this.state.blindIssuance) {
+    const cachedDefinition = readCachedQuestionnaireDefinition(this.state.electionId);
+    if (cachedDefinition) {
+      cacheQuestionnaireDefinitionForRuntime(cachedDefinition);
+    }
+    const usesPerQuestionCredentials = questionnaireUsesPerQuestionCredentials(cachedDefinition);
+    if (this.state.blindIssuance && !usesPerQuestionCredentials) {
       void this.ensureBlindIssuanceAck(this.state.blindIssuance).catch(() => undefined);
       saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
       void this.publishVoterStateSelfDm({ reason: "request_blind_ballot_already_issued" });
       return this.state;
+    }
+    if (usesPerQuestionCredentials) {
+      const scopes = buildQuestionnaireCredentialScopes(cachedDefinition);
+      const allIssued = scopes.every((scope) => Boolean(this.state?.blindIssuances?.[ballotScopeKey(scope)]));
+      if (allIssued) {
+        this.state = { ...this.state, credentialReady: true };
+        saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
+        void this.publishVoterStateSelfDm({ reason: "request_blind_ballot_bundle_already_issued" });
+        return this.state;
+      }
     }
 
     let next = this.state;
@@ -1446,11 +1542,16 @@ export class QuestionnaireOptionAVoterRuntime {
     const inviteCodeHash = this.bearerInviteCode
       ? await hashQuestionnaireInviteCode(this.bearerInviteCode)
       : "";
-    const cachedDefinition = readCachedQuestionnaireDefinition(next.electionId);
-    if (cachedDefinition) {
-      cacheQuestionnaireDefinitionForRuntime(cachedDefinition);
-    }
     const summary = loadElectionSummary(next.electionId);
+    if (usesPerQuestionCredentials && cachedDefinition) {
+      return this.requestBlindBallotBundleInternal({
+        cachedDefinition,
+        summary,
+        inviteCodeHash,
+        forceResend: options?.forceResend,
+        minRetryMs: options?.minRetryMs,
+      });
+    }
     if (!request) {
       const blindSigningPublicKey = next.inviteMessage?.blindSigningPublicKey
         ?? summary?.blindSigningPublicKey
@@ -1638,6 +1739,168 @@ export class QuestionnaireOptionAVoterRuntime {
     return this.state;
   }
 
+  private async requestBlindBallotBundleInternal(input: {
+    cachedDefinition: QuestionnaireDefinition;
+    summary: ElectionSummary | null;
+    inviteCodeHash: string;
+    forceResend?: boolean;
+    minRetryMs?: number;
+  }) {
+    if (!this.state) {
+      throw new OptionARuntimeError("not_logged_in", "Login is required.");
+    }
+    const blindSigningPublicKey = this.state.inviteMessage?.blindSigningPublicKey
+      ?? input.summary?.blindSigningPublicKey
+      ?? input.cachedDefinition.blindSigningPublicKey
+      ?? null;
+    if (!blindSigningPublicKey) {
+      throw new OptionARuntimeError("issuance_failed", "Organiser blind-signing key is not available yet.");
+    }
+
+    const scopes = buildQuestionnaireCredentialScopes(input.cachedDefinition);
+    let next: VoterElectionLocalState = {
+      ...this.state,
+      blindRequests: { ...(this.state.blindRequests ?? {}) },
+      blindIssuances: { ...(this.state.blindIssuances ?? {}) },
+      blindTokenSecrets: { ...(this.state.blindTokenSecrets ?? {}) },
+    };
+    const minRetryMs = Math.max(0, input.minRetryMs ?? OPTION_A_BLIND_REQUEST_RETRY_MS);
+    const requestsToPublish: BlindBallotRequest[] = [];
+
+    for (const scope of scopes) {
+      const scopeKey = ballotScopeKey(scope);
+      const existingIssuance = next.blindIssuances?.[scopeKey] ?? null;
+      if (existingIssuance) {
+        void this.ensureBlindIssuanceAck(existingIssuance).catch(() => undefined);
+        continue;
+      }
+      let request = next.blindRequests?.[scopeKey] ?? null;
+      let tokenSecretEntry = next.blindTokenSecrets?.[scopeKey] ?? null;
+      if (!request || !tokenSecretEntry) {
+        const tokenSecret = makeTokenSecret();
+        const tokenCommitment = await sha256Hex(tokenSecret);
+        const message = buildQuestionnaireBlindTokenSignedMessage({
+          questionnaireId: next.electionId,
+          tokenSecretCommitment: tokenCommitment,
+          ballotScope: scope,
+        });
+        const blinded = await blindQuestionnaireToken({
+          publicKey: blindSigningPublicKey,
+          message,
+        });
+        request = {
+          type: "blind_ballot_request",
+          schemaVersion: 1,
+          electionId: next.electionId,
+          requestId: makeId("request"),
+          invitedNpub: next.invitedNpub,
+          blindedMessage: blinded.blindedMessage,
+          tokenCommitment,
+          blindSigningKeyId: blindSigningPublicKey.keyId,
+          clientNonce: makeId("nonce"),
+          createdAt: nowIso(),
+          inviteCodeHash: input.inviteCodeHash || null,
+          ballotScope: scope,
+        };
+        tokenSecretEntry = {
+          tokenSecret,
+          tokenCommitment,
+          blindingFactor: blinded.blindingFactor,
+          blindSigningPublicKey,
+          ballotScope: scope,
+        };
+      } else if (input.inviteCodeHash && !request.inviteCodeHash) {
+        request = {
+          ...request,
+          inviteCodeHash: input.inviteCodeHash,
+        };
+      }
+
+      const lastSentMs = request.lastSentAt ? Date.parse(request.lastSentAt) : Number.NaN;
+      const shouldPublish = input.forceResend
+        || !request.lastSentAt
+        || !Number.isFinite(lastSentMs)
+        || Date.now() - lastSentMs >= minRetryMs;
+      next.blindRequests = {
+        ...(next.blindRequests ?? {}),
+        [scopeKey]: request,
+      };
+      next.blindTokenSecrets = {
+        ...(next.blindTokenSecrets ?? {}),
+        [scopeKey]: tokenSecretEntry,
+      };
+      next.blindRequest = next.blindRequest ?? request;
+      next.blindTokenSecret = next.blindTokenSecret ?? tokenSecretEntry;
+      if (shouldPublish) {
+        requestsToPublish.push(request);
+      }
+    }
+
+    if (!next.coordinatorNpub?.trim()) {
+      const summaryCoordinatorNpub = input.summary?.coordinatorNpub?.trim()
+        || input.cachedDefinition.coordinatorPubkey?.trim()
+        || "";
+      if (summaryCoordinatorNpub) {
+        next = {
+          ...next,
+          coordinatorNpub: summaryCoordinatorNpub,
+          lastUpdatedAt: nowIso(),
+        };
+      }
+    }
+    if (!next.coordinatorNpub?.trim()) {
+      throw new OptionARuntimeError(
+        "invite_missing",
+        "Organiser details are missing. Refresh status or reopen the invite.",
+      );
+    }
+
+    this.state = next;
+    saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
+    void this.publishVoterStateSelfDm({ reason: "request_blind_ballot_bundle_pre_publish" });
+
+    for (const request of requestsToPublish) {
+      const sentAt = nowIso();
+      const scopedRequest = {
+        ...request,
+        lastSentAt: sentAt,
+      };
+      const published = await this.publishBlindRequestDm(scopedRequest);
+      if (!published || published.successes <= 0) {
+        throw new OptionARuntimeError("dm_delivery_failed", "No relay accepted the blind ballot request DM.");
+      }
+      const scopeKey = ballotScopeKey(scopedRequest.ballotScope);
+      this.state = {
+        ...this.state,
+        blindRequest: this.state.blindRequest ?? scopedRequest,
+        blindRequests: {
+          ...(this.state.blindRequests ?? {}),
+          [scopeKey]: scopedRequest,
+        },
+        blindRequestSent: true,
+        blindRequestSentAt: sentAt,
+        lastUpdatedAt: sentAt,
+      };
+      enqueueBlindRequest(scopedRequest);
+    }
+
+    const allIssued = scopes.every((scope) => Boolean(this.state?.blindIssuances?.[ballotScopeKey(scope)]));
+    this.state = {
+      ...this.state,
+      credentialReady: allIssued,
+    };
+    this.startVoterDmSubscriptions();
+    saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
+    void this.publishVoterStateSelfDm({ reason: "request_blind_ballot_bundle_sent", force: true });
+    optionAFlowLog("voter", "blind_request_bundle_sent", {
+      electionId: this.state.electionId,
+      requested: requestsToPublish.length,
+      scopes: scopes.length,
+      allIssued,
+    });
+    return this.state;
+  }
+
   async publishBlindRequestDm(request = this.state?.blindRequest ?? null) {
     if (!this.state || !request || !this.state.coordinatorNpub) {
       return null;
@@ -1709,6 +1972,7 @@ export class QuestionnaireOptionAVoterRuntime {
     }
 
     const electionId = this.state.electionId;
+    const activeDefinition = readCachedQuestionnaireDefinition(electionId);
     const lookbackSince = Math.max(0, Math.floor(Date.now() / 1000) - OPTION_A_VOTER_DM_LOOKBACK_SECONDS);
     const needsIssuanceFetch = Boolean(this.state.blindRequestSent && !this.state.credentialReady);
     const needsAcceptanceFetch = Boolean(this.state.submission && this.state.submissionAccepted === null);
@@ -1717,7 +1981,9 @@ export class QuestionnaireOptionAVoterRuntime {
     if (!this.refreshFetchInFlight) {
       const fetchTasks: Array<Promise<void>> = [];
       if (needsIssuanceFetch) {
-        const activeRequestId = this.state.blindRequest?.requestId ?? "";
+        const activeRequestId = questionnaireUsesPerQuestionCredentials(activeDefinition)
+          ? ""
+          : this.state.blindRequest?.requestId ?? "";
         const requestAckFetch = this.fallbackNsec?.trim()
           ? fetchOptionABlindRequestAckDmsWithNsec({
             nsec: this.fallbackNsec,
@@ -1884,8 +2150,12 @@ export class QuestionnaireOptionAVoterRuntime {
 
     const previousState = this.state;
     let next = previousState;
-    if (next.blindRequest) {
-      const issuance = readBlindIssuance(next.blindRequest.requestId);
+    const requestsToCheck = Object.values(next.blindRequests ?? {});
+    if (requestsToCheck.length === 0 && next.blindRequest) {
+      requestsToCheck.push(next.blindRequest);
+    }
+    for (const request of requestsToCheck) {
+      const issuance = readBlindIssuance(request.requestId);
       if (issuance) {
         if (issuance.definition) {
           cacheQuestionnaireDefinitionForRuntime(issuance.definition);
@@ -1899,6 +2169,13 @@ export class QuestionnaireOptionAVoterRuntime {
           void this.ensureBlindIssuanceAck(issuance).catch(() => undefined);
         }
       }
+    }
+    if (questionnaireUsesPerQuestionCredentials(activeDefinition)) {
+      const scopes = buildQuestionnaireCredentialScopes(activeDefinition);
+      next = {
+        ...next,
+        credentialReady: scopes.every((scope) => Boolean(next.blindIssuances?.[ballotScopeKey(scope)])),
+      };
     }
     if (next.submission) {
       const acceptance = readAcceptance(next.submission.submissionId);
@@ -1944,6 +2221,98 @@ export class QuestionnaireOptionAVoterRuntime {
     }
   }
 
+  private async buildSubmissionCredentialBundle(definition: QuestionnaireDefinition | null): Promise<BallotCredentialProof[]> {
+    if (!this.state) {
+      throw new OptionARuntimeError("not_logged_in", "Login is required.");
+    }
+    if (!questionnaireUsesPerQuestionCredentials(definition)) {
+      const issuance = this.state.blindIssuance;
+      const tokenSecret = this.state.blindTokenSecret;
+      if (!issuance || !tokenSecret) {
+        throw new OptionARuntimeError("issuance_failed", "No issued credential is available.");
+      }
+      if (issuance.tokenCommitment !== tokenSecret.tokenCommitment) {
+        throw new OptionARuntimeError("issuance_failed", "Issued credential does not match this browser's token secret.");
+      }
+      const message = buildQuestionnaireBlindTokenSignedMessage({
+        questionnaireId: this.state.electionId,
+        tokenSecretCommitment: tokenSecret.tokenCommitment,
+        ballotScope: tokenSecret.ballotScope ?? issuance.ballotScope ?? null,
+      });
+      const credential = await finalizeQuestionnaireBlindSignature({
+        publicKey: tokenSecret.blindSigningPublicKey,
+        message,
+        blindSignature: issuance.blindSignature,
+        blindingFactor: tokenSecret.blindingFactor,
+      });
+      const localCredentialValid = await verifyQuestionnaireBlindSignature({
+        publicKey: tokenSecret.blindSigningPublicKey,
+        message,
+        signature: credential,
+      });
+      if (!localCredentialValid) {
+        throw new OptionARuntimeError("issuance_failed", "Issued blind signature could not be verified.");
+      }
+      return [{
+        tokenCommitment: tokenSecret.tokenCommitment,
+        blindSigningKeyId: issuance.blindSigningKeyId,
+        credential,
+        nullifier: deriveQuestionnaireTokenNullifier({
+          questionnaireId: this.state.electionId,
+          tokenSecret: tokenSecret.tokenSecret,
+          ballotScope: tokenSecret.ballotScope ?? issuance.ballotScope ?? null,
+        }),
+        ballotScope: tokenSecret.ballotScope ?? issuance.ballotScope ?? null,
+      }];
+    }
+
+    const proofs: BallotCredentialProof[] = [];
+    for (const answer of this.state.draftResponses) {
+      const scope = scopeForQuestion(definition, answer.questionId);
+      const scopeKey = ballotScopeKey(scope);
+      const issuance = this.state.blindIssuances?.[scopeKey] ?? null;
+      const tokenSecret = this.state.blindTokenSecrets?.[scopeKey] ?? null;
+      if (!issuance || !tokenSecret) {
+        throw new OptionARuntimeError("issuance_failed", `No issued credential is available for ${answer.questionId}.`);
+      }
+      if (issuance.tokenCommitment !== tokenSecret.tokenCommitment) {
+        throw new OptionARuntimeError("issuance_failed", `Issued credential for ${answer.questionId} does not match this browser's token secret.`);
+      }
+      const message = buildQuestionnaireBlindTokenSignedMessage({
+        questionnaireId: this.state.electionId,
+        tokenSecretCommitment: tokenSecret.tokenCommitment,
+        ballotScope: scope,
+      });
+      const credential = await finalizeQuestionnaireBlindSignature({
+        publicKey: tokenSecret.blindSigningPublicKey,
+        message,
+        blindSignature: issuance.blindSignature,
+        blindingFactor: tokenSecret.blindingFactor,
+      });
+      const localCredentialValid = await verifyQuestionnaireBlindSignature({
+        publicKey: tokenSecret.blindSigningPublicKey,
+        message,
+        signature: credential,
+      });
+      if (!localCredentialValid) {
+        throw new OptionARuntimeError("issuance_failed", `Issued blind signature for ${answer.questionId} could not be verified.`);
+      }
+      proofs.push({
+        questionId: answer.questionId,
+        tokenCommitment: tokenSecret.tokenCommitment,
+        blindSigningKeyId: issuance.blindSigningKeyId,
+        credential,
+        nullifier: deriveQuestionnaireTokenNullifier({
+          questionnaireId: this.state.electionId,
+          tokenSecret: tokenSecret.tokenSecret,
+          ballotScope: scope,
+        }),
+        ballotScope: scope,
+      });
+    }
+    return proofs;
+  }
+
   private async submitVoteInternal(requiredQuestionIds: string[]) {
     if (!this.state) {
       throw new OptionARuntimeError("not_logged_in", "Login is required.");
@@ -1952,14 +2321,9 @@ export class QuestionnaireOptionAVoterRuntime {
       electionId: this.state.electionId,
       hasExistingSubmission: Boolean(this.state.submission),
     });
-    const issuance = this.state.blindIssuance;
-    const tokenSecret = this.state.blindTokenSecret;
-    if (!issuance || !tokenSecret) {
-      throw new OptionARuntimeError("issuance_failed", "No issued credential is available.");
-    }
-    if (issuance.tokenCommitment !== tokenSecret.tokenCommitment) {
-      throw new OptionARuntimeError("issuance_failed", "Issued credential does not match this browser's token secret.");
-    }
+    const definition = readCachedQuestionnaireDefinition(this.state.electionId)
+      ?? this.state.blindIssuance?.definition
+      ?? null;
 
     if (this.state.submission && this.state.responseNsec && this.state.responseNpub) {
       if (this.state.submissionAccepted === true || this.state.submissionAccepted === false) {
@@ -2000,6 +2364,9 @@ export class QuestionnaireOptionAVoterRuntime {
         submissionId,
         responseNpub: this.state.responseNpub,
       });
+      const existingCredentialBundle = submissionCredentialBundle(this.state.submission);
+      const includeExistingCredentialBundle = Array.isArray(this.state.submission.credentialBundle)
+        && this.state.submission.credentialBundle.length > 0;
       const republished = await publishQuestionnaireBlindResponsePublic({
         responseNsec: this.state.responseNsec,
         questionnaireId: this.state.electionId,
@@ -2008,11 +2375,23 @@ export class QuestionnaireOptionAVoterRuntime {
           ? Math.floor(Date.parse(this.state.submission.submittedAt) / 1000)
           : Math.floor(Date.now() / 1000),
         tokenNullifier: this.state.submission.nullifier,
+        tokenNullifiers: includeExistingCredentialBundle ? existingCredentialBundle.map((proof) => ({
+          questionId: proof.questionId ?? proof.ballotScope?.questionId ?? null,
+          tokenNullifier: proof.nullifier,
+          ballotScope: proof.ballotScope ?? null,
+        })) : undefined,
         tokenProof: {
           tokenCommitment: this.state.submission.tokenCommitment,
           questionnaireId: this.state.electionId,
           signature: this.state.submission.credential,
         },
+        tokenProofs: includeExistingCredentialBundle ? existingCredentialBundle.map((proof) => ({
+          tokenCommitment: proof.tokenCommitment,
+          questionnaireId: this.state.electionId,
+          signature: proof.credential,
+          questionId: proof.questionId ?? proof.ballotScope?.questionId ?? null,
+          ballotScope: proof.ballotScope ?? null,
+        })) : undefined,
         answers: toQuestionnaireResponseAnswers(this.state.submission.payload.responses, {
           coordinatorNpub: this.state.coordinatorNpub,
           responseSecretKey: decodeNsecSecretKey(this.state.responseNsec),
@@ -2027,30 +2406,17 @@ export class QuestionnaireOptionAVoterRuntime {
       return this.state;
     }
 
-    const message = buildQuestionnaireBlindTokenSignedMessage({
-      questionnaireId: this.state.electionId,
-      tokenSecretCommitment: tokenSecret.tokenCommitment,
-    });
-
-    const credential = await finalizeQuestionnaireBlindSignature({
-      publicKey: tokenSecret.blindSigningPublicKey,
-      message,
-      blindSignature: issuance.blindSignature,
-      blindingFactor: tokenSecret.blindingFactor,
-    });
-    const localCredentialValid = await verifyQuestionnaireBlindSignature({
-      publicKey: tokenSecret.blindSigningPublicKey,
-      message,
-      signature: credential,
-    });
-    if (!localCredentialValid) {
-      throw new OptionARuntimeError("issuance_failed", "Issued blind signature could not be verified.");
+    const credentialBundle = await this.buildSubmissionCredentialBundle(definition);
+    const primaryCredential = credentialBundle[0];
+    if (!primaryCredential) {
+      throw new OptionARuntimeError("invalid_submission", "No answers are ready to submit.");
     }
+    const includeCredentialBundle = questionnaireUsesPerQuestionCredentials(definition);
     const responseSecretKey = await deriveDeterministicResponseSecretKey({
       electionId: this.state.electionId,
       answers: this.state.draftResponses,
-      tokenSecret: tokenSecret.tokenSecret,
-      blindSignature: issuance.blindSignature,
+      tokenSecret: credentialBundle.map((proof) => proof.tokenCommitment).join(":"),
+      blindSignature: credentialBundle.map((proof) => proof.credential).join(":"),
     });
     const responseNsec = nip19.nsecEncode(responseSecretKey);
     const responseNpub = nip19.npubEncode(getPublicKey(responseSecretKey));
@@ -2067,18 +2433,16 @@ export class QuestionnaireOptionAVoterRuntime {
       submissionId: makeId("submission"),
       invitedNpub: responseNpub,
       responseNpub,
-      tokenCommitment: tokenSecret.tokenCommitment,
-      blindSigningKeyId: issuance.blindSigningKeyId,
-      nullifier: deriveQuestionnaireTokenNullifier({
-        questionnaireId: this.state.electionId,
-        tokenSecret: tokenSecret.tokenSecret,
-      }),
+      tokenCommitment: primaryCredential.tokenCommitment,
+      blindSigningKeyId: primaryCredential.blindSigningKeyId,
+      nullifier: primaryCredential.nullifier,
+      ...(includeCredentialBundle ? { credentialBundle } : {}),
       payload: {
         electionId: this.state.electionId,
         responses: this.state.draftResponses,
       },
       submittedAt: nowIso(),
-      credential,
+      credential: primaryCredential.credential,
     };
 
     const valid = validateBallotSubmission({
@@ -2114,11 +2478,23 @@ export class QuestionnaireOptionAVoterRuntime {
         ? Math.floor(Date.parse(submission.submittedAt) / 1000)
         : Math.floor(Date.now() / 1000),
       tokenNullifier: submission.nullifier,
+      tokenNullifiers: includeCredentialBundle ? credentialBundle.map((proof) => ({
+        questionId: proof.questionId ?? proof.ballotScope?.questionId ?? null,
+        tokenNullifier: proof.nullifier,
+        ballotScope: proof.ballotScope ?? null,
+      })) : undefined,
       tokenProof: {
         tokenCommitment: submission.tokenCommitment,
         questionnaireId: this.state.electionId,
         signature: submission.credential,
       },
+      tokenProofs: includeCredentialBundle ? credentialBundle.map((proof) => ({
+        tokenCommitment: proof.tokenCommitment,
+        questionnaireId: this.state.electionId,
+        signature: proof.credential,
+        questionId: proof.questionId ?? proof.ballotScope?.questionId ?? null,
+        ballotScope: proof.ballotScope ?? null,
+      })) : undefined,
       answers: toQuestionnaireResponseAnswers(submission.payload.responses, {
         coordinatorNpub: this.state.coordinatorNpub,
         responseSecretKey,
@@ -3842,6 +4218,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
           privateKey: blindSigningPrivateKey,
           blindedMessage: request.blindedMessage,
         }),
+        ballotScope: request.ballotScope ?? null,
         definition: readCachedQuestionnaireDefinition(this.electionId),
         issuedAt: nowIso(),
       };
@@ -3924,17 +4301,32 @@ export class QuestionnaireOptionACoordinatorRuntime {
       if (!Array.isArray(entry.response.answers) || entry.response.answers.length === 0) {
         continue;
       }
+      const hasBundledCredentials = Boolean(entry.response.tokenProofs?.length || entry.response.tokenNullifiers?.length);
+      const responseProofs = entry.response.tokenProofs?.length ? entry.response.tokenProofs : [entry.response.tokenProof];
+      const responseNullifiers = entry.response.tokenNullifiers?.length
+        ? entry.response.tokenNullifiers
+        : [{ tokenNullifier: entry.response.tokenNullifier, ballotScope: entry.response.tokenProof.ballotScope ?? null }];
+      const credentialBundle = responseProofs.map((proof, proofIndex): BallotCredentialProof => ({
+        questionId: proof.questionId ?? proof.ballotScope?.questionId ?? responseNullifiers[proofIndex]?.questionId ?? null,
+        tokenCommitment: proof.tokenCommitment,
+        blindSigningKeyId: Object.values(next.issuedBlindResponses)
+          .find((issuance) => issuance.tokenCommitment === proof.tokenCommitment)?.blindSigningKeyId
+          ?? "",
+        credential: proof.signature,
+        nullifier: responseNullifiers[proofIndex]?.tokenNullifier ?? entry.response.tokenNullifier,
+        ballotScope: proof.ballotScope ?? responseNullifiers[proofIndex]?.ballotScope ?? null,
+      }));
       const issuedByCommitment = Object.values(next.issuedBlindResponses)
-        .find((issuance) => issuance.tokenCommitment === entry.response.tokenProof.tokenCommitment);
+        .find((issuance) => issuance.tokenCommitment === credentialBundle[0]?.tokenCommitment);
       if (!issuedByCommitment) {
         optionAFlowLog("coordinator", "public_submission_skipped_missing_issuance", {
           electionId: this.electionId,
           submissionId: entry.response.responseId,
-          tokenCommitment: entry.response.tokenProof.tokenCommitment,
+          tokenCommitment: credentialBundle[0]?.tokenCommitment ?? "",
         });
         continue;
       }
-      const blindSigningKeyId = issuedByCommitment.blindSigningKeyId;
+      const blindSigningKeyId = credentialBundle[0]?.blindSigningKeyId || issuedByCommitment.blindSigningKeyId;
       const syntheticSubmission: BallotSubmission = {
         type: "ballot_submission",
         schemaVersion: 1,
@@ -3942,10 +4334,11 @@ export class QuestionnaireOptionACoordinatorRuntime {
         submissionId: entry.response.responseId,
         invitedNpub: entry.response.authorPubkey,
         responseNpub: entry.response.authorPubkey,
-        tokenCommitment: entry.response.tokenProof.tokenCommitment,
+        tokenCommitment: credentialBundle[0]?.tokenCommitment ?? entry.response.tokenProof.tokenCommitment,
         blindSigningKeyId,
-        credential: entry.response.tokenProof.signature,
-        nullifier: entry.response.tokenNullifier,
+        credential: credentialBundle[0]?.credential ?? entry.response.tokenProof.signature,
+        nullifier: credentialBundle[0]?.nullifier ?? entry.response.tokenNullifier,
+        ...(hasBundledCredentials ? { credentialBundle } : {}),
         payload: {
           electionId: this.electionId,
           responses: fromQuestionnaireResponseAnswers(entry.response.answers),
@@ -4031,21 +4424,29 @@ export class QuestionnaireOptionACoordinatorRuntime {
         dequeueSubmission(submission.submissionId);
         continue;
       }
-      const issuance = Object.values(next.issuedBlindResponses)
-        .find((entry) => entry.tokenCommitment === submission.tokenCommitment) ?? null;
       const publicKey = next.election.blindSigningPublicKey ?? (
         next.blindSigningPrivateKey ? toQuestionnaireBlindPublicKey(next.blindSigningPrivateKey) : null
       );
-      const credentialValid = issuance && publicKey && issuance.blindSigningKeyId === submission.blindSigningKeyId
-        ? await verifyQuestionnaireBlindSignature({
-          publicKey,
-          message: buildQuestionnaireBlindTokenSignedMessage({
-            questionnaireId: this.electionId,
-            tokenSecretCommitment: submission.tokenCommitment,
+      const proofs = submissionCredentialBundle(submission);
+      const credentialValid = Boolean(publicKey) && (await Promise.all(proofs.map(async (proof) => {
+        const issuance = Object.values(next.issuedBlindResponses)
+          .find((entry) => entry.tokenCommitment === proof.tokenCommitment) ?? null;
+        return Boolean(
+          issuance
+          && publicKey
+          && issuance.blindSigningKeyId === proof.blindSigningKeyId
+          && sameBallotScope(issuance.ballotScope, proof.ballotScope)
+          && await verifyQuestionnaireBlindSignature({
+            publicKey,
+            message: buildQuestionnaireBlindTokenSignedMessage({
+              questionnaireId: this.electionId,
+              tokenSecretCommitment: proof.tokenCommitment,
+              ballotScope: proof.ballotScope ?? null,
+            }),
+            signature: proof.credential,
           }),
-          signature: submission.credential,
-        })
-        : false;
+        );
+      }))).every(Boolean);
       if (!credentialValid) {
         const rejected: BallotAcceptanceResult = {
           type: "ballot_acceptance_result",

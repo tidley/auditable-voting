@@ -14,12 +14,14 @@ This record freezes the implementation decisions for the questionnaire-first bli
   - `token_secret_commitment`
   - `response_mode = blind_token`
   - `schema_version = 1`
+  - optional `ballot_scope` (`question_id`, `slot_id`, `slot_index`, `version`) for per-question credentials
 
 ## 2. Nullifier derivation
 
 - Domain: `auditable-voting/questionnaire-nullifier/v1`
 - Nullifier:
-  - `sha256(canonical_json({ domain, questionnaire_id, token_secret }))`
+  - `sha256(canonical_json({ domain, questionnaire_id, token_secret, ballot_scope? }))`
+- Legacy questionnaire-scoped credentials omit `ballot_scope`; per-question credentials include the same scope used in the blind proof message.
 
 ## 3. Issuance transport
 
@@ -29,6 +31,8 @@ This record freezes the implementation decisions for the questionnaire-first bli
 ## 4. Mode authority
 
 - `responseMode = blind_token` is authoritative for new questionnaire definitions.
+- `ballotCredentialMode = per_question` means the voter requests one credential per current question slot and submits them as a bundled proof.
+- Changing answer-bearing question semantics bumps that question slot `version`; old scoped credentials are not reinterpreted for the edited question.
 - Legacy objects default to compatibility mode:
   - `responseMode = legacy_private_envelope` when field is missing.
 

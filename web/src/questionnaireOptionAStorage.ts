@@ -373,11 +373,16 @@ export function saveVoterState(input: {
   });
   writeJson(keys.blindRequest, {
     blindRequest: input.state.blindRequest,
+    blindRequests: input.state.blindRequests ?? {},
     blindRequestSent: input.state.blindRequestSent,
     blindRequestSentAt: input.state.blindRequestSentAt,
     blindTokenSecret: input.state.blindTokenSecret,
+    blindTokenSecrets: input.state.blindTokenSecrets ?? {},
   });
-  writeJson(keys.issuance, input.state.blindIssuance);
+  writeJson(keys.issuance, {
+    blindIssuance: input.state.blindIssuance,
+    blindIssuances: input.state.blindIssuances ?? {},
+  });
   writeJson(keys.draftResponses, input.state.draftResponses);
   writeJson(keys.submission, {
     submission: input.state.submission,
@@ -408,16 +413,32 @@ export function loadVoterState(input: {
   });
   const requestPart = readJson<{
     blindRequest: BlindBallotRequest | null;
+    blindRequests?: Record<string, BlindBallotRequest>;
     blindRequestSent: boolean;
     blindRequestSentAt?: string | null;
     blindTokenSecret?: VoterElectionLocalState["blindTokenSecret"];
+    blindTokenSecrets?: VoterElectionLocalState["blindTokenSecrets"];
   }>(keys.blindRequest, {
     blindRequest: null,
+    blindRequests: {},
     blindRequestSent: false,
     blindRequestSentAt: null,
     blindTokenSecret: null,
+    blindTokenSecrets: {},
   });
-  const blindIssuance = readJson<BlindBallotIssuance | null>(keys.issuance, null);
+  const issuancePart = readJson<{
+    blindIssuance?: BlindBallotIssuance | null;
+    blindIssuances?: Record<string, BlindBallotIssuance>;
+  } | BlindBallotIssuance | null>(keys.issuance, null);
+  const issuanceRecord = issuancePart && typeof issuancePart === "object" && !("type" in issuancePart)
+    ? issuancePart
+    : null;
+  const blindIssuance = issuancePart && typeof issuancePart === "object" && "type" in issuancePart
+    ? issuancePart
+    : (issuanceRecord?.blindIssuance ?? null);
+  const blindIssuances = issuanceRecord
+    ? issuanceRecord.blindIssuances ?? {}
+    : (blindIssuance ? { __questionnaire__: blindIssuance } : {});
   const draftResponses = readJson<VoterElectionLocalState["draftResponses"]>(keys.draftResponses, []);
   const submissionPart = readJson<{
     submission?: BallotSubmission | null;
@@ -437,7 +458,16 @@ export function loadVoterState(input: {
     lastUpdatedAt: new Date().toISOString(),
   });
 
-  const anyState = Boolean(inviteMessage || login.loginVerified || requestPart.blindRequest || blindIssuance || submission || draftResponses.length > 0);
+  const anyState = Boolean(
+    inviteMessage
+    || login.loginVerified
+    || requestPart.blindRequest
+    || Object.keys(requestPart.blindRequests ?? {}).length > 0
+    || blindIssuance
+    || Object.keys(blindIssuances).length > 0
+    || submission
+    || draftResponses.length > 0
+  );
   if (!anyState && !summary) {
     return null;
   }
@@ -450,11 +480,14 @@ export function loadVoterState(input: {
     loginVerifiedAt: login.loginVerifiedAt ?? null,
     inviteMessage,
     blindRequest: requestPart.blindRequest,
+    blindRequests: requestPart.blindRequests ?? (requestPart.blindRequest ? { __questionnaire__: requestPart.blindRequest } : {}),
     blindRequestSent: requestPart.blindRequestSent,
     blindRequestSentAt: requestPart.blindRequestSentAt ?? null,
     blindIssuance,
-    credentialReady: Boolean(blindIssuance),
+    blindIssuances,
+    credentialReady: Boolean(blindIssuance || Object.keys(blindIssuances).length > 0),
     blindTokenSecret: requestPart.blindTokenSecret ?? null,
+    blindTokenSecrets: requestPart.blindTokenSecrets ?? (requestPart.blindTokenSecret ? { __questionnaire__: requestPart.blindTokenSecret } : {}),
     responseNsec: submissionPart && !("type" in submissionPart) ? submissionPart.responseNsec ?? null : null,
     responseNpub: submissionPart && !("type" in submissionPart) ? submissionPart.responseNpub ?? null : submission?.responseNpub ?? null,
     draftResponses,

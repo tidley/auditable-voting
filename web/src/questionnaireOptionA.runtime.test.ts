@@ -62,7 +62,21 @@ const publicBlindResponseStore = vi.hoisted(() => ({
         tokenCommitment: string;
         questionnaireId: string;
         signature: string;
+        questionId?: string | null;
+        ballotScope?: Record<string, unknown> | null;
       };
+      tokenProofs?: Array<{
+        tokenCommitment: string;
+        questionnaireId: string;
+        signature: string;
+        questionId?: string | null;
+        ballotScope?: Record<string, unknown> | null;
+      }>;
+      tokenNullifiers?: Array<{
+        questionId?: string | null;
+        tokenNullifier: string;
+        ballotScope?: Record<string, unknown> | null;
+      }>;
       answers: Array<Record<string, unknown>>;
     };
   }>,
@@ -167,7 +181,21 @@ vi.mock("./questionnaireResponsePublish", () => ({
       tokenCommitment: string;
       questionnaireId: string;
       signature: string;
+      questionId?: string | null;
+      ballotScope?: Record<string, unknown> | null;
     };
+    tokenProofs?: Array<{
+      tokenCommitment: string;
+      questionnaireId: string;
+      signature: string;
+      questionId?: string | null;
+      ballotScope?: Record<string, unknown> | null;
+    }>;
+    tokenNullifiers?: Array<{
+      questionId?: string | null;
+      tokenNullifier: string;
+      ballotScope?: Record<string, unknown> | null;
+    }>;
     answers: Array<Record<string, unknown>>;
   }) => {
     const createdAt = input.submittedAt ?? Math.floor(Date.now() / 1000);
@@ -182,7 +210,9 @@ vi.mock("./questionnaireResponsePublish", () => ({
         submittedAt: createdAt,
         authorPubkey: nip19.npubEncode(getPublicKey(nip19.decode(input.responseNsec).data as Uint8Array)),
         tokenNullifier: input.tokenNullifier,
+        tokenNullifiers: input.tokenNullifiers,
         tokenProof: input.tokenProof,
+        tokenProofs: input.tokenProofs,
         answers: input.answers,
       },
     });
@@ -764,6 +794,106 @@ describe("questionnaireOptionARuntime", () => {
     await recovered.recoverSubmittedBallotFromSelfDm();
     expect(recovered.getSnapshot()?.submission?.submissionId).toBe(submitted?.submissionId);
     expect(recovered.getSnapshot()?.draftResponses).toEqual(submitted?.payload.responses);
+  });
+
+  it("requests and submits a scoped credential bundle for per-question questionnaires", async () => {
+    const bundleElectionId = `${electionId}_credential_bundle`;
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), bundleElectionId);
+    await coordinator.loginWithSigner({
+      title: "AGM",
+      description: "Director votes",
+      state: "open",
+      flowMode: "public_submission_v1",
+      responseMode: "blind_token",
+    });
+    coordinator.addWhitelistNpub(voterNpub);
+    const blindSigningPublicKey = coordinator.getSnapshot()?.election.blindSigningPublicKey ?? null;
+    const now = Math.floor(Date.now() / 1000);
+    const definition: QuestionnaireDefinition = {
+      ...buildDefinition({ electionId: bundleElectionId, coordinatorNpub, title: "AGM" }),
+      ballotCredentialMode: "per_question",
+      blindSigningPublicKey,
+      createdAt: now,
+      openAt: now - 30,
+      closeAt: now + 3600,
+      questions: [
+        {
+          questionId: "q1",
+          type: "yes_no",
+          prompt: "Elect Alice?",
+          required: true,
+          ballotSlot: { slotId: "director-alice", slotIndex: 1, version: 1 },
+        },
+        {
+          questionId: "q2",
+          type: "yes_no",
+          prompt: "Elect Bob?",
+          required: true,
+          ballotSlot: { slotId: "director-bob", slotIndex: 2, version: 1 },
+        },
+      ],
+    };
+    storeCachedQuestionnaireDefinition(definition);
+    upsertElectionSummary({
+      electionId: bundleElectionId,
+      title: definition.title,
+      description: definition.description ?? "",
+      state: "open",
+      openedAt: new Date(definition.openAt * 1000).toISOString(),
+      closedAt: new Date(definition.closeAt * 1000).toISOString(),
+      coordinatorNpub,
+      blindSigningPublicKey,
+      protocolVersion: definition.protocolVersion,
+      flowMode: definition.flowMode,
+      responseMode: definition.responseMode,
+    });
+    const sentInvite = await coordinator.sendInvite(voterNpub, {
+      title: "AGM",
+      description: "Director votes",
+      voteUrl: "https://example.org/vote",
+    });
+
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), bundleElectionId);
+    await voter.loginWithSigner(sentInvite.invite);
+    voter.updateDraftResponses([
+      { questionId: "q1", type: "yes_no", answer: "yes" },
+      { questionId: "q2", type: "yes_no", answer: "no" },
+    ]);
+    await voter.requestBlindBallot({ forceResend: true });
+
+    const requestedScopes = Object.values(voter.getSnapshot()?.blindRequests ?? {})
+      .map((request) => request.ballotScope?.slotId)
+      .sort();
+    expect(requestedScopes).toEqual(["director-alice", "director-bob"]);
+    expect(vi.mocked(publishOptionABlindRequestDm)).toHaveBeenCalledTimes(2);
+
+    await coordinator.processPendingBlindRequests();
+    voter.refreshIssuanceAndAcceptance();
+    const issuedScopes = Object.values(voter.getSnapshot()?.blindIssuances ?? {})
+      .map((issuance) => issuance.ballotScope?.slotId)
+      .sort();
+    expect(issuedScopes).toEqual(["director-alice", "director-bob"]);
+    expect(voter.getSnapshot()?.credentialReady).toBe(true);
+
+    await voter.submitVote(["q1", "q2"]);
+    const submission = voter.getSnapshot()?.submission;
+    expect(submission?.credentialBundle).toHaveLength(2);
+    expect(submission?.credentialBundle?.map((proof) => proof.ballotScope?.slotId).sort()).toEqual([
+      "director-alice",
+      "director-bob",
+    ]);
+    const publicResponse = publicBlindResponseStore.entries.find((entry) => (
+      entry.response.questionnaireId === bundleElectionId
+    ))?.response;
+    expect(publicResponse?.tokenProofs).toHaveLength(2);
+    expect(publicResponse?.tokenNullifiers).toHaveLength(2);
+
+    await coordinator.processPendingSubmissions(["q1", "q2"]);
+    voter.refreshIssuanceAndAcceptance();
+
+    expect(voter.getSnapshot()?.submissionAccepted).toBe(true);
+    expect(coordinator.getAcceptedUniqueCount()).toBe(1);
+    expect(Object.keys(coordinator.getSnapshot()?.acceptedNullifiers ?? {})).toHaveLength(2);
   });
 
   it("accepts recovered public submissions that arrived before close", async () => {

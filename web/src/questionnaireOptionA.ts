@@ -12,6 +12,13 @@ export type SubmissionId = string;
 export type Nullifier = string;
 export type EventId = string;
 
+export interface BallotScope {
+  questionId?: string | null;
+  slotId?: string | null;
+  slotIndex?: number | null;
+  version?: number | null;
+}
+
 export type ElectionState = "draft" | "published" | "open" | "closed" | "counted";
 export type WhitelistClaimState =
   | "whitelisted"
@@ -130,6 +137,7 @@ export interface BlindBallotRequest {
   clientNonce: string;
   createdAt: IsoTime;
   inviteCodeHash?: Hex | null;
+  ballotScope?: BallotScope | null;
   lastSentAt?: IsoTime | null;
 }
 
@@ -143,6 +151,7 @@ export interface BlindBallotIssuance {
   tokenCommitment: string;
   blindSigningKeyId: string;
   blindSignature: string;
+  ballotScope?: BallotScope | null;
   definition?: QuestionnaireDefinition | null;
   issuedAt: IsoTime;
 }
@@ -158,6 +167,15 @@ export interface QuestionnaireBallotPayload {
   responses: QuestionnaireAnswer[];
 }
 
+export interface BallotCredentialProof {
+  questionId?: string | null;
+  tokenCommitment: string;
+  blindSigningKeyId: string;
+  credential: string;
+  nullifier: Nullifier;
+  ballotScope?: BallotScope | null;
+}
+
 export interface BallotSubmission {
   type: "ballot_submission";
   schemaVersion: 1;
@@ -169,6 +187,7 @@ export interface BallotSubmission {
   blindSigningKeyId: string;
   credential: string;
   nullifier: Nullifier;
+  credentialBundle?: BallotCredentialProof[];
   payload: QuestionnaireBallotPayload;
   submittedAt: IsoTime;
 }
@@ -194,13 +213,23 @@ export interface VoterElectionLocalState {
   blindRequestSent: boolean;
   blindRequestSentAt?: IsoTime | null;
   blindIssuance?: BlindBallotIssuance | null;
+  blindRequests?: Record<string, BlindBallotRequest>;
+  blindIssuances?: Record<string, BlindBallotIssuance>;
   credentialReady: boolean;
   blindTokenSecret?: {
     tokenSecret: string;
     tokenCommitment: string;
     blindingFactor: string;
     blindSigningPublicKey: QuestionnaireBlindPublicKey;
+    ballotScope?: BallotScope | null;
   } | null;
+  blindTokenSecrets?: Record<string, {
+    tokenSecret: string;
+    tokenCommitment: string;
+    blindingFactor: string;
+    blindSigningPublicKey: QuestionnaireBlindPublicKey;
+    ballotScope?: BallotScope | null;
+  }>;
   responseNsec?: string | null;
   responseNpub?: string | null;
   draftResponses: QuestionnaireAnswer[];
@@ -305,6 +334,9 @@ function cloneVoterState(state: VoterElectionLocalState): VoterElectionLocalStat
   return {
     ...state,
     blindTokenSecret: state.blindTokenSecret ? { ...state.blindTokenSecret } : null,
+    blindRequests: { ...(state.blindRequests ?? {}) },
+    blindIssuances: { ...(state.blindIssuances ?? {}) },
+    blindTokenSecrets: { ...(state.blindTokenSecrets ?? {}) },
     draftResponses: [...state.draftResponses],
   };
 }
@@ -325,6 +357,34 @@ function findIssuanceByNpub(
   return null;
 }
 
+function ballotScopeKey(scope: BallotScope | null | undefined) {
+  const questionId = scope?.questionId?.trim() ?? "";
+  const slotId = scope?.slotId?.trim() ?? "";
+  const version = Number.isFinite(scope?.version) ? Math.max(1, Math.floor(scope?.version as number)) : 0;
+  const slotIndex = Number.isFinite(scope?.slotIndex) ? Math.max(1, Math.floor(scope?.slotIndex as number)) : 0;
+  if (!questionId && !slotId && !version && !slotIndex) {
+    return "__questionnaire__";
+  }
+  return `${questionId || slotId}:${slotId}:${slotIndex}:v${version || 1}`;
+}
+
+function sameBallotScope(left: BallotScope | null | undefined, right: BallotScope | null | undefined) {
+  return ballotScopeKey(left) === ballotScopeKey(right);
+}
+
+function findIssuanceByNpubAndScope(
+  issuedBlindResponses: Record<RequestId, BlindBallotIssuance>,
+  invitedNpub: Npub,
+  scope: BallotScope | null | undefined,
+): BlindBallotIssuance | null {
+  for (const issuance of Object.values(issuedBlindResponses)) {
+    if (issuance.invitedNpub === invitedNpub && sameBallotScope(issuance.ballotScope, scope)) {
+      return issuance;
+    }
+  }
+  return null;
+}
+
 function sameBlindBallotRequest(left: BlindBallotRequest, right: BlindBallotRequest) {
   return left.type === right.type
     && left.schemaVersion === right.schemaVersion
@@ -336,7 +396,8 @@ function sameBlindBallotRequest(left: BlindBallotRequest, right: BlindBallotRequ
     && left.blindSigningKeyId === right.blindSigningKeyId
     && left.clientNonce === right.clientNonce
     && left.createdAt === right.createdAt
-    && (left.inviteCodeHash ?? null) === (right.inviteCodeHash ?? null);
+    && (left.inviteCodeHash ?? null) === (right.inviteCodeHash ?? null)
+    && sameBallotScope(left.ballotScope, right.ballotScope);
 }
 
 function findIssuanceByTokenCommitment(
@@ -366,6 +427,19 @@ function findAcceptedSubmissionByNpub(
     }
   }
   return null;
+}
+
+function submissionCredentialBundle(submission: BallotSubmission): BallotCredentialProof[] {
+  if (Array.isArray(submission.credentialBundle) && submission.credentialBundle.length > 0) {
+    return submission.credentialBundle;
+  }
+  return [{
+    tokenCommitment: submission.tokenCommitment,
+    blindSigningKeyId: submission.blindSigningKeyId,
+    credential: submission.credential,
+    nullifier: submission.nullifier,
+    ballotScope: null,
+  }];
 }
 
 function reduceCoordinatorError(
@@ -429,8 +503,11 @@ export function createEmptyVoterElectionLocalState(input: {
     blindRequestSent: false,
     blindRequestSentAt: null,
     blindIssuance: null,
+    blindRequests: {},
+    blindIssuances: {},
     credentialReady: false,
     blindTokenSecret: null,
+    blindTokenSecrets: {},
     responseNsec: null,
     responseNpub: null,
     draftResponses: [],
@@ -476,22 +553,44 @@ export function reduceVoterEvent(
     if (!next.loginVerified) {
       return reduceVoterError(state, "login_not_verified");
     }
-    if (next.blindIssuance) {
+    const scopeKey = ballotScopeKey(event.request.ballotScope);
+    if (
+      next.blindIssuances?.[scopeKey]
+      || (next.blindIssuance && sameBallotScope(next.blindIssuance.ballotScope, event.request.ballotScope))
+    ) {
       return reduceVoterError(state, "issuance_conflict");
     }
-    if (next.blindRequest) {
-      const sameRequest = sameBlindBallotRequest(next.blindRequest, event.request);
-      if (sameRequest && next.blindRequest.lastSentAt !== event.request.lastSentAt) {
-        next.blindRequest = {
-          ...next.blindRequest,
-          lastSentAt: event.request.lastSentAt ?? next.blindRequest.lastSentAt ?? null,
+    const existingScopedRequest = next.blindRequests?.[scopeKey] ?? null;
+    if (existingScopedRequest) {
+      const sameRequest = sameBlindBallotRequest(existingScopedRequest, event.request);
+      if (sameRequest && existingScopedRequest.lastSentAt !== event.request.lastSentAt) {
+        const updatedRequest = {
+          ...existingScopedRequest,
+          lastSentAt: event.request.lastSentAt ?? existingScopedRequest.lastSentAt ?? null,
         };
+        next.blindRequests = {
+          ...(next.blindRequests ?? {}),
+          [scopeKey]: updatedRequest,
+        };
+        if (next.blindRequest?.requestId === updatedRequest.requestId) {
+          next.blindRequest = updatedRequest;
+        }
       }
       return sameRequest
         ? { state: next, ok: true }
         : reduceVoterError(state, "issuance_conflict");
     }
-    next.blindRequest = event.request;
+    if (next.blindRequest && ballotScopeKey(next.blindRequest.ballotScope) === "__questionnaire__") {
+      const sameRequest = sameBlindBallotRequest(next.blindRequest, event.request);
+      return sameRequest
+        ? { state: next, ok: true }
+        : reduceVoterError(state, "issuance_conflict");
+    }
+    next.blindRequest = next.blindRequest ?? event.request;
+    next.blindRequests = {
+      ...(next.blindRequests ?? {}),
+      [scopeKey]: event.request,
+    };
     next.lastUpdatedAt = new Date().toISOString();
     return { state: next, ok: true };
   }
@@ -500,13 +599,24 @@ export function reduceVoterEvent(
     if (event.electionId !== next.electionId) {
       return reduceVoterError(state, "election_id_mismatch");
     }
-    if (!next.blindRequest || next.blindRequest.requestId !== event.requestId) {
+    const scopedRequestEntry = Object.entries(next.blindRequests ?? {})
+      .find(([, request]) => request.requestId === event.requestId) ?? null;
+    const scopedRequestKey = scopedRequestEntry?.[0] ?? "";
+    const scopedRequest = scopedRequestEntry?.[1] ?? null;
+    if ((!next.blindRequest || next.blindRequest.requestId !== event.requestId) && !scopedRequest) {
       return reduceVoterError(state, "blind_request_missing");
     }
-    next.blindRequest = {
-      ...next.blindRequest,
+    const updatedRequest = {
+      ...(scopedRequest ?? next.blindRequest!),
       lastSentAt: event.sentAt,
     };
+    next.blindRequests = {
+      ...(next.blindRequests ?? {}),
+      [scopedRequestKey || ballotScopeKey(updatedRequest.ballotScope)]: updatedRequest,
+    };
+    if (!next.blindRequest || next.blindRequest.requestId === event.requestId) {
+      next.blindRequest = updatedRequest;
+    }
     next.blindRequestSent = true;
     next.blindRequestSentAt = event.sentAt;
     next.lastUpdatedAt = event.sentAt;
@@ -517,17 +627,34 @@ export function reduceVoterEvent(
     if (event.issuance.electionId !== next.electionId) {
       return reduceVoterError(state, "election_id_mismatch");
     }
-    if (!next.blindRequest || next.blindRequest.requestId !== event.issuance.requestId) {
+    const issuanceScopeKey = ballotScopeKey(event.issuance.ballotScope);
+    const scopedRequest = next.blindRequests?.[issuanceScopeKey] ?? null;
+    if (
+      (!next.blindRequest || next.blindRequest.requestId !== event.issuance.requestId)
+      && (!scopedRequest || scopedRequest.requestId !== event.issuance.requestId)
+    ) {
       return reduceVoterError(state, "issuance_conflict");
     }
-    if (next.blindIssuance) {
+    const existingScopedIssuance = next.blindIssuances?.[issuanceScopeKey] ?? null;
+    if (existingScopedIssuance) {
+      const sameIssuance = existingScopedIssuance.issuanceId === event.issuance.issuanceId
+        && existingScopedIssuance.blindSignature === event.issuance.blindSignature;
+      if (!sameIssuance) {
+        return reduceVoterError(state, "issuance_conflict");
+      }
+    }
+    if (next.blindIssuance && sameBallotScope(next.blindIssuance.ballotScope, event.issuance.ballotScope)) {
       const sameIssuance = next.blindIssuance.issuanceId === event.issuance.issuanceId
         && next.blindIssuance.blindSignature === event.issuance.blindSignature;
       if (!sameIssuance) {
         return reduceVoterError(state, "issuance_conflict");
       }
     }
-    next.blindIssuance = event.issuance;
+    next.blindIssuance = next.blindIssuance ?? event.issuance;
+    next.blindIssuances = {
+      ...(next.blindIssuances ?? {}),
+      [issuanceScopeKey]: event.issuance,
+    };
     next.credentialReady = true;
     next.lastUpdatedAt = event.issuance.issuedAt;
     return { state: next, ok: true };
@@ -659,7 +786,11 @@ export function reduceCoordinatorEvent(
       next.lastUpdatedAt = event.request.lastSentAt ?? event.request.createdAt;
       return { state: next, ok: true };
     }
-    const existingIssuance = findIssuanceByNpub(next.issuedBlindResponses, event.request.invitedNpub);
+    const existingIssuance = findIssuanceByNpubAndScope(
+      next.issuedBlindResponses,
+      event.request.invitedNpub,
+      event.request.ballotScope,
+    );
     if (existingIssuance) {
       return reduceCoordinatorError(state, "already_issued");
     }
@@ -695,7 +826,11 @@ export function reduceCoordinatorEvent(
         ? { state, ok: true }
         : reduceCoordinatorError(state, "issuance_conflict");
     }
-    const existingForVoter = findIssuanceByNpub(next.issuedBlindResponses, event.issuance.invitedNpub);
+    const existingForVoter = findIssuanceByNpubAndScope(
+      next.issuedBlindResponses,
+      event.issuance.invitedNpub,
+      event.issuance.ballotScope,
+    );
     if (existingForVoter) {
       return reduceCoordinatorError(state, "already_issued");
     }
@@ -723,6 +858,18 @@ export function reduceCoordinatorEvent(
     if (!validateResponsesSchema(event.submission.payload.responses)) {
       return reduceCoordinatorError(state, "schema_invalid");
     }
+    for (const proof of submissionCredentialBundle(event.submission)) {
+      const issuance = findIssuanceByTokenCommitment(next.issuedBlindResponses, proof.tokenCommitment);
+      if (!issuance) {
+        return reduceCoordinatorError(state, "issuance_missing");
+      }
+      if (
+        issuance.blindSigningKeyId !== proof.blindSigningKeyId
+        || !sameBallotScope(issuance.ballotScope, proof.ballotScope)
+      ) {
+        return reduceCoordinatorError(state, "invalid_credential");
+      }
+    }
     next.receivedSubmissions[event.submission.submissionId] = event.submission;
     next.lastUpdatedAt = event.submission.submittedAt;
     return { state: next, ok: true };
@@ -744,20 +891,31 @@ export function reduceCoordinatorEvent(
     if (existingAcceptance?.accepted === true) {
       return { state, ok: true };
     }
-    const acceptedSubmissionId = next.acceptedNullifiers[submission.nullifier];
-    if (acceptedSubmissionId && acceptedSubmissionId !== submission.submissionId) {
-      return reduceCoordinatorError(state, "duplicate_nullifier");
+    for (const proof of submissionCredentialBundle(submission)) {
+      const acceptedSubmissionId = next.acceptedNullifiers[proof.nullifier];
+      if (acceptedSubmissionId && acceptedSubmissionId !== submission.submissionId) {
+        return reduceCoordinatorError(state, "duplicate_nullifier");
+      }
     }
     const acceptedForToken = Object.entries(next.acceptanceResults).find(([submissionId, acceptedResult]) => {
       if (!acceptedResult.accepted || submissionId === submission.submissionId) {
         return false;
       }
-      return next.receivedSubmissions[submissionId]?.tokenCommitment === submission.tokenCommitment;
+      const existingSubmission = next.receivedSubmissions[submissionId];
+      if (!existingSubmission) {
+        return false;
+      }
+      const existingCommitments = new Set(
+        submissionCredentialBundle(existingSubmission).map((proof) => proof.tokenCommitment),
+      );
+      return submissionCredentialBundle(submission).some((proof) => existingCommitments.has(proof.tokenCommitment));
     });
     if (acceptedForToken) {
       return reduceCoordinatorError(state, "already_voted");
     }
-    next.acceptedNullifiers[submission.nullifier] = submission.submissionId;
+    for (const proof of submissionCredentialBundle(submission)) {
+      next.acceptedNullifiers[proof.nullifier] = submission.submissionId;
+    }
     next.acceptanceResults[submission.submissionId] = result;
     if (entry) {
       entry.submissionId = submission.submissionId;
@@ -806,7 +964,9 @@ export function restoreCoordinatorElectionState(input: {
     }
     const submission = merged.receivedSubmissions[submissionId];
     if (submission) {
-      merged.acceptedNullifiers[submission.nullifier] = submissionId;
+      for (const proof of submissionCredentialBundle(submission)) {
+        merged.acceptedNullifiers[proof.nullifier] = submissionId;
+      }
     }
   }
 
@@ -1025,7 +1185,33 @@ export function validateBallotSubmission(input: {
     return false;
   }
   const answered = new Set(input.submission.payload.responses.map((entry) => entry.questionId));
-  return input.requiredQuestionIds.every((questionId) => answered.has(questionId));
+  if (!input.requiredQuestionIds.every((questionId) => answered.has(questionId))) {
+    return false;
+  }
+  if (Array.isArray(input.submission.credentialBundle) && input.submission.credentialBundle.length > 0) {
+    const proofQuestionIds = new Set(
+      input.submission.credentialBundle
+        .map((proof) => proof.questionId?.trim() || proof.ballotScope?.questionId?.trim() || "")
+        .filter(Boolean),
+    );
+    if (!input.requiredQuestionIds.every((questionId) => proofQuestionIds.has(questionId))) {
+      return false;
+    }
+    const seenNullifiers = new Set<string>();
+    for (const proof of input.submission.credentialBundle) {
+      if (
+        !proof.tokenCommitment.trim()
+        || !proof.blindSigningKeyId.trim()
+        || !proof.credential.trim()
+        || !proof.nullifier.trim()
+        || seenNullifiers.has(proof.nullifier)
+      ) {
+        return false;
+      }
+      seenNullifiers.add(proof.nullifier);
+    }
+  }
+  return true;
 }
 
 export function countAcceptedUniqueVoters(state: CoordinatorElectionState) {

@@ -76,8 +76,8 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 
 1. Open the invite link as the invited voter, or open the app as **Voter** and click **Check invites**.
 2. Open the pending questionnaire.
-3. Click **Request ballot** if the blind credential request does not start automatically.
-4. Wait for the ballot credential to be ready.
+3. Click **Request ballot** if the blind credential request does not start automatically. Current per-question questionnaires request a bundle with one scoped credential per question slot.
+4. Wait for the ballot credentials to be ready.
 5. Complete the questionnaire and click **Submit response**.
 6. After submission, Vote keeps the submitted answers visible and locks the question controls for that questionnaire.
 7. When several questionnaires from the organiser are available, Vote labels the selector by round and local status, and **Answer next** opens the next unanswered questionnaire.
@@ -663,7 +663,7 @@ The repository now focuses on the client-side web app only:
 - non-lead ticket sends are slightly staggered by share index to reduce same-recipient relay bursts
 - automatic follow, blind-request, ticket, and acknowledgement sends are randomly delayed by up to `30s` to better match real participants and reduce relay rate limiting
 - invited voters now receive active questionnaire ids (`open`/`published`) through one roster-free public organiser announcement, so voter questionnaire selection can auto-populate without per-voter metadata DMs
-- voter questionnaire submissions now spend a blind-signed credential from a fresh ephemeral response npub, with one accepted spend per questionnaire credential
+- voter questionnaire submissions now spend blind-signed credentials from a fresh ephemeral response npub; current per-question questionnaires bundle one accepted spend per question-slot credential
 - organiser follower rows expose per-ticket relay publish diagnostics
 - Nostr is the shared state layer
 - blind-share issuance is in the simple flow
@@ -791,6 +791,7 @@ The questionnaire runtime currently provides:
 - RSABSSA blind request creation from a voter-held token secret
 - organiser blind issuance processing over a blinded token message
 - local unblinding and verification before ballot submission
+- per-question ballot slots, where edited answer semantics bump the slot version and require a fresh scoped credential for that question
 - fresh ephemeral response npubs for ballot submission, instead of using the invited voter npub as the response identity
 - single accepted submission accounting with duplicate protection
 - local resume keyed by election id and signer `npub`

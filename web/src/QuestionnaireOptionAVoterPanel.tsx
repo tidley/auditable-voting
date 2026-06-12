@@ -267,6 +267,8 @@ const AUTO_BALLOT_SIGNER_SUBSCRIPTION_REARM_MIN_INTERVAL_MS = 15_000;
 const AUTO_BALLOT_SIGNER_BACKGROUND_FETCH_MIN_INTERVAL_MS = 90_000;
 const AUTO_BALLOT_SIGNER_LIFECYCLE_FETCH_MIN_INTERVAL_MS = 45_000;
 const AUTO_BALLOT_SIGNER_INITIAL_PULL_DELAY_MS = 8_000;
+const PRIVATE_INVITE_STATUS_QUICK_CHECK_TIME_BUDGET_MS = 1_800;
+const PRIVATE_INVITE_STATUS_QUICK_CHECK_MAX_PAGES = 2;
 type BallotWaitRefreshMode = "manual" | "lifecycle" | "background" | "restart_only";
 
 function getManualBallotResendAvailableAtMs(snapshot: VoterElectionLocalState | null | undefined) {
@@ -834,9 +836,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           coordinatorNpub: next.coordinatorNpub || coordinatorNpub,
         });
         if (!inviteStatus.ok) {
-          if (inviteStatus.retry) {
-            schedulePrivateInviteRetry("Checking private invite status before requesting a ballot...");
-          }
           setRefreshNonce((value) => value + 1);
           return;
         }
@@ -1741,20 +1740,20 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     questionnaireId: string;
     voterNpub: string;
     coordinatorNpub?: string | null;
-  }): Promise<{ ok: boolean; claimedByThisDevice: boolean; retry?: boolean }> {
+  }): Promise<{ ok: boolean; claimedByThisDevice: boolean; statusKnown: boolean }> {
     const inviteCode = inviteContext.inviteCode?.trim() ?? "";
     if (!inviteCode) {
       setPrivateInviteBlock(null);
-      return { ok: true, claimedByThisDevice: false };
+      return { ok: true, claimedByThisDevice: false, statusKnown: true };
     }
     const questionnaireId = input.questionnaireId.trim();
     const voterNpub = input.voterNpub.trim();
     if (!questionnaireId || !voterNpub) {
-      return { ok: true, claimedByThisDevice: false };
+      return { ok: true, claimedByThisDevice: false, statusKnown: false };
     }
     const codeHash = await hashQuestionnaireInviteCode(inviteCode);
     if (!codeHash) {
-      return { ok: true, claimedByThisDevice: false };
+      return { ok: true, claimedByThisDevice: false, statusKnown: false };
     }
     const definition = readCachedQuestionnaireDefinition(questionnaireId);
     const summary = loadElectionSummary(questionnaireId);
@@ -1763,17 +1762,18 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       questionnaireId,
       codeHash,
       relays: relays.length > 0 ? relays : undefined,
-      limit: 40,
+      limit: 20,
+      maxPages: PRIVATE_INVITE_STATUS_QUICK_CHECK_MAX_PAGES,
+      timeBudgetMs: PRIVATE_INVITE_STATUS_QUICK_CHECK_TIME_BUDGET_MS,
     }).catch(() => null);
     const statusEvent = latestStatus?.status ?? null;
     if (!statusEvent) {
       setPrivateInviteBlock(null);
-      setStatus("Checking private invite status before requesting a ballot...");
-      return { ok: false, claimedByThisDevice: false, retry: true };
+      return { ok: true, claimedByThisDevice: false, statusKnown: false };
     }
     if (statusEvent.state === "available") {
       setPrivateInviteBlock(null);
-      return { ok: true, claimedByThisDevice: false };
+      return { ok: true, claimedByThisDevice: false, statusKnown: true };
     }
     const coordinatorNpub = statusEvent.coordinatorPubkey?.trim()
       || input.coordinatorNpub?.trim()
@@ -1787,7 +1787,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       if (ownClaimHash && statusEvent.redeemedNpubHash === ownClaimHash) {
         setPrivateInviteBlock(null);
         setStatus("Invite already claimed by this device/account.");
-        return { ok: true, claimedByThisDevice: true };
+        return { ok: true, claimedByThisDevice: true, statusKnown: true };
       }
       setPrivateInviteBlock({
         questionnaireId,
@@ -1796,7 +1796,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         reason: "redeemed",
       });
       setStatus("Private invite already used.");
-      return { ok: false, claimedByThisDevice: false };
+      return { ok: false, claimedByThisDevice: false, statusKnown: true };
     }
     setPrivateInviteBlock({
       questionnaireId,
@@ -1805,7 +1805,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       reason: "revoked",
     });
     setStatus("Private invite is no longer available.");
-    return { ok: false, claimedByThisDevice: false };
+    return { ok: false, claimedByThisDevice: false, statusKnown: true };
   }
 
   async function requestBallot() {

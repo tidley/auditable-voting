@@ -6,6 +6,13 @@ import {
 } from "./questionnaireProtocolConstants";
 import type { QuestionnaireResultQuestionSummary } from "./questionnaireProtocol";
 
+export type QuestionnaireBlindTokenScope = {
+  questionId?: string | null;
+  slotId?: string | null;
+  slotIndex?: number | null;
+  version?: number | null;
+};
+
 type CanonicalValue =
   | null
   | boolean
@@ -40,18 +47,22 @@ export function canonicalJsonStringify(value: CanonicalValue): string {
 export function buildQuestionnaireBlindTokenSignedMessage(input: {
   questionnaireId: string;
   tokenSecretCommitment: string;
+  ballotScope?: QuestionnaireBlindTokenScope | null;
 }) {
+  const ballotScope = normaliseBlindTokenScope(input.ballotScope);
   return canonicalJsonStringify({
     questionnaire_id: input.questionnaireId,
     response_mode: "blind_token",
     schema_version: 1,
     token_secret_commitment: input.tokenSecretCommitment,
+    ...(ballotScope ? { ballot_scope: ballotScope } : {}),
   });
 }
 
 export function deriveQuestionnaireBlindTokenMessageHash(input: {
   questionnaireId: string;
   tokenSecretCommitment: string;
+  ballotScope?: QuestionnaireBlindTokenScope | null;
 }) {
   const payload = canonicalJsonStringify({
     domain: QUESTIONNAIRE_BLIND_TOKEN_MESSAGE_DOMAIN,
@@ -63,13 +74,39 @@ export function deriveQuestionnaireBlindTokenMessageHash(input: {
 export function deriveQuestionnaireTokenNullifier(input: {
   questionnaireId: string;
   tokenSecret: string;
+  ballotScope?: QuestionnaireBlindTokenScope | null;
 }) {
+  const ballotScope = normaliseBlindTokenScope(input.ballotScope);
   const payload = canonicalJsonStringify({
     domain: QUESTIONNAIRE_NULLIFIER_DOMAIN,
     questionnaire_id: input.questionnaireId,
     token_secret: input.tokenSecret,
+    ...(ballotScope ? { ballot_scope: ballotScope } : {}),
   });
   return sha256HexRust(payload);
+}
+
+export function normaliseBlindTokenScope(scope: QuestionnaireBlindTokenScope | null | undefined) {
+  if (!scope) {
+    return null;
+  }
+  const questionId = scope.questionId?.trim() ?? "";
+  const slotId = scope.slotId?.trim() ?? "";
+  const slotIndex = Number.isFinite(scope.slotIndex)
+    ? Math.max(1, Math.floor(scope.slotIndex as number))
+    : null;
+  const version = Number.isFinite(scope.version)
+    ? Math.max(1, Math.floor(scope.version as number))
+    : null;
+  if (!questionId && !slotId && !slotIndex && !version) {
+    return null;
+  }
+  return {
+    ...(questionId ? { question_id: questionId } : {}),
+    ...(slotId ? { slot_id: slotId } : {}),
+    ...(slotIndex ? { slot_index: slotIndex } : {}),
+    ...(version ? { version } : {}),
+  };
 }
 
 function sortQuestionSummariesCanonical(summaries: QuestionnaireResultQuestionSummary[]) {

@@ -172,6 +172,29 @@ function createYesNoQuestion(questionId: string, prompt = "", required = true): 
   };
 }
 
+function withQuestionBallotSlot(
+  question: QuestionnaireQuestionDraft,
+  index: number,
+  options?: { bumpVersion?: boolean },
+): QuestionnaireQuestionDraft {
+  const current = question.ballotSlot ?? null;
+  const currentVersion = Number.isFinite(current?.version)
+    ? Math.max(1, Math.floor(current.version))
+    : 1;
+  return {
+    ...question,
+    ballotSlot: {
+      slotId: current?.slotId?.trim() || question.questionId,
+      slotIndex: index + 1,
+      version: options?.bumpVersion ? currentVersion + 1 : currentVersion,
+    },
+  };
+}
+
+function bumpQuestionBallotSlotVersion(question: QuestionnaireQuestionDraft): QuestionnaireQuestionDraft {
+  return withQuestionBallotSlot(question, Math.max(0, (question.ballotSlot?.slotIndex ?? 1) - 1), { bumpVersion: true });
+}
+
 function createMultipleChoiceQuestion(questionId: string, prompt = "", required = true): QuestionnaireQuestionDraft {
   return {
     questionId,
@@ -221,16 +244,25 @@ function createFreeTextQuestion(questionId: string, prompt = "", required = fals
 }
 
 function clearQuestionDraft(question: QuestionnaireQuestionDraft): QuestionnaireQuestionDraft {
+  const resetSlot = (next: QuestionnaireQuestionDraft) => ({
+    ...next,
+    ballotSlot: question.ballotSlot
+      ? {
+          ...question.ballotSlot,
+          version: Math.max(1, Math.floor(question.ballotSlot.version)) + 1,
+        }
+      : null,
+  });
   if (question.type === "multiple_choice") {
-    return createMultipleChoiceQuestion(question.questionId, "", true);
+    return resetSlot(createMultipleChoiceQuestion(question.questionId, "", true));
   }
   if (question.type === "rank") {
-    return createRankQuestion(question.questionId, "", 0);
+    return resetSlot(createRankQuestion(question.questionId, "", 0));
   }
   if (question.type === "free_text") {
-    return createFreeTextQuestion(question.questionId, "", true);
+    return resetSlot(createFreeTextQuestion(question.questionId, "", true));
   }
-  return createYesNoQuestion(question.questionId, "", true);
+  return resetSlot(createYesNoQuestion(question.questionId, "", true));
 }
 
 function deriveNextQuestionId(current: QuestionnaireQuestionDraft[]) {
@@ -581,6 +613,22 @@ function definitionBelongsToCoordinator(definition: QuestionnaireDefinition | nu
     return true;
   }
   return normaliseCoordinatorIdentifier(definition.coordinatorPubkey) === expectedCoordinator;
+}
+
+function localSummaryBelongsToCoordinator(input: {
+  summary: ElectionSummary;
+  coordinatorNpub: string;
+  cachedDefinition: QuestionnaireDefinition | null;
+}) {
+  const summaryCoordinatorNpub = normaliseCoordinatorIdentifier(input.summary.coordinatorNpub);
+  const coordinatorFilter = normaliseCoordinatorIdentifier(input.coordinatorNpub);
+  if (!summaryCoordinatorNpub || !coordinatorFilter || summaryCoordinatorNpub !== coordinatorFilter) {
+    return false;
+  }
+  if (input.cachedDefinition) {
+    return definitionBelongsToCoordinator(input.cachedDefinition, input.coordinatorNpub);
+  }
+  return Boolean(input.summary.electionId.trim());
 }
 
 function formatQuestionnaireRelayInputFromDefinition(definition: QuestionnaireDefinition) {
@@ -1182,9 +1230,10 @@ function buildDefinition(input: {
     responseVisibility: "private",
     eligibilityMode: "open",
     allowMultipleResponsesPerPubkey: false,
+    ballotCredentialMode: "per_question",
     blindSigningPublicKey: input.blindSigningPublicKey ?? null,
     ...(input.questionnaireRelays?.length ? { questionnaireRelays: input.questionnaireRelays } : {}),
-    questions: input.questions,
+    questions: input.questions.map((question, index) => withQuestionBallotSlot(question, index)),
   };
 }
 
@@ -1211,6 +1260,7 @@ function comparableDefinitionDraftShape(definition: QuestionnaireDefinition) {
     responseVisibility: definition.responseVisibility,
     eligibilityMode: definition.eligibilityMode,
     allowMultipleResponsesPerPubkey: definition.allowMultipleResponsesPerPubkey,
+    ballotCredentialMode: definition.ballotCredentialMode ?? "questionnaire",
     blindSigningPublicKey: definition.blindSigningPublicKey ?? null,
     closeDurationSeconds: definitionCloseDurationSeconds(definition),
     questionnaireRelays: comparableDefinitionRelaySet(definition),
@@ -1869,6 +1919,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         const publishedIds = new Set<string>();
         const titlesById: Record<string, string> = {};
         const coordinatorFilter = normaliseCoordinatorIdentifier(coordinatorNpub);
+        const selectedId = questionnaireId.trim();
         if (!coordinatorFilter) {
           setAvailableQuestionnaireIds([]);
           setAvailableQuestionnaireTitles({});
@@ -1884,11 +1935,18 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           if (!summaryId) {
             continue;
           }
-          ids.add(summaryId);
           const cachedDefinition = readCachedQuestionnaireDefinition(summaryId);
+          const summaryBelongsToCoordinator = localSummaryBelongsToCoordinator({
+            summary,
+            coordinatorNpub,
+            cachedDefinition,
+          });
+          if (!summaryBelongsToCoordinator) {
+            continue;
+          }
+          ids.add(summaryId);
           const cachedDefinitionBelongsToCoordinator = Boolean(
-            cachedDefinition
-            && normaliseCoordinatorIdentifier(cachedDefinition.coordinatorPubkey) === summaryCoordinatorNpub,
+            cachedDefinition && definitionBelongsToCoordinator(cachedDefinition, coordinatorNpub),
           );
           const cachedDefinitionTitle = cachedDefinition
             && cachedDefinitionBelongsToCoordinator
@@ -1942,7 +2000,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         for (const candidate of eventDefinitionCandidatesById.values()) {
           storeCachedQuestionnaireDefinition(candidate.definition);
         }
-        const selectedId = questionnaireId.trim();
         if (selectedId && view !== "responses") {
           ids.add(selectedId);
         }
@@ -1979,11 +2036,18 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           if (!summaryId) {
             continue;
           }
-          ids.add(summaryId);
           const cachedDefinition = readCachedQuestionnaireDefinition(summaryId);
+          const summaryBelongsToCoordinator = localSummaryBelongsToCoordinator({
+            summary,
+            coordinatorNpub,
+            cachedDefinition,
+          });
+          if (!summaryBelongsToCoordinator) {
+            continue;
+          }
+          ids.add(summaryId);
           const cachedDefinitionBelongsToCoordinator = Boolean(
-            cachedDefinition
-            && normaliseCoordinatorIdentifier(cachedDefinition.coordinatorPubkey) === summaryCoordinatorNpub,
+            cachedDefinition && definitionBelongsToCoordinator(cachedDefinition, coordinatorNpub),
           );
           const cachedDefinitionTitle = cachedDefinition
             && cachedDefinitionBelongsToCoordinator
@@ -2459,16 +2523,20 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       const questionId = entry.questionId;
       const prompt = entry.prompt;
       const required = entry.required;
+      const carrySlot = (next: QuestionnaireQuestionDraft) => bumpQuestionBallotSlotVersion({
+        ...next,
+        ballotSlot: entry.ballotSlot ?? null,
+      });
       if (type === "multiple_choice") {
-        return createMultipleChoiceQuestion(questionId, prompt, required);
+        return carrySlot(createMultipleChoiceQuestion(questionId, prompt, required));
       }
       if (type === "rank") {
-        return createRankQuestion(questionId, prompt, required ? 1 : 0);
+        return carrySlot(createRankQuestion(questionId, prompt, required ? 1 : 0));
       }
       if (type === "free_text") {
-        return createFreeTextQuestion(questionId, prompt, required);
+        return carrySlot(createFreeTextQuestion(questionId, prompt, required));
       }
-      return createYesNoQuestion(questionId, prompt, required);
+      return carrySlot(createYesNoQuestion(questionId, prompt, required));
     });
   }
 
@@ -2482,6 +2550,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       const duplicated = {
         ...source,
         questionId: duplicateId,
+        ballotSlot: null,
       };
       return [...current.slice(0, index + 1), duplicated, ...current.slice(index + 1)];
     });
@@ -4188,9 +4257,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                           const minimumRanked = checked
                             ? Math.max(1, Math.min(entry.options.length, entry.minimumRanked || 1))
                             : 0;
-                          return { ...entry, minimumRanked, required: minimumRanked > 0 };
+                          return bumpQuestionBallotSlotVersion({ ...entry, minimumRanked, required: minimumRanked > 0 });
                         }
-                        return { ...entry, required: checked };
+                        return bumpQuestionBallotSlotVersion({ ...entry, required: checked });
                       });
                     }}
                   />
@@ -4225,12 +4294,12 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                                 if (entry.type !== "multiple_choice") {
                                   return entry;
                                 }
-                                return {
+                                return bumpQuestionBallotSlotVersion({
                                   ...entry,
                                   options: entry.options.map((entryOption, entryOptionIndex) => (
                                     entryOptionIndex === optionIndex ? { ...entryOption, label: nextLabel } : entryOption
                                   )),
-                                };
+                                });
                               });
                             }}
                           />
@@ -4242,7 +4311,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                             onClick={() => {
                               updateQuestion(index, (entry) => (
                                 entry.type === "multiple_choice"
-                                  ? { ...entry, options: entry.options.filter((_, entryOptionIndex) => entryOptionIndex !== optionIndex) }
+                                  ? bumpQuestionBallotSlotVersion({ ...entry, options: entry.options.filter((_, entryOptionIndex) => entryOptionIndex !== optionIndex) })
                                   : entry
                               ));
                             }}
@@ -4261,10 +4330,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                           if (entry.type !== "multiple_choice") {
                             return entry;
                           }
-                          return {
+                          return bumpQuestionBallotSlotVersion({
                             ...entry,
                             options: [...entry.options, createNextOption(entry.options)],
-                          };
+                          });
                         });
                       }}
                     >
@@ -4283,7 +4352,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                         const checked = event.target.checked;
                         updateQuestion(index, (entry) => (
                           entry.type === "multiple_choice"
-                            ? { ...entry, multiSelect: checked }
+                            ? bumpQuestionBallotSlotVersion({ ...entry, multiSelect: checked })
                             : entry
                         ));
                       }}
@@ -4310,12 +4379,12 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                                 if (entry.type !== "rank") {
                                   return entry;
                                 }
-                                return {
+                                return bumpQuestionBallotSlotVersion({
                                   ...entry,
                                   options: entry.options.map((entryOption, entryOptionIndex) => (
                                     entryOptionIndex === optionIndex ? { ...entryOption, label: nextLabel } : entryOption
                                   )),
-                                };
+                                });
                               });
                             }}
                           />
@@ -4334,12 +4403,12 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                                   options.length,
                                   Math.max(0, Math.floor(Number.isFinite(entry.minimumRanked) ? entry.minimumRanked : 0)),
                                 );
-                                return {
+                                return bumpQuestionBallotSlotVersion({
                                   ...entry,
                                   options,
                                   minimumRanked,
                                   required: minimumRanked > 0,
-                                };
+                                });
                               });
                             }}
                           >
@@ -4357,10 +4426,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                           if (entry.type !== "rank") {
                             return entry;
                           }
-                          return {
+                          return bumpQuestionBallotSlotVersion({
                             ...entry,
                             options: [...entry.options, createNextOption(entry.options)],
-                          };
+                          });
                         });
                       }}
                     >
@@ -4385,7 +4454,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                           const minimumRanked = Number.isFinite(parsed)
                             ? Math.min(entry.options.length, Math.max(0, parsed))
                             : 0;
-                          return { ...entry, minimumRanked, required: minimumRanked > 0 };
+                          return bumpQuestionBallotSlotVersion({ ...entry, minimumRanked, required: minimumRanked > 0 });
                         });
                       }}
                     >
@@ -4412,7 +4481,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                         const parsed = Number.parseInt(event.target.value, 10);
                         updateQuestion(index, (entry) => (
                           entry.type === "free_text"
-                            ? { ...entry, maxLength: Number.isFinite(parsed) && parsed > 0 ? parsed : entry.maxLength }
+                            ? bumpQuestionBallotSlotVersion({ ...entry, maxLength: Number.isFinite(parsed) && parsed > 0 ? parsed : entry.maxLength })
                             : entry
                         ));
                       }}
@@ -4429,7 +4498,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                         const checked = event.target.checked;
                         updateQuestion(index, (entry) => (
                           entry.type === "free_text"
-                            ? { ...entry, encryptResponses: checked }
+                            ? bumpQuestionBallotSlotVersion({ ...entry, encryptResponses: checked })
                             : entry
                         ));
                       }}

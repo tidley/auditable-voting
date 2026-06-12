@@ -577,6 +577,57 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     });
   });
 
+  it("requests a private invite ballot when no status event is visible yet", async () => {
+    const localVoterNpub = "npub1" + "x".repeat(58);
+    const coordinatorNpub = "npub1" + "b".repeat(58);
+    const inviteCode = "private-code-without-visible-status";
+    storeCachedQuestionnaireDefinition({
+      schemaVersion: 1,
+      eventType: "questionnaire_definition",
+      responseMode: "blind_token",
+      questionnaireId: "q_private_status_missing",
+      title: "Private status missing",
+      description: "Private description",
+      createdAt: 1,
+      openAt: 1,
+      closeAt: 9999999999,
+      coordinatorPubkey: coordinatorNpub,
+      coordinatorEncryptionPubkey: coordinatorNpub,
+      responseVisibility: "private",
+      eligibilityMode: "open",
+      allowMultipleResponsesPerPubkey: false,
+      blindSigningPublicKey: {
+        scheme: "rsabssa-sha384-pss-deterministic-v1",
+        keyId: "blind_key",
+        jwk: { kty: "RSA", e: "AQAB", n: "test" },
+      },
+      questions: [{
+        questionId: "q1",
+        type: "yes_no",
+        prompt: "Private prompt",
+        required: true,
+      }],
+    });
+    fetchQuestionnairePrivateInviteStatusMock.mockResolvedValue(null);
+    const requestBlindBallot = vi.spyOn(QuestionnaireOptionAVoterRuntime.prototype, "requestBlindBallot")
+      .mockImplementation(async function mockedRequestBlindBallot(this: QuestionnaireOptionAVoterRuntime) {
+        return this.getSnapshot()!;
+      });
+    window.history.pushState(null, "", `/?role=voter&q=q_private_status_missing&coordinator=${coordinatorNpub}&invite_code=${inviteCode}&request_ballot=1`);
+
+    render(<QuestionnaireOptionAVoterPanel localVoterNpub={localVoterNpub} />);
+
+    await waitFor(() => {
+      expect(requestBlindBallot).toHaveBeenCalled();
+    });
+    expect(fetchQuestionnairePrivateInviteStatusMock).toHaveBeenCalledWith(expect.objectContaining({
+      questionnaireId: "q_private_status_missing",
+      timeBudgetMs: 1800,
+      maxPages: 2,
+    }));
+    expect(screen.queryByText("Private invite already used")).toBeNull();
+  });
+
   it("can hide the vote-page Login action when login is provided by the app menu", async () => {
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_menu_login"]} showLoginAction={false} />);
 

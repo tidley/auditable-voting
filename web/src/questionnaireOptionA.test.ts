@@ -236,6 +236,107 @@ describe("questionnaireOptionA", () => {
     expect(replay.ok).toBe(true);
   });
 
+  it("allows one issued credential per distinct question ballot scope", () => {
+    const firstScope = { questionId: "q1", slotId: "q1", slotIndex: 1, version: 1 };
+    const secondScope = { questionId: "q2", slotId: "q2", slotIndex: 2, version: 1 };
+    const firstRequest = {
+      ...makeBlindRequest("request-q1"),
+      tokenCommitment: "token-commitment-q1",
+      ballotScope: firstScope,
+    };
+    const secondRequest = {
+      ...makeBlindRequest("request-q2"),
+      blindedMessage: "blinded-msg-q2",
+      tokenCommitment: "token-commitment-q2",
+      clientNonce: "nonce-q2",
+      ballotScope: secondScope,
+    };
+    const firstIssuance = {
+      ...makeIssuance("request-q1", "issuance-q1"),
+      tokenCommitment: "token-commitment-q1",
+      ballotScope: firstScope,
+    };
+    const secondIssuance = {
+      ...makeIssuance("request-q2", "issuance-q2"),
+      tokenCommitment: "token-commitment-q2",
+      blindSignature: "blind-signature-q2",
+      ballotScope: secondScope,
+    };
+
+    let coordinator = makeCoordinatorState();
+    coordinator = reduceCoordinatorEvent(coordinator, { type: "WHITELIST_ADDED", entry: makeWhitelistEntry() }).state;
+    coordinator = reduceCoordinatorEvent(coordinator, {
+      type: "LOGIN_VERIFIED",
+      electionId,
+      invitedNpub: voterNpub,
+    }).state;
+    const receivedFirst = reduceCoordinatorEvent(coordinator, {
+      type: "BLIND_REQUEST_RECEIVED",
+      request: firstRequest,
+    });
+    expect(receivedFirst.ok).toBe(true);
+    const issuedFirst = reduceCoordinatorEvent(receivedFirst.state, {
+      type: "BLIND_SIGNATURE_ISSUED",
+      issuance: firstIssuance,
+    });
+    expect(issuedFirst.ok).toBe(true);
+    const duplicateFirst = reduceCoordinatorEvent(issuedFirst.state, {
+      type: "BLIND_REQUEST_RECEIVED",
+      request: { ...firstRequest, requestId: "request-q1-repeat", clientNonce: "nonce-repeat" },
+    });
+    expect(duplicateFirst.ok).toBe(false);
+    expect(duplicateFirst.error).toBe("already_issued");
+    const receivedSecond = reduceCoordinatorEvent(issuedFirst.state, {
+      type: "BLIND_REQUEST_RECEIVED",
+      request: secondRequest,
+    });
+    expect(receivedSecond.ok).toBe(true);
+    const issuedSecond = reduceCoordinatorEvent(receivedSecond.state, {
+      type: "BLIND_SIGNATURE_ISSUED",
+      issuance: secondIssuance,
+    });
+    expect(issuedSecond.ok).toBe(true);
+    expect(Object.values(issuedSecond.state.issuedBlindResponses).map((entry) => entry.requestId).sort()).toEqual([
+      "request-q1",
+      "request-q2",
+    ]);
+
+    const voterInit = createEmptyVoterElectionLocalState({
+      electionId,
+      invitedNpub: voterNpub,
+      coordinatorNpub,
+      now: nowIso,
+    });
+    const loggedIn = reduceVoterEvent(voterInit, {
+      type: "LOGIN_VERIFIED",
+      electionId,
+      npub: voterNpub,
+      verifiedAt: nowIso,
+    });
+    const voterFirstRequest = reduceVoterEvent(loggedIn.state, {
+      type: "BLIND_REQUEST_CREATED",
+      request: firstRequest,
+    });
+    expect(voterFirstRequest.ok).toBe(true);
+    const voterSecondRequest = reduceVoterEvent(voterFirstRequest.state, {
+      type: "BLIND_REQUEST_CREATED",
+      request: secondRequest,
+    });
+    expect(voterSecondRequest.ok).toBe(true);
+    expect(Object.keys(voterSecondRequest.state.blindRequests ?? {})).toHaveLength(2);
+    const voterFirstIssuance = reduceVoterEvent(voterSecondRequest.state, {
+      type: "BLIND_ISSUANCE_RECEIVED",
+      issuance: firstIssuance,
+    });
+    expect(voterFirstIssuance.ok).toBe(true);
+    const voterSecondIssuance = reduceVoterEvent(voterFirstIssuance.state, {
+      type: "BLIND_ISSUANCE_RECEIVED",
+      issuance: secondIssuance,
+    });
+    expect(voterSecondIssuance.ok).toBe(true);
+    expect(Object.keys(voterSecondIssuance.state.blindIssuances ?? {})).toHaveLength(2);
+  });
+
   it("enforces issuance invariants and voter-side mismatch protection with resume", () => {
     const voterInit = createEmptyVoterElectionLocalState({
       electionId,

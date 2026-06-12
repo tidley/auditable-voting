@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildQuestionnaireBlindTokenSignedMessage,
   canonicalJsonStringify,
   deriveQuestionnaireBlindTokenMessageHash,
   deriveQuestionnaireTokenNullifier,
@@ -41,5 +42,49 @@ describe("questionnaireBlindToken", () => {
       tokenSecretCommitment: "commitment-a",
     });
     expect(first).toBe(second);
+  });
+
+  it("binds blind-token messages and nullifiers to a question slot when scoped", () => {
+    const ballotScope = {
+      questionId: "q1",
+      slotId: "director_1",
+      slotIndex: 1,
+      version: 2,
+    };
+    const message = buildQuestionnaireBlindTokenSignedMessage({
+      questionnaireId: "agm-1",
+      tokenSecretCommitment: "commitment-a",
+      ballotScope,
+    });
+    expect(JSON.parse(message)).toEqual({
+      ballot_scope: {
+        question_id: "q1",
+        slot_id: "director_1",
+        slot_index: 1,
+        version: 2,
+      },
+      questionnaire_id: "agm-1",
+      response_mode: "blind_token",
+      schema_version: 1,
+      token_secret_commitment: "commitment-a",
+    });
+
+    const first = deriveQuestionnaireTokenNullifier({
+      questionnaireId: "agm-1",
+      tokenSecret: "secret-a",
+      ballotScope,
+    });
+    const changedVersion = deriveQuestionnaireTokenNullifier({
+      questionnaireId: "agm-1",
+      tokenSecret: "secret-a",
+      ballotScope: { ...ballotScope, version: 3 },
+    });
+    const unscoped = deriveQuestionnaireTokenNullifier({
+      questionnaireId: "agm-1",
+      tokenSecret: "secret-a",
+    });
+
+    expect(changedVersion).not.toBe(first);
+    expect(unscoped).not.toBe(first);
   });
 });

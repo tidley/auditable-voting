@@ -1,6 +1,6 @@
 # Questionnaire Blind-Token Protocol
 
-Version: `1.0-draft`
+Version: `1.1-draft`
 
 ## 1. Scope
 
@@ -9,7 +9,8 @@ This protocol defines the questionnaire-first path used by the client:
 - public questionnaire definition and state
 - private eligibility and blind issuance transport
 - one blind-token response bundle per voter
-- deterministic duplicate handling by token nullifier
+- optional per-question blind credentials for current question slots
+- deterministic duplicate handling by token nullifier, including all nullifiers in a per-question bundle
 - public result summary publication
 
 The response payload mode can be:
@@ -41,7 +42,9 @@ Shape (camelCase in the shipped client):
 - `responseVisibility: "public" | "private"`
 - `eligibilityMode: "open" | "allowlist"`
 - `allowMultipleResponsesPerPubkey: boolean`
+- `ballotCredentialMode?: "questionnaire" | "per_question"`
 - `questions[]` (`yes_no`, `multiple_choice`, `rank`, `free_text`; free text may set `encryptResponses: true`)
+- each question may carry `ballotSlot: { slotId, slotIndex, version }` when `ballotCredentialMode` is `per_question`
 
 Tags:
 
@@ -55,8 +58,11 @@ Validation rules include:
 - `openAt < closeAt`
 - unique `questionId`
 - unique `optionId` within each multiple-choice and rank question
+- unique live ballot slot keys (`slotId:v<version>`) when per-question credentials are used
 - ranked-choice questions use internal type `rank` and may set `minimumRanked` from `0` up to the option count
 - required organiser keys present
+
+When an answer-bearing question changes after credentials have been issued, the client keeps the question identity but bumps the slot `version`. New blind-token requests for that question are then bound to the new slot version; old scoped credentials remain unspendable for the edited slot.
 
 ## 4. Questionnaire state
 
@@ -102,7 +108,19 @@ Blind-token admission object:
 - `authorPubkey` (ephemeral response key expected)
 - `tokenNullifier`
 - `tokenProof` (`tokenCommitment`, `questionnaireId`, `signature`)
+- optional `tokenNullifiers[]` for per-question bundles, each carrying `questionId?`, `tokenNullifier`, and `ballotScope?`
+- optional `tokenProofs[]` for per-question bundles, each carrying `tokenCommitment`, `questionnaireId`, `signature`, `questionId?`, and `ballotScope?`
 - `answers` (public mode) or `encryptedPayload` + `payloadHash` (encrypted mode)
+
+`ballotScope` canonical fields are `questionId`, `slotId`, `slotIndex`, and `version`. The signed blind-token message includes the canonical scope when present:
+
+- `questionnaire_id`
+- `response_mode = blind_token`
+- `schema_version = 1`
+- `token_secret_commitment`
+- optional `ballot_scope`
+
+The token nullifier is also derived over the same optional `ballot_scope`. Legacy single-credential submissions omit the arrays and continue to use `tokenProof` and `tokenNullifier`.
 
 Tags:
 
@@ -144,7 +162,8 @@ Blind responses are evaluated in canonical order:
 Then:
 
 - first valid response for a `tokenNullifier` is accepted
-- later valid responses with the same `tokenNullifier` are rejected as `duplicate_nullifier`
+- for bundled responses, every listed `tokenNullifier` is reserved by the accepted response
+- later valid responses with any already accepted `tokenNullifier` are rejected as `duplicate_nullifier`
 
 This rule is implemented in the client transport layer and covered by regression tests.
 
@@ -154,6 +173,7 @@ Public verifier should be able to check:
 
 - questionnaire existence and shape
 - response object shape
+- every proof in a bundled response verifies against the questionnaire id, token commitment, and optional ballot scope
 - deterministic duplicate-nullifier rejection
 - summary/accounting consistency
 
@@ -176,6 +196,6 @@ For reliability on public relays:
 
 1. Questionnaire definition must be public.
 2. Response admission must be deterministic.
-3. At most one accepted response per `tokenNullifier`.
+3. At most one accepted response per `tokenNullifier`; bundled responses reserve every nullifier in the bundle.
 4. Earliest canonical valid response per nullifier wins.
 5. Result summaries must be derived from accepted responses only.

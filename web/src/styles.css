@@ -1076,8 +1076,8 @@ code {
   width: 7px;
   height: 7px;
   border-radius: 999px;
-  background: var(--simple-teal);
-  box-shadow: 0 0 0 2px var(--simple-surface), 0 0 10px rgba(45, 212, 191, 0.5);
+  background: #ef4444;
+  box-shadow: 0 0 0 2px var(--simple-surface), 0 0 10px rgba(239, 68, 68, 0.55);
 }
 
 .simple-role-switch-button.has-unread-message {
@@ -1577,7 +1577,7 @@ code {
 .simple-coordinator-nav-symbol .simple-message-unread-dot {
   top: 3px;
   right: 2px;
-  box-shadow: 0 0 0 2px var(--simple-surface-2), 0 0 10px rgba(45, 212, 191, 0.5);
+  box-shadow: 0 0 0 2px var(--simple-surface-2), 0 0 10px rgba(239, 68, 68, 0.55);
 }
 
 .simple-coordinator-nav-symbol-settings::before {

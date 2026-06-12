@@ -153,6 +153,20 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       closedAt: null,
       coordinatorNpub: "npub1other",
     });
+    upsertElectionSummary({
+      electionId: "q_stale_mismatched",
+      title: "Stale mismatched questionnaire",
+      description: "",
+      state: "open",
+      openedAt: "2026-06-04T10:00:00.000Z",
+      closedAt: null,
+      coordinatorNpub,
+    });
+    storeCachedQuestionnaireDefinition(makeDefinition({
+      questionnaireId: "q_stale_mismatched",
+      title: "Stale mismatched questionnaire",
+      coordinatorNpub: "npub1other",
+    }));
 
     render(<QuestionnaireCoordinatorPanel view='responses' coordinatorNpub={coordinatorNpub} />);
 
@@ -162,6 +176,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       expect(optionText.some((text) => text.includes("First local questionnaire - q_first_local"))).toBe(true);
       expect(optionText.some((text) => text.includes("Second local questionnaire - q_second_local"))).toBe(true);
       expect(optionText.some((text) => text.includes("Other organiser questionnaire"))).toBe(false);
+      expect(optionText.some((text) => text.includes("Stale mismatched questionnaire"))).toBe(false);
     });
   });
 

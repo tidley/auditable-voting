@@ -65,13 +65,16 @@ import {
 } from "./questionnaireRuntime";
 import { buildSimpleVoteTicketRows } from "./simpleRoundState";
 import {
-  downloadSimpleActorBackup,
   clearSimpleActorState,
+  downloadSimpleFullStateBackup,
   isSimpleActorStateLocked,
   loadSimpleActorState,
   loadSimpleActorStateWithOptions,
   parseEncryptedSimpleActorBackupBundle,
+  parseEncryptedSimpleFullStateBackupBundle,
   parseSimpleActorBackupBundle,
+  parseSimpleFullStateBackupBundle,
+  restoreSimpleFullStateBackupBundle,
   saveSimpleActorState,
   SimpleActorStateLockedError,
   type SimpleActorKeypair,
@@ -1695,12 +1698,18 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
     clearVoterSessionState({ clearManualCoordinators: true });
   }
 
-  function downloadBackup(passphrase?: string) {
+  async function downloadBackup(passphrase?: string) {
     if (!voterKeypair) {
       return;
     }
 
-    void downloadSimpleActorBackup("voter", voterKeypair as SimpleActorKeypair, {
+    const trimmedPassphrase = passphrase?.trim() ?? "";
+    if (!trimmedPassphrase) {
+      setBackupStatus("Enter a backup passphrase for the full local state backup.");
+      return;
+    }
+
+    const cache = {
       manualCoordinators,
       nip65Enabled,
       questionnaireParticipationHistory,
@@ -1714,15 +1723,38 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
       submitStatus,
       selectedVotingId,
       liveVoteChoice,
-    } satisfies SimpleVoterCache, { passphrase });
-    setBackupStatus(passphrase?.trim() ? "Encrypted identity backup downloaded." : "Identity backup downloaded.");
+    } satisfies SimpleVoterCache;
+
+    await saveSimpleActorState({
+      role: "voter",
+      keypair: voterKeypair as SimpleActorKeypair,
+      updatedAt: new Date().toISOString(),
+      cache,
+    }, storagePassphrase ? { passphrase: storagePassphrase } : undefined);
+    await downloadSimpleFullStateBackup({ passphrase: trimmedPassphrase });
+    setBackupStatus("Encrypted full local state backup downloaded.");
   }
 
   async function restoreBackup(file: File, passphrase?: string) {
     try {
       const text = await file.text();
+      const trimmedPassphrase = passphrase?.trim() ?? "";
+      const fullBundle = parseSimpleFullStateBackupBundle(text)
+        ?? (trimmedPassphrase ? await parseEncryptedSimpleFullStateBackupBundle(text, trimmedPassphrase) : null);
+      if (fullBundle) {
+        await restoreSimpleFullStateBackupBundle(fullBundle);
+        setIdentityStatus("Full local state restored from backup.");
+        setBackupStatus(`Full local state restored from ${fullBundle.exportedAt}. Reloading...`);
+        window.setTimeout(() => window.location.reload(), 80);
+        return;
+      }
+      if (!trimmedPassphrase && text.includes('"auditable-voting.full-state-backup.encrypted"')) {
+        setBackupStatus("Enter the full local state backup passphrase.");
+        return;
+      }
+
       const bundle = parseSimpleActorBackupBundle(text)
-        ?? (passphrase?.trim() ? await parseEncryptedSimpleActorBackupBundle(text, passphrase.trim()) : null);
+        ?? (trimmedPassphrase ? await parseEncryptedSimpleActorBackupBundle(text, trimmedPassphrase) : null);
       if (!bundle || bundle.role !== "voter") {
         setBackupStatus("Backup file is not a voter backup.");
         return;
@@ -3551,6 +3583,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
               onDownloadBackup={identityReady ? downloadBackup : undefined}
               onRestoreBackupFile={restoreBackup}
               backupMessage={backupStatus}
+              backupPassphraseRequired={true}
               onProtectLocalState={
                 identityReady ? protectLocalState : undefined
               }

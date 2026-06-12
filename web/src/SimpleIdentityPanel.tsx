@@ -11,6 +11,7 @@ export default function SimpleIdentityPanel({
   onDownloadBackup,
   onRestoreBackupFile,
   backupMessage,
+  backupPassphraseRequired = false,
   onProtectLocalState,
   onDisableLocalStateProtection,
   localStateProtected = false,
@@ -27,6 +28,7 @@ export default function SimpleIdentityPanel({
     passphrase?: string,
   ) => void | Promise<void>;
   backupMessage?: string | null;
+  backupPassphraseRequired?: boolean;
   onProtectLocalState?: (passphrase: string) => void | Promise<void>;
   onDisableLocalStateProtection?: (passphrase?: string) => void | Promise<void>;
   localStateProtected?: boolean;
@@ -200,7 +202,7 @@ export default function SimpleIdentityPanel({
                 className='simple-voter-input'
                 value={backupPassphrase}
                 onChange={(event) => setBackupPassphrase(event.target.value)}
-                placeholder='Optional backup passphrase'
+                placeholder={backupPassphraseRequired ? 'Backup passphrase' : 'Optional backup passphrase'}
                 type='password'
                 spellCheck={false}
                 autoCapitalize='off'
@@ -212,8 +214,9 @@ export default function SimpleIdentityPanel({
                     type='button'
                     className='simple-voter-secondary'
                     onClick={() => void onDownloadBackup(backupPassphrase)}
+                    disabled={backupPassphraseRequired && !backupPassphrase.trim()}
                   >
-                    Download backup
+                    {backupPassphraseRequired ? 'Download full backup' : 'Download backup'}
                   </button>
                 ) : null}
                 {onRestoreBackupFile ? (

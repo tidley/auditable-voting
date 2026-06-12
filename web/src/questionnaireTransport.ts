@@ -132,6 +132,8 @@ export async function fetchQuestionnairePrivateInviteStatus(input: {
   limit?: number;
   readRelayLimit?: number;
   preferKindOnly?: boolean;
+  maxPages?: number;
+  timeBudgetMs?: number;
 }) {
   const normalizedCodeHash = input.codeHash.trim().toLowerCase();
   if (!normalizedCodeHash) {
@@ -144,6 +146,8 @@ export async function fetchQuestionnairePrivateInviteStatus(input: {
     limit: input.limit ?? 40,
     readRelayLimit: input.readRelayLimit,
     preferKindOnly: input.preferKindOnly,
+    maxPages: input.maxPages,
+    timeBudgetMs: input.timeBudgetMs,
     parseQuestionnaireIdFromEvent: (event) => parseQuestionnairePrivateInviteStatusEvent(event)?.questionnaireId ?? null,
   })).events;
 
@@ -306,9 +310,23 @@ function fingerprintBlindResponsePayload(response: QuestionnaireBlindResponseEve
     submittedAt: response.submittedAt,
     authorPubkey: response.authorPubkey.trim(),
     tokenNullifier: response.tokenNullifier.trim(),
+    tokenNullifiers: response.tokenNullifiers ?? [],
     tokenProof: response.tokenProof,
+    tokenProofs: response.tokenProofs ?? [],
     answers: response.answers ?? [],
   });
+}
+
+function responseNullifiers(response: QuestionnaireBlindResponseEvent) {
+  const values = (response.tokenNullifiers ?? [])
+    .map((entry) => entry.tokenNullifier.trim())
+    .filter(Boolean);
+  const legacy = response.tokenNullifier.trim();
+  return [...new Set(values.length > 0 ? values : [legacy].filter(Boolean))];
+}
+
+function responseTokenProofs(response: QuestionnaireBlindResponseEvent) {
+  return response.tokenProofs?.length ? response.tokenProofs : [response.tokenProof];
 }
 
 function choosePreferredSubmissionDecision(
@@ -367,14 +385,15 @@ export function evaluateQuestionnaireBlindAdmissions(input: {
         decisionEventId: explicitDecision.event.id,
       });
       if (explicitDecision.decision.accepted) {
-        acceptedNullifiers.add(entry.response.tokenNullifier.trim());
+        for (const nullifier of responseNullifiers(entry.response)) {
+          acceptedNullifiers.add(nullifier);
+        }
         if (responseId) {
           acceptedResponseIds.add(responseId);
         }
       }
       continue;
     }
-    const nullifier = entry.response.tokenNullifier.trim();
     if (responseId && acceptedResponseIds.has(responseId)) {
       decisions.push({
         ...entry,
@@ -385,7 +404,8 @@ export function evaluateQuestionnaireBlindAdmissions(input: {
       });
       continue;
     }
-    if (acceptedNullifiers.has(nullifier)) {
+    const nullifiers = responseNullifiers(entry.response);
+    if (nullifiers.some((nullifier) => acceptedNullifiers.has(nullifier))) {
       decisions.push({
         ...entry,
         accepted: false,
@@ -396,7 +416,9 @@ export function evaluateQuestionnaireBlindAdmissions(input: {
       continue;
     }
 
-    acceptedNullifiers.add(nullifier);
+    for (const nullifier of nullifiers) {
+      acceptedNullifiers.add(nullifier);
+    }
     if (responseId) {
       acceptedResponseIds.add(responseId);
     }
@@ -432,14 +454,17 @@ export async function verifyQuestionnaireBlindResponseProofs(input: {
     if (!responseId) {
       return;
     }
-    const valid = await verifyQuestionnaireBlindSignature({
+    const proofs = responseTokenProofs(entry.response);
+    const valid = (await Promise.all(proofs.map((proof) => verifyQuestionnaireBlindSignature({
       publicKey: input.publicKey,
       message: buildQuestionnaireBlindTokenSignedMessage({
         questionnaireId: entry.response.questionnaireId,
-        tokenSecretCommitment: entry.response.tokenProof.tokenCommitment,
+        tokenSecretCommitment: proof.tokenCommitment,
+        ballotScope: proof.ballotScope
+          ?? (proof.questionId ? { questionId: proof.questionId } : null),
       }),
-      signature: entry.response.tokenProof.signature,
-    });
+      signature: proof.signature,
+    })))).every(Boolean);
     if (valid) {
       verifiedResponseIds.add(responseId);
     }

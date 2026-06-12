@@ -105,6 +105,44 @@ describe("questionnaireTransport blind admissions", () => {
     expect(result.acceptedCountByNullifier["nullifier-x"]).toBe(1);
   });
 
+  it("rejects bundled responses when any scoped nullifier was already accepted", () => {
+    const first = blindResponse({
+      responseId: "resp-1",
+      nullifier: "nullifier-q1",
+      createdAt: 1712537200,
+      eventId: "event-aaa",
+    });
+    first.response.tokenNullifiers = [
+      { questionId: "q1", tokenNullifier: "nullifier-q1", ballotScope: { questionId: "q1", slotId: "q1", slotIndex: 1, version: 1 } },
+      { questionId: "q2", tokenNullifier: "nullifier-q2", ballotScope: { questionId: "q2", slotId: "q2", slotIndex: 2, version: 1 } },
+    ];
+    first.response.tokenProofs = [
+      { ...first.response.tokenProof, questionId: "q1", ballotScope: { questionId: "q1", slotId: "q1", slotIndex: 1, version: 1 } },
+      { ...first.response.tokenProof, tokenCommitment: "commitment-q2", questionId: "q2", ballotScope: { questionId: "q2", slotId: "q2", slotIndex: 2, version: 1 } },
+    ];
+    const second = blindResponse({
+      responseId: "resp-2",
+      nullifier: "nullifier-q2",
+      createdAt: 1712537201,
+      eventId: "event-bbb",
+    });
+    second.response.tokenNullifiers = [
+      { questionId: "q2", tokenNullifier: "nullifier-q2", ballotScope: { questionId: "q2", slotId: "q2", slotIndex: 2, version: 1 } },
+    ];
+
+    const result = evaluateQuestionnaireBlindAdmissions({
+      entries: [second, first],
+    });
+
+    expect(result.accepted.map((entry) => entry.response.responseId)).toEqual(["resp-1"]);
+    expect(result.rejected.map((entry) => entry.response.responseId)).toEqual(["resp-2"]);
+    expect(result.rejected[0].rejectionReason).toBe("duplicate_nullifier");
+    expect(result.acceptedCountByNullifier).toMatchObject({
+      "nullifier-q1": 1,
+      "nullifier-q2": 1,
+    });
+  });
+
   it("does not reject the same relay event when it is returned more than once", () => {
     const response = blindResponse({
       responseId: "resp-1",

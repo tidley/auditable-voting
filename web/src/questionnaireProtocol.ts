@@ -17,6 +17,15 @@ export type QuestionnaireQuestionBase = {
   questionId: string;
   prompt: string;
   required: boolean;
+  ballotSlot?: QuestionnaireBallotSlot | null;
+};
+
+export type QuestionnaireBallotCredentialMode = "questionnaire" | "per_question";
+
+export type QuestionnaireBallotSlot = {
+  slotId: string;
+  slotIndex: number;
+  version: number;
 };
 
 export type QuestionnaireYesNoQuestion = QuestionnaireQuestionBase & {
@@ -69,6 +78,7 @@ export type QuestionnaireDefinition = {
   responseVisibility: "public" | "private";
   eligibilityMode: "open" | "allowlist";
   allowMultipleResponsesPerPubkey: boolean;
+  ballotCredentialMode?: QuestionnaireBallotCredentialMode;
   blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
   questionnaireRelays?: string[];
   questions: QuestionnaireQuestion[];
@@ -230,6 +240,33 @@ function isNonEmpty(value: string | null | undefined) {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+export function questionnaireUsesPerQuestionCredentials(definition: Pick<QuestionnaireDefinition, "ballotCredentialMode"> | null | undefined) {
+  return definition?.ballotCredentialMode === "per_question";
+}
+
+export function normaliseQuestionBallotSlot(question: QuestionnaireQuestion, index: number): QuestionnaireBallotSlot {
+  const slot = question.ballotSlot ?? null;
+  const slotIndex = Number.isFinite(slot?.slotIndex)
+    ? Math.max(1, Math.floor(slot.slotIndex))
+    : index + 1;
+  const version = Number.isFinite(slot?.version)
+    ? Math.max(1, Math.floor(slot.version))
+    : 1;
+  const slotId = typeof slot?.slotId === "string" && slot.slotId.trim()
+    ? slot.slotId.trim()
+    : question.questionId.trim();
+  return {
+    slotId,
+    slotIndex,
+    version,
+  };
+}
+
+export function questionBallotScopeKey(question: QuestionnaireQuestion, index: number) {
+  const slot = normaliseQuestionBallotSlot(question, index);
+  return `${slot.slotId}:v${slot.version}`;
+}
+
 export function clampRankMinimum(question: Pick<QuestionnaireRankQuestion, "options" | "minimumRanked">) {
   const optionCount = Array.isArray(question.options) ? question.options.length : 0;
   if (!Number.isFinite(question.minimumRanked)) {
@@ -278,6 +315,13 @@ export function validateQuestionnaireDefinition(input: QuestionnaireDefinition):
     errors.push("flow_mode_invalid");
   }
   if (
+    input.ballotCredentialMode !== undefined
+    && input.ballotCredentialMode !== "questionnaire"
+    && input.ballotCredentialMode !== "per_question"
+  ) {
+    errors.push("ballot_credential_mode_invalid");
+  }
+  if (
     input.responseMode !== QUESTIONNAIRE_RESPONSE_MODE_BLIND_TOKEN
     && input.responseMode !== QUESTIONNAIRE_RESPONSE_MODE_LEGACY_PRIVATE_ENVELOPE
   ) {
@@ -305,6 +349,7 @@ export function validateQuestionnaireDefinition(input: QuestionnaireDefinition):
     errors.push("questions_missing");
   } else {
     const questionIds = new Set<string>();
+    const ballotSlotKeys = new Set<string>();
     for (const question of input.questions) {
       if (!isNonEmpty(question.questionId)) {
         errors.push("question_id_missing");
@@ -314,6 +359,23 @@ export function validateQuestionnaireDefinition(input: QuestionnaireDefinition):
         errors.push(`question_id_duplicate:${question.questionId}`);
       }
       questionIds.add(question.questionId);
+      if (input.ballotCredentialMode === "per_question") {
+        const slot = normaliseQuestionBallotSlot(question, ballotSlotKeys.size);
+        if (!isNonEmpty(slot.slotId)) {
+          errors.push(`ballot_slot_id_missing:${question.questionId}`);
+        }
+        if (!Number.isFinite(slot.slotIndex) || slot.slotIndex <= 0) {
+          errors.push(`ballot_slot_index_invalid:${question.questionId}`);
+        }
+        if (!Number.isFinite(slot.version) || slot.version <= 0) {
+          errors.push(`ballot_slot_version_invalid:${question.questionId}`);
+        }
+        const slotKey = `${slot.slotId}:v${slot.version}`;
+        if (ballotSlotKeys.has(slotKey)) {
+          errors.push(`ballot_slot_duplicate:${slotKey}`);
+        }
+        ballotSlotKeys.add(slotKey);
+      }
 
       if (question.type === "multiple_choice" || question.type === "rank") {
         if (!Array.isArray(question.options) || question.options.length < 2) {

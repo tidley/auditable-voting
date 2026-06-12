@@ -140,20 +140,6 @@ export default function SimpleMessagesPanel(props: SimpleMessagesPanelProps) {
 
   return (
     <section className='simple-messages-panel' aria-label='Messages'>
-      <div className='simple-messages-head'>
-        <div>
-          <h3 className='simple-voter-question'>Messages</h3>
-          <p className='simple-voter-note'>
-            Gift-wrapped direct messages between voter and organiser identities.
-          </p>
-        </div>
-        {actorNpub ? (
-          <span className='simple-messages-actor'>
-            {deriveActorDisplayId(actorNpub)}
-          </span>
-        ) : null}
-      </div>
-
       {!actorNsec ? (
         <div className='simple-messages-empty-state'>
           <p className='simple-voter-empty'>{lockedText}</p>

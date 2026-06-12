@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  normaliseQuestionBallotSlot,
   normalizeQuestionnaireDefinition,
+  questionBallotScopeKey,
   validateQuestionnaireDefinition,
   validateQuestionnaireResponsePayload,
   type QuestionnaireDefinition,
@@ -92,6 +94,57 @@ describe("questionnaireProtocol", () => {
 
     expect(result.valid).toBe(false);
     expect(result.errors).toContain("invalid_free_text_encrypt_responses:q3");
+  });
+
+  it("validates per-question ballot slots and rejects duplicate live slots", () => {
+    const definition: QuestionnaireDefinition = {
+      ...buildDefinition(),
+      ballotCredentialMode: "per_question",
+      questions: buildDefinition().questions.map((question, index) => ({
+        ...question,
+        ballotSlot: {
+          slotId: question.questionId,
+          slotIndex: index + 1,
+          version: 1,
+        },
+      })),
+    };
+
+    expect(validateQuestionnaireDefinition(definition)).toMatchObject({ valid: true });
+    expect(normaliseQuestionBallotSlot(definition.questions[0], 0)).toEqual({
+      slotId: "q1",
+      slotIndex: 1,
+      version: 1,
+    });
+    expect(questionBallotScopeKey(definition.questions[0], 0)).toBe("q1:v1");
+
+    const duplicateSlot: QuestionnaireDefinition = {
+      ...definition,
+      questions: definition.questions.map((question, index) => ({
+        ...question,
+        ballotSlot: {
+          slotId: index < 2 ? "shared-slot" : question.questionId,
+          slotIndex: index + 1,
+          version: 1,
+        },
+      })),
+    };
+    const result = validateQuestionnaireDefinition(duplicateSlot);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain("ballot_slot_duplicate:shared-slot:v1");
+
+    const bumpedSecondSlot: QuestionnaireDefinition = {
+      ...duplicateSlot,
+      questions: duplicateSlot.questions.map((question, index) => ({
+        ...question,
+        ballotSlot: {
+          slotId: index < 2 ? "shared-slot" : question.questionId,
+          slotIndex: index + 1,
+          version: index === 1 ? 2 : 1,
+        },
+      })),
+    };
+    expect(validateQuestionnaireDefinition(bumpedSecondSlot)).toMatchObject({ valid: true });
   });
 
   it("normalizes missing response mode to legacy compatibility mode", () => {
