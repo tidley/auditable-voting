@@ -115,6 +115,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
   const [role, setRole] = useState<SimpleRole>(() => readRoleFromUrl() ?? initialRole);
   const [voterTab, setVoterTab] = useState<VoterTab>(() => (readLinkedQuestionnaireIdFromUrl() ? "vote" : "configure"));
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [voterMessagesUnread, setVoterMessagesUnread] = useState(false);
   const [accountIdentityNpub, setAccountIdentityNpub] = useState("");
   const [accountIdentityDialogOpen, setAccountIdentityDialogOpen] = useState(false);
   const [accountIdentityQrSrc, setAccountIdentityQrSrc] = useState<string | null>(null);
@@ -132,6 +133,12 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
   const preferredSignerLabel = useMemo(() => (isMobileBrowser() ? "Amber" : "NOS2X-FOX"), []);
   const preferredSignerIsAmber = preferredSignerLabel === "Amber";
   const accountIdentityLabel = accountIdentityNpub ? deriveActorDisplayId(accountIdentityNpub) : "pending";
+
+  useEffect(() => {
+    if (role !== "voter") {
+      setVoterMessagesUnread(false);
+    }
+  }, [role]);
 
   useEffect(() => {
     if (role !== "voter" && role !== "coordinator") {
@@ -698,13 +705,14 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
     <div className='simple-account-menu-wrap' ref={roleSwitchWrapRef}>
       <button
         type='button'
-        className='simple-role-switch-toggle simple-account-menu-toggle'
+        className={`simple-role-switch-toggle simple-account-menu-toggle${role === "voter" && voterMessagesUnread ? " has-unread-message is-breathing" : ""}`}
         onClick={() => {
           setAccountMenuOpen((current) => !current);
         }}
         aria-haspopup='menu'
         aria-expanded={accountMenuOpen}
         aria-controls='simple-app-menu'
+        aria-label={role === "voter" && voterMessagesUnread ? "Menu, new message" : "Menu"}
         data-press-feedback-disabled='true'
       >
         Menu
@@ -754,14 +762,19 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                     type='button'
                     role='tab'
                     aria-selected={voterTab === option.tab}
-                    className={`simple-role-switch-button${voterTab === option.tab ? ' is-active' : ''}`}
+                    className={`simple-role-switch-button${voterTab === option.tab ? ' is-active' : ''}${option.tab === "messages" && voterMessagesUnread ? ' has-unread-message' : ''}`}
                     data-press-feedback-disabled='true'
                     onClick={() => {
                       setVoterTab(option.tab);
+                      if (option.tab === "messages") {
+                        setVoterMessagesUnread(false);
+                      }
                       setAccountMenuOpen(false);
                     }}
                   >
-                    <span className={`simple-menu-tab-icon simple-menu-tab-icon-${option.icon}`} aria-hidden='true' />
+                    <span className={`simple-menu-tab-icon simple-menu-tab-icon-${option.icon}`} aria-hidden='true'>
+                      {option.tab === "messages" && voterMessagesUnread ? <span className='simple-message-unread-dot' /> : null}
+                    </span>
                     <span>{option.label}</span>
                   </button>
                 ))}
@@ -936,6 +949,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
           activeTab={voterTab}
           onActiveTabChange={setVoterTab}
           onIdentityChange={handleVoterIdentityChange}
+          onUnreadMessagesChange={setVoterMessagesUnread}
           showSectionTabs={false}
         />
       ) : role === 'coordinator' ? (

@@ -389,6 +389,66 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(screen.queryByRole("button", { name: "Publish questionnaire" })).toBeNull();
   });
 
+  it("switches from a locked published questionnaire to the parent requested draft round", async () => {
+    const coordinatorNpub = "npub1organiser";
+    window.localStorage.setItem(
+      buildSimpleNamespacedLocalStorageKey("coordinator.questionnaire-draft-data.v1"),
+      JSON.stringify({
+        questionnaireId: "q_published_before_new_round",
+        title: "Published before new round",
+        description: "",
+        closeTimerEnabled: false,
+        closeAfterMinutes: "60",
+        questions: [{
+          questionId: "q1",
+          prompt: "Proceed?",
+          required: true,
+          type: "yes_no",
+        }],
+      }),
+    );
+    storeCachedQuestionnaireDefinition(makeDefinition({
+      questionnaireId: "q_published_before_new_round",
+      title: "Published before new round",
+      coordinatorNpub,
+    }));
+    upsertElectionSummary({
+      electionId: "q_published_before_new_round",
+      title: "Published before new round",
+      description: "",
+      state: "open",
+      openedAt: "2026-06-02T10:00:00.000Z",
+      closedAt: null,
+      coordinatorNpub,
+    });
+
+    const { rerender } = render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub={coordinatorNpub} />);
+
+    const titleInput = screen.getByLabelText("Name") as HTMLInputElement;
+    const questionnaireIdInput = screen.getByLabelText("Questionnaire ID") as HTMLInputElement;
+    await waitFor(() => {
+      expect(questionnaireIdInput.value).toBe("q_published_before_new_round");
+    });
+    expect(titleInput.matches(":disabled")).toBe(true);
+    expect(questionnaireIdInput.matches(":disabled")).toBe(true);
+
+    rerender(
+      <QuestionnaireCoordinatorPanel
+        view='build'
+        coordinatorNpub={coordinatorNpub}
+        newRoundMode
+        draftQuestionnaireId='q_new_round_from_parent'
+      />,
+    );
+
+    await waitFor(() => {
+      expect(questionnaireIdInput.value).toBe("q_new_round_from_parent");
+    });
+    expect(titleInput.matches(":disabled")).toBe(false);
+    expect(questionnaireIdInput.matches(":disabled")).toBe(false);
+    expect(screen.getByRole("heading", { name: /New round/i })).toBeTruthy();
+  });
+
   it("keeps locally cached drafts editable until they have a published signal", async () => {
     const coordinatorNpub = "npub1organiser";
     window.localStorage.setItem(

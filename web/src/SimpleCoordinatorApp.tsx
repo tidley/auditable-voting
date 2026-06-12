@@ -111,6 +111,7 @@ import {
   SimpleActorStateLockedError,
   type SimpleActorKeypair,
 } from "./simpleLocalState";
+import { useHelplineUnreadIndicator } from "./useHelplineUnreadIndicator";
 import {
   buildCoordinatorFollowerRowsRust,
   mergeSimpleFollowersRust,
@@ -631,8 +632,8 @@ const SIMPLE_COORDINATOR_CONTROL_BACKFILL_INTERVAL_MS = 4000;
 const SIMPLE_COORDINATOR_ROUND_OPEN_POST_WELCOME_GRACE_MS = 1200;
 const SIMPLE_COORDINATOR_ROUND_OPEN_RETRY_DELAY_MS = 5000;
 const SIMPLE_COORDINATOR_ROUND_OPEN_RETRY_MAX_ATTEMPTS = 3;
-const OPTION_A_LOCAL_NSEC_BACKGROUND_PROCESS_INTERVAL_MS = 30_000;
-const OPTION_A_DEFAULT_BACKGROUND_PROCESS_INTERVAL_MS = 60_000;
+const OPTION_A_LOCAL_NSEC_BACKGROUND_PROCESS_INTERVAL_MS = 10_000;
+const OPTION_A_DEFAULT_BACKGROUND_PROCESS_INTERVAL_MS = 20_000;
 const SIMPLE_TICKET_RETRY_MIN_AGE_MS = 10000;
 const SIMPLE_TICKET_RETRY_MAX_ATTEMPTS = 3;
 const SIMPLE_TICKET_SEND_MAX_CONCURRENCY = 3;
@@ -1198,6 +1199,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   const [activeTab, setActiveTab] = useState<CoordinatorTab>("configure");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [newRoundMode, setNewRoundMode] = useState(false);
+  const [draftQuestionnaireId, setDraftQuestionnaireId] = useState("");
   const [relaySettingsExpandSignal, setRelaySettingsExpandSignal] = useState(0);
   const [questionnaireRelaysInput, setQuestionnaireRelaysInputState] = useState(() => readStoredQuestionnaireRelayInput());
   const [questionnaireRosterAnnouncement, setQuestionnaireRosterAnnouncement] = useState<{
@@ -1267,6 +1269,10 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   const [nowMs, setNowMs] = useState(() => Date.now());
   const activeCoordinatorNpub = signerNpub.trim() || keypair?.npub?.trim() || "";
   const activeCoordinatorShortId = activeCoordinatorNpub ? deriveActorDisplayId(activeCoordinatorNpub) : "pending";
+  const hasUnreadMessages = useHelplineUnreadIndicator({
+    actorNsec: signerNpub ? "" : (keypair?.nsec ?? ""),
+    suppressUnread: activeTab === "messages",
+  });
   const deploymentMode = useMemo(() => readDeploymentModeFromUrl(), []);
   const isCourseFeedbackMode = deploymentMode === "course_feedback";
   const optionASigner = useMemo(() => {
@@ -1622,6 +1628,10 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       }
       row.admittedEntry = admittedEntryByNpub.get(row.npub) ?? null;
     };
+    const privateInviteRowKey = (entry: BearerInviteCodeEntry) => {
+      const redeemedNpub = entry.redeemedNpub?.trim() ?? "";
+      return redeemedNpub || `private-invite:${entry.codeHash}`;
+    };
 
     for (const entry of visibleOptionAKnownVoters) {
       const row = ensureRow(entry.invitedNpub);
@@ -1638,7 +1648,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       }
     }
     for (const entry of privateInviteCodeEntries) {
-      const row = ensureRow(entry.redeemedNpub ?? "");
+      const row = ensureRow(privateInviteRowKey(entry));
       if (row && !row.privateInviteEntry) {
         attachAdmittedEntry(row);
         row.privateInviteEntry = entry;
@@ -4089,6 +4099,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     setSelectedSubmittedVotingId('');
     setSubmittedVotes([]);
     setNewRoundMode(false);
+    setDraftQuestionnaireId(nextQuestionnaireId);
     setActiveTab("configure");
     sentFollowAckStateRef.current = {};
     sentRosterStateRef.current = {};
@@ -5016,37 +5027,54 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     }));
     optionAQueueProcessingInFlightRef.current = true;
     try {
+      const processMountedRuntime = async () => {
+        if (!optionACoordinatorRuntime) {
+          return null;
+        }
+        const blindRequestsSynced = await optionACoordinatorRuntime.syncBlindRequestsFromDm();
+        await optionACoordinatorRuntime.processPendingBlindRequests();
+        await optionACoordinatorRuntime.syncBlindIssuanceAcksFromDm();
+        const blindIssuancesDelivered = await optionACoordinatorRuntime.publishPendingBlindIssuancesToDm();
+        const submissionsSynced = await optionACoordinatorRuntime.syncSubmissionsFromDm();
+        await optionACoordinatorRuntime.processPendingSubmissions([]);
+        const acceptanceResultsDelivered = await optionACoordinatorRuntime.publishPendingAcceptanceResultsToDm();
+        return {
+          processedElections: 1,
+          blindRequestsSynced,
+          submissionsSynced,
+          blindIssuancesDelivered,
+          acceptanceResultsDelivered,
+          blindRequestDiagnosticsByElectionId: {
+            [processingElectionId]: optionACoordinatorRuntime.getLastBlindRequestSyncDiagnostics(),
+          },
+        };
+      };
       const syncStep = localNsecMode
-        ? processOptionAQueuesForCoordinatorLive({
+        ? (optionACoordinatorRuntime && optionAElectionId.trim()
+          ? processMountedRuntime().then((result) => result ?? {
+            processedElections: 0,
+            blindRequestsSynced: 0,
+            submissionsSynced: 0,
+            blindIssuancesDelivered: 0,
+            acceptanceResultsDelivered: 0,
+            blindRequestDiagnosticsByElectionId: {},
+          })
+          : processOptionAQueuesForCoordinatorLive({
           coordinatorNpub: activeCoordinatorNpub,
           signer: optionASigner,
           fallbackNsec: keypair?.nsec,
           preferredElectionId: optionAElectionId,
           onlyPreferredElectionId: true,
           forceRepublishIssuances: false,
-        }).then((result) => {
-          if (optionACoordinatorRuntime && optionAElectionId.trim()) {
-            optionACoordinatorRuntime.bootstrapCoordinatorNpub({
-              coordinatorNpub: activeCoordinatorNpub,
-              startDmSubscriptions: false,
-            });
-          }
-          return result;
-        })
-        : optionACoordinatorRuntime!.syncBlindRequestsFromDm()
-          .then(() => optionACoordinatorRuntime!.syncSubmissionsFromDm())
-          .then(() => optionACoordinatorRuntime!.processPendingBlindRequests())
-          .then(() => optionACoordinatorRuntime!.publishPendingBlindIssuancesToDm())
-          .then(() => optionACoordinatorRuntime!.processPendingSubmissions([]))
-          .then(() => optionACoordinatorRuntime!.publishPendingAcceptanceResultsToDm())
-          .then(() => ({
-            processedElections: 1,
-            blindRequestsSynced: null,
-            submissionsSynced: null,
-            blindIssuancesDelivered: null,
-            acceptanceResultsDelivered: null,
-            blindRequestDiagnosticsByElectionId: {},
-          }));
+          }))
+        : processMountedRuntime().then((result) => result ?? {
+          processedElections: 0,
+          blindRequestsSynced: 0,
+          submissionsSynced: 0,
+          blindIssuancesDelivered: 0,
+          acceptanceResultsDelivered: 0,
+          blindRequestDiagnosticsByElectionId: {},
+        });
       const processingResult = await syncStep;
       const blindRequestDiagnostics = processingElectionId
         ? processingResult.blindRequestDiagnosticsByElectionId?.[processingElectionId] ?? null
@@ -5944,6 +5972,11 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         detail: { questionnaireId: nextQuestionnaireId },
       }));
     }
+    setDraftQuestionnaireId(nextQuestionnaireId);
+    setQuestionnaireRosterAnnouncement({
+      questionnaireId: nextQuestionnaireId,
+      state: "draft",
+    });
     setNewRoundMode(true);
     selectTab("configure");
   }
@@ -5955,6 +5988,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     });
     if (newRoundMode) {
       setNewRoundMode(false);
+      setDraftQuestionnaireId("");
       selectTab("participants");
     }
   }
@@ -7184,8 +7218,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
             {canStartNewRound ? (
               <button
                 type='button'
-                role='tab'
-                aria-selected={false}
                 className='simple-coordinator-nav-button simple-coordinator-new-round-button'
                 onClick={startNewRound}
               >
@@ -7211,10 +7243,13 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               type='button'
               role='tab'
               aria-selected={activeTab === 'messages'}
-              className={`simple-coordinator-nav-button${activeTab === 'messages' ? ' is-active' : ''}`}
+              aria-label={hasUnreadMessages ? "Messages, new message" : "Messages"}
+              className={`simple-coordinator-nav-button${activeTab === 'messages' ? ' is-active' : ''}${hasUnreadMessages ? ' has-unread-message' : ''}`}
               onClick={() => selectTab('messages')}
             >
-              <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-messages' aria-hidden='true' />
+              <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-messages' aria-hidden='true'>
+                {hasUnreadMessages ? <span className='simple-message-unread-dot' /> : null}
+              </span>
               <span className='simple-coordinator-nav-label'>Messages</span>
             </button>
             <button
@@ -7247,6 +7282,9 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               optionAAcceptedCount={optionAAcceptedCount}
               optionAAcceptedResponses={optionAAcceptedResponses}
               blindSigningPublicKey={optionABlindSigningPublicKey}
+              onEnsureBlindSigningPublicKey={optionACoordinatorRuntime
+                ? () => optionACoordinatorRuntime.ensureBlindSigningPublicKey()
+                : undefined}
               view='build'
               onInviteParticipants={openInviteVotersSection}
               questionnaireRelaysInput={questionnaireRelaysInput}
@@ -7264,6 +7302,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                 }
               }}
               newRoundMode={newRoundMode}
+              draftQuestionnaireId={draftQuestionnaireId}
               canApplyAdmissionsOnPublish={canApplyAdmissionsOnPublish}
               onAfterPublishQuestionnaire={handlePublishedQuestionnaire}
               onStatusChange={updateQuestionnaireRosterAnnouncement}
@@ -7285,6 +7324,9 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               optionAAcceptedCount={optionAAcceptedCount}
               optionAAcceptedResponses={optionAAcceptedResponses}
               blindSigningPublicKey={optionABlindSigningPublicKey}
+              onEnsureBlindSigningPublicKey={optionACoordinatorRuntime
+                ? () => optionACoordinatorRuntime.ensureBlindSigningPublicKey()
+                : undefined}
               view='responses'
               questionnaireRelaysInput={questionnaireRelaysInput}
               onResponseDetailsChange={handleCoordinatorResponseDetailsChange}
@@ -7544,6 +7586,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                             : []
                         );
                         const privateInviteRedeemedNpub = privateInviteEntry?.redeemedNpub?.trim() ?? "";
+                        const isUnclaimedPrivateInvite = Boolean(privateInviteEntry && !privateInviteRedeemedNpub);
                         const privateInviteUrl = privateInviteEntry ? getPrivateInviteCodeLink(privateInviteEntry.codeHash) : "";
                         const privateInviteActive = privateInviteEntry?.state === "available";
                         const canSharePrivateInvite = privateInviteActive && privateInviteUrl.length > 0;
@@ -7581,28 +7624,38 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                         );
                         const inviteButtonLabel = currentQuestionnaireEntry ? "Resend invite" : "Send invite";
                         const inviteInputId = privateInviteEntry ? `admitted-voter-private-invite-url-${privateInviteEntry.codeHash}` : "";
-                        const noteInputId = `admitted-voter-note-${row.npub}`;
+                        const noteInputId = privateInviteEntry
+                          ? `admitted-voter-note-private-${privateInviteEntry.codeHash}`
+                          : `admitted-voter-note-${row.npub}`;
                         const noteValue = row.admittedEntry?.note ?? privateInviteEntry?.note ?? "";
                         return (
                           <li key={row.npub} className='simple-admitted-voter-row' role='row'>
                             <span className='simple-admitted-voter-cell simple-admitted-voter-number' data-label='#' role='cell'>{rowIndex + 1}</span>
                             <div className='simple-admitted-voter-cell simple-admitted-voter-id-cell' data-label='Voter ID' role='cell'>
                               <span className='simple-admitted-voter-id'>
-                                {isResultOnlyParticipant ? "Result only" : deriveActorDisplayId(row.npub)}
+                                {isUnclaimedPrivateInvite
+                                  ? "Private invite"
+                                  : isResultOnlyParticipant
+                                    ? "Result only"
+                                    : deriveActorDisplayId(row.npub)}
                               </span>
                             </div>
                             <div className='simple-admitted-voter-cell simple-admitted-voter-npub-cell' data-label='Voter npub' role='cell'>
                               <div className='simple-admitted-voter-npub-line'>
-                                <span className='simple-admitted-voter-npub' title={row.npub}>{row.npub}</span>
-                                <button
-                                  type='button'
-                                  className='simple-admitted-voter-copy-npub'
-                                  onClick={() => void tryWriteClipboard(row.npub)}
-                                  aria-label='Copy voter npub'
-                                  title='Copy voter npub'
-                                >
-                                  <span className='simple-copy-icon' aria-hidden='true' />
-                                </button>
+                                <span className='simple-admitted-voter-npub' title={isUnclaimedPrivateInvite ? "Unclaimed private link" : row.npub}>
+                                  {isUnclaimedPrivateInvite ? "Unclaimed private link" : row.npub}
+                                </span>
+                                {!isUnclaimedPrivateInvite ? (
+                                  <button
+                                    type='button'
+                                    className='simple-admitted-voter-copy-npub'
+                                    onClick={() => void tryWriteClipboard(row.npub)}
+                                    aria-label='Copy voter npub'
+                                    title='Copy voter npub'
+                                  >
+                                    <span className='simple-copy-icon' aria-hidden='true' />
+                                  </button>
+                                ) : null}
                               </div>
                               {privateInviteEntry && privateInviteUrl ? (
                                 <div className='simple-admitted-private-link-details'>

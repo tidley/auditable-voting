@@ -18,6 +18,7 @@ import {
   type CoordinatorElectionState,
   type ElectionInviteMessage,
   type ElectionSummary,
+  type ElectionState,
   type Npub,
   type QuestionnaireAnswer,
   type VoterElectionLocalState,
@@ -150,7 +151,8 @@ const OPTION_A_COORDINATOR_NSEC_DM_LIMIT = 320;
 const OPTION_A_COORDINATOR_DM_PAGE_LIMIT = 40;
 const OPTION_A_COORDINATOR_DM_MAX_PAGES = 8;
 const OPTION_A_COORDINATOR_DM_TIME_BUDGET_MS = 6_000;
-const OPTION_A_ISSUANCE_DM_RETRY_MS = 5 * 60 * 1000;
+const OPTION_A_ISSUANCE_DM_RETRY_MS = 20 * 1000;
+const OPTION_A_ISSUANCE_DM_FAILED_RETRY_MS = 10 * 1000;
 const OPTION_A_BLIND_REQUEST_RETRY_MS = 45 * 1000;
 const OPTION_A_BLIND_REQUEST_ACK_RETRY_MS = 10 * 60 * 1000;
 const OPTION_A_BLIND_REQUEST_ACK_RESEND_AFTER_MS = 20 * 60 * 1000;
@@ -409,6 +411,31 @@ function mergeElectionSummaryIntoCoordinatorElection(
   };
 }
 
+function buildLocalPublishedElectionSummary(
+  electionId: string,
+  existing?: ElectionSummary,
+): Partial<ElectionSummary> | null {
+  const summary = loadElectionSummary(electionId);
+  const definition = readCachedQuestionnaireDefinition(electionId);
+  if (!summary && !definition) {
+    return null;
+  }
+  return {
+    title: summary?.title ?? definition?.title ?? existing?.title,
+    description: summary?.description ?? definition?.description ?? existing?.description,
+    state: summary?.state ?? (definition ? "open" : existing?.state),
+    openedAt: summary?.openedAt ?? (definition?.openAt ? new Date(definition.openAt * 1000).toISOString() : existing?.openedAt),
+    closedAt: summary?.closedAt ?? (definition?.closeAt ? new Date(definition.closeAt * 1000).toISOString() : existing?.closedAt),
+    coordinatorNpub: summary?.coordinatorNpub ?? definition?.coordinatorPubkey ?? existing?.coordinatorNpub,
+    blindSigningPublicKey: summary?.blindSigningPublicKey ?? definition?.blindSigningPublicKey ?? existing?.blindSigningPublicKey,
+    questionnaireRelays: summary?.questionnaireRelays ?? definition?.questionnaireRelays ?? existing?.questionnaireRelays,
+    issueBlindTokensWorker: summary?.issueBlindTokensWorker ?? existing?.issueBlindTokensWorker ?? null,
+    protocolVersion: summary?.protocolVersion ?? definition?.protocolVersion ?? existing?.protocolVersion,
+    flowMode: summary?.flowMode ?? definition?.flowMode ?? existing?.flowMode,
+    responseMode: summary?.responseMode ?? definition?.responseMode ?? existing?.responseMode,
+  };
+}
+
 function findIssuedBlindResponse(
   state: CoordinatorElectionState,
   request: BlindBallotRequest,
@@ -567,6 +594,57 @@ function shouldUsePublicSubmissionFlow(input: {
 }) {
   return input.cachedDefinitionFlowMode === QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1
     || input.summaryFlowMode === QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1;
+}
+
+function timestampMs(value: string | null | undefined) {
+  const parsed = Date.parse(value ?? "");
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function canReplaySubmissionAfterClose(input: {
+  submission: BallotSubmission;
+  election: ElectionSummary;
+}) {
+  if (input.election.state !== "closed" && input.election.state !== "counted") {
+    return false;
+  }
+  const submittedAt = timestampMs(input.submission.submittedAt);
+  const closedAt = timestampMs(input.election.closedAt);
+  return submittedAt !== null && closedAt !== null && submittedAt <= closedAt;
+}
+
+function electionStateForSubmissionValidation(input: {
+  submission: BallotSubmission;
+  election: ElectionSummary;
+}): ElectionState {
+  return input.election.state === "open" || canReplaySubmissionAfterClose(input)
+    ? "open"
+    : input.election.state;
+}
+
+function stateForSubmissionIntake(input: {
+  state: CoordinatorElectionState;
+  submission: BallotSubmission;
+}) {
+  if (input.state.election.state === "open" || !canReplaySubmissionAfterClose({
+    submission: input.submission,
+    election: input.state.election,
+  })) {
+    return {
+      state: input.state,
+      replayingAfterClose: false,
+    };
+  }
+  return {
+    state: {
+      ...input.state,
+      election: {
+        ...input.state.election,
+        state: "open" as const,
+      },
+    },
+    replayingAfterClose: true,
+  };
 }
 
 export class QuestionnaireOptionAVoterRuntime {
@@ -2763,6 +2841,28 @@ export class QuestionnaireOptionACoordinatorRuntime {
     return created;
   }
 
+  private refreshElectionSummaryFromLocalPublication() {
+    if (!this.state) {
+      return null;
+    }
+    const localSummary = buildLocalPublishedElectionSummary(this.electionId, this.state.election);
+    if (!localSummary) {
+      return this.state;
+    }
+    const mergedElection = mergeElectionSummaryIntoCoordinatorElection(this.state.election, localSummary);
+    if (JSON.stringify(mergedElection) === JSON.stringify(this.state.election)) {
+      return this.state;
+    }
+    this.state = {
+      ...this.state,
+      election: mergedElection,
+      lastUpdatedAt: nowIso(),
+    };
+    upsertElectionSummary(mergedElection);
+    this.persistCoordinatorState("refresh_local_published_election_summary", { force: true });
+    return this.state;
+  }
+
   private async ensureBlindSigningKey(): Promise<QuestionnaireBlindPrivateKey> {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
@@ -3107,6 +3207,28 @@ export class QuestionnaireOptionACoordinatorRuntime {
     };
   }
 
+  private getBearerInviteCodeRequestBlockReason(
+    state: CoordinatorElectionState,
+    request: BlindBallotRequest,
+  ): "redeemed" | "revoked" | null {
+    const codeHash = (request.inviteCodeHash ?? "").trim().toLowerCase();
+    if (!isQuestionnaireInviteCodeHash(codeHash)) {
+      return null;
+    }
+    const codeEntry = state.bearerInviteCodes?.[codeHash] ?? null;
+    if (!codeEntry || codeEntry.electionId !== this.electionId) {
+      return null;
+    }
+    if (codeEntry.state === "revoked") {
+      return "revoked";
+    }
+    const redeemedNpub = codeEntry.redeemedNpub?.trim() ?? "";
+    if (codeEntry.state === "redeemed" && redeemedNpub && redeemedNpub !== request.invitedNpub) {
+      return "redeemed";
+    }
+    return null;
+  }
+
   async authorizeRequester(invitedNpub: string) {
     const normalizedInvitedNpub = toNpub(invitedNpub);
     optionAFlowLog("coordinator", "authorize_requester", { electionId: this.electionId, invitedNpub: normalizedInvitedNpub || invitedNpub });
@@ -3357,7 +3479,10 @@ export class QuestionnaireOptionACoordinatorRuntime {
         // Keep bounded retries until we receive an explicit issuance ACK (or see a valid submission).
         // A single relay-accepted publish is not a guaranteed recipient delivery on public relays.
         const lastAttemptMs = Date.parse(delivery.lastAttemptAt);
-        return !Number.isFinite(lastAttemptMs) || Date.now() - lastAttemptMs >= minRetryMs;
+        const retryMs = delivery.lastSuccessAt
+          ? minRetryMs
+          : Math.min(minRetryMs, OPTION_A_ISSUANCE_DM_FAILED_RETRY_MS);
+        return !Number.isFinite(lastAttemptMs) || Date.now() - lastAttemptMs >= retryMs;
       });
     let delivered = 0;
     for (const issuance of issued) {
@@ -3596,6 +3721,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
     }
+    this.refreshElectionSummaryFromLocalPublication();
     const delegatedIssuance = isDelegatedWorkerCapabilityEnabled({
       electionId: this.electionId,
       capability: "issue_blind_tokens",
@@ -3621,6 +3747,17 @@ export class QuestionnaireOptionACoordinatorRuntime {
     });
     let next = this.state;
     for (const request of queue) {
+      const privateInviteBlockReason = this.getBearerInviteCodeRequestBlockReason(next, request);
+      if (privateInviteBlockReason) {
+        optionAFlowLog("coordinator", "blind_request_rejected_private_invite_unavailable", {
+          electionId: this.electionId,
+          requestId: request.requestId,
+          invitedNpub: request.invitedNpub,
+          reason: privateInviteBlockReason,
+        });
+        dequeueBlindRequest(request.requestId);
+        continue;
+      }
       next = this.redeemBearerInviteCodeForRequest(next, request);
       const claimed = reduceCoordinatorEvent(next, {
         type: "LOGIN_VERIFIED",
@@ -3747,6 +3884,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
     }
+    this.refreshElectionSummaryFromLocalPublication();
     if (isDelegatedWorkerCapabilityEnabled({
       electionId: this.electionId,
       capability: "verify_public_submissions",
@@ -3829,7 +3967,19 @@ export class QuestionnaireOptionACoordinatorRuntime {
         dequeueSubmission(submission.submissionId);
         continue;
       }
-      const received = reduceCoordinatorEvent(next, {
+      if (next.election.state !== "open" && next.election.state !== "closed" && next.election.state !== "counted") {
+        optionAFlowLog("coordinator", "submission_deferred_until_questionnaire_open", {
+          electionId: this.electionId,
+          submissionId: submission.submissionId,
+          state: next.election.state,
+        });
+        continue;
+      }
+      const intake = stateForSubmissionIntake({
+        state: next,
+        submission,
+      });
+      const received = reduceCoordinatorEvent(intake.state, {
         type: "BALLOT_SUBMISSION_RECEIVED",
         submission,
       });
@@ -3849,12 +3999,21 @@ export class QuestionnaireOptionACoordinatorRuntime {
         continue;
       }
 
-      next = received.state;
+      next = intake.replayingAfterClose
+        ? {
+          ...received.state,
+          election: next.election,
+        }
+        : received.state;
       await this.publishBallotSubmissionAckDm(submission);
+      const validationElectionState = electionStateForSubmissionValidation({
+        submission,
+        election: next.election,
+      });
       const valid = validateBallotSubmission({
         submission,
         electionId: this.electionId,
-        electionState: next.election.state,
+        electionState: validationElectionState,
         requiredQuestionIds,
       });
       if (!valid) {

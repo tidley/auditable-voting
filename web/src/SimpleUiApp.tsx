@@ -90,6 +90,7 @@ import {
 import { type MailboxReadQueryDebug } from "./simpleMailbox";
 import { createSignerService, SignerServiceError } from "./services/signerService";
 import { getSharedNostrPool } from "./sharedNostrPool";
+import { useHelplineUnreadIndicator } from "./useHelplineUnreadIndicator";
 
 type LiveVoteChoice = "Yes" | "No" | null;
 export type VoterTab = "configure" | "vote" | "messages" | "settings";
@@ -416,6 +417,7 @@ type SimpleUiAppProps = {
   activeTab?: VoterTab;
   onActiveTabChange?: (tab: VoterTab) => void;
   onIdentityChange?: (npub: string) => void;
+  onUnreadMessagesChange?: (hasUnreadMessages: boolean) => void;
   showSectionTabs?: boolean;
 };
 
@@ -616,6 +618,15 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
   const voteTabActive = activeTab === "vote";
   const questionnaireModeActive = questionnaireContext.hasDefinition;
   const shouldActivateStartupRelayTraffic = (voteTabActive || hasConfiguredCoordinators) && !questionnaireModeActive;
+  const hasUnreadMessages = useHelplineUnreadIndicator({
+    actorNsec: messagesVoterNsec,
+    allowedPeerNpubs: configuredCoordinatorTargets,
+    requireAllowedPeer: true,
+    suppressUnread: activeTab === "messages",
+  });
+  useEffect(() => {
+    props.onUnreadMessagesChange?.(hasUnreadMessages);
+  }, [hasUnreadMessages, props.onUnreadMessagesChange]);
   useEffect(() => {
     if (
       !linkedQuestionnaireId

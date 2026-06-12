@@ -823,19 +823,20 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         setActiveInvite(!next.blindRequestSent && !next.credentialReady ? publicInvite : null);
         setPendingInvites(publicInvite ? [publicInvite] : []);
         const title = publicInvite?.title || targetElectionId;
+        if (next.blindRequestSent || next.credentialReady || next.submission) {
+          setStatus("Invite already claimed by this device/account.");
+          setRefreshNonce((value) => value + 1);
+          return;
+        }
         const inviteStatus = await checkPrivateInviteBeforeBallot({
           questionnaireId: next.electionId,
           voterNpub: next.invitedNpub,
           coordinatorNpub: next.coordinatorNpub || coordinatorNpub,
         });
         if (!inviteStatus.ok) {
-          setRefreshNonce((value) => value + 1);
-          return;
-        }
-        if (next.blindRequestSent || next.credentialReady || next.submission) {
-          setStatus(inviteStatus.claimedByThisDevice
-            ? "Invite already claimed by this device/account."
-            : "Opened " + title + " from private invite code.");
+          if (inviteStatus.retry) {
+            schedulePrivateInviteRetry("Checking private invite status before requesting a ballot...");
+          }
           setRefreshNonce((value) => value + 1);
           return;
         }
@@ -1740,7 +1741,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     questionnaireId: string;
     voterNpub: string;
     coordinatorNpub?: string | null;
-  }): Promise<{ ok: boolean; claimedByThisDevice: boolean }> {
+  }): Promise<{ ok: boolean; claimedByThisDevice: boolean; retry?: boolean }> {
     const inviteCode = inviteContext.inviteCode?.trim() ?? "";
     if (!inviteCode) {
       setPrivateInviteBlock(null);
@@ -1765,7 +1766,12 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       limit: 40,
     }).catch(() => null);
     const statusEvent = latestStatus?.status ?? null;
-    if (!statusEvent || statusEvent.state === "available") {
+    if (!statusEvent) {
+      setPrivateInviteBlock(null);
+      setStatus("Checking private invite status before requesting a ballot...");
+      return { ok: false, claimedByThisDevice: false, retry: true };
+    }
+    if (statusEvent.state === "available") {
       setPrivateInviteBlock(null);
       return { ok: true, claimedByThisDevice: false };
     }
@@ -2017,9 +2023,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         markSignerWaitRecoveryBaseline();
         scheduleSignerInitialPull();
         setActiveInvite(null);
-        setStatus(inviteStatus.claimedByThisDevice
-          ? "Invite already claimed by this device/account."
-          : `Blind ballot request sent. Waiting for ${getCredentialIssuerDisplayName()} issuance.`);
+        setStatus(`Blind ballot request sent. Waiting for ${getCredentialIssuerDisplayName()} issuance.`);
         setRefreshNonce((value) => value + 1);
       }).catch((error) => {
         setStatus(error instanceof Error ? error.message : "Request failed.");

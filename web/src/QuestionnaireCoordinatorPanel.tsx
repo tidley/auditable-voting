@@ -67,6 +67,7 @@ import {
   type WorkerStatusSnapshot,
 } from "./questionnaireWorkerDelegation";
 import { buildIssueBlindTokensWorkerRouting } from "./questionnaireWorkerRouting";
+import type { ElectionSummary } from "./questionnaireOptionA";
 
 const DEFAULT_QUESTIONNAIRE_ID_PREFIX = "q";
 const QUESTIONNAIRE_DRAFT_ID_STORAGE_KEY = "coordinator.questionnaire-draft-id.v1";
@@ -122,6 +123,7 @@ type QuestionnaireCoordinatorPanelProps = {
   optionAAcceptedCount?: number;
   optionAAcceptedResponses?: QuestionnaireAcceptedResponse[];
   blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
+  onEnsureBlindSigningPublicKey?: () => Promise<QuestionnaireBlindPublicKey | null>;
   view?: "build" | "responses" | "participants";
   onInviteParticipants?: () => void;
   questionnaireRelaysInput?: string;
@@ -129,6 +131,7 @@ type QuestionnaireCoordinatorPanelProps = {
   onConfigureQuestionnaireRelays?: () => void;
   onConfigureWorker?: () => void;
   newRoundMode?: boolean;
+  draftQuestionnaireId?: string;
   canApplyAdmissionsOnPublish?: boolean;
   onAfterPublishQuestionnaire?: (questionnaireId: string) => void | Promise<void>;
   onResponseDetailsChange?: (responseDetails: QuestionnaireResultsDashboardResponseDetail[]) => void;
@@ -551,6 +554,22 @@ function questionnaireStateFromElectionSummaryState(state: string | null | undef
     return "results_published";
   }
   return null;
+}
+
+function electionSummaryStateFromQuestionnaireState(state: QuestionnaireStateValue | null): ElectionSummary["state"] | null {
+  if (state === "results_published") {
+    return "counted";
+  }
+  if (state === "draft" || state === "published" || state === "open" || state === "closed") {
+    return state;
+  }
+  return null;
+}
+
+function unixTimestampToIso(timestampSeconds?: number | null) {
+  return timestampSeconds && Number.isFinite(timestampSeconds)
+    ? new Date(timestampSeconds * 1000).toISOString()
+    : null;
 }
 
 function definitionBelongsToCoordinator(definition: QuestionnaireDefinition | null, coordinatorNpub: string) {
@@ -1315,6 +1334,86 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     filteredCount: 0,
     kindOnlyCount: 0,
   });
+  const resetQuestionnaireReadState = useCallback(() => {
+    setLatestDefinition(null);
+    setLatestState(null);
+    setLatestStateEvent(null);
+    setLatestStateCreatedAt(null);
+    setLatestAcceptedCount(0);
+    setLatestRejectedCount(0);
+    setLatestAcceptedResponses([]);
+    setLastResponseSeenEventId(null);
+    setLastResponseRejectReason(null);
+    setLatestResultAcceptedCount(null);
+    setDefinitionEventCount(0);
+    setStateEventCount(0);
+    setResponseEventCount(0);
+    setResultEventCount(0);
+    setDefinitionPublishDiagnostic({
+      attempted: false,
+      succeeded: false,
+      eventId: null,
+      kind: null,
+      tags: [],
+      relayTargets: [],
+      relaySuccessCount: 0,
+    });
+    setDefinitionPublishStartedAt(null);
+    setDefinitionPublishSucceededAt(null);
+    setStatePublishDiagnostic({
+      attempted: false,
+      succeeded: false,
+      eventId: null,
+      kind: null,
+      tags: [],
+      relayTargets: [],
+      relaySuccessCount: 0,
+    });
+    setStatePublishStartedAt(null);
+    setStatePublishSucceededAt(null);
+    setResultPublishDiagnostic({
+      attempted: false,
+      succeeded: false,
+      eventId: null,
+      kind: null,
+      tags: [],
+      relayTargets: [],
+      relaySuccessCount: 0,
+    });
+    setDefinitionReadDiagnostics({
+      mode: "filtered",
+      filteredCount: 0,
+      kindOnlyCount: 0,
+    });
+    setStateReadDiagnostics({
+      mode: "filtered",
+      filteredCount: 0,
+      kindOnlyCount: 0,
+    });
+    setResultReadDiagnostics({
+      mode: "filtered",
+      filteredCount: 0,
+      kindOnlyCount: 0,
+    });
+    setResponseReadDiagnostics({
+      mode: "filtered",
+      filteredCount: 0,
+      kindOnlyCount: 0,
+    });
+  }, []);
+  const selectDraftQuestionnaireId = useCallback((nextId: string) => {
+    const normalized = nextId.trim() || generateQuestionnaireId();
+    setQuestionnaireId((current) => (current.trim() === normalized ? current : normalized));
+    setStatus(null);
+    resetQuestionnaireReadState();
+  }, [resetQuestionnaireReadState]);
+  useEffect(() => {
+    const nextDraftId = props.draftQuestionnaireId?.trim() ?? "";
+    if (view !== "build" || !isNewRoundMode || !nextDraftId) {
+      return;
+    }
+    selectDraftQuestionnaireId(nextDraftId);
+  }, [isNewRoundMode, props.draftQuestionnaireId, selectDraftQuestionnaireId, view]);
   const parsedQuestionnaireRelays = useMemo(
     () => normalizeQuestionnaireRelays(questionnaireRelaysInput),
     [questionnaireRelaysInput],
@@ -1584,14 +1683,37 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       .sort((left, right) => right.created_at - left.created_at)[0] ?? null;
     setLastResponseSeenEventId(latestResponseEvent?.id ?? null);
 
+    const effectiveState = deriveEffectiveQuestionnaireState({
+      definition,
+      latestState: state,
+    });
     setLatestDefinition(definition);
     setLatestStateEvent(state);
     setLatestStateCreatedAt(state?.createdAt ?? null);
-    setLatestState(deriveEffectiveQuestionnaireState({
-      definition,
-      latestState: state,
-    }));
+    setLatestState(effectiveState);
     setLatestResultAcceptedCount(resultSummary?.acceptedResponseCount ?? null);
+    const summaryState = electionSummaryStateFromQuestionnaireState(effectiveState);
+    if (definition && summaryState) {
+      const existingSummary = loadElectionSummary(definition.questionnaireId);
+      const stateClosedAt = effectiveState === "closed" || effectiveState === "results_published"
+        ? unixTimestampToIso(state?.createdAt) ?? unixTimestampToIso(definition.closeAt)
+        : unixTimestampToIso(definition.closeAt);
+      upsertElectionSummary({
+        electionId: definition.questionnaireId,
+        title: definition.title,
+        description: definition.description ?? "",
+        state: summaryState,
+        openedAt: unixTimestampToIso(definition.openAt) ?? existingSummary?.openedAt ?? null,
+        closedAt: stateClosedAt,
+        coordinatorNpub: definition.coordinatorPubkey,
+        blindSigningPublicKey: definition.blindSigningPublicKey ?? existingSummary?.blindSigningPublicKey ?? null,
+        questionnaireRelays: definition.questionnaireRelays,
+        issueBlindTokensWorker: existingSummary?.issueBlindTokensWorker ?? null,
+        protocolVersion: definition.protocolVersion,
+        flowMode: definition.flowMode,
+        responseMode: definition.responseMode,
+      });
+    }
 
     if (definition?.flowMode === QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1) {
       const admissions = evaluateQuestionnaireBlindAdmissions({
@@ -2128,6 +2250,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   useEffect(() => {
     const draftQuestionnaireId = questionnaireId.trim();
     const stagedQuestionnaireId = draftQuestionnaireId || null;
+    const debugAcceptedCount = Math.max(latestAcceptedCount, props.optionAAcceptedCount ?? 0);
     const definitionPublishQuestionnaireIdTag = definitionPublishDiagnostic.tags.find((tag) => tag[0] === "questionnaire-id")?.[1] ?? null;
     const statePublishQuestionnaireIdTag = statePublishDiagnostic.tags.find((tag) => tag[0] === "questionnaire-id")?.[1] ?? null;
     const statePublishStateTag = statePublishDiagnostic.tags.find((tag) => tag[0] === "state")?.[1] ?? null;
@@ -2153,10 +2276,10 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       questionnaireIdentityContinuityOk: uniqueContinuityIds.length <= 1,
       coordinatorNpubLoaded: Boolean(coordinatorNpub),
       latestState,
-      latestAcceptedCount,
+      latestAcceptedCount: debugAcceptedCount,
       latestRejectedCount,
       responseEventsSeen: responseEventCount,
-      acceptedResponseCount: latestAcceptedCount,
+      acceptedResponseCount: debugAcceptedCount,
       rejectedResponseCount: latestRejectedCount,
       lastResponseSeenEventId,
       lastResponseRejectReason,
@@ -2179,14 +2302,14 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       deploymentMode,
       courseFeedbackAcceptanceEnabled: isCourseFeedbackMode,
       legacyRoundGatingBypassed: isCourseFeedbackMode,
-      responseAcceptedViaQuestionnairePlane: latestAcceptedCount > 0,
+      responseAcceptedViaQuestionnairePlane: debugAcceptedCount > 0,
       responseRejectedBecauseLegacyRoundRequired:
-        isCourseFeedbackMode && responseEventCount > 0 && latestAcceptedCount <= 0,
+        isCourseFeedbackMode && responseEventCount > 0 && debugAcceptedCount <= 0,
       latestDefinitionQuestionCount: latestDefinition?.questions.length ?? 0,
       latestDefinitionId: latestDefinition?.questionnaireId ?? null,
       localSummaryMatchesPublished: latestResultAcceptedCount === null
         ? null
-        : latestResultAcceptedCount === latestAcceptedCount,
+        : latestResultAcceptedCount === debugAcceptedCount,
       hasDefinition: Boolean(latestDefinition),
       status,
     };
@@ -2201,6 +2324,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     latestAcceptedCount,
     latestDefinition,
     latestRejectedCount,
+    props.optionAAcceptedCount,
     lastResponseSeenEventId,
     lastResponseRejectReason,
     latestResultAcceptedCount,
@@ -2227,13 +2351,13 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     const parentOwnsIdentityReset = props.coordinatorNsec !== undefined || props.coordinatorNpub !== undefined;
     const handleQuestionnaireIdReset = (event: Event) => {
       const nextId = (event as CustomEvent<{ questionnaireId?: string }>).detail?.questionnaireId?.trim();
-      setQuestionnaireId(nextId || generateQuestionnaireId());
+      selectDraftQuestionnaireId(nextId || generateQuestionnaireId());
     };
     const handleCoordinatorNewIdentity = () => {
       if (parentOwnsIdentityReset) {
         return;
       }
-      setQuestionnaireId(resetStoredQuestionnaireDraftId());
+      selectDraftQuestionnaireId(resetStoredQuestionnaireDraftId());
     };
     window.addEventListener(QUESTIONNAIRE_ID_RESET_EVENT, handleQuestionnaireIdReset);
     window.addEventListener("auditable-voting:coordinator-new", handleCoordinatorNewIdentity);
@@ -2241,7 +2365,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       window.removeEventListener(QUESTIONNAIRE_ID_RESET_EVENT, handleQuestionnaireIdReset);
       window.removeEventListener("auditable-voting:coordinator-new", handleCoordinatorNewIdentity);
     };
-  }, [props.coordinatorNpub, props.coordinatorNsec]);
+  }, [props.coordinatorNpub, props.coordinatorNsec, selectDraftQuestionnaireId]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -3008,6 +3132,17 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     }
 
     if (!definitionToPublish.blindSigningPublicKey) {
+      const ensuredKey = await props.onEnsureBlindSigningPublicKey?.().catch(() => null);
+      if (ensuredKey) {
+        setRecoveredBlindSigningPublicKey(ensuredKey);
+        definitionToPublish = {
+          ...definitionToPublish,
+          blindSigningPublicKey: ensuredKey,
+        };
+      }
+    }
+
+    if (!definitionToPublish.blindSigningPublicKey) {
       const recoveredKey = resolveBlindSigningPublicKey();
       if (recoveredKey) {
         definitionToPublish = {
@@ -3084,11 +3219,11 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           await delegateToWorker({ statusPrefix: "Vote published." });
         }
         let admissionsApplied = true;
-        if (options?.applyAdmissions) {
-          try {
-            await props.onAfterPublishQuestionnaire?.(definitionToPublish.questionnaireId);
-          } catch (error) {
-            admissionsApplied = false;
+        try {
+          await props.onAfterPublishQuestionnaire?.(definitionToPublish.questionnaireId);
+        } catch (error) {
+          admissionsApplied = false;
+          if (options?.applyAdmissions) {
             setStatus(
               `Vote published, but invited voters could not be applied: ${error instanceof Error ? error.message : "unknown error"}.`,
             );
@@ -3152,7 +3287,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     }
   }
 
-  async function publishState(state: QuestionnaireStateValue) {
+  async function publishState(state: QuestionnaireStateValue, options?: { refreshAfter?: boolean }) {
     const id = questionnaireId.trim();
     if (!coordinatorNsec.trim() || !coordinatorNpub.trim() || !id) {
       setStatus("Organiser key or vote ID is missing.");
@@ -3195,14 +3330,39 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         relaySuccessCount: result.successes,
       });
       if (result.successes > 0) {
-        setStatePublishSucceededAt(new Date().toISOString());
+        const statePublishedAt = unixTimestampToIso(result.event.created_at) ?? new Date().toISOString();
+        setStatePublishSucceededAt(statePublishedAt);
+        const summaryState = electionSummaryStateFromQuestionnaireState(state);
+        const definition = activePublishedDefinition;
+        const existingSummary = loadElectionSummary(id);
+        if (summaryState && (definition || existingSummary)) {
+          upsertElectionSummary({
+            electionId: id,
+            title: definition?.title ?? existingSummary?.title ?? id,
+            description: definition?.description ?? existingSummary?.description ?? "",
+            state: summaryState,
+            openedAt: definition ? unixTimestampToIso(definition.openAt) : existingSummary?.openedAt ?? null,
+            closedAt: state === "closed" || state === "results_published"
+              ? statePublishedAt
+              : (definition ? unixTimestampToIso(definition.closeAt) : existingSummary?.closedAt ?? null),
+            coordinatorNpub: definition?.coordinatorPubkey ?? existingSummary?.coordinatorNpub ?? coordinatorNpub.trim(),
+            blindSigningPublicKey: definition?.blindSigningPublicKey ?? existingSummary?.blindSigningPublicKey ?? null,
+            questionnaireRelays: definition?.questionnaireRelays ?? existingSummary?.questionnaireRelays,
+            issueBlindTokensWorker: existingSummary?.issueBlindTokensWorker ?? null,
+            protocolVersion: definition?.protocolVersion ?? existingSummary?.protocolVersion,
+            flowMode: definition?.flowMode ?? existingSummary?.flowMode,
+            responseMode: definition?.responseMode ?? existingSummary?.responseMode,
+          });
+        }
       }
       setStatus(
         result.successes > 0
           ? `Vote state '${state}' published (${result.successes}/${result.relayResults.length} relays).`
           : `Vote state '${state}' publish failed.`,
       );
-      await refresh();
+      if (options?.refreshAfter ?? true) {
+        await refresh();
+      }
       return result.successes > 0;
     } catch {
       setStatePublishDiagnostic((current) => ({ ...current, attempted: true, succeeded: false }));
@@ -3443,7 +3603,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         }
       }
       if (currentState === "open") {
-        const closed = await publishState("closed");
+        const closed = await publishState("closed", { refreshAfter: false });
         if (!closed) {
           setStatus("Could not close vote, so results were not published.");
           return;
@@ -3796,7 +3956,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   if (view === "responses") {
     return (
       <>
-        <div className='simple-session-page-toolbar'>
+        <div className='simple-session-page-toolbar simple-questionnaire-sticky-toolbar'>
           {questionnaireTopControls}
         </div>
         <QuestionnaireResultsDashboard
@@ -3836,7 +3996,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   return (
     <>
       <section className='simple-voter-section simple-questionnaire-build-section'>
-        <div className='simple-session-page-toolbar simple-questionnaire-build-toolbar'>
+        <div className='simple-session-page-toolbar simple-questionnaire-build-toolbar simple-questionnaire-sticky-toolbar'>
           {questionnaireTopControls}
         </div>
         <h2 className='simple-voter-section-title'>

@@ -17,6 +17,7 @@ import {
   saveCoordinatorState,
   storeAcceptance,
   storeBlindIssuance,
+  upsertElectionSummary,
 } from "./questionnaireOptionAStorage";
 import {
   fetchOptionABallotSubmissionDmsWithNsec,
@@ -623,6 +624,59 @@ describe("questionnaireOptionARuntime", () => {
     }));
   });
 
+  it("defers public submissions while a local questionnaire is still draft and accepts after publish state is stored", async () => {
+    const raceElectionId = `${electionId}_publish_race`;
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), raceElectionId);
+    await coordinator.loginWithSigner({
+      title: "Runtime",
+      description: "Test",
+      state: "draft",
+      flowMode: "public_submission_v1",
+      responseMode: "blind_token",
+    });
+    coordinator.addWhitelistNpub(voterNpub);
+    const sentInvite = await coordinator.sendInvite(voterNpub, {
+      title: "Runtime",
+      description: "Test",
+      voteUrl: "https://example.org/vote",
+    });
+
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), raceElectionId);
+    await voter.loginWithSigner(sentInvite.invite);
+    voter.updateDraftResponses([{ questionId: "q1", type: "yes_no", answer: "yes" }]);
+    await voter.requestBlindBallot({ forceResend: true });
+    await coordinator.processPendingBlindRequests();
+    voter.refreshIssuanceAndAcceptance();
+    await voter.submitVote(["q1"]);
+    const submissionId = voter.getSnapshot()?.submission?.submissionId ?? "";
+
+    vi.mocked(publishQuestionnaireSubmissionDecisionPublic).mockClear();
+    await coordinator.processPendingSubmissions(["q1"]);
+    expect(readAcceptance(submissionId)).toBe(null);
+    expect(publishQuestionnaireSubmissionDecisionPublic).not.toHaveBeenCalled();
+
+    const definition = buildDefinition({ electionId: raceElectionId, coordinatorNpub });
+    storeCachedQuestionnaireDefinition(definition);
+    upsertElectionSummary({
+      electionId: raceElectionId,
+      title: definition.title,
+      description: definition.description ?? "",
+      state: "open",
+      openedAt: new Date(definition.openAt * 1000).toISOString(),
+      closedAt: new Date(definition.closeAt * 1000).toISOString(),
+      coordinatorNpub,
+      blindSigningPublicKey: coordinator.getSnapshot()?.election.blindSigningPublicKey ?? null,
+      questionnaireRelays: definition.questionnaireRelays,
+      protocolVersion: definition.protocolVersion,
+      flowMode: definition.flowMode,
+      responseMode: definition.responseMode,
+    });
+
+    await coordinator.processPendingSubmissions(["q1"]);
+    expect(readAcceptance(submissionId)?.accepted).toBe(true);
+    expect(coordinator.getAcceptedUniqueCount()).toBe(1);
+  });
+
   it("routes blind requests to the delegated worker from invite metadata when available", async () => {
     const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
     await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
@@ -710,6 +764,92 @@ describe("questionnaireOptionARuntime", () => {
     await recovered.recoverSubmittedBallotFromSelfDm();
     expect(recovered.getSnapshot()?.submission?.submissionId).toBe(submitted?.submissionId);
     expect(recovered.getSnapshot()?.draftResponses).toEqual(submitted?.payload.responses);
+  });
+
+  it("accepts recovered public submissions that arrived before close", async () => {
+    const closedElectionId = `${electionId}_closed_replay`;
+    storeCachedQuestionnaireDefinition(buildDefinition({
+      electionId: closedElectionId,
+      coordinatorNpub,
+    }));
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), closedElectionId);
+    await coordinator.loginWithSigner({
+      title: "Runtime",
+      description: "Test",
+      state: "open",
+      flowMode: "public_submission_v1",
+    });
+    coordinator.addWhitelistNpub(voterNpub);
+    const sentInvite = await coordinator.sendInvite(voterNpub, {
+      title: "Runtime",
+      description: "Test",
+      voteUrl: "https://example.org/vote",
+    });
+
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), closedElectionId);
+    await voter.loginWithSigner(sentInvite.invite);
+    voter.updateDraftResponses([{ questionId: "q1", type: "yes_no", answer: "yes" }]);
+    await voter.requestBlindBallot({ forceResend: true });
+    await coordinator.processPendingBlindRequests();
+    voter.refreshIssuanceAndAcceptance();
+    expect(voter.getSnapshot()?.credentialReady).toBe(true);
+
+    await voter.submitVote(["q1"]);
+    const submission = voter.getSnapshot()?.submission;
+    expect(submission?.submissionId).toBeTruthy();
+
+    const persisted = loadCoordinatorState({
+      coordinatorNpub,
+      electionId: closedElectionId,
+    });
+    expect(persisted).toBeTruthy();
+    const submittedAt = Date.parse(submission?.submittedAt ?? "");
+    expect(Number.isFinite(submittedAt)).toBe(true);
+    const closedAt = new Date(submittedAt + 60_000).toISOString();
+    saveCoordinatorState({
+      coordinatorNpub,
+      state: {
+        ...persisted!,
+        election: {
+          ...persisted!.election,
+          state: "closed",
+          closedAt,
+        },
+        receivedSubmissions: {},
+        acceptedNullifiers: {},
+        acceptanceResults: {},
+        lastUpdatedAt: closedAt,
+      },
+    });
+
+    vi.mocked(publishQuestionnaireSubmissionDecisionPublic).mockClear();
+    const recoveredCoordinator = new QuestionnaireOptionACoordinatorRuntime(
+      signer(coordinatorNpub),
+      closedElectionId,
+      "nsec1coordinatorruntimeclosedreplayxxxxxxxxxxxxxxxxxx",
+    );
+    recoveredCoordinator.bootstrapCoordinatorNpub({
+      coordinatorNpub,
+      summary: {
+        ...persisted!.election,
+        state: "closed",
+        closedAt,
+      },
+      startDmSubscriptions: false,
+      recoverSelfState: false,
+      publishSelfState: false,
+    });
+    await recoveredCoordinator.processPendingSubmissions(["q1"]);
+
+    expect(recoveredCoordinator.getSnapshot()?.election.state).toBe("closed");
+    expect(recoveredCoordinator.getAcceptedUniqueCount()).toBe(1);
+    expect(readAcceptance(submission?.submissionId ?? "")).toEqual(expect.objectContaining({
+      accepted: true,
+    }));
+    expect(publishQuestionnaireSubmissionDecisionPublic).toHaveBeenCalledWith(expect.objectContaining({
+      submissionId: submission?.submissionId,
+      accepted: true,
+    }));
   });
 
   it("reuses an in-flight blind request across retries and republishes issuance on bounded retry cadence", async () => {
@@ -846,7 +986,8 @@ describe("questionnaireOptionARuntime", () => {
     await secondVoter.requestBlindBallot();
     await coordinator.processPendingBlindRequests();
     expect(coordinator.getSnapshot()?.whitelist[secondNpub]).toBeUndefined();
-    expect(coordinator.getPendingAuthorizations().some((entry) => entry.invitedNpub === secondNpub)).toBe(true);
+    expect(coordinator.getPendingAuthorizations().some((entry) => entry.invitedNpub === secondNpub)).toBe(false);
+    expect(listBlindRequests(electionId).some((entry) => entry.invitedNpub === secondNpub)).toBe(false);
   });
 
   it("uses organiser private invite metadata to control availability", async () => {

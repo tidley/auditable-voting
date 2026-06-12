@@ -802,6 +802,23 @@ code {
   color: var(--simple-text);
 }
 
+.simple-account-menu-toggle.is-breathing {
+  border-color: rgba(45, 212, 191, 0.72);
+  color: var(--simple-text);
+  animation: simple-menu-breathe 1.8s ease-in-out infinite;
+}
+
+@keyframes simple-menu-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(45, 212, 191, 0);
+  }
+
+  50% {
+    box-shadow: 0 0 0 5px rgba(45, 212, 191, 0.14);
+  }
+}
+
 .simple-role-switch-header {
   display: flex;
   align-items: flex-end;
@@ -1049,6 +1066,22 @@ code {
   height: 22px;
   color: currentColor;
   opacity: 0.95;
+}
+
+.simple-message-unread-dot {
+  position: absolute;
+  top: 1px;
+  right: 0;
+  z-index: 2;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--simple-teal);
+  box-shadow: 0 0 0 2px var(--simple-surface), 0 0 10px rgba(45, 212, 191, 0.5);
+}
+
+.simple-role-switch-button.has-unread-message {
+  color: var(--simple-text);
 }
 
 .simple-menu-action-icon::before,
@@ -1535,6 +1568,16 @@ code {
   border-right: 2px solid currentColor;
   border-bottom: 2px solid currentColor;
   transform: skew(12deg);
+}
+
+.simple-coordinator-nav-button.has-unread-message {
+  color: var(--simple-text);
+}
+
+.simple-coordinator-nav-symbol .simple-message-unread-dot {
+  top: 3px;
+  right: 2px;
+  box-shadow: 0 0 0 2px var(--simple-surface-2), 0 0 10px rgba(45, 212, 191, 0.5);
 }
 
 .simple-coordinator-nav-symbol-settings::before {
@@ -3368,6 +3411,25 @@ code {
 
 .simple-session-page-toolbar {
   padding: 0 8px 2px;
+}
+
+.simple-questionnaire-sticky-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 180;
+  margin: 0 -22px 12px;
+  padding: 12px 30px 10px;
+  border-bottom: 1px solid var(--simple-border);
+  background: rgba(7, 16, 26, 0.97);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.26);
+  backdrop-filter: blur(10px);
+}
+
+@media (max-width: 640px) {
+  .simple-questionnaire-sticky-toolbar {
+    margin-inline: -14px;
+    padding-inline: 22px;
+  }
 }
 
 .simple-session-controlbar {
@@ -6385,6 +6447,12 @@ code {
   .simple-account-identity-overlay-image {
     width: min(76vw, 360px);
     height: min(76vw, 360px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .simple-account-menu-toggle.is-breathing {
+    animation: none;
   }
 }
 
