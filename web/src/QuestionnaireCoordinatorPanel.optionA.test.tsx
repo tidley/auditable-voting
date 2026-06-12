@@ -240,8 +240,71 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     });
   });
 
+  it("shows only the active draft in the build page selector", async () => {
+    const coordinatorNpub = "npub1organiser";
+    window.localStorage.setItem(
+      buildSimpleNamespacedLocalStorageKey("coordinator.questionnaire-draft-data.v1"),
+      JSON.stringify({
+        questionnaireId: "q_current_draft",
+        title: "Current draft",
+        description: "",
+        closeTimerEnabled: false,
+        closeAfterMinutes: "60",
+        questions: [{
+          questionId: "q1",
+          prompt: "Proceed?",
+          required: true,
+          type: "yes_no",
+        }],
+      }),
+    );
+    upsertElectionSummary({
+      electionId: "q_previous_one",
+      title: "Previous one",
+      description: "",
+      state: "open",
+      openedAt: "2026-06-02T10:00:00.000Z",
+      closedAt: null,
+      coordinatorNpub,
+    });
+    upsertElectionSummary({
+      electionId: "q_previous_two",
+      title: "Previous two",
+      description: "",
+      state: "open",
+      openedAt: "2026-06-03T10:00:00.000Z",
+      closedAt: null,
+      coordinatorNpub,
+    });
+
+    render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub={coordinatorNpub} />);
+
+    const selector = await screen.findByRole("combobox", { name: "Questionnaire" }) as HTMLSelectElement;
+    await waitFor(() => {
+      expect(sharedNostrPoolMocks.querySync).toHaveBeenCalled();
+    });
+
+    expect([...selector.options].map((option) => option.value)).toEqual(["q_current_draft"]);
+  });
+
   it("keeps the selector on the build page and locks published questionnaire fields", async () => {
     const coordinatorNpub = "npub1organiser";
+    window.localStorage.setItem(
+      buildSimpleNamespacedLocalStorageKey("coordinator.questionnaire-draft-data.v1"),
+      JSON.stringify({
+        questionnaireId: "q_published_readonly",
+        title: "Published readonly questionnaire",
+        description: "",
+        closeTimerEnabled: false,
+        closeAfterMinutes: "60",
+        questions: [{
+          questionId: "q1",
+          prompt: "Proceed?",
+          required: true,
+          type: "yes_no",
+        }],
+      }),
+    );
     storeCachedQuestionnaireDefinition(makeDefinition({
       questionnaireId: "q_published_readonly",
       title: "Published readonly questionnaire",
@@ -261,10 +324,8 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
 
     const selector = await screen.findByRole("combobox", { name: "Questionnaire" }) as HTMLSelectElement;
     await waitFor(() => {
-      expect([...selector.options].some((option) => option.value === "q_published_readonly")).toBe(true);
+      expect([...selector.options].map((option) => option.value)).toEqual(["q_published_readonly"]);
     });
-
-    fireEvent.change(selector, { target: { value: "q_published_readonly" } });
 
     const titleInput = screen.getByLabelText("Name") as HTMLInputElement;
     const questionnaireIdInput = screen.getByLabelText("Questionnaire ID") as HTMLInputElement;

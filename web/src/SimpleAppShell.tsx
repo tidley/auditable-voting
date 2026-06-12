@@ -33,7 +33,6 @@ type CoordinatorMenuTab = "configure" | "participants" | "messages" | "settings"
 const COORDINATOR_SECTION_OPTIONS: Array<{ tab: CoordinatorMenuTab; label: string; icon: string }> = [
   { tab: "configure", label: "Questionnaire", icon: "questionnaire" },
   { tab: "participants", label: "Session", icon: "session" },
-  { tab: "messages", label: "Messages", icon: "messages" },
   { tab: "settings", label: "Settings", icon: "settings" },
 ];
 const IDENTITY_UPDATED_EVENT = "auditable-voting:identity-updated";
@@ -790,7 +789,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
             <div className='simple-account-menu-section simple-account-menu-section-nav' role='none'>
               <p className='simple-account-menu-kicker'>Organiser</p>
               <div
-                className='simple-role-switch simple-role-switch-menu-inline simple-voter-menu-switch'
+                className='simple-role-switch simple-role-switch-menu-inline simple-voter-menu-switch simple-organiser-menu-switch'
                 role='tablist'
                 aria-label='Organiser sections'
               >

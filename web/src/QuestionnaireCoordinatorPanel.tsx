@@ -2722,9 +2722,12 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     ? "New round"
     : buildStateLabel === "Open" ? "Active" : buildStateLabel;
   const checklistDescriptionAdded = description.trim().length > 0;
-  const selectedQuestionnaireOptions = availableQuestionnaireIds.length > 0
-    ? availableQuestionnaireIds
-    : (questionnaireId.trim() ? [questionnaireId.trim()] : []);
+  const currentQuestionnaireId = questionnaireId.trim();
+  const selectedQuestionnaireOptions = view === "build"
+    ? (currentQuestionnaireId ? [currentQuestionnaireId] : [])
+    : availableQuestionnaireIds.length > 0
+      ? availableQuestionnaireIds
+      : (currentQuestionnaireId ? [currentQuestionnaireId] : []);
   const questionnaireOptionLabel = (id: string) => {
     const selectedId = questionnaireId.trim();
     const selectedPublishedTitle = activePublishedDefinition?.questionnaireId === selectedId
@@ -3864,9 +3867,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             />
             {!isNewRoundMode ? (
               <div className='simple-questionnaire-id-actions'>
-                <button type='button' className='simple-voter-secondary simple-questionnaire-copy-id-button' onClick={() => void tryWriteClipboard(questionnaireId)}>
-                  Copy ID
-                </button>
                 <button type='button' className='simple-voter-secondary simple-questionnaire-generate-id-button' onClick={regenerateQuestionnaireId}>
                   Generate ID
                 </button>

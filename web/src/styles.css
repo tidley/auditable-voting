@@ -853,7 +853,7 @@ code {
   isolation: isolate;
   display: grid;
   gap: 8px;
-  width: min(472px, calc(100vw - 32px));
+  width: min(560px, calc(100vw - 16px));
   padding: 8px;
   border: 1px solid var(--simple-border);
   border-radius: 8px;
@@ -884,6 +884,15 @@ code {
   padding: 6px;
 }
 
+.simple-role-switch-menu-inline.simple-organiser-menu-switch {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.simple-role-switch-menu-inline.simple-organiser-menu-switch .simple-role-switch-button {
+  padding-right: 4px;
+  padding-left: 4px;
+}
+
 .simple-voter-menu-switch .simple-role-switch-button {
   display: grid;
   grid-template-rows: 22px auto;
@@ -901,6 +910,11 @@ code {
 .simple-voter-menu-switch .simple-role-switch-button span:last-child {
   max-width: 100%;
   overflow-wrap: anywhere;
+}
+
+.simple-organiser-menu-switch .simple-role-switch-button span:last-child {
+  overflow-wrap: normal;
+  white-space: nowrap;
 }
 
 .simple-account-menu-identity {
@@ -1141,18 +1155,27 @@ code {
   transform: skew(12deg);
 }
 
+.simple-menu-tab-icon-settings {
+  background:
+    linear-gradient(currentColor, currentColor) center / 3px 18px no-repeat,
+    linear-gradient(currentColor, currentColor) center / 18px 3px no-repeat;
+}
+
 .simple-menu-tab-icon-settings::before {
-  width: 16px;
-  height: 16px;
-  border: 2px solid currentColor;
-  border-radius: 999px;
+  width: 18px;
+  height: 18px;
+  background:
+    linear-gradient(currentColor, currentColor) center / 3px 18px no-repeat,
+    linear-gradient(currentColor, currentColor) center / 18px 3px no-repeat;
+  transform: rotate(45deg);
 }
 
 .simple-menu-tab-icon-settings::after {
-  width: 5px;
-  height: 5px;
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
   border-radius: 999px;
-  background: currentColor;
+  background: #0c1319;
 }
 
 .simple-menu-action-icon-login::before {
@@ -1320,7 +1343,7 @@ code {
 }
 
 .simple-coordinator-sidebar .simple-account-menu {
-  width: min(472px, calc(100vw - 32px));
+  width: min(560px, calc(100vw - 16px));
 }
 
 .simple-coordinator-sidebar-collapse {
@@ -1448,8 +1471,16 @@ code {
 }
 
 .simple-coordinator-new-round-button {
-  border-color: rgba(45, 212, 191, 0.18);
-  background: rgba(8, 143, 141, 0.12);
+  border-style: dashed;
+  border-color: var(--simple-border-strong);
+  background: rgba(12, 19, 25, 0.42);
+  color: var(--simple-soft);
+}
+
+.simple-coordinator-new-round-button:hover,
+.simple-coordinator-new-round-button:focus-visible {
+  border-color: var(--simple-teal);
+  background: rgba(45, 212, 191, 0.08);
   color: var(--simple-text);
 }
 
@@ -2761,7 +2792,6 @@ code {
   justify-items: stretch;
 }
 
-.simple-questionnaire-copy-id-button,
 .simple-questionnaire-generate-id-button {
   white-space: nowrap;
 }
@@ -7752,7 +7782,7 @@ code {
   }
 
   .simple-account-menu {
-    width: calc(100vw - 28px);
+    width: calc(100vw - 16px);
   }
 
   .simple-account-menu-identity {
