@@ -1191,19 +1191,29 @@ code {
   background: #0c1319;
 }
 
+.simple-menu-action-icon-new {
+  background:
+    radial-gradient(circle at 8px 7px, transparent 0 2.2px, currentColor 2.3px 3.9px, transparent 4px);
+}
+
 .simple-menu-action-icon-new::before {
+  left: 2px;
+  bottom: 3px;
   width: 13px;
-  height: 13px;
+  height: 7px;
   border: 1.8px solid currentColor;
-  border-radius: 999px;
+  border-bottom: 0;
+  border-radius: 999px 999px 0 0;
 }
 
 .simple-menu-action-icon-new::after {
-  width: 12px;
-  height: 12px;
+  right: 1px;
+  top: 4px;
+  width: 8px;
+  height: 8px;
   background:
-    linear-gradient(currentColor, currentColor) center / 12px 1.8px no-repeat,
-    linear-gradient(currentColor, currentColor) center / 1.8px 12px no-repeat;
+    linear-gradient(currentColor, currentColor) center / 8px 1.8px no-repeat,
+    linear-gradient(currentColor, currentColor) center / 1.8px 8px no-repeat;
 }
 
 .simple-menu-action-icon-signout::before {
