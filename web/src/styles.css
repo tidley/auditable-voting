@@ -879,7 +879,8 @@ code {
   box-shadow: none;
 }
 
-.simple-voter-menu-switch {
+.simple-role-switch-menu-inline.simple-voter-menu-switch {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   padding: 6px;
 }
 
@@ -889,20 +890,30 @@ code {
   align-content: center;
   justify-items: center;
   gap: 6px;
+  min-width: 0;
   min-height: 62px;
   padding: 7px 8px;
+  font-size: 0.82rem;
+  line-height: 1.1;
   text-align: center;
+}
+
+.simple-voter-menu-switch .simple-role-switch-button span:last-child {
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .simple-account-menu-identity {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(132px, 0.85fr) minmax(180px, 1fr);
   align-items: start;
+  gap: 16px;
   padding: 8px 10px 12px;
   border-bottom: 1px solid var(--simple-border);
 }
 
 .simple-account-menu-identity-actions,
+.simple-account-menu-identity-detail,
 .simple-account-menu-signout-section {
   display: grid;
   gap: 8px;
@@ -949,6 +960,62 @@ code {
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.simple-account-menu-title {
+  margin: 0;
+  color: var(--simple-text);
+  font-size: 1.18rem;
+  font-weight: 800;
+  line-height: 1.15;
+  cursor: help;
+}
+
+.simple-account-menu-identity .token-fingerprint-symbols {
+  gap: 10px;
+}
+
+.simple-account-menu-identity .token-fingerprint-compact .token-fingerprint-grid {
+  width: 63px;
+  height: 63px;
+  border-radius: 12px;
+}
+
+.simple-account-menu-identity .token-fingerprint-compact .token-fingerprint-qr-shell {
+  min-width: 66px;
+  min-height: 66px;
+}
+
+.simple-account-menu-identity .token-fingerprint-compact .token-fingerprint-qr {
+  width: 66px;
+  height: 66px;
+  border-radius: 10px;
+}
+
+.simple-account-identity-visuals {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+}
+
+.simple-account-identity-visual-labels {
+  display: grid;
+  grid-template-columns: 63px 66px;
+  gap: 10px;
+  color: var(--simple-muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1.1;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.simple-account-identity-visual-labels span {
+  cursor: help;
+}
+
+.simple-account-menu-note {
+  margin: 0;
 }
 
 .simple-account-menu-button {
@@ -1023,6 +1090,38 @@ code {
   top: 7px;
   background: currentColor;
   box-shadow: 0 4px 0 currentColor;
+}
+
+.simple-menu-tab-icon-questionnaire::before {
+  width: 15px;
+  height: 16px;
+  border: 1.8px solid currentColor;
+  border-radius: 3px;
+}
+
+.simple-menu-tab-icon-questionnaire::after {
+  width: 8px;
+  height: 1.8px;
+  top: 7px;
+  background: currentColor;
+  box-shadow: 0 4px 0 currentColor;
+}
+
+.simple-menu-tab-icon-session::before {
+  width: 3px;
+  height: 12px;
+  bottom: 4px;
+  left: 4px;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 5px -4px 0 currentColor, 10px -8px 0 currentColor;
+}
+
+.simple-menu-tab-icon-session::after {
+  width: 17px;
+  height: 1.8px;
+  bottom: 3px;
+  background: currentColor;
 }
 
 .simple-menu-tab-icon-messages::before {

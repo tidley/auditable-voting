@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { nip19 } from "nostr-tools";
 import QRCode from "qrcode";
 import SimpleAuditorApp from "./SimpleAuditorApp";
-import SimpleCoordinatorApp from "./SimpleCoordinatorApp";
+import SimpleCoordinatorApp, { SIMPLE_COORDINATOR_MENU_NAV_EVENT } from "./SimpleCoordinatorApp";
 import SimpleRelayPanel from "./SimpleRelayPanel";
 import SimpleUiApp, { type VoterTab } from "./SimpleUiApp";
 import { SIMPLE_APP_VERSION } from "./simpleAppVersion";
@@ -26,6 +26,13 @@ const ROLE_OPTIONS: Array<{ role: SimpleRole; label: string }> = [
 const VOTER_SECTION_OPTIONS: Array<{ tab: VoterTab; label: string; icon: string }> = [
   { tab: "configure", label: "Join", icon: "join" },
   { tab: "vote", label: "Vote", icon: "vote" },
+  { tab: "messages", label: "Messages", icon: "messages" },
+  { tab: "settings", label: "Settings", icon: "settings" },
+];
+type CoordinatorMenuTab = "configure" | "participants" | "messages" | "settings";
+const COORDINATOR_SECTION_OPTIONS: Array<{ tab: CoordinatorMenuTab; label: string; icon: string }> = [
+  { tab: "configure", label: "Questionnaire", icon: "questionnaire" },
+  { tab: "participants", label: "Session", icon: "session" },
   { tab: "messages", label: "Messages", icon: "messages" },
   { tab: "settings", label: "Settings", icon: "settings" },
 ];
@@ -114,6 +121,7 @@ function isMobileBrowser() {
 export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShellProps) {
   const [role, setRole] = useState<SimpleRole>(() => readRoleFromUrl() ?? initialRole);
   const [voterTab, setVoterTab] = useState<VoterTab>(() => (readLinkedQuestionnaireIdFromUrl() ? "vote" : "configure"));
+  const [coordinatorMenuTab, setCoordinatorMenuTab] = useState<CoordinatorMenuTab>("configure");
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [accountIdentityNpub, setAccountIdentityNpub] = useState("");
   const [accountIdentityDialogOpen, setAccountIdentityDialogOpen] = useState(false);
@@ -410,6 +418,16 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
 
   const handleVoterIdentityChange = useCallback((npub: string) => {
     setAccountIdentityNpub(npub.trim());
+  }, []);
+
+  const handleCoordinatorMenuTab = useCallback((tab: CoordinatorMenuTab) => {
+    setCoordinatorMenuTab(tab);
+    setAccountMenuOpen(false);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent(SIMPLE_COORDINATOR_MENU_NAV_EVENT, {
+        detail: { tab },
+      }));
+    }
   }, []);
 
   useEffect(() => {
@@ -768,6 +786,33 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
               </div>
             </div>
           ) : null}
+          {role === "coordinator" ? (
+            <div className='simple-account-menu-section simple-account-menu-section-nav' role='none'>
+              <p className='simple-account-menu-kicker'>Organiser</p>
+              <div
+                className='simple-role-switch simple-role-switch-menu-inline simple-voter-menu-switch'
+                role='tablist'
+                aria-label='Organiser sections'
+              >
+                {COORDINATOR_SECTION_OPTIONS.map((option) => (
+                  <button
+                    key={option.tab}
+                    type='button'
+                    role='tab'
+                    aria-selected={coordinatorMenuTab === option.tab}
+                    className={`simple-role-switch-button${coordinatorMenuTab === option.tab ? ' is-active' : ''}`}
+                    data-press-feedback-disabled='true'
+                    onClick={() => {
+                      handleCoordinatorMenuTab(option.tab);
+                    }}
+                  >
+                    <span className={`simple-menu-tab-icon simple-menu-tab-icon-${option.icon}`} aria-hidden='true' />
+                    <span>{option.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
           {isSimpleActorRole(role) ? (
             <>
               <div className='simple-account-menu-identity' role='none'>
@@ -822,6 +867,33 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                     <span className='simple-menu-action-icon simple-menu-action-icon-new' aria-hidden='true' />
                     <span>New identity</span>
                   </button>
+                </div>
+                <div className='simple-account-menu-identity-detail'>
+                  <p
+                    className='simple-account-menu-title'
+                    data-tooltip={accountIdentityNpub ? `Short identity shown here. Full identity: ${accountIdentityNpub}` : undefined}
+                  >
+                    {accountIdentityLabel}
+                  </p>
+                  {accountIdentityNpub ? (
+                    <div className='simple-account-identity-visuals'>
+                      <TokenFingerprint
+                        tokenId={accountIdentityNpub}
+                        compact
+                        showQr
+                        hideMetadata
+                        qrValue={accountIdentityNpub}
+                        fingerprintTitle='Colour ID: a visual fingerprint for checking this identity at a glance.'
+                        qrTitle='QR code: scan this to copy the full identity.'
+                      />
+                      <div className='simple-account-identity-visual-labels' aria-hidden='true'>
+                        <span data-tooltip='Colour ID: a visual fingerprint for checking this identity at a glance.'>Colour ID</span>
+                        <span data-tooltip='QR code: scan this to copy the full identity.'>QR code</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className='simple-voter-note simple-account-menu-note'>Identity is loading.</p>
+                  )}
                 </div>
               </div>
               <div className='simple-account-menu-signout-section' role='none'>

@@ -1348,22 +1348,29 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     && definitionBelongsToCoordinator(latestDefinition, coordinatorNpub)
     ? latestDefinition
     : null;
-  const selectedQuestionnaireHasPublishedSignal = Boolean(
-    selectedQuestionnaireId
-    && (
-      selectedLatestDefinition
-      || (selectedQuestionnaireSummaryState && selectedQuestionnaireSummaryState !== "draft")
-      || availablePublishedQuestionnaireIds.includes(selectedQuestionnaireId)
-    ),
-  );
   const selectedCachedDefinition = useMemo(() => {
-    if (!selectedQuestionnaireHasPublishedSignal) {
+    if (!selectedQuestionnaireId) {
       return null;
     }
     const cached = readCachedQuestionnaireDefinition(selectedQuestionnaireId);
     return definitionBelongsToCoordinator(cached, coordinatorNpub) ? cached : null;
-  }, [coordinatorNpub, selectedQuestionnaireHasPublishedSignal, selectedQuestionnaireId]);
-  const activePublishedDefinition = selectedLatestDefinition ?? selectedCachedDefinition;
+  }, [coordinatorNpub, selectedQuestionnaireId]);
+  const selectedSummaryHasPublishedDefinition = Boolean(
+    selectedQuestionnaireSummaryState
+    && selectedQuestionnaireSummaryState !== "draft"
+    && selectedCachedDefinition,
+  );
+  const selectedQuestionnaireHasPublishedSignal = Boolean(
+    selectedQuestionnaireId
+    && (
+      selectedLatestDefinition
+      || selectedSummaryHasPublishedDefinition
+      || availablePublishedQuestionnaireIds.includes(selectedQuestionnaireId)
+    ),
+  );
+  const activePublishedDefinition = selectedQuestionnaireHasPublishedSignal
+    ? selectedLatestDefinition ?? selectedCachedDefinition
+    : null;
   const selectedQuestionnaireIsKnownPublished = selectedQuestionnaireHasPublishedSignal;
   const publishedDefinition = selectedQuestionnaireIsKnownPublished;
   const questionnaireEditorLocked = publishedDefinition;
@@ -1755,14 +1762,18 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             continue;
           }
           ids.add(summaryId);
-          if (summary.state !== "draft") {
-            publishedIds.add(summaryId);
-          }
           const cachedDefinition = readCachedQuestionnaireDefinition(summaryId);
+          const cachedDefinitionBelongsToCoordinator = Boolean(
+            cachedDefinition
+            && normaliseCoordinatorIdentifier(cachedDefinition.coordinatorPubkey) === summaryCoordinatorNpub,
+          );
           const cachedDefinitionTitle = cachedDefinition
-            && normaliseCoordinatorIdentifier(cachedDefinition.coordinatorPubkey) === summaryCoordinatorNpub
+            && cachedDefinitionBelongsToCoordinator
             ? cachedDefinition.title?.trim() ?? ""
             : "";
+          if (summary.state !== "draft" && cachedDefinitionBelongsToCoordinator) {
+            publishedIds.add(summaryId);
+          }
           const summaryTitle = summary.title?.trim() || cachedDefinitionTitle;
           if (summaryTitle) {
             titlesById[summaryId] = summaryTitle;
@@ -1846,11 +1857,21 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
             continue;
           }
           ids.add(summaryId);
-          if (summary.state !== "draft") {
+          const cachedDefinition = readCachedQuestionnaireDefinition(summaryId);
+          const cachedDefinitionBelongsToCoordinator = Boolean(
+            cachedDefinition
+            && normaliseCoordinatorIdentifier(cachedDefinition.coordinatorPubkey) === summaryCoordinatorNpub,
+          );
+          const cachedDefinitionTitle = cachedDefinition
+            && cachedDefinitionBelongsToCoordinator
+            ? cachedDefinition.title?.trim() ?? ""
+            : "";
+          if (summary.state !== "draft" && cachedDefinitionBelongsToCoordinator) {
             publishedIds.add(summaryId);
           }
-          if (summary.title?.trim()) {
-            titlesById[summaryId] = summary.title.trim();
+          const summaryTitle = summary.title?.trim() || cachedDefinitionTitle;
+          if (summaryTitle) {
+            titlesById[summaryId] = summaryTitle;
           }
         }
         if (selectedId && view !== "responses") {
@@ -2639,9 +2660,12 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   );
   useEffect(() => {
     if (view === "build" && builtDefinition && publishValidation?.valid && !publishedDefinition) {
+      if (selectedQuestionnaireSummaryState && selectedQuestionnaireSummaryState !== "draft") {
+        return;
+      }
       storeCachedQuestionnaireDefinition(builtDefinition);
     }
-  }, [builtDefinition, publishValidation?.valid, publishedDefinition, view]);
+  }, [builtDefinition, publishValidation?.valid, publishedDefinition, selectedQuestionnaireSummaryState, view]);
   const canPublishDraft = Boolean(
     builtDefinition
     && !publishedDefinition

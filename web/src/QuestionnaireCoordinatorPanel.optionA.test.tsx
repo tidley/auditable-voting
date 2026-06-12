@@ -314,4 +314,47 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(questionnaireIdInput.matches(":disabled")).toBe(false);
     expect(screen.getByRole("button", { name: "Publish questionnaire" })).toBeTruthy();
   });
+
+  it("keeps fresh local runtime summaries editable until a definition is published", async () => {
+    const coordinatorNpub = "npub1organiser";
+    window.localStorage.setItem(
+      buildSimpleNamespacedLocalStorageKey("coordinator.questionnaire-draft-data.v1"),
+      JSON.stringify({
+        questionnaireId: "q_runtime_open_draft",
+        title: "Runtime-created draft",
+        description: "",
+        closeTimerEnabled: false,
+        closeAfterMinutes: "60",
+        questions: [{
+          questionId: "q1",
+          prompt: "Proceed?",
+          required: true,
+          type: "yes_no",
+        }],
+      }),
+    );
+    upsertElectionSummary({
+      electionId: "q_runtime_open_draft",
+      title: "Runtime-created draft",
+      description: "",
+      state: "open",
+      openedAt: "2026-06-12T10:00:00.000Z",
+      closedAt: null,
+      coordinatorNpub,
+    });
+
+    render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub={coordinatorNpub} />);
+
+    const titleInput = screen.getByLabelText("Name") as HTMLInputElement;
+    const questionnaireIdInput = screen.getByLabelText("Questionnaire ID") as HTMLInputElement;
+    const generateIdButton = screen.getByRole("button", { name: "Generate ID" });
+    await waitFor(() => {
+      expect(titleInput.value).toBe("Runtime-created draft");
+      expect(questionnaireIdInput.value).toBe("q_runtime_open_draft");
+    });
+    expect(titleInput.matches(":disabled")).toBe(false);
+    expect(questionnaireIdInput.matches(":disabled")).toBe(false);
+    expect(generateIdButton.matches(":disabled")).toBe(false);
+    expect(screen.getByText("Questionnaire not yet published")).toBeTruthy();
+  });
 });

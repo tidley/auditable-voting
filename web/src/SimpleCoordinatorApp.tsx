@@ -154,6 +154,8 @@ import { canStartInvitedQuestionnaireRound } from "./coordinatorNewRound";
 
 type CoordinatorTab = "configure" | "participants" | "messages" | "settings";
 
+export const SIMPLE_COORDINATOR_MENU_NAV_EVENT = "auditable-voting:coordinator-menu-nav";
+
 type SimpleCoordinatorAppProps = {
   accountMenu?: ReactNode;
 };
@@ -1760,13 +1762,17 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     try {
       const cachedDefinition = readCachedQuestionnaireDefinition(optionAElectionId);
       const existingSummary = loadElectionSummary(optionAElectionId);
+      const bootstrapState =
+        existingSummary?.state && existingSummary.state !== "draft" && cachedDefinition
+          ? existingSummary.state
+          : "draft";
       optionACoordinatorRuntime.bootstrapCoordinatorNpub({
         coordinatorNpub: activeCoordinatorNpub,
         summary: {
           electionId: optionAElectionId,
-          title: questionPrompt,
-          description: "",
-          state: "open",
+          title: existingSummary?.title?.trim() || cachedDefinition?.title?.trim() || questionPrompt,
+          description: existingSummary?.description ?? cachedDefinition?.description ?? "",
+          state: bootstrapState,
           questionnaireRelays: cachedDefinition?.questionnaireRelays ?? existingSummary?.questionnaireRelays,
           protocolVersion: QUESTIONNAIRE_PROTOCOL_VERSION_V2,
           flowMode: QUESTIONNAIRE_FLOW_MODE_PUBLIC_SUBMISSION_V1,
@@ -5889,6 +5895,25 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       });
     });
   }
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const handleMenuNavigation = (event: Event) => {
+      const nextTab = (event as CustomEvent<{ tab?: CoordinatorTab }>).detail?.tab;
+      if (nextTab === "configure") {
+        setNewRoundMode(false);
+        setActiveTab("configure");
+        return;
+      }
+      if (nextTab === "participants" || nextTab === "messages" || nextTab === "settings") {
+        setActiveTab(nextTab);
+      }
+    };
+    window.addEventListener(SIMPLE_COORDINATOR_MENU_NAV_EVENT, handleMenuNavigation);
+    return () => window.removeEventListener(SIMPLE_COORDINATOR_MENU_NAV_EVENT, handleMenuNavigation);
+  }, []);
 
   async function submitToLeadCoordinator() {
     const coordinatorNpub = keypair?.npub ?? "";
