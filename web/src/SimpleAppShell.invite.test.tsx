@@ -9,7 +9,6 @@ vi.mock("./SimpleUiApp", () => ({
 }));
 
 vi.mock("./SimpleCoordinatorApp", () => ({
-  SIMPLE_COORDINATOR_MENU_NAV_EVENT: "auditable-voting:coordinator-menu-nav",
   default: (props: { accountMenu?: ReactNode }) => (
     <div>
       {props.accountMenu}
@@ -212,40 +211,25 @@ describe("SimpleAppShell invite-link login", () => {
     }
   });
 
-  it("keeps organiser navigation and identity visuals in the top menu", async () => {
+  it("keeps organiser identity visuals in the top menu without duplicating sidebar navigation", async () => {
     const user = userEvent.setup();
     const organiserNpub = "npub1" + "c".repeat(58);
     window.history.pushState(null, "", "/?role=coordinator");
     const { default: SimpleAppShell } = await import("./SimpleAppShell");
-    const navEvents: string[] = [];
-    const handleNav = (event: Event) => {
-      const detail = (event as CustomEvent<{ tab?: string }>).detail;
-      if (detail?.tab) {
-        navEvents.push(detail.tab);
-      }
-    };
-    window.addEventListener("auditable-voting:coordinator-menu-nav", handleNav);
 
-    try {
-      render(<SimpleAppShell />);
-      window.dispatchEvent(new CustomEvent("auditable-voting:identity-updated", {
-        detail: { role: "coordinator", npub: organiserNpub },
-      }));
+    render(<SimpleAppShell />);
+    window.dispatchEvent(new CustomEvent("auditable-voting:identity-updated", {
+      detail: { role: "coordinator", npub: organiserNpub },
+    }));
 
-      await user.click(screen.getByRole("button", { name: "Menu" }));
+    await user.click(screen.getByRole("button", { name: "Menu" }));
 
-      expect(screen.getByRole("tablist", { name: "Organiser sections" })).toBeTruthy();
-      expect(screen.getByRole("tab", { name: "Questionnaire" })).toBeTruthy();
-      expect(screen.getByRole("tab", { name: "Session" })).toBeTruthy();
-      expect(screen.getByRole("tab", { name: "Messages" })).toBeTruthy();
-      expect(screen.getByRole("tab", { name: "Settings" })).toBeTruthy();
-      expect(screen.getByText("Colour ID")).toBeTruthy();
-      expect(screen.getByText("QR code")).toBeTruthy();
-
-      await user.click(screen.getByRole("tab", { name: "Messages" }));
-      expect(navEvents).toContain("messages");
-    } finally {
-      window.removeEventListener("auditable-voting:coordinator-menu-nav", handleNav);
-    }
+    expect(screen.queryByRole("tablist", { name: "Organiser sections" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "Questionnaire" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "Session" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "Messages" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "Settings" })).toBeNull();
+    expect(screen.getByText("Colour ID")).toBeTruthy();
+    expect(screen.getByText("QR code")).toBeTruthy();
   });
 });

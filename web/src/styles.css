@@ -884,15 +884,6 @@ code {
   padding: 6px;
 }
 
-.simple-role-switch-menu-inline.simple-organiser-menu-switch {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.simple-role-switch-menu-inline.simple-organiser-menu-switch .simple-role-switch-button {
-  padding-right: 4px;
-  padding-left: 4px;
-}
-
 .simple-voter-menu-switch .simple-role-switch-button {
   display: grid;
   grid-template-rows: 22px auto;
@@ -910,11 +901,6 @@ code {
 .simple-voter-menu-switch .simple-role-switch-button span:last-child {
   max-width: 100%;
   overflow-wrap: anywhere;
-}
-
-.simple-organiser-menu-switch .simple-role-switch-button span:last-child {
-  overflow-wrap: normal;
-  white-space: nowrap;
 }
 
 .simple-account-menu-identity {
