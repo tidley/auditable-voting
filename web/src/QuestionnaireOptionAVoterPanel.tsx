@@ -2235,7 +2235,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     try {
       const current = ensureLocalSession({ allowInviteMissing: true, allowRelayInviteFetch: true }) ?? runtime.getSnapshot();
       if (!current?.loginVerified) {
-        setStatus("Open Vote and login, then the blind-signature request will send automatically.");
         return;
       }
       if (current.electionId !== currentQuestionnaireId || !autoRequestBlindSigningKeyReady) {
