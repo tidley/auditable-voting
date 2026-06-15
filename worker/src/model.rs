@@ -288,6 +288,8 @@ pub struct ElectionRuntimeState {
     #[serde(default)]
     pub expected_invitee_count: Option<u64>,
     #[serde(default)]
+    pub last_election_config_sent_at: Option<String>,
+    #[serde(default)]
     pub summary_published: bool,
     #[serde(default)]
     pub last_result_summary_publish_at: Option<String>,
@@ -392,6 +394,7 @@ mod tests {
         assert!(election.whitelist_npubs.is_empty());
         assert!(election.bearer_invite_codes.is_empty());
         assert!(!election.eligibility_required);
+        assert!(election.last_election_config_sent_at.is_none());
         assert!(state.seen_control_event_ids.is_empty());
     }
 }
