@@ -36,6 +36,9 @@ use tracing_subscriber::EnvFilter;
 
 const DEFAULT_DM_LOOKBACK_SECS: u64 = 7 * 24 * 60 * 60;
 const DEFAULT_PUBLIC_LOOKBACK_SECS: u64 = 12 * 60 * 60;
+const CONTROL_DM_PAGE_LIMIT: usize = 250;
+const CONTROL_DM_MAX_PAGES: usize = 8;
+const PUBLIC_RESPONSE_MAX_PAGES: usize = 12;
 const CONTROL_DM_DEDUPE_RETENTION_SECS: i64 = 14 * 24 * 60 * 60;
 const PRIVATE_DM_SEND_TIMEOUT_SECS: u64 = 12;
 const COMPLETION_CLOSE_GRACE_SECS: u64 = 5;
@@ -180,6 +183,56 @@ fn has_effective_eligibility_config(election: &ElectionRuntimeState) -> bool {
         || !election.bearer_invite_codes.is_empty()
 }
 
+fn definition_uses_per_question_credentials(definition: &serde_json::Value) -> bool {
+    definition
+        .get("ballotCredentialMode")
+        .and_then(|entry| entry.as_str())
+        == Some("per_question")
+}
+
+fn election_needs_legacy_control_replay(election: &ElectionRuntimeState) -> bool {
+    if election.revoked || is_expired(&election.expires_at) {
+        return false;
+    }
+    let has_config_without_eligibility = election.blind_signing_private_key.is_some()
+        && election.definition.is_some()
+        && !has_effective_eligibility_config(election);
+    let has_scoped_requests_without_scope_records = election
+        .definition
+        .as_ref()
+        .is_some_and(definition_uses_per_question_credentials)
+        && !election.seen_blind_request_ids.is_empty()
+        && election.issued_invited_scope_keys.is_empty();
+    has_config_without_eligibility || has_scoped_requests_without_scope_records
+}
+
+fn parsed_rfc3339_millis(value: &str) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|parsed| parsed.timestamp_millis())
+}
+
+fn is_stale_delegation_replay(
+    current: Option<&WorkerDelegationCertificate>,
+    incoming: &WorkerDelegationCertificate,
+) -> bool {
+    let Some(current) = current else {
+        return false;
+    };
+    if current.delegation_id == incoming.delegation_id {
+        return false;
+    }
+    match (
+        parsed_rfc3339_millis(&current.issued_at),
+        parsed_rfc3339_millis(&incoming.issued_at),
+    ) {
+        (Some(current_issued_at), Some(incoming_issued_at)) => {
+            incoming_issued_at < current_issued_at
+        }
+        _ => false,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BlindRequestAuthorization {
     Authorized { state_changed: bool },
@@ -255,8 +308,88 @@ fn build_blind_issuance(
         token_commitment: request.token_commitment.clone(),
         blind_signing_key_id: request.blind_signing_key_id.clone(),
         blind_signature,
+        ballot_scope: request.ballot_scope.clone(),
         definition: election.definition.clone(),
         issued_at,
+    }
+}
+
+fn ballot_scope_text_field(scope: &serde_json::Value, key: &str) -> String {
+    scope
+        .get(key)
+        .and_then(|entry| entry.as_str())
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn ballot_scope_positive_integer_field(scope: &serde_json::Value, key: &str) -> u64 {
+    match scope.get(key) {
+        Some(serde_json::Value::Number(number)) => number.as_u64().unwrap_or(0).max(1),
+        _ => 0,
+    }
+}
+
+fn ballot_scope_key(scope: &Option<serde_json::Value>) -> String {
+    let Some(scope) = scope else {
+        return "__questionnaire__".to_string();
+    };
+    let question_id = ballot_scope_text_field(scope, "questionId");
+    let slot_id = ballot_scope_text_field(scope, "slotId");
+    let version = ballot_scope_positive_integer_field(scope, "version");
+    let slot_index = ballot_scope_positive_integer_field(scope, "slotIndex");
+    if question_id.is_empty() && slot_id.is_empty() && version == 0 && slot_index == 0 {
+        return "__questionnaire__".to_string();
+    }
+    format!(
+        "{}:{}:{}:v{}",
+        if question_id.is_empty() {
+            &slot_id
+        } else {
+            &question_id
+        },
+        slot_id,
+        slot_index,
+        if version == 0 { 1 } else { version }
+    )
+}
+
+fn blind_request_issuance_scope_key(request: &BlindBallotRequest) -> String {
+    format!(
+        "{}|{}",
+        request.invited_npub,
+        ballot_scope_key(&request.ballot_scope)
+    )
+}
+
+fn blind_request_uses_questionnaire_scope(request: &BlindBallotRequest) -> bool {
+    ballot_scope_key(&request.ballot_scope) == "__questionnaire__"
+}
+
+fn has_existing_issuance_for_request(
+    election: &ElectionRuntimeState,
+    request: &BlindBallotRequest,
+) -> bool {
+    if election
+        .issued_invited_scope_keys
+        .contains(&blind_request_issuance_scope_key(request))
+    {
+        return true;
+    }
+    blind_request_uses_questionnaire_scope(request)
+        && election
+            .issued_invited_npubs
+            .contains(&request.invited_npub)
+}
+
+fn record_issuance_for_request(election: &mut ElectionRuntimeState, request: &BlindBallotRequest) {
+    election
+        .issued_invited_scope_keys
+        .insert(blind_request_issuance_scope_key(request));
+    if blind_request_uses_questionnaire_scope(request) {
+        election
+            .issued_invited_npubs
+            .insert(request.invited_npub.clone());
     }
 }
 
@@ -435,7 +568,7 @@ impl WorkerRuntime {
             active_count = active_count.saturating_add(1);
 
             let expected = election.expected_invitee_count.unwrap_or(0);
-            let accepted_unique = election.accepted_response_authors.len() as u64;
+            let accepted_unique = election.accepted_response_count;
             let has_summary_capability = election
                 .capabilities
                 .contains(&WorkerCapability::PublishResultSummary);
@@ -656,32 +789,75 @@ impl WorkerRuntime {
             DEFAULT_DM_LOOKBACK_SECS,
             since_ts.as_secs()
         );
-        let filter = Filter::new()
+        let base_filter = Filter::new()
             .kind(Kind::GiftWrap)
             .custom_tag(
                 SingleLetterTag::lowercase(Alphabet::P),
                 self.worker_pubkey.to_hex(),
             )
-            .since(since_ts)
-            .limit(250);
-        let events = self
-            .fetch_events_best_effort("control plane", filter, 8)
-            .await;
+            .since(since_ts);
+        let mut events_by_id = BTreeMap::new();
+        let mut until_ts = None;
+        for page_index in 0..CONTROL_DM_MAX_PAGES {
+            let mut filter = base_filter.clone().limit(CONTROL_DM_PAGE_LIMIT);
+            if let Some(until) = until_ts {
+                filter = filter.until(until);
+            }
+            let events = self
+                .fetch_events_best_effort("control plane", filter, 8)
+                .await;
+            if events.is_empty() {
+                break;
+            }
+            let oldest_seen = events
+                .iter()
+                .map(|event| event.created_at.as_secs())
+                .min()
+                .unwrap_or_else(|| since_ts.as_secs());
+            let fetched_count = events.len();
+            for event in events {
+                events_by_id.insert(event.id, event);
+            }
+            let next_until = oldest_seen.saturating_sub(1);
+            debug!(
+                "control plane page {} fetched {} gift-wrapped events; next_until={}",
+                page_index + 1,
+                fetched_count,
+                next_until
+            );
+            if next_until <= since_ts.as_secs() {
+                break;
+            }
+            until_ts = Some(Timestamp::from_secs(next_until));
+        }
+        let events = events_by_id.into_values().collect::<Vec<_>>();
         info!(
             "control plane poll fetched {} gift-wrapped events for worker",
             events.len()
         );
-        let unseen_events = {
+        let (unseen_events, replay_seen_control_events) = {
             let mut state = self.state.lock().await;
             prune_seen_control_events(&mut state.seen_control_event_ids, Utc::now());
-            events
+            let replay_seen_control_events = !state.seen_control_event_ids.is_empty()
+                && state
+                    .elections
+                    .values()
+                    .any(election_needs_legacy_control_replay);
+            if replay_seen_control_events {
+                info!(
+                    "control plane replaying seen gift-wrapped events to recover legacy scoped-issuance state"
+                );
+            }
+            let unseen_events = events
                 .into_iter()
                 .filter(|event| {
-                    !state
-                        .seen_control_event_ids
-                        .contains_key(&event.id.to_string())
+                    replay_seen_control_events
+                        || !state
+                            .seen_control_event_ids
+                            .contains_key(&event.id.to_string())
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            (unseen_events, replay_seen_control_events)
         };
         debug!(
             "control plane poll fetched {} unseen gift-wrapped events",
@@ -702,6 +878,9 @@ impl WorkerRuntime {
             }
             match self.process_control_message(&rumor_content).await {
                 Ok(true) => seen_event_ids.push(event.id.to_string()),
+                Ok(false) if replay_seen_control_events => {
+                    seen_event_ids.push(event.id.to_string())
+                }
                 Ok(false) => {}
                 Err(error) => {
                     warn!("control message from event {} failed: {error}", event.id);
@@ -811,7 +990,7 @@ impl WorkerRuntime {
             .get("type")
             .and_then(|entry| entry.as_str())
             .unwrap_or_default();
-        info!("control message parsed: type={message_type}");
+        debug!("control message parsed: type={message_type}");
         match message_type {
             "optiona_worker_delegation_dm" => {
                 let envelope: WorkerDelegationEnvelope = match serde_json::from_value(value) {
@@ -843,7 +1022,7 @@ impl WorkerRuntime {
                     Ok(parsed) => parsed,
                     Err(_) => return Ok(true),
                 };
-                info!(
+                debug!(
                     "blind request received: election_id={}, request_id={}, invited_npub={}",
                     envelope.request.election_id,
                     envelope.request.request_id,
@@ -928,17 +1107,64 @@ impl WorkerRuntime {
             return Ok(());
         }
 
+        let public_response_limit = {
+            let state = self.state.lock().await;
+            state
+                .elections
+                .values()
+                .filter(|entry| !entry.revoked && !is_expired(&entry.expires_at))
+                .filter_map(|entry| entry.expected_invitee_count)
+                .max()
+                .unwrap_or(500)
+                .saturating_add(100)
+                .clamp(500, 5_000)
+        };
         let since_ts = fixed_lookback_timestamp(DEFAULT_PUBLIC_LOOKBACK_SECS);
-        let filter = Filter::new()
+        let base_filter = Filter::new()
             .kind(Kind::Custom(
                 IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND,
             ))
             .hashtag("questionnaire_response_blind")
-            .since(since_ts)
-            .limit(500);
-        let events = self
-            .fetch_events_best_effort("public plane", filter, 8)
-            .await;
+            .custom_tags(
+                SingleLetterTag::lowercase(Alphabet::Q),
+                elections_to_process.clone(),
+            )
+            .since(since_ts);
+        let mut events_by_id = BTreeMap::new();
+        let mut until_ts = None;
+        for page_index in 0..PUBLIC_RESPONSE_MAX_PAGES {
+            let mut filter = base_filter.clone().limit(public_response_limit as usize);
+            if let Some(until) = until_ts {
+                filter = filter.until(until);
+            }
+            let events = self
+                .fetch_events_best_effort("public plane", filter, 8)
+                .await;
+            if events.is_empty() {
+                break;
+            }
+            let oldest_seen = events
+                .iter()
+                .map(|event| event.created_at.as_secs())
+                .min()
+                .unwrap_or_else(|| since_ts.as_secs());
+            let fetched_count = events.len();
+            for event in events {
+                events_by_id.insert(event.id, event);
+            }
+            let next_until = oldest_seen.saturating_sub(1);
+            debug!(
+                "public plane page {} fetched {} blind response events; next_until={}",
+                page_index + 1,
+                fetched_count,
+                next_until
+            );
+            if next_until <= since_ts.as_secs() {
+                break;
+            }
+            until_ts = Some(Timestamp::from_secs(next_until));
+        }
+        let events = events_by_id.into_values().collect::<Vec<_>>();
         info!(
             "public plane poll fetched {} blind response events",
             events.len()
@@ -958,7 +1184,7 @@ impl WorkerRuntime {
                 unrelated_response_count = unrelated_response_count.saturating_add(1);
                 continue;
             }
-            info!(
+            debug!(
                 "public blind response received: questionnaire_id={}, response_id={}",
                 submission.questionnaire_id, submission.response_id
             );
@@ -1069,7 +1295,7 @@ impl WorkerRuntime {
                 .filter(|entry| !entry.revoked && !is_expired(&entry.expires_at))
                 .filter_map(|entry| {
                     let expected = entry.expected_invitee_count.unwrap_or(0);
-                    let accepted_unique = entry.accepted_response_authors.len() as u64;
+                    let accepted_unique = entry.accepted_response_count;
                     if expected == 0 || accepted_unique < expected {
                         return None;
                     }
@@ -1333,7 +1559,7 @@ impl WorkerRuntime {
                 .seen_blind_request_ids
                 .contains(&request.request_id)
             {
-                info!(
+                debug!(
                     "blind request replay received; re-publishing issuance: election_id={}, request_id={}",
                     request.election_id, request.request_id
                 );
@@ -1355,13 +1581,14 @@ impl WorkerRuntime {
             if !election
                 .seen_blind_request_ids
                 .contains(&request.request_id)
-                && election
-                    .issued_invited_npubs
-                    .contains(&request.invited_npub)
+                && has_existing_issuance_for_request(election, &request)
             {
                 warn!(
-                    "blind request ignored because this invited npub already has a delegated issuance: election_id={}, request_id={}, invited_npub={}",
-                    request.election_id, request.request_id, request.invited_npub
+                    "blind request ignored because this invited npub/scope already has a delegated issuance: election_id={}, request_id={}, invited_npub={}, ballot_scope={}",
+                    request.election_id,
+                    request.request_id,
+                    request.invited_npub,
+                    ballot_scope_key(&request.ballot_scope)
                 );
                 return Ok(true);
             }
@@ -1414,7 +1641,7 @@ impl WorkerRuntime {
         let successes = self
             .send_private_msg_best_effort(recipient, content, "blind issuance")
             .await?;
-        info!(
+        debug!(
             "blind issuance published: election_id={}, request_id={}, invited_npub={}, relay_successes={}",
             request.election_id,
             request.request_id,
@@ -1425,8 +1652,8 @@ impl WorkerRuntime {
         let Some(election) = state.elections.get_mut(&request.election_id) else {
             return Ok(false);
         };
+        record_issuance_for_request(election, &request);
         election.seen_blind_request_ids.insert(request.request_id);
-        election.issued_invited_npubs.insert(request.invited_npub);
         election.last_blind_issuance_at = Some(now_iso());
         self.store.save(&state)?;
         Ok(true)
@@ -1449,13 +1676,22 @@ impl WorkerRuntime {
             );
             return Ok(());
         }
-        info!(
-            "activating delegation {} for election {}",
-            delegation.delegation_id, delegation.election_id
-        );
         let sanitized_control_relays = sanitize_control_relay_strings(&delegation.control_relays);
         let control_relays = parse_control_relays(&sanitized_control_relays);
         let mut state = self.state.lock().await;
+        let active_delegation_id = state
+            .elections
+            .get(&delegation.election_id)
+            .map(|existing| existing.delegation_id.clone())
+            .unwrap_or_default();
+        let current_delegation = state.known_delegations.get(&active_delegation_id);
+        if is_stale_delegation_replay(current_delegation, &delegation) {
+            debug!(
+                "ignoring stale delegation replay {} for election {}; active delegation is {}",
+                delegation.delegation_id, delegation.election_id, active_delegation_id
+            );
+            return Ok(());
+        }
         state
             .known_delegations
             .insert(delegation.delegation_id.clone(), delegation.clone());
@@ -1464,6 +1700,12 @@ impl WorkerRuntime {
             .entry(delegation.election_id.clone())
             .or_insert_with(ElectionRuntimeState::default);
         let delegation_changed = existing.delegation_id != delegation.delegation_id;
+        if delegation_changed {
+            info!(
+                "activating delegation {} for election {}",
+                delegation.delegation_id, delegation.election_id
+            );
+        }
         existing.election_id = delegation.election_id.clone();
         existing.delegation_id = delegation.delegation_id.clone();
         existing.capabilities = delegation.capabilities.clone();
@@ -1473,6 +1715,7 @@ impl WorkerRuntime {
         if delegation_changed {
             existing.seen_blind_request_ids.clear();
             existing.issued_invited_npubs.clear();
+            existing.issued_invited_scope_keys.clear();
             existing.whitelist_npubs.clear();
             existing.bearer_invite_codes.clear();
             existing.eligibility_configured = false;
@@ -1609,9 +1852,10 @@ fn prune_seen_control_events(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::QuestionnaireBlindPrivateKey;
     use chrono::Duration as ChronoDuration;
     use serde_json::json;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     fn sample_request() -> BlindBallotRequest {
         BlindBallotRequest {
@@ -1627,6 +1871,7 @@ mod tests {
             client_nonce: "nonce_worker_definition".to_string(),
             created_at: now_iso(),
             invite_code_hash: None,
+            ballot_scope: None,
         }
     }
 
@@ -1787,7 +2032,13 @@ mod tests {
                 "kind": "free_text"
             }]
         });
-        let request = sample_request();
+        let mut request = sample_request();
+        request.ballot_scope = Some(json!({
+            "questionId": "q1",
+            "slotId": "director-alice",
+            "slotIndex": 1,
+            "version": 1
+        }));
         let election = ElectionRuntimeState {
             definition: Some(definition.clone()),
             ..ElectionRuntimeState::default()
@@ -1809,8 +2060,108 @@ mod tests {
             issuance.blind_signature,
             "blind_signature_worker_definition"
         );
+        assert_eq!(issuance.ballot_scope, request.ballot_scope);
         assert_eq!(issuance.definition, Some(definition));
         assert_eq!(issuance.issued_at, "2026-04-23T00:00:00Z");
+    }
+
+    #[test]
+    fn delegated_issuance_duplicate_guard_is_scoped() {
+        let mut election = ElectionRuntimeState::default();
+        let mut first_request = sample_request();
+        first_request.ballot_scope = Some(json!({
+            "questionId": "q1",
+            "slotId": "director-alice",
+            "slotIndex": 1,
+            "version": 1
+        }));
+        let mut second_request = sample_request();
+        second_request.request_id = "request_worker_definition_q2".to_string();
+        second_request.ballot_scope = Some(json!({
+            "questionId": "q2",
+            "slotId": "director-bob",
+            "slotIndex": 2,
+            "version": 1
+        }));
+
+        record_issuance_for_request(&mut election, &first_request);
+
+        assert!(has_existing_issuance_for_request(&election, &first_request));
+        assert!(!has_existing_issuance_for_request(
+            &election,
+            &second_request
+        ));
+    }
+
+    #[test]
+    fn delegated_issuance_duplicate_guard_preserves_unscoped_legacy_block() {
+        let mut election = ElectionRuntimeState::default();
+        let first_request = sample_request();
+        let mut duplicate_request = sample_request();
+        duplicate_request.request_id = "request_worker_definition_duplicate".to_string();
+
+        record_issuance_for_request(&mut election, &first_request);
+
+        assert!(has_existing_issuance_for_request(
+            &election,
+            &duplicate_request
+        ));
+        assert!(election
+            .issued_invited_npubs
+            .contains(&first_request.invited_npub));
+    }
+
+    #[test]
+    fn legacy_per_question_state_requests_control_replay() {
+        let election = ElectionRuntimeState {
+            expires_at: (Utc::now() + ChronoDuration::days(1)).to_rfc3339(),
+            definition: Some(json!({
+                "questionnaireId": "q_worker_definition",
+                "ballotCredentialMode": "per_question",
+                "questions": [{
+                    "questionId": "q1",
+                    "ballotSlot": {
+                        "slotId": "q1",
+                        "slotIndex": 1,
+                        "version": 1
+                    }
+                }]
+            })),
+            blind_signing_private_key: Some(QuestionnaireBlindPrivateKey {
+                scheme: "rsabssa-sha384-pss-deterministic-v1".to_string(),
+                key_id: "key_worker_definition".to_string(),
+                jwk: serde_json::json!({}),
+                private_jwk: serde_json::json!({}),
+            }),
+            seen_blind_request_ids: HashSet::from(["request_worker_definition".to_string()]),
+            ..ElectionRuntimeState::default()
+        };
+
+        assert!(election_needs_legacy_control_replay(&election));
+    }
+
+    #[test]
+    fn stale_delegation_replay_is_ignored_by_issued_at() {
+        let current = WorkerDelegationCertificate {
+            message_type: "worker_delegation".to_string(),
+            schema_version: 1,
+            delegation_id: "delegation_new".to_string(),
+            election_id: "q_worker_definition".to_string(),
+            coordinator_npub: "npub1coordinator".to_string(),
+            worker_npub: "npub1worker".to_string(),
+            capabilities: vec![WorkerCapability::IssueBlindTokens],
+            control_relays: vec!["wss://relay.nostr.net".to_string()],
+            issued_at: "2026-06-15T12:06:27.924Z".to_string(),
+            expires_at: "2036-06-12T12:06:27.924Z".to_string(),
+        };
+        let incoming = WorkerDelegationCertificate {
+            delegation_id: "delegation_old".to_string(),
+            issued_at: "2026-06-15T12:05:59.424Z".to_string(),
+            ..current.clone()
+        };
+
+        assert!(is_stale_delegation_replay(Some(&current), &incoming));
+        assert!(!is_stale_delegation_replay(Some(&incoming), &current));
     }
 
     #[test]

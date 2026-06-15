@@ -874,7 +874,7 @@
           <li>Optional FIPS host launcher that builds upstream FIPS, advertises the node via Nostr `fips-overlay-v1`, and serves the complete Vite static build on the node's mesh address</li>
           <li>Organiser-offline blind-request routing via cached audit proxy hints</li>
           <li>Browser mailbox recovery now pages backwards until the active request, issuance, or acknowledgement is found; audit proxy operation remains the default path for larger multi-round or 100-voter sessions</li>
-          <li>Audit-proxy-issued blind credentials now carry the questionnaire definition needed to render ballots offline; the proxy waits for the organiser election config before issuing, uses per-questionnaire whitelist npubs plus private invite-code hashes from that config, keeps unlisted general-link requests retryable until organiser approval syncs the whitelist, voters copy proxy-routed requests to the organiser so private links show as claimed, and follow-up questionnaire creation stays with the organiser rather than Observer or proxy</li>
+          <li>Audit-proxy-issued blind credentials now carry the questionnaire definition and requested ballot scope needed to render and spend ballots offline; the proxy waits for the organiser election config before issuing, uses per-questionnaire whitelist npubs plus private invite-code hashes from that config, keeps unlisted general-link requests retryable until organiser approval syncs the whitelist, voters copy proxy-routed requests to the organiser so private links show as claimed, and follow-up questionnaire creation stays with the organiser rather than Observer or proxy</li>
           <li>Organiser-blind authorisation</li>
           <li>Portable observer verification</li>
         </ul>
@@ -882,8 +882,13 @@
       <div class="card">
         <h3>What still needs discipline</h3>
         <ul>
+          <li>Deployment-specific threat model and operating procedure</li>
+          <li>Remote coercion and voter-device compromise remain residual risks</li>
+          <li>Metadata minimisation across identities, relays, timing, and network paths</li>
           <li>Strong blind-signature implementation</li>
           <li>Deterministic duplicate handling</li>
+          <li>Signed/reproducible client releases and dependency review</li>
+          <li>Trustee/key ceremony, backup, recovery, and dispute process</li>
           <li>Encrypted local key storage</li>
           <li>Relay health and retry strategy</li>
         </ul>

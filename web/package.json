@@ -30,7 +30,8 @@
     "test:live-relays:repeat": "node scripts/live-simple-relay-repeat.js",
     "test:live-questionnaire-scale": "tsx scripts/live-questionnaire-scale-public.ts",
     "test:live-delegate-coordinator": "tsx scripts/live-delegate-coordinator-smoke.ts",
-    "test:live-rust-helper": "tsx scripts/live-rust-helper-smoke.ts"
+    "test:live-rust-helper": "tsx scripts/live-rust-helper-smoke.ts",
+    "test:scoped-ballot-load": "tsx scripts/scoped-ballot-load-sim.ts"
   },
   "dependencies": {
     "@cloudflare/blindrsa-ts": "^0.4.5",

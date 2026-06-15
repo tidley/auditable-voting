@@ -366,6 +366,7 @@ async function processDelegatedCoordinatorQueues(input: {
         privateKey: loaded.blindSigningPrivateKey,
         blindedMessage: request.blindedMessage,
       }),
+      ballotScope: request.ballotScope ?? null,
       definition: cachedDefinition,
       issuedAt: new Date().toISOString(),
     };

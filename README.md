@@ -14,6 +14,8 @@ Experimental.
 
 The active product is the client in `web/` plus the optional audit proxy in `worker/`. Public relay behaviour, browser key custody, and live-network convergence remain operational constraints. Do not treat this as production election infrastructure without independent protocol and implementation review.
 
+The practical target is small-organisation and controlled-pilot voting, not high-stakes public elections. Before raising the stakes, define the threat model for the specific electorate, publish the operating procedure, and rehearse recovery, recount, dispute, and fallback paths. Remote browser voting cannot fully solve voter-device compromise or coercion by someone watching the voter; it can only reduce those risks with clear scope, receipt design, re-voting/spoil policy, and non-digital fallback.
+
 ## Features
 
 - Browser voter, organiser, and observer flows.
@@ -115,7 +117,7 @@ The audit proxy is an optional Rust helper. It uses the delegated organiser role
 
 For larger live sessions, such as dozens of rounds or around 100 voters, treat the audit proxy/worker as the default issuance and verification path. The browser organiser remains the root authority for admitting voters and starting follow-up questionnaires, but the proxy avoids relying on one open browser tab to process every blind request and public submission for a configured questionnaire.
 
-The proxy only issues blind credentials after it has received the organiser's election config for the active delegation. That config carries the current whitelist and private invite-code hashes. General invite-link requests are copied to the organiser as well as the proxy; when the organiser approves a requester, the updated whitelist is synced back to the proxy so the already-sent request can be issued without asking the voter to send a second proxy message.
+The proxy only issues blind credentials after it has received the organiser's election config for the active delegation. That config carries the current whitelist and private invite-code hashes. For per-question questionnaires, proxy-issued credentials preserve the requested question scope so one voter can receive separate credentials for separate current question slots. General invite-link requests are copied to the organiser as well as the proxy; when the organiser approves a requester, the updated whitelist is synced back to the proxy so the already-sent request can be issued without asking the voter to send a second proxy message.
 
 It can:
 
@@ -151,7 +153,7 @@ The proxy is outbound-only. It does not require inbound ports or a public server
 1. The organiser publishes a questionnaire definition, optional non-default relay hints, and public expected-voter count.
 2. When an invited-voter roster is applied, the organiser green-lights checked invited voters and publishes one roster-free public questionnaire announcement rather than sending the same questionnaire metadata to every voter.
 3. Voters discover the public announcement and request blind credentials over private NIP-17 messages when they answer. For per-question questionnaires, the request is a bundle of scoped credentials, one for each current question slot.
-4. The organiser or audit proxy blind-signs requests from eligible voters without seeing the final credentials.
+4. The organiser or audit proxy blind-signs requests from eligible voters without seeing the final credentials, preserving any per-question ballot scope in the issuance.
 5. Voters submit public blind-token responses from ephemeral response keys, carrying either the legacy single proof or one scoped per-question proof for the question being answered.
 6. The organiser or audit proxy publishes verification decisions and result summaries. Voter, organiser, and observer recovery prefers those public decisions before falling back to private acceptance DMs.
 7. Observers can verify public submissions, decisions, counts, and summaries from relay data.

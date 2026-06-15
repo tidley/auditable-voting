@@ -1,7 +1,8 @@
-import type { NostrEvent } from "nostr-tools";
+import { nip19, type Filter, type NostrEvent } from "nostr-tools";
 import { recordRelayCloseReasons, selectRelaysWithBackoff, rankRelaysByBackoff } from "./relayBackoff";
 import {
   fetchQuestionnaireEventsWithFallback,
+  getQuestionnaireReadRelays,
   parseQuestionnaireDefinitionEvent,
   parseQuestionnaireParticipantCountEvent,
   parseQuestionnairePrivateInviteStatusEvent,
@@ -11,6 +12,7 @@ import {
   QUESTIONNAIRE_PRIVATE_INVITE_STATUS_KIND,
   QUESTIONNAIRE_RESULT_SUMMARY_KIND,
   QUESTIONNAIRE_STATE_KIND,
+  queryQuestionnaireEvents,
 } from "./questionnaireNostr";
 import { getSharedNostrPool } from "./sharedNostrPool";
 import { SIMPLE_PUBLIC_RELAYS } from "./simpleVotingSession";
@@ -79,6 +81,60 @@ function buildPublicRelays(relays?: string[]) {
 
 function selectPublicReadRelays(relays: string[]) {
   return selectRelaysWithBackoff(relays, QUESTIONNAIRE_PUBLIC_READ_RELAYS_MAX);
+}
+
+function toHexPubkey(value?: string | null) {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) {
+    return "";
+  }
+  if (trimmed.startsWith("npub1")) {
+    try {
+      const decoded = nip19.decode(trimmed);
+      return decoded.type === "npub" ? decoded.data as string : "";
+    } catch {
+      return "";
+    }
+  }
+  return /^[0-9a-f]{64}$/i.test(trimmed) ? trimmed.toLowerCase() : "";
+}
+
+async function fetchWorkerControlEventsByCoordinator(input: {
+  questionnaireId: string;
+  kind: number;
+  relays?: string[];
+  readRelayLimit?: number;
+  coordinatorNpub?: string | null;
+}) {
+  const coordinatorHex = toHexPubkey(input.coordinatorNpub);
+  if (!coordinatorHex) {
+    return [] as NostrEvent[];
+  }
+  const relays = getQuestionnaireReadRelays(input.relays, input.readRelayLimit);
+  const filter: Filter = {
+    kinds: [input.kind],
+    authors: [coordinatorHex],
+    limit: 200,
+  };
+  return queryQuestionnaireEvents(relays, filter)
+    .then((events) => events.filter((event) => {
+      if (input.kind !== event.kind) {
+        return false;
+      }
+      if (input.kind === OPTIONA_WORKER_DELEGATION_KIND) {
+        return parseWorkerDelegationEvent(event)?.electionId === input.questionnaireId;
+      }
+      return parseWorkerDelegationRevocationEvent(event)?.electionId === input.questionnaireId;
+    }))
+    .catch(() => [] as NostrEvent[]);
+}
+
+function mergeEventsById(...groups: NostrEvent[][]) {
+  const byId = new Map<string, NostrEvent>();
+  for (const event of groups.flat()) {
+    byId.set(event.id, event);
+  }
+  return [...byId.values()];
 }
 
 export async function fetchQuestionnaireDefinitions(input: {
@@ -645,6 +701,7 @@ export async function fetchQuestionnaireActiveWorkerDelegationForCapability(inpu
   capability: WorkerCapability;
   relays?: string[];
   readRelayLimit?: number;
+  coordinatorNpub?: string | null;
 }) {
   const delegationEvents = await fetchQuestionnaireEventsWithFallback({
     questionnaireId: input.questionnaireId,
@@ -655,6 +712,13 @@ export async function fetchQuestionnaireActiveWorkerDelegationForCapability(inpu
     limit: 200,
     parseQuestionnaireIdFromEvent: (event) => parseWorkerDelegationEvent(event)?.electionId ?? null,
   });
+  const coordinatorDelegationEvents = await fetchWorkerControlEventsByCoordinator({
+    questionnaireId: input.questionnaireId,
+    kind: OPTIONA_WORKER_DELEGATION_KIND,
+    relays: input.relays,
+    readRelayLimit: input.readRelayLimit,
+    coordinatorNpub: input.coordinatorNpub,
+  });
   const revocationEvents = await fetchQuestionnaireEventsWithFallback({
     questionnaireId: input.questionnaireId,
     kind: OPTIONA_WORKER_DELEGATION_REVOCATION_KIND,
@@ -664,15 +728,22 @@ export async function fetchQuestionnaireActiveWorkerDelegationForCapability(inpu
     limit: 200,
     parseQuestionnaireIdFromEvent: (event) => parseWorkerDelegationRevocationEvent(event)?.electionId ?? null,
   });
+  const coordinatorRevocationEvents = await fetchWorkerControlEventsByCoordinator({
+    questionnaireId: input.questionnaireId,
+    kind: OPTIONA_WORKER_DELEGATION_REVOCATION_KIND,
+    relays: input.relays,
+    readRelayLimit: input.readRelayLimit,
+    coordinatorNpub: input.coordinatorNpub,
+  });
   const revocationIds = new Set(
-    revocationEvents.events
+    mergeEventsById(revocationEvents.events, coordinatorRevocationEvents)
       .map((event) => parseWorkerDelegationRevocationEvent(event))
       .filter((entry): entry is WorkerDelegationRevocation => Boolean(entry))
       .filter((entry) => entry.electionId === input.questionnaireId)
       .map((entry) => entry.delegationId),
   );
   const nowMs = Date.now();
-  const active = delegationEvents.events
+  const active = mergeEventsById(delegationEvents.events, coordinatorDelegationEvents)
     .map((event) => ({ event, delegation: parseWorkerDelegationEvent(event) }))
     .filter((entry): entry is { event: NostrEvent; delegation: WorkerDelegationCertificate } => Boolean(entry.delegation))
     .filter((entry) => entry.delegation.electionId === input.questionnaireId)

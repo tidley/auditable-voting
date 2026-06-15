@@ -1469,6 +1469,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         questionnaireId: targetElectionId,
         capability: "issue_blind_tokens",
         relays: mergeQuestionnaireRelayHints(definition?.questionnaireRelays, knownQuestionnaireRelays),
+        coordinatorNpub: definition?.coordinatorPubkey
+          ?? existingSummary?.coordinatorNpub
+          ?? inviteContext.coordinatorNpub
+          ?? null,
       });
       issueBlindTokensWorker = delegation?.workerNpub?.trim()
         ? buildIssueBlindTokensWorkerRouting({

@@ -99,11 +99,16 @@ This is experimental software.
 
 Known weak points:
 
+- Every real deployment needs an explicit threat model and operating procedure before the vote opens, including who can admit voters, when eligibility freezes, how disputes are handled, and what fallback is used if browsers, keys, relays, or the proxy fail.
 - Public relay reliability can affect delivery and discovery.
 - The client uses tag-filtered, paginated public reads, adaptive NIP-17 mailbox recovery, and consolidated organiser, voter, and observer live questionnaire subscriptions, but relay rate limits can still affect busy demonstrations.
 - For larger live sessions, such as many rounds or around 100 voters, use the audit proxy/worker for blind issuance and decision publication rather than relying on a single organiser browser tab.
-- The audit proxy still follows organiser eligibility: it waits for the organiser's whitelist/private-code config before issuing, and general-link requests are also copied to the organiser so approval can update the proxy without a second voter request. It does not create follow-up questionnaires; that remains an organiser action because it depends on the private admitted-voter roster.
+- The audit proxy still follows organiser eligibility: it waits for the organiser's whitelist/private-code config before issuing, preserves per-question ballot scope in issued credentials, and general-link requests are also copied to the organiser so approval can update the proxy without a second voter request. It does not create follow-up questionnaires; that remains an organiser action because it depends on the private admitted-voter roster.
+- Remote browser voting cannot fully prevent coercion, observation of the voter, or compromise of the voter's device. It is suitable for controlled pilots and small organisations only where those residual risks are accepted or mitigated by procedure.
+- Metadata still matters: Nostr identities, relay choices, message timing, IP/network paths, and repeated device/browser use can leak more than the encrypted ballot payload does.
 - Browser-held secret material needs careful handling.
+- Client supply-chain integrity still needs discipline: signed releases, reproducible builds, dependency review, and clear instructions for voters who want to verify the client they are using.
+- If threshold trustees are used, the project needs a documented key ceremony, trustee selection policy, backup/recovery procedure, and public record of trustee actions.
 - **Backup** creates an encrypted full-state snapshot for the current app namespace. It includes local questionnaire definitions/drafts, invite and roster state, blind-issuance state, responses, relay/proxy settings, and actor state; restoring replaces the current namespace state on the device.
 - Private invite status is published as an invite-code hash plus a per-code claimed-identity hash, so link holders can detect reuse without publishing the private invite code itself.
 - If the organiser changes an answer-bearing question after credentials exist, the app bumps that question's ballot-slot version and voters need a fresh scoped credential for that slot.

@@ -851,6 +851,7 @@ export class QuestionnaireOptionAVoterRuntime {
         questionnaireId: this.electionId,
         capability: "issue_blind_tokens",
         relays: this.getPreferredDmRelays(),
+        coordinatorNpub: this.state?.coordinatorNpub ?? loadElectionSummary(this.electionId)?.coordinatorNpub ?? null,
       });
       if (delegation?.workerNpub?.trim()) {
         const resolved = buildIssueBlindTokensWorkerRouting({
@@ -3735,6 +3736,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
         questionnaireId: this.electionId,
         capability: "issue_blind_tokens",
         relays: this.getPreferredDmRelays(),
+        coordinatorNpub: this.coordinatorNpub,
       });
       if (delegation?.workerNpub?.trim()) {
         issueBlindTokensWorker = buildIssueBlindTokensWorkerRouting({

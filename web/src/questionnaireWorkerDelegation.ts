@@ -256,6 +256,7 @@ export async function publishWorkerDelegationCertificate(input: {
     kind: OPTIONA_WORKER_DELEGATION_KIND,
     tags: [
       ["t", "optiona_worker_delegation"],
+      ["q", delegation.electionId],
       ["election-id", delegation.electionId],
       ["delegation-id", delegation.delegationId],
       ["worker", delegation.workerNpub],
@@ -279,6 +280,7 @@ export async function publishWorkerDelegationRevocation(input: {
     kind: OPTIONA_WORKER_DELEGATION_REVOCATION_KIND,
     tags: [
       ["t", "optiona_worker_delegation_revocation"],
+      ["q", revocation.electionId],
       ["election-id", revocation.electionId],
       ["delegation-id", revocation.delegationId],
       ["worker", revocation.workerNpub],

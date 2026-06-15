@@ -172,6 +172,8 @@ pub struct BlindBallotRequest {
     pub created_at: String,
     #[serde(default)]
     pub invite_code_hash: Option<String>,
+    #[serde(default)]
+    pub ballot_scope: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -197,6 +199,8 @@ pub struct BlindBallotIssuance {
     pub token_commitment: String,
     pub blind_signing_key_id: String,
     pub blind_signature: String,
+    #[serde(default)]
+    pub ballot_scope: Option<serde_json::Value>,
     pub definition: Option<serde_json::Value>,
     pub issued_at: String,
 }
@@ -265,6 +269,8 @@ pub struct ElectionRuntimeState {
     pub seen_blind_request_ids: HashSet<String>,
     #[serde(default)]
     pub issued_invited_npubs: HashSet<String>,
+    #[serde(default)]
+    pub issued_invited_scope_keys: HashSet<String>,
     #[serde(default)]
     pub whitelist_npubs: HashSet<String>,
     #[serde(default)]
@@ -382,6 +388,7 @@ mod tests {
 
         assert!(election.seen_blind_request_ids.is_empty());
         assert!(election.issued_invited_npubs.is_empty());
+        assert!(election.issued_invited_scope_keys.is_empty());
         assert!(election.whitelist_npubs.is_empty());
         assert!(election.bearer_invite_codes.is_empty());
         assert!(!election.eligibility_required);
