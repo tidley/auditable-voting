@@ -11,7 +11,7 @@ import {
   QuestionnaireOptionAVoterRuntime,
   OptionARuntimeError,
 } from "./questionnaireOptionARuntime";
-import type { ElectionInviteMessage, QuestionnaireAnswer, VoterElectionLocalState } from "./questionnaireOptionA";
+import type { BallotScope, ElectionInviteMessage, QuestionnaireAnswer, VoterElectionLocalState } from "./questionnaireOptionA";
 import { deriveActorDisplayId } from "./actorDisplay";
 import {
   loadElectionSummary,
@@ -23,6 +23,7 @@ import {
 import { fetchOptionAInviteDms, fetchOptionAInviteDmsWithNsec } from "./questionnaireOptionAInviteDm";
 import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import {
+  normaliseQuestionBallotSlot,
   questionnaireUsesPerQuestionCredentials,
   type QuestionnaireDefinition,
 } from "./questionnaireProtocol";
@@ -356,6 +357,8 @@ function formatVoteActionButtonText(input: {
   requiredQuestionsAnswered: boolean;
   canSubmitNow: boolean;
   blindSigningKeyReady: boolean;
+  ballotRequestSent: boolean;
+  credentialReady: boolean;
   coordinatorNpub: string;
   responseSubmitted: boolean;
   perQuestionMode: boolean;
@@ -383,10 +386,10 @@ function formatVoteActionButtonText(input: {
   if (!input.blindSigningKeyReady) {
     return "1/3 Loading ballot key";
   }
-  if (!snapshot.blindRequestSent) {
+  if (!input.ballotRequestSent) {
     return "1/3 Requesting ballot";
   }
-  if (!snapshot.credentialReady) {
+  if (!input.credentialReady) {
     return "2/3 Awaiting ballot";
   }
   return "3/3 Preparing response";
@@ -448,6 +451,38 @@ function formatBallotDetailValue(value: string | number | boolean | null | undef
   }
   const trimmed = value?.trim() ?? "";
   return trimmed || fallback;
+}
+
+function scopedBallotScopeKey(scope: BallotScope | null | undefined) {
+  const questionId = scope?.questionId?.trim() ?? "";
+  const slotId = scope?.slotId?.trim() ?? "";
+  const slotIndex = Number.isFinite(scope?.slotIndex) ? Math.max(1, Math.floor(scope?.slotIndex as number)) : 0;
+  const version = Number.isFinite(scope?.version) ? Math.max(1, Math.floor(scope?.version as number)) : 1;
+  if (!questionId && !slotId && !slotIndex && version === 1) {
+    return "__questionnaire__";
+  }
+  return `${questionId || slotId}:${slotId}:${slotIndex}:v${version}`;
+}
+
+function scopedBallotScopeForQuestion(
+  definition: QuestionnaireDefinition | null | undefined,
+  questionId: string,
+): BallotScope | null {
+  if (!definition || !questionnaireUsesPerQuestionCredentials(definition)) {
+    return null;
+  }
+  const index = definition.questions.findIndex((question) => question.questionId === questionId);
+  const question = index >= 0 ? definition.questions[index] : null;
+  if (!question) {
+    return null;
+  }
+  const slot = normaliseQuestionBallotSlot(question, index);
+  return {
+    questionId: question.questionId,
+    slotId: slot.slotId,
+    slotIndex: slot.slotIndex,
+    version: slot.version,
+  };
 }
 
 export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptionAVoterPanelProps) {
@@ -588,6 +623,27 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const responseSubmittedForCurrentQuestionnaire = perQuestionMode
     ? activeQuestionSubmitted
     : Boolean(snapshot?.submission && snapshot.electionId === currentQuestionnaireId);
+  const activeQuestionScope = perQuestionMode && activeQuestion
+    ? scopedBallotScopeForQuestion(currentDefinition, activeQuestion.questionId)
+    : null;
+  const activeQuestionScopeKey = perQuestionMode && activeQuestion
+    ? scopedBallotScopeKey(activeQuestionScope)
+    : "";
+  const activeQuestionRequest = perQuestionMode && activeQuestionScopeKey
+    ? snapshot?.blindRequests?.[activeQuestionScopeKey] ?? null
+    : snapshot?.blindRequest ?? null;
+  const activeQuestionIssuance = perQuestionMode && activeQuestionScopeKey
+    ? snapshot?.blindIssuances?.[activeQuestionScopeKey] ?? null
+    : snapshot?.blindIssuance ?? null;
+  const activeQuestionSubmission = perQuestionMode && activeQuestion
+    ? snapshot?.submissions?.[activeQuestion.questionId] ?? null
+    : snapshot?.submission ?? null;
+  const activeQuestionCredentialReady = perQuestionMode
+    ? Boolean(activeQuestionIssuance)
+    : Boolean(snapshot?.credentialReady);
+  const activeQuestionRequestSent = perQuestionMode
+    ? Boolean(activeQuestionRequest && (activeQuestionRequest.lastSentAt || snapshot?.blindRequestSent))
+    : Boolean(snapshot?.blindRequestSent);
 
   function markSignerWaitRecoveryBaseline() {
     if (props.localVoterNsec?.trim()) {
@@ -2047,7 +2103,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     try {
       pushAnswers();
       const activeQuestionId = perQuestionMode ? activeQuestion?.questionId?.trim() ?? "" : "";
-      await runtime.submitVote(requiredQuestionIds, activeQuestionId ? { questionId: activeQuestionId } : undefined);
+      const submitRequiredQuestionIds = activeQuestionId
+        ? requiredQuestionIds.filter((questionId) => questionId === activeQuestionId)
+        : requiredQuestionIds;
+      await runtime.submitVote(submitRequiredQuestionIds, activeQuestionId ? { questionId: activeQuestionId } : undefined);
       if (perQuestionMode) {
         const nextQuestionIndex = findNextUnsubmittedQuestionIndex(activeQuestionIndex, activeQuestionId);
         if (nextQuestionIndex >= 0) {
@@ -2660,16 +2719,31 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   };
   const requiredQuestionsAnswered = questions.length > 0 && requiredQuestions.every(questionHasResponse);
   const answerableQuestionsHaveResponse = answerableQuestions.some(questionHasResponse);
-  const canSubmitNow = flags.canSubmitVote
-    && requiredQuestionsAnswered
-    && answerableQuestionsHaveResponse
+  const activeQuestionNeedsResponse = Boolean(
+    activeQuestion
+    && (activeQuestion.required || (activeQuestion.type === "rank" && (activeQuestion.minimumRanked ?? 0) > 0)),
+  );
+  const activeQuestionHasResponse = activeQuestion ? questionHasResponse(activeQuestion) : false;
+  const requiredQuestionsAnsweredForAction = perQuestionMode
+    ? Boolean(activeQuestion && (!activeQuestionNeedsResponse || activeQuestionHasResponse))
+    : requiredQuestionsAnswered;
+  const answerableQuestionsHaveResponseForAction = perQuestionMode
+    ? activeQuestionHasResponse
+    : answerableQuestionsHaveResponse;
+  const actionQuestionnaireId = currentQuestionnaireId || electionId.trim();
+  const snapshotForAction = snapshot?.electionId === actionQuestionnaireId ? snapshot : null;
+  const canSubmitNow = (
+    perQuestionMode
+      ? Boolean(snapshotForAction?.loginVerified && activeQuestionCredentialReady)
+      : flags.canSubmitVote
+  )
+    && requiredQuestionsAnsweredForAction
+    && answerableQuestionsHaveResponseForAction
     && !responseSubmittedForCurrentQuestionnaire;
   const canAdvanceQuestion = perQuestionMode && responseSubmittedForCurrentQuestionnaire && !allQuestionResponsesSubmitted;
   const canViewResults = perQuestionMode
     ? allQuestionResponsesSubmitted
     : Boolean(snapshot?.submission);
-  const actionQuestionnaireId = currentQuestionnaireId || electionId.trim();
-  const snapshotForAction = snapshot?.electionId === actionQuestionnaireId ? snapshot : null;
   const actionCoordinatorNpub = snapshotForAction?.coordinatorNpub?.trim()
     || (activeInvite?.electionId === actionQuestionnaireId ? activeInvite.coordinatorNpub?.trim() : "")
     || inviteDropdownOptions.find((invite) => invite.electionId === actionQuestionnaireId)?.coordinatorNpub?.trim()
@@ -2677,9 +2751,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     || "";
   const voteActionButtonText = formatVoteActionButtonText({
     snapshot: snapshotForAction,
-    requiredQuestionsAnswered,
+    requiredQuestionsAnswered: requiredQuestionsAnsweredForAction,
     canSubmitNow,
     blindSigningKeyReady: autoRequestBlindSigningKeyReady,
+    ballotRequestSent: activeQuestionRequestSent,
+    credentialReady: activeQuestionCredentialReady,
     coordinatorNpub: actionCoordinatorNpub,
     responseSubmitted: responseSubmittedForCurrentQuestionnaire,
     perQuestionMode,
@@ -2703,9 +2779,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     const snapshotForTarget = snapshot?.electionId === targetQuestionnaireId ? snapshot : null;
     const debugSubmitButtonText = formatVoteActionButtonText({
       snapshot: snapshotForTarget,
-      requiredQuestionsAnswered,
+      requiredQuestionsAnswered: requiredQuestionsAnsweredForAction,
       canSubmitNow,
       blindSigningKeyReady: autoRequestBlindSigningKeyReady,
+      ballotRequestSent: activeQuestionRequestSent,
+      credentialReady: activeQuestionCredentialReady,
       coordinatorNpub: (snapshotForTarget?.coordinatorNpub?.trim() ?? "") || actionCoordinatorNpub,
       responseSubmitted: responseSubmittedForCurrentQuestionnaire,
       perQuestionMode,
@@ -2740,9 +2818,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       acceptedQuestionIds: [...acceptedQuestionIds],
       submitButtonReasonBlocked: responseSubmittedForCurrentQuestionnaire || allQuestionResponsesSubmitted
         ? null
-        : !requiredQuestionsAnswered
+        : !requiredQuestionsAnsweredForAction
           ? "required_questions_unanswered"
-          : !answerableQuestionsHaveResponse
+          : !answerableQuestionsHaveResponseForAction
             ? "question_unanswered"
           : !snapshotForTarget?.loginVerified
             ? "not_logged_in"
@@ -2750,11 +2828,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               ? "blind_signing_key_not_ready"
               : !snapshotForTarget?.coordinatorNpub?.trim()
                 ? "coordinator_missing"
-                : snapshotForTarget?.blindRequestSent && !snapshotForTarget?.credentialReady
+                : activeQuestionRequestSent && !activeQuestionCredentialReady
                   ? "waiting_for_credential"
-                  : !snapshotForTarget?.credentialReady
+                  : !activeQuestionCredentialReady
                     ? "credential_missing"
-                    : !flags.canSubmitVote
+                    : !canSubmitNow
                       ? "runtime_submit_not_ready"
                       : null,
       status,
@@ -2771,6 +2849,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       snapshotBlindRequestId: snapshot?.blindRequest?.requestId ?? null,
       snapshotCredentialReady: Boolean(snapshot?.credentialReady),
       snapshotSubmissionId: snapshot?.submission?.submissionId ?? null,
+      activeQuestionRequestId: activeQuestionRequest?.requestId ?? null,
+      activeQuestionCredentialId: activeQuestionIssuance?.issuanceId ?? null,
+      activeQuestionSubmissionId: activeQuestionSubmission?.submissionId ?? null,
+      activeQuestionCredentialReady,
       autoRequestBlindSigningKeyReady,
       autoRequestDefinitionPresent: Boolean(autoRequestDefinition),
       autoRequestDefinitionHasBlindKey: Boolean(autoRequestDefinition?.blindSigningPublicKey),
@@ -2787,9 +2869,15 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   }, [
     activeInvite?.electionId,
     activeQuestion?.questionId,
+    activeQuestionCredentialReady,
     activeQuestionIndex,
+    activeQuestionIssuance?.issuanceId,
+    activeQuestionRequest?.requestId,
+    activeQuestionRequestSent,
+    activeQuestionSubmission?.submissionId,
     actionCoordinatorNpub,
     answerableQuestionsHaveResponse,
+    answerableQuestionsHaveResponseForAction,
     acceptedQuestionIds,
     allQuestionResponsesSubmitted,
     autoRequestBlindSigningKeyReady,
@@ -2806,6 +2894,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     props.localVoterNsec,
     questions.length,
     requiredQuestionsAnswered,
+    requiredQuestionsAnsweredForAction,
     runtime,
     settingsMode,
     signedInNpub,
@@ -2853,6 +2942,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         : "Not submitted";
   const submittedMarkerNpub = snapshot?.responseNpub ?? snapshot?.submission?.responseNpub ?? snapshot?.submission?.invitedNpub ?? "";
   const submittedMarkerLabel = submittedMarkerNpub ? deriveActorDisplayId(submittedMarkerNpub) : "Unknown";
+  const activeQuestionVotingNpub = activeQuestionSubmission?.responseNpub ?? activeQuestionSubmission?.invitedNpub ?? "";
+  const activeQuestionVotingLabel = activeQuestionVotingNpub ? deriveActorDisplayId(activeQuestionVotingNpub) : "";
+  const activeQuestionCredentialStateText = activeQuestionIssuance
+    ? "Received"
+    : activeQuestionRequestSent
+      ? `Waiting for ${credentialIssuerName}`
+      : "Not requested";
   const voterIdentityForDetails = snapshot?.invitedNpub?.trim()
     || signedInNpub.trim()
     || props.localVoterNpub?.trim()
@@ -3159,6 +3255,34 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                 Next
               </button>
             </div>
+          ) : null}
+          {perQuestionMode && activeQuestion ? (
+            <section className='simple-questionnaire-active-ballot' aria-label='Current question ballot IDs'>
+              <div>
+                <span>Question</span>
+                <strong>{activeQuestion.questionId}</strong>
+              </div>
+              <div>
+                <span>Request ID</span>
+                <strong>{formatBallotDetailValue(activeQuestionRequest?.requestId, "Not created")}</strong>
+              </div>
+              <div>
+                <span>Ballot credential</span>
+                <strong>{activeQuestionCredentialStateText}</strong>
+              </div>
+              <div>
+                <span>Credential ID</span>
+                <strong>{formatBallotDetailValue(activeQuestionIssuance?.issuanceId, "Not received")}</strong>
+              </div>
+              <div>
+                <span>Submission ID</span>
+                <strong>{formatBallotDetailValue(activeQuestionSubmission?.submissionId, "Not submitted")}</strong>
+              </div>
+              <div className='simple-questionnaire-active-ballot-wide'>
+                <span>Voting ID used for this response</span>
+                <strong>{activeQuestionVotingNpub ? `${activeQuestionVotingLabel} (${activeQuestionVotingNpub})` : "Created when this question is submitted"}</strong>
+              </div>
+            </section>
           ) : null}
           {visibleQuestionEntries.map(({ question, index }) => {
             const ranked = question.type === "rank" && Array.isArray(answers[question.questionId])

@@ -5049,6 +5049,42 @@ code {
   min-width: 98px;
 }
 
+.simple-questionnaire-active-ballot {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--simple-border);
+  border-radius: 12px;
+  background: var(--simple-surface);
+}
+
+.simple-questionnaire-active-ballot div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.simple-questionnaire-active-ballot span {
+  color: var(--simple-muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.simple-questionnaire-active-ballot strong {
+  min-width: 0;
+  color: var(--simple-text);
+  font-size: 0.9rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.simple-questionnaire-active-ballot-wide {
+  grid-column: 1 / -1;
+}
+
 .simple-optiona-voter-page {
   display: grid;
   gap: 22px;
@@ -5473,6 +5509,10 @@ code {
   }
 
   .simple-ballot-details-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .simple-questionnaire-active-ballot {
     grid-template-columns: minmax(0, 1fr);
   }
 

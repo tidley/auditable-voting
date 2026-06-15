@@ -3751,7 +3751,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         return !redeemedNpub || !whitelistNpubs.includes(redeemedNpub);
       }).length;
     const expectedInviteeCount = Math.max(0, props.knownVoterCount ?? 0, whitelistNpubs.length) + unclaimedPrivateInviteCount;
+    const hasWorkerEligibilityConfig = expectedInviteeCount > 0 || whitelistNpubs.length > 0 || bearerInviteCodes.length > 0;
     const workerElectionConfigSnapshot: WorkerElectionConfigSnapshot | null = needsElectionConfigDm
+      && (!delegatedWorkerCapabilities.includes("issue_blind_tokens") || hasWorkerEligibilityConfig)
       ? {
         type: "worker_election_config",
         schemaVersion: 1,
