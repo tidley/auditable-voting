@@ -103,7 +103,7 @@ describe("SimpleAppShell invite-link login", () => {
     });
   });
 
-  it("reactivates async buttons when UI feedback arrives", async () => {
+  it("does not artificially disable copy buttons while feedback settles", async () => {
     const user = userEvent.setup();
     const { default: SimpleAppShell } = await import("./SimpleAppShell");
 
@@ -113,11 +113,9 @@ describe("SimpleAppShell invite-link login", () => {
     const copyButton = screen.getByRole("button", { name: "Copy nostr-connect URL" });
     await user.click(copyButton);
 
+    expect(copyButton.getAttribute("aria-disabled")).toBeNull();
     expect(await screen.findByText(/copy nostr-connect url/i)).toBeTruthy();
-    await waitFor(() => {
-      expect(copyButton.getAttribute("aria-disabled")).toBeNull();
-      expect(copyButton.dataset.pressFeedbackActive).toBeUndefined();
-    });
+    expect(copyButton.getAttribute("aria-disabled")).toBeNull();
   });
 
   it("enters the voter app immediately after signer login on a linked questionnaire", async () => {

@@ -730,6 +730,7 @@ const WORKER_LAUNCHER_TARGET_OPTIONS: Array<{ key: WorkerLauncherTargetKey; labe
   { key: "windowsX64", label: "Windows x64" },
   { key: "macosArm64", label: "macOS Apple Silicon" },
 ];
+const WORKER_DEFAULT_RUST_LOG = "info,auditable_voting_worker=debug,nostr_relay_pool=info,nostr_sdk=info,nostr=info,tungstenite=info,tokio_tungstenite=info";
 
 function buildWorkerLauncherContents(input: {
   target: WorkerLauncherTarget;
@@ -769,7 +770,7 @@ function buildWorkerLauncherContents(input: {
       "Invoke-WebRequest -Uri $AssetUrl -OutFile $ArchivePath",
       "Expand-Archive -Path $ArchivePath -DestinationPath $ScriptDir -Force",
       "",
-      `if (-not $env:RUST_LOG) { $env:RUST_LOG = 'debug' }`,
+      `if (-not $env:RUST_LOG) { $env:RUST_LOG = '${WORKER_DEFAULT_RUST_LOG}' }`,
       `if (-not $env:WORKER_NSEC) { $env:WORKER_NSEC = '${nsec}' }`,
       `if (-not $env:COORDINATOR_NPUB) { $env:COORDINATOR_NPUB = '${coordinator}' }`,
       `if (-not $env:WORKER_RELAYS) { $env:WORKER_RELAYS = '${relays}' }`,
@@ -832,7 +833,7 @@ function buildWorkerLauncherContents(input: {
     '    chmod +x "$SCRIPT_DIR/$LEGACY_BINARY_NAME" || true',
     "  fi",
     "",
-    'export RUST_LOG="${RUST_LOG:-debug}"',
+    `export RUST_LOG="\${RUST_LOG:-${WORKER_DEFAULT_RUST_LOG}}"`,
     `export WORKER_NSEC="\${WORKER_NSEC:-${nsec}}"`,
     `export COORDINATOR_NPUB="\${COORDINATOR_NPUB:-${coordinator}}"`,
     `export WORKER_RELAYS="\${WORKER_RELAYS:-${relays}}"`,
@@ -870,7 +871,7 @@ function buildWorkerDirectCommand(input: {
     return [
       `Invoke-WebRequest -Uri '${escapeForPowerShellSingleQuotedString(input.target.assetUrl)}' -OutFile '${escapeForPowerShellSingleQuotedString(input.target.assetFilename)}'`,
       `Expand-Archive -Path '${escapeForPowerShellSingleQuotedString(input.target.assetFilename)}' -DestinationPath '.' -Force`,
-      "$env:RUST_LOG='debug'",
+      `$env:RUST_LOG='${WORKER_DEFAULT_RUST_LOG}'`,
       `$env:WORKER_NSEC='${escapeForPowerShellSingleQuotedString(workerNsec)}'`,
       `$env:COORDINATOR_NPUB='${escapeForPowerShellSingleQuotedString(coordinatorNpub)}'`,
       `$env:WORKER_RELAYS='${escapeForPowerShellSingleQuotedString(workerRelays)}'`,
@@ -897,7 +898,7 @@ function buildWorkerDirectCommand(input: {
       ? `chmod +x "./${escapeForDoubleQuotedBash(legacyBinaryFilename)}" || true`
       : "",
     `if [ -x "./${escapeForDoubleQuotedBash(input.target.binaryFilename)}" ]; then`,
-      '  RUST_LOG="debug" \\',
+      `  RUST_LOG="${WORKER_DEFAULT_RUST_LOG}" \\`,
       `  WORKER_NSEC="${escapeForDoubleQuotedBash(workerNsec)}" \\`,
     `  COORDINATOR_NPUB="${escapeForDoubleQuotedBash(coordinatorNpub)}" \\`,
     `  WORKER_RELAYS="${escapeForDoubleQuotedBash(workerRelays)}" \\`,
@@ -905,7 +906,7 @@ function buildWorkerDirectCommand(input: {
     legacyBinaryFilename ? `elif [ -x "./${escapeForDoubleQuotedBash(legacyBinaryFilename)}" ]; then` : "else",
     ...(legacyBinaryFilename
       ? [
-          '  RUST_LOG="debug" \\',
+          `  RUST_LOG="${WORKER_DEFAULT_RUST_LOG}" \\`,
           `  WORKER_NSEC="${escapeForDoubleQuotedBash(workerNsec)}" \\`,
           `  COORDINATOR_NPUB="${escapeForDoubleQuotedBash(coordinatorNpub)}" \\`,
           `  WORKER_RELAYS="${escapeForDoubleQuotedBash(workerRelays)}" \\`,
@@ -2831,7 +2832,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     const workerNsec = generatedWorkerNsec.trim() || "nsec1...";
     const relayOverride = delegatedWorkerControlRelays.trim();
     const lines = [
-      "RUST_LOG=debug \\",
+      `RUST_LOG=${WORKER_DEFAULT_RUST_LOG} \\`,
       `WORKER_NSEC=${workerNsec} \\`,
       `  COORDINATOR_NPUB=${coordinator} \\`,
     ];
@@ -3914,8 +3915,30 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     generateWorkerCredentials();
   }, [delegatedWorkerNpub, generatedWorkerNpub, generatedWorkerNsec, generateWorkerCredentials, view]);
 
+  const toolbarSentinelRef = useRef<HTMLDivElement | null>(null);
+  const [questionnaireToolbarStuck, setQuestionnaireToolbarStuck] = useState(false);
+  useEffect(() => {
+    const sentinel = toolbarSentinelRef.current;
+    if (!sentinel || typeof window === "undefined") {
+      return;
+    }
+
+    const updateToolbarState = () => {
+      const nextStuck = sentinel.getBoundingClientRect().top < 0;
+      setQuestionnaireToolbarStuck((current) => (current === nextStuck ? current : nextStuck));
+    };
+    updateToolbarState();
+    window.addEventListener("scroll", updateToolbarState, { passive: true });
+    window.addEventListener("resize", updateToolbarState);
+    return () => {
+      window.removeEventListener("scroll", updateToolbarState);
+      window.removeEventListener("resize", updateToolbarState);
+    };
+  }, [view]);
+
   const hasParticipantsNotice = Boolean((publishValidation && !publishValidation.valid) || statusNotice);
   const showNewRoundPublishOnly = isNewRoundMode && !publishedDefinition;
+  const questionnaireToolbarClassName = `simple-session-page-toolbar simple-questionnaire-sticky-toolbar${questionnaireToolbarStuck ? " is-stuck" : ""}`;
   const questionnaireTopControls = (
     <div className='simple-session-controlbar simple-questionnaire-top-controlbar'>
       <select
@@ -4027,7 +4050,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   if (view === "responses") {
     return (
       <>
-        <div className='simple-session-page-toolbar simple-questionnaire-sticky-toolbar'>
+        <div ref={toolbarSentinelRef} className='simple-questionnaire-toolbar-sentinel' aria-hidden='true' />
+        <div className={questionnaireToolbarClassName}>
           {questionnaireTopControls}
         </div>
         <QuestionnaireResultsDashboard
@@ -4067,7 +4091,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   return (
     <>
       <section className='simple-voter-section simple-questionnaire-build-section'>
-        <div className='simple-session-page-toolbar simple-questionnaire-build-toolbar simple-questionnaire-sticky-toolbar'>
+        <div ref={toolbarSentinelRef} className='simple-questionnaire-toolbar-sentinel' aria-hidden='true' />
+        <div className={`simple-questionnaire-build-toolbar ${questionnaireToolbarClassName}`}>
           {questionnaireTopControls}
         </div>
         <h2 className='simple-voter-section-title'>
@@ -4326,7 +4351,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                     <button
                       type='button'
                       className='simple-voter-secondary simple-questionnaire-action-button simple-questionnaire-add-option-button'
-                      data-press-feedback-disabled='true'
                       onClick={() => {
                         updateQuestion(index, (entry) => {
                           if (entry.type !== "multiple_choice") {
@@ -4422,7 +4446,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                     <button
                       type='button'
                       className='simple-voter-secondary simple-questionnaire-action-button simple-questionnaire-add-option-button'
-                      data-press-feedback-disabled='true'
                       onClick={() => {
                         updateQuestion(index, (entry) => {
                           if (entry.type !== "rank") {

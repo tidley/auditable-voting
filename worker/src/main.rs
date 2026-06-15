@@ -34,6 +34,14 @@ use tokio::time::{interval, sleep, timeout};
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 
+const WORKER_DEFAULT_LOG_FILTER: &str = "info";
+const WORKER_DEPENDENCY_LOG_OVERRIDES: &[&str] = &[
+    "nostr_relay_pool=info",
+    "nostr_sdk=info",
+    "nostr=info",
+    "tungstenite=info",
+    "tokio_tungstenite=info",
+];
 const DEFAULT_DM_LOOKBACK_SECS: u64 = 7 * 24 * 60 * 60;
 const DEFAULT_PUBLIC_LOOKBACK_SECS: u64 = 12 * 60 * 60;
 const CONTROL_DM_PAGE_LIMIT: usize = 250;
@@ -112,6 +120,19 @@ fn random_suffix() -> String {
         Timestamp::now().as_secs(),
         rand::random::<u32>()
     )
+}
+
+fn build_worker_log_filter() -> EnvFilter {
+    let mut filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(WORKER_DEFAULT_LOG_FILTER));
+    for directive in WORKER_DEPENDENCY_LOG_OVERRIDES {
+        filter = filter.add_directive(
+            directive
+                .parse()
+                .expect("worker dependency log directive should be valid"),
+        );
+    }
+    filter
 }
 
 fn apply_worker_election_config(
@@ -211,6 +232,130 @@ fn election_needs_legacy_control_replay(election: &ElectionRuntimeState) -> bool
         && !election.seen_blind_request_ids.is_empty()
         && election.issued_invited_scope_keys.is_empty();
     has_config_without_eligibility || has_scoped_requests_without_scope_records
+}
+
+fn election_has_public_submission_capability(election: &ElectionRuntimeState) -> bool {
+    election
+        .capabilities
+        .contains(&WorkerCapability::VerifyPublicSubmissions)
+        || election
+            .capabilities
+            .contains(&WorkerCapability::PublishSubmissionDecisions)
+        || election
+            .capabilities
+            .contains(&WorkerCapability::CloseQuestionnaire)
+        || election
+            .capabilities
+            .contains(&WorkerCapability::PublishResultSummary)
+}
+
+fn election_should_scan_public_submissions(election: &ElectionRuntimeState) -> bool {
+    if election.revoked
+        || is_expired(&election.expires_at)
+        || !election_has_public_submission_capability(election)
+        || election.definition.is_none()
+    {
+        return false;
+    }
+    let Some(expected) = election.expected_invitee_count else {
+        return false;
+    };
+    expected > 0 && election.accepted_response_count < expected
+}
+
+fn election_has_pending_completion_work(election: &ElectionRuntimeState) -> bool {
+    let Some(expected) = election.expected_invitee_count else {
+        return false;
+    };
+    if expected == 0 || election.accepted_response_count < expected {
+        return false;
+    }
+    (election
+        .capabilities
+        .contains(&WorkerCapability::CloseQuestionnaire)
+        && !election.questionnaire_close_published)
+        || (election
+            .capabilities
+            .contains(&WorkerCapability::PublishResultSummary)
+            && !election.summary_published)
+}
+
+fn election_has_pending_ballot_or_response_work(election: &ElectionRuntimeState) -> bool {
+    let Some(expected) = election.expected_invitee_count else {
+        return false;
+    };
+    expected > 0
+        && election.accepted_response_count < expected
+        && election.definition.is_some()
+        && election.blind_signing_private_key.is_some()
+        && election
+            .capabilities
+            .contains(&WorkerCapability::IssueBlindTokens)
+}
+
+fn election_has_pending_worker_activity(election: &ElectionRuntimeState) -> bool {
+    if election.revoked || is_expired(&election.expires_at) {
+        return false;
+    }
+    election_should_scan_public_submissions(election)
+        || election_has_pending_completion_work(election)
+        || election_has_pending_ballot_or_response_work(election)
+}
+
+fn election_activity_timestamp_millis(election: &ElectionRuntimeState) -> i64 {
+    [
+        election.last_election_config_sent_at.as_deref(),
+        election.last_blind_issuance_at.as_deref(),
+        election.last_vote_verification_at.as_deref(),
+        election.last_decision_publish_at.as_deref(),
+        election.last_result_summary_publish_at.as_deref(),
+        election.last_questionnaire_close_publish_at.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(parsed_rfc3339_millis)
+    .max()
+    .unwrap_or_default()
+}
+
+fn election_config_timestamp_millis(election: &ElectionRuntimeState) -> i64 {
+    election
+        .last_election_config_sent_at
+        .as_deref()
+        .and_then(parsed_rfc3339_millis)
+        .unwrap_or_else(|| election_activity_timestamp_millis(election))
+}
+
+fn select_status_active_election(state: &WorkerPersistentState) -> Option<&ElectionRuntimeState> {
+    state
+        .elections
+        .values()
+        .filter(|entry| election_has_pending_worker_activity(entry))
+        .max_by_key(|entry| {
+            (
+                election_config_timestamp_millis(entry),
+                election_activity_timestamp_millis(entry),
+            )
+        })
+}
+
+fn select_public_submission_election_ids(state: &WorkerPersistentState) -> Vec<String> {
+    let newest_config_at = state
+        .elections
+        .values()
+        .filter(|entry| election_should_scan_public_submissions(entry))
+        .map(election_config_timestamp_millis)
+        .max();
+    let Some(newest_config_at) = newest_config_at else {
+        return Vec::new();
+    };
+    state
+        .elections
+        .values()
+        .filter(|entry| election_should_scan_public_submissions(entry))
+        .filter(|entry| election_config_timestamp_millis(entry) == newest_config_at)
+        .map(|entry| entry.election_id.clone())
+        .collect()
 }
 
 fn parsed_rfc3339_millis(value: &str) -> Option<i64> {
@@ -478,7 +623,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let env_filter = build_worker_log_filter();
     tracing_subscriber::fmt().with_env_filter(env_filter).init();
 
     let config = WorkerConfig::from_env()?;
@@ -708,14 +853,7 @@ impl WorkerRuntime {
     async fn send_status_heartbeat(&self) -> Result<()> {
         let snapshot = {
             let state = self.state.lock().await;
-            let mut active: Option<&ElectionRuntimeState> = None;
-            for election in state.elections.values() {
-                if election.revoked || is_expired(&election.expires_at) {
-                    continue;
-                }
-                active = Some(election);
-                break;
-            }
+            let active = select_status_active_election(&state);
             WorkerStatusSnapshot {
                 message_type: "worker_status".to_string(),
                 schema_version: 1,
@@ -1140,28 +1278,11 @@ impl WorkerRuntime {
     }
 
     async fn process_public_submissions(&self) -> Result<()> {
+        self.finalize_completed_elections().await?;
+
         let elections_to_process = {
             let state = self.state.lock().await;
-            state
-                .elections
-                .values()
-                .filter(|entry| !entry.revoked && !is_expired(&entry.expires_at))
-                .filter(|entry| {
-                    entry
-                        .capabilities
-                        .contains(&WorkerCapability::VerifyPublicSubmissions)
-                        || entry
-                            .capabilities
-                            .contains(&WorkerCapability::PublishSubmissionDecisions)
-                        || entry
-                            .capabilities
-                            .contains(&WorkerCapability::CloseQuestionnaire)
-                        || entry
-                            .capabilities
-                            .contains(&WorkerCapability::PublishResultSummary)
-                })
-                .map(|entry| entry.election_id.clone())
-                .collect::<Vec<_>>()
+            select_public_submission_election_ids(&state)
         };
         if elections_to_process.is_empty() {
             return Ok(());
@@ -1172,7 +1293,7 @@ impl WorkerRuntime {
             state
                 .elections
                 .values()
-                .filter(|entry| !entry.revoked && !is_expired(&entry.expires_at))
+                .filter(|entry| elections_to_process.contains(&entry.election_id))
                 .filter_map(|entry| entry.expected_invitee_count)
                 .max()
                 .unwrap_or(500)
@@ -1225,11 +1346,9 @@ impl WorkerRuntime {
             until_ts = Some(Timestamp::from_secs(next_until));
         }
         let events = events_by_id.into_values().collect::<Vec<_>>();
-        info!(
-            "public plane poll fetched {} blind response events",
-            events.len()
-        );
 
+        let mut handled_response_count = 0usize;
+        let mut replayed_response_count = 0usize;
         let mut unrelated_response_count = 0usize;
         for event in events {
             let submission =
@@ -1244,11 +1363,22 @@ impl WorkerRuntime {
                 unrelated_response_count = unrelated_response_count.saturating_add(1);
                 continue;
             }
-            debug!(
-                "public blind response received: questionnaire_id={}, response_id={}",
-                submission.questionnaire_id, submission.response_id
+            if self.handle_submission(submission).await? {
+                handled_response_count = handled_response_count.saturating_add(1);
+            } else {
+                replayed_response_count = replayed_response_count.saturating_add(1);
+            }
+        }
+        if handled_response_count > 0 {
+            info!(
+                "public plane handled {} new blind response events",
+                handled_response_count
             );
-            self.handle_submission(submission).await?;
+        } else if replayed_response_count > 0 {
+            debug!(
+                "public plane saw {} replayed blind response events",
+                replayed_response_count
+            );
         }
         if unrelated_response_count > 0 {
             debug!(
@@ -1260,16 +1390,16 @@ impl WorkerRuntime {
         Ok(())
     }
 
-    async fn handle_submission(&self, submission: QuestionnaireBlindResponseEvent) -> Result<()> {
+    async fn handle_submission(&self, submission: QuestionnaireBlindResponseEvent) -> Result<bool> {
         let mut state = self.state.lock().await;
         let Some(election) = state.elections.get_mut(&submission.questionnaire_id) else {
-            return Ok(());
+            return Ok(false);
         };
         if election
             .processed_submission_ids
             .contains(&submission.response_id)
         {
-            return Ok(());
+            return Ok(false);
         }
 
         let mut accepted = true;
@@ -1333,7 +1463,7 @@ impl WorkerRuntime {
         }
 
         self.store.save(&state)?;
-        Ok(())
+        Ok(true)
     }
 
     async fn finalize_completed_elections(&self) -> Result<()> {
@@ -2168,6 +2298,135 @@ mod tests {
         assert!(!election.eligibility_required);
     }
 
+    fn active_public_submission_election() -> ElectionRuntimeState {
+        ElectionRuntimeState {
+            election_id: "q_worker_definition".to_string(),
+            delegation_id: "delegation_worker_definition".to_string(),
+            capabilities: vec![
+                WorkerCapability::VerifyPublicSubmissions,
+                WorkerCapability::PublishSubmissionDecisions,
+                WorkerCapability::CloseQuestionnaire,
+                WorkerCapability::PublishResultSummary,
+            ],
+            expires_at: (Utc::now() + ChronoDuration::days(1)).to_rfc3339(),
+            expected_invitee_count: Some(3),
+            definition: Some(json!({
+                "schemaVersion": 2,
+                "eventType": "questionnaire_definition",
+                "questionnaireId": "q_worker_definition",
+                "questions": []
+            })),
+            ..ElectionRuntimeState::default()
+        }
+    }
+
+    #[test]
+    fn public_submission_scan_waits_for_usable_round_config() {
+        let mut election = active_public_submission_election();
+        assert!(election_should_scan_public_submissions(&election));
+
+        election.expected_invitee_count = None;
+        assert!(!election_should_scan_public_submissions(&election));
+
+        election.expected_invitee_count = Some(0);
+        assert!(!election_should_scan_public_submissions(&election));
+
+        election.expected_invitee_count = Some(3);
+        election.definition = None;
+        assert!(!election_should_scan_public_submissions(&election));
+    }
+
+    #[test]
+    fn public_submission_scan_stops_after_expected_acceptances() {
+        let mut election = active_public_submission_election();
+        election.accepted_response_count = 2;
+        assert!(election_should_scan_public_submissions(&election));
+
+        election.accepted_response_count = 3;
+        assert!(!election_should_scan_public_submissions(&election));
+    }
+
+    #[test]
+    fn public_submission_scan_ignores_revoked_and_expired_rounds() {
+        let mut election = active_public_submission_election();
+        election.revoked = true;
+        assert!(!election_should_scan_public_submissions(&election));
+
+        election.revoked = false;
+        election.expires_at = (Utc::now() - ChronoDuration::minutes(1)).to_rfc3339();
+        assert!(!election_should_scan_public_submissions(&election));
+    }
+
+    #[test]
+    fn public_submission_scan_selects_newest_configured_live_round() {
+        let mut old_round = active_public_submission_election();
+        old_round.election_id = "q_old_round".to_string();
+        old_round.last_election_config_sent_at = Some("2026-06-15T22:00:00Z".to_string());
+        old_round.last_vote_verification_at = Some("2026-06-15T22:10:00Z".to_string());
+
+        let mut new_round = active_public_submission_election();
+        new_round.election_id = "q_new_round".to_string();
+        new_round.last_election_config_sent_at = Some("2026-06-15T22:05:00Z".to_string());
+
+        let mut state = WorkerPersistentState::default();
+        state
+            .elections
+            .insert(old_round.election_id.clone(), old_round);
+        state
+            .elections
+            .insert(new_round.election_id.clone(), new_round);
+
+        assert_eq!(
+            select_public_submission_election_ids(&state),
+            vec!["q_new_round".to_string()]
+        );
+    }
+
+    #[test]
+    fn status_active_election_ignores_completed_rounds() {
+        let mut completed_round = active_public_submission_election();
+        completed_round.election_id = "q_completed_round".to_string();
+        completed_round.last_election_config_sent_at = Some("2026-06-15T22:00:00Z".to_string());
+        completed_round.last_vote_verification_at = Some("2026-06-15T22:10:00Z".to_string());
+        completed_round.accepted_response_count = 3;
+        completed_round.questionnaire_close_published = true;
+        completed_round.summary_published = true;
+
+        let mut new_round = active_public_submission_election();
+        new_round.election_id = "q_new_round".to_string();
+        new_round.last_election_config_sent_at = Some("2026-06-15T22:05:00Z".to_string());
+
+        let mut state = WorkerPersistentState::default();
+        state
+            .elections
+            .insert(completed_round.election_id.clone(), completed_round);
+        state
+            .elections
+            .insert(new_round.election_id.clone(), new_round);
+
+        let active = select_status_active_election(&state);
+        assert_eq!(
+            active.map(|entry| entry.election_id.as_str()),
+            Some("q_new_round")
+        );
+
+        let only_completed = active_public_submission_election();
+        let mut state = WorkerPersistentState::default();
+        state.elections.insert(
+            "q_completed_round".to_string(),
+            ElectionRuntimeState {
+                election_id: "q_completed_round".to_string(),
+                accepted_response_count: 3,
+                questionnaire_close_published: true,
+                summary_published: true,
+                last_election_config_sent_at: Some("2026-06-15T22:00:00Z".to_string()),
+                ..only_completed
+            },
+        );
+
+        assert!(select_status_active_election(&state).is_none());
+    }
+
     #[test]
     fn private_invite_code_authorizes_first_claimant_only() {
         let code_hash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -2411,6 +2670,16 @@ mod tests {
         let since = fixed_lookback_timestamp(lookback).as_secs();
         assert!(since <= now);
         assert!(now.saturating_sub(since) <= lookback + 1);
+    }
+
+    #[test]
+    fn worker_dependency_log_overrides_are_valid() {
+        let _ = build_worker_log_filter();
+        let mut filter = EnvFilter::new(WORKER_DEFAULT_LOG_FILTER);
+        for directive in WORKER_DEPENDENCY_LOG_OVERRIDES {
+            filter = filter.add_directive(directive.parse().unwrap());
+        }
+        drop(filter);
     }
 
     #[test]

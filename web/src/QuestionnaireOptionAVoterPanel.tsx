@@ -2924,8 +2924,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const credentialIssuerLabel = credentialIssuerNpub ? deriveActorDisplayId(credentialIssuerNpub) : "Unknown";
   const decisionActorName = credentialIssuerIsProxy ? "audit proxy" : "organiser";
   const coordinatorLabel = coordinatorNpub ? deriveActorDisplayId(coordinatorNpub) : "Unknown";
-  const submittedQuestionnaireId = snapshot?.submission?.payload?.electionId
-    || snapshot?.submission?.electionId
+  const displaySubmission = activeQuestionSubmission ?? null;
+  const displaySubmissionQuestion = perQuestionMode && activeQuestion ? activeQuestion : null;
+  const submittedQuestionnaireId = displaySubmission?.payload?.electionId
+    || displaySubmission?.electionId
     || statusQuestionnaireId;
   const requestStateText = snapshot?.blindRequestSent ? "Sent" : "Not sent";
   const credentialStateText = snapshot?.credentialReady
@@ -2940,15 +2942,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       : snapshot?.submission
         ? `Waiting for ${decisionActorName}`
         : "Not submitted";
-  const submittedMarkerNpub = snapshot?.responseNpub ?? snapshot?.submission?.responseNpub ?? snapshot?.submission?.invitedNpub ?? "";
+  const submittedMarkerNpub = displaySubmission?.responseNpub
+    ?? displaySubmission?.invitedNpub
+    ?? (!perQuestionMode ? snapshot?.responseNpub ?? "" : "");
   const submittedMarkerLabel = submittedMarkerNpub ? deriveActorDisplayId(submittedMarkerNpub) : "Unknown";
-  const activeQuestionVotingNpub = activeQuestionSubmission?.responseNpub ?? activeQuestionSubmission?.invitedNpub ?? "";
-  const activeQuestionVotingLabel = activeQuestionVotingNpub ? deriveActorDisplayId(activeQuestionVotingNpub) : "";
-  const activeQuestionCredentialStateText = activeQuestionIssuance
-    ? "Received"
-    : activeQuestionRequestSent
-      ? `Waiting for ${credentialIssuerName}`
-      : "Not requested";
   const voterIdentityForDetails = snapshot?.invitedNpub?.trim()
     || signedInNpub.trim()
     || props.localVoterNpub?.trim()
@@ -3256,34 +3253,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               </button>
             </div>
           ) : null}
-          {perQuestionMode && activeQuestion ? (
-            <section className='simple-questionnaire-active-ballot' aria-label='Current question ballot IDs'>
-              <div>
-                <span>Question</span>
-                <strong>{activeQuestion.questionId}</strong>
-              </div>
-              <div>
-                <span>Request ID</span>
-                <strong>{formatBallotDetailValue(activeQuestionRequest?.requestId, "Not created")}</strong>
-              </div>
-              <div>
-                <span>Ballot credential</span>
-                <strong>{activeQuestionCredentialStateText}</strong>
-              </div>
-              <div>
-                <span>Credential ID</span>
-                <strong>{formatBallotDetailValue(activeQuestionIssuance?.issuanceId, "Not received")}</strong>
-              </div>
-              <div>
-                <span>Submission ID</span>
-                <strong>{formatBallotDetailValue(activeQuestionSubmission?.submissionId, "Not submitted")}</strong>
-              </div>
-              <div className='simple-questionnaire-active-ballot-wide'>
-                <span>Voting ID used for this response</span>
-                <strong>{activeQuestionVotingNpub ? `${activeQuestionVotingLabel} (${activeQuestionVotingNpub})` : "Created when this question is submitted"}</strong>
-              </div>
-            </section>
-          ) : null}
           {visibleQuestionEntries.map(({ question, index }) => {
             const ranked = question.type === "rank" && Array.isArray(answers[question.questionId])
               ? (answers[question.questionId] as string[])
@@ -3398,8 +3367,19 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                             }
                             return (
                               <div key={option.optionId} className='simple-questionnaire-rank-row'>
-                                <span className='simple-questionnaire-rank-number'>{rankedIndex + 1}</span>
-                                <span>{option.label}</span>
+                                <button
+                                  type='button'
+                                  className='simple-questionnaire-rank-selected'
+                                  onClick={() => removeRankedAnswer(question.questionId, option.optionId)}
+                                  disabled={questionSubmitted}
+                                  aria-label={`Remove ${option.label} as #${rankedIndex + 1}`}
+                                >
+                                  <span className='simple-questionnaire-rank-selected-option'>
+                                    <span className='simple-questionnaire-rank-inline-number'>{rankedIndex + 1}. </span>
+                                    <span>{option.label}</span>
+                                  </span>
+                                  <span className='simple-questionnaire-rank-remove-prefix'>Remove as #{rankedIndex + 1}</span>
+                                </button>
                                 <div className='simple-questionnaire-rank-actions'>
                                   <button
                                     type='button'
@@ -3416,14 +3396,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                                     disabled={questionSubmitted || rankedIndex === ranked.length - 1}
                                   >
                                     Down
-                                  </button>
-                                  <button
-                                    type='button'
-                                    className='simple-voter-secondary simple-questionnaire-rank-action'
-                                    onClick={() => removeRankedAnswer(question.questionId, option.optionId)}
-                                    disabled={questionSubmitted}
-                                  >
-                                    Remove
                                   </button>
                                 </div>
                               </div>
@@ -3526,19 +3498,21 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           </button>
         ) : null}
       </div>
-      {snapshot?.submission ? (
+      {displaySubmission ? (
         <section className='simple-settings-card simple-submission-identity-card' aria-label='Anonymous ID used to vote'>
           <div className='simple-submission-identity-header'>
             <div>
               <p className='simple-questionnaire-voter-number'>Private submission identity</p>
-              <h4 className='simple-voter-section-title'>Anonymous ID used to vote</h4>
+              <h4 className='simple-voter-section-title'>
+                {displaySubmissionQuestion ? "Anonymous ID used for this question" : "Anonymous ID used to vote"}
+              </h4>
             </div>
           </div>
           <div className='simple-submission-identity-body'>
             <div className='simple-submission-identity-visuals'>
               <TokenFingerprint
                 tokenId={submittedMarkerNpub}
-                label='Anonymous ID used to vote'
+                label={displaySubmissionQuestion ? "Anonymous ID used for this question" : "Anonymous ID used to vote"}
                 large
                 showQr
                 hideMetadata
@@ -3555,9 +3529,15 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                 <dt>Questionnaire ID</dt>
                 <dd>{submittedQuestionnaireId}</dd>
               </div>
+              {displaySubmissionQuestion ? (
+                <div>
+                  <dt>Question</dt>
+                  <dd>Q{activeQuestionIndex + 1}: {displaySubmissionQuestion.prompt || displaySubmissionQuestion.questionId}</dd>
+                </div>
+              ) : null}
               <div>
                 <dt>Submission ID</dt>
-                <dd>{snapshot.submission.submissionId}</dd>
+                <dd>{displaySubmission.submissionId}</dd>
               </div>
               {submittedMarkerNpub ? (
                 <>

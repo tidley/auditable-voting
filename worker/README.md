@@ -50,7 +50,7 @@ Each archive extracts a platform-specific executable with the same stem as the a
 - Windows x64: `.\auditable-voting-worker-windows-x64.exe`
 - macOS Apple Silicon: `./auditable-voting-worker-macos-arm64`
 
-The coordinator Build page can also save an autoconfigured platform-specific launcher script that downloads the correct binary and fills in the current coordinator `npub`, effective relay list, and generated audit proxy `nsec` when present. Those launcher scripts and direct command-line snippets default helper-side logging to `RUST_LOG=debug`. Right-click copy-link is supported through a shareable URL that intentionally omits `WORKER_NSEC`. Raw binary links and direct command-line launch snippets are also available there under `Advanced`.
+The coordinator Build page can also save an autoconfigured platform-specific launcher script that downloads the correct binary and fills in the current coordinator `npub`, effective relay list, and generated audit proxy `nsec` when present. Those launcher scripts and direct command-line snippets default helper-side logging to scoped proxy debug logs while keeping dependency relay-frame logs at `info`, so encrypted NIP-17 payloads are not printed. Right-click copy-link is supported through a shareable URL that intentionally omits `WORKER_NSEC`. Raw binary links and direct command-line launch snippets are also available there under `Advanced`.
 
 ## Current responsibilities
 
@@ -63,7 +63,7 @@ The coordinator Build page can also save an autoconfigured platform-specific lau
 - consume delegated blind-token requests over private DMs
 - issue blind-signature responses on behalf of the coordinator for delegated elections with `Issue blind tokens` enabled, but only after the matching election config has arrived; unlisted general-link requests stay retryable until the organiser's later whitelist sync authorises them
 - redeem private invite codes locally from configured code hashes while voters also copy the same request to the organiser so the organiser UI can show the link as claimed
-- process public questionnaire submissions for delegated elections
+- process public questionnaire submissions for the newest configured delegated election only after the questionnaire definition and a positive expected participant count are configured, and stop scanning a round once expected accepted completion is reached
 - publish delegated public submission decisions with delegation provenance tags
 - optionally publish a delegated close-state event and result summary when delegated capabilities are enabled and expected invitee completion is reached using accepted valid responses only
 - exit cleanly after every active delegated election has reached expected accepted completion, published its delegated close event when enabled, and published its result summary

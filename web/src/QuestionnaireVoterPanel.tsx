@@ -1729,8 +1729,19 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
                         }
                         return (
                           <div key={option.optionId} className='simple-questionnaire-rank-row'>
-                            <span className='simple-questionnaire-rank-number'>{rankedIndex + 1}</span>
-                            <span>{option.label}</span>
+                            <button
+                              type='button'
+                              className='simple-questionnaire-rank-selected'
+                              onClick={() => removeRankedAnswer(question.questionId, option.optionId)}
+                              disabled={responseLocked}
+                              aria-label={`Remove ${option.label} as #${rankedIndex + 1}`}
+                            >
+                              <span className='simple-questionnaire-rank-selected-option'>
+                                <span className='simple-questionnaire-rank-inline-number'>{rankedIndex + 1}. </span>
+                                <span>{option.label}</span>
+                              </span>
+                              <span className='simple-questionnaire-rank-remove-prefix'>Remove as #{rankedIndex + 1}</span>
+                            </button>
                             <div className='simple-questionnaire-rank-actions'>
                               <button
                                 type='button'
@@ -1747,14 +1758,6 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
                                 disabled={responseLocked || rankedIndex === ranked.length - 1}
                               >
                                 Down
-                              </button>
-                              <button
-                                type='button'
-                                className='simple-voter-secondary simple-questionnaire-rank-action'
-                                onClick={() => removeRankedAnswer(question.questionId, option.optionId)}
-                                disabled={responseLocked}
-                              >
-                                Remove
                               </button>
                             </div>
                           </div>

@@ -7213,7 +7213,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
             aria-label={sidebarCollapsed ? "Expand organiser menu" : "Collapse organiser menu"}
             aria-pressed={sidebarCollapsed}
             onClick={() => setSidebarCollapsed((current) => !current)}
-            data-press-feedback-disabled='true'
           >
             <span className='simple-coordinator-sidebar-burger' aria-hidden='true'>
               <span />

@@ -11,7 +11,6 @@ import { deriveNpubFromNsec } from "./nostrIdentity";
 import { loadSimpleActorState, saveSimpleActorState, type SimpleActorRole } from "./simpleLocalState";
 import { tryWriteClipboard } from "./clipboard";
 import SimpleQrPanel from "./SimpleQrPanel";
-import { PRESS_FEEDBACK_SETTLED_EVENT } from "./pressFeedback";
 import TokenFingerprint from "./TokenFingerprint";
 import { deriveActorDisplayId } from "./actorDisplay";
 
@@ -257,142 +256,6 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
     return () => document.removeEventListener("pointerdown", handlePointerDown, true);
   }, [accountMenuOpen]);
 
-  useEffect(() => {
-    if (typeof document === "undefined") {
-      return;
-    }
-    type ButtonSnapshot = {
-      ariaExpanded: string;
-      ariaPressed: string;
-      ariaSelected: string;
-      className: string;
-      disabled: boolean;
-      text: string;
-    };
-
-    const pendingSnapshots = new WeakMap<HTMLButtonElement, ButtonSnapshot>();
-    const activeReleases = new WeakMap<HTMLButtonElement, () => void>();
-    const releaseHandlers = new Set<() => void>();
-
-    const findButton = (event: MouseEvent) => {
-      const target = event.target;
-      if (!(target instanceof Element)) {
-        return null;
-      }
-      return target.closest("button") as HTMLButtonElement | null;
-    };
-
-    const shouldIgnoreButton = (button: HTMLButtonElement) => (
-      button.disabled || button.dataset.pressFeedbackDisabled === "true"
-    );
-
-    const snapshotButton = (button: HTMLButtonElement): ButtonSnapshot => ({
-      ariaExpanded: button.getAttribute("aria-expanded") ?? "",
-      ariaPressed: button.getAttribute("aria-pressed") ?? "",
-      ariaSelected: button.getAttribute("aria-selected") ?? "",
-      className: button.className,
-      disabled: button.disabled,
-      text: button.textContent ?? "",
-    });
-
-    const snapshotsEqual = (left: ButtonSnapshot, right: ButtonSnapshot) => (
-      left.ariaExpanded === right.ariaExpanded &&
-      left.ariaPressed === right.ariaPressed &&
-      left.ariaSelected === right.ariaSelected &&
-      left.className === right.className &&
-      left.disabled === right.disabled &&
-      left.text === right.text
-    );
-
-    const buttonAlreadyResponded = (button: HTMLButtonElement, before: ButtonSnapshot) => (
-      !button.isConnected || button.disabled || !snapshotsEqual(before, snapshotButton(button))
-    );
-
-    const preventWhileAwaitingFeedback = (event: MouseEvent) => {
-      const button = findButton(event);
-      if (!button || shouldIgnoreButton(button)) {
-        return;
-      }
-      if (activeReleases.has(button)) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        return;
-      }
-      pendingSnapshots.set(button, snapshotButton(button));
-    };
-
-    const releaseAll = () => {
-      for (const release of [...releaseHandlers]) {
-        release();
-      }
-    };
-
-    const awaitButtonFeedback = (event: MouseEvent) => {
-      const button = findButton(event);
-      if (!button || shouldIgnoreButton(button) || event.defaultPrevented) {
-        return;
-      }
-      const before = pendingSnapshots.get(button);
-      pendingSnapshots.delete(button);
-      if (!before || buttonAlreadyResponded(button, before)) {
-        return;
-      }
-      activeReleases.get(button)?.();
-
-      let observer: MutationObserver | null = null;
-      const release = () => {
-        observer?.disconnect();
-        observer = null;
-        releaseHandlers.delete(release);
-        activeReleases.delete(button);
-        if (!button.isConnected) {
-          return;
-        }
-        delete button.dataset.pressFeedbackActive;
-        if (button.dataset.pressFeedbackOwnsAriaDisabled === "true") {
-          button.removeAttribute("aria-disabled");
-        }
-        delete button.dataset.pressFeedbackOwnsAriaDisabled;
-      };
-
-      activeReleases.set(button, release);
-      releaseHandlers.add(release);
-      button.dataset.pressFeedbackActive = "true";
-      if (!button.hasAttribute("aria-disabled")) {
-        button.dataset.pressFeedbackOwnsAriaDisabled = "true";
-        button.setAttribute("aria-disabled", "true");
-      }
-
-      if (!document.body) {
-        release();
-        return;
-      }
-      observer = new MutationObserver(() => {
-        release();
-      });
-      observer.observe(document.body, {
-        attributes: true,
-        characterData: true,
-        childList: true,
-        subtree: true,
-      });
-    };
-
-    document.addEventListener("click", preventWhileAwaitingFeedback, true);
-    document.addEventListener("click", awaitButtonFeedback);
-    window.addEventListener(PRESS_FEEDBACK_SETTLED_EVENT, releaseAll);
-    window.addEventListener("pagehide", releaseAll);
-    document.addEventListener("visibilitychange", releaseAll);
-    return () => {
-      document.removeEventListener("click", preventWhileAwaitingFeedback, true);
-      document.removeEventListener("click", awaitButtonFeedback);
-      window.removeEventListener(PRESS_FEEDBACK_SETTLED_EVENT, releaseAll);
-      window.removeEventListener("pagehide", releaseAll);
-      document.removeEventListener("visibilitychange", releaseAll);
-      releaseAll();
-    };
-  }, []);
-
   async function preserveLocalIdentityForRoleSwitch(nextRole: SimpleRole) {
     if (role === nextRole || !isSimpleActorRole(role) || !isSimpleActorRole(nextRole)) {
       return;
@@ -589,7 +452,6 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                 role='tab'
                 aria-selected={gatewayRole === option.role}
                 className={`simple-role-switch-button${gatewayRole === option.role ? " is-active" : ""}`}
-                data-press-feedback-disabled='true'
                 onClick={() => setGatewayRole(option.role)}
               >
                 {option.label}
@@ -720,7 +582,6 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
         aria-expanded={accountMenuOpen}
         aria-controls='simple-app-menu'
         aria-label={accountMenuButtonLabel}
-        data-press-feedback-disabled='true'
       >
         {role === "coordinator" ? (
           <>
@@ -758,7 +619,6 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                   role='tab'
                   aria-selected={role === option.role}
                   className={`simple-role-switch-button${role === option.role ? ' is-active' : ''}`}
-                  data-press-feedback-disabled='true'
                   onClick={() => {
                     void handleRoleSelect(option.role);
                   }}
@@ -783,7 +643,6 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                     role='tab'
                     aria-selected={voterTab === option.tab}
                     className={`simple-role-switch-button${voterTab === option.tab ? ' is-active' : ''}${option.tab === "messages" && voterMessagesUnread ? ' has-unread-message' : ''}`}
-                    data-press-feedback-disabled='true'
                     onClick={() => {
                       setVoterTab(option.tab);
                       if (option.tab === "messages") {
@@ -953,7 +812,6 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                 onClick={() => setAccountIdentityDialogOpen(true)}
                 aria-haspopup='dialog'
                 aria-label={`Show full ${roleLabel(role).toLowerCase()} npub QR`}
-                data-press-feedback-disabled='true'
               >
                 {currentRoleSummary}
               </button>

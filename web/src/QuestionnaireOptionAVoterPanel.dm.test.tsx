@@ -1265,6 +1265,53 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     expect(yesButton.getAttribute("aria-pressed")).toBe("true");
   });
 
+  it("lets voters remove a ranked option from the selected row", async () => {
+    const user = userEvent.setup();
+    storeCachedQuestionnaireDefinition({
+      schemaVersion: 1,
+      eventType: "questionnaire_definition",
+      responseMode: "blind_token",
+      questionnaireId: "q_rank_remove_selected",
+      title: "Ranked questionnaire",
+      description: "Ranked description",
+      createdAt: 1,
+      openAt: 1,
+      closeAt: 999,
+      coordinatorPubkey: "npub1" + "b".repeat(58),
+      coordinatorEncryptionPubkey: "npub1" + "b".repeat(58),
+      responseVisibility: "private",
+      eligibilityMode: "open",
+      allowMultipleResponsesPerPubkey: false,
+      questions: [{
+        questionId: "q1",
+        type: "rank",
+        prompt: "Rank these options",
+        required: true,
+        minimumRanked: 1,
+        options: [
+          { optionId: "option_1", label: "Title of option 1" },
+          { optionId: "option_2", label: "Title of option 2" },
+        ],
+      }],
+    });
+
+    render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_rank_remove_selected"]} />);
+
+    await user.click(await screen.findByRole("button", { name: /Title of option 1.*Add as #1/ }));
+
+    const selectedOption = await screen.findByRole("button", { name: "Remove Title of option 1 as #1" });
+    expect(selectedOption.textContent).toContain("1. Title of option 1");
+    expect(selectedOption.textContent).toContain("Remove as #1");
+    expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
+
+    await user.click(selectedOption);
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Remove Title of option 1 as #1" })).toBeNull();
+    });
+    expect(screen.getByRole("button", { name: /Title of option 1.*Add as #1/ })).toBeTruthy();
+  });
+
   it("shows staged ballot progress copy before a response can be submitted", async () => {
     const user = userEvent.setup();
     storeCachedQuestionnaireDefinition({
@@ -1561,5 +1608,134 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     expect(screen.getAllByText("rrrrrrr").length).toBeGreaterThan(0);
     expect(screen.getByText("Submittor identity - full")).toBeTruthy();
     expect(screen.getByText("npub1" + "r".repeat(58))).toBeTruthy();
+  });
+
+  it("shows the selected per-question submission identity", async () => {
+    const localVoterNpub = "npub1" + "h".repeat(58);
+    const firstResponseNpub = "npub1" + "1".repeat(58);
+    const secondResponseNpub = "npub1" + "2".repeat(58);
+    const staleLegacyResponseNpub = "npub1" + "z".repeat(58);
+    const definition = {
+      schemaVersion: 1 as const,
+      eventType: "questionnaire_definition" as const,
+      questionnaireId: "q_per_question_identity",
+      title: "Per-question identity",
+      description: "",
+      createdAt: 1781540000,
+      openAt: 1781540000,
+      closeAt: 1781543600,
+      coordinatorPubkey: "npub1" + "b".repeat(58),
+      coordinatorEncryptionPubkey: "npub1" + "b".repeat(58),
+      responseMode: "course_feedback" as const,
+      responseVisibility: "private" as const,
+      eligibilityMode: "open" as const,
+      allowMultipleResponsesPerPubkey: false,
+      ballotCredentialMode: "per_question" as const,
+      questions: [
+        {
+          questionId: "q1",
+          type: "yes_no" as const,
+          prompt: "First question",
+          required: true,
+        },
+        {
+          questionId: "q2",
+          type: "yes_no" as const,
+          prompt: "Second question",
+          required: true,
+        },
+      ],
+    };
+    optionAStorageMocks.loadVoterState.mockReturnValue({
+      electionId: "q_per_question_identity",
+      invitedNpub: localVoterNpub,
+      coordinatorNpub: "npub1" + "b".repeat(58),
+      loginVerified: true,
+      loginVerifiedAt: "2026-06-15T23:00:00.000Z",
+      inviteMessage: null,
+      blindRequest: null,
+      blindRequestSent: true,
+      blindRequestSentAt: "2026-06-15T23:00:00.000Z",
+      blindIssuance: {
+        type: "blind_ballot_response",
+        schemaVersion: 1,
+        electionId: "q_per_question_identity",
+        requestId: "request_legacy",
+        issuanceId: "issuance_legacy",
+        invitedNpub: localVoterNpub,
+        blindSignature: "sig_legacy",
+        definition,
+        issuedAt: "2026-06-15T23:00:00.000Z",
+      },
+      credentialReady: true,
+      draftResponses: [],
+      responseNpub: staleLegacyResponseNpub,
+      submission: {
+        type: "ballot_submission",
+        schemaVersion: 1,
+        electionId: "q_per_question_identity",
+        submissionId: "submission_legacy",
+        invitedNpub: localVoterNpub,
+        responseNpub: staleLegacyResponseNpub,
+        credential: "sig_legacy",
+        nullifier: "nullifier_legacy",
+        payload: {
+          electionId: "q_per_question_identity",
+          responses: [],
+        },
+        submittedAt: "2026-06-15T23:00:00.000Z",
+      },
+      submissions: {
+        q1: {
+          type: "ballot_submission",
+          schemaVersion: 1,
+          electionId: "q_per_question_identity",
+          submissionId: "submission_question_one",
+          invitedNpub: localVoterNpub,
+          responseNpub: firstResponseNpub,
+          credential: "sig_q1",
+          nullifier: "nullifier_q1",
+          payload: {
+            electionId: "q_per_question_identity",
+            responses: [{ questionId: "q1", type: "yes_no", answer: "yes" }],
+          },
+          submittedAt: "2026-06-15T23:01:00.000Z",
+        },
+        q2: {
+          type: "ballot_submission",
+          schemaVersion: 1,
+          electionId: "q_per_question_identity",
+          submissionId: "submission_question_two",
+          invitedNpub: localVoterNpub,
+          responseNpub: secondResponseNpub,
+          credential: "sig_q2",
+          nullifier: "nullifier_q2",
+          payload: {
+            electionId: "q_per_question_identity",
+            responses: [{ questionId: "q2", type: "yes_no", answer: "no" }],
+          },
+          submittedAt: "2026-06-15T23:02:00.000Z",
+        },
+      },
+      submissionAccepted: null,
+      submissionAcceptedAt: null,
+      submissionDecisions: {},
+      lastUpdatedAt: "2026-06-15T23:02:00.000Z",
+    });
+
+    render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_per_question_identity"]} localVoterNpub={localVoterNpub} />);
+
+    expect(screen.queryByRole("region", { name: "Current question ballot IDs" })).toBeNull();
+    const identityRegion = await screen.findByRole("region", { name: "Anonymous ID used to vote" });
+    expect(within(identityRegion).getByText("submission_question_one")).toBeTruthy();
+    expect(within(identityRegion).getByText(firstResponseNpub)).toBeTruthy();
+    expect(within(identityRegion).queryByText("submission_legacy")).toBeNull();
+    expect(within(identityRegion).queryByText(staleLegacyResponseNpub)).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Next" }));
+
+    expect(await within(identityRegion).findByText("submission_question_two")).toBeTruthy();
+    expect(within(identityRegion).getByText(secondResponseNpub)).toBeTruthy();
+    expect(within(identityRegion).queryByText(firstResponseNpub)).toBeNull();
   });
 });

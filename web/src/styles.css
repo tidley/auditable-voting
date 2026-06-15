@@ -70,14 +70,6 @@ textarea {
   font: inherit;
 }
 
-button[data-press-feedback-active="true"] {
-  cursor: wait !important;
-  opacity: 0.62 !important;
-  pointer-events: none;
-  transform: translateY(1px) !important;
-  transition: opacity 120ms ease, transform 120ms ease, filter 120ms ease;
-}
-
 code {
   font-family: "SFMono-Regular", "JetBrains Mono", monospace;
 }
@@ -3463,13 +3455,29 @@ code {
   padding: 0 8px 2px;
 }
 
+.simple-questionnaire-toolbar-sentinel {
+  height: 1px;
+  pointer-events: none;
+}
+
 .simple-questionnaire-sticky-toolbar {
   position: sticky;
   top: 0;
   z-index: 180;
   margin: 0 -22px 12px;
   padding: 12px 30px 10px;
-  border-bottom: 1px solid var(--simple-border);
+  border-bottom: 1px solid transparent;
+  background: #07101a;
+  box-shadow: none;
+  backdrop-filter: none;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.simple-questionnaire-sticky-toolbar.is-stuck {
+  border-bottom-color: var(--simple-border);
   background: rgba(7, 16, 26, 0.97);
   box-shadow: 0 12px 24px rgba(0, 0, 0, 0.26);
   backdrop-filter: blur(10px);
@@ -5099,42 +5107,6 @@ code {
   min-width: 98px;
 }
 
-.simple-questionnaire-active-ballot {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid var(--simple-border);
-  border-radius: 12px;
-  background: var(--simple-surface);
-}
-
-.simple-questionnaire-active-ballot div {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.simple-questionnaire-active-ballot span {
-  color: var(--simple-muted);
-  font-size: 0.76rem;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.simple-questionnaire-active-ballot strong {
-  min-width: 0;
-  color: var(--simple-text);
-  font-size: 0.9rem;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-}
-
-.simple-questionnaire-active-ballot-wide {
-  grid-column: 1 / -1;
-}
-
 .simple-optiona-voter-page {
   display: grid;
   gap: 22px;
@@ -5474,28 +5446,65 @@ code {
 
 .simple-questionnaire-rank-row {
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-height: 48px;
-  padding: 10px 12px;
+  padding: 6px;
   border: 1px solid var(--simple-border);
   border-radius: 10px;
   background: var(--simple-surface);
   color: var(--simple-text);
 }
 
-.simple-questionnaire-rank-number {
-  display: inline-flex;
+.simple-questionnaire-rank-selected {
+  display: flex;
   align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: 1px solid rgba(45, 212, 191, 0.48);
-  border-radius: 999px;
-  color: var(--simple-teal);
-  font-size: 1rem;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.simple-questionnaire-rank-selected:not(:disabled):hover,
+.simple-questionnaire-rank-selected:not(:disabled):focus-visible {
+  background: rgba(245, 158, 11, 0.12);
+  outline: 1px solid rgba(245, 158, 11, 0.42);
+  outline-offset: 0;
+}
+
+.simple-questionnaire-rank-selected:disabled {
+  cursor: default;
+}
+
+.simple-questionnaire-rank-selected-option {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-weight: 900;
+}
+
+.simple-questionnaire-rank-inline-number {
+  flex: none;
+  color: var(--simple-teal);
+}
+
+.simple-questionnaire-rank-remove-prefix {
+  flex: none;
+  color: var(--simple-amber);
+  font-size: 0.86rem;
+  font-weight: 900;
+  white-space: nowrap;
 }
 
 .simple-questionnaire-rank-actions {
@@ -5562,10 +5571,6 @@ code {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .simple-questionnaire-active-ballot {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .simple-submission-identity-chip {
     width: fit-content;
   }
@@ -5582,6 +5587,16 @@ code {
 
   .simple-questionnaire-rank-actions {
     justify-content: flex-start;
+  }
+
+  .simple-questionnaire-rank-selected {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .simple-questionnaire-rank-remove-prefix {
+    white-space: normal;
   }
 }
 
