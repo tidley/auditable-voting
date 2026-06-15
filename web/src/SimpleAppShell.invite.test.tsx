@@ -80,7 +80,7 @@ describe("SimpleAppShell invite-link login", () => {
     await user.click(screen.getByRole("button", { name: "Continue as Organiser" }));
     expect(screen.queryByRole("button", { name: "Login" })).toBeNull();
 
-    const menuButton = screen.getByRole("button", { name: "Menu" });
+    const menuButton = screen.getByRole("button", { name: /organiser profile menu/i });
     await user.click(menuButton);
     expect(menuButton.getAttribute("aria-disabled")).toBeNull();
     expect(screen.getByRole("tab", { name: "Organiser" }).getAttribute("aria-disabled")).toBeNull();
@@ -222,7 +222,9 @@ describe("SimpleAppShell invite-link login", () => {
       detail: { role: "coordinator", npub: organiserNpub },
     }));
 
-    await user.click(screen.getByRole("button", { name: "Menu" }));
+    expect(screen.queryByRole("button", { name: "Menu" })).toBeNull();
+    expect(screen.getByText("Profile")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: /organiser profile menu/i }));
 
     expect(screen.queryByRole("tablist", { name: "Organiser sections" })).toBeNull();
     expect(screen.queryByRole("tab", { name: "Questionnaire" })).toBeNull();

@@ -1271,7 +1271,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   ] = useState('');
   const [nowMs, setNowMs] = useState(() => Date.now());
   const activeCoordinatorNpub = signerNpub.trim() || keypair?.npub?.trim() || "";
-  const activeCoordinatorShortId = activeCoordinatorNpub ? deriveActorDisplayId(activeCoordinatorNpub) : "pending";
   const hasUnreadMessages = useHelplineUnreadIndicator({
     actorNsec: signerNpub ? "" : (keypair?.nsec ?? ""),
     suppressUnread: activeTab === "messages",
@@ -7222,13 +7221,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               <span />
             </span>
           </button>
-        </div>
-        <div className='simple-coordinator-sidebar-identity'>
-          <p className='simple-account-menu-kicker'>Organiser</p>
-          <p className='simple-coordinator-sidebar-short'>{activeCoordinatorShortId}</p>
-          <p className='simple-coordinator-sidebar-npub' title={activeCoordinatorNpub || undefined}>
-            {activeCoordinatorNpub || "Identity loading"}
-          </p>
         </div>
         <div className='simple-coordinator-sidebar-menu-slot'>
           {accountMenu ?? (

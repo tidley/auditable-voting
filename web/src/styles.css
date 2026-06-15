@@ -1346,7 +1346,7 @@ code {
   z-index: 200;
   align-self: start;
   display: grid;
-  grid-template-rows: auto auto auto 1fr;
+  grid-template-rows: auto auto 1fr;
   gap: 12px;
   min-height: 100vh;
   padding: 18px 14px;
@@ -1402,34 +1402,6 @@ code {
   background: currentColor;
 }
 
-.simple-coordinator-sidebar-identity {
-  display: grid;
-  gap: 4px;
-  padding: 12px 10px;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 10px;
-  background: rgba(6, 12, 18, 0.42);
-}
-
-.simple-coordinator-sidebar-short {
-  margin: 0;
-  color: var(--simple-text);
-  font-size: 1.15rem;
-  font-weight: 850;
-  line-height: 1.1;
-}
-
-.simple-coordinator-sidebar-npub {
-  margin: 0;
-  color: var(--simple-muted);
-  font-family: "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  font-size: 0.72rem;
-  line-height: 1.35;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .simple-coordinator-sidebar-menu-slot {
   min-width: 0;
 }
@@ -1439,7 +1411,79 @@ code {
   width: 100%;
 }
 
-.simple-coordinator-sidebar-menu-slot .simple-role-switch-toggle {
+.simple-account-profile-toggle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 82px;
+  padding: 12px 10px;
+  border-color: rgba(148, 163, 184, 0.24);
+  background: rgba(6, 12, 18, 0.48);
+  color: var(--simple-text);
+  text-align: left;
+}
+
+.simple-account-profile-toggle:hover,
+.simple-account-profile-toggle:focus-visible,
+.simple-account-profile-toggle[aria-expanded="true"] {
+  border-color: rgba(45, 212, 191, 0.76);
+  background: rgba(8, 143, 141, 0.16);
+}
+
+.simple-account-profile-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.simple-account-profile-title {
+  color: var(--simple-text);
+  font-size: 1.15rem;
+  font-weight: 850;
+  line-height: 1.1;
+}
+
+.simple-account-profile-npub {
+  min-width: 0;
+  color: var(--simple-muted);
+  font-family: "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.72rem;
+  font-weight: 500;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.simple-account-profile-affordance {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  align-self: start;
+  padding: 5px 8px;
+  border: 1px solid rgba(45, 212, 191, 0.36);
+  border-radius: 999px;
+  color: var(--simple-teal);
+  font-size: 0.74rem;
+  font-weight: 850;
+  line-height: 1;
+}
+
+.simple-account-profile-caret {
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: translateY(-1px) rotate(45deg);
+  transition: transform 160ms ease;
+}
+
+.simple-account-profile-toggle[aria-expanded="true"] .simple-account-profile-caret {
+  transform: translateY(2px) rotate(225deg);
+}
+
+.simple-coordinator-sidebar-menu-slot .simple-role-switch-toggle:not(.simple-account-profile-toggle) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1662,7 +1706,6 @@ code {
   justify-content: center;
 }
 
-.simple-coordinator-shell.is-sidebar-collapsed .simple-coordinator-sidebar-identity,
 .simple-coordinator-shell.is-sidebar-collapsed .simple-coordinator-sidebar-menu-slot,
 .simple-coordinator-shell.is-sidebar-collapsed .simple-coordinator-nav-label {
   display: none;
@@ -6183,7 +6226,6 @@ code {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .simple-coordinator-shell.is-sidebar-collapsed .simple-coordinator-sidebar-identity,
   .simple-coordinator-shell.is-sidebar-collapsed .simple-coordinator-sidebar-menu-slot,
   .simple-coordinator-shell.is-sidebar-collapsed .simple-coordinator-nav-label {
     display: block;

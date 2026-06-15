@@ -133,6 +133,13 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
   const preferredSignerLabel = useMemo(() => (isMobileBrowser() ? "Amber" : "NOS2X-FOX"), []);
   const preferredSignerIsAmber = preferredSignerLabel === "Amber";
   const accountIdentityLabel = accountIdentityNpub ? deriveActorDisplayId(accountIdentityNpub) : "pending";
+  const accountMenuButtonLabel = role === "coordinator"
+    ? accountIdentityNpub
+      ? `Open organiser profile menu for ${accountIdentityLabel}`
+      : "Open organiser profile menu"
+    : role === "voter" && voterMessagesUnread
+      ? "Menu, new message"
+      : "Menu";
 
   useEffect(() => {
     if (role !== "voter") {
@@ -705,17 +712,33 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
     <div className='simple-account-menu-wrap' ref={roleSwitchWrapRef}>
       <button
         type='button'
-        className={`simple-role-switch-toggle simple-account-menu-toggle${role === "voter" && voterMessagesUnread ? " has-unread-message is-breathing" : ""}`}
+        className={`simple-role-switch-toggle simple-account-menu-toggle${role === "coordinator" ? " simple-account-profile-toggle" : ""}${role === "voter" && voterMessagesUnread ? " has-unread-message is-breathing" : ""}`}
         onClick={() => {
           setAccountMenuOpen((current) => !current);
         }}
         aria-haspopup='menu'
         aria-expanded={accountMenuOpen}
         aria-controls='simple-app-menu'
-        aria-label={role === "voter" && voterMessagesUnread ? "Menu, new message" : "Menu"}
+        aria-label={accountMenuButtonLabel}
         data-press-feedback-disabled='true'
       >
-        Menu
+        {role === "coordinator" ? (
+          <>
+            <span className='simple-account-profile-copy'>
+              <span className='simple-account-menu-kicker'>Organiser</span>
+              <span className='simple-account-profile-title'>{accountIdentityLabel}</span>
+              <span className='simple-account-profile-npub' title={accountIdentityNpub || undefined}>
+                {accountIdentityNpub || "Identity loading"}
+              </span>
+            </span>
+            <span className='simple-account-profile-affordance' aria-hidden='true'>
+              <span>Profile</span>
+              <span className='simple-account-profile-caret' />
+            </span>
+          </>
+        ) : (
+          "Menu"
+        )}
       </button>
       {accountMenuOpen ? (
         <div
