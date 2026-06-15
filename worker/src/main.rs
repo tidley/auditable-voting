@@ -119,7 +119,7 @@ fn apply_worker_election_config(
     snapshot: &WorkerElectionConfigSnapshot,
 ) -> bool {
     if is_stale_worker_election_config(election, snapshot)
-        || is_empty_worker_election_config_downgrade(election, snapshot)
+        || is_empty_worker_election_config_without_eligibility(election, snapshot)
     {
         return false;
     }
@@ -256,11 +256,18 @@ fn is_stale_worker_election_config(
     }
 }
 
-fn is_empty_worker_election_config_downgrade(
+fn is_empty_worker_election_config_without_eligibility(
     election: &ElectionRuntimeState,
     snapshot: &WorkerElectionConfigSnapshot,
 ) -> bool {
     if snapshot.expected_invitee_count != Some(0) {
+        return false;
+    }
+    let requires_eligibility = snapshot.eligibility_required == Some(true)
+        || election
+            .capabilities
+            .contains(&WorkerCapability::IssueBlindTokens);
+    if !requires_eligibility {
         return false;
     }
     let incoming_whitelist_count = snapshot
@@ -283,19 +290,7 @@ fn is_empty_worker_election_config_downgrade(
                 .count()
         })
         .unwrap_or(0);
-    if incoming_whitelist_count > 0 || incoming_active_invite_code_count > 0 {
-        return false;
-    }
-
-    election.expected_invitee_count.unwrap_or(0) > 0
-        || !election.whitelist_npubs.is_empty()
-        || election
-            .bearer_invite_codes
-            .values()
-            .any(|entry| entry.state != "revoked")
-        || !election.seen_blind_request_ids.is_empty()
-        || !election.processed_submission_ids.is_empty()
-        || election.accepted_response_count > 0
+    incoming_whitelist_count == 0 && incoming_active_invite_code_count == 0
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1590,7 +1585,7 @@ impl WorkerRuntime {
         }
         if !apply_worker_election_config(election, &snapshot) {
             info!(
-                "worker election config ignored as stale replay or empty downgrade: election_id={}, delegation_id={}, incoming_expected_invitee_count={:?}, incoming_sent_at={}, current_expected_invitee_count={:?}, current_sent_at={}",
+                "worker election config ignored as stale replay or empty no-eligibility config: election_id={}, delegation_id={}, incoming_expected_invitee_count={:?}, incoming_sent_at={}, current_expected_invitee_count={:?}, current_sent_at={}",
                 snapshot.election_id,
                 snapshot.delegation_id,
                 snapshot.expected_invitee_count,
@@ -2095,6 +2090,82 @@ mod tests {
         );
         assert!(election.whitelist_npubs.contains("npub1knownvoter"));
         assert!(election.eligibility_required);
+    }
+
+    #[test]
+    fn empty_worker_election_config_does_not_block_older_complete_config() {
+        let mut election = ElectionRuntimeState::default();
+        let complete_snapshot = WorkerElectionConfigSnapshot {
+            message_type: "worker_election_config".to_string(),
+            schema_version: 1,
+            election_id: "q_worker_definition".to_string(),
+            delegation_id: "delegation_worker_definition".to_string(),
+            coordinator_npub: "npub1coordinator000000000000000000000000000000000000000000"
+                .to_string(),
+            worker_npub: "npub1worker000000000000000000000000000000000000000000000000".to_string(),
+            expected_invitee_count: Some(3),
+            whitelist_npubs: Some(vec!["npub1knownvoter".to_string()]),
+            bearer_invite_codes: Some(vec![]),
+            eligibility_required: Some(true),
+            blind_signing_private_key: None,
+            definition: None,
+            sent_at: "2026-06-15T20:09:02.000Z".to_string(),
+        };
+        let newer_empty_snapshot = WorkerElectionConfigSnapshot {
+            expected_invitee_count: Some(0),
+            whitelist_npubs: Some(vec![]),
+            sent_at: "2026-06-15T20:09:03.000Z".to_string(),
+            ..complete_snapshot.clone()
+        };
+
+        assert!(!apply_worker_election_config(
+            &mut election,
+            &newer_empty_snapshot
+        ));
+        assert_eq!(election.expected_invitee_count, None);
+        assert_eq!(election.last_election_config_sent_at, None);
+
+        assert!(apply_worker_election_config(
+            &mut election,
+            &complete_snapshot
+        ));
+        assert_eq!(election.expected_invitee_count, Some(3));
+        assert_eq!(
+            election.last_election_config_sent_at.as_deref(),
+            Some(complete_snapshot.sent_at.as_str())
+        );
+        assert!(election.whitelist_npubs.contains("npub1knownvoter"));
+        assert!(election.eligibility_required);
+    }
+
+    #[test]
+    fn empty_non_issuance_worker_election_config_can_apply() {
+        let mut election = ElectionRuntimeState::default();
+        let snapshot = WorkerElectionConfigSnapshot {
+            message_type: "worker_election_config".to_string(),
+            schema_version: 1,
+            election_id: "q_worker_definition".to_string(),
+            delegation_id: "delegation_worker_definition".to_string(),
+            coordinator_npub: "npub1coordinator000000000000000000000000000000000000000000"
+                .to_string(),
+            worker_npub: "npub1worker000000000000000000000000000000000000000000000000".to_string(),
+            expected_invitee_count: Some(0),
+            whitelist_npubs: Some(vec![]),
+            bearer_invite_codes: Some(vec![]),
+            eligibility_required: Some(false),
+            blind_signing_private_key: None,
+            definition: None,
+            sent_at: "2026-06-15T20:09:03.000Z".to_string(),
+        };
+
+        assert!(apply_worker_election_config(&mut election, &snapshot));
+        assert_eq!(election.expected_invitee_count, Some(0));
+        assert_eq!(
+            election.last_election_config_sent_at.as_deref(),
+            Some(snapshot.sent_at.as_str())
+        );
+        assert!(election.eligibility_configured);
+        assert!(!election.eligibility_required);
     }
 
     #[test]

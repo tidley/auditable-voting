@@ -223,7 +223,7 @@ describe("SimpleAppShell invite-link login", () => {
     }));
 
     expect(screen.queryByRole("button", { name: "Menu" })).toBeNull();
-    expect(screen.getByText("Profile")).toBeTruthy();
+    expect(screen.queryByText("Profile")).toBeNull();
     await user.click(screen.getByRole("button", { name: /organiser profile menu/i }));
 
     expect(screen.queryByRole("tablist", { name: "Organiser sections" })).toBeNull();

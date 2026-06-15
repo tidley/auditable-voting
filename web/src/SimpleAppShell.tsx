@@ -731,10 +731,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                 {accountIdentityNpub || "Identity loading"}
               </span>
             </span>
-            <span className='simple-account-profile-affordance' aria-hidden='true'>
-              <span>Profile</span>
-              <span className='simple-account-profile-caret' />
-            </span>
+            <span className='simple-account-profile-caret' aria-hidden='true' />
           </>
         ) : (
           "Menu"
