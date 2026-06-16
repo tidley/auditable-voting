@@ -112,16 +112,27 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(screen.queryByText("Draft preview")).toBeNull();
   });
 
-  it("generates a new questionnaire id when the coordinator New identity event fires", () => {
+  it("generates a new questionnaire id and proxy identity when the coordinator New identity event fires", async () => {
     render(<QuestionnaireCoordinatorPanel />);
 
     const idInput = screen.getByLabelText("Questionnaire ID") as HTMLInputElement;
+    fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "delegated_worker" } });
+    const workerNsecInput = await screen.findByLabelText("Generated audit proxy nsec (store securely)") as HTMLTextAreaElement;
+    const workerNpubInput = screen.getByLabelText("Audit proxy npub") as HTMLInputElement;
     const previousId = idInput.value;
+    const previousWorkerNsec = workerNsecInput.value;
+    const previousWorkerNpub = workerNpubInput.value;
 
     fireEvent(window, new Event("auditable-voting:coordinator-new"));
 
     expect(idInput.value).toMatch(/^q_[a-f0-9]+$/);
     expect(idInput.value).not.toBe(previousId);
+    await waitFor(() => {
+      expect(workerNsecInput.value).toMatch(/^nsec1/);
+      expect(workerNsecInput.value).not.toBe(previousWorkerNsec);
+      expect(workerNpubInput.value).toMatch(/^npub1/);
+      expect(workerNpubInput.value).not.toBe(previousWorkerNpub);
+    });
   });
 
   it("shows locally known organiser questionnaires in the live status selector", async () => {

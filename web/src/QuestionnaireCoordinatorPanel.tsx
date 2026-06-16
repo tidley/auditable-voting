@@ -875,6 +875,8 @@ function buildWorkerDirectCommand(input: {
       `$env:WORKER_NSEC='${escapeForPowerShellSingleQuotedString(workerNsec)}'`,
       `$env:COORDINATOR_NPUB='${escapeForPowerShellSingleQuotedString(coordinatorNpub)}'`,
       `$env:WORKER_RELAYS='${escapeForPowerShellSingleQuotedString(workerRelays)}'`,
+      "if (-not $env:WORKER_STATE_DIR) { $env:WORKER_STATE_DIR='.worker-state' }",
+      "New-Item -ItemType Directory -Force -Path $env:WORKER_STATE_DIR | Out-Null",
       `if (Test-Path '.\\${escapeForPowerShellSingleQuotedString(input.target.binaryFilename)}') {`,
       `  .\\${input.target.binaryFilename}`,
       ...(legacyBinaryFilename
@@ -902,6 +904,7 @@ function buildWorkerDirectCommand(input: {
       `  WORKER_NSEC="${escapeForDoubleQuotedBash(workerNsec)}" \\`,
     `  COORDINATOR_NPUB="${escapeForDoubleQuotedBash(coordinatorNpub)}" \\`,
     `  WORKER_RELAYS="${escapeForDoubleQuotedBash(workerRelays)}" \\`,
+    `  WORKER_STATE_DIR="\${WORKER_STATE_DIR:-./.worker-state}" \\`,
     `  ./${escapeForDoubleQuotedBash(input.target.binaryFilename)}`,
     legacyBinaryFilename ? `elif [ -x "./${escapeForDoubleQuotedBash(legacyBinaryFilename)}" ]; then` : "else",
     ...(legacyBinaryFilename
@@ -910,6 +913,7 @@ function buildWorkerDirectCommand(input: {
           `  WORKER_NSEC="${escapeForDoubleQuotedBash(workerNsec)}" \\`,
           `  COORDINATOR_NPUB="${escapeForDoubleQuotedBash(coordinatorNpub)}" \\`,
           `  WORKER_RELAYS="${escapeForDoubleQuotedBash(workerRelays)}" \\`,
+          `  WORKER_STATE_DIR="\${WORKER_STATE_DIR:-./.worker-state}" \\`,
           `  ./${escapeForDoubleQuotedBash(legacyBinaryFilename)}`,
         ]
       : []),
@@ -2423,6 +2427,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         return;
       }
       selectDraftQuestionnaireId(resetStoredQuestionnaireDraftId());
+      generateWorkerCredentials();
     };
     window.addEventListener(QUESTIONNAIRE_ID_RESET_EVENT, handleQuestionnaireIdReset);
     window.addEventListener("auditable-voting:coordinator-new", handleCoordinatorNewIdentity);
@@ -4842,10 +4847,13 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                       <textarea
                         id='worker-direct-command'
                         className='simple-voter-input simple-delegate-command'
-                        rows={selectedWorkerLauncherTarget.shell === "powershell" ? 6 : 7}
+                        rows={selectedWorkerLauncherTarget.shell === "powershell" ? 8 : 7}
                         readOnly
                         value={workerDirectCommand}
                       />
+                      <p className='simple-voter-note'>
+                        Direct launch defaults proxy state to <code>.worker-state</code> beside the binary. Delete that folder to reset local proxy state, or override <code>WORKER_STATE_DIR</code>.
+                      </p>
                 </section>
 
                 <section className='simple-delegate-section'>
