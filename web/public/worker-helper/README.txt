@@ -16,6 +16,9 @@ Usage (Linux x86_64):
    COORDINATOR_NPUB=npub1... \
    ./auditable-voting-worker-linux-x64
 
+   The first launch checks the binary version and exits if it is below 0.1.21. Download a newer release from
+   https://github.com/tidley/auditable-voting/releases/latest/download/auditable-voting-worker-linux-x64.tar.gz
+
    WORKER_RELAYS is optional. If not set, the audit proxy uses the default client relay set.
 
    WORKER_POLL_SECONDS controls how quickly the proxy retries stalled subscriptions and publishes fresh state after submission events.

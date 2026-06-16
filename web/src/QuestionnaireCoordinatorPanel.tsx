@@ -732,6 +732,8 @@ const WORKER_LAUNCHER_TARGET_OPTIONS: Array<{ key: WorkerLauncherTargetKey; labe
 ];
 const WORKER_DEFAULT_RUST_LOG = "info,auditable_voting_worker=debug,nostr_relay_pool=info,nostr_sdk=info,nostr=info,tungstenite=info,tokio_tungstenite=info";
 const WORKER_DEFAULT_POLL_SECONDS = "5";
+const WORKER_MINIMUM_VERSION = "0.1.21";
+const WORKER_RELEASE_DOWNLOAD_URL = "https://github.com/tidley/auditable-voting/releases/latest/download/auditable-voting-worker-linux-x64.tar.gz";
 
 function buildWorkerLauncherContents(input: {
   target: WorkerLauncherTarget;
@@ -787,7 +789,15 @@ function buildWorkerLauncherContents(input: {
       "  throw 'Audit proxy executable not found after extraction.'",
       "}",
       "",
-      "try { & $ExecutablePath --version } catch { Write-Host 'Audit proxy version check unavailable.' }",
+      `$RequiredVersion = [version]'${WORKER_MINIMUM_VERSION}'`,
+      "$VersionOutput = try { & $ExecutablePath --version } catch { $null }",
+      "$ParsedVersion = ($VersionOutput -split '\\s+')[1]",
+      "if (-not $ParsedVersion) { throw 'Unable to determine audit proxy version.' }",
+      "if ([version]$ParsedVersion -lt $RequiredVersion) {",
+      `  throw \"Audit proxy version $ParsedVersion is below minimum $RequiredVersion. Download the latest release from ${WORKER_RELEASE_DOWNLOAD_URL} before continuing.\"`,
+      "}",
+      "",
+      'Write-Host "Audit proxy version: $ParsedVersion"',
       "Write-Host \"Starting audit proxy...\"",
       "& $ExecutablePath",
       "",
@@ -852,7 +862,23 @@ function buildWorkerLauncherContents(input: {
     "  exit 1",
     "fi",
     "",
-    '"$EXECUTABLE_PATH" --version || true',
+    `WORKER_MINIMUM_VERSION="${WORKER_MINIMUM_VERSION}"`,
+    'WORKER_VERSION="$("$EXECUTABLE_PATH" --version | awk \'{print $2}\')"',
+    "if [ -z \"$WORKER_VERSION\" ]; then",
+    '  echo "Unable to determine audit proxy version." >&2',
+    "  exit 1",
+    "fi",
+    "if ! echo \"$WORKER_VERSION\" | grep -Eq \"^[0-9]+\\.[0-9]+\\.[0-9]+$\"; then",
+    '  echo "Unexpected audit proxy version format: $WORKER_VERSION" >&2',
+    "  exit 1",
+    "fi",
+    'WORKER_VERSION_VALUE="$(echo "$WORKER_VERSION" | awk -F. \'{printf "%d%03d%03d", $1, $2, $3}\')"',
+    'WORKER_MINIMUM_VERSION_VALUE="$(echo "$WORKER_MINIMUM_VERSION" | awk -F. \'{printf "%d%03d%03d", $1, $2, $3}\')"',
+    "if [ \"$WORKER_VERSION_VALUE\" -lt \"$WORKER_MINIMUM_VERSION_VALUE\" ]; then",
+    `  echo "Audit proxy version $WORKER_VERSION is below minimum $WORKER_MINIMUM_VERSION. Download the latest release from ${WORKER_RELEASE_DOWNLOAD_URL} before continuing." >&2`,
+    "  exit 1",
+    "fi",
+    'echo "Audit proxy version: $WORKER_VERSION"',
     'echo "Starting audit proxy..."',
     'exec "$EXECUTABLE_PATH"',
     "",
@@ -871,6 +897,7 @@ function buildWorkerDirectCommand(input: {
 
   if (input.target.shell === "powershell") {
     const legacyBinaryFilename = input.target.legacyBinaryFilename?.trim();
+    const escapedBinaryFilename = escapeForPowerShellSingleQuotedString(input.target.binaryFilename);
     return [
       `Invoke-WebRequest -Uri '${escapeForPowerShellSingleQuotedString(input.target.assetUrl)}' -OutFile '${escapeForPowerShellSingleQuotedString(input.target.assetFilename)}'`,
       `Expand-Archive -Path '${escapeForPowerShellSingleQuotedString(input.target.assetFilename)}' -DestinationPath '.' -Force`,
@@ -881,52 +908,83 @@ function buildWorkerDirectCommand(input: {
       `$env:WORKER_POLL_SECONDS='${WORKER_DEFAULT_POLL_SECONDS}'`,
       "if (-not $env:WORKER_STATE_DIR) { $env:WORKER_STATE_DIR='.worker-state' }",
       "New-Item -ItemType Directory -Force -Path $env:WORKER_STATE_DIR | Out-Null",
-      `if (Test-Path '.\\${escapeForPowerShellSingleQuotedString(input.target.binaryFilename)}') {`,
-      `  .\\${input.target.binaryFilename}`,
+      "$ExecutablePath = $null",
+      `if (Test-Path '.\\${escapedBinaryFilename}') {`,
+      `  $ExecutablePath = '.\\${escapedBinaryFilename}'`,
       ...(legacyBinaryFilename
         ? [
             `} elseif (Test-Path '.\\${escapeForPowerShellSingleQuotedString(legacyBinaryFilename)}') {`,
-            `  .\\${legacyBinaryFilename}`,
+            `  $ExecutablePath = '.\\${escapeForPowerShellSingleQuotedString(legacyBinaryFilename)}'`,
           ]
         : []),
-      "} else {",
+      "} elseif ($ExecutablePath -eq $null) {",
       "  throw 'Audit proxy executable not found after extraction.'",
       "}",
+      "",
+      `$RequiredVersion = [version]'${WORKER_MINIMUM_VERSION}'`,
+      "$VersionOutput = try { & $ExecutablePath --version } catch { $null }",
+      "$ParsedVersion = ($VersionOutput -split '\\s+')[1]",
+      "if (-not $ParsedVersion) { throw 'Unable to determine audit proxy version.' }",
+      "if ([version]$ParsedVersion -lt $RequiredVersion) {",
+      `  throw \"Audit proxy version $ParsedVersion is below minimum $RequiredVersion. Download the latest release from ${WORKER_RELEASE_DOWNLOAD_URL} before continuing.\"`,
+      "}",
+      "",
+      'Write-Host "Audit proxy version: $ParsedVersion"',
+      "& $ExecutablePath",
     ].join("\n");
   }
 
   const legacyBinaryFilename = input.target.legacyBinaryFilename?.trim() ?? "";
+  const escapedBinaryFilename = escapeForDoubleQuotedBash(input.target.binaryFilename);
+  const escapedLegacyBinaryFilename = legacyBinaryFilename
+    ? escapeForDoubleQuotedBash(legacyBinaryFilename)
+    : "";
+  const escapedWorkerNsec = escapeForDoubleQuotedBash(workerNsec);
+  const escapedCoordinatorNpub = escapeForDoubleQuotedBash(coordinatorNpub);
+  const escapedWorkerRelays = escapeForDoubleQuotedBash(workerRelays);
   return [
     `curl -L "${escapeForDoubleQuotedBash(input.target.assetUrl)}" -o "${escapeForDoubleQuotedBash(input.target.assetFilename)}"`,
     `tar -xzf "${escapeForDoubleQuotedBash(input.target.assetFilename)}"`,
-    `chmod +x "./${escapeForDoubleQuotedBash(input.target.binaryFilename)}" || true`,
-    legacyBinaryFilename
-      ? `chmod +x "./${escapeForDoubleQuotedBash(legacyBinaryFilename)}" || true`
-      : "",
-    `if [ -x "./${escapeForDoubleQuotedBash(input.target.binaryFilename)}" ]; then`,
-    `  RUST_LOG="${WORKER_DEFAULT_RUST_LOG}" \\`,
-    `  WORKER_NSEC="${escapeForDoubleQuotedBash(workerNsec)}" \\`,
-    `  COORDINATOR_NPUB="${escapeForDoubleQuotedBash(coordinatorNpub)}" \\`,
-    `  WORKER_RELAYS="${escapeForDoubleQuotedBash(workerRelays)}" \\`,
-    `  WORKER_POLL_SECONDS="${WORKER_DEFAULT_POLL_SECONDS}" \\`,
-    `  WORKER_STATE_DIR="\${WORKER_STATE_DIR:-./.worker-state}" \\`,
-    `  ./${escapeForDoubleQuotedBash(input.target.binaryFilename)}`,
-    legacyBinaryFilename ? `elif [ -x "./${escapeForDoubleQuotedBash(legacyBinaryFilename)}" ]; then` : "else",
+    `chmod +x "./${escapedBinaryFilename}" || true`,
+    legacyBinaryFilename ? `chmod +x "./${escapedLegacyBinaryFilename}" || true` : "",
+    "",
+    `if [ -x "./${escapedBinaryFilename}" ]; then`,
+    `  AUDIT_PROXY_BINARY="./${escapedBinaryFilename}"`,
     ...(legacyBinaryFilename
       ? [
-          `  RUST_LOG="${WORKER_DEFAULT_RUST_LOG}" \\`,
-          `  WORKER_NSEC="${escapeForDoubleQuotedBash(workerNsec)}" \\`,
-          `  COORDINATOR_NPUB="${escapeForDoubleQuotedBash(coordinatorNpub)}" \\`,
-          `  WORKER_RELAYS="${escapeForDoubleQuotedBash(workerRelays)}" \\`,
-          `  WORKER_POLL_SECONDS="${WORKER_DEFAULT_POLL_SECONDS}" \\`,
-          `  WORKER_STATE_DIR="\${WORKER_STATE_DIR:-./.worker-state}" \\`,
-          `  ./${escapeForDoubleQuotedBash(legacyBinaryFilename)}`,
+          `elif [ -x "./${escapedLegacyBinaryFilename}" ]; then`,
+          `  AUDIT_PROXY_BINARY="./${escapedLegacyBinaryFilename}"`,
         ]
       : []),
     "else",
     "  echo 'Audit proxy executable not found after extraction.' >&2",
     "  exit 1",
     "fi",
+    "",
+    `WORKER_MINIMUM_VERSION="${WORKER_MINIMUM_VERSION}"`,
+    'WORKER_VERSION="$("$AUDIT_PROXY_BINARY" --version | awk \'{print $2}\')"',
+    "if [ -z \"$WORKER_VERSION\" ]; then",
+    '  echo "Unable to determine audit proxy version." >&2',
+    "  exit 1",
+    "fi",
+    "if ! echo \"$WORKER_VERSION\" | grep -Eq \"^[0-9]+\\.[0-9]+\\.[0-9]+$\"; then",
+    '  echo "Unexpected audit proxy version format: $WORKER_VERSION" >&2',
+    "  exit 1",
+    "fi",
+    'WORKER_VERSION_VALUE="$(echo "$WORKER_VERSION" | awk -F. "{printf \"%d%03d%03d\", \$1, \$2, \$3}")"',
+    'WORKER_MINIMUM_VERSION_VALUE="$(echo "$WORKER_MINIMUM_VERSION" | awk -F. "{printf \"%d%03d%03d\", \$1, \$2, \$3}")"',
+    "if [ \"$WORKER_VERSION_VALUE\" -lt \"$WORKER_MINIMUM_VERSION_VALUE\" ]; then",
+    `  echo "Audit proxy version $WORKER_VERSION is below minimum $WORKER_MINIMUM_VERSION. Download the latest release from ${WORKER_RELEASE_DOWNLOAD_URL} before continuing." >&2`,
+    "  exit 1",
+    "fi",
+    "",
+    `RUST_LOG="${WORKER_DEFAULT_RUST_LOG}" \\`,
+    `WORKER_NSEC="${escapedWorkerNsec}" \\`,
+    `COORDINATOR_NPUB="${escapedCoordinatorNpub}" \\`,
+    `WORKER_RELAYS="${escapedWorkerRelays}" \\`,
+    `WORKER_POLL_SECONDS="${WORKER_DEFAULT_POLL_SECONDS}" \\`,
+    'WORKER_STATE_DIR="${WORKER_STATE_DIR:-./.worker-state}" \\',
+    '  "$AUDIT_PROXY_BINARY"',
   ].join("\n");
 }
 
@@ -4828,7 +4886,19 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
 
                 <section className='simple-delegate-section'>
                   <h4 className='simple-delegate-title'>Helper download and launch command</h4>
-                      <label className='simple-voter-label' htmlFor='worker-download-target'>Platform</label>
+                  <p className='simple-voter-note'>
+                    The generated helper scripts now abort if the downloaded audit proxy binary reports a version lower than <code>{WORKER_MINIMUM_VERSION}</code>.
+                    If you see this, download a fresh release from{" "}
+                    <a
+                      href={WORKER_RELEASE_DOWNLOAD_URL}
+                      target='_blank'
+                      rel='noreferrer'
+                    >
+                      {WORKER_RELEASE_DOWNLOAD_URL}
+                    </a>{" "}
+                    and rerun.
+                  </p>
+                  <label className='simple-voter-label' htmlFor='worker-download-target'>Platform</label>
                       <select
                         id='worker-download-target'
                         className='simple-voter-input'

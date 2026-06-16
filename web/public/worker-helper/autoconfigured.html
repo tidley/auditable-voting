@@ -98,13 +98,14 @@
     </style>
   </head>
   <body>
-    <main>
-      <h1>Autoconfigured audit proxy launcher</h1>
-      <p id="status">Preparing launcher download...</p>
-      <p class="note">This shareable link never includes <code>WORKER_NSEC</code>. Set your own audit proxy secret before running it.</p>
-      <div class="actions">
-        <button id="download-button" class="button" type="button">Download launcher</button>
-      </div>
+      <main>
+        <h1>Autoconfigured audit proxy launcher</h1>
+        <p id="status">Preparing launcher download...</p>
+        <p class="note">This shareable link never includes <code>WORKER_NSEC</code>. Set your own audit proxy secret before running it.</p>
+        <p class="note">If the downloaded audit proxy binary is below version <span id="required-version"></span>, the launcher aborts and instructs you to download the latest release.</p>
+        <div class="actions">
+          <button id="download-button" class="button" type="button">Download launcher</button>
+        </div>
       <pre id="preview"></pre>
     </main>
     <script>
@@ -195,6 +196,13 @@
 
       const DEFAULT_WORKER_RUST_LOG = "info,auditable_voting_worker=debug,nostr_relay_pool=info,nostr_sdk=info,nostr=info,tungstenite=info,tokio_tungstenite=info";
       const DEFAULT_WORKER_POLL_SECONDS = "5";
+      const WORKER_MINIMUM_VERSION = "0.1.21";
+      const WORKER_RELEASE_DOWNLOAD_URL = `${RELEASE_BASE_URL}/auditable-voting-worker-linux-x64.tar.gz`;
+
+      const requiredVersionNode = document.getElementById("required-version");
+      if (requiredVersionNode) {
+        requiredVersionNode.textContent = WORKER_MINIMUM_VERSION;
+      }
 
       function buildLauncherContents({
         target,
@@ -243,7 +251,15 @@
             "  throw 'Audit proxy executable not found after extraction.'",
             "}",
             "",
-            "try { & $ExecutablePath --version } catch { Write-Host 'Audit proxy version check unavailable.' }",
+            `$RequiredVersion = [version]'${WORKER_MINIMUM_VERSION}'`,
+            "$VersionOutput = try { & $ExecutablePath --version } catch { $null }",
+            "$ParsedVersion = ($VersionOutput -split '\\\\s+')[1]",
+            "if (-not $ParsedVersion) { throw 'Unable to determine audit proxy version.' }",
+            "if ([version]$ParsedVersion -lt $RequiredVersion) {",
+            `  throw \"Audit proxy version $ParsedVersion is below minimum $RequiredVersion. Download the latest release from ${WORKER_RELEASE_DOWNLOAD_URL} before continuing.\"`,
+            "}",
+            "",
+            'Write-Host "Audit proxy version: $ParsedVersion"',
             "Write-Host \"Starting audit proxy...\"",
             "& $ExecutablePath",
             "",
@@ -303,7 +319,23 @@
           "  exit 1",
           "fi",
           "",
-          '"$EXECUTABLE_PATH" --version || true',
+          `WORKER_MINIMUM_VERSION="${WORKER_MINIMUM_VERSION}"`,
+          'WORKER_VERSION="$("$EXECUTABLE_PATH" --version | awk \'{print $2}\')"',
+          "if [ -z \"$WORKER_VERSION\" ]; then",
+          '  echo "Unable to determine audit proxy version." >&2',
+          "  exit 1",
+          "fi",
+          "if ! echo \"$WORKER_VERSION\" | grep -Eq \"^[0-9]+\\.[0-9]+\\.[0-9]+$\"; then",
+          '  echo "Unexpected audit proxy version format: $WORKER_VERSION" >&2',
+          "  exit 1",
+          "fi",
+          'WORKER_VERSION_VALUE="$(echo "$WORKER_VERSION" | awk -F. \'{printf "%d%03d%03d", $1, $2, $3}\')"',
+          'WORKER_MINIMUM_VERSION_VALUE="$(echo "$WORKER_MINIMUM_VERSION" | awk -F. \'{printf "%d%03d%03d", $1, $2, $3}\')"',
+          "if [ \"$WORKER_VERSION_VALUE\" -lt \"$WORKER_MINIMUM_VERSION_VALUE\" ]; then",
+          `  echo "Audit proxy version $WORKER_VERSION is below minimum $WORKER_MINIMUM_VERSION. Download the latest release from ${WORKER_RELEASE_DOWNLOAD_URL} before continuing." >&2`,
+          "  exit 1",
+          "fi",
+          'echo "Audit proxy version: $WORKER_VERSION"',
           'echo "Starting audit proxy..."',
           'exec "$EXECUTABLE_PATH"',
           "",
