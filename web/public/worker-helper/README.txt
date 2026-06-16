@@ -10,16 +10,21 @@ Usage (Linux x86_64):
 2. Extract:
    tar -xzf auditable-voting-worker-linux-x64.tar.gz
 3. Run:
+   WORKER_POLL_SECONDS=5 \
+   WORKER_STATE_DIR="./.worker-state" \
    WORKER_NSEC=nsec1... \
    COORDINATOR_NPUB=npub1... \
    ./auditable-voting-worker-linux-x64
 
    WORKER_RELAYS is optional. If not set, the audit proxy uses the default client relay set.
 
+   WORKER_POLL_SECONDS controls how quickly the proxy retries stalled subscriptions and publishes fresh state after submission events.
+
 Organiser Build page launcher downloads:
 - The Autoconfigured action on each platform row now saves a single launcher script.
 - That launcher script includes the current organiser npub, the effective relay list, and the generated audit proxy nsec when present.
-- It also starts the audit proxy with `RUST_LOG=debug` so blind-request processing shows up in the helper logs by default.
+- It also starts the audit proxy with `RUST_LOG=info,auditable_voting_worker=debug,nostr_relay_pool=info,nostr_sdk=info,nostr=info,tungstenite=info,tokio_tungstenite=info` so blind-request processing shows up in the helper logs by default.
+- `.worker-state` is used by default so the proxy can keep operating across sessions; delete it to reset local state for that proxy identity.
 - On first run it downloads the matching raw binary asset automatically, then starts the audit proxy.
 - Right-click copy link works on the Autoconfigured action. The copied shareable URL intentionally omits WORKER_NSEC, so set your own audit proxy secret before running it.
 - The Build page `Helper download and launch command` block exposes the raw binary/checksum links and direct command-line launch snippet if you want to run the audit proxy manually.
