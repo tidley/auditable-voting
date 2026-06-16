@@ -40,7 +40,7 @@ impl WorkerConfig {
         let poll_seconds = env::var("WORKER_POLL_SECONDS")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
-            .unwrap_or(15)
+            .unwrap_or(5)
             .max(5);
 
         let worker_relays = parse_relays(&raw_relays)?;

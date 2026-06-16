@@ -24,10 +24,11 @@ use chrono::Utc;
 use crypto_bigint::BoxedUint;
 use nostr_sdk::prelude::*;
 use rsa::RsaPrivateKey;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::env;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::{interval, sleep, timeout};
@@ -44,9 +45,6 @@ const WORKER_DEPENDENCY_LOG_OVERRIDES: &[&str] = &[
 ];
 const DEFAULT_DM_LOOKBACK_SECS: u64 = 7 * 24 * 60 * 60;
 const DEFAULT_PUBLIC_LOOKBACK_SECS: u64 = 12 * 60 * 60;
-const CONTROL_DM_PAGE_LIMIT: usize = 250;
-const CONTROL_DM_MAX_PAGES: usize = 8;
-const PUBLIC_RESPONSE_MAX_PAGES: usize = 12;
 const CONTROL_DM_DEDUPE_RETENTION_SECS: i64 = 14 * 24 * 60 * 60;
 const PRIVATE_DM_SEND_TIMEOUT_SECS: u64 = 12;
 const COMPLETION_CLOSE_GRACE_SECS: u64 = 5;
@@ -147,6 +145,7 @@ fn apply_worker_election_config(
     if election.election_id.is_empty() {
         election.election_id = snapshot.election_id.clone();
     }
+    let previous_expected_invitee_count = election.expected_invitee_count;
     election.expected_invitee_count = snapshot.expected_invitee_count;
     election.last_election_config_sent_at = Some(snapshot.sent_at.clone());
     if snapshot.whitelist_npubs.is_some()
@@ -172,7 +171,29 @@ fn apply_worker_election_config(
     if snapshot.definition.is_some() {
         election.definition = snapshot.definition.clone();
     }
+    if completion_was_reopened_by_expected_count_change(
+        previous_expected_invitee_count,
+        election.expected_invitee_count,
+        election.accepted_response_count,
+    ) {
+        election.summary_published = false;
+        election.last_result_summary_publish_at = None;
+        election.questionnaire_close_published = false;
+        election.last_questionnaire_close_publish_at = None;
+    }
     true
+}
+
+fn completion_was_reopened_by_expected_count_change(
+    previous_expected: Option<u64>,
+    next_expected: Option<u64>,
+    accepted_count: u64,
+) -> bool {
+    match (previous_expected, next_expected) {
+        (Some(previous), Some(next)) => next > previous && accepted_count < next,
+        (None, Some(next)) => accepted_count < next,
+        _ => false,
+    }
 }
 
 fn normalize_invite_code_hash(value: &str) -> Option<String> {
@@ -249,6 +270,10 @@ fn election_has_public_submission_capability(election: &ElectionRuntimeState) ->
             .contains(&WorkerCapability::PublishResultSummary)
 }
 
+fn known_expected_invitee_count(election: &ElectionRuntimeState) -> Option<u64> {
+    election.expected_invitee_count.filter(|count| *count > 0)
+}
+
 fn election_should_scan_public_submissions(election: &ElectionRuntimeState) -> bool {
     if election.revoked
         || is_expired(&election.expires_at)
@@ -257,35 +282,38 @@ fn election_should_scan_public_submissions(election: &ElectionRuntimeState) -> b
     {
         return false;
     }
-    let Some(expected) = election.expected_invitee_count else {
-        return false;
-    };
-    expected > 0 && election.accepted_response_count < expected
+    known_expected_invitee_count(election)
+        .is_some_and(|expected| election.accepted_response_count < expected)
 }
 
 fn election_has_pending_completion_work(election: &ElectionRuntimeState) -> bool {
-    let Some(expected) = election.expected_invitee_count else {
+    let Some(expected) = known_expected_invitee_count(election) else {
         return false;
     };
-    if expected == 0 || election.accepted_response_count < expected {
+    if expected == 0
+        || election.accepted_response_count < expected
+        || !election.deferred_blind_request_ids.is_empty()
+    {
         return false;
     }
-    (election
+    let publish_summary = election
+        .capabilities
+        .contains(&WorkerCapability::PublishResultSummary)
+        && !election.summary_published;
+    let close_questionnaire = election
         .capabilities
         .contains(&WorkerCapability::CloseQuestionnaire)
-        && !election.questionnaire_close_published)
-        || (election
-            .capabilities
-            .contains(&WorkerCapability::PublishResultSummary)
-            && !election.summary_published)
+        && !election.questionnaire_close_published;
+    publish_summary || close_questionnaire
 }
 
 fn election_has_pending_ballot_or_response_work(election: &ElectionRuntimeState) -> bool {
-    let Some(expected) = election.expected_invitee_count else {
+    let Some(expected) = known_expected_invitee_count(election) else {
         return false;
     };
     expected > 0
-        && election.accepted_response_count < expected
+        && (election.accepted_response_count < expected
+            || !election.deferred_blind_request_ids.is_empty())
         && election.definition.is_some()
         && election.blind_signing_private_key.is_some()
         && election
@@ -300,6 +328,50 @@ fn election_has_pending_worker_activity(election: &ElectionRuntimeState) -> bool
     election_should_scan_public_submissions(election)
         || election_has_pending_completion_work(election)
         || election_has_pending_ballot_or_response_work(election)
+        || !election.deferred_blind_request_ids.is_empty()
+}
+
+#[cfg(test)]
+fn worker_state_should_terminate_after_completion(state: &WorkerPersistentState) -> bool {
+    fn is_complete_for_exit(election: &ElectionRuntimeState) -> bool {
+        let Some(expected) = known_expected_invitee_count(election) else {
+            return false;
+        };
+        if election.accepted_response_count < expected
+            || !election.deferred_blind_request_ids.is_empty()
+        {
+            return false;
+        }
+        if election
+            .capabilities
+            .contains(&WorkerCapability::PublishResultSummary)
+            && !election.summary_published
+        {
+            return false;
+        }
+        if election
+            .capabilities
+            .contains(&WorkerCapability::CloseQuestionnaire)
+            && !election.questionnaire_close_published
+        {
+            return false;
+        }
+        true
+    }
+
+    let mut active_count = 0usize;
+
+    for election in state.elections.values() {
+        if election.revoked || is_expired(&election.expires_at) {
+            continue;
+        }
+        active_count = active_count.saturating_add(1);
+        if !is_complete_for_exit(election) {
+            return false;
+        }
+    }
+
+    active_count > 0
 }
 
 fn election_activity_timestamp_millis(election: &ElectionRuntimeState) -> i64 {
@@ -339,21 +411,25 @@ fn select_status_active_election(state: &WorkerPersistentState) -> Option<&Elect
         })
 }
 
+#[cfg(test)]
 fn select_public_submission_election_ids(state: &WorkerPersistentState) -> Vec<String> {
-    let newest_config_at = state
+    let mut selected: Vec<&ElectionRuntimeState> = state
         .elections
         .values()
         .filter(|entry| election_should_scan_public_submissions(entry))
-        .map(election_config_timestamp_millis)
-        .max();
-    let Some(newest_config_at) = newest_config_at else {
+        .collect();
+    if selected.is_empty() {
         return Vec::new();
-    };
-    state
-        .elections
-        .values()
-        .filter(|entry| election_should_scan_public_submissions(entry))
-        .filter(|entry| election_config_timestamp_millis(entry) == newest_config_at)
+    }
+    selected.sort_by(|left, right| {
+        let left_ts = election_config_timestamp_millis(left);
+        let right_ts = election_config_timestamp_millis(right);
+        right_ts
+            .cmp(&left_ts)
+            .then_with(|| right.election_id.cmp(&left.election_id))
+    });
+    selected
+        .into_iter()
         .map(|entry| entry.election_id.clone())
         .collect()
 }
@@ -650,7 +726,7 @@ async fn main() -> Result<()> {
         relay_strings,
         config.worker_state_dir.display(),
         config.heartbeat_seconds,
-        config.poll_seconds,
+        config.poll_seconds
     );
 
     let client = Client::new(keys);
@@ -689,19 +765,10 @@ async fn main() -> Result<()> {
     let mut heartbeat_task = spawn_heartbeat_task(runtime.clone());
     let mut control_task = spawn_control_task(runtime.clone());
     let mut public_task = spawn_public_task(runtime.clone());
-    let mut completion_check = interval(Duration::from_secs(1));
+    let mut housekeeping_task = spawn_housekeeping_task(runtime.clone());
 
     loop {
         tokio::select! {
-            _ = completion_check.tick() => {
-                if runtime.should_terminate_after_completion().await {
-                    info!("all delegated questionnaire work is complete; audit proxy is terminating");
-                    heartbeat_task.abort();
-                    control_task.abort();
-                    public_task.abort();
-                    break;
-                }
-            },
             result = &mut heartbeat_task => {
                 log_task_exit("heartbeat", result);
                 heartbeat_task = spawn_heartbeat_task(runtime.clone());
@@ -714,10 +781,12 @@ async fn main() -> Result<()> {
                 log_task_exit("public plane", result);
                 public_task = spawn_public_task(runtime.clone());
             },
+            result = &mut housekeeping_task => {
+                log_task_exit("housekeeping", result);
+                housekeeping_task = spawn_housekeeping_task(runtime.clone());
+            },
         }
     }
-
-    Ok(())
 }
 
 fn spawn_heartbeat_task(runtime: WorkerRuntime) -> JoinHandle<()> {
@@ -734,10 +803,17 @@ fn spawn_heartbeat_task(runtime: WorkerRuntime) -> JoinHandle<()> {
 fn spawn_control_task(runtime: WorkerRuntime) -> JoinHandle<()> {
     tokio::spawn(async move {
         loop {
-            if let Err(error) = runtime.poll_control_plane().await {
-                warn!("control plane poll failed: {error}");
+            match runtime.run_control_subscription().await {
+                Ok(should_continue) => {
+                    if !should_continue {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    warn!("control plane subscription failed: {error}");
+                    sleep(Duration::from_secs(runtime.config.poll_seconds)).await;
+                }
             }
-            sleep(Duration::from_secs(runtime.config.poll_seconds)).await;
         }
     })
 }
@@ -745,10 +821,32 @@ fn spawn_control_task(runtime: WorkerRuntime) -> JoinHandle<()> {
 fn spawn_public_task(runtime: WorkerRuntime) -> JoinHandle<()> {
     tokio::spawn(async move {
         loop {
-            if let Err(error) = runtime.poll_public_plane().await {
-                warn!("public plane poll failed: {error}");
+            match runtime.run_public_subscription().await {
+                Ok(should_continue) => {
+                    if !should_continue {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    warn!("public plane subscription failed: {error}");
+                    sleep(Duration::from_secs(runtime.config.poll_seconds)).await;
+                }
             }
-            sleep(Duration::from_secs(runtime.config.poll_seconds)).await;
+        }
+    })
+}
+
+fn spawn_housekeeping_task(runtime: WorkerRuntime) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut ticker = interval(Duration::from_secs(runtime.config.poll_seconds));
+        loop {
+            ticker.tick().await;
+            if let Err(error) = runtime.finalize_completed_elections().await {
+                warn!("housekeeping completion check failed: {error}");
+            }
+            if let Err(error) = runtime.prune_local_state_cache().await {
+                warn!("housekeeping cache prune failed: {error}");
+            }
         }
     })
 }
@@ -762,92 +860,13 @@ fn log_task_exit(label: &str, result: std::result::Result<(), tokio::task::JoinE
 }
 
 impl WorkerRuntime {
-    async fn should_terminate_after_completion(&self) -> bool {
-        let state = self.state.lock().await;
-        let mut active_count = 0usize;
-
-        for election in state.elections.values() {
-            if election.revoked || is_expired(&election.expires_at) {
-                continue;
-            }
-            active_count = active_count.saturating_add(1);
-
-            let expected = election.expected_invitee_count.unwrap_or(0);
-            let accepted_unique = election.accepted_response_count;
-            let has_summary_capability = election
-                .capabilities
-                .contains(&WorkerCapability::PublishResultSummary);
-            let close_done = !election
-                .capabilities
-                .contains(&WorkerCapability::CloseQuestionnaire)
-                || election.questionnaire_close_published;
-
-            if expected == 0
-                || accepted_unique < expected
-                || !has_summary_capability
-                || !election.summary_published
-                || !close_done
-            {
-                return false;
-            }
-        }
-
-        active_count > 0
-    }
-
-    async fn fetch_events_best_effort(
-        &self,
-        label: &str,
-        filter: Filter,
-        timeout_secs: u64,
-    ) -> Vec<Event> {
-        let mut tasks = tokio::task::JoinSet::new();
-        let relays = self.effective_worker_relays().await;
-        self.ensure_relays_connected(&relays).await;
-        for relay in relays {
-            let client = self.client.clone();
-            let filter_for_task = filter.clone();
-            tasks.spawn(async move {
-                let result = client
-                    .fetch_events_from(
-                        [relay.clone()],
-                        filter_for_task,
-                        Duration::from_secs(timeout_secs),
-                    )
-                    .await;
-                (relay, result)
-            });
-        }
-
-        let mut events_by_id = BTreeMap::new();
-        let mut successes = 0usize;
-        let mut failures = Vec::new();
-        while let Some(result) = tasks.join_next().await {
-            match result {
-                Ok((relay, Ok(events))) => {
-                    self.record_relay_attempt_result(&relay, true, label).await;
-                    successes = successes.saturating_add(1);
-                    for event in events {
-                        events_by_id.insert(event.id, event);
-                    }
-                    debug!("{label} relay read succeeded: {relay}");
-                }
-                Ok((relay, Err(error))) => {
-                    self.record_relay_attempt_result(&relay, false, label).await;
-                    failures.push(format!("{relay}: {error}"));
-                }
-                Err(error) => failures.push(format!("join error: {error}")),
-            }
-        }
-        if !failures.is_empty() {
-            warn!(
-                "{label} relay read completed with {} successes and {} failures: {}",
-                successes,
-                failures.len(),
-                failures.join("; ")
-            );
-        }
-        events_by_id.into_values().collect()
+    async fn prune_local_state_cache(&self) -> Result<()> {
+        let mut state = self.state.lock().await;
+        prune_seen_control_events(&mut state.seen_control_event_ids, Utc::now());
+        state.last_public_scan_at = Some(now_iso());
+        state.last_dm_scan_at = Some(now_iso());
+        self.store.save(&state)?;
+        Ok(())
     }
 
     async fn send_status_heartbeat(&self) -> Result<()> {
@@ -980,121 +999,129 @@ impl WorkerRuntime {
         Ok(successes)
     }
 
-    async fn poll_control_plane(&self) -> Result<()> {
+    async fn run_control_subscription(&self) -> Result<bool> {
         let since_ts = fixed_lookback_timestamp(DEFAULT_DM_LOOKBACK_SECS);
-        debug!(
-            "control plane polling gift-wraps with fixed lookback: lookback_secs={}, since={}",
-            DEFAULT_DM_LOOKBACK_SECS,
-            since_ts.as_secs()
-        );
-        let base_filter = Filter::new()
+        let filter = Filter::new()
             .kind(Kind::GiftWrap)
             .custom_tag(
                 SingleLetterTag::lowercase(Alphabet::P),
                 self.worker_pubkey.to_hex(),
             )
-            .since(since_ts);
-        let mut events_by_id = BTreeMap::new();
-        let mut until_ts = None;
-        for page_index in 0..CONTROL_DM_MAX_PAGES {
-            let mut filter = base_filter.clone().limit(CONTROL_DM_PAGE_LIMIT);
-            if let Some(until) = until_ts {
-                filter = filter.until(until);
-            }
-            let events = self
-                .fetch_events_best_effort("control plane", filter, 8)
-                .await;
-            if events.is_empty() {
-                break;
-            }
-            let oldest_seen = events
-                .iter()
-                .map(|event| event.created_at.as_secs())
-                .min()
-                .unwrap_or_else(|| since_ts.as_secs());
-            let fetched_count = events.len();
-            for event in events {
-                events_by_id.insert(event.id, event);
-            }
-            let next_until = oldest_seen.saturating_sub(1);
-            debug!(
-                "control plane page {} fetched {} gift-wrapped events; next_until={}",
-                page_index + 1,
-                fetched_count,
-                next_until
+            .since(since_ts)
+            .limit(500);
+        let relays = self.effective_worker_relays().await;
+        self.ensure_relays_connected(&relays).await;
+
+        let output = self
+            .client
+            .subscribe_to(relays.clone(), filter, None)
+            .await
+            .context("failed to subscribe to control plane")?;
+        if !output.failed.is_empty() {
+            warn!(
+                "control subscription rejected by {} relays: {}",
+                output.failed.len(),
+                output
+                    .failed
+                    .into_iter()
+                    .map(|(relay, error)| format!("{relay}: {error}"))
+                    .collect::<Vec<_>>()
+                    .join("; ")
             );
-            if next_until <= since_ts.as_secs() {
-                break;
-            }
-            until_ts = Some(Timestamp::from_secs(next_until));
         }
-        let events = events_by_id.into_values().collect::<Vec<_>>();
         info!(
-            "control plane poll fetched {} gift-wrapped events for worker",
-            events.len()
+            "control plane subscription active: id={}, relays={}",
+            output.val,
+            relays.len()
         );
-        let (unseen_events, replay_seen_control_events) = {
-            let mut state = self.state.lock().await;
-            prune_seen_control_events(&mut state.seen_control_event_ids, Utc::now());
-            let replay_seen_control_events = !state.seen_control_event_ids.is_empty()
+        let control_subscription_id = output.val;
+
+        let mut notification_receiver = self.client.notifications();
+        loop {
+            match notification_receiver.recv().await {
+                Ok(RelayPoolNotification::Event {
+                    subscription_id: event_subscription_id,
+                    event,
+                    ..
+                }) if event_subscription_id == control_subscription_id => {
+                    if let Err(error) = self.process_control_plane_event(&event).await {
+                        warn!("control plane event {} failed: {error}", event.id);
+                    }
+                }
+                Ok(RelayPoolNotification::Event { .. }) => {}
+                Ok(RelayPoolNotification::Shutdown) => {
+                    info!(
+                        "control plane notification channel closed; stopping control worker loop"
+                    );
+                    return Ok(false);
+                }
+                Err(RecvError::Closed) => {
+                    info!(
+                        "control plane notification receiver closed; stopping control worker loop"
+                    );
+                    return Ok(false);
+                }
+                Err(RecvError::Lagged(skipped)) => {
+                    warn!("control plane subscription lagged by {skipped} events");
+                }
+                _ => {}
+            }
+        }
+    }
+
+    async fn process_control_plane_event(&self, event: &Event) -> Result<()> {
+        let replay_seen_control_events = {
+            let state = self.state.lock().await;
+            !state.seen_control_event_ids.is_empty()
                 && state
                     .elections
                     .values()
-                    .any(election_needs_legacy_control_replay);
-            if replay_seen_control_events {
-                info!(
-                    "control plane replaying seen gift-wrapped events to recover legacy scoped-issuance state"
-                );
-            }
-            let unseen_events = events
-                .into_iter()
-                .filter(|event| {
-                    replay_seen_control_events
-                        || !state
-                            .seen_control_event_ids
-                            .contains_key(&event.id.to_string())
-                })
-                .collect::<Vec<_>>();
-            (unseen_events, replay_seen_control_events)
+                    .any(election_needs_legacy_control_replay)
         };
-        debug!(
-            "control plane poll fetched {} unseen gift-wrapped events",
-            unseen_events.len()
-        );
-        let mut seen_event_ids = Vec::with_capacity(unseen_events.len());
-        for event in unseen_events {
-            let unwrapped = match self.client.unwrap_gift_wrap(&event).await {
-                Ok(unwrapped) => unwrapped,
-                Err(error) => {
-                    warn!("failed to unwrap control gift-wrap {}: {error}", event.id);
-                    continue;
-                }
-            };
-            let rumor_content = unwrapped.rumor.content;
-            if rumor_content.trim().is_empty() {
-                continue;
-            }
-            match self.process_control_message(&rumor_content).await {
-                Ok(true) => seen_event_ids.push(event.id.to_string()),
-                Ok(false) if replay_seen_control_events => {
-                    seen_event_ids.push(event.id.to_string())
-                }
-                Ok(false) => {}
-                Err(error) => {
-                    warn!("control message from event {} failed: {error}", event.id);
-                }
-            }
+
+        if replay_seen_control_events {
+            debug!(
+                "control plane replaying seen gift-wraps to recover legacy scoped-issuance state"
+            );
         }
-        let mut state = self.state.lock().await;
-        let seen_at = now_iso();
-        for event_id in seen_event_ids {
-            state
-                .seen_control_event_ids
-                .insert(event_id, seen_at.clone());
+
+        let event_id = event.id.to_string();
+        let replay_seen_event = {
+            let state = self.state.lock().await;
+            if state.seen_control_event_ids.contains_key(&event_id) {
+                replay_seen_control_events
+            } else {
+                true
+            }
+        };
+        if !replay_seen_event {
+            return Ok(());
         }
-        prune_seen_control_events(&mut state.seen_control_event_ids, Utc::now());
-        state.last_dm_scan_at = Some(now_iso());
-        self.store.save(&state)?;
+
+        let unwrapped = self.client.unwrap_gift_wrap(event).await?;
+        let rumor_content = unwrapped.rumor.content;
+        if rumor_content.trim().is_empty() {
+            return Ok(());
+        }
+        match self.process_control_message(&rumor_content).await {
+            Ok(true) => {
+                let mut state = self.state.lock().await;
+                state.seen_control_event_ids.insert(event_id, now_iso());
+                prune_seen_control_events(&mut state.seen_control_event_ids, Utc::now());
+                state.last_dm_scan_at = Some(now_iso());
+                self.store.save(&state)?;
+            }
+            Ok(false) => {
+                if replay_seen_control_events {
+                    let mut state = self.state.lock().await;
+                    state.seen_control_event_ids.insert(event_id, now_iso());
+                    prune_seen_control_events(&mut state.seen_control_event_ids, Utc::now());
+                    state.last_dm_scan_at = Some(now_iso());
+                    self.store.save(&state)?;
+                }
+            }
+            Err(error) => return Err(error),
+        }
         Ok(())
     }
 
@@ -1233,18 +1260,16 @@ impl WorkerRuntime {
         Ok(true)
     }
 
-    async fn poll_public_plane(&self) -> Result<()> {
-        self.poll_public_delegations_and_revocations().await?;
-        self.process_public_submissions().await?;
-        let mut state = self.state.lock().await;
-        state.last_public_scan_at = Some(now_iso());
-        self.store.save(&state)?;
-        Ok(())
-    }
-
-    async fn poll_public_delegations_and_revocations(&self) -> Result<()> {
+    async fn run_public_subscription(&self) -> Result<bool> {
         let since_ts = fixed_lookback_timestamp(DEFAULT_PUBLIC_LOOKBACK_SECS);
-        let filter = Filter::new()
+        let response_filter = Filter::new()
+            .kind(Kind::Custom(
+                IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND,
+            ))
+            .hashtag("questionnaire_response_blind")
+            .since(since_ts)
+            .limit(500);
+        let delegation_filter = Filter::new()
             .author(self.coordinator_pubkey)
             .kinds(vec![
                 Kind::Custom(OPTIONA_WORKER_DELEGATION_KIND),
@@ -1252,142 +1277,163 @@ impl WorkerRuntime {
             ])
             .since(since_ts)
             .limit(300);
-        let events = self
-            .fetch_events_best_effort("delegation plane", filter, 8)
-            .await;
-        for event in events {
-            match event.kind {
-                Kind::Custom(kind) if kind == OPTIONA_WORKER_DELEGATION_KIND => {
-                    if let Ok(delegation) =
-                        serde_json::from_str::<WorkerDelegationCertificate>(&event.content)
-                    {
-                        self.apply_delegation(delegation).await?;
-                    }
+
+        let relays = self.effective_worker_relays().await;
+        self.ensure_relays_connected(&relays).await;
+
+        let public_response_subscription_id = SubscriptionId::generate();
+        let delegation_subscription_id = SubscriptionId::generate();
+
+        let response_output = self
+            .client
+            .subscribe_to(relays.clone(), response_filter, None)
+            .await
+            .context("failed to subscribe to public response plane")?;
+        let delegation_output = self
+            .client
+            .subscribe_with_id_to(
+                relays,
+                delegation_subscription_id.clone(),
+                delegation_filter,
+                None,
+            )
+            .await
+            .context("failed to subscribe to public delegation plane")?;
+
+        if !response_output.failed.is_empty() {
+            warn!(
+                "public response subscription rejected by {} relays: {}",
+                response_output.failed.len(),
+                response_output
+                    .failed
+                    .into_iter()
+                    .map(|(relay, error)| format!("{relay}: {error}"))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            );
+        }
+        if !delegation_output.failed.is_empty() {
+            warn!(
+                "public delegation subscription rejected by {} relays: {}",
+                delegation_output.failed.len(),
+                delegation_output
+                    .failed
+                    .into_iter()
+                    .map(|(relay, error)| format!("{relay}: {error}"))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            );
+        }
+
+        info!(
+            "public response subscription active: id={}, relays={}",
+            response_output.val,
+            response_output.success.len()
+        );
+        info!(
+            "public delegation subscription active: id={}, relays={}",
+            delegation_subscription_id,
+            delegation_output.success.len()
+        );
+
+        let mut notification_receiver = self.client.notifications();
+        loop {
+            match notification_receiver.recv().await {
+                Ok(RelayPoolNotification::Event {
+                    subscription_id: event_subscription_id,
+                    event,
+                    ..
+                }) if event_subscription_id == public_response_subscription_id => {
+                    self.process_public_response_event(&event, &since_ts)
+                        .await?;
                 }
-                Kind::Custom(kind) if kind == OPTIONA_WORKER_DELEGATION_REVOCATION_KIND => {
-                    if let Ok(revocation) =
-                        serde_json::from_str::<WorkerDelegationRevocation>(&event.content)
+                Ok(RelayPoolNotification::Event {
+                    subscription_id: event_subscription_id,
+                    event,
+                    ..
+                }) if event_subscription_id == delegation_subscription_id => {
+                    if event.kind == Kind::Custom(OPTIONA_WORKER_DELEGATION_KIND) {
+                        if let Ok(delegation) =
+                            serde_json::from_str::<WorkerDelegationCertificate>(&event.content)
+                        {
+                            self.apply_delegation(delegation).await?;
+                        }
+                    } else if event.kind == Kind::Custom(OPTIONA_WORKER_DELEGATION_REVOCATION_KIND)
                     {
-                        self.apply_revocation(revocation).await?;
+                        if let Ok(revocation) =
+                            serde_json::from_str::<WorkerDelegationRevocation>(&event.content)
+                        {
+                            self.apply_revocation(revocation).await?;
+                        }
                     }
+                    let mut state = self.state.lock().await;
+                    state.last_public_scan_at = Some(now_iso());
+                    self.store.save(&state)?;
+                }
+                Ok(RelayPoolNotification::Event { .. }) => {}
+                Ok(RelayPoolNotification::Shutdown) => {
+                    info!("public plane notification channel closed; stopping public worker loop");
+                    return Ok(false);
+                }
+                Err(RecvError::Closed) => {
+                    info!("public plane notification receiver closed; stopping public worker loop");
+                    return Ok(false);
+                }
+                Err(RecvError::Lagged(skipped)) => {
+                    warn!("public plane subscription lagged by {skipped} events");
                 }
                 _ => {}
             }
         }
-        Ok(())
     }
 
-    async fn process_public_submissions(&self) -> Result<()> {
-        self.finalize_completed_elections().await?;
-
-        let elections_to_process = {
-            let state = self.state.lock().await;
-            select_public_submission_election_ids(&state)
-        };
-        if elections_to_process.is_empty() {
-            return Ok(());
+    async fn process_public_response_event(
+        &self,
+        event: &Event,
+        since_ts: &Timestamp,
+    ) -> Result<bool> {
+        if event.kind != Kind::Custom(IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND)
+            || event.created_at < *since_ts
+        {
+            return Ok(false);
         }
 
-        let public_response_limit = {
-            let state = self.state.lock().await;
-            state
-                .elections
-                .values()
-                .filter(|entry| elections_to_process.contains(&entry.election_id))
-                .filter_map(|entry| entry.expected_invitee_count)
-                .max()
-                .unwrap_or(500)
-                .saturating_add(100)
-                .clamp(500, 5_000)
-        };
-        let since_ts = fixed_lookback_timestamp(DEFAULT_PUBLIC_LOOKBACK_SECS);
-        let base_filter = Filter::new()
-            .kind(Kind::Custom(
-                IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND,
-            ))
-            .hashtag("questionnaire_response_blind")
-            .custom_tags(
-                SingleLetterTag::lowercase(Alphabet::Q),
-                elections_to_process.clone(),
-            )
-            .since(since_ts);
-        let mut events_by_id = BTreeMap::new();
-        let mut until_ts = None;
-        for page_index in 0..PUBLIC_RESPONSE_MAX_PAGES {
-            let mut filter = base_filter.clone().limit(public_response_limit as usize);
-            if let Some(until) = until_ts {
-                filter = filter.until(until);
-            }
-            let events = self
-                .fetch_events_best_effort("public plane", filter, 8)
-                .await;
-            if events.is_empty() {
-                break;
-            }
-            let oldest_seen = events
-                .iter()
-                .map(|event| event.created_at.as_secs())
-                .min()
-                .unwrap_or_else(|| since_ts.as_secs());
-            let fetched_count = events.len();
-            for event in events {
-                events_by_id.insert(event.id, event);
-            }
-            let next_until = oldest_seen.saturating_sub(1);
-            debug!(
-                "public plane page {} fetched {} blind response events; next_until={}",
-                page_index + 1,
-                fetched_count,
-                next_until
-            );
-            if next_until <= since_ts.as_secs() {
-                break;
-            }
-            until_ts = Some(Timestamp::from_secs(next_until));
-        }
-        let events = events_by_id.into_values().collect::<Vec<_>>();
+        let submission =
+            match serde_json::from_str::<QuestionnaireBlindResponseEvent>(&event.content) {
+                Ok(parsed) => parsed,
+                Err(error) => {
+                    warn!("failed to parse blind response event {}: {error}", event.id);
+                    return Ok(false);
+                }
+            };
 
-        let mut handled_response_count = 0usize;
-        let mut replayed_response_count = 0usize;
-        let mut unrelated_response_count = 0usize;
-        for event in events {
-            let submission =
-                match serde_json::from_str::<QuestionnaireBlindResponseEvent>(&event.content) {
-                    Ok(parsed) => parsed,
-                    Err(error) => {
-                        warn!("failed to parse blind response event {}: {error}", event.id);
-                        continue;
-                    }
-                };
-            if !elections_to_process.contains(&submission.questionnaire_id) {
-                unrelated_response_count = unrelated_response_count.saturating_add(1);
-                continue;
-            }
-            if self.handle_submission(submission).await? {
-                handled_response_count = handled_response_count.saturating_add(1);
+        let should_handle = {
+            let state = self.state.lock().await;
+            if let Some(election) = state.elections.get(&submission.questionnaire_id) {
+                election_should_scan_public_submissions(election)
             } else {
-                replayed_response_count = replayed_response_count.saturating_add(1);
+                false
             }
+        };
+        if !should_handle {
+            return Ok(false);
         }
-        if handled_response_count > 0 {
+
+        let handled = self.handle_submission(submission).await?;
+        if handled {
             info!(
-                "public plane handled {} new blind response events",
-                handled_response_count
-            );
-        } else if replayed_response_count > 0 {
-            debug!(
-                "public plane saw {} replayed blind response events",
-                replayed_response_count
+                "public plane handled 1 new blind response event from {}",
+                event.id
             );
         }
-        if unrelated_response_count > 0 {
-            debug!(
-                "public plane skipped {} blind response events for unrelated questionnaires",
-                unrelated_response_count
-            );
+        if handled {
+            self.finalize_completed_elections().await?;
         }
-        self.finalize_completed_elections().await?;
-        Ok(())
+
+        let mut state = self.state.lock().await;
+        state.last_public_scan_at = Some(now_iso());
+        self.store.save(&state)?;
+        Ok(handled)
     }
 
     async fn handle_submission(&self, submission: QuestionnaireBlindResponseEvent) -> Result<bool> {
@@ -1484,9 +1530,12 @@ impl WorkerRuntime {
                 .values()
                 .filter(|entry| !entry.revoked && !is_expired(&entry.expires_at))
                 .filter_map(|entry| {
-                    let expected = entry.expected_invitee_count.unwrap_or(0);
+                    let expected = match known_expected_invitee_count(entry) {
+                        Some(expected) => expected,
+                        None => return None,
+                    };
                     let accepted_unique = entry.accepted_response_count;
-                    if expected == 0 || accepted_unique < expected {
+                    if accepted_unique < expected || !entry.deferred_blind_request_ids.is_empty() {
                         return None;
                     }
                     let close_questionnaire = entry
@@ -1769,6 +1818,10 @@ impl WorkerRuntime {
                 );
             }
             if election.blind_signing_private_key.is_none() {
+                election
+                    .deferred_blind_request_ids
+                    .insert(request.request_id.clone());
+                self.store.save(&state)?;
                 warn!(
                     "blind request deferred for election {} because no blind signing key is configured",
                     request.election_id
@@ -1776,6 +1829,10 @@ impl WorkerRuntime {
                 return Ok(false);
             }
             if !has_effective_eligibility_config(election) {
+                election
+                    .deferred_blind_request_ids
+                    .insert(request.request_id.clone());
+                self.store.save(&state)?;
                 warn!(
                     "blind request deferred for election {} because delegated eligibility config is not loaded yet",
                     request.election_id
@@ -1787,6 +1844,10 @@ impl WorkerRuntime {
                 .contains(&request.request_id)
                 && has_existing_issuance_for_request(election, &request)
             {
+                election
+                    .deferred_blind_request_ids
+                    .remove(&request.request_id);
+                self.store.save(&state)?;
                 warn!(
                     "blind request ignored because this invited npub/scope already has a delegated issuance: election_id={}, request_id={}, invited_npub={}, ballot_scope={}",
                     request.election_id,
@@ -1799,6 +1860,10 @@ impl WorkerRuntime {
             let state_changed_by_authorization = match authorize_blind_request(election, &request) {
                 BlindRequestAuthorization::Authorized { state_changed } => state_changed,
                 BlindRequestAuthorization::Deferred => {
+                    election
+                        .deferred_blind_request_ids
+                        .insert(request.request_id.clone());
+                    self.store.save(&state)?;
                     info!(
                         "blind request deferred for election {} because delegated eligibility is not satisfied yet",
                         request.election_id
@@ -1806,6 +1871,10 @@ impl WorkerRuntime {
                     return Ok(false);
                 }
                 BlindRequestAuthorization::Rejected => {
+                    election
+                        .deferred_blind_request_ids
+                        .remove(&request.request_id);
+                    self.store.save(&state)?;
                     warn!(
                         "blind request rejected by delegated eligibility: election_id={}, request_id={}, invited_npub={}",
                         request.election_id, request.request_id, request.invited_npub
@@ -1824,6 +1893,13 @@ impl WorkerRuntime {
             .clone()
             .expect("checked above");
         if private_key.key_id != request.blind_signing_key_id {
+            let mut state = self.state.lock().await;
+            if let Some(election) = state.elections.get_mut(&request.election_id) {
+                election
+                    .deferred_blind_request_ids
+                    .remove(&request.request_id);
+                self.store.save(&state)?;
+            }
             warn!(
                 "blind request ignored for election {} due to key-id mismatch request={} worker={}",
                 request.election_id, request.blind_signing_key_id, private_key.key_id
@@ -1857,6 +1933,9 @@ impl WorkerRuntime {
             return Ok(false);
         };
         record_issuance_for_request(election, &request);
+        election
+            .deferred_blind_request_ids
+            .remove(&request.request_id);
         election.seen_blind_request_ids.insert(request.request_id);
         election.last_blind_issuance_at = Some(now_iso());
         self.store.save(&state)?;
@@ -1918,6 +1997,7 @@ impl WorkerRuntime {
         existing.expires_at = delegation.expires_at.clone();
         if delegation_changed {
             existing.seen_blind_request_ids.clear();
+            existing.deferred_blind_request_ids.clear();
             existing.issued_invited_npubs.clear();
             existing.issued_invited_scope_keys.clear();
             existing.whitelist_npubs.clear();
@@ -2223,6 +2303,44 @@ mod tests {
     }
 
     #[test]
+    fn increased_expected_count_reopens_completion_publications() {
+        let mut election = ElectionRuntimeState {
+            election_id: "q_worker_definition".to_string(),
+            expected_invitee_count: Some(2),
+            accepted_response_count: 2,
+            summary_published: true,
+            last_result_summary_publish_at: Some(now_iso()),
+            questionnaire_close_published: true,
+            last_questionnaire_close_publish_at: Some(now_iso()),
+            ..ElectionRuntimeState::default()
+        };
+        let snapshot = WorkerElectionConfigSnapshot {
+            message_type: "worker_election_config".to_string(),
+            schema_version: 1,
+            election_id: "q_worker_definition".to_string(),
+            delegation_id: "delegation_worker_definition".to_string(),
+            coordinator_npub: "npub1coordinator000000000000000000000000000000000000000000"
+                .to_string(),
+            worker_npub: "npub1worker000000000000000000000000000000000000000000000000".to_string(),
+            expected_invitee_count: Some(3),
+            whitelist_npubs: Some(vec!["npub1knownvoter".to_string()]),
+            bearer_invite_codes: Some(vec![]),
+            eligibility_required: Some(true),
+            blind_signing_private_key: None,
+            definition: None,
+            sent_at: "2026-06-16T11:32:05.000Z".to_string(),
+        };
+
+        assert!(apply_worker_election_config(&mut election, &snapshot));
+
+        assert_eq!(election.expected_invitee_count, Some(3));
+        assert!(!election.summary_published);
+        assert!(election.last_result_summary_publish_at.is_none());
+        assert!(!election.questionnaire_close_published);
+        assert!(election.last_questionnaire_close_publish_at.is_none());
+    }
+
+    #[test]
     fn empty_worker_election_config_does_not_block_older_complete_config() {
         let mut election = ElectionRuntimeState::default();
         let complete_snapshot = WorkerElectionConfigSnapshot {
@@ -2347,6 +2465,80 @@ mod tests {
     }
 
     #[test]
+    fn deferred_blind_request_blocks_completion_and_termination() {
+        let mut election = active_public_submission_election();
+        election.accepted_response_count = 3;
+        election.deferred_blind_request_ids = HashSet::from(["request_waiting".to_string()]);
+
+        assert!(!election_has_pending_completion_work(&election));
+        assert!(election_has_pending_worker_activity(&election));
+
+        let mut state = WorkerPersistentState::default();
+        state
+            .elections
+            .insert(election.election_id.clone(), election.clone());
+        assert!(!worker_state_should_terminate_after_completion(&state));
+
+        election.deferred_blind_request_ids.clear();
+        election.summary_published = true;
+        election.questionnaire_close_published = true;
+        let mut state = WorkerPersistentState::default();
+        state
+            .elections
+            .insert(election.election_id.clone(), election);
+        assert!(worker_state_should_terminate_after_completion(&state));
+    }
+
+    #[test]
+    fn worker_does_not_terminate_with_multi_session_work_remaining() {
+        let mut completed_session = active_public_submission_election();
+        completed_session.election_id = "q_completed_session".to_string();
+        completed_session.accepted_response_count = 3;
+        completed_session.summary_published = true;
+        completed_session.questionnaire_close_published = true;
+
+        let mut incomplete_session = active_public_submission_election();
+        incomplete_session.election_id = "q_incomplete_session".to_string();
+        incomplete_session.accepted_response_count = 2;
+
+        let mut state = WorkerPersistentState::default();
+        state
+            .elections
+            .insert(completed_session.election_id.clone(), completed_session);
+        state
+            .elections
+            .insert(incomplete_session.election_id.clone(), incomplete_session);
+
+        assert!(!worker_state_should_terminate_after_completion(&state));
+    }
+
+    #[test]
+    fn worker_does_not_terminate_with_unknown_expected_count_session() {
+        let mut completed_session = active_public_submission_election();
+        completed_session.election_id = "q_completed_session".to_string();
+        completed_session.accepted_response_count = 3;
+        completed_session.summary_published = true;
+        completed_session.questionnaire_close_published = true;
+
+        let mut unknown_session = active_public_submission_election();
+        unknown_session.election_id = "q_unknown_session".to_string();
+        unknown_session.expected_invitee_count = None;
+        unknown_session.accepted_response_count = 3;
+        unknown_session.summary_published = true;
+        unknown_session.questionnaire_close_published = true;
+
+        let mut state = WorkerPersistentState::default();
+        state
+            .elections
+            .insert(completed_session.election_id.clone(), completed_session);
+        state
+            .elections
+            .insert(unknown_session.election_id.clone(), unknown_session);
+
+        assert!(!worker_state_should_terminate_after_completion(&state));
+    }
+
+    #[test]
     fn public_submission_scan_ignores_revoked_and_expired_rounds() {
         let mut election = active_public_submission_election();
         election.revoked = true;
@@ -2358,7 +2550,7 @@ mod tests {
     }
 
     #[test]
-    fn public_submission_scan_selects_newest_configured_live_round() {
+    fn public_submission_scan_includes_all_configured_live_rounds() {
         let mut old_round = active_public_submission_election();
         old_round.election_id = "q_old_round".to_string();
         old_round.last_election_config_sent_at = Some("2026-06-15T22:00:00Z".to_string());
@@ -2378,7 +2570,7 @@ mod tests {
 
         assert_eq!(
             select_public_submission_election_ids(&state),
-            vec!["q_new_round".to_string()]
+            vec!["q_new_round".to_string(), "q_old_round".to_string()]
         );
     }
 
