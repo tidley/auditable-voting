@@ -731,6 +731,7 @@ const WORKER_LAUNCHER_TARGET_OPTIONS: Array<{ key: WorkerLauncherTargetKey; labe
   { key: "macosArm64", label: "macOS Apple Silicon" },
 ];
 const WORKER_DEFAULT_RUST_LOG = "info,auditable_voting_worker=debug,nostr_relay_pool=info,nostr_sdk=info,nostr=info,tungstenite=info,tokio_tungstenite=info";
+const WORKER_DEFAULT_POLL_SECONDS = "5";
 
 function buildWorkerLauncherContents(input: {
   target: WorkerLauncherTarget;
@@ -774,6 +775,7 @@ function buildWorkerLauncherContents(input: {
       `if (-not $env:WORKER_NSEC) { $env:WORKER_NSEC = '${nsec}' }`,
       `if (-not $env:COORDINATOR_NPUB) { $env:COORDINATOR_NPUB = '${coordinator}' }`,
       `if (-not $env:WORKER_RELAYS) { $env:WORKER_RELAYS = '${relays}' }`,
+      `if (-not $env:WORKER_POLL_SECONDS) { $env:WORKER_POLL_SECONDS = '${WORKER_DEFAULT_POLL_SECONDS}' }`,
       "if (-not $env:WORKER_STATE_DIR) { $env:WORKER_STATE_DIR = (Join-Path $ScriptDir '.worker-state') }",
       "New-Item -ItemType Directory -Force -Path $env:WORKER_STATE_DIR | Out-Null",
       "",
@@ -837,6 +839,7 @@ function buildWorkerLauncherContents(input: {
     `export WORKER_NSEC="\${WORKER_NSEC:-${nsec}}"`,
     `export COORDINATOR_NPUB="\${COORDINATOR_NPUB:-${coordinator}}"`,
     `export WORKER_RELAYS="\${WORKER_RELAYS:-${relays}}"`,
+    `export WORKER_POLL_SECONDS="\${WORKER_POLL_SECONDS:-${WORKER_DEFAULT_POLL_SECONDS}}"`,
     'export WORKER_STATE_DIR="${WORKER_STATE_DIR:-$SCRIPT_DIR/.worker-state}"',
     'mkdir -p "$WORKER_STATE_DIR"',
     "",
@@ -875,6 +878,7 @@ function buildWorkerDirectCommand(input: {
       `$env:WORKER_NSEC='${escapeForPowerShellSingleQuotedString(workerNsec)}'`,
       `$env:COORDINATOR_NPUB='${escapeForPowerShellSingleQuotedString(coordinatorNpub)}'`,
       `$env:WORKER_RELAYS='${escapeForPowerShellSingleQuotedString(workerRelays)}'`,
+      `$env:WORKER_POLL_SECONDS='${WORKER_DEFAULT_POLL_SECONDS}'`,
       "if (-not $env:WORKER_STATE_DIR) { $env:WORKER_STATE_DIR='.worker-state' }",
       "New-Item -ItemType Directory -Force -Path $env:WORKER_STATE_DIR | Out-Null",
       `if (Test-Path '.\\${escapeForPowerShellSingleQuotedString(input.target.binaryFilename)}') {`,
@@ -900,10 +904,11 @@ function buildWorkerDirectCommand(input: {
       ? `chmod +x "./${escapeForDoubleQuotedBash(legacyBinaryFilename)}" || true`
       : "",
     `if [ -x "./${escapeForDoubleQuotedBash(input.target.binaryFilename)}" ]; then`,
-      `  RUST_LOG="${WORKER_DEFAULT_RUST_LOG}" \\`,
-      `  WORKER_NSEC="${escapeForDoubleQuotedBash(workerNsec)}" \\`,
+    `  RUST_LOG="${WORKER_DEFAULT_RUST_LOG}" \\`,
+    `  WORKER_NSEC="${escapeForDoubleQuotedBash(workerNsec)}" \\`,
     `  COORDINATOR_NPUB="${escapeForDoubleQuotedBash(coordinatorNpub)}" \\`,
     `  WORKER_RELAYS="${escapeForDoubleQuotedBash(workerRelays)}" \\`,
+    `  WORKER_POLL_SECONDS="${WORKER_DEFAULT_POLL_SECONDS}" \\`,
     `  WORKER_STATE_DIR="\${WORKER_STATE_DIR:-./.worker-state}" \\`,
     `  ./${escapeForDoubleQuotedBash(input.target.binaryFilename)}`,
     legacyBinaryFilename ? `elif [ -x "./${escapeForDoubleQuotedBash(legacyBinaryFilename)}" ]; then` : "else",
@@ -913,6 +918,7 @@ function buildWorkerDirectCommand(input: {
           `  WORKER_NSEC="${escapeForDoubleQuotedBash(workerNsec)}" \\`,
           `  COORDINATOR_NPUB="${escapeForDoubleQuotedBash(coordinatorNpub)}" \\`,
           `  WORKER_RELAYS="${escapeForDoubleQuotedBash(workerRelays)}" \\`,
+          `  WORKER_POLL_SECONDS="${WORKER_DEFAULT_POLL_SECONDS}" \\`,
           `  WORKER_STATE_DIR="\${WORKER_STATE_DIR:-./.worker-state}" \\`,
           `  ./${escapeForDoubleQuotedBash(legacyBinaryFilename)}`,
         ]
@@ -2840,6 +2846,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       `RUST_LOG=${WORKER_DEFAULT_RUST_LOG} \\`,
       `WORKER_NSEC=${workerNsec} \\`,
       `  COORDINATOR_NPUB=${coordinator} \\`,
+      `  WORKER_POLL_SECONDS=${WORKER_DEFAULT_POLL_SECONDS} \\`,
     ];
     if (relayOverride) {
       lines.push(`  WORKER_RELAYS=${helperRelayList} \\`);
@@ -4845,12 +4852,12 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                       <textarea
                         id='worker-direct-command'
                         className='simple-voter-input simple-delegate-command'
-                        rows={selectedWorkerLauncherTarget.shell === "powershell" ? 8 : 7}
+                        rows={selectedWorkerLauncherTarget.shell === "powershell" ? 9 : 8}
                         readOnly
                         value={workerDirectCommand}
                       />
                       <p className='simple-voter-note'>
-                        Direct launch defaults proxy state to <code>.worker-state</code> beside the binary. Delete that folder to reset local proxy state, or override <code>WORKER_STATE_DIR</code>.
+                        Direct launch defaults proxy state to <code>.worker-state</code> beside the binary and keeps the proxy running for later sessions. Delete that folder to reset local proxy state, or override <code>WORKER_STATE_DIR</code>.
                       </p>
                 </section>
 
