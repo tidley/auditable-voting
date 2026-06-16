@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.79] - 2026-06-16
+
+### Changed
+- Bumped web app package to 0.1.79 and worker package to 0.1.20.
+- Refined delegated worker reliability by fixing public blind-response subscription handling and guarding completion publishing from duplicate in-flight runs.
+
+### Fixed
+- Fixed delegated worker path that was matching response events against the wrong subscription id.
+- Prevented close/summary completion events from being published more than once when response processing and housekeeping overlap.
+
 ## [0.1.71] - 2026-06-10
 
 ### Added
