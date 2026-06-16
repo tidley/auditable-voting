@@ -24,7 +24,7 @@ use chrono::Utc;
 use crypto_bigint::BoxedUint;
 use nostr_sdk::prelude::*;
 use rsa::RsaPrivateKey;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -684,6 +684,7 @@ struct WorkerRuntime {
     store: Arc<WorkerStore>,
     state: Arc<Mutex<WorkerPersistentState>>,
     relay_backoff: Arc<Mutex<HashMap<String, RelayBackoffState>>>,
+    completion_in_flight: Arc<Mutex<HashSet<String>>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -758,6 +759,7 @@ async fn main() -> Result<()> {
         store,
         state: Arc::new(Mutex::new(persistent)),
         relay_backoff: Arc::new(Mutex::new(HashMap::new())),
+        completion_in_flight: Arc::new(Mutex::new(HashSet::new())),
     };
 
     info!("worker started as {}", worker_npub);
@@ -1281,14 +1283,13 @@ impl WorkerRuntime {
         let relays = self.effective_worker_relays().await;
         self.ensure_relays_connected(&relays).await;
 
-        let public_response_subscription_id = SubscriptionId::generate();
-        let delegation_subscription_id = SubscriptionId::generate();
-
         let response_output = self
             .client
             .subscribe_to(relays.clone(), response_filter, None)
             .await
             .context("failed to subscribe to public response plane")?;
+        let public_response_subscription_id = response_output.val.clone();
+        let delegation_subscription_id = SubscriptionId::generate();
         let delegation_output = self
             .client
             .subscribe_with_id_to(
@@ -1525,6 +1526,7 @@ impl WorkerRuntime {
 
         let actions = {
             let state = self.state.lock().await;
+            let mut in_flight = self.completion_in_flight.lock().await;
             state
                 .elections
                 .values()
@@ -1549,6 +1551,10 @@ impl WorkerRuntime {
                     if !close_questionnaire && !publish_summary {
                         return None;
                     }
+                    if in_flight.contains(&entry.election_id) {
+                        return None;
+                    }
+                    in_flight.insert(entry.election_id.clone());
                     Some(CompletionAction {
                         election_id: entry.election_id.clone(),
                         delegation_id: entry.delegation_id.clone(),
@@ -1564,9 +1570,17 @@ impl WorkerRuntime {
         for action in actions {
             if action.close_questionnaire {
                 sleep(Duration::from_secs(COMPLETION_CLOSE_GRACE_SECS)).await;
-                let close_event_id = self
+                let close_event_id = match self
                     .publish_questionnaire_closed_state(&action.election_id, &action.delegation_id)
-                    .await?;
+                    .await
+                {
+                    Ok(event_id) => event_id,
+                    Err(error) => {
+                        let mut in_flight = self.completion_in_flight.lock().await;
+                        in_flight.remove(&action.election_id);
+                        return Err(error);
+                    }
+                };
                 let mut state = self.state.lock().await;
                 if let Some(election) = state.elections.get_mut(&action.election_id) {
                     election.questionnaire_close_published = true;
@@ -1580,13 +1594,21 @@ impl WorkerRuntime {
             }
 
             if action.publish_summary {
-                let summary_event_id = self
+                let summary_event_id = match self
                     .publish_result_summary(
                         &action.election_id,
                         action.accepted_count,
                         action.rejected_count,
                     )
-                    .await?;
+                    .await
+                {
+                    Ok(event_id) => event_id,
+                    Err(error) => {
+                        let mut in_flight = self.completion_in_flight.lock().await;
+                        in_flight.remove(&action.election_id);
+                        return Err(error);
+                    }
+                };
                 let mut state = self.state.lock().await;
                 if let Some(election) = state.elections.get_mut(&action.election_id) {
                     election.summary_published = true;
@@ -1598,6 +1620,8 @@ impl WorkerRuntime {
                     action.election_id, summary_event_id
                 );
             }
+            let mut in_flight = self.completion_in_flight.lock().await;
+            in_flight.remove(&action.election_id);
         }
 
         Ok(())

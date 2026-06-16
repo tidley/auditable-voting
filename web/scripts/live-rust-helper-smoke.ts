@@ -517,6 +517,7 @@ async function main() {
     "OPTIONA_LIVE_RUST_HELPER_SUBMISSION_CONCURRENCY",
     perQuestionSubmissions ? 12 : 1,
   );
+  const expectWorkerExit = envBool("OPTIONA_LIVE_RUST_HELPER_EXPECT_WORKER_EXIT", false);
   const inviteBaseUrl = process.env.OPTIONA_LIVE_RUST_HELPER_INVITE_BASE_URL?.trim()
     || "https://auditable-voting.pages.dev/";
   const requireRelayReadback = envBool("OPTIONA_LIVE_RUST_HELPER_REQUIRE_RELAY_READBACK", false);
@@ -1331,7 +1332,12 @@ async function main() {
       assert(submissionDecisionCameFromRelayReadback, "submission decision required relay readback but only helper state confirmed success");
       assert(summaryCameFromRelayReadback, "result summary required relay readback but only helper state confirmed success");
     }
-    await workerExit.waitForExpectedExit(Math.max(30_000, intervalMs * 4));
+    if (expectWorkerExit) {
+      await workerExit.waitForExpectedExit(Math.max(30_000, intervalMs * 4));
+    } else {
+      await sleep(Math.min(500, intervalMs));
+      workerExit.assertRunning();
+    }
 
     process.stdout.write("rust helper live smoke passed\n");
     process.stdout.write(`Submissions completed: ${completedVoters.length}\n`);
