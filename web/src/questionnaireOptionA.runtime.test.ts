@@ -1499,6 +1499,52 @@ describe("questionnaireOptionARuntime", () => {
     }
   }, 15_000);
 
+  it("issues ballots directly when stale delegated-worker mode is present but no active proxy routing", async () => {
+    const staleSessionId = `${electionId}_stale_no_proxy`;
+    const staleDelegation = createWorkerDelegationCertificate({
+      electionId: staleSessionId,
+      coordinatorNpub,
+      workerNpub: "npub1staleproxynoproxy00000000000000000000000",
+      capabilities: ["issue_blind_tokens"],
+      controlRelays: ["wss://worker-relay.example"],
+      expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+    });
+    upsertStoredWorkerDelegation({
+      electionId: staleSessionId,
+      mode: "delegated_worker",
+      activeDelegation: staleDelegation,
+      lastRevocation: null,
+      lastUpdatedAt: new Date().toISOString(),
+    });
+
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), staleSessionId);
+    await coordinator.loginWithSigner({
+      title: "Runtime stale proxy fallback",
+      description: "Stale delegation fallback test",
+      state: "open",
+    });
+    coordinator.addWhitelistNpub(voterNpub);
+    const sentInvite = await coordinator.sendInvite(voterNpub, {
+      title: "Runtime stale proxy fallback",
+      description: "Stale delegation fallback test",
+      voteUrl: "https://example.org/vote/stale-no-proxy",
+    });
+    expect(sentInvite.invite.issueBlindTokensWorker).toBeNull();
+
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), staleSessionId);
+    await voter.loginWithSigner(sentInvite.invite);
+    await voter.requestBlindBallot({ forceResend: true });
+    await coordinator.processPendingBlindRequests();
+
+    voter.refreshIssuanceAndAcceptance();
+    expect(voter.getSnapshot()?.credentialReady).toBe(true);
+    expect(voter.getSnapshot()?.blindIssuance?.electionId).toBe(staleSessionId);
+    expect(voter.getSnapshot()?.blindIssuance?.invitedNpub).toBe(voterNpub);
+    expect(coordinator.getSnapshot()?.whitelist[voterNpub]?.issuanceId).toBe(
+      voter.getSnapshot()?.blindIssuance?.issuanceId,
+    );
+  });
+
   it("issues delegated proxy ballots to multiple voters across multiple sessions", async () => {
     const sessionIds = [
       "election_runtime_proxy_multi_1",

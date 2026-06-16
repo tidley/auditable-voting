@@ -123,7 +123,7 @@ import {
   buildQuestionnaireBlindTokenSignedMessage,
   deriveQuestionnaireTokenNullifier,
 } from "./questionnaireBlindToken";
-import { isDelegatedWorkerCapabilityEnabled } from "./questionnaireWorkerDelegation";
+import { isDelegatedWorkerCapabilityEnabled, loadStoredWorkerDelegation } from "./questionnaireWorkerDelegation";
 import {
   publishQuestionnaireBlindResponsePublic,
   publishQuestionnaireSubmissionDecisionPublic,
@@ -2839,6 +2839,29 @@ export class QuestionnaireOptionACoordinatorRuntime {
     this.stopCoordinatorDmSubscriptions();
   }
 
+  private isDelegatedIssueBlindTokensEnabled() {
+    if (!isDelegatedWorkerCapabilityEnabled({
+      electionId: this.electionId,
+      capability: "issue_blind_tokens",
+    })) {
+      return false;
+    }
+    const routing = selectIssueBlindTokensWorkerRouting({
+      summary: loadElectionSummary(this.electionId),
+    });
+    if (!routing?.workerNpub?.trim()) {
+      return false;
+    }
+    const stored = loadStoredWorkerDelegation(this.electionId);
+    if (!stored?.activeDelegation || stored.mode !== "delegated_worker") {
+      return false;
+    }
+    if (routing.delegationId && routing.delegationId !== stored.activeDelegation.delegationId) {
+      return false;
+    }
+    return true;
+  }
+
   private stopCoordinatorDmSubscriptions() {
     this.stopBlindRequestSubscription?.();
     this.stopBlindRequestSubscription = null;
@@ -4006,10 +4029,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
     if (!this.state || !this.coordinatorNpub) {
       throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
     }
-    if (isDelegatedWorkerCapabilityEnabled({
-      electionId: this.electionId,
-      capability: "issue_blind_tokens",
-    })) {
+    if (this.isDelegatedIssueBlindTokensEnabled()) {
       optionAFlowLog("coordinator", "blind_issuance_publish_skipped_delegated_worker", {
         electionId: this.electionId,
       });
@@ -4284,10 +4304,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
       throw new OptionARuntimeError("not_logged_in", "Organiser login is required.");
     }
     this.refreshElectionSummaryFromLocalPublication();
-    const delegatedIssuance = isDelegatedWorkerCapabilityEnabled({
-      electionId: this.electionId,
-      capability: "issue_blind_tokens",
-    });
+    const delegatedIssuance = this.isDelegatedIssueBlindTokensEnabled();
     if (delegatedIssuance) {
       optionAFlowLog("coordinator", "process_blind_requests_delegated_worker_observe_only", {
         electionId: this.electionId,

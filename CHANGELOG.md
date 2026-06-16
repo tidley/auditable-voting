@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.82] - 2026-06-16
+
+### Fixed
+- Fixed delegated worker ballot issuance gating so voters no longer get stuck on "Awaiting ballot" when stale worker routing state remains after a proxy path changes.
+- Added a regression test for stale delegated-worker mode with no active proxy routing (`questionnaireOptionA.runtime.test.ts`).
+
 ## [0.1.81] - 2026-06-16
 
 ### Changed
