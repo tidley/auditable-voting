@@ -941,6 +941,8 @@ function buildAutoconfiguredWorkerLauncherHref(input: {
     target: input.targetKey,
     coordinator_npub: input.coordinatorNpub.trim() || "npub1...",
     worker_relays: sanitizeWorkerRelays(input.workerRelays).join(","),
+    rust_log: WORKER_DEFAULT_RUST_LOG,
+    worker_poll_seconds: WORKER_DEFAULT_POLL_SECONDS,
   });
   if (input.workerNpub?.trim()) {
     params.set("worker_npub", input.workerNpub.trim());
