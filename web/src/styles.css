@@ -2574,11 +2574,24 @@ code {
 }
 
 .simple-questionnaire-build-aside {
+  grid-column: 2;
+  grid-row: 1 / span 2;
   position: sticky;
   top: 18px;
   display: grid;
   gap: 12px;
   min-width: 0;
+}
+
+.simple-questionnaire-build-proxy {
+  grid-column: 1;
+  min-width: 0;
+}
+
+.simple-questionnaire-build-proxy > .simple-collapsible-section {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
 }
 
 .simple-questionnaire-build-side-card .simple-voter-section-title {
@@ -7941,7 +7954,13 @@ code {
   }
 
   .simple-questionnaire-build-aside {
+    grid-column: auto;
+    grid-row: auto;
     position: static;
+  }
+
+  .simple-questionnaire-build-proxy {
+    grid-column: auto;
   }
 }
 

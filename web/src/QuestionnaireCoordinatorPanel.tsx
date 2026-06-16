@@ -4644,27 +4644,25 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
               {statusNotice}
             </section>
           </aside>
-        </div>
-      </section>
-      <div id='delegated-worker-section'>
-        <SimpleCollapsibleSection title='Audit proxy' titleToggleLabel='Audit proxy' defaultCollapsed expandSignal={auditProxyExpandSignal}>
-          <div className='simple-questionnaire-worker-section'>
-            <label className='simple-voter-label' htmlFor='delegation-mode'>Mode</label>
-            <select
-              id='delegation-mode'
-              className='simple-voter-input'
-              value={delegationMode}
-              onChange={(event) => setDelegationMode(event.target.value === "delegated_worker" ? "delegated_worker" : "browser_only")}
-            >
-              <option value='browser_only'>Browser only</option>
-              <option value='delegated_worker'>Audit proxy</option>
-            </select>
-            <p className='simple-voter-note'>
-              Use Audit proxy for larger live sessions or repeated rounds. When selected, publishing with a valid audit proxy npub configures delegation for that questionnaire.
-            </p>
+          <div id='delegated-worker-section' className='simple-questionnaire-build-proxy'>
+            <SimpleCollapsibleSection title='Audit proxy' titleToggleLabel='Audit proxy' defaultCollapsed expandSignal={auditProxyExpandSignal}>
+              <div className='simple-questionnaire-worker-section'>
+                <label className='simple-voter-label' htmlFor='delegation-mode'>Mode</label>
+                <select
+                  id='delegation-mode'
+                  className='simple-voter-input'
+                  value={delegationMode}
+                  onChange={(event) => setDelegationMode(event.target.value === "delegated_worker" ? "delegated_worker" : "browser_only")}
+                >
+                  <option value='browser_only'>Browser only</option>
+                  <option value='delegated_worker'>Audit proxy</option>
+                </select>
+                <p className='simple-voter-note'>
+                  Use Audit proxy for larger live sessions or repeated rounds. When selected, publishing with a valid audit proxy npub configures delegation for that questionnaire.
+                </p>
 
-            {delegationMode === "delegated_worker" ? (
-              <>
+                {delegationMode === "delegated_worker" ? (
+                  <>
                 <section className='simple-delegate-section'>
                   <h4 className='simple-delegate-title'>Available audit proxies</h4>
                   {availableWorkerStatuses.length === 0 ? (
@@ -4996,11 +4994,13 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                     Revoke delegation
                   </button>
                 </div>
-              </>
-            ) : null}
+                  </>
+                ) : null}
+              </div>
+            </SimpleCollapsibleSection>
           </div>
-        </SimpleCollapsibleSection>
-      </div>
+        </div>
+      </section>
     </>
   );
 }

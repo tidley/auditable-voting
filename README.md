@@ -6,6 +6,8 @@ Auditable Voting lets an organiser publish a questionnaire, invite voters for re
 
 Live site: [npub1hkze8k84da0qm4lu75x32z33qepyzdqc735jnj5a602x8q4cstksnkvl3a.nsite.lol](https://npub1hkze8k84da0qm4lu75x32z33qepyzdqc735jnj5a602x8q4cstksnkvl3a.nsite.lol/)
 
+GitHub Pages mirror: [tidley.github.io/auditable-voting](https://tidley.github.io/auditable-voting/)
+
 For a non-technical walkthrough, start with the [plain-English demo guide](docs/demo-guide.md). It avoids protocol terms and gives a short action-first flow for publishing a questionnaire, sharing an invite, submitting a response, and checking the result.
 
 ## Status
