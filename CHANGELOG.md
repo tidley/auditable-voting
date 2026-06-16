@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.80] - 2026-06-16
+
+### Changed
+- Bumped web app package to 0.1.80 and worker package to 0.1.21.
+
 ## [0.1.79] - 2026-06-16
 
 ### Changed

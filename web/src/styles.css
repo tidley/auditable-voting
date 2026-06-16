@@ -4069,10 +4069,9 @@ code {
     minmax(135px, 0.82fr)
     minmax(140px, 0.72fr)
     minmax(110px, 0.58fr)
-    minmax(180px, 1fr)
     minmax(96px, 0.52fr)
     minmax(130px, 0.72fr);
-  min-width: 980px;
+  min-width: 800px;
   align-items: center;
 }
 
@@ -4124,7 +4123,6 @@ code {
 
 .simple-admitted-voter-id-cell,
 .simple-admitted-voter-state-cell,
-.simple-admitted-voter-vote-cell,
 .simple-admitted-voter-auto-cell {
   display: grid;
   gap: 6px;
@@ -4353,59 +4351,6 @@ code {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-}
-
-.simple-participant-result {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-}
-
-.simple-participant-result-time {
-  color: var(--simple-muted);
-  font-size: 0.74rem;
-  line-height: 1.25;
-}
-
-.simple-participant-result-disclosure {
-  min-width: 0;
-}
-
-.simple-participant-result-disclosure summary {
-  width: max-content;
-  max-width: 100%;
-  color: var(--simple-teal);
-  cursor: pointer;
-  font-size: 0.78rem;
-  font-weight: 850;
-}
-
-.simple-participant-result-answer-list {
-  display: grid;
-  gap: 8px;
-  margin: 8px 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.simple-participant-result-answer-list li {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.simple-participant-result-question {
-  color: var(--simple-muted);
-  font-size: 0.7rem;
-  font-weight: 850;
-  line-height: 1.25;
-}
-
-.simple-participant-result-answer {
-  color: var(--simple-text);
-  font-size: 0.82rem;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
 }
 
 .simple-admitted-private-invite-row .simple-invite-qr-trigger {

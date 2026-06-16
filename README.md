@@ -119,7 +119,7 @@ The audit proxy is an optional Rust helper. It uses the delegated organiser role
 
 For larger live sessions, such as dozens of rounds or around 100 voters, treat the audit proxy/worker as the default issuance and verification path. The browser organiser remains the root authority for admitting voters and starting follow-up questionnaires, but the proxy avoids relying on one open browser tab to process every blind request and public submission for a configured questionnaire.
 
-The proxy only issues blind credentials after it has received the organiser's election config for the active delegation. That config carries the current whitelist and private invite-code hashes. For per-question questionnaires, proxy-issued credentials preserve the requested question scope so one voter can receive separate credentials for separate current question slots. General invite-link requests are copied to the organiser as well as the proxy; when the organiser approves a requester, the updated whitelist is synced back to the proxy so the already-sent request can be issued without asking the voter to send a second proxy message. The proxy also waits for a configured questionnaire definition and positive expected participant count before scanning public submissions, scans the newest configured live questionnaire, and stops scanning that round once expected accepted completion is reached.
+The proxy only issues blind credentials after it has received the organiser's election config for the active delegation. That config carries the current whitelist and private invite-code hashes. For per-question questionnaires, proxy-issued credentials preserve the requested question scope so one voter can receive separate credentials for separate current question slots. General invite-link requests are copied to the organiser as well as the proxy; when the organiser approves a requester, the updated whitelist is synced back to the proxy so the already-sent request can be issued without asking the voter to send a second proxy message. The proxy also waits for a configured questionnaire definition and positive expected participant count before scanning public submissions, scans the newest configured live questionnaire, and stops scanning that round once expected accepted completion is reached and no delegated blind request is still waiting for authorisation/configuration.
 
 It can:
 
@@ -129,7 +129,7 @@ It can:
 - publish accept/reject decisions;
 - close the questionnaire after all expected invitees have accepted valid responses;
 - publish the result summary;
-- exit cleanly once delegated close and summary publication are complete.
+- stay online for later sessions after currently delegated close and summary publication are complete.
 
 Run it locally:
 
@@ -145,7 +145,7 @@ Useful optional environment variables:
 
 - `WORKER_STATE_DIR`
 - `WORKER_HEARTBEAT_SECONDS`
-- `WORKER_POLL_SECONDS`
+- `WORKER_POLL_SECONDS` (generated launchers set this to `5`)
 - `WORKER_RELAYS`
 
 The proxy is outbound-only. It does not require inbound ports or a public server endpoint.

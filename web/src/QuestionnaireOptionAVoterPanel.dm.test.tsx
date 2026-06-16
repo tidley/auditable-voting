@@ -810,9 +810,9 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     });
   });
 
-  it("shows the manual resend action 20 seconds after the blind request was sent", async () => {
+  it("shows the manual resend action after the resend cooldown", async () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-04-18T00:00:10.000Z"));
+    vi.setSystemTime(new Date("2026-04-18T00:00:05.000Z"));
     const localVoterNpub = "npub1" + "w".repeat(58);
     const coordinatorNpub = "npub1" + "b".repeat(58);
     optionAStorageMocks.loadVoterState.mockReturnValue({
@@ -882,7 +882,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     expect(screen.queryByRole("button", { name: "Resend request" })).toBeNull();
 
     await act(async () => {
-      vi.advanceTimersByTime(10_000);
+      vi.advanceTimersByTime(5_000);
     });
 
     expect(screen.getByRole("button", { name: "Resend request" })).toBeTruthy();
@@ -963,7 +963,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     });
 
     await waitFor(() => {
-      expect(requestSpy).toHaveBeenCalledWith({ minRetryMs: 8 * 60_000 });
+      expect(requestSpy).toHaveBeenCalledWith({ minRetryMs: 10_000 });
     });
   });
 

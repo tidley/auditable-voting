@@ -124,7 +124,6 @@ import {
 import { createSignerService, SignerServiceError } from "./services/signerService";
 import { getSharedNostrPool } from "./sharedNostrPool";
 import type {
-  BallotAcceptanceResult,
   BallotSubmission,
   BearerInviteCodeEntry,
   BearerInviteCodeState,
@@ -133,8 +132,6 @@ import type {
   WhitelistClaimState,
 } from "./questionnaireOptionA";
 import type {
-  QuestionnaireQuestion,
-  QuestionnaireResponseAnswer,
   QuestionnaireResponsePayload,
 } from "./questionnaireProtocol";
 import type { QuestionnaireAcceptedResponse } from "./questionnaireRuntime";
@@ -343,19 +340,6 @@ function pendingAuthorisationStatusIndicator(): StatusIndicatorView {
   };
 }
 
-function participantVoteStatusIndicator(acceptance: BallotAcceptanceResult | null | undefined): StatusIndicatorView {
-  if (!acceptance) {
-    return {
-      className: "simple-vote-status-icon simple-status-indicator is-voter-received",
-      icon: "V",
-      label: "Vote received",
-    };
-  }
-  return acceptance.accepted
-    ? whitelistStatusIndicator("vote_accepted")
-    : whitelistStatusIndicator("vote_rejected");
-}
-
 function privateInviteVoterStatusIndicator(input: {
   state: BearerInviteCodeState;
   redeemedNpub?: string | null;
@@ -402,43 +386,6 @@ function privateInviteVoterStatusIndicator(input: {
     icon: "-",
     label: "Not claimed",
   };
-}
-
-function formatParticipantSubmissionTime(submittedAt: number | null | undefined, submission: BallotSubmission | null) {
-  const unix = submittedAt ?? (
-    submission
-      ? Math.floor(Date.parse(submission.submittedAt) / 1000)
-      : null
-  );
-  if (!unix || !Number.isFinite(unix)) {
-    return "Time unknown";
-  }
-  return new Date(unix * 1000).toLocaleString();
-}
-
-function getQuestionOptionLabels(question: QuestionnaireQuestion | undefined, optionIds: string[]) {
-  if (!question || (question.type !== "multiple_choice" && question.type !== "rank")) {
-    return optionIds;
-  }
-  const labelById = new Map(question.options.map((option) => [option.optionId, option.label]));
-  return optionIds.map((optionId) => labelById.get(optionId) ?? optionId);
-}
-
-function formatParticipantAnswerValue(
-  answer: QuestionnaireResponseAnswer,
-  question: QuestionnaireQuestion | undefined,
-) {
-  if (answer.answerType === "yes_no") {
-    return answer.value ? "Yes" : "No";
-  }
-  if (answer.answerType === "multiple_choice") {
-    return getQuestionOptionLabels(question, answer.selectedOptionIds).join(", ") || "-";
-  }
-  if (answer.answerType === "rank") {
-    const labels = getQuestionOptionLabels(question, answer.rankedOptionIds);
-    return labels.map((label, index) => `${index + 1}. ${label}`).join("; ") || "-";
-  }
-  return answer.text || "(empty)";
 }
 
 function setPrivateInviteUrlAutoBallot(inviteUrl: string, autoRequestBallot: boolean) {
@@ -1519,14 +1466,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       .sort()
       .join("|")
   ), [visibleOptionAKnownVoters]);
-  const activeParticipantQuestionnaireDefinition = useMemo(
-    () => optionAElectionId.trim() ? readCachedQuestionnaireDefinition(optionAElectionId.trim()) : null,
-    [knownVoterInviteRefreshNonce, optionAElectionId],
-  );
-  const participantQuestionById = useMemo(
-    () => new Map((activeParticipantQuestionnaireDefinition?.questions ?? []).map((question) => [question.questionId, question])),
-    [activeParticipantQuestionnaireDefinition?.questions],
-  );
   const optionAParticipantSubmissionEntries = useMemo(() => {
     const snapshot = optionACoordinatorRuntime?.getSnapshot();
     if (!snapshot) {
@@ -5213,6 +5152,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     try {
       admitVotersToRoster([invitedNpub], "manual", { silent: true });
       await optionACoordinatorRuntime.authorizeRequester(invitedNpub);
+      await syncActiveWorkerElectionConfig().catch(() => false);
       setKnownVoterInviteRefreshNonce((value) => value + 1);
       setInviteFeedbackStatus(`Authorised and invited ${deriveActorDisplayId(invitedNpub)}. Sending invite...`, options?.statusTarget);
       await sendInviteToKnownVoter(invitedNpub, { statusTarget: options?.statusTarget });
@@ -7596,7 +7536,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                       <span role='columnheader'>Voter npub</span>
                       <span role='columnheader'>Internal note</span>
                       <span role='columnheader'>State</span>
-                      <span role='columnheader'>Vote</span>
                       <span role='columnheader'>Auto-ballot</span>
                       <span role='columnheader'>Actions</span>
                     </div>
@@ -7606,22 +7545,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                         const pendingAuthorization = row.pendingAuthorization;
                         const privateInviteEntry = row.privateInviteEntry;
                         const submissionEntry = row.submissionEntry;
-                        const submission = submissionEntry?.submission ?? null;
-                        const responseDetail = submissionEntry?.responseDetail ?? row.responseDetail;
-                        const voteStatusIndicator = submissionEntry
-                          ? participantVoteStatusIndicator(submissionEntry.acceptance)
-                          : responseDetail
-                            ? (responseDetail.accepted ? whitelistStatusIndicator("vote_accepted") : whitelistStatusIndicator("vote_rejected"))
-                            : null;
-                        const participantResultId = submission?.submissionId ?? responseDetail?.response.responseId ?? row.npub;
-                        const participantAnswers = responseDetail?.response.answers ?? (
-                          submission
-                            ? submission.payload.responses.map((answer) => optionAAnswerToQuestionnaireAnswer(answer, {
-                              authorPubkey: submission.responseNpub?.trim() || submission.invitedNpub,
-                              coordinatorNsec: keypair?.nsec ?? null,
-                            }))
-                            : []
-                        );
                         const privateInviteRedeemedNpub = privateInviteEntry?.redeemedNpub?.trim() ?? "";
                         const isUnclaimedPrivateInvite = Boolean(privateInviteEntry && !privateInviteRedeemedNpub);
                         const privateInviteUrl = privateInviteEntry ? getPrivateInviteCodeLink(privateInviteEntry.codeHash) : "";
@@ -7755,41 +7678,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                                 </span>
                               ) : (
                                 <span className='simple-admitted-voter-pending'>Future questionnaires</span>
-                              )}
-                            </div>
-                            <div className='simple-admitted-voter-cell simple-admitted-voter-vote-cell' data-label='Vote' role='cell'>
-                              {submissionEntry && voteStatusIndicator ? (
-                                <div className='simple-participant-result'>
-                                  <span className={`simple-admitted-voter-status ${voteStatusIndicator.className}`} title={participantResultId}>
-                                    <span className='simple-admitted-voter-status-symbol' aria-hidden='true'>{voteStatusIndicator.icon}</span>
-                                    <span>{voteStatusIndicator.label}</span>
-                                  </span>
-                                  <span className='simple-participant-result-time'>
-                                    {formatParticipantSubmissionTime(responseDetail?.response.submittedAt ?? responseDetail?.event.created_at, submission)}
-                                  </span>
-                                  {participantAnswers.length > 0 ? (
-                                    <details className='simple-participant-result-disclosure'>
-                                      <summary>{submissionEntry?.acceptance?.accepted === false || responseDetail?.accepted === false ? "View response" : "View result"}</summary>
-                                      <ol className='simple-participant-result-answer-list'>
-                                        {participantAnswers.map((answer) => {
-                                          const question = participantQuestionById.get(answer.questionId);
-                                          return (
-                                            <li key={`${participantResultId}:${answer.questionId}`}>
-                                              <span className='simple-participant-result-question'>
-                                                {question?.prompt || answer.questionId}
-                                              </span>
-                                              <span className='simple-participant-result-answer'>
-                                                {formatParticipantAnswerValue(answer, question)}
-                                              </span>
-                                            </li>
-                                          );
-                                        })}
-                                      </ol>
-                                    </details>
-                                  ) : null}
-                                </div>
-                              ) : (
-                                <span className='simple-admitted-voter-empty-cell'>No vote yet</span>
                               )}
                             </div>
                             <div className='simple-admitted-voter-cell simple-admitted-voter-auto-cell' data-label='Auto-ballot' role='cell'>

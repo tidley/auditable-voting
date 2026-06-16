@@ -159,11 +159,9 @@ const OPTION_A_COORDINATOR_NSEC_DM_LIMIT = 320;
 const OPTION_A_COORDINATOR_DM_PAGE_LIMIT = 40;
 const OPTION_A_COORDINATOR_DM_MAX_PAGES = 8;
 const OPTION_A_COORDINATOR_DM_TIME_BUDGET_MS = 6_000;
-const OPTION_A_ISSUANCE_DM_RETRY_MS = 20 * 1000;
-const OPTION_A_ISSUANCE_DM_FAILED_RETRY_MS = 10 * 1000;
-const OPTION_A_BLIND_REQUEST_RETRY_MS = 45 * 1000;
-const OPTION_A_BLIND_REQUEST_ACK_RETRY_MS = 10 * 60 * 1000;
-const OPTION_A_BLIND_REQUEST_ACK_RESEND_AFTER_MS = 20 * 60 * 1000;
+const OPTION_A_ISSUANCE_DM_RETRY_MS = 8 * 1000;
+const OPTION_A_ISSUANCE_DM_FAILED_RETRY_MS = 5 * 1000;
+const OPTION_A_BLIND_REQUEST_RETRY_MS = 15 * 1000;
 const OPTION_A_SUBMISSION_REPUBLISH_RETRY_MS = 3 * 60 * 1000;
 const OPTION_A_SUBMISSION_ACK_RETRY_MS = 2 * 60 * 1000;
 const OPTION_A_SELF_COPY_RECOVERY_LOOKBACK_SECONDS = Math.round(36 * 60 * 60);
@@ -348,6 +346,30 @@ function hasRecentAck(ackedAt: string | null | undefined, retryWindowMs: number)
   }
   const ackedAtMs = Date.parse(ackedAt);
   return Number.isFinite(ackedAtMs) && Date.now() - ackedAtMs < retryWindowMs;
+}
+
+function shouldThrottleBlindRequestPublish(params: {
+  request: BlindBallotRequest;
+  requestSent: boolean;
+  blindIssuanceExists: boolean;
+  forceResend: boolean;
+  minRetryMs: number;
+  requestAckAt: string | null | undefined;
+}) {
+  if (params.forceResend) {
+    return false;
+  }
+  if (!params.requestSent || params.blindIssuanceExists) {
+    return false;
+  }
+  const lastSentMs = params.request.lastSentAt ? Date.parse(params.request.lastSentAt) : Number.NaN;
+  if (Number.isFinite(lastSentMs) && Date.now() - lastSentMs < params.minRetryMs) {
+    return true;
+  }
+  if (hasRecentAck(params.requestAckAt, params.minRetryMs)) {
+    return true;
+  }
+  return false;
 }
 
 async function deriveDeterministicResponseSecretKey(input: {
@@ -1672,58 +1694,30 @@ export class QuestionnaireOptionAVoterRuntime {
     }
     const minRetryMs = Math.max(0, options?.minRetryMs ?? OPTION_A_BLIND_REQUEST_RETRY_MS);
     const lastSentMs = this.state.blindRequestSentAt ? Date.parse(this.state.blindRequestSentAt) : Number.NaN;
+    const requestAck = request ? readBlindRequestAckRecord(request.requestId) : null;
     if (
-      !options?.forceResend
-      && request
-      && this.state.blindRequestSent
-      && !this.state.blindIssuance
-      && Number.isFinite(lastSentMs)
-      && Date.now() - lastSentMs < minRetryMs
+      request
+      && shouldThrottleBlindRequestPublish({
+        request,
+        requestSent: this.state.blindRequestSent,
+        blindIssuanceExists: Boolean(this.state.blindIssuance),
+        forceResend: Boolean(options?.forceResend),
+        minRetryMs,
+        requestAckAt: requestAck?.ackedAt,
+      })
     ) {
+      const lastSentAt = request.lastSentAt;
+      const hasFreshAck = hasRecentAck(requestAck?.ackedAt, minRetryMs);
       optionAFlowLog("voter", "blind_request_resend_skipped_cooldown", {
         electionId: this.state.electionId,
         requestId: request.requestId,
         minRetryMs,
+        reason: hasFreshAck ? "acked_recently" : Number.isFinite(lastSentMs) ? "sent_recently" : "first_send",
+        requestLastSentAt: lastSentAt,
+        requestAckAt: requestAck?.ackedAt ?? null,
       });
       saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
       void this.publishVoterStateSelfDm({ reason: "request_blind_ballot_skip_cooldown" });
-      return this.state;
-    }
-    const requestAck = request ? readBlindRequestAckRecord(request.requestId) : null;
-    if (
-      !options?.forceResend
-      && request
-      && this.state.blindRequestSent
-      && !this.state.blindIssuance
-      && hasRecentAck(requestAck?.ackedAt, OPTION_A_BLIND_REQUEST_ACK_RETRY_MS)
-    ) {
-      optionAFlowLog("voter", "blind_request_resend_skipped_acknowledged", {
-        electionId: this.state.electionId,
-        requestId: request.requestId,
-        ackedAt: requestAck?.ackedAt ?? null,
-        minRetryMs: OPTION_A_BLIND_REQUEST_ACK_RETRY_MS,
-      });
-      saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
-      void this.publishVoterStateSelfDm({ reason: "request_blind_ballot_skip_acknowledged" });
-      return this.state;
-    }
-    if (
-      !options?.forceResend
-      && request
-      && this.state.blindRequestSent
-      && !this.state.blindIssuance
-      && requestAck
-      && Number.isFinite(lastSentMs)
-      && Date.now() - lastSentMs < OPTION_A_BLIND_REQUEST_ACK_RESEND_AFTER_MS
-    ) {
-      optionAFlowLog("voter", "blind_request_resend_skipped_ack_backoff", {
-        electionId: this.state.electionId,
-        requestId: request.requestId,
-        ackedAt: requestAck.ackedAt,
-        minRetryMs: OPTION_A_BLIND_REQUEST_ACK_RESEND_AFTER_MS,
-      });
-      saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
-      void this.publishVoterStateSelfDm({ reason: "request_blind_ballot_skip_ack_backoff" });
       return this.state;
     }
     if (
@@ -1860,11 +1854,27 @@ export class QuestionnaireOptionAVoterRuntime {
         };
       }
 
-      const lastSentMs = request.lastSentAt ? Date.parse(request.lastSentAt) : Number.NaN;
+      const requestAck = readBlindRequestAckRecord(request.requestId);
+      const hasFreshAck = hasRecentAck(requestAck?.ackedAt, minRetryMs);
       const shouldPublish = input.forceResend
         || !request.lastSentAt
-        || !Number.isFinite(lastSentMs)
-        || Date.now() - lastSentMs >= minRetryMs;
+        || !shouldThrottleBlindRequestPublish({
+          request,
+          requestSent: Boolean(next.blindRequestSent),
+          blindIssuanceExists: false,
+          forceResend: Boolean(input.forceResend),
+          minRetryMs,
+          requestAckAt: requestAck?.ackedAt,
+        });
+      if (!shouldPublish && hasFreshAck) {
+        optionAFlowLog("voter", "blind_request_bundle_publish_skipped_ack_recently", {
+          electionId: this.state.electionId,
+          requestId: request.requestId,
+          requestAckAt: requestAck?.ackedAt ?? null,
+          minRetryMs,
+          scope: scopeKey,
+        });
+      }
       next.blindRequests = {
         ...(next.blindRequests ?? {}),
         [scopeKey]: request,
