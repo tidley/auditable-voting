@@ -12,6 +12,7 @@ import {
   dequeueBlindRequest,
   listBlindRequests,
   loadCoordinatorState,
+  loadElectionSummary,
   readAcceptance,
   readBlindIssuance,
   saveCoordinatorState,
@@ -1227,6 +1228,57 @@ describe("questionnaireOptionARuntime", () => {
         electionId,
         invitedNpub: privateCodeNpub,
         blindSigningKeyId: toQuestionnaireBlindPublicKey(privateKey).keyId,
+      }),
+    }));
+  });
+
+  it("resets stale blind token request state when signing key changes", async () => {
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+    coordinator.addWhitelistNpub(voterNpub);
+    const sentInvite = await coordinator.sendInvite(voterNpub, {
+      title: "Runtime",
+      description: "Test",
+      voteUrl: "https://example.org/vote",
+    });
+
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionId);
+    await voter.loginWithSigner(sentInvite.invite);
+    await voter.requestBlindBallot({ forceResend: true });
+    const firstRequest = voter.getSnapshot()?.blindRequest;
+    expect(firstRequest?.blindSigningKeyId).toBeTruthy();
+    const firstRequestId = firstRequest?.requestId ?? "";
+    const firstKeyId = firstRequest?.blindSigningKeyId ?? "";
+
+    const replacementKey = toQuestionnaireBlindPublicKey(await generateQuestionnaireBlindKeyPair());
+    const summary = loadElectionSummary(electionId);
+    expect(summary).not.toBeNull();
+    upsertElectionSummary({
+      ...summary!,
+      blindSigningPublicKey: replacementKey,
+    });
+
+    const nextVoter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionId);
+    const inviteWithoutKey = {
+      ...sentInvite.invite,
+      blindSigningPublicKey: null,
+    };
+    await nextVoter.bootstrapWithLocalIdentity({
+      invitedNpub: voterNpub,
+      coordinatorNpub,
+      invite: inviteWithoutKey,
+      allowInviteMissing: true,
+    });
+    vi.mocked(publishOptionABlindRequestDm).mockClear();
+
+    const refreshed = await nextVoter.requestBlindBallot({ forceResend: true });
+
+    expect(refreshed.blindRequest?.blindSigningKeyId).toBe(replacementKey.keyId);
+    expect(refreshed.blindRequest?.requestId).not.toBe(firstRequestId);
+    expect(firstRequest?.blindSigningKeyId).toBe(firstKeyId);
+    expect(vi.mocked(publishOptionABlindRequestDm)).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        blindSigningKeyId: replacementKey.keyId,
       }),
     }));
   });

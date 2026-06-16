@@ -22,6 +22,7 @@ import {
   type ElectionSummary,
   type ElectionState,
   type Npub,
+  type QuestionnaireBlindPublicKey,
   type QuestionnaireAnswer,
   type VoterElectionLocalState,
   type WhitelistEntry,
@@ -846,6 +847,68 @@ export class QuestionnaireOptionAVoterRuntime {
     return getPreferredQuestionnaireRelays(this.electionId);
   }
 
+  private resolveVoterBlindSigningPublicKey(input: {
+    inviteMessage?: ElectionInviteMessage | null;
+    summary: ElectionSummary | null;
+    cachedDefinition: QuestionnaireDefinition | null;
+  }) {
+    return (
+      input.inviteMessage?.blindSigningPublicKey
+      ?? input.summary?.blindSigningPublicKey
+      ?? input.cachedDefinition?.blindSigningPublicKey
+      ?? null
+    );
+  }
+
+  private reconcileVoterBlindSigningKeyState(input: {
+    state: VoterElectionLocalState;
+    blindSigningPublicKey: QuestionnaireBlindPublicKey | null;
+  }): VoterElectionLocalState {
+    const { state } = input;
+    const expectedKeyId = input.blindSigningPublicKey?.keyId.trim() || "";
+    if (!expectedKeyId) {
+      return state;
+    }
+
+    const hasMismatch = Boolean(
+      (state.blindRequest && state.blindRequest.blindSigningKeyId !== expectedKeyId)
+      || (state.blindIssuance && state.blindIssuance.blindSigningKeyId !== expectedKeyId)
+      || (state.blindTokenSecret && state.blindTokenSecret.blindSigningPublicKey.keyId !== expectedKeyId)
+      || Object.values(state.blindRequests ?? {}).some((request) => request.blindSigningKeyId !== expectedKeyId)
+      || Object.values(state.blindIssuances ?? {}).some((issuance) => issuance.blindSigningKeyId !== expectedKeyId)
+      || Object.values(state.blindTokenSecrets ?? {}).some((entry) => entry.blindSigningPublicKey.keyId !== expectedKeyId)
+    );
+    if (!hasMismatch) {
+      return state;
+    }
+
+    for (const requestId of Object.values(state.blindRequests ?? {}).map((request) => request.requestId)) {
+      dequeueBlindRequest(requestId);
+    }
+
+    optionAFlowLog("voter", "blind_signing_key_mismatch_reset", {
+      electionId: state.electionId,
+      invitedNpub: state.invitedNpub,
+      expectedBlindSigningKeyId: expectedKeyId,
+      previousRequestId: state.blindRequest?.requestId ?? null,
+      previousIssuanceId: state.blindIssuance?.issuanceId ?? null,
+    });
+
+    return {
+      ...state,
+      blindRequest: null,
+      blindRequests: {},
+      blindRequestSent: false,
+      blindRequestSentAt: null,
+      blindIssuance: null,
+      blindIssuances: {},
+      blindTokenSecret: null,
+      blindTokenSecrets: {},
+      credentialReady: false,
+      lastUpdatedAt: nowIso(),
+    };
+  }
+
   private rememberIssueBlindTokensWorkerRouting(routing = this.state?.inviteMessage?.issueBlindTokensWorker ?? null) {
     const summary = loadElectionSummary(this.electionId);
     if (summary) {
@@ -1333,6 +1396,7 @@ export class QuestionnaireOptionAVoterRuntime {
     }
 
     const summary = loadElectionSummary(this.electionId);
+    const cachedDefinition = readCachedQuestionnaireDefinition(this.electionId);
     if (invite?.issueBlindTokensWorker && summary) {
       upsertElectionSummary(withIssueBlindTokensWorkerRouting(summary, invite.issueBlindTokensWorker));
     }
@@ -1377,17 +1441,26 @@ export class QuestionnaireOptionAVoterRuntime {
       canonicalIssuance: loggedIn.state.blindRequest ? readBlindIssuance(loggedIn.state.blindRequest.requestId) : null,
       canonicalAcceptance: loggedIn.state.submission ? readAcceptance(loggedIn.state.submission.submissionId) : null,
     });
+    const blindSigningPublicKey = this.resolveVoterBlindSigningPublicKey({
+      inviteMessage: restored.inviteMessage,
+      summary,
+      cachedDefinition: cachedDefinition ?? readCachedQuestionnaireDefinition(this.electionId),
+    });
+    const reconciled = this.reconcileVoterBlindSigningKeyState({
+      state: restored,
+      blindSigningPublicKey,
+    });
 
-    this.state = restored;
-    saveVoterState({ voterNpub: signerNpub, state: restored });
+    this.state = reconciled;
+    saveVoterState({ voterNpub: signerNpub, state: reconciled });
     this.startVoterDmSubscriptions();
-    if (restored.blindIssuance) {
-      void this.ensureBlindIssuanceAck(restored.blindIssuance).catch(() => undefined);
+    if (reconciled.blindIssuance) {
+      void this.ensureBlindIssuanceAck(reconciled.blindIssuance).catch(() => undefined);
     }
-    await this.recoverVoterStateFromSelfDm().catch(() => restored);
-    await this.recoverSubmittedBallotFromSelfDm().catch(() => restored);
+    await this.recoverVoterStateFromSelfDm().catch(() => reconciled);
+    await this.recoverSubmittedBallotFromSelfDm().catch(() => reconciled);
     void this.publishVoterStateSelfDm({ reason: "login_with_signer" });
-    return this.state ?? restored;
+    return this.state ?? reconciled;
   }
 
   bootstrapWithLocalIdentity(input: {
@@ -1472,16 +1545,25 @@ export class QuestionnaireOptionAVoterRuntime {
       canonicalIssuance: loggedIn.state.blindRequest ? readBlindIssuance(loggedIn.state.blindRequest.requestId) : null,
       canonicalAcceptance: loggedIn.state.submission ? readAcceptance(loggedIn.state.submission.submissionId) : null,
     });
+    const blindSigningPublicKey = this.resolveVoterBlindSigningPublicKey({
+      inviteMessage: restored.inviteMessage,
+      summary,
+      cachedDefinition: cachedDefinition ?? readCachedQuestionnaireDefinition(this.electionId),
+    });
+    const reconciled = this.reconcileVoterBlindSigningKeyState({
+      state: restored,
+      blindSigningPublicKey,
+    });
 
-    this.state = restored;
-    saveVoterState({ voterNpub: invitedNpub, state: restored });
+    this.state = reconciled;
+    saveVoterState({ voterNpub: invitedNpub, state: reconciled });
     this.startVoterDmSubscriptions();
-    if (restored.blindIssuance) {
-      void this.ensureBlindIssuanceAck(restored.blindIssuance).catch(() => undefined);
+    if (reconciled.blindIssuance) {
+      void this.ensureBlindIssuanceAck(reconciled.blindIssuance).catch(() => undefined);
     }
-    void this.recoverVoterStateFromSelfDm().catch(() => restored);
+    void this.recoverVoterStateFromSelfDm().catch(() => reconciled);
     void this.publishVoterStateSelfDm({ reason: "bootstrap_local_identity" });
-    return restored;
+    return reconciled;
   }
 
   private applyRecoveredSubmission(submission: BallotSubmission) {
@@ -1576,15 +1658,26 @@ export class QuestionnaireOptionAVoterRuntime {
     if (!this.state) {
       throw new OptionARuntimeError("not_logged_in", "Login is required.");
     }
+    let next = this.state;
+    const summary = loadElectionSummary(next.electionId);
+    const cachedDefinition = readCachedQuestionnaireDefinition(next.electionId);
     optionAFlowLog("voter", "blind_request_started", {
-      electionId: this.state.electionId,
-      alreadyHasRequest: Boolean(this.state.blindRequest),
-      alreadyHasIssuance: Boolean(this.state.blindIssuance),
+      electionId: next.electionId,
+      alreadyHasRequest: Boolean(next.blindRequest),
+      alreadyHasIssuance: Boolean(next.blindIssuance),
     });
-    const cachedDefinition = readCachedQuestionnaireDefinition(this.state.electionId);
     if (cachedDefinition) {
       cacheQuestionnaireDefinitionForRuntime(cachedDefinition);
     }
+    next = this.reconcileVoterBlindSigningKeyState({
+      state: next,
+      blindSigningPublicKey: this.resolveVoterBlindSigningPublicKey({
+        inviteMessage: next.inviteMessage ?? null,
+        summary,
+        cachedDefinition,
+      }),
+    });
+    this.state = next;
     const usesPerQuestionCredentials = questionnaireUsesPerQuestionCredentials(cachedDefinition);
     if (this.state.blindIssuance && !usesPerQuestionCredentials) {
       void this.ensureBlindIssuanceAck(this.state.blindIssuance).catch(() => undefined);
@@ -1603,12 +1696,10 @@ export class QuestionnaireOptionAVoterRuntime {
       }
     }
 
-    let next = this.state;
     let request = next.blindRequest;
     const inviteCodeHash = this.bearerInviteCode
       ? await hashQuestionnaireInviteCode(this.bearerInviteCode)
       : "";
-    const summary = loadElectionSummary(next.electionId);
     if (usesPerQuestionCredentials && cachedDefinition) {
       return this.requestBlindBallotBundleInternal({
         cachedDefinition,
