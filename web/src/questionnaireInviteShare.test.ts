@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildQuestionnaireInviteUrl,
   hasVoterInviteContextInUrl,
+  isGeneralVoterInviteUrl,
   parseInviteFromUrl,
   shouldAutoRequestBallotFromUrl,
 } from "./questionnaireInvite";
@@ -87,6 +88,24 @@ describe("questionnaire invite sharing", () => {
     expect(hasVoterInviteContextInUrl("?role=voter&q=q_public_123")).toBe(true);
     expect(hasVoterInviteContextInUrl("?role=voter&coordinator=npub1coordinator")).toBe(true);
     expect(hasVoterInviteContextInUrl("?role=voter&invite_code=abc123private")).toBe(true);
+  });
+
+  it("detects general voter invite links", () => {
+    expect(isGeneralVoterInviteUrl("?role=voter&q=q_public_123")).toBe(true);
+    expect(isGeneralVoterInviteUrl("?role=voter&request_ballot=1&election_id=q_public_123")).toBe(true);
+    expect(isGeneralVoterInviteUrl("?role=voter&questionnaire=q_public_123&request_ballot=1")).toBe(true);
+  });
+
+  it("does not treat private invite links as general", () => {
+    expect(isGeneralVoterInviteUrl("?role=voter&q=q_public_123&coordinator=npub1coordinator&invited=npub1invited")).toBe(false);
+    expect(isGeneralVoterInviteUrl("?role=voter&q=q_public_123&invite_code=abc123private")).toBe(false);
+    expect(isGeneralVoterInviteUrl("?role=voter&q=q_public_123&invite=%7B%22type%22%3A%22election_invite%22%7D")).toBe(false);
+  });
+
+  it("is not general without a questionnaire context", () => {
+    expect(isGeneralVoterInviteUrl("?role=voter")).toBe(false);
+    expect(isGeneralVoterInviteUrl("?role=voter&request_ballot=1")).toBe(false);
+    expect(isGeneralVoterInviteUrl("?role=voter&coordinator=npub1coordinator")).toBe(false);
   });
 
   it("builds no-account share copy around the public questionnaire link", () => {

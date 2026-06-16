@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.81] - 2026-06-16
+
+### Changed
+- Refined general invite handling so opening a public voter link without private invite metadata generates a fresh voter identity, clears stale session state, and starts a new voter session.
+- Added invite-detection tests for general-voter link behavior.
+
 ## [0.1.80] - 2026-06-16
 
 ### Changed

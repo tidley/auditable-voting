@@ -122,3 +122,25 @@ export function hasVoterInviteContextInUrl(search = typeof window !== "undefined
     || (params.get("code") ?? "").trim(),
   );
 }
+
+export function isGeneralVoterInviteUrl(search = typeof window !== "undefined" ? window.location.search : "") {
+  const params = new URLSearchParams(search);
+  const hasQuestionnaireContext = Boolean(
+    (params.get("q") ?? "").trim()
+    || (params.get("election_id") ?? "").trim()
+    || (params.get("questionnaire") ?? "").trim(),
+  );
+  if (!hasQuestionnaireContext) {
+    return false;
+  }
+
+  const hasPrivateInviteContext = Boolean(
+    (params.get("coordinator") ?? "").trim()
+    || (params.get("invited") ?? "").trim()
+    || (params.get("invite") ?? "").trim()
+    || (params.get("invite_code") ?? "").trim()
+    || (params.get("code") ?? "").trim(),
+  );
+
+  return !hasPrivateInviteContext;
+}

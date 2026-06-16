@@ -56,7 +56,12 @@ import {
   QUESTIONNAIRE_DEFINITION_KIND,
   QUESTIONNAIRE_STATE_KIND,
 } from "./questionnaireNostr";
-import { hasVoterInviteContextInUrl, parseInviteFromUrl, shouldAutoRequestBallotFromUrl } from "./questionnaireInvite";
+import {
+  hasVoterInviteContextInUrl,
+  isGeneralVoterInviteUrl,
+  parseInviteFromUrl,
+  shouldAutoRequestBallotFromUrl,
+} from "./questionnaireInvite";
 import { fetchOptionAInviteDms, fetchOptionAInviteDmsWithNsec } from "./questionnaireOptionAInviteDm";
 import { publishInviteToMailbox } from "./questionnaireOptionAStorage";
 import {
@@ -456,6 +461,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
   const [identityStatus, setIdentityStatus] = useState<string | null>(null);
   const [signerNpub, setSignerNpub] = useState<string>("");
   const [signerStatus, setSignerStatus] = useState<string | null>(null);
+  const shouldCreateFreshIdentityForGeneralInvite = useMemo(() => isGeneralVoterInviteUrl(), []);
   const questionnaireVoterIdentity = selectQuestionnaireVoterIdentity({
     privateInviteCode: linkedPrivateInviteCode,
     signerNpub,
@@ -764,6 +770,32 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
     let cancelled = false;
     const hydrationEpoch = identityHydrationEpochRef.current;
 
+    if (shouldCreateFreshIdentityForGeneralInvite) {
+      const nextKeypair = createSimpleVoterKeypair();
+      void saveSimpleActorState({
+        role: "voter",
+        keypair: nextKeypair,
+        updatedAt: new Date().toISOString(),
+      }).catch(() => undefined);
+      setVoterKeypair(nextKeypair);
+      setManualCoordinators([]);
+      setNip65Enabled(false);
+      setQuestionnaireParticipationHistory([]);
+      setProtocolStateCache(null);
+      setRequestStatus(null);
+      setReceivedShards([]);
+      setPendingBlindRequests({});
+      setRoundReplyKeypairs({});
+      setFollowDeliveries({});
+      setRequestDeliveries({});
+      setSubmitStatus(null);
+      setSelectedVotingId("");
+      setLiveVoteChoice(null);
+      setStorageLocked(false);
+      setIdentityReady(true);
+      return;
+    }
+
     void loadSimpleActorState("voter").then((storedState) => {
       if (cancelled || hydrationEpoch !== identityHydrationEpochRef.current) {
         return;
@@ -858,7 +890,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
     return () => {
       cancelled = true;
     };
-  }, [shouldHydrateSavedManualCoordinators, urlCoordinatorTargets]);
+  }, [shouldCreateFreshIdentityForGeneralInvite, shouldHydrateSavedManualCoordinators, urlCoordinatorTargets]);
 
   useEffect(() => {
     setNip65EnabledForSession(nip65Enabled);
