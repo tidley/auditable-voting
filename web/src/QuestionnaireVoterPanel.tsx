@@ -30,8 +30,10 @@ function getRankRequirementState(optionCount: number, minimumRanked: number, sel
     label: minimum > 0
       ? missing > 0
         ? `Choose ${missing} more`
-        : `${selectedCount}/${minimum} selected`
-      : "Optional",
+        : null
+      : selectedCount > 0
+        ? null
+        : "Optional",
   };
 }
 type SelectorLifecycle = "open" | "published" | "draft" | "closed" | "counted" | "unknown";
@@ -1639,13 +1641,16 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
             const requirementLabel = question.required ? "Required" : "Optional";
             if (question.type === "yes_no") {
               const selected = answerState[question.questionId];
+              const requirementText = typeof selected === "boolean" ? null : requirementLabel;
               return (
                 <article key={question.questionId} className={`simple-questionnaire-voter-card${responseLocked ? " is-response-locked" : ""}`}>
                   <div className='simple-questionnaire-voter-heading'>
                     <h4 className='simple-questionnaire-voter-prompt'>Q{index + 1}: {questionPrompt}</h4>
-                    <p className={`simple-questionnaire-voter-requirement${question.required ? "" : " is-optional"}`}>
-                      {requirementLabel}
-                    </p>
+                    {requirementText ? (
+                      <p className={`simple-questionnaire-voter-requirement${question.required ? "" : " is-optional"}`}>
+                        {requirementText}
+                      </p>
+                    ) : null}
                   </div>
                   <div className='simple-vote-button-grid simple-questionnaire-yes-no-grid'>
                     <button
@@ -1673,13 +1678,16 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
               const selected = Array.isArray(answerState[question.questionId])
                 ? (answerState[question.questionId] as string[])
                 : [];
+              const requirementText = selected.length > 0 ? null : requirementLabel;
               return (
                 <article key={question.questionId} className={`simple-questionnaire-voter-card${responseLocked ? " is-response-locked" : ""}`}>
                   <div className='simple-questionnaire-voter-heading'>
                     <h4 className='simple-questionnaire-voter-prompt'>Q{index + 1}: {questionPrompt}</h4>
-                    <p className={`simple-questionnaire-voter-requirement${question.required ? "" : " is-optional"}`}>
-                      {requirementLabel}
-                    </p>
+                    {requirementText ? (
+                      <p className={`simple-questionnaire-voter-requirement${question.required ? "" : " is-optional"}`}>
+                        {requirementText}
+                      </p>
+                    ) : null}
                   </div>
                   <div className='simple-questionnaire-choice-list'>
                     {question.options.map((option) => (
@@ -1707,13 +1715,16 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
               const unrankedOptions = question.options.filter((option) => !rankedSet.has(option.optionId));
               const minimumRanked = Math.max(0, Math.min(question.options.length, Math.floor(question.minimumRanked)));
               const rankRequirement = getRankRequirementState(question.options.length, minimumRanked, ranked.length);
+              const requirementText = rankRequirement.label;
               return (
                 <article key={question.questionId} className={`simple-questionnaire-voter-card${responseLocked ? " is-response-locked" : ""}`}>
                   <div className='simple-questionnaire-voter-heading'>
                     <h4 className='simple-questionnaire-voter-prompt'>Q{index + 1}: {questionPrompt}</h4>
-                    <p className={`simple-questionnaire-voter-requirement${rankRequirement.missing > 0 ? " is-needed" : question.required ? "" : " is-optional"}`}>
-                      {rankRequirement.label}
-                    </p>
+                    {requirementText ? (
+                      <p className={`simple-questionnaire-voter-requirement${rankRequirement.missing > 0 ? " is-needed" : " is-optional"}`}>
+                        {requirementText}
+                      </p>
+                    ) : null}
                   </div>
                   {rankRequirement.missing > 0 ? (
                     <p className='simple-questionnaire-rank-needed'>
@@ -1788,13 +1799,16 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
             const text = typeof answerState[question.questionId] === "string"
               ? (answerState[question.questionId] as string)
               : "";
+            const requirementText = text.trim() ? null : requirementLabel;
             return (
               <article key={question.questionId} className={`simple-questionnaire-voter-card${responseLocked ? " is-response-locked" : ""}`}>
                 <div className='simple-questionnaire-voter-heading'>
                   <h4 className='simple-questionnaire-voter-prompt'>Q{index + 1}: {questionPrompt}</h4>
-                  <p className={`simple-questionnaire-voter-requirement${question.required ? "" : " is-optional"}`}>
-                    {requirementLabel}
-                  </p>
+                  {requirementText ? (
+                    <p className={`simple-questionnaire-voter-requirement${question.required ? "" : " is-optional"}`}>
+                      {requirementText}
+                    </p>
+                  ) : null}
                 </div>
                 <label className='simple-voter-label simple-voter-label-tight' htmlFor={`questionnaire-free-text-${question.questionId}`}>
                   Additional comments

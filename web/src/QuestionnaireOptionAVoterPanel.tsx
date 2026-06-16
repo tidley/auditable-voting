@@ -437,8 +437,10 @@ function getRankRequirementState(optionCount: number, minimumRanked: number, sel
     label: minimum > 0
       ? missing > 0
         ? `Choose ${missing} more`
-        : `${selectedCount}/${minimum} selected`
-      : "Optional",
+        : null
+      : selectedCount > 0
+        ? null
+        : "Optional",
   };
 }
 
@@ -3264,20 +3266,25 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
             const rankRequirement = question.type === "rank"
               ? getRankRequirementState(question.options?.length ?? 0, question.minimumRanked ?? 0, ranked.length)
               : null;
-            const requirementClass = rankRequirement
-              ? rankRequirement.missing > 0
-                ? " is-needed"
-                : question.required
-                  ? ""
-                  : " is-optional"
-              : question.required ? "" : " is-optional";
+            const requirementLabel = questionAccepted
+              ? "Accepted"
+              : questionSubmitted
+                ? "Submitted"
+                : rankRequirement?.label ?? (questionHasResponse(question) ? null : (question.required ? "Required" : "Optional"));
+            const requirementClass = rankRequirement?.missing
+              ? " is-needed"
+              : requirementLabel === "Optional"
+                ? " is-optional"
+                : "";
             return (
             <article key={question.questionId} className={`simple-questionnaire-voter-card${questionSubmitted ? " is-response-locked" : ""}`}>
               <div className='simple-questionnaire-voter-heading'>
                 <h4 className='simple-questionnaire-voter-prompt'>Q{index + 1}: {question.prompt || "Untitled question"}</h4>
-                <p className={`simple-questionnaire-voter-requirement${requirementClass}`}>
-                  {questionAccepted ? "Accepted" : questionSubmitted ? "Submitted" : rankRequirement?.label ?? (question.required ? "Required" : "Optional")}
-                </p>
+                {requirementLabel ? (
+                  <p className={`simple-questionnaire-voter-requirement${requirementClass}`}>
+                    {requirementLabel}
+                  </p>
+                ) : null}
               </div>
               {rankRequirement && rankRequirement.missing > 0 ? (
                 <p className='simple-questionnaire-rank-needed'>

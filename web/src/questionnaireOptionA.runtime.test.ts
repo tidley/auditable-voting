@@ -599,6 +599,8 @@ describe("questionnaireOptionARuntime", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(fetchQuestionnaireActiveWorkerDelegationForCapability).mockReset();
+    vi.mocked(fetchQuestionnaireActiveWorkerDelegationForCapability).mockResolvedValue(null);
     window.localStorage.clear();
     publicBlindResponseStore.entries.splice(0, publicBlindResponseStore.entries.length);
   });
@@ -1385,6 +1387,180 @@ describe("questionnaireOptionARuntime", () => {
     expect(coordinatorOne.getSnapshot()?.whitelist[voterNpub]?.issuanceId).toBe(issuanceOne?.issuanceId);
     expect(coordinatorTwo.getSnapshot()?.whitelist[voterNpub]?.issuanceId).toBe(issuanceTwo?.issuanceId);
   });
+
+  it("issues organiser ballots to multiple voters across multiple sessions without a proxy", async () => {
+    const sessionIds = [
+      "election_runtime_organiser_multi_1",
+      "election_runtime_organiser_multi_2",
+    ];
+    const voterNpubs = [
+      voterNpub,
+      otherNpub,
+      "npub1thirdorganisermultiruntime0000000000000000000000",
+    ];
+    const tokenCommitments = new Map<string, string>();
+    const coordinatorSigner = signer(coordinatorNpub);
+
+    for (const sessionId of sessionIds) {
+      const coordinator = new QuestionnaireOptionACoordinatorRuntime(coordinatorSigner, sessionId);
+      await coordinator.loginWithSigner({
+        title: `Runtime ${sessionId}`,
+        description: "Multi-session organiser ballot test",
+        state: "open",
+      });
+      expect(coordinator.addWhitelistNpubs(voterNpubs).addedCount).toBe(voterNpubs.length);
+
+      const voters = [];
+      for (const invitedNpub of voterNpubs) {
+        const sentInvite = await coordinator.sendInvite(invitedNpub, {
+          title: `Runtime ${sessionId}`,
+          description: "Multi-session organiser ballot test",
+          voteUrl: `https://example.org/vote/${sessionId}`,
+        });
+        expect(sentInvite.invite.issueBlindTokensWorker).toBeNull();
+
+        const voter = new QuestionnaireOptionAVoterRuntime(signer(invitedNpub), sessionId);
+        await voter.loginWithSigner(sentInvite.invite);
+        await voter.requestBlindBallot({ forceResend: true });
+        voters.push({ invitedNpub, voter });
+      }
+
+      await coordinator.processPendingBlindRequests();
+
+      for (const { invitedNpub, voter } of voters) {
+        voter.refreshIssuanceAndAcceptance();
+        const issuance = voter.getSnapshot()?.blindIssuance;
+        expect(voter.getSnapshot()?.credentialReady).toBe(true);
+        expect(issuance?.electionId).toBe(sessionId);
+        expect(issuance?.invitedNpub).toBe(invitedNpub);
+        expect(issuance?.tokenCommitment).toBeTruthy();
+        expect(coordinator.getSnapshot()?.whitelist[invitedNpub]?.issuanceId).toBe(issuance?.issuanceId);
+        tokenCommitments.set(`${sessionId}:${invitedNpub}`, issuance?.tokenCommitment ?? "");
+      }
+    }
+
+    expect(new Set(tokenCommitments.values()).size).toBe(sessionIds.length * voterNpubs.length);
+    for (const invitedNpub of voterNpubs) {
+      expect(tokenCommitments.get(`${sessionIds[0]}:${invitedNpub}`)).not.toBe(
+        tokenCommitments.get(`${sessionIds[1]}:${invitedNpub}`),
+      );
+    }
+  }, 15_000);
+
+  it("issues delegated proxy ballots to multiple voters across multiple sessions", async () => {
+    const sessionIds = [
+      "election_runtime_proxy_multi_1",
+      "election_runtime_proxy_multi_2",
+    ];
+    const voterNpubs = [
+      voterNpub,
+      otherNpub,
+      "npub1thirdproxymultiruntime000000000000000000000000000",
+    ];
+    const workerNpub = "npub1delegateproxymultiruntime000000000000000000000000";
+    const coordinatorSigner = signer(coordinatorNpub);
+    const delegations = new Map<string, ReturnType<typeof createWorkerDelegationCertificate>>();
+    const tokenCommitments = new Map<string, string>();
+
+    for (const sessionId of sessionIds) {
+      const definition = buildDefinition({
+        electionId: sessionId,
+        coordinatorNpub,
+        title: `Runtime ${sessionId}`,
+      });
+      storeCachedQuestionnaireDefinition(definition);
+      const delegation = createWorkerDelegationCertificate({
+        electionId: sessionId,
+        coordinatorNpub,
+        workerNpub,
+        capabilities: ["issue_blind_tokens"],
+        controlRelays: ["wss://worker-relay.example"],
+        expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+      });
+      delegations.set(sessionId, delegation);
+      upsertStoredWorkerDelegation({
+        electionId: sessionId,
+        mode: "delegated_worker",
+        activeDelegation: delegation,
+        lastRevocation: null,
+        lastUpdatedAt: new Date().toISOString(),
+      });
+    }
+
+    vi.mocked(fetchQuestionnaireActiveWorkerDelegationForCapability).mockImplementation(async (input) => (
+      delegations.get(input.questionnaireId) ?? null
+    ));
+
+    for (const sessionId of sessionIds) {
+      const coordinator = new QuestionnaireOptionACoordinatorRuntime(coordinatorSigner, sessionId);
+      await coordinator.loginWithSigner({
+        title: `Runtime ${sessionId}`,
+        description: "Multi-session proxy ballot test",
+        state: "open",
+      });
+      expect(coordinator.addWhitelistNpubs(voterNpubs).addedCount).toBe(voterNpubs.length);
+
+      const voters = [];
+      for (const invitedNpub of voterNpubs) {
+        const sentInvite = await coordinator.sendInvite(invitedNpub, {
+          title: `Runtime ${sessionId}`,
+          description: "Multi-session proxy ballot test",
+          voteUrl: `https://example.org/vote/${sessionId}`,
+        });
+        expect(sentInvite.invite.issueBlindTokensWorker?.workerNpub).toBe(workerNpub);
+
+        const voter = new QuestionnaireOptionAVoterRuntime(signer(invitedNpub), sessionId);
+        await voter.loginWithSigner(sentInvite.invite);
+        await voter.requestBlindBallot({ forceResend: true });
+        voters.push({ invitedNpub, voter });
+      }
+
+      await coordinator.processPendingBlindRequests();
+      for (const { invitedNpub, voter } of voters) {
+        const requestId = voter.getSnapshot()?.blindRequest?.requestId ?? "";
+        expect(requestId).toBeTruthy();
+        expect(coordinator.getSnapshot()?.whitelist[invitedNpub]?.claimState).toBe("blind_request_received");
+        expect(readBlindIssuance(requestId)).toBe(null);
+      }
+
+      await processDelegatedCoordinatorQueues({
+        electionId: sessionId,
+        coordinatorNpub,
+        workerNpub,
+        expectedInviteeCount: voterNpubs.length,
+      });
+
+      for (const { invitedNpub, voter } of voters) {
+        voter.refreshIssuanceAndAcceptance();
+        const issuance = voter.getSnapshot()?.blindIssuance;
+        expect(voter.getSnapshot()?.credentialReady).toBe(true);
+        expect(issuance?.electionId).toBe(sessionId);
+        expect(issuance?.invitedNpub).toBe(invitedNpub);
+        expect(issuance?.tokenCommitment).toBeTruthy();
+        expect(vi.mocked(publishOptionABlindIssuanceDm)).toHaveBeenCalledWith(expect.objectContaining({
+          recipientNpub: invitedNpub,
+        }));
+        tokenCommitments.set(`${sessionId}:${invitedNpub}`, issuance?.tokenCommitment ?? "");
+      }
+    }
+
+    expect(new Set(tokenCommitments.values()).size).toBe(sessionIds.length * voterNpubs.length);
+    for (const invitedNpub of voterNpubs) {
+      expect(tokenCommitments.get(`${sessionIds[0]}:${invitedNpub}`)).not.toBe(
+        tokenCommitments.get(`${sessionIds[1]}:${invitedNpub}`),
+      );
+    }
+    for (const sessionId of sessionIds) {
+      expect(publishOptionABlindRequestDm).toHaveBeenCalledWith(expect.objectContaining({
+        recipientNpub: workerNpub,
+        request: expect.objectContaining({ electionId: sessionId }),
+      }));
+      expect(publishOptionABlindRequestDm).toHaveBeenCalledWith(expect.objectContaining({
+        recipientNpub: coordinatorNpub,
+        request: expect.objectContaining({ electionId: sessionId }),
+      }));
+    }
+  }, 15_000);
 
   it("runs delegated request -> issuance -> submission -> summary end to end", async () => {
     const workerNpub = "npub1delegatecoordinatorruntime00000000000000000000000";

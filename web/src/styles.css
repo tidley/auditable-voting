@@ -5458,9 +5458,9 @@ code {
 }
 
 .simple-questionnaire-rank-selected {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   width: 100%;
   min-width: 0;
@@ -5500,7 +5500,7 @@ code {
 }
 
 .simple-questionnaire-rank-remove-prefix {
-  flex: none;
+  justify-self: end;
   color: var(--simple-amber);
   font-size: 0.86rem;
   font-weight: 900;
@@ -5587,16 +5587,6 @@ code {
 
   .simple-questionnaire-rank-actions {
     justify-content: flex-start;
-  }
-
-  .simple-questionnaire-rank-selected {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 5px;
-  }
-
-  .simple-questionnaire-rank-remove-prefix {
-    white-space: normal;
   }
 }
 

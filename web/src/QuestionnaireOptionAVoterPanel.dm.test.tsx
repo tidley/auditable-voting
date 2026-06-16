@@ -1263,6 +1263,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     expect(yesButton.className).toContain("is-active");
     expect(noButton.className).toContain("is-dimmed");
     expect(yesButton.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.queryByText("Required")).toBeNull();
   });
 
   it("lets voters remove a ranked option from the selected row", async () => {
@@ -1297,12 +1298,15 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_rank_remove_selected"]} />);
 
+    expect(await screen.findByText("Choose 1 more")).toBeTruthy();
     await user.click(await screen.findByRole("button", { name: /Title of option 1.*Add as #1/ }));
 
     const selectedOption = await screen.findByRole("button", { name: "Remove Title of option 1 as #1" });
     expect(selectedOption.textContent).toContain("1. Title of option 1");
     expect(selectedOption.textContent).toContain("Remove as #1");
     expect(screen.queryByRole("button", { name: "Remove" })).toBeNull();
+    expect(screen.queryByText("Choose 1 more")).toBeNull();
+    expect(screen.queryByText("1/1 selected")).toBeNull();
 
     await user.click(selectedOption);
 
@@ -1310,6 +1314,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
       expect(screen.queryByRole("button", { name: "Remove Title of option 1 as #1" })).toBeNull();
     });
     expect(screen.getByRole("button", { name: /Title of option 1.*Add as #1/ })).toBeTruthy();
+    expect(screen.getByText("Choose 1 more")).toBeTruthy();
   });
 
   it("shows staged ballot progress copy before a response can be submitted", async () => {
