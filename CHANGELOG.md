@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.90] - 2026-06-17
+
+### Changed
+- Limited the worker release asset workflow to Linux x64 for now, with the other platform targets documented for quick re-enable.
+- Bumped web app package to 0.1.90.
+
 ## [0.1.89] - 2026-06-17
 
 ### Fixed
