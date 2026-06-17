@@ -204,30 +204,31 @@ function cacheDefinitionForVoting(
   definition: QuestionnaireDefinition,
   issueBlindTokensWorker?: ElectionInviteMessage["issueBlindTokensWorker"],
 ) {
-  storeCachedQuestionnaireDefinition(definition);
-  const electionId = definition.questionnaireId.trim();
-  const coordinatorNpub = definition.coordinatorPubkey.trim();
+  const storedDefinition = storeCachedQuestionnaireDefinition(definition) ?? definition;
+  const electionId = storedDefinition.questionnaireId.trim();
+  const coordinatorNpub = storedDefinition.coordinatorPubkey.trim();
   if (!electionId || !coordinatorNpub) {
     return;
   }
   const existing = loadElectionSummary(electionId);
-  const closed = Number.isFinite(definition.closeAt) && definition.closeAt <= Math.floor(Date.now() / 1000);
+  const closed = Number.isFinite(storedDefinition.closeAt) && storedDefinition.closeAt <= Math.floor(Date.now() / 1000);
   upsertElectionSummary({
     electionId,
-    title: definition.title || existing?.title || "Questionnaire",
-    description: definition.description ?? existing?.description ?? "",
+    title: storedDefinition.title || existing?.title || "Questionnaire",
+    description: storedDefinition.description ?? existing?.description ?? "",
     state: existing?.state ?? (closed ? "closed" : "open"),
-    openedAt: Number.isFinite(definition.openAt) ? new Date(definition.openAt * 1000).toISOString() : existing?.openedAt ?? null,
-    closedAt: Number.isFinite(definition.closeAt) ? new Date(definition.closeAt * 1000).toISOString() : existing?.closedAt ?? null,
+    openedAt: Number.isFinite(storedDefinition.openAt) ? new Date(storedDefinition.openAt * 1000).toISOString() : existing?.openedAt ?? null,
+    closedAt: Number.isFinite(storedDefinition.closeAt) ? new Date(storedDefinition.closeAt * 1000).toISOString() : existing?.closedAt ?? null,
     coordinatorNpub,
-    blindSigningPublicKey: definition.blindSigningPublicKey ?? existing?.blindSigningPublicKey ?? null,
-    questionnaireRelays: definition.questionnaireRelays,
+    blindSigningPublicKey: storedDefinition.blindSigningPublicKey ?? existing?.blindSigningPublicKey ?? null,
+    definitionCreatedAt: Number.isFinite(storedDefinition.createdAt) ? storedDefinition.createdAt : existing?.definitionCreatedAt,
+    questionnaireRelays: storedDefinition.questionnaireRelays,
     issueBlindTokensWorker: issueBlindTokensWorker === undefined
       ? existing?.issueBlindTokensWorker ?? null
       : issueBlindTokensWorker,
-    protocolVersion: definition.protocolVersion ?? existing?.protocolVersion,
-    flowMode: definition.flowMode ?? existing?.flowMode,
-    responseMode: definition.responseMode ?? existing?.responseMode,
+    protocolVersion: storedDefinition.protocolVersion ?? existing?.protocolVersion,
+    flowMode: storedDefinition.flowMode ?? existing?.flowMode,
+    responseMode: storedDefinition.responseMode ?? existing?.responseMode,
   });
 }
 

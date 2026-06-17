@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { nip19 } from "nostr-tools";
+import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 import { QUESTIONNAIRE_DEFINITION_KIND } from "./questionnaireNostr";
 
 vi.mock("./questionnaireFlowMode", () => ({
@@ -21,9 +21,10 @@ vi.mock("./sharedNostrPool", () => ({
 }));
 
 import QuestionnaireCoordinatorPanel from "./QuestionnaireCoordinatorPanel";
-import { upsertElectionSummary } from "./questionnaireOptionAStorage";
+import { saveCoordinatorState, upsertElectionSummary } from "./questionnaireOptionAStorage";
 import { storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import { buildSimpleNamespacedLocalStorageKey } from "./simpleLocalState";
+import { generateQuestionnaireBlindKeyPair, toQuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
 
 function makeDefinition(input: {
   questionnaireId: string;
@@ -553,5 +554,83 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(questionnaireIdInput.matches(":disabled")).toBe(false);
     expect(generateIdButton.matches(":disabled")).toBe(false);
     expect(screen.getByText("Questionnaire not yet published")).toBeTruthy();
+  });
+
+  it("does not configure the audit proxy when the local blind private key does not match the published vote key", async () => {
+    const coordinatorSecret = generateSecretKey();
+    const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecret));
+    const coordinatorNsec = nip19.nsecEncode(coordinatorSecret);
+    const workerNpub = nip19.npubEncode("1".repeat(64));
+    const publishedBlindKey = await generateQuestionnaireBlindKeyPair();
+    const mismatchedBlindKey = await generateQuestionnaireBlindKeyPair();
+    const publicDefinition = {
+      ...makeDefinition({
+        questionnaireId: "q_proxy_key_mismatch",
+        title: "Proxy key mismatch",
+        coordinatorNpub,
+      }),
+      blindSigningPublicKey: toQuestionnaireBlindPublicKey(publishedBlindKey),
+    };
+    storeCachedQuestionnaireDefinition(publicDefinition);
+    const election = {
+      electionId: "q_proxy_key_mismatch",
+      title: "Proxy key mismatch",
+      description: "",
+      state: "open" as const,
+      openedAt: "2026-06-17T22:00:00.000Z",
+      closedAt: null,
+      coordinatorNpub,
+      blindSigningPublicKey: publicDefinition.blindSigningPublicKey,
+    };
+    upsertElectionSummary(election);
+    saveCoordinatorState({
+      coordinatorNpub,
+      state: {
+        election,
+        whitelist: {},
+        bearerInviteCodes: {},
+        pendingBlindRequests: {},
+        issuedBlindResponses: {},
+        receivedSubmissions: {},
+        acceptedNullifiers: {},
+        acceptanceResults: {},
+        blindSigningPrivateKey: mismatchedBlindKey,
+        lastUpdatedAt: "2026-06-17T22:00:00.000Z",
+      },
+    });
+    window.localStorage.setItem(
+      buildSimpleNamespacedLocalStorageKey("coordinator.questionnaire-draft-data.v1"),
+      JSON.stringify({
+        questionnaireId: "q_proxy_key_mismatch",
+        title: "Proxy key mismatch",
+        description: "",
+        closeTimerEnabled: false,
+        closeAfterMinutes: "60",
+        questions: [{
+          questionId: "q1",
+          prompt: "Proceed?",
+          required: true,
+          type: "yes_no",
+        }],
+      }),
+    );
+
+    render(
+      <QuestionnaireCoordinatorPanel
+        view='build'
+        coordinatorNpub={coordinatorNpub}
+        coordinatorNsec={coordinatorNsec}
+        draftQuestionnaireId='q_proxy_key_mismatch'
+        knownVoterCount={1}
+      />,
+    );
+
+    fireEvent.change(await screen.findByLabelText("Mode"), { target: { value: "delegated_worker" } });
+    fireEvent.change(await screen.findByLabelText("Audit proxy npub"), { target: { value: workerNpub } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm configuration" }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Audit proxy not configured because the local blind-signing private key does not match the published vote key/i)).toBeTruthy();
+    });
   });
 });

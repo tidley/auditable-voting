@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.91] - 2026-06-17
+
+### Fixed
+- Refreshed public questionnaire definitions before delegated blind ballot requests so voters cannot keep resending requests against a stale blind-signing key.
+- Refused audit proxy configuration when the organiser's local blind-signing private key does not match the published vote definition, and made the worker reject mismatched configs as a final guard.
+
+### Changed
+- Bumped web app package to 0.1.91 and worker package to 0.1.23.
+- Updated generated audit proxy launcher minimum-version checks to require worker 0.1.23.
+
 ## [0.1.90] - 2026-06-17
 
 ### Changed

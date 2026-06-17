@@ -732,7 +732,7 @@ const WORKER_LAUNCHER_TARGET_OPTIONS: Array<{ key: WorkerLauncherTargetKey; labe
 ];
 const WORKER_DEFAULT_RUST_LOG = "info,auditable_voting_worker=debug,nostr_relay_pool=info,nostr_sdk=info,nostr=info,tungstenite=info,tokio_tungstenite=info";
 const WORKER_DEFAULT_POLL_SECONDS = "5";
-const WORKER_MINIMUM_VERSION = "0.1.22";
+const WORKER_MINIMUM_VERSION = "0.1.23";
 const WORKER_RELEASE_DOWNLOAD_URL = "https://github.com/tidley/auditable-voting/releases/latest/download/auditable-voting-worker-linux-x64.tar.gz";
 
 function buildWorkerLauncherContents(input: {
@@ -1831,6 +1831,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         closedAt: stateClosedAt,
         coordinatorNpub: definition.coordinatorPubkey,
         blindSigningPublicKey: definition.blindSigningPublicKey ?? existingSummary?.blindSigningPublicKey ?? null,
+        definitionCreatedAt: Number.isFinite(definition.createdAt) ? definition.createdAt : existingSummary?.definitionCreatedAt,
         questionnaireRelays: definition.questionnaireRelays,
         issueBlindTokensWorker: existingSummary?.issueBlindTokensWorker ?? null,
         protocolVersion: definition.protocolVersion,
@@ -3347,6 +3348,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           closedAt: new Date(definitionToPublish.closeAt * 1000).toISOString(),
           coordinatorNpub: definitionToPublish.coordinatorPubkey,
           blindSigningPublicKey: definitionToPublish.blindSigningPublicKey ?? null,
+          definitionCreatedAt: Number.isFinite(definitionToPublish.createdAt) ? definitionToPublish.createdAt : undefined,
           questionnaireRelays: definitionToPublish.questionnaireRelays,
           issueBlindTokensWorker: loadElectionSummary(definitionToPublish.questionnaireId)?.issueBlindTokensWorker ?? null,
           protocolVersion: definitionToPublish.protocolVersion,
@@ -3492,6 +3494,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
               : (definition ? unixTimestampToIso(definition.closeAt) : existingSummary?.closedAt ?? null),
             coordinatorNpub: definition?.coordinatorPubkey ?? existingSummary?.coordinatorNpub ?? coordinatorNpub.trim(),
             blindSigningPublicKey: definition?.blindSigningPublicKey ?? existingSummary?.blindSigningPublicKey ?? null,
+            definitionCreatedAt: Number.isFinite(definition?.createdAt) ? definition?.createdAt : existingSummary?.definitionCreatedAt,
             questionnaireRelays: definition?.questionnaireRelays ?? existingSummary?.questionnaireRelays,
             issueBlindTokensWorker: existingSummary?.issueBlindTokensWorker ?? null,
             protocolVersion: definition?.protocolVersion ?? existingSummary?.protocolVersion,
@@ -3812,9 +3815,25 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         electionId,
       })
       : null;
-    if (delegatedWorkerCapabilities.includes("issue_blind_tokens") && !coordinatorState?.blindSigningPrivateKey) {
-      setStatus(`${options?.statusPrefix ? `${options.statusPrefix} ` : ""}Blind-signing private key is not available yet. Publish the vote and try again.`);
-      return;
+    const workerConfigDefinition = activePublishedDefinition ?? readCachedQuestionnaireDefinition(electionId);
+    const summaryForWorkerConfig = loadElectionSummary(electionId);
+    const blindSigningPrivateKeyForWorker = delegatedWorkerCapabilities.includes("issue_blind_tokens")
+      ? coordinatorState?.blindSigningPrivateKey ?? null
+      : null;
+    if (delegatedWorkerCapabilities.includes("issue_blind_tokens")) {
+      if (!blindSigningPrivateKeyForWorker) {
+        setStatus(`${options?.statusPrefix ? `${options.statusPrefix} ` : ""}Blind-signing private key is not available yet. Publish the vote and try again.`);
+        return;
+      }
+      const advertisedPublicKey = activePublishedDefinition?.blindSigningPublicKey
+        ?? summaryForWorkerConfig?.blindSigningPublicKey
+        ?? workerConfigDefinition?.blindSigningPublicKey
+        ?? null;
+      const privatePublicKey = toQuestionnaireBlindPublicKey(blindSigningPrivateKeyForWorker);
+      if (advertisedPublicKey?.keyId && privatePublicKey.keyId !== advertisedPublicKey.keyId) {
+        setStatus(`${options?.statusPrefix ? `${options.statusPrefix} ` : ""}Audit proxy not configured because the local blind-signing private key does not match the published vote key. Restore the organiser identity that published this vote or start a new vote.`);
+        return;
+      }
     }
     const whitelistNpubs = Object.keys(coordinatorState?.whitelist ?? {})
       .map((entry) => entry.trim())
@@ -3842,9 +3861,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         bearerInviteCodes,
         eligibilityRequired: delegatedWorkerCapabilities.includes("issue_blind_tokens"),
         blindSigningPrivateKey: delegatedWorkerCapabilities.includes("issue_blind_tokens")
-          ? coordinatorState?.blindSigningPrivateKey ?? null
+          ? blindSigningPrivateKeyForWorker
           : null,
-        definition: activePublishedDefinition ?? readCachedQuestionnaireDefinition(electionId),
+        definition: workerConfigDefinition,
         sentAt: new Date().toISOString(),
       }
       : null;

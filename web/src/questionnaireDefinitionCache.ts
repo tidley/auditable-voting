@@ -33,12 +33,23 @@ function writeCache(cache: Record<string, QuestionnaireDefinition>) {
 export function storeCachedQuestionnaireDefinition(definition: QuestionnaireDefinition) {
   const id = definition.questionnaireId.trim();
   if (!id) {
-    return;
+    return null;
+  }
+  const cache = readCache();
+  const existing = cache[id] ?? null;
+  if (
+    existing
+    && Number.isFinite(existing.createdAt)
+    && Number.isFinite(definition.createdAt)
+    && existing.createdAt > definition.createdAt
+  ) {
+    return existing;
   }
   writeCache({
-    ...readCache(),
+    ...cache,
     [id]: definition,
   });
+  return definition;
 }
 
 export function readCachedQuestionnaireDefinition(questionnaireId: string) {

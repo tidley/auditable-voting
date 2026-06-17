@@ -133,6 +133,7 @@ import {
 import {
   fetchQuestionnaireActiveWorkerDelegationForCapability,
   fetchQuestionnaireBlindResponses,
+  fetchQuestionnaireDefinitions,
   fetchQuestionnaireSubmissionDecisions,
 } from "./questionnaireTransport";
 import {
@@ -234,31 +235,32 @@ function getPreferredQuestionnaireRelays(electionId: string) {
 }
 
 function cacheQuestionnaireDefinitionForRuntime(definition: QuestionnaireDefinition) {
-  storeCachedQuestionnaireDefinition(definition);
-  const electionId = definition.questionnaireId.trim();
+  const storedDefinition = storeCachedQuestionnaireDefinition(definition) ?? definition;
+  const electionId = storedDefinition.questionnaireId.trim();
   if (!electionId) {
     return;
   }
   const summary = loadElectionSummary(electionId);
-  const coordinatorNpub = definition.coordinatorPubkey.trim();
+  const coordinatorNpub = storedDefinition.coordinatorPubkey.trim();
   if (!summary && !coordinatorNpub) {
     return;
   }
-  const closed = Number.isFinite(definition.closeAt) && definition.closeAt <= Math.floor(Date.now() / 1000);
+  const closed = Number.isFinite(storedDefinition.closeAt) && storedDefinition.closeAt <= Math.floor(Date.now() / 1000);
   upsertElectionSummary({
     electionId,
-    title: definition.title || summary?.title || "Questionnaire",
-    description: definition.description ?? summary?.description ?? "",
+    title: storedDefinition.title || summary?.title || "Questionnaire",
+    description: storedDefinition.description ?? summary?.description ?? "",
     state: summary?.state ?? (closed ? "closed" : "open"),
-    openedAt: Number.isFinite(definition.openAt) ? new Date(definition.openAt * 1000).toISOString() : summary?.openedAt ?? null,
-    closedAt: Number.isFinite(definition.closeAt) ? new Date(definition.closeAt * 1000).toISOString() : summary?.closedAt ?? null,
+    openedAt: Number.isFinite(storedDefinition.openAt) ? new Date(storedDefinition.openAt * 1000).toISOString() : summary?.openedAt ?? null,
+    closedAt: Number.isFinite(storedDefinition.closeAt) ? new Date(storedDefinition.closeAt * 1000).toISOString() : summary?.closedAt ?? null,
     coordinatorNpub: summary?.coordinatorNpub || coordinatorNpub,
-    blindSigningPublicKey: definition.blindSigningPublicKey ?? summary?.blindSigningPublicKey ?? null,
-    questionnaireRelays: definition.questionnaireRelays,
+    blindSigningPublicKey: storedDefinition.blindSigningPublicKey ?? summary?.blindSigningPublicKey ?? null,
+    definitionCreatedAt: Number.isFinite(storedDefinition.createdAt) ? storedDefinition.createdAt : summary?.definitionCreatedAt,
+    questionnaireRelays: storedDefinition.questionnaireRelays,
     issueBlindTokensWorker: summary?.issueBlindTokensWorker ?? null,
-    protocolVersion: definition.protocolVersion ?? summary?.protocolVersion,
-    flowMode: definition.flowMode ?? summary?.flowMode,
-    responseMode: definition.responseMode ?? summary?.responseMode,
+    protocolVersion: storedDefinition.protocolVersion ?? summary?.protocolVersion,
+    flowMode: storedDefinition.flowMode ?? summary?.flowMode,
+    responseMode: storedDefinition.responseMode ?? summary?.responseMode,
   });
 }
 
@@ -439,6 +441,7 @@ function mergeElectionSummaryIntoCoordinatorElection(
     flowMode: summary?.flowMode ?? existing.flowMode,
     responseMode: summary?.responseMode ?? existing.responseMode,
     blindSigningPublicKey: summary?.blindSigningPublicKey ?? existing.blindSigningPublicKey,
+    definitionCreatedAt: summary?.definitionCreatedAt ?? existing.definitionCreatedAt,
     questionnaireRelays: summary?.questionnaireRelays ?? existing.questionnaireRelays,
     issueBlindTokensWorker: summary?.issueBlindTokensWorker ?? existing.issueBlindTokensWorker ?? null,
   };
@@ -461,6 +464,7 @@ function buildLocalPublishedElectionSummary(
     closedAt: summary?.closedAt ?? (definition?.closeAt ? new Date(definition.closeAt * 1000).toISOString() : existing?.closedAt),
     coordinatorNpub: summary?.coordinatorNpub ?? definition?.coordinatorPubkey ?? existing?.coordinatorNpub,
     blindSigningPublicKey: summary?.blindSigningPublicKey ?? definition?.blindSigningPublicKey ?? existing?.blindSigningPublicKey,
+    definitionCreatedAt: summary?.definitionCreatedAt ?? definition?.createdAt ?? existing?.definitionCreatedAt,
     questionnaireRelays: summary?.questionnaireRelays ?? definition?.questionnaireRelays ?? existing?.questionnaireRelays,
     issueBlindTokensWorker: summary?.issueBlindTokensWorker ?? existing?.issueBlindTokensWorker ?? null,
     protocolVersion: summary?.protocolVersion ?? definition?.protocolVersion ?? existing?.protocolVersion,
@@ -854,12 +858,65 @@ export class QuestionnaireOptionAVoterRuntime {
     summary: ElectionSummary | null;
     cachedDefinition: QuestionnaireDefinition | null;
   }) {
+    const timestampedCandidates = [
+      {
+        publicKey: input.summary?.blindSigningPublicKey ?? null,
+        createdAt: input.summary?.definitionCreatedAt,
+      },
+      {
+        publicKey: input.cachedDefinition?.blindSigningPublicKey ?? null,
+        createdAt: input.cachedDefinition?.createdAt,
+      },
+      {
+        publicKey: input.inviteMessage?.definition?.blindSigningPublicKey ?? null,
+        createdAt: input.inviteMessage?.definition?.createdAt,
+      },
+    ]
+      .filter((candidate): candidate is { publicKey: QuestionnaireBlindPublicKey; createdAt: number } =>
+        Boolean(candidate.publicKey) && Number.isFinite(candidate.createdAt),
+      )
+      .sort((left, right) => right.createdAt - left.createdAt);
+    if (timestampedCandidates[0]) {
+      return timestampedCandidates[0].publicKey;
+    }
     return (
-      input.cachedDefinition?.blindSigningPublicKey
-      ?? input.summary?.blindSigningPublicKey
+      input.summary?.blindSigningPublicKey
+      ?? input.cachedDefinition?.blindSigningPublicKey
+      ?? input.inviteMessage?.definition?.blindSigningPublicKey
       ?? input.inviteMessage?.blindSigningPublicKey
       ?? null
     );
+  }
+
+  private async refreshVoterPublicQuestionnaireMetadata(input: {
+    state: VoterElectionLocalState;
+    summary: ElectionSummary | null;
+    cachedDefinition: QuestionnaireDefinition | null;
+  }) {
+    const relays = mergeQuestionnaireRelayHints(
+      input.cachedDefinition?.questionnaireRelays,
+      input.state.inviteMessage?.definition?.questionnaireRelays,
+      input.summary?.questionnaireRelays,
+    );
+    try {
+      const entries = await fetchQuestionnaireDefinitions({
+        questionnaireId: input.state.electionId,
+        limit: 20,
+        relays: relays.length > 0 ? relays : undefined,
+      });
+      const latest = [...entries]
+        .filter((entry) => entry.definition.questionnaireId === input.state.electionId)
+        .sort((left, right) => Number(right.event.created_at ?? right.definition.createdAt ?? 0) - Number(left.event.created_at ?? left.definition.createdAt ?? 0))[0]?.definition ?? null;
+      if (latest) {
+        cacheQuestionnaireDefinitionForRuntime(latest);
+      }
+    } catch {
+      // A fresh public definition is preferred, but cached metadata is still usable offline.
+    }
+    return {
+      summary: loadElectionSummary(input.state.electionId),
+      cachedDefinition: readCachedQuestionnaireDefinition(input.state.electionId),
+    };
   }
 
   private reconcileVoterBlindSigningKeyState(input: {
@@ -1474,8 +1531,8 @@ export class QuestionnaireOptionAVoterRuntime {
     });
     const blindSigningPublicKey = this.resolveVoterBlindSigningPublicKey({
       inviteMessage: restored.inviteMessage,
-      summary,
-      cachedDefinition: cachedDefinition ?? readCachedQuestionnaireDefinition(this.electionId),
+      summary: loadElectionSummary(this.electionId),
+      cachedDefinition: readCachedQuestionnaireDefinition(this.electionId) ?? cachedDefinition,
     });
     const reconciled = this.reconcileVoterBlindSigningKeyState({
       state: restored,
@@ -1515,9 +1572,6 @@ export class QuestionnaireOptionAVoterRuntime {
       : rawInvite;
 
     const cachedDefinition = readCachedQuestionnaireDefinition(this.electionId);
-    if (cachedDefinition) {
-      cacheQuestionnaireDefinitionForRuntime(cachedDefinition);
-    }
     const summary = loadElectionSummary(this.electionId);
     const definitionCoordinatorNpub = cachedDefinition?.coordinatorPubkey?.trim() ?? "";
     if (invite?.issueBlindTokensWorker && summary) {
@@ -1578,8 +1632,8 @@ export class QuestionnaireOptionAVoterRuntime {
     });
     const blindSigningPublicKey = this.resolveVoterBlindSigningPublicKey({
       inviteMessage: restored.inviteMessage,
-      summary,
-      cachedDefinition: cachedDefinition ?? readCachedQuestionnaireDefinition(this.electionId),
+      summary: loadElectionSummary(this.electionId),
+      cachedDefinition: readCachedQuestionnaireDefinition(this.electionId) ?? cachedDefinition,
     });
     const reconciled = this.reconcileVoterBlindSigningKeyState({
       state: restored,
@@ -1690,16 +1744,18 @@ export class QuestionnaireOptionAVoterRuntime {
       throw new OptionARuntimeError("not_logged_in", "Login is required.");
     }
     let next = this.state;
-    const summary = loadElectionSummary(next.electionId);
-    const cachedDefinition = readCachedQuestionnaireDefinition(next.electionId);
+    let summary = loadElectionSummary(next.electionId);
+    let cachedDefinition = readCachedQuestionnaireDefinition(next.electionId);
     optionAFlowLog("voter", "blind_request_started", {
       electionId: next.electionId,
       alreadyHasRequest: Boolean(next.blindRequest),
       alreadyHasIssuance: Boolean(next.blindIssuance),
     });
-    if (cachedDefinition) {
-      cacheQuestionnaireDefinitionForRuntime(cachedDefinition);
-    }
+    ({ summary, cachedDefinition } = await this.refreshVoterPublicQuestionnaireMetadata({
+      state: next,
+      summary,
+      cachedDefinition,
+    }));
     next = this.reconcileVoterBlindSigningKeyState({
       state: next,
       blindSigningPublicKey: this.resolveVoterBlindSigningPublicKey({

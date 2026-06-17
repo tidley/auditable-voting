@@ -51,7 +51,7 @@ import {
   publishQuestionnaireSubmissionDecisionPublic,
 } from "./questionnaireResponsePublish";
 import type { SignerService } from "./services/signerService";
-import { fetchQuestionnaireActiveWorkerDelegationForCapability } from "./questionnaireTransport";
+import { fetchQuestionnaireActiveWorkerDelegationForCapability, fetchQuestionnaireDefinitions } from "./questionnaireTransport";
 import { createWorkerDelegationCertificate, upsertStoredWorkerDelegation } from "./questionnaireWorkerDelegation";
 
 const publicBlindResponseStore = vi.hoisted(() => ({
@@ -263,6 +263,7 @@ vi.mock("./questionnaireNostr", async () => {
 
 vi.mock("./questionnaireTransport", () => ({
   fetchQuestionnaireActiveWorkerDelegationForCapability: vi.fn().mockResolvedValue(null),
+  fetchQuestionnaireDefinitions: vi.fn().mockResolvedValue([]),
   fetchQuestionnaireBlindResponses: vi.fn(async (input: { questionnaireId: string }) =>
     publicBlindResponseStore.entries.filter((entry) => entry.response.questionnaireId === input.questionnaireId)),
   fetchQuestionnaireSubmissionDecisions: vi.fn().mockResolvedValue([]),
@@ -608,6 +609,8 @@ describe("questionnaireOptionARuntime", () => {
     vi.clearAllMocks();
     vi.mocked(fetchQuestionnaireActiveWorkerDelegationForCapability).mockReset();
     vi.mocked(fetchQuestionnaireActiveWorkerDelegationForCapability).mockResolvedValue(null);
+    vi.mocked(fetchQuestionnaireDefinitions).mockReset();
+    vi.mocked(fetchQuestionnaireDefinitions).mockResolvedValue([]);
     window.localStorage.clear();
     publicBlindResponseStore.entries.splice(0, publicBlindResponseStore.entries.length);
   });
@@ -1316,6 +1319,125 @@ describe("questionnaireOptionARuntime", () => {
     expect(vi.mocked(publishOptionABlindRequestDm)).toHaveBeenCalledWith(expect.objectContaining({
       request: expect.objectContaining({
         blindSigningKeyId: replacementKey.keyId,
+      }),
+    }));
+  });
+
+  it("refreshes the public definition before publishing a blind request so stale cached keys cannot loop forever", async () => {
+    const staleKey = toQuestionnaireBlindPublicKey(await generateQuestionnaireBlindKeyPair());
+    const latestKey = toQuestionnaireBlindPublicKey(await generateQuestionnaireBlindKeyPair());
+    const staleDefinition: QuestionnaireDefinition = {
+      ...buildDefinition({ electionId, coordinatorNpub }),
+      createdAt: 100,
+      openAt: 90,
+      closeAt: 3600,
+      blindSigningPublicKey: staleKey,
+    };
+    const latestDefinition: QuestionnaireDefinition = {
+      ...buildDefinition({ electionId, coordinatorNpub }),
+      createdAt: 200,
+      openAt: 190,
+      closeAt: 7200,
+      blindSigningPublicKey: latestKey,
+    };
+    storeCachedQuestionnaireDefinition(staleDefinition);
+    upsertElectionSummary({
+      electionId,
+      title: "Runtime",
+      description: "Test",
+      state: "open",
+      openedAt: "2026-06-17T22:00:00.000Z",
+      closedAt: null,
+      coordinatorNpub,
+      blindSigningPublicKey: staleKey,
+    });
+    vi.mocked(fetchQuestionnaireDefinitions).mockResolvedValueOnce([{
+      event: { id: "latest-definition", created_at: latestDefinition.createdAt },
+      definition: latestDefinition,
+    }] as Awaited<ReturnType<typeof fetchQuestionnaireDefinitions>>);
+
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionId);
+    voter.bootstrapWithLocalIdentity({
+      invitedNpub: voterNpub,
+      coordinatorNpub,
+      invite: {
+        type: "election_invite",
+        schemaVersion: 1,
+        electionId,
+        title: "Runtime",
+        description: "Test",
+        voteUrl: "https://example.org/vote",
+        invitedNpub: voterNpub,
+        coordinatorNpub,
+        blindSigningPublicKey: staleKey,
+        definition: staleDefinition,
+        expiresAt: null,
+      },
+      allowInviteMissing: true,
+    });
+    vi.mocked(publishOptionABlindRequestDm).mockClear();
+
+    const refreshed = await voter.requestBlindBallot({ forceResend: true });
+
+    expect(refreshed.blindRequest?.blindSigningKeyId).toBe(latestKey.keyId);
+    expect(loadElectionSummary(electionId)?.blindSigningPublicKey?.keyId).toBe(latestKey.keyId);
+    expect(readCachedQuestionnaireDefinition(electionId)?.blindSigningPublicKey?.keyId).toBe(latestKey.keyId);
+    expect(vi.mocked(publishOptionABlindRequestDm)).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        blindSigningKeyId: latestKey.keyId,
+      }),
+    }));
+  });
+
+  it("uses a newer cached public definition over an older summary when relay refresh is empty", async () => {
+    const staleKey = toQuestionnaireBlindPublicKey(await generateQuestionnaireBlindKeyPair());
+    const latestKey = toQuestionnaireBlindPublicKey(await generateQuestionnaireBlindKeyPair());
+    const latestDefinition: QuestionnaireDefinition = {
+      ...buildDefinition({ electionId, coordinatorNpub }),
+      createdAt: 300,
+      openAt: 290,
+      closeAt: 7200,
+      blindSigningPublicKey: latestKey,
+    };
+    storeCachedQuestionnaireDefinition(latestDefinition);
+    upsertElectionSummary({
+      electionId,
+      title: "Runtime",
+      description: "Test",
+      state: "open",
+      openedAt: "2026-06-17T22:00:00.000Z",
+      closedAt: null,
+      coordinatorNpub,
+      blindSigningPublicKey: staleKey,
+      definitionCreatedAt: 100,
+    });
+
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionId);
+    voter.bootstrapWithLocalIdentity({
+      invitedNpub: voterNpub,
+      coordinatorNpub,
+      invite: {
+        type: "election_invite",
+        schemaVersion: 1,
+        electionId,
+        title: "Runtime",
+        description: "Test",
+        voteUrl: "https://example.org/vote",
+        invitedNpub: voterNpub,
+        coordinatorNpub,
+        blindSigningPublicKey: staleKey,
+        expiresAt: null,
+      },
+      allowInviteMissing: true,
+    });
+    vi.mocked(publishOptionABlindRequestDm).mockClear();
+
+    const refreshed = await voter.requestBlindBallot({ forceResend: true });
+
+    expect(refreshed.blindRequest?.blindSigningKeyId).toBe(latestKey.keyId);
+    expect(vi.mocked(publishOptionABlindRequestDm)).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        blindSigningKeyId: latestKey.keyId,
       }),
     }));
   });

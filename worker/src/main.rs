@@ -207,6 +207,7 @@ fn apply_worker_election_config(
 ) -> bool {
     if is_stale_worker_election_config(election, snapshot)
         || is_empty_worker_election_config_without_eligibility(election, snapshot)
+        || worker_election_config_has_blind_key_mismatch(snapshot)
     {
         return false;
     }
@@ -250,6 +251,27 @@ fn apply_worker_election_config(
         election.last_questionnaire_close_publish_at = None;
     }
     true
+}
+
+fn definition_blind_signing_key_id(definition: &Option<serde_json::Value>) -> Option<String> {
+    definition
+        .as_ref()?
+        .get("blindSigningPublicKey")?
+        .get("keyId")?
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn worker_election_config_has_blind_key_mismatch(snapshot: &WorkerElectionConfigSnapshot) -> bool {
+    let Some(private_key) = snapshot.blind_signing_private_key.as_ref() else {
+        return false;
+    };
+    let Some(definition_key_id) = definition_blind_signing_key_id(&snapshot.definition) else {
+        return false;
+    };
+    private_key.key_id != definition_key_id
 }
 
 fn completion_was_reopened_by_expected_count_change(
@@ -1841,6 +1863,20 @@ impl WorkerRuntime {
         if snapshot.coordinator_npub != self.config.coordinator_npub {
             return Ok(());
         }
+        if worker_election_config_has_blind_key_mismatch(&snapshot) {
+            warn!(
+                "worker election config ignored because blind signing key does not match definition: election_id={}, delegation_id={}, private_key={}, definition_key={}",
+                snapshot.election_id,
+                snapshot.delegation_id,
+                snapshot
+                    .blind_signing_private_key
+                    .as_ref()
+                    .map(|key| key.key_id.as_str())
+                    .unwrap_or("missing"),
+                definition_blind_signing_key_id(&snapshot.definition).unwrap_or_else(|| "missing".to_string()),
+            );
+            return Ok(());
+        }
         let mut state = self.state.lock().await;
         let election = state
             .elections
@@ -2308,6 +2344,48 @@ mod tests {
             .bearer_invite_codes
             .contains_key("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
         assert_eq!(election.definition, Some(definition));
+    }
+
+    #[test]
+    fn worker_election_config_rejects_mismatched_blind_private_key() {
+        let mut election = ElectionRuntimeState::default();
+        let snapshot = WorkerElectionConfigSnapshot {
+            message_type: "worker_election_config".to_string(),
+            schema_version: 1,
+            election_id: "q_worker_definition".to_string(),
+            delegation_id: "delegation_worker_definition".to_string(),
+            coordinator_npub: "npub1coordinator000000000000000000000000000000000000000000"
+                .to_string(),
+            worker_npub: "npub1worker000000000000000000000000000000000000000000000000".to_string(),
+            expected_invitee_count: Some(1),
+            whitelist_npubs: Some(vec!["npub1knownvoter".to_string()]),
+            bearer_invite_codes: Some(vec![]),
+            eligibility_required: Some(true),
+            blind_signing_private_key: Some(QuestionnaireBlindPrivateKey {
+                scheme: "rsa-blind-pss-sha384".to_string(),
+                key_id: "private-key-id".to_string(),
+                jwk: json!({}),
+                private_jwk: json!({}),
+            }),
+            definition: Some(json!({
+                "schemaVersion": 1,
+                "eventType": "questionnaire_definition",
+                "questionnaireId": "q_worker_definition",
+                "blindSigningPublicKey": {
+                    "scheme": "rsa-blind-pss-sha384",
+                    "keyId": "published-key-id",
+                    "jwk": {}
+                }
+            })),
+            sent_at: now_iso(),
+        };
+
+        assert!(worker_election_config_has_blind_key_mismatch(&snapshot));
+        assert!(!apply_worker_election_config(&mut election, &snapshot));
+
+        assert!(election.blind_signing_private_key.is_none());
+        assert!(election.definition.is_none());
+        assert_eq!(election.last_election_config_sent_at, None);
     }
 
     #[test]
