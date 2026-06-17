@@ -37,6 +37,7 @@ vi.mock("./questionnaireOptionABlindDm", async () => {
   const actual = await vi.importActual<typeof import("./questionnaireOptionABlindDm")>("./questionnaireOptionABlindDm");
   return {
     ...actual,
+    fetchOptionAWorkerStatusDmsWithNsec: vi.fn().mockResolvedValue([]),
     publishOptionAWorkerDelegationDm: vi.fn().mockResolvedValue({
       eventId: "mock-worker-delegation-dm",
       successes: 1,
@@ -57,7 +58,7 @@ import { loadCoordinatorState, saveCoordinatorState, upsertElectionSummary } fro
 import { storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import { buildSimpleNamespacedLocalStorageKey } from "./simpleLocalState";
 import { generateQuestionnaireBlindKeyPair, toQuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
-import { publishOptionAWorkerElectionConfigDm } from "./questionnaireOptionABlindDm";
+import { fetchOptionAWorkerStatusDmsWithNsec, publishOptionAWorkerElectionConfigDm } from "./questionnaireOptionABlindDm";
 
 function makeDefinition(input: {
   questionnaireId: string;
@@ -112,6 +113,7 @@ beforeEach(() => {
   sharedNostrPoolMocks.subscribeMany.mockReturnValue({
     close: vi.fn(),
   });
+  vi.mocked(fetchOptionAWorkerStatusDmsWithNsec).mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -167,6 +169,42 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       expect(workerNpubInput.value).toMatch(/^npub1/);
       expect(workerNpubInput.value).not.toBe(previousWorkerNpub);
     });
+  });
+
+  it("uses a live available proxy for delegated setup instead of a stale generated account", async () => {
+    const coordinatorSecret = generateSecretKey();
+    const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecret));
+    const coordinatorNsec = nip19.nsecEncode(coordinatorSecret);
+    const liveWorkerNpub = nip19.npubEncode("3".repeat(64));
+    vi.mocked(fetchOptionAWorkerStatusDmsWithNsec).mockResolvedValue([{
+      type: "worker_status",
+      schemaVersion: 1,
+      workerNpub: liveWorkerNpub,
+      coordinatorNpub,
+      workerVersion: "0.1.23",
+      state: "active",
+      heartbeatAt: "2026-06-17T23:30:00.000Z",
+      delegationId: "delegation_previous",
+      delegationState: "active",
+      activeElectionId: "q_previous",
+      advertisedRelays: ["wss://relay.nostr.net", "wss://nos.lol"],
+      supportedCapabilities: ["issue_blind_tokens"],
+    }]);
+
+    render(
+      <QuestionnaireCoordinatorPanel
+        coordinatorNpub={coordinatorNpub}
+        coordinatorNsec={coordinatorNsec}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Mode"), { target: { value: "delegated_worker" } });
+
+    await waitFor(() => {
+      expect((screen.getByLabelText("Audit proxy npub") as HTMLInputElement).value).toBe(liveWorkerNpub);
+    });
+    expect(screen.queryByLabelText("Generated audit proxy nsec (store securely)")).toBeNull();
+    expect((document.querySelector("#delegated-worker-relays") as HTMLTextAreaElement | null)?.value).toContain("wss://relay.nostr.net");
   });
 
   it("shows locally known organiser questionnaires in the live status selector", async () => {

@@ -1724,6 +1724,38 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     };
   }, [coordinatorNpub, coordinatorNsec]);
 
+  const selectAvailableWorkerStatus = useCallback((snapshot: WorkerStatusSnapshot) => {
+    const workerNpub = normaliseWorkerNpub(snapshot.workerNpub);
+    if (!workerNpub) {
+      return;
+    }
+    setDelegatedWorkerNpub(workerNpub);
+    if (Array.isArray(snapshot.advertisedRelays) && snapshot.advertisedRelays.length > 0) {
+      setDelegatedWorkerControlRelays(snapshot.advertisedRelays.join(", "));
+    }
+    if (normaliseWorkerNpub(generatedWorkerNpub) !== workerNpub) {
+      setGeneratedWorkerNsec("");
+      setGeneratedWorkerNpub("");
+    }
+  }, [generatedWorkerNpub]);
+
+  useEffect(() => {
+    if (delegationMode !== "delegated_worker" || activeWorkerDelegation || availableWorkerStatuses.length === 0) {
+      return;
+    }
+    const selectedWorkerNpub = normaliseWorkerNpub(delegatedWorkerNpub);
+    if (selectedWorkerNpub && availableWorkerStatuses.some((snapshot) => normaliseWorkerNpub(snapshot.workerNpub) === selectedWorkerNpub)) {
+      return;
+    }
+    selectAvailableWorkerStatus(availableWorkerStatuses[0]);
+  }, [
+    activeWorkerDelegation,
+    availableWorkerStatuses,
+    delegatedWorkerNpub,
+    delegationMode,
+    selectAvailableWorkerStatus,
+  ]);
+
   function parseDelegatedControlRelays(value: string) {
     const parsed = sanitizeWorkerRelays(value);
     return parsed.length > 0 ? parsed : DEFAULT_WORKER_CONTROL_RELAYS;
@@ -4794,12 +4826,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                           <button
                             type='button'
                             className='simple-voter-secondary'
-                            onClick={() => {
-                              setDelegatedWorkerNpub(snapshot.workerNpub);
-                              if (Array.isArray(snapshot.advertisedRelays) && snapshot.advertisedRelays.length > 0) {
-                                setDelegatedWorkerControlRelays(snapshot.advertisedRelays.join(", "));
-                              }
-                            }}
+                            onClick={() => selectAvailableWorkerStatus(snapshot)}
                           >
                             {deriveActorDisplayId(snapshot.workerNpub)} · {snapshot.state} · {new Date(snapshot.heartbeatAt).toLocaleTimeString()}
                           </button>
@@ -4817,7 +4844,14 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                     className='simple-voter-input'
                     placeholder='npub1...'
                     value={delegatedWorkerNpub}
-                    onChange={(event) => setDelegatedWorkerNpub(event.target.value)}
+                    onChange={(event) => {
+                      const nextWorkerNpub = event.target.value;
+                      setDelegatedWorkerNpub(nextWorkerNpub);
+                      if (normaliseWorkerNpub(nextWorkerNpub) !== normaliseWorkerNpub(generatedWorkerNpub)) {
+                        setGeneratedWorkerNsec("");
+                        setGeneratedWorkerNpub("");
+                      }
+                    }}
                   />
                   <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
                     <button type='button' className='simple-voter-secondary' onClick={generateWorkerCredentials}>

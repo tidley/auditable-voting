@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.93] - 2026-06-17
+
+### Fixed
+- Reused the latest live audit proxy status for new delegated questionnaire setup instead of leaving later sessions pointed at an unstarted generated proxy account.
+- Cleared stale generated proxy secrets when selecting or typing a different audit proxy npub, so the launch command and delegated proxy target cannot silently disagree.
+
+### Changed
+- Bumped web app package to 0.1.93.
+
 ## [0.1.92] - 2026-06-17
 
 ### Fixed
