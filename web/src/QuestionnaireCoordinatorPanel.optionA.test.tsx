@@ -20,11 +20,44 @@ vi.mock("./sharedNostrPool", () => ({
   }),
 }));
 
+vi.mock("./questionnaireWorkerDelegation", async () => {
+  const actual = await vi.importActual<typeof import("./questionnaireWorkerDelegation")>("./questionnaireWorkerDelegation");
+  return {
+    ...actual,
+    publishWorkerDelegationCertificate: vi.fn().mockResolvedValue({
+      eventId: "mock-worker-delegation",
+      successes: 1,
+      failures: 0,
+      relayResults: [],
+    }),
+  };
+});
+
+vi.mock("./questionnaireOptionABlindDm", async () => {
+  const actual = await vi.importActual<typeof import("./questionnaireOptionABlindDm")>("./questionnaireOptionABlindDm");
+  return {
+    ...actual,
+    publishOptionAWorkerDelegationDm: vi.fn().mockResolvedValue({
+      eventId: "mock-worker-delegation-dm",
+      successes: 1,
+      failures: 0,
+      relayResults: [],
+    }),
+    publishOptionAWorkerElectionConfigDm: vi.fn().mockResolvedValue({
+      eventId: "mock-worker-config-dm",
+      successes: 1,
+      failures: 0,
+      relayResults: [],
+    }),
+  };
+});
+
 import QuestionnaireCoordinatorPanel from "./QuestionnaireCoordinatorPanel";
-import { saveCoordinatorState, upsertElectionSummary } from "./questionnaireOptionAStorage";
+import { loadCoordinatorState, saveCoordinatorState, upsertElectionSummary } from "./questionnaireOptionAStorage";
 import { storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import { buildSimpleNamespacedLocalStorageKey } from "./simpleLocalState";
 import { generateQuestionnaireBlindKeyPair, toQuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
+import { publishOptionAWorkerElectionConfigDm } from "./questionnaireOptionABlindDm";
 
 function makeDefinition(input: {
   questionnaireId: string;
@@ -630,7 +663,115 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     fireEvent.click(screen.getByRole("button", { name: "Confirm configuration" }));
 
     await waitFor(() => {
-      expect(screen.getByText(/Audit proxy not configured because the local blind-signing private key does not match the published vote key/i)).toBeTruthy();
+      expect(screen.getByText(/Audit proxy not configured because no local blind-signing private key matches the published vote key/i)).toBeTruthy();
     });
+  });
+
+  it("recovers the matching local blind private key before configuring the audit proxy", async () => {
+    const coordinatorSecret = generateSecretKey();
+    const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecret));
+    const coordinatorNsec = nip19.nsecEncode(coordinatorSecret);
+    const workerNpub = nip19.npubEncode("2".repeat(64));
+    const publishedBlindKey = await generateQuestionnaireBlindKeyPair();
+    const mismatchedBlindKey = await generateQuestionnaireBlindKeyPair();
+    const publicDefinition = {
+      ...makeDefinition({
+        questionnaireId: "q_proxy_key_recovery",
+        title: "Proxy key recovery",
+        coordinatorNpub,
+      }),
+      blindSigningPublicKey: toQuestionnaireBlindPublicKey(publishedBlindKey),
+    };
+    storeCachedQuestionnaireDefinition(publicDefinition);
+    const election = {
+      electionId: "q_proxy_key_recovery",
+      title: "Proxy key recovery",
+      description: "",
+      state: "open" as const,
+      openedAt: "2026-06-17T22:00:00.000Z",
+      closedAt: null,
+      coordinatorNpub,
+      blindSigningPublicKey: publicDefinition.blindSigningPublicKey,
+    };
+    upsertElectionSummary(election);
+    saveCoordinatorState({
+      coordinatorNpub,
+      state: {
+        election,
+        whitelist: {},
+        bearerInviteCodes: {},
+        pendingBlindRequests: {},
+        issuedBlindResponses: {},
+        receivedSubmissions: {},
+        acceptedNullifiers: {},
+        acceptanceResults: {},
+        blindSigningPrivateKey: mismatchedBlindKey,
+        lastUpdatedAt: "2026-06-17T22:00:00.000Z",
+      },
+    });
+    saveCoordinatorState({
+      coordinatorNpub,
+      state: {
+        election: {
+          ...election,
+          electionId: "q_previous_matching_key",
+          title: "Previous matching key",
+        },
+        whitelist: {},
+        bearerInviteCodes: {},
+        pendingBlindRequests: {},
+        issuedBlindResponses: {},
+        receivedSubmissions: {},
+        acceptedNullifiers: {},
+        acceptanceResults: {},
+        blindSigningPrivateKey: publishedBlindKey,
+        lastUpdatedAt: "2026-06-17T21:00:00.000Z",
+      },
+    });
+    window.localStorage.setItem(
+      buildSimpleNamespacedLocalStorageKey("coordinator.questionnaire-draft-data.v1"),
+      JSON.stringify({
+        questionnaireId: "q_proxy_key_recovery",
+        title: "Proxy key recovery",
+        description: "",
+        closeTimerEnabled: false,
+        closeAfterMinutes: "60",
+        questions: [{
+          questionId: "q1",
+          prompt: "Proceed?",
+          required: true,
+          type: "yes_no",
+        }],
+      }),
+    );
+
+    render(
+      <QuestionnaireCoordinatorPanel
+        view='build'
+        coordinatorNpub={coordinatorNpub}
+        coordinatorNsec={coordinatorNsec}
+        draftQuestionnaireId='q_proxy_key_recovery'
+        knownVoterCount={1}
+      />,
+    );
+
+    fireEvent.change(await screen.findByLabelText("Mode"), { target: { value: "delegated_worker" } });
+    fireEvent.change(await screen.findByLabelText("Audit proxy npub"), { target: { value: workerNpub } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm configuration" }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Audit proxy configured/i)).toBeTruthy();
+    });
+    expect(publishOptionAWorkerElectionConfigDm).toHaveBeenCalledWith(expect.objectContaining({
+      snapshot: expect.objectContaining({
+        blindSigningPrivateKey: expect.objectContaining({
+          keyId: publishedBlindKey.keyId,
+        }),
+      }),
+    }));
+    expect(loadCoordinatorState({
+      coordinatorNpub,
+      electionId: "q_proxy_key_recovery",
+    })?.blindSigningPrivateKey?.keyId).toBe(publishedBlindKey.keyId);
   });
 });

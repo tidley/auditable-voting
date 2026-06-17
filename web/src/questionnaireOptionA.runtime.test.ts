@@ -615,6 +615,25 @@ describe("questionnaireOptionARuntime", () => {
     publicBlindResponseStore.entries.splice(0, publicBlindResponseStore.entries.length);
   });
 
+  it("repairs stale coordinator blind public key state from the local private key", async () => {
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+    const savedPrivateKey = loadCoordinatorState({ coordinatorNpub, electionId })?.blindSigningPrivateKey;
+    expect(savedPrivateKey).toBeTruthy();
+    const expectedPublicKey = toQuestionnaireBlindPublicKey(savedPrivateKey!);
+    const stalePublicKey = toQuestionnaireBlindPublicKey(await generateQuestionnaireBlindKeyPair());
+    upsertElectionSummary({
+      ...loadElectionSummary(electionId)!,
+      blindSigningPublicKey: stalePublicKey,
+    });
+
+    const reloaded = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
+    await reloaded.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+
+    expect(reloaded.getSnapshot()?.election.blindSigningPublicKey?.keyId).toBe(expectedPublicKey.keyId);
+    expect(loadElectionSummary(electionId)?.blindSigningPublicKey?.keyId).toBe(expectedPublicKey.keyId);
+  });
+
   it("restores login state and invite mismatch is rejected", async () => {
     const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
     await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });

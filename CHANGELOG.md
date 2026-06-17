@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.92] - 2026-06-17
+
+### Fixed
+- Repaired organiser blind-signing key drift before publishing new questionnaire definitions, so voters do not request ballots against a stale public key.
+- Recovered matching locally stored blind-signing private keys when configuring an audit proxy for an already-published questionnaire.
+- Updated SimpleRound coverage for the current questionnaire/session UI after removal of legacy live-round ticket controls.
+
+### Changed
+- Bumped web app package to 0.1.92.
+
 ## [0.1.91] - 2026-06-17
 
 ### Fixed

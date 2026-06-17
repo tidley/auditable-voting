@@ -3557,12 +3557,13 @@ export class QuestionnaireOptionACoordinatorRuntime {
     }
     if (this.state.blindSigningPrivateKey) {
       const existingPrivateKey = this.state.blindSigningPrivateKey;
-      if (!this.state.election.blindSigningPublicKey) {
+      const existingPublicKey = toQuestionnaireBlindPublicKey(existingPrivateKey);
+      if (this.state.election.blindSigningPublicKey?.keyId !== existingPublicKey.keyId) {
         this.state = {
           ...this.state,
           election: {
             ...this.state.election,
-            blindSigningPublicKey: toQuestionnaireBlindPublicKey(existingPrivateKey),
+            blindSigningPublicKey: existingPublicKey,
           },
         };
         upsertElectionSummary(this.state.election);

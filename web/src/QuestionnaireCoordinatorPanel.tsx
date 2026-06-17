@@ -45,7 +45,7 @@ import {
   questionnaireRelaysForMetadata,
 } from "./questionnaireRelays";
 import { createSignerService } from "./services/signerService";
-import { listElectionSummaries, loadCoordinatorState, loadElectionSummary, upsertElectionSummary } from "./questionnaireOptionAStorage";
+import { findCoordinatorBlindSigningPrivateKey, listElectionSummaries, loadCoordinatorState, loadElectionSummary, saveCoordinatorState, upsertElectionSummary } from "./questionnaireOptionAStorage";
 import {
   type WorkerElectionConfigSnapshot,
   fetchOptionAWorkerStatusDmsWithNsec,
@@ -3277,15 +3277,13 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       return;
     }
 
-    if (!definitionToPublish.blindSigningPublicKey) {
-      const ensuredKey = await props.onEnsureBlindSigningPublicKey?.().catch(() => null);
-      if (ensuredKey) {
-        setRecoveredBlindSigningPublicKey(ensuredKey);
-        definitionToPublish = {
-          ...definitionToPublish,
-          blindSigningPublicKey: ensuredKey,
-        };
-      }
+    const ensuredKey = await props.onEnsureBlindSigningPublicKey?.().catch(() => null);
+    if (ensuredKey && definitionToPublish.blindSigningPublicKey?.keyId !== ensuredKey.keyId) {
+      setRecoveredBlindSigningPublicKey(ensuredKey);
+      definitionToPublish = {
+        ...definitionToPublish,
+        blindSigningPublicKey: ensuredKey,
+      };
     }
 
     if (!definitionToPublish.blindSigningPublicKey) {
@@ -3817,21 +3815,51 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       : null;
     const workerConfigDefinition = activePublishedDefinition ?? readCachedQuestionnaireDefinition(electionId);
     const summaryForWorkerConfig = loadElectionSummary(electionId);
-    const blindSigningPrivateKeyForWorker = delegatedWorkerCapabilities.includes("issue_blind_tokens")
+    let blindSigningPrivateKeyForWorker = delegatedWorkerCapabilities.includes("issue_blind_tokens")
       ? coordinatorState?.blindSigningPrivateKey ?? null
       : null;
     if (delegatedWorkerCapabilities.includes("issue_blind_tokens")) {
-      if (!blindSigningPrivateKeyForWorker) {
-        setStatus(`${options?.statusPrefix ? `${options.statusPrefix} ` : ""}Blind-signing private key is not available yet. Publish the vote and try again.`);
-        return;
-      }
       const advertisedPublicKey = activePublishedDefinition?.blindSigningPublicKey
         ?? summaryForWorkerConfig?.blindSigningPublicKey
         ?? workerConfigDefinition?.blindSigningPublicKey
         ?? null;
+      if (advertisedPublicKey?.keyId) {
+        const privatePublicKey = blindSigningPrivateKeyForWorker
+          ? toQuestionnaireBlindPublicKey(blindSigningPrivateKeyForWorker)
+          : null;
+        if (privatePublicKey?.keyId !== advertisedPublicKey.keyId) {
+          const recovered = findCoordinatorBlindSigningPrivateKey({
+            coordinatorNpub: coordinatorNpubTrimmed,
+            keyId: advertisedPublicKey.keyId,
+          });
+          if (recovered) {
+            blindSigningPrivateKeyForWorker = recovered.privateKey;
+            if (coordinatorState) {
+              const recoveredState = {
+                ...coordinatorState,
+                blindSigningPrivateKey: recovered.privateKey,
+                election: {
+                  ...coordinatorState.election,
+                  blindSigningPublicKey: advertisedPublicKey,
+                },
+                lastUpdatedAt: new Date().toISOString(),
+              };
+              saveCoordinatorState({
+                coordinatorNpub: coordinatorNpubTrimmed,
+                state: recoveredState,
+              });
+              upsertElectionSummary(recoveredState.election);
+            }
+          }
+        }
+      }
+      if (!blindSigningPrivateKeyForWorker) {
+        setStatus(`${options?.statusPrefix ? `${options.statusPrefix} ` : ""}Blind-signing private key is not available yet. Publish the vote and try again.`);
+        return;
+      }
       const privatePublicKey = toQuestionnaireBlindPublicKey(blindSigningPrivateKeyForWorker);
       if (advertisedPublicKey?.keyId && privatePublicKey.keyId !== advertisedPublicKey.keyId) {
-        setStatus(`${options?.statusPrefix ? `${options.statusPrefix} ` : ""}Audit proxy not configured because the local blind-signing private key does not match the published vote key. Restore the organiser identity that published this vote or start a new vote.`);
+        setStatus(`${options?.statusPrefix ? `${options.statusPrefix} ` : ""}Audit proxy not configured because no local blind-signing private key matches the published vote key. Restore the organiser identity that published this vote or start a new vote.`);
         return;
       }
     }

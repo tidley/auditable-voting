@@ -358,6 +358,43 @@ export function loadCoordinatorState(input: {
   };
 }
 
+export function findCoordinatorBlindSigningPrivateKey(input: {
+  coordinatorNpub: Npub;
+  keyId: string;
+}): {
+  electionId: string;
+  privateKey: NonNullable<CoordinatorElectionState["blindSigningPrivateKey"]>;
+} | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const coordinatorNpub = input.coordinatorNpub.trim();
+  const keyId = input.keyId.trim();
+  if (!coordinatorNpub || !keyId) {
+    return null;
+  }
+  const prefix = getKey(`app:auditable-voting:coordinator:${coordinatorNpub}:`);
+  const suffix = ":election:blindSigningPrivateKey";
+  for (let index = 0; index < window.localStorage.length; index += 1) {
+    const storageKey = window.localStorage.key(index) ?? "";
+    if (!storageKey.startsWith(prefix) || !storageKey.endsWith(suffix)) {
+      continue;
+    }
+    try {
+      const privateKey = JSON.parse(window.localStorage.getItem(storageKey) ?? "null") as CoordinatorElectionState["blindSigningPrivateKey"];
+      if (privateKey?.keyId === keyId) {
+        return {
+          electionId: storageKey.slice(prefix.length, -suffix.length),
+          privateKey,
+        };
+      }
+    } catch {
+      // Ignore malformed legacy records and continue scanning.
+    }
+  }
+  return null;
+}
+
 export function saveVoterState(input: {
   voterNpub: Npub;
   state: VoterElectionLocalState;
