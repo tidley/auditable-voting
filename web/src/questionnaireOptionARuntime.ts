@@ -2086,57 +2086,70 @@ export class QuestionnaireOptionAVoterRuntime {
       return null;
     }
     const routing = await this.resolveIssueBlindTokensWorkerRouting();
-    const recipientNpub = routing?.workerNpub?.trim() || this.state.coordinatorNpub;
+    const coordinatorNpub = this.state.coordinatorNpub.trim();
+    const workerNpub = routing?.workerNpub?.trim() || "";
+    const primaryRecipientNpub = workerNpub || coordinatorNpub;
+    const recipientNpubs = [...new Set([primaryRecipientNpub, coordinatorNpub, workerNpub].filter(Boolean))];
     const relays = mergeBlindRequestRoutingRelays(this.getPreferredDmRelays(), routing);
-    const shouldCopyOrganizer = Boolean(routing?.workerNpub?.trim() && this.state.coordinatorNpub.trim() !== recipientNpub);
     optionAFlowLog("voter", "blind_request_publish_attempt", {
       electionId: this.state.electionId,
       requestId: request.requestId,
-      coordinatorNpub: this.state.coordinatorNpub,
-      recipientNpub,
+      coordinatorNpub,
+      workerNpub: workerNpub || null,
+      recipientNpub: primaryRecipientNpub,
+      recipientCount: recipientNpubs.length,
       delegationId: routing?.delegationId ?? null,
-      organizerCopy: shouldCopyOrganizer,
+      organizerCopy: Boolean(workerNpub && coordinatorNpub !== workerNpub),
+      proxyCopy: Boolean(workerNpub),
     });
     try {
-      const result = await publishOptionABlindRequestDm({
-        signer: this.signer,
-        recipientNpub,
-        request,
-        fallbackNsec: this.fallbackNsec,
-        relays,
-      });
-      this.rememberPrivateRelaySuccesses(result);
-      if (shouldCopyOrganizer) {
+      let combined: Awaited<ReturnType<typeof publishOptionABlindRequestDm>> | null = null;
+      for (const recipientNpub of recipientNpubs) {
         try {
-          const organizerCopy = await publishOptionABlindRequestDm({
+          const relaySet = recipientNpub === workerNpub ? relays : this.getPreferredDmRelays();
+          const result = await publishOptionABlindRequestDm({
             signer: this.signer,
-            recipientNpub: this.state.coordinatorNpub,
+            recipientNpub,
             request,
             fallbackNsec: this.fallbackNsec,
-            relays: this.getPreferredDmRelays(),
+            relays: relaySet,
           });
-          this.rememberPrivateRelaySuccesses(organizerCopy);
-          optionAFlowLog("voter", "blind_request_organizer_copy_result", {
+          this.rememberPrivateRelaySuccesses(result);
+          optionAFlowLog("voter", "blind_request_recipient_publish_result", {
             electionId: this.state.electionId,
             requestId: request.requestId,
-            successes: organizerCopy.successes,
-            failures: organizerCopy.failures,
+            recipientNpub,
+            recipientRole: recipientNpub === workerNpub ? "proxy" : "organiser",
+            successes: result.successes,
+            failures: result.failures,
           });
-          return {
-            ...result,
-            successes: result.successes + organizerCopy.successes,
-            failures: result.failures + organizerCopy.failures,
-            relayResults: [...result.relayResults, ...organizerCopy.relayResults],
-          };
+          combined = combined
+            ? {
+              ...combined,
+              successes: combined.successes + result.successes,
+              failures: combined.failures + result.failures,
+              relayResults: [...combined.relayResults, ...result.relayResults],
+            }
+            : result;
         } catch (error) {
-          optionAFlowLog("voter", "blind_request_organizer_copy_failed", {
+          optionAFlowLog("voter", "blind_request_recipient_publish_failed", {
             electionId: this.state.electionId,
             requestId: request.requestId,
+            recipientNpub,
+            recipientRole: recipientNpub === workerNpub ? "proxy" : "organiser",
             error: error instanceof Error ? error.message : String(error),
           });
         }
       }
-      return result;
+      if (combined) {
+        return {
+          ...combined,
+          successes: combined.successes,
+          failures: combined.failures,
+          relayResults: combined.relayResults,
+        };
+      }
+      return null;
     } catch {
       return null;
     }

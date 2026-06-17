@@ -747,6 +747,9 @@ describe("questionnaireOptionARuntime", () => {
       recipientNpub: workerNpub,
       relays: expect.arrayContaining(["wss://worker-relay.example"]),
     }));
+    expect(vi.mocked(publishOptionABlindRequestDm)).toHaveBeenCalledWith(expect.objectContaining({
+      recipientNpub: coordinatorNpub,
+    }));
   });
 
   it("runs request -> issuance -> submit -> acceptance and supports resume", async () => {

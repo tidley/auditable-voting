@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.89] - 2026-06-17
+
+### Fixed
+- Copied delegated blind ballot requests to both organiser and audit proxy so a worker can issue even when the organiser copy is the first route observed.
+- Added short audit-proxy debug logs for decrypted control-plane DM metadata without printing encrypted payload blobs.
+
+### Changed
+- Bumped web app package to 0.1.89 and worker package to 0.1.22.
+- Updated generated audit proxy launcher minimum-version checks to require worker 0.1.22.
+
 ## [0.1.88] - 2026-06-17
 
 ### Fixed

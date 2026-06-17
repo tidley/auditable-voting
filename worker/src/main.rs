@@ -120,6 +120,74 @@ fn random_suffix() -> String {
     )
 }
 
+fn short_ascii(value: &str) -> String {
+    if value.len() <= 24 {
+        return value.to_string();
+    }
+    format!(
+        "{}..{}",
+        &value[..12],
+        &value[value.len().saturating_sub(6)..]
+    )
+}
+
+fn compact_preview(value: &str, max_chars: usize) -> String {
+    let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut preview = compact.chars().take(max_chars).collect::<String>();
+    if compact.chars().count() > max_chars {
+        preview.push_str("...");
+    }
+    preview
+}
+
+fn rumor_message_type(content: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(content)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("type")
+                .and_then(|entry| entry.as_str())
+                .map(str::to_string)
+        })
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "kind14_dm".to_string())
+}
+
+fn log_decrypted_worker_dm(event: &Event, rumor: &UnsignedEvent) {
+    let message_type = rumor_message_type(&rumor.content);
+    let sender_npub = rumor
+        .pubkey
+        .to_bech32()
+        .unwrap_or_else(|_| rumor.pubkey.to_string());
+    let recipient_tag_count = rumor
+        .tags
+        .iter()
+        .filter(|tag| tag.kind().to_string() == "p")
+        .count();
+    let subject = rumor
+        .tags
+        .iter()
+        .find(|tag| tag.kind().to_string() == "subject")
+        .and_then(|tag| tag.content())
+        .unwrap_or("");
+    let preview = if message_type == "kind14_dm" {
+        compact_preview(&rumor.content, 96)
+    } else {
+        String::new()
+    };
+    debug!(
+        "decrypted worker DM received: event_id={}, rumor_kind={}, sender={}, type={}, recipients={}, subject={}, chars={}, preview={}",
+        short_ascii(&event.id.to_string()),
+        rumor.kind.as_u16(),
+        short_ascii(&sender_npub),
+        message_type,
+        recipient_tag_count,
+        compact_preview(subject, 48),
+        rumor.content.chars().count(),
+        preview
+    );
+}
+
 fn build_worker_log_filter() -> EnvFilter {
     let mut filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(WORKER_DEFAULT_LOG_FILTER));
@@ -1101,6 +1169,7 @@ impl WorkerRuntime {
         }
 
         let unwrapped = self.client.unwrap_gift_wrap(event).await?;
+        log_decrypted_worker_dm(event, &unwrapped.rumor);
         let rumor_content = unwrapped.rumor.content;
         if rumor_content.trim().is_empty() {
             return Ok(());
