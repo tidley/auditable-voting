@@ -5413,6 +5413,11 @@ code {
   border-radius: 10px;
   background: var(--simple-surface);
   color: var(--simple-text);
+  cursor: pointer;
+}
+
+.simple-questionnaire-rank-row[aria-disabled='true'] {
+  cursor: default;
 }
 
 .simple-questionnaire-rank-selected {
@@ -5424,23 +5429,15 @@ code {
   min-width: 0;
   min-height: 40px;
   padding: 8px 10px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: inherit;
   text-align: left;
-  cursor: pointer;
 }
 
-.simple-questionnaire-rank-selected:not(:disabled):hover,
-.simple-questionnaire-rank-selected:not(:disabled):focus-visible {
+.simple-questionnaire-rank-row:not([aria-disabled='true']):hover,
+.simple-questionnaire-rank-row:not([aria-disabled='true']):focus-visible,
+.simple-questionnaire-rank-row:not([aria-disabled='true']):focus-within {
   background: rgba(245, 158, 11, 0.12);
   outline: 1px solid rgba(245, 158, 11, 0.42);
   outline-offset: 0;
-}
-
-.simple-questionnaire-rank-selected:disabled {
-  cursor: default;
 }
 
 .simple-questionnaire-rank-selected-option {

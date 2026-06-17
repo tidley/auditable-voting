@@ -570,11 +570,10 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
 
     render(<QuestionnaireOptionAVoterPanel localVoterNpub={localVoterNpub} />);
 
-    expect(await screen.findByText("Invite already claimed by this device/account.")).toBeTruthy();
-    expect(screen.queryByText("Private invite already used")).toBeNull();
     await waitFor(() => {
       expect(requestBlindBallot).toHaveBeenCalled();
     });
+    expect(screen.queryByText("Private invite already used")).toBeNull();
   });
 
   it("requests a private invite ballot when no status event is visible yet", async () => {

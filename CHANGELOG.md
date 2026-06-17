@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.83] - 2026-06-17
+
+### Changed
+- Made selected ranked-answer rows removable by tapping anywhere on the row while keeping rank movement controls separate.
+- Removed duplicate ranked-answer instruction text and the inline voter status update under the answer controls.
+
 ## [0.1.82] - 2026-06-16
 
 ### Fixed

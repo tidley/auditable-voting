@@ -1726,11 +1726,6 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
                       </p>
                     ) : null}
                   </div>
-                  {rankRequirement.missing > 0 ? (
-                    <p className='simple-questionnaire-rank-needed'>
-                      Choose at least {rankRequirement.minimum} ranked choices. {rankRequirement.missing} more needed.
-                    </p>
-                  ) : null}
                   <div className='simple-questionnaire-rank-voter-grid'>
                     <div className='simple-questionnaire-choice-list'>
                       {ranked.length > 0 ? ranked.map((optionId, rankedIndex) => {
@@ -1738,41 +1733,64 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
                         if (!option) {
                           return null;
                         }
-                        return (
-                          <div key={option.optionId} className='simple-questionnaire-rank-row'>
-                            <button
-                              type='button'
-                              className='simple-questionnaire-rank-selected'
-                              onClick={() => removeRankedAnswer(question.questionId, option.optionId)}
-                              disabled={responseLocked}
-                              aria-label={`Remove ${option.label} as #${rankedIndex + 1}`}
-                            >
-                              <span className='simple-questionnaire-rank-selected-option'>
-                                <span className='simple-questionnaire-rank-inline-number'>{rankedIndex + 1}. </span>
-                                <span>{option.label}</span>
-                              </span>
-                              <span className='simple-questionnaire-rank-remove-prefix'>Remove as #{rankedIndex + 1}</span>
-                            </button>
-                            <div className='simple-questionnaire-rank-actions'>
-                              <button
-                                type='button'
-                                className='simple-voter-secondary simple-questionnaire-rank-action'
-                                onClick={() => moveRankedAnswer(question.questionId, option.optionId, -1)}
-                                disabled={responseLocked || rankedIndex === 0}
+                            return (
+                              <div
+                                key={option.optionId}
+                                className={`simple-questionnaire-rank-row${responseLocked ? " is-response-locked" : ""}`}
+                                role='button'
+                                tabIndex={responseLocked ? -1 : 0}
+                                aria-label={`Remove ${option.label} as #${rankedIndex + 1}`}
+                                aria-disabled={responseLocked}
+                                onClick={() => {
+                                  if (responseLocked) {
+                                    return;
+                                  }
+                                  removeRankedAnswer(question.questionId, option.optionId);
+                                }}
+                                onKeyDown={(event) => {
+                                  if (responseLocked) {
+                                    return;
+                                  }
+                                  if (event.key !== "Enter" && event.key !== " ") {
+                                    return;
+                                  }
+                                  event.preventDefault();
+                                  removeRankedAnswer(question.questionId, option.optionId);
+                                }}
                               >
-                                Up
-                              </button>
-                              <button
-                                type='button'
-                                className='simple-voter-secondary simple-questionnaire-rank-action'
-                                onClick={() => moveRankedAnswer(question.questionId, option.optionId, 1)}
-                                disabled={responseLocked || rankedIndex === ranked.length - 1}
-                              >
-                                Down
-                              </button>
-                            </div>
-                          </div>
-                        );
+                                <span className='simple-questionnaire-rank-selected'>
+                                  <span className='simple-questionnaire-rank-selected-option'>
+                                    <span className='simple-questionnaire-rank-inline-number'>{rankedIndex + 1}. </span>
+                                    <span>{option.label}</span>
+                                  </span>
+                                  <span className='simple-questionnaire-rank-remove-prefix'>Remove as #{rankedIndex + 1}</span>
+                                </span>
+                                <div className='simple-questionnaire-rank-actions'>
+                                  <button
+                                    type='button'
+                                    className='simple-voter-secondary simple-questionnaire-rank-action'
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      moveRankedAnswer(question.questionId, option.optionId, -1);
+                                    }}
+                                    disabled={responseLocked || rankedIndex === 0}
+                                  >
+                                    Up
+                                  </button>
+                                  <button
+                                    type='button'
+                                    className='simple-voter-secondary simple-questionnaire-rank-action'
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      moveRankedAnswer(question.questionId, option.optionId, 1);
+                                    }}
+                                    disabled={responseLocked || rankedIndex === ranked.length - 1}
+                                  >
+                                    Down
+                                  </button>
+                                </div>
+                              </div>
+                            );
                       }) : null}
                     </div>
                     {unrankedOptions.length > 0 ? (

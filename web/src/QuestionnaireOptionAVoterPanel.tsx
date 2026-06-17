@@ -3204,7 +3204,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
           </ul>
         </section>
       ) : null}
-      {status ? <p className='simple-voter-note'>{status}</p> : null}
       {privateInviteBlockCard}
       <section className='simple-questionnaire-voter-overview' aria-label='Questionnaire summary'>
         <div className='simple-questionnaire-voter-title-block'>
@@ -3281,11 +3280,6 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                   </p>
                 ) : null}
               </div>
-              {rankRequirement && rankRequirement.missing > 0 ? (
-                <p className='simple-questionnaire-rank-needed'>
-                  Choose at least {rankRequirement.minimum} ranked choices. {rankRequirement.missing} more needed.
-                </p>
-              ) : null}
               {question.type === "yes_no" ? (
                 <div className='simple-vote-button-grid simple-questionnaire-yes-no-grid'>
                   <button
@@ -3368,25 +3362,45 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                               return null;
                             }
                             return (
-                              <div key={option.optionId} className='simple-questionnaire-rank-row'>
-                                <button
-                                  type='button'
-                                  className='simple-questionnaire-rank-selected'
-                                  onClick={() => removeRankedAnswer(question.questionId, option.optionId)}
-                                  disabled={questionSubmitted}
-                                  aria-label={`Remove ${option.label} as #${rankedIndex + 1}`}
-                                >
+                              <div
+                                key={option.optionId}
+                                className={`simple-questionnaire-rank-row${questionSubmitted ? " is-response-locked" : ""}`}
+                                role='button'
+                                tabIndex={questionSubmitted ? -1 : 0}
+                                aria-label={`Remove ${option.label} as #${rankedIndex + 1}`}
+                                aria-disabled={questionSubmitted}
+                                onClick={() => {
+                                  if (questionSubmitted) {
+                                    return;
+                                  }
+                                  removeRankedAnswer(question.questionId, option.optionId);
+                                }}
+                                onKeyDown={(event) => {
+                                  if (questionSubmitted) {
+                                    return;
+                                  }
+                                  if (event.key !== "Enter" && event.key !== " ") {
+                                    return;
+                                  }
+                                  event.preventDefault();
+                                  removeRankedAnswer(question.questionId, option.optionId);
+                                }}
+                              >
+                                <span className='simple-questionnaire-rank-selected'>
                                   <span className='simple-questionnaire-rank-selected-option'>
                                     <span className='simple-questionnaire-rank-inline-number'>{rankedIndex + 1}. </span>
                                     <span>{option.label}</span>
                                   </span>
                                   <span className='simple-questionnaire-rank-remove-prefix'>Remove as #{rankedIndex + 1}</span>
-                                </button>
+                                </span>
                                 <div className='simple-questionnaire-rank-actions'>
                                   <button
                                     type='button'
                                     className='simple-voter-secondary simple-questionnaire-rank-action'
-                                    onClick={() => moveRankedAnswer(question.questionId, option.optionId, -1)}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      moveRankedAnswer(question.questionId, option.optionId, -1);
+                                    }}
                                     disabled={questionSubmitted || rankedIndex === 0}
                                   >
                                     Up
@@ -3394,7 +3408,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
                                   <button
                                     type='button'
                                     className='simple-voter-secondary simple-questionnaire-rank-action'
-                                    onClick={() => moveRankedAnswer(question.questionId, option.optionId, 1)}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      moveRankedAnswer(question.questionId, option.optionId, 1);
+                                    }}
                                     disabled={questionSubmitted || rankedIndex === ranked.length - 1}
                                   >
                                     Down
