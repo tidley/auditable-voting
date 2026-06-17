@@ -1082,6 +1082,65 @@ describe("questionnaireOptionARuntime", () => {
     expect(vi.mocked(publishOptionABlindIssuanceDm)).toHaveBeenCalledTimes(3);
   });
 
+  it("shares in-flight per-question blind requests across voter runtime instances", async () => {
+    const sharedElectionId = `${electionId}_shared_per_question`;
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), sharedElectionId);
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+    coordinator.addWhitelistNpub(voterNpub);
+    const blindSigningPublicKey = coordinator.getSnapshot()?.election.blindSigningPublicKey ?? null;
+    const definition: QuestionnaireDefinition = {
+      ...buildDefinition({ electionId: sharedElectionId, coordinatorNpub }),
+      ballotCredentialMode: "per_question",
+      blindSigningPublicKey,
+      questions: [
+        {
+          questionId: "q3",
+          type: "yes_no",
+          prompt: "Approve?",
+          required: true,
+          ballotSlot: { slotId: "q3", slotIndex: 1, version: 5 },
+        },
+      ],
+    };
+    storeCachedQuestionnaireDefinition(definition);
+    upsertElectionSummary({
+      electionId: sharedElectionId,
+      title: definition.title,
+      description: definition.description ?? "",
+      state: "open",
+      openedAt: new Date(definition.openAt * 1000).toISOString(),
+      closedAt: new Date(definition.closeAt * 1000).toISOString(),
+      coordinatorNpub,
+      blindSigningPublicKey,
+      protocolVersion: definition.protocolVersion,
+      flowMode: definition.flowMode,
+      responseMode: definition.responseMode,
+    });
+    const sentInvite = await coordinator.sendInvite(voterNpub, {
+      title: "Runtime",
+      description: "Test",
+      voteUrl: "https://example.org/vote",
+    });
+
+    const firstRuntime = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), sharedElectionId);
+    const secondRuntime = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), sharedElectionId);
+    await firstRuntime.loginWithSigner(sentInvite.invite);
+    await secondRuntime.loginWithSigner(sentInvite.invite);
+    vi.mocked(publishOptionABlindRequestDm).mockClear();
+
+    const [first, second] = await Promise.all([
+      firstRuntime.requestBlindBallot({ forceResend: true }),
+      secondRuntime.requestBlindBallot({ forceResend: true }),
+    ]);
+    const firstRequest = Object.values(first.blindRequests ?? {})[0] ?? null;
+    const secondRequest = Object.values(second.blindRequests ?? {})[0] ?? null;
+
+    expect(firstRequest?.requestId).toBeTruthy();
+    expect(secondRequest?.requestId).toBe(firstRequest?.requestId);
+    expect(listBlindRequests(sharedElectionId).map((entry) => entry.requestId)).toEqual([firstRequest?.requestId]);
+    expect(vi.mocked(publishOptionABlindRequestDm)).toHaveBeenCalledTimes(1);
+  });
+
   it("uses local nsec subscriptions for voter blind issuance recovery", async () => {
     const voterNsec = "nsec1localvoterruntime000000000000000000000000000000";
     const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);

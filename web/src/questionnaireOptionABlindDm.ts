@@ -7,6 +7,7 @@ import type {
   BlindBallotIssuance,
   BlindBallotRequest,
   CoordinatorElectionState,
+  VoterElectionLocalState,
 } from "./questionnaireOptionA";
 import type { QuestionnaireBlindPrivateKey } from "./questionnaireBlindSignature";
 import type { QuestionnaireDefinition } from "./questionnaireProtocol";
@@ -149,9 +150,13 @@ export type OptionAVoterStateSnapshot = {
   loginVerified: boolean;
   loginVerifiedAt?: string | null;
   blindRequest?: BlindBallotRequest | null;
+  blindRequests?: VoterElectionLocalState["blindRequests"];
   blindRequestSent: boolean;
   blindRequestSentAt?: string | null;
   blindIssuance?: BlindBallotIssuance | null;
+  blindIssuances?: VoterElectionLocalState["blindIssuances"];
+  blindTokenSecret?: VoterElectionLocalState["blindTokenSecret"];
+  blindTokenSecrets?: VoterElectionLocalState["blindTokenSecrets"];
   credentialReady: boolean;
   responseNpub?: string | null;
   draftResponses?: BallotSubmission["payload"]["responses"];

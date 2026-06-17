@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.94] - 2026-06-17
+
+### Fixed
+- Shared in-flight voter ballot requests across runtime instances for the same questionnaire and voter, preventing duplicate request IDs for one per-question ballot scope.
+- Preserved per-question blind request, token-secret, and issuance maps in voter self-state recovery so new session runtimes reuse the original credential request instead of starting a second one.
+
+### Changed
+- Bumped web app package to 0.1.94.
+
 ## [0.1.93] - 2026-06-17
 
 ### Fixed
