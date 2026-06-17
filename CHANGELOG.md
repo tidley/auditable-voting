@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.87] - 2026-06-17
+
+### Fixed
+- Hid organiser questionnaire-link-only DMs from the voter helpline inbox and unread/glowing Menu indicator while keeping normal organiser messages visible.
+- Added helpline DM regression coverage for questionnaire-link filtering.
+
 ## [0.1.86] - 2026-06-17
 
 ### Fixed

@@ -17,6 +17,7 @@ export function useHelplineUnreadIndicator(input: {
   allowedPeerNpubs?: string[];
   requireAllowedPeer?: boolean;
   suppressUnread?: boolean;
+  hideReceivedQuestionnaireInviteLinks?: boolean;
 }) {
   const [hasUnread, setHasUnread] = useState(false);
   const suppressUnreadRef = useRef(Boolean(input.suppressUnread));
@@ -48,6 +49,7 @@ export function useHelplineUnreadIndicator(input: {
     return subscribeHelplineDmMessages({
       actorNsec,
       allowedPeerNpubs: allowedPeerNpubs.length > 0 ? allowedPeerNpubs : undefined,
+      hideReceivedQuestionnaireInviteLinks: input.hideReceivedQuestionnaireInviteLinks,
       onMessages: (messages) => {
         const receivedIds = messages
           .filter((message) => message.direction === "received")
@@ -69,7 +71,7 @@ export function useHelplineUnreadIndicator(input: {
       },
       onError: () => undefined,
     });
-  }, [actorNsec, allowedPeerNpubKey, allowedPeerNpubs, input.requireAllowedPeer]);
+  }, [actorNsec, allowedPeerNpubKey, allowedPeerNpubs, input.hideReceivedQuestionnaireInviteLinks, input.requireAllowedPeer]);
 
   return hasUnread;
 }

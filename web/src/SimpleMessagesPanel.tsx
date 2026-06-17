@@ -59,6 +59,7 @@ export default function SimpleMessagesPanel(props: SimpleMessagesPanelProps) {
     const unsubscribe = subscribeHelplineDmMessages({
       actorNsec,
       allowedPeerNpubs: voterTargetRequired ? targetNpubs : undefined,
+      hideReceivedQuestionnaireInviteLinks: props.role === "voter",
       onMessages: (nextMessages) => {
         setMessages(nextMessages);
         setStatus((current) => (current === "Loading messages..." ? null : current));

@@ -12,6 +12,7 @@ import {
   rankRelaysByBackoff,
   selectRelaysWithBackoff,
 } from "./relayBackoff";
+import { parseInviteFromUrl } from "./questionnaireInvite";
 import { SIMPLE_DM_RELAYS } from "./simpleShardDm";
 import { getSharedNostrPool } from "./sharedNostrPool";
 import { normalizeRelaysRust, sortRecordsByCreatedAtDescRust } from "./wasm/auditableVotingCore";
@@ -135,10 +136,35 @@ function contentLooksLikeInternalAction(content: string) {
   }
 }
 
+export function contentIsQuestionnaireInviteLinkOnly(content: string) {
+  const trimmed = content.trim();
+  const match = trimmed.match(/^<?(https?:\/\/[^\s<>]+)>?$/i);
+  if (!match?.[1]) {
+    return false;
+  }
+  try {
+    const url = new URL(match[1]);
+    const params = url.searchParams;
+    const role = params.get("role")?.trim().toLowerCase() ?? "";
+    const hasQuestionnaireId = Boolean(
+      (params.get("q") ?? "").trim()
+      || (params.get("election_id") ?? "").trim()
+      || (params.get("questionnaire") ?? "").trim(),
+    );
+    if (role === "voter" && hasQuestionnaireId) {
+      return true;
+    }
+    return Boolean(parseInviteFromUrl(url.search).electionId && role === "voter");
+  } catch {
+    return false;
+  }
+}
+
 function parseHelplineMessageFromGiftWrap(
   wrappedEvent: NostrEvent,
   actorSecretKey: Uint8Array,
   actorNpub: string,
+  options?: { hideReceivedQuestionnaireInviteLinks?: boolean },
 ): HelplineDmMessage | null {
   try {
     const rumor = nip17.unwrapEvent(wrappedEvent, actorSecretKey) as {
@@ -162,6 +188,9 @@ function parseHelplineMessageFromGiftWrap(
     }
     const recipientNpubs = parseRecipientNpubs(rumor.tags);
     const direction = senderNpub === actorNpub ? "sent" : "received";
+    if (options?.hideReceivedQuestionnaireInviteLinks && direction === "received" && contentIsQuestionnaireInviteLinkOnly(body)) {
+      return null;
+    }
     const peerNpub = direction === "sent"
       ? recipientNpubs.find((value) => value !== actorNpub) ?? recipientNpubs[0] ?? ""
       : senderNpub;
@@ -302,6 +331,7 @@ export async function fetchHelplineDmMessages(input: {
   relays?: string[];
   limit?: number;
   allowedPeerNpubs?: string[];
+  hideReceivedQuestionnaireInviteLinks?: boolean;
 }) {
   const actor = decodeNsecSecretKey(input.actorNsec);
   const inboxRelays = await resolveRecipientInboxRelays(actor.npub, input.relays);
@@ -315,7 +345,9 @@ export async function fetchHelplineDmMessages(input: {
   const allowedPeers = new Set((input.allowedPeerNpubs ?? []).map((value) => value.trim()).filter(Boolean));
   const byLogicalId = new Map<string, HelplineDmMessage>();
   for (const wrappedEvent of wrappedEvents) {
-    const message = parseHelplineMessageFromGiftWrap(wrappedEvent, actor.secretKey, actor.npub);
+    const message = parseHelplineMessageFromGiftWrap(wrappedEvent, actor.secretKey, actor.npub, {
+      hideReceivedQuestionnaireInviteLinks: input.hideReceivedQuestionnaireInviteLinks,
+    });
     if (!message) {
       continue;
     }
@@ -332,6 +364,7 @@ export function subscribeHelplineDmMessages(input: {
   relays?: string[];
   limit?: number;
   allowedPeerNpubs?: string[];
+  hideReceivedQuestionnaireInviteLinks?: boolean;
   onMessages: (messages: HelplineDmMessage[]) => void;
   onError?: (error: Error) => void;
 }) {
@@ -371,7 +404,9 @@ export function subscribeHelplineDmMessages(input: {
       limit: input.limit ?? 300,
     }, {
       onevent: (wrappedEvent) => {
-        const message = parseHelplineMessageFromGiftWrap(wrappedEvent, actor.secretKey, actor.npub);
+        const message = parseHelplineMessageFromGiftWrap(wrappedEvent, actor.secretKey, actor.npub, {
+          hideReceivedQuestionnaireInviteLinks: input.hideReceivedQuestionnaireInviteLinks,
+        });
         if (!message) {
           return;
         }

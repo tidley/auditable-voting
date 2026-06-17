@@ -632,6 +632,7 @@ export default function SimpleUiApp(props: SimpleUiAppProps = {}) {
     allowedPeerNpubs: configuredCoordinatorTargets,
     requireAllowedPeer: true,
     suppressUnread: activeTab === "messages",
+    hideReceivedQuestionnaireInviteLinks: true,
   });
   useEffect(() => {
     props.onUnreadMessagesChange?.(hasUnreadMessages);
