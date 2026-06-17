@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.85] - 2026-06-17
+
+### Fixed
+- Fixed voter ballot requests that could keep using a stale blind-signing key from an invite after the current questionnaire definition/summary had a newer key.
+- Added regression coverage for stale invite keys so waiting voters regenerate requests against the current worker/organiser key instead of staying on `2/3 Awaiting ballot`.
+
 ## [0.1.84] - 2026-06-17
 
 ### Fixed

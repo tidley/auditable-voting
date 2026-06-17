@@ -1232,7 +1232,7 @@ describe("questionnaireOptionARuntime", () => {
     }));
   });
 
-  it("resets stale blind token request state when signing key changes", async () => {
+  it("resets stale blind token request state when signing key changes despite stale invite key", async () => {
     const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
     await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
     coordinator.addWhitelistNpub(voterNpub);
@@ -1259,14 +1259,10 @@ describe("questionnaireOptionARuntime", () => {
     });
 
     const nextVoter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionId);
-    const inviteWithoutKey = {
-      ...sentInvite.invite,
-      blindSigningPublicKey: null,
-    };
     await nextVoter.bootstrapWithLocalIdentity({
       invitedNpub: voterNpub,
       coordinatorNpub,
-      invite: inviteWithoutKey,
+      invite: sentInvite.invite,
       allowInviteMissing: true,
     });
     vi.mocked(publishOptionABlindRequestDm).mockClear();

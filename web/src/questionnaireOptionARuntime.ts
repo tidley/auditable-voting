@@ -853,9 +853,9 @@ export class QuestionnaireOptionAVoterRuntime {
     cachedDefinition: QuestionnaireDefinition | null;
   }) {
     return (
-      input.inviteMessage?.blindSigningPublicKey
+      input.cachedDefinition?.blindSigningPublicKey
       ?? input.summary?.blindSigningPublicKey
-      ?? input.cachedDefinition?.blindSigningPublicKey
+      ?? input.inviteMessage?.blindSigningPublicKey
       ?? null
     );
   }
@@ -1710,10 +1710,11 @@ export class QuestionnaireOptionAVoterRuntime {
       });
     }
     if (!request) {
-      const blindSigningPublicKey = next.inviteMessage?.blindSigningPublicKey
-        ?? summary?.blindSigningPublicKey
-        ?? cachedDefinition?.blindSigningPublicKey
-        ?? null;
+      const blindSigningPublicKey = this.resolveVoterBlindSigningPublicKey({
+        inviteMessage: next.inviteMessage ?? null,
+        summary,
+        cachedDefinition,
+      });
       if (!blindSigningPublicKey) {
         throw new OptionARuntimeError("issuance_failed", "Organiser blind-signing key is not available yet.");
       }
@@ -1878,10 +1879,11 @@ export class QuestionnaireOptionAVoterRuntime {
     if (!this.state) {
       throw new OptionARuntimeError("not_logged_in", "Login is required.");
     }
-    const blindSigningPublicKey = this.state.inviteMessage?.blindSigningPublicKey
-      ?? input.summary?.blindSigningPublicKey
-      ?? input.cachedDefinition.blindSigningPublicKey
-      ?? null;
+    const blindSigningPublicKey = this.resolveVoterBlindSigningPublicKey({
+      inviteMessage: this.state.inviteMessage ?? null,
+      summary: input.summary,
+      cachedDefinition: input.cachedDefinition,
+    });
     if (!blindSigningPublicKey) {
       throw new OptionARuntimeError("issuance_failed", "Organiser blind-signing key is not available yet.");
     }
