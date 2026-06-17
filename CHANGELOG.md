@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.88] - 2026-06-17
+
+### Fixed
+- Fixed local-key voter ballot waits so request-ack and credential DM subscriptions start before blind requests are published, avoiding a fast-proxy issuance race that could leave later sessions at `2/3 Awaiting ballot`.
+- Added local `nsec` live subscriptions for voter request acknowledgements and blind credential issuances, matching the existing recovery fetch path.
+
+### Changed
+- Changed the per-question submission identity label to "Identity used for this question".
+
 ## [0.1.87] - 2026-06-17
 
 ### Fixed

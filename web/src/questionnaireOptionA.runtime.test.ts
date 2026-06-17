@@ -27,6 +27,10 @@ import {
   publishOptionABlindIssuanceDm,
   publishOptionABlindRequestDm,
   publishOptionAVoterStateDm,
+  subscribeOptionABlindIssuanceDms,
+  subscribeOptionABlindIssuanceDmsWithNsec,
+  subscribeOptionABlindRequestAckDms,
+  subscribeOptionABlindRequestAckDmsWithNsec,
 } from "./questionnaireOptionABlindDm";
 import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import {
@@ -164,11 +168,13 @@ vi.mock("./questionnaireOptionABlindDm", () => ({
   }),
   subscribeOptionABlindRequestDms: vi.fn(() => () => undefined),
   subscribeOptionABlindIssuanceDms: vi.fn(() => () => undefined),
+  subscribeOptionABlindIssuanceDmsWithNsec: vi.fn(() => () => undefined),
   subscribeOptionABallotSubmissionDms: vi.fn(() => () => undefined),
   subscribeOptionABallotSubmissionAckDms: vi.fn(() => () => undefined),
   subscribeOptionABallotAcceptanceDms: vi.fn(() => () => undefined),
   subscribeOptionABlindIssuanceAckDms: vi.fn(() => () => undefined),
   subscribeOptionABlindRequestAckDms: vi.fn(() => () => undefined),
+  subscribeOptionABlindRequestAckDmsWithNsec: vi.fn(() => () => undefined),
 }));
 
 vi.mock("./questionnaireResponsePublish", () => ({
@@ -1049,6 +1055,38 @@ describe("questionnaireOptionARuntime", () => {
     await coordinator.publishPendingBlindIssuancesToDm();
     expect(readBlindIssuance(requestId ?? "")).toEqual(issued);
     expect(vi.mocked(publishOptionABlindIssuanceDm)).toHaveBeenCalledTimes(3);
+  });
+
+  it("uses local nsec subscriptions for voter blind issuance recovery", async () => {
+    const voterNsec = "nsec1localvoterruntime000000000000000000000000000000";
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), electionId);
+    await coordinator.loginWithSigner({ title: "Runtime", description: "Test", state: "open" });
+    coordinator.addWhitelistNpub(voterNpub);
+    const sentInvite = await coordinator.sendInvite(voterNpub, {
+      title: "Runtime",
+      description: "Test",
+      voteUrl: "https://example.org/vote",
+    });
+
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), electionId, voterNsec);
+    await voter.loginWithSigner(sentInvite.invite);
+    await voter.requestBlindBallot({ forceResend: true });
+
+    expect(subscribeOptionABlindRequestAckDmsWithNsec).toHaveBeenCalledWith(expect.objectContaining({
+      nsec: voterNsec,
+      electionId,
+      onAck: expect.any(Function),
+    }));
+    expect(subscribeOptionABlindIssuanceDmsWithNsec).toHaveBeenCalledWith(expect.objectContaining({
+      nsec: voterNsec,
+      electionId,
+      onIssuance: expect.any(Function),
+    }));
+    const blindRequestPublishOrder = vi.mocked(publishOptionABlindRequestDm).mock.invocationCallOrder[0];
+    expect(vi.mocked(subscribeOptionABlindRequestAckDmsWithNsec).mock.invocationCallOrder[0]).toBeLessThan(blindRequestPublishOrder);
+    expect(vi.mocked(subscribeOptionABlindIssuanceDmsWithNsec).mock.invocationCallOrder[0]).toBeLessThan(blindRequestPublishOrder);
+    expect(subscribeOptionABlindRequestAckDms).not.toHaveBeenCalled();
+    expect(subscribeOptionABlindIssuanceDms).not.toHaveBeenCalled();
   });
 
   it("prevents duplicate issuance and duplicate accepted submissions from inflating unique count", async () => {

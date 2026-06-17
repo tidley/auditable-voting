@@ -1464,6 +1464,111 @@ function createSignerGiftWrapSubscription<T>(input: {
   return close;
 }
 
+function createSecretKeyGiftWrapSubscription<T>(input: {
+  nsec: string;
+  electionId?: string;
+  relays?: string[];
+  stage: string;
+  parse: (content: string) => T | null;
+  keyOf: (value: T) => string;
+  onValue: (value: T) => void;
+  onError?: (error: Error) => void;
+  validate?: (value: T, decoded: { rumorContent: string; sealPubkey: string }) => boolean;
+}) {
+  let secretKey: Uint8Array;
+  try {
+    secretKey = decodeNsecSecretKey(input.nsec);
+  } catch (error) {
+    if (error instanceof Error) {
+      input.onError?.(error);
+    }
+    return () => undefined;
+  }
+  const recipientHex = getPublicKey(secretKey);
+  const recipientNpub = nip19.npubEncode(recipientHex);
+  let closed = false;
+  let detachSharedInbox: (() => void) | null = null;
+  const seenKeys = new Set<string>();
+
+  const close = () => {
+    closed = true;
+    if (detachSharedInbox) {
+      detachSharedInbox();
+      detachSharedInbox = null;
+    }
+  };
+
+  const handleEvent = (event: NostrEvent) => {
+    if (closed) {
+      return;
+    }
+    try {
+      const decoded = decodeGiftWrapWithSecretKey({
+        secretKey,
+        event,
+      });
+      if (!decoded) {
+        return;
+      }
+      const value = input.parse(decoded.rumorContent);
+      if (!value) {
+        return;
+      }
+      const electionId = input.electionId?.trim();
+      if (electionId && typeof (value as { electionId?: string }).electionId === "string" && (value as { electionId: string }).electionId !== electionId) {
+        return;
+      }
+      if (input.validate && !input.validate(value, decoded)) {
+        return;
+      }
+      const key = input.keyOf(value);
+      if (!key || seenKeys.has(key)) {
+        return;
+      }
+      seenKeys.add(key);
+      optionABlindDmLog(`${input.stage}_event`, { key });
+      input.onValue(value);
+    } catch (error) {
+      if (error instanceof Error) {
+        input.onError?.(error);
+      }
+    }
+  };
+
+  void (async () => {
+    try {
+      const relays = await resolveRecipientReadRelays(recipientHex, buildRelays(input.relays));
+      if (closed) {
+        return;
+      }
+      optionABlindDmLog(`${input.stage}_listener_attached`, {
+        recipientNpub,
+        relayCount: relays.length,
+      });
+      detachSharedInbox = await attachSharedGiftWrapInbox({
+        recipientNpub,
+        recipientHex,
+        relays,
+        listener: {
+          id: `${input.stage}:${recipientHex}:${crypto.randomUUID()}`,
+          onEvent: handleEvent,
+          onError: input.onError,
+        },
+      });
+      if (closed) {
+        detachSharedInbox();
+        detachSharedInbox = null;
+      }
+    } catch (error) {
+      if (!closed && error instanceof Error) {
+        input.onError?.(error);
+      }
+    }
+  })();
+
+  return close;
+}
+
 async function publishEnvelope(input: {
   signer: SignerService;
   recipientNpub: string;
@@ -3297,6 +3402,25 @@ export function subscribeOptionABlindIssuanceDms(input: {
   });
 }
 
+export function subscribeOptionABlindIssuanceDmsWithNsec(input: {
+  nsec: string;
+  electionId?: string;
+  relays?: string[];
+  onIssuance: (issuance: BlindBallotIssuance) => void;
+  onError?: (error: Error) => void;
+}) {
+  return createSecretKeyGiftWrapSubscription<BlindBallotIssuance>({
+    nsec: input.nsec,
+    electionId: input.electionId,
+    relays: input.relays,
+    stage: "subscribe_issuances_nsec",
+    parse: parseBlindIssuanceDmContent,
+    keyOf: (value) => `${value.electionId}:${value.requestId}:${value.issuanceId}`,
+    onValue: input.onIssuance,
+    onError: input.onError,
+  });
+}
+
 export function subscribeOptionABlindRequestAckDms(input: {
   signer: SignerService;
   electionId?: string;
@@ -3311,6 +3435,25 @@ export function subscribeOptionABlindRequestAckDms(input: {
     relays: input.relays,
     since: input.since,
     stage: "subscribe_request_acks",
+    parse: parseBlindRequestAckDmContent,
+    keyOf: (value) => `${value.electionId}:${value.requestId}`,
+    onValue: input.onAck,
+    onError: input.onError,
+  });
+}
+
+export function subscribeOptionABlindRequestAckDmsWithNsec(input: {
+  nsec: string;
+  electionId?: string;
+  relays?: string[];
+  onAck: (ack: BlindRequestAck) => void;
+  onError?: (error: Error) => void;
+}) {
+  return createSecretKeyGiftWrapSubscription<BlindRequestAck>({
+    nsec: input.nsec,
+    electionId: input.electionId,
+    relays: input.relays,
+    stage: "subscribe_request_acks_nsec",
     parse: parseBlindRequestAckDmContent,
     keyOf: (value) => `${value.electionId}:${value.requestId}`,
     onValue: input.onAck,

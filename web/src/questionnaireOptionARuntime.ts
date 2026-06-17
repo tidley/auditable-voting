@@ -99,7 +99,9 @@ import {
   subscribeOptionABallotSubmissionDms,
   subscribeOptionABlindIssuanceAckDms,
   subscribeOptionABlindIssuanceDms,
+  subscribeOptionABlindIssuanceDmsWithNsec,
   subscribeOptionABlindRequestAckDms,
+  subscribeOptionABlindRequestAckDmsWithNsec,
   subscribeOptionABlindRequestDms,
   type BallotSubmissionAck,
   type BlindRequestAck,
@@ -1161,6 +1163,18 @@ export class QuestionnaireOptionAVoterRuntime {
     this.startVoterDmSubscriptions();
   }
 
+  private hasPendingBlindRequestForCredential() {
+    if (!this.state?.blindRequest && !this.state?.blindRequests) {
+      return false;
+    }
+    if (this.state.blindRequest && !this.state.blindIssuance) {
+      return true;
+    }
+    return Object.entries(this.state.blindRequests ?? {}).some(([scopeKey, request]) => (
+      Boolean(request) && !this.state?.blindIssuances?.[scopeKey]
+    ));
+  }
+
   private applyBlindIssuanceToState(issuance: BlindBallotIssuance, reason: string) {
     storeBlindIssuance(issuance);
     if (issuance.definition) {
@@ -1228,7 +1242,7 @@ export class QuestionnaireOptionAVoterRuntime {
       return;
     }
     const shouldSubscribeBlindIssuance = Boolean(
-      this.state.blindRequestSent && !this.state.credentialReady,
+      !this.state.credentialReady && (this.state.blindRequestSent || this.hasPendingBlindRequestForCredential()),
     );
     const shouldSubscribeAcceptance = Boolean(
       this.state.submission && this.state.submissionAccepted === null,
@@ -1239,26 +1253,35 @@ export class QuestionnaireOptionAVoterRuntime {
     const lookbackSince = Math.max(0, Math.floor(Date.now() / 1000) - OPTION_A_VOTER_DM_LOOKBACK_SECONDS);
     const issuanceSince = lookbackSince;
     const acceptanceSince = lookbackSince;
+    const voterNsec = this.fallbackNsec?.trim() ?? "";
 
     if (!shouldSubscribeBlindIssuance && this.stopBlindRequestAckSubscription) {
       this.stopBlindRequestAckSubscription();
       this.stopBlindRequestAckSubscription = null;
     }
     if (shouldSubscribeBlindIssuance && !this.stopBlindRequestAckSubscription) {
-      this.stopBlindRequestAckSubscription = subscribeOptionABlindRequestAckDms({
-        signer: this.signer,
-        electionId: this.electionId,
-        relays,
-        since: issuanceSince,
-        onAck: (ack) => {
-          storeBlindRequestAckRecord({
-            requestId: ack.requestId,
-            electionId: ack.electionId,
-            invitedNpub: ack.invitedNpub,
-            ackedAt: ack.ackedAt,
-          });
-        },
-      });
+      const onAck = (ack: BlindRequestAck) => {
+        storeBlindRequestAckRecord({
+          requestId: ack.requestId,
+          electionId: ack.electionId,
+          invitedNpub: ack.invitedNpub,
+          ackedAt: ack.ackedAt,
+        });
+      };
+      this.stopBlindRequestAckSubscription = voterNsec
+        ? subscribeOptionABlindRequestAckDmsWithNsec({
+          nsec: voterNsec,
+          electionId: this.electionId,
+          relays,
+          onAck,
+        })
+        : subscribeOptionABlindRequestAckDms({
+          signer: this.signer,
+          electionId: this.electionId,
+          relays,
+          since: issuanceSince,
+          onAck,
+        });
     }
 
     if (!shouldSubscribeBlindIssuance && this.stopBlindIssuanceSubscription) {
@@ -1266,15 +1289,23 @@ export class QuestionnaireOptionAVoterRuntime {
       this.stopBlindIssuanceSubscription = null;
     }
     if (shouldSubscribeBlindIssuance && !this.stopBlindIssuanceSubscription) {
-      this.stopBlindIssuanceSubscription = subscribeOptionABlindIssuanceDms({
-        signer: this.signer,
-        electionId: this.electionId,
-        relays,
-        since: issuanceSince,
-        onIssuance: (issuance) => {
-          this.applyBlindIssuanceToState(issuance, "blind_issuance_received");
-        },
-      });
+      const onIssuance = (issuance: BlindBallotIssuance) => {
+        this.applyBlindIssuanceToState(issuance, "blind_issuance_received");
+      };
+      this.stopBlindIssuanceSubscription = voterNsec
+        ? subscribeOptionABlindIssuanceDmsWithNsec({
+          nsec: voterNsec,
+          electionId: this.electionId,
+          relays,
+          onIssuance,
+        })
+        : subscribeOptionABlindIssuanceDms({
+          signer: this.signer,
+          electionId: this.electionId,
+          relays,
+          since: issuanceSince,
+          onIssuance,
+        });
     }
 
     if (!shouldSubscribeAcceptance && this.stopSubmissionAckSubscription) {
@@ -1832,6 +1863,7 @@ export class QuestionnaireOptionAVoterRuntime {
         "Organiser details are missing. Refresh status or reopen the invite.",
       );
     }
+    this.startVoterDmSubscriptions();
     const sentAt = nowIso();
     request = {
       ...request,
@@ -2005,6 +2037,7 @@ export class QuestionnaireOptionAVoterRuntime {
     this.state = next;
     saveVoterState({ voterNpub: this.state.invitedNpub, state: this.state });
     void this.publishVoterStateSelfDm({ reason: "request_blind_ballot_bundle_pre_publish" });
+    this.startVoterDmSubscriptions();
 
     for (const request of requestsToPublish) {
       const sentAt = nowIso();

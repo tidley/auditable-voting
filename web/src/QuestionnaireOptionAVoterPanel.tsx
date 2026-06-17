@@ -3528,7 +3528,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
             <div>
               <p className='simple-questionnaire-voter-number'>Private submission identity</p>
               <h4 className='simple-voter-section-title'>
-                {displaySubmissionQuestion ? "Anonymous ID used for this question" : "Anonymous ID used to vote"}
+                {displaySubmissionQuestion ? "Identity used for this question" : "Anonymous ID used to vote"}
               </h4>
             </div>
           </div>
@@ -3536,7 +3536,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
             <div className='simple-submission-identity-visuals'>
               <TokenFingerprint
                 tokenId={submittedMarkerNpub}
-                label={displaySubmissionQuestion ? "Anonymous ID used for this question" : "Anonymous ID used to vote"}
+                label={displaySubmissionQuestion ? "Identity used for this question" : "Anonymous ID used to vote"}
                 large
                 showQr
                 hideMetadata
