@@ -1768,12 +1768,17 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       });
       const allowLocalRecipientMismatch = Boolean(props.localVoterNpub?.trim());
       setPendingInvites(refreshedInvites.filter((entry) => allowLocalRecipientMismatch || entry.invitedNpub === next.invitedNpub));
+      const waitingForCredential = Boolean(next.blindRequestSent && !next.credentialReady && !next.submission);
       setActiveInvite(!next.blindRequestSent && !next.credentialReady ? invite : null);
-      if (requestAfterLogin && !next.blindRequestSent && !next.credentialReady) {
-        await voterRuntime.requestBlindBallot();
+      if (requestAfterLogin && !next.credentialReady && !next.submission) {
+        await voterRuntime.requestBlindBallot(waitingForCredential ? { forceResend: true } : undefined);
         markSignerWaitRecoveryBaseline();
         scheduleSignerInitialPull();
-        setStatus("Opened " + (invite.title || invite.electionId) + ". Blind ballot request sent.");
+        setStatus("Opened " + (invite.title || invite.electionId) + (
+          waitingForCredential
+            ? ". Blind ballot request resent."
+            : ". Blind ballot request sent."
+        ));
       } else {
         setStatus("Opened " + (invite.title || invite.electionId) + ".");
       }
@@ -2234,7 +2239,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         }
         requestRetryAtRef.current[key] = now;
         try {
-          await runtime.requestBlindBallot({ minRetryMs: resendMs });
+          await runtime.requestBlindBallot({ forceResend: true, minRetryMs: resendMs });
           markSignerWaitRecoveryBaseline();
           scheduleSignerInitialPull();
           queueBallotWaitRefresh({
@@ -2318,7 +2323,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       requestRetryAtRef.current[key] = now;
       retryInFlight = true;
       try {
-        await runtime.requestBlindBallot({ minRetryMs: resendMs });
+        await runtime.requestBlindBallot({ forceResend: true, minRetryMs: resendMs });
         markSignerWaitRecoveryBaseline();
         scheduleSignerInitialPull();
         queueBallotWaitRefresh({

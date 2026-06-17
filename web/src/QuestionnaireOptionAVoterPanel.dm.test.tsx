@@ -356,6 +356,142 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     });
   });
 
+  it("force-resends a pending next-questionnaire ballot request from Answer next", async () => {
+    const user = userEvent.setup();
+    const localVoterNpub = "npub1" + "r".repeat(58);
+    const coordinatorNpub = "npub1" + "b".repeat(58);
+    const makeDefinition = (questionnaireId: string, title: string, prompt: string) => ({
+      schemaVersion: 1 as const,
+      eventType: "questionnaire_definition" as const,
+      responseMode: "blind_token" as const,
+      questionnaireId,
+      title,
+      description: "",
+      createdAt: 1,
+      openAt: 1,
+      closeAt: 9999999999,
+      coordinatorPubkey: coordinatorNpub,
+      coordinatorEncryptionPubkey: coordinatorNpub,
+      responseVisibility: "private" as const,
+      eligibilityMode: "open" as const,
+      allowMultipleResponsesPerPubkey: false,
+      blindSigningPublicKey: {
+        scheme: "rsabssa-sha384-pss-deterministic-v1" as const,
+        keyId: `${questionnaireId}_blind_key`,
+        jwk: { kty: "RSA", e: "AQAB", n: "test" },
+      },
+      questions: [{
+        questionId: `${questionnaireId}_q1`,
+        type: "yes_no" as const,
+        prompt,
+        required: true,
+      }],
+    });
+    const initialDefinition = makeDefinition("q_pending_initial", "Pending initial", "Pending initial prompt");
+    const nextDefinition = makeDefinition("q_pending_next", "Pending next", "Pending next prompt");
+    optionAStorageMocks.loadVoterState.mockImplementation((input: unknown) => {
+      const electionId = typeof input === "object" && input && "electionId" in input
+        ? String((input as { electionId?: unknown }).electionId ?? "")
+        : "";
+      if (electionId !== "q_pending_next") {
+        return null;
+      }
+      return {
+        electionId: "q_pending_next",
+        invitedNpub: localVoterNpub,
+        coordinatorNpub,
+        loginVerified: true,
+        loginVerifiedAt: "2026-06-17T12:00:00.000Z",
+        inviteMessage: null,
+        blindRequest: {
+          type: "blind_ballot_request",
+          schemaVersion: 1,
+          electionId: "q_pending_next",
+          requestId: "request_pending_next",
+          invitedNpub: localVoterNpub,
+          blindedMessage: "blinded_pending_next",
+          tokenCommitment: "commitment_pending_next",
+          blindSigningKeyId: nextDefinition.blindSigningPublicKey.keyId,
+          clientNonce: "nonce_pending_next",
+          createdAt: "2026-06-17T12:00:00.000Z",
+          lastSentAt: "2026-06-17T12:00:01.000Z",
+        },
+        blindRequests: {},
+        blindRequestSent: true,
+        blindRequestSentAt: "2026-06-17T12:00:01.000Z",
+        blindIssuance: null,
+        blindIssuances: {},
+        credentialReady: false,
+        blindTokenSecret: null,
+        blindTokenSecrets: {},
+        draftResponses: [],
+        submission: null,
+        submissions: {},
+        submissionAccepted: null,
+        submissionAcceptedAt: null,
+        submissionDecisions: {},
+        lastUpdatedAt: "2026-06-17T12:00:01.000Z",
+      };
+    });
+    optionAStorageMocks.listInvitesFromMailbox.mockReturnValue([
+      {
+        type: "election_invite",
+        schemaVersion: 1,
+        electionId: "q_pending_initial",
+        title: "Pending initial",
+        description: "",
+        voteUrl: "https://example.test/vote?q=q_pending_initial",
+        invitedNpub: localVoterNpub,
+        coordinatorNpub,
+        blindSigningPublicKey: initialDefinition.blindSigningPublicKey,
+        definition: initialDefinition,
+        expiresAt: null,
+      },
+      {
+        type: "election_invite",
+        schemaVersion: 1,
+        electionId: "q_pending_next",
+        title: "Pending next",
+        description: "",
+        voteUrl: "https://example.test/vote?q=q_pending_next",
+        invitedNpub: localVoterNpub,
+        coordinatorNpub,
+        blindSigningPublicKey: nextDefinition.blindSigningPublicKey,
+        definition: nextDefinition,
+        expiresAt: null,
+      },
+    ]);
+    const requestCalls: Array<{
+      electionId: string;
+      options: Parameters<QuestionnaireOptionAVoterRuntime["requestBlindBallot"]>[0];
+    }> = [];
+    vi.spyOn(QuestionnaireOptionAVoterRuntime.prototype, "requestBlindBallot")
+      .mockImplementation(async function mockedRequestBlindBallot(
+        this: QuestionnaireOptionAVoterRuntime,
+        options?: Parameters<QuestionnaireOptionAVoterRuntime["requestBlindBallot"]>[0],
+      ) {
+        requestCalls.push({ electionId: this.getSnapshot()?.electionId ?? "", options });
+        return this.getSnapshot()!;
+      });
+
+    render(
+      <QuestionnaireOptionAVoterPanel
+        announcedQuestionnaireIds={["q_pending_initial"]}
+        localVoterNpub={localVoterNpub}
+      />,
+    );
+
+    await screen.findByRole("combobox", { name: "Questionnaire" });
+    await user.click(screen.getByRole("button", { name: /Answer next/ }));
+
+    await waitFor(() => {
+      expect(requestCalls).toContainEqual({
+        electionId: "q_pending_next",
+        options: { forceResend: true },
+      });
+    });
+  });
+
   it("keeps the current public questionnaire in the selector when a new admitted invite arrives", async () => {
     const user = userEvent.setup();
     const localVoterNpub = "npub1" + "s".repeat(58);
@@ -962,7 +1098,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     });
 
     await waitFor(() => {
-      expect(requestSpy).toHaveBeenCalledWith({ minRetryMs: 10_000 });
+      expect(requestSpy).toHaveBeenCalledWith({ forceResend: true, minRetryMs: 10_000 });
     });
   });
 

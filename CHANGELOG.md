@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.86] - 2026-06-17
+
+### Fixed
+- Fixed second-round voter ballot recovery so opening an already-pending next questionnaire immediately force-resends the blind ballot request.
+- Changed automatic "Awaiting ballot" retries to force-resend after the resend guard, avoiding stale relay ACKs that could leave delegated proxy voters stuck on `2/3 Awaiting ballot`.
+
 ## [0.1.85] - 2026-06-17
 
 ### Fixed
