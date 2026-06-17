@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.84] - 2026-06-17
+
+### Fixed
+- Fixed the direct audit proxy launch command so its version check uses shell-safe `awk` quoting.
+- Changed the direct Linux/macOS launch command to export worker environment variables before running the binary, avoiding fragile line-continuation paste issues around `WORKER_STATE_DIR`.
+- Synced the shareable worker helper HTML shell defaults with the generated launcher source.
+
 ## [0.1.83] - 2026-06-17
 
 ### Changed
