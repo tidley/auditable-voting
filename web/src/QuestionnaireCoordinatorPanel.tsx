@@ -768,7 +768,7 @@ const WORKER_LAUNCHER_TARGET_OPTIONS: Array<{ key: WorkerLauncherTargetKey; labe
 ];
 const WORKER_DEFAULT_RUST_LOG = "info,auditable_voting_worker=debug,nostr_relay_pool=info,nostr_sdk=info,nostr=info,tungstenite=info,tokio_tungstenite=info";
 const WORKER_DEFAULT_POLL_SECONDS = "5";
-const WORKER_MINIMUM_VERSION = "0.1.28";
+const WORKER_MINIMUM_VERSION = "0.1.29";
 const WORKER_RELEASE_DOWNLOAD_URL = "https://github.com/tidley/auditable-voting/releases/latest/download/auditable-voting-worker-linux-x64.tar.gz";
 
 function buildWorkerLauncherContents(input: {
@@ -979,51 +979,54 @@ function buildWorkerDirectCommand(input: {
   const escapedCoordinatorNpub = escapeForDoubleQuotedBash(coordinatorNpub);
   const escapedWorkerRelays = escapeForDoubleQuotedBash(workerRelays);
   return [
-    `curl -L "${escapeForDoubleQuotedBash(input.target.assetUrl)}" -o "${escapeForDoubleQuotedBash(input.target.assetFilename)}"`,
-    `tar -xzf "${escapeForDoubleQuotedBash(input.target.assetFilename)}"`,
-    `chmod +x "./${escapedBinaryFilename}" || true`,
-    legacyBinaryFilename ? `if [ -e "./${escapedLegacyBinaryFilename}" ]; then chmod +x "./${escapedLegacyBinaryFilename}"; fi` : "",
+    "start_auditable_voting_proxy() {",
+    `  curl -L --fail "${escapeForDoubleQuotedBash(input.target.assetUrl)}" -o "${escapeForDoubleQuotedBash(input.target.assetFilename)}" || return 1`,
+    `  tar -xzf "${escapeForDoubleQuotedBash(input.target.assetFilename)}" || return 1`,
+    `  chmod +x "./${escapedBinaryFilename}" || true`,
+    legacyBinaryFilename ? `  if [ -e "./${escapedLegacyBinaryFilename}" ]; then chmod +x "./${escapedLegacyBinaryFilename}"; fi` : "",
     "",
-    `if [ -x "./${escapedBinaryFilename}" ]; then`,
-    `  AUDIT_PROXY_BINARY="./${escapedBinaryFilename}"`,
+    `  if [ -x "./${escapedBinaryFilename}" ]; then`,
+    `    AUDIT_PROXY_BINARY="./${escapedBinaryFilename}"`,
     ...(legacyBinaryFilename
       ? [
-          `elif [ -x "./${escapedLegacyBinaryFilename}" ]; then`,
-          `  AUDIT_PROXY_BINARY="./${escapedLegacyBinaryFilename}"`,
+          `  elif [ -x "./${escapedLegacyBinaryFilename}" ]; then`,
+          `    AUDIT_PROXY_BINARY="./${escapedLegacyBinaryFilename}"`,
         ]
       : []),
-    "else",
-    "  echo 'Audit proxy executable not found after extraction.' >&2",
-    "  exit 1",
-    "fi",
+    "  else",
+    "    echo 'Audit proxy executable not found after extraction.' >&2",
+    "    return 1",
+    "  fi",
     "",
-    `WORKER_MINIMUM_VERSION="${WORKER_MINIMUM_VERSION}"`,
-    'WORKER_VERSION="$("$AUDIT_PROXY_BINARY" --version | awk \'{print $2}\')"',
-    "if [ -z \"$WORKER_VERSION\" ]; then",
-    '  echo "Unable to determine audit proxy version." >&2',
-    "  exit 1",
-    "fi",
-    "if ! echo \"$WORKER_VERSION\" | grep -Eq \"^[0-9]+\\.[0-9]+\\.[0-9]+$\"; then",
-    '  echo "Unexpected audit proxy version format: $WORKER_VERSION" >&2',
-    "  exit 1",
-    "fi",
-    'WORKER_VERSION_VALUE="$(echo "$WORKER_VERSION" | awk -F. \'{printf "%d%03d%03d", $1, $2, $3}\')"',
-    'WORKER_MINIMUM_VERSION_VALUE="$(echo "$WORKER_MINIMUM_VERSION" | awk -F. \'{printf "%d%03d%03d", $1, $2, $3}\')"',
-    "if [ \"$WORKER_VERSION_VALUE\" -lt \"$WORKER_MINIMUM_VERSION_VALUE\" ]; then",
-    `  echo "Audit proxy version $WORKER_VERSION is below minimum $WORKER_MINIMUM_VERSION. Download the latest release from ${WORKER_RELEASE_DOWNLOAD_URL} before continuing." >&2`,
-    "  exit 1",
-    "fi",
+    `  WORKER_MINIMUM_VERSION="${WORKER_MINIMUM_VERSION}"`,
+    '  WORKER_VERSION="$("$AUDIT_PROXY_BINARY" --version | awk \'{print $2}\')" || return 1',
+    "  if [ -z \"$WORKER_VERSION\" ]; then",
+    '    echo "Unable to determine audit proxy version." >&2',
+    "    return 1",
+    "  fi",
+    "  if ! echo \"$WORKER_VERSION\" | grep -Eq \"^[0-9]+\\.[0-9]+\\.[0-9]+$\"; then",
+    '    echo "Unexpected audit proxy version format: $WORKER_VERSION" >&2',
+    "    return 1",
+    "  fi",
+    '  WORKER_VERSION_VALUE="$(echo "$WORKER_VERSION" | awk -F. \'{printf "%d%03d%03d", $1, $2, $3}\')"',
+    '  WORKER_MINIMUM_VERSION_VALUE="$(echo "$WORKER_MINIMUM_VERSION" | awk -F. \'{printf "%d%03d%03d", $1, $2, $3}\')"',
+    "  if [ \"$WORKER_VERSION_VALUE\" -lt \"$WORKER_MINIMUM_VERSION_VALUE\" ]; then",
+    `    echo "Audit proxy version $WORKER_VERSION is below minimum $WORKER_MINIMUM_VERSION. Download the latest release from ${WORKER_RELEASE_DOWNLOAD_URL} before continuing." >&2`,
+    "    return 1",
+    "  fi",
     "",
-    `export RUST_LOG="${WORKER_DEFAULT_RUST_LOG}"`,
-    `export WORKER_NSEC="${escapedWorkerNsec}"`,
-    `export COORDINATOR_NPUB="${escapedCoordinatorNpub}"`,
-    `export WORKER_RELAYS="${escapedWorkerRelays}"`,
-    `export WORKER_POLL_SECONDS="${WORKER_DEFAULT_POLL_SECONDS}"`,
-    'export WORKER_STATE_DIR="${WORKER_STATE_DIR:-./.worker-state}"',
-    'mkdir -p "$WORKER_STATE_DIR"',
-    'echo "Audit proxy version: $WORKER_VERSION"',
-    'echo "Starting audit proxy..."',
-    '"$AUDIT_PROXY_BINARY"',
+    `  export RUST_LOG="${WORKER_DEFAULT_RUST_LOG}"`,
+    `  export WORKER_NSEC="${escapedWorkerNsec}"`,
+    `  export COORDINATOR_NPUB="${escapedCoordinatorNpub}"`,
+    `  export WORKER_RELAYS="${escapedWorkerRelays}"`,
+    `  export WORKER_POLL_SECONDS="${WORKER_DEFAULT_POLL_SECONDS}"`,
+    '  export WORKER_STATE_DIR="${WORKER_STATE_DIR:-./.worker-state}"',
+    '  mkdir -p "$WORKER_STATE_DIR" || return 1',
+    '  echo "Audit proxy version: $WORKER_VERSION"',
+    '  echo "Starting audit proxy..."',
+    '  "$AUDIT_PROXY_BINARY"',
+    "}",
+    "start_auditable_voting_proxy",
   ].join("\n");
 }
 
@@ -5056,7 +5059,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                     >
                       {WORKER_RELEASE_DOWNLOAD_URL}
                     </a>{" "}
-                    and rerun.
+                    and rerun. The pasted direct command returns to your shell on setup or version errors instead of closing the terminal session.
                   </p>
                   <label className='simple-voter-label' htmlFor='worker-download-target'>Platform</label>
                       <select

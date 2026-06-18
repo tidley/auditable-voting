@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.100] - 2026-06-18
+
+### Changed
+- Bumped the audit proxy to 0.1.29 and raised generated launcher minimum-version checks to 0.1.29.
+- Wrapped the pasted Linux Direct command-line launch in a shell function so setup/version failures return to the current shell instead of closing an SSH session.
+- Bumped the web app package to 0.1.100.
+
 ## [0.1.99] - 2026-06-18
 
 ### Changed
