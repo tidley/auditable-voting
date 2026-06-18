@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.95] - 2026-06-18
+
+### Changed
+- Bundled per-question blind ballot requests into one voter-to-organiser/proxy DM per session request.
+- Bundled multi-credential blind issuances into one organiser/proxy-to-voter DM per recipient.
+- Raised the generated audit proxy launcher minimum version to worker 0.1.24 because older workers do not understand bundled request DMs.
+- Bumped web app package to 0.1.95 and worker package to 0.1.24.
+
 ## [0.1.94] - 2026-06-17
 
 ### Fixed

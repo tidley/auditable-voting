@@ -188,6 +188,16 @@ pub struct BlindBallotRequestEnvelope {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BlindBallotRequestBundleEnvelope {
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub schema_version: u8,
+    pub requests: Vec<BlindBallotRequest>,
+    pub sent_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BlindBallotIssuance {
     #[serde(rename = "type")]
     pub message_type: String,
@@ -212,6 +222,16 @@ pub struct BlindBallotIssuanceEnvelope {
     pub message_type: String,
     pub schema_version: u8,
     pub issuance: BlindBallotIssuance,
+    pub sent_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlindBallotIssuanceBundleEnvelope {
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub schema_version: u8,
+    pub issuances: Vec<BlindBallotIssuance>,
     pub sent_at: String,
 }
 

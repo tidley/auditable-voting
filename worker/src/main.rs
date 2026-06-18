@@ -4,8 +4,9 @@ mod store;
 
 use crate::config::WorkerConfig;
 use crate::model::{
-    is_expired, now_iso, BearerInviteCodeEntry, BlindBallotIssuance, BlindBallotIssuanceEnvelope,
-    BlindBallotRequest, BlindBallotRequestEnvelope, ElectionRuntimeState,
+    is_expired, now_iso, BearerInviteCodeEntry, BlindBallotIssuance,
+    BlindBallotIssuanceBundleEnvelope, BlindBallotIssuanceEnvelope, BlindBallotRequest,
+    BlindBallotRequestBundleEnvelope, BlindBallotRequestEnvelope, ElectionRuntimeState,
     QuestionnaireBlindResponseEvent, QuestionnaireSubmissionDecisionEvent, WorkerCapability,
     WorkerDelegationCertificate, WorkerDelegationEnvelope, WorkerDelegationRevocation,
     WorkerElectionConfigEnvelope, WorkerElectionConfigSnapshot, WorkerPersistentState,
@@ -609,6 +610,15 @@ enum BlindRequestAuthorization {
     Authorized { state_changed: bool },
     Deferred,
     Rejected,
+}
+
+enum PreparedBlindIssuance {
+    Deferred,
+    Handled,
+    Issuance {
+        request: BlindBallotRequest,
+        issuance: BlindBallotIssuance,
+    },
 }
 
 fn authorize_blind_request(
@@ -1348,6 +1358,17 @@ impl WorkerRuntime {
                 );
                 return self.handle_blind_request(envelope.request).await;
             }
+            "optiona_blind_request_bundle_dm" => {
+                let envelope: BlindBallotRequestBundleEnvelope = match serde_json::from_value(value) {
+                    Ok(parsed) => parsed,
+                    Err(_) => return Ok(true),
+                };
+                debug!(
+                    "blind request bundle received: requests={}",
+                    envelope.requests.len()
+                );
+                return self.handle_blind_request_bundle(envelope.requests).await;
+            }
             _ => return Ok(true),
         }
         Ok(true)
@@ -1918,7 +1939,10 @@ impl WorkerRuntime {
         Ok(())
     }
 
-    async fn handle_blind_request(&self, request: BlindBallotRequest) -> Result<bool> {
+    async fn prepare_blind_issuance(
+        &self,
+        request: BlindBallotRequest,
+    ) -> Result<PreparedBlindIssuance> {
         let election = {
             let mut state = self.state.lock().await;
             let Some(election) = state.elections.get_mut(&request.election_id) else {
@@ -1926,16 +1950,16 @@ impl WorkerRuntime {
                     "blind request deferred for election {} because no worker config is loaded yet",
                     request.election_id
                 );
-                return Ok(false);
+                return Ok(PreparedBlindIssuance::Deferred);
             };
             if election.revoked || is_expired(&election.expires_at) {
-                return Ok(true);
+                return Ok(PreparedBlindIssuance::Handled);
             }
             if !election
                 .capabilities
                 .contains(&WorkerCapability::IssueBlindTokens)
             {
-                return Ok(true);
+                return Ok(PreparedBlindIssuance::Handled);
             }
             if election
                 .seen_blind_request_ids
@@ -1955,7 +1979,7 @@ impl WorkerRuntime {
                     "blind request deferred for election {} because no blind signing key is configured",
                     request.election_id
                 );
-                return Ok(false);
+                return Ok(PreparedBlindIssuance::Deferred);
             }
             if !has_effective_eligibility_config(election) {
                 election
@@ -1966,7 +1990,7 @@ impl WorkerRuntime {
                     "blind request deferred for election {} because delegated eligibility config is not loaded yet",
                     request.election_id
                 );
-                return Ok(false);
+                return Ok(PreparedBlindIssuance::Deferred);
             }
             if !election
                 .seen_blind_request_ids
@@ -1984,7 +2008,7 @@ impl WorkerRuntime {
                     request.invited_npub,
                     ballot_scope_key(&request.ballot_scope)
                 );
-                return Ok(true);
+                return Ok(PreparedBlindIssuance::Handled);
             }
             let state_changed_by_authorization = match authorize_blind_request(election, &request) {
                 BlindRequestAuthorization::Authorized { state_changed } => state_changed,
@@ -1997,7 +2021,7 @@ impl WorkerRuntime {
                         "blind request deferred for election {} because delegated eligibility is not satisfied yet",
                         request.election_id
                     );
-                    return Ok(false);
+                    return Ok(PreparedBlindIssuance::Deferred);
                 }
                 BlindRequestAuthorization::Rejected => {
                     election
@@ -2008,7 +2032,7 @@ impl WorkerRuntime {
                         "blind request rejected by delegated eligibility: election_id={}, request_id={}, invited_npub={}",
                         request.election_id, request.request_id, request.invited_npub
                     );
-                    return Ok(true);
+                    return Ok(PreparedBlindIssuance::Handled);
                 }
             };
             let cloned = election.clone();
@@ -2033,15 +2057,71 @@ impl WorkerRuntime {
                 "blind request ignored for election {} due to key-id mismatch request={} worker={}",
                 request.election_id, request.blind_signing_key_id, private_key.key_id
             );
-            return Ok(true);
+            return Ok(PreparedBlindIssuance::Handled);
         }
         let blind_signature =
             sign_blinded_message(&request.blinded_message, &private_key.private_jwk)?;
         let issuance = build_blind_issuance(&request, &election, blind_signature, now_iso());
+        Ok(PreparedBlindIssuance::Issuance { request, issuance })
+    }
+
+    async fn mark_blind_issuances_published(&self, requests: &[BlindBallotRequest]) -> Result<()> {
+        let mut state = self.state.lock().await;
+        for request in requests {
+            let Some(election) = state.elections.get_mut(&request.election_id) else {
+                continue;
+            };
+            record_issuance_for_request(election, request);
+            election
+                .deferred_blind_request_ids
+                .remove(&request.request_id);
+            election
+                .seen_blind_request_ids
+                .insert(request.request_id.clone());
+            election.last_blind_issuance_at = Some(now_iso());
+        }
+        self.store.save(&state)?;
+        Ok(())
+    }
+
+    async fn publish_prepared_blind_issuances(
+        &self,
+        recipient_npub: &str,
+        issuances: &[BlindBallotIssuance],
+    ) -> Result<usize> {
+        let recipient =
+            PublicKey::from_bech32(recipient_npub).context("invalid invited npub on blind request")?;
+        let content = if issuances.len() == 1 {
+            let envelope = BlindBallotIssuanceEnvelope {
+                message_type: "optiona_blind_issuance_dm".to_string(),
+                schema_version: 1,
+                issuance: issuances[0].clone(),
+                sent_at: now_iso(),
+            };
+            serde_json::to_string(&envelope)?
+        } else {
+            let envelope = BlindBallotIssuanceBundleEnvelope {
+                message_type: "optiona_blind_issuance_bundle_dm".to_string(),
+                schema_version: 1,
+                issuances: issuances.to_vec(),
+                sent_at: now_iso(),
+            };
+            serde_json::to_string(&envelope)?
+        };
+        self.send_private_msg_best_effort(recipient, content, "blind issuance")
+            .await
+    }
+
+    async fn handle_blind_request(&self, request: BlindBallotRequest) -> Result<bool> {
+        let (request, issuance) = match self.prepare_blind_issuance(request).await? {
+            PreparedBlindIssuance::Deferred => return Ok(false),
+            PreparedBlindIssuance::Handled => return Ok(true),
+            PreparedBlindIssuance::Issuance { request, issuance } => (request, issuance),
+        };
         let envelope = BlindBallotIssuanceEnvelope {
             message_type: "optiona_blind_issuance_dm".to_string(),
             schema_version: 1,
-            issuance,
+            issuance: issuance.clone(),
             sent_at: now_iso(),
         };
         let content = serde_json::to_string(&envelope)?;
@@ -2057,18 +2137,63 @@ impl WorkerRuntime {
             request.invited_npub,
             successes
         );
-        let mut state = self.state.lock().await;
-        let Some(election) = state.elections.get_mut(&request.election_id) else {
-            return Ok(false);
-        };
-        record_issuance_for_request(election, &request);
-        election
-            .deferred_blind_request_ids
-            .remove(&request.request_id);
-        election.seen_blind_request_ids.insert(request.request_id);
-        election.last_blind_issuance_at = Some(now_iso());
-        self.store.save(&state)?;
+        self.mark_blind_issuances_published(&[request]).await?;
         Ok(true)
+    }
+
+    async fn handle_blind_request_bundle(&self, requests: Vec<BlindBallotRequest>) -> Result<bool> {
+        let mut handled_any = false;
+        let mut prepared_by_recipient: std::collections::HashMap<
+            String,
+            Vec<(BlindBallotRequest, BlindBallotIssuance)>,
+        > = std::collections::HashMap::new();
+        let mut seen_bundle_scope_keys = std::collections::HashSet::new();
+        for request in requests {
+            let scope_key = blind_request_issuance_scope_key(&request);
+            if !seen_bundle_scope_keys.insert(scope_key.clone()) {
+                warn!(
+                    "blind request bundle skipped duplicate voter/scope entry: election_id={}, request_id={}, invited_npub={}, ballot_scope={}",
+                    request.election_id,
+                    request.request_id,
+                    request.invited_npub,
+                    ballot_scope_key(&request.ballot_scope)
+                );
+                handled_any = true;
+                continue;
+            }
+            match self.prepare_blind_issuance(request).await? {
+                PreparedBlindIssuance::Deferred => {}
+                PreparedBlindIssuance::Handled => handled_any = true,
+                PreparedBlindIssuance::Issuance { request, issuance } => {
+                    handled_any = true;
+                    prepared_by_recipient
+                        .entry(request.invited_npub.clone())
+                        .or_default()
+                        .push((request, issuance));
+                }
+            }
+        }
+        for (recipient_npub, entries) in prepared_by_recipient {
+            let issuances = entries
+                .iter()
+                .map(|(_, issuance)| issuance.clone())
+                .collect::<Vec<_>>();
+            let successes = self
+                .publish_prepared_blind_issuances(&recipient_npub, &issuances)
+                .await?;
+            debug!(
+                "blind issuance bundle published: recipient_npub={}, issuances={}, relay_successes={}",
+                recipient_npub,
+                issuances.len(),
+                successes
+            );
+            let requests = entries
+                .into_iter()
+                .map(|(request, _)| request)
+                .collect::<Vec<_>>();
+            self.mark_blind_issuances_published(&requests).await?;
+        }
+        Ok(handled_any)
     }
 
     async fn apply_delegation(&self, delegation: WorkerDelegationCertificate) -> Result<()> {

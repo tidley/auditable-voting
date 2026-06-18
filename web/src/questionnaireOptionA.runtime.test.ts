@@ -24,7 +24,9 @@ import {
   fetchOptionABallotSubmissionDmsWithNsec,
   publishOptionABallotAcceptanceDm,
   publishOptionABallotSubmissionDm,
+  publishOptionABlindIssuanceBundleDm,
   publishOptionABlindIssuanceDm,
+  publishOptionABlindRequestBundleDm,
   publishOptionABlindRequestDm,
   publishOptionAVoterStateDm,
   subscribeOptionABlindIssuanceDms,
@@ -148,6 +150,12 @@ vi.mock("./questionnaireOptionABlindDm", () => ({
     failures: 0,
     relayResults: [],
   }),
+  publishOptionABlindIssuanceBundleDm: vi.fn().mockResolvedValue({
+    eventId: "mock-option-a-issuance-bundle-dm",
+    successes: 1,
+    failures: 0,
+    relayResults: [],
+  }),
   publishOptionABlindIssuanceAckDm: vi.fn().mockResolvedValue({
     eventId: "mock-option-a-issuance-ack-dm",
     successes: 1,
@@ -162,6 +170,12 @@ vi.mock("./questionnaireOptionABlindDm", () => ({
   }),
   publishOptionABlindRequestDm: vi.fn().mockResolvedValue({
     eventId: "mock-option-a-request-dm",
+    successes: 1,
+    failures: 0,
+    relayResults: [],
+  }),
+  publishOptionABlindRequestBundleDm: vi.fn().mockResolvedValue({
+    eventId: "mock-option-a-request-bundle-dm",
     successes: 1,
     failures: 0,
     relayResults: [],
@@ -900,7 +914,14 @@ describe("questionnaireOptionARuntime", () => {
       .map((request) => request.ballotScope?.slotId)
       .sort();
     expect(requestedScopes).toEqual(["director-alice", "director-bob"]);
-    expect(vi.mocked(publishOptionABlindRequestDm)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(publishOptionABlindRequestDm)).not.toHaveBeenCalled();
+    expect(vi.mocked(publishOptionABlindRequestBundleDm)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(publishOptionABlindRequestBundleDm)).toHaveBeenCalledWith(expect.objectContaining({
+      requests: expect.arrayContaining([
+        expect.objectContaining({ ballotScope: expect.objectContaining({ slotId: "director-alice" }) }),
+        expect.objectContaining({ ballotScope: expect.objectContaining({ slotId: "director-bob" }) }),
+      ]),
+    }));
 
     await coordinator.processPendingBlindRequests();
     voter.refreshIssuanceAndAcceptance();

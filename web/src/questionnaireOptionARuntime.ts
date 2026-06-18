@@ -91,8 +91,10 @@ import {
   publishOptionACoordinatorStateDm,
   publishOptionAVoterStateDm,
   publishOptionABlindIssuanceAckDm,
+  publishOptionABlindIssuanceBundleDm,
   publishOptionABlindIssuanceDm,
   publishOptionABlindRequestAckDm,
+  publishOptionABlindRequestBundleDm,
   publishOptionABlindRequestDm,
   subscribeOptionABallotAcceptanceDms,
   subscribeOptionABallotSubmissionAckDms,
@@ -2244,29 +2246,33 @@ export class QuestionnaireOptionAVoterRuntime {
     void this.publishVoterStateSelfDm({ reason: "request_blind_ballot_bundle_pre_publish" });
     this.startVoterDmSubscriptions();
 
-    for (const request of requestsToPublish) {
+    if (requestsToPublish.length > 0) {
       const sentAt = nowIso();
-      const scopedRequest = {
+      const scopedRequests = requestsToPublish.map((request) => ({
         ...request,
         lastSentAt: sentAt,
-      };
-      const published = await this.publishBlindRequestDm(scopedRequest);
+      }));
+      const published = await this.publishBlindRequestBundleDm(scopedRequests);
       if (!published || published.successes <= 0) {
         throw new OptionARuntimeError("dm_delivery_failed", "No relay accepted the blind ballot request DM.");
       }
-      const scopeKey = ballotScopeKey(scopedRequest.ballotScope);
+      let nextRequests = { ...(this.state.blindRequests ?? {}) };
+      for (const scopedRequest of scopedRequests) {
+        const scopeKey = ballotScopeKey(scopedRequest.ballotScope);
+        nextRequests = {
+          ...nextRequests,
+          [scopeKey]: scopedRequest,
+        };
+        enqueueBlindRequest(scopedRequest);
+      }
       this.state = {
         ...this.state,
-        blindRequest: this.state.blindRequest ?? scopedRequest,
-        blindRequests: {
-          ...(this.state.blindRequests ?? {}),
-          [scopeKey]: scopedRequest,
-        },
+        blindRequest: this.state.blindRequest ?? scopedRequests[0] ?? null,
+        blindRequests: nextRequests,
         blindRequestSent: true,
         blindRequestSentAt: sentAt,
         lastUpdatedAt: sentAt,
       };
-      enqueueBlindRequest(scopedRequest);
     }
 
     const allIssued = scopes.every((scope) => Boolean(this.state?.blindIssuances?.[ballotScopeKey(scope)]));
@@ -2358,6 +2364,68 @@ export class QuestionnaireOptionAVoterRuntime {
     } catch {
       return null;
     }
+  }
+
+  async publishBlindRequestBundleDm(requests: BlindBallotRequest[]) {
+    if (!this.state || requests.length === 0 || !this.state.coordinatorNpub) {
+      return null;
+    }
+    if (requests.length === 1) {
+      return this.publishBlindRequestDm(requests[0]);
+    }
+    const routing = await this.resolveIssueBlindTokensWorkerRouting();
+    const coordinatorNpub = this.state.coordinatorNpub.trim();
+    const workerNpub = routing?.workerNpub?.trim() || "";
+    const primaryRecipientNpub = workerNpub || coordinatorNpub;
+    const recipientNpubs = [...new Set([primaryRecipientNpub, coordinatorNpub, workerNpub].filter(Boolean))];
+    const relays = mergeBlindRequestRoutingRelays(this.getPreferredDmRelays(), routing);
+    optionAFlowLog("voter", "blind_request_bundle_publish_attempt", {
+      electionId: this.state.electionId,
+      requestCount: requests.length,
+      coordinatorNpub,
+      workerNpub: workerNpub || null,
+      recipientCount: recipientNpubs.length,
+      delegationId: routing?.delegationId ?? null,
+    });
+    let combined: Awaited<ReturnType<typeof publishOptionABlindRequestBundleDm>> | null = null;
+    for (const recipientNpub of recipientNpubs) {
+      try {
+        const relaySet = recipientNpub === workerNpub ? relays : this.getPreferredDmRelays();
+        const result = await publishOptionABlindRequestBundleDm({
+          signer: this.signer,
+          recipientNpub,
+          requests,
+          fallbackNsec: this.fallbackNsec,
+          relays: relaySet,
+        });
+        this.rememberPrivateRelaySuccesses(result);
+        optionAFlowLog("voter", "blind_request_bundle_recipient_publish_result", {
+          electionId: this.state.electionId,
+          requestCount: requests.length,
+          recipientNpub,
+          recipientRole: recipientNpub === workerNpub ? "proxy" : "organiser",
+          successes: result.successes,
+          failures: result.failures,
+        });
+        combined = combined
+          ? {
+            ...combined,
+            successes: combined.successes + result.successes,
+            failures: combined.failures + result.failures,
+            relayResults: [...combined.relayResults, ...result.relayResults],
+          }
+          : result;
+      } catch (error) {
+        optionAFlowLog("voter", "blind_request_bundle_recipient_publish_failed", {
+          electionId: this.state.electionId,
+          requestCount: requests.length,
+          recipientNpub,
+          recipientRole: recipientNpub === workerNpub ? "proxy" : "organiser",
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    return combined;
   }
 
   refreshIssuanceAndAcceptance(options?: { restartSubscriptions?: boolean }) {
@@ -4321,41 +4389,57 @@ export class QuestionnaireOptionACoordinatorRuntime {
         return !Number.isFinite(lastAttemptMs) || Date.now() - lastAttemptMs >= retryMs;
       });
     let delivered = 0;
+    const issuancesByRecipient = new Map<string, BlindBallotIssuance[]>();
     for (const issuance of issued) {
+      const entries = issuancesByRecipient.get(issuance.invitedNpub) ?? [];
+      entries.push(issuance);
+      issuancesByRecipient.set(issuance.invitedNpub, entries);
+    }
+    for (const recipientIssuances of issuancesByRecipient.values()) {
       const attemptedAt = nowIso();
       let eventId: string | null = null;
       let success = false;
       try {
-        const result = await publishOptionABlindIssuanceDm({
-          signer: this.signer,
-          recipientNpub: issuance.invitedNpub,
-          issuance,
-          fallbackNsec: this.fallbackNsec,
-          relays: this.getPreferredDmRelays(),
-        });
+        const result = recipientIssuances.length > 1
+          ? await publishOptionABlindIssuanceBundleDm({
+            signer: this.signer,
+            recipientNpub: recipientIssuances[0].invitedNpub,
+            issuances: recipientIssuances,
+            fallbackNsec: this.fallbackNsec,
+            relays: this.getPreferredDmRelays(),
+          })
+          : await publishOptionABlindIssuanceDm({
+            signer: this.signer,
+            recipientNpub: recipientIssuances[0].invitedNpub,
+            issuance: recipientIssuances[0],
+            fallbackNsec: this.fallbackNsec,
+            relays: this.getPreferredDmRelays(),
+          });
         eventId = result.eventId;
         success = result.successes > 0;
         if (success) {
-          delivered += 1;
+          delivered += recipientIssuances.length;
           this.rememberPrivateRelaySuccesses(result);
         }
         optionAFlowLog("coordinator", "blind_issuance_dm_publish_result", {
           electionId: this.electionId,
-          requestId: issuance.requestId,
+          requestIds: recipientIssuances.map((issuance) => issuance.requestId),
           successes: result.successes,
           failures: result.failures,
         });
       } catch {
         // Keep best-effort to avoid blocking queue processing.
       } finally {
-        recordBlindIssuanceDeliveryAttempt({
-          issuance,
-          attemptedAt,
-          delivered: success,
-          eventId,
-          requestLastSentAt: this.issuanceDmRepublishRequests.get(issuance.requestId) ?? null,
-        });
-        this.issuanceDmRepublishRequests.delete(issuance.requestId);
+        for (const issuance of recipientIssuances) {
+          recordBlindIssuanceDeliveryAttempt({
+            issuance,
+            attemptedAt,
+            delivered: success,
+            eventId,
+            requestLastSentAt: this.issuanceDmRepublishRequests.get(issuance.requestId) ?? null,
+          });
+          this.issuanceDmRepublishRequests.delete(issuance.requestId);
+        }
       }
     }
     return delivered;

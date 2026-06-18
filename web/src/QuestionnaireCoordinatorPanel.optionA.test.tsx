@@ -181,7 +181,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       schemaVersion: 1,
       workerNpub: liveWorkerNpub,
       coordinatorNpub,
-      workerVersion: "0.1.23",
+      workerVersion: "0.1.24",
       state: "active",
       heartbeatAt: "2026-06-17T23:30:00.000Z",
       delegationId: "delegation_previous",

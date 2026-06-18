@@ -71,10 +71,24 @@ type BlindRequestDmEnvelope = {
   sentAt: string;
 };
 
+type BlindRequestBundleDmEnvelope = {
+  type: "optiona_blind_request_bundle_dm";
+  schemaVersion: 1;
+  requests: BlindBallotRequest[];
+  sentAt: string;
+};
+
 type BlindIssuanceDmEnvelope = {
   type: "optiona_blind_issuance_dm";
   schemaVersion: 1;
   issuance: BlindBallotIssuance;
+  sentAt: string;
+};
+
+type BlindIssuanceBundleDmEnvelope = {
+  type: "optiona_blind_issuance_bundle_dm";
+  schemaVersion: 1;
+  issuances: BlindBallotIssuance[];
   sentAt: string;
 };
 
@@ -803,43 +817,57 @@ async function queryBlindDmSyncWithFallbackPaginated(
   };
 }
 
-function parseBlindRequestDmContent(content: string): BlindBallotRequest | null {
+function isValidBlindRequestPayload(request: BlindBallotRequest | null | undefined): request is BlindBallotRequest {
+  return Boolean(
+    request?.type === "blind_ballot_request"
+    && request.schemaVersion === 1
+    && typeof request.electionId === "string"
+    && typeof request.requestId === "string"
+    && typeof request.invitedNpub === "string",
+  );
+}
+
+function isValidBlindIssuancePayload(issuance: BlindBallotIssuance | null | undefined): issuance is BlindBallotIssuance {
+  return Boolean(
+    issuance?.type === "blind_ballot_response"
+    && issuance.schemaVersion === 1
+    && typeof issuance.electionId === "string"
+    && typeof issuance.requestId === "string"
+    && typeof issuance.invitedNpub === "string",
+  );
+}
+
+function parseBlindRequestDmContent(content: string): BlindBallotRequest[] | null {
   try {
-    const parsed = JSON.parse(content) as Partial<BlindRequestDmEnvelope> | BlindBallotRequest;
-    const request = (parsed as BlindRequestDmEnvelope).type === "optiona_blind_request_dm"
-      ? (parsed as BlindRequestDmEnvelope).request
-      : parsed as BlindBallotRequest;
-    if (
-      request?.type !== "blind_ballot_request"
-      || request.schemaVersion !== 1
-      || typeof request.electionId !== "string"
-      || typeof request.requestId !== "string"
-      || typeof request.invitedNpub !== "string"
-    ) {
+    const parsed = JSON.parse(content) as Partial<BlindRequestDmEnvelope | BlindRequestBundleDmEnvelope> | BlindBallotRequest;
+    const requests = (parsed as BlindRequestBundleDmEnvelope).type === "optiona_blind_request_bundle_dm"
+      ? (parsed as BlindRequestBundleDmEnvelope).requests
+      : (parsed as BlindRequestDmEnvelope).type === "optiona_blind_request_dm"
+        ? [(parsed as BlindRequestDmEnvelope).request]
+        : [parsed as BlindBallotRequest];
+    if (!Array.isArray(requests)) {
       return null;
     }
-    return request;
+    const valid = requests.filter(isValidBlindRequestPayload);
+    return valid.length > 0 ? valid : null;
   } catch {
     return null;
   }
 }
 
-function parseBlindIssuanceDmContent(content: string): BlindBallotIssuance | null {
+function parseBlindIssuanceDmContent(content: string): BlindBallotIssuance[] | null {
   try {
-    const parsed = JSON.parse(content) as Partial<BlindIssuanceDmEnvelope> | BlindBallotIssuance;
-    const issuance = (parsed as BlindIssuanceDmEnvelope).type === "optiona_blind_issuance_dm"
-      ? (parsed as BlindIssuanceDmEnvelope).issuance
-      : parsed as BlindBallotIssuance;
-    if (
-      issuance?.type !== "blind_ballot_response"
-      || issuance.schemaVersion !== 1
-      || typeof issuance.electionId !== "string"
-      || typeof issuance.requestId !== "string"
-      || typeof issuance.invitedNpub !== "string"
-    ) {
+    const parsed = JSON.parse(content) as Partial<BlindIssuanceDmEnvelope | BlindIssuanceBundleDmEnvelope> | BlindBallotIssuance;
+    const issuances = (parsed as BlindIssuanceBundleDmEnvelope).type === "optiona_blind_issuance_bundle_dm"
+      ? (parsed as BlindIssuanceBundleDmEnvelope).issuances
+      : (parsed as BlindIssuanceDmEnvelope).type === "optiona_blind_issuance_dm"
+        ? [(parsed as BlindIssuanceDmEnvelope).issuance]
+        : [parsed as BlindBallotIssuance];
+    if (!Array.isArray(issuances)) {
       return null;
     }
-    return issuance;
+    const valid = issuances.filter(isValidBlindIssuancePayload);
+    return valid.length > 0 ? valid : null;
   } catch {
     return null;
   }
@@ -1120,7 +1148,9 @@ function parseWorkerElectionConfigDmContent(content: string): WorkerElectionConf
 
 function optionABlindDmSubject(
   envelope: BlindRequestDmEnvelope
+    | BlindRequestBundleDmEnvelope
     | BlindIssuanceDmEnvelope
+    | BlindIssuanceBundleDmEnvelope
     | BlindRequestAckDmEnvelope
     | BlindIssuanceAckDmEnvelope
     | BallotSubmissionDmEnvelope
@@ -1136,8 +1166,12 @@ function optionABlindDmSubject(
   switch (envelope.type) {
     case "optiona_blind_request_dm":
       return "Auditable Voting blind request";
+    case "optiona_blind_request_bundle_dm":
+      return "Auditable Voting blind request bundle";
     case "optiona_blind_issuance_dm":
       return "Auditable Voting blind issuance";
+    case "optiona_blind_issuance_bundle_dm":
+      return "Auditable Voting blind issuance bundle";
     case "optiona_blind_request_ack_dm":
       return "Auditable Voting blind request ack";
     case "optiona_blind_issuance_ack_dm":
@@ -1169,7 +1203,9 @@ function createRumor(input: {
   relayUrl?: string;
   subject: string;
   envelope: BlindRequestDmEnvelope
+    | BlindRequestBundleDmEnvelope
     | BlindIssuanceDmEnvelope
+    | BlindIssuanceBundleDmEnvelope
     | BlindRequestAckDmEnvelope
     | BlindIssuanceAckDmEnvelope
     | BallotSubmissionDmEnvelope
@@ -1317,7 +1353,7 @@ function decodeGiftWrapWithSecretKey(input: {
 async function pageContainsSignerDm<T>(input: {
   pageEvents: NostrEvent[];
   signer: SignerService;
-  parse: (content: string) => T | null;
+  parse: (content: string) => T | T[] | null;
   matches: (entry: T) => boolean;
 }) {
   for (const event of input.pageEvents) {
@@ -1330,7 +1366,8 @@ async function pageContainsSignerDm<T>(input: {
         continue;
       }
       const parsed = input.parse(decoded.rumorContent);
-      if (parsed && input.matches(parsed)) {
+      const values = Array.isArray(parsed) ? parsed : (parsed ? [parsed] : []);
+      if (values.some((entry) => input.matches(entry))) {
         return true;
       }
     } catch {
@@ -1343,7 +1380,7 @@ async function pageContainsSignerDm<T>(input: {
 function pageContainsSecretKeyDm<T>(input: {
   pageEvents: NostrEvent[];
   secretKey: Uint8Array;
-  parse: (content: string) => T | null;
+  parse: (content: string) => T | T[] | null;
   matches: (entry: T) => boolean;
 }) {
   for (const event of input.pageEvents) {
@@ -1356,7 +1393,8 @@ function pageContainsSecretKeyDm<T>(input: {
         continue;
       }
       const parsed = input.parse(decoded.rumorContent);
-      if (parsed && input.matches(parsed)) {
+      const values = Array.isArray(parsed) ? parsed : (parsed ? [parsed] : []);
+      if (values.some((entry) => input.matches(entry))) {
         return true;
       }
     } catch {
@@ -1372,7 +1410,7 @@ function createSignerGiftWrapSubscription<T>(input: {
   relays?: string[];
   since?: number;
   stage: string;
-  parse: (content: string) => T | null;
+  parse: (content: string) => T | T[] | null;
   keyOf: (value: T) => string;
   onValue: (value: T) => void;
   onError?: (error: Error) => void;
@@ -1405,24 +1443,27 @@ function createSignerGiftWrapSubscription<T>(input: {
       if (!decoded) {
         return;
       }
-      const value = input.parse(decoded.rumorContent);
-      if (!value) {
+      const parsed = input.parse(decoded.rumorContent);
+      const values = Array.isArray(parsed) ? parsed : (parsed ? [parsed] : []);
+      if (values.length === 0) {
         return;
       }
       const electionId = input.electionId?.trim();
-      if (electionId && typeof (value as { electionId?: string }).electionId === "string" && (value as { electionId: string }).electionId !== electionId) {
-        return;
+      for (const value of values) {
+        if (electionId && typeof (value as { electionId?: string }).electionId === "string" && (value as { electionId: string }).electionId !== electionId) {
+          continue;
+        }
+        if (input.validate && !input.validate(value, decoded)) {
+          continue;
+        }
+        const key = input.keyOf(value);
+        if (!key || seenKeys.has(key)) {
+          continue;
+        }
+        seenKeys.add(key);
+        optionABlindDmLog(`${input.stage}_event`, { key });
+        input.onValue(value);
       }
-      if (input.validate && !input.validate(value, decoded)) {
-        return;
-      }
-      const key = input.keyOf(value);
-      if (!key || seenKeys.has(key)) {
-        return;
-      }
-      seenKeys.add(key);
-      optionABlindDmLog(`${input.stage}_event`, { key });
-      input.onValue(value);
     } catch (error) {
       if (error instanceof Error) {
         input.onError?.(error);
@@ -1474,7 +1515,7 @@ function createSecretKeyGiftWrapSubscription<T>(input: {
   electionId?: string;
   relays?: string[];
   stage: string;
-  parse: (content: string) => T | null;
+  parse: (content: string) => T | T[] | null;
   keyOf: (value: T) => string;
   onValue: (value: T) => void;
   onError?: (error: Error) => void;
@@ -1515,24 +1556,27 @@ function createSecretKeyGiftWrapSubscription<T>(input: {
       if (!decoded) {
         return;
       }
-      const value = input.parse(decoded.rumorContent);
-      if (!value) {
+      const parsed = input.parse(decoded.rumorContent);
+      const values = Array.isArray(parsed) ? parsed : (parsed ? [parsed] : []);
+      if (values.length === 0) {
         return;
       }
       const electionId = input.electionId?.trim();
-      if (electionId && typeof (value as { electionId?: string }).electionId === "string" && (value as { electionId: string }).electionId !== electionId) {
-        return;
+      for (const value of values) {
+        if (electionId && typeof (value as { electionId?: string }).electionId === "string" && (value as { electionId: string }).electionId !== electionId) {
+          continue;
+        }
+        if (input.validate && !input.validate(value, decoded)) {
+          continue;
+        }
+        const key = input.keyOf(value);
+        if (!key || seenKeys.has(key)) {
+          continue;
+        }
+        seenKeys.add(key);
+        optionABlindDmLog(`${input.stage}_event`, { key });
+        input.onValue(value);
       }
-      if (input.validate && !input.validate(value, decoded)) {
-        return;
-      }
-      const key = input.keyOf(value);
-      if (!key || seenKeys.has(key)) {
-        return;
-      }
-      seenKeys.add(key);
-      optionABlindDmLog(`${input.stage}_event`, { key });
-      input.onValue(value);
     } catch (error) {
       if (error instanceof Error) {
         input.onError?.(error);
@@ -1578,7 +1622,9 @@ async function publishEnvelope(input: {
   signer: SignerService;
   recipientNpub: string;
   envelope: BlindRequestDmEnvelope
+    | BlindRequestBundleDmEnvelope
     | BlindIssuanceDmEnvelope
+    | BlindIssuanceBundleDmEnvelope
     | BlindRequestAckDmEnvelope
     | BlindIssuanceAckDmEnvelope
     | BallotSubmissionDmEnvelope
@@ -1723,6 +1769,32 @@ export async function publishOptionABlindRequestDm(input: {
   });
 }
 
+export async function publishOptionABlindRequestBundleDm(input: {
+  signer: SignerService;
+  recipientNpub: string;
+  requests: BlindBallotRequest[];
+  fallbackNsec?: string;
+  relays?: string[];
+}) {
+  const first = input.requests[0];
+  if (!first) {
+    throw new Error("Blind request bundle is empty.");
+  }
+  return publishEnvelope({
+    signer: input.signer,
+    recipientNpub: input.recipientNpub,
+    fallbackNsec: input.fallbackNsec,
+    relays: input.relays,
+    channel: `optiona-blind-request-bundle:${first.electionId}:${first.invitedNpub}:${input.requests.length}`,
+    envelope: {
+      type: "optiona_blind_request_bundle_dm",
+      schemaVersion: 1,
+      requests: input.requests,
+      sentAt: new Date().toISOString(),
+    },
+  });
+}
+
 export async function publishOptionABlindIssuanceDm(input: {
   signer: SignerService;
   recipientNpub: string;
@@ -1740,6 +1812,32 @@ export async function publishOptionABlindIssuanceDm(input: {
       type: "optiona_blind_issuance_dm",
       schemaVersion: 1,
       issuance: input.issuance,
+      sentAt: new Date().toISOString(),
+    },
+  });
+}
+
+export async function publishOptionABlindIssuanceBundleDm(input: {
+  signer: SignerService;
+  recipientNpub: string;
+  issuances: BlindBallotIssuance[];
+  fallbackNsec?: string;
+  relays?: string[];
+}) {
+  const first = input.issuances[0];
+  if (!first) {
+    throw new Error("Blind issuance bundle is empty.");
+  }
+  return publishEnvelope({
+    signer: input.signer,
+    recipientNpub: input.recipientNpub,
+    fallbackNsec: input.fallbackNsec,
+    relays: input.relays,
+    channel: `optiona-blind-issuance-bundle:${first.electionId}:${first.invitedNpub}:${input.issuances.length}`,
+    envelope: {
+      type: "optiona_blind_issuance_bundle_dm",
+      schemaVersion: 1,
+      issuances: input.issuances,
       sentAt: new Date().toISOString(),
     },
   });
@@ -2038,20 +2136,22 @@ export async function fetchOptionABlindRequestDms(input: {
         incrementReason(rejectReasons, "decode_failed");
         continue;
       }
-      const request = parseBlindRequestDmContent(decoded.rumorContent);
-      if (!request) {
+      const requests = parseBlindRequestDmContent(decoded.rumorContent);
+      if (!requests?.length) {
         incrementReason(rejectReasons, "parse_failed");
         continue;
       }
-      if (input.electionId?.trim() && request.electionId !== input.electionId.trim()) {
-        incrementReason(rejectReasons, "election_mismatch");
-        continue;
-      }
-      const key = `${request.electionId}:${request.requestId}:${request.invitedNpub}`;
-      if (!unique.has(key)) {
-        unique.set(key, request);
-      } else {
-        incrementReason(rejectReasons, "duplicate");
+      for (const request of requests) {
+        if (input.electionId?.trim() && request.electionId !== input.electionId.trim()) {
+          incrementReason(rejectReasons, "election_mismatch");
+          continue;
+        }
+        const key = `${request.electionId}:${request.requestId}:${request.invitedNpub}`;
+        if (!unique.has(key)) {
+          unique.set(key, request);
+        } else {
+          incrementReason(rejectReasons, "duplicate");
+        }
       }
     } catch {
       incrementReason(rejectReasons, "decrypt_failed");
@@ -2109,20 +2209,22 @@ export async function fetchOptionABlindRequestDmsWithNsec(input: {
         incrementReason(rejectReasons, "decode_failed");
         continue;
       }
-      const request = parseBlindRequestDmContent(decoded.rumorContent);
-      if (!request) {
+      const requests = parseBlindRequestDmContent(decoded.rumorContent);
+      if (!requests?.length) {
         incrementReason(rejectReasons, "parse_failed");
         continue;
       }
-      if (input.electionId?.trim() && request.electionId !== input.electionId.trim()) {
-        incrementReason(rejectReasons, "election_mismatch");
-        continue;
-      }
-      const key = `${request.electionId}:${request.requestId}:${request.invitedNpub}`;
-      if (!unique.has(key)) {
-        unique.set(key, request);
-      } else {
-        incrementReason(rejectReasons, "duplicate");
+      for (const request of requests) {
+        if (input.electionId?.trim() && request.electionId !== input.electionId.trim()) {
+          incrementReason(rejectReasons, "election_mismatch");
+          continue;
+        }
+        const key = `${request.electionId}:${request.requestId}:${request.invitedNpub}`;
+        if (!unique.has(key)) {
+          unique.set(key, request);
+        } else {
+          incrementReason(rejectReasons, "duplicate");
+        }
       }
     } catch {
       incrementReason(rejectReasons, "decrypt_failed");
@@ -2196,16 +2298,18 @@ export async function fetchOptionABlindIssuanceDms(input: {
       if (!decoded) {
         continue;
       }
-      const issuance = parseBlindIssuanceDmContent(decoded.rumorContent);
-      if (!issuance) {
+      const issuances = parseBlindIssuanceDmContent(decoded.rumorContent);
+      if (!issuances?.length) {
         continue;
       }
-      if (input.electionId?.trim() && issuance.electionId !== input.electionId.trim()) {
-        continue;
-      }
-      const key = `${issuance.electionId}:${issuance.requestId}:${issuance.issuanceId}`;
-      if (!unique.has(key)) {
-        unique.set(key, issuance);
+      for (const issuance of issuances) {
+        if (input.electionId?.trim() && issuance.electionId !== input.electionId.trim()) {
+          continue;
+        }
+        const key = `${issuance.electionId}:${issuance.requestId}:${issuance.issuanceId}`;
+        if (!unique.has(key)) {
+          unique.set(key, issuance);
+        }
       }
     } catch {
       continue;
@@ -2257,16 +2361,18 @@ export async function fetchOptionABlindIssuanceDmsWithNsec(input: {
       if (!decoded) {
         continue;
       }
-      const issuance = parseBlindIssuanceDmContent(decoded.rumorContent);
-      if (!issuance) {
+      const issuances = parseBlindIssuanceDmContent(decoded.rumorContent);
+      if (!issuances?.length) {
         continue;
       }
-      if (input.electionId?.trim() && issuance.electionId !== input.electionId.trim()) {
-        continue;
-      }
-      const key = `${issuance.electionId}:${issuance.requestId}:${issuance.issuanceId}`;
-      if (!unique.has(key)) {
-        unique.set(key, issuance);
+      for (const issuance of issuances) {
+        if (input.electionId?.trim() && issuance.electionId !== input.electionId.trim()) {
+          continue;
+        }
+        const key = `${issuance.electionId}:${issuance.requestId}:${issuance.issuanceId}`;
+        if (!unique.has(key)) {
+          unique.set(key, issuance);
+        }
       }
     } catch {
       continue;
