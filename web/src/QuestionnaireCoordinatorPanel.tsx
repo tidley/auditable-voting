@@ -2738,10 +2738,24 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   }
 
   function addQuestion() {
-    setQuestions((current) => alignQuestionBallotGroups([
-      ...current,
-      createYesNoQuestion(deriveNextQuestionId(current), "", true),
-    ]));
+    setQuestions((current) => {
+      const previous = current[current.length - 1] ?? null;
+      const previousBallotIndex = previous
+        ? ballotSlotIndexForQuestion(previous, current.length - 1)
+        : 1;
+      const previousBallotVersion = Number.isFinite(previous?.ballotSlot?.version)
+        ? Math.max(1, Math.floor(previous?.ballotSlot?.version as number))
+        : 1;
+      const question = withQuestionBallotSlot(
+        createYesNoQuestion(deriveNextQuestionId(current), "", true),
+        current.length,
+        {
+          slotIndex: previousBallotIndex,
+          version: previousBallotVersion,
+        },
+      );
+      return alignQuestionBallotGroups([...current, question]);
+    });
   }
 
   const resolveBlindSigningPublicKey = useCallback(() => {
@@ -4567,6 +4581,52 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                     </div>
                   </div>
                 </div>
+                <div className='simple-questionnaire-question-toolbar' aria-label={`Question ${index + 1} actions`}>
+                  <button
+                    type='button'
+                    className='simple-voter-secondary simple-questionnaire-icon-button'
+                    aria-label={`Duplicate question ${index + 1}`}
+                    title={`Duplicate question ${index + 1}`}
+                    onClick={() => duplicateQuestion(index)}
+                  >
+                    <span className='simple-copy-icon simple-questionnaire-button-copy-icon' aria-hidden='true' />
+                  </button>
+                  <button
+                    type='button'
+                    className='simple-voter-secondary simple-questionnaire-icon-button'
+                    aria-label={`Move question ${index + 1} up`}
+                    title={`Move question ${index + 1} up`}
+                    disabled={!canMoveUp}
+                    onClick={() => moveQuestion(index, -1)}
+                  >
+                    <svg className='simple-questionnaire-svg-icon' viewBox='0 0 24 24' aria-hidden='true' focusable='false'>
+                      <path d='M12 19V5' />
+                      <path d='M5 12l7-7 7 7' />
+                    </svg>
+                  </button>
+                  <button
+                    type='button'
+                    className='simple-voter-secondary simple-questionnaire-icon-button'
+                    aria-label={`Move question ${index + 1} down`}
+                    title={`Move question ${index + 1} down`}
+                    disabled={!canMoveDown}
+                    onClick={() => moveQuestion(index, 1)}
+                  >
+                    <svg className='simple-questionnaire-svg-icon' viewBox='0 0 24 24' aria-hidden='true' focusable='false'>
+                      <path d='M12 5v14' />
+                      <path d='M19 12l-7 7-7-7' />
+                    </svg>
+                  </button>
+                  <button
+                    type='button'
+                    className='simple-voter-secondary simple-questionnaire-icon-button simple-questionnaire-remove-button'
+                    aria-label={`Remove question ${index + 1}`}
+                    title={`Remove question ${index + 1}`}
+                    onClick={() => deleteQuestion(index)}
+                  >
+                    <span className='simple-questionnaire-button-icon simple-questionnaire-button-icon-trash' aria-hidden='true' />
+                  </button>
+                </div>
               </div>
               <input
                 id={`question-prompt-${index}`}
@@ -4807,52 +4867,6 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                   </label>
                 </div>
               ) : null}
-              <div className='simple-questionnaire-question-actions'>
-                <div className='simple-voter-action-row simple-voter-action-row-inline simple-voter-action-row-tight'>
-                  <button
-                    type='button'
-                    className='simple-voter-secondary simple-questionnaire-action-button'
-                    onClick={() => duplicateQuestion(index)}
-                  >
-                    <span className='simple-copy-icon simple-questionnaire-button-copy-icon' aria-hidden='true' />
-                    <span>Duplicate</span>
-                  </button>
-                  {canMoveUp ? (
-                    <button
-                      type='button'
-                      className='simple-voter-secondary simple-questionnaire-action-button'
-                      onClick={() => moveQuestion(index, -1)}
-                    >
-                      <svg className='simple-questionnaire-svg-icon' viewBox='0 0 24 24' aria-hidden='true' focusable='false'>
-                        <path d='M12 19V5' />
-                        <path d='M5 12l7-7 7 7' />
-                      </svg>
-                      <span>Move up</span>
-                    </button>
-                  ) : null}
-                  {canMoveDown ? (
-                    <button
-                      type='button'
-                      className='simple-voter-secondary simple-questionnaire-action-button'
-                      onClick={() => moveQuestion(index, 1)}
-                    >
-                      <svg className='simple-questionnaire-svg-icon' viewBox='0 0 24 24' aria-hidden='true' focusable='false'>
-                        <path d='M12 5v14' />
-                        <path d='M19 12l-7 7-7-7' />
-                      </svg>
-                      <span>Move down</span>
-                    </button>
-                  ) : null}
-                </div>
-                <button
-                  type='button'
-                  className='simple-voter-secondary simple-questionnaire-action-button simple-questionnaire-remove-button'
-                  onClick={() => deleteQuestion(index)}
-                >
-                  <span className='simple-questionnaire-button-icon simple-questionnaire-button-icon-trash' aria-hidden='true' />
-                  <span>Remove</span>
-                </button>
-              </div>
             </div>
           );
         })}

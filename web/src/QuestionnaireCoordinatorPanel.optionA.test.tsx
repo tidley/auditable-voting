@@ -209,10 +209,17 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     await waitFor(() => {
       expect(secondBallotIndex.value).toBe("2");
     });
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Question" }));
+    const thirdBallotIndex = screen.getByLabelText("Question 3 ballot index") as HTMLInputElement;
+    expect(thirdBallotIndex.value).toBe("2");
+
     fireEvent.change(secondBallotIndex, { target: { value: "1" } });
+    fireEvent.change(thirdBallotIndex, { target: { value: "1" } });
 
     await waitFor(() => {
       expect(secondBallotIndex.value).toBe("1");
+      expect(thirdBallotIndex.value).toBe("1");
     });
 
     const stored = JSON.parse(
@@ -221,9 +228,12 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
 
     expect(stored.questions?.[0]?.ballotSlot?.slotIndex).toBe(1);
     expect(stored.questions?.[1]?.ballotSlot?.slotIndex).toBe(1);
+    expect(stored.questions?.[2]?.ballotSlot?.slotIndex).toBe(1);
     expect(stored.questions?.[0]?.ballotSlot?.slotId).toBe("ballot-1");
     expect(stored.questions?.[1]?.ballotSlot?.slotId).toBe("ballot-1");
+    expect(stored.questions?.[2]?.ballotSlot?.slotId).toBe("ballot-1");
     expect(stored.questions?.[0]?.ballotSlot?.version).toBe(stored.questions?.[1]?.ballotSlot?.version);
+    expect(stored.questions?.[1]?.ballotSlot?.version).toBe(stored.questions?.[2]?.ballotSlot?.version);
   });
 
   it("does not show the JSON preview controls in the build actions", () => {

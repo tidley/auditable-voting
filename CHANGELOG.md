@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.105] - 2026-06-18
+
+### Changed
+- Restyled the account/profile menu with flat filled surfaces, role/action icons, a wider identity tile layout, and separate Colour ID/QR actions.
+- Changed the new-identity confirmation modal to use flat fills and a clearer key-refresh icon.
+- Moved questionnaire question actions into compact icon buttons in the question header and kept reorder controls explicit instead of showing a drag handle.
+- Split the ballot-index stepper arrows outside the number input so the arrow targets are larger without widening the control.
+- Added questions now inherit the ballot index from the previous question, while duplicated questions keep the source question's ballot group.
+- Bumped the web app package to 0.1.105.
+
 ## [0.1.104] - 2026-06-18
 
 ### Changed
