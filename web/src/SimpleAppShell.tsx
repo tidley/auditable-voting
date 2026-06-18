@@ -118,6 +118,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
   const [accountIdentityNpub, setAccountIdentityNpub] = useState("");
   const [accountIdentityDialogOpen, setAccountIdentityDialogOpen] = useState(false);
   const [accountIdentityQrSrc, setAccountIdentityQrSrc] = useState<string | null>(null);
+  const [newIdentityConfirmRole, setNewIdentityConfirmRole] = useState<SimpleActorRole | null>(null);
   const [showGateway, setShowGateway] = useState(() => !hasRoleInUrl() || shouldForceGatewayFromUrl());
   const [gatewayRole, setGatewayRole] = useState<SimpleRole>(() => readRoleFromUrl() ?? initialRole);
   const [gatewayNsec, setGatewayNsec] = useState("");
@@ -150,6 +151,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
     if (role !== "voter" && role !== "coordinator") {
       setAccountIdentityNpub("");
       setAccountIdentityDialogOpen(false);
+      setNewIdentityConfirmRole(null);
       return;
     }
 
@@ -220,6 +222,19 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [accountIdentityDialogOpen]);
+
+  useEffect(() => {
+    if (!newIdentityConfirmRole) {
+      return;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setNewIdentityConfirmRole(null);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [newIdentityConfirmRole]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -300,10 +315,24 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
   const currentRoleSummary = useMemo(() => (
     isSimpleActorRole(role) ? `${roleLabel(role)} ${accountIdentityLabel}` : roleLabel(role)
   ), [accountIdentityLabel, role]);
+  const newIdentityConfirmLabel = newIdentityConfirmRole ? roleLabel(newIdentityConfirmRole) : "";
+  const newIdentityConfirmShortId = newIdentityConfirmRole === role && accountIdentityNpub
+    ? deriveActorDisplayId(accountIdentityNpub)
+    : "";
   const gatewayContinueLabel = useMemo(() => {
     const hasSignerIdentity = gatewaySignerNpub.trim().length > 0;
     return `${hasSignerIdentity ? "Login" : "Continue"} as ${gatewayRoleTitle}`;
   }, [gatewayRoleTitle, gatewaySignerNpub]);
+
+  function confirmNewIdentity() {
+    if (!newIdentityConfirmRole || typeof window === "undefined") {
+      return;
+    }
+    const targetRole = newIdentityConfirmRole;
+    setNewIdentityConfirmRole(null);
+    setAccountMenuOpen(false);
+    window.dispatchEvent(new Event(`auditable-voting:${targetRole}-new`));
+  }
 
   async function loginWithSigner() {
     try {
@@ -699,16 +728,8 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                     className='simple-account-menu-button simple-account-menu-action'
                     role='menuitem'
                     onClick={() => {
-                      if (
-                        typeof window !== "undefined"
-                        && !window.confirm("Create a new identity for this role? Your current identity stays in this browser only if you have backed it up.")
-                      ) {
-                        return;
-                      }
                       setAccountMenuOpen(false);
-                      if (typeof window !== "undefined") {
-                        window.dispatchEvent(new Event(`auditable-voting:${role}-new`));
-                      }
+                      setNewIdentityConfirmRole(role);
                     }}
                   >
                     <span className='simple-menu-action-icon simple-menu-action-icon-new' aria-hidden='true' />
@@ -873,6 +894,58 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                 aria-hidden='true'
               />
             )}
+          </div>
+        </div>
+      ) : null}
+      {newIdentityConfirmRole ? (
+        <div
+          className='simple-identity-qr-overlay simple-new-identity-confirm-overlay'
+          role='dialog'
+          aria-modal='true'
+          aria-labelledby='new-identity-confirm-title'
+          aria-describedby='new-identity-confirm-description'
+          onClick={() => setNewIdentityConfirmRole(null)}
+        >
+          <button
+            type='button'
+            className='simple-identity-qr-overlay-close simple-new-identity-confirm-close'
+            onClick={() => setNewIdentityConfirmRole(null)}
+            aria-label='Cancel new identity'
+          >
+            Close
+          </button>
+          <div
+            className='simple-identity-qr-overlay-card simple-new-identity-confirm-card'
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className='simple-new-identity-confirm-mark' aria-hidden='true'>
+              <span />
+            </div>
+            <div className='simple-new-identity-confirm-copy'>
+              <p className='simple-account-menu-kicker'>New {newIdentityConfirmLabel} identity</p>
+              <h2 id='new-identity-confirm-title' className='simple-voter-section-title'>Start fresh?</h2>
+              <p id='new-identity-confirm-description' className='simple-voter-note'>
+                A new identity gives this role a new public key. Your current identity
+                {newIdentityConfirmShortId ? <> <strong>{newIdentityConfirmShortId}</strong></> : null}
+                {" "}can only be restored later if you have a backup or saved nsec.
+              </p>
+            </div>
+            <div className='simple-new-identity-confirm-actions'>
+              <button
+                type='button'
+                className='simple-voter-secondary'
+                onClick={() => setNewIdentityConfirmRole(null)}
+              >
+                Keep current identity
+              </button>
+              <button
+                type='button'
+                className='simple-voter-primary simple-new-identity-confirm-primary'
+                onClick={confirmNewIdentity}
+              >
+                Create new identity
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

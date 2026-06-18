@@ -6531,6 +6531,99 @@ code {
   justify-self: center;
 }
 
+.simple-new-identity-confirm-overlay {
+  background:
+    radial-gradient(circle at 50% 34%, rgba(250, 204, 21, 0.18), transparent 34%),
+    rgba(7, 13, 16, 0.88);
+}
+
+.simple-new-identity-confirm-card {
+  width: min(92vw, 520px);
+  grid-template-columns: auto minmax(0, 1fr);
+  place-items: stretch;
+  align-items: start;
+  gap: 16px;
+  padding: 22px;
+  border-color: rgba(250, 204, 21, 0.24);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.08), transparent 42%),
+    var(--simple-surface);
+}
+
+.simple-new-identity-confirm-mark {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  border-radius: 16px;
+  background: rgba(250, 204, 21, 0.14);
+  color: #facc15;
+  box-shadow: inset 0 0 0 1px rgba(250, 204, 21, 0.28);
+}
+
+.simple-new-identity-confirm-mark span {
+  position: relative;
+  display: block;
+  width: 28px;
+  height: 28px;
+}
+
+.simple-new-identity-confirm-mark span::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 1px;
+  width: 15px;
+  height: 15px;
+  border: 2px solid currentColor;
+  border-radius: 999px;
+}
+
+.simple-new-identity-confirm-mark span::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 1px;
+  width: 14px;
+  height: 14px;
+  background:
+    linear-gradient(currentColor, currentColor) center / 14px 2px no-repeat,
+    linear-gradient(currentColor, currentColor) center / 2px 14px no-repeat;
+}
+
+.simple-new-identity-confirm-copy {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.simple-new-identity-confirm-copy .simple-voter-section-title,
+.simple-new-identity-confirm-copy .simple-voter-note {
+  margin: 0;
+}
+
+.simple-new-identity-confirm-copy .simple-voter-note {
+  line-height: 1.5;
+}
+
+.simple-new-identity-confirm-copy strong {
+  color: var(--simple-soft);
+  white-space: nowrap;
+}
+
+.simple-new-identity-confirm-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.simple-new-identity-confirm-primary {
+  min-width: 180px;
+}
+
 @media (max-width: 720px) {
   .simple-account-identity-overlay-card {
     grid-template-columns: minmax(0, 1fr);
@@ -6540,6 +6633,25 @@ code {
   .simple-account-identity-overlay-image {
     width: min(76vw, 360px);
     height: min(76vw, 360px);
+  }
+}
+
+@media (max-width: 560px) {
+  .simple-new-identity-confirm-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .simple-new-identity-confirm-mark {
+    width: 48px;
+    height: 48px;
+  }
+
+  .simple-new-identity-confirm-actions {
+    justify-content: stretch;
+  }
+
+  .simple-new-identity-confirm-actions > button {
+    width: 100%;
   }
 }
 

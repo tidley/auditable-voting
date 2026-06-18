@@ -161,6 +161,47 @@ describe("SimpleAppShell invite-link login", () => {
     expect(screen.getByAltText("QR code for Voter npub").getAttribute("src")).toBe("data:image/png;base64,mock-qr");
   });
 
+  it("uses an in-app confirmation before creating a new identity", async () => {
+    const user = userEvent.setup();
+    const voterNpub = "npub1" + "d".repeat(58);
+    const confirmSpy = vi.spyOn(window, "confirm");
+    const newIdentityEvents: string[] = [];
+    const handleNewIdentity = () => {
+      newIdentityEvents.push("voter");
+    };
+    window.history.pushState(null, "", "/?role=voter");
+    window.addEventListener("auditable-voting:voter-new", handleNewIdentity);
+    const { default: SimpleAppShell } = await import("./SimpleAppShell");
+
+    try {
+      render(<SimpleAppShell />);
+      window.dispatchEvent(new CustomEvent("auditable-voting:identity-updated", {
+        detail: { role: "voter", npub: voterNpub },
+      }));
+
+      await user.click(screen.getByRole("button", { name: "Menu" }));
+      await user.click(screen.getByRole("menuitem", { name: "New identity" }));
+
+      expect(confirmSpy).not.toHaveBeenCalled();
+      expect(await screen.findByRole("dialog", { name: "Start fresh?" })).toBeTruthy();
+      expect(screen.getByText(/can only be restored later/i)).toBeTruthy();
+      expect(newIdentityEvents).toEqual([]);
+
+      await user.click(screen.getByRole("button", { name: "Keep current identity" }));
+      expect(screen.queryByRole("dialog", { name: "Start fresh?" })).toBeNull();
+      expect(newIdentityEvents).toEqual([]);
+
+      await user.click(screen.getByRole("button", { name: "Menu" }));
+      await user.click(screen.getByRole("menuitem", { name: "New identity" }));
+      await user.click(await screen.findByRole("button", { name: "Create new identity" }));
+
+      expect(newIdentityEvents).toEqual(["voter"]);
+    } finally {
+      window.removeEventListener("auditable-voting:voter-new", handleNewIdentity);
+      confirmSpy.mockRestore();
+    }
+  });
+
   it("keeps voter section navigation in the top menu", async () => {
     const user = userEvent.setup();
     window.history.pushState(null, "", "/?role=voter");
