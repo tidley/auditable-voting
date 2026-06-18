@@ -1784,6 +1784,9 @@ impl WorkerRuntime {
         if event.kind != Kind::Custom(IMPLEMENTATION_KIND_QUESTIONNAIRE_DEFINITION) {
             return Ok(false);
         }
+        if event.pubkey != self.coordinator_pubkey {
+            return Ok(false);
+        }
         let definition = match serde_json::from_str::<serde_json::Value>(&event.content) {
             Ok(parsed) => parsed,
             Err(error) => {
@@ -2817,6 +2820,9 @@ mod tests {
     use chrono::Duration as ChronoDuration;
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn sample_request() -> BlindBallotRequest {
         BlindBallotRequest {
@@ -2834,6 +2840,102 @@ mod tests {
             invite_code_hash: None,
             ballot_scope: None,
         }
+    }
+
+    fn unique_worker_state_dir(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "auditable-voting-worker-{label}-{}-{nanos}",
+            std::process::id()
+        ))
+    }
+
+    fn test_runtime_with_state(
+        coordinator_keys: &Keys,
+        mut state: WorkerPersistentState,
+    ) -> (WorkerRuntime, PathBuf) {
+        let worker_keys = Keys::generate();
+        let worker_npub = worker_keys.public_key().to_bech32().expect("worker npub");
+        let coordinator_npub = coordinator_keys
+            .public_key()
+            .to_bech32()
+            .expect("coordinator npub");
+        let state_dir = unique_worker_state_dir("definition");
+        let store = Arc::new(WorkerStore::open(&state_dir).expect("open worker store"));
+        state.worker_npub = worker_npub.clone();
+        state.coordinator_npub = coordinator_npub.clone();
+        state.relays = vec!["wss://relay.example.com".to_string()];
+        store.save(&state).expect("save initial worker state");
+
+        let runtime = WorkerRuntime {
+            config: WorkerConfig {
+                worker_nsec: worker_keys.secret_key().to_bech32().expect("worker nsec"),
+                coordinator_npub,
+                worker_relays: vec![RelayUrl::parse("wss://relay.example.com").expect("relay")],
+                worker_relays_from_env: true,
+                worker_state_dir: state_dir.clone(),
+                heartbeat_seconds: 30,
+                poll_seconds: 5,
+            },
+            client: Client::new(worker_keys.clone()),
+            worker_pubkey: worker_keys.public_key(),
+            worker_npub,
+            coordinator_pubkey: coordinator_keys.public_key(),
+            store,
+            state: Arc::new(Mutex::new(state)),
+            relay_backoff: Arc::new(Mutex::new(HashMap::new())),
+            completion_in_flight: Arc::new(Mutex::new(HashSet::new())),
+        };
+        (runtime, state_dir)
+    }
+
+    fn public_definition(questionnaire_id: &str, key_id: &str) -> serde_json::Value {
+        json!({
+            "schemaVersion": 1,
+            "eventType": "questionnaire_definition",
+            "questionnaireId": questionnaire_id,
+            "title": "Runtime definition",
+            "description": "Loaded from a signed public event",
+            "createdAt": 1781200000,
+            "openAt": 1781200000,
+            "closeAt": 1781203600,
+            "coordinatorPubkey": "npub1coordinator",
+            "coordinatorEncryptionPubkey": "npub1coordinator",
+            "responseVisibility": "private",
+            "eligibilityMode": "open",
+            "blindSigningPublicKey": {
+                "scheme": "rsa-blind-pss-sha384",
+                "keyId": key_id,
+                "jwk": {}
+            },
+            "questions": [{
+                "questionId": "q1",
+                "prompt": "Proceed?",
+                "required": true,
+                "type": "yes_no"
+            }]
+        })
+    }
+
+    fn public_definition_event(keys: &Keys, definition: &serde_json::Value) -> Event {
+        let questionnaire_id = definition
+            .get("questionnaireId")
+            .and_then(|entry| entry.as_str())
+            .expect("definition questionnaire id");
+        EventBuilder::new(
+            Kind::Custom(IMPLEMENTATION_KIND_QUESTIONNAIRE_DEFINITION),
+            serde_json::to_string(definition).expect("serialize definition"),
+        )
+        .tags([
+            Tag::parse(["t", "questionnaire_definition"]).expect("hashtag tag"),
+            Tag::parse(["q", questionnaire_id]).expect("q tag"),
+            Tag::parse(["questionnaire-id", questionnaire_id]).expect("questionnaire id tag"),
+        ])
+        .sign_with_keys(keys)
+        .expect("sign definition event")
     }
 
     #[test]
@@ -2981,6 +3083,199 @@ mod tests {
             &mismatched_definition,
             &election
         ));
+    }
+
+    #[tokio::test]
+    async fn public_definition_event_loads_when_no_expected_hash_is_configured() {
+        let coordinator_keys = Keys::generate();
+        let definition = public_definition("q_public_definition_no_hash", "key-live");
+        let mut state = WorkerPersistentState::default();
+        state.elections.insert(
+            "q_public_definition_no_hash".to_string(),
+            ElectionRuntimeState {
+                election_id: "q_public_definition_no_hash".to_string(),
+                ..ElectionRuntimeState::default()
+            },
+        );
+        let (runtime, state_dir) = test_runtime_with_state(&coordinator_keys, state);
+        let event = public_definition_event(&coordinator_keys, &definition);
+
+        assert!(runtime
+            .process_public_definition_event(&event)
+            .await
+            .expect("process definition"));
+
+        {
+            let state = runtime.state.lock().await;
+            let election = state
+                .elections
+                .get("q_public_definition_no_hash")
+                .expect("election stored");
+            assert_eq!(election.definition.as_ref(), Some(&definition));
+            assert_eq!(
+                election.definition_hash.as_deref(),
+                Some(questionnaire_definition_hash(&definition).as_str())
+            );
+            assert_eq!(
+                election.definition_event_id.as_deref(),
+                Some(event.id.to_hex().as_str())
+            );
+        }
+        let _ = fs::remove_dir_all(state_dir);
+    }
+
+    #[tokio::test]
+    async fn public_definition_event_loads_when_expected_hash_matches() {
+        let coordinator_keys = Keys::generate();
+        let definition = public_definition("q_public_definition_matching_hash", "key-live");
+        let expected_hash = questionnaire_definition_hash(&definition);
+        let mut state = WorkerPersistentState::default();
+        state.elections.insert(
+            "q_public_definition_matching_hash".to_string(),
+            ElectionRuntimeState {
+                election_id: "q_public_definition_matching_hash".to_string(),
+                definition_hash: Some(expected_hash.clone()),
+                ..ElectionRuntimeState::default()
+            },
+        );
+        let (runtime, state_dir) = test_runtime_with_state(&coordinator_keys, state);
+        let event = public_definition_event(&coordinator_keys, &definition);
+
+        assert!(runtime
+            .process_public_definition_event(&event)
+            .await
+            .expect("process definition"));
+
+        {
+            let state = runtime.state.lock().await;
+            let election = state
+                .elections
+                .get("q_public_definition_matching_hash")
+                .expect("election stored");
+            assert_eq!(election.definition.as_ref(), Some(&definition));
+            assert_eq!(
+                election.definition_hash.as_deref(),
+                Some(expected_hash.as_str())
+            );
+        }
+        let _ = fs::remove_dir_all(state_dir);
+    }
+
+    #[tokio::test]
+    async fn public_definition_event_recovers_stale_expected_hash_when_blind_key_matches() {
+        let coordinator_keys = Keys::generate();
+        let definition = public_definition("q_public_definition_stale_hash", "key-live");
+        let mut state = WorkerPersistentState::default();
+        state.elections.insert(
+            "q_public_definition_stale_hash".to_string(),
+            ElectionRuntimeState {
+                election_id: "q_public_definition_stale_hash".to_string(),
+                definition_hash: Some("stale-definition-hash".to_string()),
+                blind_signing_private_key: Some(QuestionnaireBlindPrivateKey {
+                    scheme: "rsa-blind-pss-sha384".to_string(),
+                    key_id: "key-live".to_string(),
+                    jwk: json!({}),
+                    private_jwk: json!({}),
+                }),
+                ..ElectionRuntimeState::default()
+            },
+        );
+        let (runtime, state_dir) = test_runtime_with_state(&coordinator_keys, state);
+        let event = public_definition_event(&coordinator_keys, &definition);
+
+        assert!(runtime
+            .process_public_definition_event(&event)
+            .await
+            .expect("process definition"));
+
+        {
+            let state = runtime.state.lock().await;
+            let election = state
+                .elections
+                .get("q_public_definition_stale_hash")
+                .expect("election stored");
+            assert_eq!(election.definition.as_ref(), Some(&definition));
+            assert_eq!(
+                election.definition_hash.as_deref(),
+                Some(questionnaire_definition_hash(&definition).as_str())
+            );
+        }
+        let _ = fs::remove_dir_all(state_dir);
+    }
+
+    #[tokio::test]
+    async fn public_definition_event_rejects_stale_expected_hash_when_blind_key_differs() {
+        let coordinator_keys = Keys::generate();
+        let definition = public_definition("q_public_definition_wrong_key", "different-key");
+        let mut state = WorkerPersistentState::default();
+        state.elections.insert(
+            "q_public_definition_wrong_key".to_string(),
+            ElectionRuntimeState {
+                election_id: "q_public_definition_wrong_key".to_string(),
+                definition_hash: Some("stale-definition-hash".to_string()),
+                blind_signing_private_key: Some(QuestionnaireBlindPrivateKey {
+                    scheme: "rsa-blind-pss-sha384".to_string(),
+                    key_id: "key-live".to_string(),
+                    jwk: json!({}),
+                    private_jwk: json!({}),
+                }),
+                ..ElectionRuntimeState::default()
+            },
+        );
+        let (runtime, state_dir) = test_runtime_with_state(&coordinator_keys, state);
+        let event = public_definition_event(&coordinator_keys, &definition);
+
+        assert!(!runtime
+            .process_public_definition_event(&event)
+            .await
+            .expect("process definition"));
+
+        {
+            let state = runtime.state.lock().await;
+            let election = state
+                .elections
+                .get("q_public_definition_wrong_key")
+                .expect("election stored");
+            assert!(election.definition.is_none());
+            assert_eq!(
+                election.definition_hash.as_deref(),
+                Some("stale-definition-hash")
+            );
+        }
+        let _ = fs::remove_dir_all(state_dir);
+    }
+
+    #[tokio::test]
+    async fn public_definition_event_rejects_non_coordinator_author() {
+        let coordinator_keys = Keys::generate();
+        let other_keys = Keys::generate();
+        let definition = public_definition("q_public_definition_wrong_author", "key-live");
+        let mut state = WorkerPersistentState::default();
+        state.elections.insert(
+            "q_public_definition_wrong_author".to_string(),
+            ElectionRuntimeState {
+                election_id: "q_public_definition_wrong_author".to_string(),
+                ..ElectionRuntimeState::default()
+            },
+        );
+        let (runtime, state_dir) = test_runtime_with_state(&coordinator_keys, state);
+        let event = public_definition_event(&other_keys, &definition);
+
+        assert!(!runtime
+            .process_public_definition_event(&event)
+            .await
+            .expect("process definition"));
+
+        {
+            let state = runtime.state.lock().await;
+            let election = state
+                .elections
+                .get("q_public_definition_wrong_author")
+                .expect("election stored");
+            assert!(election.definition.is_none());
+            assert!(election.definition_hash.is_none());
+        }
+        let _ = fs::remove_dir_all(state_dir);
     }
 
     #[test]

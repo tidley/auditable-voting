@@ -13,6 +13,22 @@ const sharedNostrPoolMocks = vi.hoisted(() => ({
   subscribeMany: vi.fn(),
 }));
 
+const questionnaireNostrMocks = vi.hoisted(() => ({
+  publishQuestionnaireDefinition: vi.fn(),
+  publishQuestionnaireParticipantCount: vi.fn(),
+  publishQuestionnaireState: vi.fn(),
+}));
+
+vi.mock("./questionnaireNostr", async () => {
+  const actual = await vi.importActual<typeof import("./questionnaireNostr")>("./questionnaireNostr");
+  return {
+    ...actual,
+    publishQuestionnaireDefinition: questionnaireNostrMocks.publishQuestionnaireDefinition,
+    publishQuestionnaireParticipantCount: questionnaireNostrMocks.publishQuestionnaireParticipantCount,
+    publishQuestionnaireState: questionnaireNostrMocks.publishQuestionnaireState,
+  };
+});
+
 vi.mock("./sharedNostrPool", () => ({
   getSharedNostrPool: () => ({
     querySync: sharedNostrPoolMocks.querySync,
@@ -59,6 +75,7 @@ import { storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCac
 import { buildSimpleNamespacedLocalStorageKey } from "./simpleLocalState";
 import { generateQuestionnaireBlindKeyPair, toQuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
 import { fetchOptionAWorkerStatusDmsWithNsec, publishOptionAWorkerElectionConfigDm } from "./questionnaireOptionABlindDm";
+import { questionnaireDefinitionHash } from "./questionnaireDefinitionReference";
 
 function makeDefinition(input: {
   questionnaireId: string;
@@ -112,6 +129,43 @@ beforeEach(() => {
   sharedNostrPoolMocks.querySync.mockResolvedValue([]);
   sharedNostrPoolMocks.subscribeMany.mockReturnValue({
     close: vi.fn(),
+  });
+  questionnaireNostrMocks.publishQuestionnaireDefinition.mockImplementation(async (input) => ({
+    eventId: "mock-published-definition-event",
+    event: {
+      id: "mock-published-definition-event",
+      pubkey: "",
+      created_at: input.definition.createdAt,
+      kind: QUESTIONNAIRE_DEFINITION_KIND,
+      tags: [["q", input.definition.questionnaireId], ["questionnaire-id", input.definition.questionnaireId]],
+      content: JSON.stringify(input.definition),
+      sig: "0".repeat(128),
+    },
+    relayResults: [{ relay: "wss://relay.nostr.net", success: true }],
+    successes: 1,
+    failures: 0,
+  }));
+  questionnaireNostrMocks.publishQuestionnaireParticipantCount.mockResolvedValue({
+    eventId: "mock-participant-count-event",
+    event: {
+      id: "mock-participant-count-event",
+      kind: 6428,
+      tags: [],
+    },
+    relayResults: [{ relay: "wss://relay.nostr.net", success: true }],
+    successes: 1,
+    failures: 0,
+  });
+  questionnaireNostrMocks.publishQuestionnaireState.mockResolvedValue({
+    eventId: "mock-state-event",
+    event: {
+      id: "mock-state-event",
+      kind: 6421,
+      tags: [["state", "open"]],
+    },
+    relayResults: [{ relay: "wss://relay.nostr.net", success: true }],
+    successes: 1,
+    failures: 0,
   });
   vi.mocked(fetchOptionAWorkerStatusDmsWithNsec).mockResolvedValue([]);
 });
@@ -652,6 +706,100 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(questionnaireIdInput.matches(":disabled")).toBe(false);
     expect(generateIdButton.matches(":disabled")).toBe(false);
     expect(screen.getByText("Questionnaire not yet published")).toBeTruthy();
+  });
+
+  it("configures the audit proxy from the just-published definition instead of stale cached definition state", async () => {
+    const coordinatorSecret = generateSecretKey();
+    const coordinatorNpub = nip19.npubEncode(getPublicKey(coordinatorSecret));
+    const coordinatorNsec = nip19.nsecEncode(coordinatorSecret);
+    const workerNpub = nip19.npubEncode("9".repeat(64));
+    const publishedBlindKey = await generateQuestionnaireBlindKeyPair();
+    const staleBlindKey = await generateQuestionnaireBlindKeyPair();
+    const staleDefinition = {
+      ...makeDefinition({
+        questionnaireId: "q_publish_proxy_hash",
+        title: "Stale cached definition",
+        coordinatorNpub,
+      }),
+      createdAt: 9999999999,
+      openAt: 9999999999,
+      closeAt: 10000003600,
+      blindSigningPublicKey: toQuestionnaireBlindPublicKey(staleBlindKey),
+    };
+    storeCachedQuestionnaireDefinition(staleDefinition);
+    const draftElection = {
+      electionId: "q_publish_proxy_hash",
+      title: "Fresh published definition",
+      description: "Fresh proxy setup",
+      state: "draft" as const,
+      openedAt: null,
+      closedAt: null,
+      coordinatorNpub,
+      blindSigningPublicKey: toQuestionnaireBlindPublicKey(publishedBlindKey),
+    };
+    upsertElectionSummary(draftElection);
+    saveCoordinatorState({
+      coordinatorNpub,
+      state: {
+        election: draftElection,
+        whitelist: {},
+        bearerInviteCodes: {},
+        pendingBlindRequests: {},
+        issuedBlindResponses: {},
+        receivedSubmissions: {},
+        acceptedNullifiers: {},
+        acceptanceResults: {},
+        blindSigningPrivateKey: publishedBlindKey,
+        lastUpdatedAt: "2026-06-18T21:30:00.000Z",
+      },
+    });
+    window.localStorage.setItem(
+      buildSimpleNamespacedLocalStorageKey("coordinator.questionnaire-draft-data.v1"),
+      JSON.stringify({
+        questionnaireId: "q_publish_proxy_hash",
+        title: "Fresh published definition",
+        description: "Fresh proxy setup",
+        closeTimerEnabled: false,
+        closeAfterMinutes: "60",
+        delegationMode: "delegated_worker",
+        delegatedWorkerNpub: workerNpub,
+        questions: [{
+          questionId: "q1",
+          prompt: "Proceed?",
+          required: true,
+          type: "yes_no",
+        }],
+      }),
+    );
+
+    render(
+      <QuestionnaireCoordinatorPanel
+        view='build'
+        coordinatorNpub={coordinatorNpub}
+        coordinatorNsec={coordinatorNsec}
+        blindSigningPublicKey={toQuestionnaireBlindPublicKey(publishedBlindKey)}
+        knownVoterCount={1}
+      />,
+    );
+
+    const publishButton = await screen.findByRole("button", { name: "Publish questionnaire" }) as HTMLButtonElement;
+    await waitFor(() => {
+      expect(publishButton.matches(":disabled")).toBe(false);
+    });
+    fireEvent.click(publishButton);
+
+    await waitFor(() => {
+      expect(publishOptionAWorkerElectionConfigDm).toHaveBeenCalled();
+    });
+
+    const publishedDefinition = questionnaireNostrMocks.publishQuestionnaireDefinition.mock.calls[0]?.[0]?.definition;
+    const workerConfigInput = vi.mocked(publishOptionAWorkerElectionConfigDm).mock.calls[0]?.[0];
+    expect(publishedDefinition?.title).toBe("Fresh published definition");
+    expect(workerConfigInput?.snapshot.definitionReference?.definitionEventId).toBe("mock-published-definition-event");
+    expect(workerConfigInput?.snapshot.definitionReference?.definitionHash).toBe(questionnaireDefinitionHash(publishedDefinition));
+    expect(workerConfigInput?.snapshot.definitionReference?.definitionHash).not.toBe(questionnaireDefinitionHash(staleDefinition));
+    expect(workerConfigInput?.snapshot.blindSigningPrivateKey?.keyId).toBe(publishedBlindKey.keyId);
+    expect(workerConfigInput?.snapshot.blindSigningPrivateKey?.keyId).not.toBe(staleBlindKey.keyId);
   });
 
   it("does not configure the audit proxy when the local blind private key does not match the published vote key", async () => {

@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.102] - 2026-06-18
+
+### Changed
+- Added regression coverage for proxy configuration using the just-published questionnaire definition instead of stale cached definition state.
+- Added audit proxy public-definition intake tests for normal loads, matching-hash loads, stale-hash recovery, wrong-key rejection, and wrong-author rejection.
+- Hardened audit proxy public-definition intake to ignore definition events not signed by the configured organiser.
+- Raised generated launcher minimum-version checks to audit proxy 0.1.31.
+- Bumped the web app package to 0.1.102 and audit proxy package to 0.1.31.
+
 ## [0.1.101] - 2026-06-18
 
 ### Fixed
