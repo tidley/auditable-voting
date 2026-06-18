@@ -84,6 +84,15 @@ export type QuestionnaireDefinition = {
   questions: QuestionnaireQuestion[];
 };
 
+export type QuestionnaireDefinitionReference = {
+  questionnaireId: string;
+  coordinatorNpub?: string | null;
+  relays?: string[];
+  definitionHash?: string | null;
+  definitionEventId?: string | null;
+  createdAt?: number | null;
+};
+
 export type QuestionnaireParticipantCountEvent = {
   schemaVersion: 1;
   eventType: "questionnaire_participant_count";
@@ -264,7 +273,7 @@ export function normaliseQuestionBallotSlot(question: QuestionnaireQuestion, ind
 
 export function questionBallotScopeKey(question: QuestionnaireQuestion, index: number) {
   const slot = normaliseQuestionBallotSlot(question, index);
-  return `${slot.slotId}:v${slot.version}`;
+  return `slot:${slot.slotIndex}:v${slot.version}`;
 }
 
 export function clampRankMinimum(question: Pick<QuestionnaireRankQuestion, "options" | "minimumRanked">) {
@@ -349,8 +358,7 @@ export function validateQuestionnaireDefinition(input: QuestionnaireDefinition):
     errors.push("questions_missing");
   } else {
     const questionIds = new Set<string>();
-    const ballotSlotKeys = new Set<string>();
-    for (const question of input.questions) {
+    for (const [index, question] of input.questions.entries()) {
       if (!isNonEmpty(question.questionId)) {
         errors.push("question_id_missing");
         continue;
@@ -360,7 +368,7 @@ export function validateQuestionnaireDefinition(input: QuestionnaireDefinition):
       }
       questionIds.add(question.questionId);
       if (input.ballotCredentialMode === "per_question") {
-        const slot = normaliseQuestionBallotSlot(question, ballotSlotKeys.size);
+        const slot = normaliseQuestionBallotSlot(question, index);
         if (!isNonEmpty(slot.slotId)) {
           errors.push(`ballot_slot_id_missing:${question.questionId}`);
         }
@@ -370,11 +378,6 @@ export function validateQuestionnaireDefinition(input: QuestionnaireDefinition):
         if (!Number.isFinite(slot.version) || slot.version <= 0) {
           errors.push(`ballot_slot_version_invalid:${question.questionId}`);
         }
-        const slotKey = `${slot.slotId}:v${slot.version}`;
-        if (ballotSlotKeys.has(slotKey)) {
-          errors.push(`ballot_slot_duplicate:${slotKey}`);
-        }
-        ballotSlotKeys.add(slotKey);
       }
 
       if (question.type === "multiple_choice" || question.type === "rank") {

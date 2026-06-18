@@ -13,6 +13,10 @@ export function parseInviteFromUrl(search = typeof window !== "undefined" ? wind
   const electionId = (params.get("q") ?? params.get("election_id") ?? params.get("questionnaire") ?? "").trim() || null;
   const coordinatorNpub = (params.get("coordinator") ?? "").trim();
   const invitedNpub = (params.get("invited") ?? "").trim();
+  const relayHints = params.getAll("relay")
+    .concat((params.get("relays") ?? "").split(","))
+    .map((entry) => entry.trim())
+    .filter((entry, index, entries) => entry.length > 0 && entries.indexOf(entry) === index);
   const encodedInvite = (params.get("invite") ?? "").trim();
   const inviteCode = normaliseQuestionnaireInviteCode(params.get("invite_code") ?? params.get("code"));
   if (!encodedInvite) {
@@ -31,7 +35,11 @@ export function parseInviteFromUrl(search = typeof window !== "undefined" ? wind
           voteUrl,
           invitedNpub,
           coordinatorNpub,
-          definition: null,
+          definitionReference: {
+            questionnaireId: electionId,
+            coordinatorNpub,
+            relays: relayHints.length > 0 ? relayHints : undefined,
+          },
           expiresAt: null,
         },
         inviteCode: inviteCode || null,
@@ -66,6 +74,9 @@ export function buildInviteUrl(input: {
   return buildQuestionnaireInviteUrl({
     baseUrl: input.baseUrl,
     electionId: input.invite.electionId,
+    coordinatorNpub: input.invite.coordinatorNpub,
+    invitedNpub: input.invite.invitedNpub,
+    relays: input.invite.definitionReference?.relays,
   });
 }
 
@@ -77,6 +88,7 @@ export function buildQuestionnaireInviteUrl(input: {
   inviteCode?: string | null;
   login?: boolean;
   autoRequestBallot?: boolean;
+  relays?: string[] | null;
 }) {
   const base = input.baseUrl ?? (typeof window !== "undefined" ? window.location.href : DEFAULT_INVITE_BASE_URL);
   const url = new URL("./", base);
@@ -96,6 +108,12 @@ export function buildQuestionnaireInviteUrl(input: {
   const inviteCode = normaliseQuestionnaireInviteCode(input.inviteCode);
   if (inviteCode) {
     url.searchParams.set("invite_code", inviteCode);
+  }
+  for (const relay of input.relays ?? []) {
+    const trimmed = relay.trim();
+    if (trimmed) {
+      url.searchParams.append("relay", trimmed);
+    }
   }
   if (input.autoRequestBallot) {
     url.searchParams.set("request_ballot", "1");

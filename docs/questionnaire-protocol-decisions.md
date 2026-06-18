@@ -27,12 +27,13 @@ This record freezes the implementation decisions for the questionnaire-first bli
 
 - Reuses the existing private mailbox/envelope transport model.
 - Public questionnaire objects remain on public questionnaire event kinds.
+- Request and issuance bundle DMs keep plain JSON as the canonical fallback. Large `optiona_blind_request_bundle_dm` and `optiona_blind_issuance_bundle_dm` payloads may be wrapped as `optiona_compressed_bundle_dm` using gzip+base64url before NIP-17 encryption; decoders unwrap the bundle before normal envelope parsing.
 
 ## 4. Mode authority
 
 - `responseMode = blind_token` is authoritative for new questionnaire definitions.
-- `ballotCredentialMode = per_question` means the voter requests one credential per current question slot, sees one question at a time, and submits one scoped proof with the answer for that question.
-- Changing answer-bearing question semantics bumps that question slot `version`; old scoped credentials are not reinterpreted for the edited question.
+- `ballotCredentialMode = per_question` means the voter requests one credential per current ballot index. Questions sharing the same `slot_index` and `version` are shown/submitted as one group with one scoped proof; questions with different indices spend independent credentials.
+- Changing answer-bearing question semantics bumps that ballot index group's slot `version`; old scoped credentials are not reinterpreted for the edited group.
 - Legacy objects default to compatibility mode:
   - `responseMode = legacy_private_envelope` when field is missing.
 

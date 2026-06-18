@@ -21,6 +21,7 @@ import {
   type SignedLoginProof,
   type WhitelistEntry,
 } from "./questionnaireOptionA";
+import type { QuestionnaireDefinition } from "./questionnaireProtocol";
 
 const electionId = "election-1";
 const coordinatorNpub = "npub1coordinator";
@@ -414,6 +415,79 @@ describe("questionnaireOptionA", () => {
       requiredQuestionIds: ["q1"],
     });
     expect(missingRequired).toBe(false);
+
+    const independentDefinition: QuestionnaireDefinition = {
+      schemaVersion: 1,
+      eventType: "questionnaire_definition",
+      responseMode: "blind_token",
+      questionnaireId: electionId,
+      title: "Scoped questions",
+      createdAt: 1,
+      openAt: 1,
+      closeAt: 2,
+      coordinatorPubkey: coordinatorNpub,
+      coordinatorEncryptionPubkey: coordinatorNpub,
+      responseVisibility: "public",
+      eligibilityMode: "allowlist",
+      allowMultipleResponsesPerPubkey: false,
+      ballotCredentialMode: "per_question",
+      questions: [
+        {
+          questionId: "q1",
+          prompt: "Question one?",
+          required: true,
+          type: "yes_no",
+          ballotSlot: { slotId: "ballot-1", slotIndex: 1, version: 1 },
+        },
+        {
+          questionId: "q2",
+          prompt: "Question two?",
+          required: true,
+          type: "yes_no",
+          ballotSlot: { slotId: "ballot-2", slotIndex: 2, version: 1 },
+        },
+      ],
+    };
+    const firstSlotProof = {
+      questionId: "q1",
+      tokenCommitment: "token-commitment-1",
+      blindSigningKeyId: "blind-key-1",
+      credential: "credential-1",
+      nullifier: "nullifier-1",
+      ballotScope: { questionId: "q1", slotId: "ballot-1", slotIndex: 1, version: 1 },
+    };
+    const wrongScopeForIndependentQuestion = validateBallotSubmission({
+      submission: {
+        ...makeSubmission(),
+        credentialBundle: [firstSlotProof],
+        payload: { electionId, responses: [{ questionId: "q2", type: "yes_no", answer: "yes" }] },
+      },
+      electionId,
+      electionState: "open",
+      requiredQuestionIds: ["q2"],
+      definition: independentDefinition,
+    });
+    expect(wrongScopeForIndependentQuestion).toBe(false);
+
+    const groupedDefinition: QuestionnaireDefinition = {
+      ...independentDefinition,
+      questions: independentDefinition.questions.map((question) => ({
+        ...question,
+        ballotSlot: { slotId: "ballot-1", slotIndex: 1, version: 1 },
+      })),
+    };
+    const groupedScopeForGroupedQuestion = validateBallotSubmission({
+      submission: {
+        ...makeSubmission(),
+        credentialBundle: [firstSlotProof],
+        payload: { electionId, responses: [{ questionId: "q2", type: "yes_no", answer: "yes" }] },
+      },
+      electionId,
+      electionState: "open",
+      requiredQuestionIds: ["q2"],
+      definition: groupedDefinition,
+    });
+    expect(groupedScopeForGroupedQuestion).toBe(true);
 
     let coordinator = makeCoordinatorState();
     coordinator = reduceCoordinatorEvent(coordinator, { type: "WHITELIST_ADDED", entry: makeWhitelistEntry() }).state;

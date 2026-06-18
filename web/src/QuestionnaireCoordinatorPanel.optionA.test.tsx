@@ -141,6 +141,33 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     expect(onConfigureWorker).not.toHaveBeenCalled();
   });
 
+  it("lets organisers group questions under one ballot index", async () => {
+    render(<QuestionnaireCoordinatorPanel view='build' coordinatorNpub='npub1organiser' />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Question" }));
+    const firstBallotIndex = screen.getByLabelText("Question 1 ballot index") as HTMLInputElement;
+    const secondBallotIndex = screen.getByLabelText("Question 2 ballot index") as HTMLInputElement;
+
+    expect(firstBallotIndex.value).toBe("1");
+    expect(secondBallotIndex.value).toBe("2");
+
+    fireEvent.change(secondBallotIndex, { target: { value: "1" } });
+
+    await waitFor(() => {
+      expect(secondBallotIndex.value).toBe("1");
+    });
+
+    const stored = JSON.parse(
+      window.localStorage.getItem(buildSimpleNamespacedLocalStorageKey("coordinator.questionnaire-draft-data.v1")) ?? "{}",
+    ) as { questions?: Array<{ ballotSlot?: { slotIndex?: number; slotId?: string; version?: number } }> };
+
+    expect(stored.questions?.[0]?.ballotSlot?.slotIndex).toBe(1);
+    expect(stored.questions?.[1]?.ballotSlot?.slotIndex).toBe(1);
+    expect(stored.questions?.[0]?.ballotSlot?.slotId).toBe("ballot-1");
+    expect(stored.questions?.[1]?.ballotSlot?.slotId).toBe("ballot-1");
+    expect(stored.questions?.[0]?.ballotSlot?.version).toBe(stored.questions?.[1]?.ballotSlot?.version);
+  });
+
   it("does not show the JSON preview controls in the build actions", () => {
     render(<QuestionnaireCoordinatorPanel />);
 
@@ -181,7 +208,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
       schemaVersion: 1,
       workerNpub: liveWorkerNpub,
       coordinatorNpub,
-      workerVersion: "0.1.24",
+      workerVersion: "0.1.26",
       state: "active",
       heartbeatAt: "2026-06-17T23:30:00.000Z",
       delegationId: "delegation_previous",

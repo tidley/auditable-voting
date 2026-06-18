@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 pub const OPTIONA_WORKER_DELEGATION_KIND: u16 = 31994;
 pub const OPTIONA_WORKER_DELEGATION_REVOCATION_KIND: u16 = 31995;
+pub const IMPLEMENTATION_KIND_QUESTIONNAIRE_DEFINITION: u16 = 6420;
 pub const IMPLEMENTATION_KIND_QUESTIONNAIRE_STATE: u16 = 6421;
 pub const IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND: u16 = 6424;
 pub const IMPLEMENTATION_KIND_QUESTIONNAIRE_SUBMISSION_DECISION: u16 = 6425;
@@ -118,8 +119,27 @@ pub struct WorkerElectionConfigSnapshot {
     #[serde(default)]
     pub eligibility_required: Option<bool>,
     pub blind_signing_private_key: Option<QuestionnaireBlindPrivateKey>,
+    #[serde(default)]
+    pub definition_reference: Option<QuestionnaireDefinitionReference>,
+    #[serde(default)]
     pub definition: Option<serde_json::Value>,
     pub sent_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestionnaireDefinitionReference {
+    pub questionnaire_id: String,
+    #[serde(default)]
+    pub coordinator_npub: Option<String>,
+    #[serde(default)]
+    pub relays: Option<Vec<String>>,
+    #[serde(default)]
+    pub definition_hash: Option<String>,
+    #[serde(default)]
+    pub definition_event_id: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -198,6 +218,20 @@ pub struct BlindBallotRequestBundleEnvelope {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CompressedBundleEnvelope {
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub schema_version: u8,
+    pub encoding: String,
+    pub inner_type: String,
+    pub payload: String,
+    pub original_length: usize,
+    pub compressed_length: usize,
+    pub sent_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BlindBallotIssuance {
     #[serde(rename = "type")]
     pub message_type: String,
@@ -209,8 +243,13 @@ pub struct BlindBallotIssuance {
     pub token_commitment: String,
     pub blind_signing_key_id: String,
     pub blind_signature: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub definition_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub definition_event_id: Option<String>,
     #[serde(default)]
     pub ballot_scope: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub definition: Option<serde_json::Value>,
     pub issued_at: String,
 }
@@ -231,6 +270,12 @@ pub struct BlindBallotIssuanceBundleEnvelope {
     #[serde(rename = "type")]
     pub message_type: String,
     pub schema_version: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub definition_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub definition_event_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub definition: Option<serde_json::Value>,
     pub issuances: Vec<BlindBallotIssuance>,
     pub sent_at: String,
 }
@@ -321,6 +366,12 @@ pub struct ElectionRuntimeState {
     pub last_questionnaire_close_publish_at: Option<String>,
     #[serde(default)]
     pub blind_signing_private_key: Option<QuestionnaireBlindPrivateKey>,
+    #[serde(default)]
+    pub definition_hash: Option<String>,
+    #[serde(default)]
+    pub definition_event_id: Option<String>,
+    #[serde(default)]
+    pub definition_relays: Vec<String>,
     #[serde(default)]
     pub definition: Option<serde_json::Value>,
     #[serde(default)]

@@ -259,7 +259,7 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 
 1. Open the invite link as the invited voter, or open the app as **Voter** and click **Check invites**.
 2. Open the pending questionnaire.
-3. Click **Request ballot** if the blind credential request does not start automatically.
+3. Click **Request ballot** if the blind credential request does not start automatically. Current per-question questionnaires request a bundle with one scoped credential per ballot index; large request bundles may be compressed before NIP-17 encryption, with plain JSON kept as the fallback.
 4. Wait for the ballot credential to be ready.
 5. Complete the questionnaire and click **Submit response**.
 6. After submission, Vote keeps the submitted answers visible and locks the question controls for that questionnaire.
@@ -289,7 +289,7 @@ This is the practical browser-based flow. The root landing page defaults to **Ob
 2. Share the public questionnaire link by copy or native device sharing, optionally using personalised links or roster-applied public announcements for invited voter npubs.
 3. Optional: in the separate **Questionnaire** tab `Audit proxy` section, use Set up audit proxy after publication to open the section and generate an audit proxy account, then use the quick start command or helper downloads or save an autoconfigured platform launcher that already includes the current organiser `npub`; right-click copy-link uses a shareable launcher URL that omits the audit proxy secret, generated launchers refresh the helper binary from GitHub Releases on each run, raw binary and direct CLI options sit under `Helper download and launch command`, and delegation still leaves the organiser as root authority.
 4. Receive blind-token requests over private DMs (or delegate handling to an audit proxy).
-5. Issue blind signatures to authorised voters over private DMs (or let the audit proxy blind-sign on behalf of the organiser for that delegated round). Invite payloads and cached election metadata now carry the audit proxy routing hint so voters can keep targeting the audit proxy if the organiser browser goes offline, and audit proxy election-config DMs also carry the questionnaire definition so audit-proxy-issued blind credentials can still render the ballot if the organiser browser is offline.
+5. Issue blind signatures to authorised voters over private DMs (or let the audit proxy blind-sign on behalf of the organiser for that delegated round). Invite payloads and cached election metadata carry the audit proxy routing hint plus a questionnaire pointer, so voters can keep targeting the audit proxy if the organiser browser goes offline; audit proxy election-config DMs carry the public definition pointer, and credential DMs carry only credentials/signatures plus a definition hash or event id.
 6. Watch public submissions and publish public accept/reject decisions (or delegate decision publication).
 7. Close the round and publish the result summary (or delegate proxy close + auto-summary once all expected invitees have accepted valid responses).
 
@@ -304,9 +304,9 @@ For larger live sessions, such as dozens of rounds or around 100 voters, the aud
 The proxy receives two private control messages from the organiser:
 
 1. a signed worker delegation that names the questionnaire, proxy `npub`, capabilities, control relays, and expiry
-2. an election config message containing the questionnaire metadata, blind-signing material needed for delegated issuance, per-questionnaire whitelisted voter npubs projected from the organiser's invited-voter roster, private invite-code hashes, and the routing hints voters should use
+2. an election config message containing the public questionnaire definition pointer, blind-signing material needed for delegated issuance, per-questionnaire whitelisted voter npubs projected from the organiser's invited-voter roster, private invite-code hashes, and the routing hints voters should use
 
-After activation, the proxy subscribes to its own NIP-17 mailbox over outbound relay connections, with bounded polling as a recovery path. It can issue blind ballot credentials, including first-claim private code invites, publish submission decisions, verify public submissions, close the questionnaire once the accepted valid response count reaches the expected invitee count, and publish result summaries when those capabilities are delegated. It refuses blind-signing material that does not match the published questionnaire definition, sends heartbeats and operation reports back to the organiser so the Questionnaire tab can show whether the proxy is active, and stays running for later delegated questionnaires until it is closed from the command line.
+After activation, the proxy subscribes to its own NIP-17 mailbox over outbound relay connections, with bounded polling as a recovery path. It can issue blind ballot credentials, including first-claim private code invites, publish submission decisions, verify public submissions, close the questionnaire once the accepted valid response count reaches the expected invitee count, and publish result summaries when those capabilities are delegated. It refuses blind-signing material that does not match the published questionnaire definition, decodes compressed request bundles before normal parsing, sends heartbeats and operation reports back to the organiser so the Questionnaire tab can show whether the proxy is active, and stays running for later delegated questionnaires until it is closed from the command line.
 
 Proxy closure is guarded by the same accepted-response set used for summary publication. Rejected, duplicate, invalid, or spam submissions do not count towards automatic closure. The delegated close event is published as questionnaire state with proxy provenance, so Organiser and Observer views label it as `Closed by audit proxy`.
 
@@ -405,12 +405,12 @@ The client uses:
 
 - React and TypeScript for the browser UI
 - `nostr-tools` for Nostr identities, events, relay reads, and relay writes
-- NIP-17 gift-wrapped DMs for private request and issuance traffic
+- NIP-17 gift-wrapped DMs for private request and issuance traffic; large request/issuance bundle envelopes can be gzip+base64url wrapped before encryption, and plain JSON remains valid
 - `@cloudflare/blindrsa-ts` for RSABSSA blind signatures
 - Rust/Wasm for deterministic replay and protocol validation in the public round path
 - an optional Rust audit proxy runtime (`worker/`) for delegated election operations over outbound-only relay connections
 - adaptive browser NIP-17 mailbox recovery that pages backwards until the active request, issuance, or submission acknowledgement is found, or until a short time budget is reached; local-key voter sessions subscribe to request-ack and credential DMs through the same raw nsec decrypt path used by recovery; delegated blind requests are encrypted separately to both organiser and proxy; public submission decisions are recovered through the public questionnaire event backfill
-- audit proxy DM polling with event-id dedupe so relay-randomised gift-wrap timestamps do not cause missed delegated blind requests, plus short decrypted DM metadata logs, status heartbeats back to the organiser, active delegation control-relay reads, delegated close + auto-summary after all expected invitees have accepted valid responses, clean exit after completed delegated work, and the smaller default helper relay set (relay.nostr.net, nos.lol, relay.nostr.info); older persisted relay hints are retained but known unreliable endpoints are retried with per-relay exponential backoff
+- audit proxy DM polling with event-id dedupe so relay-randomised gift-wrap timestamps do not cause missed delegated blind requests, plus compressed request-bundle decoding, short decrypted DM metadata logs, status heartbeats back to the organiser, active delegation control-relay reads, delegated close + auto-summary after all expected invitees have accepted valid responses, continuous operation until command-line shutdown, and the smaller default helper relay set (relay.nostr.net, nos.lol, relay.nostr.info); older persisted relay hints are retained but known unreliable endpoints are retried with per-relay exponential backoff
 - an optional FIPS host launcher (`web/public/fips-host/launch-auditable-voting-fips.sh`) that builds the upstream FIPS Rust daemon, enables `fips-overlay-v1` Nostr endpoint adverts, installs the complete Vite static build on the host's `fips0` address, opens the chosen mesh web port through the FIPS firewall, and can install the audit proxy as a disabled systemd service
 - browser storage for private active state and recovery
 

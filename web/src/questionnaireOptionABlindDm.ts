@@ -1,5 +1,7 @@
+import { gzipSync, gunzipSync, strFromU8, strToU8 } from "fflate";
 import { finalizeEvent, generateSecretKey, getEventHash, getPublicKey, nip19, nip44, type NostrEvent } from "nostr-tools";
 import { publishToRelaysStaggered, queueNostrPublish } from "./nostrPublishQueue";
+import { questionnaireDefinitionHash } from "./questionnaireDefinitionReference";
 import type {
   BallotAcceptanceResult,
   BallotSubmission,
@@ -10,7 +12,7 @@ import type {
   VoterElectionLocalState,
 } from "./questionnaireOptionA";
 import type { QuestionnaireBlindPrivateKey } from "./questionnaireBlindSignature";
-import type { QuestionnaireDefinition } from "./questionnaireProtocol";
+import type { QuestionnaireDefinition, QuestionnaireDefinitionReference } from "./questionnaireProtocol";
 import type { SignerService } from "./services/signerService";
 import type {
   WorkerDelegationCertificate,
@@ -45,6 +47,9 @@ const OPTION_A_BLIND_DM_BACKFILL_PAGE_LIMIT = 40;
 const OPTION_A_BLIND_DM_BACKFILL_MAX_PAGES = 8;
 const OPTION_A_BLIND_DM_BACKFILL_TIME_BUDGET_MS = 6_000;
 const OPTION_A_DM_EXISTENCE_CHECK_MAX_RELAYS = 6;
+const OPTION_A_COMPRESSED_BUNDLE_TYPE = "optiona_compressed_bundle_dm";
+const OPTION_A_COMPRESSED_BUNDLE_ENCODING = "gzip+base64url";
+const OPTION_A_BUNDLE_COMPRESSION_THRESHOLD_BYTES = 8 * 1024;
 const OPTION_A_BLIND_DM_READ_PRIORITY_RELAYS = [
   "wss://relay.nostr.net",
   "wss://nos.lol",
@@ -88,6 +93,10 @@ type BlindIssuanceDmEnvelope = {
 type BlindIssuanceBundleDmEnvelope = {
   type: "optiona_blind_issuance_bundle_dm";
   schemaVersion: 1;
+  definitionHash?: string | null;
+  definitionEventId?: string | null;
+  /** Legacy bundle-level definition. New bundles carry definitionHash / definitionEventId instead. */
+  definition?: QuestionnaireDefinition | null;
   issuances: BlindBallotIssuance[];
   sentAt: string;
 };
@@ -244,6 +253,8 @@ export type WorkerElectionConfigSnapshot = {
   bearerInviteCodes?: BearerInviteCodeEntry[];
   eligibilityRequired?: boolean;
   blindSigningPrivateKey?: QuestionnaireBlindPrivateKey | null;
+  definitionReference?: QuestionnaireDefinitionReference | null;
+  /** Legacy worker configs embedded the definition directly. */
   definition?: QuestionnaireDefinition | null;
   sentAt: string;
 };
@@ -254,6 +265,121 @@ type WorkerElectionConfigDmEnvelope = {
   snapshot: WorkerElectionConfigSnapshot;
   sentAt: string;
 };
+
+type CompressedBundleDmEnvelope = {
+  type: typeof OPTION_A_COMPRESSED_BUNDLE_TYPE;
+  schemaVersion: 1;
+  encoding: typeof OPTION_A_COMPRESSED_BUNDLE_ENCODING;
+  innerType: string;
+  payload: string;
+  originalLength: number;
+  compressedLength: number;
+  sentAt: string;
+};
+
+type OptionABlindDmEnvelope =
+  | BlindRequestDmEnvelope
+  | BlindRequestBundleDmEnvelope
+  | BlindIssuanceDmEnvelope
+  | BlindIssuanceBundleDmEnvelope
+  | BlindRequestAckDmEnvelope
+  | BlindIssuanceAckDmEnvelope
+  | BallotSubmissionDmEnvelope
+  | BallotSubmissionAckDmEnvelope
+  | BallotAcceptanceDmEnvelope
+  | VoterStateDmEnvelope
+  | CoordinatorStateDmEnvelope
+  | WorkerStatusDmEnvelope
+  | WorkerDelegationDmEnvelope
+  | WorkerDelegationRevocationDmEnvelope
+  | WorkerElectionConfigDmEnvelope;
+
+function bytesToBase64Url(bytes: Uint8Array) {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function base64UrlToBytes(value: string) {
+  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = `${normalized}${"=".repeat((4 - (normalized.length % 4)) % 4)}`;
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+function isCompressibleBundleEnvelope(envelope: Pick<OptionABlindDmEnvelope, "type">) {
+  return envelope.type === "optiona_blind_request_bundle_dm"
+    || envelope.type === "optiona_blind_issuance_bundle_dm";
+}
+
+export function encodeOptionADmEnvelopeContent(envelope: OptionABlindDmEnvelope) {
+  const plainContent = JSON.stringify(envelope);
+  if (!isCompressibleBundleEnvelope(envelope)) {
+    return plainContent;
+  }
+  const plainBytes = strToU8(plainContent);
+  if (plainBytes.length < OPTION_A_BUNDLE_COMPRESSION_THRESHOLD_BYTES) {
+    return plainContent;
+  }
+  const compressed = gzipSync(plainBytes, { level: 6 });
+  const wrapper: CompressedBundleDmEnvelope = {
+    type: OPTION_A_COMPRESSED_BUNDLE_TYPE,
+    schemaVersion: 1,
+    encoding: OPTION_A_COMPRESSED_BUNDLE_ENCODING,
+    innerType: envelope.type,
+    payload: bytesToBase64Url(compressed),
+    originalLength: plainBytes.length,
+    compressedLength: compressed.length,
+    sentAt: envelope.sentAt,
+  };
+  const wrappedContent = JSON.stringify(wrapper);
+  return strToU8(wrappedContent).length < plainBytes.length ? wrappedContent : plainContent;
+}
+
+export function parseOptionADmEnvelopeContent(content: string): unknown {
+  const parsed = JSON.parse(content) as Partial<CompressedBundleDmEnvelope> | unknown;
+  if (
+    parsed
+    && typeof parsed === "object"
+    && (parsed as Partial<CompressedBundleDmEnvelope>).type === OPTION_A_COMPRESSED_BUNDLE_TYPE
+  ) {
+    const wrapper = parsed as Partial<CompressedBundleDmEnvelope>;
+    if (
+      wrapper.schemaVersion !== 1
+      || wrapper.encoding !== OPTION_A_COMPRESSED_BUNDLE_ENCODING
+      || typeof wrapper.innerType !== "string"
+      || typeof wrapper.payload !== "string"
+      || typeof wrapper.originalLength !== "number"
+      || typeof wrapper.compressedLength !== "number"
+    ) {
+      throw new Error("Invalid compressed bundle envelope.");
+    }
+    const compressed = base64UrlToBytes(wrapper.payload);
+    if (compressed.length !== wrapper.compressedLength) {
+      throw new Error("Compressed bundle length mismatch.");
+    }
+    const uncompressed = strFromU8(gunzipSync(compressed));
+    if (strToU8(uncompressed).length !== wrapper.originalLength) {
+      throw new Error("Compressed bundle original length mismatch.");
+    }
+    const inner = JSON.parse(uncompressed) as { type?: unknown };
+    if (inner?.type !== wrapper.innerType) {
+      throw new Error("Compressed bundle inner type mismatch.");
+    }
+    return inner;
+  }
+  return parsed;
+}
 
 function optionABlindDmDebugLoggingEnabled() {
   const globalDebug = (globalThis as typeof globalThis & { __AUDITABLE_VOTING_DEBUG_OPTION_A?: unknown })
@@ -839,7 +965,7 @@ function isValidBlindIssuancePayload(issuance: BlindBallotIssuance | null | unde
 
 function parseBlindRequestDmContent(content: string): BlindBallotRequest[] | null {
   try {
-    const parsed = JSON.parse(content) as Partial<BlindRequestDmEnvelope | BlindRequestBundleDmEnvelope> | BlindBallotRequest;
+    const parsed = parseOptionADmEnvelopeContent(content) as Partial<BlindRequestDmEnvelope | BlindRequestBundleDmEnvelope> | BlindBallotRequest;
     const requests = (parsed as BlindRequestBundleDmEnvelope).type === "optiona_blind_request_bundle_dm"
       ? (parsed as BlindRequestBundleDmEnvelope).requests
       : (parsed as BlindRequestDmEnvelope).type === "optiona_blind_request_dm"
@@ -857,12 +983,28 @@ function parseBlindRequestDmContent(content: string): BlindBallotRequest[] | nul
 
 function parseBlindIssuanceDmContent(content: string): BlindBallotIssuance[] | null {
   try {
-    const parsed = JSON.parse(content) as Partial<BlindIssuanceDmEnvelope | BlindIssuanceBundleDmEnvelope> | BlindBallotIssuance;
-    const issuances = (parsed as BlindIssuanceBundleDmEnvelope).type === "optiona_blind_issuance_bundle_dm"
-      ? (parsed as BlindIssuanceBundleDmEnvelope).issuances
-      : (parsed as BlindIssuanceDmEnvelope).type === "optiona_blind_issuance_dm"
-        ? [(parsed as BlindIssuanceDmEnvelope).issuance]
-        : [parsed as BlindBallotIssuance];
+    const parsed = parseOptionADmEnvelopeContent(content) as Partial<BlindIssuanceDmEnvelope | BlindIssuanceBundleDmEnvelope> | BlindBallotIssuance;
+    let issuances: BlindBallotIssuance[];
+    if ((parsed as BlindIssuanceBundleDmEnvelope).type === "optiona_blind_issuance_bundle_dm") {
+      const bundle = parsed as BlindIssuanceBundleDmEnvelope;
+      const sharedDefinition = bundle.definition ?? null;
+      issuances = Array.isArray(bundle.issuances)
+        ? bundle.issuances.map((issuance) => (
+          {
+            ...issuance,
+            definitionHash: issuance.definitionHash ?? bundle.definitionHash ?? (
+              sharedDefinition ? questionnaireDefinitionHash(sharedDefinition) : null
+            ),
+            definitionEventId: issuance.definitionEventId ?? bundle.definitionEventId ?? null,
+            ...(sharedDefinition && !issuance.definition ? { definition: sharedDefinition } : {}),
+          }
+        ))
+        : [];
+    } else if ((parsed as BlindIssuanceDmEnvelope).type === "optiona_blind_issuance_dm") {
+      issuances = [(parsed as BlindIssuanceDmEnvelope).issuance];
+    } else {
+      issuances = [parsed as BlindBallotIssuance];
+    }
     if (!Array.isArray(issuances)) {
       return null;
     }
@@ -1104,7 +1246,7 @@ function parseWorkerDelegationRevocationDmContent(content: string): WorkerDelega
 
 function parseWorkerElectionConfigDmContent(content: string): WorkerElectionConfigSnapshot | null {
   try {
-    const parsed = JSON.parse(content) as Partial<WorkerElectionConfigDmEnvelope> | WorkerElectionConfigSnapshot;
+    const parsed = parseOptionADmEnvelopeContent(content) as Partial<WorkerElectionConfigDmEnvelope> | WorkerElectionConfigSnapshot;
     const snapshot = (parsed as WorkerElectionConfigDmEnvelope).type === "optiona_worker_election_config_dm"
       ? (parsed as WorkerElectionConfigDmEnvelope).snapshot
       : parsed as WorkerElectionConfigSnapshot;
@@ -1147,21 +1289,7 @@ function parseWorkerElectionConfigDmContent(content: string): WorkerElectionConf
 }
 
 function optionABlindDmSubject(
-  envelope: BlindRequestDmEnvelope
-    | BlindRequestBundleDmEnvelope
-    | BlindIssuanceDmEnvelope
-    | BlindIssuanceBundleDmEnvelope
-    | BlindRequestAckDmEnvelope
-    | BlindIssuanceAckDmEnvelope
-    | BallotSubmissionDmEnvelope
-    | BallotSubmissionAckDmEnvelope
-    | BallotAcceptanceDmEnvelope
-    | VoterStateDmEnvelope
-    | CoordinatorStateDmEnvelope
-    | WorkerStatusDmEnvelope
-    | WorkerDelegationDmEnvelope
-    | WorkerDelegationRevocationDmEnvelope
-    | WorkerElectionConfigDmEnvelope,
+  envelope: OptionABlindDmEnvelope,
 ) {
   switch (envelope.type) {
     case "optiona_blind_request_dm":
@@ -1202,21 +1330,7 @@ function createRumor(input: {
   recipientHex: string;
   relayUrl?: string;
   subject: string;
-  envelope: BlindRequestDmEnvelope
-    | BlindRequestBundleDmEnvelope
-    | BlindIssuanceDmEnvelope
-    | BlindIssuanceBundleDmEnvelope
-    | BlindRequestAckDmEnvelope
-    | BlindIssuanceAckDmEnvelope
-    | BallotSubmissionDmEnvelope
-    | BallotSubmissionAckDmEnvelope
-    | BallotAcceptanceDmEnvelope
-    | VoterStateDmEnvelope
-    | CoordinatorStateDmEnvelope
-    | WorkerStatusDmEnvelope
-    | WorkerDelegationDmEnvelope
-    | WorkerDelegationRevocationDmEnvelope
-    | WorkerElectionConfigDmEnvelope;
+  envelope: OptionABlindDmEnvelope;
 }) {
   const rumor = {
     kind: KIND_RUMOR_MESSAGE,
@@ -1225,7 +1339,7 @@ function createRumor(input: {
       input.relayUrl ? ["p", input.recipientHex, input.relayUrl] : ["p", input.recipientHex],
       ["subject", input.subject],
     ],
-    content: JSON.stringify(input.envelope),
+    content: encodeOptionADmEnvelopeContent(input.envelope),
     pubkey: input.senderHex,
   };
   return {
@@ -1621,20 +1735,7 @@ function createSecretKeyGiftWrapSubscription<T>(input: {
 async function publishEnvelope(input: {
   signer: SignerService;
   recipientNpub: string;
-  envelope: BlindRequestDmEnvelope
-    | BlindRequestBundleDmEnvelope
-    | BlindIssuanceDmEnvelope
-    | BlindIssuanceBundleDmEnvelope
-    | BlindRequestAckDmEnvelope
-    | BlindIssuanceAckDmEnvelope
-    | BallotSubmissionDmEnvelope
-    | BallotSubmissionAckDmEnvelope
-    | BallotAcceptanceDmEnvelope
-    | VoterStateDmEnvelope
-    | CoordinatorStateDmEnvelope
-    | WorkerStatusDmEnvelope
-    | WorkerDelegationDmEnvelope
-    | WorkerDelegationRevocationDmEnvelope;
+  envelope: OptionABlindDmEnvelope;
   fallbackNsec?: string;
   relays?: string[];
   channel: string;
@@ -1802,25 +1903,71 @@ export async function publishOptionABlindIssuanceDm(input: {
   fallbackNsec?: string;
   relays?: string[];
 }) {
+  const legacyDefinition = input.issuance.definition ?? null;
+  const issuance = {
+    ...input.issuance,
+    definition: undefined,
+    definitionHash: input.issuance.definitionHash ?? (legacyDefinition ? questionnaireDefinitionHash(legacyDefinition) : null),
+    definitionEventId: input.issuance.definitionEventId ?? null,
+  };
   return publishEnvelope({
     signer: input.signer,
     recipientNpub: input.recipientNpub,
     fallbackNsec: input.fallbackNsec,
     relays: input.relays,
-    channel: `optiona-blind-issuance:${input.issuance.electionId}:${input.issuance.requestId}`,
+    channel: `optiona-blind-issuance:${issuance.electionId}:${issuance.requestId}`,
     envelope: {
       type: "optiona_blind_issuance_dm",
       schemaVersion: 1,
-      issuance: input.issuance,
+      issuance,
       sentAt: new Date().toISOString(),
     },
   });
+}
+
+export function buildOptionABlindIssuanceBundleEnvelope(input: {
+  issuances: BlindBallotIssuance[];
+  definition?: QuestionnaireDefinition | null;
+  definitionHash?: string | null;
+  definitionEventId?: string | null;
+  sentAt?: string;
+}): BlindIssuanceBundleDmEnvelope {
+  const sharedDefinition = input.definition ?? input.issuances.find((issuance) => issuance.definition)?.definition ?? null;
+  const definitionHash = input.definitionHash
+    ?? input.issuances.find((issuance) => issuance.definitionHash)?.definitionHash
+    ?? (sharedDefinition ? questionnaireDefinitionHash(sharedDefinition) : null);
+  const definitionEventId = input.definitionEventId
+    ?? input.issuances.find((issuance) => issuance.definitionEventId)?.definitionEventId
+    ?? null;
+  const bundledIssuances = sharedDefinition
+    ? input.issuances.map((issuance) => ({
+      ...issuance,
+      definition: undefined,
+      definitionHash: issuance.definitionHash ?? definitionHash,
+      definitionEventId: issuance.definitionEventId ?? definitionEventId,
+    }))
+    : input.issuances.map((issuance) => ({
+      ...issuance,
+      definitionHash: issuance.definitionHash ?? definitionHash,
+      definitionEventId: issuance.definitionEventId ?? definitionEventId,
+    }));
+  return {
+    type: "optiona_blind_issuance_bundle_dm",
+    schemaVersion: 1,
+    definitionHash,
+    definitionEventId,
+    issuances: bundledIssuances,
+    sentAt: input.sentAt ?? new Date().toISOString(),
+  };
 }
 
 export async function publishOptionABlindIssuanceBundleDm(input: {
   signer: SignerService;
   recipientNpub: string;
   issuances: BlindBallotIssuance[];
+  definition?: QuestionnaireDefinition | null;
+  definitionHash?: string | null;
+  definitionEventId?: string | null;
   fallbackNsec?: string;
   relays?: string[];
 }) {
@@ -1834,12 +1981,12 @@ export async function publishOptionABlindIssuanceBundleDm(input: {
     fallbackNsec: input.fallbackNsec,
     relays: input.relays,
     channel: `optiona-blind-issuance-bundle:${first.electionId}:${first.invitedNpub}:${input.issuances.length}`,
-    envelope: {
-      type: "optiona_blind_issuance_bundle_dm",
-      schemaVersion: 1,
+    envelope: buildOptionABlindIssuanceBundleEnvelope({
       issuances: input.issuances,
-      sentAt: new Date().toISOString(),
-    },
+      definition: input.definition,
+      definitionHash: input.definitionHash,
+      definitionEventId: input.definitionEventId,
+    }),
   });
 }
 

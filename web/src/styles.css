@@ -2183,7 +2183,7 @@ code {
 
 .simple-questionnaire-question-head {
   display: grid;
-  grid-template-columns: max-content minmax(170px, 260px) minmax(0, 1fr) max-content;
+  grid-template-columns: max-content minmax(170px, 260px) minmax(0, 1fr) max-content max-content;
   align-items: center;
   gap: 12px;
 }
@@ -2245,6 +2245,26 @@ code {
   cursor: pointer;
   grid-column: 4;
   justify-self: end;
+}
+
+.simple-questionnaire-ballot-index-control {
+  display: inline-flex;
+  width: max-content;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--simple-soft);
+  font-size: 0.9rem;
+  font-weight: 800;
+  grid-column: 5;
+  justify-self: end;
+}
+
+.simple-questionnaire-ballot-index-input {
+  width: 58px;
+  min-height: 38px;
+  padding: 6px 8px;
+  text-align: center;
 }
 
 .simple-questionnaire-required-toggle input[type="checkbox"] {
@@ -8044,6 +8064,11 @@ code {
   .simple-questionnaire-question-head .simple-questionnaire-required-toggle {
     grid-column: 2;
     margin-left: 0;
+  }
+
+  .simple-questionnaire-question-head .simple-questionnaire-ballot-index-control {
+    grid-column: 2;
+    justify-self: end;
   }
 
   .simple-questionnaire-option-stack {

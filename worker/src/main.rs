@@ -6,12 +6,12 @@ use crate::config::WorkerConfig;
 use crate::model::{
     is_expired, now_iso, BearerInviteCodeEntry, BlindBallotIssuance,
     BlindBallotIssuanceBundleEnvelope, BlindBallotIssuanceEnvelope, BlindBallotRequest,
-    BlindBallotRequestBundleEnvelope, BlindBallotRequestEnvelope, ElectionRuntimeState,
-    QuestionnaireBlindResponseEvent, QuestionnaireSubmissionDecisionEvent, WorkerCapability,
-    WorkerDelegationCertificate, WorkerDelegationEnvelope, WorkerDelegationRevocation,
-    WorkerElectionConfigEnvelope, WorkerElectionConfigSnapshot, WorkerPersistentState,
-    WorkerRevocationEnvelope, WorkerStatusEnvelope, WorkerStatusSnapshot,
-    IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND,
+    BlindBallotRequestBundleEnvelope, BlindBallotRequestEnvelope, CompressedBundleEnvelope,
+    ElectionRuntimeState, QuestionnaireBlindResponseEvent, QuestionnaireSubmissionDecisionEvent,
+    WorkerCapability, WorkerDelegationCertificate, WorkerDelegationEnvelope,
+    WorkerDelegationRevocation, WorkerElectionConfigEnvelope, WorkerElectionConfigSnapshot,
+    WorkerPersistentState, WorkerRevocationEnvelope, WorkerStatusEnvelope, WorkerStatusSnapshot,
+    IMPLEMENTATION_KIND_QUESTIONNAIRE_DEFINITION, IMPLEMENTATION_KIND_QUESTIONNAIRE_RESPONSE_BLIND,
     IMPLEMENTATION_KIND_QUESTIONNAIRE_RESULT_SUMMARY, IMPLEMENTATION_KIND_QUESTIONNAIRE_STATE,
     IMPLEMENTATION_KIND_QUESTIONNAIRE_SUBMISSION_DECISION, OPTIONA_WORKER_DELEGATION_KIND,
     OPTIONA_WORKER_DELEGATION_REVOCATION_KIND,
@@ -23,10 +23,15 @@ use base64::Engine as _;
 use blind_rsa_signatures::SecretKeySha384PSSDeterministic;
 use chrono::Utc;
 use crypto_bigint::BoxedUint;
+use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use nostr_sdk::prelude::*;
 use rsa::RsaPrivateKey;
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::env;
+use std::io::{Read, Write};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast::error::RecvError;
@@ -49,6 +54,9 @@ const DEFAULT_PUBLIC_LOOKBACK_SECS: u64 = 12 * 60 * 60;
 const CONTROL_DM_DEDUPE_RETENTION_SECS: i64 = 14 * 24 * 60 * 60;
 const PRIVATE_DM_SEND_TIMEOUT_SECS: u64 = 12;
 const COMPLETION_CLOSE_GRACE_SECS: u64 = 5;
+const COMPRESSED_BUNDLE_MESSAGE_TYPE: &str = "optiona_compressed_bundle_dm";
+const COMPRESSED_BUNDLE_ENCODING: &str = "gzip+base64url";
+const BUNDLE_COMPRESSION_THRESHOLD_BYTES: usize = 8 * 1024;
 const DISCOURAGED_WORKER_READ_RELAYS: &[&str] = &[
     "wss://strfry.bitsbytom.com",
     "wss://nip17.tomdwyer.uk",
@@ -113,6 +121,139 @@ fn sign_blinded_message(blinded_hex: &str, private_jwk: &serde_json::Value) -> R
         .collect::<String>())
 }
 
+fn canonical_json(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Null => "null".to_string(),
+        serde_json::Value::Bool(entry) => {
+            if *entry {
+                "true".to_string()
+            } else {
+                "false".to_string()
+            }
+        }
+        serde_json::Value::Number(number) => number.to_string(),
+        serde_json::Value::String(entry) => {
+            serde_json::to_string(entry).unwrap_or_else(|_| "\"\"".to_string())
+        }
+        serde_json::Value::Array(entries) => format!(
+            "[{}]",
+            entries
+                .iter()
+                .map(canonical_json)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        serde_json::Value::Object(entries) => {
+            let mut keys = entries.keys().collect::<Vec<_>>();
+            keys.sort();
+            format!(
+                "{{{}}}",
+                keys.into_iter()
+                    .filter_map(|key| {
+                        Some(format!(
+                            "{}:{}",
+                            serde_json::to_string(key).ok()?,
+                            canonical_json(entries.get(key)?)
+                        ))
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        }
+    }
+}
+
+fn sha256_hex(value: &str) -> String {
+    Sha256::digest(value.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
+}
+
+fn questionnaire_definition_hash(definition: &serde_json::Value) -> String {
+    sha256_hex(&canonical_json(definition))
+}
+
+fn compressible_bundle_message_type(message_type: &str) -> bool {
+    matches!(
+        message_type,
+        "optiona_blind_request_bundle_dm" | "optiona_blind_issuance_bundle_dm"
+    )
+}
+
+fn maybe_compress_bundle_content(
+    content: String,
+    message_type: &str,
+    sent_at: &str,
+) -> Result<String> {
+    if !compressible_bundle_message_type(message_type)
+        || content.as_bytes().len() < BUNDLE_COMPRESSION_THRESHOLD_BYTES
+    {
+        return Ok(content);
+    }
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(content.as_bytes())?;
+    let compressed = encoder.finish()?;
+    let wrapper = serde_json::json!({
+        "type": COMPRESSED_BUNDLE_MESSAGE_TYPE,
+        "schemaVersion": 1,
+        "encoding": COMPRESSED_BUNDLE_ENCODING,
+        "innerType": message_type,
+        "payload": URL_SAFE_NO_PAD.encode(&compressed),
+        "originalLength": content.as_bytes().len(),
+        "compressedLength": compressed.len(),
+        "sentAt": sent_at,
+    });
+    let wrapped = serde_json::to_string(&wrapper)?;
+    if wrapped.as_bytes().len() < content.as_bytes().len() {
+        Ok(wrapped)
+    } else {
+        Ok(content)
+    }
+}
+
+fn unwrap_compressed_bundle_value(value: serde_json::Value) -> Result<serde_json::Value> {
+    if value
+        .get("type")
+        .and_then(|entry| entry.as_str())
+        != Some(COMPRESSED_BUNDLE_MESSAGE_TYPE)
+    {
+        return Ok(value);
+    }
+    let envelope: CompressedBundleEnvelope = serde_json::from_value(value)
+        .context("invalid compressed bundle envelope")?;
+    if envelope.schema_version != 1
+        || envelope.encoding != COMPRESSED_BUNDLE_ENCODING
+        || !compressible_bundle_message_type(&envelope.inner_type)
+    {
+        anyhow::bail!("unsupported compressed bundle envelope");
+    }
+    let compressed = URL_SAFE_NO_PAD
+        .decode(envelope.payload.as_bytes())
+        .context("invalid compressed bundle payload")?;
+    if compressed.len() != envelope.compressed_length {
+        anyhow::bail!("compressed bundle length mismatch");
+    }
+    let mut decoder = GzDecoder::new(compressed.as_slice());
+    let mut content = String::new();
+    decoder
+        .read_to_string(&mut content)
+        .context("invalid compressed bundle gzip payload")?;
+    if content.as_bytes().len() != envelope.original_length {
+        anyhow::bail!("compressed bundle length mismatch");
+    }
+    let inner: serde_json::Value = serde_json::from_str(&content)
+        .context("invalid compressed bundle JSON payload")?;
+    let inner_type = inner
+        .get("type")
+        .and_then(|entry| entry.as_str())
+        .unwrap_or_default();
+    if inner_type != envelope.inner_type {
+        anyhow::bail!("compressed bundle inner type mismatch");
+    }
+    Ok(inner)
+}
+
 fn random_suffix() -> String {
     format!(
         "{}{:08x}",
@@ -145,6 +286,16 @@ fn rumor_message_type(content: &str) -> String {
     serde_json::from_str::<serde_json::Value>(content)
         .ok()
         .and_then(|value| {
+            if value
+                .get("type")
+                .and_then(|entry| entry.as_str())
+                == Some(COMPRESSED_BUNDLE_MESSAGE_TYPE)
+            {
+                return value
+                    .get("innerType")
+                    .and_then(|entry| entry.as_str())
+                    .map(str::to_string);
+            }
             value
                 .get("type")
                 .and_then(|entry| entry.as_str())
@@ -238,8 +389,26 @@ fn apply_worker_election_config(
     if snapshot.blind_signing_private_key.is_some() {
         election.blind_signing_private_key = snapshot.blind_signing_private_key.clone();
     }
+    if let Some(reference) = &snapshot.definition_reference {
+        if let Some(hash) = reference.definition_hash.as_ref().map(|entry| entry.trim()).filter(|entry| !entry.is_empty()) {
+            election.definition_hash = Some(hash.to_string());
+        }
+        if let Some(event_id) = reference.definition_event_id.as_ref().map(|entry| entry.trim()).filter(|entry| !entry.is_empty()) {
+            election.definition_event_id = Some(event_id.to_string());
+        }
+        if let Some(relays) = &reference.relays {
+            election.definition_relays = relays
+                .iter()
+                .map(|entry| entry.trim().to_string())
+                .filter(|entry| !entry.is_empty())
+                .collect();
+        }
+    }
     if snapshot.definition.is_some() {
         election.definition = snapshot.definition.clone();
+        if let Some(definition) = &election.definition {
+            election.definition_hash = Some(questionnaire_definition_hash(definition));
+        }
     }
     if completion_was_reopened_by_expected_count_change(
         previous_expected_invitee_count,
@@ -689,9 +858,36 @@ fn build_blind_issuance(
         token_commitment: request.token_commitment.clone(),
         blind_signing_key_id: request.blind_signing_key_id.clone(),
         blind_signature,
+        definition_hash: election.definition_hash.clone().or_else(|| {
+            election
+                .definition
+                .as_ref()
+                .map(questionnaire_definition_hash)
+        }),
+        definition_event_id: election.definition_event_id.clone(),
         ballot_scope: request.ballot_scope.clone(),
-        definition: election.definition.clone(),
+        definition: None,
         issued_at,
+    }
+}
+
+fn build_blind_issuance_bundle_envelope(
+    issuances: &[BlindBallotIssuance],
+) -> BlindBallotIssuanceBundleEnvelope {
+    let definition_hash = issuances
+        .iter()
+        .find_map(|issuance| issuance.definition_hash.clone());
+    let definition_event_id = issuances
+        .iter()
+        .find_map(|issuance| issuance.definition_event_id.clone());
+    BlindBallotIssuanceBundleEnvelope {
+        message_type: "optiona_blind_issuance_bundle_dm".to_string(),
+        schema_version: 1,
+        definition_hash,
+        definition_event_id,
+        definition: None,
+        issuances: issuances.to_vec(),
+        sent_at: now_iso(),
     }
 }
 
@@ -721,6 +917,9 @@ fn ballot_scope_key(scope: &Option<serde_json::Value>) -> String {
     let slot_index = ballot_scope_positive_integer_field(scope, "slotIndex");
     if question_id.is_empty() && slot_id.is_empty() && version == 0 && slot_index == 0 {
         return "__questionnaire__".to_string();
+    }
+    if slot_index > 0 {
+        return format!("slot:{}:v{}", slot_index, if version == 0 { 1 } else { version });
     }
     format!(
         "{}:{}:{}:v{}",
@@ -1243,6 +1442,14 @@ impl WorkerRuntime {
                     }
                 }
             }
+            for relay in &election.definition_relays {
+                match RelayUrl::parse(relay) {
+                    Ok(parsed) => relays.push(parsed),
+                    Err(error) => {
+                        warn!("ignoring invalid definition relay {relay}: {error}")
+                    }
+                }
+            }
         }
         drop(state);
         self.select_relay_retry_batch(dedupe_relays(relays)).await
@@ -1310,9 +1517,16 @@ impl WorkerRuntime {
     }
 
     async fn process_control_message(&self, content: &str) -> Result<bool> {
-        let value: serde_json::Value = match serde_json::from_str(content) {
+        let raw_value: serde_json::Value = match serde_json::from_str(content) {
             Ok(parsed) => parsed,
             Err(_) => return Ok(true),
+        };
+        let value = match unwrap_compressed_bundle_value(raw_value) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                warn!("failed to decode compressed control message: {error}");
+                return Ok(true);
+            }
         };
         let message_type = value
             .get("type")
@@ -1391,6 +1605,12 @@ impl WorkerRuntime {
             ])
             .since(since_ts)
             .limit(300);
+        let definition_filter = Filter::new()
+            .author(self.coordinator_pubkey)
+            .kind(Kind::Custom(IMPLEMENTATION_KIND_QUESTIONNAIRE_DEFINITION))
+            .hashtag("questionnaire_definition")
+            .since(since_ts)
+            .limit(300);
 
         let relays = self.effective_worker_relays().await;
         self.ensure_relays_connected(&relays).await;
@@ -1402,16 +1622,27 @@ impl WorkerRuntime {
             .context("failed to subscribe to public response plane")?;
         let public_response_subscription_id = response_output.val.clone();
         let delegation_subscription_id = SubscriptionId::generate();
+        let definition_subscription_id = SubscriptionId::generate();
         let delegation_output = self
             .client
             .subscribe_with_id_to(
-                relays,
+                relays.clone(),
                 delegation_subscription_id.clone(),
                 delegation_filter,
                 None,
             )
             .await
             .context("failed to subscribe to public delegation plane")?;
+        let definition_output = self
+            .client
+            .subscribe_with_id_to(
+                relays,
+                definition_subscription_id.clone(),
+                definition_filter,
+                None,
+            )
+            .await
+            .context("failed to subscribe to public definition plane")?;
 
         if !response_output.failed.is_empty() {
             warn!(
@@ -1437,6 +1668,18 @@ impl WorkerRuntime {
                     .join("; ")
             );
         }
+        if !definition_output.failed.is_empty() {
+            warn!(
+                "public definition subscription rejected by {} relays: {}",
+                definition_output.failed.len(),
+                definition_output
+                    .failed
+                    .into_iter()
+                    .map(|(relay, error)| format!("{relay}: {error}"))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            );
+        }
 
         info!(
             "public response subscription active: id={}, relays={}",
@@ -1447,6 +1690,11 @@ impl WorkerRuntime {
             "public delegation subscription active: id={}, relays={}",
             delegation_subscription_id,
             delegation_output.success.len()
+        );
+        info!(
+            "public definition subscription active: id={}, relays={}",
+            definition_subscription_id,
+            definition_output.success.len()
         );
 
         let mut notification_receiver = self.client.notifications();
@@ -1459,6 +1707,13 @@ impl WorkerRuntime {
                 }) if event_subscription_id == public_response_subscription_id => {
                     self.process_public_response_event(&event, &since_ts)
                         .await?;
+                }
+                Ok(RelayPoolNotification::Event {
+                    subscription_id: event_subscription_id,
+                    event,
+                    ..
+                }) if event_subscription_id == definition_subscription_id => {
+                    self.process_public_definition_event(&event).await?;
                 }
                 Ok(RelayPoolNotification::Event {
                     subscription_id: event_subscription_id,
@@ -1498,6 +1753,71 @@ impl WorkerRuntime {
                 _ => {}
             }
         }
+    }
+
+    async fn process_public_definition_event(&self, event: &Event) -> Result<bool> {
+        if event.kind != Kind::Custom(IMPLEMENTATION_KIND_QUESTIONNAIRE_DEFINITION) {
+            return Ok(false);
+        }
+        let definition = match serde_json::from_str::<serde_json::Value>(&event.content) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                warn!("failed to parse questionnaire definition event {}: {error}", event.id);
+                return Ok(false);
+            }
+        };
+        if definition
+            .get("eventType")
+            .and_then(|entry| entry.as_str())
+            != Some("questionnaire_definition")
+        {
+            return Ok(false);
+        }
+        let Some(questionnaire_id) = definition
+            .get("questionnaireId")
+            .and_then(|entry| entry.as_str())
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty())
+            .map(str::to_string)
+        else {
+            return Ok(false);
+        };
+        let definition_hash = questionnaire_definition_hash(&definition);
+        let mut state = self.state.lock().await;
+        let election = state
+            .elections
+            .entry(questionnaire_id.clone())
+            .or_insert_with(ElectionRuntimeState::default);
+        if election.election_id.is_empty() {
+            election.election_id = questionnaire_id.clone();
+        }
+        if let Some(expected_hash) = election
+            .definition_hash
+            .as_ref()
+            .map(|entry| entry.trim())
+            .filter(|entry| !entry.is_empty())
+        {
+            if expected_hash != definition_hash {
+                debug!(
+                    "public questionnaire definition ignored due to hash mismatch: election_id={}, expected={}, received={}",
+                    questionnaire_id,
+                    expected_hash,
+                    definition_hash
+                );
+                return Ok(false);
+            }
+        }
+        election.definition = Some(definition);
+        election.definition_hash = Some(definition_hash);
+        election.definition_event_id = Some(event.id.to_hex());
+        state.last_public_scan_at = Some(now_iso());
+        self.store.save(&state)?;
+        debug!(
+            "public questionnaire definition stored: election_id={}, event_id={}",
+            questionnaire_id,
+            event.id
+        );
+        Ok(true)
     }
 
     async fn process_public_response_event(
@@ -1928,14 +2248,56 @@ impl WorkerRuntime {
             return Ok(());
         }
         self.store.save(&state)?;
+        let should_fetch_public_definition =
+            snapshot.definition_reference.is_some() && snapshot.definition.is_none();
+        drop(state);
         info!(
-            "worker election config applied: election_id={}, delegation_id={}, expected_invitee_count={:?}, has_blind_signing_key={}, has_definition={}",
+            "worker election config applied: election_id={}, delegation_id={}, expected_invitee_count={:?}, has_blind_signing_key={}, has_definition_reference={}, has_legacy_definition={}",
             snapshot.election_id,
             snapshot.delegation_id,
             snapshot.expected_invitee_count,
             snapshot.blind_signing_private_key.is_some(),
+            snapshot.definition_reference.is_some(),
             snapshot.definition.is_some(),
         );
+        if should_fetch_public_definition {
+            self.fetch_public_definition_for_election(&snapshot.election_id)
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn fetch_public_definition_for_election(&self, election_id: &str) -> Result<()> {
+        let relays = self.effective_worker_relays().await;
+        self.ensure_relays_connected(&relays).await;
+        let filter = Filter::new()
+            .author(self.coordinator_pubkey)
+            .kind(Kind::Custom(IMPLEMENTATION_KIND_QUESTIONNAIRE_DEFINITION))
+            .hashtag("questionnaire_definition")
+            .custom_tag(
+                SingleLetterTag::lowercase(Alphabet::Q),
+                election_id.to_string(),
+            )
+            .limit(100);
+        let events = self
+            .client
+            .fetch_events(filter, Duration::from_secs(5))
+            .await
+            .context("failed to fetch public questionnaire definition")?;
+        let mut handled = false;
+        for event in events.into_iter() {
+            if event.content.contains(election_id)
+                && self.process_public_definition_event(&event).await?
+            {
+                handled = true;
+            }
+        }
+        if !handled {
+            debug!(
+                "public questionnaire definition fetch found no matching definition: election_id={}",
+                election_id
+            );
+        }
         Ok(())
     }
 
@@ -1977,6 +2339,17 @@ impl WorkerRuntime {
                 self.store.save(&state)?;
                 warn!(
                     "blind request deferred for election {} because no blind signing key is configured",
+                    request.election_id
+                );
+                return Ok(PreparedBlindIssuance::Deferred);
+            }
+            if election.definition.is_none() {
+                election
+                    .deferred_blind_request_ids
+                    .insert(request.request_id.clone());
+                self.store.save(&state)?;
+                warn!(
+                    "blind request deferred for election {} because public questionnaire definition is not loaded yet",
                     request.election_id
                 );
                 return Ok(PreparedBlindIssuance::Deferred);
@@ -2045,6 +2418,16 @@ impl WorkerRuntime {
             .blind_signing_private_key
             .clone()
             .expect("checked above");
+        let definition_key_id = definition_blind_signing_key_id(&election.definition);
+        if definition_key_id.as_deref().is_some_and(|key_id| key_id != private_key.key_id) {
+            warn!(
+                "blind request ignored for election {} because public definition key does not match worker private key definition={} worker={}",
+                request.election_id,
+                definition_key_id.unwrap_or_else(|| "missing".to_string()),
+                private_key.key_id
+            );
+            return Ok(PreparedBlindIssuance::Handled);
+        }
         if private_key.key_id != request.blind_signing_key_id {
             let mut state = self.state.lock().await;
             if let Some(election) = state.elections.get_mut(&request.election_id) {
@@ -2100,13 +2483,10 @@ impl WorkerRuntime {
             };
             serde_json::to_string(&envelope)?
         } else {
-            let envelope = BlindBallotIssuanceBundleEnvelope {
-                message_type: "optiona_blind_issuance_bundle_dm".to_string(),
-                schema_version: 1,
-                issuances: issuances.to_vec(),
-                sent_at: now_iso(),
-            };
-            serde_json::to_string(&envelope)?
+            let envelope = build_blind_issuance_bundle_envelope(issuances);
+            let message_type = envelope.message_type.clone();
+            let sent_at = envelope.sent_at.clone();
+            maybe_compress_bundle_content(serde_json::to_string(&envelope)?, &message_type, &sent_at)?
         };
         self.send_private_msg_best_effort(recipient, content, "blind issuance")
             .await
@@ -2144,7 +2524,7 @@ impl WorkerRuntime {
     async fn handle_blind_request_bundle(&self, requests: Vec<BlindBallotRequest>) -> Result<bool> {
         let mut handled_any = false;
         let mut prepared_by_recipient: std::collections::HashMap<
-            String,
+            (String, String),
             Vec<(BlindBallotRequest, BlindBallotIssuance)>,
         > = std::collections::HashMap::new();
         let mut seen_bundle_scope_keys = std::collections::HashSet::new();
@@ -2167,13 +2547,13 @@ impl WorkerRuntime {
                 PreparedBlindIssuance::Issuance { request, issuance } => {
                     handled_any = true;
                     prepared_by_recipient
-                        .entry(request.invited_npub.clone())
+                        .entry((request.invited_npub.clone(), request.election_id.clone()))
                         .or_default()
                         .push((request, issuance));
                 }
             }
         }
-        for (recipient_npub, entries) in prepared_by_recipient {
+        for ((recipient_npub, election_id), entries) in prepared_by_recipient {
             let issuances = entries
                 .iter()
                 .map(|(_, issuance)| issuance.clone())
@@ -2182,7 +2562,8 @@ impl WorkerRuntime {
                 .publish_prepared_blind_issuances(&recipient_npub, &issuances)
                 .await?;
             debug!(
-                "blind issuance bundle published: recipient_npub={}, issuances={}, relay_successes={}",
+                "blind issuance bundle published: election_id={}, recipient_npub={}, issuances={}, relay_successes={}",
+                election_id,
                 recipient_npub,
                 issuances.len(),
                 successes
@@ -2451,6 +2832,7 @@ mod tests {
             }]),
             eligibility_required: Some(true),
             blind_signing_private_key: None,
+            definition_reference: None,
             definition: Some(definition.clone()),
             sent_at: now_iso(),
         };
@@ -2468,7 +2850,11 @@ mod tests {
         assert!(election
             .bearer_invite_codes
             .contains_key("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
-        assert_eq!(election.definition, Some(definition));
+        assert_eq!(election.definition, Some(definition.clone()));
+        assert_eq!(
+            election.definition_hash.as_deref(),
+            Some(questionnaire_definition_hash(&definition).as_str())
+        );
     }
 
     #[test]
@@ -2492,6 +2878,7 @@ mod tests {
                 jwk: json!({}),
                 private_jwk: json!({}),
             }),
+            definition_reference: None,
             definition: Some(json!({
                 "schemaVersion": 1,
                 "eventType": "questionnaire_definition",
@@ -2529,6 +2916,7 @@ mod tests {
             bearer_invite_codes: Some(vec![]),
             eligibility_required: Some(true),
             blind_signing_private_key: None,
+            definition_reference: None,
             definition: None,
             sent_at: "2026-06-15T12:41:49.000Z".to_string(),
         };
@@ -2570,6 +2958,7 @@ mod tests {
             bearer_invite_codes: Some(vec![]),
             eligibility_required: Some(true),
             blind_signing_private_key: None,
+            definition_reference: None,
             definition: None,
             sent_at: "2026-06-15T20:09:02.000Z".to_string(),
         };
@@ -2623,6 +3012,7 @@ mod tests {
             bearer_invite_codes: Some(vec![]),
             eligibility_required: Some(true),
             blind_signing_private_key: None,
+            definition_reference: None,
             definition: None,
             sent_at: "2026-06-16T11:32:05.000Z".to_string(),
         };
@@ -2652,6 +3042,7 @@ mod tests {
             bearer_invite_codes: Some(vec![]),
             eligibility_required: Some(true),
             blind_signing_private_key: None,
+            definition_reference: None,
             definition: None,
             sent_at: "2026-06-15T20:09:02.000Z".to_string(),
         };
@@ -2698,6 +3089,7 @@ mod tests {
             bearer_invite_codes: Some(vec![]),
             eligibility_required: Some(false),
             blind_signing_private_key: None,
+            definition_reference: None,
             definition: None,
             sent_at: "2026-06-15T20:09:03.000Z".to_string(),
         };
@@ -3006,7 +3398,7 @@ mod tests {
     }
 
     #[test]
-    fn build_blind_issuance_carries_worker_definition() {
+    fn build_blind_issuance_carries_worker_definition_hash() {
         let definition = json!({
             "schemaVersion": 2,
             "eventType": "questionnaire_definition",
@@ -3048,8 +3440,145 @@ mod tests {
             "blind_signature_worker_definition"
         );
         assert_eq!(issuance.ballot_scope, request.ballot_scope);
-        assert_eq!(issuance.definition, Some(definition));
+        assert_eq!(issuance.definition, None);
+        assert_eq!(
+            issuance.definition_hash.as_deref(),
+            Some(questionnaire_definition_hash(&definition).as_str())
+        );
+        assert_eq!(issuance.definition_event_id, None);
         assert_eq!(issuance.issued_at, "2026-04-23T00:00:00Z");
+    }
+
+    #[test]
+    fn blind_issuance_bundle_carries_definition_hash_without_definition() {
+        let definition = json!({
+            "schemaVersion": 1,
+            "eventType": "questionnaire_definition",
+            "questionnaireId": "q_worker_definition",
+            "title": "Delegated definition",
+            "questions": [{
+                "questionId": "q1",
+                "prompt": "Question 1",
+                "type": "yes_no"
+            }]
+        });
+        let election = ElectionRuntimeState {
+            definition: Some(definition.clone()),
+            ..ElectionRuntimeState::default()
+        };
+        let mut first_request = sample_request();
+        first_request.ballot_scope = Some(json!({
+            "questionId": "q1",
+            "slotId": "q1:1",
+            "slotIndex": 1,
+            "version": 1
+        }));
+        let mut second_request = sample_request();
+        second_request.request_id = "request_worker_definition_q2".to_string();
+        second_request.ballot_scope = Some(json!({
+            "questionId": "q2",
+            "slotId": "q2:1",
+            "slotIndex": 2,
+            "version": 1
+        }));
+
+        let envelope = build_blind_issuance_bundle_envelope(&[
+            build_blind_issuance(
+                &first_request,
+                &election,
+                "blind_signature_worker_definition_q1".to_string(),
+                "2026-04-23T00:00:00Z".to_string(),
+            ),
+            build_blind_issuance(
+                &second_request,
+                &election,
+                "blind_signature_worker_definition_q2".to_string(),
+                "2026-04-23T00:00:01Z".to_string(),
+            ),
+        ]);
+
+        assert_eq!(envelope.definition, None);
+        assert_eq!(
+            envelope.definition_hash.as_deref(),
+            Some(questionnaire_definition_hash(&definition).as_str())
+        );
+        assert_eq!(envelope.issuances.len(), 2);
+        assert!(envelope
+            .issuances
+            .iter()
+            .all(|issuance| issuance.definition.is_none()));
+        let serialized = serde_json::to_value(&envelope).expect("serialize bundle");
+        assert!(serialized.get("definition").is_none());
+        assert_eq!(
+            serialized.get("definitionHash").and_then(|entry| entry.as_str()),
+            Some(questionnaire_definition_hash(&definition).as_str())
+        );
+        for issuance in serialized["issuances"]
+            .as_array()
+            .expect("serialized issuances")
+        {
+            assert!(issuance.get("definition").is_none());
+            assert_eq!(
+                issuance.get("definitionHash").and_then(|entry| entry.as_str()),
+                Some(questionnaire_definition_hash(&definition).as_str())
+            );
+        }
+    }
+
+    #[test]
+    fn small_bundle_content_stays_plain_json() {
+        let envelope = BlindBallotRequestBundleEnvelope {
+            message_type: "optiona_blind_request_bundle_dm".to_string(),
+            schema_version: 1,
+            requests: vec![sample_request()],
+            sent_at: "2026-04-23T00:00:00Z".to_string(),
+        };
+        let content = serde_json::to_string(&envelope).expect("serialize request bundle");
+        let encoded = maybe_compress_bundle_content(
+            content,
+            "optiona_blind_request_bundle_dm",
+            "2026-04-23T00:00:00Z",
+        )
+        .expect("encode bundle");
+        let value: serde_json::Value = serde_json::from_str(&encoded).expect("parse encoded bundle");
+
+        assert_eq!(
+            value.get("type").and_then(|entry| entry.as_str()),
+            Some("optiona_blind_request_bundle_dm")
+        );
+    }
+
+    #[test]
+    fn compressed_request_bundle_decodes_to_inner_envelope() {
+        let mut request = sample_request();
+        request.blinded_message = format!("blind_{}", "x".repeat(16_000));
+        let envelope = BlindBallotRequestBundleEnvelope {
+            message_type: "optiona_blind_request_bundle_dm".to_string(),
+            schema_version: 1,
+            requests: vec![request],
+            sent_at: "2026-04-23T00:00:00Z".to_string(),
+        };
+        let content = serde_json::to_string(&envelope).expect("serialize request bundle");
+        let encoded = maybe_compress_bundle_content(
+            content,
+            "optiona_blind_request_bundle_dm",
+            "2026-04-23T00:00:00Z",
+        )
+        .expect("encode bundle");
+        let wrapper: serde_json::Value = serde_json::from_str(&encoded).expect("parse encoded bundle");
+
+        assert_eq!(
+            wrapper.get("type").and_then(|entry| entry.as_str()),
+            Some(COMPRESSED_BUNDLE_MESSAGE_TYPE)
+        );
+
+        let decoded = unwrap_compressed_bundle_value(wrapper).expect("decode compressed bundle");
+        let decoded_envelope: BlindBallotRequestBundleEnvelope =
+            serde_json::from_value(decoded).expect("decode request bundle");
+
+        assert_eq!(decoded_envelope.message_type, "optiona_blind_request_bundle_dm");
+        assert_eq!(decoded_envelope.requests.len(), 1);
+        assert!(decoded_envelope.requests[0].blinded_message.len() > 16_000);
     }
 
     #[test]
@@ -3077,6 +3606,20 @@ mod tests {
         assert!(!has_existing_issuance_for_request(
             &election,
             &second_request
+        ));
+
+        let mut grouped_request = sample_request();
+        grouped_request.request_id = "request_worker_definition_grouped".to_string();
+        grouped_request.ballot_scope = Some(json!({
+            "questionId": "q2",
+            "slotId": "director-alice",
+            "slotIndex": 1,
+            "version": 1
+        }));
+
+        assert!(has_existing_issuance_for_request(
+            &election,
+            &grouped_request
         ));
     }
 

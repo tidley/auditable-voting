@@ -2,6 +2,43 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.99] - 2026-06-18
+
+### Changed
+- Added gzip+base64url compressed bundle envelopes for large blind request and blind issuance bundle DMs, with automatic plain JSON fallback for small or non-beneficial payloads.
+- Organiser, voter, and audit proxy intake now decode compressed bundle wrappers before parsing the original bundle envelope.
+- The audit proxy now compresses large bundled issuance replies while preserving plain JSON replies for small bundles.
+- Added web and worker tests for compressed bundle decoding and fallback behaviour.
+- Raised the generated audit proxy launcher minimum version to worker 0.1.28 for compressed bundle handling.
+- Bumped web app package to 0.1.99 and worker package to 0.1.28.
+
+## [0.1.98] - 2026-06-18
+
+### Changed
+- Added organiser ballot index controls so multiple questions can share one ballot credential while others keep independent credentials.
+- Voter per-question flow now renders and submits all questions in the active ballot index group together, using one scoped proof for the group.
+- Runtime, coordinator, and audit proxy scope matching now treat `slotIndex + version` as the live ballot scope key.
+- Updated protocol docs and public explainers for grouped ballot-index credentials.
+- Raised the generated audit proxy launcher minimum version to worker 0.1.27 for grouped ballot-index scope handling.
+- Bumped web app package to 0.1.98 and worker package to 0.1.27.
+
+## [0.1.97] - 2026-06-18
+
+### Changed
+- Public questionnaire definitions are now the source of truth for organisers, voters, observers, and audit proxies.
+- Invite links, invite DMs, and audit proxy election-config DMs now carry questionnaire pointers and relay hints instead of embedding questionnaire definitions.
+- Blind credential issuance DMs now carry only credential/signature data plus a public-definition hash or event id, reducing bundled issuance payload size and relay churn.
+- Voters cache fetched public definitions locally for offline rendering, retry, and submission.
+- Raised the generated audit proxy launcher minimum version to worker 0.1.26 for definition-reference credential issuance.
+- Bumped web app package to 0.1.97 and worker package to 0.1.26.
+
+## [0.1.96] - 2026-06-18
+
+### Changed
+- Compact blind issuance bundle DMs now carry the shared questionnaire definition once at bundle level instead of repeating it inside every credential.
+- Raised the generated audit proxy launcher minimum version to worker 0.1.25 because older workers repeat the questionnaire definition in bundled issuance DMs.
+- Bumped web app package to 0.1.96 and worker package to 0.1.25.
+
 ## [0.1.95] - 2026-06-18
 
 ### Changed

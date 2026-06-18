@@ -87,6 +87,7 @@ import {
   hashQuestionnairePrivateInviteClaim,
 } from "./questionnaireInviteCode";
 import { readCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
+import { buildQuestionnaireDefinitionReference } from "./questionnaireDefinitionReference";
 import {
   primeNip65RelayHints,
   setNip65EnabledForSession,
@@ -1694,8 +1695,16 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     if (!electionId) {
       return "";
     }
-    return buildQuestionnaireInviteUrl({ electionId, login: false, autoRequestBallot: true });
-  }, [optionAElectionId]);
+    const cachedDefinition = readCachedQuestionnaireDefinition(electionId);
+    const summary = loadElectionSummary(electionId);
+    return buildQuestionnaireInviteUrl({
+      electionId,
+      coordinatorNpub: activeCoordinatorNpub.trim() || summary?.coordinatorNpub || cachedDefinition?.coordinatorPubkey || undefined,
+      relays: cachedDefinition?.questionnaireRelays ?? summary?.questionnaireRelays ?? null,
+      login: false,
+      autoRequestBallot: true,
+    });
+  }, [activeCoordinatorNpub, optionAElectionId, knownVoterInviteRefreshNonce]);
   const publicQuestionnaireInviteCopy = useMemo(() => {
     const electionId = optionAElectionId.trim();
     const cachedDefinition = electionId ? readCachedQuestionnaireDefinition(electionId) : null;
@@ -4548,6 +4557,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     ) {
       return null;
     }
+    const cachedDefinition = readCachedQuestionnaireDefinition(electionId);
     return {
       workerNpub: delegation.workerNpub,
       relays: delegation.controlRelays,
@@ -4565,7 +4575,9 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
         blindSigningPrivateKey: delegation.capabilities.includes("issue_blind_tokens")
           ? coordinatorState.blindSigningPrivateKey ?? null
           : null,
-        definition: readCachedQuestionnaireDefinition(electionId),
+        definitionReference: cachedDefinition
+          ? buildQuestionnaireDefinitionReference({ definition: cachedDefinition })
+          : null,
         sentAt: new Date().toISOString(),
       },
     };
@@ -4616,7 +4628,11 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       optionACoordinatorRuntime.addBearerInviteCode(inviteCodeHash);
       const inviteUrl = buildQuestionnaireInviteUrl({
         electionId,
+        coordinatorNpub: activeCoordinatorNpub.trim() || undefined,
         inviteCode,
+        relays: readCachedQuestionnaireDefinition(electionId)?.questionnaireRelays
+          ?? loadElectionSummary(electionId)?.questionnaireRelays
+          ?? null,
         login: false,
         autoRequestBallot: true,
       });
@@ -4698,6 +4714,9 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       electionId,
       coordinatorNpub,
       invitedNpub: normalizedInvitedNpub,
+      relays: readCachedQuestionnaireDefinition(electionId)?.questionnaireRelays
+        ?? loadElectionSummary(electionId)?.questionnaireRelays
+        ?? null,
     });
   }
 
@@ -4914,7 +4933,13 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
             voteUrl: "",
             invitedNpub,
             coordinatorNpub: activeCoordinatorNpub,
-            definition: null,
+            definitionReference: {
+              questionnaireId: optionAElectionId,
+              coordinatorNpub: activeCoordinatorNpub,
+              relays: readCachedQuestionnaireDefinition(optionAElectionId)?.questionnaireRelays
+                ?? loadElectionSummary(optionAElectionId)?.questionnaireRelays
+                ?? undefined,
+            },
             expiresAt: null,
           },
         }),

@@ -432,15 +432,15 @@
             <div class="short-version">
               <div class="panel panel-accent">
                 <h2 id="short-version">The short version</h2>
-                <p>This system lets an organiser confirm who is allowed to vote without learning how each person voted. Invited voters can receive the next questionnaire invite from the organiser roster, receive a fresh blind credential for each questionnaire, submit their response from a fresh identity, and observers can recompute the result from public data.</p>
+                <p>This system lets an organiser confirm who is allowed to vote without learning how each person voted. Invited voters can receive the next questionnaire invite from the organiser roster, receive fresh blind credentials for each questionnaire, submit responses from fresh identities, and observers can recompute the result from public data.</p>
                 <div class="hero-actions">
                   <a class="button" href="./technical-details.html">Technical details</a>
                 </div>
               </div>
               <ol class="flow-list panel" aria-label="One minute flow">
                 <li>An organiser invites a voter or confirms that a voter is eligible.</li>
-                <li>The voter requests a fresh blind ballot credential for this questionnaire.</li>
-                <li>The organiser signs it without seeing the final credential.</li>
+                <li>The voter requests fresh blind ballot credentials for this questionnaire, one per ballot index. Large bundled request and issuance DMs can be compressed before encryption, while small bundles stay plain JSON.</li>
+                <li>The organiser or audit proxy signs it without seeing the final credential.</li>
                 <li>The voter submits a public ballot anonymously.</li>
                 <li>Anyone can verify that accepted ballots are valid, unique, and correctly tallied.</li>
               </ol>
@@ -476,7 +476,7 @@
           <section class="section" aria-labelledby="problem">
         <p class="section-kicker">Why it matters</p>
         <h2 id="problem">What problem it solves</h2>
-        <p class="section-intro">Most online voting systems force an uncomfortable tradeoff: either the operator can link voters to votes, or the public cannot independently verify the result. Auditable Voting tries to keep voter privacy while making the count independently checkable.</p>
+        <p class="section-intro">Most online voting systems force an uncomfortable tradeoff: either the operator can link voters to votes, or the public cannot independently verify the result. Auditable Voting tries to keep voter privacy while making the count independently checkable. Public questionnaire definitions are the source of truth, while private credential messages carry only credential material and may compress large bundles before NIP-17 encryption.</p>
         <div class="grid-2">
           <article class="info-card">
             <h3>Eligibility</h3>
@@ -498,7 +498,7 @@
             <ul>
               <li>Open an invite or request ballot access.</li>
               <li>Wait for a ballot credential.</li>
-              <li>Submit each questionnaire with a fresh blind credential, using the top questionnaire selector and Answer next when several invited questionnaires are waiting.</li>
+              <li>Submit each questionnaire with fresh blind credentials, using the top questionnaire selector and Answer next when several invited questionnaires are waiting.</li>
             </ul>
           </article>
           <article class="role-card">

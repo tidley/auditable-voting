@@ -16,7 +16,7 @@ Usage (Linux x86_64):
    COORDINATOR_NPUB=npub1... \
    ./auditable-voting-worker-linux-x64
 
-   The first launch checks the binary version and exits if it is below 0.1.22. Download a newer release from
+   The first launch checks the binary version and exits if it is below 0.1.28. Download a newer release from
    https://github.com/tidley/auditable-voting/releases/latest/download/auditable-voting-worker-linux-x64.tar.gz
 
    WORKER_RELAYS is optional. If not set, the audit proxy uses the default client relay set.
@@ -33,24 +33,15 @@ Organiser Build page launcher downloads:
 - The Build page `Helper download and launch command` block exposes the raw binary/checksum links and direct command-line launch snippet if you want to run the audit proxy manually.
 
 Other platforms:
-- Download prebuilt release assets:
-  - auditable-voting-worker-linux-arm64.tar.gz
-  - auditable-voting-worker-linux-armv7.tar.gz
-  - auditable-voting-worker-windows-x64.zip
-  - auditable-voting-worker-macos-arm64.tar.gz
-- Matching extracted executables use the same platform-specific names:
-  - auditable-voting-worker-linux-arm64
-  - auditable-voting-worker-linux-armv7
-  - auditable-voting-worker-windows-x64.exe
-  - auditable-voting-worker-macos-arm64
+- Linux arm64, Linux armv7, Windows x64, and macOS Apple Silicon release jobs are temporarily disabled to keep release turnaround short. The targets remain documented in the workflow and can be re-enabled easily.
 - Or build from source in /worker:
   cd worker
   cargo build --release
 
 Audit proxy responsibilities:
 - announce audit proxy status to organiser
-- receive audit proxy election-config state including the blind-signing key and questionnaire definition
-- process delegated blind-token requests
-- issue blind-signature responses for delegated elections, including the questionnaire definition when available
+- receive audit proxy election-config state including the blind-signing key and public questionnaire definition pointer
+- process delegated blind-token requests, including compressed bundle wrappers
+- issue blind-signature responses for delegated elections, including the public definition hash/event id when available, and compress large issuance bundles before encryption when useful
 - verify public submissions and publish delegated decisions
 - optionally auto-publish result summary when all expected invitees have responded

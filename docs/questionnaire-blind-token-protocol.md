@@ -8,8 +8,8 @@ This protocol defines the questionnaire-first path used by the client:
 
 - public questionnaire definition and state
 - private eligibility and blind issuance transport
-- one blind-token response per answered question in per-question mode
-- optional per-question blind credentials for current question slots
+- one blind-token response per submitted ballot index in per-question mode
+- optional per-question blind credentials for current ballot-index slots
 - deterministic duplicate handling by token nullifier, including scoped per-question nullifiers
 - public result summary publication
 
@@ -44,7 +44,7 @@ Shape (camelCase in the shipped client):
 - `allowMultipleResponsesPerPubkey: boolean`
 - `ballotCredentialMode?: "questionnaire" | "per_question"`
 - `questions[]` (`yes_no`, `multiple_choice`, `rank`, `free_text`; free text may set `encryptResponses: true`)
-- each question may carry `ballotSlot: { slotId, slotIndex, version }` when `ballotCredentialMode` is `per_question`
+- each question may carry `ballotSlot: { slotId, slotIndex, version }` when `ballotCredentialMode` is `per_question`; questions with the same `slotIndex` and `version` share one ballot credential
 
 Tags:
 
@@ -58,11 +58,11 @@ Validation rules include:
 - `openAt < closeAt`
 - unique `questionId`
 - unique `optionId` within each multiple-choice and rank question
-- unique live ballot slot keys (`slotId:v<version>`) when per-question credentials are used
+- valid positive live ballot slot indices and versions when per-question credentials are used; duplicate `slotIndex:v<version>` groups are intentional and spend one shared credential
 - ranked-choice questions use internal type `rank` and may set `minimumRanked` from `0` up to the option count
 - required organiser keys present
 
-When an answer-bearing question changes after credentials have been issued, the client keeps the question identity but bumps the slot `version`. New blind-token requests for that question are then bound to the new slot version; old scoped credentials remain unspendable for the edited slot.
+When an answer-bearing question changes after credentials have been issued, the client keeps the question identity but bumps the slot `version` for that ballot index group. New blind-token requests for that group are then bound to the new slot version; old scoped credentials remain unspendable for the edited slot.
 
 ## 4. Questionnaire state
 
@@ -108,11 +108,11 @@ Blind-token admission object:
 - `authorPubkey` (ephemeral response key expected)
 - `tokenNullifier`
 - `tokenProof` (`tokenCommitment`, `questionnaireId`, `signature`)
-- optional `tokenNullifiers[]` for scoped responses, each carrying `questionId?`, `tokenNullifier`, and `ballotScope?`; current per-question submissions carry one scoped entry
-- optional `tokenProofs[]` for scoped responses, each carrying `tokenCommitment`, `questionnaireId`, `signature`, `questionId?`, and `ballotScope?`; current per-question submissions carry one scoped entry
+- optional `tokenNullifiers[]` for scoped responses, each carrying `questionId?`, `tokenNullifier`, and `ballotScope?`; current per-question submissions carry one scoped entry per submitted ballot index
+- optional `tokenProofs[]` for scoped responses, each carrying `tokenCommitment`, `questionnaireId`, `signature`, `questionId?`, and `ballotScope?`; current per-question submissions carry one scoped entry per submitted ballot index
 - `answers` (public mode) or `encryptedPayload` + `payloadHash` (encrypted mode)
 
-`ballotScope` canonical fields are `questionId`, `slotId`, `slotIndex`, and `version`. The signed blind-token message includes the canonical scope when present:
+`ballotScope` canonical fields are `questionId`, `slotId`, `slotIndex`, and `version`. The live scope key is `slotIndex + version`; `questionId` and `slotId` remain descriptive/canonical fields. The signed blind-token message includes the canonical scope when present:
 
 - `questionnaire_id`
 - `response_mode = blind_token`
@@ -184,7 +184,20 @@ Organiser-side verification (especially in encrypted mode) additionally checks:
 - required answers
 - option validity, rank minimums, and free-text length limits
 
-## 9. Relay compatibility notes
+## 9. Private bundle transport
+
+Blind request and blind issuance DMs are ordinary JSON envelopes by default. Large bundled envelopes may be wrapped before NIP-17 encryption as:
+
+- `type: "optiona_compressed_bundle_dm"`
+- `schemaVersion: 1`
+- `encoding: "gzip+base64url"`
+- `innerType: "optiona_blind_request_bundle_dm" | "optiona_blind_issuance_bundle_dm"`
+- `payload` containing the gzip-compressed inner JSON envelope encoded as unpadded base64url
+- `originalLength`, `compressedLength`, and `sentAt`
+
+Decoders must accept both the plain JSON bundle envelope and the compressed wrapper. After decompression, the inner envelope is parsed exactly as if it had been received directly, and the inner `type` must match `innerType`. Compression is applied only to the private JSON envelope before gift wrapping; encrypted NIP-17 events are not recompressed.
+
+## 10. Relay compatibility notes
 
 For reliability on public relays:
 
@@ -192,7 +205,7 @@ For reliability on public relays:
 - use broad kind fetch with local `questionnaireId` reconciliation fallback where required
 - keep transcript-carrying questionnaire kinds outside Nostr replaceable and parameterised-replaceable ranges; current implementation kinds are regular custom events so repeated rounds and submissions are not displaced by newer events from the same organiser or voter key
 
-## 10. Normative summary
+## 11. Normative summary
 
 1. Questionnaire definition must be public.
 2. Response admission must be deterministic.

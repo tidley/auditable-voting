@@ -25,6 +25,7 @@ import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 import { deriveActorDisplayId } from "./actorDisplay";
 import QuestionnaireResultsDashboard, { type QuestionnaireResultsDashboardResponseDetail } from "./QuestionnaireResultsDashboard";
 import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
+import { buildQuestionnaireDefinitionReference } from "./questionnaireDefinitionReference";
 import { tryWriteClipboard } from "./clipboard";
 import { fetchQuestionnaireBlindResponses } from "./questionnaireTransport";
 import { evaluateQuestionnaireBlindAdmissions, fetchQuestionnaireSubmissionDecisions, verifyQuestionnaireBlindResponseProofs } from "./questionnaireTransport";
@@ -172,27 +173,62 @@ function createYesNoQuestion(questionId: string, prompt = "", required = true): 
   };
 }
 
+function ballotSlotIndexForQuestion(question: QuestionnaireQuestionDraft, fallbackIndex: number) {
+  const slotIndex = question.ballotSlot?.slotIndex;
+  return Number.isFinite(slotIndex)
+    ? Math.max(1, Math.floor(slotIndex as number))
+    : fallbackIndex + 1;
+}
+
+function ballotSlotIdForIndex(slotIndex: number) {
+  return `ballot-${Math.max(1, Math.floor(slotIndex))}`;
+}
+
 function withQuestionBallotSlot(
   question: QuestionnaireQuestionDraft,
   index: number,
-  options?: { bumpVersion?: boolean },
+  options?: { bumpVersion?: boolean; slotIndex?: number; version?: number },
 ): QuestionnaireQuestionDraft {
   const current = question.ballotSlot ?? null;
+  const slotIndex = Number.isFinite(options?.slotIndex)
+    ? Math.max(1, Math.floor(options?.slotIndex as number))
+    : ballotSlotIndexForQuestion(question, index);
   const currentVersion = Number.isFinite(current?.version)
     ? Math.max(1, Math.floor(current.version))
     : 1;
+  const version = Number.isFinite(options?.version)
+    ? Math.max(1, Math.floor(options?.version as number))
+    : options?.bumpVersion ? currentVersion + 1 : currentVersion;
   return {
     ...question,
     ballotSlot: {
-      slotId: current?.slotId?.trim() || question.questionId,
-      slotIndex: index + 1,
-      version: options?.bumpVersion ? currentVersion + 1 : currentVersion,
+      slotId: ballotSlotIdForIndex(slotIndex),
+      slotIndex,
+      version,
     },
   };
 }
 
 function bumpQuestionBallotSlotVersion(question: QuestionnaireQuestionDraft): QuestionnaireQuestionDraft {
   return withQuestionBallotSlot(question, Math.max(0, (question.ballotSlot?.slotIndex ?? 1) - 1), { bumpVersion: true });
+}
+
+function alignQuestionBallotGroups(questions: QuestionnaireQuestionDraft[]) {
+  const groupVersionByIndex = new Map<number, number>();
+  questions.forEach((question, index) => {
+    const slotIndex = ballotSlotIndexForQuestion(question, index);
+    const version = Number.isFinite(question.ballotSlot?.version)
+      ? Math.max(1, Math.floor(question.ballotSlot?.version as number))
+      : 1;
+    groupVersionByIndex.set(slotIndex, Math.max(groupVersionByIndex.get(slotIndex) ?? 1, version));
+  });
+  return questions.map((question, index) => {
+    const slotIndex = ballotSlotIndexForQuestion(question, index);
+    return withQuestionBallotSlot(question, index, {
+      slotIndex,
+      version: groupVersionByIndex.get(slotIndex) ?? 1,
+    });
+  });
 }
 
 function createMultipleChoiceQuestion(questionId: string, prompt = "", required = true): QuestionnaireQuestionDraft {
@@ -444,7 +480,7 @@ function normaliseStoredQuestions(input: unknown): QuestionnaireQuestionDraft[] 
         required: minimumRanked > 0,
       };
     });
-  return entries.length > 0 ? entries : [createYesNoQuestion("q1")];
+  return entries.length > 0 ? alignQuestionBallotGroups(entries) : [createYesNoQuestion("q1")];
 }
 
 function sanitizeWorkerRelays(value: string) {
@@ -732,7 +768,7 @@ const WORKER_LAUNCHER_TARGET_OPTIONS: Array<{ key: WorkerLauncherTargetKey; labe
 ];
 const WORKER_DEFAULT_RUST_LOG = "info,auditable_voting_worker=debug,nostr_relay_pool=info,nostr_sdk=info,nostr=info,tungstenite=info,tokio_tungstenite=info";
 const WORKER_DEFAULT_POLL_SECONDS = "5";
-const WORKER_MINIMUM_VERSION = "0.1.24";
+const WORKER_MINIMUM_VERSION = "0.1.28";
 const WORKER_RELEASE_DOWNLOAD_URL = "https://github.com/tidley/auditable-voting/releases/latest/download/auditable-voting-worker-linux-x64.tar.gz";
 
 function buildWorkerLauncherContents(input: {
@@ -1307,7 +1343,7 @@ function buildDefinition(input: {
     ballotCredentialMode: "per_question",
     blindSigningPublicKey: input.blindSigningPublicKey ?? null,
     ...(input.questionnaireRelays?.length ? { questionnaireRelays: input.questionnaireRelays } : {}),
-    questions: input.questions.map((question, index) => withQuestionBallotSlot(question, index)),
+    questions: alignQuestionBallotGroups(input.questions),
   };
 }
 
@@ -2618,9 +2654,19 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   }, [activePublishedDefinition, props.onQuestionnaireRelaysInputChange, view]);
 
   function updateQuestion(index: number, updater: (question: QuestionnaireQuestionDraft) => QuestionnaireQuestionDraft) {
-    setQuestions((current) => current.map((entry, entryIndex) => (
-      entryIndex === index ? updater(entry) : entry
-    )));
+    setQuestions((current) => {
+      const updated = current.map((entry, entryIndex) => (
+        entryIndex === index ? updater(entry) : entry
+      ));
+      return alignQuestionBallotGroups(updated);
+    });
+  }
+
+  function setQuestionBallotIndex(index: number, slotIndex: number) {
+    updateQuestion(index, (entry) => withQuestionBallotSlot(entry, index, {
+      slotIndex,
+      bumpVersion: true,
+    }));
   }
 
   function setQuestionType(index: number, type: QuestionnaireQuestionDraft["type"]) {
@@ -2660,7 +2706,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         questionId: duplicateId,
         ballotSlot: null,
       };
-      return [...current.slice(0, index + 1), duplicated, ...current.slice(index + 1)];
+      return alignQuestionBallotGroups([...current.slice(0, index + 1), duplicated, ...current.slice(index + 1)]);
     });
   }
 
@@ -2674,7 +2720,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       const temp = next[index];
       next[index] = next[target];
       next[target] = temp;
-      return next;
+      return alignQuestionBallotGroups(next);
     });
   }
 
@@ -2684,12 +2730,15 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         const existing = current[index] ?? current[0] ?? createYesNoQuestion("q1");
         return [clearQuestionDraft(existing)];
       }
-      return current.filter((_, currentIndex) => currentIndex !== index);
+      return alignQuestionBallotGroups(current.filter((_, currentIndex) => currentIndex !== index));
     });
   }
 
   function addQuestion() {
-    setQuestions((current) => [...current, createYesNoQuestion(deriveNextQuestionId(current), "", true)]);
+    setQuestions((current) => alignQuestionBallotGroups([
+      ...current,
+      createYesNoQuestion(deriveNextQuestionId(current), "", true),
+    ]));
   }
 
   const resolveBlindSigningPublicKey = useCallback(() => {
@@ -3846,6 +3895,13 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       })
       : null;
     const workerConfigDefinition = activePublishedDefinition ?? readCachedQuestionnaireDefinition(electionId);
+    const workerDefinitionReference = workerConfigDefinition
+      ? buildQuestionnaireDefinitionReference({
+        definition: workerConfigDefinition,
+        definitionEventId: definitionPublishDiagnostic.eventId,
+        relays: workerConfigDefinition.questionnaireRelays ?? questionnaireRelayPublishHints,
+      })
+      : null;
     const summaryForWorkerConfig = loadElectionSummary(electionId);
     let blindSigningPrivateKeyForWorker = delegatedWorkerCapabilities.includes("issue_blind_tokens")
       ? coordinatorState?.blindSigningPrivateKey ?? null
@@ -3923,7 +3979,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         blindSigningPrivateKey: delegatedWorkerCapabilities.includes("issue_blind_tokens")
           ? blindSigningPrivateKeyForWorker
           : null,
-        definition: workerConfigDefinition,
+        definitionReference: workerDefinitionReference,
         sentAt: new Date().toISOString(),
       }
       : null;
@@ -4407,6 +4463,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         {questions.map((question, index) => {
           const canMoveUp = index > 0;
           const canMoveDown = index < questions.length - 1;
+          const ballotIndex = ballotSlotIndexForQuestion(question, index);
 
           return (
             <div key={`${question.questionId}-${index}`} className='simple-questionnaire-question-card'>
@@ -4447,6 +4504,25 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                   <span className='simple-questionnaire-switch' aria-hidden='true'>
                     <span className='simple-questionnaire-switch-knob' />
                   </span>
+                </label>
+                <label className='simple-questionnaire-ballot-index-control'>
+                  <span>Ballot</span>
+                  <input
+                    className='simple-voter-input simple-questionnaire-ballot-index-input'
+                    type='number'
+                    inputMode='numeric'
+                    min={1}
+                    max={Math.max(1, questions.length)}
+                    value={ballotIndex}
+                    aria-label={`Question ${index + 1} ballot index`}
+                    onChange={(event) => {
+                      const parsed = Number.parseInt(event.target.value, 10);
+                      if (!Number.isFinite(parsed)) {
+                        return;
+                      }
+                      setQuestionBallotIndex(index, Math.min(Math.max(1, parsed), Math.max(1, questions.length)));
+                    }}
+                  />
                 </label>
               </div>
               <input

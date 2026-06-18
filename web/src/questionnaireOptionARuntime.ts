@@ -113,6 +113,10 @@ import {
   type OptionABlindRequestFetchDiagnostics,
 } from "./questionnaireOptionABlindDm";
 import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
+import {
+  buildQuestionnaireDefinitionReference,
+  questionnaireDefinitionHash,
+} from "./questionnaireDefinitionReference";
 import { fetchOptionAInviteDms, publishOptionAInviteDm } from "./questionnaireOptionAInviteDm";
 import type { SignerService } from "./services/signerService";
 import {
@@ -527,6 +531,9 @@ function ballotScopeKey(scope: BallotScope | null | undefined) {
   if (!questionId && !slotId && !slotIndex && version === 1) {
     return "__questionnaire__";
   }
+  if (slotIndex > 0) {
+    return `slot:${slotIndex}:v${version}`;
+  }
   return `${questionId || slotId}:${slotId}:${slotIndex}:v${version}`;
 }
 
@@ -538,15 +545,23 @@ function buildQuestionnaireCredentialScopes(definition: QuestionnaireDefinition 
   if (!definition || !questionnaireUsesPerQuestionCredentials(definition)) {
     return [null];
   }
-  return definition.questions.map((question, index) => {
+  const scopes: BallotScope[] = [];
+  const seen = new Set<string>();
+  definition.questions.forEach((question, index) => {
     const slot = normaliseQuestionBallotSlot(question, index);
-    return {
+    const scope = {
       questionId: question.questionId,
       slotId: slot.slotId,
       slotIndex: slot.slotIndex,
       version: slot.version,
     };
+    const key = ballotScopeKey(scope);
+    if (!seen.has(key)) {
+      seen.add(key);
+      scopes.push(scope);
+    }
   });
+  return scopes;
 }
 
 function scopeForQuestion(definition: QuestionnaireDefinition | null | undefined, questionId: string): BallotScope | null {
@@ -559,11 +574,28 @@ function scopeForQuestion(definition: QuestionnaireDefinition | null | undefined
     return null;
   }
   const slot = normaliseQuestionBallotSlot(question, index);
-  return {
+  const targetKey = ballotScopeKey({
     questionId: question.questionId,
     slotId: slot.slotId,
     slotIndex: slot.slotIndex,
     version: slot.version,
+  });
+  const canonicalIndex = definition.questions.findIndex((candidate, candidateIndex) => {
+    const candidateSlot = normaliseQuestionBallotSlot(candidate, candidateIndex);
+    return ballotScopeKey({
+      questionId: candidate.questionId,
+      slotId: candidateSlot.slotId,
+      slotIndex: candidateSlot.slotIndex,
+      version: candidateSlot.version,
+    }) === targetKey;
+  });
+  const canonicalQuestion = canonicalIndex >= 0 ? definition.questions[canonicalIndex] : question;
+  const canonicalSlot = normaliseQuestionBallotSlot(canonicalQuestion, canonicalIndex >= 0 ? canonicalIndex : index);
+  return {
+    questionId: canonicalQuestion.questionId,
+    slotId: canonicalSlot.slotId,
+    slotIndex: canonicalSlot.slotIndex,
+    version: canonicalSlot.version,
   };
 }
 
@@ -608,6 +640,11 @@ function scopedRequiredQuestionIdsForSubmission(submission: BallotSubmission, re
   }
   return requiredQuestionIds.filter((questionId) => coveredQuestionIds.has(questionId));
 }
+
+type SubmitVoteOptions = {
+  questionId?: string;
+  questionIds?: string[];
+};
 
 function inferRejectReason(error?: string): BallotRejectReason {
   if (error === "duplicate_nullifier") {
@@ -901,6 +938,8 @@ export class QuestionnaireOptionAVoterRuntime {
         publicKey: input.cachedDefinition?.blindSigningPublicKey ?? null,
         createdAt: input.cachedDefinition?.createdAt,
       },
+      // Legacy direct-invite definitions are tolerated for old links, but fresh
+      // public/cached definitions above are the source of truth for new flows.
       {
         publicKey: input.inviteMessage?.definition?.blindSigningPublicKey ?? null,
         createdAt: input.inviteMessage?.definition?.createdAt,
@@ -929,6 +968,7 @@ export class QuestionnaireOptionAVoterRuntime {
   }) {
     const relays = mergeQuestionnaireRelayHints(
       input.cachedDefinition?.questionnaireRelays,
+      input.state.inviteMessage?.definitionReference?.relays,
       input.state.inviteMessage?.definition?.questionnaireRelays,
       input.summary?.questionnaireRelays,
     );
@@ -940,6 +980,10 @@ export class QuestionnaireOptionAVoterRuntime {
       });
       const latest = [...entries]
         .filter((entry) => entry.definition.questionnaireId === input.state.electionId)
+        .filter((entry) => {
+          const expectedHash = input.state.inviteMessage?.definitionReference?.definitionHash?.trim() ?? "";
+          return !expectedHash || questionnaireDefinitionHash(entry.definition) === expectedHash;
+        })
         .sort((left, right) => Number(right.event.created_at ?? right.definition.createdAt ?? 0) - Number(left.event.created_at ?? left.definition.createdAt ?? 0))[0]?.definition ?? null;
       if (latest) {
         cacheQuestionnaireDefinitionForRuntime(latest);
@@ -1648,10 +1692,15 @@ export class QuestionnaireOptionAVoterRuntime {
       canonicalIssuance: loggedIn.state.blindRequest ? readBlindIssuance(loggedIn.state.blindRequest.requestId) : null,
       canonicalAcceptance: loggedIn.state.submission ? readAcceptance(loggedIn.state.submission.submissionId) : null,
     });
-    const blindSigningPublicKey = this.resolveVoterBlindSigningPublicKey({
-      inviteMessage: restored.inviteMessage,
+    const refreshedMetadata = await this.refreshVoterPublicQuestionnaireMetadata({
+      state: restored,
       summary: loadElectionSummary(this.electionId),
       cachedDefinition: readCachedQuestionnaireDefinition(this.electionId) ?? cachedDefinition,
+    });
+    const blindSigningPublicKey = this.resolveVoterBlindSigningPublicKey({
+      inviteMessage: restored.inviteMessage,
+      summary: refreshedMetadata.summary,
+      cachedDefinition: refreshedMetadata.cachedDefinition,
     });
     const reconciled = this.reconcileVoterBlindSigningKeyState({
       state: restored,
@@ -1749,6 +1798,11 @@ export class QuestionnaireOptionAVoterRuntime {
       canonicalIssuance: loggedIn.state.blindRequest ? readBlindIssuance(loggedIn.state.blindRequest.requestId) : null,
       canonicalAcceptance: loggedIn.state.submission ? readAcceptance(loggedIn.state.submission.submissionId) : null,
     });
+    void this.refreshVoterPublicQuestionnaireMetadata({
+      state: restored,
+      summary: loadElectionSummary(this.electionId),
+      cachedDefinition: readCachedQuestionnaireDefinition(this.electionId) ?? cachedDefinition,
+    }).catch(() => null);
     const blindSigningPublicKey = this.resolveVoterBlindSigningPublicKey({
       inviteMessage: restored.inviteMessage,
       summary: loadElectionSummary(this.electionId),
@@ -2697,7 +2751,7 @@ export class QuestionnaireOptionAVoterRuntime {
     return this.state;
   }
 
-  async submitVote(requiredQuestionIds: string[], options?: { questionId?: string }) {
+  async submitVote(requiredQuestionIds: string[], options?: SubmitVoteOptions) {
     if (this.submitVoteInflight) {
       optionAFlowLog("voter", "submit_vote_inflight_reused", { electionId: this.electionId });
       return this.submitVoteInflight;
@@ -2759,9 +2813,13 @@ export class QuestionnaireOptionAVoterRuntime {
     }
 
     const proofs: BallotCredentialProof[] = [];
+    const proofByScopeKey = new Set<string>();
     for (const answer of responses) {
       const scope = scopeForQuestion(definition, answer.questionId);
       const scopeKey = ballotScopeKey(scope);
+      if (proofByScopeKey.has(scopeKey)) {
+        continue;
+      }
       const issuance = this.state.blindIssuances?.[scopeKey] ?? null;
       const tokenSecret = this.state.blindTokenSecrets?.[scopeKey] ?? null;
       if (!issuance || !tokenSecret) {
@@ -2789,8 +2847,9 @@ export class QuestionnaireOptionAVoterRuntime {
       if (!localCredentialValid) {
         throw new OptionARuntimeError("issuance_failed", `Issued blind signature for ${answer.questionId} could not be verified.`);
       }
+      proofByScopeKey.add(scopeKey);
       proofs.push({
-        questionId: answer.questionId,
+        questionId: scope?.questionId ?? answer.questionId,
         tokenCommitment: tokenSecret.tokenCommitment,
         blindSigningKeyId: issuance.blindSigningKeyId,
         credential,
@@ -2805,7 +2864,7 @@ export class QuestionnaireOptionAVoterRuntime {
     return proofs;
   }
 
-  private async submitVoteInternal(requiredQuestionIds: string[], options?: { questionId?: string }) {
+  private async submitVoteInternal(requiredQuestionIds: string[], options?: SubmitVoteOptions) {
     if (!this.state) {
       throw new OptionARuntimeError("not_logged_in", "Login is required.");
     }
@@ -2813,25 +2872,31 @@ export class QuestionnaireOptionAVoterRuntime {
       electionId: this.state.electionId,
       hasExistingSubmission: Boolean(this.state.submission),
     });
-    const definition = readCachedQuestionnaireDefinition(this.state.electionId)
-      ?? this.state.blindIssuance?.definition
-      ?? null;
-    const targetQuestionId = options?.questionId?.trim() ?? "";
-    const submissionResponses = targetQuestionId
-      ? this.state.draftResponses.filter((answer) => answer.questionId === targetQuestionId)
+    const definition = readCachedQuestionnaireDefinition(this.state.electionId);
+    const targetQuestionIds = [...new Set([
+      ...(options?.questionId ? [options.questionId] : []),
+      ...(options?.questionIds ?? []),
+    ]
+      .map((questionId) => questionId.trim())
+      .filter(Boolean))];
+    const targetQuestionIdSet = new Set(targetQuestionIds);
+    const submissionResponses = targetQuestionIdSet.size > 0
+      ? this.state.draftResponses.filter((answer) => targetQuestionIdSet.has(answer.questionId))
       : this.state.draftResponses;
-    const existingQuestionSubmission = targetQuestionId ? this.state.submissions?.[targetQuestionId] ?? null : null;
+    const existingQuestionSubmissions = targetQuestionIds
+      .map((questionId) => this.state?.submissions?.[questionId] ?? null)
+      .filter(Boolean);
 
-    if (existingQuestionSubmission) {
+    if (targetQuestionIds.length > 0 && existingQuestionSubmissions.length === targetQuestionIds.length) {
       optionAFlowLog("voter", "submit_vote_question_already_submitted", {
         electionId: this.state.electionId,
-        questionId: targetQuestionId,
-        submissionId: existingQuestionSubmission.submissionId,
+        questionId: targetQuestionIds.join(","),
+        submissionId: existingQuestionSubmissions[0]?.submissionId ?? "",
       });
       return this.state;
     }
 
-    if (!targetQuestionId && this.state.submission && this.state.responseNsec && this.state.responseNpub) {
+    if (targetQuestionIds.length === 0 && this.state.submission && this.state.responseNsec && this.state.responseNpub) {
       if (this.state.submissionAccepted === true || this.state.submissionAccepted === false) {
         optionAFlowLog("voter", "submit_vote_republish_skipped_decided", {
           electionId: this.state.electionId,
@@ -2956,6 +3021,7 @@ export class QuestionnaireOptionAVoterRuntime {
       electionId: this.state.electionId,
       electionState: "open",
       requiredQuestionIds,
+      definition,
     });
     if (!valid) {
       throw new OptionARuntimeError("invalid_submission", "Submission is invalid or incomplete.");
@@ -4173,7 +4239,17 @@ export class QuestionnaireOptionACoordinatorRuntime {
     if (!this.state.whitelist[normalizedInvitedNpub]) {
       throw new OptionARuntimeError("not_whitelisted", "Invite target is not whitelisted.");
     }
-    const blindSigningPrivateKey = await this.ensureBlindSigningKey();
+    const cachedDefinition = readCachedQuestionnaireDefinition(this.electionId);
+    const definitionReference = cachedDefinition
+      ? buildQuestionnaireDefinitionReference({
+        definition: cachedDefinition,
+        relays: getPreferredQuestionnaireRelays(this.electionId),
+      })
+      : {
+        questionnaireId: this.electionId,
+        coordinatorNpub: this.coordinatorNpub,
+        relays: getPreferredQuestionnaireRelays(this.electionId),
+      };
     let issueBlindTokensWorker = selectIssueBlindTokensWorkerRouting({
       summary: loadElectionSummary(this.electionId) ?? this.state.election,
     });
@@ -4206,9 +4282,8 @@ export class QuestionnaireOptionACoordinatorRuntime {
       voteUrl: meta.voteUrl,
       invitedNpub: normalizedInvitedNpub,
       coordinatorNpub: this.coordinatorNpub,
-      blindSigningPublicKey: toQuestionnaireBlindPublicKey(blindSigningPrivateKey),
+      definitionReference,
       issueBlindTokensWorker,
-      definition: readCachedQuestionnaireDefinition(this.electionId),
       expiresAt: null,
     };
     const sent = reduceCoordinatorEvent(this.state, {
@@ -4364,7 +4439,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
     ]);
     const minRetryMs = options?.minRetryMs ?? OPTION_A_ISSUANCE_DM_RETRY_MS;
     const issued = Object.values(this.state.issuedBlindResponses)
-      .map((issuance) => this.enrichIssuanceWithDefinition(issuance))
+      .map((issuance) => this.enrichIssuanceWithDefinitionReference(issuance))
       .filter((issuance) => {
         if (options?.forceAll || forcedRequestIds.has(issuance.requestId)) {
           return true;
@@ -4405,6 +4480,8 @@ export class QuestionnaireOptionACoordinatorRuntime {
             signer: this.signer,
             recipientNpub: recipientIssuances[0].invitedNpub,
             issuances: recipientIssuances,
+            definitionHash: recipientIssuances.find((issuance) => issuance.definitionHash)?.definitionHash ?? null,
+            definitionEventId: recipientIssuances.find((issuance) => issuance.definitionEventId)?.definitionEventId ?? null,
             fallbackNsec: this.fallbackNsec,
             relays: this.getPreferredDmRelays(),
           })
@@ -4445,12 +4522,20 @@ export class QuestionnaireOptionACoordinatorRuntime {
     return delivered;
   }
 
-  private enrichIssuanceWithDefinition(issuance: BlindBallotIssuance): BlindBallotIssuance {
-    if (issuance.definition) {
+  private enrichIssuanceWithDefinitionReference(issuance: BlindBallotIssuance): BlindBallotIssuance {
+    if (issuance.definitionHash && !issuance.definition) {
       return issuance;
     }
     const definition = readCachedQuestionnaireDefinition(this.electionId);
-    return definition ? { ...issuance, definition } : issuance;
+    if (!definition) {
+      return issuance;
+    }
+    return {
+      ...issuance,
+      definition: undefined,
+      definitionHash: issuance.definitionHash ?? questionnaireDefinitionHash(definition),
+      definitionEventId: issuance.definitionEventId ?? null,
+    };
   }
 
   async syncBlindIssuanceAcksFromDm() {
@@ -4508,9 +4593,10 @@ export class QuestionnaireOptionACoordinatorRuntime {
       });
       return 0;
     }
+    const cachedDefinition = readCachedQuestionnaireDefinition(this.electionId);
     const publicSubmissionFlow = shouldUsePublicSubmissionFlow({
       summaryFlowMode: this.state.election.flowMode ?? null,
-      cachedDefinitionFlowMode: readCachedQuestionnaireDefinition(this.electionId)?.flowMode ?? null,
+      cachedDefinitionFlowMode: cachedDefinition?.flowMode ?? null,
     });
     if (publicSubmissionFlow) {
       optionAFlowLog("coordinator", "submissions_sync_skipped_public_submission_flow", {
@@ -4701,7 +4787,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
         }
         const existingIssuance = findIssuedBlindResponse(next, request);
         if (received.error === "already_issued" && existingIssuance) {
-          const enriched = this.enrichIssuanceWithDefinition(existingIssuance);
+          const enriched = this.enrichIssuanceWithDefinitionReference(existingIssuance);
           await this.publishBlindRequestAckDm(request);
           this.maybeQueueIssuanceRepublish(enriched, request);
           next = {
@@ -4731,9 +4817,11 @@ export class QuestionnaireOptionACoordinatorRuntime {
         continue;
       }
       await this.publishBlindRequestAckDm(request);
+      const cachedDefinition = readCachedQuestionnaireDefinition(this.electionId);
+      const definitionHash = cachedDefinition ? questionnaireDefinitionHash(cachedDefinition) : null;
       const existingIssuance = findIssuedBlindResponse(next, request);
       if (existingIssuance) {
-        const enriched = this.enrichIssuanceWithDefinition(existingIssuance);
+        const enriched = this.enrichIssuanceWithDefinitionReference(existingIssuance);
         this.maybeQueueIssuanceRepublish(enriched, request);
         next = {
           ...next,
@@ -4760,7 +4848,8 @@ export class QuestionnaireOptionACoordinatorRuntime {
           blindedMessage: request.blindedMessage,
         }),
         ballotScope: request.ballotScope ?? null,
-        definition: readCachedQuestionnaireDefinition(this.electionId),
+        definitionHash,
+        definitionEventId: null,
         issuedAt: nowIso(),
       };
       const issued = reduceCoordinatorEvent(next, {
@@ -4817,9 +4906,10 @@ export class QuestionnaireOptionACoordinatorRuntime {
     }
     const originalState = this.state;
     let next = this.state;
+    const cachedDefinition = readCachedQuestionnaireDefinition(this.electionId);
     const publicSubmissionFlow = shouldUsePublicSubmissionFlow({
       summaryFlowMode: this.state.election.flowMode ?? null,
-      cachedDefinitionFlowMode: readCachedQuestionnaireDefinition(this.electionId)?.flowMode ?? null,
+      cachedDefinitionFlowMode: cachedDefinition?.flowMode ?? null,
     });
     const queue = publicSubmissionFlow ? [] : listSubmissions(this.electionId);
     const queuedSubmissionIds = new Set(queue.map((entry) => entry.submissionId));
@@ -4949,6 +5039,7 @@ export class QuestionnaireOptionACoordinatorRuntime {
         electionId: this.electionId,
         electionState: validationElectionState,
         requiredQuestionIds: scopedRequiredQuestionIdsForSubmission(submission, requiredQuestionIds),
+        definition: cachedDefinition,
       });
       if (!valid) {
         const rejected: BallotAcceptanceResult = {

@@ -2,13 +2,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { generateSecretKey, getPublicKey, nip17, nip19 } from "nostr-tools";
 import type { SignerService } from "./services/signerService";
 import {
+  buildOptionABlindIssuanceBundleEnvelope,
+  encodeOptionADmEnvelopeContent,
   fetchOptionABallotAcceptanceDmsWithNsec,
   fetchOptionABallotSubmissionDmsWithNsec,
   fetchOptionABlindIssuanceDms,
   fetchOptionABlindIssuanceDmsWithNsec,
   fetchOptionABlindRequestDmsWithNsec,
+  parseOptionADmEnvelopeContent,
   publishOptionABlindRequestDm,
 } from "./questionnaireOptionABlindDm";
+import type { BlindBallotIssuance, BlindBallotRequest } from "./questionnaireOptionA";
+import type { QuestionnaireDefinition } from "./questionnaireProtocol";
+import { questionnaireDefinitionHash } from "./questionnaireDefinitionReference";
 
 const querySync = vi.fn();
 const publish = vi.fn();
@@ -33,6 +39,83 @@ function makeSigner(overrides: Partial<SignerService> = {}): SignerService {
     nip44Encrypt: async () => "ciphertext",
     nip44Decrypt: async () => "",
     ...overrides,
+  };
+}
+
+function makeDefinition(): QuestionnaireDefinition {
+  return {
+    schemaVersion: 1,
+    eventType: "questionnaire_definition",
+    protocolVersion: 2,
+    flowMode: "public_submission_v1",
+    responseMode: "blind_token",
+    questionnaireId: "q_bundle",
+    title: "Bundle",
+    description: "Bundle test",
+    createdAt: 1,
+    openAt: 1,
+    closeAt: 2,
+    coordinatorPubkey: "coordinator",
+    coordinatorEncryptionPubkey: "coordinator",
+    responseVisibility: "public",
+    eligibilityMode: "allowlist",
+    allowMultipleResponsesPerPubkey: false,
+    ballotCredentialMode: "per_question",
+    questions: [
+      {
+        questionId: "q1",
+        type: "yes_no",
+        prompt: "Question 1",
+        required: true,
+        ballotSlot: { slotId: "q1:1", slotIndex: 1, version: 1 },
+      },
+    ],
+  };
+}
+
+function makeIssuance(
+  requestId: string,
+  definition: QuestionnaireDefinition,
+): BlindBallotIssuance {
+  return {
+    type: "blind_ballot_response",
+    schemaVersion: 1,
+    electionId: definition.questionnaireId,
+    requestId,
+    issuanceId: `issuance_${requestId}`,
+    invitedNpub: "npub1voter",
+    tokenCommitment: "commitment",
+    blindSigningKeyId: "key",
+    blindSignature: "signature",
+    ballotScope: {
+      questionId: requestId,
+      slotId: `${requestId}:1`,
+      slotIndex: 1,
+      version: 1,
+    },
+    definition,
+    issuedAt: "2026-06-18T00:00:00.000Z",
+  };
+}
+
+function makeRequest(input: { requestId: string; invitedNpub: string; padding?: string }): BlindBallotRequest {
+  return {
+    type: "blind_ballot_request",
+    schemaVersion: 1,
+    electionId: "q_bundle",
+    requestId: input.requestId,
+    invitedNpub: input.invitedNpub,
+    blindedMessage: `blind_${input.requestId}${input.padding ?? ""}`,
+    tokenCommitment: `commitment_${input.requestId}`,
+    blindSigningKeyId: "key",
+    clientNonce: `nonce_${input.requestId}`,
+    createdAt: "2026-06-18T00:00:00.000Z",
+    ballotScope: {
+      questionId: input.requestId,
+      slotId: `${input.requestId}:1`,
+      slotIndex: 1,
+      version: 1,
+    },
   };
 }
 
@@ -120,6 +203,131 @@ describe("questionnaireOptionABlindDm", () => {
     ]);
   });
 
+  it("builds issuance bundles with a shared definition hash and no definition payload", () => {
+    const definition = makeDefinition();
+    const definitionHash = questionnaireDefinitionHash(definition);
+    const envelope = buildOptionABlindIssuanceBundleEnvelope({
+      issuances: [
+        makeIssuance("q1", definition),
+        makeIssuance("q2", definition),
+      ],
+      sentAt: "2026-06-18T00:00:01.000Z",
+    });
+
+    expect(envelope.definition).toBeUndefined();
+    expect(envelope.definitionHash).toBe(definitionHash);
+    expect(envelope.issuances).toHaveLength(2);
+    expect(envelope.issuances.every((issuance) => issuance.definition === undefined)).toBe(true);
+    expect(envelope.issuances.every((issuance) => issuance.definitionHash === definitionHash)).toBe(true);
+
+    const serialized = JSON.parse(JSON.stringify(envelope)) as {
+      definition?: QuestionnaireDefinition;
+      definitionHash?: string;
+      issuances: Array<Record<string, unknown>>;
+    };
+    expect(serialized.definition).toBeUndefined();
+    expect(serialized.definitionHash).toBe(definitionHash);
+    expect(serialized.issuances.every((issuance) => !("definition" in issuance))).toBe(true);
+    expect(serialized.issuances.every((issuance) => issuance.definitionHash === definitionHash)).toBe(true);
+  });
+
+  it("keeps small bundle envelopes as plain JSON", () => {
+    const recipientNpub = nip19.npubEncode(getPublicKey(generateSecretKey()));
+    const envelope = {
+      type: "optiona_blind_request_bundle_dm" as const,
+      schemaVersion: 1 as const,
+      requests: [makeRequest({ requestId: "request_small", invitedNpub: recipientNpub })],
+      sentAt: "2026-06-18T00:00:00.000Z",
+    };
+
+    const content = encodeOptionADmEnvelopeContent(envelope);
+    const parsed = JSON.parse(content) as { type?: string };
+
+    expect(parsed.type).toBe("optiona_blind_request_bundle_dm");
+    expect(parseOptionADmEnvelopeContent(content)).toEqual(envelope);
+  });
+
+  it("decodes compressed blind request bundles for organiser intake", async () => {
+    const recipientSecret = generateSecretKey();
+    const recipientHex = getPublicKey(recipientSecret);
+    const recipientNpub = nip19.npubEncode(recipientHex);
+    const recipientNsec = nip19.nsecEncode(recipientSecret);
+    const senderSecret = generateSecretKey();
+    const envelope = {
+      type: "optiona_blind_request_bundle_dm" as const,
+      schemaVersion: 1 as const,
+      requests: [
+        makeRequest({
+          requestId: "request_compressed_1",
+          invitedNpub: recipientNpub,
+          padding: "x".repeat(16_000),
+        }),
+      ],
+      sentAt: "2026-06-18T00:00:00.000Z",
+    };
+    const content = encodeOptionADmEnvelopeContent(envelope);
+    const wrapper = JSON.parse(content) as { type?: string; innerType?: string };
+
+    expect(wrapper.type).toBe("optiona_compressed_bundle_dm");
+    expect(wrapper.innerType).toBe("optiona_blind_request_bundle_dm");
+
+    const wrappedRequest = nip17.wrapEvent(
+      senderSecret,
+      { publicKey: recipientHex, relayUrl: "wss://relay.example" },
+      content,
+      "Option A blind request bundle",
+    );
+    querySync.mockResolvedValue([wrappedRequest]);
+
+    const fetchedRequests = await fetchOptionABlindRequestDmsWithNsec({
+      nsec: recipientNsec,
+      electionId: "q_bundle",
+      limit: 20,
+    });
+
+    expect(fetchedRequests).toHaveLength(1);
+    expect(fetchedRequests[0]?.requestId).toBe("request_compressed_1");
+  });
+
+  it("decodes compressed blind issuance bundles for voter intake", async () => {
+    const recipientSecret = generateSecretKey();
+    const recipientHex = getPublicKey(recipientSecret);
+    const recipientNsec = nip19.nsecEncode(recipientSecret);
+    const senderSecret = generateSecretKey();
+    const definition = makeDefinition();
+    const issuances = Array.from({ length: 24 }, (_, index) => ({
+      ...makeIssuance(`q${index + 1}`, definition),
+      blindSignature: `signature_${index}_${"y".repeat(600)}`,
+    }));
+    const envelope = buildOptionABlindIssuanceBundleEnvelope({
+      issuances,
+      sentAt: "2026-06-18T00:00:01.000Z",
+    });
+    const content = encodeOptionADmEnvelopeContent(envelope);
+    const wrapper = JSON.parse(content) as { type?: string; innerType?: string };
+
+    expect(wrapper.type).toBe("optiona_compressed_bundle_dm");
+    expect(wrapper.innerType).toBe("optiona_blind_issuance_bundle_dm");
+
+    const wrappedIssuance = nip17.wrapEvent(
+      senderSecret,
+      { publicKey: recipientHex, relayUrl: "wss://relay.example" },
+      content,
+      "Option A blind issuance bundle",
+    );
+    querySync.mockResolvedValue([wrappedIssuance]);
+
+    const fetchedIssuances = await fetchOptionABlindIssuanceDmsWithNsec({
+      nsec: recipientNsec,
+      electionId: definition.questionnaireId,
+      limit: 30,
+    });
+
+    expect(fetchedIssuances).toHaveLength(24);
+    expect(fetchedIssuances[0]?.definitionHash).toBe(questionnaireDefinitionHash(definition));
+    expect(fetchedIssuances.at(-1)?.issuanceId).toBe("issuance_q24");
+  });
+
   it("reads blind request and issuance DMs via local nsec", async () => {
     const recipientSecret = generateSecretKey();
     const recipientHex = getPublicKey(recipientSecret);
@@ -190,6 +398,43 @@ describe("questionnaireOptionABlindDm", () => {
     expect(fetchedRequests[0]?.requestId).toBe("request_2");
     expect(fetchedIssuances).toHaveLength(1);
     expect(fetchedIssuances[0]?.issuanceId).toBe("issuance_2");
+  });
+
+  it("hydrates bundled issuance definitions from the shared envelope definition", async () => {
+    const recipientSecret = generateSecretKey();
+    const recipientHex = getPublicKey(recipientSecret);
+    const recipientNsec = nip19.nsecEncode(recipientSecret);
+    const senderSecret = generateSecretKey();
+    const definition = makeDefinition();
+    const issuance = {
+      ...makeIssuance("q1", definition),
+      definition: undefined,
+    };
+
+    const wrappedIssuance = nip17.wrapEvent(
+      senderSecret,
+      { publicKey: recipientHex, relayUrl: "wss://relay.example" },
+      JSON.stringify({
+        type: "optiona_blind_issuance_bundle_dm",
+        schemaVersion: 1,
+        definition,
+        issuances: [issuance],
+        sentAt: new Date().toISOString(),
+      }),
+      "Option A blind issuance",
+    );
+
+    querySync.mockResolvedValue([wrappedIssuance]);
+
+    const fetchedIssuances = await fetchOptionABlindIssuanceDmsWithNsec({
+      nsec: recipientNsec,
+      electionId: definition.questionnaireId,
+      limit: 20,
+    });
+
+    expect(fetchedIssuances).toHaveLength(1);
+    expect(fetchedIssuances[0]?.issuanceId).toBe("issuance_q1");
+    expect(fetchedIssuances[0]?.definition).toEqual(definition);
   });
 
   it("falls back to broader relay reads when the primary issuance scan is empty", async () => {

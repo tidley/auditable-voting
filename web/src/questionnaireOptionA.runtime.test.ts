@@ -35,6 +35,7 @@ import {
   subscribeOptionABlindRequestAckDmsWithNsec,
 } from "./questionnaireOptionABlindDm";
 import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
+import { questionnaireDefinitionHash } from "./questionnaireDefinitionReference";
 import {
   buildQuestionnaireBlindTokenSignedMessage,
 } from "./questionnaireBlindToken";
@@ -389,7 +390,8 @@ async function processDelegatedCoordinatorQueues(input: {
         blindedMessage: request.blindedMessage,
       }),
       ballotScope: request.ballotScope ?? null,
-      definition: cachedDefinition,
+      definitionHash: questionnaireDefinitionHash(cachedDefinition),
+      definitionEventId: null,
       issuedAt: new Date().toISOString(),
     };
 
@@ -477,6 +479,7 @@ async function processDelegatedCoordinatorQueues(input: {
         message: buildQuestionnaireBlindTokenSignedMessage({
           questionnaireId: input.electionId,
           tokenSecretCommitment: submission.tokenCommitment,
+          ballotScope: issuance?.ballotScope ?? null,
         }),
         signature: submission.credential,
       });
@@ -968,6 +971,112 @@ describe("questionnaireOptionARuntime", () => {
     expect(voter.getSnapshot()?.submissionDecisions?.q2?.accepted).toBe(true);
     expect(coordinator.getAcceptedUniqueCount()).toBe(2);
     expect(Object.keys(coordinator.getSnapshot()?.acceptedNullifiers ?? {})).toHaveLength(2);
+  });
+
+  it("uses one scoped credential for questions grouped under the same ballot index", async () => {
+    const groupedElectionId = `${electionId}_credential_group`;
+    const coordinator = new QuestionnaireOptionACoordinatorRuntime(signer(coordinatorNpub), groupedElectionId);
+    await coordinator.loginWithSigner({
+      title: "Grouped ballot",
+      description: "One ballot for grouped questions",
+      state: "open",
+      flowMode: "public_submission_v1",
+      responseMode: "blind_token",
+    });
+    coordinator.addWhitelistNpub(voterNpub);
+    const blindSigningPublicKey = coordinator.getSnapshot()?.election.blindSigningPublicKey ?? null;
+    const now = Math.floor(Date.now() / 1000);
+    const definition: QuestionnaireDefinition = {
+      ...buildDefinition({ electionId: groupedElectionId, coordinatorNpub, title: "Grouped ballot" }),
+      ballotCredentialMode: "per_question",
+      blindSigningPublicKey,
+      createdAt: now,
+      openAt: now - 30,
+      closeAt: now + 3600,
+      questions: [
+        {
+          questionId: "q1",
+          type: "yes_no",
+          prompt: "Approve the report?",
+          required: true,
+          ballotSlot: { slotId: "ballot-1", slotIndex: 1, version: 1 },
+        },
+        {
+          questionId: "q2",
+          type: "yes_no",
+          prompt: "Approve the minutes?",
+          required: true,
+          ballotSlot: { slotId: "ballot-1", slotIndex: 1, version: 1 },
+        },
+        {
+          questionId: "q3",
+          type: "yes_no",
+          prompt: "Elect the chair?",
+          required: true,
+          ballotSlot: { slotId: "ballot-2", slotIndex: 2, version: 1 },
+        },
+      ],
+    };
+    storeCachedQuestionnaireDefinition(definition);
+    upsertElectionSummary({
+      electionId: groupedElectionId,
+      title: definition.title,
+      description: definition.description ?? "",
+      state: "open",
+      openedAt: new Date(definition.openAt * 1000).toISOString(),
+      closedAt: new Date(definition.closeAt * 1000).toISOString(),
+      coordinatorNpub,
+      blindSigningPublicKey,
+      protocolVersion: definition.protocolVersion,
+      flowMode: definition.flowMode,
+      responseMode: definition.responseMode,
+    });
+    const sentInvite = await coordinator.sendInvite(voterNpub, {
+      title: "Grouped ballot",
+      description: "One ballot for grouped questions",
+      voteUrl: "https://example.org/vote",
+    });
+
+    const voter = new QuestionnaireOptionAVoterRuntime(signer(voterNpub), groupedElectionId);
+    await voter.loginWithSigner(sentInvite.invite);
+    voter.updateDraftResponses([
+      { questionId: "q1", type: "yes_no", answer: "yes" },
+      { questionId: "q2", type: "yes_no", answer: "no" },
+      { questionId: "q3", type: "yes_no", answer: "yes" },
+    ]);
+    await voter.requestBlindBallot({ forceResend: true });
+
+    const requestedScopes = Object.values(voter.getSnapshot()?.blindRequests ?? {})
+      .map((request) => `${request.ballotScope?.slotId}:${request.ballotScope?.slotIndex}`)
+      .sort();
+    expect(requestedScopes).toEqual(["ballot-1:1", "ballot-2:2"]);
+
+    await coordinator.processPendingBlindRequests();
+    voter.refreshIssuanceAndAcceptance();
+    expect(Object.values(voter.getSnapshot()?.blindIssuances ?? {})).toHaveLength(2);
+
+    await voter.submitVote(["q1", "q2"], { questionIds: ["q1", "q2"] });
+    const groupedSubmission = voter.getSnapshot()?.submissions?.q1;
+    expect(groupedSubmission).toBe(voter.getSnapshot()?.submissions?.q2);
+    expect(groupedSubmission?.payload.responses.map((answer) => answer.questionId).sort()).toEqual(["q1", "q2"]);
+    expect(groupedSubmission?.credentialBundle).toHaveLength(1);
+    expect(groupedSubmission?.credentialBundle?.[0]?.ballotScope?.slotIndex).toBe(1);
+
+    const publicResponses = publicBlindResponseStore.entries.filter((entry) => (
+      entry.response.questionnaireId === groupedElectionId
+    )).map((entry) => entry.response);
+    expect(publicResponses).toHaveLength(1);
+    expect(publicResponses[0]?.answers.map((answer) => answer.questionId).sort()).toEqual(["q1", "q2"]);
+    expect(publicResponses[0]?.tokenProofs).toHaveLength(1);
+    expect(publicResponses[0]?.tokenNullifiers).toHaveLength(1);
+
+    await coordinator.processPendingSubmissions(["q1", "q2", "q3"]);
+    voter.refreshIssuanceAndAcceptance();
+
+    expect(voter.getSnapshot()?.submissionDecisions?.q1?.accepted).toBe(true);
+    expect(voter.getSnapshot()?.submissionDecisions?.q2?.accepted).toBe(true);
+    expect(coordinator.getAcceptedUniqueCount()).toBe(1);
+    expect(Object.keys(coordinator.getSnapshot()?.acceptedNullifiers ?? {})).toHaveLength(1);
   });
 
   it("accepts recovered public submissions that arrived before close", async () => {

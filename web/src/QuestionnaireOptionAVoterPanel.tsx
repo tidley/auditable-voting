@@ -22,6 +22,7 @@ import {
 } from "./questionnaireOptionAStorage";
 import { fetchOptionAInviteDms, fetchOptionAInviteDmsWithNsec } from "./questionnaireOptionAInviteDm";
 import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
+import { buildQuestionnaireDefinitionReference } from "./questionnaireDefinitionReference";
 import {
   normaliseQuestionBallotSlot,
   questionnaireUsesPerQuestionCredentials,
@@ -251,9 +252,8 @@ function buildInviteFromPublicDefinition(
     voteUrl: typeof window === "undefined" ? "" : window.location.href,
     invitedNpub: invitedNpub.trim(),
     coordinatorNpub,
-    blindSigningPublicKey: definition.blindSigningPublicKey ?? null,
+    definitionReference: buildQuestionnaireDefinitionReference({ definition }),
     issueBlindTokensWorker: issueBlindTokensWorker ?? null,
-    definition,
     expiresAt: null,
   };
 }
@@ -464,6 +464,9 @@ function scopedBallotScopeKey(scope: BallotScope | null | undefined) {
   if (!questionId && !slotId && !slotIndex && version === 1) {
     return "__questionnaire__";
   }
+  if (slotIndex > 0) {
+    return `slot:${slotIndex}:v${version}`;
+  }
   return `${questionId || slotId}:${slotId}:${slotIndex}:v${version}`;
 }
 
@@ -480,11 +483,28 @@ function scopedBallotScopeForQuestion(
     return null;
   }
   const slot = normaliseQuestionBallotSlot(question, index);
-  return {
+  const targetKey = scopedBallotScopeKey({
     questionId: question.questionId,
     slotId: slot.slotId,
     slotIndex: slot.slotIndex,
     version: slot.version,
+  });
+  const canonicalIndex = definition.questions.findIndex((candidate, candidateIndex) => {
+    const candidateSlot = normaliseQuestionBallotSlot(candidate, candidateIndex);
+    return scopedBallotScopeKey({
+      questionId: candidate.questionId,
+      slotId: candidateSlot.slotId,
+      slotIndex: candidateSlot.slotIndex,
+      version: candidateSlot.version,
+    }) === targetKey;
+  });
+  const canonicalQuestion = canonicalIndex >= 0 ? definition.questions[canonicalIndex] : question;
+  const canonicalSlot = normaliseQuestionBallotSlot(canonicalQuestion, canonicalIndex >= 0 ? canonicalIndex : index);
+  return {
+    questionId: canonicalQuestion.questionId,
+    slotId: canonicalSlot.slotId,
+    slotIndex: canonicalSlot.slotIndex,
+    version: canonicalSlot.version,
   };
 }
 
@@ -619,27 +639,69 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     acceptedQuestionKey ? acceptedQuestionKey.split("|") : [],
   ), [acceptedQuestionKey]);
   const activeQuestion = perQuestionMode ? questions[activeQuestionIndex] ?? null : null;
-  const activeQuestionSubmitted = Boolean(activeQuestion && submittedQuestionIds.has(activeQuestion.questionId));
-  const allQuestionResponsesSubmitted = perQuestionMode
-    && questions.length > 0
-    && questions.every((question) => submittedQuestionIds.has(question.questionId));
-  const responseSubmittedForCurrentQuestionnaire = perQuestionMode
-    ? activeQuestionSubmitted
-    : Boolean(snapshot?.submission && snapshot.electionId === currentQuestionnaireId);
   const activeQuestionScope = perQuestionMode && activeQuestion
     ? scopedBallotScopeForQuestion(currentDefinition, activeQuestion.questionId)
     : null;
   const activeQuestionScopeKey = perQuestionMode && activeQuestion
     ? scopedBallotScopeKey(activeQuestionScope)
     : "";
+  const activeQuestionGroupEntries = useMemo(() => (
+    perQuestionMode && activeQuestion && activeQuestionScopeKey
+      ? questions
+        .map((question, index) => ({ question, index }))
+        .filter(({ question }) => (
+          scopedBallotScopeKey(scopedBallotScopeForQuestion(currentDefinition, question.questionId)) === activeQuestionScopeKey
+        ))
+      : activeQuestion
+        ? [{ question: activeQuestion, index: activeQuestionIndex }]
+        : []
+  ), [activeQuestion, activeQuestionIndex, activeQuestionScopeKey, currentDefinition, perQuestionMode, questions]);
+  const activeQuestionIds = useMemo(
+    () => activeQuestionGroupEntries.map(({ question }) => question.questionId),
+    [activeQuestionGroupEntries],
+  );
+  const groupKeyForQuestionId = (questionId: string) => (
+    scopedBallotScopeKey(scopedBallotScopeForQuestion(currentDefinition, questionId))
+  );
+  const submittedQuestionGroupKeys = useMemo(() => {
+    const keys = new Set<string>();
+    if (!perQuestionMode) {
+      return keys;
+    }
+    for (const question of questions) {
+      if (submittedQuestionIds.has(question.questionId)) {
+        keys.add(groupKeyForQuestionId(question.questionId));
+      }
+    }
+    return keys;
+  }, [currentDefinition, perQuestionMode, questions, submittedQuestionIds]);
+  const acceptedQuestionGroupKeys = useMemo(() => {
+    const keys = new Set<string>();
+    if (!perQuestionMode) {
+      return keys;
+    }
+    for (const question of questions) {
+      if (acceptedQuestionIds.has(question.questionId)) {
+        keys.add(groupKeyForQuestionId(question.questionId));
+      }
+    }
+    return keys;
+  }, [acceptedQuestionIds, currentDefinition, perQuestionMode, questions]);
+  const activeQuestionSubmitted = Boolean(activeQuestionScopeKey && submittedQuestionGroupKeys.has(activeQuestionScopeKey));
+  const allQuestionResponsesSubmitted = perQuestionMode
+    && questions.length > 0
+    && questions.every((question) => submittedQuestionGroupKeys.has(groupKeyForQuestionId(question.questionId)));
+  const responseSubmittedForCurrentQuestionnaire = perQuestionMode
+    ? activeQuestionSubmitted
+    : Boolean(snapshot?.submission && snapshot.electionId === currentQuestionnaireId);
   const activeQuestionRequest = perQuestionMode && activeQuestionScopeKey
     ? snapshot?.blindRequests?.[activeQuestionScopeKey] ?? null
     : snapshot?.blindRequest ?? null;
   const activeQuestionIssuance = perQuestionMode && activeQuestionScopeKey
     ? snapshot?.blindIssuances?.[activeQuestionScopeKey] ?? null
     : snapshot?.blindIssuance ?? null;
-  const activeQuestionSubmission = perQuestionMode && activeQuestion
-    ? snapshot?.submissions?.[activeQuestion.questionId] ?? null
+  const activeQuestionSubmission = perQuestionMode
+    ? activeQuestionIds.map((questionId) => snapshot?.submissions?.[questionId] ?? null).find(Boolean) ?? null
     : snapshot?.submission ?? null;
   const activeQuestionCredentialReady = perQuestionMode
     ? Boolean(activeQuestionIssuance)
@@ -1350,16 +1412,16 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   ]);
 
   const answerableQuestions = useMemo(
-    () => (perQuestionMode ? (activeQuestion ? [activeQuestion] : []) : questions),
-    [activeQuestion, perQuestionMode, questions],
+    () => (perQuestionMode ? activeQuestionGroupEntries.map(({ question }) => question) : questions),
+    [activeQuestionGroupEntries, perQuestionMode, questions],
   );
   const visibleQuestionEntries = useMemo(
     () => (
-      perQuestionMode && activeQuestion
-        ? [{ question: activeQuestion, index: activeQuestionIndex }]
+      perQuestionMode
+        ? activeQuestionGroupEntries
         : questions.map((question, index) => ({ question, index }))
     ),
-    [activeQuestion, activeQuestionIndex, perQuestionMode, questions],
+    [activeQuestionGroupEntries, perQuestionMode, questions],
   );
   const requiredQuestions = useMemo(
     () => answerableQuestions.filter((question) => question.required || (question.type === "rank" && (question.minimumRanked ?? 0) > 0)),
@@ -1557,9 +1619,12 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         voteUrl: typeof window === "undefined" ? "" : window.location.href,
         invitedNpub: voterNpub.trim(),
         coordinatorNpub,
-        blindSigningPublicKey: existingSummary?.blindSigningPublicKey ?? null,
+        definitionReference: {
+          questionnaireId: targetElectionId,
+          coordinatorNpub,
+          relays: existingSummary?.questionnaireRelays,
+        },
         issueBlindTokensWorker,
-        definition: null,
         expiresAt: null,
       };
     }
@@ -1873,6 +1938,9 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       baseUrl: window.location.href,
       electionId: id,
       coordinatorNpub: coordinatorNpub?.trim() || undefined,
+      relays: readCachedQuestionnaireDefinition(id)?.questionnaireRelays
+        ?? loadElectionSummary(id)?.questionnaireRelays
+        ?? null,
       login: false,
       autoRequestBallot: true,
     });
@@ -2084,14 +2152,36 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
   }
 
-  function findNextUnsubmittedQuestionIndex(fromIndex: number, justSubmittedQuestionId = "") {
+  function findAdjacentQuestionGroupIndex(fromIndex: number, direction: -1 | 1) {
     if (!perQuestionMode || questions.length === 0) {
       return -1;
     }
-    const isSubmitted = (questionId: string) => (
-      submittedQuestionIds.has(questionId)
-      || (justSubmittedQuestionId.trim().length > 0 && questionId === justSubmittedQuestionId)
+    const currentGroupKey = questions[fromIndex]
+      ? groupKeyForQuestionId(questions[fromIndex].questionId)
+      : "";
+    for (let offset = 1; offset <= questions.length; offset += 1) {
+      const index = fromIndex + (offset * direction);
+      if (index < 0 || index >= questions.length) {
+        break;
+      }
+      if (groupKeyForQuestionId(questions[index].questionId) !== currentGroupKey) {
+        return index;
+      }
+    }
+    return -1;
+  }
+
+  function findNextUnsubmittedQuestionIndex(fromIndex: number, justSubmittedQuestionIds: string[] = []) {
+    if (!perQuestionMode || questions.length === 0) {
+      return -1;
+    }
+    const justSubmittedGroupKeys = new Set(
+      justSubmittedQuestionIds.map((questionId) => groupKeyForQuestionId(questionId)),
     );
+    const isSubmitted = (questionId: string) => {
+      const groupKey = groupKeyForQuestionId(questionId);
+      return submittedQuestionGroupKeys.has(groupKey) || justSubmittedGroupKeys.has(groupKey);
+    };
     for (let offset = 1; offset <= questions.length; offset += 1) {
       const index = (fromIndex + offset) % questions.length;
       if (!isSubmitted(questions[index].questionId)) {
@@ -2107,13 +2197,14 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     }
     try {
       pushAnswers();
-      const activeQuestionId = perQuestionMode ? activeQuestion?.questionId?.trim() ?? "" : "";
-      const submitRequiredQuestionIds = activeQuestionId
-        ? requiredQuestionIds.filter((questionId) => questionId === activeQuestionId)
+      const submitQuestionIds = perQuestionMode ? activeQuestionIds : [];
+      const submitQuestionIdSet = new Set(submitQuestionIds);
+      const submitRequiredQuestionIds = submitQuestionIdSet.size > 0
+        ? requiredQuestionIds.filter((questionId) => submitQuestionIdSet.has(questionId))
         : requiredQuestionIds;
-      await runtime.submitVote(submitRequiredQuestionIds, activeQuestionId ? { questionId: activeQuestionId } : undefined);
+      await runtime.submitVote(submitRequiredQuestionIds, submitQuestionIds.length > 0 ? { questionIds: submitQuestionIds } : undefined);
       if (perQuestionMode) {
-        const nextQuestionIndex = findNextUnsubmittedQuestionIndex(activeQuestionIndex, activeQuestionId);
+        const nextQuestionIndex = findNextUnsubmittedQuestionIndex(activeQuestionIndex, submitQuestionIds);
         if (nextQuestionIndex >= 0) {
           setActiveQuestionIndex(nextQuestionIndex);
           setStatus(null);
@@ -2553,9 +2644,14 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       voteUrl: typeof window === "undefined" ? "" : window.location.href,
       invitedNpub,
       coordinatorNpub,
-      blindSigningPublicKey: definition?.blindSigningPublicKey ?? summary?.blindSigningPublicKey ?? null,
+      definitionReference: definition
+        ? buildQuestionnaireDefinitionReference({ definition })
+        : {
+          questionnaireId: id,
+          coordinatorNpub,
+          relays: summary?.questionnaireRelays,
+        },
       issueBlindTokensWorker: summary?.issueBlindTokensWorker ?? null,
-      definition,
       expiresAt: null,
     };
   };
@@ -2722,16 +2818,13 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   };
   const requiredQuestionsAnswered = questions.length > 0 && requiredQuestions.every(questionHasResponse);
   const answerableQuestionsHaveResponse = answerableQuestions.some(questionHasResponse);
-  const activeQuestionNeedsResponse = Boolean(
-    activeQuestion
-    && (activeQuestion.required || (activeQuestion.type === "rank" && (activeQuestion.minimumRanked ?? 0) > 0)),
-  );
-  const activeQuestionHasResponse = activeQuestion ? questionHasResponse(activeQuestion) : false;
+  const activeQuestionGroupHasRequiredResponses = requiredQuestions.every(questionHasResponse);
+  const activeQuestionGroupHasAnyResponse = answerableQuestions.some(questionHasResponse);
   const requiredQuestionsAnsweredForAction = perQuestionMode
-    ? Boolean(activeQuestion && (!activeQuestionNeedsResponse || activeQuestionHasResponse))
+    ? Boolean(activeQuestion && activeQuestionGroupHasRequiredResponses)
     : requiredQuestionsAnswered;
   const answerableQuestionsHaveResponseForAction = perQuestionMode
-    ? activeQuestionHasResponse
+    ? activeQuestionGroupHasAnyResponse
     : answerableQuestionsHaveResponse;
   const actionQuestionnaireId = currentQuestionnaireId || electionId.trim();
   const snapshotForAction = snapshot?.electionId === actionQuestionnaireId ? snapshot : null;
@@ -2747,6 +2840,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const canViewResults = perQuestionMode
     ? allQuestionResponsesSubmitted
     : Boolean(snapshot?.submission);
+  const previousQuestionGroupIndex = perQuestionMode ? findAdjacentQuestionGroupIndex(activeQuestionIndex, -1) : -1;
+  const nextQuestionGroupIndex = perQuestionMode ? findAdjacentQuestionGroupIndex(activeQuestionIndex, 1) : -1;
   const actionCoordinatorNpub = snapshotForAction?.coordinatorNpub?.trim()
     || (activeInvite?.electionId === actionQuestionnaireId ? activeInvite.coordinatorNpub?.trim() : "")
     || inviteDropdownOptions.find((invite) => invite.electionId === actionQuestionnaireId)?.coordinatorNpub?.trim()
@@ -2817,6 +2912,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       perQuestionMode,
       activeQuestionIndex,
       activeQuestionId: activeQuestion?.questionId ?? null,
+      activeQuestionIds,
       submittedQuestionIds: [...submittedQuestionIds],
       acceptedQuestionIds: [...acceptedQuestionIds],
       submitButtonReasonBlocked: responseSubmittedForCurrentQuestionnaire || allQuestionResponsesSubmitted
@@ -2878,6 +2974,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     activeQuestionRequest?.requestId,
     activeQuestionRequestSent,
     activeQuestionSubmission?.submissionId,
+    activeQuestionIds,
     actionCoordinatorNpub,
     answerableQuestionsHaveResponse,
     answerableQuestionsHaveResponseForAction,
@@ -3237,19 +3334,32 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               <button
                 type='button'
                 className='simple-voter-secondary simple-questionnaire-stepper-button'
-                disabled={activeQuestionIndex <= 0}
-                onClick={() => setActiveQuestionIndex((current) => Math.max(0, current - 1))}
+                disabled={previousQuestionGroupIndex < 0}
+                onClick={() => {
+                  if (previousQuestionGroupIndex >= 0) {
+                    setActiveQuestionIndex(previousQuestionGroupIndex);
+                  }
+                }}
               >
                 Previous
               </button>
               <p className='simple-questionnaire-question-progress'>
-                Question {Math.min(activeQuestionIndex + 1, questions.length)}/{questions.length}
+                {activeQuestionScope?.slotIndex
+                  ? `Ballot ${activeQuestionScope.slotIndex}`
+                  : `Question ${Math.min(activeQuestionIndex + 1, questions.length)}/${questions.length}`}
+                {activeQuestionGroupEntries.length > 1
+                  ? ` · ${activeQuestionGroupEntries.length} questions`
+                  : ` · Question ${Math.min(activeQuestionIndex + 1, questions.length)}/${questions.length}`}
               </p>
               <button
                 type='button'
                 className='simple-voter-secondary simple-questionnaire-stepper-button'
-                disabled={activeQuestionIndex >= questions.length - 1}
-                onClick={() => setActiveQuestionIndex((current) => Math.min(questions.length - 1, current + 1))}
+                disabled={nextQuestionGroupIndex < 0}
+                onClick={() => {
+                  if (nextQuestionGroupIndex >= 0) {
+                    setActiveQuestionIndex(nextQuestionGroupIndex);
+                  }
+                }}
               >
                 Next
               </button>
@@ -3260,9 +3370,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               ? (answers[question.questionId] as string[])
               : [];
             const questionSubmitted = perQuestionMode
-              ? submittedQuestionIds.has(question.questionId)
+              ? submittedQuestionGroupKeys.has(groupKeyForQuestionId(question.questionId))
               : responseSubmittedForCurrentQuestionnaire;
-            const questionAccepted = acceptedQuestionIds.has(question.questionId);
+            const questionAccepted = perQuestionMode
+              ? acceptedQuestionGroupKeys.has(groupKeyForQuestionId(question.questionId))
+              : acceptedQuestionIds.has(question.questionId);
             const rankRequirement = question.type === "rank"
               ? getRankRequirementState(question.options?.length ?? 0, question.minimumRanked ?? 0, ranked.length)
               : null;
@@ -3557,7 +3669,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               {displaySubmissionQuestion ? (
                 <div>
                   <dt>Question</dt>
-                  <dd>Q{activeQuestionIndex + 1}: {displaySubmissionQuestion.prompt || displaySubmissionQuestion.questionId}</dd>
+                  <dd>
+                    {activeQuestionGroupEntries.length > 1
+                      ? activeQuestionGroupEntries.map(({ question, index }) => `Q${index + 1}: ${question.prompt || question.questionId}`).join("; ")
+                      : `Q${activeQuestionIndex + 1}: ${displaySubmissionQuestion.prompt || displaySubmissionQuestion.questionId}`}
+                  </dd>
                 </div>
               ) : null}
               <div>

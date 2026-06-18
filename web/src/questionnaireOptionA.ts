@@ -1,4 +1,9 @@
-import type { QuestionnaireDefinition } from "./questionnaireProtocol";
+import {
+  questionBallotScopeKey,
+  questionnaireUsesPerQuestionCredentials,
+  type QuestionnaireDefinition,
+  type QuestionnaireDefinitionReference,
+} from "./questionnaireProtocol";
 import type { QuestionnaireBlindPrivateKey, QuestionnaireBlindPublicKey } from "./questionnaireBlindSignature";
 import type { QuestionnaireFlowMode, QuestionnaireResponseMode } from "./questionnaireProtocolConstants";
 
@@ -100,6 +105,11 @@ export interface ElectionInviteMessage {
   voteUrl: string;
   invitedNpub: Npub;
   coordinatorNpub: Npub;
+  definitionReference?: QuestionnaireDefinitionReference | null;
+  /**
+   * Legacy invites embedded enough round data for offline bootstrap. New invites carry
+   * only definitionReference and resolve the definition from public questionnaire events.
+   */
   blindSigningPublicKey?: QuestionnaireBlindPublicKey | null;
   issueBlindTokensWorker?: IssueBlindTokensWorkerRouting | null;
   definition?: QuestionnaireDefinition | null;
@@ -152,7 +162,10 @@ export interface BlindBallotIssuance {
   tokenCommitment: string;
   blindSigningKeyId: string;
   blindSignature: string;
+  definitionHash?: Hex | null;
+  definitionEventId?: EventId | null;
   ballotScope?: BallotScope | null;
+  /** Legacy issuances embedded the definition directly. New issuances carry a definition hash/reference. */
   definition?: QuestionnaireDefinition | null;
   issuedAt: IsoTime;
 }
@@ -375,6 +388,9 @@ function ballotScopeKey(scope: BallotScope | null | undefined) {
   if (!questionId && !slotId && !version && !slotIndex) {
     return "__questionnaire__";
   }
+  if (slotIndex > 0) {
+    return `slot:${slotIndex}:v${version || 1}`;
+  }
   return `${questionId || slotId}:${slotId}:${slotIndex}:v${version || 1}`;
 }
 
@@ -452,18 +468,37 @@ function submissionCredentialBundle(submission: BallotSubmission): BallotCredent
   }];
 }
 
-function ballotCredentialProofQuestionId(proof: BallotCredentialProof) {
-  return proof.questionId?.trim() || proof.ballotScope?.questionId?.trim() || "";
+function ballotSubmissionQuestionKeys(submission: BallotSubmission): string[] {
+  if (!Array.isArray(submission.credentialBundle) || submission.credentialBundle.length === 0) {
+    return [];
+  }
+  return [...new Set(
+    submission.payload.responses
+      .map((entry) => entry.questionId.trim())
+      .filter(Boolean),
+  )];
 }
 
-function ballotSubmissionQuestionKey(submission: BallotSubmission): string {
-  const proofQuestionId = submission.credentialBundle?.[0]
-    ? ballotCredentialProofQuestionId(submission.credentialBundle[0])
-    : "";
-  if (proofQuestionId && submission.payload.responses.length === 1) {
-    return proofQuestionId;
+function answeredQuestionsMatchCredentialScopes(
+  definition: QuestionnaireDefinition | null | undefined,
+  submission: BallotSubmission,
+) {
+  if (!definition || !questionnaireUsesPerQuestionCredentials(definition)) {
+    return true;
   }
-  return "";
+  const proofScopeKeys = new Set(
+    submissionCredentialBundle(submission).map((proof) => ballotScopeKey(proof.ballotScope)),
+  );
+  for (const answer of submission.payload.responses) {
+    const questionIndex = definition.questions.findIndex((question) => question.questionId === answer.questionId);
+    if (questionIndex < 0) {
+      return false;
+    }
+    if (!proofScopeKeys.has(questionBallotScopeKey(definition.questions[questionIndex], questionIndex))) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function reduceCoordinatorError(
@@ -702,19 +737,21 @@ export function reduceVoterEvent(
     if (!next.credentialReady) {
       return reduceVoterError(state, "credential_not_ready");
     }
-    const questionKey = ballotSubmissionQuestionKey(event.submission);
-    const existingQuestionDecision = questionKey ? next.submissionDecisions?.[questionKey] : null;
-    if ((!questionKey && next.submissionAccepted === true) || existingQuestionDecision?.accepted === true) {
+    const questionKeys = ballotSubmissionQuestionKeys(event.submission);
+    const existingAcceptedQuestionDecision = questionKeys.some((questionKey) => (
+      next.submissionDecisions?.[questionKey]?.accepted === true
+    ));
+    if ((questionKeys.length === 0 && next.submissionAccepted === true) || existingAcceptedQuestionDecision) {
       return reduceVoterError(state, "already_submitted");
     }
     if (!validateResponsesSchema(event.submission.payload.responses)) {
       return reduceVoterError(state, "schema_invalid");
     }
     next.submission = event.submission;
-    if (questionKey) {
+    if (questionKeys.length > 0) {
       next.submissions = {
         ...(next.submissions ?? {}),
-        [questionKey]: event.submission,
+        ...Object.fromEntries(questionKeys.map((questionKey) => [questionKey, event.submission])),
       };
     }
     next.responseNpub = event.submission.responseNpub ?? event.submission.invitedNpub;
@@ -723,20 +760,20 @@ export function reduceVoterEvent(
   }
 
   if (event.type === "BALLOT_SUBMISSION_ACCEPTED") {
-    const questionEntry = Object.entries(next.submissions ?? {})
-      .find(([, submission]) => submission.submissionId === event.submissionId) ?? null;
-    if (next.submission?.submissionId !== event.submissionId && !questionEntry) {
+    const questionEntries = Object.entries(next.submissions ?? {})
+      .filter(([, submission]) => submission.submissionId === event.submissionId);
+    if (next.submission?.submissionId !== event.submissionId && questionEntries.length === 0) {
       return reduceVoterError(state, "schema_invalid");
     }
-    if (questionEntry) {
+    if (questionEntries.length > 0) {
       next.submissionDecisions = {
         ...(next.submissionDecisions ?? {}),
-        [questionEntry[0]]: {
+        ...Object.fromEntries(questionEntries.map(([questionId]) => [questionId, {
           submissionId: event.submissionId,
           accepted: true,
           decidedAt: event.decidedAt,
           reason: null,
-        },
+        }])),
       };
     } else {
       next.submissionAccepted = true;
@@ -746,20 +783,20 @@ export function reduceVoterEvent(
     return { state: next, ok: true };
   }
 
-  const questionEntry = Object.entries(next.submissions ?? {})
-    .find(([, submission]) => submission.submissionId === event.submissionId) ?? null;
-  if (next.submission?.submissionId !== event.submissionId && !questionEntry) {
+  const questionEntries = Object.entries(next.submissions ?? {})
+    .filter(([, submission]) => submission.submissionId === event.submissionId);
+  if (next.submission?.submissionId !== event.submissionId && questionEntries.length === 0) {
     return reduceVoterError(state, "schema_invalid");
   }
-  if (questionEntry) {
+  if (questionEntries.length > 0) {
     next.submissionDecisions = {
       ...(next.submissionDecisions ?? {}),
-      [questionEntry[0]]: {
+      ...Object.fromEntries(questionEntries.map(([questionId]) => [questionId, {
         submissionId: event.submissionId,
         accepted: false,
         decidedAt: event.decidedAt,
         reason: event.reason,
-      },
+      }])),
     };
   } else {
     next.submissionAccepted = false;
@@ -1231,6 +1268,7 @@ export function validateBallotSubmission(input: {
   electionId: ElectionId;
   electionState: ElectionState;
   requiredQuestionIds: string[];
+  definition?: QuestionnaireDefinition | null;
 }) {
   if (input.submission.electionId !== input.electionId || input.submission.payload.electionId !== input.electionId) {
     return false;
@@ -1252,23 +1290,6 @@ export function validateBallotSubmission(input: {
     return false;
   }
   if (Array.isArray(input.submission.credentialBundle) && input.submission.credentialBundle.length > 0) {
-    const proofQuestionIds = new Set(
-      input.submission.credentialBundle
-        .map((proof) => ballotCredentialProofQuestionId(proof))
-        .filter(Boolean),
-    );
-    if (
-      proofQuestionIds.size > 0
-      && (
-        [...answered].some((questionId) => !proofQuestionIds.has(questionId))
-        || [...proofQuestionIds].some((questionId) => !answered.has(questionId))
-      )
-    ) {
-      return false;
-    }
-    if (!input.requiredQuestionIds.every((questionId) => proofQuestionIds.has(questionId))) {
-      return false;
-    }
     const seenNullifiers = new Set<string>();
     for (const proof of input.submission.credentialBundle) {
       if (
@@ -1281,6 +1302,9 @@ export function validateBallotSubmission(input: {
         return false;
       }
       seenNullifiers.add(proof.nullifier);
+    }
+    if (!answeredQuestionsMatchCredentialScopes(input.definition, input.submission)) {
+      return false;
     }
   }
   return true;
