@@ -353,7 +353,7 @@ function formatQuestionnaireRoundOptionLabel(input: {
   return `${input.index + 1}/${input.total} ${resolveInviteDisplayTitle(input.invite)} · ${input.progress.label}`;
 }
 
-function formatVoteActionButtonText(input: {
+export function formatVoteActionButtonText(input: {
   snapshot: VoterElectionLocalState | null;
   requiredQuestionsAnswered: boolean;
   canSubmitNow: boolean;
@@ -364,8 +364,12 @@ function formatVoteActionButtonText(input: {
   responseSubmitted: boolean;
   perQuestionMode: boolean;
   allQuestionResponsesSubmitted: boolean;
+  submitInFlight: boolean;
 }) {
   const snapshot = input.snapshot;
+  if (input.submitInFlight) {
+    return "Submitting...";
+  }
   if (input.responseSubmitted && input.perQuestionMode && !input.allQuestionResponsesSubmitted) {
     return "Next question";
   }
@@ -536,6 +540,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [encryptFreeTextByQuestionId, setEncryptFreeTextByQuestionId] = useState<Record<string, boolean>>({});
+  const [submitInFlight, setSubmitInFlight] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [manualResendClockMs, setManualResendClockMs] = useState(() => Date.now());
   const [privateInviteBootstrapRetryNonce, setPrivateInviteBootstrapRetryNonce] = useState(0);
@@ -2192,9 +2197,10 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
   }
 
   async function submit() {
-    if (!runtime) {
+    if (!runtime || submitInFlight) {
       return;
     }
+    setSubmitInFlight(true);
     try {
       pushAnswers();
       const submitQuestionIds = perQuestionMode ? activeQuestionIds : [];
@@ -2217,6 +2223,8 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       setRefreshNonce((value) => value + 1);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Submit failed.");
+    } finally {
+      setSubmitInFlight(false);
     }
   }
 
@@ -2858,6 +2866,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     responseSubmitted: responseSubmittedForCurrentQuestionnaire,
     perQuestionMode,
     allQuestionResponsesSubmitted,
+    submitInFlight,
   });
   useEffect(() => {
     if (!responseSubmittedForCurrentQuestionnaire || !snapshot?.draftResponses?.length) {
@@ -2886,8 +2895,30 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       responseSubmitted: responseSubmittedForCurrentQuestionnaire,
       perQuestionMode,
       allQuestionResponsesSubmitted,
+      submitInFlight,
     });
     const questionnaireSeen = questions.length > 0 || Boolean(autoRequestDefinition);
+    const submitButtonReasonBlocked = submitInFlight
+      ? "submitting"
+      : responseSubmittedForCurrentQuestionnaire || allQuestionResponsesSubmitted
+        ? null
+        : !requiredQuestionsAnsweredForAction
+          ? "required_questions_unanswered"
+          : !answerableQuestionsHaveResponseForAction
+            ? "question_unanswered"
+            : !snapshotForTarget?.loginVerified
+              ? "not_logged_in"
+              : !autoRequestBlindSigningKeyReady
+                ? "blind_signing_key_not_ready"
+                : !snapshotForTarget?.coordinatorNpub?.trim()
+                  ? "coordinator_missing"
+                  : activeQuestionRequestSent && !activeQuestionCredentialReady
+                    ? "waiting_for_credential"
+                    : !activeQuestionCredentialReady
+                      ? "credential_missing"
+                      : !canSubmitNow
+                        ? "runtime_submit_not_ready"
+                        : null;
     owner.__questionnaireVoterDebug = {
       mode: "option_a",
       questionnaireId: targetQuestionnaireId,
@@ -2907,7 +2938,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         : snapshotForTarget?.submission ? 1 : 0,
       submitButtonPresent: true,
       submitButtonVisible: !settingsMode,
-      submitButtonDisabled: !(canSubmitNow || responseSubmittedForCurrentQuestionnaire || allQuestionResponsesSubmitted),
+      submitButtonDisabled: submitInFlight || !(canSubmitNow || responseSubmittedForCurrentQuestionnaire || allQuestionResponsesSubmitted),
       submitButtonText: debugSubmitButtonText,
       perQuestionMode,
       activeQuestionIndex,
@@ -2915,25 +2946,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
       activeQuestionIds,
       submittedQuestionIds: [...submittedQuestionIds],
       acceptedQuestionIds: [...acceptedQuestionIds],
-      submitButtonReasonBlocked: responseSubmittedForCurrentQuestionnaire || allQuestionResponsesSubmitted
-        ? null
-        : !requiredQuestionsAnsweredForAction
-          ? "required_questions_unanswered"
-          : !answerableQuestionsHaveResponseForAction
-            ? "question_unanswered"
-          : !snapshotForTarget?.loginVerified
-            ? "not_logged_in"
-            : !autoRequestBlindSigningKeyReady
-              ? "blind_signing_key_not_ready"
-              : !snapshotForTarget?.coordinatorNpub?.trim()
-                ? "coordinator_missing"
-                : activeQuestionRequestSent && !activeQuestionCredentialReady
-                  ? "waiting_for_credential"
-                  : !activeQuestionCredentialReady
-                    ? "credential_missing"
-                    : !canSubmitNow
-                      ? "runtime_submit_not_ready"
-                      : null,
+      submitButtonReasonBlocked,
       status,
       signedInNpub: signedInNpub || null,
       localVoterNpub: props.localVoterNpub?.trim() || null,
@@ -3003,6 +3016,7 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
     perQuestionMode,
     responseSubmittedForCurrentQuestionnaire,
     submittedQuestionIds,
+    submitInFlight,
   ]);
   const statusQuestionnaireId = currentQuestionnaireId || electionId.trim();
   const coordinatorNpub = (snapshot?.electionId === statusQuestionnaireId ? snapshot.coordinatorNpub?.trim() : "")
@@ -3611,8 +3625,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
         <button
           type='button'
           className='simple-voter-primary'
-          disabled={!(canSubmitNow || canAdvanceQuestion || canViewResults)}
+          disabled={submitInFlight || !(canSubmitNow || canAdvanceQuestion || canViewResults)}
           onClick={() => {
+            if (submitInFlight) {
+              return;
+            }
             if (canAdvanceQuestion) {
               const nextQuestionIndex = findNextUnsubmittedQuestionIndex(activeQuestionIndex);
               if (nextQuestionIndex >= 0) {
@@ -3683,11 +3700,11 @@ export default function QuestionnaireOptionAVoterPanel(props: QuestionnaireOptio
               {submittedMarkerNpub ? (
                 <>
                   <div>
-                    <dt>Submittor identity - short</dt>
+                    <dt>Submitter identity - short</dt>
                     <dd>{submittedMarkerLabel}</dd>
                   </div>
                   <div>
-                    <dt>Submittor identity - full</dt>
+                    <dt>Submitter identity - full</dt>
                     <dd>{submittedMarkerNpub}</dd>
                   </div>
                 </>

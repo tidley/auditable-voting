@@ -97,7 +97,7 @@ vi.mock("./questionnaireOptionAInviteDm", () => ({
   ]),
 }));
 
-import QuestionnaireOptionAVoterPanel from "./QuestionnaireOptionAVoterPanel";
+import QuestionnaireOptionAVoterPanel, { formatVoteActionButtonText } from "./QuestionnaireOptionAVoterPanel";
 import { QuestionnaireOptionAVoterRuntime } from "./questionnaireOptionARuntime";
 import { storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
 import { fetchQuestionnaireDefinitions, fetchQuestionnairePrivateInviteStatus } from "./questionnaireTransport";
@@ -155,6 +155,29 @@ afterEach(() => {
 });
 
 describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
+  it("shows an in-flight submit label until the next action state is available", () => {
+    const baseInput = {
+      snapshot: null,
+      requiredQuestionsAnswered: true,
+      canSubmitNow: true,
+      blindSigningKeyReady: true,
+      ballotRequestSent: true,
+      credentialReady: true,
+      coordinatorNpub: "npub1organiser",
+      responseSubmitted: false,
+      perQuestionMode: false,
+      allQuestionResponsesSubmitted: false,
+    };
+
+    expect(formatVoteActionButtonText({ ...baseInput, submitInFlight: true })).toBe("Submitting...");
+    expect(formatVoteActionButtonText({
+      ...baseInput,
+      canSubmitNow: false,
+      responseSubmitted: true,
+      submitInFlight: false,
+    })).toBe("View results");
+  });
+
   it("loads pending invites after signer login", async () => {
     const user = userEvent.setup();
     render(<QuestionnaireOptionAVoterPanel />);
@@ -1739,6 +1762,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     render(<QuestionnaireOptionAVoterPanel announcedQuestionnaireIds={["q_submitted_marker"]} localVoterNpub={localVoterNpub} />);
 
     const identityRegion = await screen.findByRole("region", { name: "Anonymous ID used to vote" });
+    expect(screen.getAllByLabelText(/Open Colour ID for token/i).length).toBeGreaterThan(0);
     expect(screen.getAllByLabelText(/Expand QR for token/i).length).toBeGreaterThan(0);
     expect(within(identityRegion).getByText("Questionnaire ID")).toBeTruthy();
     expect(within(identityRegion).getByText("q_submitted_marker")).toBeTruthy();
@@ -1746,7 +1770,7 @@ describe("QuestionnaireOptionAVoterPanel DM retrieval", () => {
     expect(screen.getByText("submission_submitted_marker")).toBeTruthy();
     expect(screen.getAllByText("Anonymous ID used to vote").length).toBeGreaterThan(0);
     expect(screen.getAllByText("rrrrrrr").length).toBeGreaterThan(0);
-    expect(screen.getByText("Submittor identity - full")).toBeTruthy();
+    expect(screen.getByText("Submitter identity - full")).toBeTruthy();
     expect(screen.getByText("npub1" + "r".repeat(58))).toBeTruthy();
   });
 

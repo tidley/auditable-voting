@@ -2309,11 +2309,110 @@ code {
   justify-self: end;
 }
 
+.simple-questionnaire-ballot-index-control label {
+  cursor: pointer;
+}
+
+.simple-questionnaire-ballot-stepper {
+  position: relative;
+  width: 78px;
+}
+
 .simple-questionnaire-ballot-index-input {
-  width: 58px;
+  width: 100%;
   min-height: 38px;
-  padding: 6px 8px;
+  padding: 6px 34px 6px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  border-radius: 8px;
+  background: rgba(2, 6, 23, 0.68);
+  color: var(--simple-text);
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: 900;
+  line-height: 1;
   text-align: center;
+  outline: none;
+  appearance: textfield;
+  -moz-appearance: textfield;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.simple-questionnaire-ballot-index-input::-webkit-inner-spin-button,
+.simple-questionnaire-ballot-index-input::-webkit-outer-spin-button {
+  margin: 0;
+  appearance: none;
+}
+
+.simple-questionnaire-ballot-index-input:focus {
+  border-color: var(--simple-teal);
+  background: rgba(2, 6, 23, 0.9);
+  box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.14);
+}
+
+.simple-questionnaire-ballot-stepper-buttons {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  bottom: 4px;
+  display: grid;
+  width: 24px;
+  grid-template-rows: 1fr 1fr;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 5px;
+  background: rgba(15, 23, 42, 0.92);
+}
+
+.simple-questionnaire-ballot-stepper-button {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--simple-soft);
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease, opacity 140ms ease;
+}
+
+.simple-questionnaire-ballot-stepper-button + .simple-questionnaire-ballot-stepper-button {
+  border-top: 1px solid rgba(148, 163, 184, 0.22);
+}
+
+.simple-questionnaire-ballot-stepper-button:hover,
+.simple-questionnaire-ballot-stepper-button:focus-visible {
+  background: rgba(45, 212, 191, 0.18);
+  color: var(--simple-text);
+}
+
+.simple-questionnaire-ballot-stepper-button:focus-visible {
+  outline: 1px solid var(--simple-teal);
+  outline-offset: -1px;
+}
+
+.simple-questionnaire-ballot-stepper-button:disabled,
+.simple-questionnaire-ballot-stepper-button:disabled:hover {
+  background: transparent;
+  color: rgba(148, 163, 184, 0.42);
+  cursor: default;
+}
+
+.simple-questionnaire-ballot-stepper-arrow {
+  display: block;
+  width: 0;
+  height: 0;
+  border-right: 6px solid transparent;
+  border-left: 6px solid transparent;
+}
+
+.simple-questionnaire-ballot-stepper-arrow.is-up {
+  border-bottom: 7px solid currentColor;
+}
+
+.simple-questionnaire-ballot-stepper-arrow.is-down {
+  border-top: 7px solid currentColor;
 }
 
 .simple-questionnaire-required-toggle input[type="checkbox"] {
@@ -5196,8 +5295,13 @@ code {
 }
 
 .simple-submission-identity-card {
-  gap: 16px;
-  padding: 18px;
+  gap: 10px;
+  padding: 14px;
+  border-color: rgba(45, 212, 191, 0.2);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(45, 212, 191, 0.04), transparent 38%),
+    rgba(3, 13, 23, 0.72);
 }
 
 .simple-submission-identity-header {
@@ -5208,7 +5312,9 @@ code {
 }
 
 .simple-submission-identity-header .simple-voter-section-title {
-  margin: 4px 0 0;
+  margin: 3px 0 0;
+  font-size: 1.08rem;
+  line-height: 1.2;
 }
 
 .simple-submission-identity-chip {
@@ -5226,28 +5332,25 @@ code {
 
 .simple-submission-identity-body {
   display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
-  gap: 22px;
+  gap: 8px;
 }
 
 .simple-submission-identity-visuals {
   display: grid;
-  gap: 8px;
-  justify-items: start;
-  padding: 10px;
-  border: 1px solid var(--simple-border);
-  border-radius: 14px;
-  background: var(--simple-surface);
+  gap: 6px;
+  min-width: 0;
 }
 
 .simple-submission-identity-visual-labels {
   display: grid;
-  grid-template-columns: 128px 120px;
-  gap: 12px;
-  color: var(--simple-muted);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 0 8px;
+  color: var(--simple-soft);
   font-size: 0.72rem;
-  font-weight: 800;
+  font-weight: 700;
   line-height: 1.1;
   text-align: center;
   white-space: nowrap;
@@ -5259,31 +5362,87 @@ code {
 
 .simple-submission-identity-details {
   display: grid;
-  gap: 12px;
   margin: 0;
   min-width: 0;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 7px;
+  background: rgba(2, 9, 18, 0.42);
 }
 
 .simple-submission-identity-details div {
   display: grid;
-  gap: 4px;
+  grid-template-columns: minmax(130px, 0.7fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
   min-width: 0;
+  padding: 6px 9px;
+  border-top: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.simple-submission-identity-details div:first-child {
+  border-top: 0;
 }
 
 .simple-submission-identity-details dt {
-  color: var(--simple-teal);
-  font-size: 0.78rem;
-  font-weight: 800;
-  letter-spacing: 0.02em;
+  color: var(--simple-soft);
+  font-size: 0.82rem;
+  font-weight: 650;
+  letter-spacing: 0;
 }
 
 .simple-submission-identity-details dd {
   margin: 0;
   color: var(--simple-text);
-  font-size: 0.96rem;
-  font-weight: 700;
+  font-size: 0.82rem;
+  font-weight: 550;
   line-height: 1.35;
   overflow-wrap: anywhere;
+}
+
+.simple-submission-identity-visuals .token-fingerprint {
+  width: 100%;
+}
+
+.simple-submission-identity-visuals .token-fingerprint-symbols {
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.simple-submission-identity-visuals .token-fingerprint-grid,
+.simple-submission-identity-visuals .token-fingerprint-qr-shell {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  height: 118px;
+  place-items: center;
+  box-sizing: border-box;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 7px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.04), transparent 48%),
+    rgba(15, 23, 42, 0.5);
+}
+
+.simple-submission-identity-visuals .token-fingerprint-grid {
+  grid-template-columns: repeat(5, 14px) !important;
+  justify-content: center;
+  align-content: center;
+  gap: 2px;
+  padding: 0;
+}
+
+.simple-submission-identity-visuals .token-fingerprint-cell {
+  width: 14px;
+  height: 14px;
+}
+
+.simple-submission-identity-visuals .token-fingerprint-qr {
+  width: 88px;
+  height: 88px;
+  border-radius: 9px;
 }
 
 .simple-ballot-details-card {
@@ -6587,8 +6746,8 @@ code {
 
 .simple-new-identity-confirm-overlay {
   background:
-    radial-gradient(circle at 50% 34%, rgba(250, 204, 21, 0.18), transparent 34%),
-    rgba(7, 13, 16, 0.88);
+    radial-gradient(circle at 18% 12%, rgba(20, 184, 166, 0.15), transparent 28%),
+    rgba(3, 10, 18, 0.88);
 }
 
 .simple-new-identity-confirm-card {
@@ -6596,39 +6755,68 @@ code {
   grid-template-columns: auto minmax(0, 1fr);
   place-items: stretch;
   align-items: start;
-  gap: 16px;
-  padding: 22px;
-  border-color: rgba(250, 204, 21, 0.24);
+  gap: 22px 24px;
+  padding: 30px 26px 24px;
+  border-color: rgba(45, 212, 191, 0.2);
+  border-radius: 8px;
   background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.08), transparent 42%),
-    var(--simple-surface);
+    linear-gradient(135deg, rgba(45, 212, 191, 0.08), transparent 38%),
+    #07111d;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.44);
+}
+
+.simple-new-identity-confirm-close {
+  top: 18px;
+  right: 20px;
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--simple-soft);
+  font-size: 1.7rem;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.simple-new-identity-confirm-close:hover,
+.simple-new-identity-confirm-close:focus-visible {
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--simple-text);
 }
 
 .simple-new-identity-confirm-mark {
   display: grid;
   place-items: center;
-  width: 54px;
-  height: 54px;
-  border-radius: 16px;
-  background: rgba(250, 204, 21, 0.14);
-  color: #facc15;
-  box-shadow: inset 0 0 0 1px rgba(250, 204, 21, 0.28);
+  width: 78px;
+  height: 72px;
+  border: 1px solid rgba(45, 212, 191, 0.2);
+  border-radius: 8px;
+  background: rgba(20, 184, 166, 0.12);
+  color: var(--simple-teal);
+  box-shadow: inset 0 0 22px rgba(45, 212, 191, 0.08);
 }
 
 .simple-new-identity-confirm-mark span {
   position: relative;
   display: block;
-  width: 28px;
-  height: 28px;
+  width: 42px;
+  height: 42px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 999px;
 }
 
 .simple-new-identity-confirm-mark span::before {
   content: "";
   position: absolute;
-  left: 2px;
-  top: 1px;
-  width: 15px;
-  height: 15px;
+  left: 11px;
+  top: 11px;
+  width: 13px;
+  height: 13px;
   border: 2px solid currentColor;
   border-radius: 999px;
 }
@@ -6636,18 +6824,20 @@ code {
 .simple-new-identity-confirm-mark span::after {
   content: "";
   position: absolute;
-  right: 0;
-  bottom: 1px;
-  width: 14px;
-  height: 14px;
+  right: 5px;
+  bottom: 8px;
+  width: 18px;
+  height: 10px;
   background:
-    linear-gradient(currentColor, currentColor) center / 14px 2px no-repeat,
-    linear-gradient(currentColor, currentColor) center / 2px 14px no-repeat;
+    linear-gradient(currentColor, currentColor) left 4px top 4px / 15px 2px no-repeat,
+    linear-gradient(currentColor, currentColor) right 0 top 4px / 2px 6px no-repeat,
+    linear-gradient(currentColor, currentColor) right 5px top 4px / 2px 6px no-repeat;
+  transform: rotate(-42deg);
 }
 
 .simple-new-identity-confirm-copy {
   display: grid;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
 }
 
@@ -6660,22 +6850,78 @@ code {
   line-height: 1.5;
 }
 
+.simple-new-identity-confirm-copy .simple-account-menu-kicker {
+  letter-spacing: 0;
+}
+
 .simple-new-identity-confirm-copy strong {
-  color: var(--simple-soft);
+  color: var(--simple-teal);
   white-space: nowrap;
+}
+
+.simple-new-identity-confirm-current {
+  margin: -2px 0 0;
+  color: var(--simple-muted);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.simple-new-identity-confirm-warning {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  margin-top: 18px;
+  padding: 13px 16px;
+  border: 1px solid rgba(45, 212, 191, 0.16);
+  border-radius: 8px;
+  background: rgba(8, 28, 38, 0.62);
+}
+
+.simple-new-identity-confirm-warning-icon {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border: 2px solid #22d3ee;
+  border-radius: 999px;
+  color: #22d3ee;
+  font-size: 0.78rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.simple-new-identity-confirm-warning p {
+  margin: 0 0 3px;
+  color: var(--simple-text);
+  font-size: 0.88rem;
+  font-weight: 900;
+}
+
+.simple-new-identity-confirm-warning div > span {
+  display: block;
+  color: var(--simple-soft);
+  font-size: 0.82rem;
+  line-height: 1.38;
 }
 
 .simple-new-identity-confirm-actions {
   grid-column: 1 / -1;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 10px;
-  padding-top: 4px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 18px;
+  padding-top: 2px;
 }
 
 .simple-new-identity-confirm-primary {
-  min-width: 180px;
+  width: 100%;
+  min-width: 0;
+}
+
+.simple-new-identity-confirm-actions > button {
+  width: 100%;
+  min-height: 40px;
+  border-radius: 6px;
 }
 
 @media (max-width: 720px) {
@@ -6693,15 +6939,17 @@ code {
 @media (max-width: 560px) {
   .simple-new-identity-confirm-card {
     grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
   }
 
   .simple-new-identity-confirm-mark {
-    width: 48px;
-    height: 48px;
+    width: 64px;
+    height: 60px;
   }
 
   .simple-new-identity-confirm-actions {
-    justify-content: stretch;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
   }
 
   .simple-new-identity-confirm-actions > button {

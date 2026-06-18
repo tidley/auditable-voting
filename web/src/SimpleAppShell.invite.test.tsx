@@ -140,7 +140,7 @@ describe("SimpleAppShell invite-link login", () => {
     expect(screen.getByText("Voter pending")).toBeTruthy();
   });
 
-  it("opens the full voter npub QR from the topbar identity button", async () => {
+  it("uses the voter identity label as the profile menu trigger", async () => {
     const user = userEvent.setup();
     const voterNpub = "npub1" + "b".repeat(58);
     window.history.pushState(null, "", "/?role=voter");
@@ -151,14 +151,14 @@ describe("SimpleAppShell invite-link login", () => {
       detail: { role: "voter", npub: voterNpub },
     }));
 
-    const identityButton = await screen.findByRole("button", { name: "Show full voter npub QR" });
+    expect(screen.queryByRole("button", { name: "Show full voter npub QR" })).toBeNull();
+    const identityButton = await screen.findByRole("button", { name: /voter profile menu/i });
     expect(identityButton.textContent).toMatch(/^Voter /);
 
     await user.click(identityButton);
 
-    expect(await screen.findByRole("dialog", { name: "Voter npub QR code" })).toBeTruthy();
-    expect(screen.getByText(voterNpub)).toBeTruthy();
-    expect(screen.getByAltText("QR code for Voter npub").getAttribute("src")).toBe("data:image/png;base64,mock-qr");
+    expect(screen.getByText("Colour ID")).toBeTruthy();
+    expect(screen.getByText("QR code")).toBeTruthy();
   });
 
   it("uses an in-app confirmation before creating a new identity", async () => {
@@ -179,19 +179,19 @@ describe("SimpleAppShell invite-link login", () => {
         detail: { role: "voter", npub: voterNpub },
       }));
 
-      await user.click(screen.getByRole("button", { name: "Menu" }));
+      await user.click(screen.getByRole("button", { name: /voter profile menu/i }));
       await user.click(screen.getByRole("menuitem", { name: "New identity" }));
 
       expect(confirmSpy).not.toHaveBeenCalled();
-      expect(await screen.findByRole("dialog", { name: "Start fresh?" })).toBeTruthy();
-      expect(screen.getByText(/can only be restored later/i)).toBeTruthy();
+      expect(await screen.findByRole("dialog", { name: "Are you sure?" })).toBeTruthy();
+      expect(screen.getByText(/Make sure you have backed up this profile/i)).toBeTruthy();
       expect(newIdentityEvents).toEqual([]);
 
-      await user.click(screen.getByRole("button", { name: "Keep current identity" }));
-      expect(screen.queryByRole("dialog", { name: "Start fresh?" })).toBeNull();
+      await user.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(screen.queryByRole("dialog", { name: "Are you sure?" })).toBeNull();
       expect(newIdentityEvents).toEqual([]);
 
-      await user.click(screen.getByRole("button", { name: "Menu" }));
+      await user.click(screen.getByRole("button", { name: /voter profile menu/i }));
       await user.click(screen.getByRole("menuitem", { name: "New identity" }));
       await user.click(await screen.findByRole("button", { name: "Create new identity" }));
 
@@ -222,7 +222,7 @@ describe("SimpleAppShell invite-link login", () => {
       expect(screen.queryByRole("menuitem", { name: "How it works" })).toBeNull();
       expect(screen.queryByText("vtest")).toBeNull();
 
-      await user.click(screen.getByRole("button", { name: "Menu" }));
+      await user.click(screen.getByRole("button", { name: /voter profile menu/i }));
       const voterSections = screen.getByRole("tablist", { name: "Voter sections" });
       expect(voterSections).toBeTruthy();
       expect(screen.getByText("vtest")).toBeTruthy();
@@ -237,13 +237,13 @@ describe("SimpleAppShell invite-link login", () => {
       await user.click(screen.getByRole("menuitem", { name: "Login" }));
       expect(loginEvents).toBe(1);
 
-      await user.click(screen.getByRole("button", { name: "Menu" }));
+      await user.click(screen.getByRole("button", { name: /voter profile menu/i }));
       await user.click(screen.getByRole("tab", { name: "Settings" }));
 
       expect(screen.getByTestId("simple-voter-app").textContent).toContain("settings");
       expect(screen.queryByRole("tablist", { name: "Voter sections" })).toBeNull();
 
-      await user.click(screen.getByRole("button", { name: "Menu" }));
+      await user.click(screen.getByRole("button", { name: /voter profile menu/i }));
       expect(screen.getByRole("tab", { name: "Settings" }).getAttribute("aria-selected")).toBe("true");
     } finally {
       window.removeEventListener("auditable-voting:voter-login", handleLogin);

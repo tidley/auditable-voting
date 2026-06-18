@@ -5997,7 +5997,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
 
   function startNewRound() {
     if (!canStartNewRound) {
-      setAdmittedVoterStatus("Enable Auto-ballot for at least one invited voter before starting a new round.");
+      setAdmittedVoterStatus("Enable Auto-ballot for at least one invited voter before adding a session.");
       selectTab("participants");
       return;
     }
@@ -7264,7 +7264,7 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                 onClick={startNewRound}
               >
                 <span className='simple-coordinator-nav-symbol simple-coordinator-nav-symbol-new-round' aria-hidden='true' />
-                <span className='simple-coordinator-nav-label'>New round</span>
+                <span className='simple-coordinator-nav-label'>Add session</span>
               </button>
             ) : null}
             <button

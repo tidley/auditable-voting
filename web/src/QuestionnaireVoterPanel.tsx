@@ -471,6 +471,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
   const [answerState, setAnswerState] = useState<QuestionnaireAnswerState>({});
   const [responseSubmittedCount, setResponseSubmittedCount] = useState(0);
   const [tokenStatus, setTokenStatus] = useState<"ready" | "submitted">("ready");
+  const [submitInFlight, setSubmitInFlight] = useState(false);
   const [definitionEventCount, setDefinitionEventCount] = useState(0);
   const [stateEventCount, setStateEventCount] = useState(0);
   const [responseEventCount, setResponseEventCount] = useState(0);
@@ -1115,8 +1116,8 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
     && submittedQuestionnaireIds.includes(questionnaireId.trim())
   );
   const canSubmit = useMemo(() => {
-    return Boolean(definition && state === "open" && tokenStatus === "ready" && !responseLocked);
-  }, [definition, responseLocked, state, tokenStatus]);
+    return Boolean(definition && state === "open" && tokenStatus === "ready" && !responseLocked && !submitInFlight);
+  }, [definition, responseLocked, state, submitInFlight, tokenStatus]);
   const selectedQuestionnaireOptions = selectorEntries.map((entry) => entry.questionnaireId);
   const selectedQuestionnaireEntry = selectorEntries.find((entry) => entry.questionnaireId === questionnaireId) ?? null;
 
@@ -1265,6 +1266,9 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
   }
 
   async function submitResponse() {
+    if (submitInFlight) {
+      return;
+    }
     setResponsePipelineDiagnostics((current) => ({
       ...current,
       submitHandlerEntered: true,
@@ -1335,6 +1339,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
       lastResponsePublishError: null,
       lastResponseRejectReason: null,
     }));
+    setSubmitInFlight(true);
     setStatus("Submitting response...");
 
     try {
@@ -1394,6 +1399,8 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
         lastResponsePublishError: error instanceof Error ? error.message : String(error),
       }));
       setStatus("Response submit failed.");
+    } finally {
+      setSubmitInFlight(false);
     }
   }
 
@@ -1410,6 +1417,8 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
       submitButtonReasonBlocked = "already_submitted";
     } else if (tokenStatus !== "ready") {
       submitButtonReasonBlocked = "no_token";
+    } else if (submitInFlight) {
+      submitButtonReasonBlocked = "submitting";
     } else if (!canSubmit) {
       submitButtonReasonBlocked = "response_not_ready";
     }
@@ -1478,7 +1487,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
       submitButtonPresent,
       submitButtonVisible,
       submitButtonDisabled,
-      submitButtonText: "Submit response",
+      submitButtonText: submitInFlight ? "Submitting..." : "Submit response",
       submitButtonReasonBlocked,
       responsePayloadBuilt: responsePipelineDiagnostics.responsePayloadBuilt,
       responsePayloadValidated: responsePipelineDiagnostics.responsePayloadValidated,
@@ -1534,6 +1543,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
     stateKindOnlyCount,
     stateReadMode,
     status,
+    submitInFlight,
     voterNpub,
     canSubmit,
     tokenStatus,
@@ -1861,7 +1871,7 @@ export default function QuestionnaireVoterPanel(props: QuestionnaireVoterPanelPr
             disabled={!canSubmit}
             onClick={() => void submitResponse()}
           >
-            Submit response
+            {submitInFlight ? "Submitting..." : "Submit response"}
           </button>
         </div>
       ) : (

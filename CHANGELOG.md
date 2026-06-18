@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.104] - 2026-06-18
+
+### Changed
+- Updated voter and organiser UI polish: the voter profile menu now carries the voter short identity, submitted identity cards use a compact two-panel Colour ID/QR layout, and the new-identity confirmation uses the refined in-app modal copy.
+- Split Colour ID and QR preview actions so each opens only the selected identity view.
+- Changed new questionnaire questions to default to ballot index 1 instead of auto-incrementing, while preserving ballot grouping on duplicated questions.
+- Added larger custom ballot-index stepper arrows and a transient `Submitting...` state for voter response submission.
+- Renamed organiser `New round` copy to `Add session` across app copy and docs.
+- Bumped the web app package to 0.1.104.
+
 ## [0.1.102] - 2026-06-18
 
 ### Changed

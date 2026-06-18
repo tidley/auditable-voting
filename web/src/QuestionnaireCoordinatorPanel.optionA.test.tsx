@@ -203,8 +203,12 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     const secondBallotIndex = screen.getByLabelText("Question 2 ballot index") as HTMLInputElement;
 
     expect(firstBallotIndex.value).toBe("1");
-    expect(secondBallotIndex.value).toBe("2");
+    expect(secondBallotIndex.value).toBe("1");
 
+    fireEvent.change(secondBallotIndex, { target: { value: "2" } });
+    await waitFor(() => {
+      expect(secondBallotIndex.value).toBe("2");
+    });
     fireEvent.change(secondBallotIndex, { target: { value: "1" } });
 
     await waitFor(() => {
@@ -625,7 +629,7 @@ describe("QuestionnaireCoordinatorPanel option_a mode", () => {
     });
     expect(titleInput.matches(":disabled")).toBe(false);
     expect(questionnaireIdInput.matches(":disabled")).toBe(false);
-    expect(screen.getByRole("heading", { name: /New round/i })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: /Add session/i })).toBeTruthy();
   });
 
   it("keeps locally cached drafts editable until they have a published signal", async () => {

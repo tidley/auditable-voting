@@ -173,11 +173,11 @@ function createYesNoQuestion(questionId: string, prompt = "", required = true): 
   };
 }
 
-function ballotSlotIndexForQuestion(question: QuestionnaireQuestionDraft, fallbackIndex: number) {
+function ballotSlotIndexForQuestion(question: QuestionnaireQuestionDraft, _fallbackIndex: number) {
   const slotIndex = question.ballotSlot?.slotIndex;
   return Number.isFinite(slotIndex)
     ? Math.max(1, Math.floor(slotIndex as number))
-    : fallbackIndex + 1;
+    : 1;
 }
 
 function ballotSlotIdForIndex(slotIndex: number) {
@@ -2707,7 +2707,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       const duplicated = {
         ...source,
         questionId: duplicateId,
-        ballotSlot: null,
+        ballotSlot: source.ballotSlot ? { ...source.ballotSlot } : null,
       };
       return alignQuestionBallotGroups([...current.slice(0, index + 1), duplicated, ...current.slice(index + 1)]);
     });
@@ -3074,7 +3074,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           ? "Open"
           : "Draft";
   const setupHeadingStateLabel = isNewRoundMode && !publishedDefinition
-    ? "New round"
+    ? "Add session"
     : buildStateLabel === "Open" ? "Active" : buildStateLabel;
   const checklistDescriptionAdded = description.trim().length > 0;
   const currentQuestionnaireId = questionnaireId.trim();
@@ -3348,7 +3348,7 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
   async function publishDefinition(options?: { applyAdmissions?: boolean }) {
     let definitionToPublish = builtDefinition;
     if (publishedDefinition) {
-      setStatus("Published questionnaires are read-only. Start a new round to make changes.");
+      setStatus("Published questionnaires are read-only. Add a session to make changes.");
       return;
     }
     if (!coordinatorNsec.trim() || !definitionToPublish) {
@@ -4482,6 +4482,8 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           const canMoveUp = index > 0;
           const canMoveDown = index < questions.length - 1;
           const ballotIndex = ballotSlotIndexForQuestion(question, index);
+          const maxBallotIndex = Math.max(1, questions.length);
+          const ballotInputId = `question-ballot-index-${index}`;
 
           return (
             <div key={`${question.questionId}-${index}`} className='simple-questionnaire-question-card'>
@@ -4523,25 +4525,48 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
                     <span className='simple-questionnaire-switch-knob' />
                   </span>
                 </label>
-                <label className='simple-questionnaire-ballot-index-control'>
-                  <span>Ballot</span>
-                  <input
-                    className='simple-voter-input simple-questionnaire-ballot-index-input'
-                    type='number'
-                    inputMode='numeric'
-                    min={1}
-                    max={Math.max(1, questions.length)}
-                    value={ballotIndex}
-                    aria-label={`Question ${index + 1} ballot index`}
-                    onChange={(event) => {
-                      const parsed = Number.parseInt(event.target.value, 10);
-                      if (!Number.isFinite(parsed)) {
-                        return;
-                      }
-                      setQuestionBallotIndex(index, Math.min(Math.max(1, parsed), Math.max(1, questions.length)));
-                    }}
-                  />
-                </label>
+                <div className='simple-questionnaire-ballot-index-control'>
+                  <label htmlFor={ballotInputId}>Ballot</label>
+                  <div className='simple-questionnaire-ballot-stepper'>
+                    <input
+                      id={ballotInputId}
+                      className='simple-questionnaire-ballot-index-input'
+                      type='number'
+                      inputMode='numeric'
+                      min={1}
+                      max={maxBallotIndex}
+                      value={ballotIndex}
+                      aria-label={`Question ${index + 1} ballot index`}
+                      onChange={(event) => {
+                        const parsed = Number.parseInt(event.target.value, 10);
+                        if (!Number.isFinite(parsed)) {
+                          return;
+                        }
+                        setQuestionBallotIndex(index, Math.min(Math.max(1, parsed), maxBallotIndex));
+                      }}
+                    />
+                    <div className='simple-questionnaire-ballot-stepper-buttons'>
+                      <button
+                        className='simple-questionnaire-ballot-stepper-button'
+                        type='button'
+                        aria-label={`Increase question ${index + 1} ballot index`}
+                        disabled={ballotIndex >= maxBallotIndex}
+                        onClick={() => setQuestionBallotIndex(index, Math.min(maxBallotIndex, ballotIndex + 1))}
+                      >
+                        <span className='simple-questionnaire-ballot-stepper-arrow is-up' aria-hidden='true' />
+                      </button>
+                      <button
+                        className='simple-questionnaire-ballot-stepper-button'
+                        type='button'
+                        aria-label={`Decrease question ${index + 1} ballot index`}
+                        disabled={ballotIndex <= 1}
+                        onClick={() => setQuestionBallotIndex(index, Math.max(1, ballotIndex - 1))}
+                      >
+                        <span className='simple-questionnaire-ballot-stepper-arrow is-down' aria-hidden='true' />
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
               <input
                 id={`question-prompt-${index}`}

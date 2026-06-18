@@ -137,8 +137,10 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
     ? accountIdentityNpub
       ? `Open organiser profile menu for ${accountIdentityLabel}`
       : "Open organiser profile menu"
-    : role === "voter" && voterMessagesUnread
-      ? "Menu, new message"
+    : role === "voter"
+      ? accountIdentityNpub
+        ? `Open voter profile menu for Voter ${accountIdentityLabel}${voterMessagesUnread ? ", new message" : ""}`
+        : `Open voter profile menu${voterMessagesUnread ? ", new message" : ""}`
       : "Menu";
 
   useEffect(() => {
@@ -623,6 +625,8 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
             </span>
             <span className='simple-account-profile-caret' aria-hidden='true' />
           </>
+        ) : role === "voter" ? (
+          `Voter ${accountIdentityLabel}`
         ) : (
           "Menu"
         )}
@@ -822,7 +826,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
         <div className='simple-role-switch-wrap'>
           <div className='simple-role-switch-topbar'>
             {accountMenuControl}
-            {isSimpleActorRole(role) && accountIdentityNpub ? (
+            {role === "voter" ? null : isSimpleActorRole(role) && accountIdentityNpub ? (
               <button
                 type='button'
                 className='simple-role-switch-toggle simple-current-role-summary simple-current-role-button'
@@ -908,7 +912,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
             onClick={() => setNewIdentityConfirmRole(null)}
             aria-label='Cancel new identity'
           >
-            Close
+            <span aria-hidden='true'>×</span>
           </button>
           <div
             className='simple-identity-qr-overlay-card simple-new-identity-confirm-card'
@@ -919,12 +923,22 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
             </div>
             <div className='simple-new-identity-confirm-copy'>
               <p className='simple-account-menu-kicker'>New {newIdentityConfirmLabel} identity</p>
-              <h2 id='new-identity-confirm-title' className='simple-voter-section-title'>Start fresh?</h2>
+              <h2 id='new-identity-confirm-title' className='simple-voter-section-title'>Are you sure?</h2>
               <p id='new-identity-confirm-description' className='simple-voter-note'>
-                A new identity gives this role a new public key. Your current identity
-                {newIdentityConfirmShortId ? <> <strong>{newIdentityConfirmShortId}</strong></> : null}
-                {" "}can only be restored later if you have a backup or saved nsec.
+                Make sure you have backed up this profile if you intend to use it again.
               </p>
+              {newIdentityConfirmShortId ? (
+                <p className='simple-new-identity-confirm-current'>
+                  Current profile <strong>{newIdentityConfirmShortId}</strong>
+                </p>
+              ) : null}
+              <div className='simple-new-identity-confirm-warning'>
+                <span className='simple-new-identity-confirm-warning-icon' aria-hidden='true'>i</span>
+                <div>
+                  <p>This action cannot be undone.</p>
+                  <span>Creating a new identity replaces the current local profile for this role.</span>
+                </div>
+              </div>
             </div>
             <div className='simple-new-identity-confirm-actions'>
               <button
@@ -932,7 +946,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                 className='simple-voter-secondary'
                 onClick={() => setNewIdentityConfirmRole(null)}
               >
-                Keep current identity
+                Cancel
               </button>
               <button
                 type='button'
