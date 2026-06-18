@@ -25,7 +25,7 @@ import SimpleCollapsibleSection from "./SimpleCollapsibleSection";
 import { deriveActorDisplayId } from "./actorDisplay";
 import QuestionnaireResultsDashboard, { type QuestionnaireResultsDashboardResponseDetail } from "./QuestionnaireResultsDashboard";
 import { readCachedQuestionnaireDefinition, storeCachedQuestionnaireDefinition } from "./questionnaireDefinitionCache";
-import { buildQuestionnaireDefinitionReference } from "./questionnaireDefinitionReference";
+import { buildQuestionnaireDefinitionReference, selectNewestMatchingQuestionnaireDefinition } from "./questionnaireDefinitionReference";
 import { tryWriteClipboard } from "./clipboard";
 import { fetchQuestionnaireBlindResponses } from "./questionnaireTransport";
 import { evaluateQuestionnaireBlindAdmissions, fetchQuestionnaireSubmissionDecisions, verifyQuestionnaireBlindResponseProofs } from "./questionnaireTransport";
@@ -768,7 +768,7 @@ const WORKER_LAUNCHER_TARGET_OPTIONS: Array<{ key: WorkerLauncherTargetKey; labe
 ];
 const WORKER_DEFAULT_RUST_LOG = "info,auditable_voting_worker=debug,nostr_relay_pool=info,nostr_sdk=info,nostr=info,tungstenite=info,tokio_tungstenite=info";
 const WORKER_DEFAULT_POLL_SECONDS = "5";
-const WORKER_MINIMUM_VERSION = "0.1.29";
+const WORKER_MINIMUM_VERSION = "0.1.30";
 const WORKER_RELEASE_DOWNLOAD_URL = "https://github.com/tidley/auditable-voting/releases/latest/download/auditable-voting-worker-linux-x64.tar.gz";
 
 function buildWorkerLauncherContents(input: {
@@ -3445,7 +3445,11 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
           && Boolean(normaliseWorkerNpub(delegatedWorkerNpub));
         if (shouldConfigureWorker) {
           setStatus("Vote published. Configuring audit proxy...");
-          await delegateToWorker({ statusPrefix: "Vote published." });
+          await delegateToWorker({
+            statusPrefix: "Vote published.",
+            definitionOverride: definitionToPublish,
+            definitionEventIdOverride: result.eventId,
+          });
         }
         let admissionsApplied = true;
         try {
@@ -3845,7 +3849,11 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
     }
   }
 
-  async function delegateToWorker(options?: { statusPrefix?: string }) {
+  async function delegateToWorker(options?: {
+    statusPrefix?: string;
+    definitionOverride?: QuestionnaireDefinition | null;
+    definitionEventIdOverride?: string | null;
+  }) {
     const electionId = questionnaireId.trim();
     const coordinatorNsecTrimmed = coordinatorNsec.trim();
     const coordinatorNpubTrimmed = coordinatorNpub.trim();
@@ -3897,11 +3905,15 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
         electionId,
       })
       : null;
-    const workerConfigDefinition = activePublishedDefinition ?? readCachedQuestionnaireDefinition(electionId);
+    const workerConfigDefinition = selectNewestMatchingQuestionnaireDefinition(electionId, [
+      options?.definitionOverride ?? null,
+      readCachedQuestionnaireDefinition(electionId),
+      activePublishedDefinition,
+    ]);
     const workerDefinitionReference = workerConfigDefinition
       ? buildQuestionnaireDefinitionReference({
         definition: workerConfigDefinition,
-        definitionEventId: definitionPublishDiagnostic.eventId,
+        definitionEventId: options?.definitionEventIdOverride ?? null,
         relays: workerConfigDefinition.questionnaireRelays ?? questionnaireRelayPublishHints,
       })
       : null;
@@ -3910,9 +3922,9 @@ export default function QuestionnaireCoordinatorPanel(props: QuestionnaireCoordi
       ? coordinatorState?.blindSigningPrivateKey ?? null
       : null;
     if (delegatedWorkerCapabilities.includes("issue_blind_tokens")) {
-      const advertisedPublicKey = activePublishedDefinition?.blindSigningPublicKey
+      const advertisedPublicKey = workerConfigDefinition?.blindSigningPublicKey
+        ?? activePublishedDefinition?.blindSigningPublicKey
         ?? summaryForWorkerConfig?.blindSigningPublicKey
-        ?? workerConfigDefinition?.blindSigningPublicKey
         ?? null;
       if (advertisedPublicKey?.keyId) {
         const privatePublicKey = blindSigningPrivateKeyForWorker

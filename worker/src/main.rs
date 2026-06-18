@@ -213,15 +213,11 @@ fn maybe_compress_bundle_content(
 }
 
 fn unwrap_compressed_bundle_value(value: serde_json::Value) -> Result<serde_json::Value> {
-    if value
-        .get("type")
-        .and_then(|entry| entry.as_str())
-        != Some(COMPRESSED_BUNDLE_MESSAGE_TYPE)
-    {
+    if value.get("type").and_then(|entry| entry.as_str()) != Some(COMPRESSED_BUNDLE_MESSAGE_TYPE) {
         return Ok(value);
     }
-    let envelope: CompressedBundleEnvelope = serde_json::from_value(value)
-        .context("invalid compressed bundle envelope")?;
+    let envelope: CompressedBundleEnvelope =
+        serde_json::from_value(value).context("invalid compressed bundle envelope")?;
     if envelope.schema_version != 1
         || envelope.encoding != COMPRESSED_BUNDLE_ENCODING
         || !compressible_bundle_message_type(&envelope.inner_type)
@@ -242,8 +238,8 @@ fn unwrap_compressed_bundle_value(value: serde_json::Value) -> Result<serde_json
     if content.as_bytes().len() != envelope.original_length {
         anyhow::bail!("compressed bundle length mismatch");
     }
-    let inner: serde_json::Value = serde_json::from_str(&content)
-        .context("invalid compressed bundle JSON payload")?;
+    let inner: serde_json::Value =
+        serde_json::from_str(&content).context("invalid compressed bundle JSON payload")?;
     let inner_type = inner
         .get("type")
         .and_then(|entry| entry.as_str())
@@ -286,9 +282,7 @@ fn rumor_message_type(content: &str) -> String {
     serde_json::from_str::<serde_json::Value>(content)
         .ok()
         .and_then(|value| {
-            if value
-                .get("type")
-                .and_then(|entry| entry.as_str())
+            if value.get("type").and_then(|entry| entry.as_str())
                 == Some(COMPRESSED_BUNDLE_MESSAGE_TYPE)
             {
                 return value
@@ -390,10 +384,20 @@ fn apply_worker_election_config(
         election.blind_signing_private_key = snapshot.blind_signing_private_key.clone();
     }
     if let Some(reference) = &snapshot.definition_reference {
-        if let Some(hash) = reference.definition_hash.as_ref().map(|entry| entry.trim()).filter(|entry| !entry.is_empty()) {
+        if let Some(hash) = reference
+            .definition_hash
+            .as_ref()
+            .map(|entry| entry.trim())
+            .filter(|entry| !entry.is_empty())
+        {
             election.definition_hash = Some(hash.to_string());
         }
-        if let Some(event_id) = reference.definition_event_id.as_ref().map(|entry| entry.trim()).filter(|entry| !entry.is_empty()) {
+        if let Some(event_id) = reference
+            .definition_event_id
+            .as_ref()
+            .map(|entry| entry.trim())
+            .filter(|entry| !entry.is_empty())
+        {
             election.definition_event_id = Some(event_id.to_string());
         }
         if let Some(relays) = &reference.relays {
@@ -423,15 +427,31 @@ fn apply_worker_election_config(
     true
 }
 
-fn definition_blind_signing_key_id(definition: &Option<serde_json::Value>) -> Option<String> {
+fn definition_value_blind_signing_key_id(definition: &serde_json::Value) -> Option<String> {
     definition
-        .as_ref()?
         .get("blindSigningPublicKey")?
         .get("keyId")?
         .as_str()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+}
+
+fn definition_blind_signing_key_id(definition: &Option<serde_json::Value>) -> Option<String> {
+    definition
+        .as_ref()
+        .and_then(definition_value_blind_signing_key_id)
+}
+
+fn public_definition_matches_worker_private_key(
+    definition: &serde_json::Value,
+    election: &ElectionRuntimeState,
+) -> bool {
+    let Some(private_key) = election.blind_signing_private_key.as_ref() else {
+        return false;
+    };
+    definition_value_blind_signing_key_id(definition).as_deref()
+        == Some(private_key.key_id.as_str())
 }
 
 fn worker_election_config_has_blind_key_mismatch(snapshot: &WorkerElectionConfigSnapshot) -> bool {
@@ -919,7 +939,11 @@ fn ballot_scope_key(scope: &Option<serde_json::Value>) -> String {
         return "__questionnaire__".to_string();
     }
     if slot_index > 0 {
-        return format!("slot:{}:v{}", slot_index, if version == 0 { 1 } else { version });
+        return format!(
+            "slot:{}:v{}",
+            slot_index,
+            if version == 0 { 1 } else { version }
+        );
     }
     format!(
         "{}:{}:{}:v{}",
@@ -1573,7 +1597,8 @@ impl WorkerRuntime {
                 return self.handle_blind_request(envelope.request).await;
             }
             "optiona_blind_request_bundle_dm" => {
-                let envelope: BlindBallotRequestBundleEnvelope = match serde_json::from_value(value) {
+                let envelope: BlindBallotRequestBundleEnvelope = match serde_json::from_value(value)
+                {
                     Ok(parsed) => parsed,
                     Err(_) => return Ok(true),
                 };
@@ -1762,13 +1787,14 @@ impl WorkerRuntime {
         let definition = match serde_json::from_str::<serde_json::Value>(&event.content) {
             Ok(parsed) => parsed,
             Err(error) => {
-                warn!("failed to parse questionnaire definition event {}: {error}", event.id);
+                warn!(
+                    "failed to parse questionnaire definition event {}: {error}",
+                    event.id
+                );
                 return Ok(false);
             }
         };
-        if definition
-            .get("eventType")
-            .and_then(|entry| entry.as_str())
+        if definition.get("eventType").and_then(|entry| entry.as_str())
             != Some("questionnaire_definition")
         {
             return Ok(false);
@@ -1798,13 +1824,22 @@ impl WorkerRuntime {
             .filter(|entry| !entry.is_empty())
         {
             if expected_hash != definition_hash {
-                debug!(
-                    "public questionnaire definition ignored due to hash mismatch: election_id={}, expected={}, received={}",
-                    questionnaire_id,
-                    expected_hash,
-                    definition_hash
-                );
-                return Ok(false);
+                if public_definition_matches_worker_private_key(&definition, election) {
+                    warn!(
+                        "public questionnaire definition hash mismatch but blind signing key matches worker config; accepting public definition: election_id={}, expected={}, received={}",
+                        questionnaire_id,
+                        expected_hash,
+                        definition_hash
+                    );
+                } else {
+                    debug!(
+                        "public questionnaire definition ignored due to hash mismatch: election_id={}, expected={}, received={}",
+                        questionnaire_id,
+                        expected_hash,
+                        definition_hash
+                    );
+                    return Ok(false);
+                }
             }
         }
         election.definition = Some(definition);
@@ -1814,8 +1849,7 @@ impl WorkerRuntime {
         self.store.save(&state)?;
         debug!(
             "public questionnaire definition stored: election_id={}, event_id={}",
-            questionnaire_id,
-            event.id
+            questionnaire_id, event.id
         );
         Ok(true)
     }
@@ -2419,7 +2453,10 @@ impl WorkerRuntime {
             .clone()
             .expect("checked above");
         let definition_key_id = definition_blind_signing_key_id(&election.definition);
-        if definition_key_id.as_deref().is_some_and(|key_id| key_id != private_key.key_id) {
+        if definition_key_id
+            .as_deref()
+            .is_some_and(|key_id| key_id != private_key.key_id)
+        {
             warn!(
                 "blind request ignored for election {} because public definition key does not match worker private key definition={} worker={}",
                 request.election_id,
@@ -2472,8 +2509,8 @@ impl WorkerRuntime {
         recipient_npub: &str,
         issuances: &[BlindBallotIssuance],
     ) -> Result<usize> {
-        let recipient =
-            PublicKey::from_bech32(recipient_npub).context("invalid invited npub on blind request")?;
+        let recipient = PublicKey::from_bech32(recipient_npub)
+            .context("invalid invited npub on blind request")?;
         let content = if issuances.len() == 1 {
             let envelope = BlindBallotIssuanceEnvelope {
                 message_type: "optiona_blind_issuance_dm".to_string(),
@@ -2486,7 +2523,11 @@ impl WorkerRuntime {
             let envelope = build_blind_issuance_bundle_envelope(issuances);
             let message_type = envelope.message_type.clone();
             let sent_at = envelope.sent_at.clone();
-            maybe_compress_bundle_content(serde_json::to_string(&envelope)?, &message_type, &sent_at)?
+            maybe_compress_bundle_content(
+                serde_json::to_string(&envelope)?,
+                &message_type,
+                &sent_at,
+            )?
         };
         self.send_private_msg_best_effort(recipient, content, "blind issuance")
             .await
@@ -2898,6 +2939,48 @@ mod tests {
         assert!(election.blind_signing_private_key.is_none());
         assert!(election.definition.is_none());
         assert_eq!(election.last_election_config_sent_at, None);
+    }
+
+    #[test]
+    fn public_definition_hash_mismatch_is_recoverable_when_blind_key_matches() {
+        let matching_definition = json!({
+            "schemaVersion": 1,
+            "eventType": "questionnaire_definition",
+            "questionnaireId": "q_worker_definition",
+            "blindSigningPublicKey": {
+                "scheme": "rsa-blind-pss-sha384",
+                "keyId": "private-key-id",
+                "jwk": {}
+            }
+        });
+        let mismatched_definition = json!({
+            "schemaVersion": 1,
+            "eventType": "questionnaire_definition",
+            "questionnaireId": "q_worker_definition",
+            "blindSigningPublicKey": {
+                "scheme": "rsa-blind-pss-sha384",
+                "keyId": "other-key-id",
+                "jwk": {}
+            }
+        });
+        let election = ElectionRuntimeState {
+            blind_signing_private_key: Some(QuestionnaireBlindPrivateKey {
+                scheme: "rsa-blind-pss-sha384".to_string(),
+                key_id: "private-key-id".to_string(),
+                jwk: json!({}),
+                private_jwk: json!({}),
+            }),
+            ..ElectionRuntimeState::default()
+        };
+
+        assert!(public_definition_matches_worker_private_key(
+            &matching_definition,
+            &election
+        ));
+        assert!(!public_definition_matches_worker_private_key(
+            &mismatched_definition,
+            &election
+        ));
     }
 
     #[test]
@@ -3510,7 +3593,9 @@ mod tests {
         let serialized = serde_json::to_value(&envelope).expect("serialize bundle");
         assert!(serialized.get("definition").is_none());
         assert_eq!(
-            serialized.get("definitionHash").and_then(|entry| entry.as_str()),
+            serialized
+                .get("definitionHash")
+                .and_then(|entry| entry.as_str()),
             Some(questionnaire_definition_hash(&definition).as_str())
         );
         for issuance in serialized["issuances"]
@@ -3519,7 +3604,9 @@ mod tests {
         {
             assert!(issuance.get("definition").is_none());
             assert_eq!(
-                issuance.get("definitionHash").and_then(|entry| entry.as_str()),
+                issuance
+                    .get("definitionHash")
+                    .and_then(|entry| entry.as_str()),
                 Some(questionnaire_definition_hash(&definition).as_str())
             );
         }
@@ -3540,7 +3627,8 @@ mod tests {
             "2026-04-23T00:00:00Z",
         )
         .expect("encode bundle");
-        let value: serde_json::Value = serde_json::from_str(&encoded).expect("parse encoded bundle");
+        let value: serde_json::Value =
+            serde_json::from_str(&encoded).expect("parse encoded bundle");
 
         assert_eq!(
             value.get("type").and_then(|entry| entry.as_str()),
@@ -3565,7 +3653,8 @@ mod tests {
             "2026-04-23T00:00:00Z",
         )
         .expect("encode bundle");
-        let wrapper: serde_json::Value = serde_json::from_str(&encoded).expect("parse encoded bundle");
+        let wrapper: serde_json::Value =
+            serde_json::from_str(&encoded).expect("parse encoded bundle");
 
         assert_eq!(
             wrapper.get("type").and_then(|entry| entry.as_str()),
@@ -3576,7 +3665,10 @@ mod tests {
         let decoded_envelope: BlindBallotRequestBundleEnvelope =
             serde_json::from_value(decoded).expect("decode request bundle");
 
-        assert_eq!(decoded_envelope.message_type, "optiona_blind_request_bundle_dm");
+        assert_eq!(
+            decoded_envelope.message_type,
+            "optiona_blind_request_bundle_dm"
+        );
         assert_eq!(decoded_envelope.requests.len(), 1);
         assert!(decoded_envelope.requests[0].blinded_message.len() > 16_000);
     }

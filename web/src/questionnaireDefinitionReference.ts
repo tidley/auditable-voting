@@ -32,6 +32,22 @@ export function questionnaireDefinitionHash(definition: QuestionnaireDefinition)
   return sha256HexRust(stableJsonStringify(definition as unknown as JsonValue));
 }
 
+export function selectNewestMatchingQuestionnaireDefinition(
+  questionnaireId: string,
+  definitions: Array<QuestionnaireDefinition | null | undefined>,
+) {
+  const targetId = questionnaireId.trim();
+  if (!targetId) {
+    return null;
+  }
+  return definitions
+    .filter((definition): definition is QuestionnaireDefinition => (
+      Boolean(definition)
+      && definition.questionnaireId === targetId
+    ))
+    .sort((left, right) => Number(right.createdAt ?? 0) - Number(left.createdAt ?? 0))[0] ?? null;
+}
+
 export function buildQuestionnaireDefinitionReference(input: {
   definition: QuestionnaireDefinition;
   definitionEventId?: string | null;

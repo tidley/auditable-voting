@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented in this file.
 
+## [0.1.101] - 2026-06-18
+
+### Fixed
+- Fixed audit proxy configuration immediately after publishing so it uses the just-published questionnaire definition and event id instead of stale React state for the definition hash.
+- The audit proxy now recovers from a stale expected public-definition hash when the fetched public definition's blind-signing key id matches the configured private key, then stores the fetched definition hash for later issuances.
+- Raised generated launcher minimum-version checks to audit proxy 0.1.30.
+- Bumped the web app package to 0.1.101 and audit proxy package to 0.1.30.
+
 ## [0.1.100] - 2026-06-18
 
 ### Changed
