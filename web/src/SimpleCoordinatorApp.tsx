@@ -1182,7 +1182,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
   const [admittedVoterDraftNpub, setAdmittedVoterDraftNpub] = useState("");
   const [admittedVoterStatus, setAdmittedVoterStatus] = useState<string | null>(null);
   const [admittedVoterApplyInFlight, setAdmittedVoterApplyInFlight] = useState(false);
-  const [knownVoterDraftNpub, setKnownVoterDraftNpub] = useState("");
   const [knownVoterInviteStatus, setKnownVoterInviteStatus] = useState<string | null>(null);
   const [knownVoterInviteRefreshNonce, setKnownVoterInviteRefreshNonce] = useState(0);
   const [optionAQueueProcessingDebug, setOptionAQueueProcessingDebug] = useState<OptionAQueueProcessingDebug>({
@@ -4359,11 +4358,29 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     };
   }
 
-  function admitDraftVoter() {
-    const result = admitVotersToRoster([admittedVoterDraftNpub], "manual");
-    if (result.npubs.length > 0) {
-      setAdmittedVoterDraftNpub("");
+  async function inviteDraftVoter() {
+    const rawValue = admittedVoterDraftNpub.trim();
+    if (!rawValue) {
+      return;
     }
+    const npub = normalizeInviteNpubInput(rawValue);
+    if (!npub) {
+      setAdmittedVoterStatus("Enter a valid voter npub or nostr:nprofile.");
+      setKnownVoterInviteStatus(null);
+      return;
+    }
+    if (!optionACoordinatorRuntime || !optionAElectionId.trim()) {
+      const result = admitVotersToRoster([npub], "manual");
+      if (result.npubs.length > 0) {
+        setAdmittedVoterDraftNpub("");
+      }
+      setKnownVoterInviteStatus(null);
+      return;
+    }
+    setAdmittedVoterDraftNpub("");
+    setInviteFeedbackStatus(`Inviting ${deriveActorDisplayId(npub)}...`, "admitted");
+    setKnownVoterInviteRefreshNonce((value) => value + 1);
+    await sendInviteToKnownVoter(npub, { statusTarget: "admitted" });
   }
 
   function removeVoterAdmission(npub: string) {
@@ -4849,15 +4866,34 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
     }
   }
 
-  function addSelectedImportedContactsToWhitelist() {
+  async function addSelectedImportedContactsToWhitelist() {
     if (selectedImportedKnownVoterNpubs.length === 0) {
       return;
     }
     const result = admitVotersToRoster(selectedImportedKnownVoterNpubs, "contact", { silent: true });
+    if (result.npubs.length === 0) {
+      setKnownVoterInviteStatus("Could not add selected contacts.");
+      return;
+    }
+    if (!optionACoordinatorRuntime || !optionAElectionId.trim()) {
+      setKnownVoterInviteStatus(
+        `Invited ${result.addedCount || result.npubs.length}/${selectedImportedKnownVoterNpubs.length} selected contact${selectedImportedKnownVoterNpubs.length === 1 ? "" : "s"}${optionAElectionId.trim() ? `; ${result.projectedCount} added to this questionnaire.` : "."}`,
+      );
+      return;
+    }
+    setKnownVoterInviteStatus(`Inviting ${selectedImportedKnownVoterNpubs.length} selected contact${selectedImportedKnownVoterNpubs.length === 1 ? "" : "s"}...`);
+    const deliveries = await Promise.all(
+      selectedImportedKnownVoterNpubs.map((npub) => sendInviteToKnownVoter(npub, {
+        silent: true,
+        syncWorkerConfig: false,
+      })),
+    );
+    await syncActiveWorkerElectionConfig().catch(() => false);
+    setKnownVoterInviteRefreshNonce((value) => value + 1);
+    const deliveredCount = deliveries.filter((entry) => entry?.dmDelivered).length;
+    setSelectedImportedKnownVoterNpubs([]);
     setKnownVoterInviteStatus(
-      result.npubs.length > 0
-        ? `Invited ${result.addedCount || result.npubs.length}/${selectedImportedKnownVoterNpubs.length} selected contact${selectedImportedKnownVoterNpubs.length === 1 ? "" : "s"}${optionAElectionId.trim() ? `; ${result.projectedCount} added to this questionnaire.` : "."}`
-        : "Could not add selected contacts.",
+      `Invited ${selectedImportedKnownVoterNpubs.length} selected contact${selectedImportedKnownVoterNpubs.length === 1 ? "" : "s"}; ${deliveredCount}/${selectedImportedKnownVoterNpubs.length} DM${selectedImportedKnownVoterNpubs.length === 1 ? "" : "s"} sent.`,
     );
   }
 
@@ -4885,32 +4921,6 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
       }
       return [...next];
     });
-  }
-
-  async function inviteKnownVoterNpub() {
-    if (!optionACoordinatorRuntime) {
-      return;
-    }
-    const rawValue = knownVoterDraftNpub.trim();
-    if (!rawValue) {
-      return;
-    }
-    const npub = normalizeInviteNpubInput(rawValue);
-    if (!npub) {
-      setKnownVoterInviteStatus("Enter a valid npub or nostr:nprofile.");
-      return;
-    }
-    try {
-      admitVotersToRoster([npub], "manual", { silent: true });
-      optionACoordinatorRuntime.addWhitelistNpub(npub);
-      setOptimisticKnownVoterNpubs((current) => (current.includes(npub) ? current : [...current, npub]));
-      setKnownVoterDraftNpub("");
-      setKnownVoterInviteStatus(`Inviting ${deriveActorDisplayId(npub)}...`);
-      setKnownVoterInviteRefreshNonce((value) => value + 1);
-      await sendInviteToKnownVoter(npub);
-    } catch (error) {
-      setKnownVoterInviteStatus(error instanceof Error ? error.message : "Could not invite voter.");
-    }
   }
 
   async function sendInviteToKnownVoter(invitedNpub: string, options?: { silent?: boolean; syncWorkerConfig?: boolean; statusTarget?: "known" | "admitted" }) {
@@ -7335,7 +7345,15 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
               onStatusChange={updateQuestionnaireRosterAnnouncement}
             />
             <div id='coordinator-invite-voters-section' className='simple-session-invites'>
-              <SimpleCollapsibleSection title='Voters' hideToggle>
+              <SimpleCollapsibleSection
+                title='Voters'
+                hideToggle
+                headerAction={(
+                  <span className='simple-admitted-voter-count simple-admitted-voter-count-header'>
+                    {admittedVoterSummaryLabel}
+                  </span>
+                )}
+              >
                 <div className='simple-invite-share-panel simple-admitted-voters-panel' aria-label='Voters'>
                   <div className='simple-invite-share-heading simple-admitted-voters-heading'>
                     <div className='simple-invite-share-copy'>
@@ -7344,53 +7362,106 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                         Invite voters once for this organiser. Each questionnaire still issues a fresh blind ballot credential per response.
                       </p>
                     </div>
-                    <span className='simple-admitted-voter-count'>
-                      {admittedVoterSummaryLabel}
-                    </span>
-                  </div>
-                  <div className='simple-invite-share-panel simple-invite-share-panel-add-voter' aria-label='Add voter identities'>
-                    <div className='simple-invite-share-copy'>
-                      <h3 className='simple-voter-question'>Add voter identities</h3>
-                    </div>
-                    <div className='simple-voter-add-row simple-voter-add-row-with-scan simple-admitted-voters-add-row'>
-                      <input
-                        className='simple-voter-input simple-voter-input-inline'
-                        value={admittedVoterDraftNpub}
-                        placeholder='npub1... or nostr:nprofile1...'
-                        onChange={(event) => setAdmittedVoterDraftNpub(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") {
-                            event.preventDefault();
-                            admitDraftVoter();
-                          }
-                        }}
-                      />
                       <button
                         type='button'
                         className='simple-voter-secondary'
-                        disabled={!admittedVoterDraftNpub.trim() || !activeCoordinatorNpub.trim()}
-                        onClick={admitDraftVoter}
+                        onClick={() => void importKnownVotersFromContacts()}
+                        disabled={knownVoterContactsLoading || !activeCoordinatorNpub}
                       >
-                        Invite
+                        {knownVoterContactsLoading ? 'Importing...' : 'Import contacts'}
                       </button>
-                    </div>
                   </div>
-                  <div className='simple-voter-action-row simple-voter-action-row-inline simple-admitted-voters-action-row'>
+                  <div className='simple-voter-add-row simple-voter-add-row-with-scan simple-admitted-voters-add-row'>
+                    <input
+                      className='simple-voter-input simple-voter-input-inline'
+                      value={admittedVoterDraftNpub}
+                      placeholder='npub1... or nostr:nprofile1...'
+                      onChange={(event) => setAdmittedVoterDraftNpub(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void inviteDraftVoter();
+                        }
+                      }}
+                    />
                     <button
                       type='button'
                       className='simple-voter-secondary'
-                      disabled={admittedVoterApplyInFlight || admittedVoterAutoApplyNpubs.length === 0 || !optionAElectionId.trim() || !optionACoordinatorRuntime}
-                      onClick={() => void applyAdmissionRosterToCurrentQuestionnaire()}
+                      disabled={!admittedVoterDraftNpub.trim() || !activeCoordinatorNpub.trim()}
+                      onClick={() => void inviteDraftVoter()}
                     >
-                      {admittedVoterApplyInFlight ? "Applying..." : "Apply to current questionnaire"}
+                      Invite
                     </button>
                   </div>
+                  {importedKnownVoterContacts.length > 0 ? (
+                    <div className='simple-voter-field-stack simple-imported-contact-panel'>
+                      <label className='simple-voter-label' htmlFor='known-voter-contact-search'>
+                        Imported contacts
+                      </label>
+                      <input
+                        id='known-voter-contact-search'
+                        className='simple-voter-input'
+                        value={knownVoterContactSearch}
+                        onChange={(event) => setKnownVoterContactSearch(event.target.value)}
+                        placeholder='Search by name, NIP-05, or npub'
+                      />
+                      <div className='simple-voter-action-row simple-voter-action-row-inline'>
+                        <button
+                          type='button'
+                          className='simple-voter-secondary'
+                          onClick={toggleSelectAllVisibleImportedKnownVoters}
+                          disabled={filteredImportedKnownVoterContacts.length === 0}
+                        >
+                          {filteredImportedKnownVoterContacts.length > 0 && filteredImportedKnownVoterContacts.every((entry) => selectedImportedKnownVoterSet.has(entry.npub))
+                            ? 'Clear visible'
+                            : 'Select all visible'}
+                        </button>
+                        <p className='simple-voter-note'>
+                          {selectedImportedKnownVoterNpubs.length} selected
+                        </p>
+                      </div>
+                      <div className='simple-imported-contact-list' role='list' aria-label='Imported contact candidates'>
+                        {filteredImportedKnownVoterContacts.length > 0 ? filteredImportedKnownVoterContacts.map((contact) => {
+                          const label = contact.profileName ?? contact.petname ?? contact.nip05 ?? deriveActorDisplayId(contact.npub);
+                          return (
+                            <label key={contact.npub} className='simple-imported-contact-row' role='listitem'>
+                              <input
+                                type='checkbox'
+                                checked={selectedImportedKnownVoterSet.has(contact.npub)}
+                                onChange={() => toggleImportedKnownVoterSelection(contact.npub)}
+                              />
+                              <span className='simple-imported-contact-copy'>
+                                <span className='simple-imported-contact-primary'>{label}</span>
+                                <span className='simple-imported-contact-secondary'>
+                                  {contact.nip05 ? `${contact.nip05} · ` : ''}{contact.npub}
+                                </span>
+                              </span>
+                            </label>
+                          );
+                        }) : (
+                          <p className='simple-voter-note'>No contacts match your filter.</p>
+                        )}
+                      </div>
+                      <div className='simple-voter-action-row simple-voter-action-row-inline'>
+                        <button
+                          type='button'
+                          className='simple-voter-secondary'
+                          onClick={() => void addSelectedImportedContactsToWhitelist()}
+                          disabled={selectedImportedKnownVoterNpubs.length === 0}
+                        >
+                          Invite selected voters
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                  {knownVoterInviteStatus ? <p className='simple-voter-note'>{knownVoterInviteStatus}</p> : null}
+                  {admittedVoterStatus ? <p className='simple-voter-note'>{admittedVoterStatus}</p> : null}
                   {optionAElectionId ? (
                     <div className='simple-voter-field-stack'>
                     <div className='simple-invite-share-panel simple-invite-share-panel-general' aria-label='Share questionnaire link'>
                       <div className='simple-invite-share-heading'>
                         <div className='simple-invite-share-copy'>
-                          <h3 className='simple-voter-question'>General invite link</h3>
+                          <h3 className='simple-voter-question'>General invite</h3>
                           <p className='simple-voter-note'>
                             Open link or scan QR code to request invite.
                           </p>
@@ -7414,115 +7485,18 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                         >
                           Copy link
                         </button>
-                      </div>
-                    </div>
-                    <div className='simple-invite-share-panel' aria-label='Invite via Nostr'>
-                      <div className='simple-invite-share-copy'>
-                        <h3 className='simple-voter-question'>Invite via Nostr</h3>
-                        <p className='simple-voter-note'>
-                          Send invites using direct messages.
-                        </p>
-                      </div>
-                      <input
-                        className='simple-voter-input simple-voter-input-inline'
-                        value={knownVoterDraftNpub}
-                        placeholder='npub1... or nostr:nprofile1...'
-                        onChange={(event) => setKnownVoterDraftNpub(event.target.value)}
-                      />
-                      <div className='simple-invite-share-actions'>
                         <button
                           type='button'
                           className='simple-voter-secondary'
-                          disabled={!knownVoterDraftNpub.trim()}
-                          onClick={() => void inviteKnownVoterNpub()}
+                          onClick={() => void createPrivateInviteCodeLink()}
+                          disabled={!publicQuestionnaireInviteUrl || !optionACoordinatorRuntime}
                         >
-                          Invite
-                        </button>
-                        <button
-                          type='button'
-                          className='simple-voter-secondary'
-                          onClick={() => void importKnownVotersFromContacts()}
-                          disabled={knownVoterContactsLoading || !activeCoordinatorNpub}
-                        >
-                          {knownVoterContactsLoading ? 'Importing...' : 'Import contacts'}
+                          {privateInviteCreateCopied ? "Copied" : "Create single-use invite link"}
                         </button>
                       </div>
-                      {importedKnownVoterContacts.length > 0 ? (
-                        <div className='simple-voter-field-stack'>
-                          <label className='simple-voter-label' htmlFor='known-voter-contact-search'>
-                            Imported contacts
-                          </label>
-                          <input
-                            id='known-voter-contact-search'
-                            className='simple-voter-input'
-                            value={knownVoterContactSearch}
-                            onChange={(event) => setKnownVoterContactSearch(event.target.value)}
-                            placeholder='Search by name, NIP-05, or npub'
-                          />
-                          <div className='simple-voter-action-row simple-voter-action-row-inline'>
-                            <button
-                              type='button'
-                              className='simple-voter-secondary'
-                              onClick={toggleSelectAllVisibleImportedKnownVoters}
-                              disabled={filteredImportedKnownVoterContacts.length === 0}
-                            >
-                              {filteredImportedKnownVoterContacts.length > 0 && filteredImportedKnownVoterContacts.every((entry) => selectedImportedKnownVoterSet.has(entry.npub))
-                                ? 'Clear visible'
-                                : 'Select all visible'}
-                            </button>
-                            <p className='simple-voter-note'>
-                              {selectedImportedKnownVoterNpubs.length} selected
-                            </p>
-                          </div>
-                          <div className='simple-imported-contact-list' role='list' aria-label='Imported contact candidates'>
-                            {filteredImportedKnownVoterContacts.length > 0 ? filteredImportedKnownVoterContacts.map((contact) => {
-                              const label = contact.profileName ?? contact.petname ?? contact.nip05 ?? deriveActorDisplayId(contact.npub);
-                              return (
-                                <label key={contact.npub} className='simple-imported-contact-row' role='listitem'>
-                                  <input
-                                    type='checkbox'
-                                    checked={selectedImportedKnownVoterSet.has(contact.npub)}
-                                    onChange={() => toggleImportedKnownVoterSelection(contact.npub)}
-                                  />
-                                  <span className='simple-imported-contact-copy'>
-                                    <span className='simple-imported-contact-primary'>{label}</span>
-                                    <span className='simple-imported-contact-secondary'>
-                                      {contact.nip05 ? `${contact.nip05} · ` : ''}{contact.npub}
-                                    </span>
-                                  </span>
-                                </label>
-                              );
-                            }) : (
-                              <p className='simple-voter-note'>No contacts match your filter.</p>
-                            )}
-                          </div>
-                          <div className='simple-voter-action-row simple-voter-action-row-inline'>
-                            <button
-                              type='button'
-                              className='simple-voter-secondary'
-                              onClick={addSelectedImportedContactsToWhitelist}
-                              disabled={selectedImportedKnownVoterNpubs.length === 0}
-                            >
-                              Invite selected voters
-                            </button>
-                          </div>
-                        </div>
-                      ) : null}
-                      {knownVoterInviteStatus ? <p className='simple-voter-note'>{knownVoterInviteStatus}</p> : null}
-                    </div>
-                    <div className='simple-voter-action-row simple-voter-action-row-inline simple-private-invite-create-row'>
-                      <button
-                        type='button'
-                        className='simple-voter-secondary'
-                        onClick={() => void createPrivateInviteCodeLink()}
-                        disabled={!publicQuestionnaireInviteUrl || !optionACoordinatorRuntime}
-                      >
-                        {privateInviteCreateCopied ? "Copied" : "Create single-use invite link"}
-                      </button>
                     </div>
                   </div>
                 ) : null}
-                {admittedVoterStatus ? <p className='simple-voter-note'>{admittedVoterStatus}</p> : null}
                 <div className='simple-participants-subsection' aria-label='Participants'>
                   <div className='simple-participants-header'>
                     <div className='simple-invite-share-copy'>

@@ -3,6 +3,7 @@ import { useEffect, useId, useState, type ReactNode } from "react";
 export default function SimpleCollapsibleSection({
   title,
   titleToggleLabel,
+  headerAction,
   children,
   defaultCollapsed = false,
   renderWhenExpanded = false,
@@ -11,6 +12,7 @@ export default function SimpleCollapsibleSection({
 }: {
   title: ReactNode;
   titleToggleLabel?: string;
+  headerAction?: ReactNode;
   children: ReactNode;
   defaultCollapsed?: boolean;
   renderWhenExpanded?: boolean;
@@ -50,19 +52,24 @@ export default function SimpleCollapsibleSection({
             </button>
           </h2>
         ) : (
-          <>
-            <h2 id={titleId} className="simple-voter-section-title simple-collapsible-title">{title}</h2>
-            <button
-              type="button"
-              className="simple-collapsible-toggle"
-              aria-expanded={!isCollapsed}
-              aria-controls={bodyId}
-              onClick={() => setCollapsed((current) => !current)}
-            >
-              {isCollapsed ? "Show" : "Hide"}
-            </button>
-          </>
+          <h2 id={titleId} className="simple-voter-section-title simple-collapsible-title">{title}</h2>
         )}
+        {headerAction ? (
+          <div className="simple-collapsible-header-action">
+            {headerAction}
+          </div>
+        ) : null}
+        {!hideToggle && !titleToggleLabel ? (
+          <button
+            type="button"
+            className="simple-collapsible-toggle"
+            aria-expanded={!isCollapsed}
+            aria-controls={bodyId}
+            onClick={() => setCollapsed((current) => !current)}
+          >
+            {isCollapsed ? "Show" : "Hide"}
+          </button>
+        ) : null}
       </div>
       <div id={bodyId} className="simple-collapsible-body">
         <div className="simple-collapsible-body-inner">

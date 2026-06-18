@@ -635,7 +635,7 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
           aria-label='App menu'
         >
           <div className='simple-account-menu-section' role='none'>
-            <p className='simple-account-menu-kicker'>Role</p>
+            <p className='simple-account-menu-kicker'>Switch</p>
             <div
               className='simple-role-switch simple-role-switch-menu-inline'
               role='tablist'
@@ -706,7 +706,6 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                         }
                       }}
                     >
-                      <span className='simple-menu-action-icon simple-menu-action-icon-login' aria-hidden='true' />
                       <span>Login</span>
                     </button>
                   ) : null}
@@ -720,7 +719,6 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                       void tryWriteClipboard(accountIdentityNpub);
                     }}
                   >
-                    <span className='simple-menu-action-icon simple-menu-action-icon-copy' aria-hidden='true' />
                     <span>Copy identity</span>
                   </button>
                   <button
@@ -732,7 +730,6 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                       setNewIdentityConfirmRole(role);
                     }}
                   >
-                    <span className='simple-menu-action-icon simple-menu-action-icon-new' aria-hidden='true' />
                     <span>New identity</span>
                   </button>
                 </div>
@@ -783,7 +780,6 @@ export default function SimpleAppShell({ initialRole = "auditor" }: SimpleAppShe
                     }
                   }}
                 >
-                  <span className='simple-menu-action-icon simple-menu-action-icon-signout' aria-hidden='true' />
                   <span>Sign out</span>
                 </button>
               </div>

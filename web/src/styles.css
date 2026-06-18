@@ -945,8 +945,16 @@ code {
   gap: 8px;
 }
 
+.simple-account-menu-identity-actions {
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+}
+
+.simple-account-menu-identity-actions .simple-account-menu-kicker {
+  grid-column: 1 / -1;
+}
+
 .simple-account-menu-signout-section {
-  padding: 0 10px 4px;
+  padding: 0 10px 8px;
 }
 
 .simple-account-menu-about-section {
@@ -956,14 +964,20 @@ code {
 }
 
 .simple-account-menu-about-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
+}
+
+.simple-account-menu-about-row .simple-account-menu-button {
+  min-width: 0;
+  width: 100%;
 }
 
 .simple-account-menu-version {
-  margin: 0 0 0 auto;
+  justify-self: end;
+  margin: 0 0 0 8px;
   color: var(--simple-muted);
   font-size: 0.88rem;
   font-weight: 800;
@@ -972,11 +986,79 @@ code {
 }
 
 .simple-account-menu-link {
+  text-decoration: none;
+}
+
+.simple-account-menu-button {
+  min-height: 52px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--simple-muted);
+  font: inherit;
+  font-weight: 700;
+  text-align: center;
+  cursor: pointer;
+  transition: background 180ms ease, color 180ms ease, border-color 180ms ease;
+}
+
+.simple-account-menu-action,
+.simple-account-menu-link {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-start;
-  text-decoration: none;
-  white-space: nowrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.simple-account-menu-button span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.simple-account-menu-signout-button {
+  color: #ffb4a8;
+}
+
+.simple-account-menu-identity-actions .simple-account-menu-button,
+.simple-account-menu-signout-section .simple-account-menu-button {
+  width: 100%;
+}
+
+.simple-account-menu-button:hover,
+.simple-account-menu-button:focus-visible {
+  border-color: var(--simple-border-strong);
+  background: var(--simple-surface-3);
+  color: var(--simple-text);
+}
+
+.simple-account-menu-signout-button:hover,
+.simple-account-menu-signout-button:focus-visible {
+  color: #ffd0c8;
+}
+
+.simple-account-menu-button:disabled,
+.simple-account-menu-button:disabled:hover {
+  border-color: transparent;
+  background: transparent;
+  color: rgba(184, 196, 204, 0.48);
+  cursor: not-allowed;
+}
+
+/*
+ * Shared icon glyphs remain available for the compact voter section tabs.
+ * Account menu actions use text-only rectangular controls to match role switching.
+ */
+.simple-menu-action-icon,
+.simple-menu-tab-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: currentColor;
+  opacity: 0.95;
 }
 
 .simple-account-menu-kicker {
@@ -1042,39 +1124,6 @@ code {
 
 .simple-account-menu-note {
   margin: 0;
-}
-
-.simple-account-menu-button {
-  min-height: 46px;
-  padding: 0 12px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--simple-muted);
-  font: inherit;
-  font-weight: 700;
-  text-align: left;
-  cursor: pointer;
-  transition: background 180ms ease, color 180ms ease, border-color 180ms ease;
-}
-
-.simple-account-menu-action {
-  display: grid;
-  grid-template-columns: 22px minmax(0, 1fr);
-  align-items: center;
-  gap: 10px;
-}
-
-.simple-menu-action-icon,
-.simple-menu-tab-icon {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  color: currentColor;
-  opacity: 0.95;
 }
 
 .simple-message-unread-dot {
@@ -3230,6 +3279,13 @@ code {
   flex: 1 1 auto;
 }
 
+.simple-collapsible-header-action {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
 .simple-collapsible-toggle {
   flex: 0 0 auto;
   padding: 8px 12px;
@@ -4061,6 +4117,10 @@ code {
   white-space: nowrap;
 }
 
+.simple-admitted-voter-count-header {
+  justify-self: end;
+}
+
 .simple-admitted-voters-add-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -4426,11 +4486,6 @@ code {
   font-size: 0.82rem;
 }
 
-.simple-session-invites .simple-admitted-voters-action-row {
-  justify-content: flex-end;
-  margin: 0 0 12px;
-}
-
 .simple-session-invites .simple-admitted-voters-add-row {
   grid-template-columns: minmax(0, 1fr) auto;
   margin-bottom: 12px;
@@ -4440,18 +4495,12 @@ code {
   gap: 12px;
 }
 
-.simple-session-invites .simple-invite-share-panel-add-voter,
 .simple-session-invites .simple-invite-share-panel-general,
-.simple-session-invites .simple-invite-share-panel[aria-label='Invite via Nostr'] {
+.simple-session-invites .simple-imported-contact-panel {
   padding: 12px;
   border: 1px solid rgba(148, 163, 184, 0.16);
   border-radius: 8px;
   background: #08111b;
-}
-
-.simple-session-invites .simple-private-invite-create-row {
-  justify-content: flex-end;
-  margin: 0;
 }
 
 .simple-session-invites .simple-admitted-voter-note-field {
@@ -6976,23 +7025,25 @@ code {
 }
 
 .simple-voter-choice-yes {
-  background: rgba(20, 184, 166, 0.16);
-  border-color: rgba(20, 184, 166, 0.35);
+  background: rgba(20, 184, 166, 0.11);
+  border-color: rgba(20, 184, 166, 0.28);
 }
 
 .simple-voter-choice-no {
-  background: rgba(239, 68, 68, 0.16);
-  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.11);
+  border-color: rgba(239, 68, 68, 0.28);
 }
 
 .simple-voter-choice-yes.is-active {
-  background: var(--simple-green);
-  border-color: var(--simple-green);
+  background: #0f766e;
+  border-color: #14b8a6;
+  color: #f8fbfc;
 }
 
 .simple-voter-choice-no.is-active {
-  background: var(--simple-coral);
-  border-color: var(--simple-coral);
+  background: #b91c1c;
+  border-color: #ef4444;
+  color: #fff7f7;
 }
 
 .simple-voter-choice-yes.is-dimmed {
@@ -8068,8 +8119,14 @@ code {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .simple-account-menu-identity-actions .simple-account-menu-kicker {
+  .simple-account-menu-about-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .simple-account-menu-version {
     grid-column: 1 / -1;
+    justify-self: start;
+    margin-left: 0;
   }
 
   .simple-app-version {
@@ -8316,6 +8373,10 @@ code {
   .simple-admitted-voter-actions,
   .simple-admitted-voter-remove {
     justify-self: start;
+  }
+
+  .simple-admitted-voter-count-header {
+    justify-self: end;
   }
 
   .simple-private-invite-panel-head,
