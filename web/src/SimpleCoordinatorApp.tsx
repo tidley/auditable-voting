@@ -944,6 +944,22 @@ function InviteQrButton({ value, label, title }: InviteQrButtonProps) {
   );
 }
 
+function ParticipantsShownIcon() {
+  return (
+    <svg
+      className='simple-auditor-question-response-icon'
+      viewBox='0 0 24 24'
+      aria-hidden='true'
+      focusable='false'
+    >
+      <path
+        d='M8.5 11.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Zm7 0a3 3 0 1 1 0-6 3 3 0 0 1 0 6ZM2.75 19c.55-3.08 2.66-5 5.75-5s5.2 1.92 5.75 5H2.75Zm10.85 0a7.33 7.33 0 0 0-1.32-2.95A5.2 5.2 0 0 1 15.5 15c2.65 0 4.46 1.52 4.95 4H13.6Z'
+        fill='currentColor'
+      />
+    </svg>
+  );
+}
+
 function createLocalNsecSignerService(nsec: string) {
   const secretKey = decodeNsec(nsec);
   if (!secretKey) {
@@ -7501,22 +7517,18 @@ export default function SimpleCoordinatorApp({ accountMenu }: SimpleCoordinatorA
                   <div className='simple-participants-header'>
                     <div className='simple-invite-share-copy'>
                       <h3 className='simple-voter-question'>Participants</h3>
-                      <p className='simple-voter-note'>
-                        Voters, access requests, and received votes for the current questionnaire.
-                      </p>
                     </div>
-                    <span className='simple-admitted-voter-count'>
-                      {participantRosterVisibleCount}/{participantRosterTotalCount} shown
-                    </span>
+                    <p className='simple-auditor-question-response-count simple-participants-shown-count'>
+                      <ParticipantsShownIcon />
+                      <span>{participantRosterVisibleCount}/{participantRosterTotalCount} shown</span>
+                    </p>
                   </div>
-                  <label className='simple-voter-label' htmlFor='coordinator-participant-search'>
-                    Search participants
-                  </label>
                   <input
                     id='coordinator-participant-search'
                     className='simple-voter-input'
                     value={participantSearchQuery}
                     onChange={(event) => setParticipantSearchQuery(event.target.value)}
+                    aria-label='Search participants'
                     placeholder='Search by voter, private invite, request, response ID, or token...'
                   />
                   {participantRosterTotalCount === 0 ? (

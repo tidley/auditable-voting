@@ -4433,6 +4433,11 @@ code {
   gap: 12px;
 }
 
+.simple-participants-shown-count {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+}
+
 .simple-admitted-private-invite-row .simple-invite-qr-trigger {
   width: 82px;
   height: 82px;

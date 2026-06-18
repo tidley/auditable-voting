@@ -1,7 +1,7 @@
 {
   "name": "auditable-voting-web",
   "private": true,
-  "version": "0.1.102",
+  "version": "0.1.103",
   "type": "module",
   "scripts": {
     "build:wasm": "npm run build:wasm:legacy && npm run build:wasm:coordinator",
